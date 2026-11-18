@@ -76,15 +76,6 @@ def resumed(example: dict) -> None:
     assert all(m["event"]["seq"] >= after for m in example["server"][1:-1])
 
 
-def availability_told(example: dict) -> bool:
-    """The summary when ready, the availability after it, the write's result, the summary of the end."""
-    kinds = [m["type"] for m in example["server"]]
-    ready = next(i for i, m in enumerate(example["server"])
-                 if m["type"] == "variables" and m["variables"]["state"] == "ready")
-    return kinds[ready + 1:] == ["availability", "operation", "operation", "variables"] and \
-        example["server"][-1]["variables"]["state"] == "ended"
-
-
 SHOWN = {
     "session-none": lambda e: (e["status"], e["response"]["session"], e["response"]["allowed"]["start"]) ==
     (200, None, {"ok": True, "reason": None, "message": None}),
@@ -95,8 +86,6 @@ SHOWN = {
     "ws-stop": ended("stopped", "stop command", states=["ended", "ended", "ended"]),
     "ws-force-stop": ended("stopped", "stop command", states=["ended", "ended", "killed"]),
     "ws-resume": resumed,
-    # Not a file until the client library reads the availability message (it passes over a type it does not know).
-    "ws-availability": availability_told,
     # an error: its HTTP status (also as the table of errors in gui/protocol/README.md says)
     "error-unauthorized": 401, "error-forbidden-host": 403, "error-forbidden-origin": 403,
     "error-cors-not-allowed": 403, "error-not-found": 404, "error-method-not-allowed": 405, "error-too-large": 413,

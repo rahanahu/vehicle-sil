@@ -1,5 +1,6 @@
 import { HttpError, HttpTransport, errorMessage } from './http';
-import { Open } from './protocol';
+import { Open, readAvailability } from './protocol';
+import type { VariableAvailability } from './protocol';
 import { ErrorSink, Readable, Writable, rethrowLater } from './values';
 import type { BindOptions, VariableBinding } from './variable-binding';
 
@@ -57,6 +58,13 @@ export interface VariablesState {
   /** Why the API is unavailable or cannot connect (the server's English text). null if none. */
   reason: string | null;
   peers: VariablePeer[];
+  /**
+   * Whether each ECU uses each variable now (participant, then variable name): information only (it changes neither
+   * how the variable is read nor whether it can be written). Kept apart from `peers`, which holds the declared
+   * definitions, so that a notification replaces this table and leaves `peers` as it is. Every variable in `peers` has
+   * an entry; `active` when the server does not say.
+   */
+  availability: ReadonlyMap<string, ReadonlyMap<string, VariableAvailability>>;
   /** Number of participants and variables beyond the limit that the server did not keep. */
   peersOmitted: number;
   variablesOmitted: number;
@@ -288,6 +296,7 @@ const NO_VARIABLES: VariablesState = {
   status: 'unknown',
   reason: null,
   peers: [],
+  availability: new Map(),
   peersOmitted: 0,
   variablesOmitted: 0,
 };
@@ -319,9 +328,11 @@ const positionOrNull = (value: unknown) =>
 export function readVariables(value: unknown, session: number | null): VariablesState {
   if (!isObject(value)) return { ...NO_VARIABLES, session };
   const peers: VariablePeer[] = [];
+  const availability = new Map<string, Map<string, VariableAvailability>>();
   for (const p of Array.isArray(value['peers']) ? value['peers'] : []) {
     if (!isObject(p) || typeof p['name'] !== 'string') continue;
     const variables: VariableInfo[] = [];
+    const states = new Map<string, VariableAvailability>();
     for (const v of Array.isArray(p['variables']) ? p['variables'] : []) {
       if (!isObject(v) || typeof v['name'] !== 'string') continue;
       const items = Array.isArray(v['enum'])
@@ -343,7 +354,9 @@ export function readVariables(value: unknown, session: number | null): Variables
         description: text(v['description']),
         enum: items,
       });
+      states.set(v['name'], readAvailability(v['availability']));
     }
+    availability.set(p['name'], states);
     peers.push({ name: p['name'], connected: p['connected'] === true, variables });
   }
   return {
@@ -351,6 +364,7 @@ export function readVariables(value: unknown, session: number | null): Variables
     status: text(value['state'], 'unknown'),
     reason: typeof value['reason'] === 'string' ? value['reason'] : null,
     peers,
+    availability,
     peersOmitted: count(value['peers_omitted']),
     variablesOmitted: count(value['variables_omitted']),
   };
@@ -716,6 +730,12 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           }
           break;
         }
+        case 'availability': {
+          // Replaces the states of each participant listed. A disconnection changes nothing: the last states stay
+          if (message['session'] !== this.stateValue.get().session) break;
+          if (this.takeAvailability(message['peers'])) touchedAll = true;
+          break;
+        }
         case 'error': {
           // A watch was refused: on this connection, the values of that subscription do not arrive
           const code = message['code'];
@@ -728,6 +748,29 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     }
     flush();
     if (touchedAll || touched.size > 0) this.publish(touchedAll ? null : touched);
+  }
+
+  /** Returns whether any state changed. Only the availability table changes: `peers` keeps its identity. */
+  private takeAvailability(peers: unknown): boolean {
+    if (!isObject(peers)) return false;
+    const state = this.stateValue.get();
+    let next: Map<string, ReadonlyMap<string, VariableAvailability>> | null = null;
+    for (const peer of state.peers) {
+      const told = peers[peer.name];
+      if (!isObject(told)) continue;
+      const before = state.availability.get(peer.name);
+      const states = new Map(peer.variables.map((v) => [v.name, readAvailability(told[v.name])]));
+      if (
+        before?.size === states.size &&
+        [...states].every(([name, value]) => before.get(name) === value)
+      )
+        continue;
+      next ??= new Map(state.availability);
+      next.set(peer.name, states);
+    }
+    if (!next) return false;
+    this.stateValue.set({ ...state, availability: next });
+    return true;
   }
 
   /** Applies the variables part of hello and of an HTTP summary (`session`). */

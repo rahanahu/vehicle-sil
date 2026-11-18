@@ -18,8 +18,9 @@ import { MatDialog, MatDialogRef } from '@angular/material/dialog';
 import {
   FrontClock,
   FrontControls,
+  FrontResult,
+  FrontStatus,
   PHASES,
-  RunOutcome,
   SessionView,
   phaseIndex,
   severityRank,
@@ -29,10 +30,13 @@ import { settledAfter } from '../core/streams/stream-signals';
 import { ForceStopDialog } from './force-stop-dialog';
 import {
   LATE_ANNOUNCEMENT,
+  TONE_MARKS,
+  cutShort,
   latenessText,
   phaseLabel,
   reasonText,
-  runOutcomeLabel,
+  resultLine,
+  resultTone,
   speedLabel,
 } from './labels';
 import { StopAction } from './run-session';
@@ -47,6 +51,16 @@ export const ACTION_GUARD_MS = 800;
 export const ACTION_GUARD = new InjectionToken<number>('ACTION_GUARD', {
   factory: () => ACTION_GUARD_MS,
 });
+
+/** 結果の言葉を入れた文を、結果の言葉の前と後に分ける（英語の結果の文にだけ `lang` を付けるため。訳の文はそのまま）。 */
+function around(
+  sentence: (outcome: string) => string,
+  line: { text: string; english: boolean },
+): { before: string; text: string; english: boolean; after: string } {
+  const mark = '\u0000';
+  const [before = '', after = ''] = sentence(mark).split(mark);
+  return { before, text: line.text, english: line.english, after };
+}
 
 /**
  * 状態の帯: いつも見えるところに、操作（開始 / 停止 / 待たずに止める）、結果、段階、経過と仮想時刻。
@@ -73,7 +87,8 @@ export class RunStatus {
   private forceDialog: MatDialogRef<ForceStopDialog, boolean> | null = null;
 
   readonly session = input.required<SessionView | null>();
-  readonly outcome = input.required<RunOutcome | null>();
+  /** 実行の状態と結果（正面の口の `status`）。色、結果の文、異常終了かは、ここから決める。 */
+  readonly status = input.required<FrontStatus>();
   /** 開始、停止、待たずに止めるを押せるか、押せない理由（正面の口の `controls`）。 */
   readonly controls = input.required<FrontControls>();
   /** 仮想時刻と速さ（正面の口の `clock`。時刻のカードと同じ値）。 */
@@ -183,10 +198,11 @@ export class RunStatus {
     const speed = this.running() ? this.clock().speed : null;
     return speed === null ? null : speedLabel(speed);
   });
-  /** 一時停止している（実行中で、止めるよう頼んでいないとき）。 */
-  private readonly paused = computed(
-    () => this.outcome() === 'running' && this.session()?.launcherState?.paused === true,
-  );
+  /**
+   * 一時停止している（実行中の帯の文だけが使う）。ランチャーの state から読む: 正面の口の `status.run` は、止めて
+   * 始めた実行が参加を待つ間は `waiting` で、paused と言わない。
+   */
+  private readonly paused = computed(() => this.session()?.launcherState?.paused === true);
   /**
    * 実時間への遅れ（実行中で、許容を超えて遅れた刻みがあるとき。色だけでなく文で）。途中で最速に変えても、それまでの
    * 遅れは出したまま。結果が出たら、結果のカードが言う。
@@ -223,16 +239,24 @@ export class RunStatus {
     return parts.length === 0 ? null : this.list.format(parts);
   });
 
-  /** 結果の印と色: 成功は ✓、止めた実行と中断は ■（失敗の色にしない）、ほかは ✕。 */
-  private resultTone(result: string | undefined): { tone: string; mark: string } {
-    if (result === 'passed') return { tone: 'good', mark: '✓' };
-    if (result === 'stopped' || result === 'incomplete' || result === 'interrupted')
-      return { tone: 'neutral', mark: '■' };
-    return { tone: 'bad', mark: '✕' };
+  /** 結果の色（正面の口の `status.result`。シナリオの途中で止めたかだけは、ランチャーの結果の名前から）。 */
+  private toneOf(result: FrontResult): 'good' | 'neutral' | 'bad' {
+    return resultTone(result, cutShort(result, this.session()?.result?.result));
   }
 
-  /** 結果の 1 行（色だけで伝えないよう、印と文で）。止めている間は、ボタンが「止めています…」なので、待っているものだけ。 */
-  protected readonly summary = computed(() => {
+  /**
+   * 結果の 1 行（色だけで伝えないよう、印と文で）。実行の状態は正面の口の `status.run`。止めている間は、ボタンが
+   * 「止めています…」なので、待っているものだけ。結果は、文（before、after）の中の text が結果の言葉で、english:
+   * それがランチャーの英語の文（`lang="en"`）。
+   */
+  protected readonly summary = computed<{
+    tone: string;
+    mark: string;
+    text: string;
+    english?: boolean;
+    before?: string;
+    after?: string;
+  }>(() => {
     if (this.starting()) {
       return {
         tone: 'active',
@@ -243,40 +267,44 @@ export class RunStatus {
       };
     }
     const session = this.session();
-    const outcome = this.outcome();
-    if (!session || !outcome)
-      return { tone: 'plain', mark: '', text: $localize`まだ実行していません。` };
-    const result = session.result;
-    switch (outcome) {
-      case 'running':
-        return this.paused()
-          ? { tone: 'active', mark: '‖', text: $localize`一時停止中` }
-          : { tone: 'active', mark: '●', text: $localize`実行中` };
+    const { run, result } = this.status();
+    switch (run) {
+      case 'none':
+        return { tone: 'plain', mark: '', text: $localize`まだ実行していません。` };
+      case 'starting':
+        // ほかの画面の開始が届くのを待っている（ランチャーが動き出したら、実行中と言う）
+        if (!this.running()) return { tone: 'active', mark: '●', text: $localize`始めています…` };
+        break;
       case 'stopping':
-        return {
-          tone: 'active',
-          mark: '●',
-          text: $localize`participant が終わるのを待っています`,
-        };
-      case 'forcing':
-        return {
-          tone: 'active',
-          mark: '●',
-          text: $localize`残っている participant を強制終了するのを待っています`,
-        };
-      case 'finishing':
-        return {
-          ...this.resultTone(result?.result),
-          text: $localize`${runOutcomeLabel(result?.result ?? '')}:outcome:（ランチャーが終わるのを待っています）`,
-        };
-      case 'ended':
-        return {
-          ...this.resultTone(result?.result),
-          text: this.otherFile()
-            ? $localize`前の実行: ${runOutcomeLabel(result?.result ?? '')}:outcome:`
-            : runOutcomeLabel(result?.result ?? ''),
-        };
+        // 止めるよう頼んだときだけ。ランチャーが自分で止めている間（stop_at_ms に着いた、など）は実行中と言う
+        if (this.stopRequests() >= 2)
+          return {
+            tone: 'active',
+            mark: '●',
+            text: $localize`残っている participant を強制終了するのを待っています`,
+          };
+        if (this.stopRequests() >= 1)
+          return {
+            tone: 'active',
+            mark: '●',
+            text: $localize`participant が終わるのを待っています`,
+          };
+        break;
+      case 'ended': {
+        if (!result) break;
+        const tone = this.toneOf(result);
+        const line = resultLine(result, session?.result?.result);
+        // 結果は出たが、ランチャーはまだ動いている（正面の口にはないので、セッションの写しから）
+        const sentence = this.running()
+          ? (outcome: string) =>
+              $localize`${outcome}:outcome:（ランチャーが終わるのを待っています）`
+          : this.otherFile()
+            ? (outcome: string) => $localize`前の実行: ${outcome}:outcome:`
+            : (outcome: string) => outcome;
+        return { tone, mark: TONE_MARKS[tone], ...around(sentence, line) };
+      }
       case 'crashed': {
+        if (!session) break;
         const { exitCode, signal } = session.launcher;
         const how =
           exitCode !== null
@@ -292,17 +320,18 @@ export class RunStatus {
         };
       }
     }
+    // 始まって動いている（参加を待つ、実行、一時停止。ランチャーが自分で止めている間も）
+    return this.paused()
+      ? { tone: 'active', mark: '‖', text: $localize`一時停止中` }
+      : { tone: 'active', mark: '●', text: $localize`実行中` };
   });
 
-  /** 失敗したとき、最初の誤り（ランチャーの英語の文）。 */
+  /** 失敗したとき（結果の色が悪い）、最初の誤り（ランチャーの英語の文。所見はセッションの写しから）。 */
   protected readonly firstError = computed(() => {
     const session = this.session();
+    const result = this.status().result;
     // 止めた実行と中断は誤りではない（所見は注記だけ）
-    if (
-      !session?.result ||
-      ['passed', 'stopped', 'incomplete', 'interrupted'].includes(session.result.result)
-    )
-      return null;
+    if (!result || !session?.result || this.toneOf(result) !== 'bad') return null;
     const findings = session.result.findings;
     const worst = [...findings].sort(
       (a, b) => severityRank(a.severity) - severityRank(b.severity),
@@ -316,15 +345,16 @@ export class RunStatus {
     return session?.launcher.running ? session.launcher.silentSeconds : null;
   });
 
+  /** 結果（または異常終了）がある。 */
   protected readonly hasDetails = computed(() => {
-    const outcome = this.outcome();
-    return outcome === 'ended' || outcome === 'crashed' || outcome === 'finishing';
+    const run = this.status().run;
+    return run === 'ended' || run === 'crashed';
   });
 
   /** 段階。結果を出さずに終わったら、止まった段階に印を付け、「終了」まで進める。 */
   protected readonly steps = computed(() => {
     const session = this.session();
-    const crashed = this.outcome() === 'crashed';
+    const crashed = this.status().run === 'crashed';
     const reached = session ? session.phaseRank : -1;
     const current = session && !session.launcher.running ? phaseIndex('ended') : reached;
     return PHASES.map((phase, i) => {

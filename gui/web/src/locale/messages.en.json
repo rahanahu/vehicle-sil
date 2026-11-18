@@ -278,10 +278,6 @@
       "source": "準備に失敗した",
       "target": "Setup failed"
     },
-    "5640466719174617982": {
-      "source": "結果の名前を読めません",
-      "target": "Unknown result"
-    },
     "7825180317461266234": {
       "source": "stop_at_ms まで動いた",
       "target": "Reached stop_at_ms"
@@ -1022,21 +1018,13 @@
       "source": "まだ実行していません。",
       "target": "Nothing has run yet."
     },
-    "1483151911201142225": {
-      "source": "一時停止中",
-      "target": "Paused"
-    },
-    "4790358423910213729": {
-      "source": "実行中",
-      "target": "Running"
+    "4347575089504127812": {
+      "source": "残っている participant を強制終了するのを待っています",
+      "target": "Waiting for the remaining participants to be killed"
     },
     "1310325384570851397": {
       "source": "participant が終わるのを待っています",
       "target": "Waiting for the participants to exit"
-    },
-    "4347575089504127812": {
-      "source": "残っている participant を強制終了するのを待っています",
-      "target": "Waiting for the remaining participants to be killed"
     },
     "1524206275876348327": {
       "source": "{$outcome}（ランチャーが終わるのを待っています）",
@@ -1061,6 +1049,14 @@
     "5034331345302203445": {
       "source": "異常終了（{$how}）",
       "target": "Ended abnormally ({$how})"
+    },
+    "1483151911201142225": {
+      "source": "一時停止中",
+      "target": "Paused"
+    },
+    "4790358423910213729": {
+      "source": "実行中",
+      "target": "Running"
     },
     "6996685723143967056": {
       "source": "{$phase}（中断）",
@@ -1625,6 +1621,14 @@
     "2801277815975594602": {
       "source": " 書く ",
       "target": " Write "
+    },
+    "3599633625644188035": {
+      "source": "この ECU はいま使っていません",
+      "target": "Not used by this ECU now"
+    },
+    "7912602377845951306": {
+      "source": "未使用",
+      "target": "Not in use"
     }
   }
 }

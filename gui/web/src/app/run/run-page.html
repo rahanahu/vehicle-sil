@@ -68,7 +68,7 @@
 
   <app-run-status
     [session]="session()"
-    [outcome]="run.outcome()"
+    [status]="run.status()"
     [controls]="run.controls()"
     [clock]="time.clock()"
     [ready]="run.ready()"
@@ -268,7 +268,9 @@
 
     <div class="column watch">
       @if (session(); as session) {
-        @if (session.result; as result) {
+        <!-- 結果か異常終了かは、正面の口の status。結果の中身（所見、時間の進み方）はセッションの写しから -->
+        @let status = run.status();
+        @if (status.run === 'ended' && status.result && session.result) {
           <mat-card
             appearance="outlined"
             data-testid="result-card"
@@ -286,10 +288,10 @@
                   結果は出ましたが、ランチャーはまだ終わっていません。終わらないときは、上の「停止」で止めてください。
                 </p>
               }
-              <app-result-panel [result]="result" />
+              <app-result-panel [result]="session.result" [outcome]="status.result" />
             </mat-card-content>
           </mat-card>
-        } @else if (!session.launcher.running) {
+        } @else if (status.run === 'crashed') {
           <mat-card
             appearance="outlined"
             class="crash"

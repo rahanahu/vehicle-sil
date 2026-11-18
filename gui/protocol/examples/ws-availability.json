@@ -1,0 +1,387 @@
+{
+  "description": "A run whose ECUs report whether they use some variables (the stand-in's engine.demand and engine.speed, unknown until the first step): each variable of the summary has its availability, an availability message tells the change after the first step, and a write to a variable that is not in use is applied as any other. Only the variables, availability and operation messages are shown (not the operation's first state, sent).",
+  "client": [
+    {
+      "type": "auth",
+      "token": "<token>"
+    }
+  ],
+  "server": [
+    {
+      "type": "variables",
+      "session": 1,
+      "variables": {
+        "state": "connecting",
+        "reason": null,
+        "peers": [],
+        "peers_omitted": 0,
+        "variables_omitted": 0,
+        "operations": [],
+        "operations_from_seq": 0,
+        "operations_open_omitted": 0
+      }
+    },
+    {
+      "type": "variables",
+      "session": 1,
+      "variables": {
+        "state": "ready",
+        "reason": null,
+        "peers": [
+          {
+            "name": "Engine",
+            "connected": true,
+            "variables": [
+              {
+                "name": "ecu.connected",
+                "type": "bool",
+                "role": "input",
+                "writable": true,
+                "unit": "",
+                "min": null,
+                "max": null,
+                "step": null,
+                "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
+                "enum": null,
+                "availability": "active"
+              },
+              {
+                "name": "engine.demand",
+                "type": "real",
+                "role": "input",
+                "writable": true,
+                "unit": "%",
+                "min": 0.0,
+                "max": 100.0,
+                "step": null,
+                "description": "requested level",
+                "enum": null,
+                "availability": "unknown"
+              },
+              {
+                "name": "engine.speed",
+                "type": "integer",
+                "role": "output",
+                "writable": false,
+                "unit": "rpm",
+                "min": null,
+                "max": null,
+                "step": null,
+                "description": "",
+                "enum": null,
+                "availability": "unknown"
+              },
+              {
+                "name": "engine.mode",
+                "type": "enum",
+                "role": "parameter",
+                "writable": true,
+                "unit": "",
+                "min": null,
+                "max": null,
+                "step": null,
+                "description": "operating mode",
+                "enum": [
+                  {
+                    "name": "off",
+                    "value": 0
+                  },
+                  {
+                    "name": "on",
+                    "value": 1
+                  }
+                ],
+                "availability": "active"
+              }
+            ]
+          },
+          {
+            "name": "Dashboard",
+            "connected": true,
+            "variables": [
+              {
+                "name": "ecu.connected",
+                "type": "bool",
+                "role": "input",
+                "writable": true,
+                "unit": "",
+                "min": null,
+                "max": null,
+                "step": null,
+                "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
+                "enum": null,
+                "availability": "active"
+              },
+              {
+                "name": "dashboard.demand",
+                "type": "real",
+                "role": "input",
+                "writable": true,
+                "unit": "%",
+                "min": 0.0,
+                "max": 100.0,
+                "step": null,
+                "description": "requested level",
+                "enum": null,
+                "availability": "unknown"
+              },
+              {
+                "name": "dashboard.speed",
+                "type": "integer",
+                "role": "output",
+                "writable": false,
+                "unit": "rpm",
+                "min": null,
+                "max": null,
+                "step": null,
+                "description": "",
+                "enum": null,
+                "availability": "unknown"
+              },
+              {
+                "name": "dashboard.mode",
+                "type": "enum",
+                "role": "parameter",
+                "writable": true,
+                "unit": "",
+                "min": null,
+                "max": null,
+                "step": null,
+                "description": "operating mode",
+                "enum": [
+                  {
+                    "name": "off",
+                    "value": 0
+                  },
+                  {
+                    "name": "on",
+                    "value": 1
+                  }
+                ],
+                "availability": "active"
+              }
+            ]
+          }
+        ],
+        "peers_omitted": 0,
+        "variables_omitted": 0,
+        "operations": [],
+        "operations_from_seq": 0,
+        "operations_open_omitted": 0
+      }
+    },
+    {
+      "type": "availability",
+      "session": 1,
+      "peers": {
+        "Engine": {
+          "engine.demand": "inactive",
+          "engine.speed": "active"
+        },
+        "Dashboard": {
+          "dashboard.demand": "inactive",
+          "dashboard.speed": "active"
+        }
+      }
+    },
+    {
+      "type": "operation",
+      "session": 1,
+      "seq": 1,
+      "state": "queued",
+      "done": false,
+      "peers": {
+        "Engine": {
+          "state": "queued",
+          "applied_at_ms": null,
+          "late": false,
+          "reason": null,
+          "applied_writes": null,
+          "failed_write": null
+        }
+      }
+    },
+    {
+      "type": "operation",
+      "session": 1,
+      "seq": 1,
+      "state": "applied",
+      "done": true,
+      "peers": {
+        "Engine": {
+          "state": "applied",
+          "applied_at_ms": 200,
+          "late": false,
+          "reason": null,
+          "applied_writes": 1,
+          "failed_write": null
+        }
+      }
+    },
+    {
+      "type": "variables",
+      "session": 1,
+      "variables": {
+        "state": "ended",
+        "reason": null,
+        "peers": [
+          {
+            "name": "Engine",
+            "connected": false,
+            "variables": [
+              {
+                "name": "ecu.connected",
+                "type": "bool",
+                "role": "input",
+                "writable": true,
+                "unit": "",
+                "min": null,
+                "max": null,
+                "step": null,
+                "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
+                "enum": null,
+                "availability": "active"
+              },
+              {
+                "name": "engine.demand",
+                "type": "real",
+                "role": "input",
+                "writable": true,
+                "unit": "%",
+                "min": 0.0,
+                "max": 100.0,
+                "step": null,
+                "description": "requested level",
+                "enum": null,
+                "availability": "inactive"
+              },
+              {
+                "name": "engine.speed",
+                "type": "integer",
+                "role": "output",
+                "writable": false,
+                "unit": "rpm",
+                "min": null,
+                "max": null,
+                "step": null,
+                "description": "",
+                "enum": null,
+                "availability": "active"
+              },
+              {
+                "name": "engine.mode",
+                "type": "enum",
+                "role": "parameter",
+                "writable": true,
+                "unit": "",
+                "min": null,
+                "max": null,
+                "step": null,
+                "description": "operating mode",
+                "enum": [
+                  {
+                    "name": "off",
+                    "value": 0
+                  },
+                  {
+                    "name": "on",
+                    "value": 1
+                  }
+                ],
+                "availability": "active"
+              }
+            ]
+          },
+          {
+            "name": "Dashboard",
+            "connected": false,
+            "variables": [
+              {
+                "name": "ecu.connected",
+                "type": "bool",
+                "role": "input",
+                "writable": true,
+                "unit": "",
+                "min": null,
+                "max": null,
+                "step": null,
+                "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
+                "enum": null,
+                "availability": "active"
+              },
+              {
+                "name": "dashboard.demand",
+                "type": "real",
+                "role": "input",
+                "writable": true,
+                "unit": "%",
+                "min": 0.0,
+                "max": 100.0,
+                "step": null,
+                "description": "requested level",
+                "enum": null,
+                "availability": "inactive"
+              },
+              {
+                "name": "dashboard.speed",
+                "type": "integer",
+                "role": "output",
+                "writable": false,
+                "unit": "rpm",
+                "min": null,
+                "max": null,
+                "step": null,
+                "description": "",
+                "enum": null,
+                "availability": "active"
+              },
+              {
+                "name": "dashboard.mode",
+                "type": "enum",
+                "role": "parameter",
+                "writable": true,
+                "unit": "",
+                "min": null,
+                "max": null,
+                "step": null,
+                "description": "operating mode",
+                "enum": [
+                  {
+                    "name": "off",
+                    "value": 0
+                  },
+                  {
+                    "name": "on",
+                    "value": 1
+                  }
+                ],
+                "availability": "active"
+              }
+            ]
+          }
+        ],
+        "peers_omitted": 0,
+        "variables_omitted": 0,
+        "operations": [
+          {
+            "seq": 1,
+            "state": "applied",
+            "done": true,
+            "peers": {
+              "Engine": {
+                "state": "applied",
+                "applied_at_ms": 200,
+                "late": false,
+                "reason": null,
+                "applied_writes": 1,
+                "failed_write": null
+              }
+            }
+          }
+        ],
+        "operations_from_seq": 0,
+        "operations_open_omitted": 0
+      }
+    }
+  ]
+}

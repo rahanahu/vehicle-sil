@@ -119,9 +119,10 @@ participant が失敗すると（ステップのハンドラー、実時間の�
 | 呼ぶ時点 | 起きること |
 |---|---|
 | `start()` が lifecycle を始めるまで（`start()` の前） | 何もしない（SIL Kit が無視するため） |
-| `start()` が lifecycle を始めている最中 | 覚えておき、`start()` が報告する |
+| CommunicationReady のハンドラーの中、または SIL Kit がそれを呼んだ後 | その場で報告する（`start()` が lifecycle を始める処理から戻っていなくても） |
+| それ以外で、`start()` が lifecycle を始めている最中 | 覚えておき、`start()` か、SIL Kit が CommunicationReady のハンドラーを呼ぶときの、早い方で報告する |
 
-最中の呼び出しがあるのは、autonomous の participant の CommunicationReady のハンドラーが、`start()` がそこから戻る前に呼ばれることがあるためです。この順は、テスト用のフックで決めて `core.participant_start_reports_a_failure_*` が確認します。
+SIL Kit が CommunicationReady のハンドラーを呼ぶのは lifecycle が始まった後だけなので、そこで報告したエラーは受け取られます。ハンドラーは `start()` が lifecycle を始める処理から戻る前に呼ばれることがあり、短い実行はその前に終わることさえあります。そこまで覚えておいた失敗は Shutdown の後の報告になり、SIL Kit が捨てます。`ParticipantRuntime` はどの participant にも CommunicationReady のハンドラーを SIL Kit に登録するので、ハンドラーを渡されていない participant でも同じです。この順は、テスト用のフックで決めて `core.participant_start_reports_a_failure_*` と `core.participant_start_does_not_lose_*` が確認します。
 
 ### `bind_host()`
 

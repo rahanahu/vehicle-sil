@@ -98,6 +98,7 @@ export function viewOf(bound: BoundVariable, track: Track, launcher: Control): V
     sim_ms: bound.reading?.sampleMs ?? null,
     stale: bound.condition.kind === 'stale',
     note: noteOf(bound.condition),
+    availability: bound.availability,
     can_write: bound.block === null && launcher.ok,
     why:
       bound.block === null

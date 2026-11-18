@@ -50,6 +50,7 @@ export const viewOf = (fields: Partial<VariableView> = {}): VariableView =>
     sim_ms: 0,
     stale: false,
     note: null,
+    availability: 'active',
     can_write: true,
     why: null,
     writing: false,

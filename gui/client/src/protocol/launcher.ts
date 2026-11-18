@@ -420,6 +420,8 @@ export interface ControlOffer extends FromLauncher {
   transport: string;
   /** Format version of the messages. */
   wire_version: number | null;
+  /** Revision of the format (null from a launcher that does not say). */
+  wire_revision: number | null;
 }
 
 const readControlOffer = (value: unknown, path: string, u?: Unreadable): ControlOffer => {
@@ -427,6 +429,7 @@ const readControlOffer = (value: unknown, path: string, u?: Unreadable): Control
   return withRaw(f, {
     transport: field(f, path, 'transport', lenient(string, '', u)),
     wire_version: field(f, path, 'wire_version', soft(nullable(integer), null, u)),
+    wire_revision: field(f, path, 'wire_revision', soft(nullable(integer), null, u)),
   });
 };
 
