@@ -4,6 +4,7 @@
 # scripts/check-docs.py: the pairs of an English page and its Japanese page. scripts/verify.py: the
 # lines of a failing test's output that its summary shows. scripts/hotspots.py: the signals and the
 # classification of other work (it makes git repositories and work trees; not run on Windows).
+# .github/workflows/ci.yml: the job `all checks` waits for every other job.
 # scripts/check-commits.py: the titles and files that CI checks of a pull request (--message, --changed).
 if(VEHICLE_SIL_J1939_CODEGEN_PYTHON)
   add_test(NAME scripts.run_gui
@@ -18,6 +19,9 @@ if(VEHICLE_SIL_J1939_CODEGEN_PYTHON)
   add_test(NAME scripts.check_commits
            COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_check_commits.py)
   set_tests_properties(scripts.check_commits PROPERTIES LABELS unit TIMEOUT 120)
+  add_test(NAME scripts.ci_workflow
+           COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_ci_workflow.py)
+  set_tests_properties(scripts.ci_workflow PROPERTIES LABELS unit TIMEOUT 120)
   add_test(NAME scripts.verify
            COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_verify.py)
   set_tests_properties(scripts.verify PROPERTIES LABELS unit TIMEOUT 120)

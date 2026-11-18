@@ -80,12 +80,12 @@ Not run: <CI に任せたもの、実行しなかったものと、その理由>
 
 | 変更 | 実行するもの |
 |---|---|
-| 文書だけ | リンク（`python`）、文書を比べる `linux-gcc-debug` のテスト、GUI の README の書式。変更したファイルが `gui/` にあるか、GUI のテストが読む文書（`docs/gui.md`、スターターの README）であるときは、GUI サーバーのテストとタイムライン要素のテストも。変更したファイルが `docs/howto/first-ecu.md` か `docs/howto/operate-signals.md`（`linux-gcc-control` のテストが例と比べる）であるときは、`linux-gcc-control` も |
+| 文書だけ | リンク（`python`）、文書を比べる `linux-gcc-debug` のテスト、GUI の README の書式。変更したファイルが `gui/` にあるか、GUI のテストが読む文書（`docs/gui.md`）であるときは、GUI サーバーのテストとタイムライン要素のテストも。変更したファイルが `docs/howto/first-ecu.md` か `docs/howto/operate-signals.md`（`linux-gcc-control` のテストが例と比べる）であるときは、`linux-gcc-control` も |
 | コード | `linux-gcc-debug`、`linux-clang-tsan`、`linux-gcc-control`、Windows、GUI（変更したファイルがすべて GUI の外なら除く）、`python` |
 | ビルドのファイル（CMake、プリセット、パッチ、`external/`、`.github/`） | さらに `linux-gcc-release`、`linux-gcc-static`、最も古い CMake、ECU プロジェクトのテンプレートを FetchContent でビルドするテスト |
 | `main` への push | 上のすべてと `linux-clang-asan` |
 
-`linux-clang-tsan` の失敗は、そのチェックには表示されますが、`all checks` を失敗させません。`python` は、プルリクエストの題（`scripts/check-commits.py --message`）と、`.local/` 以下や `CLAUDE.local.md` が変更に入っていないこと（`--changed`）も確かめます。
+プルリクエストでは、`linux-clang-tsan` の失敗はそのチェックに表示されますが、`all checks` を失敗させません。`main` では失敗させます。`python` は、プルリクエストの題と、コミットが 1 つのときはそのコミットのメッセージ（`scripts/check-commits.py --message`）、`.local/` と `build/` 以下のファイルや `CLAUDE.local.md` が変更に入っていないこと（`--changed`）も確かめます。再実行は古い題を読みます。題を直したら、コミットを push するか、プルリクエストを閉じて開き直します。
 
 ### ポートとロック
 
