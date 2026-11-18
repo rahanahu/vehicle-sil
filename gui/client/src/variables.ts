@@ -965,11 +965,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     const session = this.stateValue.get().session;
     if (session === null) {
       return Promise.reject(
-        new WriteError(
-          'refused',
-          'there is no run to write to (wait for the variables of a run: client.variables.state)',
-          'not-running',
-        ),
+        new WriteError('refused', 'there is no run to write to', 'not-running'),
       );
     }
     const body: Fields = { session, writes };

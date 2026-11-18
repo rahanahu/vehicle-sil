@@ -40,8 +40,7 @@ Allowed no_control_server(const char* what)
     Allowed out;
     out.ok = false;
     out.reason = reason::kNoControlServer;
-    out.message = std::string("this run has no control server, and only a control server's client can ") + what +
-                  ": start the run with --control <address> (docs/control-api.md)";
+    out.message = std::string("this run has no control server, and only a control server's client can ") + what;
     return out;
 }
 

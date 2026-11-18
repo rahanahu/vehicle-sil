@@ -248,7 +248,7 @@ A `state` of a run with `--control` (pretty-printed here; it is one line in the 
   "allowed": {
     "pause": { "ok": true, "reason": null, "message": null, "caution": null },
     "resume": { "ok": true, "reason": null, "message": null, "caution": null },
-    "step": { "ok": false, "reason": "not-paused", "message": "step works while the simulation is paused: send {\"command\":\"pause\"} first (or run with --start-paused)", "caution": null, "min_ms": 1, "max_ms": 1000000000000 },
+    "step": { "ok": false, "reason": "not-paused", "message": "step works while the simulation is paused: pause it first", "caution": null, "min_ms": 1, "max_ms": 1000000000000 },
     "speed": { "ok": true, "reason": null, "message": null, "caution": null, "min": 1e-06, "max": 1e+06 },
     "run_until": { "ok": true, "reason": null, "message": null, "caution": null },
     "stop": { "ok": true, "reason": null, "message": null, "caution": null },

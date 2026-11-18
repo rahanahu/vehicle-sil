@@ -58,8 +58,8 @@ CLOSE_WAIT_S = 2.0
 SYNC_TIMEOUT_S = 10.0  # for the control server to send what there is, once connected; then the connection is ended
 PROBE_TIMEOUT_S = 2.0
 PROBE_PEER = "vehicle-sil-gui-probe"  # no peer's name: a GetSnapshot for it is answered without values
-TOO_OLD = ("the vehicle_sil_launch of this run is too old for this GUI server: its control server has no GetSnapshot "
-           "(the time and the values of one moment), so the variables cannot be read; build a newer launcher")
+TOO_OLD = ("the vehicle_sil_launch of this run is too old for this GUI server: its control server cannot give "
+           "the time and the values of one moment, so the variables cannot be read")
 
 log = logging.getLogger("vehicle_sil_gui")
 

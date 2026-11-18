@@ -972,7 +972,7 @@ TEST_CASE(a_command_may_carry_the_senders_number_which_comes_back_in_its_event)
     e.command(*parse_command("x"), "stdin");
     CHECK(e.wait_written(10s));
     check_text(shape(sink.lines()), R"(command "command":"pause","source":"stdin","accepted":true,"message":null,"reason":null,"id":41}
-command "command":"step","source":"stdin","accepted":false,"message":"the simulation has not been set up yet: step works once it stands still (a state event with paused true), with --start-paused from the start","reason":"not-set-up","id":42}
+command "command":"step","source":"stdin","accepted":false,"message":"the simulation has not been set up yet: step works once the simulation stands still","reason":"not-set-up","id":42}
 command "command":"jump","source":"stdin","accepted":false,"message":"unknown command 'jump': the commands are stop, pause, resume, step, run_until and speed","reason":"unknown-command","id":43}
 command "command":null,"source":"stdin","accepted":false,"message":"the line is not a JSON object: write one JSON object per line, such as {\"command\":\"stop\"}","reason":"invalid-command","id":null}
 )");
@@ -1038,8 +1038,7 @@ TEST_CASE(time_commands_before_the_simulation_are_kept_and_after_it_refused)
     CHECK(commands.apply(command(R"({"command":"pause"})"), "stdin").accepted);
     const Command early = commands.apply(command(R"({"command":"step","ms":10})"), "stdin");
     CHECK(!early.accepted);
-    check_text(early.message, "the simulation has not been set up yet: step works once it stands still (a state event "
-                              "with paused true), with --start-paused from the start");
+    check_text(early.message, "the simulation has not been set up yet: step works once the simulation stands still");
     CHECK(commands.apply(command(R"({"command":"resume"})"), "stdin").accepted);
     commands.detach();
     const Command late = commands.apply(command(R"({"command":"pause"})"), "stdin");
@@ -1050,7 +1049,7 @@ TEST_CASE(time_commands_before_the_simulation_are_kept_and_after_it_refused)
     check_text(shape(sink.lines()),
                R"(command "command":"speed","source":"stdin","accepted":true,"message":null,"reason":null,"id":null}
 command "command":"pause","source":"stdin","accepted":true,"message":null,"reason":null,"id":null}
-command "command":"step","source":"stdin","accepted":false,"message":"the simulation has not been set up yet: step works once it stands still (a state event with paused true), with --start-paused from the start","reason":"not-set-up","id":null}
+command "command":"step","source":"stdin","accepted":false,"message":"the simulation has not been set up yet: step works once the simulation stands still","reason":"not-set-up","id":null}
 command "command":"resume","source":"stdin","accepted":true,"message":null,"reason":null,"id":null}
 command "command":"pause","source":"stdin","accepted":false,"message":"the simulation is not running (it is over, or it did not start): pause works from the start of the run until the simulation ends","reason":"not-running","id":null}
 )");
@@ -1141,7 +1140,7 @@ TEST_CASE(an_accepted_step_says_where_it_ends_in_its_command_event)
     CHECK(!commands.apply(command(R"({"command":"step","ms":10})"), "stdin").at_ms);
     commands.detach();
     CHECK(events.wait_written(10s));
-    const std::string refused = R"x(,"accepted":false,"message":"step works while the simulation is paused: send {\"command\":\"pause\"} first (or run with --start-paused)","reason":"not-paused")x";
+    const std::string refused = R"x(,"accepted":false,"message":"step works while the simulation is paused: pause it first","reason":"not-paused")x";
     check_text(shape(sink.lines()), R"(command "command":"step","source":"stdin")" + refused + R"(,"id":1}
 command "command":"pause","source":"stdin","accepted":true,"message":null,"reason":null,"id":null}
 command "command":"step","source":"stdin","accepted":true,"message":null,"reason":null,"ms":20,"at_ms":20,"id":2}

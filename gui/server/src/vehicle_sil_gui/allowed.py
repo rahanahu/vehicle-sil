@@ -33,10 +33,10 @@ def allowed_start(facts: Facts, running: bool) -> dict:
     if facts.closing:
         return _answer("shutting-down", "the GUI server is stopping: it starts no new run")
     if running:  # also the run that has just been registered, while its start has not answered yet
-        return _answer("already-running", "a simulation is running: stop it (POST api/stop) and wait for it to end "
+        return _answer("already-running", "a simulation is running: stop it and wait for it to end "
                                           "before starting another")
     if facts.starting:
-        return _answer("starting", "a run is starting: wait until it has started (the answer of POST api/run), "
+        return _answer("starting", "a run is starting: wait until it has started, "
                                    "then stop it before starting another")
     if not facts.launcher_usable:
         return _answer("launcher-unusable", facts.launcher_message or "the launcher is not usable")

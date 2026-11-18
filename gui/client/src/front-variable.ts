@@ -13,13 +13,11 @@ import { VariableRef, WriteError } from './variables';
 const WHY_BLOCKED: Record<WriteBlock, string> = {
   'read-only': 'this variable is an output of the ECU: it cannot be written',
   disconnected: 'the connection to the GUI server is down: wait until it is back',
-  'not-ready':
-    'the variables are not available now (no run, or the run has no Control Server): start a run with --control',
+  'not-ready': 'the variables are not available now (no run, or the run has no Control Server)',
   ended: 'the run has ended: start a new one to write again',
   missing: 'this variable is not in the current run: check the names (ECU and variable)',
   'peer-disconnected': 'the ECU is not connected to the Control Server now',
-  parameter:
-    'a parameter can be written only before the first step: start the run paused (start_paused)',
+  parameter: 'a parameter can be written only before the first step: start the run paused',
   'no-range': 'the variable has no range (min and max)',
   'no-value': 'there is no value yet',
   scenario: 'a scenario is running: it writes the variables; you can only watch them',

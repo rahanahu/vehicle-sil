@@ -160,7 +160,7 @@ def test_without_scenario_control_a_scenario_run_has_no_variables(tmp_path: Path
             status, body = await c.post("api/run", {"file": "simulation.yaml", "scenario": PASS})
             assert status == 200, body
             v = body["session"]["variables"]
-            assert v["state"] == "off" and "scenario-control" in v["reason"]
+            assert v["state"] == "off" and "control server" in v["reason"]
             await ws.until(is_ended)
             _, body = await c.get("api/session")
             assert body["session"]["result"]["result"] == "passed"  # the launcher was not given --control

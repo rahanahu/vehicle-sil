@@ -120,7 +120,7 @@ export function resultFor(s: Snapshot, run: RunState): FrontResult | null {
       end: 'crashed',
       scenario: null,
       ok: false,
-      message: `the launcher ended without a result (${how}): read the log of vehicle_sil_launch, then start again`,
+      message: `the launcher ended without a result (${how}): start again`,
     };
   }
   return run === 'ended' && session.result ? resultOf(session.result) : null;
@@ -261,10 +261,7 @@ function numberOf(item: LauncherAllowedItem | undefined, key: string): number | 
 }
 
 const STATE_ITEM_MISSING = (name: string) =>
-  reason(
-    'unsupported',
-    `this launcher does not say whether it accepts ${name} (its state event has no such entry): build a newer vehicle_sil_launch`,
-  );
+  reason('unsupported', `this launcher does not say whether it accepts ${name}`);
 
 export function controlsOf(s: Snapshot, run: RunState): FrontControls {
   return composeControls(s, run).controls;
@@ -341,13 +338,7 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
     if (down) return control(false, down);
     if (!live) return control(false, reason('not-running', 'no run is going: start one first'));
     if (!state) {
-      return control(
-        false,
-        reason(
-          'unsupported',
-          'this launcher does not say what it accepts (no state event): build a newer vehicle_sil_launch',
-        ),
-      );
+      return control(false, reason('unsupported', 'this launcher does not say what it accepts'));
     }
     const item = state.allowed[name];
     if (!item) return control(false, STATE_ITEM_MISSING(name));
@@ -379,10 +370,7 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
     ? runUntilBase
     : control(
         false,
-        reason(
-          'unsupported',
-          'this GUI server does not send run_until yet: use step to reach a time',
-        ),
+        reason('unsupported', 'this launcher cannot run until a time: step reaches a time'),
         runUntilBase.caution,
       );
 

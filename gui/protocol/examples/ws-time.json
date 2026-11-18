@@ -46,7 +46,7 @@
         "start": {
           "ok": false,
           "reason": "starting",
-          "message": "a run is starting: wait until it has started (the answer of POST api/run), then stop it before starting another"
+          "message": "a run is starting: wait until it has started, then stop it before starting another"
         },
         "stop": {
           "ok": true,
@@ -99,7 +99,7 @@
           "start": {
             "ok": false,
             "reason": "already-running",
-            "message": "a simulation is running: stop it (POST api/stop) and wait for it to end before starting another"
+            "message": "a simulation is running: stop it and wait for it to end before starting another"
           },
           "stop": {
             "ok": true,
@@ -124,7 +124,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, time-policy, stdin-run-until, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -203,7 +203,7 @@
           "step": {
             "ok": false,
             "reason": "not-set-up",
-            "message": "the simulation has not been set up yet: step works once it stands still (a state event with paused true), with --start-paused from the start",
+            "message": "the simulation has not been set up yet: step works once the simulation stands still",
             "caution": null,
             "min_ms": 1,
             "max_ms": 1000000000000
@@ -231,7 +231,7 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
@@ -565,7 +565,7 @@
           "step": {
             "ok": false,
             "reason": "not-set-up",
-            "message": "the simulation has not been set up yet: step works once it stands still (a state event with paused true), with --start-paused from the start",
+            "message": "the simulation has not been set up yet: step works once the simulation stands still",
             "caution": null,
             "min_ms": 1,
             "max_ms": 1000000000000
@@ -593,7 +593,7 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
@@ -684,7 +684,7 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
@@ -841,7 +841,7 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
@@ -978,7 +978,7 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
@@ -1091,7 +1091,7 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
@@ -1176,7 +1176,7 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
@@ -1261,7 +1261,7 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
@@ -1318,7 +1318,7 @@
           "step": {
             "ok": false,
             "reason": "not-paused",
-            "message": "step works while the simulation is paused: send {\"command\":\"pause\"} first (or run with --start-paused)",
+            "message": "step works while the simulation is paused: pause it first",
             "caution": null,
             "min_ms": 1,
             "max_ms": 1000000000000
@@ -1346,7 +1346,7 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
@@ -1360,7 +1360,7 @@
         "event": "time",
         "seq": 34,
         "t_ms": 340,
-        "sim_ms": 130,
+        "sim_ms": 120,
         "actual_speed": null,
         "late_steps": 0,
         "max_late_ms": 0,
@@ -1378,7 +1378,7 @@
         "command": "step",
         "source": "stdin",
         "accepted": false,
-        "message": "step works while the simulation is paused: send {\"command\":\"pause\"} first (or run with --start-paused)",
+        "message": "step works while the simulation is paused: pause it first",
         "reason": "not-paused",
         "id": null
       }
@@ -1461,11 +1461,26 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
         "outside": []
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 38,
+        "t_ms": 380,
+        "sim_ms": 130,
+        "actual_speed": null,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
       }
     },
     {
@@ -1491,12 +1506,12 @@
         },
         "stop": "requested",
         "phase": "running",
-        "last_seq": 37,
-        "last_t_ms": 370,
+        "last_seq": 38,
+        "last_t_ms": 380,
         "time": {
           "event": "time",
-          "seq": 34,
-          "t_ms": 340,
+          "seq": 38,
+          "t_ms": 380,
           "sim_ms": 130,
           "actual_speed": null,
           "late_steps": 0,
@@ -1883,7 +1898,7 @@
             "write": {
               "ok": false,
               "reason": "no-control-server",
-              "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+              "message": "this run has no control server, and only a control server's client can write a variable",
               "caution": null
             }
           },
@@ -1894,7 +1909,7 @@
           "start": {
             "ok": false,
             "reason": "already-running",
-            "message": "a simulation is running: stop it (POST api/stop) and wait for it to end before starting another"
+            "message": "a simulation is running: stop it and wait for it to end before starting another"
           },
           "stop": {
             "ok": false,
@@ -1928,8 +1943,8 @@
       "session": 1,
       "event": {
         "event": "command",
-        "seq": 38,
-        "t_ms": 380,
+        "seq": 39,
+        "t_ms": 390,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -1943,8 +1958,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 39,
-        "t_ms": 390,
+        "seq": 40,
+        "t_ms": 400,
         "rev": 11,
         "phase": "running",
         "paused": true,
@@ -2001,7 +2016,7 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
@@ -2013,8 +2028,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 40,
-        "t_ms": 400,
+        "seq": 41,
+        "t_ms": 410,
         "rev": 12,
         "phase": "running",
         "paused": false,
@@ -2071,7 +2086,7 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
@@ -2083,8 +2098,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 41,
-        "t_ms": 410,
+        "seq": 42,
+        "t_ms": 420,
         "source": "vehicle_sil_launch",
         "line": "stopped by a stop request: the simulation was stopped"
       }
@@ -2094,8 +2109,8 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 42,
-        "t_ms": 420,
+        "seq": 43,
+        "t_ms": 430,
         "severity": "warning",
         "code": "coarse-time-step",
         "file": "forever.yaml",
@@ -2111,8 +2126,8 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 43,
-        "t_ms": 430,
+        "seq": 44,
+        "t_ms": 440,
         "severity": "note",
         "code": "stopped",
         "file": "forever.yaml",
@@ -2128,8 +2143,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 44,
-        "t_ms": 440,
+        "seq": 45,
+        "t_ms": 450,
         "phase": "stopping"
       }
     },
@@ -2138,8 +2153,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 45,
-        "t_ms": 450,
+        "seq": 46,
+        "t_ms": 460,
         "rev": 13,
         "phase": "stopping",
         "paused": false,
@@ -2196,7 +2211,7 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
@@ -2208,8 +2223,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 46,
-        "t_ms": 460,
+        "seq": 47,
+        "t_ms": 470,
         "source": "vehicle_sil_launch",
         "line": "Engine exited with code 0"
       }
@@ -2219,8 +2234,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 47,
-        "t_ms": 470,
+        "seq": 48,
+        "t_ms": 480,
         "name": "Engine",
         "state": "ended",
         "exit_code": 0,
@@ -2232,8 +2247,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 48,
-        "t_ms": 480,
+        "seq": 49,
+        "t_ms": 490,
         "source": "vehicle_sil_launch",
         "line": "Dashboard exited with code 0"
       }
@@ -2243,8 +2258,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 49,
-        "t_ms": 490,
+        "seq": 50,
+        "t_ms": 500,
         "name": "Dashboard",
         "state": "ended",
         "exit_code": 0,
@@ -2256,8 +2271,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 50,
-        "t_ms": 500,
+        "seq": 51,
+        "t_ms": 510,
         "phase": "ended"
       }
     },
@@ -2266,8 +2281,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 51,
-        "t_ms": 510,
+        "seq": 52,
+        "t_ms": 520,
         "rev": 14,
         "phase": "ended",
         "paused": false,
@@ -2324,7 +2339,7 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
@@ -2336,8 +2351,8 @@
       "session": 1,
       "event": {
         "event": "result",
-        "seq": 52,
-        "t_ms": 520,
+        "seq": 53,
+        "t_ms": 530,
         "result": {
           "vehicle_sil_run": 2,
           "vehicle_sil": "0.1.0",
@@ -2771,12 +2786,12 @@
         },
         "stop": "requested",
         "phase": "ended",
-        "last_seq": 52,
-        "last_t_ms": 520,
+        "last_seq": 53,
+        "last_t_ms": 530,
         "time": {
           "event": "time",
-          "seq": 34,
-          "t_ms": 340,
+          "seq": 38,
+          "t_ms": 380,
           "sim_ms": 130,
           "actual_speed": null,
           "late_steps": 0,
@@ -3122,7 +3137,7 @@
         ],
         "findings_omitted": 0,
         "last_command": {
-          "seq": 38,
+          "seq": 39,
           "command": "stop",
           "source": "stdin",
           "accepted": true,
@@ -3131,7 +3146,7 @@
           "id": null
         },
         "launcher_state": {
-          "seq": 51,
+          "seq": 52,
           "rev": 14,
           "phase": "ended",
           "paused": false,
@@ -3188,7 +3203,7 @@
             "write": {
               "ok": false,
               "reason": "no-control-server",
-              "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+              "message": "this run has no control server, and only a control server's client can write a variable",
               "caution": null
             }
           },

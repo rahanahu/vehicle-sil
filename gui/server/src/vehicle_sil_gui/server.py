@@ -363,11 +363,9 @@ class GuiServer:
     async def _no_variables(self) -> str | None:
         """Why a run started now would have no variables (None: it would have them). The launcher is probed."""
         if not self.o.variables:
-            return "the GUI server was started with --no-variables"
+            return "the GUI server was started without variables"
         if control.FEATURE not in self.launcher.features:
-            return (f"this vehicle_sil_launch has no '{control.FEATURE}' (its features: "
-                    f"{', '.join(self.launcher.features) or 'none'}): build it with "
-                    "-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)")
+            return "this launcher was built without a control server, so the variables of the ECUs cannot be read"
         if self.o.source is not None:
             return None
         async with self._library_lock:
@@ -482,8 +480,7 @@ class GuiServer:
         """The scenario of a check or run request (None: none), when the launcher can play one."""
         scenario = resolve_scenario(self.root, config, body.get("scenario"))
         if scenario is not None and FEATURE_SCENARIO not in self.launcher.features:
-            raise InvalidRequest("unsupported", f"this vehicle_sil_launch has no '{FEATURE_SCENARIO}': leave "
-                                                "scenario null, or build a newer launcher")
+            raise InvalidRequest("unsupported", "this launcher cannot play a scenario")
         return scenario
 
     @staticmethod
@@ -497,8 +494,7 @@ class GuiServer:
         last check, or a new one; always: even when the request names none)."""
         wanted, manual = body.get("disable"), body.get("manual")
         if manual is not None and FEATURE_MANUAL not in self.launcher.features:
-            raise InvalidRequest("unsupported", f"this vehicle_sil_launch has no '{FEATURE_MANUAL}': leave manual "
-                                                "out, or build a newer launcher")
+            raise InvalidRequest("unsupported", "this launcher cannot leave a participant for you to start")
         known = await self.participant_names(config.relative, variant) if always or wanted or manual else []
         disable = check_disable(wanted, known)
         return disable, check_manual(manual, known, disable)
@@ -529,11 +525,11 @@ class GuiServer:
             check_fields("api/run", body, RUN_FIELDS)
             self._not_closing()
             if self.session is not None and self.session.state == "running":
-                raise Refused(409, "already-running", "a simulation is running: stop it (POST api/stop) and wait for "
-                                                      "it to end before starting another")
+                raise Refused(409, "already-running", "a simulation is running: stop it and wait for it to "
+                                                      "end before starting another")
             if self._starting:  # no run is running: another request is starting one
-                raise Refused(409, "starting", "a run is starting: wait until it has started (the answer of POST "
-                                               "api/run), then stop it before starting another")
+                raise Refused(409, "starting", "a run is starting: wait until it has started, then "
+                                               "stop it before starting another")
         except (InvalidRequest, Refused) as e:
             return self._refusal(e)
         # From here until the launcher is registered (or the start fails), no other run may start.
@@ -558,11 +554,10 @@ class GuiServer:
         start_paused = body.get("start_paused", False)
         if not isinstance(start_paused, bool):
             raise InvalidRequest("invalid-field", "start_paused must be true or false")
-        for wanted, feature, default in ((speed is not None, FEATURE_SPEED, "speed null"),
-                                         (start_paused, FEATURE_START_PAUSED, "start_paused false")):
+        for wanted, feature, cannot in ((speed is not None, FEATURE_SPEED, "run at a set speed"),
+                                        (start_paused, FEATURE_START_PAUSED, "start paused")):
             if wanted and feature not in self.launcher.features:
-                raise InvalidRequest("unsupported", f"this vehicle_sil_launch has no '{feature}': leave {default}, "
-                                                    "or build a newer launcher")
+                raise InvalidRequest("unsupported", f"this launcher cannot {cannot}")
         scenario = self._scenario(config, body)
         if scenario is not None and start_paused:
             raise InvalidRequest("invalid-field", "start_paused cannot be used with a scenario (the launcher plays "
@@ -579,9 +574,8 @@ class GuiServer:
         # The one place that decides whether a scenario's run has the launcher's control server: only a launcher
         # with scenario-control can have it (it then refuses writes); the others refuse --scenario with --control.
         if scenario is not None and why_not is None and FEATURE_SCENARIO_CONTROL not in self.launcher.features:
-            why_not = (f"this run plays a scenario, and this vehicle_sil_launch has no '{FEATURE_SCENARIO_CONTROL}': "
-                       "it cannot have its control server during a scenario, so the variables cannot be read; "
-                       "build a newer launcher, or run without the scenario")
+            why_not = ("this run plays a scenario, and this launcher cannot have its control server during a "
+                       "scenario, so the variables cannot be read")
         self._not_closing()
         credentials = token = None
         if why_not is None:
@@ -673,21 +667,19 @@ class GuiServer:
         if run is None or self._starting or run.session.state != "running" or not run.session.launcher_running \
                 or proc.stdin is None or proc.stdin.is_closing():
             return error(409, "not-running", "no simulation is running: time commands go to the run that is "
-                                             "running (start one with POST api/run, and wait for its start)")
+                                             "running")
         # What the launcher that runs can do, not the one on disk now (it may have been built again since).
         if FEATURE_TIME_COMMANDS not in run.features:
-            return error(400, "unsupported", f"the vehicle_sil_launch of this run has no '{FEATURE_TIME_COMMANDS}': "
-                                             "it cannot pause, resume, step or change the speed; build a newer "
-                                             "launcher")
+            return error(400, "unsupported", "the launcher of this run cannot pause, resume, step or change the "
+                                             "speed")
         if command["command"] == "run_until" and FEATURE_STDIN_RUN_UNTIL not in run.features:
-            return error(400, "unsupported", f"the vehicle_sil_launch of this run has no '{FEATURE_STDIN_RUN_UNTIL}': "
-                                             "it cannot run until a time; build a newer launcher")
+            return error(400, "unsupported", "the launcher of this run cannot run until a time")
         said = self._launcher_refuses(run, command["command"])
         if said is not None and said[0] == "not-running":  # the run is over (a late command could change nothing)
             return error(409, "not-running", said[1])
         if "id" in command and FEATURE_STATE not in run.features:
-            return error(400, "unsupported", f"the vehicle_sil_launch of this run has no '{FEATURE_STATE}': it does "
-                                             "not return the id of a command; leave id out, or build a newer launcher")
+            return error(400, "unsupported", "the launcher of this run does not return the id of a command: "
+                                             "leave id out")
         gone = error(409, "not-running", "the launcher's input is closed (it is ending): the command was not sent")
         try:
             proc.stdin.write(command_line(command))  # written before any await: in the order the requests came
@@ -747,7 +739,7 @@ class GuiServer:
             run = self.current
             if run is None or self._starting or run.session.state != "running" or not run.session.launcher_running:
                 raise Refused(409, "not-running", "no simulation is running: variables are written to the run that "
-                                                  "is running (start one with POST api/run)")
+                                                  "is running")
             if meant != run.session.id:
                 raise Refused(409, "session-changed", f"the write is meant for the run {meant}, but the run that is "
                                                       f"running is {run.session.id}: nothing was written; look at "
@@ -759,9 +751,8 @@ class GuiServer:
                                                        "time); read them, or start a run without a scenario to "
                                                        "write")
             if control.FEATURE not in run.features:
-                raise Refused(400, "unsupported", f"the vehicle_sil_launch of this run has no '{control.FEATURE}': "
-                                                  "its ECUs' variables cannot be written; build it with "
-                                                  "-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON")
+                raise Refused(400, "unsupported", "the launcher of this run was built without a control server: "
+                                                  "its ECUs' variables cannot be written")
             writes, at_ns, late = run.variables.check_write(body)
             seq = await run.variables.write(writes, at_ns, late)
             run.recording.wrote(seq, writes, run.variables.operations.get(seq))

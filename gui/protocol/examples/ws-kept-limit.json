@@ -31,8 +31,8 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 40042,
-        "last_t_ms": 400420,
+        "last_seq": 40043,
+        "last_t_ms": 400430,
         "time": {
           "event": "time",
           "seq": 40029,
@@ -393,7 +393,7 @@
         "findings_omitted": 39000,
         "last_command": null,
         "launcher_state": {
-          "seq": 40041,
+          "seq": 40042,
           "rev": 8,
           "phase": "ended",
           "paused": false,
@@ -450,7 +450,7 @@
             "write": {
               "ok": false,
               "reason": "no-control-server",
-              "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+              "message": "this run has no control server, and only a control server's client can write a variable",
               "caution": null
             }
           },
@@ -520,7 +520,7 @@
         "scenario": null,
         "variables": {
           "state": "off",
-          "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, time-policy, stdin-run-until, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+          "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
           "peers": [],
           "peers_omitted": 0,
           "variables_omitted": 0,
@@ -554,7 +554,7 @@
     {
       "type": "synced",
       "session": 1,
-      "last_seq": 40042
+      "last_seq": 40043
     }
   ]
 }

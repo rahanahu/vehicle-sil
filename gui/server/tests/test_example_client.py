@@ -123,8 +123,8 @@ def test_variables_example_with_the_fake_control_server(tmp_path: Path, bundle: 
 def test_variables_example_says_why_there_are_no_variables(tmp_path: Path, bundle: Path) -> None:
     with gui_server(tmp_path) as gui:  # the stand-in launcher as it is: a launcher without a control server
         out = run_example("variables.mjs", gui.url, "simulation.yaml")
-    assert out.returncode == 1 and out.stdout.startswith("no variables: this vehicle_sil_launch has no "
-                                                         "'control-server'"), out.stdout + out.stderr
+    assert out.returncode == 1 and out.stdout.startswith("no variables: this launcher was built "
+                                                         "without a control server"), out.stdout + out.stderr
 
 
 REAL = os.environ.get("VEHICLE_SIL_GUI_LAUNCHER")

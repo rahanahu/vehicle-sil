@@ -136,10 +136,9 @@ constexpr std::array<Rule, 10> kRules{{
      },
      [](const Query&) {
          return std::string(
-             "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and "
-             "moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, "
-             "GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a "
-             "client, run without --scenario");
+             "this run plays a scenario, and until it ends only the scenario writes variables and moves the time, "
+             "so that the same scenario always gives the same result; a client can read values and the time, and "
+             "stop the run");
      }},
     {reason::kNotRunning,
      [](const Query& q) {
@@ -165,14 +164,11 @@ constexpr std::array<Rule, 10> kRules{{
                   q.arguments->speed != std::optional<double>(1.0)));
      },
      [](const Query& q) {
-         return "this run is connected outside the simulation and keeps to real time (--time-policy realtime, the "
-                "default): " +
+         return "this run is connected outside the simulation and keeps to real time: " +
                 q.name_text() +
                 (q.is(Operation::Speed) ? std::string(" other than 1") : std::string()) +
                 " is refused, because what is connected does not wait while the virtual time stands still, jumps or "
-                "goes at another speed (a resume, a speed of 1 and a stop are taken). To move the time all the same, "
-                "start the run again with --time-policy free, or without the connection (no --connect, --disable for a "
-                "participant with role: bridge)";
+                "goes at another speed (a resume, a speed of 1 and a stop are taken)";
      }},
     {reason::kOutOfRange,
      [](const Query& q) {
@@ -204,15 +200,13 @@ constexpr std::array<Rule, 10> kRules{{
      [](const Query& q) {
          return "the simulation has not been set up yet: " + q.name_text() +
                 (q.is(Operation::Step)
-                     ? std::string(" works once it stands still (a state event with paused true), with "
-                                   "--start-paused from the start")
+                     ? std::string(" works once the simulation stands still")
                      : std::string(" at a time works once the participants have been started"));
      }},
     {reason::kNotPaused,
      [](const Query& q) { return q.is(Operation::Step) && !q.situation.paused; },
      [](const Query&) {
-         return std::string("step works while the simulation is paused: send {\"command\":\"pause\"} first (or run "
-                            "with --start-paused)");
+         return std::string("step works while the simulation is paused: pause it first");
      }},
 }};
 
@@ -244,7 +238,7 @@ Allowed allowed(const ControlSituation& situation, Entry entry, Operation operat
     {
         out.caution = Caution{
             caution::kOutsideNotRealTime,
-            std::string("this run is connected outside the simulation with --time-policy free: ") +
+            std::string("this run is connected outside the simulation and its time is left to you: ") +
                 operation_name(operation) + (operation == Operation::Speed ? " other than 1" : "") +
                 " is taken, but what is connected does not wait for the virtual time and its bridge still carries "
                 "frames both ways (frames from outside pile up while the simulation stands still); the run then ends "

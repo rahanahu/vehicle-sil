@@ -71,7 +71,7 @@
         "start": {
           "ok": false,
           "reason": "starting",
-          "message": "a run is starting: wait until it has started (the answer of POST api/run), then stop it before starting another"
+          "message": "a run is starting: wait until it has started, then stop it before starting another"
         },
         "stop": {
           "ok": true,
@@ -124,7 +124,7 @@
           "start": {
             "ok": false,
             "reason": "already-running",
-            "message": "a simulation is running: stop it (POST api/stop) and wait for it to end before starting another"
+            "message": "a simulation is running: stop it and wait for it to end before starting another"
           },
           "stop": {
             "ok": true,
@@ -794,7 +794,7 @@
           "start": {
             "ok": false,
             "reason": "already-running",
-            "message": "a simulation is running: stop it (POST api/stop) and wait for it to end before starting another"
+            "message": "a simulation is running: stop it and wait for it to end before starting another"
           },
           "stop": {
             "ok": false,

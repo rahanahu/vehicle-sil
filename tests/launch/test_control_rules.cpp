@@ -91,10 +91,8 @@ void check_refused(const Decision& d, const char* reason, const std::string& mes
 }
 
 const std::string kScenarioMessage =
-    "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the "
-    "time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, "
-    "GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without "
-    "--scenario";
+    "this run plays a scenario, and until it ends only the scenario writes variables and moves the time, so that the "
+    "same scenario always gives the same result; a client can read values and the time, and stop the run";
 
 } // namespace
 
@@ -271,13 +269,10 @@ TEST_CASE(control_rules_row_outside_real_time_refuses_what_moves_the_time_away_f
             {
                 const Command c = command(o); // the speed: 2
                 check_refused(decide_command(s, entry, c), "outside-real-time",
-                              "this run is connected outside the simulation and keeps to real time (--time-policy "
-                              "realtime, the default): " +
+                              "this run is connected outside the simulation and keeps to real time: " +
                                   *c.name + (o == Operation::Speed ? " other than 1" : "") +
                                   " is refused, because what is connected does not wait while the virtual time stands "
-                                  "still, jumps or goes at another speed (a resume, a speed of 1 and a stop are taken). To "
-                                  "move the time all the same, start the run again with --time-policy free, or without the "
-                                  "connection (no --connect, --disable for a participant with role: bridge)");
+                                  "still, jumps or goes at another speed (a resume, a speed of 1 and a stop are taken)");
             }
             // A speed of max is refused, a speed of 1 is taken; so are a resume and a stop.
             Command speed = command(Operation::Speed);
@@ -381,8 +376,7 @@ TEST_CASE(control_rules_rows_not_set_up_and_not_paused_refuse_a_step_or_a_time_t
             const ControlSituation s = situation(ControlStage::SettingUp, paused);
             const Command step = command(Operation::Step);
             check_refused(decide_command(s, entry, step), "not-set-up",
-                          "the simulation has not been set up yet: step works once it stands still (a state event with "
-                          "paused true), with --start-paused from the start");
+                          "the simulation has not been set up yet: step works once the simulation stands still");
             for (const Operation o : {Operation::Pause, Operation::RunUntil})
             {
                 Command at = command(o);
@@ -399,8 +393,7 @@ TEST_CASE(control_rules_rows_not_set_up_and_not_paused_refuse_a_step_or_a_time_t
         const ControlSituation s = situation(ControlStage::Attached, false);
         const Command step = command(Operation::Step);
         check_refused(decide_command(s, entry, step), "not-paused",
-                      "step works while the simulation is paused: send {\"command\":\"pause\"} first (or run with "
-                      "--start-paused)");
+                      "step works while the simulation is paused: pause it first");
         const Command until = command(Operation::RunUntil);
         CHECK(decide_command(s, entry, until).ok);
     }
@@ -435,8 +428,7 @@ TEST_CASE(control_rules_allowed_answers_without_arguments_and_gives_the_ranges)
         const Allowed early = allowed(situation(ControlStage::Attached, false), entry, Operation::Step);
         CHECK(!early.ok);
         check_text(early.reason, "not-paused");
-        check_text(early.message, "step works while the simulation is paused: send {\"command\":\"pause\"} first (or run "
-                                  "with --start-paused)");
+        check_text(early.message, "step works while the simulation is paused: pause it first");
         CHECK(early.range.has_value());
         CHECK_EQ(early.range->min, 1.0);
         CHECK_EQ(early.range->max, static_cast<double>(kMaxMillis));
@@ -477,7 +469,7 @@ TEST_CASE(control_rules_allowed_answers_without_arguments_and_gives_the_ranges)
             CHECK(a.caution.has_value());
             check_text(a.caution->code, "outside-not-real-time");
             check_text(a.caution->message,
-                       std::string("this run is connected outside the simulation with --time-policy free: ") +
+                       std::string("this run is connected outside the simulation and its time is left to you: ") +
                            operation_name(o) + (o == Operation::Speed ? " other than 1" : "") +
                            " is taken, but what is connected does not wait for the virtual time and its bridge still "
                            "carries frames both ways (frames from outside pile up while the simulation stands still); the "
@@ -904,7 +896,7 @@ TEST_CASE(time_commands_keep_a_limited_number_of_commands_for_the_time_lock)
     CHECK(!refused.accepted);
     check_text(refused.reason, "not-set-up");
     check_text(refused.message, "the run has not read its configuration yet and keeps 256 commands to answer once it has: "
-                                "pause is refused; send it again after the run's check event (the configuration is read then)");
+                                "pause is refused; send it again once the configuration has been read");
     std::vector<std::string> lines = told.all();
     CHECK_EQ(lines.size(), std::size_t{1});
     check_text(lines.empty() ? std::string() : lines[0], "9999 pause stdin not-set-up");
