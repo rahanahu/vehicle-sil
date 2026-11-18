@@ -80,12 +80,21 @@ std::optional<double> planned_speed(const TimeLock& lock, const std::optional<st
     return asked ? *asked : otherwise;
 }
 
-std::string detail::connected_outside(const TimeLock& lock)
+std::string detail::connected_outside(const TimeLock& lock, const RequestOrigin& origin)
 {
     std::string out;
     if (!lock.connected.empty())
     {
-        out = "--connect connects " + and_list(lock.connected) + " to a real bus";
+        // As the user wrote it: --connect, or connect of the request file (or both).
+        const auto fromFile = [&origin](const std::string& network) {
+            return std::find(origin.connected.begin(), origin.connected.end(), network) != origin.connected.end();
+        };
+        const std::size_t inFile = static_cast<std::size_t>(std::count_if(lock.connected.begin(), lock.connected.end(), fromFile));
+        const std::string words = inFile == 0 ? "--connect"
+                                  : inFile == lock.connected.size() ? "connect in " + origin.file
+                                                                    : "connect in " + origin.file + " and --connect";
+        out = words + (inFile != 0 && inFile != lock.connected.size() ? " connect " : " connects ") + and_list(lock.connected) +
+              " to a real bus";
     }
     if (!lock.bridges.empty())
     {
@@ -168,8 +177,10 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
     {
         return out;
     }
-    const std::string what = connected_outside(lock);
-    const std::string freely = "pass --time-policy free if what is connected there can take messages that do not come in real time (" +
+    const std::string what = connected_outside(lock, origin);
+    // The user of a request file has no command line to pass an option on.
+    const std::string freely = (origin.file.empty() ? "pass --time-policy free" : "set time_policy free in " + origin.file) +
+                               " if what is connected there can take messages that do not come in real time (" +
                                std::string(kFreeCarries) + ")";
     const std::optional<double> unlocked = asked ? *asked : otherwise;
     const bool realTime = unlocked == std::optional<double>(1.0);

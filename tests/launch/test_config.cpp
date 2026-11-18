@@ -1103,6 +1103,19 @@ TEST_CASE(the_command_line_cannot_name_the_bridge_of_a_connected_network)
                "E 0 usage: --manual bridge.CAN: the file has no participant with this name; its participants are Engine\n");
 }
 
+TEST_CASE(a_request_file_that_connects_the_network_names_the_file_for_its_bridge)
+{
+    const std::string text = "vehicle_sil_simulation: 1\nnetworks:\n  - { name: ETH, kind: ethernet }\nparticipants:\n"
+                             "  - name: Engine\n    command: e\n";
+    EnabledOverrides overrides;
+    overrides.disable = {"bridge.ETH"};
+    overrides.origin.file = "bench.json";
+    overrides.origin.connected = {"ETH"};
+    check_text(lines(read_config(text, overrides).override_errors),
+               "E 0 usage: --disable bridge.ETH: bridge.ETH is the bridge that connect in bench.json starts for the network "
+               "ETH, not a participant of the file: to run ETH on SIL Kit only, take ETH out of connect in bench.json\n");
+}
+
 TEST_CASE(a_participant_has_a_role_that_only_the_check_reads)
 {
     const std::string text = with_participants("  - name: Engine\n    command: e\n"
