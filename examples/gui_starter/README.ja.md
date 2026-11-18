@@ -7,7 +7,7 @@ GUI サーバー（`vehicle-sil-gui`）に配信させる自分の画面です�
 | ファイル | 内容 |
 |---|---|
 | `index.html` | 画面です。部品と、スクリプトのためのわずかな要素が入っています。 |
-| `main.js` | 部品にないことのための、短い自分のスクリプトです（表示 1 つ、ボタン 1 つ、時間の軸）。 |
+| `main.js` | 部品にないことのための、短い自分のスクリプトです（表示 1 つ、ボタン 1 つ）。 |
 | `style.css` | 見た目です。部品は見た目を持たないので、部品が付ける `data-*` 属性と `aria-disabled` に当てる CSS が入っています。 |
 
 部品とライブラリはこのディレクトリにありません。画面が GUI サーバーから読み込みます（`/vsil/vehicle-sil-gui-elements.mjs` と `/vsil/vehicle-sil-gui-client.mjs`）。
@@ -75,20 +75,18 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 | `<vsil-slider>` | 変数の範囲の数。つまみを離したときに書き込みます。 | `variable` |
 | `<vsil-write>` | 1 つの値を書き込むボタン | `variable`、`value`、`label` |
 | `<vsil-scenario-select>`、`<vsil-scenario-result>` | 次の実行のシナリオと、そのステップと結果 | なし |
+| `<vsil-timeline>` | シナリオの実行の時間の軸。中に置いた `<vehicle-sil-timeline>` に出します（なければ 1 つ足します）。その属性（`compact`、`hide`、`lang`）は自分で決めます。要素のスクリプトはページが読みます: `<script src="/timeline/vehicle-sil-timeline.js">` | なし |
 
 変数は `<participant>.<variable>` と書き、最初のドットで切ります（`Engine.engine.throttle` は、participant `Engine` の変数 `engine.throttle`）。自分の ECU の名前を調べるには、ガイドの「手順 2: 表示する変数の名前を調べる」を見てください。名前が違うと、部品が `this variable is not in the current run: check the names (ECU and variable)` と言います。部品の一覧と、部品が守ること（接続、マークアップ、CSS を当てる `data-*` 属性）は、[gui/client/README.md](../../gui/client/README.ja.md#部品custom-element) の「部品（custom element）」にあります。
 
 ### 自分のスクリプト
 
-`main.js` は、スクリプトの役目の 3 つを見せます。`connect()` を引数なしで呼ぶと、部品がすでに使っている接続が返ります。だからページの WebSocket は 1 本です。断られた開始、停止、時間の操作は `<vsil-status>` に出ます。断られた変数の書き込みは、その変数を出している部品の所と、自分のスクリプトが受ける `ActionError` に出ます。
+`main.js` は、スクリプトの役目の 2 つを見せます。`connect()` を引数なしで呼ぶと、部品がすでに使っている接続が返ります。だからページの WebSocket は 1 本です。断られた開始、停止、時間の操作は `<vsil-status>` に出ます。断られた変数の書き込みは、その変数を出している部品の所と、自分のスクリプトが受ける `ActionError` に出ます。
 
 | `main.js` の中 | 見せること |
 |---|---|
 | `watch(client.variable('Engine.engine.speed'), fn)` | 自分の流儀で描く値（メーター）。`fn` はいま呼ばれ、変わるたびに呼ばれます。 |
 | `await client.variable('Engine.engine.throttle').write(100)` | 自分の操作。通らなければ `ActionError` で reject する Promise です（文は `message`、`outcome` は `refused` か `unknown`）。 |
-| `watch(client.scenario, fn)` | 時間の軸。シナリオの実行に時間の軸があれば、`<vehicle-sil-timeline>` に `src` を渡します。 |
-
-時間の軸の要素は GUI サーバーから読みます（`<script src="/timeline/vehicle-sil-timeline.js">`）。要素は、ページがすでに持つトークンを送ります。属性、プロパティ、事象は、[docs/gui.md](../../docs/ja/gui.md#自分の画面に時間の軸を置く) の「自分の画面に時間の軸を置く」にあります。
 
 スターターに入れていないものは、サンプルの画面がやっていることです。設定ファイルの選択、「Check」、任意の変数を選んで値を入力する欄です。設定ファイルを選ぶには、`client.low.configs()` で一覧を取り、自分のボタンで `client.run.start(intent, { file })` を呼びます（`<vsil-run-controls>` は最後の実行のファイルを開始します）。同じ接続の低い口 `client.low`（`check`、`variables.bind` など）も使えます。自分の部品の作り方は「[コンポーネントを作る（`bind`）](../../gui/client/README.ja.md#コンポーネントを作るbind)」にあります。
 

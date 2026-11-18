@@ -213,8 +213,8 @@ GUI に自分のコードを足す道は 3 つあります。サンプルの画�
 
 | 層 | 書くもの | 手に入るもの | 出発点 |
 |---|---|---|---|
-| 部品だけ | HTML と CSS。`<vsil-run-controls>`、`<vsil-slider variable="Engine.engine.throttle">`、`<vsil-value>` のような要素 | 開始と停止、時間の操作、状態、値、スライダー、書き込むボタン、次の実行のシナリオとその結果。スクリプトもビルドも要りません | ガイド [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) |
-| 自分のスクリプト | `connect()`、`watch`、`client.variable()` と、操作（Promise）を呼ぶスクリプト | 部品にないもの。自分の表示やボタン、ルール、時間の軸。部品と同じ接続を使うので、断られた開始、停止、時間の操作は `<vsil-status>` に出て、断られた変数の書き込みは、その変数を出している部品の所に出ます | 画面のテンプレートの `main.js` と、[gui/client/README.md](../../gui/client/README.ja.md#正面の口connect) の「正面の口（`connect()`）」 |
+| 部品だけ | HTML と CSS。`<vsil-run-controls>`、`<vsil-slider variable="Engine.engine.throttle">`、`<vsil-value>` のような要素 | 開始と停止、時間の操作、状態、値、スライダー、書き込むボタン、次の実行のシナリオとその結果、実行の時間の軸。スクリプトもビルドも要りません | ガイド [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) |
+| 自分のスクリプト | `connect()`、`watch`、`client.variable()` と、操作（Promise）を呼ぶスクリプト | 部品にないもの。自分の表示やボタン、ルール。部品と同じ接続を使うので、断られた開始、停止、時間の操作は `<vsil-status>` に出て、断られた変数の書き込みは、その変数を出している部品の所に出ます | 画面のテンプレートの `main.js` と、[gui/client/README.md](../../gui/client/README.ja.md#正面の口connect) の「正面の口（`connect()`）」 |
 | フレームワークのプロジェクト | ビルドのあるプロジェクトと、ライブラリのパッケージ（`.tgz`） | React、Vue、Svelte、Angular などのテンプレートの中の、同じ部品とライブラリ（部品は custom element です） | [examples/gui_starter/README.md](../../examples/gui_starter/README.ja.md#フレームワークのプロジェクト) の「フレームワークのプロジェクト」 |
 
 最初の 2 つの層では、部品とライブラリを GUI サーバー（`/vsil/`）から読むので、コピーするものはありません。フレームワークのプロジェクトはパッケージを使います。サンプルの画面（`gui/web` の Angular のアプリ）のコンポーネントを再利用することは、想定していません。部品を使ってください。
@@ -1086,7 +1086,7 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 | クライアントのライブラリの npm パッケージ | `import '@vehicle-sil/gui-client/timeline'`（型つきの ES モジュール。要素を定義し、何も export しません） |
 | リポジトリ | `gui/timeline/vehicle-sil-timeline.js` と `.d.ts`。最小のページは `gui/timeline/example.html` |
 
-- GUI サーバーの実行: `src` は、`/` とセッションの要約の `scenario.timeline_url`（ライブラリでは `timelineUrl`）です。`examples/gui_starter/main.js` のとおりです。
+- GUI サーバーの実行: `src` は、`/` とセッションの要約の `scenario.timeline_url`（ライブラリでは `timelineUrl`）です。スクリプトなしなら、要素を `<vsil-timeline>`（クライアントライブラリの部品。`examples/gui_starter/index.html` のとおり）の中に置きます。部品が、実行のシナリオに合わせて要素の `src` と `hidden` を設定し、ほかの属性は自分で決められます。
 - トークン: 要素は、プロパティの `token`、なければ GUI の画面がタブに持つトークン（ライブラリの `takeToken` がそこに置きます）を、`Authorization: Bearer` で送ります。トークンがないとサーバーは 401 を返し、要素がそう言います。
 - `src` は、ページと同じサーバー（同じ出どころ）を指す必要があります。要素は転送をたどりません（トークンとヘッダーを別のアドレスへ送らないため）。転送されたときは、そう言います。ほかの所のファイルは、自分で取得して `data` に渡します。
 - 要素は、インラインのスタイルを許さない CSP（`style-src 'self'`。GUI サーバーのものはこれより緩い）の下でも動きます。CSS は `<style>` の要素ではなく、組み立てたスタイルシート（constructable stylesheet）で入れます。
@@ -1211,7 +1211,7 @@ declare module 'react' {
 [examples/gui_starter](../../examples/gui_starter/) は、コピーして変えて使う、部品でできた画面です。HTML に並べた部品（状態、実行と時間の操作、スライダー、値、ランプ、書き込むボタン、次の実行のシナリオとその結果、時間の軸の要素）と、短い自分のスクリプトと、スタイルシートが入っています。ビルドは要らず、ライブラリのコピーも持ちません（部品とライブラリを `vsil/` から読みます）。ビルド済みのツールでは、`gui_starter/` にあります。
 
 - `examples/ecu_main` の例の ECU に合わせて書いてあります。自分の ECU に使うには、`variable` 属性を書き換えます（やり方はガイドにあります）。
-- `main.js` は、「[自分の画面を作る](#自分の画面を作る)」の「自分のスクリプト」の層です。`watch` で作った自分の表示、操作の失敗を扱う自分のボタン、最後のシナリオの実行の時間の軸があります。
+- `main.js` は、「[自分の画面を作る](#自分の画面を作る)」の「自分のスクリプト」の層です。`watch` で作った自分の表示、操作の失敗を扱う自分のボタンがあります。
 - 使い方は、その README にあります。
 - `scripts/verify-web.py` が、記録を再生するランチャーと偽の Control Server を相手に、`--web` で配信したこのテンプレートをブラウザで動かして確認します（e2e の `starter.spec.ts`）。
 

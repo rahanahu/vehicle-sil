@@ -51,7 +51,7 @@ GUI サーバーは、2 つの `.mjs` のファイルも、トークンなしで
 | `src/index.ts`                                                                                                   | `@vehicle-sil/gui-client`          | 公開 API（下の「公開 API」）。互換を保証するのはここと `./elements`                                                                                                                               |
 | `src/testing/index.ts`                                                                                           | `@vehicle-sil/gui-client/testing`  | テスト用のヘルパー（自分のコンポーネントのテストに使える）                                                                                                                                        |
 | `src/internal.ts`                                                                                                | `@vehicle-sil/gui-client/internal` | **互換の保証の外**。内部のクラスと関数で、アプリでは使わない                                                                                                                                      |
-| `src/elements/index.ts`（パッケージでは `dist/index.js` を import する `dist/elements.js`）                      | `@vehicle-sil/gui-client/elements` | 部品（custom element の `<vsil-status>` ほか 7 個）、`pageIntent`、`setReasonText`。import すると定義します（下の「部品（custom element）」）。DOM を要します。本体の入口はこれを import しません |
+| `src/elements/index.ts`（パッケージでは `dist/index.js` を import する `dist/elements.js`）                      | `@vehicle-sil/gui-client/elements` | 部品（custom element の `<vsil-status>` ほか 8 個）、`pageIntent`、`setReasonText`。import すると定義します（下の「部品（custom element）」）。DOM を要します。本体の入口はこれを import しません |
 | `../timeline/vehicle-sil-timeline.js`（パッケージでは `export {}` を足した `timeline/vehicle-sil-timeline.mjs`） | `@vehicle-sil/gui-client/timeline` | 要素 `<vehicle-sil-timeline>` と型。import すると要素を定義します（[docs/ja/gui.md](../../docs/ja/gui.md#自分の画面に時間の軸を置く) の「自分の画面に時間の軸を置く」）                           |
 
 - `testing` にあるのは、偽の WebSocket（`FakeWebSockets`）、偽の HTTP（`FakeHttp`）、`gui/protocol/examples/` の読み込み、要約から `SessionView` を作る `sessionViewFrom` です。
@@ -371,7 +371,7 @@ stop(); // 最後の購読を解除すると、サーバーに値を頼むのを
 
 ## 部品（custom element）
 
-`@vehicle-sil/gui-client/elements` は、`connect()` が返すものを描く custom element を 8 個定義します。スクリプトなしの HTML だけで画面を書けます。素のコントロールを light DOM に置き、見た目は付けません。スタイルは自分の CSS で付けます。素の HTML でも、Angular、React、Vue、Svelte のテンプレートでも使えます。import すると定義します（定義済みの名前は飛ばします）。
+`@vehicle-sil/gui-client/elements` は、`connect()` が返すものを描く custom element を 9 個定義します。スクリプトなしの HTML だけで画面を書けます。素のコントロールを light DOM に置き、見た目は付けません。スタイルは自分の CSS で付けます。素の HTML でも、Angular、React、Vue、Svelte のテンプレートでも使えます。import すると定義します（定義済みの名前は飛ばします）。
 
 | 要素                     | 出すもの、すること                                                                       | 属性とプロパティ                                                                                                                                                                           |
 | ------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -383,6 +383,7 @@ stop(); // 最後の購読を解除すると、サーバーに値を頼むのを
 | `<vsil-write>`           | 1 つの値を書くボタン（変数がもうその値なら押せない）                                     | `variable`、`value`（書く値。`false` や `3` のような JSON、それ以外は文字列）、`label`（ボタンの文字）                                                                                     |
 | `<vsil-scenario-select>` | 次の実行のシナリオ。走らせる構成ファイルの隣にあるものから選ぶ（最初の選択肢は「なし」） | なし                                                                                                                                                                                       |
 | `<vsil-scenario-result>` | 実行のシナリオの結果と手順                                                               | なし                                                                                                                                                                                       |
+| `<vsil-timeline>`        | 実行のシナリオの時間の軸。中に置いた `<vehicle-sil-timeline>` に出す                     | なし。その要素の属性は自分で決める（下を参照）                                                                                                                                             |
 
 変数は、`client.variable()` と同じ `ECU.variable`（最初の点で切る）で書きます。
 
@@ -402,7 +403,13 @@ stop(); // 最後の購読を解除すると、サーバーに値を頼むのを
 <vsil-time-controls speeds="0.5 1 5 max"></vsil-time-controls>
 <label>Scenario of the next run <vsil-scenario-select></vsil-scenario-select></label>
 <vsil-scenario-result></vsil-scenario-result>
+<script src="/timeline/vehicle-sil-timeline.js"></script>
+<vsil-timeline>
+  <vehicle-sil-timeline compact hide="help tables"></vehicle-sil-timeline>
+</vsil-timeline>
 ```
+
+`<vsil-timeline>` は、要素を実行につなぐだけです。中の `<vehicle-sil-timeline>` の `src`（実行の `timeline_url`。サーバーの根から）と `hidden`（実行に時間の軸がないとき）だけを設定し、ほかには触れません。中に置かなければ既定の要素を 1 つ足し、外れるときは足したものだけ消します。要素のスクリプトは部品が読まないので、ページが読みます（`<script src="/timeline/vehicle-sil-timeline.js">`、または `import '@vehicle-sil/gui-client/timeline'`）。後で定義されても動きます。要素は、ページがタブに持つトークンを送ります。別の接続（`client`）を渡した部品では、要素の `token` のプロパティを渡してください。部品自身には `data-timeline`（`shown` か `none`）が付きます。要素の属性と事象は、[docs/gui.md](../../docs/ja/gui.md#自分の画面に時間の軸を置く) の「自分の画面に時間の軸を置く」にあります。
 
 ### 部品が守ること
 

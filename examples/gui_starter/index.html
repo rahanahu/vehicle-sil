@@ -11,7 +11,7 @@
     <script type="module" src="/vsil/vehicle-sil-gui-elements.mjs"></script>
     <!-- Your own script. It lives in a file because the CSP blocks inline scripts -->
     <script type="module" src="main.js"></script>
-    <!-- The element <vehicle-sil-timeline>, which the GUI server serves for every screen -->
+    <!-- The element <vehicle-sil-timeline> for <vsil-timeline>, which the GUI server serves for every screen -->
     <script src="/timeline/vehicle-sil-timeline.js"></script>
   </head>
   <body>
@@ -54,7 +54,10 @@
       <h2>Scenario</h2>
       <p><label>Scenario of the next run <vsil-scenario-select></vsil-scenario-select></label></p>
       <vsil-scenario-result></vsil-scenario-result>
-      <vehicle-sil-timeline lang="en" compact hide="help tables" hidden></vehicle-sil-timeline>
+      <!-- The timeline of the scenario run: the part sets src and hidden of the element inside it; the attributes are yours -->
+      <vsil-timeline>
+        <vehicle-sil-timeline lang="en" compact hide="help tables"></vehicle-sil-timeline>
+      </vsil-timeline>
     </section>
   </body>
 </html>

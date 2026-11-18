@@ -84,3 +84,84 @@ describe('<vsil-scenario-result>', () => {
     expect(part.dataset['status']).toBeUndefined();
   });
 });
+
+describe('<vsil-timeline>', () => {
+  const run = (timeline_url: string | null) => ({
+    file: 'scenarios/a.yaml',
+    name: 'a',
+    status: 'passed' as const,
+    steps: [],
+    timeline_url,
+  });
+
+  async function mountTimeline(front: FakeFront, inner = '') {
+    const part = document.createElement('vsil-timeline');
+    part.innerHTML = inner;
+    part.client = front;
+    document.body.append(part);
+    await settle();
+    return part;
+  }
+
+  it("uses the page's own element, and changes only src and hidden", async () => {
+    const front = fakeFront();
+    const part = await mountTimeline(
+      front,
+      '<vehicle-sil-timeline compact hide="help tables"></vehicle-sil-timeline>',
+    );
+    const timeline = part.querySelector<HTMLElement>('vehicle-sil-timeline')!;
+    expect(part.querySelectorAll('vehicle-sil-timeline')).toHaveLength(1);
+    expect(timeline.hidden).toBe(true);
+    expect(part.dataset['timeline']).toBe('none');
+    front.cells.scenario.set(run('timelines/run.json'));
+    expect(timeline.hidden).toBe(false);
+    expect(timeline.getAttribute('src')).toBe('/timelines/run.json');
+    expect(timeline.hasAttribute('compact')).toBe(true);
+    expect(timeline.getAttribute('hide')).toBe('help tables');
+    expect([...timeline.attributes].map((a) => a.name).sort()).toEqual(['compact', 'hide', 'src']);
+    expect(part.dataset['timeline']).toBe('shown');
+    front.cells.scenario.set(null);
+    expect(timeline.hidden).toBe(true);
+    expect(part.dataset['timeline']).toBe('none');
+  });
+
+  it('adds a default element when there is none, and removes only that one when it leaves', async () => {
+    const front = fakeFront();
+    const part = await mountTimeline(front);
+    const made = part.querySelector<HTMLElement>('vehicle-sil-timeline')!;
+    expect(made).not.toBeNull();
+    front.cells.scenario.set(run('t.json'));
+    expect(made.getAttribute('src')).toBe('/t.json');
+    part.remove();
+    expect(made.isConnected).toBe(false);
+    expect(part.dataset['timeline']).toBeUndefined();
+
+    const page = await mountTimeline(fakeFront(), '<vehicle-sil-timeline></vehicle-sil-timeline>');
+    const own = page.querySelector('vehicle-sil-timeline')!;
+    page.remove();
+    expect(own.parentElement).toBe(page);
+  });
+
+  it('does not set the same file again', async () => {
+    const front = fakeFront();
+    const part = await mountTimeline(front);
+    const timeline = part.querySelector<HTMLElement>('vehicle-sil-timeline')!;
+    const set = vi.spyOn(timeline, 'setAttribute');
+    front.cells.scenario.set(run('t.json'));
+    front.cells.scenario.set({ ...run('t.json'), status: 'failed' });
+    expect(set).toHaveBeenCalledTimes(1);
+    front.cells.scenario.set(run('u.json'));
+    expect(set).toHaveBeenCalledTimes(2);
+  });
+
+  it('works while <vehicle-sil-timeline> is not defined', async () => {
+    expect(customElements.get('vehicle-sil-timeline')).toBeUndefined();
+    const front = fakeFront();
+    front.cells.scenario.set(run('t.json'));
+    const part = await mountTimeline(front);
+    expect(part.querySelector<HTMLElement>('vehicle-sil-timeline')!.getAttribute('src')).toBe(
+      '/t.json',
+    );
+    expect(part.dataset['error']).toBeUndefined();
+  });
+});

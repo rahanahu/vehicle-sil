@@ -205,8 +205,8 @@ For your own screen, use as many of these 3 layers as you need. Each layer keeps
 
 | Layer | You write | What you get | Where to start |
 |---|---|---|---|
-| Parts only | HTML and CSS: elements such as `<vsil-run-controls>`, `<vsil-slider variable="Engine.engine.throttle">` and `<vsil-value>` | Start and stop, time control, status, values, sliders, buttons that write, the scenario of the next run and its result. No script and no build | The guide [Build your own screen for the browser GUI](howto/gui-screen.md) |
-| A script of your own | A script that calls `connect()`, `watch`, `client.variable()` and the operations (Promises) | What the parts do not have: a display or a button of your own, a rule, the timeline. It uses the connection of the parts: a refused start, stop or time operation shows in `<vsil-status>`, and a refused write of a variable next to the part that shows it | `main.js` of the screen template, and "The front door (`connect()`)" in [gui/client/README.md](../gui/client/README.md#the-front-door-connect) |
+| Parts only | HTML and CSS: elements such as `<vsil-run-controls>`, `<vsil-slider variable="Engine.engine.throttle">` and `<vsil-value>` | Start and stop, time control, status, values, sliders, buttons that write, the scenario of the next run and its result, and the timeline of the run. No script and no build | The guide [Build your own screen for the browser GUI](howto/gui-screen.md) |
+| A script of your own | A script that calls `connect()`, `watch`, `client.variable()` and the operations (Promises) | What the parts do not have: a display or a button of your own, a rule. It uses the connection of the parts: a refused start, stop or time operation shows in `<vsil-status>`, and a refused write of a variable next to the part that shows it | `main.js` of the screen template, and "The front door (`connect()`)" in [gui/client/README.md](../gui/client/README.md#the-front-door-connect) |
 | A project with a framework | A project with a build, and the library package (`.tgz`) | The same parts and library in the templates of React, Vue, Svelte, Angular and others (the parts are custom elements) | "A project with a framework" in [examples/gui_starter/README.md](../examples/gui_starter/README.md#a-project-with-a-framework) |
 
 The parts and the library come from the GUI server (`/vsil/`) in the first 2 layers, so there is nothing to copy; a project with a framework uses the package. The sample screens' own widgets (the Angular app in `gui/web`) are not offered for reuse: use the parts.
@@ -1078,7 +1078,7 @@ The element `<vehicle-sil-timeline>` draws a timeline file on a screen of your o
 | The npm package of the client library | `import '@vehicle-sil/gui-client/timeline'` (an ES module with its types; it defines the element and exports nothing) |
 | Repository | `gui/timeline/vehicle-sil-timeline.js` and `.d.ts`. The smallest page is `gui/timeline/example.html` |
 
-- The run of a GUI server: `src` is `/` and `scenario.timeline_url` of the session summary (`timelineUrl` in the library), as in `examples/gui_starter/main.js`.
+- The run of a GUI server: `src` is `/` and `scenario.timeline_url` of the session summary (`timelineUrl` in the library). Without a script, put the element inside `<vsil-timeline>` (a part of the client library, as in `examples/gui_starter/index.html`): it sets `src` and `hidden` of the element from the run's scenario and leaves the other attributes to you.
 - Token: the element sends its `token` property, else the token that the GUI's screens keep in the tab (`takeToken` of the library keeps it there), with `Authorization: Bearer`. Without a token the server answers 401, and the element says so.
 - `src` must be on the page's own server (the same origin). The element does not follow a redirect, so that the token and the headers do not go to another address: it says that the address redirected. For a file from elsewhere, fetch it yourself and give it to `data`.
 - The element works even under a CSP that allows no inline style (`style-src 'self'`; the GUI server's is less strict): its CSS is a constructable style sheet, not a `<style>` element.
@@ -1203,7 +1203,7 @@ declare module 'react' {
 [examples/gui_starter](../examples/gui_starter/) is a screen of parts that you copy and change: HTML with the parts (status, run and time controls, a slider, values, a lamp, buttons that write, the scenario of the next run and its result, and the timeline element), a short script of your own and a stylesheet. It has no build step and no copy of the library (it loads the parts and the library from `vsil/`). In the prebuilt tools, it is in `gui_starter/`.
 
 - It is written for the example ECUs of `examples/ecu_main`. To use your own, change the `variable` attributes (the guide shows how).
-- `main.js` is the layer "a script of your own" of "[Build your own screen](#build-your-own-screen)": a display of your own made with `watch`, a button of your own that handles the failure of its operation, and the timeline of the last scenario run.
+- `main.js` is the layer "a script of your own" of "[Build your own screen](#build-your-own-screen)": a display of your own made with `watch`, and a button of your own that handles the failure of its operation.
 - Its README explains how to use it.
 - `scripts/verify-web.py` serves this template with `--web` and runs it in a browser, against the replay launcher and a fake Control Server (the end-to-end test `starter.spec.ts`).
 
