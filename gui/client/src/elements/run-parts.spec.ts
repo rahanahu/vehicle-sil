@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+import { userEvent } from 'vitest/browser';
 import { ActionError } from '../index';
 import { fakeFront, ok, refused } from './fake-front';
 import type { FakeFront } from './fake-front';
@@ -151,6 +151,18 @@ describe('the buttons', () => {
     expect(why.hidden).toBe(true);
     front.cells.controls.patch({ stop: refused('busy', 'Another action is on its way.') });
     expect(why.hidden).toBe(false);
+  });
+
+  it('keeps a refused button focusable, and its reason is its accessible description even when hidden', async () => {
+    front.cells.controls.patch({ stop: refused('not-running', 'No run is going.') });
+    const part = await mount('vsil-run-controls', front);
+    const stop = button(part, 'Stop');
+    for (let i = 0; i < 5 && document.activeElement !== stop; i++) await userEvent.tab(); // a disabled button would be skipped
+    expect(document.activeElement).toBe(stop);
+    expect(stop.getAttribute('aria-disabled')).toBe('true');
+    await expect.element(stop).toHaveAccessibleDescription('No run is going.');
+    await userEvent.keyboard('{Enter}');
+    expect(front.spies.stop).not.toHaveBeenCalled();
   });
 
   it('does not leave an unhandled rejection when an operation fails', async () => {

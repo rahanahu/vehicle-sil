@@ -42,7 +42,7 @@ Windows でも同じコマンドで動かす想定です。Node.js は Windows �
 | `npm start`               | 開発サーバー（http://127.0.0.1:4200）を起動する                                                                                                         |
 | `npm run build`           | 本番のビルド（出力は `dist/browser/`、ライセンスの表示は `dist/3rdpartylicenses.txt`）                                                                  |
 | `npm test`                | 単体テスト（Vitest、jsdom）を 1 回実行して終わる                                                                                                        |
-| `npm run test:client`     | クライアントのライブラリ（`../client`）の型の検査と単体テスト（Vitest、Node。Angular も DOM もなし）                                                    |
+| `npm run test:client`     | クライアントのライブラリ（`../client`）の型の検査と単体テスト（Vitest。ライブラリは Node、部品はヘッドレスの Chromium。Angular なし）                   |
 | `npm run test:timeline`   | 時間の軸の要素（`../timeline/viewer.js`）の単体テスト（Node のテストランナー。DOM なし）。先に `../timeline/vehicle-sil-timeline.js` が最新かを確かめる |
 | `npm run bundle:timeline` | `messages.js`、`timeline.css`、`viewer.js` から `../timeline/vehicle-sil-timeline.js` を作る                                                            |
 | `npm run build:client`    | クライアントのライブラリを 1 つの ESM のファイルにまとめる                                                                                              |

@@ -92,6 +92,8 @@ add_subdirectory(libs/testkit ${_vehicle_sil_exclude})
 
 # What the bridge executables share: run_bridge() (stop handling, monitor loop, exit code).
 add_subdirectory(bridges/common ${_vehicle_sil_exclude})
+# CAN bridge core: what a CAN bridge shares whatever its external side (portable).
+add_subdirectory(bridges/can ${_vehicle_sil_exclude})
 # Ethernet bridge: the bridge between a SIL Kit Ethernet network and an external link (portable).
 add_subdirectory(bridges/ethernet ${_vehicle_sil_exclude})
 # Vector XL CAN bridge: portable core everywhere, XL backend and executable on Windows only.

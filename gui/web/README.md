@@ -42,7 +42,7 @@ Run these in `gui/web/`. Each reports success or failure through its exit code.
 | `npm start`               | Starts the development server (http://127.0.0.1:4200)                                                                                                              |
 | `npm run build`           | Production build (output in `dist/browser/`, license notices in `dist/3rdpartylicenses.txt`)                                                                       |
 | `npm test`                | Runs the unit tests (Vitest, jsdom) once and exits                                                                                                                 |
-| `npm run test:client`     | Type check and unit tests of the client library (`../client`) (Vitest, Node; no Angular, no DOM)                                                                   |
+| `npm run test:client`     | Type check and unit tests of the client library (`../client`) (Vitest; the library on Node, the parts in a headless Chromium; no Angular)                          |
 | `npm run test:timeline`   | Unit tests of the timeline element (`../timeline/viewer.js`) (Node's test runner; no DOM), after checking that `../timeline/vehicle-sil-timeline.js` is up to date |
 | `npm run bundle:timeline` | Makes `../timeline/vehicle-sil-timeline.js` from `messages.js`, `timeline.css` and `viewer.js`                                                                     |
 | `npm run build:client`    | Bundles the client library into one ESM file                                                                                                                       |

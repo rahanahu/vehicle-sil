@@ -710,12 +710,14 @@ If you create it with `{ history: 600 }`, `history()` returns the points, oldest
 
 The tools (TypeScript, ESLint, Prettier, Vitest, esbuild) are the ones in `node_modules` of `gui/web`. Run these in `gui/web` (`scripts/verify-web.py` runs them too):
 
-| Command                | What it does                                                                                                                           |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run test:client`  | Type check (`tsc -p ../client`) and unit tests (Vitest; runs on Node, without Angular; only the tests of the parts use a jsdom DOM)    |
-| `npm run build:client` | Bundles into one ESM file, and the parts into a second one that imports it (esbuild, the copy that comes with the Angular build tools) |
-| `npm run lint`         | `gui/web`, and this directory with its `eslint.config.js`                                                                              |
-| `npm run format:check` | Formatting of `gui/web` and this directory (`gui/.prettierrc`)                                                                         |
+| Command                | What it does                                                                                                                                               |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run test:client`  | Type check (`tsc -p ../client`) and unit tests (Vitest; the library runs on Node, without Angular; the parts in `src/elements` run in a headless Chromium) |
+| `npm run build:client` | Bundles into one ESM file, and the parts into a second one that imports it (esbuild, the copy that comes with the Angular build tools)                     |
+| `npm run lint`         | `gui/web`, and this directory with its `eslint.config.js`                                                                                                  |
+| `npm run format:check` | Formatting of `gui/web` and this directory (`gui/.prettierrc`)                                                                                             |
+
+The tests of the parts need Playwright's Chromium (`npx playwright install --only-shell chromium` in `gui/web`; `scripts/doctor.py` says whether it starts). They run headless; to watch them, run `npx vitest --config ../client/vitest.config.mjs --project browser --browser.headless=false` in `gui/web`.
 
 The unit tests feed the examples in `gui/protocol/examples/` instead of building server notifications by hand (`testing/protocol-examples.ts`).
 

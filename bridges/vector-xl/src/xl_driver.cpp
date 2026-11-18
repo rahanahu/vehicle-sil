@@ -15,6 +15,7 @@
 #include <utility>
 
 namespace vehicle_sil::vector_xl {
+using namespace vehicle_sil::can_bridge;
 namespace detail {
 namespace {
 

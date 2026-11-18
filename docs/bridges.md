@@ -564,11 +564,11 @@ A frame passes from the SIL Kit CAN network to the XL Driver through `ICanContro
 
 | Class | Responsibility |
 |---|---|
-| `vehicle_sil::vector_xl::CanBridge` | Forwards classic CAN in both directions between SIL Kit's `ICanController` and an `ExternalCanPort`. Platform-independent |
-| `vehicle_sil::vector_xl::ExternalCanPort` | Interface to external CAN. `XlCanPort` in production, a fake in tests |
+| `vehicle_sil::can_bridge::CanBridge` | Forwards classic CAN in both directions between SIL Kit's `ICanController` and an `ExternalCanPort`. Platform-independent |
+| `vehicle_sil::can_bridge::ExternalCanPort` | Interface to external CAN. `XlCanPort` in production, a fake in tests |
 | `vehicle_sil::vector_xl::XlDriver` | Manages `xlOpenDriver` / `xlCloseDriver` with RAII and lists the channels from `xlGetDriverConfig` |
 | `vehicle_sil::vector_xl::XlCanPort` | Opens one XL channel (`xlOpenPort`) and handles transmitting (`xlCanTransmit`) and the receive thread (`xlReceive` and the notification event) |
-| `vehicle_sil::vector_xl::ExternalPortAdapter` | Turns an `ExternalCanPort` into a port of the common CAN foundation (`RealTime`). Used to place a protocol stack directly on an XL channel. Platform-independent |
+| `vehicle_sil::can_bridge::ExternalPortAdapter` | Turns an `ExternalCanPort` into a port of the common CAN foundation (`RealTime`). Used to place a protocol stack directly on an XL channel. Platform-independent |
 
 For the source locations and tests, see "Vector XL CAN Bridge" in [code-map-bridges.md](code-map-bridges.md#vector-xl-can-bridge).
 

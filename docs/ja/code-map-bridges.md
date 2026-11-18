@@ -8,13 +8,17 @@
 
 ## テストのラベル
 
+### `can_bridge`
+
+CAN ブリッジのうち、外部の側に依存しない部分（`CanBridge`、`ExternalPortAdapter`）のテストです。SIL Kit のコントローラのフェイクと外部ポートのフェイクに対して動かします。全プラットフォームで動きます。
+
 ### `vector_xl`
 
-CAN ブリッジのテストです。全プラットフォームで、テスト専用の XL ドライバのフェイクに対して本番のコードを動かします。
+Vector XL の CAN ブリッジのテストです。全プラットフォームで、テスト専用の XL ドライバのフェイクに対して本番のコードを動かします。
 
 | テストの種類 | 内容 |
 |---|---|
-| 単体テスト | CanBridge |
+| 単体テスト | 引数とチャネルの一覧 |
 | XL バックエンドのテスト | XL バックエンド |
 | プロセス内のテスト | 実際の SIL Kit を使う |
 | E2E テスト | ブリッジの実行ファイルを使う |
@@ -69,13 +73,22 @@ E2E で確認すること:
 
 ## ディレクトリごとのコードとテスト
 
+### `bridges/can`
+
+| 名前 | 場所 |
+|---|---|
+| `CanBridge`、`ExternalCanPort`、`ExternalCanEvent`、統計と健全性の行 | `can_bridge/can_bridge.hpp` |
+| `ExternalPortAdapter` | `can_bridge/external_port_adapter.hpp` |
+
+- テスト: `tests/can_bridge`（そこの `fake_external_port.hpp` と `frame_matrix.hpp` は `tests/vector_xl` も使う）
+- `ctest -R`: `^can_bridge\.`
+
 ### `bridges/vector-xl`
 
 | 名前 | 場所 |
 |---|---|
-| `CanBridge` | `vector_xl/can_bridge.hpp` |
-| `ExternalPortAdapter` | `vector_xl/external_port_adapter.hpp` |
 | `XlDriver`、`XlCanPort` | `vector_xl/xl_driver.hpp` |
+| チャネルの選択、チャネルの一覧、引数 | `vector_xl/channel_selection.hpp`、`vector_xl/bridge_options.hpp` |
 
 - テスト: `tests/vector_xl`（XL ドライバのフェイクは `tests/vector_xl/fake_xl`）
 - `ctest -R`: `^vector_xl\.`
@@ -144,6 +157,7 @@ E2E で確認すること:
 
 | ターゲット | 作る条件 |
 |---|---|
+| `can_bridge_core`（`bridges/can`） | どのプラットフォームでも |
 | `vector_xl`、`vehicle_sil_vector_xl_bridge` | Windows で、XL Driver Library があるときだけ |
 | `bridge_runtime`（`bridges/common`） | どのプラットフォームでも |
 
@@ -151,9 +165,12 @@ E2E で確認すること:
 
 ```mermaid
 flowchart TD
-    vector_xl_bridge_core --> SilKit["SilKit::SilKit"]
-    vector_xl_bridge_core --> can
-    vector_xl_bridge_core --> can_silkit
+    can_bridge_core --> SilKit["SilKit::SilKit"]
+    can_bridge_core --> can
+    can_bridge_core --> can_silkit
+    can_bridge_core --> bridge_runtime
+    vector_xl_bridge_core --> SilKit
+    vector_xl_bridge_core --> can_bridge_core
     vector_xl_bridge_core --> bridge_runtime
     vehicle_sil_vector_xl_logic --> vector_xl_bridge_core
     vector_xl --> vector_xl_bridge_core

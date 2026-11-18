@@ -148,7 +148,7 @@ Set on the tests of command-line parsing and of writing to stdout and stderr (`u
 
 | Also set on | Details |
 |---|---|
-| `core`, `lin`, `step`, `can`, `eth`, `j1939`, `peer`, `testkit`, `ecu`, `simulation`, `control`, `control_server`, `launch`, `process`, `vector_xl` | Unit tests and boundary checks |
+| `core`, `lin`, `step`, `can`, `can_bridge`, `eth`, `j1939`, `peer`, `testkit`, `ecu`, `simulation`, `control`, `control_server`, `launch`, `process`, `vector_xl` | Unit tests and boundary checks |
 | `template.get_tools` | Tests the template's `get_tools.py`, and `template` and `version` of `scripts/package.py`, with locally built archives |
 | `param_service.demo` | The only example run that has it |
 

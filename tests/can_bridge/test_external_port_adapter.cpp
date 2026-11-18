@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// vehicle_sil::vector_xl::ExternalPortAdapter: an ExternalCanPort (here a fake) as a
+// vehicle_sil::can_bridge::ExternalPortAdapter: an ExternalCanPort (here a fake) as a
 // vehicle_sil::can::Port of real time, stepped by a RealTimeDriver.
 #include "can_test_util.hpp"
 #include "fake_external_port.hpp"
@@ -9,7 +9,7 @@
 #include "vehicle_sil/can/host.hpp"
 #include "vehicle_sil/can/real_time_clock.hpp"
 #include "vehicle_sil/can/real_time_driver.hpp"
-#include "vehicle_sil/vector_xl/external_port_adapter.hpp"
+#include "vehicle_sil/can_bridge/external_port_adapter.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -27,9 +27,9 @@ using vehicle_sil::can::SendResult;
 using vehicle_sil::can::TimedFrame;
 using vehicle_sil::can::TimeDomain;
 using vehicle_sil::unit::FakeExternalPort;
-using vehicle_sil::vector_xl::ExternalEventKind;
-using vehicle_sil::vector_xl::ExternalPortAdapter;
-using vehicle_sil::vector_xl::TransmitResult;
+using vehicle_sil::can_bridge::ExternalEventKind;
+using vehicle_sil::can_bridge::ExternalPortAdapter;
+using vehicle_sil::can_bridge::TransmitResult;
 
 namespace {
 
