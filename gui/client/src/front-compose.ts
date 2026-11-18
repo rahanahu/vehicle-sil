@@ -192,18 +192,27 @@ export function simMsOf(session: SessionView | null): number | null {
 }
 
 /**
+ * Where the launcher's latest state says the run stands still (`paused_at_ms`), or null: not paused, or paused but not
+ * yet standing at a time (a run_until to a time already passed, at the maximum speed, until the next step). A time event
+ * is not used: the last one can be from before the run stood still.
+ */
+export function standsAt(session: SessionView | null): number | null {
+  const state = session?.launcherState;
+  return state?.paused === true ? (state.paused_at_ms ?? null) : null;
+}
+
+/**
  * Whether a step or a run_until that the launcher accepted has not been seen to arrive. It has arrived when the latest
- * state says paused and virtual time (simMsOf) is at the `at_ms` of its command event. That the state says paused is
- * not enough: it may be the one from before the command. Another command after it (a pause, a resume) ends the
- * question (it is then the last command), and so does the end of the run.
+ * state says the run stands still at or after the `at_ms` of its command event (standsAt). Another command after it (a
+ * pause, a resume) ends the question (it is then the last command), and so does the end of the run.
  */
 export function onItsWay(session: SessionView | null): boolean {
   const last = session?.lastCommand;
   if (!session || !session.launcher.running || !last || !last.accepted || last.atMs === null)
     return false;
   if (last.name !== 'step' && last.name !== 'run_until') return false;
-  const sim = simMsOf(session);
-  return !(sim !== null && sim >= last.atMs && session.launcherState?.paused === true);
+  const stands = standsAt(session);
+  return !(stands !== null && stands >= last.atMs);
 }
 
 // --- clock ----------------------------------------------------------------------------------------

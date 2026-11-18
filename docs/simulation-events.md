@@ -175,7 +175,7 @@ A `state` with `paused` `true` is normally written after the simulation has paus
 - The simulation has not paused at time 0 within 2 seconds after the start (the launcher stops waiting and writes the events).
 - A `pause` or `run_until` names a time at or before the current time while the simulation is running, and the simulation pauses at the next time step.
 
-Where the simulation is paused is `paused_at_ms`: it is in the same `state` as `paused`, so you do not need a `time` event to know it. It is `null` while the simulation has not come to a stand: before the simulation starts (a `--start-paused` run that has not reached time 0), and in the 2 exceptions above. The `state` with the time follows when the simulation has paused. A change of `paused_at_ms` alone (a step ends at another time) also writes a `state`.
+Where the simulation is paused is `paused_at_ms`: it is in the same `state` as `paused`, so you do not need a `time` event to know it. It is `null` while the simulation has not come to a stand: before the simulation starts (a `--start-paused` run that has not reached time 0), and in the 2 exceptions above. While the run holds before its first step (`holding` `true`), it is `0`. The `state` with the time follows when the simulation has paused. A change of `paused_at_ms` alone (a step ends at another time) also writes a `state`.
 
 `pacing`:
 
