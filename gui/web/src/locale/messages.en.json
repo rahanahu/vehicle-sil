@@ -1134,6 +1134,22 @@
       "source": "倍率",
       "target": "Factor"
     },
+    "321849708477886124": {
+      "source": "この実行で選べる速さは等速だけです。",
+      "target": "This run can go at real time only."
+    },
+    "7087154939401273390": {
+      "source": "この実行で選べる速さは {$speed} 倍だけです。",
+      "target": "This run can go at {$speed}× only."
+    },
+    "2228114195225246597": {
+      "source": "この実行で選べる速さは {$min} 倍から {$max} 倍までです。",
+      "target": "This run can go from {$min}× to {$max}×."
+    },
+    "7879828296201044095": {
+      "source": "最速は選べません。",
+      "target": "Fastest cannot be chosen."
+    },
     "8021742515226990447": {
       "source": "倍率は {$min} から {$max} の数にしてください。",
       "target": "Enter a factor from {$min} to {$max}."
@@ -1174,9 +1190,9 @@
       "source": "動いている",
       "target": "Running"
     },
-    "3521573166656724286": {
-      "source": "ステップ送りの量は 1 から {$max} までの整数（ミリ秒）にしてください。",
-      "target": "Enter a whole number of milliseconds from 1 to {$max}."
+    "5355857844268745846": {
+      "source": "ステップ送りの量は {$min} から {$max} までの整数（ミリ秒）にしてください。",
+      "target": "Enter a whole number of milliseconds from {$min} to {$max}."
     },
     "1241904257650615775": {
       "source": "前のステップ送りで進む量: {$ms} ms（ランチャーが刻みの倍数に切り上げます）。",
