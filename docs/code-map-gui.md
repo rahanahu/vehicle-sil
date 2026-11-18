@@ -33,6 +33,18 @@ For an introduction, see [gui.md](gui.md).
 - Tests: `gui/server/tests/test_example_client.py`, `gui/web/e2e/starter.spec.ts`
 - `ctest -R`: not in CTest. Run them with `scripts/verify-gui.py`.
 
+### Launcher request and targets
+
+The GUI server does not build the launcher's options. It writes what the screen chose as a request file and passes it with `--request`; the rules about the choices stay in the launcher's check.
+
+| What | Location |
+|---|---|
+| The fields of a check or a start, their form and size, and the request file that is written (a new temporary file, mode 0600 on POSIX, removed when the launcher has ended) | `INTENT_FIELDS`, `check_*()`, `write_request_file()`, `check_command()` and `run_command()` in `gui/server/src/vehicle_sil_gui/launcher.py` |
+| The only rule the server keeps for `connect`: a target other than `none` is passed on only if the last `POST api/connections` of that network of that file listed it as usable (`target-not-listed` otherwise) | `_check_targets()` and `post_connections()` in `gui/server/src/vehicle_sil_gui/server.py`; `connections_command()` in `launcher.py` |
+| Tests | `gui/server/tests/test_connect.py`, `test_units.py`, `test_runs.py`, `test_protocol_examples.py` |
+
+Do not copy a launcher rule into the server (which names exist, which fields go together, what a time policy means): add it to the launcher and let the check report it. To add a field, follow "[Request fields and the request file](code-map-launcher.md#request-fields-and-the-request-file)".
+
 ## Cross-area changes and development references
 
 - Launcher events, stdin commands, features and format: [events and commands](code-map-launcher.md#events-stdin-commands-version---json). For recordings and protocol examples, see [run traffic](code-map-launcher.md#run-traffic-traffic).

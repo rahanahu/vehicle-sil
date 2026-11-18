@@ -33,6 +33,18 @@
 - テスト: `gui/server/tests/test_example_client.py`、`gui/web/e2e/starter.spec.ts`
 - `ctest -R`: CTest には入っていません。`scripts/verify-gui.py` で実行します。
 
+### ランチャーへの要求と接続先
+
+GUI サーバーはランチャーのオプションを組み立てません。画面の選択を要求ファイルに書き、`--request` で渡します。選択のルールは、ランチャーの照合に任せます。
+
+| 内容 | 場所 |
+|---|---|
+| 照合や開始の欄、その形と大きさ、書き出す要求ファイル（新しい一時ファイル。POSIX ではモード 0600。ランチャーが終わったら削除） | `gui/server/src/vehicle_sil_gui/launcher.py` の `INTENT_FIELDS`、`check_*()`、`write_request_file()`、`check_command()`、`run_command()` |
+| サーバーが `connect` について持つ唯一のルール: `none` 以外の対象は、そのファイルのそのネットワークの直近の `POST api/connections` が使えると挙げたときだけ渡す（そうでなければ `target-not-listed`） | `gui/server/src/vehicle_sil_gui/server.py` の `_check_targets()` と `post_connections()`、`launcher.py` の `connections_command()` |
+| テスト | `gui/server/tests/test_connect.py`、`test_units.py`、`test_runs.py`、`test_protocol_examples.py` |
+
+ランチャーのルール（どの名前があるか、どの欄が一緒に成り立つか、時間の方針が何を意味するか）をサーバーに写さないでください。ランチャーに足し、照合に報告させます。欄を足すときは「[要求の欄と要求ファイル](code-map-launcher.md#要求の欄と要求ファイル)」に従います。
+
 ## 領域横断の変更と開発資料
 
 - ランチャーのイベント・標準入力コマンド・features・形式の変更: [イベントとコマンド](code-map-launcher.md#イベント標準入力のコマンドversion---json)。録画とプロトコルの例は [実行の送受信](code-map-launcher.md#実行の送受信traffic) を参照。

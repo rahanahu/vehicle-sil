@@ -243,9 +243,25 @@ The details of each part are in [code-map-launcher.md](code-map-launcher.md); th
   - `RunPlan`: values, made by the pure `plan_run()` from the check that passed, the request (`RunRequest`) and `RunLimits`. The run does not write to it.
   - `RunObservers`: the caller's functions that the run calls back (lines, events, the name of an interruption, `before_start`).
   - `RunControls`: what the run borrows (the stop requests, the time commands) or makes for itself.
+- What a check, a run or a test is asked to do is one value, `RunRequest` (`launch/request.hpp`), in two parts: the user's choices (`RunIntent`) and the caller's (`RunHost`: where the tools and logs are, the limits, whether it asks for a Control Server or for commands on standard input). `check_file()`, `run_file()` and `test_file()` take it; the command line and a request file are two ways to fill it. `validate_request()` (pure) is the one place for the rules about fields that do not go together. `tools/launch` only turns arguments into fields, so a `cli::UsageError` there means a malformed argument, never a rule about meaning.
+- `--request <file>` reads the intent from a JSON file (`schema/run-request.schema.json`). There is one reader of the format (`read_request_file()`); an argument wins over the file field by field. Messages name the file when a value came from it.
 - The bridges that `--connect` adds are marked in the plan (`RunMember::outside`, one `RunMember` for each participant). `ParticipantConfig` keeps only what the file says. The step plan is made from the configuration of the file, before the bridges are added.
 - What a run saw is a `RunOutcome` in parts: `setup`, `start`, `end`, `control`, `scenario` and `close`, then `timing`, `participants` and the rest. Its shape is not the shape of the JSON output: `format_run_json()` writes the JSON, and `assess_run()` judges the outcome. Why the run ended is `end_reason()` of the outcome (`EndReason`: what asked first to stop decides between stopped and interrupted). The exit code and whether the result is a success come from one table (`libs/launch/src/exit_codes.hpp`, used by `RunReport::exit_code()`, `RunReport::ok()`, `CheckReport::exit_code()` and `ConnectionsReport::exit_code()`); the sentence for people is `RunReport::message()`, next to `RunReport::result()` in `libs/launch/src/run_report.cpp`.
+- The exit codes: 0 for a pass or a stop by the operator, 1 for a failure, 3 for an unreadable file or a setup that failed, 4 for a usage error (also a request file that cannot be read), a code of its own for a scenario that was cut short and for an interruption.
 - The code of the Control Server is in `libs/launch` (`src/control_server.cpp`, built only with `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`; no public header of the library includes gRPC's). `run_file()` makes the server from what the request names for `--control` (`RunHost::control`), starts it and ends it; the caller destroys it after the result. `tools/launch` only copies the arguments into the request.
+
+### How the GUI server hands a run to the launcher
+
+```mermaid
+flowchart LR
+    screen["Screen"] -->|"choices"| server["GUI server<br>form, size, paths, connect targets"]
+    server -->|"writes"| file["Temporary request file"]
+    file -->|"--request"| launcher["vehicle_sil_launch<br>check and run rules"]
+```
+
+- The GUI server writes the choices of the screen as a request file (readable by the user only, removed when the launcher has ended) and starts `check` or `run` with `--request`. It builds no other launcher option for them.
+- The server checks only the form and size of a field, that a path stays under its root, and that a `connect` target was listed as usable by `POST api/connections` (`target-not-listed`). Every rule about meaning (the variant exists, the participant exists, the fields go together) is the launcher's check, and the server shows its findings.
+- `POST api/connections` runs `connections --json` for one network of a file and keeps the usable targets. This list is what a later check or run may name, so a screen cannot pass a device that the launcher did not find on this computer.
 
 ## Internals
 

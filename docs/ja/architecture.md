@@ -243,9 +243,25 @@ flowchart LR
   - `RunPlan`: 値です。通った照合、要求（`RunRequest`）、`RunLimits` から、純粋な `plan_run()` が作ります。実行はこれに書きません。
   - `RunObservers`: 実行が呼び返す、呼び出し側の関数です（行、イベント、中断の名前、`before_start`）。
   - `RunControls`: 実行が借りるもの（停止の要求、時刻の命令）と、実行が自分で作るものです。
+- 照合・実行・テストが何を頼まれるかは、1 つの値 `RunRequest`（`launch/request.hpp`）です。2 つの部分から成ります。利用者の選択（`RunIntent`）と、呼び出し側の指定（`RunHost`。ツールとログの場所、上限、Control Server や標準入力のコマンドを求めるか）です。`check_file()`、`run_file()`、`test_file()` がこれを受け取ります。コマンドラインと要求ファイルは、これを埋める 2 つの方法です。`validate_request()`（純粋）が、一緒には成り立たない欄のルールを置く唯一の場所です。`tools/launch` は引数を欄に写すだけなので、そこでの `cli::UsageError` は引数の形の誤りを意味し、意味のルールには使いません。
+- `--request <file>` は、意図を JSON のファイルから読みます（`schema/run-request.schema.json`）。形式の読み手は 1 つ（`read_request_file()`）で、引数は欄ごとにファイルに勝ちます。値がファイルから来たときは、メッセージがファイルの名前を挙げます。
 - `--connect` が足すブリッジの印は計画にあります（`RunMember::outside`。参加者ごとに `RunMember` が 1 つ）。`ParticipantConfig` はファイルが書いたことだけを持ちます。刻みの計画は、ブリッジを足す前の、ファイルの構成で作ります。
 - 実行が見たものは、部分に分かれた `RunOutcome` です（`setup`、`start`、`end`、`control`、`scenario`、`close`、続いて `timing`、`participants` ほか）。JSON の出力の形とは別です。JSON は `format_run_json()` が書き、結果の判定は `assess_run()` が行います。実行が終わった理由は、結果の `end_reason()` です（`EndReason`。stopped と interrupted のどちらかは、最初に止めるよう頼んだものが決めます）。終了コードと、結果が成功かどうかは、1 つの表（`libs/launch/src/exit_codes.hpp`。`RunReport::exit_code()`、`RunReport::ok()`、`CheckReport::exit_code()`、`ConnectionsReport::exit_code()` が使う）から決まります。人に見せる 1 文は `RunReport::message()` で、`libs/launch/src/run_report.cpp` の `RunReport::result()` の隣にあります。
+- 終了コード: 合格とオペレーターの停止は 0、失敗は 1、読めないファイルと失敗した準備は 3、使い方の誤り（読めない要求ファイルも）は 4。途中で切れたシナリオと中断には、それぞれ専用の値があります。
 - Control Server の受け口は `libs/launch`（`src/control_server.cpp`。`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけビルド。ライブラリの公開ヘッダーは gRPC のヘッダーを include しません）にあります。`run_file()` が、要求が `--control` のために指すもの（`RunHost::control`）から作り、起動し、終えます。破棄は、呼ぶ側が結果の後に行います。`tools/launch` は引数を要求に写すだけです。
+
+### GUI サーバーが実行をランチャーに渡す形
+
+```mermaid
+flowchart LR
+    screen["画面"] -->|"選択"| server["GUI サーバー<br>形、大きさ、パス、connect の対象"]
+    server -->|"書く"| file["一時の要求ファイル"]
+    file -->|"--request"| launcher["vehicle_sil_launch<br>照合と実行のルール"]
+```
+
+- GUI サーバーは、画面の選択を要求ファイルに書き（利用者だけが読める。ランチャーが終わったら削除）、`--request` を付けて `check` か `run` を起動します。そのために、ほかのランチャーのオプションは組み立てません。
+- サーバーが確かめるのは、欄の形と大きさ、パスがルートの下にあること、`connect` の対象が `POST api/connections` で使えると挙げられたものであること（`target-not-listed`）だけです。意味のルール（機種がある、participant がある、欄が一緒に成り立つ）はすべてランチャーの照合のもので、サーバーはその指摘を見せます。
+- `POST api/connections` は、ファイルの 1 つのネットワークについて `connections --json` を走らせ、使える対象を覚えます。この一覧が、あとの照合や実行が名指しできるものなので、画面は、ランチャーがこの計算機で見つけていない機器を渡せません。
 
 ## 内部の仕組み
 
