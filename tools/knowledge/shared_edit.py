@@ -3,10 +3,13 @@
 
   shared_edit.py FILE (--old TEXT | --old-file PATH) (--new TEXT | --new-file PATH) [--timeout SECONDS]
 
-FILE is one of the five shared files, written relative to .local, relative to the repository
-root (.local/...) or as an absolute path:
-  CONSTRAINTS.md  plans/STATE.md  plans/RULES.md  decisions/ACTIVE.md  changelog/pending.md
-The file must already exist. The tool changes nothing else and never creates the file.
+FILE is one of the six shared files (several coordinators write them), written relative to
+.local, relative to the repository root (.local/...) or as an absolute path:
+  CONSTRAINTS.md  plans/STATE.md  plans/RULES.md  plans/FLAKY.md  decisions/ACTIVE.md
+  changelog/pending.md
+The file must already exist. The tool changes nothing else and never creates the file. A stream
+file (plans/streams/) is not a shared file: its coordinator edits it directly, and anyone else
+tells the coordinator.
 
 What it does, in this order: take an exclusive lock on .local/.shared-edit.lock (one lock for all
 shared files; the lock file is never deleted, and the OS drops the lock when the process ends),
@@ -22,7 +25,7 @@ Outcomes (summary on stdout for success, on stderr for failure):
           its current text), ambiguous (--old is there more than once: add the neighbouring lines),
           lock-timeout (another writer holds the lock: run it again; tell the user if it fails
           twice; never fall back to writing the file directly), io-error.
-  exit 2  wrong usage (not one of the five files, a symbolic link, empty --old, a --timeout that is
+  exit 2  wrong usage (not one of the six files, a symbolic link, empty --old, a --timeout that is
           negative, NaN or infinite, an --old-file/--new-file inside vendor/ (it is
           refused before it is opened), ...).
 
@@ -54,6 +57,7 @@ SHARED_FILES = (
     "CONSTRAINTS.md",
     "plans/STATE.md",
     "plans/RULES.md",
+    "plans/FLAKY.md",
     "decisions/ACTIVE.md",
     "changelog/pending.md",
 )
@@ -98,8 +102,10 @@ def resolve_target(root: Path, name: str) -> str:
         rel = os.path.relpath(os.path.abspath(candidate), os.path.abspath(root))
         if rel in SHARED_FILES:
             return rel
+    hint = " A stream file has one owner: its coordinator edits it directly; others tell the coordinator." \
+        if "streams" in Path(name).parts else ""
     raise EditError(2, "usage", f"{name} is not a shared file. The tool writes only: {', '.join(SHARED_FILES)} "
-                    "(relative to .local).")
+                    f"(relative to .local).{hint}")
 
 
 def _acquire(lock_path: Path, timeout: float) -> int:

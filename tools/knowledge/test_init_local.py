@@ -43,7 +43,8 @@ class InitLocal(unittest.TestCase):
     def test_apply_creates_the_layout_and_excludes(self):
         code, _ = self.run_init("--apply")
         self.assertEqual(code, 0)
-        for rel in ("CONSTRAINTS.md", "plans/STATE.md", "plans/RULES.md", "decisions/ACTIVE.md", "changelog/pending.md"):
+        for rel in ("CONSTRAINTS.md", "plans/STATE.md", "plans/RULES.md", "plans/FLAKY.md", "decisions/ACTIVE.md",
+                    "changelog/pending.md"):
             self.assertTrue((self.repo / ".local" / rel).is_file(), rel)
         self.assertTrue((self.repo / ".local/plans/streams").is_dir())
         self.assertTrue((self.repo / "CLAUDE.local.md").is_file())

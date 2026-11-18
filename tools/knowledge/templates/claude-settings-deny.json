@@ -6,6 +6,7 @@
       "Edit(//<absolute path of the repository>/.local/CONSTRAINTS.md)",
       "Edit(//<absolute path of the repository>/.local/plans/STATE.md)",
       "Edit(//<absolute path of the repository>/.local/plans/RULES.md)",
+      "Edit(//<absolute path of the repository>/.local/plans/FLAKY.md)",
       "Edit(//<absolute path of the repository>/.local/decisions/ACTIVE.md)",
       "Edit(//<absolute path of the repository>/.local/changelog/pending.md)"
     ]
