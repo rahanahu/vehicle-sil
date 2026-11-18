@@ -181,7 +181,7 @@ void RunControl::note_links(RunOutcome& outcome, const std::optional<ControlStar
             run.control = ControlLink::NoHello;
             run.control_hello_seen = link != nullptr;
         }
-        out_.event([&run](EventStream& e) {
+        out_.event([&run](RunEvents& e) {
             e.control_link(run.name, control_link_name(run.control),
                            run.control == ControlLink::Connected ? std::optional<std::size_t>(run.control_variables)
                                                                  : std::nullopt,

@@ -102,7 +102,7 @@ const NetworkOutside* RunOutput::outside_of(std::size_t index) const
 
 void RunOutput::write_outside(std::size_t index, const OutsideCounts& counts) const
 {
-    event([&](EventStream& e) { e.outside(outside_of(index)->network, counts.to_outside, counts.from_outside); });
+    event([&](RunEvents& e) { e.outside(outside_of(index)->network, counts.to_outside, counts.from_outside); });
 }
 
 void RunOutput::write(const std::string& line) const
@@ -115,9 +115,9 @@ void RunOutput::write(const std::string& line) const
 
 void RunOutput::say_held(const std::string& text) const
 {
-    if (ctx_.observers.events != nullptr)
+    if (ctx_.events != nullptr)
     {
-        ctx_.observers.events->log(std::string(kLauncherName), text);
+        ctx_.events->log(std::string(kLauncherName), text);
     }
     else
     {
@@ -264,9 +264,9 @@ void RunOutput::say_outside_shared(std::size_t index, const OutsideForeign& fore
 
 void RunOutput::show(std::size_t index, std::string_view line) const
 {
-    if (ctx_.observers.events != nullptr)
+    if (ctx_.events != nullptr)
     {
-        ctx_.observers.events->log(ctx_.config.participants[index].name, printable(line));
+        ctx_.events->log(ctx_.config.participants[index].name, printable(line));
     }
     else
     {

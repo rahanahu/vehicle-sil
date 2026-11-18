@@ -66,10 +66,10 @@ enum class TimeNote
 }
 
 /// What has been written as events of run --events, so that each thing is written once and the
-/// time not too often. Without --events (RunObservers::events is null) every call does nothing.
+/// time not too often. Without --events (RunContext::events is null) every call does nothing.
 ///
 /// Threads and locks: the main thread only, for all of it (the state below and the RunOutcome
-/// it is shown). No lock of its own; the EventStream keeps itself.
+/// it is shown). No lock of its own; the RunEvents keep themselves.
 class RunNotes
 {
 public:

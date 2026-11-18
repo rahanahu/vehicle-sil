@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "run_scenario.hpp"
 
-#include "check_format.hpp"
-
-#include "vehicle_sil/launch/events.hpp"
-
 #include <silkit/services/orchestration/string_utils.hpp>
 
 #include <algorithm>
@@ -68,9 +64,9 @@ void RunScenario::note_step(const ScenarioStepRun& step)
 {
     if (step.status != StepStatus::Running)
     {
-        out_.say("scenario: " + detail::scenario_step_text(step));
+        out_.say("scenario: " + scenario_step_text(step));
     }
-    out_.event([&step](EventStream& e) { e.scenario_step(step); });
+    out_.event([&step](RunEvents& e) { e.scenario_step(step); });
 }
 
 void RunScenario::drain()
