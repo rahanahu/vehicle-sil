@@ -214,7 +214,7 @@ describe('<vsil-connect>', () => {
     expect(front.spies.check).toHaveBeenCalledTimes(1);
     expect(front.spies.check).toHaveBeenCalledWith(
       { scenario: 's.yaml', connect: { CAN1: 'can0', CAN9: 'none', ETH_EXT: 'eth0' } },
-      { file: 'simulation.yaml' },
+      { file: 'simulation.yaml', signal: expect.any(AbortSignal) },
     );
     expect(lines(part, 'vsil-findings')).toEqual(['shared.', 'real time.', 'CAN1: a loop.']);
     const shown = [...part.querySelectorAll('.vsil-findings li')] as HTMLElement[];
@@ -286,6 +286,41 @@ describe('<vsil-connect>', () => {
     // The finding names the first network only: both parts show it
     expect(lines(first, 'vsil-findings')).toEqual(['shared.']);
     expect(lines(second, 'vsil-findings')).toEqual(['CAN1: shared.']);
+  });
+
+  it('aborts its check when the intent changes, when the choice goes back to none and when it leaves', async () => {
+    const front = fakeFront();
+    // A check that waits rejects when it is aborted (as `check()` does), and is not shown as a failure
+    front.spies.check.mockImplementation(
+      (_intent?: unknown, options?: { signal?: AbortSignal }) =>
+        new Promise<CheckResult>((_, reject) =>
+          options?.signal?.addEventListener('abort', () => reject(options.signal!.reason)),
+        ),
+    );
+    const signal = (n: number) =>
+      (front.spies.check.mock.calls[n]![1] as { signal: AbortSignal }).signal;
+    pageIntent.update({ connect: { ETH_EXT: 'eth0' } });
+    const part = await mount('vsil-connect', front, { network: 'ETH_EXT' });
+    await settleCheck();
+    expect(signal(0).aborted).toBe(false);
+    // The screen changed the intent: the check of the intent before is not wanted
+    pageIntent.update({ speed: 2 });
+    expect(signal(0).aborted).toBe(true);
+    await settleCheck();
+    expect(front.spies.check).toHaveBeenCalledTimes(2);
+    expect(lines(part, 'vsil-findings')).toEqual([]);
+    // Back to SIL Kit only
+    choose(part.querySelector('select')!, 'none');
+    expect(signal(1).aborted).toBe(true);
+    pageIntent.update({ connect: { ETH_EXT: 'eth0' } });
+    await settleCheck();
+    // The part leaves
+    part.remove();
+    expect(signal(2).aborted).toBe(true);
+    await settleCheck();
+    expect(front.spies.check).toHaveBeenCalledTimes(3);
+    expect(lines(part, 'vsil-findings')).toEqual([]);
+    pageIntent.update({ speed: undefined });
   });
 
   it('drops the answer of a check that a newer choice has overtaken', async () => {
@@ -441,7 +476,7 @@ describe('<vsil-connect>', () => {
     await settleCheck();
     expect(front.spies.check).toHaveBeenCalledWith(
       { connect: { ETH_EXT: 'eth0' } },
-      { file: 'connect.yaml' },
+      { file: 'connect.yaml', signal: expect.any(AbortSignal) },
     );
     part.setAttribute('file', 'other.yaml');
     await settle();

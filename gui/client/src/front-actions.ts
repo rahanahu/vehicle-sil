@@ -79,6 +79,10 @@ interface Waiting {
   reject: (error: ActionError) => void;
 }
 
+/** Why a check that waited was not sent. */
+const closedCheck = () =>
+  new ActionError('closed', 'the client was closed before the check was sent', 'refused');
+
 /** A check that waits for its turn or is on its way. */
 interface QueuedCheck {
   /** The request as JSON: a check of the same request shares this one. */
@@ -119,6 +123,9 @@ export class FrontActions {
   private readonly inFlight = new Map<'stop' | 'force_stop', Promise<void>>();
   /** The checks not answered yet, in the order they are sent: the first is on its way, the others wait. */
   private readonly checks: QueuedCheck[] = [];
+  /** Rejects when the client closes: a check that waits ends with it. */
+  private close: (error: ActionError) => void = () => undefined;
+  private readonly closing = new Promise<never>((_, reject) => (this.close = reject));
   private nextId: number;
   private lastSim: number | null = null;
   private readonly stops: (() => void)[] = [];
@@ -133,6 +140,7 @@ export class FrontActions {
     idStart: number = 1 + Math.floor(Math.random() * 2 ** 40),
   ) {
     this.nextId = idStart;
+    this.closing.catch(() => undefined); // no check may wait when the client closes
     this.busyValue = new Writable<ReadonlySet<OperationName>>(new Set(), Object.is, src.onError);
     this.failureValue = new Writable<Failure | null>(null, Object.is, src.onError);
     this.busy = this.busyValue.readonly();
@@ -157,19 +165,23 @@ export class FrontActions {
    * Checks what `intent` would start (`api/check`). Its failure is the caller's: it is not kept for `status.problem`.
    * One check at a time: a check is sent after the answer to the one before (the server runs them one at a time, and
    * refuses with `check-busy` when too many wait). A check of the same request as one that waits or is on its way
-   * shares it (the parts and the screen of a page check the same page intent). A check whose callers have all aborted
-   * (`signal`) while it waits is not sent.
+   * shares it (the parts and the screen of a page check the same page intent); with `fresh`, only one that waits (a
+   * check that the user asks for again reads the file as it is now). A check whose callers have all aborted
+   * (`signal`) while it waits is not sent, and neither is one that waits when the client closes (`closed`).
    */
   check(
     intent: Intent = {},
-    options: { file?: string; signal?: AbortSignal } = {},
+    options: { file?: string; signal?: AbortSignal; fresh?: boolean } = {},
   ): Promise<CheckResult> {
     const request = this.requestOf(intent, options);
     if (request instanceof ActionError) return Promise.reject(request);
+    if (this.disposed) return Promise.reject(closedCheck());
     const signal = options.signal ?? null;
     if (signal?.aborted) return Promise.reject(signal.reason as Error);
     const key = JSON.stringify(request);
-    const going = this.checks.find((c) => c.key === key);
+    const going = this.checks.find(
+      (c) => c.key === key && !(options.fresh && c === this.checks[0]),
+    );
     if (going) {
       going.callers.push(signal);
       return going.promise;
@@ -181,10 +193,14 @@ export class FrontActions {
       });
     const before = this.checks.at(-1)?.done;
     const promise = before
-      ? before.then(() => {
-          const aborted = callers.every((s) => s?.aborted) ? callers[0] : null;
-          return aborted ? Promise.reject(aborted.reason as Error) : send();
-        })
+      ? Promise.race([
+          before.then(() => {
+            if (this.disposed) return Promise.reject(closedCheck());
+            const aborted = callers.every((s) => s?.aborted) ? callers[0] : null;
+            return aborted ? Promise.reject(aborted.reason as Error) : send();
+          }),
+          this.closing,
+        ])
       : send();
     const leave = () => {
       this.checks.splice(
@@ -531,10 +547,11 @@ export class FrontActions {
     return Promise.reject(this.record(error));
   }
 
-  /** Stops waiting (the client closes): what is waiting ends as unknown. */
+  /** Stops waiting (the client closes): what is waiting ends as unknown, and a check that waits is not sent. */
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.close(closedCheck());
     for (const stop of this.stops) stop();
     for (const w of [...this.waiting.values()]) {
       this.settle(

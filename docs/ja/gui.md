@@ -1277,7 +1277,7 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 
 **照合と開始のリクエスト**:
 
-- 選ばないものは、フィールドを書きません（サーバーは `null` を断ります）。フィールドは、ランチャーの要求ファイルのキーで、名前と値の形も同じです（`variant`、`params`、`scenario`、`disable`、`enable`、`manual`、`strict`、`speed`、`start_paused`。照合は、外につないだ実行の時刻の決まりに速度と `start_paused` を使います）。構成ファイルに照らして何を意味するかは、ランチャーが照合の所見で言います。
+- 選ばないものは、フィールドを書きません（サーバーは `null` を断ります）。フィールドは、ランチャーの要求ファイルのキーで、名前と値の形も同じです（`variant`、`params`、`scenario`、`disable`、`enable`、`manual`、`strict`、`speed`、`start_paused`）。照合は、速度と `start_paused` を開始と同じに判じます: 外につないで実時間を保つ実行は、等速以外の速度と `start_paused` を断り（`outside-real-time`）、速度のある照合は、警告 `coarse-time-step` を実行に任せます（実行がその速度で出します。[simulation-run.md](simulation-run.md#タイムステップと-ecu-のステップ) の「タイムステップと ECU のステップ」）。構成ファイルに照らして何を意味するかは、ランチャーが照合の所見で言います。
 - `manual` に `disable` の名前を入れません（ランチャーが拒否します）。
 - シナリオを選んだら `start_paused` は偽にします（シナリオは止めた状態では開始できません）。
 - 照合は、前の照合のレスポンスを待ってから送ります（サーバーは 1 つずつ実行します）。正面の口の `check()` はこれを代わりに行い、待っているか送っている途中の、同じ意図と同じファイルの照合を分け合います。下の口の `client.check()` では自分で行います。

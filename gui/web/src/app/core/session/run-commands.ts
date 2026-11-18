@@ -33,10 +33,15 @@ export class RunCommands {
 
   /**
    * `file` を `intent` で照合する（正面の口の `check`: 1 つずつ送り、同じ意図の照合は分け合う。`signal` が中断した
-   * 照合は、待っている間なら送らない）。失敗は呼んだ側のもの（error には出さない）。
+   * 照合は、待っている間なら送らない。`fresh` なら、送っている最中の照合は分け合わない）。失敗は呼んだ側のもの
+   * （error には出さない）。
    */
-  check(intent: Intent, file: string, signal?: AbortSignal): Promise<CheckResult> {
-    return this.front.check(intent, { file, ...(signal ? { signal } : {}) });
+  check(
+    intent: Intent,
+    file: string,
+    options: { signal?: AbortSignal; fresh?: boolean } = {},
+  ): Promise<CheckResult> {
+    return this.front.check(intent, { file, ...options });
   }
 
   /** `file` の実行を `intent` で始める。断られたら error に出る。 */

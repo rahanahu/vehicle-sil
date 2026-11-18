@@ -1269,7 +1269,7 @@ The library does not enforce these rules for you. The sample screens follow them
 
 **Check and start requests**:
 
-- A choice that is not made is a field that is left out: the server refuses `null`. The fields are the keys of the launcher's request file, with its names and value forms (`variant`, `params`, `scenario`, `disable`, `enable`, `manual`, `strict`, `speed`, `start_paused`; a check uses the speed and `start_paused` for the time of a run that is connected outside). What they mean for the configuration file is the launcher's to say, as findings of the check.
+- A choice that is not made is a field that is left out: the server refuses `null`. The fields are the keys of the launcher's request file, with its names and value forms (`variant`, `params`, `scenario`, `disable`, `enable`, `manual`, `strict`, `speed`, `start_paused`). A check judges the speed and `start_paused` as the start would: a run connected outside that keeps real time refuses a speed other than 1 and `start_paused` (`outside-real-time`), and a check with a speed leaves the warning `coarse-time-step` to the run, which reports it for that speed (see "Time steps and ECU steps" in [simulation-run.md](simulation-run.md#time-steps-and-ecu-steps)). What they mean for the configuration file is the launcher's to say, as findings of the check.
 - Do not put a name from `disable` into `manual` (the launcher refuses it).
 - If a scenario is selected, set `start_paused` to false (a scenario cannot start paused).
 - Send a check only after the response to the previous check (the server runs checks one at a time). The front door's `check()` does this for you, and shares a check of the same intent and file that waits or is on its way; do it yourself with the low-level `client.check()`.

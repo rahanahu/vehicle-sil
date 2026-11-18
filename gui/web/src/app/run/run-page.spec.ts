@@ -354,10 +354,50 @@ describe('RunPage', () => {
     expect(text(fixture, 'check-participant-Dashboard')).toContain('外した');
     http.expectNone('api/check');
 
-    // ページを離れたら、画面が書いた欄は消える（外につなぐ先は部品が消す）
+    // ページを離れたら、画面が書いた欄は消える（外につなぐ先は部品のもの: 部品が外れるときに消す）
     fixture.destroy();
-    pageIntent.update({ connect: undefined });
-    expect(pageIntent.get()).toEqual({});
+    try {
+      expect(Object.keys(pageIntent.get())).toEqual(['connect']);
+    } finally {
+      pageIntent.update({ connect: undefined });
+    }
+  });
+
+  it('writes the choices of another file when the file changes, and writes nothing while a run goes on', async () => {
+    const fixture = await openWithFiles();
+    (await checkRequest()).flush(response('check-passed'));
+    await fixture.whenStable();
+    toggle(fixture, 'Dashboard');
+    expect(pageIntent.get()).toMatchObject({ disable: ['Dashboard'] });
+    const page = fixture.componentInstance as unknown as {
+      selectFile(file: string): void;
+      running(): boolean;
+    };
+    // 別のファイル: 外す participant はそのファイルの選択（ここでは空）に戻り、それを書く
+    page.selectFile('forever.yaml');
+    TestBed.tick();
+    expect(pageIntent.get()).toMatchObject({ disable: [] });
+    page.selectFile('bad-lines.yaml');
+    TestBed.tick();
+    for (const request of http.match('api/check')) request.flush(response('check-passed'));
+
+    // 走っている間は書かない（画面の外で書かれた値もそのまま）。終わったら、いまの選択を書く
+    pageIntent.update({ disable: ['Other'] });
+    const messages = server('ws-participant-crash');
+    // 実行が始まったところまで（要約と最初の事象）
+    for (const message of messages.slice(2, 6)) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(page.running()).toBe(true);
+    expect(pageIntent.get()).toMatchObject({ disable: ['Other'] });
+    for (const message of messages.slice(6)) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(page.running()).toBe(false);
+    expect(pageIntent.get()).toMatchObject({ disable: [] });
+    await sleep(CHECK_DELAY_MS + 20);
+    for (const request of http.match('api/check')) request.flush(response('check-passed'));
+    answerScenarios();
   });
 
   it('checks the speed and the paused start with the rest, and does not start on what the check refuses', async () => {

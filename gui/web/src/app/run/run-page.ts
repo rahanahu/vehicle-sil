@@ -420,11 +420,14 @@ export class RunPage {
 
   /** 照合し直すよう頼んだ回数（同じ組み合わせでも照合し直すため）。 */
   private readonly rechecks = signal(0);
+  /** 最後に送った照合の rechecks（それより後に頼んだ「照合し直す」は、新しく送る）。 */
+  private checkedAgain = 0;
 
   /**
    * 選んだファイルを次の実行の意図で照合する。切り替えたら（速度を打ったら）CHECK_DELAY_MS 待ってから 1 回。正面の口が、
    * 前の照合の応答を待ってから送り、同じ意図の照合（部品 <vsil-connect> のもの）を分け合う。待っている間に意図が
-   * 変わったら送らず（`signal`）、古い応答は捨てる。ランチャーが動いている間は照合しない。
+   * 変わったら送らず（`signal`）、古い応答は捨てる。「照合し直す」の照合は、送っている最中の照合を分け合わない
+   * （`fresh`。直したファイルを読む）。ランチャーが動いている間は照合しない。
    */
   protected readonly check = resource({
     params: () => {
@@ -434,7 +437,12 @@ export class RunPage {
     },
     loader: async ({ params, abortSignal }) => {
       await wait(CHECK_DELAY_MS, abortSignal);
-      const result = await this.run.check(params.intent, params.file, abortSignal);
+      const fresh = params.again !== this.checkedAgain;
+      this.checkedAgain = params.again;
+      const result = await this.run.check(params.intent, params.file, {
+        signal: abortSignal,
+        fresh,
+      });
       abortSignal.throwIfAborted();
       return result;
     },

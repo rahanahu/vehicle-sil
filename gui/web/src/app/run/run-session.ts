@@ -67,8 +67,12 @@ export class RunSession {
   }
 
   /** `file` を `intent` で照合する（RunCommands.check）。 */
-  check(intent: Intent, file: string, signal?: AbortSignal): Promise<CheckResult> {
-    return this.commands.check(intent, file, signal);
+  check(
+    intent: Intent,
+    file: string,
+    options: { signal?: AbortSignal; fresh?: boolean } = {},
+  ): Promise<CheckResult> {
+    return this.commands.check(intent, file, options);
   }
 
   /** `file` の実行を `intent` で始める。 */

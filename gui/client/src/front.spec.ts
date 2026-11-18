@@ -1427,6 +1427,37 @@ describe('the front door', () => {
       rig.http.expectNone('api/check');
     });
 
+    it('sends the next check after a refused one, checks again afresh when asked, and sends no waiting check after close', async () => {
+      const rig = await open();
+      const file = { file: 'connect.yaml' };
+      const passed = (await httpExamples()).find((e) => e.name === 'check-connect')!.response;
+      const busy = rig.front.check({ disable: ['A'] }, file).catch((e: unknown) => e);
+      const going = rig.http.expectOne('api/check');
+      // Asked again by the user: not the answer on its way (it may have read the file before it was fixed)
+      const fresh = rig.front.check({ disable: ['A'] }, { ...file, fresh: true });
+      // ... but a check that waits is shared
+      expect(rig.front.check({ disable: ['A'] }, { ...file, fresh: true })).toBe(fresh);
+      rig.http.expectNone('api/check');
+      going.flush(
+        { error: { code: 'check-busy', message: 'checks are waiting.', detail: null } },
+        { status: 503, statusText: 'Service Unavailable' },
+      );
+      expect(await busy).toMatchObject({ code: 'check-busy' });
+      // A refused check does not hold up the next one
+      const again = await vi.waitFor(() => rig.http.expectOne('api/check'));
+      expect(again.request.body).toEqual({ file: 'connect.yaml', disable: ['A'] });
+      again.flush(passed);
+      await fresh;
+      // Closed while one is on its way: the one that waits is not sent
+      void rig.front.check({ disable: ['B'] }, file).catch(() => undefined);
+      rig.http.expectOne('api/check');
+      const waiting = rig.front.check({ disable: ['C'] }, file).catch((e: unknown) => e);
+      rig.front.close();
+      expect(await waiting).toMatchObject({ code: 'closed', outcome: 'refused' });
+      await expect(rig.front.check({}, file)).rejects.toMatchObject({ code: 'closed' });
+      rig.http.expectNone('api/check');
+    });
+
     it('refuses to check an intent with a field it does not know, without sending', async () => {
       const rig = await open();
       const misspelt = { conect: { ETH_EXT: 'fake0' } } as unknown as Parameters<
