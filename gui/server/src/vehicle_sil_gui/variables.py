@@ -10,7 +10,13 @@ grows without a limit:
 - of the operations (the writes and their results) the last Limits.operations are kept; every change of one is
   sent to the screens, kept or not. The summary has the open ones that are kept and the last few, and says from
   which number on it has them all (operations_from_seq) and how many open ones are not kept
-  (operations_open_omitted): a screen that connects again can tell a result it missed from one still to come.
+  (operations_open_omitted): a screen that connects again can tell a result it missed from one still to come;
+- of the availability of the variables (whether the ECU uses each now) the latest state of each peer's
+  incarnation, apart from the schema: a peer told again (connected or not, its SIL Kit state) keeps it, and only
+  another incarnation (another process) starts again from the states its schema declares. It is information
+  only: the writes, the values and the watches do not look at it. Each variable of the summary has its state, and
+  an `availability` message tells the peers whose states changed, once for the changes of a short time
+  (TOLD_TOGETHER_S), after the summary that named their variables.
 
 The values and their time are read together (Source.read_snapshot: the control server's GetSnapshot), and only
 such a read says of which moment values are. Each peer remembers the read its values are from (_Read). A `values`
@@ -32,7 +38,8 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .source import LATE_POLICIES, OperationInfo, PeerInfo, Sample, SnapshotInfo, Source, SourceError, TimeInfo
+from .source import (AVAILABILITY, LATE_POLICIES, OperationInfo, PeerInfo, Sample, SnapshotInfo, Source, SourceError,
+                     TimeInfo)
 
 OFF, CONNECTING, READY, FAILED, ENDED = "off", "connecting", "ready", "failed", "ended"
 NS_PER_MS = 1_000_000
@@ -46,6 +53,7 @@ WRITE_KEYS = ("session", "writes", "at_ms", "late")
 FORGOTTEN_OPEN = 100_000  # numbers kept of open operations that were forgotten (they get their end with the run)
 STANDING_READ_S = 0.25  # while it stands still with every value read, the watched peers are read this often
 READ_FAILURES = 3  # reads in a row that gave nothing, before the summary says so (state ready, with a reason)
+TOLD_TOGETHER_S = 0.05  # the changes of the summary, and of the availability, of this long are told in one message
 
 log = logging.getLogger("vehicle_sil_gui")
 
@@ -94,7 +102,7 @@ class _Read:
 
 class _Peer:
     __slots__ = ("name", "incarnation", "connected", "variables", "index", "types", "slots", "sample", "decoded",
-                 "version", "read")
+                 "version", "read", "declared", "states")
 
     def __init__(self, name: str):
         self.name = name
@@ -108,6 +116,13 @@ class _Peer:
         self.decoded: dict[str, object] | None = None  # the sample's values by name (made when first asked for)
         self.version = 0  # counts the samples taken
         self.read: _Read | None = None  # the read that `sample` (or its absence) is from (None: not from a read)
+        self.declared: list[str | None] = []  # the availability each variable starts with (None: does not report)
+        self.states: list[str] | None = None  # as `incarnation` last told it (None: nothing told: as declared)
+
+    def availability(self) -> list[str]:
+        """The availability of each variable now, in the source's order ("active": one that does not report)."""
+        states = self.states if self.states is not None and len(self.states) == len(self.declared) else self.declared
+        return [s if d is not None else "active" for s, d in zip(states, self.declared)]
 
     def values(self) -> dict[str, object]:
         if self.decoded is None:
@@ -199,6 +214,12 @@ class Variables:
         self._read_failures = 0  # reads in a row that gave nothing
         self.was_ready = False
         self._schema_timer: asyncio.TimerHandle | None = None
+        self._availability_timer: asyncio.TimerHandle | None = None
+        self._availability_changed: set[str] = set()  # peers whose availability is not told yet
+        # The latest availability the source told of each peer, with its incarnation, also of an incarnation that
+        # is not the peer's here now (a peer not taken yet, or a list that arrived late): when the peer comes to that
+        # incarnation, it starts from these states instead of the declared ones, which the source does not tell again.
+        self._told_availability: dict[str, tuple[str, list[str]]] = {}
         self._reconciling: asyncio.Task | None = None
         self._last_read: asyncio.Task | None = None
         self._lost: str | None = None  # why the connection was last lost
@@ -281,9 +302,36 @@ class Variables:
             self._schema_timer.cancel()
             self._schema_timer = None
         if soon and not self._closed:
-            self._schema_timer = asyncio.get_running_loop().call_later(0.05, self._tell_schema)
+            self._schema_timer = asyncio.get_running_loop().call_later(TOLD_TOGETHER_S, self._tell_schema)
             return
+        self._availability_changed.clear()  # the summary has every variable's availability
         self._emit([self.message()])
+
+    def _tell_availability(self, soon: bool = False) -> None:
+        """Sends the availability of the peers whose availability changed: of each, the states of all its variables
+        that report (by name; it replaces what was sent of the peer before). soon: once for the changes of a short
+        time. A summary that is due goes instead (it has the states too, and names the variables they are of)."""
+        if soon:
+            if self._availability_timer is None and not self._closed:
+                self._availability_timer = asyncio.get_running_loop().call_later(TOLD_TOGETHER_S,
+                                                                                 self._tell_availability)
+            return
+        if self._availability_timer is not None:
+            self._availability_timer.cancel()
+            self._availability_timer = None
+        if self._schema_timer is not None:
+            self._tell_schema()
+            return
+        changed, self._availability_changed = self._availability_changed, set()
+        peers = {}
+        for peer in self.peers.values():
+            if peer.name in changed:
+                states = {v["name"]: v["availability"] for v, d in zip(peer.slots, peer.declared)
+                          if v is not None and d is not None}
+                if states:
+                    peers[peer.name] = states
+        if peers:
+            self._emit([{"type": "availability", "session": self.session_id, "peers": peers}])
 
     # ------------------------------------------------------------ from the source (on the event loop)
 
@@ -292,6 +340,7 @@ class Variables:
         for name in removed:
             self.peers.pop(name, None)
             self._too_large.discard(name)
+            self._told_availability.pop(name, None)
             if self._since_lost is not None:
                 self._since_lost.discard(name)
         for info in peers:
@@ -304,10 +353,16 @@ class Variables:
                 peer = self.peers[info.name] = _Peer(info.name)
             if peer.incarnation != info.incarnation:  # another process under the name: its values are not these
                 peer.sample, peer.decoded, peer.read = None, None, None
+                # nor its availability: it starts from what it declares, or from what the source told of it already
+                told = self._told_availability.get(info.name)
+                peer.states = list(told[1]) if told is not None and told[0] == info.incarnation else None
                 peer.version += 1
                 self._too_large.discard(peer.name)
             peer.incarnation, peer.connected = info.incarnation, info.connected
             self._take_schema(peer, info.variables)
+            peer.declared = [v.get("availability") if v.get("availability") in AVAILABILITY else None
+                             for v in info.variables]
+            self._show_availability(peer)
             if self._since_lost is not None:
                 self._since_lost.add(info.name)
         self._count_omitted(peers, removed)
@@ -344,6 +399,11 @@ class Variables:
                 peer.sample, peer.read = None, None
                 peer.version += 1
 
+    def _show_availability(self, peer: _Peer) -> None:
+        for entry, state in zip(peer.slots, peer.availability()):
+            if entry is not None:
+                entry["availability"] = state
+
     def _variable(self, v: dict) -> dict | None:
         name, type_, role, items = v.get("name"), v.get("type"), v.get("role"), v.get("enum") or []
         if not isinstance(name, str) or not 0 < len(name) <= self.limits.name_chars or type_ not in TYPES or \
@@ -355,6 +415,27 @@ class Variables:
                 "min": _finite_or_none(v.get("min")), "max": _finite_or_none(v.get("max")),
                 "step": _finite_or_none(v.get("step")), "description": cut(v.get("description"), n),
                 "enum": [{"name": cut(i[0], n), "value": i[1]} for i in items] if type_ == "enum" else None}
+
+    def on_availability(self, name: str, incarnation: str, states: list[str]) -> None:
+        """The availability of every variable of a peer now (source.Sink). Dropped when it is of another
+        incarnation than the peer's now (of the process before it, or of one not told yet), when it does not fit
+        the schema, and for a peer none of whose variables report."""
+        if self._closed:
+            return
+        states = [s if s in AVAILABILITY else "active" for s in states]
+        self._told_availability[name] = (incarnation, states)
+        peer = self.peers.get(name)
+        if peer is None or incarnation != peer.incarnation or len(states) != len(peer.declared) \
+                or all(d is None for d in peer.declared):
+            return
+        before = peer.availability()
+        peer.states = list(states)
+        if peer.availability() == before:  # sent again, unchanged
+            return
+        self._show_availability(peer)
+        if self.state in (READY, ENDED):
+            self._availability_changed.add(name)
+            self._tell_availability(soon=True)
 
     def on_samples(self, samples: dict[str, Sample]) -> None:
         """Samples the source tells by itself (the control server is not asked to). They are the peers' latest
@@ -631,6 +712,9 @@ class Variables:
         if self._schema_timer is not None:
             self._schema_timer.cancel()
             self._schema_timer = None
+        if self._availability_timer is not None:
+            self._availability_timer.cancel()
+            self._availability_timer = None
         if self.source is not None:
             try:
                 await self.source.close()
@@ -668,8 +752,8 @@ class Variables:
         else:
             self._set_state(FAILED, (self._lost + " until the run ended") if self._lost else
                             "the run ended before the variables were read", tell=False)
-        if open_ones or self.summary() != before:
-            self._emit([self.message()])
+        if open_ones or self._availability_changed or self.summary() != before:
+            self._tell_schema()  # with the availability not told yet
 
     # ------------------------------------------------------------ values for a watch
 

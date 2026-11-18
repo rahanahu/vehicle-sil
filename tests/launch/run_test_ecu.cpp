@@ -43,6 +43,16 @@
 //                           level it has now; -1 before a change), "mode_now" (the mode, as an
 //                           enum) and "pulse" (true in the step at 200 ms only). A level of 13
 //                           is refused (the setter throws)
+//   availability            an ECU that decides in its first steps which inputs and outputs it uses
+//                           (as one that reads a configuration from its non-volatile memory): the
+//                           parameter "nvm.profile" (bit i: "io.in<i>" and "io.out<i>" are used; 1 at
+//                           first), the inputs "io.in0" and "io.in1", the outputs "io.out0" and "io.out1"
+//                           (twice the input, in every step, used or not) and "nvm.decided" (true from
+//                           its third 10 ms step on). The four io variables report their availability,
+//                           Unknown at first; in its third step it sets them Active or Inactive by the
+//                           profile
+//   availability-silent     the same variables and steps without reporting the availability (declared
+//                           without it, never set)
 //   request                 declares the input "request" (a bool that always reads false; its setter
 //                           counts every write, whatever its value) and the output "requests" (the
 //                           writes counted so far)
@@ -78,6 +88,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -252,6 +263,20 @@ public:
                     }
                 });
             }
+            else if (word == "availability" || word == "availability-silent")
+            {
+                nvm_report_ = word == "availability";
+                const std::optional<vehicle_sil::control::Availability> declared =
+                    nvm_report_ ? std::optional(vehicle_sil::control::Availability::Unknown) : std::nullopt;
+                ecu.input("nvm.profile", &nvm_profile_, {.parameter = true});
+                for (std::size_t i = 0; i < nvm_in_.size(); ++i)
+                {
+                    ecu.input("io.in" + std::to_string(i), &nvm_in_[i], {.availability = declared});
+                    ecu.output("io.out" + std::to_string(i), &nvm_out_[i], {.availability = declared});
+                }
+                ecu.output("nvm.decided", &nvm_decided_);
+                ecu.every(10ms, [this, &ecu](vehicle_sil::SimTime) { nvm_step(ecu); });
+            }
             else if (word == "request")
             {
                 ecu.input("request", [] { return false; }, [this](bool) { ++requests_; });
@@ -373,6 +398,27 @@ public:
     }
 
 private:
+    /// One step of the availability ECU: the configuration is decided in the third step.
+    void nvm_step(vehicle_sil::Ecu& ecu)
+    {
+        for (std::size_t i = 0; i < nvm_in_.size(); ++i)
+        {
+            nvm_out_[i] = nvm_in_[i] * 2;
+        }
+        if (++nvm_steps_ != 3)
+        {
+            return;
+        }
+        nvm_decided_ = true;
+        for (std::size_t i = 0; nvm_report_ && i < nvm_in_.size(); ++i)
+        {
+            const auto state = ((nvm_profile_ >> i) & 1) != 0 ? vehicle_sil::control::Availability::Active
+                                                             : vehicle_sil::control::Availability::Inactive;
+            ecu.set_availability("io.in" + std::to_string(i), state);
+            ecu.set_availability("io.out" + std::to_string(i), state);
+        }
+    }
+
     std::string name_;
     bool pid_ = false;
     std::string grandchild_;
@@ -399,6 +445,12 @@ private:
     std::int64_t mode_ = 0;
     bool pulse_ = false;
     std::int64_t requests_ = 0;
+    bool nvm_report_ = false;
+    std::int64_t nvm_profile_ = 1;
+    std::array<std::int64_t, 2> nvm_in_{};
+    std::array<std::int64_t, 2> nvm_out_{};
+    bool nvm_decided_ = false;
+    int nvm_steps_ = 0;
     std::vector<vehicle_sil::can::RawChannel*> talk_{};
     std::vector<vehicle_sil::j1939::Node*> nodes_{};
     bool heard_ = false;

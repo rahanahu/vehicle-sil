@@ -444,7 +444,7 @@ If only one of `scale` and `offset` is written, the other has its default, 1 or 
 | `from`, `address`, `identity_number`, `function_instance`, `ecu_instance` | The values written, as numbers (`null` if not written) |
 | `node` | The node that the entry takes: `coded_address` (its address in the executable's code, as `address` in `reported`), then `address`, `j1939_name` and `arbitrary_address_capable` after the entry (in the same form as the nodes in `reported`). `null` for an entry that takes no node, an entry that changes nothing, and a participant that was not described |
 
-**`control`**: The keys are `transport` (currently `"silkit"`) and `wire_version` (the message format version). It is `null` for a participant that does not report `control` (`--no-control`, an old executable), and for a participant that was not checked, failed or is disabled.
+**`control`**: The keys are `transport` (currently `"silkit"`), `wire_version` (the message format version) and `wire_revision` (the revision of that format; 0 for an executable whose `--describe` does not say it). It is `null` for a participant that does not report `control` (`--no-control`, an old executable), and for a participant that was not checked, failed or is disabled.
 
 Keys of each element of `networks[]` and `findings[]`:
 
@@ -573,7 +573,8 @@ participants:
       "j1939_nodes": null,
       "control": {
         "transport": "silkit",
-        "wire_version": 2
+        "wire_version": 2,
+        "wire_revision": 1
       }
     }
   ],
