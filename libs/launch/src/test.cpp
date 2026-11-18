@@ -181,12 +181,14 @@ std::vector<Finding> unused_params(const std::vector<TestScenario>& scenarios, c
     std::vector<std::string> names;
     for (const TestScenario& scenario : scenarios)
     {
+        // By the name each run reads it by.
+        const std::filesystem::path path = process::path_from_utf8(scenario.shown);
         std::error_code ec;
-        if (!std::filesystem::is_regular_file(scenario.path, ec) || std::filesystem::file_size(scenario.path, ec) > kMaxScenarioBytes)
+        if (!std::filesystem::is_regular_file(path, ec) || std::filesystem::file_size(path, ec) > kMaxScenarioBytes)
         {
             return {};
         }
-        std::ifstream in(scenario.path, std::ios::binary);
+        std::ifstream in(path, std::ios::binary);
         if (!in)
         {
             return {};
@@ -196,7 +198,7 @@ std::vector<Finding> unused_params(const std::vector<TestScenario>& scenarios, c
         context.params = configured;
         context.params.insert(context.params.end(), given.begin(), given.end());
         context.params_for_many = true;
-        context.read_file = files_beside(scenario.path);
+        context.read_file = files_beside(path);
         // Without the participants: the errors about the variables are not looked at.
         const ScenarioRead read = read_scenario(text, {}, context);
         for (const Finding& finding : read.findings)
@@ -340,6 +342,28 @@ std::string variants_text(const std::vector<std::string>& variants)
 
 } // namespace
 
+namespace {
+
+/// What goes between the directory `one` (`path`: the same as a path) and the name of a file in
+/// it, so that the result names that file (as `path / name` does) and reads as the user wrote the
+/// directory: "/" wherever that is so. Nothing after a separator, and nothing after a drive alone
+/// (Windows "C:": the files of the drive's current directory are "C:<name>"; "C:/<name>" is in its
+/// root). A path that Windows takes as written ("\\?\...") has no "/": there it is "\".
+std::string separator_after(const std::string& one, const std::filesystem::path& path)
+{
+    if (!one.empty() && (one.back() == '/' || one.back() == '\\'))
+    {
+        return "";
+    }
+    if (path.has_root_name() && !path.has_root_directory() && path.relative_path().empty())
+    {
+        return "";
+    }
+    return one.rfind("\\\\?\\", 0) == 0 ? "\\" : "/";
+}
+
+} // namespace
+
 ScenarioList list_scenarios(const std::vector<std::string>& given)
 {
     ScenarioList out;
@@ -356,10 +380,10 @@ ScenarioList list_scenarios(const std::vector<std::string>& given)
                                            "current directory, as the configuration file is)"));
                 continue;
             }
-            out.scenarios.push_back(TestScenario{path, one});
+            out.scenarios.push_back(TestScenario{one});
             continue;
         }
-        std::vector<std::pair<std::string, std::filesystem::path>> found; // the name as UTF-8, the file
+        std::vector<std::string> found; // the names as UTF-8
         std::filesystem::directory_iterator it(path, ec);
         for (; !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
         {
@@ -367,7 +391,7 @@ ScenarioList list_scenarios(const std::vector<std::string>& given)
             std::string name = process::utf8_from_path(it->path().filename());
             if (it->is_regular_file(ignored) && is_scenario_name(name))
             {
-                found.emplace_back(std::move(name), it->path());
+                found.push_back(std::move(name));
             }
         }
         if (ec)
@@ -385,11 +409,11 @@ ScenarioList list_scenarios(const std::vector<std::string>& given)
             continue;
         }
         // The order of the names as bytes: the same on every system, whatever order it lists them in.
-        std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-        const bool separated = !one.empty() && (one.back() == '/' || one.back() == '\\');
-        for (auto& [name, file] : found)
+        std::sort(found.begin(), found.end());
+        const std::string between = separator_after(one, path);
+        for (const std::string& name : found)
         {
-            out.scenarios.push_back(TestScenario{std::move(file), one + (separated ? "" : "/") + name});
+            out.scenarios.push_back(TestScenario{one + between + name});
         }
     }
     return out;

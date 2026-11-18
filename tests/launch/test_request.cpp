@@ -155,6 +155,15 @@ std::filesystem::path request_files()
     std::ofstream(dir / "sim.yaml", std::ios::binary) << kSim;
     std::ofstream(dir / "variants.yaml", std::ios::binary) << kVariants;
     std::ofstream(dir / "drive.yaml", std::ios::binary) << kDrive;
+    // A runnable file with the name of a bridge; nothing runs it.
+    std::filesystem::create_directories(dir / "tools");
+#ifdef _WIN32
+    const std::filesystem::path tool = dir / "tools" / "vehicle_sil_ethernet_bridge.exe";
+#else
+    const std::filesystem::path tool = dir / "tools" / "vehicle_sil_ethernet_bridge";
+#endif
+    std::ofstream(tool, std::ios::binary) << "#!/bin/sh\n";
+    std::filesystem::permissions(tool, std::filesystem::perms::owner_all);
     return dir;
 }
 
@@ -242,13 +251,15 @@ TEST_CASE(a_check_reads_every_field_of_the_request_that_is_the_checks)
     r = of_file("sim.yaml");
     r.intent.time_policy = TimePolicy::Free;
     CHECK(!check_file(r).time_lock.locked);
-    // Where the tools are: the first place a bridge is looked for, which the finding of a bridge
-    // that is nowhere names. (An Ethernet bridge on PATH would be found, and this would say so.)
+    // Where the tools are: the first place a bridge is looked for, before PATH. A runnable file of
+    // the bridge's name there is found, whatever is on PATH. (It is not asked: the participants of
+    // the file could not be described.)
     r = of_file("sim.yaml");
     r.intent.connect.push_back({"ETH1", "eth-none0"});
-    CHECK(codes(check_file(r), "connect-tool-missing") == "connect-tool-missing " && !says(check_file(r), "/opt/tools"));
-    r.host.tool_directory = "/opt/tools";
-    CHECK(says(check_file(r), "(/opt/tools)"));
+    r.host.tool_directory = dir / "tools";
+    const CheckReport asked = check_file(r);
+    CHECK(codes(asked, "connect-tool-missing").empty());
+    CHECK(asked.outside.size() == 1 && asked.outside.at(0).tool_path.parent_path() == dir / "tools");
     // The speed and --start-paused of the run that the request asks for, for the time lock; a
     // test's speed is its default, which the check does not judge.
     r = of_file("sim.yaml");

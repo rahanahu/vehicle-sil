@@ -88,6 +88,11 @@ TEST_CASE(the_scenarios_of_a_directory_come_in_the_order_of_their_names)
     std::filesystem::create_directories(dir / "empty");
     const std::string d = dir.generic_string();
     check_text(shown(list_scenarios({d})), d + "/C.JSON\n" + d + "/a.yml\n" + d + "/b.yaml\n");
+    // Each is read by the name it is shown with: the name is that of the file.
+    for (const TestScenario& scenario : list_scenarios({d, d + "/"}).scenarios)
+    {
+        CHECK(std::filesystem::is_regular_file(vehicle_sil::process::path_from_utf8(scenario.shown)));
+    }
     // Files as given, in the order given, also one that is no .yaml and one named twice.
     check_text(shown(list_scenarios({d + "/notes.txt", d + "/", d + "/b.yaml"})),
              d + "/notes.txt\n" + d + "/C.JSON\n" + d + "/a.yml\n" + d + "/b.yaml\n" + d + "/b.yaml\n");
@@ -107,7 +112,7 @@ TEST_CASE(a_test_that_cannot_begin_runs_nothing)
     write(dir / "plain.yaml", kPlain);
     write(dir / "other.yaml", "vehicle_sil_scenario: 1\nsteps:\n  - set: { Engine.level: \"${depth}\" }\n");
     TestOptions options;
-    options.scenarios = {{dir / "plain.yaml", "plain.yaml"}, {dir / "other.yaml", "other.yaml"}};
+    options.scenarios = {{"plain.yaml"}, {"other.yaml"}};
 
     // A file that is not there.
     const TestReport missing = test_in(dir, "none.yaml", options);
@@ -197,7 +202,7 @@ TEST_CASE(a_test_runs_every_variant_with_every_scenario_in_order)
     write(dir / "plain.yaml", kPlain);
     write(dir / "only.yaml", "vehicle_sil_scenario: 1\nonly: [medium]\nsteps:\n  - set: { Engine.level: 1 }\n");
     TestOptions options;
-    options.scenarios = {{dir / "plain.yaml", "plain.yaml"}, {dir / "only.yaml", "only.yaml"}};
+    options.scenarios = {{"plain.yaml"}, {"only.yaml"}};
     std::vector<std::string> lines;
     options.observers.write_line = [&lines](std::string_view line) { lines.emplace_back(line); };
 

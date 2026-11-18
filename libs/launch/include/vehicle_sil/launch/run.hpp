@@ -515,7 +515,7 @@ struct RunObservers
     /// run --events: what happens, as events (events.hpp) instead of write_line(): the phases, the
     /// check, the participants, the lines, the run's findings, the virtual time. run_file() writes
     /// every event but hello and the result (the caller writes them). No call waits for the
-    /// reader of the events. May be null.
+    /// reader of the events. May be null. Borrowed: it outlives run_file().
     EventStream* events = nullptr;
     /// The name of the first interrupt ("SIGINT"), for the result and, without RunLent::controls,
     /// for the state events (RunControls::set_stop_name()). Called from any thread that changes the
@@ -596,8 +596,8 @@ struct RunLimits
 /// whatever became of the scenario) and RunHost::timeout (then the run is aborted:
 /// OutcomeEnd::timed_out). Whether a control server and the commands of standard input were asked
 /// for (RunHost::control, stdin_commands) is the caller's to act on: the run has the server it is
-/// lent (`lent`). The request is read before anything starts and not kept: no thread of the run
-/// reads it, and the caller may destroy it when run_file() has returned or not.
+/// lent (`lent`). The request is read before anything starts and not kept: nothing reads it after
+/// run_file() has returned, also not a closing thread that was left (OutcomeClose::not_closed_ms).
 ///
 /// `check`: of it the run reads `params_for_many` and `fastest_by_default` (a test's runs); a run
 /// never reads the file only.

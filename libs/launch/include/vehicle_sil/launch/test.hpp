@@ -24,9 +24,9 @@ inline constexpr int kTestFormat = 1;
 /// One scenario file of a test.
 struct TestScenario
 {
-    std::filesystem::path path;
-    /// As the outputs name it (UTF-8). It names the same file as `path`: each run of test_file()
-    /// takes it as its scenario (RunIntent::scenario).
+    /// The file as the user could name it (UTF-8), and as the outputs name it: test_file() reads it
+    /// by this name (process::path_from_utf8()), and each run takes it as its scenario
+    /// (RunIntent::scenario).
     std::string shown;
 };
 
@@ -143,6 +143,7 @@ struct TestOptions
     /// For every run: the interrupts (RunLent::stops). Its controls must be null (test_file()
     /// throws std::invalid_argument otherwise): each run makes its own (RunControls serves one run).
     RunLent lent{};
+    /// For every run: the waits that only tests shorten.
     RunLimits limits{};
     /// CheckOptions::fastest_by_default of every run: RunIntent::speed of `request` is the test's
     /// default, not a speed the user asked for.

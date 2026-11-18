@@ -33,6 +33,8 @@ inline std::string lines(const std::vector<Finding>& findings)
 
 /// The working directory is `dir` until it ends: a request names its files as the user wrote
 /// them, and the outputs repeat the names, so a test that compares them stands where its files are.
+/// The working directory is the whole process's: not for a test in which another thread reads a
+/// relative path meanwhile.
 class InDirectory
 {
 public:
@@ -40,7 +42,11 @@ public:
     {
         std::filesystem::current_path(dir);
     }
-    ~InDirectory() { std::filesystem::current_path(before_); }
+    ~InDirectory()
+    {
+        std::error_code ignored; // a destructor must not throw
+        std::filesystem::current_path(before_, ignored);
+    }
     InDirectory(const InDirectory&) = delete;
     InDirectory& operator=(const InDirectory&) = delete;
 
