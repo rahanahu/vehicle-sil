@@ -4,10 +4,9 @@ import {
   Control,
   FrontClock,
   FrontControls,
-  RunOutcome,
+  FrontStatus,
   SessionSummary,
   SessionView,
-  runOutcome,
 } from '@vehicle-sil/gui-client';
 import { sessionViewFrom } from '@vehicle-sil/gui-client/testing';
 import { StopAction } from './run-session';
@@ -21,7 +20,7 @@ const GUARD_MS = 200;
   template: `
     <app-run-status
       [session]="session()"
-      [outcome]="outcome()"
+      [status]="status()"
       [controls]="controls()"
       [clock]="clock()"
       [ready]="ready()"
@@ -92,10 +91,29 @@ class Host {
       speed: { ...idle, min: 0.1, max: 10, fastest: true },
     };
   });
-  outcome(): RunOutcome | null {
+  /** 正面の口の `status` を、この試験で直に決める（null: セッションの写しから組み立てる）。 */
+  readonly statusGiven = signal<FrontStatus | null>(null);
+  /** 正面の口の `status` の代わり: 実行の状態と結果を、この試験のセッションから組み立てる。 */
+  readonly status = computed<FrontStatus>(() => {
+    const given = this.statusGiven();
+    if (given) return given;
     const session = this.session();
-    return session ? runOutcome(session) : null;
-  }
+    const status = (run: FrontStatus['run']): FrontStatus => {
+      const r = run === 'ended' ? session?.result : null;
+      return {
+        link: 'online',
+        run,
+        file: session?.file ?? null,
+        result: r ? { end: r.end, scenario: null, ok: r.ok, message: r.message } : null,
+        problem: null,
+      };
+    };
+    if (!session) return status('none');
+    if (session.result) return status('ended');
+    if (!session.launcher.running) return status('crashed');
+    if (session.stopRequests > 0) return status('stopping');
+    return status(session.launcherState?.paused ? 'paused' : 'running');
+  });
 }
 
 function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
@@ -134,6 +152,9 @@ const ENDED = {
   launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
   result: {
     result: 'passed',
+    end: 'completed',
+    ok: true,
+    message: 'The run reached its end without errors',
     findings: [],
     participants: [],
   } as unknown as SessionSummary['result'],
@@ -380,13 +401,16 @@ describe('RunStatus', () => {
   });
 
   it('shows a run that was stopped or interrupted in a neutral tone, not as a failure', async () => {
-    for (const [name, code, label] of [
-      ['stopped', 'stopped', '操作で停止'],
-      ['incomplete', 'stopped', 'シナリオの途中で停止'],
-      ['interrupted', 'interrupted', '中断'],
+    for (const [name, end, ok, code, label] of [
+      ['stopped', 'stopped', true, 'stopped', '操作で停止'],
+      ['incomplete', 'stopped', false, 'stopped', 'シナリオの途中で停止'],
+      ['interrupted', 'interrupted', false, 'interrupted', '中断'],
     ] as const) {
       const result = {
         result: name,
+        end,
+        ok,
+        message: 'm',
         findings: [{ severity: 'note', code, message: 'm' }],
         participants: [],
       };
@@ -405,6 +429,67 @@ describe('RunStatus', () => {
       expect(query('outcome')?.textContent).toContain(label);
       expect(query('first-error')).toBeNull();
     }
+  });
+
+  it('decides the tone and the words from the result of the front door, and shows an end it has no words for in English', async () => {
+    const ended = (result: object) =>
+      sessionViewFrom(
+        summary({
+          state: 'ended',
+          launcher: { running: false, exit_code: 1, signal: null, silent_s: null },
+          result: {
+            findings: [{ severity: 'error', code: 'participant-failed', message: 'it failed' }],
+            participants: [],
+            ...result,
+          } as unknown as SessionSummary['result'],
+        }),
+      );
+    // 止めた実行でも、誤りがあれば失敗（シナリオの途中で止めた実行とは、結果の名前で分ける）
+    await show(ended({ result: 'failed', end: 'stopped', ok: false, message: 'm' }));
+    expect(query('outcome')?.getAttribute('data-tone')).toBe('bad');
+    expect(query('outcome')?.textContent).toContain('✕');
+    expect(query('outcome')?.textContent).toContain('失敗');
+    expect(query('first-error')?.textContent).toContain('participant-failed: it failed');
+    // end で決まらない結果（何も始めなかった null、新しいランチャーの値）は、結果の名前の日本語
+    for (const end of [null, 'some_new_end']) {
+      await show(ended({ result: 'check_failed', end, ok: false, message: 'm' }));
+      expect(query('outcome')?.getAttribute('data-tone')).toBe('bad');
+      expect(query('outcome')?.textContent).toContain('照合の誤りで起動しなかった');
+      expect(query('outcome')?.querySelector('[lang="en"]')).toBeNull();
+    }
+    // 名前もない（読めない結果、新しい名前）ときだけ、ランチャーの英語の文に lang="en"
+    const message = 'The run ended in a way this screen does not know';
+    for (const result of ['', 'some_new_result']) {
+      await show(ended({ result, end: null, ok: false, message }));
+      expect(query('outcome')?.getAttribute('data-tone')).toBe('bad');
+      expect(query('outcome')?.querySelector('[lang="en"]')?.textContent).toBe(message);
+    }
+    // 前の実行の文の中では、英語の部分だけに lang="en"
+    host.otherFile.set(true);
+    await settle();
+    expect(query('outcome')?.textContent).toContain(`前の実行: ${message}`);
+    expect(query('outcome')?.querySelector('[lang="en"]')?.textContent).toBe(message);
+    host.otherFile.set(false);
+    await show(ended({ result: 'passed', end: 'completed', ok: true, message: 'm' }));
+    expect(query('outcome')?.getAttribute('data-tone')).toBe('good');
+    expect(query('outcome')?.textContent).toContain('✓成功');
+    expect(query('outcome')?.querySelector('[lang="en"]')).toBeNull();
+    expect(query('first-error')).toBeNull();
+  });
+
+  it('follows the run state of the front door: a start from another page, and a launcher that stops by itself', async () => {
+    await show(sessionViewFrom(summary(ENDED)));
+    expect(query('outcome')?.textContent).toContain('成功');
+    // ほかの画面の開始が届くのを待つ間は、前の結果を出さない
+    host.statusGiven.set({ ...host.status(), run: 'starting', result: null });
+    await settle();
+    expect(query('outcome')?.textContent).toContain('始めています');
+    expect(query('outcome')?.getAttribute('data-tone')).toBe('active');
+    // ランチャーが自分で止めている間（stop_at_ms に着いた）は、止めるよう頼んでいないので実行中
+    await show(sessionViewFrom(summary({ phase: 'stopping' })));
+    host.statusGiven.set({ ...host.status(), run: 'stopping' });
+    await settle();
+    expect(query('outcome')?.textContent).toContain('実行中');
   });
 
   it('says when the launcher has written nothing for a while, in a status region that is always there', async () => {
@@ -428,7 +513,14 @@ describe('RunStatus', () => {
   });
 
   it('can stop a launcher that runs on after its result', async () => {
-    const result = { result: 'passed', findings: [], participants: [] };
+    const result = {
+      result: 'passed',
+      end: 'completed',
+      ok: true,
+      message: 'm',
+      findings: [],
+      participants: [],
+    };
     await show(sessionViewFrom(summary({ result: result as unknown as SessionSummary['result'] })));
     expect(stopButton().textContent).toContain('停止');
     expect(stopButton().getAttribute('aria-disabled')).not.toBe('true');

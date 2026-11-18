@@ -4,6 +4,7 @@ import {
   CheckStatus,
   Control,
   ControlLink,
+  FrontResult,
   ParticipantState,
   OperationName,
   Phase,
@@ -73,7 +74,31 @@ const CHECK_OUTCOMES: Record<string, string> = {
 
 export const checkOutcomeLabel = (result: CheckOutcome): string => label(CHECK_OUTCOMES, result);
 
-const RUN_OUTCOMES: Record<string, string> = {
+/**
+ * 止めた実行が、シナリオの終わる前だった（失敗ではない）か。正面の口の `end`（stopped）と `ok`（false）だけでは、
+ * 誤りのあった停止と区別できないので、ランチャーの結果の名前（name）で決める。
+ */
+export const cutShort = (result: FrontResult, name: RunResultName | undefined): boolean =>
+  result.end === 'stopped' && !result.ok && name === 'incomplete';
+
+/**
+ * 結果の色（正面の口の `status.result`）: 利用者や外から止めた実行は中立（失敗の色にしない）、ok なら良い、ほかは悪い。
+ * cut: cutShort。
+ */
+export function resultTone(result: FrontResult, cut: boolean): 'good' | 'neutral' | 'bad' {
+  if (result.end === 'interrupted' || (result.end === 'stopped' && (result.ok || cut)))
+    return 'neutral';
+  return result.ok ? 'good' : 'bad';
+}
+
+/** 色の印（色だけで伝えないよう）。 */
+export const TONE_MARKS = { good: '✓', neutral: '■', bad: '✕' } as const;
+
+/**
+ * `end` で決まらない結果の、ランチャーの結果の名前の言い換え（何も始めなかった `end: null` の結果など）。色と
+ * 「失敗か」は決めない（それは `status.result`）。
+ */
+const RESULT_NAMES: Record<string, string> = {
   passed: $localize`成功`,
   stopped: $localize`操作で停止`,
   incomplete: $localize`シナリオの途中で停止`,
@@ -85,9 +110,37 @@ const RUN_OUTCOMES: Record<string, string> = {
   usage: $localize`引数の誤り`,
 };
 
-/** 結果の名前。読めなかった結果（''）は、そう言う。 */
-export const runOutcomeLabel = (result: RunResultName): string =>
-  result === '' ? $localize`結果の名前を読めません` : label(RUN_OUTCOMES, result);
+/**
+ * 結果の 1 文（正面の口の `status.result` の `end` と `ok` から）。`end` の表にない結果（何も始めなかった null、
+ * 新しいランチャーの値）は、ランチャーの結果の名前（name）の言い換え。それもない（読めない結果、新しい名前）ときだけ、
+ * ランチャーの英語の文（`message`）をそのまま出す（english: `lang="en"` を付ける）。
+ */
+export function resultLine(
+  result: FrontResult,
+  name: RunResultName | undefined,
+): { text: string; english: boolean } {
+  const japanese = (text: string) => ({ text, english: false });
+  switch (result.end) {
+    case 'completed':
+      return japanese(result.ok ? $localize`成功` : $localize`失敗`);
+    case 'stopped':
+      return japanese(
+        result.ok
+          ? $localize`操作で停止`
+          : cutShort(result, name)
+            ? $localize`シナリオの途中で停止`
+            : $localize`失敗`,
+      );
+    case 'interrupted':
+      return japanese($localize`中断`);
+    case 'failed':
+      return japanese($localize`失敗`);
+    case 'setup_failed':
+      return japanese($localize`準備に失敗した`);
+  }
+  const named = name && Object.hasOwn(RESULT_NAMES, name) ? RESULT_NAMES[name] : undefined;
+  return named ? japanese(named) : { text: result.message, english: true };
+}
 
 const SIMULATIONS: Record<string, string> = {
   reached_stop_at: $localize`stop_at_ms まで動いた`,

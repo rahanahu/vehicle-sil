@@ -65,7 +65,11 @@
     @if (summary().mark) {
       <span class="mark" aria-hidden="true">{{ summary().mark }}</span>
     }
-    <span>{{ summary().text }}</span>
+    <span
+      >{{ summary().before
+      }}<span [attr.lang]="summary().english ? 'en' : null">{{ summary().text }}</span
+      >{{ summary().after }}</span
+    >
   </p>
   <!-- 読み上げの領域は、中身が変わる前から置いておく -->
   <p class="silent" role="status" data-testid="silent" [class.shown]="silentSeconds() !== null">
