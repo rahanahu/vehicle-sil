@@ -1555,7 +1555,7 @@ TEST_CASE(the_participants_in_real_time_are_the_described_ecus_and_test_particip
     config.participants[1].role = launch::ParticipantRole::Test;
     config.participants[3].role = launch::ParticipantRole::Bridge; // a bridge locks the time: not one of them
     config.participants[4].enabled = false;
-    config.participants[5].for_network = "CAN"; // a bridge of --connect
+    config.participants[5].role = launch::ParticipantRole::Bridge; // as is a bridge of --connect (with_bridges())
     // Ecu0 and Ecu1 (a test participant) describe no step; Ecu2 has one; Ecu6 is not described.
     const std::vector<std::string> peers =
         launch::detail::real_time_peers(config, described(config, {0, 0, 10'000, 0, 0, 0, -1}));
@@ -2245,9 +2245,9 @@ TEST_CASE(with_bridges_adds_a_participant_for_each_connected_network_after_those
     {
         return;
     }
-    CHECK(run.config->participants[0].name == "Engine" && run.config->participants[0].for_network.empty());
+    CHECK(run.config->participants[0].name == "Engine" && run.config->participants[0].role == ParticipantRole::Ecu);
     const ParticipantConfig& can = run.config->participants[1];
-    CHECK(can.name == "bridge.CAN1" && can.for_network == "CAN1" && can.role == ParticipantRole::Bridge && !can.required &&
+    CHECK(can.name == "bridge.CAN1" && can.command == std::vector<std::string>{"vehicle_sil_vector_xl_bridge"} && can.role == ParticipantRole::Bridge && !can.required &&
           can.enabled && !can.manual);
     CHECK_EQ(can.line, std::size_t{4});
     CHECK(run.config->participants[2].name == "bridge.ETH" && run.config->participants[2].line == 3);

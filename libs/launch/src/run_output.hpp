@@ -120,7 +120,7 @@ public:
     /// the result: the last event "outside" has the result's counts.
     [[nodiscard]] std::optional<OutsideCounts> take_counts(std::size_t index);
 
-    /// The last line of the bridge `index` (ParticipantConfig::for_network) that says why it failed
+    /// The last line of the bridge `index` (RunMember::outside) that says why it failed
     /// (detail::LastLine::failure()), or "". Takes the lock.
     [[nodiscard]] std::string last_line(std::size_t index);
 
@@ -129,9 +129,13 @@ private:
     void say_held(const std::string& text) const;
     /// The line of participant `index` as people see it: a "log" event, or a line with its tag. Under the lock.
     void show(std::size_t index, std::string_view line) const;
-    /// The event "outside" of the bridge `index` (run --events). Under the lock.
+    /// What the plan says the participant `index` connects (RunPlan::members: fixed before the run,
+    /// read without the lock); null if it is not a bridge of --connect. The bridge's state below
+    /// (`outside_`, `states_`, at the same index) is what changes while it runs.
+    [[nodiscard]] const NetworkOutside* outside_of(std::size_t index) const;
+    /// The event "outside" of the bridge `index` (run --events). Under the lock. Only for a bridge.
     void write_outside(std::size_t index, const OutsideCounts& counts) const;
-    /// "outside: ETH_EXT -> enp3s0: link down at 12.40 s" for a change of the link line of the bridge `index`. Under the lock.
+    /// "outside: ETH_EXT -> enp3s0: link down at 12.40 s" for a change of the link line of the bridge `index`. Under the lock. Only for a bridge.
     void say_link_change(std::size_t index, const std::string& what, std::chrono::steady_clock::time_point now);
     /// "outside: CAN -> can0: also used by another vehicle-sil bridge (process 4321) at 3.10 s". Under the lock.
     void say_outside_shared(std::size_t index, const OutsideForeign& foreign, std::chrono::steady_clock::time_point now);
@@ -140,8 +144,6 @@ private:
     std::mutex mutex_;
     std::vector<std::unique_ptr<std::ofstream>> logs_; ///< per participant; guarded by mutex_ once the participants run
     std::vector<LastLine> last_lines_;                 ///< per participant (only a bridge's is used); guarded by mutex_
-    /// Per participant: the tool of a bridge of --connect (NetworkOutside::tool), else "". Set in the constructor.
-    std::vector<std::string> tools_;
     std::vector<OutsideNote> outside_; ///< per participant (only a bridge's is used); guarded by mutex_
     /// Per participant: the bridge's link line and counts added up (only a bridge's is used); guarded by mutex_
     std::vector<OutsideState> states_;

@@ -103,8 +103,8 @@ struct ParticipantRun
     bool manual = false;
     /// manual: it joined the simulation (the controller saw its lifecycle).
     bool manual_joined = false;
-    /// The bridge that run started for --connect: the network it connects (ParticipantConfig::
-    /// for_network); "" for a participant of the file. If it ends before the simulation is over,
+    /// The bridge that run started for --connect: the network it connects (the network of
+    /// RunMember::outside); "" for a participant of the file. If it ends before the simulation is over,
     /// the run fails (connect-failed before the start, connect-lost after it).
     std::string for_network{};
     /// for_network: its last line that says why it failed (one that starts with "error:" or "FAIL"
@@ -543,7 +543,7 @@ inline constexpr std::string_view kManualRegistryUri = "silkit://127.0.0.1:8500"
 namespace detail {
 /// The check that run_file() runs with: a copy of `check` (that passed) with one participant at the
 /// end for each network that --connect connects (CheckReport::outside, in its order): the bridge
-/// bridge.<network> (role: bridge, required: false, its network's line, for_network set), with a
+/// bridge.<network> (role: bridge, required: false, its network's line), with a
 /// ParticipantResult that is NotChecked and has the bridge's executable. Without --connect the copy
 /// is the same as `check`.
 [[nodiscard]] CheckReport with_bridges(const CheckReport& check);
