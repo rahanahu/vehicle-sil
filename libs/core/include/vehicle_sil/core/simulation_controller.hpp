@@ -282,7 +282,8 @@ public:
     // simulation cannot reach the pause while that step runs).
 
     /// Stands still at the controller step that is being held for pacing, or else at its next
-    /// step.
+    /// step. Ends a run_until(), step() or pause_at() whose time is still ahead: its target is
+    /// gone at once, also while the simulation has not come to stand still yet.
     void pause();
     /// Stands still at the first controller step at or after `t` (at the next one if `t` has
     /// passed). Replaces an earlier target.

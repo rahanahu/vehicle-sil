@@ -199,6 +199,13 @@ void TimeGate::pause_now_or_next(Wall::time_point wall)
     else
     {
         pause_next_ = true;
+        // What was running on to a later time ends here too, as when a step is held: whoever
+        // counts from the target next (a step) must not count from a time this pause has given
+        // up. A target that is not ahead stays: it says "stands still at the next step" already.
+        if (state_.pause_target && *state_.pause_target > state_.now)
+        {
+            state_.pause_target.reset();
+        }
     }
 }
 

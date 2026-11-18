@@ -1120,6 +1120,40 @@ command "command":"step","source":"stdin")" + refused + R"(,"id":null}
 )");
 }
 
+TEST_CASE(a_step_after_a_pause_counts_from_the_pause_and_not_from_the_run_until_it_ended)
+{
+    // A run_until (or a step) is in progress, a pause is accepted, and a step comes before the
+    // simulation has paused: the pause has ended the run_until, so the step counts from the
+    // controller's step in progress (0 here: the gate waits for the start, no step is held).
+    vehicle_sil::unit::InProcessRegistry registry;
+    SimulationControllerOptions options;
+    options.registry_uri = registry.uri;
+    options.required_participants = {"NeverJoins"};
+    options.time_control = TimeControlOptions{.step = std::chrono::milliseconds(10)};
+    SimulationController controller(options);
+    const auto command = [](const std::string& line) { return *parse_command(line); };
+    const auto target = [&controller] { return controller.time_state().pause_target; };
+    const auto at = [](std::int64_t ms) { return std::optional<SimTime>(SimTime{} + std::chrono::milliseconds(ms)); };
+    TimeCommands commands(false);
+    commands.set_time_lock({});
+    commands.attach(controller, 10, std::nullopt);
+    CHECK(commands.apply(command(R"({"command":"run_until","at_ms":100000})"), "stdin").accepted);
+    CHECK(target() == at(100000));
+    CHECK(commands.apply(command(R"({"command":"pause"})"), "stdin").accepted);
+    CHECK(!controller.time_state().paused);
+    CHECK(!target());
+    Command step = commands.apply(command(R"({"command":"step","ms":10})"), "stdin");
+    CHECK(step.accepted && step.at_ms == std::optional<std::int64_t>(10));
+    CHECK(target() == at(10));
+    // The same after a step in progress: the pause ends it, and the next step starts anew.
+    CHECK(commands.apply(command(R"({"command":"pause"})"), "control_server").accepted);
+    CHECK(!target());
+    step = commands.apply(command(R"({"command":"step","ms":30})"), "control_server");
+    CHECK(step.at_ms == std::optional<std::int64_t>(30));
+    CHECK(target() == at(30));
+    commands.detach();
+}
+
 TEST_CASE(time_commands_from_another_thread_never_reach_a_controller_that_is_gone)
 {
     // The thread that reads the commands applies them while the run attaches its controller,

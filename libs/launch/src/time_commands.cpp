@@ -170,7 +170,8 @@ Command decide_and_do(S& s, const Command& command, std::string_view source, con
             // before the command's event, so that the event says where this step ends. The gate
             // may go on between this look and run_until() below, but never past `step_to`: a step
             // is taken only once a pause was asked for, so the gate stands still, or does at its
-            // next step or at its target, and each of those is at or before `step_to`.
+            // next step or at its target, and each of those is at or before `step_to`. A pause()
+            // leaves no target ahead, so a step after it counts from `now`.
             const TimeState t = c->time_state();
             const SimTime from = t.pause_target && *t.pause_target > t.now ? *t.pause_target : t.now;
             const SimDuration d = std::chrono::milliseconds(*out.ms);
