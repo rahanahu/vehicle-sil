@@ -148,6 +148,21 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         {
             out_.say(line);
         }
+        // A link or a bus that stays down is as good as a bridge that ended: the run is not connected.
+        if (const auto lost = out_.outside_lost(std::chrono::steady_clock::now()))
+        {
+            const ParticipantRun& run = outcome_.participants[lost->first];
+            for (RunOutside& o : outcome_.outside)
+            {
+                if (o.network == run.for_network)
+                {
+                    o.link.lost = lost->second;
+                }
+            }
+            outcome_.failed_participant = run.name;
+            processFailed = true;
+            return true;
+        }
         std::vector<bool> known;
         for (const auto& run : outcome_.participants)
         {

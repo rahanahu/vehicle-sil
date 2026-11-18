@@ -41,6 +41,8 @@ export class RunSession {
     const session = this.session();
     return session ? runOutcome(session) : null;
   });
+  /** 実行の操作（開始、停止、待たずに止める）を押せるか、押せない理由（正面の口が言う）。 */
+  readonly controls = this.commands.controls;
   /** 開始を送って、応答を待っている。 */
   readonly starting = this.commands.starting;
   /** 停止を送って、応答を待っている（どちらの停止か）。 */

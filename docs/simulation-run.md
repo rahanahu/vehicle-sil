@@ -386,6 +386,33 @@ For an automatic test with a device on the bus, run one scenario at speed 1 with
 vehicle_sil_launch run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>
 ```
 
+### The state of the link and the bus
+
+While the run goes, `run` also reads the other lines of the bridge: the link line (`link link=up|down|unknown` of the Ethernet bridge, `link bus=active|passive|bus-off|unknown` of the CAN bridge; see "Link line" in [bridges.md](bridges.md#link-line) and [ethernet-bridge.md](ethernet-bridge.md#link-line)) and every `key=N` of the statistics line, not only the two it counts above. Keys and values it does not know are skipped. The link line is not shown as a line of the bridge either; a change of it is one line of the launcher, with the time from the start of the run, and it is a `log` event with `--events`:
+
+```text
+outside: ETH_EXT -> enp3s0: link down at 12.40 s
+outside: ETH_EXT -> enp3s0: link up at 15.10 s
+```
+
+The first line of a bridge says nothing when all is well (`up`, `active`). `run` tells apart three kinds of trouble:
+
+| Kind | What `run` does | At the end |
+|---|---|---|
+| The link or the bus is down for a while (`link=down`, `bus=bus-off`) and the bridge goes on | Goes on. When it has lasted 30 s (`RunOptions::outside_lost_after`), `run` aborts the simulation as for a bridge that ended: an unplugged cable that is plugged in again, or a device that restarts, is a matter of seconds, but a run that is meant to be connected must not go on to its end without the bus. | A warning (`outside-link-down`, `outside-bus-off`: how many times, and how long in all), or, for the 30 s, the error `connect-lost` ("link down for 30 s", "bus off for 30 s"). |
+| The bridge is connected, but frames were lost | Goes on | A warning for each kind that happened (below). One frame is enough. |
+| The bridge cannot go on | Aborts the simulation | The error `connect-lost` (above) |
+
+The kinds of loss are told from the counts of the statistics line and the link line; one table in the launcher (`detail::kOutsideDroppedKeys`) holds the keys:
+
+| Finding | From |
+|---|---|
+| `outside-frames-dropped` | Any of these counts is not 0: `ext_overruns`, `ext_queue_full`, `ext_tx_failures`, `silkit_tx_failures` (Ethernet); `overruns`, `xl_queue_full`, `xl_tx_failures`, `xl_tx_dropped`, `xl_tx_unsent`, `silkit_rejected`, `xl_rejected`, `silkit_tx_failures` (CAN). The message names each count that is not 0. |
+| `outside-loop-suspected` | `loop_suspected` is not 0: the Ethernet bridge found a source MAC address on both sides and drops its frames from then on. |
+| `outside-bus-errors` | The CAN bridge reported `bus=passive` (error passive): the message has the time in all and `error_frames`. |
+
+The other counts (`own_tx_dropped`, `filtered_to_ext`, `filtered_from_ext`, `mac_unguarded`, `oversize`, `malformed`, `ext_checksum_incomplete`) are no losses of the bridge and give no finding; they are in the result, as the bridge wrote them. The messages say what happened, whether to trust the result and what to check, for example `network 'ETH_EXT' -> enp3s0: the link was down once, for 2.70 s in all. The run went on, but frames sent meanwhile did not reach the devices, ...`. These findings are made at the end, from what was read until then.
+
 ### Where a network can be connected (`vehicle_sil_launch connections`)
 
 ```text
@@ -862,10 +889,12 @@ When the simulation started, the result shows after the participant table whethe
 | `simulation-start` | Error | All required participants joined, but the simulation could not be started |
 | `participant-failed` | Error | A required participant failed during the run, and the simulation was aborted |
 | `connect-failed` | Error | The bridge of `--connect` did not get to run before the simulation started, so the simulation was not started; if it failed before the participants of the file were started, they were not (see [Connecting a bus outside](#connecting-a-bus-outside---connect)) |
-| `connect-lost` | Error | The bridge of `--connect` ended while the simulation was running, and the simulation was aborted; or it had ended when the simulation ended |
+| `connect-lost` | Error | The bridge of `--connect` ended while the simulation was running, and the simulation was aborted; or it had ended when the simulation ended; or its link or bus was down for 30 s (see [The state of the link and the bus](#the-state-of-the-link-and-the-bus)) |
 | `outside-time-changed` | Note | In a run that is connected outside with `--time-policy free`, a command paused or stepped the simulation, or set a speed other than 1, while what is connected went on (one for the run, about the first such command; see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)) |
 | `unsynchronized-time-changed` | Note | In a run with a participant that runs in real time (no step), a command paused or stepped the simulation, or set a speed other than 1, while that participant went on (one for the run, about the first such command) |
 | `connect-nothing-received` | Note | With `--connect`, the bridge of a network sent frames to the real bus, and none came from a device there (one for each such network; see [Counting the frames to and from the bus](#counting-the-frames-to-and-from-the-bus)) |
+| `outside-link-down`, `outside-bus-off` | Warning | The link or the bus of a connected network was down while the simulation ran, and the bridge went on: how many times and how long in all (see [The state of the link and the bus](#the-state-of-the-link-and-the-bus)) |
+| `outside-bus-errors`, `outside-frames-dropped`, `outside-loop-suspected` | Warning | The bridge of a connected network was error passive, dropped frames (even one), or stopped a loop of MAC addresses (the same section) |
 | `exit-code` | Error (warning for `required: false`) | A participant's exit code is not 0, or it ended by a signal (when none of the above applies) |
 | `did-not-end` | Error | A required participant was still running `stop_timeout_ms` after the end of the simulation |
 | `left-processes` | Warning | Processes started by a participant were still running after the participant ended |
@@ -1007,6 +1036,7 @@ Keys of `outside[]` (see [Connecting a bus outside](#connecting-a-bus-outside---
 | `participant` | The bridge's name in `participants[]` (`bridge.<network>`) |
 | `to_outside` | The frames that the bridge sent to the bus (Ethernet `silkit_to_ext`, CAN `silkit_to_xl`), or `null` if no statistics line of the bridge could be read |
 | `from_outside` | The frames that came from a device on the bus (Ethernet `ext_from_devices`, CAN `xl_to_silkit`), or `null` as `to_outside` (see [Counting the frames to and from the bus](#counting-the-frames-to-and-from-the-bus)) |
+| `counts` | Every `key=N` of the last statistics line of the bridge, with the bridge's own keys (an object; `{}` if no line could be read) |
 
 Keys of `participants[].control_link` (see [Connection to ECU variables](#connection-to-ecu-variables-control_link)):
 

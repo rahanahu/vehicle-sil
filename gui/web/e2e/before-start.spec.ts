@@ -6,7 +6,7 @@ import { CONFIGS, REPLAY_LAUNCHER, GuiServer, launchGuiServer } from './support/
 import { RUN_TIMEOUT, WORDS, choose, result, start } from './support/run-page';
 
 const CONTROL_FEATURES =
-  'events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,control-server';
+  'events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,control-server,state';
 
 test('started paused with a control server: it waits before the first step, and the screen resumes it', async ({
   page,
@@ -47,7 +47,7 @@ test('started paused with a control server: it waits before the first step, and 
     await expect(page.getByTestId('pause')).toHaveAttribute('aria-disabled', 'true');
     const sent = page.waitForRequest((r) => r.url().endsWith('/api/time'));
     await page.getByTestId('resume').click();
-    expect((await sent).postDataJSON()).toEqual({ command: 'resume' });
+    expect((await sent).postDataJSON()).toEqual({ command: 'resume', id: expect.any(Number) });
     await expect(result(page, session).getByTestId('result')).toContainText('成功', {
       timeout: RUN_TIMEOUT,
     });

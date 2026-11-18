@@ -1,6 +1,5 @@
 import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { ServerInfo } from '../core/session/server-info';
 import { SimulationTime } from '../core/session/simulation-time';
 import { TimePanel } from './time-panel';
 
@@ -21,20 +20,18 @@ describe('TimePanel: the step field', () => {
       behind: signal(false),
       lateness: signal(null),
       lastCommand: signal(null),
-      controllable: signal(true),
-      sending: signal(null),
-      canStep: signal(true),
+      waiting: signal(false),
+      controls: signal({
+        step: { ok: true, reason: null, caution: null, min_ms: 1, max_ms: 60000 },
+        speed: { ok: true, reason: null, caution: null, min: 0.01, max: 1000 },
+      }),
       error: signal(null),
       errorFromServer: signal(false),
-      step: (ms: number) => steps.push(ms),
-      setSpeed: () => undefined,
+      step: (ms: number) => Promise.resolve(steps.push(ms)).then(() => undefined),
+      setSpeed: () => Promise.resolve(),
     };
-    const info = { limits: signal({ speed_min: 0.01, speed_max: 1000, step_ms_max: 60000 }) };
     TestBed.configureTestingModule({
-      providers: [
-        { provide: SimulationTime, useValue: time },
-        { provide: ServerInfo, useValue: info },
-      ],
+      providers: [{ provide: SimulationTime, useValue: time }],
     });
     fixture = TestBed.createComponent(TimePanel);
     await fixture.whenStable();

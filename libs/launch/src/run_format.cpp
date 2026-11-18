@@ -590,6 +590,13 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
             };
             count("to_outside", o.to_outside);
             count("from_outside", o.from_outside);
+            // Every count of the bridge's last statistics line, with its own keys.
+            w.begin_object("counts");
+            for (const auto& [name, value] : o.link.counts)
+            {
+                w.integer(name, static_cast<std::int64_t>(value));
+            }
+            w.end_object();
             w.end_object();
         }
     }

@@ -69,11 +69,11 @@
   <app-run-status
     [session]="session()"
     [outcome]="run.outcome()"
+    [controls]="run.controls()"
     [ready]="run.ready()"
     [starting]="run.starting()"
     [stopping]="run.stopping()"
     [stopWhileStarting]="run.stopWhileStarting()"
-    [reachable]="reachable()"
     [elapsedMs]="run.elapsedMs()"
     [blockedBy]="blockedBy()"
     [otherFile]="otherFile()"

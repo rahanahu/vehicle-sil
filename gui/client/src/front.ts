@@ -50,7 +50,7 @@ export interface ConnectOptions {
   on_error?: ErrorSink;
 }
 
-function createFront(options: ClientOptions, onClose: () => void): Front {
+function makeFront(options: ClientOptions, onClose: () => void): Front {
   const { client: low, http, onError } = buildClient(options);
 
   let counter = 0;
@@ -245,7 +245,7 @@ function createFront(options: ClientOptions, onClose: () => void): Front {
 let shared: Promise<Front> | null = null;
 
 async function open(options: ConnectOptions, onClose: () => void): Promise<Front> {
-  const front = createFront(
+  const front = makeFront(
     {
       baseUrl: options.base_url,
       token: options.token,
@@ -265,6 +265,17 @@ async function open(options: ConnectOptions, onClose: () => void): Promise<Front
     throw actionError(error);
   }
   return front;
+}
+
+/**
+ * Makes the front door without connecting and without waiting for the server (as `createClient` does for the client
+ * below it). For an app that must show its screens before the server answers, and while it cannot be reached: it calls
+ * `front.low.connect()` and `front.low.loadApp()` itself, and reads `status` (the connection, `rejected`, `incompatible`)
+ * meanwhile. Until `loadApp()` has answered, the front knows no start-up file and no launcher features (`controls` say so).
+ * Most code wants `connect()`.
+ */
+export function createFront(options: ClientOptions): Front {
+  return makeFront(options, () => undefined);
 }
 
 /** Where this page was opened from, in the browser (the server's root and the token of the URL it printed). */
