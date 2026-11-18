@@ -24,7 +24,7 @@ GUI サーバー（`vehicle-sil-gui`）に配信させる自分の画面です�
 リポジトリでは、ルートで次を実行します。
 
 ```sh
-(cd gui/web && npm ci && npm run build:client)    # build/gui-client/: the files that the server serves under /vsil/
+(cd gui/web && npm ci && npm run build:client)    # build/gui-client/ に、サーバーが /vsil/ で配るファイルができます
 uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch \
   --web examples/gui_starter build/<preset>/examples/ecu_main/simulation.yaml
 ```
@@ -56,43 +56,43 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 
 そのうえで `--web my-screen` を付けてサーバーを起動します。渡すのは `index.html` のあるディレクトリです。配信のルール（配信するファイル、CSP、トークン）は [docs/gui.md](../../docs/ja/gui.md#自分の画面のリファレンス) の「自分の画面のリファレンス」にあります。
 
-作り方は 3 つのステップで、必要なところまで進めば足ります。
+作り方は 3 つの層で、必要なところまで使えば足ります。
 
-| ステップ | 書くもの | 読むところ |
+| 層 | 書くもの | 読むところ |
 |---|---|---|
-| 1. 部品だけ | HTML（`index.html` の要素の変数名を自分のものに）と CSS。 | 下の表 |
-| 2. 自分のスクリプト | `main.js`。部品にないこと（表示、ボタン、ルール）を書きます。部品と同じ接続を使います。 | `gui/client/README.md` の「[正面の口](../../gui/client/README.ja.md#正面の口connect)」 |
-| 3. TypeScript とフレームワーク | ビルドのあるプロジェクト。部品は custom element なので、どのフレームワークのテンプレートにも書けます。 | このページの終わり |
+| 部品だけ | HTML（`index.html` の要素の変数名を自分のものに）と CSS。 | 下の表 |
+| 自分のスクリプト | `main.js`。部品にないこと（表示、ボタン、ルール）を書きます。部品と同じ接続を使います。 | `gui/client/README.md` の「[正面の口](../../gui/client/README.ja.md#正面の口connect)」 |
+| フレームワークのプロジェクト | ビルドのあるプロジェクト。部品は custom element なので、どのフレームワークのテンプレートにも書けます。 | このページの終わり |
 
-### ステップ 1: 部品だけ
+### 部品だけ
 
 | 要素 | すること | 属性 |
 |---|---|---|
 | `<vsil-status>` | 接続、実行、仮想時間、いま伝える問題 1 つ | なし |
-| `<vsil-run-controls>` | Start、Stop、待たずに止める。サーバーを起動したときのファイルを開始します。 | `label-*` |
+| `<vsil-run-controls>` | Start、Stop、待たずに止める。最後の実行のファイル（最初は、サーバーを起動したときのファイル）を開始します。 | `label-*` |
 | `<vsil-time-controls>` | Pause、Resume、Step、Run until、速さ | `speeds`、`step-ms` |
 | `<vsil-value>` | 単位つきの値。bool は `on` と `off` の文字で出ます（CSS でランプにできます）。 | `variable`、`on`、`off` |
 | `<vsil-slider>` | 変数の範囲の数。つまみを離したときに書き込みます。 | `variable` |
 | `<vsil-write>` | 1 つの値を書き込むボタン | `variable`、`value`、`label` |
 | `<vsil-scenario-select>`、`<vsil-scenario-result>` | 次の実行のシナリオと、そのステップと結果 | なし |
 
-変数は `<参加者>.<変数>` と書き、最初のドットで切ります（`Engine.engine.throttle` は、参加者 `Engine` の変数 `engine.throttle`）。自分の ECU の名前を調べるには、ガイドのステップ 2 を見てください。名前が違うと、部品が「この実行にその変数はない」と言います。部品の一覧と、部品が守ること（接続、マークアップ、CSS を当てる `data-*` 属性）は、[gui/client/README.md](../../gui/client/README.ja.md#部品custom-element) の「部品（custom element）」にあります。
+変数は `<participant>.<variable>` と書き、最初のドットで切ります（`Engine.engine.throttle` は、participant `Engine` の変数 `engine.throttle`）。自分の ECU の名前を調べるには、ガイドの「手順 2: 表示する変数の名前を調べる」を見てください。名前が違うと、部品が `this variable is not in the current run: check the names (ECU and variable)` と言います。部品の一覧と、部品が守ること（接続、マークアップ、CSS を当てる `data-*` 属性）は、[gui/client/README.md](../../gui/client/README.ja.md#部品custom-element) の「部品（custom element）」にあります。
 
-### ステップ 2: 自分のスクリプト
+### 自分のスクリプト
 
-`main.js` は、スクリプトの役目の 3 つを見せます。`connect()` を引数なしで呼ぶと、部品がすでに使っている接続が返ります。だから自分のボタンが断られると `<vsil-status>` にも出ますし、ページの WebSocket は 1 本です。
+`main.js` は、スクリプトの役目の 3 つを見せます。`connect()` を引数なしで呼ぶと、部品がすでに使っている接続が返ります。だからページの WebSocket は 1 本です。断られた開始、停止、時間の操作は `<vsil-status>` に出ます。断られた変数の書き込みは、その変数を出している部品の所と、自分のスクリプトが受ける `ActionError` に出ます。
 
 | `main.js` の中 | 見せること |
 |---|---|
-| `watch([client.variable('Engine.engine.speed')], fn)` | 自分の流儀で描く値（メーター）。`fn` はいま呼ばれ、変わるたびに呼ばれます。 |
+| `watch(client.variable('Engine.engine.speed'), fn)` | 自分の流儀で描く値（メーター）。`fn` はいま呼ばれ、変わるたびに呼ばれます。 |
 | `await client.variable('Engine.engine.throttle').write(100)` | 自分の操作。通らなければ `ActionError` で reject する Promise です（文は `message`、`outcome` は `refused` か `unknown`）。 |
-| `watch([client.scenario], fn)` | 時間の軸。シナリオの実行に時間の軸があれば、`<vehicle-sil-timeline>` に `src` を渡します。 |
+| `watch(client.scenario, fn)` | 時間の軸。シナリオの実行に時間の軸があれば、`<vehicle-sil-timeline>` に `src` を渡します。 |
 
 時間の軸の要素は GUI サーバーから読みます（`<script src="/timeline/vehicle-sil-timeline.js">`）。要素は、ページがすでに持つトークンを送ります。属性、プロパティ、事象は、[docs/gui.md](../../docs/ja/gui.md#自分の画面に時間の軸を置く) の「自分の画面に時間の軸を置く」にあります。
 
-スターターに入れていないものは、サンプルの画面がやっていることです。構成ファイルの選択、「Check」、任意の変数を選んで値を入力する欄です。必要なときは、同じ接続の低い口 `client.low`（`createClient`、`check`、`variables.bind`）を使います。自分の部品の作り方は「[コンポーネントを作る（`bind`）](../../gui/client/README.ja.md#コンポーネントを作るbind)」にあります。
+スターターに入れていないものは、サンプルの画面がやっていることです。設定ファイルの選択、「Check」、任意の変数を選んで値を入力する欄です。設定ファイルを選ぶには、`client.low.configs()` で一覧を取り、自分のボタンで `client.run.start(intent, { file })` を呼びます（`<vsil-run-controls>` は最後の実行のファイルを開始します）。同じ接続の低い口 `client.low`（`check`、`variables.bind` など）も使えます。自分の部品の作り方は「[コンポーネントを作る（`bind`）](../../gui/client/README.ja.md#コンポーネントを作るbind)」にあります。
 
-### ステップ 3: TypeScript とフレームワーク
+### フレームワークのプロジェクト
 
 ライブラリは、型つきの npm のパッケージ（`.tgz`）としても配っています（部品も入っています）。自分のプロジェクトで `npm install <その .tgz>` をして、`@vehicle-sil/gui-client` として import します。依存はありません。
 
@@ -103,10 +103,10 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 | リポジトリ | `gui/web` で `npm run pack:client` を実行します。`build/gui-client/vehicle-sil-gui-client-<version>.tgz` ができます。 |
 
 ```ts
-import '@vehicle-sil/gui-client/elements'; // defines the parts: write <vsil-slider ...> in your templates
+import '@vehicle-sil/gui-client/elements'; // 部品を定義します。テンプレートに <vsil-slider ...> と書けます
 import { ActionError, connect, watch } from '@vehicle-sil/gui-client';
 
-const client = await connect(); // the connection that the parts use
+const client = await connect(); // 部品が使う接続
 watch([client.variable('Engine.engine.speed')], (view) => console.log(view.text, view.unit));
 try {
   await client.variable('Engine.engine.throttle').write(60);

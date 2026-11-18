@@ -201,15 +201,15 @@ There are 3 ways to add your own code to the GUI. They differ in what stays of t
 - Panels are a feature of the sample screens: your own screen served with `--web` does not get them automatically.
 - Your own screen opens from the same origin as the GUI server, so the server's security checks (token, `Host`, `Origin`, CSP) apply to it unchanged.
 
-For your own screen, take as many of these 3 steps as you need. Each step keeps what the one before wrote:
+For your own screen, use as many of these 3 layers as you need. Each layer keeps what the one before wrote:
 
-| Step | You write | What you get | Where to start |
+| Layer | You write | What you get | Where to start |
 |---|---|---|---|
-| 1. Parts only | HTML and CSS: elements such as `<vsil-run-controls>`, `<vsil-slider variable="Engine.engine.throttle">` and `<vsil-value>` | Start and stop, time control, status, values, sliders, buttons that write, the scenario of the next run and its result. No script and no build | The guide [Build your own screen for the browser GUI](howto/gui-screen.md) |
-| 2. A script of your own | A script that calls `connect()`, `watch`, `client.variable()` and the operations (Promises) | What the parts do not have: a display or a button of your own, a rule, the timeline. It uses the connection of the parts, so a refusal shows in `<vsil-status>` as well | `main.js` of the screen template, and "The front door (`connect()`)" in [gui/client/README.md](../gui/client/README.md#the-front-door-connect) |
-| 3. TypeScript and a framework | A project with a build, and the library package (`.tgz`) | The same parts and library in the templates of React, Vue, Svelte, Angular and others (the parts are custom elements) | "Step 3: TypeScript and a framework" in [examples/gui_starter/README.md](../examples/gui_starter/README.md#step-3-typescript-and-a-framework) |
+| Parts only | HTML and CSS: elements such as `<vsil-run-controls>`, `<vsil-slider variable="Engine.engine.throttle">` and `<vsil-value>` | Start and stop, time control, status, values, sliders, buttons that write, the scenario of the next run and its result. No script and no build | The guide [Build your own screen for the browser GUI](howto/gui-screen.md) |
+| A script of your own | A script that calls `connect()`, `watch`, `client.variable()` and the operations (Promises) | What the parts do not have: a display or a button of your own, a rule, the timeline. It uses the connection of the parts: a refused start, stop or time operation shows in `<vsil-status>`, and a refused write of a variable next to the part that shows it | `main.js` of the screen template, and "The front door (`connect()`)" in [gui/client/README.md](../gui/client/README.md#the-front-door-connect) |
+| A project with a framework | A project with a build, and the library package (`.tgz`) | The same parts and library in the templates of React, Vue, Svelte, Angular and others (the parts are custom elements) | "A project with a framework" in [examples/gui_starter/README.md](../examples/gui_starter/README.md#a-project-with-a-framework) |
 
-The parts and the library come from the GUI server (`/vsil/`) in steps 1 and 2, so there is nothing to copy; step 3 uses the package. The sample screens' own widgets (the Angular app in `gui/web`) are not offered for reuse: use the parts.
+The parts and the library come from the GUI server (`/vsil/`) in the first 2 layers, so there is nothing to copy; a project with a framework uses the package. The sample screens' own widgets (the Angular app in `gui/web`) are not offered for reuse: use the parts.
 
 For the files that are served, CSP, the token, development servers and the rules that the library does not enforce for you, see "[Reference for your own screen](#reference-for-your-own-screen)".
 
@@ -958,7 +958,7 @@ The server serves the client library and the parts to a screen of your own, with
 | `GET /vsil/vehicle-sil-gui-client.mjs` | The bundled client library (`text/javascript`). |
 | `GET /vsil/vehicle-sil-gui-elements.mjs` | The parts. It imports `./vehicle-sil-gui-client.mjs`, which is the URL above. |
 | Any other name under `vsil/` (other files of the directory, another letter case, `..` and encoded paths) | 404. Only these two names are served, and no path is built from the request. |
-| The files are not built (in the repository, `build/gui-client/`) | 404 that names the two files and the two places it looked, and says what to run (`npm ci && npm run build:client` in `gui/web` of the repository; unpack the tools archive again). The server looks again at each request, so a build made after it started is found; it also says so once on stderr, at the first such request. The tools archive has the files inside the GUI. |
+| The files are not built (in the repository, `build/gui-client/`) | 404 that names the two files and says what to run (`npm ci && npm run build:client` in `gui/web` of the repository; unpack the tools archive again). The server looks again at each request, so a build made after it started is found. At the first such request it also writes the same on stderr, with the two places it looked. The tools archive has the files inside the GUI. |
 
 ### CSP restrictions
 
@@ -1203,7 +1203,7 @@ declare module 'react' {
 [examples/gui_starter](../examples/gui_starter/) is a screen of parts that you copy and change: HTML with the parts (status, run and time controls, a slider, values, a lamp, buttons that write, the scenario of the next run and its result, and the timeline element), a short script of your own and a stylesheet. It has no build step and no copy of the library (it loads the parts and the library from `vsil/`). In the prebuilt tools, it is in `gui_starter/`.
 
 - It is written for the example ECUs of `examples/ecu_main`. To use your own, change the `variable` attributes (the guide shows how).
-- `main.js` is step 2 of "[Build your own screen](#build-your-own-screen)": a display of your own made with `watch`, a button of your own that handles the failure of its operation, and the timeline of the last scenario run.
+- `main.js` is the layer "a script of your own" of "[Build your own screen](#build-your-own-screen)": a display of your own made with `watch`, a button of your own that handles the failure of its operation, and the timeline of the last scenario run.
 - Its README explains how to use it.
 - `scripts/verify-web.py` serves this template with `--web` and runs it in a browser, against the replay launcher and a fake Control Server (the end-to-end test `starter.spec.ts`).
 

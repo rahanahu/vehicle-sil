@@ -11,10 +11,12 @@ if (client) {
   // unit, whether it is stale, and a sentence (`note`) when it is not a live value.
   const meter = document.getElementById('rpm');
   const text = document.getElementById('rpm-text');
-  watch([client.variable('Engine.engine.speed')], (view) => {
+  const note = document.getElementById('rpm-note');
+  watch(client.variable('Engine.engine.speed'), (view) => {
     meter.value = typeof view.value === 'number' ? view.value : 0;
-    text.textContent = view.text === '' ? '-' : `${view.text} ${view.unit}`;
-    meter.dataset.stale = String(view.stale);
+    text.textContent = view.text === '' ? '-' : `${view.text}${view.unit ? ` ${view.unit}` : ''}`;
+    note.textContent = view.note ?? '';
+    meter.dataset.stale = String(view.stale || view.note !== null); // style.css dims what is not live
   });
 
   // An operation of your own. Every operation is a Promise that rejects with an ActionError when it did not go through;
@@ -31,9 +33,9 @@ if (client) {
 
   // The timeline of the scenario run: the element loads the file at `timeline_url` (it sends the token the page already has)
   const timeline = document.querySelector('vehicle-sil-timeline');
-  watch([client.scenario], (scenario) => {
+  watch(client.scenario, (scenario) => {
     const url = scenario?.timeline_url ?? null;
     timeline.hidden = url === null;
-    if (url !== null) timeline.src = `/${url}`;
+    if (url !== null && timeline.getAttribute('src') !== `/${url}`) timeline.src = `/${url}`; // not again for the same file
   });
 }

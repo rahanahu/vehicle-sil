@@ -19,8 +19,8 @@ Commands:
               stage      bin/ (the launcher, the Ethernet bridge vehicle_sil_ethernet_bridge, on Linux the SocketCAN
                          bridge vehicle_sil_socketcan_bridge, the libraries they need, vehicle-sil-gui), python/ (vehicle_sil_gui with the
                          built screen, the timeline page of gui/timeline and the client library with the parts, vehicle_sil_control with the stubs), client/ (the bundled client library, the parts and
-                         its npm package), gui_starter/ (examples/gui_starter: a screen of parts of
-                         your own, served with vehicle-sil-gui --web; the server serves the library and the parts to it under vsil/),
+                         its npm package), gui_starter/ (examples/gui_starter: a screen of your own made of
+                         parts, served with vehicle-sil-gui --web; the server serves the library and the parts to it under vsil/),
                          schema/, LICENSE, THIRD_PARTY_NOTICES.md, licenses/ (the license texts of what is inside),
                          README.md, VERSION. Windows: every DLL the executables load that is not Windows' own, found
                          with objdump, and the MSYS2 license files of their packages

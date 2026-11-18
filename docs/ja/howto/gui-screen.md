@@ -4,7 +4,7 @@
 
 画面のテンプレート（`gui_starter`）をコピーし、中の変数の名前を自分の ECU のものに変えて、ECU の変数を 1 つ表示する画面にし、GUI サーバー（`vehicle-sil-gui`）に配信させる手順です。画面は、あらかじめ用意した部品（`<vsil-slider>`、`<vsil-value>` など）でできているので、書くのは HTML だけで、スクリプトは書きません。ビルドは使いません。各手順の「確認」には、ブラウザで確かめる方法と、できるときはブラウザなしの方法（`curl`。手順 4 では Node.js も）が書いてあります。何が要るかは、次の前提に書いてあります。
 
-自分の画面は、サンプルの画面と置き換わります。サンプルの画面を残して自分の ECU の部品を足すなら、代わりにカスタムパネルを書きます。3 つの道を比べた表と、自分の画面を作る 3 つのステップ（部品だけ、自分のスクリプト、フレームワークのプロジェクト）は、[gui.md](../gui.md#自分の画面を作る) の「自分の画面を作る」にあります。
+自分の画面は、サンプルの画面と置き換わります。サンプルの画面を残して自分の ECU の部品を足すなら、代わりにカスタムパネルを書きます。3 つの道を比べた表と、自分の画面を作る 3 つの層（部品だけ、自分のスクリプト、フレームワークのプロジェクト）は、[gui.md](../gui.md#自分の画面を作る) の「自分の画面を作る」にあります。
 
 ## 前提
 
@@ -91,7 +91,7 @@ curl -s "$BASE/" | grep '<title>'
 |---|---|---|
 | `there is no index.html in it` と表示して、終了コード 2 で終わる | 渡したディレクトリに `index.html` がありません。 | `index.html` のあるディレクトリを渡します。 |
 | `it has package.json, so it is the project and not its build` と表示して、終了コード 2 で終わる | ビルドの出力でなく、プロジェクトのディレクトリを渡しています。 | ビルドの出力のディレクトリ（`dist/` など）を渡します。 |
-| 画面に `No token: open the URL that vehicle-sil-gui printed (with #token=...).` と表示される | `#token=` のない URL を開いています。 | 端末に表示された URL を、`#token=` の後ろまで含めて開きます。 |
+| すべての部品に `connect() without options works in a page that the GUI server served and that was opened from the URL it printed (it ends with #token=...). In Node, pass { base_url, token }` と表示される | `#token=` のない URL を開いています（部品ごとにこの文を出すので、部品の数だけ表示されます）。 | 端末に表示された URL を、`#token=` の後ろまで含めて開きます。 |
 
 ## 手順 2: 表示する変数の名前を調べる
 
@@ -142,7 +142,7 @@ Dashboard | dashboard.engine_lost | bool | output |  | no engine speed for more 
 
 ```html
 <!doctype html>
-<html lang="en">
+<html lang="ja">
   <head>
     <meta charset="utf-8" />
     <title>エンジンの回転数</title>
@@ -162,7 +162,7 @@ Dashboard | dashboard.engine_lost | bool | output |  | no engine speed for more 
 | 要素 | 見せるもの、すること |
 |---|---|
 | `<vsil-status>` | 接続、実行、仮想時間と、いま伝える問題 1 つ（断られた開始など） |
-| `<vsil-run-controls>` | 「Start」と「Stop」。「Start」は、サーバーの起動時に渡した設定ファイルを実行します。 |
+| `<vsil-run-controls>` | 「Start」と「Stop」。「Start」は、最後の実行のファイル（最初は、サーバーの起動時に渡した設定ファイル）を実行します。 |
 | `<vsil-value variable="...">` | 単位つきの値。生きている値でないときは、理由の文が出ます（まだ実行がない、一時停止、古い、実行が終わった）。 |
 
 このページで使っていない `<vsil-value>` の属性です。
@@ -174,15 +174,15 @@ Dashboard | dashboard.engine_lost | bool | output |  | no engine speed for more 
 
 部品の全部と属性は、[gui/client/README.md](../../../gui/client/README.ja.md#部品custom-element) の「部品（custom element）」にあります。テンプレートは、そのほとんど（スライダー、値を書き込むボタン、ランプ、時間とシナリオの操作）を使っています。
 
-このページにはスクリプトがないので、`main.js` はもう使いません。`main.js` と `style.css` は消してかまいません（テンプレートにあるのは、この手順より先のためです）。部品には自分の見た目がありません。`data-*` 属性が付いた部品の見た目の付け方は、テンプレートの `style.css` にあります。
+このページにはスクリプトがないので、`main.js` はもう使いません。`main.js` と `style.css` は消してかまいません（テンプレートにあるのは、「自分のスクリプト」と部品の見た目の付け方の見本としてです。その README を見てください）。部品には自分の見た目がありません。`data-*` 属性が付いた部品の見た目の付け方は、テンプレートの `style.css` にあります。
 
 このページの細かい点です。
 
 | 項目 | 内容 |
 |---|---|
 | 名前 | この実行にない名前は、ページのエラーにはなりません。部品が「this variable is not in the current run: check the names (ECU and variable)」と表示します。 |
-| 接続は 1 本 | 部品はページの接続を共有します。自分のスクリプトも同じ接続を使います。テンプレートの `main.js` の `connect()` が同じ接続を返すので、自分のボタンが断られると `<vsil-status>` にも出ます。 |
-| ボタンが使えない理由 | 今は仕事をできない部品（実行がないときの「Stop」）は `aria-disabled="true"` になり、理由の文が付きます。 |
+| 接続は 1 本 | 部品はページの接続を共有します。自分のスクリプトも同じ接続を使います。テンプレートの `main.js` の `connect()` が同じ接続を返します。断られた開始、停止、時間の操作は `<vsil-status>` に出ます。断られた変数の書き込みは、その変数を出している部品（たとえばスライダー）の所と、自分のスクリプトが受ける `ActionError` に出ます。 |
+| ボタンが使えない理由 | 今は仕事をできない部品（実行がないときの「Stop」）は `aria-disabled="true"` になり、理由のコードが `data-reason` に入ります。文はスクリーンリーダーが読みます。何もすることがないと言うだけの理由（実行がない）は、画面には出ません。 |
 
 ## 手順 4: 配信して確認する
 
@@ -280,7 +280,7 @@ rm token.header
 
 | 症状 | 原因 | 直し方 |
 |---|---|---|
-| 値が `-` のまま、変数がいまは使えないという文が出る | 実行を開始していないか、実行に Control Server がありません。 | 「Start」を押します。開始済みなら、Control Server のあるランチャーで GUI サーバーを起動します（文に、何を実行するかが書いてあります）。 |
+| 値が `-` のまま、変数がいまは使えないという文が出る | 実行を開始していないか、実行に Control Server がありません。 | 「Start」を押します。開始済みなら、Control Server のあるランチャーで GUI サーバーを起動します（スライダーには `start a run with --control` などと出ます）。 |
 | 部品が `this variable is not in the current run` と言う | participant の名前か変数の名前が、この実行にありません。 | 手順 2 で名前を確認します。 |
 | 画面に何も表示されず、ブラウザのコンソールに CSP のエラーが出る | インラインの `<script>` や `onclick="..."` を使っています。 | スクリプトをファイルに置き、`addEventListener` か `onclick` のプロパティで登録します。 |
 | ファイルが 404 になる | 配信されない拡張子か、`.` で始まる名前、シンボリックリンクです。 | [gui.md](../gui.md) の「`--web` で配信するファイル」の表を確認します。 |
@@ -291,7 +291,7 @@ rm token.header
 ## 次に読むもの
 
 - スクリプトで、自分の表示、ボタン、ルールを足す → テンプレートの `main.js`、[gui/client/README.md](../../../gui/client/README.ja.md#正面の口connect) の「正面の口（`connect()`）」。スクリプトは部品と同じ接続を使います。
-- TypeScript とフレームワーク（React、Vue、Angular など）で作る（部品は custom element なので、どのテンプレートにも書けます） → [examples/gui_starter/README.md](../../../examples/gui_starter/README.ja.md#ステップ-3-typescript-とフレームワーク) の「ステップ 3: TypeScript とフレームワーク」
+- TypeScript とフレームワーク（React、Vue、Angular など）で作る（部品は custom element なので、どのテンプレートにも書けます） → [examples/gui_starter/README.md](../../../examples/gui_starter/README.ja.md#フレームワークのプロジェクト) の「フレームワークのプロジェクト」
 - シナリオの実行の時間の軸を自分の画面に出す（スクリプト 1 つとタグ 1 つ。フレームワークを選びません） → [gui.md](../gui.md#自分の画面に時間の軸を置く) の「自分の画面に時間の軸を置く」
 - 配信されるファイル、CSP、開発サーバー、守るルールを調べる → [gui.md](../gui.md) の「自分の画面のリファレンス」
 - サンプルの画面を残して部品を足す → [gui.md](../gui.md#カスタムパネル) の「カスタムパネル」

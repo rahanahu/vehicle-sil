@@ -56,43 +56,43 @@ Copy the starter to another directory and build your screen there.
 
 Then start the server with `--web my-screen`. It takes the directory that contains `index.html`; for the serving rules (which files are served, CSP, token), see "Reference for your own screen" in [docs/gui.md](../../docs/gui.md#reference-for-your-own-screen).
 
-There are 3 steps, and you take only as many as you need:
+There are 3 layers, and you use only as many as you need:
 
-| Step | You write | Read |
+| Layer | You write | Read |
 |---|---|---|
-| 1. Parts only | HTML: the elements of `index.html` with your variable names, and CSS. | The table below |
-| 2. A script of your own | `main.js`: what the parts do not have (a display, a button, a rule). It uses the same connection as the parts. | "[The front door](../../gui/client/README.md#the-front-door-connect)" in `gui/client/README.md` |
-| 3. TypeScript and a framework | A project with a build. The parts are custom elements, so any template can contain them. | The end of this page |
+| Parts only | HTML: the elements of `index.html` with your variable names, and CSS. | The table below |
+| A script of your own | `main.js`: what the parts do not have (a display, a button, a rule). It uses the same connection as the parts. | "[The front door](../../gui/client/README.md#the-front-door-connect)" in `gui/client/README.md` |
+| A project with a framework | A project with a build. The parts are custom elements, so any template can contain them. | The end of this page |
 
-### Step 1: parts only
+### Parts only
 
 | Element | What it does | Attributes |
 |---|---|---|
 | `<vsil-status>` | The connection, the run, the virtual time and the one problem | none |
-| `<vsil-run-controls>` | Start, Stop and Stop without waiting. It starts the file that the server was started with. | `label-*` |
+| `<vsil-run-controls>` | Start, Stop and Stop without waiting. It starts the file of the last run (at first, the file that the server was started with). | `label-*` |
 | `<vsil-time-controls>` | Pause, Resume, Step, Run until and the speed | `speeds`, `step-ms` |
 | `<vsil-value>` | A value with its unit; a bool shows as `on` and `off` text (a lamp, with CSS) | `variable`, `on`, `off` |
 | `<vsil-slider>` | A number in the variable's range, written when the knob is released | `variable` |
 | `<vsil-write>` | A button that writes one value | `variable`, `value`, `label` |
 | `<vsil-scenario-select>`, `<vsil-scenario-result>` | The scenario of the next run, and its steps and result | none |
 
-A variable is written `<participant>.<variable>`, cut at the first dot (`Engine.engine.throttle` is the participant `Engine` and the variable `engine.throttle`). To find the names of your ECUs, see step 2 of the guide. If a name is wrong, the part says that the variable is not in this run. The complete list of the parts and what they promise (the connection, the markup and the `data-*` attributes to style) is "Parts" in [gui/client/README.md](../../gui/client/README.md#parts-custom-elements).
+A variable is written `<participant>.<variable>`, cut at the first dot (`Engine.engine.throttle` is the participant `Engine` and the variable `engine.throttle`). To find the names of your ECUs, see "Step 2: Find the name of the variable to show" in the guide. If a name is wrong, the part says that the variable is not in this run. The complete list of the parts and what they promise (the connection, the markup and the `data-*` attributes to style) is "Parts" in [gui/client/README.md](../../gui/client/README.md#parts-custom-elements).
 
-### Step 2: a script of your own
+### A script of your own
 
-`main.js` shows the 3 things that a script is for. `connect()` without options returns the connection that the parts already use, so a refusal of your button shows in `<vsil-status>` as well, and the page has one WebSocket.
+`main.js` shows the 3 things that a script is for. `connect()` without options returns the connection that the parts already use, so the page has one WebSocket. A refused start, stop or time operation shows in `<vsil-status>`; a refused write of a variable shows next to the part that shows that variable, and in the `ActionError` that your script receives.
 
 | In `main.js` | What it shows |
 |---|---|
-| `watch([client.variable('Engine.engine.speed')], fn)` | A value drawn your own way (a meter). `fn` runs now and on every change. |
+| `watch(client.variable('Engine.engine.speed'), fn)` | A value drawn your own way (a meter). `fn` runs now and on every change. |
 | `await client.variable('Engine.engine.throttle').write(100)` | An operation of your own: a Promise that rejects with an `ActionError` (a sentence in `message`, and `outcome`: `refused` or `unknown`). |
-| `watch([client.scenario], fn)` | The timeline: when a scenario run has one, `<vehicle-sil-timeline>` gets its `src`. |
+| `watch(client.scenario, fn)` | The timeline: when a scenario run has one, `<vehicle-sil-timeline>` gets its `src`. |
 
 The timeline element is loaded from the GUI server (`<script src="/timeline/vehicle-sil-timeline.js">`). It sends the token that the page already has. Its attributes, properties and events are in "Putting a timeline on your own screen" in [docs/gui.md](../../docs/gui.md#putting-a-timeline-on-your-own-screen).
 
-What the starter leaves out, because the sample screens do it: choosing the configuration file, **Check**, and a field to choose any variable and type a value. `client.low` is the lower library (`createClient`, `check`, `variables.bind`) of the same connection when you need it; see "[Build widgets (`bind`)](../../gui/client/README.md#build-widgets-bind)" for widgets of your own.
+What the starter leaves out, because the sample screens do it: choosing the configuration file, **Check**, and a field to choose any variable and type a value. To choose the file, list the files with `client.low.configs()` and start with your own button: `client.run.start(intent, { file })` (`<vsil-run-controls>` starts the file of the last run). `client.low` is the lower library of the same connection (`check`, `variables.bind` and more); see "[Build widgets (`bind`)](../../gui/client/README.md#build-widgets-bind)" for widgets of your own.
 
-### Step 3: TypeScript and a framework
+### A project with a framework
 
 The library comes as a typed npm package (`.tgz`) with the parts. Run `npm install <that .tgz>` in your project, then import it as `@vehicle-sil/gui-client`. It has no dependencies.
 

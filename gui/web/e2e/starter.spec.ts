@@ -96,6 +96,14 @@ test('the starter runs and stops, writes and shows variables, and reports a refu
   const status = page.locator('vsil-status');
   await expect(status).toHaveAttribute('data-link', 'online');
   expect(new URL(page.url()).hash).toBe(''); // the token left the URL
+  await expect(status).toHaveAttribute('data-run', 'none');
+  // The attribute of the time part reaches its list of speeds
+  await expect(page.locator('vsil-time-controls select option')).toHaveText([
+    '-',
+    '1×',
+    '5×',
+    'fastest',
+  ]);
   const button = (name: string) => page.getByRole('button', { name, exact: true });
 
   // Nothing runs: the button of its own is refused, and says so next to itself (the parts keep to their own words)
@@ -106,22 +114,19 @@ test('the starter runs and stops, writes and shows variables, and reports a refu
   await expect(status).toHaveAttribute('data-run', 'running', { timeout: RUN_TIMEOUT });
   await expect(page.locator('#floor-error')).toHaveText(/\w+/); // still the old sentence: it is the script's to clear
 
-  // A part writes: the slider
+  // A part writes: the slider. The fake ECU raises the warning above 50, which another part shows
   const slider = page.locator('vsil-slider input');
+  const warning = page.locator('vsil-value[variable="Engine.engine.warning"]');
   await expect(slider).toBeEnabled();
+  await expect(warning).toHaveAttribute('data-on', 'false');
+  await slider.fill('70');
+  await expect(warning).toHaveAttribute('data-on', 'true');
   await slider.fill('30');
-  await expect(slider).toHaveValue('30');
-  await expect(page.locator('vsil-value[variable="Engine.engine.warning"]')).toHaveAttribute(
-    'data-on',
-    'false',
-  );
+  await expect(warning).toHaveAttribute('data-on', 'false');
   // The button of its own writes through the same connection, and the parts show it
   await button('Throttle to 100 %').click();
   await expect(slider).toHaveValue('100');
-  await expect(page.locator('vsil-value[variable="Engine.engine.warning"]')).toHaveAttribute(
-    'data-on',
-    'true',
-  );
+  await expect(warning).toHaveAttribute('data-on', 'true');
   await expect(page.locator('#floor-error')).toHaveText('');
   // The display of its own
   await expect(page.locator('#rpm-text')).toHaveText(/^\d+ rpm$/);
@@ -133,6 +138,9 @@ test('the starter runs and stops, writes and shows variables, and reports a refu
   await button('Stop').click();
   await expect(status).not.toHaveAttribute('data-run', 'running', { timeout: RUN_TIMEOUT });
   await expect(slider).toBeDisabled();
+  await expect(status).toHaveAttribute('data-run', 'ended');
+  // What is not a live value any more is marked (style.css dims it), also in the display of its own
+  await expect(page.locator('#rpm')).toHaveAttribute('data-stale', 'true');
   expect(sockets).toHaveLength(1);
   expect(errors).toEqual([]);
 });
@@ -153,13 +161,14 @@ test('the starter runs a scenario and shows its timeline', async ({ page }) => {
   await expect(scenario.locator('option', { hasText: 'fails.yaml' })).toHaveCount(1);
   await scenario.selectOption({ label: 'fails.yaml' });
   await page.getByRole('button', { name: 'Start', exact: true }).click();
-  await expect(page.locator('vsil-scenario-result output')).toHaveText('failed', {
+  await expect(page.locator('vsil-scenario-result')).toHaveAttribute('data-status', 'failed', {
     timeout: RUN_TIMEOUT,
   });
   await expect(timeline.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveText(
     /^Step 2 failed at [\d.]+ ms$/,
     { timeout: RUN_TIMEOUT },
   );
+  await expect(timeline).toBeVisible();
   await expect(timeline.locator('#help')).toBeHidden();
   const shots = process.env['VEHICLE_SIL_GUI_SHOTS'];
   if (shots) {

@@ -4,7 +4,7 @@
 
 In this guide you copy the screen template (`gui_starter`), change the variable names in it to your ECU's so that it shows one ECU variable, and have the GUI server (`vehicle-sil-gui`) serve it. The screen is made of ready-made parts (`<vsil-slider>`, `<vsil-value>` and others), so you write HTML and no script; it needs no build. Each "Verify" section shows how to verify in a browser and, where that is possible, without one (with `curl`; in step 4 also with Node.js). The prerequisites below say what each way needs.
 
-Your own screen replaces the sample screens. To keep them and add a part for your ECU, write a custom panel instead; "Build your own screen" in [gui.md](../gui.md#build-your-own-screen) compares the ways, and the 3 steps of building one (parts only, a script of your own, a project with a framework).
+Your own screen replaces the sample screens. To keep them and add a part for your ECU, write a custom panel instead; "Build your own screen" in [gui.md](../gui.md#build-your-own-screen) compares the ways, and the 3 layers of building one (parts only, a script of your own, a project with a framework).
 
 ## Prerequisites
 
@@ -91,7 +91,7 @@ When you are done, stop the GUI server with Ctrl+C. From another terminal, `kill
 |---|---|---|
 | `there is no index.html in it`, and the exit code is 2 | The directory you passed has no `index.html`. | Pass a directory that contains `index.html`. |
 | `it has package.json, so it is the project and not its build`, and the exit code is 2 | You passed the project directory, not its build output. | Pass the build output directory (such as `dist/`). |
-| The screen shows `No token: open the URL that vehicle-sil-gui printed (with #token=...).` | You opened a URL without `#token=`. | Open the URL that the terminal printed, including everything after `#token=`. |
+| Every part shows `connect() without options works in a page that the GUI server served and that was opened from the URL it printed (it ends with #token=...). In Node, pass { base_url, token }` | You opened a URL without `#token=` (each part says it, so the sentence appears once per part). | Open the URL that the terminal printed, including everything after `#token=`. |
 
 ## Step 2: Find the name of the variable to show
 
@@ -162,7 +162,7 @@ The parts of this page:
 | Element | What it shows or does |
 |---|---|
 | `<vsil-status>` | The connection, the run, the virtual time and the one problem to tell you now (such as a refused start) |
-| `<vsil-run-controls>` | **Start** and **Stop**. **Start** runs the configuration file that you gave the server at startup. |
+| `<vsil-run-controls>` | **Start** and **Stop**. **Start** runs the file of the last run (at first, the configuration file that you gave the server at startup). |
 | `<vsil-value variable="...">` | The value with its unit. When it is not a live value, a sentence says why (no run yet, paused, stale, the run has ended). |
 
 Attributes of `<vsil-value>` that this page does not use:
@@ -174,15 +174,15 @@ Attributes of `<vsil-value>` that this page does not use:
 
 All the parts and their attributes are in "Parts" in [gui/client/README.md](../../gui/client/README.md#parts-custom-elements); the template uses most of them (a slider, a button that writes a value, a lamp, time and scenario controls).
 
-The page has no script, so `main.js` is no longer used and you can delete `main.js` and `style.css` (the template has them for the steps after this one). The parts have no look of their own: the template's `style.css` shows how to style what they mark with `data-*` attributes.
+The page has no script, so `main.js` is no longer used and you can delete `main.js` and `style.css` (the template has them as the model for "a script of your own" and for styling the parts; see its README). The parts have no look of their own: the template's `style.css` shows how to style what they mark with `data-*` attributes.
 
 Some details of this page:
 
 | What | Details |
 |---|---|
 | Names | A name that is not in this run does not make an error in the page: the part shows "this variable is not in the current run: check the names (ECU and variable)". |
-| One connection | The parts share the connection of the page. A script of your own shares it too: `connect()` in the template's `main.js` returns the same connection, so a refusal of your own button shows in `<vsil-status>`. |
-| Why a button cannot be used | A part that cannot do its job now (**Stop** with no run) has `aria-disabled="true"`, and a sentence says why. |
+| One connection | The parts share the connection of the page. A script of your own shares it too: `connect()` in the template's `main.js` returns the same connection. A refused start, stop or time operation shows in `<vsil-status>`. A refused write of a variable shows next to the part that shows that variable (the slider, for example), and in the `ActionError` that your own script receives. |
+| Why a button cannot be used | A part that cannot do its job now (**Stop** with no run) has `aria-disabled="true"` and the code of the reason in `data-reason`. The sentence is read by a screen reader; a reason that only says there is nothing to do (no run) is not shown on the screen. |
 
 ## Step 4: Serve the screen and verify it
 
@@ -280,7 +280,7 @@ The answer to this request only says that the server took it: the `session` in i
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| The value stays `-`, with a sentence that the variables are not available | No run has started, or the run has no Control Server. | Click **Start**. If the run has started, start the GUI server with a launcher that has a Control Server (the sentence says what to run). |
+| The value stays `-`, with a sentence that the variables are not available | No run has started, or the run has no Control Server. | Click **Start**. If the run has started, start the GUI server with a launcher that has a Control Server (the slider says `start a run with --control` or what to build). |
 | The part says `this variable is not in the current run` | The participant name or the variable name is not in this run. | Check the names as in step 2. |
 | The screen shows nothing, and the browser console shows a CSP error | The page uses inline `<script>` or `onclick="..."`. | Put the script in a file, and register handlers with `addEventListener` or the `onclick` property. |
 | A file returns 404 | Its extension is not served, its name starts with `.`, or it is a symbolic link. | See the table in "Files served with `--web`" in [gui.md](../gui.md#files-served-with---web). |
@@ -291,7 +291,7 @@ The answer to this request only says that the server took it: the `session` in i
 ## What to read next
 
 - Add a display, a button or a rule of your own with a script: `main.js` of the template, and "The front door (`connect()`)" in [gui/client/README.md](../../gui/client/README.md#the-front-door-connect). The script uses the same connection as the parts.
-- Build with TypeScript and a framework (React, Vue, Angular and others; the parts are custom elements, so any template can contain them): "Step 3: TypeScript and a framework" in [examples/gui_starter/README.md](../../examples/gui_starter/README.md#step-3-typescript-and-a-framework)
+- Build with TypeScript and a framework (React, Vue, Angular and others; the parts are custom elements, so any template can contain them): "A project with a framework" in [examples/gui_starter/README.md](../../examples/gui_starter/README.md#a-project-with-a-framework)
 - Show the timeline of a scenario run on your screen (one script and one tag, in any framework): "Putting a timeline on your own screen" in [gui.md](../gui.md#putting-a-timeline-on-your-own-screen)
 - Look up the served files, the CSP, the development server and the rules to follow: "Reference for your own screen" in [gui.md](../gui.md#reference-for-your-own-screen)
 - Keep the sample screens and add a part to them: "Custom panels" in [gui.md](../gui.md#custom-panels)
