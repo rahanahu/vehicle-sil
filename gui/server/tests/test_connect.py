@@ -200,6 +200,26 @@ def test_a_network_that_the_file_lacks_is_left_to_the_launcher(tmp_path: Path) -
         run_async(main, gui)
 
 
+def test_a_run_whose_file_changes_during_its_check_connects_nothing(tmp_path: Path) -> None:
+    """A network that the file lacks is left to the launcher, but only for the file that was checked: if the file
+    changes while the run waits for its check, it may have that network now, so the run is refused."""
+    root = tmp_path / "root"
+    shutil.copytree(CONFIGS, root)
+
+    async def main(c: Client) -> None:
+        starting = asyncio.ensure_future(c.post("api/run", {"file": FILE, "connect": {"CAN1": "physical:1"}}))
+        await asyncio.sleep(0.5)  # the run's checks take 1.5 s each
+        touch(root / FILE)
+        error = refused(*await starting, "target-not-listed")
+        assert "connect.yaml has changed since this run was checked" in error["message"]
+        assert error["detail"] == {"network": "CAN1", "target": "physical:1"}
+        status, body = await c.get("api/session")
+        assert body["session"] is None
+    with gui_server(tmp_path, root=root, launcher=stand_in(tmp_path),
+                    env={"REPLAY_CHECK_DELAY_MS": "1500"}) as gui:
+        run_async(main, gui)
+
+
 def test_the_list_is_of_a_network_of_the_file(tmp_path: Path) -> None:
     async def main(c: Client) -> None:
         error = refused(*await c.post("api/connections", {"file": FILE, "network": "NOPE"}), "unknown-network")

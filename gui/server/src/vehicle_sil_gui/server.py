@@ -541,14 +541,23 @@ class GuiServer:
                   "connect": connect or None, "time_policy": time_policy}
         return {k: v for k, v in intent.items() if v is not None}, disable, manual
 
-    def _check_targets(self, relative: str, connect: dict[str, str], networks: list[str]) -> None:
+    def _check_targets(self, relative: str, connect: dict[str, str], networks: list[str],
+                       checked_stamp: tuple | None = None) -> None:
         """The guard between the browser and the bridges' devices: a target other than "none" of a network of the
         configuration (networks: those of the check of this very request) is passed on only when the last list of
         that network of that file (POST api/connections), made from the file as it is now, gave it as usable, exactly
         so written. Refused 400 target-not-listed otherwise. A network that the configuration lacks connects nothing:
-        the launcher leaves it out with the note connect-network-unused, as it does for a request file."""
+        the launcher leaves it out with the note connect-network-unused, as it does for a request file. checked_stamp
+        (a run): the file's stamp before its check; a file changed since may have that network now, so then every
+        target other than "none" is refused."""
         for network, target in connect.items():
-            if target == NO_CONNECTION or network not in networks:
+            if target == NO_CONNECTION:
+                continue
+            if checked_stamp is not None and checked_stamp != self._stamp(relative):
+                raise Refused(400, "target-not-listed",
+                              f"{relative} has changed since this run was checked, so the networks that it connects "
+                              "may be others: start the run again", {"network": network, "target": target})
+            if network not in networks:
                 continue
             listed = self._targets.get((relative, network))
             if listed is None or listed[0] != self._stamp(relative):
@@ -641,6 +650,7 @@ class GuiServer:
         config = self.root.resolve(body.get("file"))
         await self._usable()
         scenario = self._scenario(config, body)
+        checked_stamp = self._stamp(config.relative)  # before the names and the check read the file
         intent, disable, manual = await self._intent(config, body, scenario, always=True)
         speed, start_paused = intent.get("speed"), intent.get("start_paused", False)
         # The check of what this run is made of (the same request file as the run's): a run that the check refuses
@@ -672,7 +682,7 @@ class GuiServer:
         try:
             # The last await is above: from here to the launcher's start no other request runs, so the targets are
             # compared with the lists and the file as they are when the launcher is started.
-            self._check_targets(config.relative, intent.get("connect", {}), network_names(checked))
+            self._check_targets(config.relative, intent.get("connect", {}), network_names(checked), checked_stamp)
             request = self._make_request(intent)
         except BaseException:
             control.remove(credentials)
