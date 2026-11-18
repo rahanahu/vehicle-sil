@@ -1,6 +1,7 @@
 import { signal } from '@angular/core';
 import { Control, FrontControls } from '@vehicle-sil/gui-client';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { OperationFailure } from '../core/session/gui-client';
 import { SimulationTime } from '../core/session/simulation-time';
 import { TimePanel } from './time-panel';
 
@@ -28,8 +29,8 @@ describe('TimePanel: the step field', () => {
         step: { ok: true, reason: null, caution: null, min_ms: 1, max_ms: 60000 },
         speed: { ok: true, reason: null, caution: null, min: 0.01, max: 1000, fastest: true },
       }),
-      error: signal(null),
-      errorFromServer: signal(false),
+      failure: signal(null),
+      answerTimeoutMs: 5000,
       step: (ms: number) => Promise.resolve(steps.push(ms)).then(() => undefined),
       setSpeed: () => Promise.resolve(),
     };
@@ -123,10 +124,12 @@ describe('TimePanel: why an operation cannot be used', () => {
   });
   let fixture: ComponentFixture<TimePanel>;
   const controls = signal<FrontControls>(realTime());
+  const failure = signal<OperationFailure | null>(null);
   const speeds: (number | 'max')[] = [];
 
   beforeEach(async () => {
     controls.set(realTime());
+    failure.set(null);
     speeds.length = 0;
     const time = {
       supported: signal(true),
@@ -140,8 +143,8 @@ describe('TimePanel: why an operation cannot be used', () => {
       lastCommand: signal(null),
       waiting: signal(false),
       controls,
-      error: signal(null),
-      errorFromServer: signal(false),
+      failure,
+      answerTimeoutMs: 5000,
       step: () => Promise.resolve(),
       setSpeed: (value: number | 'max') =>
         Promise.resolve(speeds.push(value)).then(() => undefined),
@@ -245,5 +248,31 @@ describe('TimePanel: why an operation cannot be used', () => {
     expect(shownText('step-hint')).toBe('');
     expect(shownText('speed-hint')).toBe('');
     expect(described(query('set-speed')!)).toBe(unsupported);
+  });
+
+  it("shows the last time command's failure from status.problem, and not what the screen leaves out", async () => {
+    const refused = () => query('time-refused')!;
+    failure.set({
+      op: 'step',
+      problem: { code: 'not-paused', message: 'step works while paused' },
+    });
+    await fixture.whenStable();
+    expect(refused().textContent).toContain('命令を受け付けられませんでした');
+    expect(refused().querySelector('span')?.getAttribute('lang')).toBe('en');
+    expect(refused().textContent).toContain('step works while paused');
+    // 答えがない: 画面の文
+    failure.set({
+      op: 'speed',
+      problem: { code: 'no-answer', message: 'the launcher did not answer' },
+    });
+    await fixture.whenStable();
+    expect(refused().textContent).toContain('ランチャーが命令（speed）に 5 秒たっても答えません');
+    expect(refused().querySelector('[lang="en"]')).toBeNull();
+    // 別の送り手に割り込まれた、実行が先に終わった、実行の失敗は、カードに出さない
+    for (const code of ['interrupted', 'not-running', 'run-failed', 'offline']) {
+      failure.set({ op: 'step', problem: { code, message: code } });
+      await fixture.whenStable();
+      expect(refused().textContent?.trim()).toBe('');
+    }
   });
 });

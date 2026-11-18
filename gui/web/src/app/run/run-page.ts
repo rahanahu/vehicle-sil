@@ -33,7 +33,7 @@ import { ServerInfo } from '../core/session/server-info';
 import { SimulationTime } from '../core/session/simulation-time';
 import { CheckPanel } from './check-panel';
 import { FindingsList } from './findings-list';
-import { cutShort, resultTone } from './labels';
+import { cutShort, failureLine, resultTone } from './labels';
 import { STDERR_CODE, launcherStderr } from './launcher-stderr';
 import { LogView } from './log-view';
 import { OutsideChoice, OutsideRows, connectChoice, connectText } from './outside-connect';
@@ -194,6 +194,8 @@ export class RunPage {
     return error ? errorMessage(error) : null;
   });
   protected readonly session = this.run.session;
+  /** 帯の下に出す、最後の開始か停止の失敗（正面の口の `status.problem`。時刻の命令の失敗は時刻のカード）。 */
+  protected readonly actionError = computed(() => failureLine(this.run.failure()));
   /** ランチャーが動いている（設定を変えられず、照合もしない）。 */
   protected readonly running = this.run.launcherRunning;
 

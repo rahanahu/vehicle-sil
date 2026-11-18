@@ -1,6 +1,6 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
-import { ActionError, CheckResult, Intent } from '@vehicle-sil/gui-client';
-import { GUI_FRONT, readableSignal } from './gui-client';
+import { Injectable, inject } from '@angular/core';
+import { ActionError, CheckResult, Intent, OperationName } from '@vehicle-sil/gui-client';
+import { GUI_FRONT, lastOperation, readableSignal } from './gui-client';
 
 /**
  * 実行の照合と操作（開始、順に止める、待たずに止める）の、Angular の包み。アプリ全体で 1 つ。操作の可否と理由は
@@ -24,17 +24,17 @@ export class RunCommands {
   /** 開始の応答を待っている間に、止めるよう頼んだ。 */
   readonly stopWhileStarting = readableSignal(this.control.stopWhileStarting);
 
-  private readonly failure = signal<{ error: ActionError; run: string } | null>(null);
-  /** 最後の操作が断られた理由（サーバーの文をそのまま）。実行の状態が変わったら出さない。 */
-  readonly error = computed(() => {
-    const failure = this.failure();
-    return failure && failure.run === this.status().run ? failure.error.message : null;
-  });
+  private readonly last = lastOperation(this.status, ['start', 'stop', 'force_stop']);
+  /**
+   * 最後の操作がこのアプリの開始か停止なら、それと正面の口の `status.problem`（いつ消えるかは正面の口が決める: 次の
+   * 操作か、`status.run` が変わったとき）。それ以外は null。
+   */
+  readonly failure = this.last.failure;
 
   /**
    * `file` を `intent` で照合する（正面の口の `check`: 1 つずつ送り、同じ意図の照合は分け合う。`signal` が中断した
    * 照合は、待っている間なら送らない。`fresh` なら、送っている最中の照合は分け合わない）。失敗は呼んだ側のもの
-   * （error には出さない）。
+   * （`status.problem` には出ない）。
    */
   check(
     intent: Intent,
@@ -44,27 +44,26 @@ export class RunCommands {
     return this.front.check(intent, { file, ...options });
   }
 
-  /** `file` の実行を `intent` で始める。断られたら error に出る。 */
+  /** `file` の実行を `intent` で始める。断られたら `status.problem` に出る。 */
   start(intent: Intent, file: string): void {
-    this.send(() => this.front.run.start(intent, { file }));
+    this.send('start', () => this.front.run.start(intent, { file }));
   }
 
   /** 順に止める（participant の終わりを待つ）。 */
   stop(): void {
-    this.send(() => this.front.run.stop());
+    this.send('stop', () => this.front.run.stop());
   }
 
   /** 待たずに止める（participant を強制終了する）。 */
   forceStop(): void {
-    this.send(() => this.front.run.forceStop());
+    this.send('force_stop', () => this.front.run.forceStop());
   }
 
-  private send(operation: () => Promise<void>): void {
-    this.failure.set(null);
+  private send(op: OperationName, operation: () => Promise<void>): void {
+    this.last.sending(op);
     operation().catch((error: unknown) => {
-      if (error instanceof ActionError) {
-        this.failure.set({ error, run: this.status().run });
-      }
+      // 失敗は正面の口が `status.problem` に置く
+      if (!(error instanceof ActionError)) throw error;
     });
   }
 }

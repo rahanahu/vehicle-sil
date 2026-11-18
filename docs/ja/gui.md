@@ -532,7 +532,7 @@ ECU が宣言した変数（[control-api.md](control-api.md) の「ECU の変数
 
 ## サンプルの画面
 
-`gui/web` の Angular のアプリです。クライアントのライブラリと、その Angular のラッパー（`gui/web/src/app/core/session/`。ライブラリの `Readable` を signal にするだけの薄い層）だけで作っていて、`--web` を指定せずに起動すると、GUI サーバーがこれを配信します。そのまま使えます。画面の開発のルールは [gui/web/README.md](../../gui/web/README.ja.md) にあります。
+`gui/web` の Angular のアプリです。クライアントのライブラリと、その Angular のラッパー（`gui/web/src/app/core/session/`。ライブラリの `Readable` を signal にする、自分の規則を持たない薄い層）だけで作っていて、`--web` を指定せずに起動すると、GUI サーバーがこれを配信します。そのまま使えます。画面の開発のルールは [gui/web/README.md](../../gui/web/README.ja.md) にあります。
 
 「変数の画面とコンポーネント」「ダッシュボードのファイル」「カスタムパネル」は、サンプルの画面の機能です。自分の画面には自動では付きません。
 
@@ -799,15 +799,15 @@ const spec: DashboardSpec = {
 | `beforeStart` | 最初のステップの前で、再開かステップ実行を待っているか（ランチャーの `state` の `holding`） |
 | `controls` | 操作ごとに、いま押してよいか、押せない理由、範囲（ライブラリの `connect()` の `controls`） |
 | `waiting` | 送って、応答をまだ見ていないコマンドがあるか |
-| `error`、`errorFromServer` | 最後のコマンドが失敗した理由と、それがサーバーかランチャーの文か |
+| `failure` | アプリの最後の操作が時間のコマンドのとき、そのコマンドと、ライブラリの `status` の `problem`（問題がないときと、最後の操作が開始か停止のときは `null`） |
 
 - `time` のフィールドは `simMs`、`actualSpeed`、`lateSteps`、`maxLateMs`、`slippedMs`、`lateMs` です。
 - 画面は、押してよいかを自分で判断しません。`controls` が、ランチャーが受け付けると言っていること（`state` のイベントの `allowed`）、GUI サーバーが言っていること、接続の状態を合わせます。
 - `beforeStart` が真になるのは、止めた状態で始めた実行で、ランチャーが変数を読み書きする API を持つときです。このとき `time` はまだ `null` で、`controls.resume` と `controls.step` が `ok` です。
 - `waiting` は、応答が届く、ランチャーが終わる、実行が替わる、サーバーが拒否する、のどれかで解除されます。5 秒（`ANSWER_TIMEOUT_MS`）たっても応答がなければ、コマンドは `no-answer` のコードで失敗します。
-- `error` は、コマンドが断られたときはサーバーかランチャーの文（英語のまま）、応答がなかったときは画面の文です。
+- 失敗がいつ消えるかは、ライブラリが決めます（次の操作か、`status.run` が変わったとき）。`failureLine`（`gui/web/src/app/run/labels.ts`）が、それを画面の文にします: 応答がなかったときは画面の文、それ以外はサーバーかランチャーの英語の文です。状態の帯や結果のカードが言うこと（接続、異常終了、失敗した実行）と、時間のコマンドの `interrupted` と `not-running`（ほかの送り手のコマンドが先に来た、実行が先に終わった。押した人の誤りではない）は出しません。
 
-コマンドは `pause()`、`resume()`、`step(ms)`、`setSpeed(value)` です。どれも Promise を返し、コマンドが済んだときに完了します（ステップ実行は、その時刻でまた一時停止したとき）。失敗は `error` に出て、Promise は失敗しません。送る前に `controls` を確認します。
+コマンドは `pause()`、`resume()`、`step(ms)`、`setSpeed(value)` です。どれも Promise を返し、コマンドが済んだときに完了します（ステップ実行は、その時刻でまた一時停止したとき）。失敗は `status.problem`（と `failure`）に出て、Promise は失敗しません。送る前に `controls` を確認します。
 
 状態の帯に操作を追加するときは、`<app-run-status>` の中に `runStatusActions` の属性を付けた要素を置きます（「開始」と「停止」の後、「待たずに止める」の前に並びます。「開始」と「停止」の位置は動きません）。
 

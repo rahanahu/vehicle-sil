@@ -524,7 +524,7 @@ The GUI reads and writes the variables that ECUs declare (see "ECU variables" in
 
 ## The sample screens
 
-An Angular app in `gui/web`. It is built only on the client library and its Angular wrapper (`gui/web/src/app/core/session/`, a thin layer that only turns the library's `Readable` into signals). When started without `--web`, the GUI server serves it. You can use it as it is. For the rules for developing the screens, see [gui/web/README.md](../gui/web/README.md).
+An Angular app in `gui/web`. It is built only on the client library and its Angular wrapper (`gui/web/src/app/core/session/`, a thin layer that turns the library's `Readable` into signals and has no rules of its own). When started without `--web`, the GUI server serves it. You can use it as it is. For the rules for developing the screens, see [gui/web/README.md](../gui/web/README.md).
 
 "The Variables screen and widgets", "Dashboard files" and "Custom panels" are features of the sample screens. Your own screen does not get them automatically.
 
@@ -791,15 +791,15 @@ The time state and commands live in one service for the whole app (built on the 
 | `beforeStart` | Whether the run is held before the first step, waiting for resume or step (`holding` of the launcher's `state`) |
 | `controls` | For each operation, whether it may be used now, why not, and its range (`controls` of the library's `connect()`) |
 | `waiting` | Whether a command was sent and its answer has not been seen yet |
-| `error`, `errorFromServer` | Why the last command failed, and whether that text came from the server or the launcher |
+| `failure` | When the last operation of the app was a time command: that command and `problem` of the library's `status` (`null` when there is no problem, and when the last operation was a start or a stop) |
 
 - The fields of `time` are `simMs`, `actualSpeed`, `lateSteps`, `maxLateMs`, `slippedMs` and `lateMs`.
 - The screen does not work out whether a control may be used: `controls` puts together what the launcher says it accepts (`allowed` of its `state` event), what the GUI server says, and the connection.
 - `beforeStart` is true in a run started paused when the launcher has the API for reading and writing variables. Then `time` is still `null`, and `controls.resume` and `controls.step` are `ok`.
 - `waiting` clears when the answer arrives, the launcher exits, the run changes, or the server rejects the command. If no answer comes within 5 seconds (`ANSWER_TIMEOUT_MS`), the command fails with the code `no-answer`.
-- `error` is the server's or the launcher's text, not localized, when the command was refused, and the screen's own text when no answer came.
+- The library decides when the failure goes (at the next operation, or when `status.run` changes). `failureLine` (`gui/web/src/app/run/labels.ts`) turns it into the sentence of the screen: the screen's own sentence when no answer came, the server's or the launcher's English sentence otherwise. It leaves out what the status bar or the result card says (the connection, a crash, a failed run), and `interrupted` and `not-running` of a time command (another sender's command came first, or the run ended first: not the user's mistake).
 
-The commands are `pause()`, `resume()`, `step(ms)` and `setSpeed(value)`. Each returns a Promise that settles when the command is done (a step: when the run is paused again at its time); a failure appears in `error` and does not reject the Promise. Check `controls` before sending.
+The commands are `pause()`, `resume()`, `step(ms)` and `setSpeed(value)`. Each returns a Promise that settles when the command is done (a step: when the run is paused again at its time); a failure appears in `status.problem` (and `failure`) and does not reject the Promise. Check `controls` before sending.
 
 To add a control to the status bar, place an element with the attribute `runStatusActions` inside `<app-run-status>` (it appears after **Start** and **Stop** and before **Stop without waiting**; **Start** and **Stop** do not move).
 
