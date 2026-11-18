@@ -228,6 +228,11 @@ struct Shared
     /// The controls of the run (run), on g_stops: the reader of stdin hands the time commands to
     /// the run through them, a control server its time operations.
     launch::RunControls* controls = nullptr;
+    /// Without --events: the lines about refused commands of standard input that are not written
+    /// yet (write_stdin_notes()). They are decided under the time commands' mutex, where nothing
+    /// may wait for stderr, so they are kept here and written outside it.
+    std::mutex stdin_notes_mutex;
+    std::vector<std::string> stdin_notes;
 };
 
 Shared& shared()
@@ -631,10 +636,46 @@ launch::EventStream* start_events(const std::string& file, const std::vector<std
 
 // --- the commands on standard input (run --stdin-commands) ---
 
-/// Without --events: a line of standard input that was not accepted, as a line on stderr.
+/// At most this many lines wait in Shared::stdin_notes (more are left out: nobody reads stderr).
+constexpr std::size_t kMaxStdinNotes = 1024;
+
+std::string stdin_ignored_line(const launch::Command& command)
+{
+    return "vehicle_sil_launch: a line of the standard input was ignored: " + command.message;
+}
+
+/// Without --events: a line of standard input that was not accepted, as a line on stderr. From
+/// the thread that reads standard input, outside every mutex of the run.
 void note_stdin_ignored(const launch::Command& command)
 {
-    note_from_thread("vehicle_sil_launch: a line of the standard input was ignored: " + command.message);
+    note_from_thread(stdin_ignored_line(command));
+}
+
+/// note_stdin_ignored() for where nothing may wait (under the time commands' mutex): the line is
+/// kept for write_stdin_notes().
+void keep_stdin_note(const launch::Command& command)
+{
+    const std::lock_guard lock(shared().stdin_notes_mutex);
+    if (shared().stdin_notes.size() < kMaxStdinNotes)
+    {
+        shared().stdin_notes.push_back(stdin_ignored_line(command));
+    }
+}
+
+/// Writes the lines keep_stdin_note() kept, outside the time commands' mutex: `from_main` as
+/// write_stderr_line() (main does not wait for stderr without a limit), else as
+/// note_from_thread(). The lines of one call keep their order.
+void write_stdin_notes(bool from_main)
+{
+    std::vector<std::string> lines;
+    {
+        const std::lock_guard lock(shared().stdin_notes_mutex);
+        lines.swap(shared().stdin_notes);
+    }
+    for (const std::string& line : lines)
+    {
+        from_main ? write_stderr_line(line) : note_from_thread(line);
+    }
 }
 
 /// Reads standard input to its end on a thread of its own: each command as an event (or, without
@@ -653,6 +694,10 @@ void start_reading_commands()
             if (command.is_time() && controls != nullptr)
             {
                 static_cast<void>(controls->time().apply(command, "stdin"));
+                if (events == nullptr)
+                {
+                    write_stdin_notes(false);
+                }
             }
             // The event first: it comes before what the stop does (it does not wait for its reader).
             else if (events != nullptr && !command.is_time())
@@ -1137,7 +1182,13 @@ int run(const cli::Args& args, launch::EventStream* events)
     }
     else
     {
-        options.write_line = write_stderr_line;
+        // The answers of commands that waited for the configuration are kept (keep_stdin_note()):
+        // they are written before the run's next line, and after the run. Like the line itself,
+        // this does not wait for stderr without a limit.
+        options.write_line = [](std::string_view line) {
+            write_stdin_notes(true);
+            write_stderr_line(line);
+        };
     }
     {
         // The controls of this run, on the stop requests of the process. Never destroyed: the
@@ -1153,11 +1204,12 @@ int run(const cli::Args& args, launch::EventStream* events)
         }
         else
         {
-            // No event says what became of a command: a refused one of standard input is a line.
+            // No event says what became of a command: a refused one of standard input is a line,
+            // written once the time commands' mutex is left (this is called under it).
             observers.on_command = [](const launch::Command& command, std::string_view source) {
                 if (!command.accepted && source == "stdin")
                 {
-                    note_stdin_ignored(command);
+                    keep_stdin_note(command);
                 }
             };
         }
@@ -1192,6 +1244,10 @@ int run(const cli::Args& args, launch::EventStream* events)
     }
     options.interrupt_name = interrupt_name;
     const launch::RunReport report = launch::run_file(process::path_from_utf8(c.file), c.file, options);
+    if (events == nullptr)
+    {
+        write_stdin_notes(true); // before the result
+    }
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
     // Before the result: every call of a client ends (a watch, a wait) and none comes any more.
     if (server)

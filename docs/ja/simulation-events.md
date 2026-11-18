@@ -197,7 +197,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 
 `pause`、`resume`、`step`、`speed`、`stop` は、標準入力のコマンドとして答えます。`run_until` と `write`（変数の書き込み）は Control Server のクライアントにしかないので、クライアントとして答えます。Control Server のない実行（`--control` なし）では、この 2 つを送る口がないので、実行の間ずっと、どちらも `ok` が `false`、理由は `no-control-server` です。シナリオの間は、この 2 つの入口で答えが違います: クライアントは時間を動かせず（`scenario-running`）、標準入力のコマンドは動かせます。上の 5 つは標準入力の答えです。
 
-シミュレーションの外につながっていて実時間を保つ実行（`--time-policy realtime`、既定）では、`pause`、`step`、`run_until` は、理由 `outside-real-time` で `ok` が `false` になり、`speed` は `min` と `max` が 1 になります（受け付けるのは速さ 1 だけです）。`--time-policy free` では、`ok` は `true` で、`caution` に `outside-not-real-time` が付きます。実行を外につないでいるものは、`check` イベントの `time_lock.because` にあります。
+シミュレーションの外につながっていて実時間を保つ実行（`--time-policy realtime`、既定）では、`pause` と `step` は、理由 `outside-real-time` で `ok` が `false` になります。`run_until` も、Control Server があってシナリオのない実行では同じです（そうでなければ、上のとおり、理由は `no-control-server` か `scenario-running` です）。`speed` は `min` と `max` が 1 になります（受け付けるのは速さ 1 だけです）。`--time-policy free` では、`ok` は `true` で、`caution` に `outside-not-real-time` が付きます。実行を外につないでいるものは、`check` イベントの `time_lock.because` にあります。
 
 `state` を書くとき:
 
@@ -569,7 +569,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 - 待たせます。`command` イベントは、ファイルを読んだ後に、そのときの答えで書きます。待たせたコマンドには、届いた順に、後から届くどのコマンドよりも先に答えます。`command` イベントの順は、コマンドが効いた順のままです。
 - `stop` は待たせません。待っているものがあっても、すぐ受け付けます。
-- 待たせるのは 256 個までです。それを超えたコマンドは、理由 `not-set-up` ですぐ断ります。最初の `state` イベントの後に、送り直してください。
+- 待たせるのは 256 個までです。それを超えたコマンドは、理由 `not-set-up` ですぐ断ります。`check` イベントの後に、送り直してください（そのときにはファイルを読み終えています。最初の `state` イベントは、それより前に出ます）。
 - ファイルが読めなければ、何も始まりません。待たせたコマンドは、理由 `not-running` で断ります。
 - ファイルを読む前に書いた `state` イベントは、まだこの規則を知りません。その `allowed` は、外につながっていない実行としての答えです。次の `state` から、この規則が入ります。
 

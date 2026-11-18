@@ -147,26 +147,26 @@ public:
         {
             c.at_ms = at_ms(*at);
         }
-        apply(c, at && *at < SimTime{});
+        apply(c);
     }
-    void resume() override { apply(command("resume"), false); }
+    void resume() override { apply(command("resume")); }
     void run_until(SimTime t) override
     {
         launch::Command c = command("run_until");
         c.at_ms = at_ms(t);
-        apply(c, t < SimTime{});
+        apply(c);
     }
     void step(SimDuration d) override
     {
         launch::Command c = command("step");
         c.ms = d.count() > 0 ? ceil_ms(d.count()) : 0;
-        apply(c, d.count() <= 0 || *c.ms > launch::kMaxMillis);
+        apply(c);
     }
     void set_speed(std::optional<double> speed) override
     {
         launch::Command c = command("speed");
         c.speed = speed;
-        apply(c, speed && !(*speed >= launch::kMinSpeed && *speed <= launch::kMaxSpeed));
+        apply(c);
     }
     std::optional<SimTime> wait_paused(std::chrono::milliseconds timeout) override { return commands_.wait_paused(timeout); }
     void stop(const std::string&) override
@@ -174,7 +174,7 @@ public:
         // Decided and written with the time commands (refused once the run is over), and, under
         // their mutex, a stop request as {"command":"stop"} on standard input: an accepted stop
         // reaches the run before it detaches the commands (not while it ends the participants).
-        apply(command("stop"), false, stop_);
+        apply(command("stop"), stop_);
     }
 
     std::vector<std::pair<std::string, std::string>> participants() const override
@@ -230,10 +230,12 @@ private:
 
     /// The command through the run's time commands (its event, its rules; `accepted` as
     /// TimeCommands::apply() calls it); a refusal as the
-    /// exception the server answers with: std::invalid_argument (INVALID_ARGUMENT) for a
-    /// `bad_argument` while the run lasts, else control_grpc::Refused (FAILED_PRECONDITION, with
-    /// the code of the refusal, as the command event's "reason", for the client's program).
-    void apply(const launch::Command& c, bool bad_argument, const std::function<void()>& accepted = {})
+    /// exception the server answers with, chosen by the rule that refused (so the client and the
+    /// command event name the same reason): std::invalid_argument (INVALID_ARGUMENT) when it was
+    /// the argument (out-of-range, missing-argument), else control_grpc::Refused
+    /// (FAILED_PRECONDITION, with the code of the refusal, as the command event's "reason", for
+    /// the client's program).
+    void apply(const launch::Command& c, const std::function<void()>& accepted = {})
     {
         const launch::Command done = commands_.apply(c, kSource, accepted);
         if (done.pending)
@@ -245,7 +247,7 @@ private:
         }
         if (!done.accepted)
         {
-            if (bad_argument && commands_.inspect([](SimulationController&, bool) {}) != launch::TimeCommands::Stage::Detached)
+            if (done.reason == launch::reason::kOutOfRange || done.reason == launch::reason::kMissingArgument)
             {
                 throw std::invalid_argument(done.message);
             }

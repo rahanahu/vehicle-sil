@@ -702,6 +702,10 @@ class LauncherTest(unittest.TestCase):
                     "run until": lambda: c.sim.run_until(ms(100_000)),
                     "set another speed": lambda: c.sim.set_speed(2.0),
                     "set the speed max": lambda: c.sim.set_speed(None),
+                    # The lock answers before the range of an argument does, as in the command event.
+                    "step of 0": lambda: c.sim.step(ms(0)),
+                    "set the speed 0": lambda: c.sim.set_speed(0.0),
+                    "pause before 0": lambda: c.sim.pause(ms(-1)),
                 }
                 for what, call in refusals.items():
                     with self.assertRaises(ControlError) as refused:
@@ -737,6 +741,9 @@ class LauncherTest(unittest.TestCase):
             ("run_until", "control_server", False, "outside-real-time"),
             ("speed", "control_server", False, "outside-real-time"),
             ("speed", "control_server", False, "outside-real-time"),
+            ("step", "control_server", False, "outside-real-time"),
+            ("speed", "control_server", False, "outside-real-time"),
+            ("pause", "control_server", False, "outside-real-time"),
             ("resume", "control_server", True, None),
             ("speed", "control_server", True, None),
             ("pause", "stdin", False, "outside-real-time"),

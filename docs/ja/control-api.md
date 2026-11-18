@@ -111,7 +111,7 @@ vehicle_sil_launch run --events --stdin-commands --start-paused --control 0 simu
 
 | 呼び出し | 実時間を保つ実行 |
 |---|---|
-| `Pause`、`Step`、`RunUntil`、1 以外の速度の `SetSpeed` | `FAILED_PRECONDITION` で拒否します。trailing metadata の `vehicle-sil-reason` は `outside-real-time` です。 |
+| `Pause`、`Step`、`RunUntil`、1 以外の速度の `SetSpeed` | `FAILED_PRECONDITION` で拒否します。trailing metadata の `vehicle-sil-reason` は `outside-real-time` です。引数の誤り（0 のステップ、範囲外の速度）も、`INVALID_ARGUMENT` でなく、この答えになります。 |
 | `Resume`、速度 1 の `SetSpeed`、`Stop` | いつもどおりです。 |
 | 読む・待つ・書く呼び出し | いつもどおりです（この規則は時刻だけのものです）。 |
 

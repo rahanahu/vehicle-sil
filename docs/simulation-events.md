@@ -197,7 +197,7 @@ How late the run is, and how fast it actually goes, are `late_ms`, `slipped_ms` 
 
 `pause`, `resume`, `step`, `speed` and `stop` are answered as for a stdin command. `run_until` and `write` (writing a variable) exist only for Control Server clients, so they are answered as for a client. In a run without a Control Server (no `--control`) nothing can send these two, so both have `ok` `false` with the reason `no-control-server` for the whole run. During a scenario the two entries differ: clients cannot move time (`scenario-running`), stdin commands can, and those five show the answer for stdin.
 
-In a run that is connected outside the simulation and keeps real time (`--time-policy realtime`, the default), `pause`, `step` and `run_until` have `ok` `false` with the reason `outside-real-time`, and `speed` has `min` and `max` 1 (only a speed of 1 is accepted). With `--time-policy free` they have `ok` `true` and the `caution` `outside-not-real-time`. What connects the run outside is `time_lock.because` of the `check` event.
+In a run that is connected outside the simulation and keeps real time (`--time-policy realtime`, the default), `pause` and `step` have `ok` `false` with the reason `outside-real-time`, and so has `run_until` in a run with a Control Server and without a scenario (otherwise its reason is `no-control-server` or `scenario-running`, as above), and `speed` has `min` and `max` 1 (only a speed of 1 is accepted). With `--time-policy free` they have `ok` `true` and the `caution` `outside-not-real-time`. What connects the run outside is `time_lock.because` of the `check` event.
 
 When `state` is written:
 
@@ -569,7 +569,7 @@ Whether a run keeps real time (`--connect`, a `role: bridge` participant, `--tim
 
 - It waits. Its `command` event is written when the file has been read, with the answer of that moment. The commands that waited are answered in the order in which they arrived, before any command that arrives later, so the order of the `command` events is still the order in which the commands took effect.
 - `stop` does not wait: it is accepted at once, whatever waits.
-- At most 256 commands wait. One more is refused at once with the reason `not-set-up`; send it again after the first `state` event.
+- At most 256 commands wait. One more is refused at once with the reason `not-set-up`; send it again after the `check` event (the file has been read then; the first `state` event comes before that).
 - If the file cannot be read, nothing starts, and the commands that waited are refused with the reason `not-running`.
 - The `state` event written before the file is read does not know the rule yet: its `allowed` is the answer for a run that is not connected outside. The next `state` has the rule.
 

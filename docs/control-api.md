@@ -111,7 +111,7 @@ A run that is connected outside the simulation (`--connect`, or an enabled `role
 
 | Call | In a run that keeps real time |
 |---|---|
-| `Pause`, `Step`, `RunUntil`, `SetSpeed` with a speed other than 1 | Rejected with `FAILED_PRECONDITION`; `vehicle-sil-reason` in the trailing metadata is `outside-real-time`. |
+| `Pause`, `Step`, `RunUntil`, `SetSpeed` with a speed other than 1 | Rejected with `FAILED_PRECONDITION`; `vehicle-sil-reason` in the trailing metadata is `outside-real-time`. A wrong argument (a step of 0, a speed out of range) gets this answer too, not `INVALID_ARGUMENT`. |
 | `Resume`, `SetSpeed` with the speed 1, `Stop` | Work as usual. |
 | Read, wait and write calls | Work as usual (the rule is about time only). |
 

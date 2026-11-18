@@ -904,7 +904,7 @@ TEST_CASE(time_commands_keep_a_limited_number_of_commands_for_the_time_lock)
     CHECK(!refused.accepted);
     check_text(refused.reason, "not-set-up");
     check_text(refused.message, "the run has not read its configuration yet and keeps 256 commands to answer once it has: "
-                                "pause is refused; send it again after the run's first state event");
+                                "pause is refused; send it again after the run's check event (the configuration is read then)");
     std::vector<std::string> lines = told.all();
     CHECK_EQ(lines.size(), std::size_t{1});
     check_text(lines.empty() ? std::string() : lines[0], "9999 pause stdin not-set-up");
