@@ -28,6 +28,7 @@ import {
   statusOf,
 } from './front-compose';
 import { FrontActions, actionError } from './front-actions';
+import { entriesOf, outsideRows } from './front-outside';
 import { makeVariable, refOf } from './front-variable';
 import { ErrorSink, Readable, derived } from './values';
 import { linkOf } from './front-compose';
@@ -190,6 +191,8 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
     onError,
   );
 
+  const outside = outsideRows(low, onError);
+
   const variables = new Map<string, ReturnType<typeof makeVariable>>();
   let closed = false;
 
@@ -199,6 +202,23 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
     clock,
     controls,
     scenario,
+    outside: outside.value,
+    connections: ({ network }, listOptions = {}) => {
+      const file = listOptions.file ?? initialFile();
+      if (file === null) {
+        return Promise.reject(
+          new ActionError(
+            'no-file',
+            'no configuration file was given and the server has none to start with: pass { file } (a path from client.low.configs())',
+            'refused',
+          ),
+        );
+      }
+      return low.connections({ file, network }).then(entriesOf, (error: unknown) => {
+        throw actionError(error);
+      });
+    },
+    check: (intent, checkOptions) => actions.check(intent, checkOptions),
     run: {
       start: (intent, startOptions) => actions.start(intent, startOptions),
       stop: () => actions.stop(),
@@ -234,6 +254,7 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
     close: () => {
       if (closed) return;
       closed = true;
+      outside.stop();
       actions.dispose();
       low.close();
       onClose();

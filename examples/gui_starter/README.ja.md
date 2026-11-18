@@ -90,6 +90,10 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 
 スターターに入れていないものは、サンプルの画面がやっていることです。設定ファイルの選択、「Check」、任意の変数を選んで値を入力する欄です。設定ファイルを選ぶには、`client.low.configs()` で一覧を取り、自分のボタンで `client.run.start(intent, { file })` を呼びます（`<vsil-run-controls>` は最後の実行のファイルを開始します）。同じ接続の低い口 `client.low`（`check`、`variables.bind` など）も使えます。自分の部品の作り方は「[コンポーネントを作る（`bind`）](../../gui/client/README.ja.md#コンポーネントを作るbind)」にあります。
 
+### ネットワークを外につなぐ
+
+構成ファイルの `can` か `ethernet` のネットワークを実機のバスにつなぐには、`<vsil-connect network="<network>">`（次の実行でつなぐ先。最初は SIL Kit だけで、GUI サーバーの PC の先の一覧は開いたときにだけ取ります）と `<vsil-outside>`（実行中、つないだネットワーク）を足します。ネットワークの名前は構成ファイルのものなので、スターターにはどちらも置いていません。外につないだ実行は実時間を保ちます。つないだ先が実時間でないメッセージを受けても困らないときは、スクリプトから `pageIntent.update({ time_policy: 'free' })` で外せます。試験台の要求ファイルを次の実行に読み込む方法と、保存する方法は、[ガイド](../../docs/ja/howto/gui-screen.md#ネットワークを外につなぐ任意) の「ネットワークを外につなぐ（任意）」にあります。
+
 ### フレームワークのプロジェクト
 
 ライブラリは、型つきの npm のパッケージ（`.tgz`）としても配っています（部品も入っています）。自分のプロジェクトで `npm install <その .tgz>` をして、`@vehicle-sil/gui-client` として import します。依存はありません。
