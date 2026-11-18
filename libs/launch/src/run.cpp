@@ -95,25 +95,25 @@
 // It starts the server on the main thread between the Runner's two stages (prepare(), then
 // run()), on the hub that prepare() gives it, and tells run() how that went (ControlServerStart);
 // the Runner never calls the server. When run_file() returns or throws, after the phase "ended"
-// has been told and the Runner has gone, it ends the server (every call of a client returns, none
-// comes any more) and destroys it: before the caller writes the result.
+// has been told and the Runner has gone, it ends the server: every call of a client returns and
+// none comes any more (control_grpc::ControlServer::shutdown(): gRPC's Shutdown(), which cancels
+// the calls that are still open after 2 s, then Wait(), which waits for their handlers to return
+// and has no limit of its own; the handlers leave when they are cancelled or the server stops).
+// That is before the caller writes the result, as it always was.
+// run_file() does not destroy the server: the report holds it (RunReport::ended_control_server),
+// and the caller lets it go after it has written the result; in a run whose closing thread was
+// left (OutcomeClose::not_closed_ms), before it ends the process without destructors. Why not
+// here, before the result: the server's destruction frees the last gRPC object of the process,
+// which may run the shutdown of gRPC itself on this thread (its threads, its I/O), and how long
+// that may take is not established. Whatever it takes, the result is out by then. The rest of
+// the destruction is short: the second shutdown() returns at once; the server's monitor joins a
+// thread that sleeps on a condition variable or is in one look at the time
+// (TimeCommands::inspect(), which returns at once once the run has detached its controller); the
+// server's share of the hub goes (in a run whose closing thread was left, that thread's
+// RunConnection has one too, so the hub stays); the audit log's file is closed, each line having
+// been flushed when it was written.
 // A server that the caller lends instead (RunLent::control_endpoint; the tests') is started at
 // the same point and stays the caller's, to end and to destroy.
-// Why the server may be destroyed here, before the result, also in a run whose closing thread
-// was left (OutcomeClose::not_closed_ms; the caller then ends the process without destructors):
-// once it is ended, its destruction waits for nothing that could keep the result back.
-// - The end is what waits (control_grpc::ControlServer::shutdown(): gRPC's Shutdown() with a
-//   limit, which cancels the calls that are still open, then Wait()), as it did before the result
-//   when the caller ended the server. After it the destructor's own shutdown() returns at once,
-//   and gRPC's server, shut down, only frees what it has.
-// - The server's monitor joins its thread, which sleeps on a condition variable that the
-//   destructor signals, or is in one look at the time: TimeCommands::inspect() under TimeCommands'
-//   mutex, which returns at once because the run has detached its controller (on the main thread,
-//   before the hand-over to the closing thread). No watch of a client is left to call.
-// - The server's share of the hub goes. In a run whose closing thread was left, that thread has a
-//   share too (the RunConnection), so the hub stays; else the hub, which has no thread, is freed
-//   here on the main thread (the Runner goes first).
-// - The audit log's file is closed; every line was flushed when it was written.
 // The server has threads of its own. Of the run they touch the
 // hub (thread safe; its subscriptions are bounded and never make the simulation wait; the server
 // holds the hub itself, so it may use it after the run) and the TimeCommands. With a scenario the
@@ -679,10 +679,10 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
     report.strict = request.intent.strict;
     // The control server of this run: made here from the request, or the caller's. Before the
     // check and its phase: a request for a server that is wrong is a usage error, and nothing is
-    // checked. Declared after the controls, which it uses, and before the Runner: on every way
-    // out, also with an exception, it goes after the Runner and before the controls, and its
-    // destructor ends it first (every call of a client returns, none comes any more).
-    std::unique_ptr<ControlEndpoint> own_server;
+    // checked. The report holds the run's own from here on, for the caller to let go after the
+    // result. Declared after the controls, which the server uses, and before the Runner: on every
+    // way out, also with an exception, it is ended after the Runner has gone.
+    std::shared_ptr<ControlEndpoint> own_server;
     if (request.host.control && lent.control_endpoint == nullptr)
     {
         detail::ControlServerOfRun made = detail::make_control_server_of_run(*request.host.control, controls);
@@ -694,7 +694,19 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
             return report;
         }
         own_server = std::move(made.server);
+        report.ended_control_server = own_server;
     }
+    const struct EndServer
+    {
+        ControlEndpoint* server;
+        ~EndServer()
+        {
+            if (server != nullptr)
+            {
+                server->end(); // every call of a client returns, none comes any more
+            }
+        }
+    } end_own_server{own_server.get()};
     ControlEndpoint* const server_of_run = lent.control_endpoint != nullptr ? lent.control_endpoint : own_server.get();
     controls.set_phase(Phase::Checking);
     // The check judges the time by what this run does (its speed and --start-paused, which it

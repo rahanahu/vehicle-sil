@@ -28,7 +28,8 @@
 // server), gRPC's threads serve the clients: their time operations go through the same
 // TimeCommands (source "control_server"), a Stop is a stop request like {"command":"stop"}, and
 // their writes and reads go to the run's hub; the run (launch::run_file()) makes the server from
-// the request, ends it after the simulation and destroys it, before main writes the result.
+// the request and ends it after the simulation, before main writes the result; main lets go of
+// what is left of it after the result.
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/cli/console.hpp"
 #include "vehicle_sil/cli/utf8.hpp"
@@ -681,6 +682,12 @@ void write_stdin_notes(bool from_main)
 /// a stop as one Ctrl+C. Its end is a stop unless one was requested before.
 void start_reading_commands()
 {
+    // Once: a second reader would take lines of the same standard input.
+    static std::atomic<bool> started{false};
+    if (started.exchange(true))
+    {
+        return;
+    }
     std::thread([] {
         launch::EventStream* events = shared().events;
         launch::RunControls* controls = shared().controls;
@@ -1233,9 +1240,11 @@ int run(const cli::Args& args, launch::EventStream* events)
         lent.controls = shared().controls;
     }
     watching.interrupt_name = interrupt_name;
-    // With --control, the run's control server has ended and is gone when this returns: every call
-    // of a client has ended (a watch, a wait), none comes any more, and its audit log is complete.
-    const launch::RunReport report = launch::run_file(request, watching, lent);
+    // With --control, the run's control server has ended when this returns: every call of a client
+    // has ended (a watch, a wait), none comes any more, and its audit log is complete. The report
+    // holds what is left of it, which goes after the result is written: when this function
+    // returns, or below, before the process is ended at once.
+    launch::RunReport report = launch::run_file(request, watching, lent);
     if (events == nullptr)
     {
         write_stdin_notes(true); // before the result
@@ -1250,6 +1259,7 @@ int run(const cli::Args& args, launch::EventStream* events)
                                          report.exit_code());
     if (report.run && report.run->close.not_closed_ms)
     {
+        report.ended_control_server.reset(); // the hub stays, with the thread that was left closing
         end_process_at_once(code);
     }
     return code;

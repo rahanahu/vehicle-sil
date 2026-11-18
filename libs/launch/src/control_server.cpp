@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 //
-// run --control: the Control Server of vehicle_sil_launch (control_server.hpp), and the one that
-// run_file() makes for its run from the request (run_control_server.hpp): what the request names
+// run --control: the Control Server (gRPC, Control API v1) of vehicle_sil_launch, on the run's hub
+// (the ECUs' variables over SIL Kit) and its time commands, as run_file() makes it for its run
+// from the request (run_control_server.hpp). Only in a build with
+// VEHICLE_SIL_BUILD_CONTROL_SERVER. What the request names
 // is read and checked here (the address, the files of TLS, the credentials, the audit log), and
 // what is wrong with it is a usage finding. Nothing here knows the command line; the messages
 // name its options, which is how the request is given.
@@ -12,9 +14,8 @@
 // is read through TimeCommands::inspect() while the run's controller is attached, and kept from
 // the last look once it is detached (the controller goes then), so no call of the server ever
 // reaches a controller that has gone.
-#include "vehicle_sil/launch/control_server.hpp"
-
 #include "run_control_server.hpp"
+
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/control_grpc/server.hpp"
 #include "vehicle_sil/core/failure_check.hpp"
@@ -428,22 +429,26 @@ control_grpc::ServerOptions read_control_options(const ControlHost& asked)
     return options;
 }
 
-} // namespace
-
-std::unique_ptr<ControlEndpoint> make_control_server(control_grpc::ServerOptions options, ControlHooks hooks)
+/// The server of a run on `controls`, from the checked options: its time operations go through
+/// their time commands, and a client's Stop is a stop request of theirs. Not started.
+std::unique_ptr<ControlEndpoint> make_server(control_grpc::ServerOptions options, RunControls& controls)
 {
     // A run that plays a scenario: what a client writes, and when it lets the time go on, is not
     // in the scenario's file: with it, the same scenario would not give the same result any more.
     // Reading changes nothing (the hub's subscriptions are bounded and never make the simulation
     // wait), and a stop is the run's to take as always. The rule is the controls'; the refusal is
     // the server's, in one place before the call.
-    if (auto only = hooks.controls->always_refused(Entry::ControlServer))
+    if (auto only = controls.always_refused(Entry::ControlServer))
     {
         options.observe_only = control_grpc::ObserveOnly{std::move(only->reason), std::move(only->message)};
     }
-    auto time = std::make_unique<LaunchTimeControl>(hooks.controls->time(), std::move(hooks.stop));
+    // The stop's event (and its refusal once the run is over) comes from the time commands.
+    auto time = std::make_unique<LaunchTimeControl>(
+      controls.time(), [&controls] { controls.stops().request(stop_source::kControlStop); });
     return std::make_unique<Server>(std::move(options), std::move(time));
 }
+
+} // namespace
 
 namespace detail {
 
@@ -452,11 +457,7 @@ ControlServerOfRun make_control_server_of_run(const ControlHost& asked, RunContr
     ControlServerOfRun out;
     try
     {
-        ControlHooks hooks;
-        hooks.controls = &controls;
-        // Its event (and its refusal once the run is over) comes from the time commands.
-        hooks.stop = [&controls] { controls.stops().request(stop_source::kControlStop); };
-        out.server = make_control_server(read_control_options(asked), std::move(hooks));
+        out.server = make_server(read_control_options(asked), controls);
     }
     catch (const Refused& refused)
     {

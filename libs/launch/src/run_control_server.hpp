@@ -16,7 +16,7 @@ namespace vehicle_sil::launch::detail {
 /// The server of one run, not started yet, or why the request for it is refused.
 struct ControlServerOfRun
 {
-    std::unique_ptr<ControlEndpoint> server; ///< null if `findings` is not empty
+    std::shared_ptr<ControlEndpoint> server; ///< null if `findings` is not empty
     /// What is wrong with the request, as a usage error (code "usage"): the first thing found.
     std::vector<Finding> findings{};
 };

@@ -111,7 +111,7 @@
 | この PC のアドレス（ほかの PC に示す URI） | `src/host_addresses.cpp` |
 | 動いているシミュレーションの見張り（`RunWatch::watch()`）、終わったときに確定すること（`RunWatch::settle()`: シナリオの終わり、時間、traffic、シミュレーションの終わり方）、仮想時間が進まないことを報告する `StandStill` | `src/run_watch.cpp` |
 | コマンドラインと、標準入力・標準出力のスレッド | `tools/launch/main.cpp` |
-| `run --control` の Control Server（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ）。実行からは `ControlEndpoint` として見える（`launch/run.hpp`）。`run_file()` が、照合の前に要求（`RunHost::control`）から作り、実行の 2 つの段（`src/run.cpp` の `Runner::prepare()` と `Runner::run()`）の間で起動し、戻るときに終えて破棄する | `libs/launch/src/control_server.cpp`（サーバーと、要求がそのために指すものの読み取りと検査）、`libs/launch/src/run_control_server.hpp`（`run_file()` が呼ぶもの） |
+| `run --control` の Control Server（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ）。実行からは `ControlEndpoint` として見える（`launch/run.hpp`）。`run_file()` が、照合の前に要求（`RunHost::control`）から作り、実行の 2 つの段（`src/run.cpp` の `Runner::prepare()` と `Runner::run()`）の間で起動し、戻るときに終える。破棄は、呼ぶ側が結果の後に行う（`RunReport::ended_control_server`） | `libs/launch/src/control_server.cpp`（サーバーと、要求がそのために指すものの読み取りと検査）、`libs/launch/src/run_control_server.hpp`（`run_file()` が呼ぶもの） |
 
 `run` を分担するクラスの役割と、どのスレッドがどの状態をどのロックで扱うかは、`run.cpp` の先頭のコメントと、各 `run_*.hpp` のクラスのコメントにあります。
 

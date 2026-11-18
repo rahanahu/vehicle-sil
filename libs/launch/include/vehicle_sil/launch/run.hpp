@@ -434,6 +434,12 @@ struct RunReport
     std::vector<Finding> findings{};
     bool strict = false;
     bool usage = false;
+    /// run --control: the run's control server, ended (no call of a client is open, none comes
+    /// any more; its audit log is complete), for the caller to let go: empty it, or let the report
+    /// go, after the result is written. Its destruction may take the shutdown of gRPC itself,
+    /// which must not keep the result back. Nothing else is to be done with it. Empty: the run
+    /// made no server.
+    std::shared_ptr<void> ended_control_server{};
 
     /// The check's and the run's together.
     [[nodiscard]] std::size_t errors() const;
@@ -478,8 +484,9 @@ struct ControlServerInfo
 };
 
 /// run --control: the control server of one run, as the run sees it. run_file() makes the one
-/// that the request asks for (RunHost::control), starts it, ends it and destroys it. A caller may
-/// lend its own instead (RunLent::control_endpoint).
+/// that the request asks for (RunHost::control), starts it and ends it, and gives it back for the
+/// caller to let go after the result (RunReport::ended_control_server). A caller may lend its own
+/// instead (RunLent::control_endpoint).
 class ControlEndpoint
 {
 public:
@@ -549,7 +556,8 @@ struct RunObservers
 /// the line "control server at <address>". If the start throws, nothing is started
 /// (OutcomeSetup::error). With RunIntent::start_paused, the run holds before the first step
 /// (TimeCommands::hold_before_start()). When run_file() returns or throws, the server has ended
-/// (every call of a client has returned) and is gone, with its audit log closed.
+/// (every call of a client has returned, and its audit log is complete); the report holds what is
+/// left of it (RunReport::ended_control_server).
 struct RunLent
 {
     /// The run's controls (run_controls.hpp), the caller's: the stop requests the run reads (as
