@@ -74,6 +74,8 @@ export const checkOutcomeLabel = (result: CheckOutcome): string => label(CHECK_O
 
 const RUN_OUTCOMES: Record<string, string> = {
   passed: $localize`成功`,
+  stopped: $localize`操作で停止`,
+  incomplete: $localize`シナリオの途中で停止`,
   failed: $localize`失敗`,
   interrupted: $localize`中断`,
   check_failed: $localize`照合の誤りで起動しなかった`,

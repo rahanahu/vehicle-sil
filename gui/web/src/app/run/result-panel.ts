@@ -138,11 +138,11 @@ export class ResultPanel {
   private readonly list = new Intl.ListFormat(inject(LOCALE_ID), { type: 'conjunction' });
   readonly result = input.required<RunResult>();
 
-  /** 成功は ✓、利用者が止めた中断は ■ で色を付けない（失敗ではない）、ほかは ✕。 */
+  /** 成功は ✓、止めた実行と中断は ■ で色を付けない（失敗ではない）、ほかは ✕。 */
   protected readonly tone = computed(() =>
     this.result().result === 'passed'
       ? 'good'
-      : this.result().result === 'interrupted'
+      : ['stopped', 'incomplete', 'interrupted'].includes(this.result().result)
         ? 'neutral'
         : 'bad',
   );

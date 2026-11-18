@@ -1091,10 +1091,13 @@ TEST_CASE(the_json_report)
     const std::string v(version());
     check_text(json.substr(0, json.find("  \"check\": {")),
                "{\n"
-               "  \"vehicle_sil_run\": 1,\n"
+               "  \"vehicle_sil_run\": 2,\n"
                "  \"vehicle_sil\": \"" + v + "\",\n"
                "  \"file\": \"sim.yaml\",\n"
                "  \"result\": \"interrupted\",\n"
+               "  \"end\": \"interrupted\",\n"
+               "  \"ok\": false,\n"
+               "  \"message\": \"The run was interrupted (SIGINT)\",\n"
                "  \"strict\": false,\n"
                "  \"errors\": 0,\n"
                "  \"warnings\": 1,\n"
@@ -2099,7 +2102,7 @@ TEST_CASE(a_participants_line_shows_no_c1_control_and_no_broken_utf8)
 TEST_CASE(an_unexpected_failure_is_written_in_the_form_of_the_command)
 {
     const std::string run = format_internal_error_json(true, "boom");
-    CHECK(run.rfind("{\n  \"vehicle_sil_run\": 1,\n", 0) == 0);
+    CHECK(run.rfind("{\n  \"vehicle_sil_run\": 2,\n", 0) == 0);
     CHECK(run.find("\"code\": \"internal\"") != std::string::npos && run.find("\"message\": \"boom\"") != std::string::npos);
     CHECK(run.find("  \"errors\": 1,\n") != std::string::npos);
     const std::string check = format_internal_error_json(false, "boom");
@@ -2799,4 +2802,205 @@ TEST_CASE(the_outputs_of_a_connected_run_have_the_counts)
                               "        \"ext_from_devices\": 3,\n        \"ext_queue_full\": 0,\n        \"silkit_to_ext\": 152\n      }\n") !=
           std::string::npos);
     CHECK(lines(r.findings).empty());
+}
+
+namespace {
+
+/// A run that `by` (of `kind`) stopped while the simulation ran.
+RunOutcome stopped_run(std::string by, vehicle_sil::launch::StopKind kind)
+{
+    RunOutcome o = passed_run();
+    o.end.simulation = SimulationEnd::Interrupted;
+    o.end.interrupted_by = std::move(by);
+    o.end.interrupted_kind = kind;
+    return o;
+}
+
+/// `o` with a scenario of one step in `status` (made in place: no struct is built and moved).
+RunOutcome with_scenario(RunOutcome o, ScenarioStatus status)
+{
+    vehicle_sil::launch::ScenarioRun& scenario = o.scenario.result.emplace();
+    scenario.file = "s.yaml";
+    scenario.status = status;
+    vehicle_sil::launch::ScenarioStepRun& step = scenario.steps.emplace_back();
+    step.index = 1;
+    step.line = 4;
+    step.text = "expect Body.level == 1";
+    step.status = status == ScenarioStatus::Passed       ? vehicle_sil::launch::StepStatus::Passed
+                  : status == ScenarioStatus::Failed     ? vehicle_sil::launch::StepStatus::Failed
+                  : status == ScenarioStatus::Incomplete ? vehicle_sil::launch::StepStatus::Unfinished
+                                                         : vehicle_sil::launch::StepStatus::NotRun;
+    if (status == ScenarioStatus::Failed)
+    {
+        step.code = "scenario-expect";
+        step.message = "it was 0";
+    }
+    return o;
+}
+
+struct Meaning
+{
+    RunResult result;
+    int exit_code;
+    bool ok;
+    const char* end; ///< the JSON's "end" with its quotes, or "null"
+};
+
+/// The result, the exit code and ok of `r` agree with `want`, with each other and with the JSON,
+/// and there is a message of one line.
+void check_meaning(const RunReport& r, const Meaning& want, const char* where)
+{
+    const auto text = [](RunResult result, int code, bool ok) {
+        return std::to_string(static_cast<int>(result)) + " exit " + std::to_string(code) + (ok ? " ok" : " not ok");
+    };
+    check_text(text(r.result(), r.exit_code(), r.ok()), text(want.result, want.exit_code, want.ok), where);
+    check_text(r.ok() == (r.exit_code() == 0) ? "ok is exit code 0" : "ok differs from exit code 0", "ok is exit code 0", where);
+    const std::string message = r.message();
+    check_text(message.empty() || message.find('\n') != std::string::npos ? "no message of one line" : "", "", where);
+    const std::string json = format_run_json(r);
+    const std::string members =
+        std::string("  \"end\": ") + want.end + ",\n  \"ok\": " + (want.ok ? "true" : "false") + ",\n  \"message\": \"";
+    check_text(json.find(members) != std::string::npos ? members : json.substr(0, 300), members, where);
+}
+
+} // namespace
+
+TEST_CASE(why_a_run_ended_is_decided_by_the_setup_then_by_what_asked_first_then_by_the_simulation)
+{
+    using vehicle_sil::launch::end_reason;
+    using vehicle_sil::launch::EndReason;
+    using vehicle_sil::launch::StopKind;
+    CHECK(end_reason(passed_run()) == EndReason::Completed);
+    RunOutcome ended = passed_run();
+    ended.end.simulation = SimulationEnd::Ended;
+    CHECK(end_reason(ended) == EndReason::Completed);
+    // The launcher stopped the simulation because the scenario was over: completed, not stopped.
+    ended.end.stopped_by_scenario = true;
+    CHECK(end_reason(ended) == EndReason::Completed);
+    RunOutcome aborted = passed_run();
+    aborted.end.simulation = SimulationEnd::Aborted;
+    CHECK(end_reason(aborted) == EndReason::Failed);
+    aborted.end.simulation = SimulationEnd::NotStarted;
+    CHECK(end_reason(aborted) == EndReason::Failed);
+    CHECK(end_reason(stopped_run("stop command", StopKind::Operator)) == EndReason::Stopped);
+    CHECK(end_reason(stopped_run("control server stop", StopKind::Operator)) == EndReason::Stopped);
+    CHECK(end_reason(stopped_run("SIGINT", StopKind::Signal)) == EndReason::Interrupted);
+    CHECK(end_reason(stopped_run("end of input", StopKind::Supervisor)) == EndReason::Interrupted);
+    CHECK(end_reason(stopped_run("output closed", StopKind::Supervisor)) == EndReason::Interrupted);
+    // What asked first decides, also when the simulation had ended or failed before it.
+    RunOutcome late = stopped_run("stop command", StopKind::Operator);
+    late.end.simulation = SimulationEnd::Aborted;
+    late.end.interrupted_while_ending = true;
+    CHECK(end_reason(late) == EndReason::Stopped);
+    // A set-up that failed is stronger than a stop.
+    late.setup.error = "no registry";
+    CHECK(end_reason(late) == EndReason::SetupFailed);
+    check_text(vehicle_sil::launch::end_reason_name(EndReason::Completed), "completed");
+    check_text(vehicle_sil::launch::end_reason_name(EndReason::Stopped), "stopped");
+    check_text(vehicle_sil::launch::end_reason_name(EndReason::Interrupted), "interrupted");
+    check_text(vehicle_sil::launch::end_reason_name(EndReason::Failed), "failed");
+    check_text(vehicle_sil::launch::end_reason_name(EndReason::SetupFailed), "setup_failed");
+}
+
+TEST_CASE(each_result_has_its_exit_code_its_ok_and_a_message)
+{
+    using vehicle_sil::launch::StopKind;
+    CHECK_EQ(vehicle_sil::launch::kExitIncomplete, 5);
+    // Reached its end.
+    check_meaning(report_of(passed_run()), {RunResult::Passed, 0, true, "\"completed\""}, "passed");
+    check_meaning(report_of(with_scenario(passed_run(), ScenarioStatus::Passed)), {RunResult::Passed, 0, true, "\"completed\""},
+                  "scenario passed");
+    check_text(report_of(passed_run()).message(), "The run reached its end without errors");
+    check_text(report_of(with_scenario(passed_run(), ScenarioStatus::Passed)).message(),
+               "The run reached its end without errors, and the scenario passed");
+    // An operator stopped it: a success without a scenario (or after it had passed).
+    const RunReport stopped = report_of(stopped_run("stop command", StopKind::Operator));
+    check_meaning(stopped, {RunResult::Stopped, 0, true, "\"stopped\""}, "stopped");
+    check_text(stopped.message(), "The run was stopped (stop command) without errors");
+    check_text(lines(stopped.findings), "N 0 stopped: stopped (stop command): the launcher stopped the simulation and the participants\n");
+    CHECK(format_run_text(stopped).ends_with("\nstopped: 0 errors, 0 warnings, 1 note\n"));
+    CHECK(format_run_text(stopped).find("run: stopped (stop command): the simulation was stopped\n") != std::string::npos);
+    CHECK(format_run_json(stopped).find("  \"result\": \"stopped\",\n  \"end\": \"stopped\",\n  \"ok\": true,\n") != std::string::npos);
+    CHECK(format_run_json(stopped).find("  \"simulation\": \"interrupted\",\n  \"interrupted_by\": \"stop command\",\n") != std::string::npos);
+    const RunReport afterPass = report_of(with_scenario(stopped_run("control server stop", StopKind::Operator), ScenarioStatus::Passed));
+    check_meaning(afterPass, {RunResult::Stopped, 0, true, "\"stopped\""}, "stopped after the scenario passed");
+    check_text(afterPass.message(), "The run was stopped (control server stop) without errors, after the scenario had passed");
+    // An operator stopped it before the scenario's end: no verdict, 5; the finding is a note.
+    const RunReport incomplete = report_of(with_scenario(stopped_run("stop command", StopKind::Operator), ScenarioStatus::Incomplete));
+    check_meaning(incomplete, {RunResult::Incomplete, 5, false, "\"stopped\""}, "incomplete");
+    check_text(incomplete.message(), "The run was stopped (stop command) before the scenario reached its end, so the scenario has no verdict");
+    CHECK_EQ(incomplete.errors(), 0U);
+    CHECK(lines(incomplete.findings).find("N 4 scenario-incomplete: the scenario did not get to its end") != std::string::npos);
+    CHECK(lines(incomplete.findings).find("; the run was stopped (stop command) before the scenario's end\n") != std::string::npos);
+    CHECK(format_run_text(incomplete).ends_with("\nincomplete: 0 errors, 0 warnings, 2 notes\n"));
+    // ... or before the scenario began.
+    RunOutcome early = with_scenario(stopped_run("stop command", StopKind::Operator), ScenarioStatus::NotRun);
+    early.end.simulation = SimulationEnd::NotStarted;
+    check_meaning(report_of(early), {RunResult::Incomplete, 5, false, "\"stopped\""}, "stopped before the start");
+    // An operator stopped it, and something is wrong: failed.
+    const RunReport failedCheck = report_of(with_scenario(stopped_run("stop command", StopKind::Operator), ScenarioStatus::Failed));
+    check_meaning(failedCheck, {RunResult::Failed, 1, false, "\"stopped\""}, "stopped after a failed step");
+    check_text(failedCheck.message(), "The run was stopped (stop command) and failed: expect Body.level == 1: it was 0");
+    RunOutcome warned = stopped_run("stop command", StopKind::Operator);
+    warned.participants[0].left_processes = true;
+    check_meaning(report_of(warned), {RunResult::Stopped, 0, true, "\"stopped\""}, "stopped with a warning");
+    check_meaning(report_of(warned, true), {RunResult::Failed, 1, false, "\"stopped\""}, "stopped with a warning, --strict");
+    CHECK(report_of(warned, true).message().starts_with("The run was stopped (stop command) and failed: a warning counts as an error with --strict: "));
+    // A stop while the participants were ending did not cut the scenario short: the finding stays an error.
+    RunOutcome late = with_scenario(passed_run(), ScenarioStatus::Incomplete);
+    late.end.simulation = SimulationEnd::Ended;
+    late.end.interrupted_by = "stop command";
+    late.end.interrupted_kind = StopKind::Operator;
+    late.end.interrupted_while_ending = true;
+    check_meaning(report_of(late), {RunResult::Failed, 1, false, "\"stopped\""}, "stopped while ending");
+    CHECK(lines(report_of(late).findings).find("E 4 scenario-incomplete: ") != std::string::npos);
+    // A signal, or the supervisor went away: interrupted, whatever else is wrong.
+    for (const auto& [by, kind] : {std::pair{"SIGINT", StopKind::Signal}, std::pair{"end of input", StopKind::Supervisor},
+                                   std::pair{"output closed", StopKind::Supervisor}})
+    {
+        check_meaning(report_of(stopped_run(by, kind)), {RunResult::Interrupted, 130, false, "\"interrupted\""}, by);
+        check_meaning(report_of(with_scenario(stopped_run(by, kind), ScenarioStatus::Incomplete)),
+                      {RunResult::Interrupted, 130, false, "\"interrupted\""}, by);
+        check_meaning(report_of(with_scenario(stopped_run(by, kind), ScenarioStatus::Failed)),
+                      {RunResult::Interrupted, 130, false, "\"interrupted\""}, by);
+    }
+    check_text(report_of(stopped_run("SIGINT", StopKind::Signal)).message(), "The run was interrupted (SIGINT)");
+    const RunReport cut = report_of(with_scenario(stopped_run("SIGINT", StopKind::Signal), ScenarioStatus::Incomplete));
+    CHECK(lines(cut.findings).find("N 4 scenario-incomplete: ") != std::string::npos);
+    CHECK(lines(cut.findings).find("; the run was interrupted (SIGINT) before the scenario's end\n") != std::string::npos);
+    // It could not go on: failed, and the scenario's finding is an error as before.
+    RunOutcome timedOut = with_scenario(passed_run(), ScenarioStatus::Incomplete);
+    timedOut.end.simulation = SimulationEnd::Aborted;
+    timedOut.end.timed_out = true;
+    timedOut.end.timeout_ms = 500;
+    const RunReport limit = report_of(timedOut);
+    check_meaning(limit, {RunResult::Failed, 1, false, "\"failed\""}, "time limit");
+    CHECK(limit.message().starts_with("The run failed: the simulation did not end within 500 ms"));
+    CHECK(lines(limit.findings).find("E 4 scenario-incomplete: ") != std::string::npos);
+    CHECK(lines(limit.findings).find("; the other findings and the lines above say why the simulation ended\n") != std::string::npos);
+    // Completed, but an error was found.
+    RunOutcome wrong = with_scenario(passed_run(), ScenarioStatus::Failed);
+    check_meaning(report_of(wrong), {RunResult::Failed, 1, false, "\"completed\""}, "completed with an error");
+    // The set-up failed.
+    RunOutcome setup;
+    setup.setup.error = "no registry";
+    check_meaning(report_of(setup), {RunResult::SetupFailed, 3, false, "\"setup_failed\""}, "set-up");
+    check_text(report_of(setup).message(), "The run failed before anything was started: cannot set up the simulation: no registry");
+    // Nothing was started: no end.
+    RunReport checkFailed = report_of(passed_run());
+    checkFailed.run.reset();
+    checkFailed.findings.clear();
+    checkFailed.check.findings.push_back(Finding{Severity::Error, "command", "participant 'Engine': no such file", 5, "Engine", ""});
+    check_meaning(checkFailed, {RunResult::CheckFailed, 1, false, "null"}, "check");
+    check_text(checkFailed.message(), "Nothing was started, because the check failed: participant 'Engine': no such file");
+    RunReport unreadable;
+    unreadable.check.findings.push_back(Finding{Severity::Error, "file", "cannot read sim.yaml", 0, "", ""});
+    check_meaning(unreadable, {RunResult::Unreadable, 3, false, "null"}, "unreadable");
+    check_text(unreadable.message(), "Nothing was started, because the configuration cannot be read: cannot read sim.yaml");
+    RunReport usage;
+    usage.usage = true;
+    usage.check.usage = true;
+    usage.check.findings.push_back(Finding{Severity::Error, "usage", "unknown option --x", 0, "", ""});
+    check_meaning(usage, {RunResult::Usage, 4, false, "null"}, "usage");
+    check_text(usage.message(), "Nothing was started, because the command line is wrong: unknown option --x");
 }

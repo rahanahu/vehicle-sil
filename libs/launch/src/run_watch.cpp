@@ -295,8 +295,8 @@ int RunWatch::settle(SimulationController& controller, const Watched& over)
             break;
         }
         outcome_.end.simulation = SimulationEnd::Interrupted;
-        outcome_.end.interrupted_by = ctx_.interrupt_name();
-        out_.say("interrupted (" + outcome_.end.interrupted_by + "): the simulation was stopped");
+        ctx_.note_interrupt(outcome_.end);
+        out_.say(outcome_.end.stop_text() + ": the simulation was stopped");
         break;
     }
     return interrupts_at_end;

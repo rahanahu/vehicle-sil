@@ -46,11 +46,17 @@ class EventStream;
 struct Command;
 
 /// The version of the JSON that format_run_json() writes (its "vehicle_sil_run" key).
-inline constexpr int kRunFormat = 1;
+inline constexpr int kRunFormat = 2;
 
-/// The exit code of a run that was interrupted (Ctrl+C, SIGINT, SIGTERM): 128 + SIGINT, as shells
-/// report a program that Ctrl+C ended (the same as an ECU executable's).
+/// The exit code of a run that was interrupted (a signal, a console event, or the program that ran
+/// the launcher went away: its input ended or its output closed): 128 + SIGINT, as shells report
+/// a program that Ctrl+C ended (the same as an ECU executable's). Not of a run that a command
+/// stopped: that is 0, or kExitIncomplete.
 inline constexpr int kExitInterrupted = ecu_executable::kExitInterrupted;
+
+/// The exit code of a run whose scenario a command stopped before its end, when nothing else was
+/// wrong: the scenario has no verdict.
+inline constexpr int kExitIncomplete = 5;
 
 /// How the launcher asks a participant to stop, in messages: "SIGTERM" (POSIX) or "Ctrl+Break"
 /// (Windows).
@@ -256,8 +262,18 @@ struct OutcomeEnd
     SimulationEnd simulation = SimulationEnd::NotStarted;
     /// The simulation ended in this state instead of shutting down normally (SIL Kit's name), or "".
     std::string controller_state{};
-    /// The interrupt that ended the run ("SIGINT", "SIGTERM", "Ctrl+C", ...), or "".
+    /// What asked first to stop the run ("SIGINT", "Ctrl+C", "stop command", "end of input", ...),
+    /// or "" if nothing did.
     std::string interrupted_by{};
+    /// The kind of what asked first (stop_kind() of the first stop request's source); set with
+    /// interrupted_by. It decides between EndReason::Stopped and EndReason::Interrupted.
+    std::optional<StopKind> interrupted_kind{};
+    /// How messages name it: "stopped (stop command)" for an operator, "interrupted (SIGINT)" for
+    /// anything else.
+    [[nodiscard]] std::string stop_text() const
+    {
+        return std::string(interrupted_kind == StopKind::Operator ? "stopped (" : "interrupted (") + interrupted_by + ")";
+    }
     /// The interrupt came after the simulation had ended, while the launcher waited for the
     /// participants to end.
     bool interrupted_while_ending = false;
@@ -359,11 +375,31 @@ struct RunOutcome
 /// its line) or the simulation, in sort_findings() order.
 [[nodiscard]] std::vector<Finding> assess_run(const RunOutcome& outcome);
 
+/// Why a run ended, whatever was found in it.
+enum class EndReason
+{
+    Completed,   ///< it reached an end that was set: stop_at_ms, a participant ended it, the scenario was over
+    Stopped,     ///< an operator stopped it (the stop command, the control server's Stop)
+    Interrupted, ///< a signal or a console event, or the program that ran the launcher went away
+    Failed,      ///< it could not start or go on: a participant or a bridge failed, a time limit passed
+    SetupFailed, ///< the registry or the controller could not be set up
+};
+
+/// Why `outcome` ended. Pure. The order: a set-up that failed; then what asked first to stop
+/// (an operator: Stopped; anything else: Interrupted), whatever came after it; then how far the
+/// simulation got. A run whose scenario was over is Completed.
+[[nodiscard]] EndReason end_reason(const RunOutcome& outcome);
+
+/// "completed", "stopped", "interrupted", "failed" or "setup_failed": the member "end" of the result.
+[[nodiscard]] const char* end_reason_name(EndReason reason) noexcept;
+
 enum class RunResult
 {
-    Passed,       ///< the simulation ended normally and every required participant exited with 0
-    Failed,       ///< the run found errors (or, --strict, warnings)
-    Interrupted,  ///< the launcher was interrupted
+    Passed,       ///< the run reached its end without errors (or, --strict, warnings)
+    Stopped,      ///< an operator stopped the run, and nothing was wrong (no scenario, or it had passed)
+    Incomplete,   ///< an operator stopped the run before its scenario's end, and nothing else was wrong
+    Failed,       ///< the run found errors (or, --strict, warnings), or could not start or go on
+    Interrupted,  ///< a signal, or the program that ran the launcher went away
     CheckFailed,  ///< the check found errors (or, --strict, warnings): nothing was started
     Unreadable,   ///< the configuration cannot be read: nothing was started
     SetupFailed,  ///< the registry or the controller could not be set up: nothing was started
@@ -386,9 +422,14 @@ struct RunReport
     [[nodiscard]] std::size_t warnings() const;
     [[nodiscard]] std::size_t notes() const;
     [[nodiscard]] RunResult result() const;
-    /// 0 passed; 1 failed or the check failed; 3 unreadable or the set-up failed; 4 usage;
-    /// kExitInterrupted.
+    /// 0 passed or stopped; 1 failed or the check failed; 3 unreadable or the set-up failed;
+    /// 4 usage; kExitIncomplete; kExitInterrupted.
     [[nodiscard]] int exit_code() const;
+    /// The result counts as a success: exit_code() is 0.
+    [[nodiscard]] bool ok() const;
+    /// One sentence for people that says what the result is (English, one line, never empty);
+    /// for a failure, with the first error.
+    [[nodiscard]] std::string message() const;
 };
 
 /// The report for people: the check's tables and findings, then the run (how far the simulation

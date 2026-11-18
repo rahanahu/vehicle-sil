@@ -320,7 +320,7 @@ void run_until_stdin(const Options& o)
     live.write("{\"command\":\"stop\"}\n");
     const auto [status, lines] = live.finish();
     const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
-    require(status && status->code == 130, "stopped while paused: 130");
+    require(status && status->code == 0, "stopped while paused: 0, not " + code_text(status));
     require(gone, "no participant is left");
     // A time that has passed while it runs as fast as it can: the simulation stands still at its next
     // step, not where it was when the command came. The state says paused at once and where only once it
@@ -348,7 +348,7 @@ void run_until_stdin(const Options& o)
         std::this_thread::sleep_for(300ms);
         run.write("{\"command\":\"stop\"}\n");
         const auto [ended, out] = run.finish();
-        require(ended && ended->code == 130, "stopped while paused: 130");
+        require(ended && ended->code == 0, "stopped while paused: 0, not " + code_text(ended));
         const auto command = std::find_if(out.begin(), out.end(), [&](const std::string& l) {
             return std::all_of(sent.begin(), sent.end(), [&](const std::string& p) { return contains(l, p); });
         });
@@ -403,7 +403,7 @@ void state_on_arrival(const Options& o)
     live.write("{\"command\":\"stop\"}\n");
     const auto [status, lines] = live.finish();
     const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
-    require(status && status->code == 130, "stopped by a command: 130");
+    require(status && status->code == 0, "stopped by a command: 0, not " + code_text(status));
     require(gone, "no participant is left");
     std::string all;
     for (const auto& line : lines)
@@ -720,7 +720,7 @@ void pause_step(const Options& o)
     live.wait_for({"\"event\":\"state\"", "\"stop\":{\"requests\":1,\"by\":\"stop command\"}"});
     const auto [status, lines] = live.finish();
     const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
-    require(status && status->code == 130, "stopped while paused: 130");
+    require(status && status->code == 0, "stopped while paused: 0, not " + code_text(status));
     require(gone, "no participant is left");
     require_ended_not_paused(lines, std::stoll(value_of(paused, "paused_at_ms")), "was stopped by a command");
     std::string all;

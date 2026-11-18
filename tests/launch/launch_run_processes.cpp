@@ -857,7 +857,7 @@ void usage(const Options& o)
             "the message:\n" + none.standard_error);
     const Captured json = launch(o, {"run", "--json", "--bad"}, dir);
     expect_code(json, 4, "run --json --bad");
-    require(contains(json.standard_output, "\"vehicle_sil_run\": 1,\n") && contains(json.standard_output, "\"result\": \"usage\",\n") &&
+    require(contains(json.standard_output, "\"vehicle_sil_run\": 2,\n") && contains(json.standard_output, "\"result\": \"usage\",\n") &&
                 contains(json.standard_output, "\"message\": \"unknown option --bad\""),
             "the run's JSON for a usage error:\n" + json.standard_output);
     const Captured logDir = launch(o, {"check", "--log-dir", "x", "sim.yaml"}, dir);
@@ -1035,7 +1035,7 @@ void disabled(const Options& o)
     // The options may come before the command.
     const Captured typoJson = launch(o, {"--json", "--disable", "Engine", "run", "sim.yaml", "--enable", "Engine"}, dir);
     expect_code(typoJson, 4, "run --json --disable Engine --enable Engine");
-    require(contains(typoJson.standard_output, "\"vehicle_sil_run\": 1,\n") &&
+    require(contains(typoJson.standard_output, "\"vehicle_sil_run\": 2,\n") &&
                 contains(typoJson.standard_output, "\"result\": \"usage\",\n") &&
                 contains(typoJson.standard_output, "\"message\": \"--disable and --enable both name Engine: give one of them\""),
             "the run's JSON for --disable and --enable of one name:\n" + typoJson.standard_output);

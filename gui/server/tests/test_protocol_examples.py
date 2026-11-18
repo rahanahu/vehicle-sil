@@ -82,8 +82,8 @@ SHOWN = {
     and e["response"]["dashboard"] is None,
     "ws-bad-types": ended("passed", problems={"bad-event": 9}),
     "ws-orphan": ended("passed", problems={"output-left-open": 1}),
-    "ws-stop": ended("interrupted", "stop command", states=["ended", "ended", "ended"]),
-    "ws-force-stop": ended("interrupted", "stop command", states=["ended", "ended", "killed"]),
+    "ws-stop": ended("stopped", "stop command", states=["ended", "ended", "ended"]),
+    "ws-force-stop": ended("stopped", "stop command", states=["ended", "ended", "killed"]),
     "ws-resume": resumed,
     # an error: its HTTP status (also as the table of errors in gui/protocol/README.md says)
     "error-unauthorized": 401, "error-forbidden-host": 403, "error-forbidden-origin": 403,

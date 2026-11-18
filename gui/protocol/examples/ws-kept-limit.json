@@ -475,10 +475,13 @@
           }
         },
         "result": {
-          "vehicle_sil_run": 1,
+          "vehicle_sil_run": 2,
           "vehicle_sil": "0.1.0",
           "file": "large-result.yaml",
           "result": "passed",
+          "end": "completed",
+          "ok": true,
+          "message": "The run reached its end without errors",
           "strict": false,
           "errors": 0,
           "warnings": 0,

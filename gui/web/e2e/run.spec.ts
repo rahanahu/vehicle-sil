@@ -122,7 +122,7 @@ test('started paused: a step, resume, pause, a new speed, stop', async ({ page }
   await expect(page.getByTestId('time-state')).toHaveText('一時停止中');
 
   await press(stopButton(page));
-  await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
+  await expect(result(page, session)).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
   // 終わった後: 時間の進み方の要約。止めた後の停止のボタンは「止めています…」のままにしない
   await expect(result(page, session).getByTestId('timing')).toContainText('2 倍');
   await expect(result(page, session).getByTestId('timing')).toContainText('一時停止していた時間');
@@ -165,7 +165,7 @@ test('a run behind real time says so in words, also after it ended', async ({ pa
   await expect(page.getByTestId('time-late')).toContainText('実時間に遅れました');
   await expect(page.getByTestId('time-lateness')).toContainText('200 ms');
   await press(stopButton(page));
-  await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
+  await expect(result(page, session)).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
   await expect(result(page, session).getByTestId('timing-late')).toContainText(
     '実時間に遅れました',
   );
@@ -285,8 +285,8 @@ test('stopping a run that does not end by itself', async ({ page }) => {
   const stop = page.waitForRequest((r) => r.url().endsWith('/api/stop'));
   await press(stopButton(page));
   expect((await stop).postDataJSON()).toEqual({ force: false });
-  await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
-  // 利用者が止めた中断は失敗の色と ✕ にしない
+  await expect(result(page, session)).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
+  // 利用者が止めた実行は失敗の色と ✕ にしない
   await expect(result(page, session).getByTestId('result')).toHaveAttribute('data-tone', 'neutral');
   await expect(page.getByTestId('outcome')).toHaveAttribute('data-tone', 'neutral');
   await expect(page.getByTestId('outcome')).not.toContainText('✕');
@@ -327,7 +327,7 @@ test('a double click on stop does not stop without waiting', async ({ page }) =>
   // 待たずに止めるボタンは消える: フォーカスは、いまの状態を言う帯の文へ移る（body に落ちない）
   await expect(force).toHaveCount(0);
   await expect(page.getByTestId('outcome')).toBeFocused();
-  await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
+  await expect(result(page, session)).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
   // Engine と Dashboard は頼まれて終わり、止まらない Logger（SIGTERM を無視する）は強制終了される
   await expect(page.getByTestId('status-Logger')).toContainText('強制終了した');
   await expect(page.getByTestId('status-Engine')).not.toContainText('強制終了');
@@ -343,7 +343,7 @@ test('the dialog to stop without waiting closes when the run ends meanwhile', as
   // 別のところ（ここでは API）で止めた
   await stopOnServer(page);
   await expect(page.getByRole('dialog')).toBeHidden();
-  await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
+  await expect(result(page, session)).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('outcome')).toBeFocused();
 });
 
@@ -547,7 +547,7 @@ test('a reload and a second tab show the same run', async ({ page, context }) =>
   await expect(other.getByTestId('log-line').first()).toBeVisible();
   // 別のタブで止めても、こちらに届く
   await press(stopButton(other));
-  await expect(page.getByTestId('result')).toContainText('中断', { timeout: RUN_TIMEOUT });
+  await expect(page.getByTestId('result')).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
   await other.close();
 });
 
@@ -584,7 +584,7 @@ test('a dropped connection is shown, joined again, and the log goes on without a
   await expect(stopButton(page)).toHaveText(/止めています/);
   refuse = false;
   await expect(page.getByTestId('connection')).toHaveText('', { timeout: scaled(10_000) });
-  await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
+  await expect(result(page, session)).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
 
   // Dashboard の行は仮想時刻 500 ms ごとに「t=0 ms」「t=500 ms」…と 1 行ずつ。重ならず抜けずに並ぶ
   await page.getByTestId('log-source').click();
@@ -711,7 +711,7 @@ test('stopping while the start waits for its answer', async ({ page }) => {
   expect((await stop).request().postDataJSON()).toEqual({ force: false });
   await expect(page.getByTestId('outcome')).toContainText('開始をやめます');
   release();
-  await expect(page.getByTestId('outcome')).toContainText('中断', { timeout: RUN_TIMEOUT });
+  await expect(page.getByTestId('outcome')).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
   expect((await serverSession(page))?.stop).toBe('requested');
   await page.unroute(/\/api\/run$/);
 });
@@ -772,7 +772,7 @@ test('everything can be done with the keyboard; Enter on start does not stop the
   await expect(stopButton(page)).toBeFocused();
   await expect(stopButton(page)).toHaveAttribute('data-armed', 'true');
   await page.keyboard.press('Enter');
-  await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
+  await expect(result(page, session)).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
   expect(actions).toEqual(['run', 'stop']);
   // 停止のボタンは押せなくなっても、そこにあってフォーカスを持ったまま
   await expect(stopButton(page)).toBeFocused();

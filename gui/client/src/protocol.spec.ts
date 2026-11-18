@@ -311,7 +311,7 @@ describe('the readers read summaries and events part by part', () => {
     const raw = structuredClone((ended?.response as { session: Record<string, unknown> }).session);
     raw['findings'] = [{ severity: 'error', message: 'm', code: 5 }, 'junk'];
     raw['participants'] = [{ name: 'A', state: 'ended', signal: 9 }];
-    (raw['result'] as Record<string, unknown>)['vehicle_sil_run'] = 2;
+    (raw['result'] as Record<string, unknown>)['vehicle_sil_run'] = 3;
     const summary = readSessionResponse({ session: raw });
     expect(summary?.findings).toEqual([expect.objectContaining({ code: '', message: 'm' })]);
     expect(summary?.participants[0]).toMatchObject({ name: 'A', state: 'ended', signal: null });

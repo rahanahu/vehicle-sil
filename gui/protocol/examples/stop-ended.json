@@ -19,19 +19,19 @@
       "launcher": {
         "pid": 10001,
         "running": false,
-        "exit_code": 130,
+        "exit_code": 0,
         "signal": null,
         "silent_s": null
       },
       "stop": "forced",
       "phase": "ended",
-      "last_seq": 241,
-      "last_t_ms": 2410,
+      "last_seq": 251,
+      "last_t_ms": 2510,
       "time": {
         "event": "time",
-        "seq": 223,
-        "t_ms": 2230,
-        "sim_ms": 95210,
+        "seq": 233,
+        "t_ms": 2330,
+        "sim_ms": 100390,
         "actual_speed": 1.5,
         "late_steps": 0,
         "max_late_ms": 0,
@@ -365,18 +365,18 @@
       "findings": [
         {
           "severity": "note",
-          "code": "interrupted",
+          "code": "stopped",
           "file": "ignore-stop.yaml",
           "line": null,
           "participant": null,
           "network": null,
-          "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+          "message": "stopped (stop command): the launcher stopped the simulation and the participants",
           "detail": null
         }
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 235,
+        "seq": 245,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -385,7 +385,7 @@
         "id": null
       },
       "launcher_state": {
-        "seq": 240,
+        "seq": 250,
         "rev": 10,
         "phase": "ended",
         "paused": false,
@@ -467,10 +467,13 @@
         }
       },
       "result": {
-        "vehicle_sil_run": 1,
+        "vehicle_sil_run": 2,
         "vehicle_sil": "0.1.0",
         "file": "ignore-stop.yaml",
-        "result": "interrupted",
+        "result": "stopped",
+        "end": "stopped",
+        "ok": true,
+        "message": "The run was stopped (stop command) without errors",
         "strict": false,
         "errors": 0,
         "warnings": 0,
@@ -484,7 +487,7 @@
           "ecu_step_ms": null,
           "step_delay_ms": null,
           "late_tolerance_ms": 10,
-          "sim_ms": 95210,
+          "sim_ms": 100390,
           "wall_ms": 1000,
           "actual_speed": 1.5,
           "paced_steps": 0,
@@ -552,7 +555,7 @@
         ],
         "outside": [],
         "traffic": {
-          "before_ms": 95210,
+          "before_ms": 100390,
           "unplaced": [
             {
               "participant": "Logger",
@@ -579,8 +582,8 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 95200,
-                  "frames_sent": 953,
+                  "at_ms": 100380,
+                  "frames_sent": 1005,
                   "frames_received": 0
                 },
                 {
@@ -588,9 +591,9 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 95200,
+                  "at_ms": 100380,
                   "frames_sent": 0,
-                  "frames_received": 953
+                  "frames_received": 1005
                 }
               ]
             }
@@ -599,12 +602,12 @@
         "findings": [
           {
             "severity": "note",
-            "code": "interrupted",
+            "code": "stopped",
             "file": "ignore-stop.yaml",
             "line": null,
             "participant": null,
             "network": null,
-            "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+            "message": "stopped (stop command): the launcher stopped the simulation and the participants",
             "detail": null
           }
         ],
@@ -877,7 +880,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 191,
+          "kept": 201,
           "dropped": 0
         }
       },

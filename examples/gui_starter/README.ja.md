@@ -40,7 +40,7 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 | 「Throttle」のスライダーを動かす | つまみを離したときに値を書き込みます。「Engine speed」が変わります。 |
 | 「Throttle to 100 %」（自分のボタン）を押す | スライダーが 100 になり、「Your own script」のメーターがそれに続きます。実行がないときは、断られた理由が出ます。 |
 | 「Pause」、「Step」、「Resume」を順に押す | 状態の行が `paused` と時間になります。「Step」は 10 ms（隣の欄）進め、「Resume」で続きます。 |
-| 「Stop」を押す | 状態の行が `the run was stopped` になります。スライダーは使えなくなり、値は、終わった実行の最後の値だと言います。 |
+| 「Stop」を押す | 状態の行が `The run was stopped (stop command) without errors` になります。スライダーは使えなくなり、値は、終わった実行の最後の値だと言います。 |
 | 「Scenario」でシナリオを選んで「Start」を押す | 実行は自分で終わります。結果が `passed`（か `failed`）と各ステップで出て、実行の時間の軸が現れます。 |
 
 変数は、ランチャーが Control Server を持つときに出ます。例の ECU では、スロットルが `Engine.engine.speed` を動かします。

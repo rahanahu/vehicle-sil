@@ -202,6 +202,7 @@
 変える場所:
 
 - `vehicle_sil_launch check` と `run` の出力（`libs/launch/src`）
+- 実行の結果: 終わった理由（`end_reason()`）、結果（`RunReport::result()`）、人に見せる 1 文（`RunReport::message()`）は `libs/launch/src/run_report.cpp`。結果ごとの終了コードと `ok` は `libs/launch/src/exit_codes.hpp` の 1 つの表
 - `examples/ecu_main/simulation.yaml`
 
 合わせて直すドキュメント:

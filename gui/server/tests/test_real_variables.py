@@ -139,7 +139,7 @@ def test_write_before_the_start_and_read_while_it_stands_still(tmp_path: Path) -
             await c.post("api/stop")
             got = await ws.until(is_ended)
             assert [m["variables"]["state"] for m in got if m["type"] == "variables"][-1] == "ended"
-            assert got[-1]["session"]["result"]["result"] == "interrupted"
+            assert got[-1]["session"]["result"]["result"] == "stopped"
             # The last values stay for a watch that comes after the end.
             await ws.send({"type": "watch", "id": 2, "variables": [SPEED]})
             last = (await ws.until(is_values(2)))[-1]

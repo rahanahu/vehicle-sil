@@ -496,7 +496,7 @@ void scenario_dither(const Options& o)
 
 /// examples/ecu_main/simulation.live.yaml: the example's two ECUs at the speed of a clock, with no
 /// stop_at_ms. It passes the check, runs past the 1000 ms at which simulation.yaml ends, never
-/// ahead of the clock, and a stop command ends it as an interrupted run (130), both ECUs with 0.
+/// ahead of the clock, and a stop command ends it as a stopped run (0), both ECUs with 0.
 void live(const Options& o)
 {
     const fs::path dir = o.example_dir;
@@ -540,10 +540,10 @@ void live(const Options& o)
                                    std::to_string(waited) + " ms");
     run.write("{\"command\":\"stop\"}\n");
     const auto [status, lines] = run.finish();
-    require(status.has_value() && status->code == 130 && !status->signal,
-            "the launcher ends with 130 when stopped, not " + code_text(status));
+    require(status.has_value() && status->code == 0 && !status->signal,
+            "the launcher ends with 0 when stopped, not " + code_text(status));
     const std::string& result = lines.back();
-    require(contains(result, "\"result\":\"interrupted\"") && contains(result, "\"interrupted_by\":\"stop command\""),
+    require(contains(result, "\"result\":\"stopped\",\"end\":\"stopped\",\"ok\":true,") && contains(result, "\"interrupted_by\":\"stop command\""),
             "the result of the stopped run:\n" + result);
     for (const std::string name : {"Engine", "Dashboard"})
     {
@@ -770,7 +770,8 @@ void scenario_failures(const Options& o)
         log("CHECK a participant's failure comes before the scenario's -> ok");
     }
     {
-        // A stop command in the middle: stopped in order (130), the scenario is incomplete.
+        // A stop command in the middle: stopped in order; the scenario is incomplete, which is the
+        // result (5), and the finding that says where it got to is a note, not an error.
         const fs::path dir = scenario_ecus(o, "",
                                            head + "  - set: { Body.level: 5 }\n"
                                                   "  - wait_until: { Door.level: 6 }\n    timeout_ms: 600000\n");
@@ -778,10 +779,13 @@ void scenario_failures(const Options& o)
         live.wait_for({"\"event\":\"scenario_step\"", "\"line\":4,", "\"status\":\"running\""});
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish();
-        require(status && status->code == 130, "a stop command during a scenario: 130");
+        require(status && status->code == 5, "a stop command during a scenario: 5, not " + code_text(status));
         const std::string& result = lines.back();
-        require(contains(result, "\"result\":\"interrupted\"") && contains(result, "\"simulation\":\"interrupted\"") &&
-                    contains(result, "\"code\":\"scenario-incomplete\"") &&
+        require(contains(result, "\"result\":\"incomplete\",\"end\":\"stopped\",\"ok\":false,\"message\":\"The run was stopped (stop command) "
+                                 "before the scenario reached its end, so the scenario has no verdict\",\"strict\":false,\"errors\":0,") &&
+                    contains(result, "\"simulation\":\"interrupted\"") &&
+                    contains(result, "{\"severity\":\"note\",\"code\":\"scenario-incomplete\"") &&
+                    contains(result, "; the run was stopped (stop command) before the scenario's end\"") &&
                     contains(result, "\"name\":null,\"status\":\"incomplete\",\"over_at_ms\":null,") &&
                     contains(result, "\"status\":\"unfinished\""),
                 "the stopped scenario:\n" + result);

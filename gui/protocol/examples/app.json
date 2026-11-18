@@ -20,7 +20,7 @@
         "vehicle_sil": "0.1.0",
         "formats": {
           "check": 1,
-          "run": 1,
+          "run": 2,
           "events": 2,
           "describe": 1,
           "test": 1,

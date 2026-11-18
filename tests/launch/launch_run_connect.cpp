@@ -154,10 +154,10 @@ long long stat_of(const fs::path& log, const std::string& key)
 std::string run_counts(const std::string& result)
 {
     std::smatch match;
-    const std::regex head("^\\{\"event\":\"result\",\"seq\":[0-9]+,\"t_ms\":[0-9]+,\"result\":\\{\"vehicle_sil_run\":1,\"vehicle_sil\":\"[^\"]*\","
-                          "\"file\":\"[^\"]*\",(\"result\":\"[a-z_]+\",\"strict\":(true|false),\"errors\":[0-9]+,\"warnings\":[0-9]+,"
-                          "\"notes\":[0-9]+)");
-    return std::regex_search(result, match, head) ? match[1].str() : std::string{};
+    const std::regex head("^\\{\"event\":\"result\",\"seq\":[0-9]+,\"t_ms\":[0-9]+,\"result\":\\{\"vehicle_sil_run\":2,\"vehicle_sil\":\"[^\"]*\","
+                          "\"file\":\"[^\"]*\",(\"result\":\"[a-z_]+\"),\"end\":[a-z_\"]+,\"ok\":(?:true|false),\"message\":\"[^\"]*\","
+                          "(\"strict\":(?:true|false),\"errors\":[0-9]+,\"warnings\":[0-9]+,\"notes\":[0-9]+)");
+    return std::regex_search(result, match, head) ? match[1].str() + "," + match[2].str() : std::string{};
 }
 
 /// The last statistics line in a bridge's log file (--log-dir), or "".
@@ -679,7 +679,7 @@ void connect_time_locked(const Options& base)
         live.wait_for({"\"event\":\"command\"", "\"id\":9"});
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish();
-        require(status && status->code == 130, "stopped by a command: exit code " + code_text(status) + "\n" + out_of(lines));
+        require(status && status->code == 0, "stopped by a command: 0, not exit code " + code_text(status) + "\n" + out_of(lines));
         const std::vector<std::string> expected{"pause 1 outside-real-time", "speed 2 outside-real-time", "speed 3 accepted",
                                                 "resume 4 accepted",         "pause 5 outside-real-time", "speed 6 outside-real-time",
                                                 "step 7 outside-real-time",  "run_until 8 outside-real-time",
@@ -768,7 +768,7 @@ void connect_time_changed(const Options& base)
         const std::string paused = live.wait_for_after({"\"command\":\"resume\"", "\"accepted\":true,"}, {"\"event\":\"time\""});
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish();
-        require(status && status->code == 130, "stopped by a command: exit code " + code_text(status) + "\n" + out_of(lines));
+        require(status && status->code == 0, "stopped by a command: 0, not exit code " + code_text(status) + "\n" + out_of(lines));
         require(events_with(lines, {"\"event\":\"command\"", "\"accepted\":false"}).empty(),
                 "every command was accepted:\n" + out_of(lines));
         // One finding, about the first command, at the time it came (not after where it stood still).

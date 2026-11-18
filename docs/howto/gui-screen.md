@@ -200,7 +200,7 @@ The browser opens the "Engine speed" screen.
 |---|---|
 | Right after opening | The top line says `ready`. `Engine.engine.speed: -`, with a sentence that the variables are not available now (no run). |
 | Click **Start** | The top line says `running` and the virtual time. `Engine.engine.speed: 1200 rpm` |
-| Click **Stop** | The top line says `the run was stopped`. `Engine.engine.speed: 1200 rpm` and "the last value of the run that has ended" |
+| Click **Stop** | The top line says `The run was stopped (stop command) without errors`. `Engine.engine.speed: 1200 rpm` and "the last value of the run that has ended" |
 
 ### Verify without a browser (the API and Node.js)
 

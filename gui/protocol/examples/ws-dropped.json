@@ -458,10 +458,13 @@
           }
         },
         "result": {
-          "vehicle_sil_run": 1,
+          "vehicle_sil_run": 2,
           "vehicle_sil": "0.1.0",
           "file": "flood.yaml",
           "result": "passed",
+          "end": "completed",
+          "ok": true,
+          "message": "The run reached its end without errors",
           "strict": false,
           "errors": 0,
           "warnings": 0,
@@ -916,10 +919,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 25,
-        "t_ms": 250,
-        "source": "vehicle_sil_launch",
-        "line": "simulation running"
+        "seq": 20,
+        "t_ms": 200,
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {

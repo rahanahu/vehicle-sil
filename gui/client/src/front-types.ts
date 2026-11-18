@@ -1,7 +1,7 @@
 // Shapes of the front door (`connect()` in front.ts). Data fields use the wire's names (snake_case: the same words as
 // the launcher's `state` event and the GUI server's `allowed`); functions use JavaScript's (`forceStop`, `runUntil`).
 import type { GuiClient } from './client';
-import type { Finding, ScenarioStatus, ScenarioStep } from './protocol';
+import type { Finding, RunEnd, ScenarioStatus, ScenarioStep } from './protocol';
 import type { ValueCondition, WriteBlock, WriteStatus } from './variable-state';
 import type { VariableRef, VariableValue } from './variables';
 import type { Readable } from './values';
@@ -23,18 +23,24 @@ export type Link = 'connecting' | 'online' | 'offline' | 'rejected' | 'incompati
 export type RunState =
   'none' | 'starting' | 'waiting' | 'running' | 'paused' | 'stopping' | 'ended' | 'crashed';
 
-/** How a run ended. `crashed` is the client's own: the launcher ended without writing a result. */
-export type EndKind =
-  'completed' | 'stopped' | 'interrupted' | 'failed' | 'setup_failed' | 'crashed';
+/**
+ * How a run ended, as the launcher's result says (`end`). `crashed` is the client's own: the launcher ended without
+ * writing a result. A launcher newer than this library may write a value that is not listed.
+ */
+export type EndKind = RunEnd | 'crashed';
 
 /** The result of the last run. */
 export interface FrontResult {
-  end: EndKind;
+  /** null when nothing was started: the check failed, or the file or the command line could not be used. */
+  end: EndKind | null;
   /** The scenario's verdict (null for a run without a scenario). */
   scenario: ScenarioStatus | null;
-  /** Whether the run succeeded. A stop by the operator is not a failure. */
+  /**
+   * Whether the run succeeded, as the launcher's result says (`ok`: its exit code is 0). A stop by the operator is a
+   * success, unless it cut a scenario short (the scenario has no verdict then).
+   */
   ok: boolean;
-  /** One English sentence for a person. */
+  /** One English sentence for a person, as the launcher wrote it. */
   message: string;
 }
 

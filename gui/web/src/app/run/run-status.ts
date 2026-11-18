@@ -221,10 +221,11 @@ export class RunStatus {
     return parts.length === 0 ? null : this.list.format(parts);
   });
 
-  /** 結果の印と色: 成功は ✓、利用者が止めた中断は ■（失敗の色にしない）、ほかは ✕。 */
+  /** 結果の印と色: 成功は ✓、止めた実行と中断は ■（失敗の色にしない）、ほかは ✕。 */
   private resultTone(result: string | undefined): { tone: string; mark: string } {
     if (result === 'passed') return { tone: 'good', mark: '✓' };
-    if (result === 'interrupted') return { tone: 'neutral', mark: '■' };
+    if (result === 'stopped' || result === 'incomplete' || result === 'interrupted')
+      return { tone: 'neutral', mark: '■' };
     return { tone: 'bad', mark: '✕' };
   }
 
@@ -294,8 +295,12 @@ export class RunStatus {
   /** 失敗したとき、最初の誤り（ランチャーの英語の文）。 */
   protected readonly firstError = computed(() => {
     const session = this.session();
-    // 利用者が止めた中断は誤りではない（所見は注記の interrupted だけ）
-    if (!session?.result || ['passed', 'interrupted'].includes(session.result.result)) return null;
+    // 止めた実行と中断は誤りではない（所見は注記だけ）
+    if (
+      !session?.result ||
+      ['passed', 'stopped', 'incomplete', 'interrupted'].includes(session.result.result)
+    )
+      return null;
     const findings = session.result.findings;
     const worst = [...findings].sort(
       (a, b) => severityRank(a.severity) - severityRank(b.severity),

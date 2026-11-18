@@ -2031,7 +2031,7 @@
         "seq": 41,
         "t_ms": 410,
         "source": "vehicle_sil_launch",
-        "line": "interrupted (stop command): the simulation was stopped"
+        "line": "stopped (stop command): the simulation was stopped"
       }
     },
     {
@@ -2059,12 +2059,12 @@
         "seq": 43,
         "t_ms": 430,
         "severity": "note",
-        "code": "interrupted",
+        "code": "stopped",
         "file": "forever.yaml",
         "line": null,
         "participant": null,
         "network": null,
-        "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+        "message": "stopped (stop command): the launcher stopped the simulation and the participants",
         "detail": null
       }
     },
@@ -2284,10 +2284,13 @@
         "seq": 52,
         "t_ms": 520,
         "result": {
-          "vehicle_sil_run": 1,
+          "vehicle_sil_run": 2,
           "vehicle_sil": "0.1.0",
           "file": "forever.yaml",
-          "result": "interrupted",
+          "result": "stopped",
+          "end": "stopped",
+          "ok": true,
+          "message": "The run was stopped (stop command) without errors",
           "strict": false,
           "errors": 0,
           "warnings": 1,
@@ -2416,12 +2419,12 @@
             },
             {
               "severity": "note",
-              "code": "interrupted",
+              "code": "stopped",
               "file": "forever.yaml",
               "line": null,
               "participant": null,
               "network": null,
-              "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+              "message": "stopped (stop command): the launcher stopped the simulation and the participants",
               "detail": null
             }
           ],
@@ -2707,7 +2710,7 @@
         "launcher": {
           "pid": 10001,
           "running": false,
-          "exit_code": 130,
+          "exit_code": 0,
           "signal": null,
           "silent_s": null
         },
@@ -3053,12 +3056,12 @@
           },
           {
             "severity": "note",
-            "code": "interrupted",
+            "code": "stopped",
             "file": "forever.yaml",
             "line": null,
             "participant": null,
             "network": null,
-            "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+            "message": "stopped (stop command): the launcher stopped the simulation and the participants",
             "detail": null
           }
         ],
@@ -3155,10 +3158,13 @@
           }
         },
         "result": {
-          "vehicle_sil_run": 1,
+          "vehicle_sil_run": 2,
           "vehicle_sil": "0.1.0",
           "file": "forever.yaml",
-          "result": "interrupted",
+          "result": "stopped",
+          "end": "stopped",
+          "ok": true,
+          "message": "The run was stopped (stop command) without errors",
           "strict": false,
           "errors": 0,
           "warnings": 1,
@@ -3287,12 +3293,12 @@
             },
             {
               "severity": "note",
-              "code": "interrupted",
+              "code": "stopped",
               "file": "forever.yaml",
               "line": null,
               "participant": null,
               "network": null,
-              "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+              "message": "stopped (stop command): the launcher stopped the simulation and the participants",
               "detail": null
             }
           ],
