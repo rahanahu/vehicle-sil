@@ -257,9 +257,52 @@ export function controlLine(
   return reason ? reasonLine(op, reason) : null;
 }
 
+/**
+ * `status.problem` の code のうち、操作の失敗でないもの: 接続（帯が言う）、ランチャーの異常終了と失敗した実行（結果の
+ * カードが言う）。操作の場所に重ねて出さない。
+ */
+const NOT_OPERATION_FAILURES = new Set([
+  'offline',
+  'connecting',
+  'rejected',
+  'incompatible',
+  'launcher-crashed',
+  'run-failed',
+]);
+
+/**
+ * 時刻の命令の失敗のうち、画面に出さない code。正面の口の `status.problem` は出すが、押した人の誤りでない（別の送り手の
+ * 命令が先に来た `interrupted`、実行が先に終わった `not-running`）ので出さない。この画面の使い勝手の判断なので、ここにある。
+ */
+const QUIET_TIME_FAILURES = new Set(['interrupted', 'not-running']);
+
+/**
+ * 最後の操作の失敗の文（正面の口の `status.problem`）。操作の失敗でない problem と、出さない code は null。時刻の命令に
+ * 答えがない（`no-answer`、`answerMs` はその待ち時間）ときは画面の文、ほかは持ち主の英語の文（`english`）。
+ */
+export function failureLine(
+  failure: { op: OperationName; problem: { code: string; message: string } } | null,
+  answerMs?: number,
+): { text: string; english: boolean } | null {
+  if (!failure || NOT_OPERATION_FAILURES.has(failure.problem.code)) return null;
+  const { op, problem } = failure;
+  const time = isTimeOperation(op);
+  if (time && QUIET_TIME_FAILURES.has(problem.code)) return null;
+  if (time && problem.code === 'no-answer' && answerMs !== undefined) {
+    return {
+      text: $localize`ランチャーが命令（${op}:command:）に ${answerMs / 1000}:seconds: 秒たっても答えません。入力を読んでいないかもしれません。もう一度送れます。`,
+      english: false,
+    };
+  }
+  return { text: problem.message, english: true };
+}
+
+const isTimeOperation = (op: OperationName): boolean =>
+  op !== 'start' && op !== 'stop' && op !== 'force_stop';
+
 /** 理由の code の、画面の言葉（表になければ null）。 */
 function screenText(op: OperationName, reason: { code: string; message: string }): string | null {
-  const time = op !== 'start' && op !== 'stop' && op !== 'force_stop';
+  const time = isTimeOperation(op);
   switch (reason.code) {
     case 'already-running':
       return $localize`実行中は開始できません。`;

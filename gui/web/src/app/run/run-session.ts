@@ -46,8 +46,8 @@ export class RunSession {
   readonly stopping = this.commands.stopping;
   /** 開始の応答を待っている間に、止めるよう頼んだ。 */
   readonly stopWhileStarting = this.commands.stopWhileStarting;
-  /** 最後の操作が断られた理由（サーバーの文をそのまま）。実行が始まるか終わったら出さない。 */
-  readonly actionError = this.commands.error;
+  /** 最後の操作が開始か停止なら、それと正面の口の `status.problem`（RunCommands.failure）。 */
+  readonly failure = this.commands.failure;
 
   /**
    * 経過時間（ミリ秒）。事象の t_ms から、次の事象までは時計で進める。

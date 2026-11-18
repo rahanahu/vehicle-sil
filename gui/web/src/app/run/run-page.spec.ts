@@ -178,6 +178,29 @@ describe('RunPage', () => {
     expect(disabled(button(fixture, 'start'))).toBe(true);
   });
 
+  it('shows under the status bar why the server refused the start (the problem of the front door)', async () => {
+    const fixture = await openWithFiles();
+    (await checkRequest()).flush(response('check-passed'));
+    await fixture.whenStable();
+    await sleep(10);
+    await fixture.whenStable();
+    expect(text(fixture, 'action-error')).toBe('');
+    button(fixture, 'start').click();
+    http
+      .expectOne('api/run')
+      .flush(
+        { error: { code: 'shutting-down', message: 'the server is shutting down', detail: null } },
+        { status: 503, statusText: 'Service Unavailable' },
+      );
+    await sleep(0);
+    await fixture.whenStable();
+    expect(text(fixture, 'action-error')).toContain('操作を受け付けられませんでした');
+    const english = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="action-error"] [lang="en"]',
+    );
+    expect(english?.textContent).toBe('the server is shutting down');
+  });
+
   it('starts paused when asked to, and shows the pause and resume buttons of a launcher that has them', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));

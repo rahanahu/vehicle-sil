@@ -6,7 +6,7 @@ import { Speed } from '@vehicle-sil/gui-client';
 import { MeasurePipe } from '../core/format/measure-pipe';
 import { numberText } from '../core/format/number-text';
 import { SimulationTime } from '../core/session/simulation-time';
-import { controlLine, latenessText, reasonLine, speedLabel } from './labels';
+import { controlLine, failureLine, latenessText, reasonLine, speedLabel } from './labels';
 import { SpeedPicker } from './speed-picker';
 
 /**
@@ -353,10 +353,13 @@ export class TimePanel {
     return !speed.ok && speed.reason?.code !== 'busy';
   });
 
-  /** 断られた命令の理由: サーバーが断った（HTTP）か、ランチャーが受け付けなかった（停止の命令を除く）。 */
+  /**
+   * 断られた命令の理由: このアプリの最後の時刻の命令の失敗（正面の口の `status.problem`）、なければ、ほかの送り手の命令を
+   * ランチャーが受け付けなかったこと（最後の command の事象。停止の命令を除く。正面の口にないので下の口から）。
+   */
   protected readonly refusal = computed<{ text: string; english: boolean } | null>(() => {
-    const error = this.time.error();
-    if (error) return { text: error, english: this.time.errorFromServer() };
+    const failure = failureLine(this.time.failure(), this.time.answerTimeoutMs);
+    if (failure) return failure;
     const last = this.time.lastCommand();
     return last && !last.accepted && last.name !== 'stop'
       ? { text: last.message ?? last.name ?? '', english: true }

@@ -94,10 +94,11 @@
       }}</span>
     </p>
   }
+  <!-- 開始と停止の失敗は、いつも持ち主の英語の文（failureLine） -->
   <p class="action-error" role="alert" data-testid="action-error">
-    @if (run.actionError(); as error) {
+    @if (actionError(); as error) {
       <ng-container i18n>操作を受け付けられませんでした:</ng-container>
-      <span lang="en">{{ error }}</span>
+      <span lang="en">{{ error.text }}</span>
     }
   </p>
 

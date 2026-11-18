@@ -1,4 +1,5 @@
-import { reasonText, simulationLabel } from './labels';
+import { OperationName } from '@vehicle-sil/gui-client';
+import { failureLine, reasonText, simulationLabel } from './labels';
 
 describe('simulationLabel', () => {
   it('says the scenario ended only when it was over (passed or failed)', () => {
@@ -25,5 +26,38 @@ describe('reasonText', () => {
     expect(reasonText('speed', { code: 'outside-real-time', message: 'keeps real time' })).toBe(
       'keeps real time',
     );
+  });
+});
+
+describe('failureLine', () => {
+  const failure = (op: OperationName, code: string) => ({
+    op,
+    problem: { code, message: `english ${code}` },
+  });
+
+  it("says that the launcher did not answer a time command in the words of the screen, and passes on the owner's sentence otherwise", () => {
+    expect(failureLine(failure('step', 'no-answer'), 5000)).toEqual({
+      text: 'ランチャーが命令（step）に 5 秒たっても答えません。入力を読んでいないかもしれません。もう一度送れます。',
+      english: false,
+    });
+    // 開始と停止の no-answer はサーバーが答えなかったこと: 持ち主の文
+    expect(failureLine(failure('stop', 'no-answer'), 5000)).toEqual({
+      text: 'english no-answer',
+      english: true,
+    });
+    expect(failureLine(failure('resume', 'not-paused'), 5000)).toEqual({
+      text: 'english not-paused',
+      english: true,
+    });
+  });
+
+  it("leaves out what is not the failure of an operation, and the time failures that are not the user's mistake", () => {
+    expect(failureLine(null)).toBeNull();
+    for (const code of ['offline', 'rejected', 'incompatible', 'launcher-crashed', 'run-failed'])
+      expect(failureLine(failure('start', code))).toBeNull();
+    for (const code of ['interrupted', 'not-running'])
+      expect(failureLine(failure('step', code), 5000)).toBeNull();
+    // 停止の not-running（止める前に実行が終わった）は、いまどおり帯の下に出す
+    expect(failureLine(failure('stop', 'not-running'))?.text).toBe('english not-running');
   });
 });

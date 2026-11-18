@@ -5,6 +5,8 @@ import {
   ErrorHandler,
   InjectionToken,
   Signal,
+  WritableSignal,
+  computed,
   inject,
   signal,
 } from '@angular/core';
@@ -12,10 +14,13 @@ import {
   ANSWER_TIMEOUT_MS,
   DEFAULT_TIMEOUT_MS,
   Front,
+  FrontStatus,
   GuiClient,
   HttpError,
   HttpTransport,
+  OperationName,
   Readable,
+  Reason,
   SocketFactory,
   createFront,
   errorMessage,
@@ -94,6 +99,41 @@ export const GUI_CLIENT = new InjectionToken<GuiClient>('GUI_CLIENT', {
   providedIn: 'root',
   factory: () => inject(GUI_FRONT).low,
 });
+
+/** 操作の失敗と、その操作。 */
+export interface OperationFailure {
+  op: OperationName;
+  /** 正面の口の `status.problem`（接続、異常終了、失敗した実行のこともある: 画面が code で分ける）。 */
+  problem: Reason;
+}
+
+/**
+ * このアプリが最後に送った操作（RunCommands と SimulationTime が送る前に書く）。正面の口の `status.problem` にある
+ * 操作の失敗は、最後の操作のもの（次の操作で消える）なので、画面はこれで、どの場所に出すかを決める。
+ */
+const LAST_OPERATION = new InjectionToken<WritableSignal<OperationName | null>>('LAST_OPERATION', {
+  providedIn: 'root',
+  factory: () => signal(null),
+});
+
+/**
+ * 操作 `op` を送る前に呼ぶ（それが最後の操作になる）。返す signal は、最後の操作が `ops` のどれかなら、それと
+ * `status.problem`（なければ null）。注入の文脈で呼ぶ。
+ */
+export function lastOperation(
+  status: Signal<FrontStatus>,
+  ops: readonly OperationName[],
+): { sending(op: OperationName): void; failure: Signal<OperationFailure | null> } {
+  const last = inject(LAST_OPERATION);
+  return {
+    sending: (op) => last.set(op),
+    failure: computed(() => {
+      const op = last();
+      const problem = status().problem;
+      return op !== null && ops.includes(op) && problem !== null ? { op, problem } : null;
+    }),
+  };
+}
 
 /**
  * 読める値（ライブラリの状態）を signal にする。注入の文脈で呼ぶ（サービスの field など）。購読は、その注入の

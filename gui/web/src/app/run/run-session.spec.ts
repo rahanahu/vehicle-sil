@@ -4,6 +4,7 @@ import { TestBed } from '@angular/core/testing';
 import { FakeWebSockets, HttpExample, httpExamples } from '@vehicle-sil/gui-client/testing';
 import { authInterceptor } from '../core/auth/auth-interceptor';
 import { SOCKET_FACTORY } from '../core/session/gui-client';
+import { SimulationTime } from '../core/session/simulation-time';
 import { RunSession } from './run-session';
 
 // 包みの試験: HttpClient（トークンつき）で送ること、応答がその場で signal に出ること。開始と停止の決まり
@@ -62,6 +63,34 @@ describe('RunSession', () => {
       );
     expect(run.stopping()).toBeNull();
     await new Promise((resolve) => setTimeout(resolve));
-    expect(run.actionError()).toBe('the server is shutting down');
+    expect(run.failure()).toEqual({
+      op: 'force_stop',
+      problem: { code: 'shutting-down', message: 'the server is shutting down' },
+    });
+  });
+
+  it('leaves the failure of a time command to the time card', async () => {
+    run.stop();
+    http
+      .expectOne('api/stop')
+      .flush(
+        { error: { code: 'shutting-down', message: 'the server is shutting down', detail: null } },
+        { status: 503, statusText: 'Service Unavailable' },
+      );
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(run.failure()?.op).toBe('stop');
+    // 時刻の命令が最後の操作になる: 停止の失敗は消え（正面の口が次の操作で消す）、時刻の命令の失敗は帯の下に出ない
+    const time = TestBed.inject(SimulationTime);
+    const sent = time.setSpeed(2);
+    expect(run.failure()).toBeNull();
+    http
+      .expectOne('api/time')
+      .flush(
+        { error: { code: 'not-running', message: 'no run is going', detail: null } },
+        { status: 409, statusText: 'Conflict' },
+      );
+    await sent;
+    expect(time.failure()).toMatchObject({ op: 'speed', problem: { code: 'not-running' } });
+    expect(run.failure()).toBeNull();
   });
 });

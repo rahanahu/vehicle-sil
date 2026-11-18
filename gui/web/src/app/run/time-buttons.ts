@@ -1,7 +1,7 @@
 import { Component, computed, inject } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { SimulationTime } from '../core/session/simulation-time';
-import { WAITING_TEXT, controlLine } from './labels';
+import { WAITING_TEXT, controlLine, failureLine } from './labels';
 
 /**
  * 一時停止と再開のボタン（実行している間、状態の帯の開始と停止の後に置く）。2 つは別のボタンで、いつもこの順に同じ
@@ -95,7 +95,7 @@ export class TimeButtons {
   protected readonly pauseText = $localize`一時停止`;
   protected readonly resumeText = $localize`再開`;
   /**
-   * ボタンの説明: 送った命令の答えを待っている間と、前の命令がうまくいかなかったときはその文、それ以外は正面の口の
+   * ボタンの説明: 送った命令の答えを待っている間と、前の命令がうまくいかなかったとき（`status.problem`）はその文、それ以外は正面の口の
    * 理由（押せないとき）か注意（`caution`）。なければ null。
    */
   protected readonly pauseWhy = computed(() => this.why('pause'));
@@ -103,8 +103,8 @@ export class TimeButtons {
 
   private why(op: 'pause' | 'resume'): { text: string; english: boolean } | null {
     if (this.time.waiting()) return { text: WAITING_TEXT, english: false };
-    const error = this.time.error();
-    if (error) return { text: error, english: this.time.errorFromServer() };
+    const failure = failureLine(this.time.failure(), this.time.answerTimeoutMs);
+    if (failure) return failure;
     return controlLine(op, this.controls()[op]);
   }
 

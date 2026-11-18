@@ -148,7 +148,7 @@ The types and parsers for what passes between the screens and the server, the co
 
 ### `core/session/`
 
-The wrapper only turns the library's `Readable` (read-only value) into signals.
+The wrapper turns the library's `Readable` (read-only value) into signals and passes the screens' actions to the library. It has no rules of its own. Besides the signals it keeps one thing: which operation the app sent last (`lastOperation` in `gui-client.ts`), so that a screen shows the failure in `status.problem` next to that operation (`failure` of `RunCommands` and `SimulationTime`). When the failure goes is the library's rule.
 
 | File                   | Contents                                                                                        |
 | ---------------------- | ----------------------------------------------------------------------------------------------- |
