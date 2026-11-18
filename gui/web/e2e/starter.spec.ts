@@ -64,13 +64,13 @@ test.afterAll(() => {
   if (screen) rmSync(screen, { recursive: true, force: true });
 });
 
-async function serve(config: string): Promise<GuiServer> {
+async function serve(config: string, features = CONTROL_FEATURES): Promise<GuiServer> {
   const server = await launchGuiServer({
     launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
     config: join(CONFIGS, config),
     // more: the variables that a slider and a lamp need (engine.demand has a range; engine.warning is true above 50)
-    env: { REPLAY_TICK_MS: '50', REPLAY_FEATURES: CONTROL_FEATURES, REPLAY_VARIABLES: 'more' },
+    env: { REPLAY_TICK_MS: '50', REPLAY_FEATURES: features, REPLAY_VARIABLES: 'more' },
     port: 0,
     web: screen,
   });
@@ -162,9 +162,13 @@ test('the starter runs and stops, writes and shows variables, and reports a refu
   expect(errors).toEqual([]);
 });
 
+// A launcher without a Control Server: there is no recording yet of a scenario run with a Control Server and a
+// timeline (the GUI server asks for both when the launcher has both), and this test writes no variable.
+const SCENARIO_FEATURES = CONTROL_FEATURES.replace(',control-server', '');
+
 test('the starter runs a scenario and shows its timeline', async ({ page }) => {
   test.setTimeout(120_000);
-  const server = await serve('simulation.yaml');
+  const server = await serve('simulation.yaml', SCENARIO_FEATURES);
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => {
