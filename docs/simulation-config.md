@@ -516,7 +516,7 @@ The bridges of this repository (`vehicle_sil_ethernet_bridge`, `vehicle_sil_vect
     command: [vehicle_sil_ethernet_bridge, --network, ETH_EXT, --backend, packet, --interface, eth1, --all-frames]
 ```
 
-For the arguments, see "Starting from a configuration file" in [ethernet-bridge.md](ethernet-bridge.md#starting-from-a-configuration-file) and [bridges.md](bridges.md#starting-from-a-configuration-file).
+For what the launcher adds to the arguments and what `--describe` must write, see "[Starting a bridge of your own](bridge-contract.md#starting-a-bridge-of-your-own-role-bridge)" in bridge-contract.md; for the arguments of each bridge, see "Starting from a configuration file" in [ethernet-bridge.md](ethernet-bridge.md#starting-from-a-configuration-file) and [bridges.md](bridges.md#starting-from-a-configuration-file).
 
 The reason for the warning: a bridge sends what is sent on the SIL Kit side to the real bus. So the transmissions of a test participant with a J1939 node, in particular its address claim (Address Claimed), also go out on the real bus, and the participant competes for its address with a real ECU that has the same address. To fix this, either make the participant only receive on that network (create no J1939 node), or disable the bridge in the runs that use the participant (`--disable <bridge>`, or `enabled: false` in a variant). The `--describe` output does not show that a participant sends raw CAN, so the check does not warn about such participants.
 

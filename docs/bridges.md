@@ -2,7 +2,7 @@
 
 [日本語](ja/bridges.md)
 
-`vehicle_sil_vector_xl_bridge` forwards classic CAN frames in both directions between a SIL Kit CAN network and a Vector XL CAN channel. This page covers the connection steps, arguments, exit codes, statistics, forwarding behavior, the build and the test coverage.
+`vehicle_sil_vector_xl_bridge` forwards classic CAN frames in both directions between a SIL Kit CAN network and a Vector XL CAN channel. This page covers what is particular to this bridge: the connection steps, arguments, forwarding behavior, the build and the test coverage. What all bridges share with the launcher (the arguments it passes, `--describe`, the exit codes, the lines a bridge prints and the mark on a device) is in [bridge-contract.md](bridge-contract.md).
 
 | Connects to | `--xl-target` | Requirement | Verified | Not verified |
 |---|---|---|---|---|
@@ -69,7 +69,7 @@ If something goes wrong, find the symptom in this table.
 | Symptom | Cause | Fix |
 |---|---|---|
 | Prints `error: ...` and exits with code 4 | An argument is wrong. | Correct it as described in "[Arguments](#arguments)". |
-| `FAIL setup: cannot connect to the SIL Kit registry ...` | The bridge cannot connect to the registry. | Do what the message says (see "[Message when the registry is unreachable](#message-when-the-registry-is-unreachable)"). |
+| `FAIL setup: cannot connect to the SIL Kit registry ...` | The bridge cannot connect to the registry. | Do what the message says (see "[Message when the registry is unreachable](bridge-contract.md#message-when-the-registry-is-unreachable)"). |
 | Prints the list of available channels and exits with code 3 | No channel has the number given to `--xl-channel`. | Give a number from the `--list-channels` output. |
 | Startup fails when you add `--bitrate` | Another application holds init access. | Leave out `--bitrate`. The bridge then connects without changing the channel configuration. |
 
@@ -113,7 +113,7 @@ You choose the channel and the device on this command line when the bridge start
 
 ### The channel list as JSON (`--json`)
 
-`--list-channels --json` writes the channels as one JSON object to stdout, in UTF-8, followed by a line break. The text is for people and its layout may change; programs read `--json`. The form is that of the Ethernet bridge's `--list-interfaces --json` (see "[The list as JSON](ethernet-bridge.md#the-list-as-json---json)"); this section gives what differs.
+`--list-channels --json` writes the channels in the form of "[Lists of devices](bridge-contract.md#lists-of-devices)" in bridge-contract.md; this section gives what differs.
 
 ```json
 {
@@ -157,15 +157,15 @@ You choose the channel and the device on this command line when the bridge start
 | `targets[].label` | The channel name from the driver. |
 | `targets[].detail` | The target and number, then what the line of the text shows. |
 | `targets[].usable` | Always `true`, also for a channel in use. |
-| `targets[].in_use`, `in_use_by`, `in_use_count` | Whether vehicle-sil bridges use the channel's bus now, as in the Ethernet bridge's list (see "[Device in use by another bridge](#device-in-use-by-another-bridge)"). The channels of Vector Virtual CAN are one bus: a bridge on any of them makes all of them in use. |
+| `targets[].in_use`, `in_use_by`, `in_use_count` | As in the contract. The channels of Vector Virtual CAN are one bus: a bridge on any of them makes all of them in use. |
 | `targets[].can` | `target`, `number`, `name`, `hw_type`, `hw_index`, `hw_channel`, `serial` and `transceiver` (`null` where the driver gives none). |
 | `notes` | Empty. |
 
-When the list cannot be made, the bridge writes the JSON with no targets and the error, and exits with code 3. The `FAIL setup: ...` line, which is on stdout without `--json`, goes to stderr, so that stdout holds the JSON alone. `error.code` is `driver-missing` when the XL driver cannot be opened, and `failed` otherwise. `error.message` is the message of the `FAIL setup:` line.
+When the list cannot be made, `error.code` is `driver-missing` when the XL driver cannot be opened, and `failed` otherwise.
 
 ## Starting from a configuration file
 
-`vehicle_sil_launch` can start the bridge with the other participants of a simulation. Write it in the configuration file like an ECU (`describe: true`, the default), with `role: bridge` and `required: false`:
+`vehicle_sil_launch` can start the bridge with the other participants of a simulation. Write it in the configuration file like an ECU, with `role: bridge` and `required: false` (what the launcher adds to `command`, and what `--describe` is, are in "[Starting a bridge of your own](bridge-contract.md#starting-a-bridge-of-your-own-role-bridge)" in bridge-contract.md):
 
 ```yaml
 participants:
@@ -175,143 +175,34 @@ participants:
     command: [vehicle_sil_vector_xl_bridge, --network, VehicleCAN, --xl-target, physical, --xl-channel, "1"]
 ```
 
-The network (`VehicleCAN`) must be in `networks` with `kind: can`. `check` adds `--describe --name XlBridge`, and `run` adds `--name XlBridge --registry-uri <URI> --start-timeout-ms <ms>` (so `registry_uri` may have port 0).
+The network (`VehicleCAN`) must be in `networks` with `kind: can`.
 
-- With `--describe`, the bridge checks its arguments as for a run (an error is exit code 4, which `check` reports as `describe-failed` with the bridge's message; do not write `--participant` or `--name` in `command`, because the launcher adds `--name`), writes the JSON that an ecu_main executable writes for `--describe` (see "[JSON format](ecu-executable.md#json-format)" in [ecu-executable.md](ecu-executable.md)) and exits with code 0, without opening the XL driver or connecting to SIL Kit. `--registry-uri` is not needed; if it is given, it is not used.
-- The JSON has the participant name, `"step_ns": null` (the bridge runs in real time), the network of `--network` with `"kind": "can"` and `"use": "raw"`, no variables, `"control": null` and an empty `features` list. `check` therefore knows which network the bridge carries (see "Test participants and bridges (`role`)" in [simulation-config.md](simulation-config.md#test-participants-and-bridges-role)).
-- The executable needs `vxlapi64.dll` to start at all, also for `--describe`: Windows loads it with the executable (the build copies it next to the executable when it finds it). On a computer without it, `check` reports `describe-failed`: the bridge could not start because a DLL it needs was not found. Leave the bridge out there with `--disable XlBridge`.
+- The bridge does not open the XL driver for `--describe`, but the executable needs `vxlapi64.dll` to start at all: Windows loads it with the executable (the build copies it next to the executable when it finds it). On a computer without it, `check` reports `describe-failed`: the bridge could not start because a DLL it needs was not found. Leave the bridge out there with `--disable XlBridge`.
 - `required: false`: the simulation does not wait for the bridge (see "[Startup order](#startup-order)"), and when the run ends, the launcher asks the bridge to stop.
 
 To have the launcher start the bridge without an entry in the file, give `--connect <network>=<target>` to `check` and `run` (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md). The adapter or channel differs from PC to PC, so it is given when you start, not written in the shared file. `run` then starts the bridge before the ECUs, waits until it runs, so that the first frames reach the bus too, and fails the run if the bridge ends (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md).
 
 ## Exit codes
 
-| Exit code | Meaning |
-|---|---|
-| 0 | Normal end on a stop request (Ctrl+C, Ctrl+Break, SIGTERM, closing the console window). Also 0 when `--list-channels`, `--describe` or `--help` finishes. |
-| 1 | Failure while running. |
-| 3 | Failure during setup (XL driver, channel selection, SIL Kit). |
-| 4 | Argument error. |
-
-The exit code is 1 in any of these cases:
-
-- The SIL Kit participant went into a stopping or ended state (the registry stopped or the connection was lost).
-- The participant stayed in a starting state and never reached Running.
-- The XL channel became unusable (the device was removed).
+The exit codes (0, 1, 3, 4), the judgment of the participant state and the closing of the console window are those of all bridges (see "[Exit codes](bridge-contract.md#exit-codes)" in bridge-contract.md). For this bridge, exit code 3 is a failure of the XL driver, of the channel selection or of SIL Kit during setup, and exit code 1 includes an XL channel that became unusable (the device was removed).
 
 ### Participant state while running
 
-| State | Handling | Output |
-|---|---|---|
-| A stopping or ended state (Stopping, Stopped, Error, ShuttingDown, Shutdown, Aborting) | Failure (exit code 1). | `FAIL: SIL Kit participant left Running (state <state>)` |
-| The same states, reached before Running | Failure (exit code 1). | `FAIL: SIL Kit participant stopped before it reached Running (state <state>)` |
-| A starting state (ReadyToRun and others), 1 second after monitoring began | Not a failure. | `waiting for the SIL Kit participant to reach Running (state <state>; at most 15000 ms)`, once |
-| Still in a starting state after 15 seconds | Failure (exit code 1). | `FAIL: SIL Kit participant did not reach Running within 15000 ms (state <state>); its SIL Kit log may say why` |
-| Paused | Not a failure. | None |
-
-The bridge never pauses on its own.
-
-### Closing the console window (Windows)
-
-When you close the console window on Windows (and also on logoff or shutdown), the `SetConsoleCtrlHandler` handler requests a stop, waits up to 4 seconds for the bridge to finish stopping (which includes printing the statistics), then ends the process with the bridge's exit code. The handler waits because Windows ends the process as soon as the handler returns, and gives the handler only about 5 seconds. Those 5 seconds cannot be changed, so the bridge prints the statistics before it stops the SIL Kit participant, and waits at most 2 seconds for the participant to stop. If it still takes longer than 4 seconds, Windows ends the process and the exit code is not 0 (the statistics are already printed by then).
-
-### Code shared by the bridge executables
-
-The bridge executables share the following through `run_bridge()` (`vehicle_sil::bridge_runtime`) in `bridges/common`:
-
-- How stop requests are received
-- The monitoring loop
-- The stop sequence (warnings raised just before the stop, then the statistics, are printed before the SIL Kit participant is stopped)
-- The exit codes
-- The 4-second wait when the console window is closed
-- The statistics line while running (`--stats-every-ms`; `BridgeHooks::statistics_line()`, `RunBridgeOptions::statistics_interval`)
-- When to say that nothing came from a device on the bus the bridge sends to (`NothingCameHint`, `nothing_came_hint.hpp`): 10 seconds after the first frame sent out, once, unless a frame from a device has come. Both bridges count those frames in `ext_from_devices` (see "[Statistics](#statistics)")
+The judgment of the participant state, and what the bridge prints for it, are those of all bridges (see "[Participant state while running](bridge-contract.md#participant-state-while-running)" in bridge-contract.md).
 
 ## Error messages
 
-### Argument errors
-
-On an argument error, the bridge prints only 2 lines to stderr (the error and a pointer to the usage) and exits with code 4. `--help` prints the full usage.
-
-```
-error: --xl-target must be 'virtual' or 'physical', got: cancase
-Run 'vehicle_sil_vector_xl_bridge --help' for the options.
-```
+Argument errors, the message for a registry that cannot be reached and the output encoding are the same for all bridges (see "[Lines the bridge prints](bridge-contract.md#lines-the-bridge-prints)" in bridge-contract.md).
 
 ### No channel found
 
 If you give `--xl-channel` a number that does not exist, the bridge prints the list of available channels and exits with code 3.
 
-### Message when the registry is unreachable
-
-If the bridge cannot connect to the registry, it prints one line with the address it tried and what to do next, and exits with code 3. `registry_failure_message()` in `bridges/common` builds the message.
-
-```
-[bridge] FAIL setup: cannot connect to the SIL Kit registry at <uri> (<SIL Kit text>). Start the registry first ('sil-kit-registry --listen-uri <uri>'), or give the address it listens at with --registry-uri.
-```
-
-The part after `(<SIL Kit text>).` depends on the address. The host is compared case-insensitively.
-
-| Host in `--registry-uri` | What the message tells you |
-|---|---|
-| A loopback address of this computer (`localhost`, `127.x.y.z`, `::1`), or an address that cannot be parsed | As in the line above: start the registry first, or give the address it listens at. |
-| Any other host | On the computer with the registry, check that the registry runs and listens on an address reachable from here, and check its firewall. |
-| `0.0.0.0` and `::` (`[::]`) | These are addresses to listen on and cannot be connected to. Give the address of the computer the registry runs on. |
-
-The text for "any other host" is below. The bridge does not determine whether the address belongs to another computer or is a LAN address of this one, so the text claims neither.
-
-```
-... <host> is not the loopback address of this computer: check that the registry runs on the computer with that address (which may be this one), that it listens on an address reached from here ('sil-kit-registry --listen-uri silkit://0.0.0.0:<port>' there listens on all of its addresses, not only on its loopback), and that its firewall lets port <port> through.
-```
-
-The text for `0.0.0.0` and `::` (`[::]`):
-
-```
-... 0.0.0.0 stands for every address of a computer: a registry listens on it, a participant cannot connect to it. Give --registry-uri the address of the computer the registry runs on (silkit://127.0.0.1:<port> if it runs on this one).
-```
-
-If the address has no port, `<port>` in these texts is 8500 (the port of a registry started without one).
-
-### Output encoding
-
-The bridges (`vehicle_sil_vector_xl_bridge`, `vehicle_sil_ethernet_bridge`) and `vehicle_sil_can_bus_simulator` write their stdout and stderr text in UTF-8. On Windows, how they write depends on where the output goes (`cli::write_text()` in `tools/common`; `vehicle_sil_launch` writes the same way).
-
-| Output goes to | How it is written |
-|---|---|
-| A console (Command Prompt, PowerShell) | As UTF-16 (`WriteConsoleW`). |
-| A file or a pipe | As UTF-8 bytes. |
-
-- In a console, non-ASCII characters (a `--participant` name, the name of a network connection) are readable whatever the code page (932 on Japanese Windows). The bridges do not change the code page, and you do not need `chcp`.
-- An MSYS2 terminal (mintty) counts as a pipe, so it receives UTF-8 bytes. Have it read them as UTF-8.
-- In Windows PowerShell 5.1, `>` and `|` re-decode the bytes they receive with `[Console]::OutputEncoding` (by default the console code page), which garbles non-ASCII characters. Run `[Console]::OutputEncoding = [Text.Encoding]::UTF8` first, or use `>` in Command Prompt.
-- SIL Kit's own log is not written this way.
-
 ## Statistics
 
-When the bridge ends, it prints the statistics on one line: `stats`, then one ` <key>=<count>` for each key of the table below, in its order. With `--stats-every-ms <ms>` it also prints the line while it runs: at the first interval, then at each interval where a count changed. The counts are totals since the start, each read on its own (one line need not show one instant). The keys and their order are fixed by this page for programs that read the line, and the tests hold them. When `vehicle_sil_launch run --connect` starts the bridge, it passes `--stats-every-ms 1000` and reads the lines for its counts: the run's output does not show the lines while the bridge runs, and shows the last one once, when the bridge has ended (see "Counting the frames to and from the bus" in [simulation-run.md](simulation-run.md#counting-the-frames-to-and-from-the-bus)).
+The form of the line and the meaning of each key are in "[Statistics line](bridge-contract.md#statistics-line)" in bridge-contract.md; this bridge prints the keys of its first example, with the `ext_tx_unsent` of this bridge: frames handed to XL that were lost without going out on the bus (on stop, or when the channel was reactivated).
 
-```
-stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 error_frames=0 overruns=0 silkit_rejected=0 ext_rejected=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_tx_dropped=0 ext_tx_unsent=0
-```
-
-
-| Key | Counts |
-|---|---|
-| `silkit_to_ext` | Frames handed to the XL transmit queue |
-| `ext_to_silkit` | Frames received from XL and forwarded to SIL Kit |
-| `ext_from_devices` | Frames received from XL that another node on the bus sent (the receipts of the bridge's own transmissions are not counted). The key the launcher reads as the frames from a device; the same name as in the Ethernet bridge |
-| `own_tx_dropped` | Receipts of the bridge's own transmissions (with receipts enabled, the same as the number of frames that went out on the bus) |
-| `error_frames` | XL error frames |
-| `overruns` | Overflows of the XL receive queue |
-| `silkit_rejected` | Frames from SIL Kit that are not forwarded (CAN FD, CAN XL, invalid ID or DLC) |
-| `ext_rejected` | Frames from XL that are not forwarded (in practice, frames with a DLC above 15) |
-| `ext_queue_full` | Frames dropped because the XL transmit queue was full |
-| `ext_tx_failures` | Other failures to transmit to XL |
-| `silkit_tx_failures` | Frames for which `ICanController::SendFrame` threw an exception |
-| `ext_tx_dropped` | Frames dropped by `--tx-timeout-ms` while the bus was congested |
-| `ext_tx_unsent` | Frames handed to XL that were lost without going out on the bus (on stop, or when the channel was reactivated) |
-
-`ext_to_silkit` and `ext_from_devices` count only frames from other nodes on the bus (the two have the same value in this bridge): the receipts of the bridge's own transmissions are in `own_tx_dropped`. If the bridge has sent frames to the channel and not one frame has come from the bus 10 seconds after the first (`ext_from_devices` is still 0), it prints a hint as a warning, once:
+`ext_to_silkit` and `ext_from_devices` count only frames from other nodes on the bus (the two have the same value in this bridge): the receipts of the bridge's own transmissions are in `own_tx_dropped` (with receipts enabled, the same as the number of frames that went out on the bus). If the bridge has sent frames to the channel and not one frame has come from the bus 10 seconds after the first (`ext_from_devices` is still 0), it prints a hint as a warning, once:
 
 ```
 nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the bridge first sent a frame there: if a device is meant to answer, check that it is on, its cable and termination, the bit rate, and that this is the channel it is on.
@@ -321,7 +212,7 @@ A frame from the bus that came earlier keeps the hint back as well. The hint als
 
 ## Link line
 
-For programs that read the output (the launcher, a script of yours), the bridge prints the state of the external bus on one line, apart from the health lines for people: `link bus=<value>`, after the tag like the statistics line, followed by the keys of the device mark (`device`, `marked`, `shared` and, on Linux, `peers`; see "[Device in use by another bridge](#device-in-use-by-another-bridge)").
+The form of the line is in "[Link line](bridge-contract.md#link-line)" in bridge-contract.md. This bridge prints `link bus=<value>`:
 
 ```
 [bridge] link bus=active device=552dd508e2f03efe marked=1 shared=0
@@ -334,54 +225,16 @@ For programs that read the output (the launcher, a script of yours), the bridge 
 | `bus-off` | Bus off |
 | `unknown` | The first answer to the error state query has not come yet, or no answer comes (`--no-bus-monitor`, or a driver that does not answer; see "[Error state queries](#error-state-queries)") |
 
-- The first line is printed once the XL port is open, before the bridge starts the SIL Kit lifecycle (before the startup line, and so before the participant can be Running). It is `unknown` until the first answer, which comes later.
-- After that, the bridge looks once a second (like the health line) and prints a line only when the value or a key of the device mark has changed. The same line is never printed twice in a row.
-- No line comes when the bridge ends (`FAIL:`, stop): the state of the participant says it.
-- `link_line_value()` gives the value, `bridge_runtime::format_link_line()` the line and `bridge_runtime::DeviceShareWatch` the keys of the device mark (`bridges/common`, shared with the Ethernet bridge).
-- A program that reads the line must skip keys and values it does not know: values and keys may be added.
-- `vehicle_sil_launch run --connect` does not show the line in the run's output, as with the statistics line.
+- The first line is printed once the XL port is open, before the bridge starts the SIL Kit lifecycle. It is `unknown` until the first answer, which comes later.
+- `link_line_value()` gives the value.
 
 ## Device in use by another bridge
 
-Two bridges that open the same device receive each other's frames: two networks, or two runs, mix there. Each bridge (this one and the Ethernet bridge) puts a mark on the device it opens and counts the marks of the other vehicle-sil bridges on it, once at startup and then once a second while it runs, so a bridge started later is found by the one that was there first, too. The mark excludes nobody: a bridge that finds others warns and goes on.
+This bridge places and counts the mark of "[Device in use by another bridge](bridge-contract.md#device-in-use-by-another-bridge)" in bridge-contract.md. Its device is a CAN channel of Vector hardware, identified by the hardware type, index, serial number and channel that the XL driver reports (`xl-<hwType>-<hwIndex>-<serial>-<hwChannel>`), or Vector Virtual CAN, whose channels are all one device (`xl-virtual`). Two channels of one Vector device are two devices. The warning of this bridge:
 
 ```
-[bridge] link bus=active device=552dd508e2f03efe marked=1 shared=1 peers=4321
 [bridge] warning: XL 'Virtual Channel 1' (Vector Virtual CAN, whose channels are all one bus) is also used by another vehicle-sil bridge (process 4321): the frames of both mix there: if that is not meant, connect them to different devices, or stop a bridge left over from an earlier run
 ```
-
-| Key of the link line | Meaning |
-|---|---|
-| `device` | The device, as 16 hexadecimal digits of a hash: the same in every bridge on the device, whatever its backend |
-| `marked` | `1`: the bridge placed its mark. `0`: it could not, and said why in a warning; the other bridges cannot find it, but it still finds them |
-| `shared` | How many other bridges have marked the device now |
-| `peers` | Their process IDs, separated by `,` (Linux only; left out where there are none) |
-
-- The first count is in the first link line (before the SIL Kit lifecycle starts). The warning comes whenever `shared` grows, with the process IDs of the bridges that came; a link line comes whenever a key changes, also when another bridge ends.
-- The lists (`--list-channels --json`, `--list-interfaces --json`) say `in_use: true`, `in_use_by` (the process IDs; empty on Windows) and `in_use_count` for a device with marks, and add "in use by a vehicle-sil bridge (process 4321)" to `detail` and to the line of the text. `usable` stays `true`. A list places no mark.
-- The device is the port to a bus: an Ethernet interface, a CAN channel of Vector hardware (its hardware type, index, serial number and channel, as the XL driver reports them), or Vector Virtual CAN (all its channels are one device). Two channels of one Vector device are two devices.
-
-| The mark finds | The mark does not find |
-|---|---|
-| vehicle-sil bridges on this computer: of another run, of another user, started by hand, and bridges of your own that place the same mark | Programs outside vehicle-sil that open the device (Wireshark, candump, CANoe): they are the outside the bridge connects to |
-| | On Linux, bridges in another network namespace (they see other interfaces) |
-| | On Windows, bridges in another session, where the marks are in the session's namespace (`Local\`, below) |
-
-On Linux a process ID in `peers` is the one in the PID namespace of the bridge that placed the mark: a bridge in a container with its own PID namespace (and the same network namespace) shows its number in the container.
-
-`vehicle_sil_launch run --connect` reads these keys. It takes the bridges of its own run out of `shared` (by their process IDs in `peers`, on Windows by their number), shows the bridge's warning as one line of its own with the process ID, and makes the finding `outside-device-shared` of what is left; with `--strict` it does not start a run on a shared device, and stops one that shares it for 3 s (see "[A device that another run uses too](simulation-run.md#a-device-that-another-run-uses-too)" in simulation-run.md). A bridge of your own that writes the same keys is read the same way.
-
-How the mark is placed (a bridge of your own, `role: bridge` in a configuration file, can place the same mark so that the others find it):
-
-| OS | Mark |
-|---|---|
-| Linux | A Unix socket (close-on-exec) bound to the abstract name `vehicle-sil/device/<kind>/<identity>/<pid>/<random>`, kept open while the bridge runs (`<random>`: 16 hexadecimal digits; another one is tried where the name is taken). Counting reads `/proc/net/unix` for the names that begin with the same `vehicle-sil/device/<kind>/<identity>/` |
-| Windows | A named mutex `Global\vehicle-sil-device-<device>-<n>`, not owned and not inherited, with the first free `<n>` from 0 to 15, kept open while the bridge runs; its security descriptor lets everyone open it with `SYNCHRONIZE`. Where this user may not create global names, the marks go to `Local\` (this session). Counting opens the other numbers in both and closes them at once |
-
-- `<kind>` is `ethernet` or `can`. `<identity>`: the interface's name (Linux), the pcap name (Npcap), `xl-<hwType>-<hwIndex>-<serial>-<hwChannel>` for a channel of Vector hardware, `xl-virtual` for Vector Virtual CAN. Where the identity has a character other than ASCII letters, digits and `._:@+-`, or the name would exceed the 107 bytes of an abstract name, `<identity>` is the `device` hash instead.
-- `<device>` is the `device` key: the hash (FNV-1a, 64 bits) of `<kind>/<identity>`.
-- The C++ bridges use `bridge_runtime::DeviceMark` and `DeviceShareWatch` (`bridges/common`).
-- The bridges built for the tests mark their fake devices per process, so that tests that run at the same time do not find each other; a test that wants two of them to share a device gives both the same `VEHICLE_SIL_FAKE_DEVICE_SCOPE`.
 
 ## Physical CAN and virtual time
 

@@ -2,7 +2,7 @@
 
 [English](../ethernet-bridge.md)
 
-`vehicle_sil_ethernet_bridge` は、SIL Kit の Ethernet ネットワークと SIL Kit の外部のインターフェースの間で、イーサネットのフレームを書き換えずに双方向に転送します。実時間で動き、時刻同期には参加しません。このドキュメントには、接続の手順、引数、終了コード、メッセージ、バックエンドごとの動作、統計、フィルターとループの防止、ライブラリの API、確認した範囲が書いてあります。
+`vehicle_sil_ethernet_bridge` は、SIL Kit の Ethernet ネットワークと SIL Kit の外部のインターフェースの間で、イーサネットのフレームを書き換えずに双方向に転送します。実時間で動き、時刻同期には参加しません。このドキュメントには、このブリッジだけのこととして、接続の手順、引数、バックエンドごとの動作、フィルターとループの防止、ライブラリの API、確認した範囲が書いてあります。すべてのブリッジがランチャーと共有すること（ランチャーが渡す引数、`--describe`、終了コード、ブリッジが出す行、デバイスの印）は、[bridge-contract.md](bridge-contract.md) にあります。
 
 | 接続する相手 | `--backend` | OS | インストールするもの | 確認した範囲 |
 |---|---|---|---|---|
@@ -156,15 +156,7 @@ participants:
 
 Linux では `--backend packet`（か `pcap`）とネットワークインターフェースの名前を書きます。ネットワーク（`ETH_EXT`）は、`networks` に `kind: ethernet` で書きます。
 
-| コマンド | `vehicle_sil_launch` が足す引数 |
-|---|---|
-| `check` | `--describe --name EthBridge` |
-| `run` | `--name EthBridge --registry-uri <URI> --start-timeout-ms <ms>` |
-
-- `--describe` のとき、ブリッジは引数を実行のときと同じに確かめ（誤りは終了コード 4。`check` がブリッジの文を添えて `describe-failed` として報告します。ランチャーが `--name` を足すので、`command` に `--participant` も `--name` も書きません）、ecu_main の実行ファイルが `--describe` で書くのと同じ JSON（[ecu-executable.md](ecu-executable.md#json-の形式) の「JSON の形式」）を書いて、終了コード 0 で終わります。インターフェースを開かず、pcap のライブラリを読み込まず、SIL Kit にもつながないので、Npcap や libpcap のない PC でも `check` が通ります。`--registry-uri` は要りません（書いてあっても使いません）。
-- JSON には、participant の名前、`"step_ns": null`（ブリッジは実時間で動く）、`--network` のネットワーク（`"kind": "ethernet"`、`"use": "ethernet"`、`"mac": null`）、空の変数、`"control": null`、空の `features` が入ります。
-- そのため `check` は、ブリッジがどのネットワークを中継するかを知っています。`networks` にないネットワークは、ECU と同じに報告します（`unknown-network`）。自分の MAC アドレスを持たないブリッジは、注記 `ethernet-mac-unknown` の対象になりません。
-- URI はランチャーが渡すので、`registry_uri` のポートは 0 でもかまいません。
+- ランチャーが足す引数と `--describe` が書くものは、bridge-contract.md の「[自作のブリッジを起こす](bridge-contract.md#自作のブリッジを起こすrole-bridge)」と「[`--describe`](bridge-contract.md#--describe)」にあります。このブリッジは、`--describe` のときインターフェースを開かず、pcap のライブラリを読み込まず、SIL Kit にもつながないので、Npcap や libpcap のない PC でも `check` が通ります。
 - `required: false`: シミュレーションはブリッジを待たず、実行が終わるとランチャーがブリッジに止める要求を送ります（ブリッジが参加する前に送られたフレームについては、[bridges.md](bridges.md#起動の順序) の「起動の順序」）。
 
 ファイルに書かずにランチャーにブリッジを起こさせるなら、`check` と `run` に `--connect <network>=<target>` を渡します（simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。アダプターやチャンネルは PC ごとに違うので、共有のファイルには書かず、起動するときに渡します。`run` は、ECU より先にブリッジを起こし、動き出すのを待つので、最初のフレームもバスに出ます。ブリッジが終わると実行を失敗にします（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。
@@ -226,19 +218,7 @@ sudo setcap -r build/<preset>/bridges/ethernet/vehicle_sil_ethernet_bridge
 
 ## 終了コード
 
-| 終了コード | 意味 | 出力 |
-|---|---|---|
-| 0 | 止める要求で止まりました。`--list-interfaces`、`--describe`、`--help` が終わったときも 0 です。 | 統計の 1 行と `stopped` |
-| 1 | 実行中の失敗です。 | `FAIL: <理由>` |
-| 3 | 準備の失敗です（この OS で使えないバックエンド、インストールされていない pcap のライブラリ、インターフェース、SIL Kit）。 | `FAIL setup: <理由>` |
-| 4 | 引数のエラーです。 | `error: <理由>` |
-
-終了コード 1 になるのは、次のどれかのときです。
-
-- 外部のインターフェースが動かなくなった（なくなった、読み取りの失敗）。
-- SIL Kit の participant が自分で止まった、終わった、Running にならなかった。
-
-participant の状態の扱いは Vector XL CAN Bridge と同じです（[bridges.md](bridges.md) の「実行中の participant の状態」）。止め方、監視、終了コードは、2 つのブリッジが共有する `run_bridge()` にあります。
+終了コード（0、1、3、4）と participant の状態の扱いは、すべてのブリッジで同じです（bridge-contract.md の「[終了コード](bridge-contract.md#終了コード)」）。このブリッジでは、終了コード 3 は、この OS で使えないバックエンド、インストールされていない pcap のライブラリ、開けないインターフェース、準備のときの SIL Kit の失敗です（`FAIL setup: <理由>`）。終了コード 1 には、外部のインターフェースが動かなくなったこと（なくなった、読み取りの失敗）も入ります（`FAIL: <理由>`）。
 
 ## 起動から停止までの動作
 
@@ -256,31 +236,7 @@ participant の状態の扱いは Vector XL CAN Bridge と同じです（[bridge
 - 順 2 で、`npcap` と `pcap` はライブラリを読み込みます。インストールされていなければ、インストールの方法を示して終了コード 3 で終わります。
 - 順 4 のメッセージは、「[バックエンド](#バックエンド)」の各節にあります。
 - 転送（順 4）を lifecycle（順 5）より先に始めるのは、ほかの participant が、ブリッジが Running になったのを見た時点で送信を始めるからです。
-
-### 引数のエラー
-
-使い方の全文は `--help` で表示します。
-
-```
-error: --backend must be tap, packet, npcap or pcap, got: usb
-Run 'vehicle_sil_ethernet_bridge --help' for the options.
-```
-
-### registry に接続できないときのメッセージ
-
-括弧の中は SIL Kit の文です。
-
-```
-[eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://127.0.0.1:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). Start the registry first ('sil-kit-registry --listen-uri silkit://127.0.0.1:8500'), or give the address it listens at with --registry-uri.
-```
-
-アドレスがこの PC のループバック（`localhost`、`127.x.y.z`、`::1`）でないときは、registry を起動するようには示さず、そのアドレスの PC で確認することを示します。そのアドレスが別の PC のものか、この PC 自身のものかは、調べません。
-
-```
-[eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://192.168.10.5:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). 192.168.10.5 is not the loopback address of this computer: check that the registry runs on the computer with that address (which may be this one), that it listens on an address reached from here ('sil-kit-registry --listen-uri silkit://0.0.0.0:8500' there listens on all of its addresses, not only on its loopback), and that its firewall lets port 8500 through.
-```
-
-`0.0.0.0` と `[::]` は待ち受けるためのアドレスなので、registry の動いている PC のアドレスを書くよう示します。メッセージは `bridges/common` の `registry_failure_message()` が作り、Vector XL のブリッジと同じです（[bridges.md](bridges.md) の「registry に接続できないときのメッセージ」）。
+- 引数のエラー（`error: <理由>` と使い方の見方の 1 行。たとえば `error: --backend must be tap, packet, npcap or pcap, got: usb`）と、registry に接続できないときのメッセージは、すべてのブリッジで同じ形です（bridge-contract.md の「[ブリッジが出す行](bridge-contract.md#ブリッジが出す行)」）。
 
 ### 起動の 1 行
 
@@ -405,7 +361,7 @@ interfaces of this computer (--backend packet and --backend pcap take the Ethern
   --interface vsil0   Ethernet, down
 ```
 
-いま vehicle-sil のブリッジが使っているインターフェースは、行の終わりに `; in use by a vehicle-sil bridge (process 4321)` が付きます（bridges.md の「[別のブリッジが使っているデバイス](bridges.md#別のブリッジが使っているデバイス)」）。`npcap`（Windows の既定）と `pcap` では、pcap のライブラリが返すインターフェースを表示します。
+いま vehicle-sil のブリッジが使っているインターフェースは、行の終わりに `; in use by a vehicle-sil bridge (process 4321)` が付きます（bridge-contract.md の「[別のブリッジが使っているデバイス](bridge-contract.md#別のブリッジが使っているデバイス)」）。`npcap`（Windows の既定）と `pcap` では、pcap のライブラリが返すインターフェースを表示します。
 
 ```
 interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); --backend npcap takes the Ethernet ones:
@@ -426,7 +382,7 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 
 #### 一覧の JSON（`--json`）
 
-`--list-interfaces --json` は、同じ一覧を 1 つの JSON のオブジェクトにして、UTF-8 で標準出力に書きます。最後に改行が付きます。文の一覧は人が読むためのもので、形が変わることがあります。プログラムは `--json` を読みます。Vector XL CAN ブリッジも、チャネルを同じ形で書きます（「[チャネルの一覧の JSON](bridges.md#チャネルの一覧の-json--json)」）。`vehicle_sil_launch connections` は、設定ファイルのネットワークのために、この 2 つの一覧を読みます（simulation-run.md の「[つなげる先の一覧](simulation-run.md#つなげる先の一覧vehicle_sil_launch-connections)」）。
+`--list-interfaces --json` は、同じ一覧を bridge-contract.md の「[デバイスの一覧](bridge-contract.md#デバイスの一覧)」の形で書きます。ここには違う所と例を書きます。
 
 ```json
 {
@@ -479,24 +435,14 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 }
 ```
 
-| キー | 内容 |
+| キー | このブリッジでの内容 |
 |---|---|
-| `vehicle_sil_targets` | この形の版です（1）。 |
 | `tool` | `vehicle_sil_ethernet_bridge` です。 |
 | `backend` | 一覧のバックエンドです。`--backend`、なければ既定です。 |
 | `source` | `npcap`、`pcap` では、ライブラリが返す版です。`packet`、`tap` では `null` です。 |
-| `targets` | インターフェースごとに 1 つのオブジェクトです。並びは文の一覧と同じです。 |
-| `targets[].value` | `--interface` にそのまま渡す名前です。 |
-| `targets[].label` | 見せる名前です。今は `value` と同じです。 |
-| `targets[].detail` | 文の一覧の行で、名前の後ろにある内容を `; ` でつないだものです。 |
-| `targets[].usable` | ブリッジが使えないインターフェースでは `false` です。そのとき `reason` が理由を言います。 |
-| `targets[].reason` | 使えない理由、または `null` です。 |
-| `targets[].in_use` | いま vehicle-sil のブリッジがインターフェースを使っているとき（その使用中の印。bridges.md の「[別のブリッジが使っているデバイス](bridges.md#別のブリッジが使っているデバイス)」）`true` です。そのとき `detail` の終わりに `in use by a vehicle-sil bridge (process 4321)` が付きます。`usable` は変わりません。 |
-| `targets[].in_use_by` | それらのブリッジのプロセス ID で、小さい順です。Windows では、印からは分からないので空です。 |
-| `targets[].in_use_count` | インターフェースを使っているブリッジの数です（Windows でも出ます）。 |
+| `targets[].detail` | 使用中のデバイスでは、`detail` の終わりに `in use by a vehicle-sil bridge (process 4321)` も付きます。 |
 | `targets[].ethernet` | バックエンドが返す内容です。`npcap`、`pcap` では `pcap_name`、`connection` と `description`（ないときは `null`）、`up`、`connected`（ライブラリが言わないときは `null`）、`loopback`、`wireless` です。`packet`、`tap` では `name`、`ethernet`、`link_type`、`up` です。 |
 | `notes` | 文の一覧の最後の行の説明です。1 文ずつ入ります（ネットワークのアダプターを返さない Npcap）。ほかのときは空です。 |
-| `error` | `null`、または一覧を作れなかったときのエラーです（下）。 |
 
 `value` は、装置に接続名があり、一覧のほかの装置に同じ接続名がなければ、その接続名です。同じかどうかは、`--interface` と同じく、ASCII の英字の大文字と小文字を区別せずに比べます（「[`--interface` に書ける名前](#--interface-に書ける名前)」）。そうでなければ pcap の名前です。`packet` と `tap` では、インターフェースの名前です。
 
@@ -510,7 +456,7 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 
 pcap のライブラリは、開く前には、装置がイーサネットかどうかを言いません。そのため、ループバックと `any` のほかは、イーサネットでない装置も使えるものとして出ます。その装置は、ブリッジが起動のときに拒否します。`tap` の一覧は、この PC のインターフェースです。ブリッジが開けるのは、その中の TAP デバイスだけです。
 
-一覧を作れないときも、ブリッジは JSON を書きます。`targets` は空で、エラーが入ります。終了コードは 3 です。`--json` がなければ標準出力に出る `FAIL setup: ...` の行は、標準エラーに出ます。標準出力には JSON だけが出ます。
+一覧を作れないときの JSON は、`targets` が空で、エラーが入ります（終了コードと `FAIL setup:` の行の行き先は、約束のページにあります）。
 
 ```json
 {
@@ -533,8 +479,6 @@ pcap のライブラリは、開く前には、装置がイーサネットかど
 | `permission-denied` | OS がこの利用者に断った。 |
 | `backend-unavailable` | そのバックエンドがこの OS で使えない（Linux で `--backend npcap` など）。 |
 | `failed` | ほか。 |
-
-`error.message` は、`FAIL setup:` の行の文です。
 
 ### `tap`
 
@@ -649,7 +593,7 @@ Windows での DLL の探し方は、次のとおりです。
 - 接続の名前が 2 つのアダプターに一致するときはエラーで、pcap の名前を示します。
 - 接続の名前は、UTF-8 の文字列として比較します（引数は UTF-8 で読みます）。Windows と同じく、ASCII の英字の大文字と小文字は区別しません（`ethernet 2` で `Ethernet 2` を選べます）。ほかの文字は同じでなければなりません。大文字と小文字だけが違う接続の名前が 2 つあるときは、どちらとも違う書き方ではエラーになって両方の名前を示し、どちらかをそのとおりに書けば、そのアダプターを選びます。
 - pcap の名前は、大文字と小文字も含めてそのとおりに比較します。
-- 一覧もエラーメッセージも、コンソールにはコードページによらず読める形で出力し、ファイルとパイプには UTF-8 で出力します（[bridges.md](bridges.md) の「出力の文字コード」）。`chcp` は不要です。
+- 一覧もエラーメッセージも、コンソールにはコードページによらず読める形で出力し、ファイルとパイプには UTF-8 で出力します（[bridge-contract.md](bridge-contract.md#出力の文字コード) の「出力の文字コード」）。`chcp` は不要です。
 - Npcap が返す文（デバイスの説明、エラーの文）は、Windows の ANSI コードページの文として読んで UTF-8 に変換します。
 - 日本語の接続の名前は、一覧に出て、一致します（英語の Windows で確認）。ファイルとパイプには正しい UTF-8 で、コンソールには正しい文字で届きます。英語の Windows のコンソールのフォントでは、四角で表示されます。日本語の Windows のコンソールでの見え方は、未確認です。
 
@@ -764,36 +708,15 @@ Windows には TAP デバイスに当たるバックエンドがありません�
 
 ## 統計
 
-`format_statistics()` は、全部の数を 1 行にします。`stats` の後に、下の表のキーごとに ` <キー>=<数>` を、表の順に並べます。ブリッジは止まるときにこの行を出し、`--stats-every-ms <ms>` を指定すれば動いている間にも出します（最初の間隔で 1 回、その後は数が変わった間隔ごと）。数は起動からの合計で、1 つずつ読むので、1 行の数が同じ瞬間のものとは限りません。キーとその順序は、行を読むプログラム（たとえば自分で書いたスクリプト）のためにこのドキュメントが定め、テストが守ります。`vehicle_sil_launch run --connect` が起こしたブリッジには、ランチャーが `--stats-every-ms 1000` を渡し、数のためにこの行を読みます。実行の出力には、ブリッジが動いている間の行は出ず、ブリッジが終わったときに最後の 1 行が 1 回出ます（[simulation-run.md](simulation-run.md#外のバスとやりとりしたフレームの数) の「外のバスとやりとりしたフレームの数」）。
+行の形、キー、キーの順は、bridge-contract.md の「[統計の行](bridge-contract.md#統計の行)」にあります。このブリッジで、キーが数えるもののうち、そこの表より細かい点は次のとおりです。
 
-```
-stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_suspected=0 mac_unguarded=0 filtered_to_ext=0 filtered_from_ext=0 oversize=0 malformed=0 ext_overruns=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_checksum_incomplete=0
-```
-
-| キー | 数えるもの | 問題の数 |
-|---|---|---|
-| `silkit_to_ext` | SIL Kit から外部へ送信したフレーム | — |
-| `ext_to_silkit` | 外部から SIL Kit へ渡したフレーム（`SendFrame()` が戻ったもの） | — |
-| `ext_from_devices` | 外部から来たフレームのうち、この PC が送信したのではなく、送信元が SIL Kit 側のアドレスでもないもの。フィルターの前に数える | — |
-| `own_tx_dropped` | 外部リンクから戻ってきた、自分が送信したフレーム（自分の送信を戻す外部リンクだけ） | — |
-| `loop_suspected` | 送信元が両側にあるアドレスのフレーム | ○ |
-| `mac_unguarded` | MAC テーブルに入らず、ループを調べずに通したフレーム | ○ |
-| `filtered_to_ext`、`filtered_from_ext` | フィルターで通さなかったフレーム（向きごと） | — |
-| `oversize` | 最大長より長いフレーム（両方向） | ○ |
-| `malformed` | イーサネットのヘッダーより短いフレーム（両方向） | ○ |
-| `ext_overruns` | OS が読み取りの前に捨てたフレーム | ○ |
-| `ext_queue_full` | 外部リンクの送信のキューがいっぱいで失ったフレーム | ○ |
-| `ext_tx_failures` | 外部リンクでの、そのほかの送信の失敗（`transmit()` が投げた例外を含む） | ○ |
-| `silkit_tx_failures` | `SendFrame()` が例外を投げたもの、または SIL Kit が送信できなかったと確認したもの（`ControllerInactive`、`LinkDown`、`Dropped`、`InvalidFrameFormat`） | ○ |
-| `ext_checksum_incomplete` | 外部から SIL Kit へ渡したフレームのうち、UDP や TCP のチェックサムが未完成のもの | ○ |
-
-- 「問題の数」に ○ のあるキーが増えると、監視の行が出ます（`problems_grew()`）。転送した数、フィルターの数、`own_tx_dropped` は問題に数えません。
-- `silkit_tx_failures` のうち、SIL Kit が送信できなかったと確認したフレームは、渡した時点で `ext_to_silkit` にも数えてあります。
+- 監視の行が出るキー（そこの表の「監視の行」が「出す」）が増えると、監視の行が出ます（`problems_grew()`）。転送した数、フィルターの数、`own_tx_dropped` は問題に数えません。
+- `ext_to_silkit` に数えるのは、`SendFrame()` が戻った時点のものです。`silkit_tx_failures` のうち、SIL Kit が送信できなかったと確認したフレーム（`ControllerInactive`、`LinkDown`、`Dropped`、`InvalidFrameFormat`）は、渡した時点で `ext_to_silkit` にも数えてあります。
 - `ext_checksum_incomplete` に数えるのは、`packet` で、同じ PC の OS が送信したフレームです（「[同じ PC の OS のネットワークスタックと通信する](#同じ-pc-の-os-のネットワークスタックと通信する)」）。`ext_to_silkit` にも数えてあります。
-- `ext_from_devices` で、外の何かが答えているかが分かります。数えないもの: この PC が送信したフレーム（この PC のアダプターの MAC アドレスからのものと、`packet` ではカーネルがこの PC の送信と印を付けたもの。「[機器から何も来ないときのヒント](#機器から何も来ないときのヒント)」のとおりで、ブリッジがアドレスを知らなければ数えます）、SIL Kit 側のアドレスからのフレーム（`--src-mac` のアドレスと、MAC のルールがあれば、ブリッジが外部へ送信したフレームの送信元。`own_tx_dropped` と `loop_suspected` が数えるフレーム）、ヘッダーより短いフレームと最大長より長いフレーム、SIL Kit のコントローラーを有効にする前のフレーム。機器からのフレームは、フィルターが SIL Kit へ通さないものでも数えます（`filtered_from_ext` にも数えます）。
+- `ext_from_devices` で、外の何かが答えているかが分かります。数えるのは、外から来たフレームのうち、この PC が送信したものでなく、送信元が SIL Kit 側のアドレスでないもので、フィルターの前に数えます。数えないもの: この PC が送信したフレーム（この PC のアダプターの MAC アドレスからのものと、`packet` ではカーネルがこの PC の送信と印を付けたもの。「[機器から何も来ないときのヒント](#機器から何も来ないときのヒント)」のとおりで、ブリッジがアドレスを知らなければ数えます）、SIL Kit 側のアドレスからのフレーム（`--src-mac` のアドレスと、MAC のルールがあれば、ブリッジが外部へ送信したフレームの送信元。`own_tx_dropped` と `loop_suspected` が数えるフレーム）、ヘッダーより短いフレームと最大長より長いフレーム、SIL Kit のコントローラーを有効にする前のフレーム。機器からのフレームは、フィルターが SIL Kit へ通さないものでも数えます（`filtered_from_ext` にも数えます）。
 - 同じアダプターを使うこの PC のプログラムの答えは数えません。`packet` では送信元のアドレスによらず、`npcap` と `pcap` では、この PC のアダプターのアドレスから送ったとき（そうしたプログラムはふつうそうします）です。
 - `tap` では、相手がこの PC のネットワークスタックなので、来たものをこの PC のものとはみなしません。`ext_from_devices` は、SIL Kit 側からでない来たフレームをすべて数え、`ext_to_silkit` と `filtered_from_ext` を合わせたものと同じです。
-- `--no-mac-guard` では、SIL Kit 側を見分けるのは `--src-mac` のアドレスだけです。自分の送信を戻す外部リンクでは、ブリッジが外部へ送信して戻ってきたフレームを `ext_from_devices` に数えます。vehicle-sil の外部リンクは、どれも戻しません。
+- `own_tx_dropped` に数えるのは、自分の送信を戻す外部リンクのときだけで、vehicle-sil の外部リンクは、どれも戻しません。`--no-mac-guard` では、SIL Kit 側を見分けるのは `--src-mac` のアドレスだけなので、ブリッジが外部へ送信して戻ってきたフレームは `ext_from_devices` に数えます。
 
 ## 監視の行
 
@@ -809,7 +732,7 @@ stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_s
 
 ## リンクの行
 
-出力を読むプログラム（ランチャーや自作のスクリプト）のために、ブリッジはリンクの状態を、人向けの監視の行とは別に 1 行で出します。形は `link link=<値>` で、統計の行と同じようにタグの後ろに付き、その後にデバイスの使用中の印のキー（`device`、`marked`、`shared`、Linux では `peers`）が続きます。ほかの vehicle-sil のブリッジが同じインターフェースを使っているかを表します（bridges.md の「[別のブリッジが使っているデバイス](bridges.md#別のブリッジが使っているデバイス)」）。
+行の形は、bridge-contract.md の「[リンクの行](bridge-contract.md#リンクの行)」にあります。このブリッジは `link link=<値>` を出します。
 
 ```
 [eth-bridge] link link=up device=af3d43e7e4b8883a marked=1 shared=0
@@ -817,17 +740,12 @@ stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_s
 
 | 値 | 意味 |
 |---|---|
-| `up` | リンクが up（`tap`、`packet`、`pcap`: インターフェースが up でキャリアがある） |
-| `down` | リンクが down |
-| `unknown` | リンクがまだ知らせていない、または知らせられない。`npcap` はリンクを見ないので、いつも `unknown` |
+| `up` | リンクが上がっています（`tap`、`packet`、`pcap`: インターフェースが up でキャリアがある） |
+| `down` | リンクが下がっています |
+| `unknown` | リンクがまだ報告していない、または分かりません。`npcap` はリンクを監視しないので、いつも `unknown` です |
 
-- 最初の行は、インターフェースを開いた後、ブリッジが SIL Kit のライフサイクルを始める前に出ます（開始の行より前で、参加者が Running になりうる前）。その時点で分からない値は `unknown` です。
-- その後は、監視の行と同じく 1 秒ごとに確かめ、値か使用中の印のキーが変わったときだけ行を出します。同じ行が続けて出ることはありません。
-- ブリッジが終わるとき（`FAIL:`、停止）には出ません。参加者の状態で分かります。
-- ブリッジは、インターフェースを開いてから印を置きます（Npcap のリンクが接続の名前から pcap の名前を知るのは、開いた後です）。同じインターフェースの `packet` と `pcap` は、同じデバイスです。
-- 値は `link_line_value()`、行は `bridge_runtime::format_link_line()`、使用中の印のキーは `bridge_runtime::DeviceShareWatch` が作ります（`bridges/common`。Vector XL のブリッジと共通）。
-- 行を読むプログラムは、知らないキーと値を読み飛ばしてください。キーと値は増えることがあります。
-- `vehicle_sil_launch run --connect` は、統計の行と同じく、この行を実行の出力に出しません。
+- ブリッジは、インターフェースを開いてから印を置きます（接続名から pcap の名前が分かるのは、Npcap のリンクが開いてからだからです）。同じインターフェースの `packet` と `pcap` は同じデバイスです。
+- `link_line_value()` が値を作ります。
 
 ## フィルター（`FrameFilter`）
 

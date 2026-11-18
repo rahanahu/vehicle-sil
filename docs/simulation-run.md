@@ -365,7 +365,7 @@ A real-time participant of your own does not stop either while the simulation is
 
 ### Counting the frames to and from the bus
 
-`run` counts, for each connected network, the frames that the bridge sent to the bus and the frames that came from a device there. It reads them from the statistics line of the bridge (`stats ...`, see "Statistics" in [ethernet-bridge.md](ethernet-bridge.md#statistics) and in [bridges.md](bridges.md#statistics)). `--stats-every-ms 1000` makes the bridge write that line while it runs, once a second when a count has changed, and once more when it stops.
+`run` counts, for each connected network, the frames that the bridge sent to the bus and the frames that came from a device there. It reads them from the statistics line of the bridge (`stats ...`, see "[Statistics line](bridge-contract.md#statistics-line)" in bridge-contract.md). `--stats-every-ms 1000` makes the bridge write that line while it runs, once a second when a count has changed, and once more when it stops.
 
 | Network | `to_outside` | `from_outside` |
 |---|---|---|
@@ -390,7 +390,7 @@ vehicle_sil_launch run --scenario <scenario> --speed 1 --strict --connect <netwo
 
 ### The state of the link and the bus
 
-While the run goes, `run` also reads the other lines of the bridge: the link line (`link link=up|down|unknown` of the Ethernet bridge, `link bus=active|passive|bus-off|unknown` of the CAN bridge; see "Link line" in [bridges.md](bridges.md#link-line) and [ethernet-bridge.md](ethernet-bridge.md#link-line)) and every `key=N` of the statistics line, not only the two it counts above. Keys and values it does not know are skipped. The link line is not shown as a line of the bridge either; a change of it is one line of the launcher, with the time from the start of the run, and it is a `log` event with `--events`:
+While the run goes, `run` also reads the other lines of the bridge: the link line (`link link=up|down|unknown` of the Ethernet bridge, `link bus=active|passive|bus-off|unknown` of the CAN bridge; see "[Link line](bridge-contract.md#link-line)" in bridge-contract.md) and every `key=N` of the statistics line, not only the two it counts above. Keys and values it does not know are skipped. The link line is not shown as a line of the bridge either; a change of it is one line of the launcher, with the time from the start of the run, and it is a `log` event with `--events`:
 
 ```text
 outside: ETH_EXT -> enp3s0: link down at 12.40 s
@@ -419,7 +419,7 @@ With `--events`, each `state` event tells the same while the run goes, for each 
 
 ### A device that another run uses too
 
-A bridge puts a mark on the device it opens and reports how many other vehicle-sil bridges are on it (`shared`, and on Linux their process IDs in `peers`; see "[Device in use by another bridge](bridges.md#device-in-use-by-another-bridge)"). Two runs on one device, or a bridge left over from an earlier run, mix their frames: the devices of this run get frames meant for the other, and the other's get this run's. `run` takes the bridges of its own run out of the count, so only a bridge that is not part of this run counts, and tells it once, with the time since the run began and, on Linux, the process ID:
+A bridge puts a mark on the device it opens and reports how many other vehicle-sil bridges are on it (`shared`, and on Linux their process IDs in `peers`; see "[Device in use by another bridge](bridge-contract.md#device-in-use-by-another-bridge)"). Two runs on one device, or a bridge left over from an earlier run, mix their frames: the devices of this run get frames meant for the other, and the other's get this run's. `run` takes the bridges of its own run out of the count, so only a bridge that is not part of this run counts, and tells it once, with the time since the run began and, on Linux, the process ID:
 
 ```text
 outside: CAN1 -> can0: also used by another vehicle-sil bridge (process 4321) at 3.10 s
@@ -566,7 +566,7 @@ The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell
 | `networks[].tool` | The bridge's executable; `null` where there is no bridge for the network (`lin`) and for an unknown kind. |
 | `networks[].backend` | The backend of the entry (`npcap`, `packet`, `tap`, `xl`, `socketcan`); `null` where `tool` is `null`. |
 | `networks[].tool_path` | Where the launcher found it; `null` if it did not, or there is no bridge. |
-| `networks[].list` | The bridge's list as the bridge wrote it, every key passed on: the form of "[The list as JSON](ethernet-bridge.md#the-list-as-json---json)" and "[The channel list as JSON](bridges.md#the-channel-list-as-json---json)". For a bridge that gives no list, a list of the same form that the launcher makes (below). `null` where `tool` is `null`. |
+| `networks[].list` | The bridge's list as the bridge wrote it, every key passed on: the form of "[Lists of devices](bridge-contract.md#lists-of-devices)". For a bridge that gives no list, a list of the same form that the launcher makes (below). `null` where `tool` is `null`. |
 | `findings` | Why the file cannot be read, the usage error, or the errors of the file, as in `check --json`; otherwise empty. |
 
 `value` of a target with `usable: true` is what `--connect <network>=<value>` takes (a program passes it as one argument, without a shell): the name that the bridge lists, with `<backend>:` before it where `--connect` needs it (a backend that is not the default of this OS, a name that is `none` or begins with a backend's word). The launcher writes it in `value` in place of the bridge's own text. the launcher sets `usable: false` and the `reason` of a target that `--connect` does not take (the `cannot be used` and `cannot be connected` lines above), so the text and the JSON say the same. When the launcher cannot get a list from the bridge, it makes one with no targets and the error. The bridge's own codes (`library-missing`, `permission-denied`, `backend-unavailable`, `driver-missing`, `failed`) come in the bridge's list.

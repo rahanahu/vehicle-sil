@@ -72,7 +72,7 @@ struct EthernetBridgeStatistics
 
 /// One line "stats silkit_to_ext=N ext_to_silkit=N ext_from_devices=N ..." with every counter, in
 /// the order of EthernetBridgeStatistics. The keys and their order are part of the bridge's
-/// documented output (docs/ethernet-bridge.md), for programs that read the line; tests hold them.
+/// documented output (docs/bridge-contract.md, "Statistics line"), for programs that read the line; tests hold them.
 [[nodiscard]] std::string format_statistics(const EthernetBridgeStatistics& statistics);
 
 /// What the bridge knows about the link at one moment (EthernetBridge::health()).

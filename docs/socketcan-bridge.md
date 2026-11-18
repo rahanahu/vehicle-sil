@@ -2,9 +2,9 @@
 
 [日本語](ja/socketcan-bridge.md)
 
-`vehicle_sil_socketcan_bridge` forwards classic CAN frames in both directions between a SIL Kit CAN network and a SocketCAN interface of the Linux computer it runs on: a CAN adapter (`can0`) or a virtual one (`vcan0`). It needs no privileges and sets nothing on the interface. This page covers the connection steps, the arguments, the list of interfaces, the lines it prints and what is and is not verified. The Vector XL bridge for Windows ([bridges.md](bridges.md)) has the same arguments where they mean the same, the same statistics, and the same lines for programs.
+`vehicle_sil_socketcan_bridge` forwards classic CAN frames in both directions between a SIL Kit CAN network and a SocketCAN interface of the Linux computer it runs on: a CAN adapter (`can0`) or a virtual one (`vcan0`). It needs no privileges and sets nothing on the interface. This page covers what is particular to this bridge: the connection steps, the arguments, the list of interfaces, its behavior and what is and is not verified. What all bridges share with the launcher (the arguments it passes, `--describe`, the exit codes, the lines for programs and the mark on a device) is in [bridge-contract.md](bridge-contract.md). The Vector XL bridge for Windows ([bridges.md](bridges.md)) has the same arguments where they mean the same.
 
-The launcher starts this bridge from `--connect`: on Linux, `vehicle_sil_launch run --connect CAN=can0 simulation.yaml` connects the CAN network `CAN` to the interface `can0` (the backend `socketcan` is the default on Linux for a target that is not `virtual:<n>` or `physical:<n>`; see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md). You can also start it by hand, or list it as a participant with `describe: true` in the configuration file (see "Starting from a configuration file" in [bridges.md](bridges.md#starting-from-a-configuration-file)).
+The launcher starts this bridge from `--connect`: on Linux, `vehicle_sil_launch run --connect CAN=can0 simulation.yaml` connects the CAN network `CAN` to the interface `can0` (the backend `socketcan` is the default on Linux for a target that is not `virtual:<n>` or `physical:<n>`; see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md). You can also start it by hand, or list it as a participant with `describe: true` in the configuration file (see "[Starting a bridge of your own](bridge-contract.md#starting-a-bridge-of-your-own-role-bridge)" in bridge-contract.md).
 
 | Connects to | `--interface` | Requirement | Verified | Not verified |
 |---|---|---|---|---|
@@ -47,11 +47,11 @@ vehicle_sil_socketcan_bridge --registry-uri silkit://127.0.0.1:8500 --interface 
 | `--describe` | Write what the bridge is as JSON and exit, without opening the interface |
 | `--list-channels [--json]` | List the CAN interfaces and exit |
 
-Exit codes: 0 stopped normally, 1 failed while running (SIL Kit ended, or the interface is gone), 3 setup failed, 4 bad command line. The statistics, the health lines and the shutdown are those of the Vector XL bridge: see "[Statistics](bridges.md#statistics)", "[Exit codes](bridges.md#exit-codes)" and "[Health lines](bridges.md#health-lines)" in [bridges.md](bridges.md); the counts are in "Statistics" there (`ext_*` for the outside, `own_tx_dropped` for the receipts of the bridge's own frames).
+Exit codes: 0 stopped normally, 1 failed while running (SIL Kit ended, or the interface is gone), 3 setup failed, 4 bad command line (see "[Exit codes](bridge-contract.md#exit-codes)"). The statistics line has the keys of the Vector XL bridge (see "[Statistics line](bridge-contract.md#statistics-line)": `ext_*` for the outside, `own_tx_dropped` for the receipts of the bridge's own frames), and the health lines and the shutdown are those of the Vector XL bridge (see "[Health lines](bridges.md#health-lines)" in [bridges.md](bridges.md)).
 
 ### The interface list
 
-`--list-channels` prints the interfaces of link type CAN, and `--json` the form of the other lists (`"vehicle_sil_targets": 1`, one target per interface, `value` the interface name):
+`--list-channels` prints the interfaces of link type CAN, and `--json` the form of "[Lists of devices](bridge-contract.md#lists-of-devices)" (one target per interface, `value` the interface name):
 
 ```
 CAN interfaces (--interface):
@@ -59,7 +59,7 @@ CAN interfaces (--interface):
   can0  CAN, up, 250000 bit/s, error-active; in use by a vehicle-sil bridge (process 4321)
 ```
 
-Each target has `can: {kind, up, bitrate, state, restart_ms}` (`kind` is `vcan` or `can`; `state` is the controller's state, `null` for vcan), and `in_use`, `in_use_by` and `in_use_count` as in "[Device in use by another bridge](bridges.md#device-in-use-by-another-bridge)". An interface that is down is listed and `usable`; its `detail` says down. The list is read from the kernel (netlink) without privileges.
+Each target has `can: {kind, up, bitrate, state, restart_ms}` (`kind` is `vcan` or `can`; `state` is the controller's state, `null` for vcan), and `in_use`, `in_use_by` and `in_use_count` as in "[Device in use by another bridge](bridge-contract.md#device-in-use-by-another-bridge)". An interface that is down is listed and `usable`; its `detail` says down. The list is read from the kernel (netlink) without privileges.
 
 ## Starting
 
@@ -89,7 +89,7 @@ Besides `bus` the bridge prints `link=<up|down>` for programs, then the keys of 
 [bridge] link bus=active link=up device=552dd508e2f03efe marked=1 shared=0
 ```
 
-`bus` is `active`, `passive`, `bus-off` or `unknown`, as in "[Link line](bridges.md#link-line)". `unknown` is the only value of a vcan interface. `link=down` is an interface that is down (`IFF_UP` cleared); the bridge also prints a `warning:` line when it goes down and when it is up again. The bridge looks at the interface four times a second, and at once when a send is refused with `ENETDOWN`. It keeps running while the interface is down and receives and sends again when it is up: no frame is sent meanwhile (`ext_tx_failures` counts the refusals). How long a down interface is tolerated is the launcher's decision.
+`bus` is `active`, `passive`, `bus-off` or `unknown`, as in "[Link line](bridge-contract.md#link-line)". `unknown` is the only value of a vcan interface. `link=down` is an interface that is down (`IFF_UP` cleared); the bridge also prints a `warning:` line when it goes down and when it is up again. The bridge looks at the interface four times a second, and at once when a send is refused with `ENETDOWN`. It keeps running while the interface is down and receives and sends again when it is up: no frame is sent meanwhile (`ext_tx_failures` counts the refusals). How long a down interface is tolerated is the launcher's decision.
 
 ## Bus state and `restart-ms`
 
@@ -101,7 +101,7 @@ The bridge asks for the error frames (`CAN_RAW_ERR_FILTER`) and reads the contro
 
 ## Device in use by another bridge
 
-The bridge places the mark of "[Device in use by another bridge](bridges.md#device-in-use-by-another-bridge)" on the interface (the identity is the interface name). A second bridge on `vcan0` makes both warn and print `shared=1`, and the list says in use. Two bridges on one interface receive each other's frames and mix their networks: the bridge does not stop.
+The bridge places the mark of "[Device in use by another bridge](bridge-contract.md#device-in-use-by-another-bridge)" on the interface (the identity is the interface name). A second bridge on `vcan0` makes both warn and print `shared=1`, and the list says in use. Two bridges on one interface receive each other's frames and mix their networks: the bridge does not stop.
 
 ## Build
 
