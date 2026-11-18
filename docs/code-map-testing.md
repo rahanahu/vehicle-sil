@@ -80,12 +80,12 @@ The job `all checks` in `.github/workflows/ci.yml` is the check that a merge int
 
 | Change | What runs |
 |---|---|
-| Documents only | The links (`python`), the `linux-gcc-debug` tests that compare the documents, and the format of the GUI's READMEs. Also the GUI server's tests and the timeline element's test, when a changed file is in `gui/` or is a document that they read (`docs/gui.md`, the starter's READMEs); also `linux-gcc-control`, when a changed file is `docs/howto/first-ecu.md` or `docs/howto/operate-signals.md`, which its tests compare with the examples |
+| Documents only | The links (`python`), the `linux-gcc-debug` tests that compare the documents, and the format of the GUI's READMEs. Also the GUI server's tests and the timeline element's test, when a changed file is in `gui/` or is a document that they read (`docs/gui.md`); also `linux-gcc-control`, when a changed file is `docs/howto/first-ecu.md` or `docs/howto/operate-signals.md`, which its tests compare with the examples |
 | Code | `linux-gcc-debug`, `linux-clang-tsan`, `linux-gcc-control`, Windows, the GUI (unless every file is outside it) and `python` |
 | Build files (CMake, presets, patches, `external/`, `.github/`) | Also `linux-gcc-release`, `linux-gcc-static`, the oldest CMake and the test that builds the ECU project template with FetchContent |
 | A push to `main` | Everything above, and `linux-clang-asan` |
 
-A failure of `linux-clang-tsan` is shown on its check but does not fail `all checks`. `python` also checks the title of a pull request (`scripts/check-commits.py --message`) and that no file under `.local/` or `CLAUDE.local.md` is in the change (`--changed`).
+In a pull request, a failure of `linux-clang-tsan` is shown on its check but does not fail `all checks`; on `main` it does. `python` also checks the title of a pull request and, when it has one commit, that commit's message (`scripts/check-commits.py --message`), and that no file under `.local/` or `build/` and no `CLAUDE.local.md` is in the change (`--changed`). A re-run reads the old title: after you fix it, push a commit or close and reopen the pull request.
 
 ### Ports and locks
 

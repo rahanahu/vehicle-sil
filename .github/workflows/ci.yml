@@ -80,10 +80,9 @@ jobs:
           gui_docs=false
           control_docs=false
           # Paths outside gui/ that the gui job's tests read: the launcher's reference timelines (gui/timeline's and
-          # gui/web's tests), the manual that the GUI server's tests and the timeline's test hold against the code
-          # (docs/gui.md and its Japanese page), and the starter's READMEs that the client library's package check
-          # tries the code of.
-          gui_reads='^tests/launch/timeline/|^docs/(ja/)?gui\.md$|^examples/gui_starter/README(\.ja)?\.md$'
+          # gui/web's tests) and the manual that the GUI server's tests and the timeline's test hold against the
+          # code (docs/gui.md and its Japanese page).
+          gui_reads='^tests/launch/timeline/|^docs/(ja/)?gui\.md$'
           # The guides that the control server's tests (tests/control_server) hold against the examples.
           control_reads='^docs/howto/(first-ecu|operate-signals)\.md$'
           if [ "$EVENT" = pull_request ]; then
@@ -125,9 +124,10 @@ jobs:
     name: linux (${{ matrix.preset }})
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    # A race that only the thread sanitizer finds is reported but does not hold a merge: the leg's check shows
-    # its failure, the job's result (what `all checks` reads) stays a success. Every other leg is a gate.
-    continue-on-error: ${{ matrix.preset == 'linux-clang-tsan' }}
+    # In a pull request, a race that only the thread sanitizer finds is reported but does not hold the merge: the
+    # leg's check shows its failure, the job's result (what `all checks` reads) stays a success. On main the leg
+    # counts: the run fails, and release.yml, which wants this workflow's run to have passed, stays shut.
+    continue-on-error: ${{ matrix.preset == 'linux-clang-tsan' && github.event_name == 'pull_request' }}
     strategy:
       fail-fast: false
       matrix:
@@ -139,8 +139,9 @@ jobs:
         preset: ${{ fromJSON(needs.changes.outputs.presets) }}
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      # gRPC, protobuf, abseil and BoringSSL are most of what linux-gcc-control compiles: it needs more room.
-      CCACHE_MAXSIZE: ${{ matrix.preset == 'linux-gcc-control' && '2G' || '1G' }}
+      # gRPC, protobuf, abseil and BoringSSL are most of what linux-gcc-control compiles: it needs more room. So
+      # does linux-gcc-release: the template's own build (FetchContent, Debug) goes into the same cache.
+      CCACHE_MAXSIZE: ${{ (matrix.preset == 'linux-gcc-control' || matrix.preset == 'linux-gcc-release') && '2G' || '1G' }}
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       # Empty (not set) for the thread sanitizer: its preset's default factor (4) applies.
@@ -461,16 +462,30 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      # The title of the pull request becomes the commit's title when it is squash-merged. Its commits are not
-      # checked one by one: a fix of an earlier one would need a force push. A new push checks a changed title.
+      # The repository squashes with the title of the commit when the pull request has one commit, and with the
+      # title of the pull request otherwise (merge and rebase keep every commit's title). So the title of the
+      # pull request is checked, and, for a single commit, that commit's message too. The commits of a longer
+      # pull request are not checked one by one: a fix of an earlier one would need a force push. A re-run reads
+      # the old title: after a fix, push a commit or close and reopen the pull request.
       - name: Title of the pull request, and files that must not be committed
         if: github.event_name == 'pull_request'
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
+          COMMITS: ${{ github.event.pull_request.commits }}
         run: |
+          fail=0
           printf '%s\n' "$PR_TITLE" > "$RUNNER_TEMP/pr-title.txt"
-          python3 scripts/check-commits.py --message "$RUNNER_TEMP/pr-title.txt"
-          python3 scripts/check-commits.py --changed HEAD^1..HEAD
+          python3 scripts/check-commits.py --message "$RUNNER_TEMP/pr-title.txt" || fail=1
+          if [ "$COMMITS" = 1 ]; then
+            # The merge commit of the checkout: its second parent is the pull request's only commit.
+            git log -1 --format=%B HEAD^2 > "$RUNNER_TEMP/commit-message.txt"
+            python3 scripts/check-commits.py --message "$RUNNER_TEMP/commit-message.txt" || fail=1
+          fi
+          python3 scripts/check-commits.py --changed HEAD^1..HEAD || fail=1
+          if [ "$fail" != 0 ]; then
+            echo "::error::Fix the title or the commit message (or remove the file) as listed above. A re-run reads the old title: push a commit, or close and reopen the pull request"
+            exit 1
+          fi
       - name: Links in the documents
         run: python3 scripts/check-docs.py --require-english
       - name: Python checks
@@ -483,9 +498,12 @@ jobs:
           retention-days: 14
 
   # The one check that main's branch protection requires: it passes when every job above passed or was left
-  # out (skipped), and fails when one failed or was cancelled. A new job goes into `needs`. Keep the name.
-  # The thread sanitizer's leg of `linux` does not count (continue-on-error there); the address sanitizer's does,
-  # and it runs on main only.
+  # out (skipped), and fails on anything else. A new job goes into `needs` (tests/scripts/test_ci_workflow.py
+  # checks it). Keep the name.
+  # The thread sanitizer's leg of `linux` does not count in a pull request (continue-on-error there); the
+  # address sanitizer's does, and it runs on main only.
+  # `if: always()` must stay: with `!cancelled()` a cancelled run would leave this job skipped, and a skipped
+  # required check counts as passed.
   all-checks:
     name: all checks
     needs: [changes, linux, linux-oldest-cmake, windows, gui, python]
@@ -504,7 +522,7 @@ jobs:
             python ${{ needs.python.result }}
         run: |
           echo "$RESULTS"
-          if grep -qE ' (failure|cancelled)$' <<<"$RESULTS"; then
-            echo "::error::A job failed or was cancelled (listed above): open it, fix it, or re-run it"
+          if grep -v '^$' <<<"$RESULTS" | grep -qvE ' (success|skipped)$'; then
+            echo "::error::A job did not succeed (listed above; only success and skipped pass): open it, fix it, or re-run it"
             exit 1
           fi
