@@ -93,7 +93,8 @@ enum class RequestCommand
 /// What depends on the file or on what runs (a variant, a network, a participant) is not here:
 /// the check judges it.
 /// A rule about a value that the request file gave (RunRequest::origin) names the key and the
-/// file ("start_paused in bench.json"), not an option. That a paused start needs commands is a
+/// file ("start_paused in bench.json"), not an option. The params of a request file need no
+/// scenario (they wait for a run that has one); --param does. That a paused start needs commands is a
 /// rule of Run and Test only: a check starts nothing (and only a request file can ask a check
 /// for a paused start).
 [[nodiscard]] std::vector<Finding> validate_request(const RunRequest& request, RequestCommand command);
@@ -110,7 +111,7 @@ struct RequestFile
     /// What the file sets; the rest is as in RunIntent{}. params: ParamSource::RequestFile.
     /// connect: every entry of the file, also one with the target kNoTarget.
     RunIntent intent{};
-    /// The keys the file sets, in its order (a key with the value null is not set).
+    /// The keys the file sets, in its order.
     std::vector<std::string> fields{};
 };
 
@@ -125,8 +126,9 @@ struct RequestFileRead
 
 /// Reads the text of a request file named `shown`: a JSON object with "vehicle_sil_run_request": 1
 /// and any of variant, params, scenario, disable, enable, manual, connect, time_policy, speed,
-/// start_paused and strict. An unknown key, a key written twice, a value of the wrong type and
-/// another version are errors. Only the form is read: whether the file has the variant, the
+/// start_paused and strict. An unknown key, a key written twice, a value of the wrong type (null
+/// too: a key that is not meant is left out) and another version are errors. The format is JSON;
+/// the reader may take more than JSON (it is the YAML reader), which is no promise. Only the form is read: whether the file has the variant, the
 /// participants and the networks is the check's to say. No file system access.
 [[nodiscard]] RequestFileRead read_request_file(std::string_view text, std::string_view shown);
 

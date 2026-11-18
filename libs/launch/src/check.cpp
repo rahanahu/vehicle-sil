@@ -241,6 +241,7 @@ CheckReport check_file(const RunRequest& request, const CheckOptions& options,
     overrides.enable = intent.enable;
     overrides.manual = intent.manual;
     overrides.variant = intent.variant;
+    overrides.origin = request.origin;
     // The speed the run was asked for; a test's is its default, which is not judged.
     const std::optional<std::optional<double>> run_speed =
         options.fastest_by_default ? std::optional<std::optional<double>>{} : intent.speed;

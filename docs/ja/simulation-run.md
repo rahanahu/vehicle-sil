@@ -604,9 +604,10 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 ```
 
 - ランチャーが読むのは、`--request` で指定したファイルだけです。設定ファイルの隣、作業ディレクトリ、ホームディレクトリ、環境変数から探すことはありません。
-- `check --request` は、`run --request` と同じ要求を照合します（速さと `start_paused` も含みます）。先に照合してから実行します。
+- `check --request` は、`run --request` と同じ要求を照合します（時間のロックに関わる速さと `start_paused` も含みます）。先に照合してから実行します。`run` だけが見る規則が 1 つあります。`start_paused` には `--stdin-commands` か `--control` が要る、という規則です（どちらも `run` だけの引数のため）。
 - `test` は `--request` を受けません（使い方の誤り）。
-- ファイルは JSON です。ファイルの間違い（知らないキー、2 回書いたキー、型の違う値、別の版）は、ファイル名と行を示す使い方の誤り（終了コード 4）で、照合も起動もしません。
+- ファイルは JSON で書きます。ランチャーはそれより緩い書き方を読めることがありますが、約束しません。スキーマと、このファイルを読むほかのツールは、JSON だけを受けます。
+- ファイルの間違い（知らないキー、2 回書いたキー、型の違う値、`null`、別の版）は、ファイル名と行を示す使い方の誤り（終了コード 4）で、照合も起動もしません。指定しないキーは書きません。
 - JSON Schema は [schema/run-request.schema.json](../../schema/run-request.schema.json) です。`"$schema"` にそのパスを書いたファイルは、エディターが補完と検査をします。
 - ランチャーを呼ぶ側が決めるものは、ファイルに書けません。設定ファイル、`--log-dir`、`--timeline`、`--timeout-ms`、`--control`、`--events`、`--stdin-commands`、`--json` は引数だけです。
 - `examples/ecu_main/requests/throttle_step.json` は、例の要求ファイルです（`vehicle_sil_launch run --request requests/throttle_step.json simulation.yaml`）。
@@ -617,9 +618,9 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 |---|---|---|
 | `vehicle_sil_run_request` | `1`（必須） | |
 | `$schema` | エディターのための、スキーマのパスか URL です。ランチャーは読み飛ばします。 | |
-| `variant` | 文字列か `null`（指定なし） | `--variant` |
-| `params` | パラメーターの名前から値（数、`true`・`false`、文字列）への対応 | `--param` |
-| `scenario` | シナリオのファイルのパスか `null`（指定なし）。相対パスは、設定ファイルのディレクトリから読みます。 | `--scenario` |
+| `variant` | 文字列 | `--variant` |
+| `params` | パラメーターの名前から値（数、`true`・`false`、文字列）への対応。シナリオを実行するときだけ使います。 | `--param` |
+| `scenario` | シナリオのファイルのパス。相対パスは、設定ファイルのディレクトリから読みます。 | `--scenario` |
 | `disable` | participant の名前の一覧 | `--disable` |
 | `enable` | participant の名前の一覧 | `--enable` |
 | `manual` | participant の名前の一覧 | `--manual` |
@@ -648,8 +649,11 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | シナリオの相対パス | 作業ディレクトリから | 設定ファイルのディレクトリから |
 | つなぐネットワークが設定ファイルにない | 誤り `connect-network` | 注記 `connect-network-unused` を出して、そのネットワークを外します（1 つのファイルを複数の設定ファイルで使うため） |
 | シナリオにないパラメーター | 使い方の誤り | 無視します（1 つのファイルを複数のシナリオで使うため） |
+| シナリオなしのパラメーター | 使い方の誤り | 無視します（1 つのファイルを、シナリオのある実行とない実行で使うため） |
 
-ファイルから来た値についての文は、引数の名前ではなく、キーとファイル名を書きます（`speed 5 in bench.json is refused`）。ファイルに `"time_policy": "free"` があるときは、注記 `outside-not-real-time` にもファイル名が出ます。そのファイルを使う全員の時間のロックを外すためです（[外につながる実行の時間](#外につながる実行の時間--time-policy)）。
+`disable`、`enable`、`manual` の participant が設定ファイルにないときは、引数のときと同じく、ファイルから来ても使い方の誤りです。文はキーとファイル名を書きます（`manual Engine in bench.json: …`）。
+
+ファイルから来た値についての文は、引数の名前ではなく、キーとファイル名を書きます（`speed 5 in bench.json is refused`）。ファイルがつなぐネットワークを外して走らせる方法は、ファイルの `connect` から外すか `--connect <network>=none` を渡す、と書きます。ファイルに `"time_policy": "free"` があるときは、注記 `outside-not-real-time` にもファイル名が出ます。そのファイルを使う全員の時間のロックを外すためです（[外につながる実行の時間](#外につながる実行の時間--time-policy)）。
 
 ## 止め方
 

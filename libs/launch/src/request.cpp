@@ -19,9 +19,10 @@ bool has(const std::vector<std::string>& names, const std::string& name)
     return std::find(names.begin(), names.end(), name) != names.end();
 }
 
-/// Adds the names of `more` that are not in `names` yet and not in `against` or `against2`.
+/// Adds the names of `more` (the file's list `key`) that are not in `names` yet and not in
+/// `against` or `against2`, and notes each in `from_file` as "<key> <name>".
 bool add_names(std::vector<std::string>& names, const std::vector<std::string>& more, const std::vector<std::string>& against,
-               const std::vector<std::string>& against2 = {})
+               const std::vector<std::string>& against2, const std::string& key, std::vector<std::string>& from_file)
 {
     bool added = false;
     for (const std::string& name : more)
@@ -29,6 +30,7 @@ bool add_names(std::vector<std::string>& names, const std::vector<std::string>& 
         if (!has(names, name) && !has(against, name) && !has(against2, name))
         {
             names.push_back(name);
+            from_file.push_back(key + " " + name);
             added = true;
         }
     }
@@ -46,16 +48,12 @@ std::vector<Finding> validate_request(const RunRequest& request, RequestCommand 
     const std::string paused = origin.named("start_paused", "--start-paused", "start_paused");
     std::vector<Finding> out;
     // A test takes the scenarios of its own list: a parameter is for each of them.
-    if (command != RequestCommand::Test && !intent.params.empty() && !intent.scenario)
+    // The params of a request file wait for a run with a scenario: one file serves runs with and without.
+    const bool typed = std::any_of(intent.params.begin(), intent.params.end(),
+                                   [](const ParamValue& p) { return p.source != ParamSource::RequestFile; });
+    if (command != RequestCommand::Test && typed && !intent.scenario)
     {
-        const bool fromFile = origin.has("params") && std::none_of(intent.params.begin(), intent.params.end(), [](const ParamValue& p) {
-            return p.source == ParamSource::CommandLine;
-        });
-        out.push_back(usage(fromFile ? "params in " + origin.file +
-                                           " sets parameters of a scenario: give --scenario <file> (or scenario in " +
-                                           origin.file + ") too, or take params out of " + origin.file
-                                     : std::string("--param sets a parameter of a scenario: give --scenario <file> too, or "
-                                                   "leave --param out")));
+        out.push_back(usage("--param sets a parameter of a scenario: give --scenario <file> too, or leave --param out"));
     }
     if (!host.timeline.empty() && !intent.scenario)
     {
@@ -158,15 +156,15 @@ RunRequest with_request_file(const RunRequest& arguments, const RequestFile& fil
     {
         origin.fields.emplace_back("connect");
     }
-    if (add_names(intent.disable, written.disable, given.enable, given.manual))
+    if (add_names(intent.disable, written.disable, given.enable, given.manual, "disable", origin.participants))
     {
         origin.fields.emplace_back("disable");
     }
-    if (add_names(intent.enable, written.enable, given.disable))
+    if (add_names(intent.enable, written.enable, given.disable, {}, "enable", origin.participants))
     {
         origin.fields.emplace_back("enable");
     }
-    if (add_names(intent.manual, written.manual, given.disable))
+    if (add_names(intent.manual, written.manual, given.disable, {}, "manual", origin.participants))
     {
         origin.fields.emplace_back("manual");
     }

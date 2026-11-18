@@ -315,7 +315,7 @@ TEST_CASE(a_test_says_once_that_the_time_lock_set_its_runs_to_speed_1)
                             "can take messages that do not come in real time (the bridge still carries frames both ways)";
     RunReport locked;
     locked.check.time_lock = TimeLock{true, {}, {"Gateway"}};
-    locked.check.findings = time_lock_findings(locked.check.time_lock, {}, std::nullopt, false);
+    locked.check.findings = time_lock_findings(locked.check.time_lock, {}, std::nullopt, false, RequestOrigin{});
     CHECK(locked.check.findings.size() == 1 && locked.check.findings.front().message == why);
     TestReport report;
     report.file = "sim.yaml";
@@ -353,7 +353,7 @@ TEST_CASE(a_test_says_once_that_the_time_lock_set_its_runs_to_speed_1)
     // No run was set to speed 1 (--time-policy free: another note): nothing to say.
     RunReport freed;
     freed.check.time_lock = TimeLock{false, {}, {"Gateway"}};
-    freed.check.findings = time_lock_findings(freed.check.time_lock, {}, std::nullopt, false);
+    freed.check.findings = time_lock_findings(freed.check.time_lock, {}, std::nullopt, false, RequestOrigin{});
     report.runs = {{"", "a.yaml", TestRunResult::Passed, "", freed}};
     CHECK(report.remarks().empty());
 }

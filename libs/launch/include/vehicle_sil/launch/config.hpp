@@ -287,6 +287,9 @@ struct RequestOrigin
     std::vector<std::string> fields{};
     /// The networks whose target the request has from the file's "connect".
     std::vector<std::string> connected{};
+    /// The participants the request has from the file's "disable", "enable" and "manual" only (the
+    /// command line does not name them there), each as "<key> <name>": "manual Engine".
+    std::vector<std::string> participants{};
 
     [[nodiscard]] bool has(std::string_view field) const
     {
@@ -424,6 +427,9 @@ struct EnabledOverrides
     /// --variant: the variant to apply. A file that defines variants needs one (none is the
     /// default); a file without variants takes none.
     std::optional<std::string> variant{};
+    /// Which of the names a request file gave: a usage error about one of them names the key and
+    /// the file ("manual Engine in bench.json"), not an option.
+    RequestOrigin origin{};
 };
 
 /// true if the start waits for a participant that someone starts by hand (enabled, required and

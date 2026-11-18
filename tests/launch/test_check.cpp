@@ -3450,34 +3450,34 @@ TEST_CASE(time_lock_findings_refuse_another_speed_and_a_paused_start_with_the_lo
     const TimeLock nothing{};
     const std::optional<double> max{};
     // Nothing connected outside: nothing to say, whatever is asked.
-    check_text(codes(time_lock_findings(nothing, asked_speed(2.0), max, true)), "");
-    check_text(codes(time_lock_findings(nothing, kNoSpeedAsked, 2.0, true)), "");
+    check_text(codes(time_lock_findings(nothing, asked_speed(2.0), max, true, RequestOrigin{})), "");
+    check_text(codes(time_lock_findings(nothing, kNoSpeedAsked, 2.0, true, RequestOrigin{})), "");
 
     // No speed asked for, and none in the file.
-    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, max, false)), "N outside-speed-set\n");
-    check_text(codes(time_lock_findings(free, kNoSpeedAsked, max, false)), "N outside-not-real-time\n");
+    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, max, false, RequestOrigin{})), "N outside-speed-set\n");
+    check_text(codes(time_lock_findings(free, kNoSpeedAsked, max, false, RequestOrigin{})), "N outside-not-real-time\n");
     // The file's speed.
-    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, 2.0, false)), "N outside-speed-set\n");
-    check_text(codes(time_lock_findings(free, kNoSpeedAsked, 2.0, false)), "N outside-not-real-time\n");
-    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, 1.0, false)), "");
-    check_text(codes(time_lock_findings(free, kNoSpeedAsked, 1.0, false)), "");
+    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, 2.0, false, RequestOrigin{})), "N outside-speed-set\n");
+    check_text(codes(time_lock_findings(free, kNoSpeedAsked, 2.0, false, RequestOrigin{})), "N outside-not-real-time\n");
+    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, 1.0, false, RequestOrigin{})), "");
+    check_text(codes(time_lock_findings(free, kNoSpeedAsked, 1.0, false, RequestOrigin{})), "");
     // --speed: an error with the lock unless it is 1, whatever the file has.
     for (const std::optional<double>& file : {max, std::optional<double>(1.0), std::optional<double>(2.0)})
     {
-        check_text(codes(time_lock_findings(locked, asked_speed(2.0), file, false)), "E outside-real-time\n");
-        check_text(codes(time_lock_findings(locked, asked_speed(0.5), file, false)), "E outside-real-time\n");
-        check_text(codes(time_lock_findings(locked, kSpeedMax, file, false)), "E outside-real-time\n");
-        check_text(codes(time_lock_findings(locked, asked_speed(1.0), file, false)), "");
-        check_text(codes(time_lock_findings(free, asked_speed(2.0), file, false)), "N outside-not-real-time\n");
-        check_text(codes(time_lock_findings(free, kSpeedMax, file, false)), "N outside-not-real-time\n");
-        check_text(codes(time_lock_findings(free, asked_speed(1.0), file, false)), "");
+        check_text(codes(time_lock_findings(locked, asked_speed(2.0), file, false, RequestOrigin{})), "E outside-real-time\n");
+        check_text(codes(time_lock_findings(locked, asked_speed(0.5), file, false, RequestOrigin{})), "E outside-real-time\n");
+        check_text(codes(time_lock_findings(locked, kSpeedMax, file, false, RequestOrigin{})), "E outside-real-time\n");
+        check_text(codes(time_lock_findings(locked, asked_speed(1.0), file, false, RequestOrigin{})), "");
+        check_text(codes(time_lock_findings(free, asked_speed(2.0), file, false, RequestOrigin{})), "N outside-not-real-time\n");
+        check_text(codes(time_lock_findings(free, kSpeedMax, file, false, RequestOrigin{})), "N outside-not-real-time\n");
+        check_text(codes(time_lock_findings(free, asked_speed(1.0), file, false, RequestOrigin{})), "");
     }
     // --start-paused, alone and with a speed.
-    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, 1.0, true)), "E outside-real-time\n");
-    check_text(codes(time_lock_findings(free, kNoSpeedAsked, 1.0, true)), "N outside-not-real-time\n");
-    check_text(codes(time_lock_findings(locked, asked_speed(2.0), 1.0, true)), "E outside-real-time\nE outside-real-time\n");
-    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, max, true)), "N outside-speed-set\nE outside-real-time\n");
-    check_text(codes(time_lock_findings(free, asked_speed(2.0), 1.0, true)), "N outside-not-real-time\nN outside-not-real-time\n");
+    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, 1.0, true, RequestOrigin{})), "E outside-real-time\n");
+    check_text(codes(time_lock_findings(free, kNoSpeedAsked, 1.0, true, RequestOrigin{})), "N outside-not-real-time\n");
+    check_text(codes(time_lock_findings(locked, asked_speed(2.0), 1.0, true, RequestOrigin{})), "E outside-real-time\nE outside-real-time\n");
+    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, max, true, RequestOrigin{})), "N outside-speed-set\nE outside-real-time\n");
+    check_text(codes(time_lock_findings(free, asked_speed(2.0), 1.0, true, RequestOrigin{})), "N outside-not-real-time\nN outside-not-real-time\n");
 }
 
 TEST_CASE(time_lock_findings_say_what_is_connected_and_how_to_go_on)
@@ -3485,30 +3485,30 @@ TEST_CASE(time_lock_findings_say_what_is_connected_and_how_to_go_on)
     const std::string freely = "pass --time-policy free if what is connected there can take messages that do not come in real "
                                "time (the bridge still carries frames both ways)";
     const TimeLock networks{true, {"ETH", "CAN1"}, {}};
-    check_text(lines(time_lock_findings(networks, asked_speed(2.0), 1.0, true)),
+    check_text(lines(time_lock_findings(networks, asked_speed(2.0), 1.0, true, RequestOrigin{})),
                "E 0 outside-real-time: --connect connects ETH and CAN1 to a real bus, which does not wait for the virtual "
                "time, so the run goes at speed 1: --speed 2 is refused. Leave --speed out; to go at another speed, run "
                "without --connect, or " + freely + "\n"
                "E 0 outside-real-time: --connect connects ETH and CAN1 to a real bus, which does not stand still: "
                "--start-paused is refused. To stop the simulation and look at it, run without --connect, or " + freely + "\n");
-    check_text(lines(time_lock_findings(networks, kSpeedMax, 1.0, false)),
+    check_text(lines(time_lock_findings(networks, kSpeedMax, 1.0, false, RequestOrigin{})),
                "E 0 outside-real-time: --connect connects ETH and CAN1 to a real bus, which does not wait for the virtual "
                "time, so the run goes at speed 1: --speed max is refused. Leave --speed out; to go at another speed, run "
                "without --connect, or " + freely + "\n");
     const TimeLock bridge{true, {}, {"Gateway"}};
-    check_text(lines(time_lock_findings(bridge, kNoSpeedAsked, 2.0, false)),
+    check_text(lines(time_lock_findings(bridge, kNoSpeedAsked, 2.0, false, RequestOrigin{})),
                "N 0 outside-speed-set: participant 'Gateway' is a bridge (role: bridge) to something outside the "
                "simulation, which does not wait for the virtual time: the run goes at speed 1 (real time), not at the "
                "speed 2 of the file. To go at another speed, run with --disable Gateway, or " + freely + "\n");
     const TimeLock all{true, {"ETH"}, {"Gateway", "Tap"}};
-    check_text(lines(time_lock_findings(all, kNoSpeedAsked, std::nullopt, false)),
+    check_text(lines(time_lock_findings(all, kNoSpeedAsked, std::nullopt, false, RequestOrigin{})),
                "N 0 outside-speed-set: --connect connects ETH to a real bus, and participants 'Gateway' and 'Tap' are "
                "bridges (role: bridge) to something outside the simulation, which does not wait for the virtual time: the "
                "run goes at speed 1 (real time), not as fast as possible. To go at another speed, run without --connect "
                "and with --disable Gateway --disable Tap, or " + freely + "\n");
     // free: notes, which say that the bridge goes on in both directions.
     const TimeLock free{false, {"ETH"}, {}};
-    check_text(lines(time_lock_findings(free, asked_speed(2.0), 1.0, true)),
+    check_text(lines(time_lock_findings(free, asked_speed(2.0), 1.0, true, RequestOrigin{})),
                "N 0 outside-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
                "and with --time-policy free --speed 2 runs the simulation at that speed: what is connected there gets the "
                "messages at the wrong times, and the bridge still carries frames both ways. To run in real time, leave "
@@ -3517,17 +3517,17 @@ TEST_CASE(time_lock_findings_say_what_is_connected_and_how_to_go_on)
                "--time-policy free --start-paused makes the simulation wait before its first step: the bridge still "
                "carries frames both ways, so frames from outside pile up while the simulation stands still. To run in "
                "real time, leave --time-policy free and --start-paused out\n");
-    check_text(lines(time_lock_findings(free, kSpeedMax, 1.0, false)),
+    check_text(lines(time_lock_findings(free, kSpeedMax, 1.0, false, RequestOrigin{})),
                "N 0 outside-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
                "and with --time-policy free --speed max runs the simulation as fast as possible: what is connected there "
                "gets the messages at the wrong times, and the bridge still carries frames both ways. To run in real time, "
                "leave --time-policy free and --speed out\n");
-    check_text(lines(time_lock_findings(free, kNoSpeedAsked, 2.0, false)),
+    check_text(lines(time_lock_findings(free, kNoSpeedAsked, 2.0, false, RequestOrigin{})),
                "N 0 outside-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
                "and with --time-policy free the simulation runs at the speed 2 of the file: what is connected there gets "
                "the messages at the wrong times, and the bridge still carries frames both ways. To run in real time, "
                "leave --time-policy free out\n");
-    check_text(lines(time_lock_findings(free, kNoSpeedAsked, std::nullopt, false)),
+    check_text(lines(time_lock_findings(free, kNoSpeedAsked, std::nullopt, false, RequestOrigin{})),
                "N 0 outside-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
                "and with --time-policy free the simulation runs as fast as possible: what is connected there gets the "
                "messages at the wrong times, and the bridge still carries frames both ways. To run in real time, leave "

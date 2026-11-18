@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "vehicle-sil request file (vehicle_sil_launch run --request, check --request), format 1",
-  "description": "What to run, written down: the variant, the scenario and its parameters, the participants left out or started by hand, where the networks are connected outside the simulation, and the speed. One file serves a test bench or a kind of run, for every configuration used there. `vehicle_sil_launch run --request <this file> <configuration>` reads it; an argument of the command line wins over the file, field by field. This schema finds unknown keys and values of the wrong form while you write. It cannot see the configuration: whether the variant, the participants and the networks exist is what `vehicle_sil_launch check --request <this file> <configuration>` says. The configuration file, the log directory, the timeline, the time limit and the control server are not in this file: they are arguments. The manual is docs/simulation-run.md of vehicle-sil.",
+  "description": "What to run, written down: the variant, the scenario and its parameters, the participants left out or started by hand, where the networks are connected outside the simulation, and the speed. One file serves a test bench or a kind of run, for every configuration used there. `vehicle_sil_launch run --request <this file> <configuration>` reads it; an argument of the command line wins over the file, field by field. This schema finds unknown keys and values of the wrong form while you write. Write JSON: vehicle_sil_launch may read a looser form, but that is no promise, and other tools read JSON only. A key that is not meant is left out (null is no value). It cannot see the configuration: whether the variant, the participants and the networks exist is what `vehicle_sil_launch check --request <this file> <configuration>` says. The configuration file, the log directory, the timeline, the time limit and the control server are not in this file: they are arguments. The manual is docs/simulation-run.md of vehicle-sil.",
   "type": "object",
   "additionalProperties": false,
   "required": ["vehicle_sil_run_request"],
@@ -15,9 +15,9 @@
       "description": "The format version. Always 1."
     },
     "variant": {
-      "type": ["string", "null"],
+      "type": "string",
       "minLength": 1,
-      "description": "The variant of the configuration to check or run (--variant). null: as if the key was not written.",
+      "description": "The variant of the configuration to check or run (--variant).",
       "examples": ["left_hand"]
     },
     "params": {
@@ -31,31 +31,31 @@
         "not": { "type": "string", "pattern": "\\$\\{" },
         "description": "One value: a number, true or false, or a text. It cannot use another parameter (${...})."
       },
-      "description": "Values of the scenario's parameters ${name}, over the scenario's, the configuration's and the variant's params. --param <name>=<value> replaces one by name. A parameter here that the scenario does not have is ignored (one file serves several scenarios).",
+      "description": "Values of the scenario's parameters ${name}, over the scenario's, the configuration's and the variant's params. --param <name>=<value> replaces one by name. Used only when a scenario runs: without a scenario they are ignored, and so is a parameter here that the scenario does not have (one file serves several scenarios).",
       "examples": [{ "target_speed": 80 }]
     },
     "scenario": {
-      "type": ["string", "null"],
+      "type": "string",
       "minLength": 1,
-      "description": "The scenario file to check and run (--scenario). A relative path is from the directory of the configuration file (unlike --scenario, which is from the working directory). null: as if the key was not written.",
+      "description": "The scenario file to check and run (--scenario). A relative path is from the directory of the configuration file (unlike --scenario, which is from the working directory).",
       "examples": ["scenarios/brake.yaml"]
     },
     "disable": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
-      "description": "Participants to leave out (--disable). Added to those of the command line; --enable <name> or --manual <name> there wins for that name.",
+      "description": "Participants to leave out (--disable). Added to those of the command line; --enable <name> or --manual <name> there wins for that name. A name that the configuration does not have is an error, and so is a name that is also in enable or manual.",
       "examples": [["Dashboard"]]
     },
     "enable": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
-      "description": "Participants to take in (--enable). Added to those of the command line; --disable <name> there wins for that name.",
+      "description": "Participants to take in (--enable). Added to those of the command line; --disable <name> there wins for that name. A name that the configuration does not have is an error.",
       "examples": [["Logger"]]
     },
     "manual": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
-      "description": "Participants that you start yourself (--manual). Added to those of the command line; --disable <name> there wins for that name.",
+      "description": "Participants that you start yourself (--manual). Added to those of the command line; --disable <name> there wins for that name. A name that the configuration does not have is an error.",
       "examples": [["Engine"]]
     },
     "connect": {

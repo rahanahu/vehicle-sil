@@ -604,9 +604,10 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 ```
 
 - The launcher reads only the file that `--request` names. It never looks for one: not next to the configuration file, not in the working directory or the home directory, and not through an environment variable.
-- `check --request` judges the same request as `run --request`, the speed and `start_paused` included. Check first, then run.
+- `check --request` judges the same request as `run --request`, the speed and `start_paused` for the time lock included. Check first, then run. One rule is left to `run`: that `start_paused` needs `--stdin-commands` or `--control`, which are arguments of `run` only.
 - `test` does not take `--request` (usage error).
-- The file is JSON. A mistake in it (an unknown key, a key written twice, a value of the wrong type, another version) is a usage error (exit code 4) that names the file and the line; nothing is checked or started.
+- Write the file as JSON. The launcher may read a looser form, but that is no promise: the schema and the other tools that read the file take JSON only.
+- A mistake in the file (an unknown key, a key written twice, a value of the wrong type, `null`, another version) is a usage error (exit code 4) that names the file and the line; nothing is checked or started. Leave a key out to not set it.
 - The JSON Schema is [schema/run-request.schema.json](../schema/run-request.schema.json). An editor completes and checks a file that names it in `"$schema"`.
 - What the caller of the launcher decides is not in the file: the configuration file, `--log-dir`, `--timeline`, `--timeout-ms`, `--control`, `--events`, `--stdin-commands` and `--json` are arguments only.
 - `examples/ecu_main/requests/throttle_step.json` is a request file of the example: `vehicle_sil_launch run --request requests/throttle_step.json simulation.yaml`.
@@ -617,9 +618,9 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 |---|---|---|
 | `vehicle_sil_run_request` | `1` (required) | |
 | `$schema` | The path or URL of the schema, for an editor. The launcher skips it. | |
-| `variant` | A text, or `null` (not set) | `--variant` |
-| `params` | A mapping of parameter names to values (a number, `true` or `false`, or a text) | `--param` |
-| `scenario` | The path of the scenario file, or `null` (not set). A relative path is from the directory of the configuration file. | `--scenario` |
+| `variant` | A text | `--variant` |
+| `params` | A mapping of parameter names to values (a number, `true` or `false`, or a text). Used only when a scenario runs. | `--param` |
+| `scenario` | The path of the scenario file. A relative path is from the directory of the configuration file. | `--scenario` |
 | `disable` | A list of participant names | `--disable` |
 | `enable` | A list of participant names | `--enable` |
 | `manual` | A list of participant names | `--manual` |
@@ -648,8 +649,11 @@ Where a request file differs from the arguments:
 | A relative scenario path | From the working directory | From the directory of the configuration file |
 | A network to connect that the configuration file does not have | The error `connect-network` | The note `connect-network-unused`; the network is left out (one file serves several configuration files) |
 | A parameter that the scenario does not have | Usage error | Ignored (one file serves several scenarios) |
+| Parameters without a scenario | Usage error | Ignored (one file serves runs with and without a scenario) |
 
-A message about a value from the file names the key and the file, not an option: `speed 5 in bench.json is refused`. With `"time_policy": "free"` in the file, the notes `outside-not-real-time` name the file too, because the file lifts the time lock for everyone who uses it (see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)).
+A participant in `disable`, `enable` or `manual` that the configuration file does not have is a usage error from the file too, as it is from an argument; the message names the key and the file (`manual Engine in bench.json: …`).
+
+A message about a value from the file names the key and the file, not an option: `speed 5 in bench.json is refused`. To run without a network that the file connects, the message says to take it out of `connect` in the file or to pass `--connect <network>=none`. With `"time_policy": "free"` in the file, the notes `outside-not-real-time` name the file too, because the file lifts the time lock for everyone who uses it (see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)).
 
 ## Stopping a run
 

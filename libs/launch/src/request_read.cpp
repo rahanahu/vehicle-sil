@@ -61,11 +61,6 @@ public:
                 unknown_key(child, key, "", kKeys);
                 continue;
             }
-            // null: as if the key was not written (a program that writes every key).
-            if ((key == "variant" || key == "scenario") && is_null(child))
-            {
-                continue;
-            }
             const std::size_t before = findings_.size();
             if (key == "variant")
             {

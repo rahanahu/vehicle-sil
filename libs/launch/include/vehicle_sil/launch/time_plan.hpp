@@ -74,11 +74,13 @@ struct TimeLock
 ///   not 1 (the run goes at 1 instead).
 /// - Not locked (TimePolicy::Free): the note outside-not-real-time if the run's speed is not 1,
 ///   and one for `start_paused`.
-/// `origin`: the speed, the paused start and the policy that a request file gave ("speed",
-/// "start_paused", "time_policy") are named by their key and the file, not as options.
+/// `origin` (RunRequest::origin; RequestOrigin{} for a request of the command line alone): the
+/// speed, the paused start and the policy that a request file gave ("speed", "start_paused",
+/// "time_policy") are named by their key and the file, not as options, and so is the way to run
+/// without a network that the file connects (`origin.connected`).
 [[nodiscard]] std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optional<std::optional<double>>& asked,
                                                       const std::optional<double>& otherwise, bool start_paused,
-                                                      const RequestOrigin& origin = {});
+                                                      const RequestOrigin& origin);
 
 /// How the simulation's time went (the result's "timing"). The pacing numbers are the time gate's
 /// (TimeControlOptions in vehicle_sil/core/simulation_controller.hpp has the definitions): they

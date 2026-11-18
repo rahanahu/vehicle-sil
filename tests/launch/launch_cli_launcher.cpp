@@ -625,7 +625,7 @@ void usage(const Options& o)
         const Captured help = launch(o, args);
         expect_code(help, 0, "vehicle_sil_launch --help");
         require(lf(help.standard_output).rfind("usage: vehicle_sil_launch check [--json]", 0) == 0 && help.standard_error.empty() &&
-                    contains(help.standard_output, "[--time-policy realtime|free]") &&
+                    contains(help.standard_output, "[--time-policy realtime|free] [--request <file>]\n") &&
                     contains(help.standard_output, "\n  --time-policy realtime|free the time of a run that is connected outside"),
                 "--help wrote:\n" + help.standard_output + help.standard_error);
     }
@@ -651,6 +651,23 @@ void usage(const Options& o)
 }
 
 void set_environment(const std::string& name, const std::string& value);
+
+/// A file that is removed again, whatever the test does meanwhile (it lies where other tests look).
+class FileForAWhile
+{
+public:
+    FileForAWhile(fs::path path, const std::string& text) : path_(std::move(path)) { write_file(path_, text); }
+    ~FileForAWhile()
+    {
+        std::error_code ignored; // a destructor must not throw
+        fs::remove(path_, ignored);
+    }
+    FileForAWhile(const FileForAWhile&) = delete;
+    FileForAWhile& operator=(const FileForAWhile&) = delete;
+
+private:
+    fs::path path_;
+};
 
 /// --request <file>: the request file gives what the arguments give, an argument wins, the file's
 /// scenario is from the directory of the configuration file, a file that cannot be read is a usage
@@ -706,15 +723,18 @@ void request(const Options& o)
     // in the working directory, and an environment variable, change nothing.
     const Captured before = launch(o, {"check", "--json", config});
     expect_code(before, 0, "check");
-    for (const fs::path& lying : {dir / "run-request.json", dir / "simulation.request.json", dir / "request.json",
-                                  fs::current_path() / "vehicle_sil_run_request.json"})
+    const std::string lie = "{ \"vehicle_sil_run_request\": 1, \"disable\": [\"Dashboard\"], \"bogus\": 1 }\n";
+    for (const fs::path& lying : {dir / "run-request.json", dir / "simulation.request.json", dir / "request.json"})
     {
-        write_file(lying, "{ \"vehicle_sil_run_request\": 1, \"disable\": [\"Dashboard\"], \"bogus\": 1 }\n");
+        write_file(lying, lie);
     }
     set_environment("VEHICLE_SIL_RUN_REQUEST", shown_path(dir / "run-request.json"));
     set_environment("VEHICLE_SIL_REQUEST", shown_path(dir / "run-request.json"));
-    const Captured after = launch(o, {"check", "--json", config});
-    fs::remove(fs::current_path() / "vehicle_sil_run_request.json");
+    Captured after;
+    {
+        const FileForAWhile inWorkingDirectory(fs::current_path() / "vehicle_sil_run_request.json", lie);
+        after = launch(o, {"check", "--json", config});
+    }
     expect_text(after.standard_output, before.standard_output, "check without --request, with request files lying around");
     // run: the scenario of the file runs, as with the arguments.
     for (const std::vector<std::string>& args :
@@ -773,6 +793,63 @@ void request(const Options& o)
     {
         const Captured check = launch(o, {"check", "--request", held, config});
         expect_code(check, 0, "check --request with start_paused");
+    }
+    // With the commands that the rule asks for, the run is taken: it stands still at 0, and the
+    // end of its standard input (there is none here) or its time limit ends it. Not a usage error.
+    {
+        const auto taken = [&](const std::vector<std::string>& args, const std::string& what) {
+            const Captured run = launch(o, args);
+            require(run.exit_code.has_value() && *run.exit_code != 4 &&
+                        !contains(run.standard_error, "needs --stdin-commands or --control") &&
+                        !contains(run.standard_error, "usage: vehicle_sil_launch"),
+                    what + " is taken; it wrote (exit code " + (run.exit_code ? std::to_string(*run.exit_code) : "none") +
+                        "):\n" + run.standard_output + run.standard_error);
+        };
+        taken({"run", "--request", held, "--stdin-commands", "--timeout-ms", "2000", config}, "run --request with start_paused, --stdin-commands");
+        const Captured version = launch(o, {"version", "--json"});
+        if (contains(version.standard_output, "\"control-server\""))
+        {
+            taken({"run", "--request", held, "--control", "0", "--timeout-ms", "1000", config},
+                  "run --request with start_paused, --control");
+        }
+        else
+        {
+            log("this build has no control server: run --request with start_paused and --control is not run");
+        }
+    }
+    // The rules wait for every argument: a file's scenario is the scenario that --timeline and --param need.
+    {
+        const std::string timeline = shown_path(o.work_dir / "bench" / "timeline.json");
+        const Captured run = launch(o, {"run", "--json", "--request", bench, "--speed", "max", "--timeline", timeline, config});
+        expect_code(run, 0, "run --request (with a scenario) --timeline");
+        require(fs::exists(o.work_dir / "bench" / "timeline.json"), "run --request --timeline wrote the timeline");
+    }
+    // The file's params without a scenario are left for a run that has one; --param is not.
+    const std::string onlyParams = shown_path(o.work_dir / "bench" / "params.json");
+    write_file(o.work_dir / "bench" / "params.json", "{ \"vehicle_sil_run_request\": 1, \"params\": { \"level\": 30 } }\n");
+    {
+        const Captured check = launch(o, {"check", "--request", onlyParams, config});
+        expect_code(check, 0, "check --request with params and no scenario");
+    }
+    expect_usage({"check", "--request", onlyParams, "--param", "level=40", config},
+                 "--param sets a parameter of a scenario: give --scenario <file> too, or leave --param out");
+    // null is no value.
+    const std::string nothing = shown_path(o.work_dir / "bench" / "null.json");
+    write_file(o.work_dir / "bench" / "null.json", "{ \"vehicle_sil_run_request\": 1, \"variant\": null }\n");
+    expect_usage({"check", "--request", nothing, config},
+                 nothing + ", line 1: variant must be the name of a variant of the configuration as a text, not empty");
+    // A participant of the file that the configuration lacks: the key and the file, not an option.
+    const std::string names = shown_path(o.work_dir / "bench" / "names.json");
+    write_file(o.work_dir / "bench" / "names.json", "{ \"vehicle_sil_run_request\": 1, \"manual\": [\"Nobody\"] }\n");
+    {
+        const Captured check = launch(o, {"check", "--request", names, config});
+        expect_code(check, 4, "check --request with a participant the configuration lacks");
+        require(contains(lf(check.standard_error),
+                         "error: manual Nobody in " + names + ": the configuration file has no participant with this name; its participants are "),
+                "check --request with manual: [Nobody] wrote:\n" + check.standard_error);
+        const Captured typed2 = launch(o, {"check", "--manual", "Nobody", config});
+        require(contains(lf(typed2.standard_error), "error: --manual Nobody: the file has no participant with this name; its participants are "),
+                "check --manual Nobody wrote:\n" + typed2.standard_error);
     }
     // test takes no request file.
     expect_usage({"test", config, "--request", bench, "--scenarios", shown_path(dir / "scenarios")},

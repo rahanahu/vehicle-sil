@@ -118,6 +118,45 @@ using detail::not_connected;
 
 constexpr const char* kFreeCarries = "the bridge still carries frames both ways";
 
+/// What to do to run on SIL Kit only, for a message: "run without --connect" (not_connected()),
+/// or, for the networks that the request file connects, "take CAN1 out of connect in bench.json,
+/// or pass --connect CAN1=none": the user typed no --connect to leave out.
+std::string run_not_connected(const TimeLock& lock, const RequestOrigin& origin)
+{
+    std::vector<std::string> ofFile;
+    for (const std::string& network : lock.connected)
+    {
+        if (std::find(origin.connected.begin(), origin.connected.end(), network) != origin.connected.end())
+        {
+            ofFile.push_back(network);
+        }
+    }
+    if (ofFile.empty())
+    {
+        return "run " + not_connected(lock);
+    }
+    std::string names;
+    std::string none;
+    for (std::size_t i = 0; i < ofFile.size(); ++i)
+    {
+        names += (i == 0 ? "" : i + 1 == ofFile.size() ? " and " : ", ") + ofFile[i];
+        none += (i == 0 ? "" : " ") + ("--connect " + ofFile[i] + "=none");
+    }
+    std::string out = "take " + names + " out of connect in " + origin.file + ", or pass " + none;
+    // What else connects the run: the --connect of the command line, the bridges of the file.
+    if (ofFile.size() < lock.connected.size())
+    {
+        out += ", and leave the other --connect out";
+    }
+    if (!lock.bridges.empty())
+    {
+        TimeLock bridges;
+        bridges.bridges = lock.bridges;
+        out += ", and run " + not_connected(bridges);
+    }
+    return out;
+}
+
 } // namespace
 
 std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optional<std::optional<double>>& asked,
@@ -148,7 +187,7 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
                                       " is refused. " +
                                       (origin.has("speed") ? "Take speed out of " + origin.file + ", or pass --speed 1"
                                                            : std::string("Leave --speed out")) +
-                                      "; to go at another speed, run " + not_connected(lock) + ", or " + freely,
+                                      "; to go at another speed, " + run_not_connected(lock, origin) + ", or " + freely,
                                   0, "", ""});
         }
         if (!asked && !realTime)
@@ -157,15 +196,15 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
                                   what + ", which does not wait for the virtual time: the run goes at speed 1 (real time), not " +
                                       (otherwise ? "at the speed " + speed_text(otherwise) + " of the file"
                                                  : std::string("as fast as possible")) +
-                                      ". To go at another speed, run " + not_connected(lock) + ", or " + freely,
+                                      ". To go at another speed, " + run_not_connected(lock, origin) + ", or " + freely,
                                   0, "", ""});
         }
         if (start_paused)
         {
             out.push_back(Finding{Severity::Error, "outside-real-time",
                                   what + ", which does not stand still: " + paused +
-                                      " is refused. To stop the simulation and look at it, run " +
-                                      not_connected(lock) + ", or " + freely,
+                                      " is refused. To stop the simulation and look at it, " +
+                                      run_not_connected(lock, origin) + ", or " + freely,
                                   0, "", ""});
         }
         return out;

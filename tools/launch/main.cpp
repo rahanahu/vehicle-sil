@@ -89,7 +89,7 @@ using namespace vehicle_sil;
 constexpr const char* kUsage =
     "usage: vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]\n"
     "                                [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
-    "                                [--time-policy realtime|free]\n"
+    "                                [--time-policy realtime|free] [--request <file>]\n"
     "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]\n"
     "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
@@ -98,7 +98,7 @@ constexpr const char* kUsage =
     "                              [--speed <speed>] [--strict] [--log-dir <dir>]\n"
     "                              [--timeout-ms <ms>]\n"
     "                              [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
-    "                              [--time-policy realtime|free]\n"
+    "                              [--time-policy realtime|free] [--request <file>]\n"
     "                              [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...\n"
     "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]\n"
@@ -976,14 +976,38 @@ RequestArgument read_request_argument(const cli::Args& args)
 
 /// Refuses the first rule of the request that its fields so far break (launch::validate_request()).
 /// Called where the arguments are read in the order the user's mistakes are reported in: a rule
-/// whose fields are not read yet does not fire. `asked`: the request file under the arguments.
+/// whose fields are not read yet does not fire. With a request file (`asked`) nothing is judged
+/// here: the file gives fields too, so the rules wait until every argument is read
+/// (whole_request()).
 void require_valid(const launch::RunRequest& request, launch::RequestCommand command, const RequestArgument& asked = {})
 {
-    const std::vector<launch::Finding> findings = launch::validate_request(asked.over(request), command);
+    if (asked.file)
+    {
+        return;
+    }
+    const std::vector<launch::Finding> findings = launch::validate_request(request, command);
     if (!findings.empty())
     {
         throw cli::UsageError(findings.front().message);
     }
+}
+
+/// The request of the command once every argument is read: `arguments` over the request file, if
+/// there is one, judged as a whole (launch::validate_request(); the first rule broken is refused).
+launch::RunRequest whole_request(const launch::RunRequest& arguments, launch::RequestCommand command,
+                                 const RequestArgument& asked)
+{
+    if (!asked.file)
+    {
+        return arguments; // judged as the arguments were read (require_valid())
+    }
+    launch::RunRequest request = asked.over(arguments);
+    const std::vector<launch::Finding> findings = launch::validate_request(request, command);
+    if (!findings.empty())
+    {
+        throw cli::UsageError(findings.front().message);
+    }
+    return request;
 }
 
 /// What check, run and test share: the configuration file and the arguments that say what to run.
@@ -1113,7 +1137,8 @@ int check(const cli::Args& args)
         }
     }
     const RequestArgument asked = read_request_argument(args);
-    const launch::RunRequest request = asked.over(read_request(args, launch::RequestCommand::Check, asked));
+    const launch::RunRequest request =
+        whole_request(read_request(args, launch::RequestCommand::Check, asked), launch::RequestCommand::Check, asked);
     const std::string& file = request.host.config;
     const launch::CheckReport report = launch::check_file(request);
     if (report.usage)
@@ -1237,8 +1262,9 @@ int run(const cli::Args& args, launch::EventStream* events)
     host.stdin_commands = args.flag("stdin-commands");
     request.intent.start_paused = args.flag("start-paused");
     require_valid(request, launch::RequestCommand::Run, asked);
-    // From here on the request is the whole of it: the arguments over the file of --request.
-    request = asked.over(request);
+    // From here on the request is the whole of it: the arguments over the file of --request,
+    // judged now that the fields the rules need (--stdin-commands, --control) are read.
+    request = whole_request(request, launch::RequestCommand::Run, asked);
     launch::RunObservers watching;
     launch::RunLent lent;
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER

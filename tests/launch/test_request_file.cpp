@@ -132,10 +132,10 @@ TEST_CASE(a_request_file_has_every_field_of_the_intent)
           intent.start_paused && intent.strict);
     CHECK(file.fields == list("variant", "params", "scenario", "disable", "enable", "manual", "connect", "time_policy", "speed",
                               "start_paused", "strict"));
-    // Only the version: nothing is set. "max", and null for a key that a program always writes.
+    // Only the version: nothing is set. "max".
     const RequestFile bare = file_of("{\"vehicle_sil_run_request\": 1}");
     CHECK(bare.fields.empty() && !bare.intent.variant && !bare.intent.speed && bare.intent.connect.empty());
-    const RequestFile fastest = file_of(with("\"speed\": \"max\", \"variant\": null, \"scenario\": null"));
+    const RequestFile fastest = file_of(with("\"speed\": \"max\""));
     CHECK(fastest.intent.speed.has_value() && !fastest.intent.speed->has_value() && fastest.fields == list("speed"));
     // A byte order mark first, as an editor on Windows writes it.
     CHECK(file_of("\xEF\xBB\xBF{\"vehicle_sil_run_request\": 1, \"strict\": true}").intent.strict);
@@ -199,6 +199,14 @@ TEST_CASE(a_request_file_with_a_mistake_is_refused_with_the_file_and_the_line)
     wrong("\"speed\": \"2\"", "speed must be a number");
     wrong("\"speed\": 0", "speed must be a number");
     wrong("\"speed\": null", "speed must be a number");
+    // null is no value of any key: a key that is not meant is left out.
+    wrong("\"variant\": null", "variant must be the name of a variant of the configuration as a text, not empty");
+    wrong("\"scenario\": null", "scenario must be the path of a scenario file");
+    wrong("\"params\": null", "params must be a mapping");
+    wrong("\"disable\": null", "disable must be a list of participant names");
+    wrong("\"connect\": null", "connect must be a mapping of network names to targets");
+    wrong("\"time_policy\": null", "time_policy must be \"realtime\"");
+    wrong("\"strict\": null", "strict must be true or false, not empty");
     wrong("\"start_paused\": \"true\"", "start_paused must be true or false, not the text \"true\"");
     wrong("\"strict\": 1", "strict must be true or false, not '1'");
     // The file says two things about one participant.
@@ -301,6 +309,8 @@ TEST_CASE(the_lists_of_participants_add_up_and_the_command_line_wins_where_they_
     CHECK(merged.intent.enable == list("X", "C"));
     CHECK(merged.intent.manual == list("M", "A"));
     CHECK(merged.origin.fields == list("enable", "manual"));
+    // The names that are the file's alone, with their key: a message about one names the file.
+    CHECK(merged.origin.participants == list("enable C", "manual A"));
     CHECK(override_conflicts(EnabledOverrides{merged.intent.disable, merged.intent.enable, merged.intent.manual, {}}).empty());
     // Nothing given: the file's lists.
     const RunRequest all = with_request_file(RunRequest{}, file, false);
@@ -313,9 +323,9 @@ TEST_CASE(a_rule_about_a_value_of_the_request_file_names_the_key_and_the_file)
     RunRequest none;
     // params without a scenario.
     RunRequest r = with_request_file(none, file_of(with("\"params\": {\"rpm\": 650}")), false);
-    CHECK(messages(r) == list("params in bench.json sets parameters of a scenario: give --scenario <file> (or scenario in "
-                              "bench.json) too, or take params out of bench.json"));
-    r.intent.params.push_back(argument("x", "1")); // one of the command line: its words
+    // The file's params wait for a run with a scenario: one file serves runs with and without.
+    CHECK(messages(r).empty() && messages(r, RequestCommand::Check).empty());
+    r.intent.params.push_back(argument("x", "1")); // one of the command line needs its scenario
     CHECK(messages(r) == list("--param sets a parameter of a scenario: give --scenario <file> too, or leave --param out"));
     r.intent.scenario = "drive.yaml";
     CHECK(messages(r).empty());
@@ -341,6 +351,67 @@ TEST_CASE(a_rule_about_a_value_of_the_request_file_names_the_key_and_the_file)
                "simulation go on (resume, step)"));
     CHECK(messages(with_request_file(none, hold, false), RequestCommand::Check).empty());
     CHECK(messages(with_request_file(commands, hold, false)).empty());
+}
+
+TEST_CASE(the_way_out_of_the_time_lock_names_the_request_file_for_the_networks_it_connects)
+{
+    const std::string freely = "pass --time-policy free if what is connected there can take messages that do not come in real "
+                               "time (the bridge still carries frames both ways)";
+    const std::optional<std::optional<double>> two(2.0);
+    RequestOrigin origin;
+    origin.file = "bench.json";
+    origin.fields = {"connect", "speed"};
+    origin.connected = {"CAN", "ETH"};
+    // Every connected network is the file's: the user typed no --connect to leave out.
+    check_text(lines(time_lock_findings(TimeLock{true, {"CAN", "ETH"}, {}}, two, 1.0, true, origin)),
+               "E outside-real-time: --connect connects CAN and ETH to a real bus, which does not wait for the virtual "
+               "time, so the run goes at speed 1: speed 2 in bench.json is refused. Take speed out of bench.json, or pass "
+               "--speed 1; to go at another speed, take CAN and ETH out of connect in bench.json, or pass --connect CAN=none "
+               "--connect ETH=none, or " + freely + "\n"
+               "E outside-real-time: --connect connects CAN and ETH to a real bus, which does not stand still: "
+               "--start-paused is refused. To stop the simulation and look at it, take CAN and ETH out of connect in "
+               "bench.json, or pass --connect CAN=none --connect ETH=none, or " + freely + "\n");
+    // The note about the file's speed of the configuration says the same.
+    origin.fields = {"connect"};
+    origin.connected = {"CAN"};
+    check_text(lines(time_lock_findings(TimeLock{true, {"CAN"}, {}}, {}, 2.0, false, origin)),
+               "N outside-speed-set: --connect connects CAN to a real bus, which does not wait for the virtual time: the "
+               "run goes at speed 1 (real time), not at the speed 2 of the file. To go at another speed, take CAN out of "
+               "connect in bench.json, or pass --connect CAN=none, or " + freely + "\n");
+    // One network of the file, one of the command line, and a bridge of the configuration.
+    check_text(lines(time_lock_findings(TimeLock{true, {"ETH", "CAN"}, {"Gateway"}}, {}, 2.0, false, origin)),
+               "N outside-speed-set: --connect connects ETH and CAN to a real bus, and participant 'Gateway' is a bridge "
+               "(role: bridge) to something outside the simulation, which does not wait for the virtual time: the run goes "
+               "at speed 1 (real time), not at the speed 2 of the file. To go at another speed, take CAN out of connect in "
+               "bench.json, or pass --connect CAN=none, and leave the other --connect out, and run with --disable Gateway, "
+               "or " + freely + "\n");
+    // A network of the file that an argument replaced is the command line's: its words.
+    origin.connected = {};
+    CHECK(lines(time_lock_findings(TimeLock{true, {"CAN"}, {}}, {}, 2.0, false, origin)) ==
+          lines(time_lock_findings(TimeLock{true, {"CAN"}, {}}, {}, 2.0, false, RequestOrigin{})));
+}
+
+TEST_CASE(a_participant_of_the_request_file_that_the_configuration_lacks_is_an_error_that_names_the_file)
+{
+    const char* const sim = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: A\n    command: [missing/a]\n";
+    const RequestFile bench = *read_request_file(with("\"manual\": [\"Engine\"], \"disable\": [\"A\"]"), "bench.json").file;
+    RunRequest given;
+    given.intent.enable = {"Motor"};
+    const RunRequest merged = with_request_file(given, bench, false);
+    EnabledOverrides overrides;
+    overrides.disable = merged.intent.disable;
+    overrides.enable = merged.intent.enable;
+    overrides.manual = merged.intent.manual;
+    overrides.origin = merged.origin;
+    check_text(lines(read_config(sim, overrides).override_errors),
+               "E usage: --enable Motor: the file has no participant with this name; its participants are A\n"
+               "E usage: manual Engine in bench.json: the configuration file has no participant with this name; its "
+               "participants are A\n");
+    // The same names on the command line: the options, as before.
+    overrides.origin = {};
+    check_text(lines(read_config(sim, overrides).override_errors),
+               "E usage: --enable Motor: the file has no participant with this name; its participants are A\n"
+               "E usage: --manual Engine: the file has no participant with this name; its participants are A\n");
 }
 
 TEST_CASE(the_findings_about_the_time_name_the_request_file_for_what_it_gave)
@@ -389,8 +460,8 @@ TEST_CASE(the_findings_about_the_time_name_the_request_file_for_what_it_gave)
                "time, leave time_policy free in bench.json out\n");
     // A file that gave none of them: the words of the command line.
     origin.fields = {"variant"};
-    CHECK(lines(time_lock_findings(locked, five, 1.0, true, origin)) == lines(time_lock_findings(locked, five, 1.0, true)));
-    CHECK(lines(time_lock_findings(free, five, 1.0, true, origin)) == lines(time_lock_findings(free, five, 1.0, true)));
+    CHECK(lines(time_lock_findings(locked, five, 1.0, true, origin)) == lines(time_lock_findings(locked, five, 1.0, true, RequestOrigin{})));
+    CHECK(lines(time_lock_findings(free, five, 1.0, true, origin)) == lines(time_lock_findings(free, five, 1.0, true, RequestOrigin{})));
 }
 
 namespace {
