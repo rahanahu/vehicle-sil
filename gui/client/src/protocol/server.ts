@@ -791,10 +791,7 @@ export type TimeCommand = (
   | { command: 'resume' }
   /** Only while paused. Advances by ms and pauses again (the launcher rounds up to a multiple of the time step). */
   | { command: 'step'; ms: number }
-  /**
-   * Runs on and pauses at at_ms (0 to limits.step_ms_max; the launcher rounds up to a multiple of the time step). Refused
-   * with 400 unsupported by a launcher without the stdin-run-until feature.
-   */
+  /** Runs on and pauses at at_ms (0 to limits.step_ms_max; the launcher rounds up to a multiple of the time step). */
   | { command: 'run_until'; at_ms: number }
   | { command: 'speed'; value: number | 'max' }
 ) & {

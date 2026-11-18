@@ -77,7 +77,6 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
     session: low.session.session.get(),
     allowed: low.session.allowed.get(),
     limits: low.limits.get(),
-    features: low.app.get()?.launcher.features ?? [],
     busy: actions.busy.get(),
   });
 
@@ -292,7 +291,8 @@ async function open(options: ConnectOptions, onClose: () => void): Promise<Front
  * Makes the front door without connecting and without waiting for the server (as `createClient` does for the client
  * below it). For an app that must show its screens before the server answers, and while it cannot be reached: it calls
  * `front.low.connect()` and `front.low.loadApp()` itself, and reads `status` (the connection, `rejected`, `incompatible`)
- * meanwhile. Until `loadApp()` has answered, the front knows no start-up file and no launcher features (`controls` say so).
+ * meanwhile. Until `loadApp()` has answered, the front knows no start-up file, and the ranges in `controls` are the
+ * defaults (`DEFAULT_LIMITS`).
  * Most code wants `connect()`.
  */
 export function createFront(options: ClientOptions): Front {

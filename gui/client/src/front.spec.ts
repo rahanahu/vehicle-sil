@@ -184,7 +184,7 @@ describe('the front door', () => {
     }
   });
 
-  async function open(features: string[] = [], without: string[] = []): Promise<Rig> {
+  async function open(): Promise<Rig> {
     const fake = new FakeWebSockets();
     const http = new FakeHttp();
     const promise = connect({
@@ -197,12 +197,7 @@ describe('the front door', () => {
         throw error;
       },
     });
-    const answer = structuredClone(app) as { launcher: { version: { features: string[] } } };
-    answer.launcher.version.features = answer.launcher.version.features.filter(
-      (f) => !without.includes(f),
-    );
-    answer.launcher.version.features.push(...features);
-    http.expectOne('api/app').flush(answer);
+    http.expectOne('api/app').flush(app);
     const front = await promise;
     const socket = fake.last();
     socket.open();
@@ -1035,8 +1030,9 @@ describe('the front door', () => {
       expect(done).toBe(true);
     });
 
-    it('says run_until is unsupported when the launcher lacks the feature stdin-run-until', async () => {
-      const rig = await open([], ['stdin-run-until']);
+    it('says the time operations are unsupported until the launcher has said what it accepts', async () => {
+      const rig = await open();
+      // The start of a run: the launcher runs, its first state has not come yet
       await rig.deliver(
         {
           type: 'hello',
@@ -1047,13 +1043,17 @@ describe('the front door', () => {
           allowed: serverAllowed(3, alreadyRunning),
           replay: null,
         },
-        event(pausedState(1)),
         { type: 'synced', session: 1, last_seq: 40 },
       );
-      expect(rig.front.controls.get().run_until).toMatchObject({
+      const notYet = {
         ok: false,
-        reason: { code: 'unsupported' },
-      });
+        reason: { code: 'unsupported', message: 'the launcher has not said yet what it accepts' },
+      };
+      expect(rig.front.controls.get().pause).toMatchObject(notYet);
+      expect(rig.front.controls.get().run_until).toMatchObject(notYet);
+      await rig.deliver(event(stateEvent(1)));
+      expect(rig.front.controls.get().pause).toMatchObject({ ok: true, reason: null });
+      expect(rig.front.controls.get().run_until).toMatchObject({ ok: true, reason: null });
     });
 
     it('refuses a second start while the first is on its way, and a start with the token refused', async () => {

@@ -27,7 +27,7 @@ export class SimulationTime {
   private readonly front = inject(GUI_FRONT);
   /** 時刻の命令の答えを待つ時間（ミリ秒。これを過ぎると `no-answer` で失敗する）。 */
   readonly answerTimeoutMs = inject(ANSWER_TIMEOUT);
-  // 接続と api/app の読み込みを始めさせる（状態はセッションの写しとランチャーの features から作る）
+  // 接続と api/app の読み込みを始めさせる（範囲はサーバーの limits から）
   private readonly server = inject(ServerConnection);
   private readonly info = inject(ServerInfo);
   private readonly control = this.front.low.time;
@@ -40,8 +40,6 @@ export class SimulationTime {
   /** 仮想時間と速さ（正面の口の `clock`。状態の帯もこれを読む: 帯とカードで値がずれない）。 */
   readonly clock = readableSignal(this.front.clock);
 
-  /** ランチャーが時刻の命令（pause、resume、step、speed）を持つか。持たなければ操作を出さない。 */
-  readonly supported = computed(() => this.state().supported);
   /** いまのセッションの時刻（time の事象が来るまでは null）。 */
   readonly time = computed<TimeView | null>(() => this.state().time);
   /** 仮想時間（ミリ秒）。正面の口の `clock`（一時停止中は、ランチャーの `state` が言う止まった時刻も見る）。 */

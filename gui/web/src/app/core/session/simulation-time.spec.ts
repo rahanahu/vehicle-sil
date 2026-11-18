@@ -54,7 +54,7 @@ describe('SimulationTime', () => {
   /** サービスを作り、サーバーの情報に答えて、WebSocket を開き、`last` が真になる事象まで流す。 */
   function openUntil(last: (event: Event) => boolean): SimulationTime {
     const time = TestBed.inject(SimulationTime);
-    TestBed.inject(ServerInfo).features();
+    TestBed.inject(ServerInfo);
     TestBed.tick();
     http.expectOne('api/app').flush(app);
     fake.last().open();
@@ -78,7 +78,6 @@ describe('SimulationTime', () => {
 
   it('follows the time of the run, and sends a command with the token', async () => {
     const time = openPaused();
-    expect(time.supported()).toBe(true);
     expect([time.simMs(), time.paused(), time.speed()]).toEqual([0, true, 'max']);
     const { pause, resume, step } = time.controls();
     expect([pause.ok, resume.ok, step.ok]).toEqual([false, true, true]);
@@ -124,16 +123,5 @@ describe('SimulationTime', () => {
       op: 'resume',
       problem: { code: 'not-paused', message: 'the simulation is not paused' },
     });
-  });
-
-  it('offers no command to a launcher without time commands', () => {
-    const time = TestBed.inject(SimulationTime);
-    TestBed.inject(ServerInfo).features();
-    TestBed.tick();
-    const answer = structuredClone(app) as { launcher: { version: { features: string[] } } };
-    answer.launcher.version.features = ['events', 'stdin-commands'];
-    http.expectOne('api/app').flush(answer);
-    expect(time.supported()).toBe(false);
-    expect(TestBed.inject(ServerInfo).has('events')).toBe(true);
   });
 });

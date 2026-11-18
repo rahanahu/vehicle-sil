@@ -38,10 +38,6 @@
       "source": "言語（Language）: {$language}",
       "target": "Language: {$language}"
     },
-    "2831722713291175641": {
-      "source": "ランチャーが命令（{$command}）に {$seconds} 秒たっても答えません。入力を読んでいないかもしれません。もう一度送れます。",
-      "target": "The launcher has not answered the {$command} command in {$seconds} s. It may not be reading its input. You can send the command again."
-    },
     "8542080435534198197": {
       "source": "実行",
       "target": "Run"
@@ -377,6 +373,10 @@
     "9205666988521086765": {
       "source": "送った命令へのランチャーの答えを待っています。",
       "target": "Waiting for the launcher to answer the command."
+    },
+    "2831722713291175641": {
+      "source": "ランチャーが命令（{$command}）に {$seconds} 秒たっても答えません。入力を読んでいないかもしれません。もう一度送れます。",
+      "target": "The launcher has not answered the {$command} command in {$seconds} s. It may not be reading its input. You can send the command again."
     },
     "3546224380235485503": {
       "source": "実行中は開始できません。",
@@ -1289,10 +1289,6 @@
     "1786186159333010746": {
       "source": "サーバーとの接続が切れています。値は古いかもしれず、書けません。",
       "target": "Connection to the server lost. Values may be out of date and cannot be written."
-    },
-    "403373071631315232": {
-      "source": "シナリオの実行中は、変数を見られません:",
-      "target": "Variables are not available while a scenario runs:"
     },
     "1708163471579535631": {
       "source": "値を読めていません。出している値は最後に読めたもので、古いかもしれません:",

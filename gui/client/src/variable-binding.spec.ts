@@ -528,7 +528,7 @@ describe('client.variables.bind', () => {
       block: 'launcher',
       launcherReason: {
         code: 'unsupported',
-        message: 'this launcher does not say what it accepts',
+        message: 'the launcher has not said yet what it accepts',
       },
     });
     enabled.write(true);

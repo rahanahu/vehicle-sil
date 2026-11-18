@@ -124,23 +124,6 @@ const readVariable: Reader<Variable> = (value, path) => {
 
 // --- Launcher: scenarios (docs/scenario.md) -----------------------------------------------------
 
-/** Launcher feature: can run scenarios (`--scenario`). */
-export const FEATURE_SCENARIO = 'scenario';
-/**
- * Launcher feature: can keep a Control Server during a scenario run (variables can be read; the launcher refuses
- * writes). With a launcher without it, a scenario run has no variables.
- */
-export const FEATURE_SCENARIO_CONTROL = 'scenario-control';
-
-// --- Launcher: participants that the user starts ("Starting a participant yourself" in docs/simulation-config.md) ---
-
-/**
- * Launcher feature: participants the user starts (`manual: true` in the configuration file, `--manual`). The launcher
- * does not start them; it reports the command that starts them in a participant event (state `manual`) and waits for
- * them to join.
- */
-export const FEATURE_MANUAL = 'manual-participants';
-
 /**
  * State of a scenario step. running only appears in events (not in the steps of the result). skipped: the step
  * uses a variable that this run does not have; it does not make the scenario fail.

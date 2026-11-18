@@ -426,7 +426,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 
 ## シナリオ
 
-シナリオ（[scenario.md](scenario.md)。ECU の変数に決まった手順で値を設定し、結果を確認するファイル）を、画面から選んで実行します。ランチャーの `features` に `scenario` があるときだけ、「構成ファイル」のカードに「シナリオ」のフィールドが表示されます。
+シナリオ（[scenario.md](scenario.md)。ECU の変数に決まった手順で値を設定し、結果を確認するファイル）を、画面から選んで実行します。「構成ファイル」のカードに「シナリオ」のフィールドがあります。
 
 | 項目 | 内容 |
 |---|---|
@@ -441,7 +441,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 - 手順の表は、ランチャーのイベント `scenario_step` で進み、結果が出たら、実行されなかった手順を含む全部の手順になります。途中から開いた画面も同じ表を表示します。
 - シナリオは止めた状態では開始できません（「止めた状態で始める」は押せなくなります）。
 - 一時停止、ステップ実行、速度の変更、停止は、シナリオのない実行と同じです（シナリオの結果は変わりません）。GUI はこれらをランチャーの標準入力のコマンドで送ります。Control Server のクライアントの時間の呼び出しも、同じ答えになります。
-- ランチャーに Control Server があれば（`features` に `control-server`。`scenario-control` も一緒にあります）、「変数」の画面で値を見られます（書き込むコンポーネントは押せず、「シナリオの実行中は書けません」と表示されます）。Control Server のないランチャーでは、シナリオの実行に変数はなく、「変数」の画面は「シナリオの実行中は、変数を見られません」と表示します。
+- ランチャーに Control Server があれば（`features` に `control-server`）、「変数」の画面で値を見られます（書き込むコンポーネントは押せず、「シナリオの実行中は書けません」と表示されます）。Control Server のないランチャーでは、シナリオの実行を含めてどの実行にも変数はなく、「変数」の画面はほかの実行と同じく理由を表示します。
 - サーバーの API は `GET api/scenarios?file=<configuration file>` と、`api/check`、`api/run` の `scenario`（[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「シナリオ」）、ライブラリでは `client.scenarios(file)` と、`check` と `run.start` の `scenario`、セッションのコピーの `scenario` です。
 
 ### シナリオの実行の時間の軸
@@ -571,7 +571,7 @@ ECU の変数の読み書きは、サーバーの API とクライアントの�
 
 ### participant を自分で起動する
 
-ランチャーの `features` に `manual-participants` があるときだけ使えます。ルールは [simulation-config.md](simulation-config.md) の「participant を自分で起動する」にあります。
+ルールは [simulation-config.md](simulation-config.md) の「participant を自分で起動する」にあります。
 
 | 手順 | すること | 画面の表示 |
 |---|---|---|
@@ -781,15 +781,12 @@ const spec: DashboardSpec = {
 | メンバー | 内容 |
 |---|---|
 | `app` | `GET api/app` のレスポンス |
-| `features` | ランチャーができること |
-| `has(name)` | その機能があるか |
 | `limits` | 速度の範囲、ステップ実行の上限 |
 
 `SimulationTime`（`gui/web/src/app/core/session/simulation-time.ts`）:
 
 | signal | 内容 |
 |---|---|
-| `supported` | ランチャーが時間のコマンドを持つか |
 | `time` | 最後の `time` のイベント（まだなければ `null`） |
 | `simMs`、`actualSpeed` | 仮想時刻と実際の速度: ライブラリの `connect()` の `clock` の `sim_ms` と `actual_speed`（一時停止中は、ランチャーの `state` が言う止まった時刻と、`null`） |
 | `speed`、`paused` | 指定の速度と、一時停止しているか: ランチャーの最後の `state` のイベントの `speed` と `paused`（最初の `state` の前と、ランチャーが動いていないときは `null`） |

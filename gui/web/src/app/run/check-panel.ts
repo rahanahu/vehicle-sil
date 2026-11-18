@@ -35,8 +35,6 @@ export class CheckPanel {
   readonly disabled = model.required<ReadonlySet<string>>();
   /** 画面で「自分で起動する」にした participant の名前（`--manual`）。切り替えると照合し直す。 */
   readonly manual = model<ReadonlySet<string>>(new Set());
-  /** 「自分で起動する」を出すか（ランチャーの features に manual-participants があるときだけ）。 */
-  readonly manualAvailable = input(false);
   /** 切り替えられないとき（実行中、照合の途中）。 */
   readonly locked = input(false);
 

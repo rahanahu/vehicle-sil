@@ -121,7 +121,7 @@ GUI サーバーは、2 つの `.mjs` のファイルも、トークンなしで
 | ---- | ----------------------------------------------------------------------------------------- |
 | 型   | `ClientTime`（`state`、`answerTimeoutMs`、`pause`、`resume`、`step`、`setSpeed`、`send`） |
 | 型   | `TimeState`、`TimeFailure`、`Lateness`、`SendResult`、`NotSentReason`                     |
-| 定数 | `ANSWER_TIMEOUT_MS`、`FEATURE_SPEED`、`FEATURE_START_PAUSED`、`FEATURE_TIME_COMMANDS`     |
+| 定数 | `ANSWER_TIMEOUT_MS`                                                                       |
 
 ### ECU の変数
 
@@ -183,13 +183,12 @@ GUI サーバーは、2 つの `.mjs` のファイルも、トークンなしで
 | 読み取り関数                                               | `readServerMessage`、`readAppInfo`、`readConfigList`、`readCheckResponse`、`readConnections`、`readSessionResponse`、`readTimeResponse`、`readWriteResponse`、`readVariablesSummary`、`readDashboardResponse`、`readScenarioList`、`readRecording` |
 | 変数の API の形                                            | `VariablesSummary`、`VariableSummary`、`ValuesMessage`、`OperationReport`、`WatchMessage`、`WriteAnswer`                                                                                                                                           |
 | ダッシュボードのファイル（`dashboard(file)`）              | `DashboardResponse`、`DashboardFile`、`DashboardFileSection`、`DashboardFileItem`、`DashboardFileError`、`DashboardPanelModule`、`DashboardVariable`                                                                                               |
-| シナリオ（`--scenario`、`scenarios(file)`、`recording()`） | `ScenarioStep`、`ScenarioStepStatus`、`ScenarioStatus`、`CheckScenario`、`ScenarioResult`、`SummaryScenario`、`ScenarioList`、`ScenarioFile`、`Recording`、`FEATURE_SCENARIO`、`FEATURE_SCENARIO_CONTROL`                                          |
+| シナリオ（`--scenario`、`scenarios(file)`、`recording()`） | `ScenarioStep`、`ScenarioStepStatus`、`ScenarioStatus`、`CheckScenario`、`ScenarioResult`、`SummaryScenario`、`ScenarioList`、`ScenarioFile`、`Recording`                                                                                          |
 | リクエストの形                                             | `CheckRequest`、`RunRequest`、`ConnectionsRequest`、`Speed`、`StopRequest`、`TimeCommand`                                                                                                                                                          |
 | 設定ファイルの一覧                                         | `ConfigList`、`ConfigFile`                                                                                                                                                                                                                         |
 | エラーの形                                                 | `ServerProblem`                                                                                                                                                                                                                                    |
 | 指摘                                                       | `Finding`、`Severity`                                                                                                                                                                                                                              |
 | ランチャーのキーと通信量                                   | `FromLauncher`、`LauncherFields`、`RunTraffic`、`TrafficNetwork`、`TrafficParticipant`、`TrafficUnplaced`、`ParticipantRole`、`OutsideState`                                                                                                       |
-| 自分で起動する participant（`manual`）                     | `FEATURE_MANUAL`                                                                                                                                                                                                                                   |
 | セッションのコピーの `SessionView.scenario`                | `ScenarioView`                                                                                                                                                                                                                                     |
 
 ## 基本の使い方
@@ -205,7 +204,7 @@ const client = createClient({
   baseUrl: new URL('/', location.href).href,
   token: takeToken(window),
 });
-await client.loadApp(); // ランチャーの features（時間のコマンドを持つか、など）
+await client.loadApp(); // サーバーの情報（起動時のファイル、範囲、変数を使えるか）
 client.connect();
 const stop = client.session.session.subscribe((session) => {
   if (session?.result) console.log(session.result.result);
@@ -263,13 +262,13 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 - ブラウザと Web Worker では、ブラウザが付けるので `origin` を渡しません（Worker の WebSocket はハンドシェイクのヘッダーを付けられません）。
 - HTTP の実装を変えるときは `http`（`HttpTransport`）を、WebSocket を変えるときは `socket`（`SocketFactory`）を渡します。
 
-ライブラリが肩代わりしないルール（ランチャーの `features` に合わせたリクエストのフィールド、変数を書けるか、値が古いか）は、[docs/gui.md](../../docs/ja/gui.md) の「画面を作るときのルール」にあります。
+ライブラリが肩代わりしないルール（照合と開始のリクエストのフィールド、変数を書けるか、値が古いか）は、[docs/gui.md](../../docs/ja/gui.md) の「画面を作るときのルール」にあります。
 
 ## 正面の口（`connect()`）
 
 `connect()` は、ライブラリの正面の口を返します。画面が見せるもの（`status`、`clock`、`controls`、`scenario`）、Promise で返す操作（`run`、`time`）、変数 1 つ（`variable()`）です。ここまでに説明したクライアントの上に作ってあり、そちらは何も変えません。`front.low` は同じ `GuiClient`（イベント、ログ、所見、参加者）で、`createClient` もこれまでどおり使えます。画面が決めなければならないこと（「いまはどの状態か」「このボタンはいま押せるか、押せないなら理由は何か」）には正面の口を使い、それ以外には `low` を使います。
 
-サーバーが答える前から、また届かない間も画面を出す必要のあるアプリ（標準の画面）は、代わりに `createFront(options)` を使います。`createClient` と同じく、接続せずに正面の口を作るだけで、アプリが自分で `front.low.connect()` と `front.low.loadApp()` を呼びます。`loadApp()` が答えるまで、正面の口は起動時のファイルもランチャーの機能も知りません。
+サーバーが答える前から、また届かない間も画面を出す必要のあるアプリ（標準の画面）は、代わりに `createFront(options)` を使います。`createClient` と同じく、接続せずに正面の口を作るだけで、アプリが自分で `front.low.connect()` と `front.low.loadApp()` を呼びます。`loadApp()` が答えるまで、正面の口は起動時のファイルを知らず、`controls` の範囲は既定の値（`DEFAULT_LIMITS`）です。
 
 ```ts
 import { ActionError, connect, until, watch } from '@vehicle-sil/gui-client';
@@ -330,9 +329,8 @@ try {
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `start`                                         | GUI サーバーの `allowed.start`（`starting`、`already-running`、`launcher-unusable`、`shutting-down`）とその文                                                                                                                                                                                                                                                                  |
 | `stop`、`force_stop`                            | GUI サーバーの `allowed.stop` と `allowed.force`。`stop` は、最後に知った実行（か、向かっている開始）があれば、切断中でも、結果の後もランチャーが動いているとサーバーが言う間も `ok`。`force_stop` は、1 回目の停止の後だけ `ok`（それまでは `not-stopping`）                                                                                                                  |
-| `pause`、`resume`、`step`、`speed`、`run_until` | ランチャーの `state.allowed`（理由、文、`caution` はランチャーが書いたまま。`step` と `speed` の範囲も。`fastest` は、ランチャーの約束のとおり、`min` と `max` が等しいとき false）。コピーに実行がなければ `not-running`、`state` を出さないランチャーなら `unsupported`                                                                                                      |
+| `pause`、`resume`、`step`、`speed`、`run_until` | ランチャーの `state.allowed`（理由、文、`caution` はランチャーが書いたまま。`step` と `speed` の範囲も。`fastest` は、ランチャーの約束のとおり、`min` と `max` が等しいとき false）。コピーに実行がなければ `not-running`、ランチャーがまだ言っていなければ（実行の初めで `state` がまだ届いていない、またはその操作の項目がない）`unsupported`                                |
 | `pause`、`resume`（何も変わらないとき）         | 一時停止中は `pause` が `ok` でなく（`paused`）、止まっていなければ `resume` が `ok` でありません（`not-paused`）。ランチャーはどちらも受けますが、ボタンにはすることがありません。ステップ送りか run_until が向かっている間（受け付けられて、まだ着いたと見えていない間。着いたとは、仮想時刻がその `at_ms` で、ランチャーの `state` が一時停止のこと）は、どちらも言いません |
-| `run_until`                                     | ランチャーが機能 `stdin-run-until` を持つまで `unsupported`                                                                                                                                                                                                                                                                                                                    |
 | すべて                                          | 接続: `rejected`、`incompatible`、`offline`、`connecting` では不可になります（`stop` と `force_stop` は上のとおり）。このページの同じ操作が答えを待つ間は `busy`                                                                                                                                                                                                               |
 
 ### 操作
@@ -350,7 +348,7 @@ try {
 
 送る前に client が断るのは、client が持ち主であるものだけです。接続（`rejected`、`incompatible`）、同じ操作が答えを待っていること（`busy`。`start()` も含む）、引数の形（`invalid-argument`）です。それ以外は、`controls` が不可でも送り、持ち主の答えを返します（コピーが古いことがあるため）。5 秒は正面の口が持つ時間で、着くまでの待ちには適用しません（着くまでの待ちは、実行の終わりか、別の命令の割り込みで終わります）。
 
-時刻の命令には、ページが選んだ要求の番号（`id`）を付け、答えは、同じ `id` を持つランチャーの `command` イベントです。ほかのページや stdin の、同じ名前の命令への答えは、自分のものとして取りません。`state` を出すランチャーが要ります（古いランチャーには GUI サーバーが命令を断ります（`unsupported`））。
+時刻の命令には、ページが選んだ要求の番号（`id`）を付け、答えは、同じ `id` を持つランチャーの `command` イベントです。ほかのページや stdin の、同じ名前の命令への答えは、自分のものとして取りません。
 
 ### ネットワークを外につなぐ
 

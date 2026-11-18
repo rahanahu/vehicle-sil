@@ -1,12 +1,7 @@
 import { HttpTransport, errorMessage } from './http';
-import { AppInfo, TimeCommand, TimeCommandName } from './protocol';
+import { TimeCommand, TimeCommandName } from './protocol';
 import { CommandView, SessionView, TimeView } from './session-state';
 import { ErrorSink, Readable, Writable, derived, rethrowLater, shallowEqual } from './values';
-
-/** The launcher features that concern time. */
-export const FEATURE_SPEED = 'speed';
-export const FEATURE_START_PAUSED = 'start-paused';
-export const FEATURE_TIME_COMMANDS = 'time-commands';
 
 /**
  * How long to wait for the launcher's answer (the command event) to a command sent (ms). After that, the client stops
@@ -44,12 +39,10 @@ export interface Lateness {
 
 /**
  * Time state: the virtual time, the lateness, and the answer to the last command. All values come from the session
- * copy and the server information. Whether a command may be used now is not here: the launcher says it (`allowed` of
+ * copy. Whether a command may be used now is not here: the launcher says it (`allowed` of
  * its state, SessionView.launcherState), and `controls` of connect() puts it together with the connection.
  */
 export interface TimeState {
-  /** Whether the launcher has time commands (pause, resume, step, speed). If not, no controls are shown. */
-  supported: boolean;
   /** Time of the current session (null until a time event arrives). */
   time: TimeView | null;
   /** The speed is paced (the launcher's state has a numeric speed). Lateness is not counted when running as fast as possible. */
@@ -125,7 +118,6 @@ export class TimeControl implements ClientTime {
 
   constructor(
     private readonly session: Readable<SessionView | null>,
-    app: Readable<AppInfo | null>,
     private readonly transport: HttpTransport,
     /** How long to wait for an answer (ms). */
     readonly answerTimeoutMs = ANSWER_TIMEOUT_MS,
@@ -135,8 +127,8 @@ export class TimeControl implements ClientTime {
     this.pending = new Writable<Pending | null>(null, Object.is, onError);
     this.failureValue = new Writable<TimeFailure | null>(null, Object.is, onError);
     this.state = derived(
-      [session, app, this.inFlight, this.pending, this.failureValue],
-      () => this.compute(session.get(), app.get()),
+      [session, this.inFlight, this.pending, this.failureValue],
+      () => this.compute(session.get()),
       shallowEqual,
       onError,
     );
@@ -217,8 +209,7 @@ export class TimeControl implements ClientTime {
     });
   }
 
-  private compute(session: SessionView | null, app: AppInfo | null): TimeState {
-    const supported = app?.launcher.features.includes(FEATURE_TIME_COMMANDS) ?? false;
+  private compute(session: SessionView | null): TimeState {
     const time = session?.time ?? null;
     let lateness: Lateness | null =
       !time || time.lateSteps === null || time.maxLateMs === null
@@ -248,7 +239,6 @@ export class TimeControl implements ClientTime {
     }
     const failure = this.failureValue.get();
     return {
-      supported,
       time,
       paced: typeof session?.launcherState?.speed === 'number',
       lateness,

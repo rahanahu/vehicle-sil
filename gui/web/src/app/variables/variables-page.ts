@@ -411,15 +411,6 @@ export class VariablesPage {
     const reason = this.variables.reason();
     const app = this.info.variables();
     const session = this.server.session();
-    // 変数の機能そのものが使えない古い経路の説明（書けるかどうかの話ではない）
-    const scenario = !!session?.scenario && session.launcher.running;
-    if (scenario && (status === 'off' || status === 'failed')) {
-      return {
-        text: $localize`シナリオの実行中は、変数を見られません:`,
-        english: reason,
-        tone: 'warn',
-      };
-    }
     // 書けるかどうかはランチャーが言う。client が読んだまま（launcherAnswer。部品の bind と同じ値）を写す
     const write = launcherAnswer(session?.launcherState ?? null, 'write').reason;
     switch (status) {

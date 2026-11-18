@@ -134,7 +134,7 @@ describe('RunPage', () => {
     await fixture.whenStable();
     expect(text(fixture, 'check-participant-Dashboard')).toContain('外した');
 
-    // 自分で起動する（ランチャーの features に manual-participants がある）
+    // 自分で起動する
     (fixture.nativeElement as HTMLElement)
       .querySelector<HTMLButtonElement>('[data-testid="manual-Engine"] button[role="switch"]')
       ?.click();
@@ -201,7 +201,7 @@ describe('RunPage', () => {
     expect(english?.textContent).toBe('the server is shutting down');
   });
 
-  it('starts paused when asked to, and shows the pause and resume buttons of a launcher that has them', async () => {
+  it('starts paused when asked to, and shows the pause and resume buttons', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
     await fixture.whenStable();
