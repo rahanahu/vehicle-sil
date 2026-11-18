@@ -136,16 +136,16 @@ In the browser, call `takeToken(window)`. It reads `#token=` from the URL, remov
 
 ### Binding variables to widgets (`bind`)
 
-| Kind     | Name                                                                                                                 |
-| -------- | -------------------------------------------------------------------------------------------------------------------- |
-| Method   | `client.variables.bind(ref, options)`                                                                                |
-| Type     | `BindOptions` (`periodMs`, `history`, `needsRange`, `needsValue`, `visible`)                                         |
-| Type     | `VariableBinding` (`ref`, `state`, `history()`, `write(value)`, `reject(message)`, `setVisible(visible)`, `close()`) |
-| Type     | `BoundVariable` (`ref`, `info`, `reading`, `condition`, `block`, `writeStatus`, `pending`)                           |
-| Type     | `ValueCondition`, `WriteBlock`, `WriteStatus`, `WriteValue`                                                          |
-| Function | `isWriteError`, `hasRange`                                                                                           |
-| Function | `valueCondition` (`ConditionInput`), `writeBlock` (`WriteBlockInput`)                                                |
-| Constant | `DROPPED_MESSAGE`                                                                                                    |
+| Kind     | Name                                                                                                                           |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Method   | `client.variables.bind(ref, options)`                                                                                          |
+| Type     | `BindOptions` (`periodMs`, `history`, `needsRange`, `needsValue`, `visible`)                                                   |
+| Type     | `VariableBinding` (`ref`, `state`, `history()`, `write(value)`, `reject(message)`, `setVisible(visible)`, `close()`)           |
+| Type     | `BoundVariable` (`ref`, `info`, `reading`, `condition`, `block`, `launcherReason`, `writeStatus`, `pending`), `LauncherReason` |
+| Type     | `ValueCondition`, `WriteBlock`, `WriteStatus`, `WriteValue`                                                                    |
+| Function | `isWriteError`, `hasRange`                                                                                                     |
+| Function | `valueCondition` (`ConditionInput`), `writeBlock` (`WriteBlockInput`)                                                          |
+| Constant | `DROPPED_MESSAGE`                                                                                                              |
 
 `valueCondition`, `writeBlock` and `hasRange` are the pure functions that `bind` builds its state with.
 
@@ -619,14 +619,15 @@ Always call `close()` when you are done (it cleans up the watch and the subscrip
 
 ### Fields of `state` (`BoundVariable`)
 
-| Field         | Contents                                                                                         |
-| ------------- | ------------------------------------------------------------------------------------------------ |
-| `info`        | The variable definition (`undefined` if the current run does not have the variable)              |
-| `reading`     | The last value (`VariableReading`; `undefined` if there is none yet or while `visible` is false) |
-| `condition`   | The value condition ("Value condition (`condition`)" below)                                      |
-| `block`       | Why the variable cannot be written now ("Why a write is blocked (`block`)" below)                |
-| `writeStatus` | The status of the last write ("Write status (`writeStatus`, `pending`)" below)                   |
-| `pending`     | The value sent and still waiting for its result (`null` if none)                                 |
+| Field            | Contents                                                                                                             |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `info`           | The variable definition (`undefined` if the current run does not have the variable)                                  |
+| `reading`        | The last value (`VariableReading`; `undefined` if there is none yet or while `visible` is false)                     |
+| `condition`      | The value condition ("Value condition (`condition`)" below)                                                          |
+| `block`          | Why the variable cannot be written now ("Why a write is blocked (`block`)" below)                                    |
+| `launcherReason` | When `block` is `launcher`: the launcher's reason as it wrote it (`code` and an English `message`); `null` otherwise |
+| `writeStatus`    | The status of the last write ("Write status (`writeStatus`, `pending`)" below)                                       |
+| `pending`        | The value sent and still waiting for its result (`null` if none)                                                     |
 
 - `subscribe` is called only on changes (get the first state with `state.get()`).
 - `get()` always builds the state from the current values. So if you call `get()` during a notification of another `Readable` (such as `client.variables.state`), it may notify this `state`'s subscribers of a new state right there.
@@ -658,18 +659,20 @@ The `status` of `unavailable` is one of: not running, this run has no variables,
 
 `null` if the variable can be written. If several reasons apply, `block` is the one highest in the table.
 
-| `block`             | Meaning                                                                                                                                     |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `read-only`         | A read-only variable (`role` is `output`)                                                                                                   |
-| `disconnected`      | The connection between the client and the server is down                                                                                    |
-| `ended`             | The run ended                                                                                                                               |
-| `not-ready`         | The variable feature is not available (not running, connecting, cannot connect)                                                             |
-| `missing`           | The current run does not have the variable                                                                                                  |
-| `peer-disconnected` | The ECU is not connected to the Control Server                                                                                              |
-| `parameter`         | A `parameter` can be written only before the first step of a run started paused (`isHolding(session)`: `holding` in the launcher's `state`) |
-| `scenario`          | A scenario is running (view only)                                                                                                           |
-| `no-range`          | `needsRange` is set, but the variable has no range (`min` and `max`)                                                                        |
-| `no-value`          | `needsValue` is set, and there is no value yet (neither read nor sent)                                                                      |
+Only `launcher` comes from the launcher; the other values are the client's own. The client has no rule of its own about what the launcher accepts: when the launcher takes a write during a scenario, `bind` lets it through.
+
+| `block`             | Meaning                                                                                                                                                                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read-only`         | A read-only variable (`role` is `output`)                                                                                                                                                                                              |
+| `disconnected`      | The connection between the client and the server is down                                                                                                                                                                               |
+| `ended`             | The run ended                                                                                                                                                                                                                          |
+| `not-ready`         | The variable feature is not available (not running, connecting, cannot connect)                                                                                                                                                        |
+| `missing`           | The current run does not have the variable                                                                                                                                                                                             |
+| `peer-disconnected` | The ECU is not connected to the Control Server                                                                                                                                                                                         |
+| `parameter`         | A `parameter` can be written only before the first step of a run started paused (`isHolding(session)`: `holding` in the launcher's `state`). The client's prediction of the ECU's rule: the launcher does not say it for each variable |
+| `launcher`          | The launcher does not take a write now (`allowed.write` of its `state`). `launcherReason` has its code and sentence, for example `scenario-running` while a scenario plays                                                             |
+| `no-range`          | `needsRange` is set, but the variable has no range (`min` and `max`)                                                                                                                                                                   |
+| `no-value`          | `needsValue` is set, and there is no value yet (neither read nor sent)                                                                                                                                                                 |
 
 ### Write status (`writeStatus`, `pending`)
 

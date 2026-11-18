@@ -3,6 +3,7 @@ import { BATCH_MS } from './connection';
 import { isHolding } from './session-state';
 import { FakeHttp, FakeRequest } from './testing/fake-http';
 import { FakeWebSockets } from './testing/fake-web-socket';
+import { httpExamples } from './testing/protocol-examples';
 import { BoundVariable, DROPPED_MESSAGE, VariableBinding } from './variable-binding';
 import { VariableRef } from './variables';
 
@@ -433,7 +434,7 @@ describe('client.variables.bind', () => {
     mode.close();
   });
 
-  it('only shows the variables while a scenario runs', async () => {
+  it("blocks a write with the launcher's reason, and only while the launcher refuses it", async () => {
     const enabled = client.variables.bind(ref('engine.enabled'));
     const scenario = {
       file: 'scenarios/a.yaml',
@@ -445,11 +446,81 @@ describe('client.variables.bind', () => {
       over_at_ms: null,
       timeline_url: null,
     };
-    await deliver(hello('ready', 1, { scenario }));
-    expect(client.session.session.get()?.scenario).not.toBeNull();
-    expect(enabled.state.get().block).toBe('scenario');
+    const playing =
+      'this run plays a scenario, and until it ends only the scenario writes variables';
+    const launcherState = (write: object) => ({
+      ...holdingState,
+      phase: 'running',
+      paused: false,
+      holding: false,
+      scenario: true,
+      allowed: { write },
+    });
+    await deliver(
+      hello('ready', 1, {
+        scenario,
+        launcher_state: launcherState({
+          ok: false,
+          reason: 'scenario-running',
+          message: playing,
+          caution: null,
+        }),
+      }),
+    );
+    expect(enabled.state.get()).toMatchObject({
+      block: 'launcher',
+      launcherReason: { code: 'scenario-running', message: playing },
+    });
     enabled.write(true);
     expect(requests()).toEqual([]);
+    // The client keeps no rule of its own: a scenario that the launcher lets a client write to is writable
+    await deliver(
+      hello('ready', 1, {
+        scenario,
+        launcher_state: {
+          ...launcherState({ ok: true, reason: null, message: null, caution: null }),
+          rev: 6,
+          seq: 6,
+        },
+      }),
+    );
+    expect(client.session.session.get()?.scenario).not.toBeNull();
+    expect(enabled.state.get()).toMatchObject({ block: null, launcherReason: null });
+    // The variable's own reason comes before the launcher's
+    const speed = client.variables.bind(ref('engine.speed'));
+    await deliver(
+      hello('ready', 1, {
+        scenario,
+        launcher_state: {
+          ...launcherState({
+            ok: false,
+            reason: 'scenario-running',
+            message: playing,
+            caution: null,
+          }),
+          rev: 7,
+          seq: 7,
+        },
+      }),
+    );
+    expect(speed.state.get()).toMatchObject({ block: 'read-only', launcherReason: null });
+    speed.close();
+    enabled.close();
+  });
+
+  it("shows the server's refusal of a write during a scenario as its code", async () => {
+    const example = (await httpExamples()).find((e) => e.name === 'error-scenario-running');
+    const enabled = client.variables.bind(ref('engine.enabled'));
+    await deliver(hello());
+    enabled.write(true);
+    const [request] = requests();
+    expect(example?.status).toBe(409);
+    request.flush(example?.response, { status: 409, statusText: 'Conflict' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(enabled.state.get().writeStatus).toMatchObject({
+      kind: 'refused',
+      code: 'scenario-running',
+    });
     enabled.close();
   });
 

@@ -755,7 +755,7 @@ The `VariableBinding` that `bindVariable` returns holds the following as signals
 | `info` | The variable definition |
 | `reading` | The last value |
 | `condition` | The value condition |
-| `block` | Why it cannot be written |
+| `block`, `launcherReason` | Why it cannot be written (`launcherReason`: the launcher's code and sentence when `block` is `launcher`) |
 | `write(value)`, `writeStatus`, `pending` | Writing, and its status |
 
 - Values are watched only while the widget is visible.
@@ -1056,7 +1056,7 @@ The logic of a widget that shows and writes one variable, such as a slider, a sw
 |---|---|---|
 | `info`, `reading` | The variable definition, and the last value (with the time it belongs to) | None |
 | `condition` | The value condition | `condition.kind`: `unavailable`, `missing`, `waiting`, `live`, `paused`, `stale`, `ended` |
-| `block` | Why it cannot be written now (`null` if it can) | `read-only`, `disconnected`, `ended`, `not-ready`, `missing`, `peer-disconnected`, `parameter`, `scenario`, `no-range`, `no-value` |
+| `block` | Why it cannot be written now (`null` if it can) | `read-only`, `disconnected`, `ended`, `not-ready`, `missing`, `peer-disconnected`, `parameter`, `launcher` (the launcher's reason is in `launcherReason`), `no-range`, `no-value` |
 | `writeStatus`, `pending` | The status of the last write, and the value sent and waiting for its result | `writeStatus.kind`: `idle`, `sending`, `queued`, `applied` and others |
 
 The meanings of `condition.kind` are below. For the meanings of the values of `block` and `writeStatus` and the detailed rules, see "Build widgets (`bind`)" in [gui/client/README.md](../gui/client/README.md#build-widgets-bind).
@@ -1277,8 +1277,8 @@ The library does not enforce these rules for you. The sample screens follow them
 **Whether a variable can be written**: if you build your widgets with `client.variables.bind`, `block` of `state` checks these rules. A screen that calls `write` directly checks them itself.
 
 - A variable whose `writable` is false (`output`) cannot be written.
-- A `parameter` can be written only before the first step (`holding` of the launcher's `state`; `isHolding(session)` in the library).
-- A run that is running a scenario (the session copy has `scenario`, and the launcher is running) cannot be written.
+- A `parameter` can be written only before the first step (`holding` of the launcher's `state`; `isHolding(session)` in the library). This is the library's prediction of the ECU's rule: the launcher does not say it for each variable.
+- A write that the launcher does not take now cannot be written: `allowed.write` of the launcher's `state` (`launcherState` of the session copy) is not `ok`, for example with `scenario-running` while a scenario plays. Take the reason from there (`block` is `launcher`, with the code and the sentence in `launcherReason`); do not decide it from `scenario` of the session copy, so that the screen follows the launcher when its rule changes.
 - A participant not connected to the Control Server (`peers[].connected` of `client.variables.state` is false) cannot be written either.
 
 **Whether a value is stale**: `condition` of `bind`'s `state` reports `stale` with the reason. A screen that uses `watch` directly checks this itself.

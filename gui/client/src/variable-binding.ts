@@ -49,6 +49,12 @@ export interface BindOptions {
   visible?: boolean;
 }
 
+/** Why the launcher does not take a write now: the code (stays the same) and one English sentence. */
+export interface LauncherReason {
+  readonly code: string;
+  readonly message: string;
+}
+
 /** Current state of one variable (the value of VariableBinding.state). */
 export interface BoundVariable {
   /** Which variable. */
@@ -66,6 +72,11 @@ export interface BoundVariable {
   readonly condition: ValueCondition;
   /** Why the variable cannot be written now (null if it can). */
   readonly block: WriteBlock | null;
+  /**
+   * When block is `launcher`: the launcher's reason, as it wrote it in `allowed.write` of its `state` (`code`, such as
+   * `scenario-running`, and one English sentence). null otherwise.
+   */
+  readonly launcherReason: LauncherReason | null;
   /**
    * Status of the last write to this variable (in the current run). Every bind of the same variable sees the same
    * status.
@@ -235,17 +246,32 @@ export class VariableBinder {
   }
 
   /**
-   * Why the variable cannot be written now (null if it can). Only the widget-independent reasons (Binding adds
-   * scenario, range and value).
+   * Why the variable cannot be written now (null if it can). Only the widget-independent reasons: the variable's own
+   * first, then the launcher's (Binding adds range and value).
    */
   block(ref: VariableRef): WriteBlock | null {
-    return writeBlock({
+    const own = writeBlock({
       info: this.find(ref),
       status: this.sources.variables.state.get().status,
       connected: this.connected(),
       beforeStart: isHolding(this.sources.session.get()),
       peerConnected: this.peerConnected(ref.peer),
     });
+    if (own !== null) return own;
+    return this.launcherReason() ? 'launcher' : null;
+  }
+
+  /**
+   * Why the launcher does not take a write now, as it says in `allowed.write` of its last `state` (null when it takes
+   * one, or has not said). The client keeps no rule of its own about it.
+   */
+  launcherReason(): LauncherReason | null {
+    const item = this.sources.session.get()?.launcherState?.allowed['write'];
+    if (!item || item.ok) return null;
+    return {
+      code: item.reason ?? 'refused',
+      message: item.message ?? 'the launcher does not take a write now',
+    };
   }
 
   /** Status of the last write to that variable in the current run. */
@@ -426,6 +452,8 @@ function sameBound(a: BoundVariable, b: BoundVariable): boolean {
     a.availability === b.availability &&
     a.reading === b.reading &&
     a.block === b.block &&
+    a.launcherReason?.code === b.launcherReason?.code &&
+    a.launcherReason?.message === b.launcherReason?.message &&
     a.writeStatus === b.writeStatus &&
     a.pending === b.pending &&
     sameCondition(a.condition, b.condition)
@@ -487,13 +515,15 @@ class Binding implements VariableBinding {
       readFailing: variables.status === 'ready' && variables.reason !== null,
     });
     const pending = binder.pending(ref);
+    const block = this.blockOf(info, reading, pending);
     return {
       ref,
       info,
       availability: variables.availability.get(ref.peer)?.get(ref.name) ?? 'unknown',
       reading,
       condition,
-      block: this.blockOf(info, reading, pending),
+      block,
+      launcherReason: block === 'launcher' ? binder.launcherReason() : null,
       writeStatus: binder.status(ref),
       pending,
     };
@@ -506,9 +536,6 @@ class Binding implements VariableBinding {
   ): WriteBlock | null {
     const base = this.binder.block(this.ref);
     if (base !== null) return base;
-    // While a scenario runs, the variable is watch-only (no write status is kept; the server refuses writes too)
-    const session = this.binder.sources.session.get();
-    if (session?.scenario && session.launcher.running) return 'scenario';
     if (this.options.needsRange && info && !hasRange(info)) return 'no-range';
     if (this.options.needsValue && reading === undefined && pending === null) return 'no-value';
     return null;

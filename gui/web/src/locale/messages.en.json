@@ -1306,10 +1306,6 @@
       "source": "値を読めていません。出している値は最後に読めたもので、古いかもしれません:",
       "target": "Cannot read the values. The values shown are the last ones read and may be out of date:"
     },
-    "8929531448881994828": {
-      "source": "シナリオの実行中です。値は見られますが、書くことはできません（シナリオの結果を変えないため）。",
-      "target": "A scenario is running. You can see the values but not write them, so the scenario result is not affected."
-    },
     "554589511785725809": {
       "source": "最初のステップの前で止まっています。ここで書いた値（パラメーターを含む）は、時刻 0 のステップで反映されます。再開は「実行」の画面で行います。",
       "target": "Paused before the first step. Values you write now (parameters included) are applied in the step at time 0. Resume on the Run screen."
@@ -1481,6 +1477,10 @@
     "345950103004168810": {
       "source": "シナリオの実行中は書けません（見るだけです）",
       "target": "Cannot write while a scenario runs (view only)"
+    },
+    "8847019285534239338": {
+      "source": "ランチャーがいまは書き込みを受け付けません:",
+      "target": "The launcher does not take a write now:"
     },
     "8973894855810621678": {
       "source": "送っています",

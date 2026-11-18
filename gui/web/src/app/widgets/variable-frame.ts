@@ -64,7 +64,10 @@ import { VariableBinding } from './variable-binding';
           }
         </p>
         <p class="why" [id]="variable().id + '-why'" data-testid="widget-why">
-          {{ why() }}
+          {{ why().text }}
+          @if (why().english; as english) {
+            <span lang="en">{{ english }}</span>
+          }
           @if (variable().availability() === 'inactive') {
             <!-- 操作に Tab で入ったとき、理由の文と一緒に読まれる（見た目には出さない） -->
             <span class="sr" i18n>この ECU はいま使っていません</span>
@@ -170,8 +173,7 @@ export class VariableFrame {
   protected readonly condition = computed(() => conditionText(this.variable().condition()));
   protected readonly write = computed(() => writeText(this.variable().writeStatus()));
   protected readonly failed = computed(() => isWriteError(this.variable().writeStatus()));
-  protected readonly why = computed(() => {
-    const block = this.variable().block();
-    return block === null || block === 'read-only' ? '' : blockText(block);
-  });
+  protected readonly why = computed(() =>
+    blockText(this.variable().block(), this.variable().launcherReason()),
+  );
 }

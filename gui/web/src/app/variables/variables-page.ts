@@ -26,7 +26,7 @@ import {
   filterDashboard,
 } from '../widgets/dashboard-spec';
 import { DashboardView } from '../widgets/dashboard-view';
-import { monitoringTitle } from '../widgets/labels';
+import { launcherWriteText, monitoringTitle } from '../widgets/labels';
 
 /** 画面の上に出す、変数の機能の様子。english: 添える英語の文（サーバーの理由）。 */
 interface Notice {
@@ -411,6 +411,7 @@ export class VariablesPage {
     const reason = this.variables.reason();
     const app = this.info.variables();
     const session = this.server.session();
+    // 変数の機能そのものが使えない古い経路の説明（書けるかどうかの話ではない）
     const scenario = !!session?.scenario && session.launcher.running;
     if (scenario && (status === 'off' || status === 'failed')) {
       return {
@@ -419,6 +420,7 @@ export class VariablesPage {
         tone: 'warn',
       };
     }
+    const write = session?.launcherState?.allowed['write'];
     switch (status) {
       case 'ready':
         // ready のまま理由があるのは、値の読み取りが失敗し続けているとき（出ている値は最後に読めたもの）
@@ -429,10 +431,10 @@ export class VariablesPage {
             tone: 'warn',
           };
         }
-        if (scenario) {
+        // 書けるかどうかはランチャーが言う（`state.allowed.write`）。断っているなら、その理由を写す
+        if (write && !write.ok) {
           return {
-            text: $localize`シナリオの実行中です。値は見られますが、書くことはできません（シナリオの結果を変えないため）。`,
-            english: null,
+            ...launcherWriteText({ code: write.reason ?? '', message: write.message ?? '' }),
             tone: 'info',
           };
         }

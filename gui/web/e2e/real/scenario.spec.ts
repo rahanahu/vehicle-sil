@@ -36,9 +36,12 @@ test('a real scenario run: the variables are read but not written, the time and 
   expect(response.status(), await response.text()).toBe(200);
   try {
     await openVariables(page, target);
-    await expect(page.getByTestId('variables-notice')).toContainText('シナリオの実行中です', {
-      timeout: RUN_TIMEOUT,
-    });
+    await expect(page.getByTestId('variables-notice')).toContainText(
+      'シナリオの実行中は書けません',
+      {
+        timeout: RUN_TIMEOUT,
+      },
+    );
     // シナリオが時刻 0 に書いたスロットル（50 %）が見える
     await expect
       .poll(() => numberOf(page, 'Engine', 'engine.throttle'), { timeout: RUN_TIMEOUT })

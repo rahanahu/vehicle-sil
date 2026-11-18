@@ -87,7 +87,12 @@ export type {
 
 // Binding one variable to one widget (client.variables.bind): value state, whether it can be written, write status
 export { DROPPED_MESSAGE } from './variable-binding';
-export type { BindOptions, BoundVariable, VariableBinding } from './variable-binding';
+export type {
+  BindOptions,
+  BoundVariable,
+  LauncherReason,
+  VariableBinding,
+} from './variable-binding';
 export { hasRange, isWriteError, valueCondition, writeBlock } from './variable-state';
 export type {
   ConditionInput,

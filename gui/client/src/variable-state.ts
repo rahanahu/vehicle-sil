@@ -86,8 +86,10 @@ export function sameCondition(a: ValueCondition, b: ValueCondition): boolean {
  * - ended: the run has ended.
  * - missing: the variable is not in the current run.
  * - peer-disconnected: that ECU is not connected to the Control Server.
- * - parameter: a parameter can only be written before the first step.
- * - scenario: a scenario is running (watch only; the launcher refuses writes).
+ * - parameter: a parameter can only be written before the first step (the client's prediction of the ECU's rule: the
+ *   launcher does not say it for each variable).
+ * - launcher: the launcher does not take a write now (`allowed.write` of its `state`, for example `scenario-running`
+ *   while a scenario plays). Its reason, code and sentence as the launcher wrote them, is BoundVariable.launcherReason.
  * - no-range: a widget that needs a range (slider) is bound to a variable without one (min and max)
  *   (BindOptions.needsRange).
  * - no-value: there is no value yet, so a widget that moves from the value (slider) cannot move
@@ -101,9 +103,9 @@ export type WriteBlock =
   | 'missing'
   | 'peer-disconnected'
   | 'parameter'
+  | 'launcher'
   | 'no-range'
-  | 'no-value'
-  | 'scenario';
+  | 'no-value';
 
 /** Input of writeBlock. */
 export interface WriteBlockInput {
@@ -118,7 +120,7 @@ export interface WriteBlockInput {
 
 /**
  * Decides why the variable cannot be written now (null if it can). Only the reasons that do not depend on the widget:
- * client.variables.bind adds scenario, no-range and no-value.
+ * client.variables.bind adds launcher, no-range and no-value.
  */
 export function writeBlock(input: WriteBlockInput): WriteBlock | null {
   const { info, status } = input;

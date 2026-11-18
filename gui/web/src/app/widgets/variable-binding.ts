@@ -11,6 +11,7 @@ import {
 import {
   BoundVariable,
   HistoryPoint,
+  LauncherReason,
   ValueCondition,
   VariableAvailability,
   VariableInfo,
@@ -64,6 +65,8 @@ export interface VariableBinding {
   readonly condition: Signal<ValueCondition>;
   /** いま書けない理由（書けるなら null）。 */
   readonly block: Signal<WriteBlock | null>;
+  /** block が launcher のとき、ランチャーの理由（`state.allowed.write` の code と英語の文）。ほかは null。 */
+  readonly launcherReason: Signal<LauncherReason | null>;
   /** この変数への最後の書き込みの様子（いまの実行の）。 */
   readonly writeStatus: Signal<WriteStatus>;
   /**
@@ -166,6 +169,7 @@ export function bindVariable(ref: () => VariableRef, options: BindOptions = {}):
       const now = state();
       return now ? now.block : 'not-ready';
     }),
+    launcherReason: computed(() => state()?.launcherReason ?? null),
     writeStatus: computed(() => state()?.writeStatus ?? IDLE),
     pending: computed(() => state()?.pending ?? null),
     id: `variable-${nextId++}`,

@@ -763,7 +763,7 @@ const spec: DashboardSpec = {
 | `info` | 変数の定義 |
 | `reading` | 最後の値 |
 | `condition` | 値の状態 |
-| `block` | 書き込めない理由 |
+| `block`、`launcherReason` | 書き込めない理由（`launcherReason`: `block` が `launcher` のときの、ランチャーの code と文） |
 | `write(value)`、`writeStatus`、`pending` | 書き込みと、その状態 |
 
 - 値は、コンポーネントが見えている間だけ watch されます。
@@ -1064,7 +1064,7 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 |---|---|---|
 | `info`、`reading` | 変数の定義と、最後の値（いつの値かつき） | なし |
 | `condition` | 値の状態 | `condition.kind`: `unavailable`、`missing`、`waiting`、`live`、`paused`、`stale`、`ended` |
-| `block` | いま書き込めない理由（書き込めるなら `null`） | `read-only`、`disconnected`、`ended`、`not-ready`、`missing`、`peer-disconnected`、`parameter`、`scenario`、`no-range`、`no-value` |
+| `block` | いま書き込めない理由（書き込めるなら `null`） | `read-only`、`disconnected`、`ended`、`not-ready`、`missing`、`peer-disconnected`、`parameter`、`launcher`（ランチャーの理由は `launcherReason`）、`no-range`、`no-value` |
 | `writeStatus`、`pending` | 最後の書き込みの状態と、送って結果を待っている値 | `writeStatus.kind`: `idle`、`sending`、`queued`、`applied` など |
 
 `condition.kind` の意味は次のとおりです。`block` と `writeStatus` の値の意味と細かいルールは、[gui/client/README.md](../../gui/client/README.ja.md) の「コンポーネントを作る（`bind`）」にあります。
@@ -1285,8 +1285,8 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 **変数に書き込めるか**: コンポーネントを `client.variables.bind` で作れば、`state` の `block` がこのルールを確認します。`write` を直接呼ぶ画面は、自分で確認します。
 
 - `writable` が偽の変数（`output`）には書き込めません。
-- `parameter` は最初のステップの前（ランチャーの `state` の `holding`。ライブラリでは `isHolding(session)`）だけです。
-- シナリオを実行している実行（セッションのコピーに `scenario` があり、ランチャーが動いている）には書き込めません。
+- `parameter` は最初のステップの前（ランチャーの `state` の `holding`。ライブラリでは `isHolding(session)`）だけです。これは ECU の規則のライブラリによる予測です（ランチャーは変数ごとには言いません）。
+- ランチャーがいま受けない書き込みはできません: ランチャーの `state`（セッションのコピーの `launcherState`）の `allowed.write` が `ok` でないとき（たとえば、シナリオの実行中の `scenario-running`）。理由はそこから取ります（`block` は `launcher`、code と文は `launcherReason`）。ランチャーの規則が変わっても画面が従うように、セッションのコピーの `scenario` から決めません。
 - Control Server と接続していない participant（`client.variables.state` の `peers[].connected` が偽）にも書き込めません。
 
 **値が古いか**: `bind` の `state` の `condition` が `stale` と理由で通知します。`watch` を直接使う画面は、自分で確認します。

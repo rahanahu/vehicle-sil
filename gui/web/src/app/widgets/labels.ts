@@ -1,5 +1,6 @@
 // 部品の言葉。状態の名前（機械が読む値）から、画面の言葉を作る。
 import {
+  LauncherReason,
   ValueCondition,
   VariableInfo,
   VariablesStatus,
@@ -76,7 +77,7 @@ export function conditionText(condition: ValueCondition): MarkedText {
   }
 }
 
-const BLOCKS: Record<WriteBlock, string> = {
+const BLOCKS: Record<Exclude<WriteBlock, 'launcher'>, string> = {
   'read-only': $localize`読むだけの変数です`,
   disconnected: $localize`サーバーとの接続が切れているので書けません`,
   'not-ready': $localize`いまは書けません（実行がないか、ランチャーにつながっていません）`,
@@ -86,11 +87,39 @@ const BLOCKS: Record<WriteBlock, string> = {
   'no-range': $localize`範囲（最小と最大）のない変数なので、スライダーは使えません（数値の入力を使ってください）`,
   'no-value': $localize`値がまだないので動かせません（値が届くと動かせます）`,
   parameter: $localize`パラメーターは、止めて始めた実行の最初のステップの前だけ書けます`,
-  scenario: $localize`シナリオの実行中は書けません（見るだけです）`,
 };
 
-/** 書けない理由の文。 */
-export const blockText = (block: WriteBlock): string => BLOCKS[block];
+/** ランチャーが書き込みを断る理由（`state.allowed.write` の code）の、画面の言葉。表にない code は、ランチャーの英語の文で出す。 */
+const LAUNCHER_REASONS: Record<string, string> = {
+  'scenario-running': $localize`シナリオの実行中は書けません（見るだけです）`,
+};
+
+/** 文と、その後ろに添える英語の文（ランチャーの文。なければ null）。 */
+export interface ReasonText {
+  text: string;
+  english: string | null;
+}
+
+/**
+ * 書けない理由の文。`launcher`（ランチャーが断る）は、ランチャーの理由（`launcherReason`）を写す。
+ * 読むだけの変数は、役割の欄が言うので空にする。
+ */
+export function blockText(block: WriteBlock | null, launcher: LauncherReason | null): ReasonText {
+  if (block === null || block === 'read-only') return { text: '', english: null };
+  if (block !== 'launcher') return { text: BLOCKS[block], english: null };
+  return launcherWriteText(launcher);
+}
+
+/** ランチャーが書き込みを断る理由の文（画面の言葉のない code は、ランチャーの英語の文を添える）。 */
+export function launcherWriteText(launcher: LauncherReason | null): ReasonText {
+  if (launcher && Object.hasOwn(LAUNCHER_REASONS, launcher.code)) {
+    return { text: LAUNCHER_REASONS[launcher.code], english: null };
+  }
+  return {
+    text: $localize`ランチャーがいまは書き込みを受け付けません:`,
+    english: launcher?.message ?? null,
+  };
+}
 
 /** 書き込みの様子の文（idle は空）。english: 文の後ろに添える英語の文（サーバーとライブラリの文）。 */
 export function writeText(status: WriteStatus): MarkedText & { english: string | null } {
