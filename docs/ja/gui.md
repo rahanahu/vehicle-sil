@@ -227,7 +227,7 @@ GUI に自分のコードを足す道は 3 つあります。サンプルの画�
 |---|---|
 | GUI サーバーの起動 | Python 3.11 以上と [uv](https://docs.astral.sh/uv/) |
 | シミュレーションの照合と実行 | `version --json` の `features` に `events`、`stdin-commands`、`request`、`time-commands`、`stdin-run-until`、`state` がある `vehicle_sil_launch`（同じ版の vehicle-sil のランチャーなら、すべてあります。[simulation-events.md](simulation-events.md) の「プログラムから使う」） |
-| 時間の操作 | `features` の `speed`、`start-paused`、`time-commands`（ないランチャーでは、その操作を表示しません） |
+| 時間の操作 | `features` の `time-commands`（必須。上を参照）と、`speed`、`start-paused`（ないランチャーでは、その操作を表示しません） |
 | ECU の変数の読み書き | Control Server を持つランチャー（`features` に `control-server`。`-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` でビルドしたもの。[control-api.md](control-api.md)）と、GUI サーバーの Python の gRPC（`grpcio`、`protobuf`。`uv sync` がインストールします） |
 | 実行するシミュレーション | 設定ファイルと、そこに書いた ECU の実行ファイル（ランチャーが照合と実行で起動します） |
 | 画面 | サンプルの画面のビルド（`gui/web` の `npm run build` の出力）か、自分の画面のビルド（`--web`） |
@@ -379,7 +379,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 | 実行中 | 「時刻」のカード | 仮想時間、いまの速度、実際の速度、一時停止しているかを見て、ステップ実行（ミリ秒を入力）と速度の変更をします。 |
 | 終了の後 | 「結果」のカード | 時間の進み方（速度、仮想時間、かかった実時間、実際の速度、一時停止していた時間、速度を合わせたときの遅れ）を見ます。 |
 
-- ランチャーの `features` に `speed`、`start-paused`、`time-commands` がなければ、それぞれの操作を表示しません（`speed` だけのランチャーでは、「時刻」のカードは見るだけです）。サーバーは、コマンドごとにランチャーの `features` を確かめません。時間のコマンドの機能は、起動時に必須として確かめます。
+- ランチャーの `features` に `speed` か `start-paused` がなければ、それぞれの操作を表示しません。`time-commands`、`stdin-run-until`、`state` は起動時に必須として確かめるので、サーバーはコマンドごとには確かめません。
 - シミュレーションの外につながる実行（ファイルに `role: bridge` の participant がいる、または実行の要求に `connect` がある）では、ランチャーが、一時停止、ステップ、1 以外の速さを、理由 `outside-real-time` で断ります。コマンドラインのときと同じです（[simulation-run.md](simulation-run.md) の「外につながる実行の時間」）。これはランチャーの規則です。GUI サーバーは自分の規則を持たず、答えを中継します。要求の `time_policy`（`"free"`）がこれを外し、実行が実時間を守るかは、照合の `time_lock` が言います。「時刻」のカードは、一時停止とステップの下にランチャーの理由を出し、「等速」のほかの速さは選べません（カードが、この実行で選べる速さは等速だけだと言います）。
 - 時間の操作ごとの、使えるか、使えない理由、ステップと速さの範囲は、クライアントのライブラリの `controls` から来ます（[gui/client/README.ja.md](../../gui/client/README.ja.md)）。画面は自分の規則を持ちません。画面に言葉のある理由は画面の言語で、ほかの理由はランチャーの英語の文のままで出ます。注意（コマンドは受け付けるが、先に知っておくとよいこと。`outside-not-real-time` など）も同じ場所に出ます。
 - 途中から開いた画面や、別のタブも、同じ時間の状態を表示します（サーバーの要約に、最後の `time` と `command` のイベントがあるため）。

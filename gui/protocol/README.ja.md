@@ -169,13 +169,12 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | `{"command": "run_until", "at_ms": <整数>}` | 0 から `limits.step_ms_max` |
 | `{"command": "speed", "value": <"max" or a number>}` | `speed` と同じ範囲 |
 
-どの本体にも `"id"`（0 から 2^53 までの整数）を付けられます。サーバーはそれをコマンドの行に入れてランチャーに渡し、ランチャーはその行に答える `command` イベントの `id` に返します（`id` のない行は `null`）。画面は、自分のコマンドへの答えを、ほかの画面やランチャーの標準入力のコマンドへの答えと見分けるのに使います。サーバーは `id` を読みません。レスポンスのコマンドにも `id` が入ります。そのような数でない `id` は 400 `invalid-field`、機能 `state` のないランチャーに `id` つきのコマンドを送ると 400 `unsupported` です。
+どの本体にも `"id"`（0 から 2^53 までの整数）を付けられます。サーバーはそれをコマンドの行に入れてランチャーに渡し、ランチャーはその行に答える `command` イベントの `id` に返します（`id` のない行は `null`）。画面は、自分のコマンドへの答えを、ほかの画面やランチャーの標準入力のコマンドへの答えと見分けるのに使います。サーバーは `id` を読みません。レスポンスのコマンドにも `id` が入ります。そのような数でない `id` は 400 `invalid-field`です。
 
 サーバーは、動いている実行のランチャーの標準入力に 1 行で書き、レスポンスを待たずに返します。止まっているランチャーでリクエストが固まらないようにするためです。
 
 - 受け付けたかどうかと理由は、ランチャーの `command` のイベント（`accepted`、`message`、断った理由のコード `reason`、`id`、`step` の実際に進む `ms` とその後に止まる時刻 `at_ms`、`run_until` の頼んだ時刻をタイムステップに切り上げた `at_ms`）で届きます。コマンドが反映されたことは `time` のイベントで届きます。どちらも、要約の `last_command` と `time` に残ります。
 - 動いている実行がなければ（終わった、始まりかけ、ランチャーの入力が閉じた、ランチャーの最後の `state` が `not-running` と言っている）409 `not-running` です。ランチャーの `allowed` にある、ほかの理由では断りません。その `allowed` は少し古いことがあるので、コマンドの答えはランチャー自身が返します。
-- その実行のランチャー（始めたときの `version --json`）の `features` に `time-commands` がなければ 400 `unsupported` です。 `run_until` は、`features` に `stdin-run-until` もなければ 400 `unsupported` です。
 - ランチャーが入力を読まないままのときも、リクエストは長くて約 2 秒で返ります（コマンドはランチャーの入力に残ります）。
 - コマンドの意味（一時停止はステップの境目で反映される、ステップ実行は一時停止の間だけ、など）はランチャーのルールです（[docs/simulation-events.md](../../docs/ja/simulation-events.md) の「標準入力のコマンド」）。
 
@@ -230,7 +229,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 
 - `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`。`api/connections` は `file` と `network` を受けます。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
 - `invalid-field` の対象: `speed`、`start_paused`、`variant`、`params`、`enable`、`strict`、`connect`、`time_policy`、`network`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`value`、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
-- `unsupported` の対象: `time-commands` を持たないのに `api/time` を送った。`control-server` を持たないのに `api/write` を送った。
+- `unsupported` の対象: `control-server` を持たないのに `api/write` を送った。（サーバーは起動時に `time-commands`、`stdin-run-until`、`state` を必須として確かめるので、`api/time` にこの場合はありません。）
 
 例のファイルは次のとおりです。ほかのコードは、GUI サーバーのテストの中で確認します。
 
@@ -642,11 +641,11 @@ participant ごとの `state` は次のとおりです。
 | 操作 | 扱い |
 |---|---|
 | 止めた状態で始める（`start_paused: true`） | ランチャーが断る: 422 `check-failed`（`api/run`）、`usage` の結果（`api/check`） |
-| 変数を読む | ランチャーの `features` に `scenario-control` があれば読める |
+| 変数を読む | ランチャーの `features` に `control-server` があれば読める |
 | `api/write` | 409 `scenario-running` で拒否する |
 | 時間のコマンド（`api/time`）と停止 | ふつうの実行と同じ |
 
-- `scenario-control` があれば、サーバーは `--control` を付けます（書き込みはランチャーも拒否します）。なければ、`--control` を付けず、変数の状態は `off` で、`reason` に理由が入ります。
+- `control-server` があれば、サーバーは `--control` を付けます（書き込みはランチャーも拒否します）。なければ、`--control` を付けず、変数の状態は `off` で、`reason` に理由が入ります。
 - 時間のコマンドと停止は、ランチャーの標準入力に書きます。Control Server がシナリオの実行中にクライアントに対して拒否する `Pause`、`Step`、`SetSpeed` などとは別で、ランチャーは受け付けます。
 
 ### シナリオのイベントと要約

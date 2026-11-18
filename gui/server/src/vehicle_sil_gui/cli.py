@@ -37,7 +37,7 @@ Stop it with Ctrl+C; a running simulation is stopped first."""
 
 EPILOG = """\
 The launcher is --launcher, else $VEHICLE_SIL_LAUNCH, else vehicle_sil_launch on PATH; it must report the
-features events and stdin-commands in `version --json`. A path ending in .py runs with this Python.
+features {required} in `version --json`. A path ending in .py runs with this Python.
 
 exit codes: 0 stopped (Ctrl+C, SIGTERM), 1 failed while running, 2 usage error, or the launcher or the port
 cannot be used (the message says what to do)
@@ -49,7 +49,8 @@ in this Python; without them, or with --no-variables, everything else works.
 examples:
   vehicle-sil-gui examples/simulation.yaml          # root: the file's directory
   vehicle-sil-gui --root examples --no-browser --json
-  vehicle-sil-gui --web my-screen/dist examples/simulation.yaml   # your own screen (docs/gui.md)"""
+  vehicle-sil-gui --web my-screen/dist examples/simulation.yaml   # your own screen (docs/gui.md)""".replace(
+    "{required}", ", ".join(launcher_module.REQUIRED_FEATURES))
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:

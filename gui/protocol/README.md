@@ -169,13 +169,12 @@ The body is one of the following (any other field gives 400 `invalid-field`).
 | `{"command": "run_until", "at_ms": <integer>}` | 0 to `limits.step_ms_max` |
 | `{"command": "speed", "value": <"max" or a number>}` | Same range as `speed` |
 
-Each body may also have `"id"`, a whole number from 0 to 2^53. The server passes it to the launcher in the command line, and the launcher returns it as `id` in the `command` event that answers that line (`null` when the line had none). A screen uses it to tell the answer to its own command from the answers to the commands of other screens or of the launcher's stdin; the server does not read it. The response carries the command with its `id`. An `id` that is not such a number gives 400 `invalid-field`; a launcher without the feature `state` gives 400 `unsupported` for a command with an `id`.
+Each body may also have `"id"`, a whole number from 0 to 2^53. The server passes it to the launcher in the command line, and the launcher returns it as `id` in the `command` event that answers that line (`null` when the line had none). A screen uses it to tell the answer to its own command from the answers to the commands of other screens or of the launcher's stdin; the server does not read it. The response carries the command with its `id`. An `id` that is not such a number gives 400 `invalid-field`.
 
 The server writes the command as one line to the stdin of the running run's launcher and returns without waiting for an answer. This keeps a request from hanging on a stuck launcher.
 
 - Whether the command was accepted, and why not, arrives in the launcher's `command` event (`accepted`, `message`, `reason` (the code of why not), `id`, for `step` the actual `ms` it advances and the `at_ms` at which the simulation pauses after it, and for `run_until` the `at_ms` asked for, rounded up to the time step). The `time` event shows that the command took effect. Both stay in `last_command` and `time` of the summary.
 - If no run is running (it ended, it is starting, the launcher's input is closed, or the launcher's last `state` says `not-running`), the response is 409 `not-running`. The server does not refuse a command for any other reason in the launcher's `allowed`: that `allowed` may be a moment old, so the launcher answers the command itself.
-- If the launcher of that run (`version --json` at the start) lacks `time-commands` in `features`, the response is 400 `unsupported`. A `run_until` is also refused with 400 `unsupported` when `features` lacks `stdin-run-until`.
 - Even if the launcher never reads its input, the request returns within about 2 seconds (the command stays in the launcher's input).
 - What the commands mean (a pause takes effect at a step boundary, stepping works only while paused and so on) is defined by the launcher (see "Stdin commands (`run --stdin-commands`)" in [docs/simulation-events.md](../../docs/simulation-events.md#stdin-commands-run---stdin-commands)).
 
@@ -230,7 +229,7 @@ The codes that screens look at. The names do not change (new ones may be added).
 
 - `api/check` and `api/run` take the same fields: `file`, `$schema`, `vehicle_sil_run_request`, `scenario`, `variant`, `params`, `disable`, `enable`, `manual`, `strict`, `connect`, `time_policy`, `speed` and `start_paused`. `api/connections` takes `file` and `network`. Any other field (a misspelled one, or a key of the launcher's side) and any `null` give 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
 - Fields covered by `invalid-field`: `speed`, `start_paused`, `variant`, `params`, `enable`, `strict`, `connect`, `time_policy`, `network`, `force`, `disable`, `manual` (also the same name twice), `command`, `ms` and `value` of `api/time`, `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
-- Cases of `unsupported`: `api/time` sent when the launcher lacks `time-commands`; `api/write` sent when the launcher lacks `control-server`.
+- Case of `unsupported`: `api/write` sent when the launcher lacks `control-server`. (The server requires `time-commands`, `stdin-run-until` and `state` when it starts, so `api/time` has no such case.)
 
 The example files. The GUI server's tests check the other codes.
 
@@ -642,11 +641,11 @@ What you can do while a scenario runs:
 | Action | Handling |
 |---|---|
 | Start paused (`start_paused: true`) | the launcher refuses it: 422 `check-failed` (`api/run`), a `usage` result (`api/check`) |
-| Read variables | Possible if the launcher's `features` have `scenario-control` |
+| Read variables | Possible if the launcher's `features` have `control-server` |
 | `api/write` | Rejected with 409 `scenario-running` |
 | Time commands (`api/time`) and stop | Same as for a normal run |
 
-- With `scenario-control`, the server adds `--control` (the launcher also rejects writes). Without it, the server does not add `--control`, the variable state is `off`, and `reason` gives the reason.
+- With `control-server`, the server adds `--control` (the launcher also rejects writes). Without it, the server does not add `--control`, the variable state is `off`, and `reason` gives the reason.
 - Time commands and stop are written to the launcher's stdin. This is separate from `Pause`, `Step`, `SetSpeed` and the other calls that the Control Server refuses from clients while a scenario runs; the launcher accepts them.
 
 ### Scenario events and summary
