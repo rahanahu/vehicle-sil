@@ -55,7 +55,7 @@ vehicle-sil-gui --web my-screen simulation.live.yaml   # opens a browser (add --
 | File | Contents |
 |---|---|
 | `index.html` | The screen |
-| `main.js` | A small script of your own for what the parts do not have (a display, a button, the timeline) |
+| `main.js` | A small script of your own for what the parts do not have (a display, a button) |
 | `style.css` | The styles for the parts |
 | `README.md` | A description of the template (not served) |
 | `README.ja.md` | The same description in Japanese (not served) |

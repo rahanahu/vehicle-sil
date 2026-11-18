@@ -51,7 +51,7 @@ The GUI server also serves the two `.mjs` files, without the token, as `/vsil/ve
 | `src/index.ts`                                                                                                  | `@vehicle-sil/gui-client`          | The public API ("Public API" below). This entry point and `./elements` are kept compatible                                                                                                                 |
 | `src/testing/index.ts`                                                                                          | `@vehicle-sil/gui-client/testing`  | Test helpers (usable in tests of your own widgets)                                                                                                                                                         |
 | `src/internal.ts`                                                                                               | `@vehicle-sil/gui-client/internal` | **No compatibility guarantee.** Internal classes and functions; do not use them in apps                                                                                                                    |
-| `src/elements/index.ts` (in the package as `dist/elements.js`, which imports `dist/index.js`)                   | `@vehicle-sil/gui-client/elements` | The parts (custom elements `<vsil-status>` and 7 more), `pageIntent` and `setReasonText`: importing it defines them ("Parts (custom elements)" below). It needs a DOM; the main entry does not import it   |
+| `src/elements/index.ts` (in the package as `dist/elements.js`, which imports `dist/index.js`)                   | `@vehicle-sil/gui-client/elements` | The parts (custom elements `<vsil-status>` and 8 more), `pageIntent` and `setReasonText`: importing it defines them ("Parts (custom elements)" below). It needs a DOM; the main entry does not import it   |
 | `../timeline/vehicle-sil-timeline.js` (in the package as `timeline/vehicle-sil-timeline.mjs`, with `export {}`) | `@vehicle-sil/gui-client/timeline` | The element `<vehicle-sil-timeline>`, with its types: importing it defines the element ("Putting a timeline on your own screen" in [docs/gui.md](../../docs/gui.md#putting-a-timeline-on-your-own-screen)) |
 
 - `testing` contains a fake WebSocket (`FakeWebSockets`), a fake HTTP (`FakeHttp`), loaders for `gui/protocol/examples/`, and `sessionViewFrom`, which builds a `SessionView` from a summary.
@@ -369,7 +369,7 @@ The view has `value`, `text` (an enum shows the item's name), `unit`, `min`, `ma
 
 ## Parts (custom elements)
 
-`@vehicle-sil/gui-client/elements` defines 8 custom elements that draw what `connect()` returns, so that a screen can be written as HTML without a script. They use native controls in the light DOM and have no styles of their own: your CSS styles them, and they work in plain HTML and in the templates of Angular, React, Vue and Svelte. Importing the module defines them (a name that is defined already is skipped).
+`@vehicle-sil/gui-client/elements` defines 9 custom elements that draw what `connect()` returns, so that a screen can be written as HTML without a script. They use native controls in the light DOM and have no styles of their own: your CSS styles them, and they work in plain HTML and in the templates of Angular, React, Vue and Svelte. Importing the module defines them (a name that is defined already is skipped).
 
 | Element                  | What it shows or does                                                                                     | Attributes and properties                                                                                                                                                                                               |
 | ------------------------ | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -381,6 +381,7 @@ The view has `value`, `text` (an enum shows the item's name), `unit`, `min`, `ma
 | `<vsil-write>`           | A button that writes one value (not usable when the variable already has it)                              | `variable`; `value` (what to write: JSON such as `false` or `3`, otherwise text); `label` (the button text)                                                                                                             |
 | `<vsil-scenario-select>` | The scenario of the next run, among those next to the run's configuration file (the first choice is none) | none                                                                                                                                                                                                                    |
 | `<vsil-scenario-result>` | The status and the steps of the run's scenario                                                            | none                                                                                                                                                                                                                    |
+| `<vsil-timeline>`        | The timeline of the run's scenario, in the `<vehicle-sil-timeline>` that you put inside it                | none; the attributes of that element are yours (see below)                                                                                                                                                              |
 
 A variable is written `ECU.variable` (cut at the first dot), as for `client.variable()`.
 
@@ -400,7 +401,13 @@ A variable is written `ECU.variable` (cut at the first dot), as for `client.vari
 <vsil-time-controls speeds="0.5 1 5 max"></vsil-time-controls>
 <label>Scenario of the next run <vsil-scenario-select></vsil-scenario-select></label>
 <vsil-scenario-result></vsil-scenario-result>
+<script src="/timeline/vehicle-sil-timeline.js"></script>
+<vsil-timeline>
+  <vehicle-sil-timeline compact hide="help tables"></vehicle-sil-timeline>
+</vsil-timeline>
 ```
+
+`<vsil-timeline>` only ties the element to the run: it sets `src` (the run's `timeline_url`, from the server's root) and `hidden` (when the run has no timeline) of the `<vehicle-sil-timeline>` inside it, and nothing else of it. It adds a default element when you put none, and removes only that one. The part does not load the element's script: the page does (`<script src="/timeline/vehicle-sil-timeline.js">`, or `import '@vehicle-sil/gui-client/timeline'`); an element that is defined later works too. The element sends the token that the page keeps in the tab; for a part with another connection (`client`), give the element its `token` property. It sets `data-timeline` (`shown` or `none`) on itself. The attributes and events of the element are in "Putting a timeline on your own screen" in [docs/gui.md](../../docs/gui.md#putting-a-timeline-on-your-own-screen).
 
 ### What the parts promise
 

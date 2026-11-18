@@ -7,7 +7,7 @@ A screen of your own for the GUI server (`vehicle-sil-gui`) to serve, made of pa
 | File | Contents |
 |---|---|
 | `index.html` | The screen: the parts, and a few lines of markup for the script. |
-| `main.js` | A small script of your own for what the parts do not have: a display, a button and the timeline. |
+| `main.js` | A small script of your own for what the parts do not have: a display and a button. |
 | `style.css` | The look. The parts have none of their own; this file styles the `data-*` attributes and `aria-disabled` that they set. |
 
 The parts and the library are not in this directory: the page loads them from the GUI server (`/vsil/vehicle-sil-gui-elements.mjs` and `/vsil/vehicle-sil-gui-client.mjs`).
@@ -75,20 +75,18 @@ There are 3 layers, and you use only as many as you need:
 | `<vsil-slider>` | A number in the variable's range, written when the knob is released | `variable` |
 | `<vsil-write>` | A button that writes one value | `variable`, `value`, `label` |
 | `<vsil-scenario-select>`, `<vsil-scenario-result>` | The scenario of the next run, and its steps and result | none |
+| `<vsil-timeline>` | The timeline of the scenario run, in the `<vehicle-sil-timeline>` that you put inside it (it adds one when there is none). Its attributes (`compact`, `hide`, `lang`) are yours. The page loads the element's script: `<script src="/timeline/vehicle-sil-timeline.js">`. | none |
 
 A variable is written `<participant>.<variable>`, cut at the first dot (`Engine.engine.throttle` is the participant `Engine` and the variable `engine.throttle`). To find the names of your ECUs, see "Step 2: Find the name of the variable to show" in the guide. If a name is wrong, the part says that the variable is not in this run. The complete list of the parts and what they promise (the connection, the markup and the `data-*` attributes to style) is "Parts" in [gui/client/README.md](../../gui/client/README.md#parts-custom-elements).
 
 ### A script of your own
 
-`main.js` shows the 3 things that a script is for. `connect()` without options returns the connection that the parts already use, so the page has one WebSocket. A refused start, stop or time operation shows in `<vsil-status>`; a refused write of a variable shows next to the part that shows that variable, and in the `ActionError` that your script receives.
+`main.js` shows the 2 things that a script is for. `connect()` without options returns the connection that the parts already use, so the page has one WebSocket. A refused start, stop or time operation shows in `<vsil-status>`; a refused write of a variable shows next to the part that shows that variable, and in the `ActionError` that your script receives.
 
 | In `main.js` | What it shows |
 |---|---|
 | `watch(client.variable('Engine.engine.speed'), fn)` | A value drawn your own way (a meter). `fn` runs now and on every change. |
 | `await client.variable('Engine.engine.throttle').write(100)` | An operation of your own: a Promise that rejects with an `ActionError` (a sentence in `message`, and `outcome`: `refused` or `unknown`). |
-| `watch(client.scenario, fn)` | The timeline: when a scenario run has one, `<vehicle-sil-timeline>` gets its `src`. |
-
-The timeline element is loaded from the GUI server (`<script src="/timeline/vehicle-sil-timeline.js">`). It sends the token that the page already has. Its attributes, properties and events are in "Putting a timeline on your own screen" in [docs/gui.md](../../docs/gui.md#putting-a-timeline-on-your-own-screen).
 
 What the starter leaves out, because the sample screens do it: choosing the configuration file, **Check**, and a field to choose any variable and type a value. To choose the file, list the files with `client.low.configs()` and start with your own button: `client.run.start(intent, { file })` (`<vsil-run-controls>` starts the file of the last run). `client.low` is the lower library of the same connection (`check`, `variables.bind` and more); see "[Build widgets (`bind`)](../../gui/client/README.md#build-widgets-bind)" for widgets of your own.
 

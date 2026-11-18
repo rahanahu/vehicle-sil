@@ -1,5 +1,5 @@
 // Your own script, for what the parts of index.html do not have. The parts need no script: this one adds a display of
-// your own, a button of your own and the timeline. README.md explains the steps.
+// your own and a button of your own. README.md explains the steps.
 import { ActionError, connect, watch } from '/vsil/vehicle-sil-gui-client.mjs';
 
 // The same connection that the parts use: connect() without options gives every caller the one that the page has.
@@ -29,13 +29,5 @@ if (client) {
     } catch (error) {
       failure.textContent = error instanceof ActionError ? error.message : String(error);
     }
-  });
-
-  // The timeline of the scenario run: the element loads the file at `timeline_url` (it sends the token the page already has)
-  const timeline = document.querySelector('vehicle-sil-timeline');
-  watch(client.scenario, (scenario) => {
-    const url = scenario?.timeline_url ?? null;
-    timeline.hidden = url === null;
-    if (url !== null && timeline.getAttribute('src') !== `/${url}`) timeline.src = `/${url}`; // not again for the same file
   });
 }

@@ -5,7 +5,11 @@ import { pageIntent } from './page-intent';
 import { setReasonText } from './reasons';
 import type { ReasonText } from './reasons';
 import { VsilRunControlsElement, VsilStatusElement, VsilTimeControlsElement } from './run-parts';
-import { VsilScenarioResultElement, VsilScenarioSelectElement } from './scenario-parts';
+import {
+  VsilScenarioResultElement,
+  VsilScenarioSelectElement,
+  VsilTimelineElement,
+} from './scenario-parts';
 import { VsilSliderElement, VsilValueElement, VsilWriteElement } from './variable-parts';
 
 export { pageIntent, setReasonText };
@@ -17,6 +21,7 @@ export {
   VsilSliderElement,
   VsilStatusElement,
   VsilTimeControlsElement,
+  VsilTimelineElement,
   VsilValueElement,
   VsilWriteElement,
 };
@@ -31,6 +36,7 @@ declare global {
     'vsil-write': VsilWriteElement;
     'vsil-scenario-select': VsilScenarioSelectElement;
     'vsil-scenario-result': VsilScenarioResultElement;
+    'vsil-timeline': VsilTimelineElement;
   }
 }
 
@@ -43,6 +49,7 @@ const PARTS: [string, CustomElementConstructor][] = [
   ['vsil-write', VsilWriteElement],
   ['vsil-scenario-select', VsilScenarioSelectElement],
   ['vsil-scenario-result', VsilScenarioResultElement],
+  ['vsil-timeline', VsilTimelineElement],
 ];
 
 // A name that is defined already (another copy of this module) is left alone.
