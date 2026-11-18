@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// run --control: its command line, read and checked (the server itself is control_server.hpp).
+// run --control: its command line, read and checked (the server itself is launch/control_server.hpp in libs/launch).
 #pragma once
 
 #include "vehicle_sil/control_grpc/server.hpp"

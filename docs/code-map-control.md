@@ -192,7 +192,7 @@ The Python stubs are generated in the test build (`python -m vehicle_sil_control
 
 Where to change:
 
-- `tools/launch/control_arguments.cpp` (reads and checks the command line of `--control`; the usage errors) and `tools/launch/control_server.cpp` (the server, from the checked `ServerOptions`)
+- `tools/launch/control_arguments.cpp` (reads and checks the command line of `--control`; the usage errors) and `libs/launch/src/control_server.cpp` (the server, from the checked `ServerOptions`)
 - `launch::ControlEndpoint` and `RunOptions::control_endpoint` (`launch/run.hpp`); `run_file()` in `libs/launch/src/run.cpp` starts the Server between `Runner::prepare()` and `Runner::run()`
 - `hold_before_start()`, `inspect()` and `wait_paused()` of `TimeCommands`
 - `ServerOptions::external_hub`
@@ -227,7 +227,7 @@ Where to change:
 - `ServerOptions::observe_only`
 - `Effect` in `libs/control_grpc/src/auth.hpp`, and `rpc_rules()` in `auth.cpp`
 - The code that rejects calls: `guarded()` in `control_service.cpp`
-- The code that sets it up: `tools/launch/control_server.cpp`
+- The code that sets it up: `libs/launch/src/control_server.cpp`
 
 Documentation to update:
 

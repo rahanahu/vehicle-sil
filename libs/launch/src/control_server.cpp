@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT
 //
 // run --control: the Control Server of vehicle_sil_launch (control_server.hpp). It takes the checked
-// options (control_arguments.hpp reads them from the command line) and knows nothing of the command line.
+// options (tools/launch/control_arguments.hpp reads them from the command line) and knows nothing
+// of the command line.
 //
 // The server's time operations are commands of the run like those on standard input: they go
-// through launch::TimeCommands with the source "control_server" (one mutex for every source, the
+// through TimeCommands with the source "control_server" (one mutex for every source, the
 // command event before the effect, the same rules). Its view of the time and of the participants
 // is read through TimeCommands::inspect() while the run's controller is attached, and kept from
 // the last look once it is detached (the controller goes then), so no call of the server ever
 // reaches a controller that has gone.
-#include "control_server.hpp"
+#include "vehicle_sil/launch/control_server.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/control_grpc/server.hpp"
@@ -31,7 +32,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch_cli {
+namespace vehicle_sil::launch {
 namespace {
 
 namespace orch = SilKit::Services::Orchestration;
@@ -89,7 +90,7 @@ std::vector<std::pair<std::string, std::string>> participants_of(SimulationContr
 class LaunchTimeControl final : public control_grpc::TimeControl
 {
 public:
-    LaunchTimeControl(launch::TimeCommands& commands, std::function<void()> stop) :
+    LaunchTimeControl(TimeCommands& commands, std::function<void()> stop) :
       commands_(commands), stop_(std::move(stop))
     {
         // The last look, as the controller goes: what the server reports from then on is where the
@@ -126,7 +127,7 @@ public:
             const std::lock_guard lock(mutex_);
             last_view_ = v;
         });
-        if (stage == launch::TimeCommands::Stage::Detached)
+        if (stage == TimeCommands::Stage::Detached)
         {
             // The run is over (or did not start): where it got, for good.
             const std::lock_guard lock(mutex_);
@@ -139,7 +140,7 @@ public:
 
     void pause(std::optional<SimTime> at) override
     {
-        launch::Command c = command("pause");
+        Command c = command("pause");
         if (at)
         {
             c.at_ms = at_ms(*at);
@@ -149,19 +150,19 @@ public:
     void resume() override { apply(command("resume")); }
     void run_until(SimTime t) override
     {
-        launch::Command c = command("run_until");
+        Command c = command("run_until");
         c.at_ms = at_ms(t);
         apply(c);
     }
     void step(SimDuration d) override
     {
-        launch::Command c = command("step");
+        Command c = command("step");
         c.ms = d.count() > 0 ? ceil_ms(d.count()) : 0;
         apply(c);
     }
     void set_speed(std::optional<double> speed) override
     {
-        launch::Command c = command("speed");
+        Command c = command("speed");
         c.speed = speed;
         apply(c);
     }
@@ -182,7 +183,7 @@ public:
             const std::lock_guard lock(mutex_);
             last_participants_ = out;
         });
-        if (stage == launch::TimeCommands::Stage::Detached)
+        if (stage == TimeCommands::Stage::Detached)
         {
             const std::lock_guard lock(mutex_);
             out = last_participants_;
@@ -201,7 +202,7 @@ public:
                 last_left_ = left;
             }
         });
-        if (stage == launch::TimeCommands::Stage::Detached)
+        if (stage == TimeCommands::Stage::Detached)
         {
             const std::lock_guard lock(mutex_);
             left = last_left_;
@@ -210,9 +211,9 @@ public:
     }
 
 private:
-    static launch::Command command(const char* name)
+    static Command command(const char* name)
     {
-        launch::Command c;
+        Command c;
         c.name = name;
         c.accepted = true;
         return c;
@@ -232,9 +233,9 @@ private:
     /// the argument (out-of-range, missing-argument), else control_grpc::Refused
     /// (FAILED_PRECONDITION, with the code of the refusal, as the command event's "reason", for
     /// the client's program).
-    void apply(const launch::Command& c, const std::function<void()>& accepted = {})
+    void apply(const Command& c, const std::function<void()>& accepted = {})
     {
-        const launch::Command done = commands_.apply(c, kSource, accepted);
+        const Command done = commands_.apply(c, kSource, accepted);
         if (done.pending)
         {
             // Not while this server listens: the run gives its time commands the time lock before
@@ -244,7 +245,7 @@ private:
         }
         if (!done.accepted)
         {
-            if (done.reason == launch::reason::kOutOfRange || done.reason == launch::reason::kMissingArgument)
+            if (done.reason == reason::kOutOfRange || done.reason == reason::kMissingArgument)
             {
                 throw std::invalid_argument(done.message);
             }
@@ -252,7 +253,7 @@ private:
         }
     }
 
-    launch::TimeCommands& commands_;
+    TimeCommands& commands_;
     std::function<void()> stop_;
     mutable std::mutex mutex_; ///< after TimeCommands' mutex
     mutable control_grpc::TimeView last_view_{};
@@ -270,7 +271,7 @@ std::string actual_address(const std::string& listen, int port)
     return listen.substr(0, listen.rfind(':') + 1) + std::to_string(port);
 }
 
-class Server final : public launch::ControlEndpoint
+class Server final : public ControlEndpoint
 {
 public:
     Server(control_grpc::ServerOptions options, std::unique_ptr<LaunchTimeControl> time) :
@@ -279,14 +280,14 @@ public:
     }
     ~Server() override { end(); }
 
-    launch::ControlServerInfo start(std::shared_ptr<control::Hub> hub) override
+    ControlServerInfo start(std::shared_ptr<control::Hub> hub) override
     {
         hub_ = std::move(hub);
         control_grpc::ServerOptions o = options_;
         o.external_hub = hub_.get();
         o.time = time_.get();
         server_ = std::make_unique<control_grpc::ControlServer>(std::move(o));
-        launch::ControlServerInfo info;
+        ControlServerInfo info;
         info.address = actual_address(options_.listen, server_->port());
         info.tls = !options_.security.certificate_chain_pem.empty();
         info.credentials = !options_.security.credentials.empty();
@@ -310,14 +311,14 @@ private:
 
 } // namespace
 
-std::unique_ptr<launch::ControlEndpoint> make_control_server(control_grpc::ServerOptions options, ControlHooks hooks)
+std::unique_ptr<ControlEndpoint> make_control_server(control_grpc::ServerOptions options, ControlHooks hooks)
 {
     // A run that plays a scenario: what a client writes, and when it lets the time go on, is not
     // in the scenario's file: with it, the same scenario would not give the same result any more.
     // Reading changes nothing (the hub's subscriptions are bounded and never make the simulation
     // wait), and a stop is the run's to take as always. The rule is the controls'; the refusal is
     // the server's, in one place before the call.
-    if (auto only = hooks.controls->always_refused(launch::Entry::ControlServer))
+    if (auto only = hooks.controls->always_refused(Entry::ControlServer))
     {
         options.observe_only = control_grpc::ObserveOnly{std::move(only->reason), std::move(only->message)};
     }
@@ -325,4 +326,4 @@ std::unique_ptr<launch::ControlEndpoint> make_control_server(control_grpc::Serve
     return std::make_unique<Server>(std::move(options), std::move(time));
 }
 
-} // namespace vehicle_sil::launch_cli
+} // namespace vehicle_sil::launch
