@@ -132,7 +132,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 `paused` が `true` のイベントは、ふつう、止まった後に書きます。`--start-paused` の最初の `time` も、時刻 0 で止まってから書くので、結果の `paused_ms` は、このイベントより前から数えています。例外は次の 2 つです。どちらも、止まる予定の時刻に着いているのに、まだ止まっていない間に `true` を書きます。このときの `paused_ms` は、実際に止まってから数えます。
 
 - 始まった後 2 秒たっても、時刻 0 で止まらなかったとき（待つのをやめて書きます）。
-- 時刻を指定した `pause` や `run_until` が今の時刻以下を指していて、次のタイムステップで止まるとき。
+- 動いている間に、時刻を指定した `pause` や `run_until` が今の時刻以下を指していて、次のタイムステップで止まるとき。
 
 `command`:
 
@@ -144,10 +144,10 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `message` | 受け付けなかった理由（受け付けたら `null`） |
 | `reason` | 受け付けなかった理由のコード（[理由のコード](#理由のコード)。受け付けたら `null`） |
 | `ms` | 受け付けた `step` にだけあります。実際に進む仮想時間（タイムステップの倍数に切り上げたもの） |
-| `at_ms` | 受け付けた `run_until` と、時刻つきの `pause` にだけあります。止まる仮想時刻（タイムステップの倍数に切り上げたもの） |
+| `at_ms` | 受け付けた `run_until` と、時刻つきの `pause` にだけあります。頼んだ仮想時刻（タイムステップの倍数に切り上げたもの）。その時刻がすでに過ぎている場合を除き、止まる時刻です（「標準入力のコマンド」を見てください） |
 | `id` | 標準入力の行の `id` をそのまま返します（行になければ `null`。ほかの `source` でも `null`） |
 
-`command` を書くのは、標準入力からコマンドを受けたとき（`--stdin-commands`）と、Control Server のクライアントが時間の操作か停止を呼んだとき（`--control`）です。`run_until` と、時刻つきの `pause` は、クライアントからだけ来ます。
+`command` を書くのは、標準入力からコマンドを受けたとき（`--stdin-commands`）と、Control Server のクライアントが時間の操作か停止を呼んだとき（`--control`）です。時刻つきの `pause` は、クライアントからだけ来ます。
 
 コマンドを送って答えを待つプログラムは、自分の番号を `id` に入れ、同じ `id` の `command` のイベントを待ちます。`id` がないと、同じ名前の `command` のイベントが、ほかのプログラムが送った行への答えかもしれません。
 
@@ -195,7 +195,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 
 `ok` は「受け付けるか」の答えで、「何かが変わるか」ではありません。一時停止中も `pause` は `ok` です（受け付けて、何もしません）。`paused` が `false` でも `step` が `ok` のことがあります: `pause` を受け付けた直後でシミュレーションが止まるまでの間と、ステップを進めている間です。
 
-`pause`、`resume`、`step`、`speed`、`stop` は、標準入力のコマンドとして答えます。`run_until` と `write`（変数の書き込み）は Control Server のクライアントにしかないので、クライアントとして答えます。Control Server のない実行（`--control` なし）では、この 2 つを送る口がないので、実行の間ずっと、どちらも `ok` が `false`、理由は `no-control-server` です。シナリオの間は、この 2 つの入口で答えが違います: クライアントは時間を動かせず（`scenario-running`）、標準入力のコマンドは動かせます。上の 5 つは標準入力の答えです。
+`pause`、`resume`、`step`、`run_until`、`speed`、`stop` は、標準入力のコマンドとして答えます。`write`（変数の書き込み）は Control Server のクライアントにしかないので、クライアントとして答えます。Control Server のない実行（`--control` なし）では、`write` を送る口がないので、実行の間ずっと、`ok` が `false`、理由は `no-control-server` です。シナリオの間は、この 2 つの入口で答えが違います: クライアントは時間を動かせず（`scenario-running`）、標準入力のコマンドは動かせます。上の 6 つは標準入力の答えです。
 
 `state` を書くとき:
 
@@ -245,10 +245,10 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `not-paused` | 一時停止していないときの `step` |
 | `not-running` | シミュレーションが終わった、または始まりませんでした |
 | `scenario-running` | シナリオを再生する実行です。クライアントは変数を書けず、時間も動かせません |
-| `no-control-server` | `state` の `allowed` にだけ出ます。Control Server のない実行（`--control` なし）で、Control Server のクライアントだけが送れる操作（`run_until`、`write`）です |
+| `no-control-server` | `state` の `allowed` にだけ出ます。Control Server のない実行（`--control` なし）で、Control Server のクライアントだけが送れる操作（`write`）です |
 | `outside-real-time` | 実行につながっているものが仮想時間を待たないので、実行は実時間を保ちます。いまは、これを設定するものはありません |
 | `out-of-range` | 引数が範囲の外です（クライアントの速度、ステップ、時刻） |
-| `missing-argument` | クライアントの `run_until` に時刻がありません |
+| `missing-argument` | クライアントの `run_until` に時刻がありません（標準入力では `invalid-argument`） |
 | `not-a-time-command` | 時間のコマンドの名前ではありません |
 | `invalid-command` | コマンドでない標準入力の行: JSON のオブジェクトでない、`command` がない、64 KiB を超える |
 | `unknown-command` | 標準入力が受け付けない名前のコマンド |
@@ -516,6 +516,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `{"command":"pause"}` | 一時停止します。 |
 | `{"command":"resume"}` | 一時停止をやめて進みます。 |
 | `{"command":"step","ms":<ms>}` | 一時停止している間だけ: 仮想時間を `<ms>`（1 以上 10^12 以下の整数）だけ進めて、また止まります。 |
+| `{"command":"run_until","at_ms":<ms>}` | 進み続けて、仮想時刻 `<ms>`（0 以上 10^12 以下の整数。タイムステップの倍数に切り上げます）で一時停止します。[Control API](control-api.md) の `RunUntil` と同じで、`--control` は要りません。 |
 | `{"command":"speed","value":<速度>}` | 速度を変えます（`<速度>` は数か `"max"`。設定ファイルの `speed` と同じ範囲）。 |
 | 上のどれかに `"id":<id>` を付けたもの | 同じです。`<id>`（0 以上 2^53 以下の整数）が、その行の `command` のイベントの `id` に返ります。 |
 | 標準入力の終わり（EOF） | `stop` を 1 回受けたのと同じです（起動した側がいなくなった、パイプを閉じた）。 |
@@ -530,21 +531,22 @@ participant の `log` の終わりの側には、保証がありません。part
 | `resume` | 速度は、ここから数え直します。 |
 | `step` | タイムステップの倍数に切り上げます（`command` のイベントの `ms` が、実際に進む量です）。 |
 | `step` | 前の `step` の途中で送ると、その止まる時刻から数えます。 |
+| `run_until` | 動いている間も、一時停止している間も使えます。止まっている時刻がすでに指定の時刻以上なら、そのまま止まっていて、何も起きません。動いている間に過ぎた時刻なら、次のタイムステップで止まります。`command` のイベントの `at_ms` は、頼んだ時刻をタイムステップの倍数に切り上げたものです。過ぎた時刻では止まる時刻と一致しないので、`at_ms` を待たず、次の `paused` が `true` の `time` の `sim_ms` か `state` のイベントを見てください。 |
 | `speed` | 一時停止はそのままです。 |
 | EOF | すでに止める要求（`stop`、シグナル、閉じた標準出力）を受けていれば、何もしません（2 回目に数えません。`command` のイベントも書きません）。 |
 | それ以外 | JSON のオブジェクトでない、`command` がない、知らないコマンド、`id` が 0 以上 2^53 以下の整数でない、64 KiB を超える行がこれに当たります。 |
 | それ以外 | `--events` なら `command` のイベント（`accepted: false`、`message`、`reason`）を、なければ標準エラーに 1 行を書きます。 |
 
-オブジェクトのほかのキーは無視します。イベントを読む側が読んでいなくても、コマンドは受け付けて実行します。
+オブジェクトのほかのキーは無視します。`at_ms` を付けた `pause` は、時刻なしの `pause` として扱います（時刻で止めるには `run_until` を使います）。`--stdin-commands` のない実行でも、`state` のイベントは `run_until` を標準入力の答えとして示します。イベントを読む側が読んでいなくても、コマンドは受け付けて実行します。
 
 ### 時間のコマンドを受け付ける条件
 
-時間のコマンド（`pause`、`resume`、`step`、`speed`）は、標準入力を読むスレッドが、受け付けるかを決めて `command` のイベントを書き、それから controller に渡します。どれも待ちません（実行を進めるスレッドも、イベントを読む側も待ちません）。controller は、次のタイムステップの境目で適用します。
+時間のコマンド（`pause`、`resume`、`step`、`run_until`、`speed`）は、標準入力を読むスレッドが、受け付けるかを決めて `command` のイベントを書き、それから controller に渡します。どれも待ちません（実行を進めるスレッドも、イベントを読む側も待ちません）。controller は、次のタイムステップの境目で適用します。
 
 | 場合 | 扱い |
 |---|---|
 | `step` を、一時停止していないときに送った（`resume` の後など） | 受け付けません。 |
-| `step` を、controller ができる前（照合の間など）に送った | 受け付けません。 |
+| `step` か `run_until` を、controller ができる前（照合の間など）に送った | 受け付けません。 |
 | シミュレーションが終わった後（始まらなかったときも）の時間のコマンド | 受け付けません。 |
 | 一時停止しているときの `pause`、動いているときの `resume` | 受け付けて、何もしません。 |
 | controller ができる前（照合の間など）に受けた `pause`、`resume`、`speed` | 覚えておき、controller ができたときに渡します。 |
@@ -553,7 +555,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 一時停止しても、`phase` は `running` のままです。一時停止は `state` と `time` の `paused` で通知します。
 
-`--control` と `--start-paused` で時刻 0 のステップの前に止まる実行では、止まるより前に受け付けた `resume`、`step`、`pause` も、その後の止まり方を決めます（[control-api.md](control-api.md) の「始まる前に書く」）。
+`--control` と `--start-paused` で時刻 0 のステップの前に止まる実行では、止まるより前に受け付けた `resume`、`step`、`run_until`、`pause` も、その後の止まり方を決めます（[control-api.md](control-api.md) の「始まる前に書く」）。
 
 ### `accepted` の意味と、止めた実行の結果
 
@@ -576,7 +578,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | 項目 | 標準入力 | クライアント |
 |---|---|---|
 | `--stdin-commands` がないとき | 読みません。 | 受け付けます。 |
-| `run_until` と時刻つきの `pause` | 送れません。 | 送れます。 |
+| 時刻つきの `pause` | 送れません。 | 送れます。 |
 | シミュレーションが終わった後の停止 | `stop` を受け付けて、何もしません。 | `Stop` を拒否します。 |
 
 ## バージョンと機能の一覧（`vehicle_sil_launch version`）
@@ -620,7 +622,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "connections",
     "connect-counts",
     "state",
-    "time-policy"
+    "time-policy",
+    "stdin-run-until"
   ]
 }
 ```
@@ -680,6 +683,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `connect-counts` | つないだネットワークが実機のバスへ送ったフレームと、そこの機器から来たフレームの数（[simulation-run.md](simulation-run.md#外のバスとやりとりしたフレームの数) の「外のバスとやりとりしたフレームの数」） |
 | `state` | イベント `state`: 実行がいまどこにいるかと、いま受け付ける操作（[`state` のイベント](#state-のイベント)） |
 | `time-policy` | `check`、`run`、`test` の `--time-policy`。シミュレーションの外につながる実行は、`free` を選ばなければ実時間を保ちます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」） |
+| `stdin-run-until` | 標準入力の `run_until`（[標準入力のコマンド](#標準入力のコマンドrun---stdin-commands)を見てください） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 

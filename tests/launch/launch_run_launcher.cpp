@@ -95,6 +95,7 @@ int main(int argc, char** argv)
             {"output_closed", output_closed},
             {"path", path},
             {"pause_step", pause_step},
+            {"run_until_stdin", run_until_stdin},
             {"paused_failures", paused_failures},
             {"quitter", quitter},
             {"realtime", realtime},

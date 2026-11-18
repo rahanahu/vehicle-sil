@@ -153,15 +153,16 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | `{"command": "pause"}` | |
 | `{"command": "resume"}` | |
 | `{"command": "step", "ms": <integer>}` | 1 から `limits.step_ms_max` |
+| `{"command": "run_until", "at_ms": <整数>}` | 0 から `limits.step_ms_max` |
 | `{"command": "speed", "value": <"max" or a number>}` | `speed` と同じ範囲 |
 
 どの本体にも `"id"`（0 から 2^53 までの整数）を付けられます。サーバーはそれをコマンドの行に入れてランチャーに渡し、ランチャーはその行に答える `command` イベントの `id` に返します（`id` のない行は `null`）。画面は、自分のコマンドへの答えを、ほかの画面やランチャーの標準入力のコマンドへの答えと見分けるのに使います。サーバーは `id` を読みません。レスポンスのコマンドにも `id` が入ります。そのような数でない `id` は 400 `invalid-field`、機能 `state` のないランチャーに `id` つきのコマンドを送ると 400 `unsupported` です。
 
 サーバーは、動いている実行のランチャーの標準入力に 1 行で書き、レスポンスを待たずに返します。止まっているランチャーでリクエストが固まらないようにするためです。
 
-- 受け付けたかどうかと理由は、ランチャーの `command` のイベント（`accepted`、`message`、断った理由のコード `reason`、`id`、`step` の実際に進む `ms`）で届きます。コマンドが反映されたことは `time` のイベントで届きます。どちらも、要約の `last_command` と `time` に残ります。
+- 受け付けたかどうかと理由は、ランチャーの `command` のイベント（`accepted`、`message`、断った理由のコード `reason`、`id`、`step` の実際に進む `ms`、`run_until` の頼んだ時刻をタイムステップに切り上げた `at_ms`）で届きます。コマンドが反映されたことは `time` のイベントで届きます。どちらも、要約の `last_command` と `time` に残ります。
 - 動いている実行がなければ（終わった、始まりかけ、ランチャーの入力が閉じた、ランチャーの最後の `state` が `not-running` と言っている）409 `not-running` です。ランチャーの `allowed` にある、ほかの理由では断りません。その `allowed` は少し古いことがあるので、コマンドの答えはランチャー自身が返します。
-- その実行のランチャー（始めたときの `version --json`）の `features` に `time-commands` がなければ 400 `unsupported` です。
+- その実行のランチャー（始めたときの `version --json`）の `features` に `time-commands` がなければ 400 `unsupported` です。 `run_until` は、`features` に `stdin-run-until` もなければ 400 `unsupported` です。
 - ランチャーが入力を読まないままのときも、リクエストは長くて約 2 秒で返ります（コマンドはランチャーの入力に残ります）。
 - コマンドの意味（一時停止はステップの境目で反映される、ステップ実行は一時停止の間だけ、など）はランチャーのルールです（[docs/simulation-events.md](../../docs/ja/simulation-events.md) の「標準入力のコマンド」）。
 

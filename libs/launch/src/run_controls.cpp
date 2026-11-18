@@ -91,11 +91,10 @@ RunState RunControls::compose(const TimeFacts& facts) const
     out.allowed.pause = ask(Operation::Pause, Entry::Stdin);
     out.allowed.resume = ask(Operation::Resume, Entry::Stdin);
     out.allowed.step = ask(Operation::Step, Entry::Stdin);
+    out.allowed.run_until = ask(Operation::RunUntil, Entry::Stdin);
     out.allowed.speed = ask(Operation::Speed, Entry::Stdin);
     out.allowed.stop = ask(Operation::Stop, Entry::Stdin);
-    // Standard input has neither: as the entry that has them answers, if the run has that entry.
-    out.allowed.run_until =
-        control_server_ ? ask(Operation::RunUntil, Entry::ControlServer) : no_control_server("send run_until");
+    // Standard input has no write: as the entry that has it answers, if the run has that entry.
     out.allowed.write =
         control_server_ ? ask(Operation::Write, Entry::ControlServer) : no_control_server("write a variable");
     return out;
