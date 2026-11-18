@@ -34,6 +34,12 @@ public:
     /// Called once per health interval (RunBridgeOptions::health_interval): the monitor line to
     /// print, or nullopt when there is nothing new to say.
     [[nodiscard]] virtual std::optional<std::string> health_line() = 0;
+    /// The line of the state of the connection to the outside as it is now ("link key=value",
+    /// bridge_runtime::format_link_line()), or nullopt for a bridge that has none. run_bridge()
+    /// asks once per health interval and prints the line whenever it differs from the one
+    /// printed before (RunBridgeOptions::link_line_printed for the first). The first line is
+    /// printed by the executable before the lifecycle starts.
+    [[nodiscard]] virtual std::optional<std::string> link_line() { return std::nullopt; }
     /// The statistics line as it is now ("stats key=N ..."). Asked once per statistics interval
     /// (RunBridgeOptions::statistics_interval), only where one is given.
     [[nodiscard]] virtual std::string statistics_line() = 0;
@@ -73,6 +79,10 @@ struct RunBridgeOptions
     std::string tag = "bridge";
     /// Printed once the stop handlers are in place; it should end with "Ctrl+C to stop".
     std::string ready_line;
+    /// The link line the executable printed itself before it started the SIL Kit lifecycle (so that
+    /// a program that waits for Running has read it); run_bridge() prints the line again only where
+    /// it differs.
+    std::optional<std::string> link_line_printed;
     /// How often hooks.health_line() is asked.
     std::chrono::milliseconds health_interval{1000};
     /// How often hooks.statistics_line() is asked while the bridge runs (--stats-every-ms). The

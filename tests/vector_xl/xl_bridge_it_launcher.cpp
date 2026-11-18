@@ -28,7 +28,8 @@
 //   no-answers                registry + bridge (no echo node) with --stats-every-ms 100 + the
 //                             peer with --answers none: the bridge prints its statistics line
 //                             while it runs, a line only where it changed, and the one with every
-//                             frame sent out has xl_to_silkit=0. Only the lines while running are
+//                             frame sent out has xl_to_silkit=0, and the link line ("link bus=...")
+//                             comes before the start line, once per value. Only the lines while running are
 //                             checked, so that the bridge can be ended as on Windows.
 //   stop-request              registry + bridge: once the bridge says "Ctrl+C to stop", the
 //                             launcher asks it to stop (POSIX SIGTERM, Windows Ctrl+Break to its
@@ -382,6 +383,14 @@ int run_no_answers(const Options& options)
     ok = expect(sent.has_value() && *sent > 0, "peer sent " + (sent ? std::to_string(*sent) : std::string("?")) + " frames") && ok;
     ok = expect(!complete.empty(), "bridge printed a statistics line with silkit_to_xl == sent while running") && ok;
     ok = expect(stat(complete, "xl_to_silkit") == std::optional<unsigned long long>(0), "that line has xl_to_silkit=0") && ok;
+    // The link line: first, before the start line, then only where the value changed (the fake bus stays error active).
+    const auto firstLink = text.find("link bus=");
+    ok = expect(firstLink != std::string::npos && firstLink < text.find("Ctrl+C to stop"),
+                "the link line comes before the start line") && ok;
+    ok = expect(text.find("link bus=", firstLink + 1) == std::string::npos || text.find("link bus=active") != std::string::npos,
+                "the later link lines are about a changed value (active)") && ok;
+    ok = expect(text.find("link bus=active", text.find("link bus=active") + 1) == std::string::npos,
+                "the link line with the same value is printed once") && ok;
     std::string keys = "stats";
     for (const char* key : {"silkit_to_xl", "xl_to_silkit", "own_tx_dropped", "error_frames", "overruns", "silkit_rejected",
                             "xl_rejected", "xl_queue_full", "xl_tx_failures", "silkit_tx_failures", "xl_tx_dropped", "xl_tx_unsent"})

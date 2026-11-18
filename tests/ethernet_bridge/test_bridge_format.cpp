@@ -7,6 +7,7 @@
 #include "vehicle_sil/ethernet_bridge/ethernet_bridge.hpp"
 
 #include <cstdint>
+#include <string_view>
 
 namespace {
 
@@ -100,4 +101,11 @@ TEST_CASE(format_health_change_says_when_the_problems_stopped)
                "interface enp3s0: link up; no new problems since the last report");
     CHECK_TEXT(*format_health_change(health(LinkState::Unknown), health(LinkState::Unknown), "vsil0", true),
                "interface vsil0: link state unknown; no new problems since the last report");
+}
+
+TEST_CASE(link_line_value_names_every_link_state)
+{
+    CHECK(link_line_value(LinkState::Up) == std::string_view("up"));
+    CHECK(link_line_value(LinkState::Down) == std::string_view("down"));
+    CHECK(link_line_value(LinkState::Unknown) == std::string_view("unknown"));
 }

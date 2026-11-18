@@ -16,6 +16,12 @@
 
 namespace vehicle_sil::launch::detail {
 
+bool is_link_line(std::string_view line)
+{
+    constexpr std::string_view kWord = "link ";
+    return without_tag(line).substr(0, kWord.size()) == kWord;
+}
+
 std::optional<OutsideCounts> read_outside_counts(std::string_view tool, std::string_view line)
 {
     // The keys of each bridge: the frames it sent to the bus, and those that came from a device there.

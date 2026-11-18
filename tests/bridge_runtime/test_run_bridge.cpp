@@ -62,12 +62,15 @@ public:
     std::function<std::optional<std::string>(int)> on_fault = [](int) { return std::nullopt; };
     std::function<std::vector<std::string>(int)> on_warnings = [](int) { return std::vector<std::string>{}; };
     std::function<std::optional<std::string>(int)> on_health = [](int) { return std::nullopt; };
+    /// Called at every link_line() call with the number of the call (from 1); nullopt: no line.
+    std::function<std::optional<std::string>(int)> on_link = [](int) { return std::nullopt; };
     std::function<void()> on_final_statistics = [] {};
     std::function<std::string(int)> on_statistics = [](int) { return std::string("stats forwarded=0"); };
 
     std::optional<std::string> fault() override { return on_fault(++faults_); }
     std::vector<std::string> take_warnings() override { return on_warnings(++warnings_); }
     std::optional<std::string> health_line() override { return on_health(++healths_); }
+    std::optional<std::string> link_line() override { return on_link(++links_); }
     std::string statistics_line() override { return on_statistics(++statistics_); }
     void stop() noexcept override { events_.push_back("hooks.stop"); }
     std::vector<std::string> final_statistics() override
@@ -84,6 +87,7 @@ private:
     int faults_ = 0;
     int warnings_ = 0;
     int healths_ = 0;
+    int links_ = 0;
 };
 
 /// A participant whose states the test scripts: state() returns `next(call number from 1)`.
@@ -351,6 +355,59 @@ TEST_CASE(run_bridge_prints_no_statistics_line_before_the_first_interval)
 
     CHECK_EQ(run_bridge(participant, hooks, options), 0);
     CHECK_EQ(hooks.statistics_calls(), 0);
+    CHECK_EVENTS(events, "bridging A <-> B; Ctrl+C to stop", "stopping", "hooks.stop", "hooks.final_statistics",
+                 "stats forwarded=3", "last error: none really", "participant.stop bridge stopped", "stopped");
+}
+
+TEST_CASE(run_bridge_prints_the_link_line_only_where_it_differs_from_the_one_printed_before)
+{
+    Events events;
+    FakeHooks hooks(events);
+    hooks.on_link = [](int call) {
+        if (call == 6)
+        {
+            request_stop();
+        }
+        // up (printed by the executable already), up, down, down, up, up: a line for each change.
+        return std::string(call <= 2 ? "link link=up" : call <= 4 ? "link link=down" : "link link=up");
+    };
+    ScriptedParticipant participant(events, [](int) { return State::Running; });
+    auto options = test_options(events);
+    options.link_line_printed = "link link=up";
+
+    CHECK_EQ(run_bridge(participant, hooks, options), 0);
+    // Nothing at the end: no link line after "stopping".
+    CHECK_EVENTS(events, "bridging A <-> B; Ctrl+C to stop", "link link=down", "link link=up", "stopping", "hooks.stop",
+                 "hooks.final_statistics", "stats forwarded=3", "last error: none really",
+                 "participant.stop bridge stopped", "stopped");
+}
+
+TEST_CASE(run_bridge_prints_a_link_line_that_the_executable_did_not_print)
+{
+    Events events;
+    FakeHooks hooks(events);
+    hooks.on_link = [](int call) {
+        if (call == 3)
+        {
+            request_stop();
+        }
+        return std::string("link bus=active");
+    };
+    ScriptedParticipant participant(events, [](int) { return State::Running; });
+
+    CHECK_EQ(run_bridge(participant, hooks, test_options(events)), 0);
+    CHECK_EVENTS(events, "bridging A <-> B; Ctrl+C to stop", "link bus=active", "stopping", "hooks.stop",
+                 "hooks.final_statistics", "stats forwarded=3", "last error: none really",
+                 "participant.stop bridge stopped", "stopped");
+}
+
+TEST_CASE(run_bridge_prints_no_link_line_for_a_bridge_without_one)
+{
+    Events events;
+    FakeHooks hooks(events);
+    ScriptedParticipant participant(events, running_until_stop(4));
+
+    CHECK_EQ(run_bridge(participant, hooks, test_options(events)), 0);
     CHECK_EVENTS(events, "bridging A <-> B; Ctrl+C to stop", "stopping", "hooks.stop", "hooks.final_statistics",
                  "stats forwarded=3", "last error: none really", "participant.stop bridge stopped", "stopped");
 }
