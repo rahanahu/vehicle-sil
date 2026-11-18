@@ -510,6 +510,18 @@
       "source": "{VAR_PLURAL, plural, other {── ここで {INTERPOLATION} 行が落ちました ──}}",
       "target": "{VAR_PLURAL, plural, one {── {INTERPOLATION} line dropped here ──} other {── {INTERPOLATION} lines dropped here ──}}"
     },
+    "895206350986040304": {
+      "source": "外につなぐ",
+      "target": "Connect outside"
+    },
+    "6647473419015071120": {
+      "source": "つなぐ先の一覧は、GUI サーバーが動いている PC のものです。",
+      "target": "The targets listed are those of the computer that runs the GUI server."
+    },
+    "8405364551322063390": {
+      "source": "外につないだネットワーク",
+      "target": "Networks connected outside"
+    },
     "9054170585872214007": {
       "source": " ランチャーが先に終わったので、終わりを知らせてこなかった participant がどうなったかはわかりません。 ",
       "target": " The launcher exited first. What happened to the participants that did not report their end is unknown. "
@@ -737,6 +749,10 @@
     "5118572535897803416": {
       "source": "閉じる",
       "target": "Close"
+    },
+    "5575442561937318200": {
+      "source": "始めると外につなぐ先:",
+      "target": "The start connects outside:"
     },
     "8995777842646753773": {
       "source": "操作を受け付けられませんでした:",
