@@ -22,6 +22,8 @@
 //                                        with the same identifier and inverted data bytes, and
 //                                        every remote frame with a data frame of DLC bytes 0,1,2...
 //      VEHICLE_SIL_FAKE_XL_LOSE_DEVICE_AFTER_MS=<ms>  like set_device_lost(true), <ms> after open_driver
+//      VEHICLE_SIL_FAKE_XL_BUS_OFF_AFTER_MS=<ms>  from <ms> after open_driver, request_chip_state answers bus off
+//                                        on every channel, whatever set_chip_state says and activations do
 //  - request_chip_state on an active port queues a chip_state event with the channel's state
 //    (set_chip_state; error active, 0/0 by default); kStatusNotOnBus on an inactive port,
 //    kStatusQueueFull while set_transmit_queue_full, kStatusNoAccess while

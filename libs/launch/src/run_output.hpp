@@ -17,6 +17,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace vehicle_sil::launch::detail {
@@ -36,7 +37,11 @@ namespace vehicle_sil::launch::detail {
 /// The bridges of --connect: their statistics lines that read_outside_counts() reads are the
 /// launcher's to read while the bridge runs: they go to the log file, and their counts to the event
 /// "outside" (OutsideNote, under `mutex_`) and, at the end, to the result (take_counts()). Only the
-/// last one, the bridge's report for people, is shown, once, at the end (take_counts()).
+/// last one, the bridge's report for people, is shown, once, at the end (take_counts()). Every count
+/// of the line and each link line also go to the bridge's OutsideState (under `mutex_`, as the lines
+/// come from the reader threads); the thread that watches the simulation asks it whether the run
+/// must stop (outside_lost()), and the result gets its sums (take_link()). The change of a link
+/// says itself in one line of the launcher.
 ///
 /// Lifetime: it must outlive the participants' processes (their reader threads end in
 /// process::Process's destructor).
@@ -87,6 +92,15 @@ public:
     /// due at `now` (OutsideNote::due()). The thread that watches the simulation, at each look.
     void outside_due(std::chrono::steady_clock::time_point now);
 
+    /// Why the run must stop for a bridge at `now`: its link or bus has been down for
+    /// RunOptions::outside_lost_after. The bridge's index and the reason ("link down for 30 s"), or
+    /// empty. The thread that watches the simulation, at each look.
+    [[nodiscard]] std::optional<std::pair<std::size_t, std::string>> outside_lost(std::chrono::steady_clock::time_point now);
+
+    /// What was read of the bridge `index`'s link line and counts, added up at `now` (OutsideState::summary()).
+    /// After its output has been read to the end.
+    [[nodiscard]] OutsideLink take_link(std::size_t index, std::chrono::steady_clock::time_point now);
+
     /// The last counts of the bridge `index`, or empty if none were read; first writes the event
     /// "outside" with any that were held back (OutsideNote::flush()), then shows the last statistics
     /// line read as a line of the bridge. After its output has been read to the end, and before
@@ -104,6 +118,8 @@ private:
     void show(std::size_t index, std::string_view line) const;
     /// The event "outside" of the bridge `index` (run --events). Under the lock.
     void write_outside(std::size_t index, const OutsideCounts& counts) const;
+    /// "outside: ETH_EXT -> enp3s0: link down at 12.40 s" for a change of the link line of the bridge `index`. Under the lock.
+    void say_link_change(std::size_t index, const std::string& what, std::chrono::steady_clock::time_point now);
 
     const RunContext& ctx_;
     std::mutex mutex_;
@@ -112,6 +128,10 @@ private:
     /// Per participant: the tool of a bridge of --connect (NetworkOutside::tool), else "". Set in the constructor.
     std::vector<std::string> tools_;
     std::vector<OutsideNote> outside_; ///< per participant (only a bridge's is used); guarded by mutex_
+    /// Per participant: the bridge's link line and counts added up (only a bridge's is used); guarded by mutex_
+    std::vector<OutsideState> states_;
+    /// When this was made: the run's start in the lines that say when the link changed.
+    std::chrono::steady_clock::time_point began_ = std::chrono::steady_clock::now();
     /// Per participant: the last statistics line read (a bridge's), until take_counts() shows it; guarded by mutex_
     std::vector<std::string> last_statistics_;
 };

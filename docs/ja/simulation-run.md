@@ -386,6 +386,33 @@ network 'ETH_EXT': nothing came from a device on the real bus (vEthernet (A)) be
 vehicle_sil_launch run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>
 ```
 
+### リンクとバスの状態
+
+走っている間、`run` はブリッジのほかの行も読みます。リンクの行（Ethernet のブリッジの `link link=up|down|unknown`、CAN のブリッジの `link bus=active|passive|bus-off|unknown`。[bridges.md](bridges.md#リンクの行) と [ethernet-bridge.md](ethernet-bridge.md#リンクの行) の「リンクの行」）と、統計の行の `key=N` のすべて（上で数える 2 つだけではありません）です。知らないキーと値は読み飛ばします。リンクの行も、ブリッジの行としては出しません。変わったときは、実行の始まりからの時間を付けたランチャーの 1 行にし、`--events` では `log` イベントにします。
+
+```text
+outside: ETH_EXT -> enp3s0: link down at 12.40 s
+outside: ETH_EXT -> enp3s0: link up at 15.10 s
+```
+
+ブリッジの最初の行は、正常（`up`、`active`）なら何も言いません。`run` は、トラブルを 3 つに分けます。
+
+| 種類 | `run` がすること | 終わりに |
+|---|---|---|
+| リンクやバスがしばらく落ちていて（`link=down`、`bus=bus-off`）、ブリッジは動いている | 続けます。30 秒続いたら（`RunOptions::outside_lost_after`）、ブリッジが終わったときと同じに、シミュレーションを中断します。抜いたケーブルの差し直しや機器の再起動は数秒ですが、つなぐつもりの実行が、バスなしで最後まで走ってはいけないからです。 | 警告（`outside-link-down`、`outside-bus-off`。回数と合計の時間）。30 秒のときは誤り `connect-lost`（「link down for 30 s」「bus off for 30 s」） |
+| つながっているが、フレームが失われた | 続けます | 起きた種類ごとの警告（下）。1 フレームでも出します |
+| ブリッジが続けられない | シミュレーションを中断します | 誤り `connect-lost`（上） |
+
+失われた種類は、統計の行の数とリンクの行から見分けます。キーの表はランチャーに 1 つだけあります（`detail::kOutsideDroppedKeys`）。
+
+| 所見 | 元 |
+|---|---|
+| `outside-frames-dropped` | 次の数のどれかが 0 でない。`ext_overruns`、`ext_queue_full`、`ext_tx_failures`、`silkit_tx_failures`（Ethernet）、`overruns`、`xl_queue_full`、`xl_tx_failures`、`xl_tx_dropped`、`xl_tx_unsent`、`silkit_rejected`、`xl_rejected`、`silkit_tx_failures`（CAN）。文は 0 でない数のそれぞれを挙げます。 |
+| `outside-loop-suspected` | `loop_suspected` が 0 でない。Ethernet のブリッジが両側にある送信元 MAC アドレスを見つけ、それ以後、そのフレームを捨てている。 |
+| `outside-bus-errors` | CAN のブリッジが `bus=passive`（error passive）を報告した。文に合計の時間と `error_frames` を書きます。 |
+
+ほかの数（`own_tx_dropped`、`filtered_to_ext`、`filtered_from_ext`、`mac_unguarded`、`oversize`、`malformed`、`ext_checksum_incomplete`）はブリッジの失った分ではないので、所見にしません。結果には、ブリッジの書いたとおりに入ります。文は、何が起きたか、結果を信じてよいか、何を確かめるかを書きます。例: `network 'ETH_EXT' -> enp3s0: the link was down once, for 2.70 s in all. The run went on, but frames sent meanwhile did not reach the devices, ...`。この所見は、それまでに読んだものから、終わりに作ります。
+
 ### つなげる先の一覧（`vehicle_sil_launch connections`）
 
 ```text
@@ -859,10 +886,12 @@ passed: 0 errors, 1 warning, 1 note
 | `simulation-start` | エラー | 必須の participant がそろったのに、シミュレーションを始められなかった |
 | `participant-failed` | エラー | 実行中に必須の participant が失敗し、シミュレーションを中断した |
 | `connect-failed` | エラー | シミュレーションが始まる前に、`--connect` のブリッジが動き出せなかったので、シミュレーションを始めなかった。ファイルの participant を起動する前の失敗なら、それらも起動しなかった（[バスを外につなぐ](#バスを外につなぐ--connect)） |
-| `connect-lost` | エラー | 実行中に `--connect` のブリッジが終わったので、シミュレーションを中断した。または、シミュレーションが終わったときに、もう終わっていた |
+| `connect-lost` | エラー | 実行中に `--connect` のブリッジが終わったので、シミュレーションを中断した。または、シミュレーションが終わったときに、もう終わっていた。または、リンクやバスが 30 秒落ちていた（[リンクとバスの状態](#リンクとバスの状態)） |
 | `outside-time-changed` | 注記 | 外につながる実行を `--time-policy free` で動かし、コマンドがシミュレーションを止めたかステップで進めたか、1 以外の速さにした。その間も、つながっている相手は動いていた（実行に 1 つ。最初のそういうコマンドについて。[外につながる実行の時間](#外につながる実行の時間--time-policy)） |
 | `unsynchronized-time-changed` | 注記 | 実時間で動く participant（ステップがない）のいる実行で、コマンドがシミュレーションを止めたかステップで進めたか、1 以外の速さにした。その間も、その participant は動いていた（実行に 1 つ。最初のそういうコマンドについて） |
 | `connect-nothing-received` | 注意 | `--connect` のある実行で、ネットワークのブリッジが実機のバスへフレームを送ったのに、そこの機器から 1 つも来なかった（そういうネットワークごとに 1 つ。[外のバスとやりとりしたフレームの数](#外のバスとやりとりしたフレームの数)） |
+| `outside-link-down`、`outside-bus-off` | 警告 | シミュレーションの実行中に、つないだネットワークのリンクやバスが落ち、ブリッジは動き続けた。回数と合計の時間（[リンクとバスの状態](#リンクとバスの状態)） |
+| `outside-bus-errors`、`outside-frames-dropped`、`outside-loop-suspected` | 警告 | つないだネットワークのブリッジが error passive になった、フレームを失った（1 つでも）、MAC アドレスのループを止めた（同じ節） |
 | `exit-code` | エラー（`required: false` は警告） | participant の終了コードが 0 でない、またはシグナルで終わった（上のどれでもないとき） |
 | `did-not-end` | エラー | 必須の participant が、シミュレーションの終わりから `stop_timeout_ms` たっても動いていた |
 | `left-processes` | 警告 | participant が起動したプロセスが、その participant が終わった後も動いていた |
@@ -1004,6 +1033,7 @@ passed: 0 errors, 1 warning, 1 note
 | `participant` | `participants[]` でのブリッジの名前（`bridge.<network>`） |
 | `to_outside` | ブリッジがバスへ送ったフレームの数（Ethernet は `silkit_to_ext`、CAN は `silkit_to_xl`）。ブリッジの統計の行を 1 つも読めなければ `null` |
 | `from_outside` | バスの機器から来たフレームの数（Ethernet は `ext_from_devices`、CAN は `xl_to_silkit`）。`null` は `to_outside` と同じ（[外のバスとやりとりしたフレームの数](#外のバスとやりとりしたフレームの数)） |
+| `counts` | ブリッジの最後の統計の行の `key=N` のすべて。キーはブリッジのまま（オブジェクト。行を 1 つも読めなければ `{}`） |
 
 `participants[].control_link` のキー（[ECU の変数との接続](#ecu-の変数との接続control_link)）:
 

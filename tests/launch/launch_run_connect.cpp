@@ -181,7 +181,7 @@ std::pair<long long, long long> result_counts(const std::string& result, const s
     // Compact (events) or written out (--json).
     const std::regex counts("\"network\":\\s*\"" + network +
                             "\",\\s*\"target\":\\s*\"[^\"]*\",\\s*\"participant\":\\s*\"[^\"]*\",\\s*\"to_outside\":\\s*([0-9]+),\\s*"
-                            "\"from_outside\":\\s*([0-9]+)\\s*\\}");
+                            "\"from_outside\":\\s*([0-9]+),\\s*\"counts\":\\s*\\{[^}]*\\}\\s*\\}");
     if (!std::regex_search(result, match, counts))
     {
         return {-1, -1};
@@ -200,6 +200,10 @@ void expect_counts(const std::vector<std::string>& lines, const fs::path& logs, 
     const std::string bridge = "bridge." + network;
     std::tie(to, from) = result_counts(lines.back(), network);
     require(to >= 0 && from >= 0, network + ": the result has the counts:\n" + lines.back());
+    // Every count of the bridge's last statistics line, with its own keys.
+    require(contains(lines.back(), "\"counts\":{") && contains(lines.back(), "\"" + to_key + "\":" + std::to_string(to)) &&
+                contains(lines.back(), "\"" + from_key + "\":" + std::to_string(from)),
+            network + ": the result's counts are those of the bridge's last statistics line:\n" + lines.back());
     const std::vector<std::string> events = events_with(lines, {"\"event\":\"outside\"", "\"network\":\"" + network + "\""});
     require(!events.empty(), network + ": run --events wrote the event outside:\n" + out_of(lines));
     require(index_of(lines, {"\"name\":\"" + bridge + "\"", "\"state\":\"started\""}) <
@@ -341,9 +345,9 @@ void connect_roundtrip(const Options& base)
                 result.find("\"name\":\"bridge.ETH_EXT\"") < result.find("\"name\":\"bridge.CAN\""),
             "the result has the bridges after the participants of the file:\n" + result);
     require(std::regex_search(result, std::regex("\"outside\":\\[\\{\"network\":\"ETH_EXT\",\"target\":\"fake0\",\"participant\":"
-                                                 "\"bridge\\.ETH_EXT\",\"to_outside\":[0-9]+,\"from_outside\":[0-9]+\\},\\{\"network\":"
+                                                 "\"bridge\\.ETH_EXT\",\"to_outside\":[0-9]+,\"from_outside\":[0-9]+,\"counts\":\\{[^}]*\\}\\},\\{\"network\":"
                                                  "\"CAN\",\"target\":\"virtual:1\",\"participant\":\"bridge\\.CAN\",\"to_outside\":[0-9]+,"
-                                                 "\"from_outside\":[0-9]+\\}\\]")),
+                                                 "\"from_outside\":[0-9]+,\"counts\":\\{[^}]*\\}\\}\\]")),
             "the result has outside:\n" + result);
 #ifndef _WIN32
     // On Windows the launcher can ask only where it shares a console with the bridge, and else ends it.
@@ -378,6 +382,70 @@ void connect_no_adapter(const Options& base)
     for (const char* code : {"start", "ended-before-start", "not-joined", "exit-code", "participant-failed"})
     {
         require(finding_in(lines, code).empty(), std::string("no finding ") + code + ":\n" + out_of(lines));
+    }
+}
+
+/// connect_bus_off: the CAN controller goes bus off one second after the bridge started and stays
+/// so. The run is short of the 30 s that stop it: it goes on to its end, says the change in a line,
+/// and ends with the warning outside-bus-off (the bus-off that is still on counts to the end);
+/// --strict would fail on it.
+void connect_bus_off(const Options& base)
+{
+    const Options o = connect_options(base);
+    set_environment("VEHICLE_SIL_FAKE_XL_ECHO", "0");
+    set_environment("VEHICLE_SIL_FAKE_XL_BUS_OFF_AFTER_MS", "1000");
+    const fs::path dir = connect_dir(o, "bus_off", "stop_at_ms: 4500\n", talker(o), {{"Talker", "talk CAN"}});
+    const Captured run = launch(o, {"run", "--events", "--speed", "1", "--log-dir", "logs", "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
+    set_environment("VEHICLE_SIL_FAKE_XL_BUS_OFF_AFTER_MS", "");
+    const std::vector<std::string> lines = check_events(run.standard_output);
+    expect_code(run, 0, "run --connect with a bus that is off");
+    require(contains(lines.back(), "\"code\":\"outside-bus-off\"") &&
+                contains(lines.back(), "network 'CAN' -> virtual:1: the controller was bus off once, for ") &&
+                contains(lines.back(), "\"warnings\":1"),
+            "the warning outside-bus-off, in the result (it is made at the end):\n" + lines.back());
+    require(finding_in(lines, "connect-lost").empty(), "the run was not stopped for it:\n" + out_of(lines));
+    require(index_of(lines, {"\"event\":\"log\"", "outside: CAN -> virtual:1: bus bus-off at "}) < lines.size(),
+            "the launcher said that the bus went off:\n" + out_of(lines));
+    // The link line is for the launcher: not shown as a line of the bridge.
+    require(index_of(lines, {"\"source\":\"bridge.CAN\"", "] link bus="}) == lines.size(), "no link line of the bridge:\n" + out_of(lines));
+    require(contains(lines.back(), "\"simulation\":\"reached_stop_at\"") && contains(lines.back(), "\"counts\":{"),
+            "the run went to its end, and the result has the counts:\n" + lines.back());
+}
+
+/// connect_bus_off_lost: the CAN controller is bus off from the start and stays so (the bridge has
+/// no --bitrate, so it does not restart it). The launcher waits 30 s, the real time, and then
+/// aborts the run as for a bridge that ended: the error connect-lost with "bus off for 30 s", exit
+/// code 1, the simulation aborted, and the ECUs ended.
+void connect_bus_off_lost(const Options& base)
+{
+    const Options o = connect_options(base);
+    set_environment("VEHICLE_SIL_FAKE_XL_ECHO", "0");
+    set_environment("VEHICLE_SIL_FAKE_XL_BUS_OFF_AFTER_MS", "0");
+    const fs::path dir = connect_dir(o, "bus_off_lost", "stop_at_ms: 300000\n", talker(o), {{"Talker", "talk CAN"}});
+    const std::string timeout = std::to_string(scaled_timeout(120s).count());
+    const auto began = std::chrono::steady_clock::now();
+    const Captured run = launch(o, {"run", "--events", "--speed", "1", "--timeout-ms", timeout, "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
+    const auto took = std::chrono::steady_clock::now() - began;
+    set_environment("VEHICLE_SIL_FAKE_XL_BUS_OFF_AFTER_MS", "");
+    const std::vector<std::string> lines = check_events(run.standard_output);
+    expect_code(run, 1, "run --connect whose bus stays off");
+    require(took >= 30s && took < 30s + scaled_timeout(30s), "the run was aborted after 30 s, not before and not much later: " +
+                std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(took).count()) + " ms\n" + out_of(lines));
+    const std::string lost = finding_in(lines, "connect-lost");
+    require(contains(lost, "network 'CAN': the connection to the real bus (virtual:1) was lost while the simulation was running: "
+                           "bridge.CAN reported bus off for 30 s") &&
+                contains(lost, "\"severity\":\"error\""),
+            "the finding connect-lost:\n" + out_of(lines));
+    require(contains(lines.back(), "\"simulation\":\"aborted\"") && contains(lines.back(), "\"result\":\"failed\""),
+            "the simulation was aborted:\n" + lines.back());
+    for (const char* code : {"participant-failed", "exit-code", "outside-bus-off"})
+    {
+        require(finding_in(lines, code).empty(), std::string("no finding ") + code + ":\n" + out_of(lines));
+    }
+    for (const char* ecu : {"Pinger", "Talker"})
+    {
+        require(events_with(lines, {std::string("\"name\":\"") + ecu + "\"", "\"state\":\"ended\""}).size() == 1,
+                std::string(ecu) + " ended:\n" + out_of(lines));
     }
 }
 

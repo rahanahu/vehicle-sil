@@ -20,8 +20,8 @@
 //   time_commands.cpp    TimeCommands     pause, resume, step, run_until, speed
 //   run_assess.cpp, run_format.cpp, run_words.hpp   the findings, the result, its text and JSON
 //   run_connect.cpp      with_bridges()   run --connect: the bridges as participants of the run only
-//   run_outside.cpp      read_outside_counts(), OutsideNote   run --connect: the counts in a bridge's
-//                        statistics lines, and when the event "outside" goes out
+//   run_outside.cpp      read_outside_counts(), OutsideNote, OutsideState   run --connect: the counts in a
+//                        bridge's statistics lines, its link line, and when the event "outside" goes out
 //   timeline.cpp         TimelineRecord   run --timeline: what the scenario's engine notes
 //   timeline_format.cpp  format_timeline_json()   the file made of it (Runner::open_timeline(), write_timeline())
 //

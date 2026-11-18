@@ -2566,7 +2566,7 @@ TEST_CASE(the_outputs_of_a_connected_run_have_the_bridge_and_where_it_connects)
     CHECK(json.find("      \"name\": \"bridge.ETH\",\n      \"required\": false,\n      \"enabled\": true,\n      \"manual\": false,\n"
                     "      \"for_network\": \"ETH\",\n      \"ended\": \"stopped\",\n") != std::string::npos);
     CHECK(json.find("  \"outside\": [\n    {\n      \"network\": \"ETH\",\n      \"target\": \"eth0\",\n      \"participant\": "
-                    "\"bridge.ETH\",\n      \"to_outside\": null,\n      \"from_outside\": null\n    }\n  ],\n") != std::string::npos);
+                    "\"bridge.ETH\",\n      \"to_outside\": null,\n      \"from_outside\": null,\n      \"counts\": {}\n    }\n  ],\n") != std::string::npos);
     // The tool is not in the result.
     CHECK(json.find("vehicle_sil_ethernet_bridge") == std::string::npos);
     // Without --connect: no line, and no change in the table.
@@ -2620,16 +2620,97 @@ TEST_CASE(a_bridge_that_sent_and_got_nothing_from_a_device_is_a_note)
     CHECK(found.find("connect-lost") != std::string::npos && found.find("connect-nothing-received") == std::string::npos);
 }
 
+TEST_CASE(what_a_bridge_saw_of_the_real_bus_is_a_warning_for_each_kind)
+{
+    const auto seen = [](OutsideLink link, const char* tool = "vehicle_sil_ethernet_bridge") {
+        RunOutcome o = connected_run(stopped_bridge(0));
+        o.outside[0].tool = tool;
+        o.outside[0].link = std::move(link);
+        return o;
+    };
+    // Nothing seen: no finding.
+    CHECK(assess_run(seen({})).empty());
+    // The link: once or more, with the time in all.
+    OutsideLink down;
+    down.down_count = 1;
+    down.down_total = 2700ms;
+    RunOutcome o = seen(down);
+    const std::string found = lines(assess_run(o));
+    CHECK(found.find("W 3 outside-link-down: network 'ETH' -> eth0: the link was down once, for 2.70 s in all.") == 0);
+    CHECK(found.find("--strict") != std::string::npos && found.find("cable") != std::string::npos);
+    down.down_count = 3;
+    CHECK(lines(assess_run(seen(down))).find("the link was down 3 times, for 2.70 s in all") != std::string::npos);
+    // A warning: --strict fails, and the end of the participants decides (no event before).
+    CHECK(report_of(o, true).result() != RunResult::Passed);
+    CHECK(report_of(o).result() == RunResult::Passed);
+    CHECK(launch::detail::settled_findings(o).empty());
+    // The bus.
+    OutsideLink bus;
+    bus.bus_off_count = 2;
+    bus.bus_off_total = 1500ms;
+    CHECK(lines(assess_run(seen(bus, "vehicle_sil_vector_xl_bridge")))
+              .find("outside-bus-off: network 'ETH' -> eth0: the controller was bus off 2 times, for 1.50 s in all.") !=
+          std::string::npos);
+    OutsideLink passive;
+    passive.passive_total = 4000ms;
+    passive.counts = {{"error_frames", 17}};
+    CHECK(lines(assess_run(seen(passive, "vehicle_sil_vector_xl_bridge")))
+              .find("outside-bus-errors: network 'ETH' -> eth0: the controller was error passive for 4.00 s in all (error_frames=17).") !=
+          std::string::npos);
+    // Dropped frames, from the table only, with the counts: one frame is enough. Not the other keys.
+    OutsideLink dropped;
+    dropped.counts = {{"ext_queue_full", 1}, {"ext_tx_failures", 3}, {"oversize", 8}, {"own_tx_dropped", 4}};
+    const std::string drop = lines(assess_run(seen(dropped)));
+    CHECK(drop.find("outside-frames-dropped: network 'ETH' -> eth0: the bridge dropped frames (ext_queue_full=1, ext_tx_failures=3):") !=
+          std::string::npos);
+    CHECK(drop.find("oversize") == std::string::npos && drop.find("--tx-timeout-ms") == std::string::npos);
+    dropped.counts = {{"xl_tx_dropped", 2}};
+    CHECK(lines(assess_run(seen(dropped, "vehicle_sil_vector_xl_bridge"))).find("--tx-timeout-ms") != std::string::npos);
+    // Counts of 0 and the keys that are no losses: nothing.
+    dropped.counts = {{"ext_queue_full", 0}, {"oversize", 8}, {"malformed", 1}, {"ext_checksum_incomplete", 5}, {"filtered_to_ext", 2}};
+    CHECK(assess_run(seen(dropped)).empty());
+    // A loop.
+    OutsideLink loop;
+    loop.counts = {{"loop_suspected", 1}};
+    CHECK(lines(assess_run(seen(loop))).find("outside-loop-suspected: network 'ETH' -> eth0: the bridge stopped 1 frame whose source MAC address was on both sides (loop_suspected)") !=
+          std::string::npos);
+    loop.counts = {{"loop_suspected", 0}};
+    CHECK(assess_run(seen(loop)).empty());
+    // The simulation did not start: none.
+    o = seen(down);
+    o.simulation = SimulationEnd::NotStarted;
+    CHECK(lines(assess_run(o)).find("outside-link-down") == std::string::npos);
+}
+
+TEST_CASE(a_link_that_stayed_down_is_connect_lost_with_the_time_it_was_waited_for)
+{
+    RunOutcome o = connected_run(stopped_bridge(0));
+    o.outside[0].tool = "vehicle_sil_ethernet_bridge";
+    o.outside[0].link.down_count = 1;
+    o.outside[0].link.down_total = 31s;
+    o.outside[0].link.lost = "link down for 30 s";
+    o.simulation = SimulationEnd::Aborted;
+    o.failed_participant = "bridge.ETH";
+    const std::string found = lines(assess_run(o));
+    CHECK(found.find("E 3 connect-lost: network 'ETH': the connection to the real bus (eth0) was lost while the simulation was "
+                     "running: bridge.ETH reported link down for 30 s") == 0);
+    // connect-lost says it: not the same again.
+    CHECK(found.find("outside-link-down") == std::string::npos);
+    CHECK(launch::detail::settled_findings(o).empty());
+}
+
 TEST_CASE(the_outputs_of_a_connected_run_have_the_counts)
 {
     RunOutcome o = connected_run(stopped_bridge(0));
     o.outside[0].to_outside = 152;
     o.outside[0].from_outside = 3;
+    o.outside[0].link.counts = {{"ext_from_devices", 3}, {"ext_queue_full", 0}, {"silkit_to_ext", 152}};
     const RunReport r = report_of(o);
     CHECK(format_run_text(r).find("outside: ETH -> eth0 (bridge.ETH): 152 frames out, 3 from devices\n\n") != std::string::npos);
     o.outside[0].to_outside = 1;
     CHECK(format_run_text(report_of(o)).find("outside: ETH -> eth0 (bridge.ETH): 1 frame out, 3 from devices\n") != std::string::npos);
-    CHECK(format_run_json(r).find("\"participant\": \"bridge.ETH\",\n      \"to_outside\": 152,\n      \"from_outside\": 3\n") !=
+    CHECK(format_run_json(r).find("\"participant\": \"bridge.ETH\",\n      \"to_outside\": 152,\n      \"from_outside\": 3,\n      \"counts\": {\n"
+                              "        \"ext_from_devices\": 3,\n        \"ext_queue_full\": 0,\n        \"silkit_to_ext\": 152\n      }\n") !=
           std::string::npos);
     CHECK(lines(r.findings).empty());
 }

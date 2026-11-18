@@ -505,6 +505,8 @@ private:
 void connect_roundtrip(const Options& o);
 void connect_no_adapter(const Options& o);
 void connect_nothing_received(const Options& o);
+void connect_bus_off(const Options& o);
+void connect_bus_off_lost(const Options& o);
 void connect_lost_kill(const Options& o);
 void connect_lost_exit0(const Options& o);
 void connect_dies_while_waiting(const Options& o);

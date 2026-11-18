@@ -18,6 +18,7 @@
 #include "vehicle_sil/launch/traffic.hpp"
 #include "vehicle_sil/process/process.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -29,6 +30,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace vehicle_sil {
@@ -148,6 +150,28 @@ struct ParticipantRun
     std::uint64_t control_late_messages = 0;
 };
 
+/// What the launcher read of the state of a bridge of --connect while it ran and what it made of it
+/// (RunOutside::link; detail::OutsideState): the last statistics line's counts, how long the link
+/// or the bus was down, and why the launcher stopped the run for it. One member of RunOutside, so
+/// that the fields of what is read from the bridge stay together.
+struct OutsideLink
+{
+    /// Every key=N of the last statistics line, with the bridge's own keys; empty: none was read.
+    std::map<std::string, std::uint64_t> counts{};
+    /// "link=down" of the link line: how many times, and how long in all (a down that lasted to the
+    /// end counts to the end).
+    std::uint32_t down_count = 0;
+    std::chrono::milliseconds down_total{};
+    /// "bus=bus-off", the same.
+    std::uint32_t bus_off_count = 0;
+    std::chrono::milliseconds bus_off_total{};
+    /// How long "bus=passive" lasted in all.
+    std::chrono::milliseconds passive_total{};
+    /// Why the launcher stopped the run while the bridge itself went on ("link down for 30 s"), or
+    /// empty (OutsideState::lost()).
+    std::string lost{};
+};
+
 /// A network that the run connected to a real bus (--connect; the result's "outside").
 struct RunOutside
 {
@@ -162,6 +186,8 @@ struct RunOutside
     /// The bridge's tool (bridge_tool(), NetworkOutside::tool): which counts its line has. Not in
     /// the outputs.
     std::string tool{};
+    /// What was read of its link line and its counts, and made of them (see OutsideLink).
+    OutsideLink link{};
 };
 
 /// Whether `run` is a participant that stops the run when it ends: a bridge that run started for
@@ -355,6 +381,10 @@ public:
     virtual void end() = 0;
 };
 
+/// How long a bridge of --connect may report the link or the bus down before the launcher stops the
+/// run (RunOptions::outside_lost_after).
+inline constexpr std::chrono::milliseconds kOutsideLostAfter{30000};
+
 struct RunOptions
 {
     CheckOptions check{};
@@ -405,6 +435,9 @@ struct RunOptions
     std::function<std::string()> interrupt_name{};
     /// How often the launcher looks at the participants and the simulation.
     std::chrono::milliseconds poll{20};
+    /// How long a bridge of --connect may report the link or the bus down (link=down, bus=bus-off)
+    /// before the launcher stops the run as for a bridge that ended (OutsideState::lost()). Only tests make it shorter.
+    std::chrono::milliseconds outside_lost_after = kOutsideLostAfter;
     /// The longest the simulation may run, from its start to its end (wall clock); then it is
     /// aborted (RunOutcome::timed_out). Empty: no limit.
     std::optional<std::chrono::milliseconds> timeout{};
@@ -655,6 +688,77 @@ struct OutsideCounts
 /// first; see "Link line" in docs/bridges.md). Run does not show these lines: they are for the
 /// launcher to read, like the statistics lines.
 [[nodiscard]] bool is_link_line(std::string_view line);
+
+/// Every key=N of a statistics line of the bridge `tool`: what read_outside_counts() accepts of the
+/// line (the same refusals), with all its keys instead of two. Empty for any other line.
+[[nodiscard]] std::optional<std::map<std::string, std::uint64_t>> read_outside_stats(std::string_view tool,
+                                                                                    std::string_view line);
+
+/// The state of the link and of the bus that a link line says ("link link=down", "link bus=bus-off").
+enum class OutsideLinkValue { Unknown, Up, Down };
+enum class OutsideBusValue { Unknown, Active, Passive, BusOff };
+/// The keys of a link line that this launcher knows; a key it does not know (device, marked, shared,
+/// peers, or a new one) or a value it does not know is left out: empty.
+struct OutsideLinkLine
+{
+    std::optional<OutsideLinkValue> link{};
+    std::optional<OutsideBusValue> bus{};
+};
+/// The known keys of a link line, or empty for a line that is none (is_link_line()) or whose parts
+/// are not "key=value". A part of another form or a repeated key is skipped.
+[[nodiscard]] std::optional<OutsideLinkLine> read_outside_link_line(std::string_view line);
+
+/// What the counts of a bridge say about the frames it lost. The one table of the keys of each
+/// kind; they are the bridge's own names and change with them. Dropped: the queue was full, a send
+/// failed, a receive overran, a frame was refused. The others (own_tx_dropped, filtered_*,
+/// mac_unguarded, oversize, malformed, ext_checksum_incomplete) are not losses and are only carried.
+inline constexpr std::array<std::string_view, 11> kOutsideDroppedKeys{
+    "ext_overruns", "ext_queue_full", "ext_tx_failures", "silkit_tx_failures", "overruns",       "xl_queue_full",
+    "xl_tx_failures", "xl_tx_dropped", "xl_tx_unsent",    "silkit_rejected",    "xl_rejected"};
+/// The count of frames the bridge stopped as a loop (Ethernet).
+inline constexpr std::string_view kOutsideLoopKey = "loop_suspected";
+/// The count of error frames the CAN controller saw.
+inline constexpr std::string_view kOutsideBusErrorsKey = "error_frames";
+/// The keys of `counts` in kOutsideDroppedKeys whose count is not 0, with the counts, in
+/// the order of the table.
+[[nodiscard]] std::vector<std::pair<std::string, std::uint64_t>> dropped_counts(const std::map<std::string, std::uint64_t>& counts);
+
+/// What one bridge's link line and counts add up to. Pure like OutsideNote: time is an argument, no
+/// clock, no thread, no lock (RunOutput's mutex guards it).
+class OutsideState
+{
+public:
+    /// A link line read at `now`. true: link or bus changed (what people are told).
+    bool on_link(const OutsideLinkLine& line, std::chrono::steady_clock::time_point now);
+    /// The counts of a statistics line (the last ones are kept).
+    void on_counts(std::map<std::string, std::uint64_t> counts) { counts_ = std::move(counts); }
+    /// The link as it is now: "up", "down", "unknown", or empty before any line.
+    [[nodiscard]] std::string link_text() const;
+    /// The bus as it is now, as link_text().
+    [[nodiscard]] std::string bus_text() const;
+    /// Why the run must stop at `now`: the link or the bus has been down for `limit` or more
+    /// ("link down for 30 s", "bus off for 30 s"), else empty. The link comes first.
+    [[nodiscard]] std::string lost(std::chrono::steady_clock::time_point now, std::chrono::milliseconds limit) const;
+    /// The sums at `now` (a down or bus-off that is still on counts to `now`), with `lost` empty.
+    [[nodiscard]] OutsideLink summary(std::chrono::steady_clock::time_point now) const;
+
+private:
+    struct Span
+    {
+        std::uint32_t count = 0;
+        std::chrono::steady_clock::duration total{};
+        std::optional<std::chrono::steady_clock::time_point> since{}; ///< when the one that is on began
+        void begin(std::chrono::steady_clock::time_point now);
+        void end(std::chrono::steady_clock::time_point now);
+        [[nodiscard]] std::chrono::steady_clock::duration total_at(std::chrono::steady_clock::time_point now) const;
+    };
+    std::optional<OutsideLinkValue> link_{};
+    std::optional<OutsideBusValue> bus_{};
+    Span down_;
+    Span bus_off_;
+    Span passive_;
+    std::map<std::string, std::uint64_t> counts_;
+};
 
 /// When run --events writes the event "outside" of one bridge: when its counts have changed
 /// (on_counts()), at most once in kEvery; counts held back by that go out once kEvery has passed

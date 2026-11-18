@@ -295,6 +295,8 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     PREFIX launch_run LABELS integration launch TIMEOUT 300
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
     SCENARIOS
+      connect_bus_off
+      connect_bus_off_lost
       connect_dies_while_waiting
       connect_lost_exit0
       connect_lost_kill
