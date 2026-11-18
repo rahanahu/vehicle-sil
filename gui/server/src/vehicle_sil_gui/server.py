@@ -29,6 +29,7 @@ from .launcher import (CHECK_FIELDS, FEATURE_MANUAL, FEATURE_SCENARIO, FEATURE_S
                        RUN_FIELDS, Launcher, check_command, check_disable, check_fields, check_manual, check_params,
                        check_speed, check_time_command, check_variant,
                        command_line, run_command)
+from . import client_files
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .recording import Recording
 from .scenarios import list_scenarios, resolve_scenario
@@ -176,6 +177,8 @@ class GuiServer:
         self.static = StaticFiles(options.web_dir)
         self.timelines = Timelines()
         self.timeline_page = find_page_dir()
+        self.client_dir = client_files.find_dir()
+        self._client_warned = False  # the files that vsil/ serves are missing: said once on stderr, at the first request
         self.current: Run | None = None  # the last run started (the one the screens see)
         self._runs: set[Run] = set()  # every launcher not yet followed to its end
         self._starting = False
@@ -253,6 +256,8 @@ class GuiServer:
         app.router.add_get("/panels/{key}/{path:.*}", self.get_panel)
         app.router.add_get("/timeline", self.get_timeline_page)
         app.router.add_get("/timeline/{name:.*}", self.get_timeline_page)
+        app.router.add_get("/" + client_files.PATH.rstrip("/"), self.get_client_file)
+        app.router.add_get(f"/{client_files.PATH}{{name:.*}}", self.get_client_file)
         app.router.add_get("/{path:.*}", self.get_static)
         return app
 
@@ -447,6 +452,31 @@ class GuiServer:
         if body is None:
             return error(404, "not-found", f"GET {request.path}: {found[0]} of the timeline page cannot be read")
         return web.Response(body=body, headers={"Content-Type": found[1]})
+
+    async def get_client_file(self, request: web.Request) -> web.StreamResponse:
+        """The client library and the parts (client_files.FILES), under vsil/, for a screen of your own; no token
+        (as the timeline page). Only the names of the table are served: no path is built from the request."""
+        found = client_files.FILES.get(request.match_info.get("name", ""))
+        if found is None:
+            return error(404, "not-found", f"GET {request.path}: the GUI server serves only "
+                                           + " and ".join(f"/{client_files.PATH}{n}" for n in client_files.FILES))
+        if self.client_dir is None:  # not built when the server started: looked for again (the build may be done now)
+            self.client_dir = await asyncio.to_thread(client_files.find_dir)
+        if self.client_dir is None:
+            self._warn_client_files(client_files.missing_message(where=True))
+            return error(404, "not-found", client_files.missing_message())
+        body = await asyncio.to_thread(read_page_file, self.client_dir, request.match_info["name"])
+        if body is None:
+            message = (f"GET {request.path}: {request.match_info['name']} cannot be read: build it again with "
+                       f"`{client_files.BUILD_COMMAND}` in gui/web (in the tools archive: unpack it again)")
+            self._warn_client_files(message)
+            return error(404, "not-found", message)
+        return web.Response(body=body, headers={"Content-Type": found})
+
+    def _warn_client_files(self, message: str) -> None:
+        if not self._client_warned:  # once: the next requests get the 404 only
+            self._client_warned = True
+            log.warning("%s", message)
 
     def _scenario(self, config: ConfigFile, body: dict) -> str | None:
         """The scenario of a check or run request (None: none), when the launcher can play one."""

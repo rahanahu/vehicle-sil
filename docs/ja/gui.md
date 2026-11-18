@@ -926,6 +926,7 @@ sections:
 |---|---|
 | ライブラリのファイルやパッケージの入手 | 「[ライブラリを入手する](#ライブラリを入手する)」 |
 | 配信されるファイルと、されないファイル | 「[`--web` で配信するファイル](#--web-で配信するファイル)」 |
+| サーバーからライブラリと部品を読む | 「[`vsil/` で配るファイル](#vsil-で配るファイル)」 |
 | 画面で使えないもの（インラインのスクリプト、CDN など） | 「[CSP による制限](#csp-による制限)」 |
 | トークンの扱い | 「[トークンの受け取り](#トークンの受け取り)」 |
 | Vite などの開発サーバーとの併用 | 「[開発サーバーを使う](#開発サーバーを使う)」 |
@@ -939,9 +940,11 @@ sections:
 | 形 | ビルド済みのツールでの場所 | リポジトリで作るコマンド（`gui/web` で実行） |
 |---|---|---|
 | 1 つにまとめたファイル（`vehicle-sil-gui-client.mjs`） | `client/` と `gui_starter/` | `npm run build:client`（`build/gui-client/vehicle-sil-gui-client.mjs` ができます） |
+| 部品（`vehicle-sil-gui-elements.mjs`。上のファイルを import します） | `client/` | `npm run build:client`（`build/gui-client/vehicle-sil-gui-elements.mjs` ができます） |
 | npm のパッケージ（`vehicle-sil-gui-client-<version>.tgz`） | `client/`（リリースのページにも同じファイルがあります） | `npm run pack:client`（`build/gui-client/vehicle-sil-gui-client-<version>.tgz` ができます） |
 
 - **1 つにまとめたファイル**: 画面のディレクトリに置いて、相対パスで import します（ブラウザでも Node 22 以上でも読み込めます）。
+- **GUI サーバーから**: サーバーは、1 つにまとめたファイルと部品を `/vsil/vehicle-sil-gui-client.mjs` と `/vsil/vehicle-sil-gui-elements.mjs` で配ります。ビルドなしの画面は、写さずに使えます（`<script type="module" src="/vsil/vehicle-sil-gui-elements.mjs">`、`import { connect } from '/vsil/vehicle-sil-gui-client.mjs'`）。2 つとも `/vsil/` から読むか、2 つとも写しを読むかのどちらかにして、片方ずつは使いません。部品は client ライブラリをファイル名で import するので、写しが 2 つあると接続が 2 本になります。「[`vsil/` で配るファイル](#vsil-で配るファイル)」を見てください。
 - **パッケージ**: 自分のプロジェクトで `npm install <that .tgz>` をすると、`@vehicle-sil/gui-client` として import できます（`npm install <its URL>` でもインストールできます）。npm のレジストリには公開していません。
   - 中身は、1 つにまとめた ESM（`dist/index.js`）、型（`types/`）、`exports` を書いた `package.json`、README、LICENSE で、依存はありません。バージョンは GUI サーバーと同じです。
   - 型は、ブラウザの型（`lib` の `DOM`。`WebSocket` など）を使います。
@@ -982,11 +985,22 @@ sections:
 
 - ページの読み込みかどうかは、`Sec-Fetch-Mode: navigate`、それを送らないブラウザでは `Accept` に `text/html` があるかで判定します。
 - 拡張子のないファイルは、あっても配信しません。
-- ルートの直下の `api/`、`ws`、`panels/` はサーバーの API なので、画面のパスに使えません。
+- ルートの直下の `api/`、`ws`、`panels/`、`timeline/`、`vsil/` はサーバー自身のものなので、画面のパスに使えません。
 
 **キャッシュと Service Worker**: 画面のファイルには `Cache-Control: no-cache` を付けます（ブラウザは毎回確認するので、ビルドし直したらページを読み込み直せば新しいものが表示されます）。Service Worker は登録できません（`Service-Worker: script` の付いたリクエストは 404）。登録した Service Worker は、後で同じポートで起動したサーバーでも古い画面を表示し、その画面が新しいトークンを受け取ってしまうためです。
 
 **`baseUrl`**: クライアントの `baseUrl` は、サーバーのルートにします（`createClient({ baseUrl: new URL('/', location.href).href, ... })`）。`document.baseURI` は、`<base href="/">` のないページでは、そのときの画面のパス（`/settings/foo` など）になり、API の URL が `/settings/api/app` になってしまいます（サンプルの画面は `<base href="/">` を持つので、`document.baseURI` を使っています）。
+
+### `vsil/` で配るファイル
+
+サーバーは、自分の画面に client ライブラリと部品を配ります。ヘッダーはサンプルの画面と同じで、トークンは要りません（公開のライブラリのコードなので、時間の軸のページと同じ扱いです）。`--web` のディレクトリに `vsil/` があっても、`vsil/` はサーバーのもので、そのディレクトリのファイルは配りません。
+
+| リクエスト | 応答 |
+|---|---|
+| `GET /vsil/vehicle-sil-gui-client.mjs` | 1 つにまとめた client ライブラリ（`text/javascript`）。 |
+| `GET /vsil/vehicle-sil-gui-elements.mjs` | 部品。`./vehicle-sil-gui-client.mjs`（上の URL）を import します。 |
+| `vsil/` の下のほかの名前（ディレクトリの別のファイル、大文字小文字の違い、`..` や符号化したパス） | 404。配るのはこの 2 つの名前だけで、リクエストからパスを組み立てません。 |
+| ファイルがビルドされていない（リポジトリでは `build/gui-client/`） | 2 つのファイルの名前と、探した 2 つの場所と、すること（リポジトリでは `gui/web` で `npm ci && npm run build:client`、ビルド済みのツールの圧縮ファイルでは展開し直す）を書いた 404。サーバーはリクエストのたびに探し直すので、起動した後に作ったビルドも見つかります。最初にそのリクエストを受けたときに、標準エラーにも同じことを 1 回だけ書きます。ビルド済みのツールの圧縮ファイルでは、GUI の中にあります。 |
 
 ### CSP による制限
 
@@ -1043,6 +1057,7 @@ export default {
     strictPort: true,
     proxy: {
       '/api/': { target: gui },
+      '/vsil/': { target: gui }, // only for a screen that loads the library and the parts from the server
       '^/ws$': { target: gui, ws: true },
     },
   },

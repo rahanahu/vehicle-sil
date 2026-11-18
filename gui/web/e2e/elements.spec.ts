@@ -1,9 +1,10 @@
 // A screen made only of the parts (elements-page/: no script of its own except one line that calls connect()), served by
-// the GUI server's --web with the two bundles next to it (npm run build:client), against the replaying launcher.
+// the GUI server's --web, which loads the two bundles from the server's own vsil/ (built by npm run build:client), against
+// the replaying launcher.
 // The parts must start, pause, step and stop a run, write a variable and show it, and the page's script and the parts
 // must share one connection (one WebSocket).
 import { Locator, expect, test } from '@playwright/test';
-import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -40,11 +41,11 @@ test.beforeAll(async () => {
   test.skip(test.info().project.name !== 'static', 'only once');
   screen = mkdtempSync(join(tmpdir(), 'vehicle-sil-gui-elements-'));
   cpSync(join(__dirname, 'elements-page'), screen, { recursive: true });
+  // The page copies nothing: the server serves the bundles from here (and says what to run when they are not there)
   for (const name of BUNDLES) {
     if (!existsSync(join(BUILD, name))) {
       throw new Error(`${join(BUILD, name)} is missing: run npm run build:client in gui/web first`);
     }
-    copyFileSync(join(BUILD, name), join(screen, name));
   }
 });
 

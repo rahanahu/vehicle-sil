@@ -145,8 +145,15 @@ TEST_CASE(the_bridges_are_the_last_participants_of_the_plan_and_do_not_count_for
     {
         return;
     }
-    CHECK(plan.config().participants[0].name == "Ecu0" && plan.config().participants[0].for_network.empty());
-    CHECK(plan.config().participants[1].name == "bridge.CAN1" && plan.config().participants[1].for_network == "CAN1");
+    CHECK(plan.config().participants[0].name == "Ecu0" && plan.config().participants[1].name == "bridge.CAN1");
+    // The mark of the bridge, with what it connects: one member for each participant.
+    CHECK_EQ(plan.members.size(), std::size_t{2});
+    if (plan.members.size() != 2)
+    {
+        return;
+    }
+    CHECK(!plan.members[0].outside);
+    CHECK(plan.members[1].outside && *plan.members[1].outside == check.outside[0]);
     // The check that was given is left as it was.
     CHECK_EQ(check.config->participants.size(), std::size_t{1});
     // The outcome begins with the same participants in the same order, and the network outside.
@@ -165,12 +172,13 @@ TEST_CASE(the_bridges_are_the_last_participants_of_the_plan_and_do_not_count_for
 
 TEST_CASE(a_bridge_of_the_file_counts_for_the_step_as_any_participant_with_a_step)
 {
-    // role: bridge in the file, not a bridge that --connect adds (for_network is empty): the step
-    // divides its step too, 5 ms and 2 ms meet every 1 ms. Left out, the step would be 5 ms.
+    // role: bridge in the file, not a bridge that --connect adds (the plan does not mark it): the
+    // step divides its step too, 5 ms and 2 ms meet every 1 ms. Left out, the step would be 5 ms.
     CheckReport check = checked({5000, 2000});
     check.config->participants[1].role = ParticipantRole::Bridge;
-    CHECK(check.config->participants[1].for_network.empty());
-    CHECK(timed(check, at_speed(Speed(1.0))) == (Timed{1, 1.0}));
+    const RunPlan plan = plan_run(check, "dir", at_speed(Speed(1.0)));
+    CHECK(plan.members.size() == 2 && !plan.members[1].outside);
+    CHECK((Timed{plan.timing.time_step_ms, plan.timing.speed}) == (Timed{1, 1.0}));
 }
 
 TEST_CASE(a_check_without_a_configuration_has_no_plan)

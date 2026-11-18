@@ -176,7 +176,8 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
     {
         const ParticipantConfig& p = ctx_.config.participants[i];
         ParticipantRun& run = outcome_.participants[i];
-        const bool bridge = !p.for_network.empty();
+        const std::optional<NetworkOutside>& outside = ctx_.plan.members[i].outside;
+        const bool bridge = outside.has_value();
         if (bridge != (which == Which::Bridges))
         {
             continue;
@@ -191,10 +192,7 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
         std::vector<std::string> arguments;
         if (bridge)
         {
-            const auto outside = std::find_if(ctx_.check.outside.begin(), ctx_.check.outside.end(),
-                                              [&p](const NetworkOutside& o) { return o.network == p.for_network; });
-            arguments = bridge_run_arguments(outside != ctx_.check.outside.end() ? *outside : NetworkOutside{}, uri,
-                                             ctx_.config.start_timeout_ms);
+            arguments = bridge_run_arguments(*outside, uri, ctx_.config.start_timeout_ms);
         }
         else
         {

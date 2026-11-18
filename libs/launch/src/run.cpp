@@ -34,7 +34,7 @@
 //   its SIL Kit thread; RunStartWindow::run()): the StartShared, RunScenario::begin(),
 //   RunControl::expected_agents() and hub(), TimeCommands::hold_before_start(), and RunOutput;
 //   it reads the peers' states (gone_before_start(): the required participants and the bridges of
-//   --connect, whose mark ParticipantConfig::for_network is fixed before the run).
+//   --connect, whose mark RunPlan::members is fixed before the run).
 // - The scenario's thread (RunScenario::loop()): the scenario's engine and, with --timeline, the
 //   TimelineRecord it fills, from RunScenario::start() until the main thread joins it,
 //   RunSamples::take(), and RunOutput. The record is filled on this thread (and on the window's,
@@ -247,7 +247,7 @@ public:
       plan_(std::move(plan)), observers_(std::move(observers)),
       ctx_{plan_.config(), plan_.check, plan_, observers_, plan_.scenario(), controls, controls.time()},
       outcome_(planned_outcome(plan_)), out_(ctx_), control_(ctx_, out_),
-      samples_(participant_names(ctx_.config), detail::traffic_plan(ctx_.config, ctx_.check)), notes_(ctx_, participants_),
+      samples_(participant_names(ctx_.config), detail::traffic_plan(ctx_.config, ctx_.check, ctx_.plan.members)), notes_(ctx_, participants_),
       scenario_(ctx_, out_, control_, samples_), start_(ctx_, out_, control_, notes_, scenario_, participants_, outcome_),
       watch_(ctx_, out_, notes_, samples_, scenario_, start_, participants_, outcome_),
       participants_(ctx_, out_, outcome_, plan_.base)

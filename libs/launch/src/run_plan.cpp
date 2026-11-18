@@ -20,12 +20,20 @@ RunPlan plan_run(const CheckReport& check, std::filesystem::path base, const Run
     }
     RunPlan plan;
     plan.check = detail::with_bridges(check);
+    // with_bridges() adds one participant for each network outside, in their order, after those of
+    // the file.
+    plan.members.resize(check.config->participants.size());
+    for (const NetworkOutside& outside : check.outside)
+    {
+        plan.members.emplace_back().outside = outside;
+    }
     plan.base = std::move(base);
-    const SimulationConfig& config = plan.config();
+    // The file's participants only: a bridge of --connect runs in real time, the gate does not move it.
+    const SimulationConfig& config = *check.config;
     // 1 with the time lock, whatever was asked for (the check refuses another --speed).
     const std::optional<double> speed = planned_speed(plan.check.time_lock, options.speed, config.speed);
     // With a scenario the step does not follow the speed: the same steps at every speed.
-    plan.timing = detail::plan_time_step(config, plan.check, speed, plan.scenario() != nullptr);
+    plan.timing = detail::plan_time_step(config, check, speed, plan.scenario() != nullptr);
     plan.timing.speed = speed;
     plan.timing.coarse_step_checked = std::any_of(plan.check.findings.begin(), plan.check.findings.end(),
                                                   [](const Finding& f) { return f.code == "coarse-time-step"; });
@@ -63,8 +71,9 @@ RunOutcome planned_outcome(const RunPlan& plan)
     {
         outcome.end.timeout_ms = plan.timeout->count();
     }
-    for (const auto& p : config.participants)
+    for (std::size_t i = 0; i < config.participants.size(); ++i)
     {
+        const ParticipantConfig& p = config.participants[i];
         // Made in place: MinGW's GCC took the fields of a local that was then moved for uninitialized
         // (-Wmaybe-uninitialized), although every one has its initializer.
         ParticipantRun& run = outcome.participants.emplace_back();
@@ -73,7 +82,10 @@ RunOutcome planned_outcome(const RunPlan& plan)
         run.describe = p.describe;
         run.enabled = p.enabled;
         run.manual = p.manual;
-        run.for_network = p.for_network;
+        if (i < plan.members.size() && plan.members[i].outside)
+        {
+            run.for_network = plan.members[i].outside->network;
+        }
         run.line = p.line;
     }
     for (const NetworkOutside& o : check.outside)

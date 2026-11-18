@@ -50,7 +50,7 @@ public:
     /// Which participants start_children() starts.
     enum class Which
     {
-        Bridges, ///< the bridges of --connect (ParticipantConfig::for_network)
+        Bridges, ///< the bridges of --connect (RunMember::outside)
         Others,  ///< the participants of the file
     };
 

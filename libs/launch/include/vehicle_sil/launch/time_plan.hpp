@@ -139,7 +139,8 @@ namespace detail {
 /// The enabled participants of the file that run in real time, in the file's order: an ecu or a
 /// test participant (not a bridge) whose --describe output `check` has and names no step. The
 /// time gate does not move them, and they do not stand still when the simulation does. One with
-/// describe: false is not known, and not named.
+/// describe: false is not known, and not named. A bridge that run adds for --connect has the role
+/// bridge (detail::with_bridges()), so `config` may be the file's or the run's.
 [[nodiscard]] std::vector<std::string> real_time_peers(const SimulationConfig& config, const CheckReport& check);
 /// The step of the launcher's controller for a run at `speed` (empty: as fast as possible; `fine`:
 /// as with a speed, whatever the speed is: a run with a scenario, whose results must not depend on
@@ -152,6 +153,9 @@ namespace detail {
 ///   the enabled ECUs as `check` has them, so that every ECU step starts at a controller step (the
 ///   gate keeps real time only there); 1 ms if a participant's step is not known (describe: false)
 ///   or the divisor is no whole number of milliseconds.
+/// `config` and `check` are those of the file, before detail::with_bridges(): a bridge that run adds
+/// for --connect has no description, and would be counted as a participant whose step is not known
+/// (the step falls to 1 ms). plan_run() does it so.
 [[nodiscard]] RunTiming plan_time_step(const SimulationConfig& config, const CheckReport& check,
                                        const std::optional<double>& speed, bool fine = false);
 

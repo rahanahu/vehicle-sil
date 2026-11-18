@@ -32,10 +32,12 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 | ファイル                               | ビルド済みのツール                                    | リポジトリでビルドする（`gui/web` で実行）                                              |
 | -------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `vehicle-sil-gui-client.mjs`           | `<tools>/client/vehicle-sil-gui-client.mjs`           | `npm run build:client` が `build/gui-client/vehicle-sil-gui-client.mjs` を作る          |
-| `vehicle-sil-gui-elements.mjs`         | （アーカイブには入っていません）                      | `npm run build:client` が `build/gui-client/vehicle-sil-gui-elements.mjs` を作る        |
+| `vehicle-sil-gui-elements.mjs`         | `<tools>/client/vehicle-sil-gui-elements.mjs`         | `npm run build:client` が `build/gui-client/vehicle-sil-gui-elements.mjs` を作る        |
 | `vehicle-sil-gui-client-<version>.tgz` | `<tools>/client/vehicle-sil-gui-client-<version>.tgz` | `npm run pack:client` が `build/gui-client/vehicle-sil-gui-client-<version>.tgz` を作る |
 
 同じ `.tgz` は、リリースのページにもあります。`build/` はリポジトリの直下のもので、Git では追跡しません。
+
+GUI サーバーは、2 つの `.mjs` のファイルも、トークンなしで `/vsil/vehicle-sil-gui-client.mjs` と `/vsil/vehicle-sil-gui-elements.mjs` として配ります（リポジトリでは `build/gui-client/` から。ビルドしていないときは、実行するコマンドを言います）。ビルドなしの画面は、ここから読めば、何も写さずに済みます。
 
 - **1 つにまとめたファイル**: ブラウザでも Node（22 以上）でも読めます。`scripts/verify-gui.py` が、このファイルを Node から使う例を、記録を再生するランチャーを相手に動かして確認します。
 - **パッケージ**: 中身は、1 つにまとめた ESM、`.d.ts`、`exports`、README、LICENSE です（作り方は `pack.mjs`）。バージョンは GUI サーバーと同じです。型はブラウザの型（`lib` の `DOM`）を使います。エントリーポイントは `.`、`./elements`、`./timeline` です（`testing` と `internal` は入りません）。
@@ -381,7 +383,7 @@ stop(); // 最後の購読を解除すると、サーバーに値を頼むのを
 変数は、`client.variable()` と同じ `ECU.variable`（最初の点で切る）で書きます。
 
 ```html
-<script type="module" src="./vehicle-sil-gui-elements.mjs"></script>
+<script type="module" src="/vsil/vehicle-sil-gui-elements.mjs"></script>
 <vsil-status></vsil-status> <vsil-run-controls></vsil-run-controls>
 <label>Throttle <vsil-slider variable="Engine.engine.throttle"></vsil-slider></label>
 <vsil-write
@@ -401,7 +403,7 @@ stop(); // 最後の購読を解除すると、サーバーに値を頼むのを
 ### 部品が守ること
 
 - **ページの接続。** 部品は引数なしで `connect()` を呼びます。ページのスクリプトと部品は 1 つの接続（WebSocket 1 本）を共有し、自分のボタンの失敗も `<vsil-status>` に出ます。別の接続を使わせるには、部品の `client` プロパティに渡します（文書に入っていれば結び直します）。
-- **ファイルの組は 1 つ。** パッケージか 1 ファイルの束のどちらか一方を使い、両方は使いません。部品は本体の入口を import し、写しを持ちません。プロジェクトでは（パッケージ）、部品も自分のスクリプトも `@vehicle-sil/gui-client` を import します。1 ファイルの束では、`vehicle-sil-gui-elements.mjs` を `vehicle-sil-gui-client.mjs` の隣に置き、ライブラリーは同じファイルから import します。ライブラリーの写しが 2 つあると、接続も 2 本になります。
+- **ファイルの組は 1 つ。** パッケージ、1 ファイルの束の写し、GUI サーバーの `/vsil/` のファイルのどれか 1 つを使い、混ぜません。部品は本体の入口をファイル名で import し、写しを持ちません。プロジェクトでは（パッケージ）、部品も自分のスクリプトも `@vehicle-sil/gui-client` を import します。写しでは、`vehicle-sil-gui-elements.mjs` を `vehicle-sil-gui-client.mjs` の隣に置き、ライブラリーは同じファイルから import します。サーバーからでは、部品を `/vsil/vehicle-sil-gui-elements.mjs`、ライブラリーを `/vsil/vehicle-sil-gui-client.mjs` から読みます（部品の import は、そのファイルになります）。ライブラリーの写しが 2 つあると（たとえばページの隣に置いたライブラリーの写しと、`/vsil/` の部品）、接続も 2 本になります。
 - **自分のマークアップと CSS。** 影の DOM はありません。部品は足した `<span class="vsil">` に描き、要素の中に置いた子は残します。CSS のために `data-*` を付けます: `data-link`、`data-run`、`data-pacing`（`<vsil-status>`）、`data-stale`、`data-can-write`、`data-on`（変数の部品）、`data-status`（`<vsil-scenario-result>` とその手順）、`<vsil-run-controls>` と `<vsil-time-controls>` の各ボタンと速さの選択の `data-reason` と `data-caution`（あれば理由のコード）。
 - **使えないボタン**は `disabled` にせず `aria-disabled="true"` にします（フォーカスを保ちます）。押しても何も起きず、理由は `aria-describedby` の先の要素に文として入ります（速さの選択も同じ）。何もすることがないと言うだけの理由（`not-running`、`offline`）もその要素に入りますが、要素は `hidden` です。読み上げは読み、画面には各ボタンの隣に繰り返しません（`<vsil-status>` が状態を出します）。変数がもうその値のときの `<vsil-write>` も同じです（"already false"）。書けない、または範囲のないスライダーは `disabled` で、理由はその隣に出ます。
 - **寿命。** 部品は文書に入ると購読し、外れると全部止めます。接続を待つ間に外れたら、何も描きません。`variable` などの属性が変わると結び直します。

@@ -18,6 +18,7 @@ For an introduction, see [gui.md](gui.md).
 | API specification and examples | `gui/protocol` |
 | Client library | `gui/client/src` |
 | Sample screens | `gui/web/src/app` |
+| The client library and the parts served to a screen of your own (`vsil/`) | `gui/server/src/vehicle_sil_gui/client_files.py` and `get_client_file()` in `server.py`; the files are listed again in `CLIENT_BUNDLES` of `scripts/package.py`; test: `gui/server/tests/test_client_files.py` |
 
 - Tests: `gui/server/tests` (pytest), the unit tests of `gui/client/src` and `gui/web/src/app`, `gui/web/e2e` (Playwright)
 - `ctest -R`: not in CTest. Run them with `scripts/verify-gui.py` (`-k` narrows the server tests; `--skip-web`) and `scripts/verify-web.py`.

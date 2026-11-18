@@ -45,7 +45,7 @@ Run these in `gui/web/`. Each reports success or failure through its exit code.
 | `npm run test:client`     | Type check and unit tests of the client library (`../client`) (Vitest; the library on Node, the parts in a headless Chromium; no Angular)                          |
 | `npm run test:timeline`   | Unit tests of the timeline element (`../timeline/viewer.js`) (Node's test runner; no DOM), after checking that `../timeline/vehicle-sil-timeline.js` is up to date |
 | `npm run bundle:timeline` | Makes `../timeline/vehicle-sil-timeline.js` from `messages.js`, `timeline.css` and `viewer.js`                                                                     |
-| `npm run build:client`    | Bundles the client library into one ESM file                                                                                                                       |
+| `npm run build:client`    | Bundles the client library and the parts into two ESM files                                                                                                        |
 | `npm run pack:client`     | Packs the client library as a typed npm package                                                                                                                    |
 | `npm run lint`            | ESLint (angular-eslint). Warnings also fail                                                                                                                        |
 | `npm run format:check`    | Checks Prettier formatting (`../client` and `../timeline` too; settings in `../.prettierrc`)                                                                       |
@@ -55,7 +55,7 @@ Run these in `gui/web/`. Each reports success or failure through its exit code.
 | `npm run i18n:extract`    | Writes the text to translate to `build/i18n/messages.json` (`build/` at the top of the repository)                                                                 |
 
 - `npm start` forwards `/api/` and `/ws` to the GUI server (127.0.0.1:8765) (`proxy.conf.mjs`; the port comes from the environment variable `GUI_PORT`).
-- `npm run build:client` writes `../../build/gui-client/vehicle-sil-gui-client.mjs`. It uses the esbuild that comes with the Angular build tools.
+- `npm run build:client` writes `../../build/gui-client/vehicle-sil-gui-client.mjs` and `vehicle-sil-gui-elements.mjs` (the parts, which import the first). The GUI server serves both under `/vsil/`. It uses the esbuild that comes with the Angular build tools.
 - `npm run pack:client` writes `../../build/gui-client/vehicle-sil-gui-client-<version>.tgz`, then installs it to check it (`../client/pack.mjs`).
 - `npm run lint` also lints `../client` and `../timeline`, each with its own `eslint.config.js` (plain ESLint, not angular-eslint).
 - `npm run e2e` and `npm run e2e:real` need `npm run build` first.
