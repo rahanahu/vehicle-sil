@@ -313,11 +313,17 @@ void manual_frozen(const Options& o)
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish_unchecked(60s);
         lateByHand.thaw();
-        require(status && status->code == 0,
-                "a stop ends a run that waits for a frozen participant (0), not " +
+        // Before the start, the stop ends the run without errors (0). Once the simulation runs, frozen
+        // Late keeps it from shutting down, and the participants that wait in their step for Late may
+        // not end when asked: the stopped run then reports those errors (1, result failed).
+        const bool cleanly = status && status->code == 0;
+        require(cleanly || (running && status && status->code == 1),
+                "a stop ends a run that waits for a frozen participant (0, or 1 with errors once it ran), not " +
                     (status ? std::to_string(status->code) : std::string("still running")) + ":\n" + out_of(lines));
         check_events(lines);
-        require(contains(lines.back(), "\"result\":\"stopped\"") && contains(lines.back(), "\"interrupted_by\":\"stop command\""),
+        require(contains(lines.back(), cleanly ? "\"result\":\"stopped\"" : "\"result\":\"failed\"") &&
+                    contains(lines.back(), "\"end\":\"stopped\"") &&
+                    contains(lines.back(), "\"interrupted_by\":\"stop command\""),
                 "the run was stopped by the command:\n" + lines.back());
         require(!contains(lines.back(), "connection-not-closed"),
                 "the launcher closed its SIL Kit connection, with Late frozen:\n" + lines.back());
