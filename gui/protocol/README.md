@@ -80,8 +80,9 @@ Every `api/` request has these conditions:
 |---|---|---|
 | `GET api/app` | Information on the server and the launcher, whether variables can be read and written, limits | `app.json` |
 | `GET api/configs` | The `.yaml` / `.yml` files under the root | `configs.json` |
-| `POST api/check` `{file, disable, enable, manual, scenario, variant, params, strict}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
-| `POST api/run` `{file, disable, enable, manual, scenario, variant, params, strict, speed, start_paused}` | `{session}` (the summary of the run it started), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `error-check-failed.json` |
+| `POST api/check` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/run` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{session}` (the summary of the run it started), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `run-connect.json`, `error-check-failed.json` |
+| `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: where that network can be connected on this computer ("Connecting a network outside" below) | `connections.json` |
 | `POST api/stop` `{force}` | `{session}` (the current summary; `null` if there is no run) | `stop*.json` |
 | `POST api/time` `{command, ms, value, id}` | `{session_id, command}` (the command sent to the launcher, with its `id` if given) | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}` (the operation number; the result arrives as `operation` over WebSocket) | `write.json` |
@@ -95,7 +96,7 @@ Every `api/` request has these conditions:
 - Each file in `api/configs` has `path` (relative to the root, separated by `/`), `modified`, `size` and `simulation` (whether it starts with `vehicle_sil_simulation`). The list as a whole has `truncated`.
 - `check` in the `api/check` response is the result of `check --json` as is. The response is 200 even if the check fails.
 - For `api/write`, see "ECU variables" below; for `api/scenarios` and `scenario`, "Scenarios"; for `api/recording`, "Recording actions (`api/recording`)"; for `api/timeline`, "Timeline of a scenario run (`api/timeline`)"; for `api/dashboard`, "Dashboard files". The `file` of `api/dashboard` goes through the same checks as for `api/check` (`invalid-path`, `outside-root`, `not-a-configuration`, `file-not-found`).
-- Once the server has begun to shut down, `api/run`, `api/check` and `api/write` return 503 `shutting-down`.
+- Once the server has begun to shut down, `api/run`, `api/check`, `api/connections` and `api/write` return 503 `shutting-down`.
 
 ### `disable` and `manual`
 
@@ -119,12 +120,25 @@ Send `speed` (`"max"` or a number) and `start_paused` (`true`) to choose them. L
 - A numeric `speed` must be from `limits.speed_min` to `limits.speed_max` (the same as the launcher).
 - Without `speed`, the `speed` of the configuration file applies.
 
+### Connecting a network outside (`connect`, `time_policy`, `api/connections`)
+
+A `can` or `ethernet` network can be connected to a real bus through the launcher's bridge (see "Connecting a bus outside (`--connect`)" in [docs/simulation-run.md](../../docs/simulation-run.md#connecting-a-bus-outside---connect)). A screen does it in three steps:
+
+1. **List**: `POST api/connections` `{"file": "simulation.yaml", "network": "ETH_EXT"}` runs `connections --json --network ETH_EXT` of the launcher and answers `{file, network, exit_code, connections}`. `connections` is the launcher's JSON as is ("`connections --json`" in docs/simulation-run.md): `networks[]` has one entry for each backend of this OS, and `list.targets[]` has `value`, `label`, `detail`, `usable` and `reason`. Ask for a network only when the user opens it: only that network's bridge is started, so a computer that runs SIL Kit only gets no Npcap prompt. `network` must be a name in `networks[].name` of the last check of that file (the server checks the file without an intent when it has none, or when the file has changed since); otherwise the answer is 400 `unknown-network`, with the names in `detail.networks`. The list waits in the queue of the checks (503 `check-busy` as for `api/check`). Example: `connections.json`.
+2. **Choose**: send `connect` `{"<network>": "<target>"}` in `api/check` and `api/run`, with a `value` of the list. `"none"` keeps the network on SIL Kit only and needs no list.
+3. **Check and start**: the check says where each network goes (`networks[].outside`) and whether the run keeps real time (`time_lock`). `time_policy` (`"free"`) lifts that lock; the launcher decides what it means and whether pause, step and speed are allowed (`allowed` of the summary). The server passes `connect` and `time_policy` on in the request file and has no rule of its own about the time. Examples: `check-connect.json`, `run-connect.json`.
+
+**The guard (`target-not-listed`)**: a target other than `"none"` is passed on only if the last list of that network of that file gave it with `usable: true`, written exactly so, and the file has not changed since that list. Otherwise `api/check` and `api/run` answer 400 `target-not-listed` (`detail` `{network, target}`) and nothing is started: list the network again and choose from it. So a value from the browser reaches a bridge's device only when the launcher has listed it on this computer. Each new list of a network replaces the one before, and a list that fails (502 `launcher-output`) leaves none. Example: `error-target-not-listed.json`.
+
+- The server does not remember the choice from one run to the next: a screen keeps it if it wants to.
+- The launcher's `outside` events and `outside[]` of its `state` event are passed on as they are.
+
 ### Check and start (`api/check`, `api/run`)
 
 - **Start**: of several `api/run` requests sent at the same time, only one starts a run. The others get 409 `starting` while a run is starting, and 409 `already-running` while a run is running. A screen applies the summary in the response to its local state at once (the `session` that arrives later has the same contents).
 - **Start after a check**: `api/run` first checks what the run is made of (the same request file as the run's), in the same queue as `api/check`. If the check does not pass (`result` is not `passed`), no run is started and the response is 422 `check-failed`. Its `detail` is `{result, findings}`: `result` is the check's `result` (`failed`, `unreadable` or `usage`), and `findings` are the `findings` that `api/check` returns for the same request (the same objects). A check that passes with warnings or notes starts the run. Fix the findings, then send `api/run` again; the request is refused before anything is started, so there is nothing to stop. Example: `error-check-failed.json`.
-- **The intent and the request file**: the body is `file` (this server's field: the configuration file, relative to the root) and the keys of the launcher's request file (`schema/run-request.schema.json`; "Request files (`--request`)" in [docs/simulation-run.md](../../docs/simulation-run.md#request-files---request)), with the same names and value forms: `variant` (a string), `params` (an object of parameter name to a string, a number or a boolean), `scenario`, `disable`, `enable` and `manual` (lists of participant names), `strict` (a boolean), `speed` and `start_paused` (for `api/check` too: the launcher's check uses them for its rules about time and about a scenario). `vehicle_sil_run_request` may be sent as `1`, and `$schema` as a text (it is dropped). The names of the keys and the forms of the values are those of the request file; `file` is added, and `scenario` is a name from the listing of `api/scenarios`, not a path from the directory of the configuration file. The server checks the form of each value (the body is at most 64 KiB) and the paths (`file`; `scenario` against the listing of `api/scenarios`), writes the intent into a request file of its own (readable by this user only; removed when the check or the run has ended) and gives the launcher `--request <that file>`. What the values mean for the file (is there that variant, can `disable` and `manual` be used together, does the scenario have those `params`) is the launcher's to say: it shows as a finding (`api/check`) or as 422 `check-failed` (`api/run`), and a finding that is about the request file names it "the request" (the temporary file is gone by the time you read it). The names that `disable` and `manual` may take are those of the check of that variant.
-- **A choice that is not made is a key that is left out.** A `null` is refused (400 `invalid-field`). `connect` and `time_policy` of the request file are not taken yet (400 `unsupported`). The keys of the launcher's side of a run (`control`, `timeline`, `log_dir` and others) are unknown fields (400 `invalid-field`): the server decides them. The `scenario` to send is the `path` that `api/scenarios` lists (relative to the root); the server writes it relative to the directory of the configuration file, which is where the request file reads it from. A launcher without the feature `request` cannot be used (`api/app` says so in `launcher.problems`).
+- **The intent and the request file**: the body is `file` (this server's field: the configuration file, relative to the root) and the keys of the launcher's request file (`schema/run-request.schema.json`; "Request files (`--request`)" in [docs/simulation-run.md](../../docs/simulation-run.md#request-files---request)), with the same names and value forms: `variant` (a string), `params` (an object of parameter name to a string, a number or a boolean), `scenario`, `disable`, `enable` and `manual` (lists of participant names), `strict` (a boolean), `connect` (an object of network name to target) and `time_policy` (a string) ("Connecting a network outside" above), `speed` and `start_paused` (for `api/check` too: the launcher's check uses them for its rules about time and about a scenario). `vehicle_sil_run_request` may be sent as `1`, and `$schema` as a text (it is dropped). The names of the keys and the forms of the values are those of the request file; `file` is added, and `scenario` is a name from the listing of `api/scenarios`, not a path from the directory of the configuration file. The server checks the form of each value (the body is at most 64 KiB) and the paths (`file`; `scenario` against the listing of `api/scenarios`), writes the intent into a request file of its own (readable by this user only; removed when the check or the run has ended) and gives the launcher `--request <that file>`. What the values mean for the file (is there that variant, can `disable` and `manual` be used together, does the scenario have those `params`) is the launcher's to say: it shows as a finding (`api/check`) or as 422 `check-failed` (`api/run`), and a finding that is about the request file names it "the request" (the temporary file is gone by the time you read it). The names that `disable` and `manual` may take are those of the check of that variant.
+- **A choice that is not made is a key that is left out.** A `null` is refused (400 `invalid-field`). The keys of the launcher's side of a run (`control`, `timeline`, `log_dir` and others) are unknown fields (400 `invalid-field`): the server decides them. The `scenario` to send is the `path` that `api/scenarios` lists (relative to the root); the server writes it relative to the directory of the configuration file, which is where the request file reads it from. A launcher without the feature `request` cannot be used (`api/app` says so in `launcher.problems`).
 - **Check**: `api/check` requests sent at the same time are not rejected; they run one at a time. If too many requests are waiting, or the wait exceeds the check time limit (`limits.check_timeout_s` in `api/app`), the response is 503 `check-busy`. `api/run` also runs a check in the same queue.
 
 ### Stop (`api/stop`)
@@ -175,6 +189,8 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 400 | `outside-root` | Absolute path, `..`, symbolic link out of the root |
 | 400 | `not-a-configuration` | Not a regular `.yaml` / `.yml` file |
 | 400 | `unknown-participant` | A name in `disable` or `manual` is not in the check result |
+| 400 | `unknown-network` | `api/connections`: `network` is not in the last check of that file (`detail` holds `{network, networks}`) |
+| 400 | `target-not-listed` | A target of `connect` (other than `none`) is not usable in the last list of that network of that file, or the file has changed since (`detail` holds `{network, target}`; "Connecting a network outside" above). Example: `error-target-not-listed.json` |
 | 400 | `scenario-not-listed` | `scenario` is not one of the scenarios that `api/scenarios` lists for that configuration file (no `scenarios`, a link, a file elsewhere) |
 | 400 | `unsupported` | Uses a feature the launcher does not have (which: below the table) |
 | 400 | `unknown-variable` | `api/write`: the participant or variable is not in the run's variable list (`detail` holds `{peer, name}`) |
@@ -199,26 +215,26 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 415 | `unsupported-media-type` | There is a body, but not `Content-Type: application/json` |
 | 500 | `internal` | A server bug (no example; if it happens, look at stderr) |
 | 502 | `launcher-start` | The launcher cannot be started |
-| 502 | `launcher-output` | `check --json` did not write a check result |
+| 502 | `launcher-output` | `check --json` did not write a check result, or `connections --json` no list |
 | 502 | `write-failed` | `api/write`: the write did not reach the Control Server (disconnected) |
 | 503 | `launcher-unusable` | The launcher cannot be used (the reason is in `launcher.problems` of `api/app`) |
-| 503 | `check-busy` | Too many checks waiting, or waiting too long |
+| 503 | `check-busy` | Too many checks (and lists of `api/connections`) waiting, or waiting too long |
 | 503 | `write-busy` | `api/write`: an earlier write is waiting for the Control Server's response and this one did not get its turn (not sent) |
 | 503 | `shutting-down` | The server is shutting down |
 | 503 | `too-many-connections` | WebSocket connection limit (handshake response) |
 | 500 | `request-file` | The temporary file that carries the request to the launcher could not be made (no space, or a temporary directory that cannot be written: set `TMPDIR`) |
-| 504 | `check-timeout` | The check did not finish within the time limit (it was stopped) |
+| 504 | `check-timeout` | The check (or the list of `api/connections`) did not finish within the time limit (it was stopped) |
 | 504 | `write-timeout` | `api/write`: the Control Server did not answer in time (`limits.write_timeout_s`). It may have received the write (do not resend) |
 
-- `api/check` and `api/run` take the same fields: `file`, `$schema`, `vehicle_sil_run_request`, `scenario`, `variant`, `params`, `disable`, `enable`, `manual`, `strict`, `speed` and `start_paused`. Any other field (a misspelled one, or a key of the launcher's side) and any `null` give 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
-- Fields covered by `invalid-field`: `speed`, `start_paused`, `variant`, `params`, `enable`, `strict`, `force`, `disable`, `manual` (also the same name twice), `command`, `ms` and `value` of `api/time`, `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
-- Cases of `unsupported`: `connect` or `time_policy` sent to `api/check` or `api/run`; `api/time` sent when the launcher lacks `time-commands`; `api/write` sent when the launcher lacks `control-server`.
+- `api/check` and `api/run` take the same fields: `file`, `$schema`, `vehicle_sil_run_request`, `scenario`, `variant`, `params`, `disable`, `enable`, `manual`, `strict`, `connect`, `time_policy`, `speed` and `start_paused`. `api/connections` takes `file` and `network`. Any other field (a misspelled one, or a key of the launcher's side) and any `null` give 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
+- Fields covered by `invalid-field`: `speed`, `start_paused`, `variant`, `params`, `enable`, `strict`, `connect`, `time_policy`, `network`, `force`, `disable`, `manual` (also the same name twice), `command`, `ms` and `value` of `api/time`, `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
+- Cases of `unsupported`: `api/time` sent when the launcher lacks `time-commands`; `api/write` sent when the launcher lacks `control-server`.
 
 The example files. The GUI server's tests check the other codes.
 
 | File | Contents |
 |---|---|
-| `error-already-running.json`, `error-check-failed.json`, `error-not-writable.json`, `error-scenario-not-listed.json`, `error-scenario-running.json`, `error-session-changed.json` | HTTP errors |
+| `error-already-running.json`, `error-check-failed.json`, `error-not-writable.json`, `error-scenario-not-listed.json`, `error-scenario-running.json`, `error-session-changed.json`, `error-target-not-listed.json` | HTTP errors |
 | `error-invalid-watch.json` | WebSocket `error` |
 | `stop.json`, `stop-force.json`, `stop-ended.json` | Stop responses |
 | `time.json` | Time command response |

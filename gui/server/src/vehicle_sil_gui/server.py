@@ -15,7 +15,7 @@ import json
 import logging
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,11 +24,12 @@ from aiohttp import WSCloseCode, WSMsgType, web
 from . import __version__, control, dashboard, process
 from .allowed import Facts, Numbered, allowed as allowed_of
 from .hub import Client, Hub, Outgoing, encode
-from .launcher import (REQUEST_FIELDS, FEATURE_SCENARIO_CONTROL, FEATURE_STATE, FEATURE_STDIN_RUN_UNTIL,
-                       FEATURE_TIME_COMMANDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, InvalidRequest,
-                       Launcher, check_command, check_disable, check_enable, check_fields, check_manual,
-                       check_params, check_speed, check_strict, check_time_command, check_variant, command_line,
-                       hide_request, hide_request_in_line, run_command, write_request_file)
+from .launcher import (CONNECTIONS_FIELDS, NO_CONNECTION, REQUEST_FIELDS, FEATURE_SCENARIO_CONTROL, FEATURE_STATE,
+                       FEATURE_STDIN_RUN_UNTIL, FEATURE_TIME_COMMANDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN,
+                       STEP_MS_MAX, InvalidRequest, Launcher, check_command, check_connect, check_disable,
+                       check_enable, check_fields, check_manual, check_network, check_params, check_speed,
+                       check_strict, check_time_command, check_time_policy, check_variant, command_line,
+                       connections_command, hide_request, hide_request_in_line, run_command, write_request_file)
 from . import client_files
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .recording import Recording
@@ -84,6 +85,14 @@ COMMON_HEADERS = {
 }
 
 log = logging.getLogger("vehicle_sil_gui")
+
+
+def remember(cache: dict, key: object, value: object) -> None:
+    """Puts the value in a cache of at most MAX_NAMES_CACHED entries, as the newest (the oldest goes first)."""
+    cache.pop(key, None)
+    cache[key] = value
+    while len(cache) > MAX_NAMES_CACHED:
+        del cache[next(iter(cache))]
 
 
 def error(status: int, code: str, message: str, detail: object = None) -> web.Response:
@@ -193,6 +202,11 @@ class GuiServer:
         self._checks: set[asyncio.subprocess.Process] = set()  # the checks and the launcher's version probes
         self.launcher.track = self._checks
         self._names: dict[tuple[str, str | None], tuple[tuple, list[str]]] = {}
+        # The networks of each file, from its last check that gave them: (the file's stamp, names).
+        self._networks: dict[str, tuple[tuple, list[str]]] = {}
+        # Of each (file, network), the targets that its last list (POST api/connections) gave as usable, with the
+        # file's stamp then: the only targets that a check or a run passes on (see _check_targets).
+        self._targets: dict[tuple[str, str], tuple[tuple, frozenset[str]]] = {}
         self._sockets: dict[web.WebSocketResponse, web.BaseRequest] = {}
         self._unauthenticated: dict[web.WebSocketResponse, None] = {}  # oldest first
         self._authenticated: set[web.WebSocketResponse] = set()
@@ -244,6 +258,7 @@ class GuiServer:
         app.router.add_get("/api/app", self.get_app)
         app.router.add_get("/api/configs", self.get_configs)
         app.router.add_post("/api/check", self.post_check)
+        app.router.add_post("/api/connections", self.post_connections)
         app.router.add_post("/api/run", self.post_run)
         app.router.add_post("/api/stop", self.post_stop)
         app.router.add_post("/api/time", self.post_time)
@@ -496,14 +511,38 @@ class GuiServer:
         start_paused = body.get("start_paused", False)
         if not isinstance(start_paused, bool):
             raise InvalidRequest("invalid-field", "start_paused must be true or false")
+        connect = check_connect(body.get("connect"))
+        time_policy = check_time_policy(body.get("time_policy"))
+        self._check_targets(config.relative, connect)
         wanted, wanted_manual = body.get("disable"), body.get("manual")
         known = await self.participant_names(config.relative, variant) if always or wanted or wanted_manual else []
         disable, manual = check_disable(wanted, known), check_manual(wanted_manual, known)
         intent = {"variant": variant, "params": params or None,
                   "scenario": relative_to_config(config, scenario) if scenario is not None else None,
                   "disable": disable or None, "enable": enable or None, "manual": manual or None,
-                  "strict": strict or None, "speed": speed, "start_paused": start_paused or None}
+                  "strict": strict or None, "speed": speed, "start_paused": start_paused or None,
+                  "connect": connect or None, "time_policy": time_policy}
         return {k: v for k, v in intent.items() if v is not None}, disable, manual
+
+    def _check_targets(self, relative: str, connect: dict[str, str]) -> None:
+        """The guard between the browser and the bridges' devices: a target other than "none" is passed on only when
+        the last list of that network of that file (POST api/connections), made from the file as it is now, gave it
+        as usable, exactly so written. Refused 400 target-not-listed otherwise."""
+        for network, target in connect.items():
+            if target == NO_CONNECTION:
+                continue
+            listed = self._targets.get((relative, network))
+            if listed is None or listed[0] != self._stamp(relative):
+                why = (f"there is no list of where {network!r} of {relative} can be connected" if listed is None else
+                       f"{relative} has changed since {network!r} was listed")
+            elif target not in listed[1]:
+                why = f"the last list of {network!r} of {relative} does not have {target!r} as usable"
+            else:
+                continue
+            raise Refused(400, "target-not-listed",
+                          f"{why}: ask POST api/connections {{\"file\": {json.dumps(relative)}, \"network\": "
+                          f"{json.dumps(network)}}} and give a value that it lists with usable: true, or \"none\" "
+                          "to keep the network on SIL Kit only", {"network": network, "target": target})
 
     async def api_not_found(self, request: web.Request) -> web.Response:
         return error(404, "not-found", f"{request.method} {request.path}: no such API")
@@ -522,6 +561,28 @@ class GuiServer:
             return self._refusal(e)
         return web.json_response({"file": config.relative, "disable": disable, "manual": manual,
                                   "scenario": scenario, "exit_code": code, "check": result})
+
+    async def post_connections(self, request: web.Request) -> web.Response:
+        """Where one network of the file can be connected on this computer (connections --json --network), in the
+        queue of the checks. The targets that it lists as usable are the ones that a check or a run may name."""
+        try:
+            self._not_closing()
+            body = await self._body(request)
+            check_fields("api/connections", body, CONNECTIONS_FIELDS)
+            network = check_network(body.get("network"))
+            config = self.root.resolve(body.get("file"))
+            await self._usable()
+            networks = await self.network_names(config.relative)
+            if network not in networks:
+                raise Refused(400, "unknown-network",
+                              f"no network named {network!r} in the last check of {config.relative}: the networks "
+                              f"are {', '.join(networks) or 'none'} (check the file again if it has changed)",
+                              {"network": network, "networks": networks})
+            code, result = await self._in_check_queue(lambda: self._list_targets(config.relative, network))
+        except (PathRejected, InvalidRequest, Refused) as e:
+            return self._refusal(e)
+        return web.json_response({"file": config.relative, "network": network, "exit_code": code,
+                                  "connections": result})
 
     async def post_run(self, request: web.Request) -> web.Response:
         try:
@@ -810,9 +871,21 @@ class GuiServer:
                                                  "api/configs lists") from None
         return (st.st_mtime_ns, st.st_size)
 
+    async def network_names(self, relative: str) -> list[str]:
+        """The network names of the file, from its last check that gave them, or from a new check (no intent) when the
+        file has changed since. Every variant has the networks of the file."""
+        cached = self._networks.get(relative)
+        if cached and cached[0] == self._stamp(relative):
+            return cached[1]
+        await self._check(relative, {})
+        return self._networks.get(relative, ((), []))[1]
+
     async def _check(self, relative: str, intent: dict) -> tuple[int, dict]:
-        """check --json of the file with the intent (the keys of a request file), one at a time: the others wait
-        (MAX_CHECK_WAITING of them, check_timeout_s each)."""
+        """check --json of the file with the intent (the keys of a request file), in the queue of the checks."""
+        return await self._in_check_queue(lambda: self._check_locked(relative, intent))
+
+    async def _in_check_queue(self, work: Callable[[], Awaitable[tuple[int, dict]]]) -> tuple[int, dict]:
+        """One check (or list) at a time: the others wait (MAX_CHECK_WAITING of them, check_timeout_s each)."""
         self._not_closing()
         if self._check_waiting >= MAX_CHECK_WAITING:
             raise Refused(503, "check-busy", f"{MAX_CHECK_WAITING} checks are already waiting for the one that "
@@ -828,7 +901,7 @@ class GuiServer:
             self._check_waiting -= 1
         try:
             self._not_closing()
-            return await self._check_locked(relative, intent)
+            return await work()
         finally:
             self._check_lock.release()
 
@@ -872,10 +945,45 @@ class GuiServer:
                                                   "check object", tail)
         names = [p["name"] for p in result["participants"] if isinstance(p, dict) and isinstance(p.get("name"), str)]
         if names or result.get("result") not in ("usage",):
-            self._names.pop((relative, variant), None)
-            self._names[(relative, variant)] = (stamp, names)
-            while len(self._names) > MAX_NAMES_CACHED:
-                del self._names[next(iter(self._names))]
+            remember(self._names, (relative, variant), (stamp, names))
+        networks = result.get("networks")
+        networks = [n["name"] for n in networks if isinstance(n, dict) and isinstance(n.get("name"), str)] \
+            if isinstance(networks, list) else []
+        if networks or result.get("result") not in ("usage",):
+            remember(self._networks, relative, (stamp, networks))
+        return code, result
+
+    async def _list_targets(self, relative: str, network: str) -> tuple[int, dict]:
+        """connections --json of one network (in the queue of the checks). Its usable targets replace those of the
+        last list of (file, network); a list that fails leaves none."""
+        stamp = self._stamp(relative)
+        self._targets.pop((relative, network), None)
+        try:
+            code, out, err = await process.run_to_end(connections_command(self.launcher, relative, network),
+                                                      cwd=self.root.root, timeout_s=self.o.check_timeout_s,
+                                                      track=self._checks)
+        except TimeoutError:
+            raise Refused(504, "check-timeout", f"the list of where {network!r} can be connected did not end in "
+                                                f"{self.o.check_timeout_s:g} s (it was stopped): a bridge's list may "
+                                                "hang") from None
+        except OSError as e:
+            raise Refused(502, "launcher-start", f"cannot start {self.launcher.path}: {e}") from None
+        self._not_closing()
+        try:
+            result = json.loads(out)
+        except (ValueError, RecursionError):
+            result = None
+        if not isinstance(result, dict) or not isinstance(result.get("networks"), list):
+            tail = err.decode("utf-8", "replace").strip().splitlines()[-10:]
+            raise Refused(502, "launcher-output", f"connections --json exited with code {code} and did not write "
+                                                  "the connections object", tail)
+        usable = frozenset(
+            t["value"] for n in result["networks"]
+            if isinstance(n, dict) and n.get("name") == network and isinstance(n.get("list"), dict)
+            and isinstance(n["list"].get("targets"), list)
+            for t in n["list"]["targets"]
+            if isinstance(t, dict) and t.get("usable") is True and isinstance(t.get("value"), str))
+        remember(self._targets, (relative, network), (stamp, usable))
         return code, result
 
     # ------------------------------------------------------------ the launcher's run

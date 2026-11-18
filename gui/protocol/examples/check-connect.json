@@ -1,0 +1,297 @@
+{
+  "description": "A check with ETH_EXT connected to a listed target: networks[].outside says where, and time_lock that the run keeps real time.",
+  "request": {
+    "method": "POST",
+    "path": "api/check",
+    "body": {
+      "file": "connect.yaml",
+      "connect": {
+        "ETH_EXT": "fake0"
+      }
+    }
+  },
+  "status": 200,
+  "response": {
+    "file": "connect.yaml",
+    "disable": [],
+    "manual": [],
+    "scenario": null,
+    "exit_code": 0,
+    "check": {
+      "vehicle_sil_check": 1,
+      "vehicle_sil": "0.1.0",
+      "file": "connect.yaml",
+      "result": "passed",
+      "strict": false,
+      "errors": 0,
+      "warnings": 1,
+      "notes": 1,
+      "stop_at_ms": 1000,
+      "start_timeout_ms": 30000,
+      "stop_timeout_ms": 10000,
+      "registry_uri": null,
+      "participants": [
+        {
+          "name": "Engine",
+          "line": 14,
+          "command": [
+            "engine/vehicle_sil_engine_ecu"
+          ],
+          "describe": true,
+          "required": true,
+          "enabled": true,
+          "manual": false,
+          "role": "ecu",
+          "step_ms": null,
+          "status": "described",
+          "reported": {
+            "vehicle_sil": "0.1.0",
+            "name": "Engine",
+            "step_ns": 10000000,
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "use": "j1939",
+                "nodes": [
+                  {
+                    "address": 0,
+                    "j1939_name": "0x00000000FE000001",
+                    "arbitrary_address_capable": false
+                  }
+                ],
+                "mac": null
+              }
+            ]
+          },
+          "variables": [
+            {
+              "name": "ecu.connected",
+              "type": "bool",
+              "causality": "input",
+              "unit": "",
+              "min": null,
+              "max": null,
+              "step": null,
+              "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
+              "items": [],
+              "builtin": true
+            },
+            {
+              "name": "engine.demand",
+              "type": "real",
+              "causality": "input",
+              "unit": "%",
+              "min": 0,
+              "max": 100,
+              "step": null,
+              "description": "requested level",
+              "items": [],
+              "builtin": false
+            },
+            {
+              "name": "engine.speed",
+              "type": "integer",
+              "causality": "output",
+              "unit": "rpm",
+              "min": null,
+              "max": null,
+              "step": null,
+              "description": "",
+              "items": [],
+              "builtin": false
+            },
+            {
+              "name": "engine.mode",
+              "type": "enum",
+              "causality": "parameter",
+              "unit": "",
+              "min": null,
+              "max": null,
+              "step": null,
+              "description": "operating mode",
+              "items": [
+                {
+                  "name": "off",
+                  "value": 0
+                },
+                {
+                  "name": "on",
+                  "value": 1
+                }
+              ],
+              "builtin": false
+            }
+          ],
+          "network_map": null,
+          "j1939_nodes": null,
+          "control": {
+            "transport": "silkit",
+            "wire_version": 2
+          }
+        },
+        {
+          "name": "Dashboard",
+          "line": 16,
+          "command": [
+            "dashboard/vehicle_sil_dashboard_ecu"
+          ],
+          "describe": true,
+          "required": true,
+          "enabled": true,
+          "manual": false,
+          "role": "ecu",
+          "step_ms": null,
+          "status": "described",
+          "reported": {
+            "vehicle_sil": "0.1.0",
+            "name": "Dashboard",
+            "step_ns": 5000000,
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "use": "j1939",
+                "nodes": [
+                  {
+                    "address": 40,
+                    "j1939_name": null,
+                    "arbitrary_address_capable": false
+                  }
+                ],
+                "mac": null
+              }
+            ]
+          },
+          "variables": [
+            {
+              "name": "ecu.connected",
+              "type": "bool",
+              "causality": "input",
+              "unit": "",
+              "min": null,
+              "max": null,
+              "step": null,
+              "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
+              "items": [],
+              "builtin": true
+            },
+            {
+              "name": "dashboard.demand",
+              "type": "real",
+              "causality": "input",
+              "unit": "%",
+              "min": 0,
+              "max": 100,
+              "step": null,
+              "description": "requested level",
+              "items": [],
+              "builtin": false
+            },
+            {
+              "name": "dashboard.speed",
+              "type": "integer",
+              "causality": "output",
+              "unit": "rpm",
+              "min": null,
+              "max": null,
+              "step": null,
+              "description": "",
+              "items": [],
+              "builtin": false
+            },
+            {
+              "name": "dashboard.mode",
+              "type": "enum",
+              "causality": "parameter",
+              "unit": "",
+              "min": null,
+              "max": null,
+              "step": null,
+              "description": "operating mode",
+              "items": [
+                {
+                  "name": "off",
+                  "value": 0
+                },
+                {
+                  "name": "on",
+                  "value": 1
+                }
+              ],
+              "builtin": false
+            }
+          ],
+          "network_map": null,
+          "j1939_nodes": null,
+          "control": {
+            "transport": "silkit",
+            "wire_version": 2
+          }
+        }
+      ],
+      "networks": [
+        {
+          "name": "J1939_CAN",
+          "kind": "can",
+          "line": 8,
+          "participants": [
+            "Engine",
+            "Dashboard"
+          ],
+          "outside": null
+        },
+        {
+          "name": "ETH_EXT",
+          "kind": "ethernet",
+          "line": 10,
+          "participants": [],
+          "outside": {
+            "tool": "vehicle_sil_ethernet_bridge",
+            "tool_path": "/path/to/tools/vehicle_sil_ethernet_bridge",
+            "target": "fake0",
+            "participant": "bridge.ETH_EXT",
+            "command": [
+              "vehicle_sil_ethernet_bridge",
+              "--network",
+              "ETH_EXT",
+              "--backend",
+              "packet",
+              "--interface",
+              "fake0",
+              "--all-frames"
+            ]
+          }
+        }
+      ],
+      "time_lock": {
+        "locked": true,
+        "because": [
+          "ETH_EXT"
+        ]
+      },
+      "findings": [
+        {
+          "severity": "warning",
+          "code": "unused-network",
+          "file": "connect.yaml",
+          "line": 10,
+          "participant": null,
+          "network": "ETH_EXT",
+          "message": "network 'ETH_EXT': no participant uses it: remove it, or check the network names in the ECUs",
+          "detail": null
+        },
+        {
+          "severity": "note",
+          "code": "outside-speed-set",
+          "file": "connect.yaml",
+          "line": null,
+          "participant": null,
+          "network": null,
+          "message": "--connect connects ETH_EXT to a real bus, which does not wait for the virtual time: the run goes at speed 1 (real time), not as fast as possible. To go at another speed, run without --connect, or pass --time-policy free if what is connected there can take messages that do not come in real time (the bridge still carries frames both ways)",
+          "detail": null
+        }
+      ]
+    }
+  }
+}

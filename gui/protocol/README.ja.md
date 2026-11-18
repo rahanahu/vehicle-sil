@@ -80,8 +80,9 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 |---|---|---|
 | `GET api/app` | サーバーとランチャーの情報、変数を読み書きできるか、上限 | `app.json` |
 | `GET api/configs` | root の下の `.yaml` / `.yml` の一覧 | `configs.json` |
-| `POST api/check` `{file, disable, enable, manual, scenario, variant, params, strict}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
-| `POST api/run` `{file, disable, enable, manual, scenario, variant, params, strict, speed, start_paused}` | `{session}`（始めた実行の要約）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`error-check-failed.json` |
+| `POST api/check` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/run` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{session}`（始めた実行の要約）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
+| `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: そのネットワークを、このコンピューターでどこにつなげるか（下の「ネットワークを外につなぐ」） | `connections.json` |
 | `POST api/stop` `{force}` | `{session}`（今の要約。実行がなければ `null`） | `stop*.json` |
 | `POST api/time` `{command, ms, value, id}` | `{session_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
@@ -95,7 +96,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 - `api/configs` の各ファイルは、`path`（root からの相対で `/` 区切り）、`modified`、`size`、`simulation`（先頭に `vehicle_sil_simulation` があるか）を持ちます。一覧の全体に `truncated` があります。
 - `api/check` の `check` は `check --json` の結果そのままです。照合が失敗しても 200 です。
 - `api/write` は下の「ECU の変数」、`api/scenarios` と `scenario` は下の「シナリオ」、`api/recording` は下の「操作の記録（`api/recording`）」、`api/timeline` は下の「シナリオの実行の時間の軸（`api/timeline`）」、`api/dashboard` は下の「ダッシュボードのファイル」にあります。`api/dashboard` の `file` は `api/check` と同じ検査を通ります（`invalid-path`、`outside-root`、`not-a-configuration`、`file-not-found`）。
-- サーバーが終了を始めたら、`api/run`、`api/check`、`api/write` は 503 `shutting-down` です。
+- サーバーが終了を始めたら、`api/run`、`api/check`、`api/connections`、`api/write` は 503 `shutting-down` です。
 
 ### `disable` と `manual`
 
@@ -119,12 +120,25 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 - `speed` の数の範囲は `limits.speed_min` から `limits.speed_max` までです（ランチャーと同じ）。
 - `speed` を省くと、設定ファイルの `speed` です。
 
+### ネットワークを外につなぐ（`connect`、`time_policy`、`api/connections`）
+
+`can` と `ethernet` のネットワークは、ランチャーのブリッジを通して実機のバスにつなげます（[docs/simulation-run.md](../../docs/ja/simulation-run.md#バスを外につなぐ--connect) の「バスを外につなぐ（`--connect`）」）。画面は 3 段で行います。
+
+1. **一覧を取る**: `POST api/connections` `{"file": "simulation.yaml", "network": "ETH_EXT"}` は、ランチャーの `connections --json --network ETH_EXT` を走らせ、`{file, network, exit_code, connections}` を返します。`connections` はランチャーの JSON そのままです（docs/simulation-run.md の「`connections --json`」）。`networks[]` はこの OS の方式（backend）ごとに 1 つずつで、`list.targets[]` に `value`、`label`、`detail`、`usable`、`reason` があります。一覧は、利用者がそのネットワークを開いたときだけ頼みます。そのネットワークのブリッジだけが起動するので、SIL Kit だけを使うコンピューターに Npcap の確認は出ません。`network` は、そのファイルの直近の照合の `networks[].name` にある名前です（照合がまだないか、その後にファイルが変わったら、サーバーが意図なしで照合します）。ないと 400 `unknown-network` で、`detail.networks` に名前の一覧が入ります。一覧は照合と同じ順番を待ちます（`api/check` と同じく 503 `check-busy`）。例: `connections.json`。
+2. **選ぶ**: `api/check` と `api/run` に `connect` `{"<network>": "<target>"}` を、一覧の `value` で送ります。`"none"` はネットワークを SIL Kit だけに置き、一覧は要りません。
+3. **照合して始める**: 照合は、各ネットワークのつなぎ先（`networks[].outside`）と、実行が実時間を守るか（`time_lock`）を言います。`time_policy`（`"free"`）はその固定を外します。それが何を意味するか、一時停止、ステップ、速さの変更を受けるか（要約の `allowed`）は、ランチャーが決めます。サーバーは `connect` と `time_policy` を要求ファイルで渡すだけで、時間の規則を持ちません。例: `check-connect.json`、`run-connect.json`。
+
+**守り（`target-not-listed`）**: `"none"` 以外の先は、そのファイルのそのネットワークの直近の一覧に、ちょうど同じ文字列で `usable: true` として載っていて、その一覧の後にファイルが変わっていないときだけ渡します。そうでなければ、`api/check` と `api/run` は 400 `target-not-listed`（`detail` は `{network, target}`）で、何も始めません。ネットワークの一覧を取り直し、そこから選びます。こうして、ブラウザーからの値は、ランチャーがこのコンピューターで一覧に載せたときだけ、ブリッジのデバイスに届きます。あるネットワークの新しい一覧は、前の一覧を置き換えます。一覧に失敗すると（502 `launcher-output`）、一覧はなくなります。例: `error-target-not-listed.json`。
+
+- サーバーは、実行をまたいで選んだ先を覚えません。覚えたい画面は自分で覚えます。
+- ランチャーの `outside` イベントと、`state` イベントの `outside[]` は、そのまま渡します。
+
 ### 照合と開始（`api/check`、`api/run`）
 
 - **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけている間は 409 `starting`、動いている間は 409 `already-running` です。レスポンスの要約を、画面はその場で手元の状態に反映します（後から届く `session` も同じ内容です）。
 - **照合のあとの開始**: `api/run` は、まず実行を成す内容（実行と同じ要求ファイル）を、`api/check` と同じ順番で照合します。照合が通らなければ（`result` が `passed` でなければ）実行は始めず、422 `check-failed` を返します。`detail` は `{result, findings}` で、`result` は照合の `result`（`failed`、`unreadable`、`usage`）、`findings` は同じリクエストで `api/check` が返す `findings`（同じオブジェクト）です。警告や注記があるだけで通る照合は、実行を始めます。所見を直してから、もう一度 `api/run` を送ります。何も始める前に断るので、止めるものはありません。例: `error-check-failed.json`。
-- **意図と要求ファイル**: 本文は、`file`（このサーバーのフィールド。root からの相対の構成ファイル）と、ランチャーの要求ファイル（`schema/run-request.schema.json`。[docs/simulation-run.md](../../docs/ja/simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）のキーです。名前と値の形は同じです。`variant`（文字列）、`params`（パラメーター名から文字列、数、真偽への object）、`scenario`、`disable`、`enable`、`manual`（participant 名の配列）、`strict`（真偽）、`speed` と `start_paused`（`api/check` でも。ランチャーの照合が、時間とシナリオの規則に使います）です。`vehicle_sil_run_request` は `1` なら、`$schema` は文字列なら送れます（後者は捨てます）。キーの名前と値の形は要求ファイルと同じで、`file` が加わります。`scenario` は `api/scenarios` の一覧の名前で、構成ファイルのディレクトリからのパスではありません。サーバーは、各値の形（本文は 64 KiB まで）、パス（`file`、`api/scenarios` の一覧と照らす `scenario`）だけを調べ、意図を自分の要求ファイル（この利用者だけが読める。照合か実行が終わったら消す）に書いて、ランチャーに `--request <そのファイル>` を渡します。値がそのファイルで何を意味するか（その variant があるか、`disable` と `manual` を併せてよいか、シナリオにその `params` があるか）は、ランチャーが言います。所見（`api/check`）か 422 `check-failed`（`api/run`）に出ます。要求ファイルについての所見は、そのファイルを「the request」と呼びます（一時ファイルは、読むときにはもうありません）。`disable` と `manual` に使える名前は、その variant の照合の結果のものです。
-- **選ばないことは、キーを書かないこと。** `null` は断ります（400 `invalid-field`）。要求ファイルの `connect` と `time_policy` は、まだ受けません（400 `unsupported`）。実行をする側のキー（`control`、`timeline`、`log_dir` など）は知らないフィールドです（400 `invalid-field`）。サーバーが決めます。送る `scenario` は、`api/scenarios` が返す `path`（root からの相対）です。サーバーは、要求ファイルが読む基準である構成ファイルのディレクトリからの相対に直して書きます。`request` の feature がないランチャーは使えません（`api/app` の `launcher.problems` に出ます）。
+- **意図と要求ファイル**: 本文は、`file`（このサーバーのフィールド。root からの相対の構成ファイル）と、ランチャーの要求ファイル（`schema/run-request.schema.json`。[docs/simulation-run.md](../../docs/ja/simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）のキーです。名前と値の形は同じです。`variant`（文字列）、`params`（パラメーター名から文字列、数、真偽への object）、`scenario`、`disable`、`enable`、`manual`（participant 名の配列）、`strict`（真偽）、`connect`（ネットワーク名から先への object）と `time_policy`（文字列）（上の「ネットワークを外につなぐ」）、`speed` と `start_paused`（`api/check` でも。ランチャーの照合が、時間とシナリオの規則に使います）です。`vehicle_sil_run_request` は `1` なら、`$schema` は文字列なら送れます（後者は捨てます）。キーの名前と値の形は要求ファイルと同じで、`file` が加わります。`scenario` は `api/scenarios` の一覧の名前で、構成ファイルのディレクトリからのパスではありません。サーバーは、各値の形（本文は 64 KiB まで）、パス（`file`、`api/scenarios` の一覧と照らす `scenario`）だけを調べ、意図を自分の要求ファイル（この利用者だけが読める。照合か実行が終わったら消す）に書いて、ランチャーに `--request <そのファイル>` を渡します。値がそのファイルで何を意味するか（その variant があるか、`disable` と `manual` を併せてよいか、シナリオにその `params` があるか）は、ランチャーが言います。所見（`api/check`）か 422 `check-failed`（`api/run`）に出ます。要求ファイルについての所見は、そのファイルを「the request」と呼びます（一時ファイルは、読むときにはもうありません）。`disable` と `manual` に使える名前は、その variant の照合の結果のものです。
+- **選ばないことは、キーを書かないこと。** `null` は断ります（400 `invalid-field`）。実行をする側のキー（`control`、`timeline`、`log_dir` など）は知らないフィールドです（400 `invalid-field`）。サーバーが決めます。送る `scenario` は、`api/scenarios` が返す `path`（root からの相対）です。サーバーは、要求ファイルが読む基準である構成ファイルのディレクトリからの相対に直して書きます。`request` の feature がないランチャーは使えません（`api/app` の `launcher.problems` に出ます）。
 - **照合**: 同時の `api/check` は拒否せず、順に 1 つずつ実行します。待っているリクエストが多すぎるか、待ちが照合の時間の上限（`api/app` の `limits.check_timeout_s`）を過ぎたら 503 `check-busy` です。`api/run` も同じ順番で照合します。
 
 ### 停止（`api/stop`）
@@ -175,6 +189,8 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 400 | `outside-root` | 絶対パス、`..`、root の外へのシンボリックリンク |
 | 400 | `not-a-configuration` | `.yaml` / `.yml` の通常のファイルでない |
 | 400 | `unknown-participant` | `disable` か `manual` の名前が照合の結果にない |
+| 400 | `unknown-network` | `api/connections`: `network` が、そのファイルの直近の照合にない（`detail` に `{network, networks}`） |
+| 400 | `target-not-listed` | `connect` の先（`none` 以外）が、そのファイルのそのネットワークの直近の一覧で使えるものでない、またはその後にファイルが変わった（`detail` に `{network, target}`。上の「ネットワークを外につなぐ」）。例: `error-target-not-listed.json` |
 | 400 | `scenario-not-listed` | `scenario` が、`api/scenarios` がその設定ファイルに挙げるシナリオでない（`scenarios` がない、リンク、ほかの場所のファイル） |
 | 400 | `unsupported` | ランチャーが持たない機能を使った（対象は表の下） |
 | 400 | `unknown-variable` | `api/write`: その participant か変数が、実行の変数の一覧にない（`detail` に `{peer, name}`） |
@@ -199,26 +215,26 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 415 | `unsupported-media-type` | 本文があるのに `Content-Type: application/json` でない |
 | 500 | `internal` | サーバーの不具合（例はない。起きたら標準エラーを見る） |
 | 502 | `launcher-start` | ランチャーを起動できない |
-| 502 | `launcher-output` | `check --json` が照合の結果を書かなかった |
+| 502 | `launcher-output` | `check --json` が照合の結果を、または `connections --json` が一覧を書かなかった |
 | 502 | `write-failed` | `api/write`: 書き込みが Control Server に届かなかった（切断された） |
 | 503 | `launcher-unusable` | ランチャーが使えない（`api/app` の `launcher.problems` に理由） |
-| 503 | `check-busy` | 照合の待ちが多すぎるか、待ちが長すぎる |
+| 503 | `check-busy` | 照合（と `api/connections` の一覧）の待ちが多すぎるか、待ちが長すぎる |
 | 503 | `write-busy` | `api/write`: 前の書き込みが Control Server のレスポンスを待っていて、順番が来なかった（送っていない） |
 | 503 | `shutting-down` | サーバーが終了しようとしている |
 | 503 | `too-many-connections` | WebSocket の数の上限（ハンドシェイクのレスポンス） |
 | 500 | `request-file` | ランチャーに要求を渡す一時ファイルを作れなかった（空きがない、一時ディレクトリに書けない。`TMPDIR` を設定する） |
-| 504 | `check-timeout` | 照合が時間の上限までに終わらなかった（止めた） |
+| 504 | `check-timeout` | 照合（または `api/connections` の一覧）が時間の上限までに終わらなかった（止めた） |
 | 504 | `write-timeout` | `api/write`: Control Server が時間内（`limits.write_timeout_s`）に応答しなかった。受け取られたかもしれない（送り直さない） |
 
-- `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`speed`、`start_paused`。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
-- `invalid-field` の対象: `speed`、`start_paused`、`variant`、`params`、`enable`、`strict`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`value`、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
-- `unsupported` の対象: `api/check` か `api/run` に `connect` か `time_policy` を送った。`time-commands` を持たないのに `api/time` を送った。`control-server` を持たないのに `api/write` を送った。
+- `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`。`api/connections` は `file` と `network` を受けます。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
+- `invalid-field` の対象: `speed`、`start_paused`、`variant`、`params`、`enable`、`strict`、`connect`、`time_policy`、`network`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`value`、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
+- `unsupported` の対象: `time-commands` を持たないのに `api/time` を送った。`control-server` を持たないのに `api/write` を送った。
 
 例のファイルは次のとおりです。ほかのコードは、GUI サーバーのテストの中で確認します。
 
 | ファイル | 内容 |
 |---|---|
-| `error-already-running.json`、`error-check-failed.json`、`error-not-writable.json`、`error-scenario-not-listed.json`、`error-scenario-running.json`、`error-session-changed.json` | HTTP のエラー |
+| `error-already-running.json`、`error-check-failed.json`、`error-not-writable.json`、`error-scenario-not-listed.json`、`error-scenario-running.json`、`error-session-changed.json`、`error-target-not-listed.json` | HTTP のエラー |
 | `error-invalid-watch.json` | WebSocket の `error` |
 | `stop.json`、`stop-force.json`、`stop-ended.json` | 停止のレスポンス |
 | `time.json` | 時間のコマンドのレスポンス |

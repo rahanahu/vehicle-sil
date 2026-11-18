@@ -243,7 +243,47 @@ export interface CheckRequest {
   params?: Record<string, string | number | boolean>;
   /** true: fail on warnings too. */
   strict?: boolean;
+  /**
+   * Where networks are connected outside the simulation: network name to target. A target other than `none` must be a
+   * `value` that the last `POST api/connections` of that network gave with `usable: true` (else 400 target-not-listed).
+   */
+  connect?: Record<string, string>;
+  /** The time policy of a run connected outside (`realtime` or `free`; the launcher decides what it allows). */
+  time_policy?: string;
 }
+
+/** Body of POST api/connections: the configuration file and one of its networks (one the user opened). */
+export interface ConnectionsRequest {
+  /** Path relative to root. */
+  file: string;
+  /** A name in `networks[].name` of the last check of `file`. */
+  network: string;
+}
+
+/** Answer of POST api/connections: where that network can be connected on this computer. */
+export interface ConnectionsAnswer {
+  file: string;
+  network: string;
+  /** The exit code of the launcher's `connections` (0: listed, 1: a list failed or the file has errors, 4: usage). */
+  exit_code: number;
+  /**
+   * The launcher's `connections --json` as it wrote it (`networks[].list.targets[]`: `value`, `label`, `detail`,
+   * `usable`, `reason`). A `value` with `usable: true` is what `connect` of api/check and api/run may give the network.
+   */
+  connections: Record<string, unknown>;
+}
+
+/** Reads the answer of POST api/connections. */
+export const readConnectionsResponse = (value: unknown): ConnectionsAnswer => {
+  const path = 'response';
+  const f = object(value, path);
+  return {
+    file: field(f, path, 'file', string),
+    network: field(f, path, 'network', string),
+    exit_code: field(f, path, 'exit_code', integer),
+    connections: field(f, path, 'connections', object),
+  };
+};
 
 /** One entry of GET api/scenarios. */
 export interface ScenarioFile {

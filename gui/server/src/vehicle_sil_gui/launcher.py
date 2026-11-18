@@ -166,21 +166,21 @@ class InvalidRequest(ValueError):
 # file (schema/run-request.schema.json), with the names and value forms of that file. The keys of the launcher's side
 # (control, timeline, log_dir, events, stdin) are not in the list: this server decides them.
 REQUEST_VERSION_KEY = "vehicle_sil_run_request"
-INTENT_FIELDS = ("scenario", "variant", "params", "disable", "enable", "manual", "strict")
+INTENT_FIELDS = ("scenario", "variant", "params", "disable", "enable", "manual", "strict", "connect", "time_policy")
 # `$schema` is the editor's key of a request file: read and dropped, as the launcher does.
 REQUEST_FIELDS = ("file", "$schema", REQUEST_VERSION_KEY, *INTENT_FIELDS, "speed", "start_paused")
-# Keys of the request file that this server does not pass on yet.
-UNSUPPORTED_FIELDS = {"connect": "where a network is connected outside the simulation",
-                      "time_policy": "the time policy of a run that is connected outside the simulation"}
+# POST api/connections: the configuration file and the one network to list (the one the user opened).
+CONNECTIONS_FIELDS = ("file", "network")
+# The target of `connect` that keeps a network on SIL Kit only: it needs no list.
+NO_CONNECTION = "none"
+# The launcher's features `connect`, `connections` and `time-policy` are not in REQUIRED_FEATURES: every launcher with
+# `request` has them (the launcher's features are only added, and these came before `request`, on every OS).
 
 
 def check_fields(endpoint: str, body: dict, allowed: tuple[str, ...]) -> None:
     """Refuses a body with a field the endpoint does not take (a field that is ignored, misspelled or not
     supported, would leave the sender believing it had an effect), a field that is null (the request file has no
     null: a field that is not wanted is left out) and a request format that is not 1."""
-    for key, what in UNSUPPORTED_FIELDS.items():
-        if key in body:
-            raise InvalidRequest("unsupported", f"{endpoint} does not take {key!r} ({what}) yet: leave it out")
     unknown = sorted(k for k in body if k not in allowed)
     if unknown:
         raise InvalidRequest("invalid-field", f"{endpoint} takes no {', '.join(repr(k) for k in unknown)}: "
@@ -228,6 +228,38 @@ def check_strict(strict: object) -> bool:
     if not isinstance(strict, bool):
         raise InvalidRequest("invalid-field", "strict must be true or false")
     return strict
+
+
+def check_connect(connect: object) -> dict[str, str]:
+    """The connect of the request: {network: target}. Whether the file has such a network and the target is one that
+    the launcher takes, the launcher says; whether this server passes the target on, the lists of POST
+    api/connections say (GuiServer._check_targets)."""
+    if connect is None:
+        return {}
+    if not isinstance(connect, dict) or not all(isinstance(n, str) and n and isinstance(t, str)
+                                                for n, t in connect.items()):
+        raise InvalidRequest("invalid-field", 'connect must be an object of network name to target, e.g. '
+                                              '{"ETH_EXT": "enp3s0"}: a target that POST api/connections lists, or '
+                                              '"none" for SIL Kit only')
+    return dict(connect)
+
+
+def check_time_policy(policy: object) -> str | None:
+    """The time_policy of the request. Which values there are, and what they do, the launcher says."""
+    if policy is None:
+        return None
+    if not isinstance(policy, str) or not policy:
+        raise InvalidRequest("invalid-field", 'time_policy must be the name of a time policy ("realtime" or '
+                                              '"free"), or left out')
+    return policy
+
+
+def check_network(network: object) -> str:
+    """The network of POST api/connections: a name (which ones the file has, its last check says)."""
+    if not isinstance(network, str) or not network:
+        raise InvalidRequest("invalid-field", 'network must be the name of a network of the file (a non-empty '
+                                              'string), e.g. {"file": "simulation.yaml", "network": "ETH_EXT"}')
+    return network
 
 
 def check_speed(speed: object) -> float | str | None:
@@ -370,6 +402,12 @@ def write_request_file(intent: dict) -> Path:
 def check_command(launcher: Launcher, file: str, request: Path) -> list[str]:
     """request: the file that write_request_file made (everything that the browser chose is in it)."""
     return launcher.prefix + ["check", "--json", "--request", str(request), "--", file]
+
+
+def connections_command(launcher: Launcher, file: str, network: str) -> list[str]:
+    """Where one network of the file can be connected on this computer: only the bridge of that network is asked
+    (no other one is started, and so no Npcap prompt comes for a network that the user did not open)."""
+    return launcher.prefix + ["connections", "--json", "--network", network, "--", file]
 
 
 def run_command(launcher: Launcher, file: str, request: Path, control_credentials: Path | None = None,

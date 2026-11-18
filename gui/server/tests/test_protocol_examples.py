@@ -42,7 +42,8 @@ EXAMPLES = {
     "write", "ws-variables", "ws-variables-failed", "error-unknown-variable", "error-not-writable", "error-session-changed",
     "error-variables-not-ready", "error-invalid-watch", "dashboard", "dashboard-errors", "dashboard-none",
     "scenarios", "check-scenario", "error-scenario-not-listed", "ws-scenario", "recording", "error-scenario-running",
-    "check-manual", "ws-manual", "ws-allowed",
+    "check-manual", "ws-manual", "ws-allowed", "connections", "check-connect", "run-connect",
+    "error-target-not-listed", "error-unknown-network",
 }
 
 
@@ -94,6 +95,7 @@ SHOWN = {
     "error-check-timeout": 504, "error-launcher-output": 502, "error-launcher-unusable": 503,
     "error-launcher-start": 502, "error-shutting-down": 503, "error-too-many-connections": 503,
     "error-not-running": 409, "error-unknown-variable": 400, "error-variables-not-ready": 409,
+    "error-unknown-network": 400,
 }
 
 
@@ -350,14 +352,55 @@ def test_http_examples(tmp_path: Path) -> None:
         run_async(talk, gui)
 
 
-def test_the_error_of_a_request_key_that_is_not_taken_yet(tmp_path: Path) -> None:
+def test_the_error_of_a_feature_that_the_launcher_lacks(tmp_path: Path) -> None:
+    with gui_server(tmp_path, env={"REPLAY_FEATURES": "events,stdin-commands,request,check-variables"}) as gui:
+        async def talk(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            status, body = await c.post("api/run", {"file": "forever.yaml"})
+            assert status == 200, body
+            await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
+            req = {"command": "pause"}
+            status, body = await c.post("api/time", req)
+            check_example("error-unsupported", http("A time command that the run's launcher cannot take (it lacks "
+                                                    "the feature time-commands).", "POST", "api/time", req, status,
+                                                    body), gui)
+            await c.post("api/stop")
+            await sock.until(is_ended)
+        run_async(talk, gui)
+
+
+def test_connect_examples(tmp_path: Path) -> None:
+    """Where a network can be connected, a check and a run connected there, and a target that was not listed."""
+    tools = {str(REPLAY.parent): "/path/to/tools"}  # where the stand-in launcher says the bridges are
     with gui_server(tmp_path) as gui:
         async def talk(c: Client) -> None:
-            req = {"file": "simulation.yaml", "connect": {"ETH_EXT": "enp3s0"}}
+            req = {"file": "connect.yaml", "connect": {"ETH_EXT": "fake0"}}
+            status, body = await c.post("api/check", req)
+            check_example("error-target-not-listed", http(
+                "A target that the last list of that network (POST api/connections) did not give as usable: here, "
+                "no list was made yet.", "POST", "api/check", req, status, body), gui)
+            status, body = await c.post("api/connections", {"file": "connect.yaml", "network": "NOPE"})
+            check_example("error-unknown-network", http("A network that the last check of the file does not have.",
+                                                        "POST", "api/connections",
+                                                        {"file": "connect.yaml", "network": "NOPE"}, status, body),
+                          gui)
+            lreq = {"file": "connect.yaml", "network": "ETH_EXT"}
+            status, body = await c.post("api/connections", lreq)
+            check_example("connections", http(
+                "Where ETH_EXT can be connected on this computer (the launcher's connections --json of that network "
+                "only). The targets with usable: true are the values that connect may give it.", "POST",
+                "api/connections", lreq, status, body), gui, tools)
+            status, body = await c.post("api/check", req)
+            check_example("check-connect", http(
+                "A check with ETH_EXT connected to a listed target: networks[].outside says where, and time_lock "
+                "that the run keeps real time.", "POST", "api/check", req, status, body), gui, tools)
+            sock = await c.ws()
+            await sock.until(is_synced)
             status, body = await c.post("api/run", req)
-            check_example("error-unsupported", http("A key of the request file that this server does not pass on "
-                                                    "yet (connect, time_policy).", "POST", "api/run", req, status,
-                                                    body), gui)
+            check_example("run-connect", http("Start a run with ETH_EXT connected to a listed target.", "POST",
+                                              "api/run", req, status, body), gui, tools)
+            await sock.until(is_ended)
         run_async(talk, gui)
 
 
