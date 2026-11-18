@@ -1731,19 +1731,36 @@ void check_network(const Rules& rules, const NetworkConfig& network)
                                                " also have one ECU each: if one of them is meant to be the same bus") +
                       ", keep one of the two names: remove '" + network.name + "' from networks and " +
                       same_bus_lines(rules, network, ecu, aloneNames.size() == 1 ? aloneNames.front() : std::string{});
-        rules.add(weight, "single-participant", network.line,
-            prefix +
-                (tests.empty() ? "only " + ecu + " is on it, so what it sends there reaches no one" + rules.not_counted +
-                                     ": add the other participants of this network, or remove it"
-                 : ecus == 1
-                     ? "only " + ecu + " is on it besides the participants for testing (role: test: " + and_list(tests) +
-                           "), so what it sends there reaches no other ECU" + rules.not_counted +
-                           ": add the other ECUs of this network, or remove it"
-                     : "only participants for testing (role: test: " + and_list(tests) +
-                           ") are on it, so there is no ECU for them there" + rules.not_counted +
-                           ": add the ECUs of this network, or remove it") +
-                sameBus,
-            "", network.name);
+        const std::string who =
+            tests.empty() ? "only " + ecu + " is on it"
+            : ecus == 1   ? "only " + ecu + " is on it besides the participants for testing (role: test: " +
+                              and_list(tests) + ")"
+                          : "only participants for testing (role: test: " + and_list(tests) + ") are on it";
+        const std::string lead =
+            tests.empty() ? who + ", so what it sends there reaches no one"
+            : ecus == 1   ? who + ", so what it sends there reaches no other ECU"
+                          : who + ", so there is no ECU for them there";
+        if (network.external)
+        {
+            // The network is written for a run that connects it: there the outside is the other side.
+            rules.add(Severity::Note, "single-participant", network.line,
+                prefix + who + rules.not_counted +
+                    "; it has external (the settings for connecting it outside), so what it sends there reaches an "
+                    "outside party in a run that connects it, and no one in this run: connect the network outside to "
+                    "use it, or ignore this in a run that does not",
+                "", network.name);
+        }
+        else
+        {
+            rules.add(weight, "single-participant", network.line,
+                prefix + lead + rules.not_counted +
+                    (tests.empty() ? ": add the other participants of this network, or remove it"
+                     : ecus == 1   ? ": add the other ECUs of this network, or remove it"
+                                   : ": add the ECUs of this network, or remove it") +
+                    "; if it talks only to equipment outside, connect it outside to run it (external says what passes)" +
+                    sameBus,
+                "", network.name);
+        }
     }
     for (const std::size_t talker : talkingTests)
     {
