@@ -46,7 +46,9 @@ describe('RunSession', () => {
     request.flush(examples.get('run')?.response as object);
     expect(run.starting()).toBe(false);
     expect(run.launcherRunning()).toBe(true);
-    expect(run.outcome()).toBe('running');
+    // 正面の口の status: ランチャーはまだ段階を言っていない
+    expect(run.status().run).toBe('starting');
+    expect(run.status().result).toBeNull();
   });
 
   it('shows why the server refused', async () => {

@@ -14,7 +14,8 @@ export class RunCommands {
 
   /** 各操作を押せるか、押せない理由（正面の口が言う）。 */
   readonly controls = readableSignal(this.front.controls);
-  private readonly status = readableSignal(this.front.status);
+  /** 実行の状態と、終わった実行の結果（正面の口の `status`）。 */
+  readonly status = readableSignal(this.front.status);
 
   /** 開始を送って、応答を待っている。 */
   readonly starting = readableSignal(this.control.starting);
