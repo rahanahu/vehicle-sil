@@ -19,7 +19,7 @@
 #include "vehicle_sil/cli/utf8.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/vector_xl/bridge_options.hpp"
-#include "vehicle_sil/vector_xl/can_bridge.hpp"
+#include "vehicle_sil/can_bridge/can_bridge.hpp"
 #include "vehicle_sil/vector_xl/channel_selection.hpp"
 #include "vehicle_sil/vector_xl/xl_driver.hpp"
 
@@ -39,6 +39,7 @@ namespace {
 
 using namespace vehicle_sil;
 using namespace vehicle_sil::vector_xl;
+using namespace vehicle_sil::can_bridge;
 using cli::log;
 
 using cli::kExitOk;

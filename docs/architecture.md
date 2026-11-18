@@ -69,7 +69,8 @@ vehicle-sil/
 ├── proto/            Control API definition (vehicle_sil/control/v1/control.proto)
 ├── python/vehicle_sil_control/ Python client and CLI for the Control API, helpers that run `vehicle_sil_launch run --control` as a child process
 ├── bridges/common/  run_bridge(), shared by the bridge executables (stopping, monitoring loop, stop order, exit codes; internal)
-├── bridges/vector-xl/ Vector XL CAN Bridge (portable forwarding core; XL backend and executable for Windows only)
+├── bridges/can/     CanBridge and ExternalPortAdapter, shared by the CAN bridges (portable; internal)
+├── bridges/vector-xl/ Vector XL CAN Bridge (channel selection and arguments everywhere; XL backend and executable for Windows only)
 ├── bridges/ethernet/ Ethernet Bridge (forwarding between SIL Kit Ethernet and the external interface, statistics, argument parsing, executable; built on every platform)
 ├── tools/common/     Command-line parsing, exit codes and logging shared by the executables (internal, header-only)
 ├── tools/sim_controller/ System controller that starts and stops virtual-time simulations (vehicle_sil_sim_controller)
@@ -146,7 +147,7 @@ For what each target links (the dependency direction), follow the area-specific 
 | `vehicle_sil::control_proto` (with `VEHICLE_SIL_BUILD_CONTROL_SERVER`) | — | Code generated from `control.proto` (internal to `control_grpc`). | — | — |
 | `vehicle_sil::control_grpc` (same condition) | User-facing | The Control API (gRPC) server, for clients. ECU Agents connect through SIL Kit with `vehicle_sil::control_silkit`. `vehicle_sil_launch run --control` uses it. | `vehicle_sil::control_grpc::ControlServer`, `time_control_of()`, authentication (TLS, tokens, roles) | [control-api.md](control-api.md) |
 | `vehicle_sil::bridge_runtime` (internal) | — | `vehicle_sil::bridge_runtime::run_bridge()`, which the bridge executables call after their setup. Platform-independent. | How stop requests are received (signals, closing the Windows console), the monitoring loop (evaluating the participant status, failures of the external side, warnings, health lines), the stop order (statistics are printed before the SIL Kit participant stops), exit codes, `BridgeHooks` (passes in the parts specific to each bridge) | [bridges.md](bridges.md) |
-| `vehicle_sil::vector_xl_bridge_core` | — | The core of the CAN bridge. Platform-independent. | `vehicle_sil::vector_xl::CanBridge` and others, `ExternalPortAdapter` (turns an external CAN port into a real-time `vehicle_sil::can` port), `ExternalCanPort` | — |
+| `vehicle_sil::can_bridge_core` | — | The part of a CAN bridge that does not depend on its external side. Platform-independent. | `vehicle_sil::can_bridge::CanBridge` and others, `ExternalPortAdapter` (turns an external CAN port into a real-time `vehicle_sil::can` port), `ExternalCanPort` | — |
 | `vehicle_sil::vector_xl` (Windows only) | — | The Vector XL Driver backend. Windows only; requires the XL Driver Library. | `vehicle_sil::vector_xl::XlDriver`, `XlCanPort` | — |
 | `vehicle_sil_vector_xl_bridge` (Windows only, executable) | — | CLI of the bridge. | — | — |
 | `vehicle_sil::eth_link` | — | The external side of the Ethernet Bridge. Independent of SIL Kit. | `vehicle_sil::eth_link::ExternalLink` (external interface abstraction), `FrameFilter` (filter), `MacSideTable` (loop prevention), `make_tap_link()` and `make_packet_link()` (OS interfaces; Linux only), `make_pcap_link()` (pcap libraries; loads Npcap on Windows and libpcap on Linux at run time) | [ethernet-bridge.md](ethernet-bridge.md) |

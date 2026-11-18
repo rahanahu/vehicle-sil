@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-#include "vehicle_sil/vector_xl/external_port_adapter.hpp"
+#include "vehicle_sil/can_bridge/external_port_adapter.hpp"
 
 #include "vehicle_sil/can_silkit/silkit_can_port.hpp"
 
 #include <utility>
 
-namespace vehicle_sil::vector_xl {
+namespace vehicle_sil::can_bridge {
 
 ExternalPortAdapter::ExternalPortAdapter(ExternalCanPort& external, const can::RealTimeClock& clock,
                                          ExternalPortAdapterOptions options)
@@ -141,4 +141,4 @@ ExternalPortAdapterStatistics ExternalPortAdapter::statistics() const
     return s;
 }
 
-} // namespace vehicle_sil::vector_xl
+} // namespace vehicle_sil::can_bridge

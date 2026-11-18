@@ -148,7 +148,7 @@ ctest --preset linux-gcc-release -L fetchcontent
 
 | ほかに付くもの | 内容 |
 |---|---|
-| `core`、`lin`、`step`、`can`、`eth`、`j1939`、`peer`、`testkit`、`ecu`、`simulation`、`control`、`control_server`、`launch`、`process`、`vector_xl` | 単体テストと境界の検査 |
+| `core`、`lin`、`step`、`can`、`can_bridge`、`eth`、`j1939`、`peer`、`testkit`、`ecu`、`simulation`、`control`、`control_server`、`launch`、`process`、`vector_xl` | 単体テストと境界の検査 |
 | `template.get_tools` | テンプレートの `get_tools.py` と、`scripts/package.py` の `template`、`version` を、手元で作ったアーカイブで確認する |
 | `param_service.demo` | サンプルの実行のうち、これにだけ付く |
 

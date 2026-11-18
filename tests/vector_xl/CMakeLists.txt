@@ -18,20 +18,23 @@ target_link_libraries(vehicle_sil_vector_xl_bridge_on_fake PRIVATE vehicle_sil_v
 vehicle_sil_target_defaults(vehicle_sil_vector_xl_bridge_on_fake)
 vehicle_sil_copy_runtime_dlls(vehicle_sil_vector_xl_bridge_on_fake)
 
+# The fake external port and the frame matrix of tests/can_bridge, which these tests use too.
+set(_can_bridge_tests "${PROJECT_SOURCE_DIR}/tests/can_bridge")
+
 # In-process tests, one CTest test per case (each in its own process).
 vehicle_sil_add_harness_tests(vehicle_sil_vector_xl_tests
   PREFIX vector_xl LABELS vector_xl unit TIMEOUT 60
   SOURCES
     test_bridge_options.cpp
     test_bridge_silkit.cpp
-    test_can_bridge.cpp
-    test_external_port_adapter.cpp
     test_xl_port.cpp
   LINK vehicle_sil_vector_xl_on_fake vehicle_sil::core)
+target_include_directories(vehicle_sil_vector_xl_tests PRIVATE ${_can_bridge_tests})
 
 # Process level tests of the bridge executable.
 add_executable(vehicle_sil_vector_xl_it_peer xl_bridge_it_peer.cpp)
 target_link_libraries(vehicle_sil_vector_xl_it_peer PRIVATE vehicle_sil::core vehicle_sil_cli)
+target_include_directories(vehicle_sil_vector_xl_it_peer PRIVATE ${_can_bridge_tests})
 vehicle_sil_target_defaults(vehicle_sil_vector_xl_it_peer)
 vehicle_sil_copy_runtime_dlls(vehicle_sil_vector_xl_it_peer)
 

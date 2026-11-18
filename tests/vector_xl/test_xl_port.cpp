@@ -21,6 +21,7 @@ namespace {
 
 namespace can = SilKit::Services::Can;
 using namespace vehicle_sil::vector_xl;
+using namespace vehicle_sil::can_bridge;
 using namespace std::chrono_literals;
 using vehicle_sil::test::scaled_timeout;
 using vehicle_sil::test::frame_matrix;
