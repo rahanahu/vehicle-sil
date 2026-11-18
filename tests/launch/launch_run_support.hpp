@@ -639,6 +639,10 @@ void ethernet(const Options& o);
 void scenario_expect_beside(const Options& o);
 void scenario_failures(const Options& o);
 
+// launch_run_scenario_time.cpp
+void scenario_time_commands_same(const Options& o);
+void scenario_paused_timeout(const Options& o);
+
 // launch_run_variants.cpp
 void variable_map(const Options& o);
 void variants(const Options& o);

@@ -135,14 +135,26 @@ private:
     std::string reason_;
 };
 
-/// A server that only shows the simulation (ServerOptions::observe_only).
+/// A server whose clients do not change what the simulation computes (ServerOptions::observe_only).
 struct ObserveOnly
 {
+    /// The calls it refuses.
+    enum class Refuses
+    {
+        /// Every call that changes the simulation: Write, ForgetPeer, Pause, Resume, RunUntil, Step,
+        /// SetSpeed. The server only shows the simulation.
+        Changes,
+        /// Write and ForgetPeer alone. The time operations go to ServerOptions::time as always:
+        /// for a simulation whose result does not depend on where the time stands still or on its
+        /// speed, but does on what is written.
+        Writes,
+    };
     /// Why, for programs: a short lower-case ASCII word ("scenario-running"), sent as the trailing
     /// metadata kRefusalReasonKey of every refused call.
     std::string reason;
     /// Why, and what to do instead, for people: the refusal is "cannot <action>: <message>".
     std::string message;
+    Refuses refuses = Refuses::Changes;
 };
 
 struct ServerOptions
@@ -174,9 +186,10 @@ struct ServerOptions
     std::size_t max_snapshot_bytes = std::size_t{4} * 1024 * 1024;
     SecurityOptions security{};
     /// Set: the server only shows the simulation. Every call that changes it (Write, ForgetPeer,
-    /// Pause, Resume, RunUntil, Step, SetSpeed) is refused with FAILED_PRECONDITION for every role,
-    /// before it reaches the hub or `time`, with a line in the audit log. The calls that read or
-    /// wait are served as always, and so is Stop (a simulation can always be ended).
+    /// Pause, Resume, RunUntil, Step, SetSpeed; with ObserveOnly::Refuses::Writes only the first
+    /// two) is refused with FAILED_PRECONDITION for every role, before it reaches the hub or
+    /// `time`, with a line in the audit log. The calls that read or wait are served as always, and
+    /// so is Stop (a simulation can always be ended).
     std::optional<ObserveOnly> observe_only{};
     /// Called with one line for every call that changes something (write, time operations) and
     /// for refused calls: who, from where, what, and the outcome. Control

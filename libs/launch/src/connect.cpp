@@ -73,6 +73,10 @@ constexpr std::string_view kEthernetTool = "vehicle_sil_ethernet_bridge";
 constexpr std::string_view kXlTool = "vehicle_sil_vector_xl_bridge";
 constexpr std::string_view kSocketCanTool = "vehicle_sil_socketcan_bridge";
 
+// Every backend of every kind (all OSes): the one place that says which bridge connects what.
+// ethernet: npcap (Windows), packet and tap (Linux), all in vehicle_sil_ethernet_bridge. can: xl
+// (vehicle_sil_vector_xl_bridge, named on any OS, listed on Windows) and socketcan
+// (vehicle_sil_socketcan_bridge, Linux). LIN has none.
 constexpr ConnectBackend kBackends[] = {
     {NetworkKind::Ethernet, "npcap", kEthernetTool, false, true, false, true},
     {NetworkKind::Ethernet, "packet", kEthernetTool, true, false, true, false},
@@ -99,8 +103,6 @@ std::string_view default_backend(NetworkKind kind, std::string_view selector, Os
 }
 
 } // namespace
-
-std::span<const ConnectBackend> connect_backends() { return kBackends; }
 
 const ConnectBackend* find_backend(NetworkKind kind, std::string_view name)
 {

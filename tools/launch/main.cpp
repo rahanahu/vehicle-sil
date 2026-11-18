@@ -145,7 +145,7 @@ constexpr const char* kUsage =
     "                              run: then run it: write the ECUs' variables and compare their values at\n"
     "                              virtual times, stop the simulation when the scenario is over, and fail if a\n"
     "                              step failed (docs/scenario.md; not with --start-paused; with --control the\n"
-    "                              clients read and stop, and cannot write or move the time)\n"
+    "                              clients read, move the time and stop, and cannot write)\n"
     "  --variant <name>            the variant of <file> to check or run (its variants: the common part with the\n"
     "                              variant's commands, variable maps, params and enabled laid over it); a file\n"
     "                              that defines variants needs it: none is the default. test: only this variant\n"
@@ -1465,7 +1465,7 @@ int test(const cli::Args& args)
 std::vector<std::string_view> build_features()
 {
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
-    return {launch::kControlServerFeature, launch::kScenarioControlFeature};
+    return {launch::kControlServerFeature, launch::kScenarioControlFeature, launch::kScenarioTimeFeature};
 #else
     return {};
 #endif

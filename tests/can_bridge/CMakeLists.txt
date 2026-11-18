@@ -7,4 +7,4 @@ vehicle_sil_add_harness_tests(vehicle_sil_can_bridge_tests
   SOURCES
     test_can_bridge.cpp
     test_external_port_adapter.cpp
-  LINK vehicle_sil::can_bridge_core vehicle_sil::core)
+  LINK vehicle_sil::can_bridge_core vehicle_sil::can_external vehicle_sil::core)

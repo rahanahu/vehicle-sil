@@ -482,7 +482,8 @@ def needs(case: Case) -> set[str]:
     if "--control" in case.argv:
         out.add("control-server")
         if "--scenario" in case.argv:
-            out.add("scenario-control")
+            # Both: the recordings say what such a launcher writes (its write refusal names what a client can do).
+            out.update(("scenario-control", "scenario-time"))
     return out
 
 
@@ -513,6 +514,11 @@ def write(path: Path, head: dict, entries: list[dict]) -> None:
 
 
 NOT_IN_ORDER = {"time", "log", "log_dropped", "state"}
+# The cases that stop twice at once: a participant that is not required (Logger) either ends on the first stop (SIGTERM)
+# or is killed first; which one happens is a race, so both count as the same ending there. No other case is lenient.
+EITHER_END = {"forever-stop-twice", "control-force", "control-paused-resume-force", "control-scenario-slow-force",
+              "control-simulation-force"}
+ENDS_AT_STOP = ("stopped", "killed")
 SOMETIMES = {"log_dropped"}  # a kind of event that only a slow reader makes the launcher write  # how many and where depend on timing: their shapes are compared
 
 
@@ -521,14 +527,17 @@ def json_type(value) -> str:
             type(None): "null"}[type(value)]
 
 
-def decided(e: dict) -> tuple:
-    """The values of an event that the launcher decides, not the timing (compared as they are)."""
+def decided(e: dict, either_end: frozenset = frozenset()) -> tuple:
+    """The values of an event that the launcher decides, not the timing (compared as they are). either_end: the
+    participants whose ending by a stop or by force (killed, or ended by SIGTERM) is taken as the same."""
     kind = e.get("event")
     if kind == "finding":
         return e.get("severity"), e.get("code"), e.get("participant")
     if kind == "command":
         return e.get("command"), e.get("source"), e.get("accepted"), e.get("ms")
     if kind == "participant":
+        if e.get("name") in either_end and e.get("state") in ENDS_AT_STOP:
+            return e.get("name"), "ended at the stop", None, None, e.get("reason")
         return e.get("name"), e.get("state"), e.get("exit_code"), e.get("signal"), e.get("reason")
     if kind in ("phase", "control_link"):
         return e.get("phase"), e.get("name"), e.get("state")
@@ -540,7 +549,9 @@ def decided(e: dict) -> tuple:
         r = e["result"]
         return (r.get("result"), r.get("simulation"), r.get("interrupted_by"),
                 tuple(f.get("code") for f in r.get("findings") or []),
-                tuple((p.get("name"), p.get("ended"), p.get("exit_code"), p.get("signal"))
+                tuple((p.get("name"), "ended at the stop", None, None)
+                      if p.get("name") in either_end and p.get("ended") in ENDS_AT_STOP else
+                      (p.get("name"), p.get("ended"), p.get("exit_code"), p.get("signal"))
                       for p in r.get("participants") or []), checked(r.get("check")),
                 (r.get("scenario") or {}).get("status"))
     return ()
@@ -555,10 +566,16 @@ def checked(c) -> tuple:
                   for p in c.get("participants") or []))
 
 
-def outline(entries: list[dict], unsure: frozenset = frozenset()) -> list:
+def outline(entries: list[dict], unsure: frozenset = frozenset(), either_end: bool = False) -> list:
     """What is compared in order: the events but time, state, log and log_dropped, with the values the launcher decides
     (participant events between two others in any order: that order is timing), what check --json and version
-    --json print, the commands written, the exit code, and whether anything came on standard error."""
+    --json print, the commands written, the exit code, and whether anything came on standard error.
+    either_end: the end of a participant that is not required counts the same whether it was stopped or killed."""
+    either = frozenset(
+        p.get("name") for e in entries if "out" in e and e["out"].get("event") == "result"
+        and isinstance(e["out"].get("result"), dict)
+        for p in e["out"]["result"].get("participants") or [] if p.get("required") is False) if either_end \
+        else frozenset()
     out: list = []
     group: list = []
     for e in entries:
@@ -566,7 +583,7 @@ def outline(entries: list[dict], unsure: frozenset = frozenset()) -> list:
             kind = e["out"].get("event")
             if kind in NOT_IN_ORDER:
                 continue
-            item = ("event", kind, decided(e["out"]))
+            item = ("event", kind, decided(e["out"], either))
             if kind == "participant":
                 group.append(item)
                 continue
@@ -642,7 +659,8 @@ def compare(name: str, tracked: Path, fresh: Path, shapes: tuple[Shapes, Shapes]
     _, b = replay_launcher.read_recording(fresh)
     shapes[0].add(a)
     shapes[1].add(b)
-    left, right = outline(a, unsure), outline(b, unsure)
+    either = name in EITHER_END
+    left, right = outline(a, unsure, either), outline(b, unsure, either)
     if left == right:
         return []
     at = next((i for i, (x, y) in enumerate(zip(left, right)) if x != y), min(len(left), len(right)))

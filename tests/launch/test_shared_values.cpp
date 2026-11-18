@@ -151,3 +151,28 @@ TEST_CASE(the_gui_takes_the_launchers_limits)
     same(value_in(picker, "readonly min = input(", ")"), launch::kMinSpeed, picker + " min", "launch::kMinSpeed");
     same(value_in(picker, "readonly max = input(", ")"), launch::kMaxSpeed, picker + " max", "launch::kMaxSpeed");
 }
+
+TEST_CASE(the_gui_reads_the_launchers_manual_stays_line)
+{
+    // The standard GUI shows that a participant the user started has not left, by the start of the
+    // launcher's log line (after the name): the text it looks for must be the launcher's.
+    const std::string page = "gui/web/src/app/run/run-page.ts";
+    const std::string text = read_source(page);
+    const std::string before = "const MANUAL_STAYS = '";
+    const std::size_t at = text.find(before);
+    if (at == std::string::npos)
+    {
+        throw unit::Failure(page + ": \"" + before + "\" is not there any more; change this test with it");
+    }
+    const std::size_t start = at + before.size();
+    const std::size_t end = text.find('\'', start);
+    const std::string gui = text.substr(start, end - start);
+    // The launcher writes the line as <name> + this text + the rest (run_participants.cpp).
+    const std::string writer = "libs/launch/src/run_participants.cpp";
+    if (read_source(writer).find("\"" + gui) == std::string::npos)
+    {
+        throw unit::Failure(page + " looks for MANUAL_STAYS \"" + gui + "\", but " + writer +
+                            " no longer writes a line with that text: make them the same (one of them changed "
+                            "without the other)");
+    }
+}

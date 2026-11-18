@@ -87,23 +87,23 @@ std::string role_name(Role role)
 const std::vector<RpcRule>& rpc_rules()
 {
     // Viewer reads, Operator changes the simulation's inputs and time, Admin ends it. The effect
-    // says the same of the call itself, whoever calls: an observe-only server refuses each Change.
+    // says the same of the call itself, whoever calls: an observe-only server refuses by it.
     static const std::vector<RpcRule> rules = {
         {kControlService, "Ping", Role::Viewer, Effect::Read, false, "ping"},
         {kControlService, "ListPeers", Role::Viewer, Effect::Read, false, "list peers"},
         {kControlService, "GetValues", Role::Viewer, Effect::Read, false, "read values"},
-        {kControlService, "Write", Role::Operator, Effect::Change, true, "write"},
+        {kControlService, "Write", Role::Operator, Effect::Write, true, "write"},
         {kControlService, "GetOperation", Role::Viewer, Effect::Read, false, "read operations"},
         {kControlService, "WaitOperation", Role::Viewer, Effect::Read, false, "wait for operations"},
         {kControlService, "Watch", Role::Viewer, Effect::Read, false, "watch"},
-        {kControlService, "ForgetPeer", Role::Operator, Effect::Change, true, "forget a peer"},
+        {kControlService, "ForgetPeer", Role::Operator, Effect::Write, true, "forget a peer"},
         {kControlService, "GetTime", Role::Viewer, Effect::Read, false, "read the time"},
         {kControlService, "GetSnapshot", Role::Viewer, Effect::Read, false, "read a snapshot"},
-        {kControlService, "Pause", Role::Operator, Effect::Change, true, "pause"},
-        {kControlService, "Resume", Role::Operator, Effect::Change, true, "resume"},
-        {kControlService, "RunUntil", Role::Operator, Effect::Change, true, "run until"},
-        {kControlService, "Step", Role::Operator, Effect::Change, true, "step"},
-        {kControlService, "SetSpeed", Role::Operator, Effect::Change, true, "set the speed"},
+        {kControlService, "Pause", Role::Operator, Effect::Time, true, "pause"},
+        {kControlService, "Resume", Role::Operator, Effect::Time, true, "resume"},
+        {kControlService, "RunUntil", Role::Operator, Effect::Time, true, "run until"},
+        {kControlService, "Step", Role::Operator, Effect::Time, true, "step"},
+        {kControlService, "SetSpeed", Role::Operator, Effect::Time, true, "set the speed"},
         {kControlService, "WaitPaused", Role::Viewer, Effect::Read, false, "wait for a pause"},
         {kControlService, "Stop", Role::Admin, Effect::End, true, "stop"},
     };

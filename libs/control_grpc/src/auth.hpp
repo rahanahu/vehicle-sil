@@ -38,13 +38,14 @@ private:
 
 std::string role_name(Role role);
 
-/// What a call does to the simulation. A server that only shows it (ServerOptions::observe_only)
-/// refuses every Change.
+/// What a call does to the simulation. An observe-only server (ServerOptions::observe_only)
+/// refuses every Write, and every Time unless it refuses the writes alone (ObserveOnly::refuses).
 enum class Effect
 {
-    Read,   ///< nothing: it reads or waits
-    Change, ///< it writes variables, changes the hub's peers or moves the time
-    End,    ///< it ends the simulation (Stop): never refused for observe_only, so that a run can always be stopped
+    Read,  ///< nothing: it reads or waits
+    Write, ///< it writes variables or changes the hub's peers: what the participants get changes
+    Time,  ///< it moves the time (pause, resume, run until, step, speed): when they get it, not what
+    End,   ///< it ends the simulation (Stop): never refused for observe_only, so that a run can always be stopped
 };
 
 /// What a call needs: one row of the authorization table.

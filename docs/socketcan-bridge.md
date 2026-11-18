@@ -29,7 +29,7 @@ For an adapter, set the bit rate and bring it up first (this needs root, and the
 ```sh
 sudo ip link set can0 type can bitrate 250000 restart-ms 100
 sudo ip link set can0 up
-vehicle_sil_socketcan_bridge --registry-uri silkit://127.0.0.1:8500 --interface can0 --bitrate 250000
+vehicle_sil_socketcan_bridge --registry-uri silkit://127.0.0.1:8500 --network J1939_CAN1 --interface can0 --bitrate 250000
 ```
 
 ## Arguments
@@ -38,7 +38,7 @@ vehicle_sil_socketcan_bridge --registry-uri silkit://127.0.0.1:8500 --interface 
 |---|---|
 | `--registry-uri <uri>` | SIL Kit registry (required, except for `--describe` and `--list-channels`) |
 | `--interface <name>` | The SocketCAN interface (required) |
-| `--network <name>` | SIL Kit CAN network (`J1939_CAN1`) |
+| `--network <name>` | SIL Kit CAN network (required; there is no default) |
 | `--name <name>`, `--participant <name>` | SIL Kit participant name (`SocketCanBridge`) |
 | `--bitrate <bit/s>` | The bit rate the interface must run at (15000..1000000). The bridge does not set it |
 | `--tx-timeout-ms <ms>` | Drop frames while the bus took none for this long (100..60000) |

@@ -176,6 +176,7 @@ E2E で確認すること:
 | ターゲット | 作る条件 |
 |---|---|
 | `can_bridge_core`（`bridges/can`） | どのプラットフォームでも |
+| `can_external`（`bridges/can`。`ExternalPortAdapter`） | どのプラットフォームでも |
 | `vector_xl`、`vehicle_sil_vector_xl_bridge` | Windows で、XL Driver Library があるときだけ |
 | `bridge_runtime`（`bridges/common`） | どのプラットフォームでも |
 
@@ -184,9 +185,10 @@ E2E で確認すること:
 ```mermaid
 flowchart TD
     can_bridge_core --> SilKit["SilKit::SilKit"]
-    can_bridge_core --> can
-    can_bridge_core --> can_silkit
     can_bridge_core --> bridge_runtime
+    can_external --> can_bridge_core
+    can_external --> can
+    can_external --> can_silkit
     vector_xl_bridge_core --> SilKit
     vector_xl_bridge_core --> can_bridge_core
     vector_xl_bridge_core --> bridge_runtime
