@@ -48,13 +48,14 @@ Allowed no_control_server(const char* what)
 
 RunControls::RunControls(StopRequests& stops, bool start_paused, Observers observers, bool scenario) :
   stops_(stops), time_(start_paused, observers.on_command, scenario), on_phase_(std::move(observers.on_phase)),
-  on_state_(std::move(observers.on_state)), has_command_observer_(static_cast<bool>(observers.on_command))
+  on_state_(std::move(observers.on_state)), start_paused_(start_paused), scenario_(scenario),
+  has_command_observer_(static_cast<bool>(observers.on_command))
 {
     // Before any other thread has this object.
     time_.set_on_change([this](const TimeFacts& facts) { tell(facts); });
 }
 
-RunControls::RunControls(StopRequests& stops, bool start_paused) : RunControls(stops, start_paused, Observers{}) {}
+RunControls::RunControls(StopRequests& stops, bool start_paused) : RunControls(stops, start_paused, Observers{}, false) {}
 
 void RunControls::set_phase(Phase phase)
 {

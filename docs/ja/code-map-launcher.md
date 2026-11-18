@@ -417,7 +417,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 - `libs/launch/src/time_commands.cpp` の `TimeCommands`
 - 操作盤の時間のロック: `check_file()` が、構成を読んだ直後（どの `--describe` よりも前）に `on_time_lock` を呼び、`run_file()` がそこで `RunControls::set_time_lock()` にロックを渡します。それまで `TimeCommands::apply()` は停止のほかを決めません。コマンドは届いた順に待ち、`set_time_lock()` が決めます（構成が読めなければ `detach()` が断ります）。ロックの行と `--time-policy free` の注意は `control_rules.cpp`（`ControlSituation::time_locked`、`time_free`）
 - 注記 `outside-time-changed` と `unsynchronized-time-changed`: `run_assess.cpp` の `time_changed_findings()`。材料は `RunOutcome::time_changed`、`time_lock`、`real_time_peers`（`time_plan.cpp` の `detail::real_time_peers()`）
-- 時刻のコマンド、停止、書き込みを受けるかどうかと、断るときの文: `libs/launch/src/control_rules.cpp` の行（`TimeCommands::apply()`、`RunControls::allowed()`、Control Server の `observe_only` が読む 1 か所。行のテストは `tests/launch/test_control_rules.cpp`）
+- 時刻のコマンド、停止、書き込みを受けるかどうかと、断るときの文: `libs/launch/src/control_rules.cpp` の行（`TimeCommands::apply()`、`RunControls::allowed()`、Control Server の `observe_only` が読む 1 か所。標準入力の停止も、Control Server の停止と同じく `TimeCommands::apply()` を通ります。行のテストは `tests/launch/test_control_rules.cpp`）
 - `time_plan.cpp` の `detail::plan_time_step()`（controller のタイムステップの既定）、`detail::coarse_time_step()`、`RunTiming::actual_speed()`（宣言は `time_plan.hpp`。`check.cpp` は `run.hpp` なしで使います）
 - `time_plan.cpp` の `time_lock()`、`planned_speed()`、`time_lock_findings()`: シミュレーションの外につながる実行が実時間を保つかどうか（`--time-policy`）、始めるときの速さ、照合の指摘 `outside-*`。`check_file()` が結果を `CheckReport::time_lock` に置き、実行はそこから速さを読みます
 - `run_notes.cpp` の `RunNotes::note_time()`（`time` を書く時点。止まっていると数えるかは `run_notes.hpp` の `detail::noted_standing()`。`state` の `paused` は `run_controls.cpp` の `RunControls`）
