@@ -529,7 +529,8 @@ public:
         try
         {
             f(*options_.time);
-            // The watches see the change at once, not only at the monitor's next read.
+            // The watches get the change in their next round (at most about 100 ms, while they wait
+            // for hub updates), not only after the monitor's next read.
             monitor_->poll();
             detail::time_to_proto(options_.time->state(), *reply);
         }
