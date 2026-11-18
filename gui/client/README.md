@@ -338,8 +338,6 @@ The client refuses before sending only what it owns: the connection (`rejected`,
 
 A time command carries a request number (`id`) that the page chose, and the answer is the launcher's `command` event with the same `id`; an answer to another page's or stdin's command with the same name is not taken for it. This needs a launcher that writes `state`: for an older one the GUI server refuses the command (`unsupported`).
 
-`run_until` is not accepted by the GUI server yet: `controls.run_until` says `unsupported`, and `runUntil()` sends the command so that a server that takes it works at once.
-
 ### One variable
 
 ```ts

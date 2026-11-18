@@ -162,7 +162,7 @@ describe('the front door', () => {
     vi.useRealTimers();
   });
 
-  async function open(features: string[] = []): Promise<Rig> {
+  async function open(features: string[] = [], without: string[] = []): Promise<Rig> {
     const fake = new FakeWebSockets();
     const http = new FakeHttp();
     const promise = connect({
@@ -176,6 +176,9 @@ describe('the front door', () => {
       },
     });
     const answer = structuredClone(app) as { launcher: { version: { features: string[] } } };
+    answer.launcher.version.features = answer.launcher.version.features.filter(
+      (f) => !without.includes(f),
+    );
     answer.launcher.version.features.push(...features);
     http.expectOne('api/app').flush(answer);
     const front = await promise;
@@ -808,15 +811,10 @@ describe('the front door', () => {
       await rig.deliver(event(timeEvent(61, 900, true)), event(pausedState(3)));
       await until;
       expect(done).toBe(true);
-      // the controls say it cannot be sent unless the launcher has stdin-run-until
-      expect(rig.front.controls.get().run_until).toMatchObject({
-        ok: false,
-        reason: { code: 'unsupported' },
-      });
     });
 
-    it('turns run_until on when the launcher has the feature stdin-run-until', async () => {
-      const rig = await open(['stdin-run-until']);
+    it('says run_until is unsupported when the launcher lacks the feature stdin-run-until', async () => {
+      const rig = await open([], ['stdin-run-until']);
       await rig.deliver(
         {
           type: 'hello',
@@ -830,7 +828,10 @@ describe('the front door', () => {
         event(pausedState(1)),
         { type: 'synced', session: 1, last_seq: 40 },
       );
-      expect(rig.front.controls.get().run_until.ok).toBe(true);
+      expect(rig.front.controls.get().run_until).toMatchObject({
+        ok: false,
+        reason: { code: 'unsupported' },
+      });
     });
 
     it('refuses a second start while the first is on its way, and a start with the token refused', async () => {
