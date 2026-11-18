@@ -363,6 +363,7 @@ Peer ごとの状態は Sent → Queued（Agent が積んだ）→ Applied、Lat
 - Peer、値、操作は、それぞれ Peer ごと・操作ごとに最新の状態だけを持ちます（読む前に変われば置き換える）。
 - 上限（`capacity`）があるのはイベントと操作で、あふれたら、イベントは古いものから、操作はいちばん前に変わったものから捨てて数えます。
 - 値には、そのスキーマの incarnation が付きます。
+- `SubscriptionOptions::operation_clients_excluded` は、`client` がこの一覧にある操作を除きます（ランチャーのシナリオは `scenario` として書きます）。購読に入れないので、上限の場所を取らず、捨てた数にも数えません。
 - `SubscriptionOptions::availability`（既定は off）を立てると、`AvailabilityUpdate` も届きます。報告する変数を持つ Peer の全変数の状態で、スキーマの順です（変数の対応表の見えるスキーマも同じ順です）。Peer ごとに最新だけを持ち、読む前に変われば置き換えます（捨てた数には数えません）。新しい incarnation は、そのスキーマの宣言の状態から始め、購読に残った前の incarnation の分を置き換えます。今の接続でない接続から来たもの、持っているより古い `version`、スキーマと長さの違うものは無視します。
 - `poll()` の順は、Peer、利用状態、操作（番号の順）、イベント（受信した順）、値です。
 - `close()` で、待っている `poll()` を起こして終えます。

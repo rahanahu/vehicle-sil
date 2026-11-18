@@ -49,6 +49,7 @@ from .source import AVAILABILITY, OperationInfo, PeerInfo, Sink, SnapshotInfo, S
 FEATURE = "control-server"  # of vehicle_sil_launch version --json: run --control and the event below
 EVENT = "control_server"  # {"address", "tls", "credentials"}: where the run's control server listens
 STUBS_VARIABLE = "VEHICLE_SIL_CONTROL_STUBS"
+SCENARIO_CLIENT = "scenario"  # the client of a scenario's writes (fixed: docs/control-api.md)
 PROTO = Path("vehicle_sil") / "control" / "v1" / "control.proto"
 ROLE_LINE = "operator vehicle-sil-gui {token}\n"  # reads, writes and time; not the stop (that goes by stdin)
 ADDRESS = re.compile(r"127\.0\.0\.1:(\d{1,5})")  # what `--control 0` gives: nothing else is connected to
@@ -482,6 +483,10 @@ class GrpcSource:
                 request = pb.WatchRequest(values=False, events=False, operations=True, time=True)
                 if "availability" in request.DESCRIPTOR.fields_by_name:  # not in stubs older than it
                     request.availability = True
+                # Not the operations of the scenario's own writes: they can be one per step, and nothing here
+                # uses them.
+                if "operation_clients_excluded" in request.DESCRIPTOR.fields_by_name:  # not in stubs older than it
+                    request.operation_clients_excluded.append(SCENARIO_CLIENT)
                 call = self._stub.Watch(request, metadata=self._metadata)
                 with self._lock:
                     self._call = call

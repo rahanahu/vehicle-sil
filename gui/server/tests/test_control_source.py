@@ -97,10 +97,12 @@ def test_the_state_the_values_a_write_and_its_result(fake) -> None:
         await sink.until("synced")
         kinds = sink.kinds()  # the peers (in one or more parts), the time, and then the word that this is all
         assert kinds[-2:] == ["time", "synced"] and set(kinds[:-2]) == {"peers"}
-        # What it asked the server to send along: the operations, the time and the availability, not the values.
+        # What it asked the server to send along: the operations (but the scenario's), the time and the availability,
+        # not the values.
         asked = server.requests[0]
         assert (asked.values, asked.events, asked.operations, asked.time, asked.availability) == \
             (False, False, True, True, True)
+        assert list(asked.operation_clients_excluded) == ["scenario"]
         assert [p.name for p in await source.read_peers(2)] == ["Engine", "Body"]
         engine = sink.peers["Engine"]
         # every ECU has ecu.connected first (vehicle-sil adds it), then its own variables

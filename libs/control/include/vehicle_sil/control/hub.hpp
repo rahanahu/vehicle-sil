@@ -227,6 +227,9 @@ struct SubscriptionOptions
     bool values = true;
     bool events = true;
     bool operations = true;
+    /// The operations whose OperationRequest::client is one of these are not delivered at all
+    /// (they are not dropped and not counted). Empty: every operation.
+    std::vector<std::string> operation_clients_excluded{};
     /// AvailabilityUpdate for the peers with a variable that reports its availability: when such
     /// a peer connects as a new incarnation (the states its variables start with) and whenever
     /// its states change. Off unless asked for.
@@ -257,6 +260,9 @@ private:
     friend class Hub;
     explicit Subscription(SubscriptionOptions options) : options_(std::move(options)) {}
     [[nodiscard]] bool wants(const std::string& peer) const;
+    /// Whether `op` goes to this subscription: operations asked for, its client not excluded, and
+    /// one of its peers wanted.
+    [[nodiscard]] bool wants(const OperationResult& op) const;
     // Called by the hub with its lock held.
     void put_peer(const PeerInfo& info, bool removed = false);
     void put_operation(const OperationResult& op);

@@ -729,6 +729,40 @@ TEST_CASE(control_hub_a_full_subscription_drops_the_operation_that_changed_longe
     static_cast<void>(b);
 }
 
+TEST_CASE(control_hub_a_subscription_leaves_out_the_operations_of_the_clients_it_names)
+{
+    Hub hub;
+    FakePeer engine("Engine", "e1", hub);
+    engine.connect();
+    auto every = hub.subscribe(SubscriptionOptions{.values = false, .events = false});
+    // Room for one: what it leaves out neither takes room nor counts as dropped.
+    auto without = hub.subscribe(
+        SubscriptionOptions{.values = false, .events = false, .operation_clients_excluded = {"scenario", "other"}, .capacity = 1});
+    static_cast<void>(every->poll(0, 0ms)); // the peers
+    static_cast<void>(without->poll(0, 0ms));
+    const auto from = [](std::string client) {
+        auto request = req({{"Engine", "level", 1.0}}, at(1h));
+        request.client = std::move(client);
+        return request;
+    };
+    const auto a = hub.write(from("scenario"));
+    const auto b = hub.write(from("test"));
+    const auto c = hub.write(from("other"));
+    engine.pump(); // each changes again (Queued)
+    const auto seqs = [](const std::shared_ptr<Subscription>& sub) {
+        std::vector<std::uint64_t> seen;
+        for (const auto& u : sub->poll(0, 0ms))
+        {
+            seen.push_back(std::get<OperationUpdate>(u).operation.seq);
+        }
+        return seen;
+    };
+    CHECK((seqs(every) == std::vector<std::uint64_t>{a, b, c}));
+    CHECK((seqs(without) == std::vector<std::uint64_t>{b}));
+    CHECK_EQ(without->dropped(), std::uint64_t{0});
+    CHECK_EQ(every->dropped(), std::uint64_t{0});
+}
+
 namespace {
 
 /// A link whose send() lets the peer restart (a new incarnation connects) while it sends.

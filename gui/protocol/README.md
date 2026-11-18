@@ -449,7 +449,7 @@ When the launcher has a Control Server (`variables.available` in `api/app`), the
 | `peers[].variables[]` | `{"name", "type", "role", "writable", "unit", "min", "max", "step", "description", "enum", "availability"}` |
 | `peers_omitted`, `variables_omitted` | Numbers of participants and variables left out because a limit was exceeded |
 | `operations` | Operations (`operation` below without `type` and `session`; in the order the server first saw them) |
-| `operations_from_seq` | Every operation with this number (`seq`) or higher is in `operations` (0 means every operation the server saw) |
+| `operations_from_seq` | Every operation with this number (`seq`) or higher that the server receives is in `operations` (0 means every operation the server saw). The operations of a scenario's own writes never reach the server (see `operation` below) |
 | `operations_open_omitted` | Number of open operations the server could not keep (normally 0) |
 
 | `state` | Meaning |
@@ -604,7 +604,7 @@ The per-participant `state`:
 
 - `applied_writes` and `failed_write` are the Control Server's `TargetResult` values, passed on as they are: how many of the participant's writes took effect (from the first) and the position (from 0) of the write `reason` is about. The participant's writes are those of the `api/write` request for it, in the order given. `null` when not known or not said (see "When a write is applied" in [docs/control-api.md](../../docs/control-api.md#when-a-write-is-applied)).
 - The overall `state`: while in progress, `sent` (some ECU has not received it yet) or `queued`. Once final (`done` is `true`), it is the participants' state if they all agree, otherwise `mixed`. A final operation does not change.
-- Each time the state changes, the server sends it to every connection (operations that other clients wrote directly to the Control Server arrive too).
+- Each time the state changes, the server sends it to every connection (operations that other clients wrote directly to the Control Server arrive too). The operations of a scenario's own writes do not arrive: the GUI server does not receive them from the Control Server.
 - `operation` is never dropped, even for a slow connection. But if that connection's queue overflows and a `resync` (sending everything again from `hello`) happens, only the operations in `operations` of the summary (the open ones and the last 32) arrive again. Results of operations that completed before that do not reach that connection (`operations_from_seq` of the summary tells which).
 - An operation that has not completed by the end of the run is completed by the server as `unknown` (`reason`: `the run ended before the result came`) and sent.
 - When there are more than 256 open operations and the server could not keep the old ones (`operations_open_omitted` in the summary), a change to such an operation is still sent as `operation` if it arrives. If the run ends without the operation completing, `unknown` is sent at the end (with empty `peers`).

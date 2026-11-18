@@ -20,6 +20,7 @@ Environment: VEHICLE_SIL_LAUNCH_EXE, VEHICLE_SIL_EXAMPLE_DIR (examples/ecu_main 
 VEHICLE_SIL_TEST_DATA_DIR (the TLS files), VEHICLE_SIL_LAUNCH_SCRATCH (a directory to write into),
 PYTHONPATH with the repository's python/ directory, VEHICLE_SIL_CONTROL_STUBS.
 """
+import itertools
 import json
 import os
 import pathlib
@@ -35,6 +36,7 @@ import unittest
 import grpc
 
 from vehicle_sil_control import Control, ControlError, Launch, LaunchError, TimeState, control_address, ms
+from vehicle_sil_control._stubs import pb, rpc
 
 EXE = ".exe" if os.name == "nt" else ""
 TOKEN = "0123456789abcdef-test-token"
@@ -89,6 +91,12 @@ steps:
   - ramp: { Engine.engine.throttle: { to: 0, over_ms: 200 } }
   - expect: { Engine.engine.speed: { le: 1000 } }
     within_ms: 100
+"""
+# One that writes in every step of the engine for ten minutes of the simulation's time.
+RAMP = """vehicle_sil_scenario: 1
+name: ramp
+steps:
+  - ramp: { Engine.engine.throttle: { from: 0, to: 50, over_ms: 600000 } }
 """
 # One that is not over for ten minutes of the simulation's time.
 LONG = """vehicle_sil_scenario: 1
@@ -749,6 +757,35 @@ class LauncherTest(unittest.TestCase):
         self.assertEqual(result["scenario"]["status"], "incomplete")
         self.assertIn(("note", "scenario-incomplete", None), findings_of(result))
         self.assertEqual([s["status"] for s in result["scenario"]["steps"]], ["passed", "not_run"])
+
+    def test_the_scenario_writes_as_the_client_scenario_which_a_watch_can_leave_out(self):
+        # The name is fixed (docs/control-api.md): the GUI server's watch leaves the scenario's operations out by it.
+        play = scenario("ramp", RAMP)
+        with self.launch("scenario_client", stop_at_ms=3_600_000, arguments=["--scenario", str(play), "--speed", "1"]) as launch:
+            launch.wait_for_event("phase", phase="running")
+            with grpc.insecure_channel(launch.address) as channel:
+                stub = rpc.ControlServiceStub(channel)
+                left_out = stub.Watch(pb.WatchRequest(values=False, events=False, operations=True, time=True,
+                                                      operation_clients_excluded=["scenario"]), timeout=120)
+                # It is subscribed (its initial updates are there) before every operation the other one sees.
+                self.assertIn("initial_done", (u.WhichOneof("kind") for u in left_out))
+                every = stub.Watch(pb.WatchRequest(values=False, events=False, operations=True), timeout=120)
+                clients = [u.operation.client for u in itertools.islice(
+                    (u for u in every if u.WhichOneof("kind") == "operation"), 5)]
+                every.cancel()
+                # Read on until a third of a second of the simulation's time later: past the operations above.
+                until = stub.GetTime(pb.GetTimeRequest(), timeout=30).now_ns + 300_000_000
+                operations = []
+                for u in left_out:
+                    if u.WhichOneof("kind") == "operation":
+                        operations.append(u.operation)
+                    elif u.WhichOneof("kind") == "time" and u.time.now_ns >= until:
+                        break
+                left_out.cancel()
+            launch.stop()
+            launch.wait()
+        self.assertEqual(clients, ["scenario"] * 5)
+        self.assertEqual(operations, [])
 
     def test_a_run_that_is_connected_outside_refuses_what_moves_its_time_away_from_real_time(self):
         with Launch(LAUNCH, bridged_config("time_locked", 3_600_000)) as launch:

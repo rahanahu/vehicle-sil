@@ -223,7 +223,10 @@ export class WriteError extends Error {
 export interface ClientVariables {
   /** List and state of the variables. */
   readonly state: Readable<VariablesState>;
-  /** Recent operations (results of writes; oldest first, up to OPERATIONS_KEPT; includes other clients' writes). */
+  /**
+   * Recent operations (results of writes; oldest first, up to OPERATIONS_KEPT; includes other clients' writes, not a
+   * scenario's own writes).
+   */
   readonly operations: Readable<readonly OperationView[]>;
   /**
    * The server refused a watch (`invalid-watch`, `too-many-watches`; null if not). Values of the refused subscription
@@ -547,7 +550,8 @@ interface Listed {
 /**
  * If the summary shows that the result of the operation with that number will no longer arrive, returns that error
  * (null if it cannot tell). The summary's list holds every unsettled operation and every operation numbered at or
- * above the boundary (operations_from_seq). So an operation that is not in the list and is older than the boundary
+ * above the boundary (operations_from_seq) that the server receives (a scenario's own writes never come; a write of
+ * this client always does). So an operation that is not in the list and is older than the boundary
  * settled while disconnected, and its notification will not come any more. Operations in the list, and those numbered
  * at or above the boundary, just have not arrived yet, so keep waiting. A summary that does not give the boundary
  * cannot tell them apart, so keep waiting.

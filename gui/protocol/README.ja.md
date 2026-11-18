@@ -449,7 +449,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | `peers[].variables[]` | `{"name", "type", "role", "writable", "unit", "min", "max", "step", "description", "enum", "availability"}` |
 | `peers_omitted`、`variables_omitted` | 上限を超えたので入れていない participant と変数の数 |
 | `operations` | 操作（下の `operation` から `type` と `session` を除いたもの。サーバーが初めて見た順） |
-| `operations_from_seq` | この番号（`seq`）以上の操作は、全部 `operations` に入っている（0 なら、サーバーが見た操作の全部） |
+| `operations_from_seq` | サーバーが受け取る操作のうち、この番号（`seq`）以上のものは、全部 `operations` に入っている（0 なら、サーバーが見た操作の全部）。シナリオ自身の書き込みの操作は、サーバーに届かない（下の `operation`） |
 | `operations_open_omitted` | サーバーが覚えきれなかった未確定の操作の数（ふつうは 0） |
 
 | `state` | 意味 |
@@ -604,7 +604,7 @@ participant ごとの `state` は次のとおりです。
 
 - `applied_writes` と `failed_write` は、Control Server の `TargetResult` の値をそのまま渡したものです。participant の書き込みのうち先頭から反映された数と、`reason` が言っている書き込みの位置（0 から）です。participant の書き込みは、`api/write` のリクエストのうちその participant への書き込みを、書いた順に並べたものです。わからないとき、言われないときは `null` です（[docs/ja/control-api.md](../../docs/ja/control-api.md#書き込みが反映される時点) の「書き込みが反映される時点」）。
 - 全体の `state`: 途中は `sent`（まだ受け取っていない ECU がある）か `queued` です。確定（`done` が `true`）したら、全部の participant が同じならその状態、違えば `mixed` です。確定した操作は変わりません。
-- 状態が変わるたびに、全部の接続へ送ります（ほかのクライアントが Control Server に直接書いた操作も届きます）。
+- 状態が変わるたびに、全部の接続へ送ります（ほかのクライアントが Control Server に直接書いた操作も届きます）。シナリオ自身の書き込みの操作は届きません。GUI サーバーが Control Server から受け取らないからです。
 - 受信の遅い接続でも、`operation` は落としません。ただし、その接続の待ち行列があふれて `resync`（`hello` からの送り直し）になったときは、要約の `operations`（未確定の操作と、最後の 32 件）にあるものだけが届き直します。それより前に確定した操作の結果は、その接続には届きません（どれがそうかは、要約の `operations_from_seq` でわかります）。
 - 実行が終わるまでに確定しなかった操作は、サーバーが `unknown`（`reason`: `the run ended before the result came`）で確定させて送ります。
 - 未確定の操作が 256 件を超えて、サーバーが古いものを覚えていられなかったとき（要約の `operations_open_omitted`）も、その操作の変化が届けば `operation` で送ります。確定しないまま実行が終われば、終わりに `unknown` を送ります（そのときは `peers` が空です）。
