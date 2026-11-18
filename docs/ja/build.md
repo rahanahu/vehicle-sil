@@ -143,6 +143,7 @@ UCRT64 シェルの外（PowerShell など）から実行するときは、`C:\m
 |---|---|
 | `vehicle_sil_launch` | Control Server つきです。 |
 | `vehicle_sil_ethernet_bridge` | Ethernet のブリッジです（[ethernet-bridge.md](ethernet-bridge.md)）。`vehicle_sil_launch` の隣にあり、`vehicle_sil_launch run --connect` がそこで見つけます。`npcap`（Windows）と `pcap`（Linux）のバックエンドには Npcap か libpcap が要ります。アーカイブには入っていないので、自分でインストールします。 |
+| `vehicle_sil_socketcan_bridge`（Linux のアーカイブだけ） | SocketCAN のブリッジです（[socketcan-bridge.md](socketcan-bridge.md)）。この PC の CAN アダプターか `vcan0` につなぎます。特権は要りません。ランチャーの `--connect` からはまだ起動しません。 |
 | GUI サーバーと画面 | — |
 | Control API の Python クライアント | gRPC のスタブつきです。 |
 | GUI のクライアントのライブラリ | 1 つの ES モジュールと、型つきの npm のパッケージです。 |

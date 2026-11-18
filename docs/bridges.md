@@ -12,7 +12,7 @@
 > [!WARNING]
 > Sending and receiving on Vector Virtual CAN is verified with an MSYS2 UCRT64 build on Windows 11 and the real XL Driver Library. Sending and receiving is also verified over a physical loopback that connects the 2 channels of a VN5620. Other physical CAN setups and devices are not verified.
 
-For the Ethernet Bridge (`vehicle_sil_ethernet_bridge`), see [ethernet-bridge.md](ethernet-bridge.md).
+For the Ethernet Bridge (`vehicle_sil_ethernet_bridge`), see [ethernet-bridge.md](ethernet-bridge.md); for the SocketCAN bridge of Linux (`vehicle_sil_socketcan_bridge`), see [socketcan-bridge.md](socketcan-bridge.md).
 
 ## First connection
 

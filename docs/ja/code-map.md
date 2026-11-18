@@ -20,7 +20,7 @@ vehicle-sil 自体を開発するときに、変える場所、そのテスト�
 | ランチャー・プロセス・設定・実行 | [code-map-launcher.md](code-map-launcher.md) |
 | シナリオ・時間の軸・一括実行 | [code-map-scenario.md](code-map-scenario.md) |
 | Control API・gRPC・ランチャーの Control Server | [code-map-control.md](code-map-control.md) |
-| Vector XL とイーサネットのブリッジ | [code-map-bridges.md](code-map-bridges.md) |
+| Vector XL、SocketCAN、イーサネットのブリッジ | [code-map-bridges.md](code-map-bridges.md) |
 | ブラウザー GUI・プロトコル・クライアント・画面の例 | [code-map-gui.md](code-map-gui.md) |
 | ビルド・配布・依存ライブラリ・ライブラリの追加 | [code-map-build.md](code-map-build.md) |
 

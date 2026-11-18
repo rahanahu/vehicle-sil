@@ -1,16 +1,20 @@
-# Vector XL とイーサネットのブリッジ
+# Vector XL、SocketCAN、イーサネットのブリッジ
 
 [English](../code-map-bridges.md)
 
 この分野を変更するときの地図です。全体の入口は [code-map.md](code-map.md)、テストの共通ルールは [code-map-testing.md](code-map-testing.md) にあります。
 
-関連する仕様と変更範囲: [bridges.md](bridges.md) / [ethernet-bridge.md](ethernet-bridge.md) / [CAN・イーサネット・LIN のバス](code-map-buses.md) / [ランチャー・プロセス・設定・実行](code-map-launcher.md)
+関連する仕様と変更範囲: [bridges.md](bridges.md) / [socketcan-bridge.md](socketcan-bridge.md) / [ethernet-bridge.md](ethernet-bridge.md) / [CAN・イーサネット・LIN のバス](code-map-buses.md) / [ランチャー・プロセス・設定・実行](code-map-launcher.md)
 
 ## テストのラベル
 
 ### `can_bridge`
 
 CAN ブリッジのうち、外部の側に依存しない部分（`CanBridge`、`ExternalPortAdapter`）のテストです。SIL Kit のコントローラのフェイクと外部ポートのフェイクに対して動かします。全プラットフォームで動きます。
+
+### `socketcan_bridge`
+
+SocketCAN ブリッジ（Linux のみ）のテストです。単体テストは、偽の `CanDevice`（ソケットの層）に対して本番のコードを動かします。引数、netlink の応答とインターフェースの確認、一覧、エラーのフレーム、フレーム・受領・エラーのフレーム・bus-off・`ENOBUFS`・`ENETDOWN`・`ENODEV`・送信のタイムアウトでの `SocketCanPort` です。`socketcan_bridge.netns.*`（`integration` ラベル）は、ネットワーク名前空間の `vcan0` で本物の実行ファイルを `tests/vector_xl` のピアと動かします。名前空間や `vcan0` を作れない所ではスキップ（77）し、`VEHICLE_SIL_REQUIRE_SOCKETCAN=1` ならそれを失敗にします。
 
 ### `vector_xl`
 
@@ -92,6 +96,20 @@ E2E で確認すること:
 
 - テスト: `tests/vector_xl`（XL ドライバのフェイクは `tests/vector_xl/fake_xl`）
 - `ctest -R`: `^vector_xl\.`
+
+### `bridges/socketcan`
+
+| 名前 | 場所 |
+|---|---|
+| `SocketCanPort`（`ExternalCanPort`。リンクの状態、送信のタイムアウト） | `socketcan/socketcan_port.hpp` |
+| `CanDevice`（ソケットの層。`LinuxCanDevice` がカーネルを呼び、試験は偽物を与える）、`RawFrame` | `socketcan/can_device.hpp`（`LinuxCanDevice` は `src/linux_can_device.cpp`） |
+| netlink で読む CAN インターフェース、`check_interface()`、一覧のテキストと JSON | `socketcan/can_interfaces.hpp`（netlink の入出力は `src/netlink.cpp`） |
+| `interpret_error_frame()` | `socketcan/error_frame.hpp` |
+| 引数 | `socketcan/bridge_options.hpp` |
+
+- スレッド: `SocketCanPort` はソケットを読み、インターフェースを見るスレッドを 1 つ持ちます。`transmit()` は任意のスレッドから来て、デバイスのロックを共有で取ります。`stop()` はソケットを閉じる前に排他で取ります。送信がインターフェースの消失や down を見つけたときは、スレッドに見るよう頼むだけです（`watch_requested_`、`requested_fault_`）。イベントはスレッドだけが出します。
+- テスト: `tests/socketcan_bridge`（`fake_can_device.hpp` が偽のソケットの層。netns の試験は `tests/vector_xl` のピアを使う）
+- `ctest -R`: `^socketcan_bridge\.`
 
 ### `bridges/common`
 
@@ -184,6 +202,22 @@ flowchart TD
     bridge_runtime -.-> core
     bridge_runtime -.-> json
     bridge_runtime -.-> vehicle_sil_cli
+```
+
+### SocketCAN Bridge
+
+Linux だけでビルドします。`LinuxCanDevice` は実行ファイルにだけ入ります。試験は `socketcan_bridge_core` を偽の `CanDevice` とリンクします。
+
+```mermaid
+flowchart TD
+    socketcan_bridge_core --> SilKit["SilKit::SilKit"]
+    socketcan_bridge_core --> can_bridge_core
+    socketcan_bridge_core --> bridge_runtime
+    socketcan_bridge_core -.-> json
+    vehicle_sil_socketcan_bridge -.-> socketcan_bridge_core
+    vehicle_sil_socketcan_bridge -.-> bridge_runtime
+    vehicle_sil_socketcan_bridge -.-> core
+    vehicle_sil_socketcan_bridge -.-> vehicle_sil_cli
 ```
 
 ### Ethernet Bridge

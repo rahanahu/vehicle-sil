@@ -10,13 +10,14 @@ Commands:
                          with VEHICLE_SIL_STATIC=ON: SIL Kit, the C++ runtime and gRPC (built here at the pinned
                          version, never a system one) linked into the launcher; SIL Kit and the C++ runtime into
                          the Ethernet bridge
-              build      cmake --build --target vehicle_sil_launch vehicle_sil_ethernet_bridge
+              build      cmake --build --target vehicle_sil_launch vehicle_sil_ethernet_bridge (Linux: and
+                         vehicle_sil_socketcan_bridge)
               compiler   the build was made with GCC (MinGW-w64 included): the archive this repository hands out is
                          not made with another compiler (anyone may build so for themselves)
               python     python/requirements.txt (uv export of the GUI server with gRPC, pinned with hashes from uv.lock)
                          and the gRPC stubs of the Control API (uv run ... python -m vehicle_sil_control.generate)
-              stage      bin/ (the launcher, the Ethernet bridge vehicle_sil_ethernet_bridge, the libraries they
-                         need, vehicle-sil-gui), python/ (vehicle_sil_gui with the
+              stage      bin/ (the launcher, the Ethernet bridge vehicle_sil_ethernet_bridge, on Linux the SocketCAN
+                         bridge vehicle_sil_socketcan_bridge, the libraries they need, vehicle-sil-gui), python/ (vehicle_sil_gui with the
                          built screen and the timeline page of gui/timeline, vehicle_sil_control with the stubs), client/ (the bundled client library and
                          its npm package), gui_starter/ (examples/gui_starter with the bundled library: a screen of
                          your own, served with vehicle-sil-gui --web),
@@ -97,6 +98,8 @@ EXE = ".exe" if WINDOWS else ""
 # only with the Vector XL Driver Library, which vehicle-sil may not hand out.
 LAUNCHER = f"vehicle_sil_launch{EXE}"
 ETHERNET_BRIDGE = f"vehicle_sil_ethernet_bridge{EXE}"
+# The SocketCAN bridge is built on Linux only (a CAN adapter or vcan of this computer); the archive of Windows has none.
+SOCKETCAN_BRIDGE = "vehicle_sil_socketcan_bridge"
 # The pcap libraries (Npcap's DLLs, libpcap): the bridge loads them at run time where they are installed, so that
 # it starts (--describe, --list-interfaces) without them; neither is in the archive.
 PCAP_LIBRARY = re.compile(r"^(wpcap\.dll|packet\.dll|libpcap\.so.*)$", re.IGNORECASE)
@@ -427,6 +430,10 @@ echo vehicle-sil-gui: uv is not installed, and %VEHICLE_SIL_PYTHON% (VEHICLE_SIL
 exit /b 2
 """
 
+SOCKETCAN_ROW = ("| `bin/vehicle_sil_socketcan_bridge` | the SocketCAN bridge between a SIL Kit CAN network and a CAN interface of this "
+                 "computer (a CAN adapter, or a virtual one such as `vcan0`); it needs no privileges and sets nothing on the "
+                 "interface: `--interface <name>`, `--list-channels` (the launcher does not start it from `--connect` yet) |\n")
+
 README = """# vehicle-sil {version} tools ({platform})
 
 Prebuilt tools of vehicle-sil {version}: the launcher and the browser GUI. Build your ECUs with the same
@@ -436,7 +443,7 @@ vehicle-sil version (the ECU project template: GIT_TAG v{version}).
 |---|---|
 | `bin/vehicle_sil_launch{exe}` | checks and runs a simulation configuration (`check`, `run`, `run --scenario`, `run --control`) |
 | `bin/vehicle_sil_ethernet_bridge{exe}` | the Ethernet bridge between a SIL Kit Ethernet network and a network interface of this computer: `vehicle_sil_launch run --connect <network>=<interface>` starts it from here. Its `npcap` (Windows) and `pcap` (Linux) backends need Npcap or libpcap installed, which this archive does not contain; `packet` and `tap` (Linux) need nothing. The Vector XL CAN bridge is not in this archive: build it with the Vector XL Driver Library and put it next to `vehicle_sil_launch` or in a directory on PATH |
-| `bin/vehicle-sil-gui`{cmd} | the browser GUI's server, with the launcher above (needs Python 3.11+; with uv, `uv run` installs its packages) |
+{socketcan_row}| `bin/vehicle-sil-gui`{cmd} | the browser GUI's server, with the launcher above (needs Python 3.11+; with uv, `uv run` installs its packages) |
 | `python/` | the GUI server (`vehicle_sil_gui`, with the built screen and the timeline page) and the Control API client (`vehicle_sil_control`, with its gRPC stubs); `requirements.txt` pins their packages with hashes |
 | `client/vehicle-sil-gui-client.mjs` | the GUI client library as one ES module (for a screen without a build: import it with a relative path) |
 | `client/vehicle-sil-gui-client-{version}.tgz` | the same library as an npm package with its types: `npm install <this file>`, then `import ... from '@vehicle-sil/gui-client'` |
@@ -488,6 +495,7 @@ def tools_command(args: argparse.Namespace) -> int:
     stage = stage_root / top
     launcher = build / "tools" / "launch" / LAUNCHER
     bridge = build / "bridges" / "ethernet" / ETHERNET_BRIDGE
+    socketcan_bridge = build / "bridges" / "socketcan" / SOCKETCAN_BRIDGE
     for tool, why in [("cmake", "configure and build"), ("uv", "the Python packages and stubs")] + (
             [] if args.no_build else [("ninja", "the build")]) + (
             [("objdump", "the DLLs of the executables (MSYS2: binutils)"), ("pacman", "the licenses of the DLLs")]
@@ -544,7 +552,7 @@ def tools_command(args: argparse.Namespace) -> int:
 
     def build_step(s: Step) -> None:
         s.run(["cmake", "--build", build, "--target", "vehicle_sil_launch", "vehicle_sil_ethernet_bridge",
-               "--parallel", str(args.jobs)])
+               *([] if WINDOWS else [SOCKETCAN_BRIDGE]), "--parallel", str(args.jobs)])
 
     python_dir = build / "python"
 
@@ -572,12 +580,14 @@ def tools_command(args: argparse.Namespace) -> int:
         (stage / "bin").mkdir(parents=True)
         shutil.copy2(launcher, stage / "bin")
         shutil.copy2(bridge, stage / "bin")
+        if not WINDOWS:
+            shutil.copy2(socketcan_bridge, stage / "bin")
         if WINDOWS:
             bundled = stage_windows_dlls(s, [launcher, bridge], stage / "bin")
             (stage / "bin" / "vehicle-sil-gui.cmd").write_text(
                 CMD_WRAPPER.replace("@PYTHON@", python_versions()).replace("\n", "\r\n"), encoding="ascii", newline="")
         else:
-            bundled = stage_linux_libraries(s, [launcher, bridge], build, stage / "bin")
+            bundled = stage_linux_libraries(s, [launcher, bridge, socketcan_bridge], build, stage / "bin")
         wrapper = stage / "bin" / "vehicle-sil-gui"
         wrapper.write_text(SH_WRAPPER.replace("@PYTHON@", python_versions()), encoding="ascii", newline="\n")
         wrapper.chmod(0o755)
@@ -606,7 +616,8 @@ def tools_command(args: argparse.Namespace) -> int:
         shutil.copy2(ROOT / "LICENSE", stage)
         shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", stage)
         stage_licenses(s, build, stage / "licenses", web_licenses, bundled, args.allow_missing_licenses)
-        (stage / "README.md").write_text(README.format(version=version, platform=PLATFORM, exe=EXE,
+        socketcan_row = "" if WINDOWS else SOCKETCAN_ROW
+        (stage / "README.md").write_text(README.format(version=version, platform=PLATFORM, exe=EXE, socketcan_row=socketcan_row,
                                                        cmd=" (`.cmd` from the Command Prompt)" if WINDOWS else ""),
                                          encoding="utf-8")
         (stage / "VERSION").write_text(version + "\n", encoding="ascii")
@@ -640,6 +651,8 @@ def tools_command(args: argparse.Namespace) -> int:
                              "time (libs/eth_link/src/pcap), so that it starts where Npcap or libpcap is not "
                              "installed and the archive holds none of their files; load it there instead of linking it")
         s.notes.append(check_bridge_alone(s, stage / "bin" / ETHERNET_BRIDGE, version))
+        if not WINDOWS:
+            s.notes.append(check_socketcan_bridge_alone(s, stage / "bin" / SOCKETCAN_BRIDGE, version))
         if WINDOWS:
             missing = [f"{pe.name} needs {dll}" for pe in sorted((stage / "bin").glob("*.[de][lx][le]"))
                        for dll in pe_imports(s, pe)
@@ -654,7 +667,8 @@ def tools_command(args: argparse.Namespace) -> int:
             s.notes.append("no DLL in bin/")
             return
         newest = (0, 0)
-        for elf in [stage / "bin" / LAUNCHER, stage / "bin" / ETHERNET_BRIDGE, *sorted((stage / "bin").glob("*.so*"))]:
+        for elf in [stage / "bin" / LAUNCHER, stage / "bin" / ETHERNET_BRIDGE, stage / "bin" / SOCKETCAN_BRIDGE,
+                    *sorted((stage / "bin").glob("*.so*"))]:
             needed = elf_needed(s, elf)
             allowed = LINUX_SYSTEM_LIBRARIES | ({"libstdc++.so.6", "libgcc_s.so.1"} if args.shared_runtime else set())
             extra = [n for n in needed if n not in allowed and not (stage / "bin" / n).is_file()]
@@ -754,6 +768,23 @@ def check_bridge_alone(s: Step, bridge: Path, version: str) -> str:
         found.append(f"{listed.get('backend')}: " + (f"{count} interface{'' if count == 1 else 's'}" if error is None
                                                       else "library-missing"))
     return f"{bridge.name} --describe and --list-interfaces --json ({', '.join(found)})"
+
+
+def check_socketcan_bridge_alone(s: Step, bridge: Path, version: str) -> str:
+    """Runs the SocketCAN bridge as a user's computer does, with a PATH of the system's directories only: --describe
+    and --list-channels --json, which open no interface. Returns a note for the summary."""
+    env = dict(os.environ, PATH=minimal_path())
+    described = run_json(s, [bridge, "--network", "CAN", "--interface", "vsil-verify0", "--describe", "--name", "bridge.CAN"], env)
+    networks = described.get("networks") or [{}]
+    if (described.get("vehicle_sil") != version or described.get("name") != "bridge.CAN"
+            or networks[0].get("name") != "CAN" or networks[0].get("kind") != "can"):
+        raise StepFailed(f"{bridge.name} --describe does not describe bridge.CAN on the CAN network CAN of "
+                         f"vehicle-sil {version}: {described}")
+    listed = run_json(s, [bridge, "--list-channels", "--json"], env)
+    if listed.get("tool") != "vehicle_sil_socketcan_bridge" or listed.get("error") is not None:
+        raise StepFailed(f"{bridge.name} --list-channels --json answers no list: {json.dumps(listed)[:300]}")
+    count = len(listed.get("targets") or [])
+    return f"{bridge.name} --describe and --list-channels --json ({count} CAN interface{'' if count == 1 else 's'})"
 
 
 def elf_needed(s: Step, path: Path) -> list[str]:
@@ -943,7 +974,7 @@ def verify_command(args: argparse.Namespace) -> int:
                      "gui_starter/index.html", "gui_starter/vehicle-sil-gui-client.mjs",
                      "schema/dashboard.schema.json", "schema/simulation.schema.json",
                      "schema/scenario.schema.json", "schema/timeline.schema.json"] + (
-                ["bin/vehicle-sil-gui.cmd"] if WINDOWS else []):
+                ["bin/vehicle-sil-gui.cmd"] if WINDOWS else [f"bin/{SOCKETCAN_BRIDGE}"]):
             if not (tools / path).is_file():
                 raise StepFailed(f"the archive has no {top}/{path}")
 
@@ -955,6 +986,8 @@ def verify_command(args: argparse.Namespace) -> int:
             raise StepFailed(f"the archive's launcher is not vehicle-sil {version} with its control server: {info}")
         s.notes.append(f"PATH={env['PATH']}")
         s.notes.append(check_bridge_alone(s, tools / "bin" / ETHERNET_BRIDGE, version))
+        if not WINDOWS:
+            s.notes.append(check_socketcan_bridge_alone(s, tools / "bin" / SOCKETCAN_BRIDGE, version))
 
     def build(s: Step) -> None:
         s.run(["cmake", "--preset", preset, f"-DFETCHCONTENT_SOURCE_DIR_VEHICLE_SIL={ROOT}"] + (args.cmake_arg or []),
