@@ -18,7 +18,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from real_configs import NETWORKS, examples_dir, executables, usable
+from conftest import Client, gui_server, is_ended, is_synced, run_async
+from real_configs import NETWORKS, examples_dir, executables, usable, write
 from vehicle_sil_gui.recording import scenario_yaml
 
 TESTS = Path(__file__).resolve().parent
@@ -58,3 +59,30 @@ def test_a_saved_scenario_with_names_beyond_ascii_passes_the_real_check(tmp_path
     assert check["result"] == "passed", check["findings"]
     assert check["scenario"] == {"file": "rec.yaml", "name": "recorded from s\u00edm.yaml (run 1)", "steps": 2,
                                  "inputs": [], "lines": []}
+
+
+def test_a_variant_chosen_in_the_browser_reaches_the_real_check_and_run(tmp_path: Path) -> None:
+    """The intent of the browser is a request file for the real launcher: a configuration with variants, checked and
+    run with the variant chosen (and refused with the launcher's own words when none is chosen)."""
+    configs = tmp_path / "configs"
+    write(configs, EXAMPLES)
+
+    async def talk(c: Client) -> None:
+        status, body = await c.post("api/check", {"file": "variants.yaml"})
+        assert status == 200 and body["check"]["result"] == "usage", body  # the launcher says to choose a variant
+        assert "variant" in json.dumps(body["check"]["findings"])
+        status, body = await c.post("api/run", {"file": "variants.yaml"})
+        assert (status, body["error"]["code"]) == (422, "check-failed"), body
+        for variant in ("small", "big"):
+            status, body = await c.post("api/check", {"file": "variants.yaml", "variant": variant})
+            assert status == 200 and body["check"]["result"] == "passed", body
+        status, body = await c.post("api/check", {"file": "variants.yaml", "variant": "nope"})
+        assert status == 200 and body["check"]["result"] == "usage", body
+        sock = await c.ws()
+        await sock.until(is_synced)
+        status, body = await c.post("api/run", {"file": "variants.yaml", "variant": "small", "speed": "max"})
+        assert status == 200, body
+        got = await sock.until(is_ended)
+        assert got[-1]["session"]["result"]["result"] == "passed", got[-1]["session"]["result"]
+    with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER)) as gui:
+        run_async(talk, gui)

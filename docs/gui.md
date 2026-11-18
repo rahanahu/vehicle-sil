@@ -1246,7 +1246,7 @@ The library does not enforce these rules for you. The sample screens follow them
 
 | Rule | If you do not |
 |---|---|
-| Do not send fields for features missing from the launcher's `features` in check and start requests | The server rejects the request with 400. |
+| Leave out a choice that is not made (send no `null`) in check and start requests | The server rejects the request with 400 `invalid-field`. |
 | Before writing, check whether the variable can be written | The server rejects the write (`refused` of `WriteError`), but you cannot show in advance that it is disabled. |
 | Check whether a value is stale, and show it | A stale value looks like the current value. |
 | Tell monitoring variables apart from the variables the ECU declared | Monitoring variables get mixed in with the application's variables. |
@@ -1254,16 +1254,8 @@ The library does not enforce these rules for you. The sample screens follow them
 
 **Check and start requests**:
 
-- Do not send fields for features that the launcher's `features` (`client.app.get()?.launcher.features`) lack.
-
-  | Field | `features` needed |
-  |---|---|
-  | `manual` | `manual-participants` |
-  | `speed` | `speed` |
-  | `start_paused` | `start-paused` |
-  | `scenario` | `scenario` |
-
-- Do not put a name from `disable` into `manual` (the server rejects it with 400).
+- A choice that is not made is a field that is left out: the server refuses `null`. The fields are the keys of the launcher's request file, with its names and value forms (`variant`, `params`, `scenario`, `disable`, `enable`, `manual`, `strict`, and for a start `speed` and `start_paused`). What they mean for the configuration file is the launcher's to say, as findings of the check.
+- Do not put a name from `disable` into `manual` (the launcher refuses it).
 - If a scenario is selected, set `start_paused` to false (a scenario cannot start paused).
 - Send a check only after the response to the previous check (the server runs checks one at a time).
 

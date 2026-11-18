@@ -87,13 +87,16 @@ const MOVES = new Set(['pause', 'resume']);
 
 /** The fields of an `Intent` (what `run.start()` takes). */
 const INTENT_FIELDS = new Set([
+  'vehicle_sil_run_request',
   'disable',
+  'enable',
   'manual',
   'scenario',
   'variant',
   'params',
   'speed',
   'start_paused',
+  'strict',
 ]);
 
 export class FrontActions {
@@ -152,15 +155,21 @@ export class FrontActions {
     }
     const own = this.refusalOfStart();
     if (own) return this.fail(own);
+    // The server takes the intent as the request file has it: a choice that is not made is not sent (no null)
     const request: RunRequest = {
       file,
       disable: intent.disable ?? [],
-      speed: intent.speed ?? null,
-      start_paused: intent.start_paused ?? false,
+      ...(intent.vehicle_sil_run_request
+        ? { vehicle_sil_run_request: intent.vehicle_sil_run_request }
+        : {}),
+      ...(intent.enable ? { enable: intent.enable } : {}),
       ...(intent.manual ? { manual: intent.manual } : {}),
       ...(intent.scenario !== undefined ? { scenario: intent.scenario } : {}),
       ...(intent.variant !== undefined ? { variant: intent.variant } : {}),
       ...(intent.params ? { params: intent.params } : {}),
+      ...(intent.speed !== undefined ? { speed: intent.speed } : {}),
+      ...(intent.start_paused ? { start_paused: true } : {}),
+      ...(intent.strict ? { strict: true } : {}),
     };
     return this.guarded('start', () => this.src.low.run.start(request).then(() => undefined));
   }

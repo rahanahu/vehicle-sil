@@ -1254,7 +1254,7 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 
 | ルール | 守らないとき |
 |---|---|
-| ランチャーの `features` にない機能のフィールドを、照合と開始のリクエストで送らない | サーバーが 400 で拒否します。 |
+| 照合と開始のリクエストで、選ばないものは書かない（`null` を送らない） | サーバーが 400 `invalid-field` で拒否します。 |
 | 書き込む前に、変数に書き込めるかを確認する | サーバーが拒否しますが（`WriteError` の `refused`）、押せないことを先に見せられません。 |
 | 値が古いかを確認して表示する | 古い値が、いまの値に見えます。 |
 | 監視用の変数を、ECU が宣言した変数と区別する | 監視用の変数が、アプリの変数に混ざって並びます。 |
@@ -1262,16 +1262,8 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 
 **照合と開始のリクエスト**:
 
-- ランチャーの `features`（`client.app.get()?.launcher.features`）にない機能のフィールドは送りません。
-
-  | フィールド | 必要な `features` |
-  |---|---|
-  | `manual` | `manual-participants` |
-  | `speed` | `speed` |
-  | `start_paused` | `start-paused` |
-  | `scenario` | `scenario` |
-
-- `manual` に `disable` の名前を入れません（サーバーが 400 で拒否します）。
+- 選ばないものは、フィールドを書きません（サーバーは `null` を断ります）。フィールドは、ランチャーの要求ファイルのキーで、名前と値の形も同じです（`variant`、`params`、`scenario`、`disable`、`enable`、`manual`、`strict`、開始では `speed` と `start_paused`）。構成ファイルに照らして何を意味するかは、ランチャーが照合の所見で言います。
+- `manual` に `disable` の名前を入れません（ランチャーが拒否します）。
 - シナリオを選んだら `start_paused` は偽にします（シナリオは止めた状態では開始できません）。
 - 照合は、前の照合のレスポンスを待ってから送ります（サーバーは 1 つずつ実行します）。
 

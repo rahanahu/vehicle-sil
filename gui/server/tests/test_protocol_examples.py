@@ -272,7 +272,7 @@ def test_http_examples(tmp_path: Path) -> None:
             ):
                 status, body = await c.post("api/check", req)
                 check_example(name, http(text, "POST", "api/check", req, status, body), gui)
-            req = {"file": "check-error.yaml", "disable": [], "speed": None, "start_paused": False}
+            req = {"file": "check-error.yaml", "disable": []}
             status, body = await c.post("api/run", req)
             check_example("error-check-failed", http("A start whose check found an error: no run is started, and "
                                                      "detail.findings are the check's findings.", "POST",
@@ -321,7 +321,7 @@ def test_http_examples(tmp_path: Path) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
             # ignore-stop.yaml: Logger does not end when asked, so the run is still there when the second stop comes
-            req = {"file": "ignore-stop.yaml", "disable": [], "speed": None, "start_paused": False}
+            req = {"file": "ignore-stop.yaml", "disable": []}
             status, body = await c.post("api/run", req)
             check_example("run", http("Start a run: the summary of the new run.", "POST", "api/run", req, status,
                                       body), gui)
@@ -350,13 +350,14 @@ def test_http_examples(tmp_path: Path) -> None:
         run_async(talk, gui)
 
 
-def test_errors_of_an_older_launcher(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"REPLAY_FEATURES": "events,stdin-commands,check-variables"}) as gui:
+def test_the_error_of_a_request_key_that_is_not_taken_yet(tmp_path: Path) -> None:
+    with gui_server(tmp_path) as gui:
         async def talk(c: Client) -> None:
-            req = {"file": "simulation.yaml", "start_paused": True}
+            req = {"file": "simulation.yaml", "connect": {"ETH_EXT": "enp3s0"}}
             status, body = await c.post("api/run", req)
-            check_example("error-unsupported", http("start_paused true with a launcher that has no start-paused "
-                                                    "feature.", "POST", "api/run", req, status, body), gui)
+            check_example("error-unsupported", http("A key of the request file that this server does not pass on "
+                                                    "yet (connect, time_policy).", "POST", "api/run", req, status,
+                                                    body), gui)
         run_async(talk, gui)
 
 

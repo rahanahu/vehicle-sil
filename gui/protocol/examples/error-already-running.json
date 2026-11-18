@@ -5,9 +5,7 @@
     "path": "api/run",
     "body": {
       "file": "ignore-stop.yaml",
-      "disable": [],
-      "speed": null,
-      "start_paused": false
+      "disable": []
     }
   },
   "status": 409,

@@ -86,7 +86,7 @@ describe('RunControl', () => {
   });
 
   it('shows why the server refused', () => {
-    run.start({ file: 'a.yaml', disable: [], speed: null, start_paused: false });
+    run.start({ file: 'a.yaml', disable: [] });
     http
       .expectOne('api/run')
       .flush(
@@ -101,7 +101,7 @@ describe('RunControl', () => {
   });
 
   it('can be asked to stop while the start waits for its answer, and asks again if the answer does not show it', () => {
-    run.start({ file: 'a.yaml', disable: [], speed: null, start_paused: false });
+    run.start({ file: 'a.yaml', disable: [] });
     run.stop();
     expect(run.stopWhileStarting()).toBe(true);
     expect(run.stopping()).toBe('stop');
@@ -138,7 +138,7 @@ describe('RunControl', () => {
   });
 
   it('forgets a refusal once another run starts or the run ends', () => {
-    run.start({ file: 'a.yaml', disable: [], speed: null, start_paused: false });
+    run.start({ file: 'a.yaml', disable: [] });
     http
       .expectOne('api/run')
       .flush(
@@ -154,11 +154,9 @@ describe('RunControl', () => {
 
   it('says that no answer came, not that the start failed, and waits as long as the server may check', () => {
     let rejected: unknown = null;
-    client.run
-      .start({ file: 'a.yaml', disable: [], speed: null, start_paused: false })
-      .catch((e) => {
-        rejected = e;
-      });
+    client.run.start({ file: 'a.yaml', disable: [] }).catch((e) => {
+      rejected = e;
+    });
     const request = http.expectOne('api/run');
     // A start may check again: room for waiting its turn and for the check, plus a margin
     expect(request.request.timeoutMs).toBe(2 * 120 * 1000 + DEFAULT_TIMEOUT_MS);

@@ -17,10 +17,9 @@ from conftest import (CONTROL_FEATURES, REPOSITORY, Client, gui_server, is_ended
                       run_async)
 
 from vehicle_sil_gui import recording
-from vehicle_sil_gui.launcher import Launcher, check_command, run_command
-from vehicle_sil_gui.paths import ConfigRoot, PathRejected
+from vehicle_sil_gui.paths import ConfigFile, ConfigRoot, PathRejected
 from vehicle_sil_gui.recording import Recording, key, number, quoted, scenario_yaml
-from vehicle_sil_gui.scenarios import list_scenarios, resolve_scenario
+from vehicle_sil_gui.scenarios import list_scenarios, relative_to_config, resolve_scenario
 
 PASS, FAIL = "scenarios/throttle.yaml", "scenarios/fails.yaml"
 
@@ -85,11 +84,11 @@ def test_only_the_files_in_scenarios_next_to_the_configuration_are_listed_and_ta
             resolve_scenario(cfg, linked, "linked/scenarios/a.yaml")
 
 
-def test_a_path_that_starts_with_a_dash_is_not_an_option_to_the_launcher() -> None:
-    assert check_command(Launcher(Path("vehicle_sil_launch")), "-x/sim.yaml", [], "-x/scenarios/a.yaml")[-4:] == \
-        ["--scenario", "./-x/scenarios/a.yaml", "--", "-x/sim.yaml"]
-    argv = run_command(Launcher(Path("vehicle_sil_launch")), "sim.yaml", [], None, False, None, "scenarios/a.yaml")
-    assert argv[argv.index("--scenario") + 1] == "scenarios/a.yaml"
+def test_the_scenario_of_a_request_file_is_from_the_directory_of_the_configuration_file() -> None:
+    assert relative_to_config(ConfigFile("simulation.yaml", Path("/r/simulation.yaml")),
+                              "scenarios/a.yaml") == "scenarios/a.yaml"
+    assert relative_to_config(ConfigFile("a/b/sim.yaml", Path("/r/a/b/sim.yaml")),
+                              "a/b/scenarios/-x.yaml") == "scenarios/-x.yaml"
 
 
 def test_the_listing_and_a_check_with_a_scenario(gui) -> None:
@@ -105,18 +104,13 @@ def test_the_listing_and_a_check_with_a_scenario(gui) -> None:
         status, body = await c.post("api/check", {"file": "simulation.yaml", "scenario": "simulation.yaml"})
         assert (status, body["error"]["code"]) == (400, "scenario-not-listed")
         assert "GET api/scenarios?file=simulation.yaml" in body["error"]["message"]
+        # The launcher refuses a scenario that starts paused (the check says it): the run is not started
         status, body = await c.post("api/run", {"file": "simulation.yaml", "scenario": PASS, "start_paused": True})
-        assert (status, body["error"]["code"]) == (400, "invalid-field") and "start_paused" in body["error"]["message"]
+        assert (status, body["error"]["code"]) == (422, "check-failed"), body
+        assert body["error"]["detail"]["result"] == "usage" and body["error"]["detail"]["findings"][0]["code"] == "usage"
+        status, body = await c.get("api/session")
+        assert body["session"] is None
     run_async(talk, gui)
-
-
-def test_a_launcher_without_scenarios_is_not_given_one(tmp_path: Path) -> None:
-    features = "events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links"
-    with gui_server(tmp_path, env={"REPLAY_FEATURES": features}) as gui:
-        async def talk(c: Client) -> None:
-            status, body = await c.post("api/check", {"file": "simulation.yaml", "scenario": PASS})
-            assert (status, body["error"]["code"]) == (400, "unsupported")
-        run_async(talk, gui)
 
 
 # ---------------------------------------------------------------- runs

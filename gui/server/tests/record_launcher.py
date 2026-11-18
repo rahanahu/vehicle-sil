@@ -115,6 +115,10 @@ class Case:
     # event says, ("sleep", s), ("hang",): the launcher waits on (the recording ends here; it is killed)
     script: list[tuple] = field(default_factory=list)
     default: bool = False  # of the recordings of one command line, the one to play until a command says otherwise
+    # A request file to give instead of the options of argv (which still name the case: replay_launcher.py turns
+    # a --request back into such options). For what options cannot say: `check --start-paused` is refused as an
+    # option, and a request file may have start_paused for check (the launcher's rules about it are checked there).
+    request: dict | None = None
 
 
 def run_case(name: str, file: str, about: str, *script, extra: tuple = (), default: bool = False) -> Case:
@@ -167,6 +171,10 @@ class Recorder:
     def record(self, case: Case) -> tuple[dict, list[dict]]:
         argv = [str(self.root / ".control-credentials") if a == "<credentials>" else
                 str(self.timeline_path(case)) if a == "<timeline>" else a for a in case.argv]
+        if case.request is not None:
+            path = self.root / ".request.json"
+            path.write_text(json.dumps({"vehicle_sil_run_request": 1, **case.request}), encoding="utf-8")
+            argv = [*argv[:argv.index("--json") + 1], "--request", str(path), "--", argv[-1]]
         proc = subprocess.Popen([str(self.launcher), *argv], cwd=self.root, stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         lines: list[tuple[float, str, str]] = []  # (time, "out" | "err" | "send", text)
@@ -761,6 +769,13 @@ def checks() -> list[Case]:
         Case("check-forever-scenario-no-logger", ["check", "--json", "--scenario", "scenarios/throttle.yaml",
                                                   "--disable", "Logger", "--", "forever.yaml"],
              "the check of forever.yaml with a scenario, without Logger"),
+        Case("check-simulation-scenario-paused", ["check", "--json", "--scenario", "scenarios/throttle.yaml",
+                                                  "--start-paused", "--", "simulation.yaml"],
+             "the check of a scenario that is asked to start paused (the launcher refuses the two together)"),
+        Case("check-simulation-scenario-paused", ["check", "--json", "--scenario", "scenarios/throttle.yaml",
+                                                  "--start-paused", "--", "simulation.yaml"],
+             "the check of a request file with a scenario and start_paused (the launcher refuses the two together)",
+             request={"scenario": "scenarios/throttle.yaml", "start_paused": True}),
         Case("check-variants", ["check", "--json", "--", "variants.yaml"],
              "the check of a file with variants, none chosen (the launcher says to choose one)"),
         Case("check-variants-small", ["check", "--json", "--variant", "small", "--", "variants.yaml"],

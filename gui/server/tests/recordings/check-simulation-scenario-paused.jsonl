@@ -1,0 +1,121 @@
+{"vehicle_sil_recording": 1, "case": "check-simulation-scenario-paused", "about": "the check of a request file with a scenario and start_paused (the launcher refuses the two together)", "shape": ["check", "--json", "--scenario", "<scenario>", "--start-paused", "--", "<file>"], "config": "simulation.yaml", "config_sha256": "c8bf88cb74bb62562a94a60bc814273c432e9e1abcbc369325a8618847b02df6", "scenario": "scenarios/throttle.yaml", "scenario_sha256": "bc8ce24e6bacca1f262f9a3ad7e26c3b3a032d9f708105efa66f404551e5289e"}
+{"print": {"vehicle_sil_check": 1, "vehicle_sil": "0.1.0", "file": "<file>", "result": "usage", "strict": false, "errors": 1, "warnings": 0, "notes": 0, "stop_at_ms": null, "start_timeout_ms": null, "stop_timeout_ms": null, "registry_uri": null, "participants": [], "networks": [], "time_lock": null, "findings": [{"severity": "error", "code": "usage", "file": "<file>", "line": null, "participant": null, "network": null, "message": "scenario in <root>/.request.json cannot be used with start_paused in <root>/.request.json: the scenario writes its values for 0 before the first step and runs by itself; pause and step it with --stdin-commands if needed", "detail": null}]}}
+{"err": "error: scenario in <root>/.request.json cannot be used with start_paused in <root>/.request.json: the scenario writes its values for 0 before the first step and runs by itself; pause and step it with --stdin-commands if needed"}
+{"err": "usage: vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]"}
+{"err": "                                [--describe-timeout-ms <ms>] [--connect <network>=<target>]..."}
+{"err": "                                [--time-policy realtime|free] [--request <file>]"}
+{"err": "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>"}
+{"err": "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]"}
+{"err": "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>"}
+{"err": "                              --control-tls-key <file>] [--control-audit-log <file>]]"}
+{"err": "                              [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]"}
+{"err": "                              [--speed <speed>] [--strict] [--log-dir <dir>]"}
+{"err": "                              [--timeout-ms <ms>]"}
+{"err": "                              [--describe-timeout-ms <ms>] [--connect <network>=<target>]..."}
+{"err": "                              [--time-policy realtime|free] [--request <file>]"}
+{"err": "                              [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>"}
+{"err": "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]..."}
+{"err": "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]"}
+{"err": "                               [--disable <name>]... [--enable <name>]... <file> --scenarios <directory or files>..."}
+{"err": "       vehicle_sil_launch connections [--json] [--network <name>] [--] <file>"}
+{"err": "       vehicle_sil_launch version [--json]"}
+{"err": "  check <file>                compare the simulation configuration <file> (YAML or JSON) with what each"}
+{"err": "                              ecu_main executable in it reports (--describe); list the participants,"}
+{"err": "                              the networks and every error and warning"}
+{"err": "  run <file>                  check <file>; if it passes, run the simulation: the registry and the"}
+{"err": "                              controller in this process, each participant as a process of its own"}
+{"err": "                              (its output on stderr, each line after [<name>]); then end every"}
+{"err": "                              participant and report how each ended. Ctrl+C stops it in order"}
+{"err": "  test <file>                 run every scenario of --scenarios with <file>, once for each of its variants, one"}
+{"err": "                              run after the other (each as run --speed max --scenario: its own registry and"}
+{"err": "                              processes); then a table of all runs: passed, FAILED or skipped, and why. A"}
+{"err": "                              failed run does not end the test. Ctrl+C stops the current run in order and"}
+{"err": "                              leaves the rest out"}
+{"err": "  connections <file>          where each network of <file> can be connected on this computer: asks the bridge"}
+{"err": "                              of each can and ethernet network for its list and writes the targets as"}
+{"err": "                              --connect lines to copy (connects to nothing)"}
+{"err": "  version                     the version of vehicle_sil_launch (--json: also its formats and features)"}
+{"err": "  --json                      write the result as JSON"}
+{"err": "  --events                    run: write what happens as events on stdout, one JSON object per line, the"}
+{"err": "                              result last (nothing on stderr but the launcher's own failures)"}
+{"err": "  --events-stall-ms <ms>      run --events: give up a reader of the events that takes nothing for <ms>, and wait"}
+{"err": "                              at most <ms> for it to take the result (1000 or more; default 30000)"}
+{"err": "  --stdin-commands            run: read commands from stdin, one JSON object per line: {\"command\":\"stop\"}"}
+{"err": "                              stops in order (twice: without waiting); the end of stdin stops as well;"}
+{"err": "                              pause, resume, step (with \"ms\"), run_until (with \"at_ms\") and speed (with"}
+{"err": "                              \"value\") control the time"}
+{"err": "  --start-paused              run --stdin-commands or --control: stand still at 0 until a resume or step"}
+{"err": "                              command (with --control: before the first step, so that a client's writes"}
+{"err": "                              take effect at 0)"}
+{"err": "  --control <address>         run: serve the Control API (gRPC) for clients: the ECUs' variables and the"}
+{"err": "                              time; <port> (on 127.0.0.1; 0: any free port), <host>:<port> or unix:<path>;"}
+{"err": "                              the event control_server and a line say where (only in a build with"}
+{"err": "                              VEHICLE_SIL_BUILD_CONTROL_SERVER=ON)"}
+{"err": "  --control-credentials <file> run --control: tokens and roles, one per line: <role> <name> <token>"}
+{"err": "                              (every call then needs a token; never put a token on the command line)"}
+{"err": "  --control-tls-cert <file>   run --control: PEM certificate chain of the server (with --control-tls-key: TLS)"}
+{"err": "  --control-tls-key <file>    run --control: PEM private key of the server"}
+{"err": "  --control-audit-log <file>  run --control: append who changed what"}
+{"err": "  --scenario <file>           check: also check the scenario <file> against the participants' variables;"}
+{"err": "                              run: then run it: write the ECUs' variables and compare their values at"}
+{"err": "                              virtual times, stop the simulation when the scenario is over, and fail if a"}
+{"err": "                              step failed (docs/scenario.md; not with --start-paused; with --control the"}
+{"err": "                              clients read and stop, and cannot write or move the time)"}
+{"err": "  --variant <name>            the variant of <file> to check or run (its variants: the common part with the"}
+{"err": "                              variant's commands, variable maps, params and enabled laid over it); a file"}
+{"err": "                              that defines variants needs it: none is the default. test: only this variant"}
+{"err": "                              (repeatable); without it, every variant"}
+{"err": "  --param <name>=<value>      with --scenario: the value of the scenario's parameter ${<name>}, over the"}
+{"err": "                              scenario's, the file's and the variant's params; repeatable. test: for each"}
+{"err": "                              scenario that has the parameter (at least one must)"}
+{"err": "  --scenarios <dir or files>  test: the scenarios: a directory (the files directly in it that end in .yaml,"}
+{"err": "                              .yml or .json, in the order of their names) or files, in the order given;"}
+{"err": "                              several after one --scenarios (so <file> comes first, or after --); repeatable"}
+{"err": "  --timeline <file>           run --scenario: write what the scenario wrote and saw over the virtual time"}
+{"err": "                              (its steps, the written and the sampled values) to <file> as JSON"}
+{"err": "                              (docs/simulation-run.md; schema/timeline.schema.json)"}
+{"err": "  --fail-fast                 test: do not run what comes after the first run that fails"}
+{"err": "  --speed <speed>             run: simulation seconds per wall-clock second (1 real time, 2 twice as fast)"}
+{"err": "                              or max (as fast as possible); replaces speed in <file>"}
+{"err": "  --strict                    fail on warnings too"}
+{"err": "  --log-dir <dir>             run: also write each participant's output to <dir>/<name>.log"}
+{"err": "  --timeout-ms <ms>           run: abort the simulation if it has not ended <ms> after its start (wall clock;"}
+{"err": "                              with --start-paused and --control, from when it stands still before the start);"}
+{"err": "                              test: each run"}
+{"err": "  --describe-timeout-ms <ms>  how long one executable may take for --describe (default 10000)"}
+{"err": "  --connect <network>=<target> connect the network <network> of <file> to a real bus at <target>: an"}
+{"err": "                              Ethernet adapter, or virtual:<n> or physical:<n> for a CAN channel (connections"}
+{"err": "                              <file> lists those of this computer); none: SIL Kit only. check finds the"}
+{"err": "                              network's bridge (next to vehicle_sil_launch or on PATH) and asks it --describe;"}
+{"err": "                              run starts it before the other participants (as bridge.<network>) and fails if"}
+{"err": "                              it ends. Repeatable, each network once"}
+{"err": "  --time-policy realtime|free the time of a run that is connected outside the simulation (by --connect, or by"}
+{"err": "                              an enabled participant with role: bridge). realtime (the default): it goes at"}
+{"err": "                              speed 1 whatever speed <file> has; another --speed and --start-paused are the"}
+{"err": "                              error outside-real-time, and the commands that pause or step it or change its"}
+{"err": "                              speed are refused while it runs. free: the speed and the time are yours to"}
+{"err": "                              change as in any run; the bridge still carries frames both ways, so what is"}
+{"err": "                              connected there sees the simulation pause or run ahead. No effect on other"}
+{"err": "                              runs"}
+{"err": "  --request <file>            check, run: what to run, from the request file <file> (JSON: variant, params,"}
+{"err": "                              scenario, disable, enable, manual, connect, time_policy, speed, start_paused,"}
+{"err": "                              strict; schema/run-request.schema.json). An argument wins over the file, field"}
+{"err": "                              by field: --connect and --param by name, --connect <network>=none takes the"}
+{"err": "                              file's target away; the lists add up. scenario in <file> is from the directory"}
+{"err": "                              of the configuration file. Only this file is read: none is looked for"}
+{"err": "  --network <name>            connections: only the network <name>"}
+{"err": "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable"}
+{"err": "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable"}
+{"err": "  --manual <name>             you start the participant <name> yourself (from a debugger, say): run does not"}
+{"err": "                              start it, prints the command to start it with and waits for it to join, with"}
+{"err": "                              no time limit (as manual: true in <file>); repeatable"}
+{"err": "  --help, -h                  this text"}
+{"err": "  --version                   as version"}
+{"err": "  --                          what follows is the file, also if it starts with '-'"}
+{"err": "exit codes: 0 passed (run: also stopped by a command), 1 errors (with --strict: or warnings; run: also a failed"}
+{"err": "            simulation; test: a run failed or was left out; connections: a list could not be made), 3 the file"}
+{"err": "            cannot be read (run: or the registry cannot be set up), 4 usage, 5 run: a scenario was stopped by a"}
+{"err": "            command before its end, 130 run or test was interrupted (a signal, or its input or output closed)"}
+{"err": "the file format: docs/simulation-config.md; check: docs/simulation-check.md; run: docs/simulation-run.md;"}
+{"err": "events and commands: docs/simulation-events.md; scenarios: docs/scenario.md"}
+{"exit": 4}

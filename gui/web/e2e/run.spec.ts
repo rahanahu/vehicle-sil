@@ -207,7 +207,10 @@ test('a launcher without the time features shows no time controls', async ({ pag
   await expect(page.getByRole('radio', { name: '等速' })).toHaveCount(0);
   const run = page.waitForRequest((r) => r.url().endsWith('/api/run'));
   await start(page);
-  expect((await run).postDataJSON()).toMatchObject({ speed: null, start_paused: false });
+  const body = (await run).postDataJSON() as Record<string, unknown>;
+  expect(body).toMatchObject({ file: 'forever.yaml' });
+  expect(body).not.toHaveProperty('speed'); // a choice that is not made is not sent (no null)
+  expect(body).not.toHaveProperty('start_paused');
   await expect(page.getByTestId('log-line').first()).toBeVisible({ timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('time-card')).toHaveCount(0);
   await stopOnServer(page);

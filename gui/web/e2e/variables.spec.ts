@@ -16,7 +16,7 @@ import {
 } from './support/variables-page';
 
 const CONTROL_FEATURES =
-  'events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,control-server';
+  'events,stdin-commands,request,check-variables,speed,start-paused,time-commands,control-links,control-server';
 
 let server: GuiServer;
 let target: Target;

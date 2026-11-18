@@ -1169,6 +1169,47 @@ describe('the front door', () => {
       expect(rig.front.status.get().run).not.toBe('none');
     });
 
+    it('sends the intent as the request file has it: every key it was given, and no null', async () => {
+      const rig = await open();
+      await rig.deliver(
+        {
+          type: 'hello',
+          vehicle_sil_gui: 1,
+          version: '0.1.0',
+          instance: 'x',
+          session: null,
+          allowed: serverAllowed(1, startOk, notRunning),
+          replay: null,
+        },
+        { type: 'synced', session: null, last_seq: null },
+      );
+      const start = rig.front.run.start(
+        {
+          variant: 'small',
+          params: { gain: 0.5, on: true },
+          scenario: 'scenarios/s.yaml',
+          disable: ['Logger'],
+          enable: ['Spare'],
+          manual: ['Dashboard'],
+          strict: true,
+        },
+        { file: 'sim.yaml' },
+      );
+      const request = rig.http.expectOne('api/run');
+      expect(request.request.body).toEqual({
+        file: 'sim.yaml',
+        variant: 'small',
+        params: { gain: 0.5, on: true },
+        scenario: 'scenarios/s.yaml',
+        disable: ['Logger'],
+        enable: ['Spare'],
+        manual: ['Dashboard'],
+        strict: true,
+      });
+      request.flush({ session: summary() });
+      await start;
+    });
+
     it('rejects a start that got no answer as unknown', async () => {
       const rig = await open();
       const start = rig.front.run

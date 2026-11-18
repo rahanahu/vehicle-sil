@@ -158,7 +158,6 @@ async function main() {
   const started = await client.run.start({
     file,
     disable: [],
-    speed: null,
     start_paused: true,
   });
   console.log(`started: session ${started?.id}`);

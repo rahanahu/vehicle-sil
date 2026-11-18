@@ -18,7 +18,7 @@ import { RUN_TIMEOUT } from './support/run-page';
 
 // The launcher features that the variables and the scenario need (as the replaying launcher is told to say)
 const CONTROL_FEATURES =
-  'events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,control-server,' +
+  'events,stdin-commands,request,check-variables,speed,start-paused,time-commands,control-links,control-server,' +
   'scenario,timeline';
 const BUILD = join(REPOSITORY, 'build', 'gui-client');
 const BUNDLES = ['vehicle-sil-gui-client.mjs', 'vehicle-sil-gui-elements.mjs'];

@@ -211,8 +211,8 @@ def test_paths_outside_the_root_are_refused(tmp_path: Path) -> None:
 
 def test_only_participants_of_the_file_can_be_disabled_or_manual(gui: Gui) -> None:
     async def main(c: Client) -> None:
-        for key in ("disable", "manual"):  # both become arguments of the launcher
-            for names in (["Nobody"], ["--json"], ["Engine", "Nobody"], ["engine"]):
+        for key in ("disable", "manual"):  # both go to the launcher in its request file
+            for names in (["Nobody"], ["Engine", "Nobody"], ["engine"]):
                 for path in ("api/check", "api/run"):
                     status, body = await c.post(path, {"file": "simulation.yaml", key: names})
                     assert status == 400 and body["error"]["code"] == "unknown-participant", (path, key, names)
@@ -220,10 +220,6 @@ def test_only_participants_of_the_file_can_be_disabled_or_manual(gui: Gui) -> No
             for names in ("Engine", [1], ["Engine", "Engine"], {"Engine": True}):
                 status, body = await c.post("api/check", {"file": "simulation.yaml", key: names})
                 assert status == 400 and body["error"]["code"] == "invalid-field", (key, names)
-        for path in ("api/check", "api/run"):  # the launcher refuses a name in both
-            status, body = await c.post(path, {"file": "simulation.yaml", "disable": ["Engine"], "manual": ["Engine"]})
-            assert status == 400 and body["error"]["code"] == "invalid-field", path
-            assert "disable and manual both name 'Engine'" in body["error"]["message"]
         for speed in (True, 0, -1, 1e7, 1e-7, "fast", "Infinity", [2]):
             status, body = await c.post("api/run", {"file": "simulation.yaml", "speed": speed})
             assert status == 400 and body["error"]["code"] == "invalid-field", speed

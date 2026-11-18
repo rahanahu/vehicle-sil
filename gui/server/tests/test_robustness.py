@@ -189,44 +189,31 @@ def test_the_checks_that_aiohttp_makes(gui: Gui) -> None:
 # ---------------------------------------------------------------- names that look like options
 
 
-def test_a_participant_named_like_an_option_is_refused_before_the_launcher(gui: Gui) -> None:
-    """vehicle_sil_launch takes a value that starts with '-' for an option (`--disable --json` is its usage error):
-    the GUI server refuses such a name in disable and manual, says what to do instead, and starts no launcher. (The
-    launcher's check refuses such a name in the file too.)"""
-    async def main(c: Client) -> None:
-        for path in ("api/check", "api/run"):
-            status, body = await c.post(path, {"file": "dash-name.yaml", "disable": ["--json"]})
-            assert (status, body["error"]["code"]) == (400, "name-like-option"), body
-            assert "'--json'" in body["error"]["message"] and "rename the participant" in body["error"]["message"]
-        for path in ("api/check", "api/run"):
-            status, body = await c.post(path, {"file": "dash-name.yaml", "manual": ["--json"]})
-            assert (status, body["error"]["code"]) == (400, "name-like-option"), body
-            assert "--manual" in body["error"]["message"]
-        status, body = await c.get("api/session")
-        assert body["session"] is None  # nothing was started
-        status, body = await c.post("api/check", {"file": "dash-name.yaml", "disable": []})
-        assert status == 200 and [f["code"] for f in body["check"]["findings"]] == ["value"]  # the launcher's own
-    run_async(main, gui)
-
-
 def test_a_field_that_the_request_does_not_take_is_refused_not_ignored(gui: Gui) -> None:
     """A field that is ignored would leave its sender believing it had an effect: api/check and api/run answer 400
-    invalid-field and name every unknown field and the fields they take (api/check does not take speed)."""
+    invalid-field and name every unknown field and the fields they take (both take the same ones). The keys of
+    the launcher's side of a run (control, timeline, log_dir) are among the unknown ones."""
+    takes_all = ("file, $schema, vehicle_sil_run_request, scenario, variant, params, disable, enable, manual, strict, "
+                 "speed, start_paused")
+
     async def main(c: Client) -> None:
-        for path, takes in (("api/check", "file, disable, manual, scenario, variant, params"),
-                            ("api/run", "file, disable, manual, scenario, variant, params, speed, start_paused")):
+        for path, takes in (("api/check", takes_all), ("api/run", takes_all)):
             status, body = await c.post(path, {"file": "simulation.yaml", "varient": "b"})
             assert (status, body["error"]["code"]) == (400, "invalid-field"), body
             assert body["error"]["message"] == f"{path} takes no 'varient': the fields it takes are {takes}"
             status, body = await c.post(path, {"file": "simulation.yaml", "zeta": 1, "alpha": 2})
             assert (status, body["error"]["code"]) == (400, "invalid-field"), body
             assert "no 'alpha', 'zeta':" in body["error"]["message"]
-        status, body = await c.post("api/check", {"file": "simulation.yaml", "speed": 1})
-        assert (status, body["error"]["code"]) == (400, "invalid-field") and "'speed'" in body["error"]["message"]
+        for key, value in (("control", 0), ("timeline", "x.json"), ("log_dir", "logs"), ("events", True),
+                           ("timeout_ms", 5), ("-x", 1)):  # the launcher's side: this server decides them
+            for path in ("api/check", "api/run"):
+                status, body = await c.post(path, {"file": "simulation.yaml", key: value})
+                assert (status, body["error"]["code"]) == (400, "invalid-field"), (path, key, body)
+                assert f"'{key}'" in body["error"]["message"]
         status, body = await c.get("api/session")
         assert body["session"] is None  # nothing was started
         status, body = await c.post("api/check", {"file": "simulation.yaml", "disable": [], "manual": [],
-                                                  "scenario": None})
+                                                  "vehicle_sil_run_request": 1})
         assert status == 200, body  # the fields it takes are as before
     run_async(main, gui)
 

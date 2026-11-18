@@ -210,7 +210,7 @@ client.connect();
 const stop = client.session.session.subscribe((session) => {
   if (session?.result) console.log(session.result.result);
 });
-await client.run.start({ file: 'simulation.yaml', disable: [], speed: null, start_paused: false });
+await client.run.start({ file: 'simulation.yaml', disable: [] });
 ```
 
 ### 状態を読む（`Readable`）
@@ -337,7 +337,7 @@ try {
 
 操作はすべて Promise で、うまくいかなければ `ActionError` で拒否します。`code`、文（`message`）、`findings`（`check-failed` のとき）、`outcome` を持ちます。`outcome` は `refused`（持ち主が断った。何も起きていない）か `unknown`（実行されたかもしれない。送り直す前に `status` と `clock` を見る）です。
 
-`run.start(intent, { file })` の `intent` は、いま GUI サーバーが受ける部分です: `disable`、`manual`、`scenario`、`variant`、`params`、`speed`、`start_paused`（ほかの欄は `unknown-field` で断ります）。`file` の既定は、サーバーの起動時のファイルです。
+`run.start(intent, { file })` の `intent` は、ランチャーの要求ファイルのキーです: `vehicle_sil_run_request`（1。省いてよい）、`variant`、`params`、`scenario`、`disable`、`enable`、`manual`、`strict`、`speed`、`start_paused`（ほかの欄は `unknown-field` で断ります。選ばないものはキーを書かず、`null` は書きません。`connect` と `time_policy` は、まだ受けません）。`file` の既定は、サーバーの起動時のファイルです。
 
 | 操作                               | 解決する時                                                                                                                                                                                                                                                                                                            | 拒否の理由                                                                                                                                                                                                                                            |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -210,7 +210,7 @@ client.connect();
 const stop = client.session.session.subscribe((session) => {
   if (session?.result) console.log(session.result.result);
 });
-await client.run.start({ file: 'simulation.yaml', disable: [], speed: null, start_paused: false });
+await client.run.start({ file: 'simulation.yaml', disable: [] });
 ```
 
 ### Read state (`Readable`)
@@ -335,7 +335,7 @@ Each entry is `{ ok, reason, caution }`: `reason` is `{ code, message }` when `o
 
 ### Operations
 
-`run.start(intent, { file })` takes the part of the intent the GUI server takes now: `disable`, `manual`, `scenario`, `variant`, `params`, `speed` and `start_paused` (any other field is refused with `unknown-field`); `file` defaults to the server's start-up file. Every operation is a Promise. It rejects with an `ActionError`: `code`, a sentence (`message`), `findings` (for `check-failed`) and `outcome`: `refused` (the owner said no; nothing happened) or `unknown` (it may have been done: look at `status` and `clock` before you send it again).
+`run.start(intent, { file })` takes the intent: `vehicle_sil_run_request` (1, optional), `variant`, `params`, `scenario`, `disable`, `enable`, `manual`, `strict`, `speed` and `start_paused`, as the launcher's request file names them (any other field is refused with `unknown-field`; a choice that is not made is a key that is left out, never `null`; `connect` and `time_policy` are not taken yet); `file` defaults to the server's start-up file. Every operation is a Promise. It rejects with an `ActionError`: `code`, a sentence (`message`), `findings` (for `check-failed`) and `outcome`: `refused` (the owner said no; nothing happened) or `unknown` (it may have been done: look at `status` and `clock` before you send it again).
 
 | Operation                          | Resolves when                                                                                                                                                                                                                                                                                                                                       | Rejects with                                                                                                                                                                                                                                                                              |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

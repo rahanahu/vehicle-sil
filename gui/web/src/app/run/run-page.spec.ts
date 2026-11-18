@@ -169,8 +169,6 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: [],
       manual: [],
-      speed: null,
-      start_paused: false,
     });
     // 応答の要約をその場で当てる（通知を待たずに、停止が押せて、開始は押せない）
     run.flush(response('run'));
