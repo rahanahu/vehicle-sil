@@ -693,11 +693,12 @@ The result of the scenario (`status` in JSON) is decided as follows:
 | All steps passed | `passed` | The launcher stops the simulation at that controller step, and the run passes (exit code 0 if there are no other errors). |
 | One step failed | `failed` | The launcher stops the simulation, and the run fails (exit code 1). |
 | `stop_at_ms` was reached first | `failed` | The first step whose result is not decided fails (`scenario-out-of-time`). |
-| A stop request (Ctrl+C, the `stop` command), a participant failure, `--timeout-ms` | `incomplete` | These take precedence over the scenario. The rules of [simulation-run.md](simulation-run.md) apply unchanged. |
+| The `stop` command, or `Stop` of the Control API | `incomplete` | The run is `incomplete` (exit code 5) if nothing else is wrong: the scenario has no verdict. |
+| Ctrl+C or another interrupt, a participant failure, `--timeout-ms` | `incomplete` | These take precedence over the scenario. The rules of [simulation-run.md](simulation-run.md) apply unchanged (130 for an interrupt, 1 for a failure). |
 
 - The launcher stops the run when all steps pass, so the configuration file does not need `stop_at_ms`.
 - When `stop_at_ms` is reached first, the results are decided as far as possible. Increase `stop_at_ms` or remove it.
-- With `incomplete`, the error `scenario-incomplete` shows how far the scenario got.
+- With `incomplete`, the finding `scenario-incomplete` shows how far the scenario got. It is a note when a stop or an interrupt cut the scenario short, and an error otherwise.
 - If a write to an ECU that crashed fails first, the result of the run is still a participant failure, and the scenario is `incomplete`.
 
 ### When a step fails
@@ -1043,7 +1044,7 @@ With both `--scenario` and `--control`, the Control Server also runs during a sc
 | Read and wait: `Ping`, `ListPeers`, `GetValues`, `GetSnapshot`, `Watch`, `GetTime`, `WaitPaused`, `GetOperation`, `WaitOperation` | Work as usual. |
 | Write variables, forget peers: `Write`, `ForgetPeer` | Rejected. |
 | Move time: `Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed` | Rejected. |
-| Stop: `Stop` | Accepted. It is one of the stop requests, and the scenario becomes `incomplete` (`interrupted_by` is `"control server stop"`). |
+| Stop: `Stop` | Accepted. It is one of the stop requests, and the scenario becomes `incomplete` (`interrupted_by` is `"control server stop"`; the result is `"incomplete"`, exit code 5). |
 
 A rejected call:
 

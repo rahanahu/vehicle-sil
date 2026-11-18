@@ -390,7 +390,7 @@ manual の必須の participant がいる実行では、開始の時間の上限
 - 区間 1 で、`run` が起動した participant が `start_timeout_ms` の間に参加しなければ、manual のいない実行と同じく `not-joined` です。
 - manual でない必須の participant がそろうと、`waiting for <名前> to join (manual): ...` の行を 1 回表示します。
 - 区間 3 で、`run` が起動した participant が初期化で固まれば、manual のいない実行と同じく `simulation-start` のエラーです。
-- どの区間でも、Ctrl+C、`stop` のコマンド、Control Server の `Stop` で止まります（終了コード 130）。
+- どの区間でも、Ctrl+C、`stop` のコマンド、Control Server の `Stop` で止まります（終了コードは、Ctrl+C なら 130、コマンドと `Stop` なら 0）。
 - `required: false` の manual の participant は、待ちません（コマンドを表示するだけです）。
 
 `--timeout-ms` は、manual の必須の participant がいる実行では、`run` が participant を待ち始めた時点から数えます（参加を待つ時間、開始を待つ時間、実行の時間の合計です）。始まる前に過ぎると `timeout` のエラーで、何を待っていたか（参加していない participant か、最初のステップに着いていない participant）をメッセージに挙げます。`manual: true` を書いた設定ファイルを CI で動かすときは、`--timeout-ms` を付けると、誰も起動しなくても終わります。
@@ -997,6 +997,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | 1 | エラーがある |
 | 3 | 設定ファイルを読めない |
 | 4 | 引数のエラー |
+| 5 | `run`: コマンドで、シナリオが終わる前に止めた |
 | 130 | `run` か `test` が中断された |
 
 終了コードごとの条件は次のとおりです。
@@ -1005,6 +1006,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 |---|---|
 | 0 | 警告と注記だけなら 0 です（`--strict` では、警告もないこと）。 |
 | 0 | `run` では、シミュレーションが正常に終わり、必須の participant がどれも 0 で終わったときです。 |
+| 0 | `run` では、`{"command":"stop"}` か Control Server のクライアントの `Stop` で止め、ほかに問題がなかったときも 0 です。 |
 | 1 | `--strict` では、警告があるときも 1 です。 |
 | 1 | `run` では、照合のエラー（何も起動しない）か、実行のエラー（participant が失敗した、そろわなかった、止めても終わらなかったなど）です。 |
 | 1 | `test` では、失敗した組が 1 つ以上ある、中断されていないのに実行しなかった組がある、`--strict` で実行した組が 1 つもない、のどれかです。 |
@@ -1014,7 +1016,8 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | 3 | `run` で registry や controller を用意できないときも 3 です。 |
 | 3 | 結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です。 |
 | 4 | エラーと使い方を標準エラーに書きます（対象の引数は下の表）。 |
-| 130 | Ctrl+C、`{"command":"stop"}`、標準入力の終わり、閉じた標準出力、Control Server のクライアントの `Stop` などです。 |
+| 5 | `run` では、`{"command":"stop"}` か Control Server のクライアントの `Stop` で、シナリオが終わる前に止め、ほかに問題がなかったときです。 |
+| 130 | Ctrl+C などのシグナル、標準入力の終わり、閉じた標準出力です。 |
 
 想定外の失敗（終了コード 3）では、標準エラーに理由を書きます。`--json` では、そのコマンドの形の JSON に、`code` が `internal` のエラーを書きます。
 

@@ -495,6 +495,9 @@ describe('applyEvents', () => {
     const result = {
       file: 'sim.yaml',
       result: 'failed',
+      end: 'completed',
+      ok: false,
+      message: 'The run failed: m',
       errors: 1,
       warnings: 0,
       notes: 0,
@@ -610,8 +613,11 @@ describe('applyEvents', () => {
     const steps = [step(1, 'passed'), step(2, 'failed'), step(3, 'not_run')];
     const result = {
       ...(summary().result ?? {}),
-      vehicle_sil_run: 1,
+      vehicle_sil_run: 2,
       result: 'failed',
+      end: 'completed',
+      ok: false,
+      message: 'The run failed: a step failed',
       errors: 1,
       warnings: 0,
       notes: 0,

@@ -258,6 +258,14 @@
       "source": "成功",
       "target": "Passed"
     },
+    "1954104011884441934": {
+      "source": "操作で停止",
+      "target": "Stopped"
+    },
+    "1211543527662360657": {
+      "source": "シナリオの途中で停止",
+      "target": "Stopped before the scenario's end"
+    },
     "2513729513979630059": {
       "source": "中断",
       "target": "Interrupted"

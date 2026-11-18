@@ -1570,7 +1570,7 @@ TEST_CASE(version_names_the_formats_and_the_features)
   "vehicle_sil": ")" + v + R"(",
   "formats": {
     "check": 1,
-    "run": 1,
+    "run": 2,
     "events": 2,
     "describe": 1,
     "test": 1,

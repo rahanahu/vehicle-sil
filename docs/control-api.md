@@ -216,7 +216,7 @@ If the launcher does not accept a command, the client gets a gRPC error whose me
 | Topic | Behavior of `Stop` |
 |---|---|
 | First and second call | The first stops the participants in order. The second ends them without waiting. |
-| `interrupted_by` of the result | `"control server stop"`. |
+| The result | `interrupted_by` is `"control server stop"`, `end` is `"stopped"`. The exit code is 0, or 5 if a scenario was stopped before its end (1 if the run found errors). |
 | The reason text | Kept only in the audit log line. |
 | After the simulation has ended (also when it never started) | Rejected like time commands (`accepted: false`, `FAILED_PRECONDITION`). The result does not change. |
 | Order of events | In the same order as time commands. |

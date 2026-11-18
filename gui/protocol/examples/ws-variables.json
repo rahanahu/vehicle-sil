@@ -997,14 +997,14 @@
         "launcher": {
           "pid": 10001,
           "running": false,
-          "exit_code": 130,
+          "exit_code": 0,
           "signal": null,
           "silent_s": null
         },
         "stop": "requested",
         "phase": "ended",
-        "last_seq": 46,
-        "last_t_ms": 460,
+        "last_seq": 45,
+        "last_t_ms": 450,
         "time": {
           "event": "time",
           "seq": 32,
@@ -1333,12 +1333,12 @@
         "findings": [
           {
             "severity": "note",
-            "code": "interrupted",
+            "code": "stopped",
             "file": "forever.yaml",
             "line": null,
             "participant": null,
             "network": null,
-            "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+            "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
             "detail": null
           }
         ],
@@ -1353,7 +1353,7 @@
           "id": null
         },
         "launcher_state": {
-          "seq": 45,
+          "seq": 44,
           "rev": 11,
           "phase": "ended",
           "paused": false,
@@ -1435,10 +1435,13 @@
           }
         },
         "result": {
-          "vehicle_sil_run": 1,
+          "vehicle_sil_run": 2,
           "vehicle_sil": "0.1.0",
           "file": "forever.yaml",
-          "result": "interrupted",
+          "result": "stopped",
+          "end": "stopped",
+          "ok": true,
+          "message": "The run was stopped by a stop request without errors",
           "strict": false,
           "errors": 0,
           "warnings": 0,
@@ -1557,12 +1560,12 @@
           "findings": [
             {
               "severity": "note",
-              "code": "interrupted",
+              "code": "stopped",
               "file": "forever.yaml",
               "line": null,
               "participant": null,
               "network": null,
-              "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+              "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
               "detail": null
             }
           ],

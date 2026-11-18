@@ -25,12 +25,12 @@
       },
       "stop": "none",
       "phase": "running",
-      "last_seq": 28,
-      "last_t_ms": 280,
+      "last_seq": 27,
+      "last_t_ms": 270,
       "time": {
         "event": "time",
-        "seq": 27,
-        "t_ms": 270,
+        "seq": 26,
+        "t_ms": 260,
         "sim_ms": 0,
         "actual_speed": null,
         "late_steps": 0,
@@ -361,7 +361,7 @@
       "findings_omitted": 0,
       "last_command": null,
       "launcher_state": {
-        "seq": 25,
+        "seq": 24,
         "rev": 5,
         "phase": "running",
         "paused": false,
@@ -449,7 +449,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 3,
+          "kept": 2,
           "dropped": 0
         }
       },

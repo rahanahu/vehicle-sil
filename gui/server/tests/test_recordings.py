@@ -212,10 +212,12 @@ def test_a_recording_of_an_older_launcher_is_told_to_be_recorded_again() -> None
 def test_a_stop_goes_on_with_the_recording_that_has_it() -> None:
     """forever.yaml has recordings with one stop, two stops, a refused step, the end of input: each is chosen by
     what comes."""
-    for lines, interrupted_by in (([replay_launcher.json.dumps({"command": "stop"})], "stop command"),
-                                  ([None], "end of input")):
+    for lines, interrupted_by, exit_code, result in (
+            ([replay_launcher.json.dumps({"command": "stop"})], "stop command", 0, "stopped"),
+            ([None], "end of input", 130, "interrupted")):
         code, events, err = replay(["run", "--events", "--stdin-commands", "--", "forever.yaml"], lines)
-        assert code == 130 and events[-1]["result"]["interrupted_by"] == interrupted_by, err
+        assert code == exit_code and events[-1]["result"]["interrupted_by"] == interrupted_by, err
+        assert events[-1]["result"]["result"] == result, err
         check_rules(events)
     code, events, err = replay(["run", "--events", "--stdin-commands", "--", "forever.yaml"],
                                ['{"command":"step","ms":10}', '{"command":"stop"}'])
@@ -228,7 +230,7 @@ def test_a_command_more_than_any_recording_has_ends_the_replay() -> None:
     silently, so a test sees a GUI server that writes a command too many."""
     stop = '{"command":"stop"}'
     code, events, err = replay(["run", "--events", "--stdin-commands", "--", "forever.yaml"], [stop, stop])
-    assert code == 130 and [e["accepted"] for e in events if e["event"] == "command"] == [True, True], err
+    assert code == 0 and [e["accepted"] for e in events if e["event"] == "command"] == [True, True], err
     code, events, err = replay(["run", "--events", "--stdin-commands", "--", "forever.yaml"], [stop, stop, stop])
     assert code == 3 and events[-1]["event"] != "result", err
     assert f"{stop} came where no recording of this command line has a command" in err

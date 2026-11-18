@@ -599,6 +599,7 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 | 利用者が起動する（manual の）participant | どの手順も適用しません（[participant を自分で起動する](simulation-config.md#participant-を自分で起動するmanual--manual)の「止め方」）。 |
 | シミュレーションが始まらなかった | 1 を飛ばして 2 からです（その participant のエラーにはしません）。 |
 | Windows で `vehicle_sil_launch` にコンソールがない | Ctrl+Break を送信できないので、2 の代わりにすぐ強制終了します（メッセージにそう書きます）。 |
+| 止める要求の 2 回目（Ctrl+C か `stop` コマンドをもう 1 回）、または 1 の間に来た要求 | 待ちを飛ばします。participant にすぐ止めるよう頼み、終わらないものを強制終了します。こうして強制終了した participant は `did-not-end` になりません。`stop` コマンドで止めた実行では、注記 `ended-by-force` と結果の `message` が名前を書きます。終了コードは 0 のままです（待たないことを選んだため）。 |
 
 ecu_main の実行ファイルは、始まる前に止まるよう求められると、すぐに終わります（[ecu-executable.md](ecu-executable.md)）。
 
@@ -612,7 +613,7 @@ participant を終了させた後、`run` は自分の SIL Kit の接続（ECU �
 
 ## 中断（Ctrl+C）
 
-Ctrl+C（SIGINT）、SIGTERM、SIGHUP（Windows: Ctrl+C、Ctrl+Break、コンソールを閉じる）を受けると、`vehicle_sil_launch` はシミュレーションを順に止め（controller の stop）、上の止め方で participant を終了させ、結果に中断を書いて、終了コード 130 で終わります。
+Ctrl+C（SIGINT）、SIGTERM、SIGHUP（Windows: Ctrl+C、Ctrl+Break、コンソールを閉じる）を受けると、`vehicle_sil_launch` はシミュレーションを順に止め（controller の stop）、上の止め方で participant を終了させ、結果に中断を書いて、終了コード 130 で終わります。`--stdin-commands` の標準入力の終わりと、`--events` の閉じた標準出力も同じ扱いです（ランチャーを起動したプログラムがいなくなった）。コマンド（`{"command":"stop"}`、Control API の `Stop`）で止めた実行は、中断ではありません。[実行の終わり方](#実行の終わり方endokmessage)を見てください。
 
 | 受けた時点 | すること |
 |---|---|
@@ -797,7 +798,7 @@ participant は UTF-8 で書いてください。Windows のコンソールに�
 | 5 | participant の表（必須か、どう終わったか。`--connect` のブリッジは最後） |
 | 6 | ネットワークごとの送受信（`traffic:` の 1 行と表。下の「[ネットワークの送受信](#ネットワークの送受信traffic)」） |
 | 7 | 実行の指摘 |
-| 8 | 結果の 1 行（`passed:`、`failed:`、`interrupted:` と、照合と実行を合わせたエラー、警告、注記の数） |
+| 8 | 結果の 1 行（`passed:`、`stopped:`、`incomplete:`、`failed:`、`interrupted:` と、照合と実行を合わせたエラー、警告、注記の数） |
 
 照合にエラーがあるときは、照合の表と指摘の後に `nothing was started:` の行を書きます。
 
@@ -942,7 +943,9 @@ passed: 0 errors, 1 warning, 1 note
 | `coarse-time-step` | 警告 | 速度の指定があり、controller のタイムステップが ECU のステップより粗い |
 | `timeline-write` | エラー | `--timeline` のファイルを、実行の後に書けなかった（開けたが、書き込みが失敗した） |
 | `timeline-limit` | 注記 | `--timeline` のファイルが、上限で古い側の点を捨てた |
-| `interrupted` | 注記 | 中断された |
+| `interrupted` | 注記 | 中断された（シグナル、標準入力の終わり、閉じた標準出力） |
+| `stopped` | 注記 | コマンドで止めた（`{"command":"stop"}`、Control API の `Stop`） |
+| `ended-by-force` | 注記 | コマンドで止めた実行で、止める要求がもう 1 回来た（または participant の終わりを待つ間に来た）ため、頼んでも終わらなかった participant を、待ち切らずに強制終了した |
 
 `code` ごとの補足:
 
@@ -986,13 +989,40 @@ passed: 0 errors, 1 warning, 1 note
 | 終了コード | 意味 | `--json` の `result` |
 |---|---|---|
 | 0 | シミュレーションが正常に終わり、必須の participant がどれも 0 で終わった（`--strict` では警告もない） | `"passed"` |
+| 0 | コマンド（`{"command":"stop"}`、Control Server のクライアントの `Stop`）で止め、ほかに問題がなかった。止める要求を 2 回出したために強制終了された participant は、ここではエラーにしません（注記 `ended-by-force` が名前を書きます） | `"stopped"` |
 | 1 | 照合のエラーで、何も起動しなかった | `"check_failed"` |
 | 1 | 実行のエラー（participant が失敗した、そろわなかった、止めても終わらなかったなど） | `"failed"` |
 | 3 | 設定ファイルを読めない（ファイルがない、文法のエラー、知らない形式のバージョンなど） | `"unreadable"` |
 | 3 | registry や controller を用意できない（指摘 `setup`） | `"setup_failed"` |
 | 3 | 結果を標準出力に書けない、`vehicle_sil_launch` 自身の想定外の失敗 | |
 | 4 | 引数のエラー | `"usage"` |
-| 130 | 中断された（Ctrl+C、`{"command":"stop"}`、標準入力の終わり、閉じた標準出力、Control Server のクライアントの `Stop` など） | `"interrupted"` |
+| 5 | コマンドで、シナリオが終わる前（または始まる前）に止め、ほかに問題がなかった。シナリオの判定はない | `"incomplete"` |
+| 130 | 中断された。シグナル（Ctrl+C、SIGTERM、コンソールを閉じる）か、ランチャーを起動したプログラムがいなくなった（標準入力の終わり、閉じた標準出力） | `"interrupted"` |
+
+いくつかに当てはまるときは、強いものが決めます。順は 4、3、130、1、5、0 です。シグナルで中断された実行は、エラーがあっても 130 です。コマンドで止めた実行は、エラー（失敗したシナリオのステップ、失敗した participant や終わらなかった participant、`--strict` での警告）があれば 1 です。自分の `stop` コマンドの後に 130 を待っていたスクリプトは、0（シナリオつきなら 5 も）を受けるように直してください。
+
+### 実行の終わり方（`end`、`ok`、`message`）
+
+結果は、終わり方について 3 つのことを書きます。`run --json` の JSON と、`result` イベントの両方にあります。
+
+| キー | 値 |
+|---|---|
+| `end` | 実行が終わった理由（下の表）。何も起動しなかったときは `null` |
+| `ok` | 終了コードが 0 のときだけ `true` |
+| `message` | 結果を人に伝える英語の 1 行。実行を止めたものは種類で書きます（`by a stop request`、`by a signal`、`because its input closed`、`because its output closed`。正確な名前は `interrupted_by`）。失敗のときは、最初のエラーの文の全体が続くので、長くなることがあります |
+
+| `end` | 終わった理由 | `result` |
+|---|---|---|
+| `"completed"` | 決めた終わりに達した。`stop_at_ms`、participant がシミュレーションを終えた、シナリオが終わった | `"passed"`。エラーがあれば `"failed"` |
+| `"stopped"` | コマンド（`{"command":"stop"}`、Control API の `Stop`）で止めた | `"stopped"`。シナリオが最後まで進まなかったときは `"incomplete"`。エラーがあれば `"failed"` |
+| `"interrupted"` | シグナルやコンソールのイベント、標準入力の終わり、閉じた標準出力 | `"interrupted"` |
+| `"failed"` | 始められなかった、または続けられなかった。participant やブリッジの失敗、`--timeout-ms`、participant がそろわなかった | `"failed"` |
+| `"setup_failed"` | registry や controller を用意できない | `"setup_failed"` |
+| `null` | 何も起動しなかった | `"check_failed"`、`"unreadable"`、`"usage"` |
+
+- `"stopped"` と `"interrupted"` のどちらになるかは、最初に止めるよう頼んだものが決めます。`stop` コマンドの後の Ctrl+C は、コマンドによる停止のままです。`interrupted_by` が、最初に頼んだものの名前です。
+- 停止や中断で途中になったシナリオは `incomplete` で、指摘 `scenario-incomplete` は注記になります（シナリオがどこまで進んだかを書きます）。ほかの理由（participant の失敗、`--timeout-ms`）で終わった実行では、この指摘はエラーで、終了コードは 1 です。
+- `message` は表示のための文です。判断には `ok`、`result`、`end`、`scenario.status` を使ってください。
 
 ファイルがないときの終了コードは、ファイルの種類で違います。
 
@@ -1008,14 +1038,15 @@ passed: 0 errors, 1 warning, 1 note
 
 | キー | 値 |
 |---|---|
-| `vehicle_sil_run` | 形式のバージョン（今は 1） |
+| `vehicle_sil_run` | 形式のバージョン（今は 2） |
 | `vehicle_sil` | `vehicle_sil_launch` の vehicle-sil のバージョン |
 | `file` | 設定ファイル（引数に書いたとおり） |
-| `result` | `"passed"`、`"failed"`、`"interrupted"`、`"check_failed"`（照合のエラーで何も起動しなかった）、`"unreadable"`、`"setup_failed"`、`"usage"` |
+| `result` | `"passed"`、`"stopped"`、`"incomplete"`、`"failed"`、`"interrupted"`、`"check_failed"`（照合のエラーで何も起動しなかった）、`"unreadable"`、`"setup_failed"`、`"usage"`（[終了コード](#終了コード)を参照） |
+| `end`、`ok`、`message` | 実行が終わった理由、結果が成功かどうか、人に伝える 1 文（[実行の終わり方](#実行の終わり方endokmessage)を参照） |
 | `strict` | `--strict` を付けたか |
 | `errors`、`warnings`、`notes` | 照合と実行を合わせた数 |
 | `simulation` | シミュレーションの終わり方（下の表）。何も起動しなかったときは `null` |
-| `interrupted_by` | 中断のシグナルかキー（`"SIGINT"`、`"Ctrl+C"` など）。中断でなければ `null` |
+| `interrupted_by` | 最初に止めるよう頼んだもの。シグナルかキー（`"SIGINT"`、`"Ctrl+C"` など）、または `"stop command"`、`"control server stop"`、`"end of input"`、`"output closed"`。`end` が `"stopped"` のときも入る。何も頼まなければ `null` |
 | `registry_uri` | 実行の registry が待ち受けた URI で、participant に渡したもの。ファイルのポートが 0 なら、取ったポートです（`check` の `registry_uri` は書いたとおり）。registry を起動しなかったときは `null` |
 | `timing` | 時間の進み方（下の表）。何も起動しなかったときは `null` |
 | `participants[]` | participant ごとの結果（下の表）。設定ファイルの順で、無効にした participant も含む。その後に `--connect` のブリッジ |
@@ -1034,7 +1065,7 @@ passed: 0 errors, 1 warning, 1 note
 | `"reached_stop_at"` | `stop_at_ms` まで動いた |
 | `"ended"` | participant が止めた（`--scenario` では、シナリオが終わってランチャーが止めたときも） |
 | `"aborted"` | 中断した（`--timeout-ms` のときも） |
-| `"interrupted"` | 止める要求（Ctrl+C など）で止めた |
+| `"interrupted"` | 止める要求（Ctrl+C、`stop` コマンドなど）で止めた（どの種類かは `end`） |
 | `"not_started"` | 始まらなかった |
 
 `--scenario` を付けた実行で、`"ended"` がどちらの意味かを見分けるには、`scenario.status` を見ます。`"passed"` か `"failed"` なら、シナリオが終わって止めた実行です。飛ばした手順があれば、`scenario.skipped_steps` にその数があります（`status` は `"passed"` のまま）。飛ばした手順の `at_ms` は null です。`--timeline` を付けた実行では、`scenario.timeline` に、時間の軸のファイルの名前（引数のとおり）があります。付けなければ `null` です（[シナリオの実行を時間の軸で記録する](#シナリオの実行を時間の軸で記録する--timeline)）。
@@ -1130,10 +1161,13 @@ passed: 0 errors, 1 warning, 1 note
 <!-- vehicle_sil_launch run simulation.yaml --json -->
 ```json
 {
-  "vehicle_sil_run": 1,
+  "vehicle_sil_run": 2,
   "vehicle_sil": "<version>",
   "file": "simulation.yaml",
   "result": "passed",
+  "end": "completed",
+  "ok": true,
+  "message": "The run reached its end without errors",
   "strict": false,
   "errors": 0,
   "warnings": 0,
@@ -1857,6 +1891,8 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 | 3 | 結果を書けない、`vehicle_sil_launch` 自身の想定外の失敗 |
 | 4 | 引数のエラー（何も実行していません） |
 | 130 | 中断された（その前に失敗した組があっても 130） |
+
+`test` は止めるコマンドを受けないので、終了コード 5 はありません。`test` の実行がシナリオの終わる前に終わるのは、シグナル（130）か `--timeout-ms`（1）のときだけです。
 
 `skipped` は失敗に数えません。全部が `skipped` でも、`--strict` がなければ 0 です。設定ファイルの `manual: true` の participant のエラーも 4 です。
 

@@ -392,7 +392,7 @@ In a run with a required manual participant, the time limit for the start is spl
 - In phase 1, if a participant that `run` starts does not join within `start_timeout_ms`, the result is `not-joined`, as in a run without manual participants.
 - When all required participants that are not manual have joined, `run` prints the line `waiting for <name> to join (manual): ...` once.
 - In phase 3, if a participant that `run` started hangs during initialization, the result is a `simulation-start` error, as in a run without manual participants.
-- In every phase, Ctrl+C, the `stop` command and a `Stop` call through the Control Server stop the run (exit code 130).
+- In every phase, Ctrl+C, the `stop` command and a `Stop` call through the Control Server stop the run (exit code 130 for Ctrl+C; 0 for the command and the call).
 - `run` does not wait for a manual participant with `required: false`. It only prints the command.
 
 In a run with a required manual participant, `--timeout-ms` counts from the moment `run` starts to wait for the participants. It covers the wait for them to join, the wait for the start and the run itself. If it runs out before the start, the result is a `timeout` error, and the message names what `run` was waiting for: participants that have not joined, or participants that have not reached the first step. To run a configuration file with `manual: true` in CI, pass `--timeout-ms`, so that the run ends even if nobody starts the participant.
@@ -999,6 +999,7 @@ On Windows, the arguments are read as UTF-8 from the wide-character command line
 | 1 | Errors |
 | 3 | The configuration file cannot be read |
 | 4 | Usage error |
+| 5 | `run`: a command stopped a scenario before its end |
 | 130 | `run` or `test` was interrupted |
 
 When each exit code occurs:
@@ -1007,6 +1008,7 @@ When each exit code occurs:
 |---|---|
 | 0 | With only warnings and notes, the exit code is 0 (with `--strict`, there must be no warnings either). |
 | 0 | For `run`, when the simulation ended normally and every required participant exited with 0. |
+| 0 | For `run`, also when `{"command":"stop"}` or `Stop` from a Control Server client stopped it and nothing was wrong. |
 | 1 | With `--strict`, warnings also give 1. |
 | 1 | For `run`, an error of the check (nothing is started) or an error of the run (a participant failed, the participants did not all join, a participant did not end when stopped, and so on). |
 | 1 | For `test`: at least one run failed, a run did not take place although `test` was not interrupted, or, with `--strict`, no run took place at all. |
@@ -1016,7 +1018,8 @@ When each exit code occurs:
 | 3 | Also when `run` cannot set up the registry or the controller. |
 | 3 | Also when the result cannot be written to stdout, and on an unexpected failure of `vehicle_sil_launch` itself. |
 | 4 | The error and the usage go to stderr (the table below lists the cases). |
-| 130 | Ctrl+C, `{"command":"stop"}`, the end of stdin, a closed stdout, `Stop` from a Control Server client and so on. |
+| 5 | For `run`, when `{"command":"stop"}` or `Stop` from a Control Server client stopped a scenario before its end and nothing else was wrong. |
+| 130 | Ctrl+C and other signals, the end of stdin, a closed stdout. |
 
 On an unexpected failure (exit code 3), the reason goes to stderr. With `--json`, the command's usual JSON holds an error whose `code` is `internal`.
 

@@ -58,6 +58,20 @@ struct RunContext
     {
         return observers.interrupt_name ? observers.interrupt_name() : std::string("interrupt");
     }
+    /// What asked first to stop, as messages name it before it is noted (OutcomeEnd::stop_text()).
+    [[nodiscard]] std::string stop_text() const
+    {
+        OutcomeEnd end;
+        note_interrupt(end);
+        return end.stop_text();
+    }
+    /// Notes in `end` what asked first to stop the run: its name and its kind (the one place that
+    /// writes them). The kind is of the first request, whatever came after it.
+    void note_interrupt(OutcomeEnd& end) const
+    {
+        end.interrupted_by = interrupt_name();
+        end.interrupted_kind = stop_kind(controls.stops().first());
+    }
     /// run --start-paused with a control server: the run holds before the first step.
     [[nodiscard]] bool holds() const { return plan.holds_before_start; }
 };

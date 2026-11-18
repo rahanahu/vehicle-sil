@@ -358,26 +358,32 @@ describe('RunStatus', () => {
     expect(query('blocked')?.textContent).toContain('サーバーと揃うまで');
   });
 
-  it('shows a run the user stopped in a neutral tone, not as a failure', async () => {
-    const result = {
-      result: 'interrupted',
-      findings: [{ severity: 'note', code: 'interrupted', message: 'm' }],
-      participants: [],
-    };
-    await show(
-      sessionViewFrom(
-        summary({
-          state: 'ended',
-          launcher: { running: false, exit_code: 130, signal: null, silent_s: null },
-          result: result as unknown as SessionSummary['result'],
-        }),
-      ),
-    );
-    expect(query('outcome')?.getAttribute('data-tone')).toBe('neutral');
-    expect(query('outcome')?.textContent).toContain('■');
-    expect(query('outcome')?.textContent).not.toContain('✕');
-    expect(query('outcome')?.textContent).toContain('中断');
-    expect(query('first-error')).toBeNull();
+  it('shows a run that was stopped or interrupted in a neutral tone, not as a failure', async () => {
+    for (const [name, code, label] of [
+      ['stopped', 'stopped', '操作で停止'],
+      ['incomplete', 'stopped', 'シナリオの途中で停止'],
+      ['interrupted', 'interrupted', '中断'],
+    ] as const) {
+      const result = {
+        result: name,
+        findings: [{ severity: 'note', code, message: 'm' }],
+        participants: [],
+      };
+      await show(
+        sessionViewFrom(
+          summary({
+            state: 'ended',
+            launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
+            result: result as unknown as SessionSummary['result'],
+          }),
+        ),
+      );
+      expect(query('outcome')?.getAttribute('data-tone')).toBe('neutral');
+      expect(query('outcome')?.textContent).toContain('■');
+      expect(query('outcome')?.textContent).not.toContain('✕');
+      expect(query('outcome')?.textContent).toContain(label);
+      expect(query('first-error')).toBeNull();
+    }
   });
 
   it('says when the launcher has written nothing for a while, in a status region that is always there', async () => {

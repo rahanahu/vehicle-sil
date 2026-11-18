@@ -369,7 +369,7 @@ TEST_CASE(the_report_of_a_test_for_people_and_as_json)
                     "  \"scenarios\": [\n    \"scn/idle.yaml\",\n    \"scn/turbo.yaml\"\n  ],\n"
                     "  \"passed\": 2,\n  \"failed\": 1,\n  \"skipped\": 1,\n  \"interrupted\": 0,\n  \"not_run\": 0,\n"
                     "  \"runs\": [\n    {\n      \"variant\": \"small\",\n      \"scenario\": \"scn/idle.yaml\",\n"
-                    "      \"result\": \"passed\",\n      \"reason\": null,\n      \"run\": {\n        \"vehicle_sil_run\": 1,\n") !=
+                    "      \"result\": \"passed\",\n      \"reason\": null,\n      \"run\": {\n        \"vehicle_sil_run\": 2,\n") !=
           std::string::npos);
     CHECK(json.find("      \"result\": \"skipped\",\n      \"reason\": \"the scenario is only for medium (its only)\",\n"
                     "      \"run\": null\n    },\n") != std::string::npos);

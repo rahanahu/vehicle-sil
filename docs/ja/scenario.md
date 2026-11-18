@@ -693,11 +693,12 @@ steps:
 | 全部の手順が成功した | `passed` | ランチャーがその controller のステップでシミュレーションを止め、成功します（ほかにエラーがなければ終了コード 0）。 |
 | 手順が 1 つ失敗した | `failed` | ランチャーがシミュレーションを止め、失敗します（終了コード 1）。 |
 | `stop_at_ms` に先に達した | `failed` | 結果が決まっていない最初の手順が失敗です（`scenario-out-of-time`）。 |
-| 停止の要求（Ctrl+C、`stop` のコマンド）、participant の失敗、`--timeout-ms` | `incomplete` | シナリオより優先で、[simulation-run.md](simulation-run.md) のルールのままです。 |
+| `stop` のコマンド、Control API の `Stop` | `incomplete` | ほかに問題がなければ、実行は `incomplete`（終了コード 5）です。シナリオの判定はありません。 |
+| Ctrl+C などの中断、participant の失敗、`--timeout-ms` | `incomplete` | シナリオより優先で、[simulation-run.md](simulation-run.md) のルールのままです（中断は 130、失敗は 1）。 |
 
 - 全部の手順が成功すればランチャーが止めるので、設定ファイルに `stop_at_ms` がなくても実行できます。
 - `stop_at_ms` に先に達したときは、決められる所まで結果を決めます（`stop_at_ms` を大きくするか、消します）。
-- `incomplete` のときは、エラー `scenario-incomplete` が、どこまで進んだかを示します。
+- `incomplete` のときは、指摘 `scenario-incomplete` が、どこまで進んだかを示します。停止や中断でシナリオが途中になったときは注記、それ以外はエラーです。
 - 異常終了した ECU への書き込みが先に失敗しても、実行の結果は participant の失敗で、シナリオは `incomplete` です。
 
 ### 手順が失敗したとき
@@ -1043,7 +1044,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | 読む、待つ: `Ping`、`ListPeers`、`GetValues`、`GetSnapshot`、`Watch`、`GetTime`、`WaitPaused`、`GetOperation`、`WaitOperation` | いつもどおりです。 |
 | 変数を書く、Peer を消す: `Write`、`ForgetPeer` | 拒否します。 |
 | 時刻を動かす: `Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed` | 拒否します。 |
-| 止める: `Stop` | 受け付けます。停止の要求の 1 つで、シナリオは `incomplete` になります（`interrupted_by` は `"control server stop"`）。 |
+| 止める: `Stop` | 受け付けます。停止の要求の 1 つで、シナリオは `incomplete` になります（`interrupted_by` は `"control server stop"`。結果は `"incomplete"`、終了コード 5）。 |
 
 拒否した呼び出しは、次のとおりです。
 

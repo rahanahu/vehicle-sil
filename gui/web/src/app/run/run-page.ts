@@ -526,7 +526,11 @@ export class RunPage {
   /** participant の終わりが、利用者が止めたことによるものか（色を弱める）。 */
   protected readonly interrupted = computed(() => {
     const session = this.session();
-    return !!session && (session.stopRequests > 0 || session.result?.result === 'interrupted');
+    return (
+      !!session &&
+      (session.stopRequests > 0 ||
+        ['stopped', 'incomplete', 'interrupted'].includes(session.result?.result ?? ''))
+    );
   });
 
   /** 自分で起動した participant のうち、終わった後も残っているとランチャーがログで知らせたもの（名前から行へ）。 */

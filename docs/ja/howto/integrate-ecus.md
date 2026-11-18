@@ -584,6 +584,7 @@ passed: 0 errors, 1 warning, 1 note
 | `stop_at_ms` を書く | その仮想時刻で止まります。 | 指摘に `error` がなければ 0 |
 | Ctrl+C | シミュレーションを止め、ECU を終了させてから、結果を表示します。 | 130 |
 | Ctrl+C をもう 1 回 | 待たずに強制終了します。 | 130 |
+| `stop` コマンド（`--stdin-commands`、Control API、GUI） | 1 回目の Ctrl+C と同じです。 | `error` の指摘がなければ 0 |
 | `--timeout-ms <ms>` | 開始から実時間で `<ms>` たっても終わらなければ、中断して `error` にします。 | 1 |
 
 プログラムから止めるときは、`run` に `--stdin-commands` を付けて、標準入力に `{"command":"stop"}` を書くか、標準入力を閉じます（[simulation-events.md](../simulation-events.md) の「標準入力のコマンド」）。
@@ -596,7 +597,7 @@ CI のスクリプトや自作のツールから使うときは、終了コー�
 
 | したいこと | コマンド | 出力 |
 |---|---|---|
-| 成功か失敗かだけを知る | `check` か `run` の終了コード | 0 が成功、1 が失敗、130 が中断です。 |
+| 成功か失敗かだけを知る | `check` か `run` の終了コード | 0 が成功（コマンドで止めたときも 0）、1 が失敗、130 が中断です。 |
 | 指摘をプログラムで読む | `vehicle_sil_launch check --json simulation.yaml` | 結果を 1 つの JSON で標準出力に書きます。 |
 | 実行の経過を読む | `vehicle_sil_launch run --events --stdin-commands simulation.yaml` | 1 行に 1 つの JSON で、起きたことを順に書きます。 |
 | 使える機能を調べる | `vehicle_sil_launch version --json` | `features` に、機能の名前が並びます。 |

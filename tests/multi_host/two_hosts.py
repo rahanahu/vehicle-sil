@@ -198,8 +198,8 @@ def inner(args: argparse.Namespace) -> None:
         sh("ip", "-n", "b", "link", "set", "vb", "up")
         a.wait_for("virtual time advances again", 60)
         a.write('{"command":"stop"}\n')
-        if a.wait(60) != 130:
-            fail("a stop ends the run (130):\n" + a.text())
+        if a.wait(60) != 0:
+            fail("a stop ends the run without errors (0, result stopped):\n" + a.text())
         if b.wait(30) != 0:
             fail("the Dashboard on b ends with the run:\n" + b.text())
         print("two_hosts: link back, it went on, stopped", flush=True)

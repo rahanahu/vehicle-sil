@@ -205,7 +205,7 @@ def test_trouble_with_the_control_server_leaves_the_run_alone(tmp_path: Path, co
             await ws.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time" and m["event"]["sim_ms"] > 300)
             await c.post("api/stop")
             got = await ws.until(is_ended)
-            assert got[-1]["session"]["result"]["result"] == "interrupted"
+            assert got[-1]["session"]["result"]["result"] == "stopped"
             told = [m["variables"] for m in ws.received if m["type"] == "variables"]
             assert collapsed([v["state"] for v in told]) == states
             assert reason in told[-1]["reason"] and gui.token not in json.dumps(ws.received)

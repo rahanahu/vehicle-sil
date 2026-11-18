@@ -162,7 +162,7 @@ std::string RunStart::start_given_up(SimulationController& controller)
     // has its limit and a stop takes effect once it is over, as it always did.)
     if (waits_for_manual(ctx_.config) && ctx_.interrupts() > 0)
     {
-        return "interrupted (" + ctx_.interrupt_name() + ")";
+        return ctx_.stop_text();
     }
     if (const auto from = shared_.manual_wait_began(); from && ctx_.plan.timeout && std::chrono::steady_clock::now() >= *from + *ctx_.plan.timeout)
     {
@@ -551,8 +551,8 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
 
 void RunStart::interrupted_before_start()
 {
-    outcome_.end.interrupted_by = ctx_.interrupt_name();
-    out_.say("interrupted (" + outcome_.end.interrupted_by + ") before the simulation started");
+    ctx_.note_interrupt(outcome_.end);
+    out_.say(outcome_.end.stop_text() + " before the simulation started");
 }
 
 bool RunStart::start_timed_out(const std::string& waiting_for)

@@ -454,7 +454,7 @@ void test_command(const Options& o)
                               "      \"run\": null\n    },\n    {\n      \"variant\": \"small\",\n"
                               "      \"scenario\": \"scn/b_fill.yaml\",\n      \"result\": \"passed\",\n"
                               "      \"reason\": \"1 of 3 steps was skipped\",\n      \"run\": {\n"
-                              "        \"vehicle_sil_run\": 1,\n") &&
+                              "        \"vehicle_sil_run\": 2,\n") &&
                 contains(out, "        \"file\": \"sim.yaml\",\n        \"result\": \"passed\",\n") &&
                 contains(out, "          \"file\": \"scn/c_fails.yaml\",\n") &&
                 contains(out, "\n  ],\n  \"findings\": []\n}\n"),

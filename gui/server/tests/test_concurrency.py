@@ -87,7 +87,7 @@ def test_stop_is_idempotent_and_answers_with_the_summary(tmp_path: Path) -> None
             got = await sock.until(is_ended)
             assert len(event_messages(sock.received, "command")) == 1  # one stop reached the launcher
             end = got[-1]["session"]
-            assert end["launcher"] == {"pid": end["launcher"]["pid"], "running": False, "exit_code": 130,
+            assert end["launcher"] == {"pid": end["launcher"]["pid"], "running": False, "exit_code": 0,
                                        "signal": None, "silent_s": None}
             status, body = await c.post("api/stop", {"force": True})  # ended: the summary, nothing sent
             assert status == 200 and without_variables(body["session"]) == end
@@ -129,7 +129,7 @@ def test_force_without_a_stop_first_sends_two(tmp_path: Path) -> None:
             status, body = await c.post("api/stop", {"force": True})
             assert body["session"]["stop"] == "forced"
             got = await sock.until(is_ended)
-            assert got[-1]["session"]["result"]["result"] == "interrupted"
+            assert got[-1]["session"]["result"]["result"] == "stopped"
             assert len(event_messages(sock.received, "command")) == 2
         run_async(main, gui)
 
@@ -151,7 +151,7 @@ def test_a_stop_while_the_run_starts_stops_it_once_started(tmp_path: Path) -> No
             status, body = await run
             assert status == 200 and body["session"]["stop"] == "requested", body
             got = await sock.until(is_ended, timeout=15)
-            assert got[-1]["session"]["result"]["result"] == "interrupted"
+            assert got[-1]["session"]["result"]["result"] == "stopped"
             assert len(event_messages(sock.received, "command")) == 1
             # The next run does not inherit the stop.
             status, body = await c.post("api/run", {"file": "forever.yaml"})

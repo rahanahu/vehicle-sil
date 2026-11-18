@@ -884,11 +884,12 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "log",
+        "event": "control_link",
         "seq": 20,
         "t_ms": 200,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
+        "name": "Engine",
+        "state": "connected",
+        "variables": 4
       }
     },
     {
@@ -898,7 +899,7 @@
         "event": "control_link",
         "seq": 21,
         "t_ms": 210,
-        "name": "Engine",
+        "name": "Dashboard",
         "state": "connected",
         "variables": 4
       }
@@ -910,18 +911,6 @@
         "event": "control_link",
         "seq": 22,
         "t_ms": 220,
-        "name": "Dashboard",
-        "state": "connected",
-        "variables": 4
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "control_link",
-        "seq": 23,
-        "t_ms": 230,
         "name": "Logger",
         "state": "none"
       }
@@ -931,8 +920,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 24,
-        "t_ms": 240,
+        "seq": 23,
+        "t_ms": 230,
         "phase": "running"
       }
     },
@@ -941,8 +930,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 25,
-        "t_ms": 250,
+        "seq": 24,
+        "t_ms": 240,
         "rev": 5,
         "phase": "running",
         "paused": false,
@@ -1011,8 +1000,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 26,
-        "t_ms": 260,
+        "seq": 25,
+        "t_ms": 250,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -1022,14 +1011,25 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 27,
-        "t_ms": 270,
+        "seq": 26,
+        "t_ms": 260,
         "sim_ms": 0,
         "actual_speed": null,
         "late_steps": 0,
         "max_late_ms": 0,
         "slipped_ms": 0,
         "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 27,
+        "t_ms": 270,
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -1404,10 +1404,13 @@
         "seq": 44,
         "t_ms": 440,
         "result": {
-          "vehicle_sil_run": 1,
+          "vehicle_sil_run": 2,
           "vehicle_sil": "0.1.0",
           "file": "log-dropped.yaml",
           "result": "passed",
+          "end": "completed",
+          "ok": true,
+          "message": "The run reached its end without errors",
           "strict": false,
           "errors": 0,
           "warnings": 0,
@@ -2245,10 +2248,13 @@
           }
         },
         "result": {
-          "vehicle_sil_run": 1,
+          "vehicle_sil_run": 2,
           "vehicle_sil": "0.1.0",
           "file": "log-dropped.yaml",
           "result": "passed",
+          "end": "completed",
+          "ok": true,
+          "message": "The run reached its end without errors",
           "strict": false,
           "errors": 0,
           "warnings": 0,

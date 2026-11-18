@@ -14,7 +14,6 @@ import type {
 import { SessionView, runOutcome } from './session-state';
 import type {
   Control,
-  EndKind,
   FrontClock,
   FrontControls,
   FrontResult,
@@ -94,58 +93,18 @@ export function runOf(s: Snapshot): RunState {
   }
 }
 
-/** Whether the operator's stop made the run end (a stop is not a failure). */
-function stoppedByOperator(result: RunResult): boolean {
-  const by = (result.interrupted_by ?? '').toLowerCase();
-  return result.result === 'interrupted' && by.includes('stop');
-}
-
 /**
- * The names of the results, kept here until the launcher writes `ok` and `message` into the result (then this table
- * goes: the result is passed on as written).
+ * The launcher's result as the screens get it: why the run ended, the scenario's verdict, whether it is a success and
+ * the sentence to show, all as the launcher wrote them (no rule of its own here).
  */
-export function resultOf(result: RunResult): FrontResult {
-  const scenario = result.scenario?.status ?? null;
-  const firstError = result.findings.find((f) => f.severity === 'error')?.message;
-  let end: EndKind;
-  let message: string;
-  switch (result.result) {
-    case 'passed':
-      end = 'completed';
-      message = 'the run reached its end';
-      break;
-    case 'interrupted':
-      if (stoppedByOperator(result)) {
-        end = 'stopped';
-        message = 'the run was stopped';
-      } else {
-        end = 'interrupted';
-        message = `the run was interrupted (${result.interrupted_by ?? 'by the system'}): start it again`;
-      }
-      break;
-    case 'setup_failed':
-      end = 'setup_failed';
-      message = 'the launcher could not set the run up: read the log of vehicle_sil_launch';
-      break;
-    case 'check_failed':
-      end = 'failed';
-      message =
-        'the check found errors, so no run was made: fix the findings of the check, then start again';
-      break;
-    default:
-      end = 'failed';
-      message = firstError
-        ? `the run failed: ${firstError}`
-        : 'the run failed: see the findings and the log of the run';
-  }
-  let ok = end === 'completed' || end === 'stopped';
-  if (scenario === 'failed') {
-    ok = false;
-    message = 'the scenario failed: see its steps';
-  } else if (scenario === 'incomplete' && ok) {
-    message = 'the run ended before the scenario was through';
-  }
-  return { end, scenario, ok, message };
+function resultOf(result: RunResult): FrontResult {
+  return {
+    end: result.end,
+    scenario: result.scenario?.status ?? null,
+    ok: result.ok,
+    // A result whose sentence could not be read (or that the server shrank) still says something
+    message: result.message || `the run ended with the result ${result.result || 'unknown'}`,
+  };
 }
 
 export function resultFor(s: Snapshot, run: RunState): FrontResult | null {

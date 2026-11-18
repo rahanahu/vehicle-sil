@@ -40,7 +40,7 @@ The browser opens the URL that the server printed (with `#token=`) and shows thi
 | Move the **Throttle** slider | The value is written when you release the knob. **Engine speed** changes. |
 | Click **Throttle to 100 %** (your own button) | The slider moves to 100 and the meter under "Your own script" follows. Before a run, the button shows why it was refused. |
 | Click **Pause**, **Step**, then **Resume** | The status line says `paused` and the time; **Step** moves it by 10 ms (the field next to it); **Resume** goes on. |
-| Click **Stop** | The status line says `the run was stopped`. The slider is disabled, and the values say they are the last ones of a run that has ended. |
+| Click **Stop** | The status line says `The run was stopped by a stop request without errors`. The slider is disabled, and the values say they are the last ones of a run that has ended. |
 | Pick a scenario under **Scenario** and click **Start** | The run ends by itself. The result says `passed` (or `failed`) with each step, and the timeline of the run appears. |
 
 Variables appear when the launcher has a Control Server. In the example ECUs, the throttle drives `Engine.engine.speed`.
