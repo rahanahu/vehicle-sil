@@ -880,7 +880,7 @@ TEST_CASE(a_command_is_a_json_object_with_the_command_stop)
     check_text(read(R"({"command":{"name":"stop"}})"), "refused -: \"command\" is not a string: write one JSON object "
                                                        "per line, such as {\"command\":\"stop\"}");
     check_text(read(R"({"command":"jump"})"),
-               "refused 'jump': unknown command 'jump': the commands are stop, pause, resume, step and speed");
+               "refused 'jump': unknown command 'jump': the commands are stop, pause, resume, step, run_until and speed");
     CHECK(!parse_command(R"({"command":"jump"})")->is_stop());
     // Each refusal has its code; an accepted line has none.
     const auto reason = [](std::string_view line) { return parse_command(line)->reason; };
@@ -939,7 +939,7 @@ TEST_CASE(a_command_may_carry_the_senders_number_which_comes_back_in_its_event)
     CHECK(e.wait_written(10s));
     check_text(shape(sink.lines()), R"(command "command":"pause","source":"stdin","accepted":true,"message":null,"reason":null,"id":41}
 command "command":"step","source":"stdin","accepted":false,"message":"the simulation has not been set up yet: step works once it stands still (a time event with paused true), with --start-paused from the start","reason":"not-set-up","id":42}
-command "command":"jump","source":"stdin","accepted":false,"message":"unknown command 'jump': the commands are stop, pause, resume, step and speed","reason":"unknown-command","id":43}
+command "command":"jump","source":"stdin","accepted":false,"message":"unknown command 'jump': the commands are stop, pause, resume, step, run_until and speed","reason":"unknown-command","id":43}
 command "command":null,"source":"stdin","accepted":false,"message":"the line is not a JSON object: write one JSON object per line, such as {\"command\":\"stop\"}","reason":"invalid-command","id":null}
 )");
 }
@@ -949,13 +949,25 @@ TEST_CASE(the_time_commands_are_read_with_their_values)
     const auto read = [](std::string_view line) {
         const auto c = parse_command(line);
         return std::string(c->accepted ? "accepted " : "refused ") + (c->name ? *c->name : "-") +
-               (c->ms ? " ms " + std::to_string(*c->ms) : "") + (c->speed ? " value " + speed_text(c->speed) : "") + ": " +
+               (c->ms ? " ms " + std::to_string(*c->ms) : "") + (c->at_ms ? " at_ms " + std::to_string(*c->at_ms) : "") + (c->speed ? " value " + speed_text(c->speed) : "") + ": " +
                c->message;
     };
     check_text(read(R"({"command":"pause"})"), "accepted pause: ");
     check_text(read(R"({"command":"resume","ms":5})"), "accepted resume: "); // other keys are ignored
     check_text(read(R"({"command":"step","ms":100})"), "accepted step ms 100: ");
     check_text(read(R"({"command":"step","ms":1000000000000})"), "accepted step ms 1000000000000: ");
+    check_text(read(R"({"command":"run_until","at_ms":5000})"), "accepted run_until at_ms 5000: ");
+    check_text(read(R"({"command":"run_until","at_ms":0})"), "accepted run_until at_ms 0: ");
+    const std::string until = "refused run_until: run_until needs \"at_ms\", the virtual time to stand still at, a whole "
+                              "number of milliseconds from 0 to 1000000000000, such as "
+                              "{\"command\":\"run_until\",\"at_ms\":5000}";
+    for (const char* bad : {R"({"command":"run_until"})", R"({"command":"run_until","at_ms":-1})",
+                            R"({"command":"run_until","at_ms":1.5})", R"({"command":"run_until","at_ms":"5"})",
+                            R"({"command":"run_until","at_ms":1000000000001})"})
+    {
+        check_text(read(bad), until);
+        check_text(parse_command(bad)->reason, "invalid-argument");
+    }
     check_text(read(R"({"command":"speed","value":1})"), "accepted speed value 1: ");
     check_text(read(R"({"command":"speed","value":0.25})"), "accepted speed value 0.25: ");
     check_text(read(R"({"command":"speed","value":"max"})"), "accepted speed: ");
@@ -1407,13 +1419,14 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "connections",
     "connect-counts",
     "state",
-    "time-policy"
+    "time-policy",
+    "stdin-run-until"
   ]
 }
 )");
     // A build with the control server adds its features last.
     const std::string with = format_version_json({kControlServerFeature, kScenarioControlFeature});
-    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"control-server\",\n    \"scenario-control\"\n  ]") != std::string::npos);
+    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"stdin-run-until\",\n    \"control-server\",\n    \"scenario-control\"\n  ]") != std::string::npos);
 }
 
 TEST_CASE(an_accepted_stop_is_asked_for_before_the_detach_and_a_refused_one_not_at_all)

@@ -25,7 +25,7 @@ from . import __version__, control, dashboard, process
 from .allowed import Facts, Numbered, allowed as allowed_of
 from .hub import Client, Hub, Outgoing, encode
 from .launcher import (CHECK_FIELDS, FEATURE_MANUAL, FEATURE_SCENARIO, FEATURE_SCENARIO_CONTROL, FEATURE_SPEED,
-                       FEATURE_START_PAUSED, FEATURE_STATE, FEATURE_TIME_COMMANDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, InvalidRequest,
+                       FEATURE_START_PAUSED, FEATURE_STATE, FEATURE_STDIN_RUN_UNTIL, FEATURE_TIME_COMMANDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, InvalidRequest,
                        RUN_FIELDS, Launcher, check_command, check_disable, check_fields, check_manual, check_params,
                        check_speed, check_time_command, check_variant,
                        command_line, run_command)
@@ -630,8 +630,8 @@ class GuiServer:
         return web.json_response({"session": session.summary()})
 
     async def post_time(self, request: web.Request) -> web.Response:
-        """A time command (pause, resume, step, speed) to the launcher of the run that is running. Written to its
-        standard input and not waited for: whether the launcher took it comes as its command event (a launcher
+        """A time command (pause, resume, step, run_until, speed) to the launcher of the run that is running. Written
+        to its standard input and not waited for: whether the launcher took it comes as its command event (a launcher
         that stands still must not hold this request)."""
         try:
             self._not_closing()
@@ -649,6 +649,9 @@ class GuiServer:
             return error(400, "unsupported", f"the vehicle_sil_launch of this run has no '{FEATURE_TIME_COMMANDS}': "
                                              "it cannot pause, resume, step or change the speed; build a newer "
                                              "launcher")
+        if command["command"] == "run_until" and FEATURE_STDIN_RUN_UNTIL not in run.features:
+            return error(400, "unsupported", f"the vehicle_sil_launch of this run has no '{FEATURE_STDIN_RUN_UNTIL}': "
+                                             "it cannot run until a time; build a newer launcher")
         said = self._launcher_refuses(run, command["command"])
         if said is not None and said[0] == "not-running":  # the run is over (a late command could change nothing)
             return error(409, "not-running", said[1])
