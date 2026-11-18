@@ -409,7 +409,7 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 
 **単体テスト**:
 
-- 単体テストは TestBed で、本物のブラウザー（Vitest の Browser Mode、headless の Chromium）で動く。DOM が要るものは本物の DOM で確かめ、DOM の要らない試験は `../client` に置いて Node で動かす。ブラウザーがないときは `scripts/doctor.py` の案内で入れる。試験はファイルを読めない。`vitest-base.config.mts` が Node 側の命令を定義し、`vitest/browser` から呼ぶ。
+- 単体テストは TestBed で、本物のブラウザー（Vitest の Browser Mode、headless の Chromium）で動く。DOM が要るものは本物の DOM で確かめ、本物のブラウザーでは描画に依る知らせ（`IntersectionObserver` など）は偽のタイマーで進まないので、試験が順序を決める偽物に替える（`Visibility` は `src/app/testing/visible-now.ts`）。DOM の要らない試験は `../client` に置いて Node で動かす。ブラウザーがないときは `scripts/doctor.py` の案内で入れる。試験はファイルを読めない。`vitest-base.config.mts` が Node 側の命令を定義し、`vitest/browser` から呼ぶ。
 - `Layout` は signal を持つ偽物に差し替え、幅の区分を試験が決める（本物は画面の幅に従う）。
 - `resource` は `TestBed.tick()` でリクエストを出させ、`HttpTestingController` で `flush` してから `whenStable()`（レスポンスを返していないリクエストがあると `whenStable()` が終わらない）。
 - WebSocket は `FakeWebSockets`（`@vehicle-sil/gui-client/testing`）で差し替える（`{ provide: SOCKET_FACTORY, useValue: fake.factory }`）。HTTP は、ラッパーが `HttpClient` で送るので `HttpTestingController` で返す。時間は Vitest の偽の時計。
