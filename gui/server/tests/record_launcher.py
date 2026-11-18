@@ -13,6 +13,16 @@ writes what came back to recordings/<case>.jsonl (--out: another directory). Wit
 A case with --timeline <timeline> has the launcher write its timeline file into the copy; the recording holds the
 file (a timeline_file entry, before the line that names the file) and the mark <timeline> for its name.
 
+The cases that connect a network outside (tools) run the copy of the launcher that sits next to the bridges built on
+the fake drivers (--connect-tools, default: tests/launch/connect_tools of the launcher's build, made by the CMake
+target vehicle_sil_launch_connect_tools), with VEHICLE_SIL_TEST_PCAP_LIBRARY set to the fake pcap library
+(--fake-pcap, default: tests/eth_link/fake_pcap/vehicle_sil_fake_pcap.so of that build), so the Ethernet bridge lists
+and opens its adapters fake0 and fake-echo. Where the bridges are is replaced with the mark <tools>. Without those
+files the cases are skipped, and the summary line says so. The list of a network (connections) is recorded in a
+network namespace of its own (unshare -rn), where the only interface is lo, so that the list of the backend tap holds
+no interface of this computer; --compare runs it without one where unshare -rn cannot be used (it compares only the
+shapes of a list), and recording it there fails with what to do.
+
 What changes from run to run is replaced with a fixed mark: the copy's directory (<root>), the pids ("<pid>"), the
 registry's port (silkit://127.0.0.1:8500), the control server's address (<control>), times (no seq, no t_ms, the
 time between lines in steps of 100 ms), how fast it went (actual_speed 1.5, wall_ms 1000, paused_ms 500 when it
@@ -62,6 +72,7 @@ RECORDINGS = HERE / "recordings"
 FORMAT = 1
 REGISTRY = "silkit://127.0.0.1:8500"
 RUN = ["run", "--events", "--stdin-commands"]
+LAUNCHER = "vehicle_sil_launch"
 STOP = '{"command":"stop"}'
 PAUSE, RESUME = '{"command":"pause"}', '{"command":"resume"}'
 TIMEOUT_S = 60
@@ -117,8 +128,11 @@ class Case:
     default: bool = False  # of the recordings of one command line, the one to play until a command says otherwise
     # A request file to give instead of the options of argv (which still name the case: replay_launcher.py turns
     # a --request back into such options). For what options cannot say: `check --start-paused` is refused as an
-    # option, and a request file may have start_paused for check (the launcher's rules about it are checked there).
+    # option, and a request file may have start_paused for check (the launcher's rules about it are checked there);
+    # a network of the request file's connect that the configuration lacks is left out with a note, not an error.
     request: dict | None = None
+    tools: bool = False  # run the launcher next to the bridges on the fake drivers (see the top of this file)
+    own_network: bool = False  # in a network namespace of its own (unshare -rn): this computer's interfaces unseen
 
 
 def run_case(name: str, file: str, about: str, *script, extra: tuple = (), default: bool = False) -> Case:
@@ -132,10 +146,15 @@ CREDENTIALS = ("--control", "0", "--control-credentials", "<credentials>")
 
 
 class Recorder:
-    def __init__(self, launcher: Path, examples: Path, root: Path):
+    def __init__(self, launcher: Path, examples: Path, root: Path, tools: tuple[Path, Path] | None = None,
+                 compare: bool = False):
         self.launcher = launcher
         self.examples = examples
         self.root = root
+        self.tools = tools  # (the directory of the launcher next to the bridges, the fake pcap library)
+        self.compare = compare
+        self.namespaces = shutil.which("unshare") is not None and subprocess.run(
+            ["unshare", "-rn", "true"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
         self.token = secrets.token_hex(16)
 
     def prepare(self) -> None:
@@ -174,9 +193,22 @@ class Recorder:
         if case.request is not None:
             path = self.root / ".request.json"
             path.write_text(json.dumps({"vehicle_sil_run_request": 1, **case.request}), encoding="utf-8")
-            argv = [*argv[:argv.index("--json") + 1], "--request", str(path), "--", argv[-1]]
-        proc = subprocess.Popen([str(self.launcher), *argv], cwd=self.root, stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+            # check: its --json; run: the options of RUN; the rest is in the request
+            keep = argv.index("--json") + 1 if "--json" in argv else len(RUN)
+            argv = [*argv[:keep], "--request", str(path), "--", argv[-1]]
+        launcher, env = self.launcher, None
+        if case.tools:
+            assert self.tools is not None
+            launcher = self.tools[0] / LAUNCHER
+            env = {**os.environ, "VEHICLE_SIL_TEST_PCAP_LIBRARY": str(self.tools[1])}
+        prefix = []
+        if case.own_network and self.namespaces:
+            prefix = ["unshare", "-rn"]
+        elif case.own_network and not self.compare:
+            raise RuntimeError(f"{case.name}: `unshare -rn true` fails here, so the list would show this computer's "
+                               "interfaces: record it where unprivileged user namespaces can be made")
+        proc = subprocess.Popen([*prefix, str(launcher), *argv], cwd=self.root, stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, env=env)
         lines: list[tuple[float, str, str]] = []  # (time, "out" | "err" | "send", text)
         events: list[dict] = []
         lock = threading.Condition()
@@ -274,9 +306,12 @@ class Recorder:
                 for path in sorted({str(self.timeline_path(case).resolve()), str(self.timeline_path(case))},
                                    key=len, reverse=True):
                     s = s.replace(path, "<timeline>")
-            for path in sorted({str(self.root.resolve()), str(self.root), str(self.examples.resolve()),
-                                str(self.examples)}, key=len, reverse=True):
-                s = s.replace(path, "<root>")
+            marked = {p: "<root>" for p in (str(self.root.resolve()), str(self.root), str(self.examples.resolve()),
+                                             str(self.examples))}
+            if self.tools is not None:
+                marked |= {str(self.tools[0].resolve()): "<tools>", str(self.tools[0]): "<tools>"}
+            for path in sorted(marked, key=len, reverse=True):
+                s = s.replace(path, marked[path])
             if registry:
                 s = s.replace(registry, REGISTRY)
             if control:
@@ -632,6 +667,12 @@ def main(argv: list[str]) -> int:
                         help="the ecu_main example's build directory (default: the one next to the launcher)")
     parser.add_argument("--out", type=Path, default=RECORDINGS, help="where to write (default: recordings/)")
     parser.add_argument("--compare", action="store_true", help="compare with recordings/ instead of writing")
+    parser.add_argument("--connect-tools", type=Path,
+                        help="the launcher next to the bridges on the fake drivers (default: tests/launch/connect_tools "
+                             "of the launcher's build)")
+    parser.add_argument("--fake-pcap", type=Path, help="the fake pcap library (default: "
+                                                       "tests/eth_link/fake_pcap/vehicle_sil_fake_pcap.so of the "
+                                                       "launcher's build)")
     parser.add_argument("cases", nargs="*", help="the cases (default: all)")
     args = parser.parse_args(argv)
     sys.path.insert(0, str(HERE))
@@ -659,12 +700,23 @@ def main(argv: list[str]) -> int:
               f"launcher does not have; version --json is compared without {', '.join(sorted(missing))}",
               file=sys.stderr)
     chosen = [c for c in chosen if c not in lacking]
+    build = args.launcher.resolve().parent.parent.parent
+    tools = (args.connect_tools or build / "tests" / "launch" / "connect_tools",
+             args.fake_pcap or build / "tests" / "eth_link" / "fake_pcap" / "vehicle_sil_fake_pcap.so")
+    no_tools = [c for c in chosen if c.tools] if not ((tools[0] / LAUNCHER).is_file() and tools[1].is_file()) else []
+    if no_tools:
+        print(f"record_launcher: {len(no_tools)} cases skipped: they connect a network with the bridges on the fake "
+              f"drivers, and {tools[0] / LAUNCHER} or {tools[1]} is missing: build the targets "
+              "vehicle_sil_launch_connect_tools and vehicle_sil_fake_pcap, or give --connect-tools and --fake-pcap",
+              file=sys.stderr)
+    chosen = [c for c in chosen if c not in no_tools]
     again: dict[str, int] = {}
     failed = []
     with tempfile.TemporaryDirectory(prefix="record-launcher-") as tmp:
         root = Path(tmp) / "root"
         root.mkdir()
-        recorder = Recorder(args.launcher.resolve(), examples.resolve(), root)
+        recorder = Recorder(args.launcher.resolve(), examples.resolve(), root, None if no_tools else tools,
+                            args.compare)
         recorder.prepare()
         out = Path(tmp) / "fresh" if args.compare else args.out
         shapes = (Shapes(), Shapes())
@@ -689,6 +741,7 @@ def main(argv: list[str]) -> int:
           f"{'as recorded' if args.compare else 'recorded'}" + (f" (into {args.out})" if not args.compare else "")
           + ("; the shapes of the events differ" if shapes_differ else "")
           + (f"; {len(lacking)} skipped (no {', '.join(sorted(missing))})" if lacking else "")
+          + (f"; {len(no_tools)} skipped (no connect tools)" if no_tools else "")
           + (f"; recorded again ({', '.join(BUSY)}): " + ", ".join(f"{n} {k}x" for n, k in sorted(again.items()))
              if again else ""))
     return 1 if failed else 0
@@ -948,7 +1001,45 @@ def runs() -> list[Case]:
     return out
 
 
-CASES: list[Case] = [Case("version", ["version", "--json"], "version --json"), *checks(), *runs()]
+def connects() -> list[Case]:
+    """Connecting the Ethernet network of connect.yaml to the fake pcap library's adapter fake0, as the GUI server
+    asks: the list of that one network, the checks (nothing connected: the one that names the networks; none;
+    connected; connected with the time policy free) and a run with it connected, to its end; a network that the
+    file lacks (listed: a usage error; in a request file's connect: a note); a file with variants."""
+    target = ("--connect", "ETH_EXT=fake0")
+    unused = ("--connect", "CAN1=physical:1")
+    return [
+        Case("connections-connect", ["connections", "--json", "--network", "ETH_EXT", "--", "connect.yaml"],
+             "where ETH_EXT can be connected (packet: the fake pcap library's adapters; tap: none but lo)",
+             tools=True, own_network=True),
+        Case("check-connect-none", ["check", "--json", "--", "connect.yaml"], "the check of connect.yaml, nothing "
+             "connected"),
+        Case("check-connect", ["check", "--json", *target, "--", "connect.yaml"],
+             "the check with ETH_EXT connected to fake0: the time is locked to real time", tools=True),
+        Case("check-connect-sil-kit-only", ["check", "--json", "--connect", "ETH_EXT=none", "--", "connect.yaml"],
+             "the check with ETH_EXT kept on SIL Kit only (none)"),
+        Case("check-connect-free", ["check", "--json", "--time-policy", "free", *target, "--", "connect.yaml"],
+             "the check with ETH_EXT connected to fake0 and the time policy free: the time is not locked", tools=True),
+        Case("run-connect", [*RUN, *target, "--", "connect.yaml"],
+             "a run with ETH_EXT connected to fake0, at real time, to its end", tools=True),
+        Case("check-connect-can", ["check", "--json", "--connect", "J1939_CAN=fake0", "--", "connect.yaml"],
+             "the check with J1939_CAN connected to fake0 (on Linux the SocketCAN bridge, which is not among the "
+             "tools)", tools=True),
+        Case("connections-unknown-network", ["connections", "--json", "--network", "NOPE", "--", "connect.yaml"],
+             "the list of a network that connect.yaml lacks: a usage error"),
+        Case("connections-variants", ["connections", "--json", "--network", "J1939_CAN", "--", "variants.yaml"],
+             "where J1939_CAN of a file with variants can be connected (read without a variant; on Linux the "
+             "SocketCAN bridge, which is not among the tools)", tools=True),
+        Case("check-connect-unused", ["check", "--json", *unused, "--", "connect.yaml"],
+             "the check of a request whose connect has a network that connect.yaml lacks: the note "
+             "connect-network-unused", request={"connect": {"CAN1": "physical:1"}}),
+        Case("run-connect-unused", [*RUN, *unused, "--", "connect.yaml"],
+             "a run of a request whose connect has a network that connect.yaml lacks, to its end",
+             request={"connect": {"CAN1": "physical:1"}}),
+    ]
+
+
+CASES: list[Case] = [Case("version", ["version", "--json"], "version --json"), *checks(), *runs(), *connects()]
 
 
 if __name__ == "__main__":

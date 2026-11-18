@@ -126,7 +126,7 @@ export class ActionError extends Error {
 /**
  * What a start asks for: the keys of the request file (`schema/run-request.schema.json`), with its names and value
  * forms. A choice that is not made is left out of the object: there is no null. (`connect` and `time_policy` of the
- * file are not here: the GUI server does not take them yet.)
+ * file are not here yet: a connected start needs the list of POST api/connections, which this client does not ask for.)
  */
 export interface Intent {
   /** The format of the request file: 1, or left out (the client adds none). */

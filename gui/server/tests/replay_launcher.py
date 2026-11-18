@@ -39,7 +39,7 @@ How it plays:
   than in the recordings that have it (going back would write their answers twice); standard error says which.
   Only after the result is a command not read (as the launcher reads none then).
 - The recording's marks are put back: <root> (the directory it runs in), <file>, <scenario> and <timeline> (the
-  arguments),
+  arguments), <tools> (where the bridges were: the directory of this program, as if they were next to it),
   "<pid>" (its own pid in hello; for a started participant the pid of a sleeping child process that it starts in
   its place and ends when the participant ends, so that a test can see whether stopping left processes behind),
   <control> (the address of the control server below).
@@ -96,8 +96,8 @@ has, or that came later than recorded) is added too: the tests make sure it stay
 
 Other environment variables: REPLAY_FEATURES (the features of version --json, comma-separated, to stand in for an
 older launcher; default: the recorded ones without control-server, a launcher built without the control server,
-so that only the tests that ask for it need gRPC), REPLAY_CHECK_DELAY_MS (how long check takes), REPLAY_CONTROL
-(what goes wrong with the control server: wrong-token, unreachable, bad-address, closes: it ends after the third
+so that only the tests that ask for it need gRPC), REPLAY_CHECK_DELAY_MS (how long check and connections take),
+REPLAY_CONTROL (what goes wrong with the control server: wrong-token, unreachable, bad-address, closes: it ends after the third
 time event), REPLAY_RECORDINGS (another directory of recordings, with fake_control.py next to it). Standard library
 only, except fake_control (grpcio) for --control. A --control-credentials file that others can read ends it with
 code 3 (the real launcher's rule for the token file).
@@ -172,6 +172,10 @@ def expand_request(argv: list[str]) -> list[str]:
         options += ["--start-paused"]  # a check has no such option: only the scenario's rule is recorded (by a request)
     if request.get("strict"):
         options += ["--strict"]
+    if "time_policy" in request:
+        options += ["--time-policy", request["time_policy"]]
+    for network, target in request.get("connect", {}).items():
+        options += ["--connect", f"{network}={target}"]
     if "scenario" in request and len(after) > 1:
         config_directory = os.path.dirname(after[1])
         scenario = os.path.normpath(os.path.join(config_directory, request["scenario"])).replace(os.sep, "/")
@@ -608,6 +612,7 @@ class Player:
             value = value.replace("<root>", self.root).replace("<file>", self.file or "")
             value = value.replace("<scenario>", self.scenario or "")
             value = value.replace("<timeline>", self.timeline or "")
+            value = value.replace("<tools>", os.path.dirname(os.path.abspath(sys.argv[0])))
             if self.control is not None:
                 value = value.replace("<control>", self.control_address)
         return value
@@ -880,7 +885,7 @@ class Player:
                 pass
         elif "--stdin-commands" in self.argv:
             threading.Thread(target=self.read_input, daemon=True).start()
-        if self.argv[:1] == ["check"]:
+        if self.argv[:1] in (["check"], ["connections"]):
             time.sleep(int(os.environ.get("REPLAY_CHECK_DELAY_MS", "0")) / 1000)
         while self.i < len(self.entries):
             self.early_input()

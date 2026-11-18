@@ -284,7 +284,10 @@ def test_variant_and_params_of_the_wrong_shape_are_refused(gui: Gui) -> None:
                                ({"enable": "A"}, "invalid-field"), ({"enable": [1]}, "invalid-field"),
                                ({"strict": 1}, "invalid-field"), ({"strict": None}, "invalid-field"),
                                ({"vehicle_sil_run_request": 2}, "invalid-field"),
-                               ({"connect": {"ETH": "x"}}, "unsupported"), ({"time_policy": "free"}, "unsupported")):
+                               ({"connect": ["ETH=x"]}, "invalid-field"), ({"connect": {"ETH": 1}}, "invalid-field"),
+                               ({"connect": {"": "none"}}, "invalid-field"), ({"connect": None}, "invalid-field"),
+                               ({"time_policy": ""}, "invalid-field"), ({"time_policy": True}, "invalid-field"),
+                               ({"time_policy": None}, "invalid-field")):
                 status, reply = await c.post(path, {"file": "simulation.yaml", **body})
                 assert (status, reply["error"]["code"]) == (400, code), (path, body, reply)
         status, body = await c.get("api/session")

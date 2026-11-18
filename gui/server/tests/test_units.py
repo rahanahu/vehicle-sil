@@ -1032,7 +1032,8 @@ def test_a_request_field_is_checked_before_anything_is_made_of_it() -> None:
     check_fields("api/run", {"file": "a.yaml", "$schema": "x.json", "vehicle_sil_run_request": 1, "speed": 2},
                  REQUEST_FIELDS)
     check_fields("api/check", {"file": "a.yaml", "speed": 1, "start_paused": True}, REQUEST_FIELDS)
-    for body, code in (({"connect": {"N": "x"}}, "unsupported"), ({"time_policy": "free"}, "unsupported"),
+    check_fields("api/run", {"file": "a.yaml", "connect": {"N": "x"}, "time_policy": "free"}, REQUEST_FIELDS)
+    for body, code in (({"connect": None}, "invalid-field"), ({"time_policy": None}, "invalid-field"),
                        ({"variant": None}, "invalid-field"), ({"speed": None}, "invalid-field"),
                        ({"vehicle_sil_run_request": 2}, "invalid-field"),
                        ({"vehicle_sil_run_request": True}, "invalid-field"), ({"control": 0}, "invalid-field"),

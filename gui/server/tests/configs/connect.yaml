@@ -1,0 +1,17 @@
+# A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it
+# (recordings/, made by record_launcher.py: record again after changing this file).
+# ETH_EXT can be connected outside: record_launcher.py lists it and connects it with the Ethernet bridge on the fake
+# pcap library (its adapter fake0).
+vehicle_sil_simulation: 1
+stop_at_ms: 1000
+networks:
+  - name: J1939_CAN
+    kind: can
+  - name: ETH_EXT
+    kind: ethernet
+    external: { all_frames: true }
+participants:
+  - name: Engine
+    command: [engine/vehicle_sil_engine_ecu]
+  - name: Dashboard
+    command: [dashboard/vehicle_sil_dashboard_ecu]
