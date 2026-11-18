@@ -292,12 +292,14 @@ With `--connect`, the devices on the real bus do not stop or change speed with t
 
 ## Connecting a bus outside (`--connect`)
 
-`run --connect <network>=<target>` connects the network to a real bus (an Ethernet adapter, or a CAN channel of the Vector XL Driver Library) through the bridge of this repository. First see where each network can be connected on this computer, and copy a `--connect` line of the output (see [Where a network can be connected](#where-a-network-can-be-connected-vehicle_sil_launch-connections)):
+`run --connect <network>=<target>` connects the network to a real bus (an Ethernet adapter or TAP device, a SocketCAN interface, or a CAN channel of the Vector XL Driver Library) through the bridge of this repository. First see where each network can be connected on this computer, and copy a `--connect` line of the output (see [Where a network can be connected](#where-a-network-can-be-connected-vehicle_sil_launch-connections)):
 
 ```sh
 vehicle_sil_launch connections simulation.yaml
 vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.yaml
 ```
+
+The target is `none` or `[<backend>:]<selector>`: a backend (`packet`, `tap`, `npcap`, `xl`, `socketcan`) chooses how the network is connected, and a target without one takes the default of this OS (the grammar and the table are in "[`--connect`](simulation-config.md#--connect)" in simulation-config.md). On Linux, `--connect J1939_CAN1=can0` connects a CAN network to the SocketCAN interface `can0` and `--connect ETH_EXT=tap:vsil0` an Ethernet network to the TAP device `vsil0`.
 
 The check looks for the bridge and asks it `--describe`, as `check --connect` does (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md). If the check passes, `run` goes on:
 
@@ -439,14 +441,14 @@ If two networks of this run have different `--connect` values (so the check does
 vehicle_sil_launch connections [--json] [--network <name>] [--] <file>
 ```
 
-`connections` lists, for each `can` and `ethernet` network of the file, where it can be connected on this computer. It asks the network's bridge for its list (`vehicle_sil_ethernet_bridge --list-interfaces --json`, `vehicle_sil_vector_xl_bridge --list-channels --json`) and looks for the bridge as `--connect` does: next to `vehicle_sil_launch`, then in the absolute directories of `PATH`. It connects to nothing: it starts neither SIL Kit nor a participant, and the bridges open no adapter and no channel. Each bridge is asked once, also for two networks of its kind.
+`connections` lists, for each `can` and `ethernet` network of the file, where it can be connected on this computer. It asks the network's bridge for its list (`vehicle_sil_ethernet_bridge --list-interfaces --backend <backend> --json`, `vehicle_sil_socketcan_bridge --list-channels --json`, `vehicle_sil_vector_xl_bridge --list-channels --json`) and looks for the bridge as `--connect` does: next to `vehicle_sil_launch`, then in the absolute directories of `PATH`. It connects to nothing: it starts neither SIL Kit nor a participant, and the bridges open no adapter and no channel. It lists each network once for each backend of this OS that it can list (on Linux an Ethernet network twice, `packet` and `tap`; a CAN network `socketcan`; on Windows `npcap` and `xl`), and each bridge is asked once for a backend, also for two networks of its kind. A target of the default backend is written without a prefix, a target of another backend with it, so the `--connect` line can be copied as it is.
 
 - `--network <name>` lists that network only. A name that the file does not have is a usage error.
 - The file is read without a variant, because every variant has the networks of the file. `--variant` is a usage error.
 - Errors in the file do not stop the list: the networks that could be read are listed, and the file's errors follow, as `check` reports them (exit code 1).
 - The launcher starts each bridge in the bridge's own directory, as for `--connect` (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md).
 
-An example on Windows, where the Vector XL bridge is not installed:
+An example on Windows, where the Vector XL bridge is not installed (on Linux, the line of an Ethernet network is `--connect ETH_EXT=enp3s0` for `packet` and `--connect ETH_EXT=tap:vsil0` for `tap`, each list under its own heading; a CAN network lists `--connect J1939_CAN1=can0` under `vehicle_sil_socketcan_bridge`):
 
 ```text
 simulation.yaml: where each network can be connected on this computer
@@ -463,12 +465,12 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 |---|---|
 | `<network> (<kind>; <bridge>, <backend>: <library>):` | The network, its bridge, and the backend and library version that the bridge reports. |
 | `--connect ...` | A target that the bridge can use. Copy the argument to `check` or `run`. After it: the target's name if it differs, and what the bridge says about it. |
-| `cannot be used: <target>  (<reason>)` | A target that the bridge lists but cannot use (the loopback), or one that `--connect` does not take: `none`, which means SIL Kit only (the reason gives the adapter's pcap name to use instead, or says to rename the interface where it has no other name), a name that starts with `-`, and the other values that `connect-target` refuses. |
+| `cannot be used: <target>  (<reason>)` | A target that the bridge lists but cannot use (the loopback), or one that `--connect` does not take: a name that starts with `-`, and the other values that `connect-target` refuses. |
 | `cannot be connected with --connect: ...` | The network's name has `=` or starts with `--`, so `--connect` cannot name it: rename the network. |
 | `note: ...` | What the bridge adds (Npcap that offers no network adapter), or a target quoted for sh only (below). |
 | `cannot list: <message> [<code>]` | The list could not be made (see the codes below). |
 | `nothing listed: ...` | The bridge lists nothing on this computer. |
-| `<network> (<kind>): SIL Kit only (<why>)` | There is no bridge for the network on this computer: none for LIN, and the Vector XL bridge of a `can` network runs on Windows only. Where it does not run, a bridge that is found anyway (a build for tests) is used. |
+| `<network> (<kind>): SIL Kit only (<why>)` | There is no bridge for the network: none for LIN. |
 | `<network>: its kind in the file has an error` | `check` says what is wrong. |
 
 The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell and cmd all read it the same: as it is if it has only ASCII letters, digits and `_ - . : / = +`, otherwise in double quotes. A target with `"`, `$`, `` ` ``, `%`, `!`, the quotation marks `“` `”` `„` (U+201C, U+201D, U+201E, which PowerShell reads as `"`) or a control character, or with `\` at its end or before `"`, `$`, `` ` `` or `\`, cannot be written so for all of them: its line is quoted for sh (`'...'`), and a `note:` line says so.
@@ -486,6 +488,7 @@ The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell
       "name": "ETH_EXT",
       "kind": "ethernet",
       "tool": "vehicle_sil_ethernet_bridge",
+      "backend": "npcap",
       "tool_path": "C:/vsil/bin/vehicle_sil_ethernet_bridge.exe",
       "list": {
         "vehicle_sil_targets": 1,
@@ -521,6 +524,7 @@ The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell
       "name": "J1939_CAN1",
       "kind": "can",
       "tool": "vehicle_sil_vector_xl_bridge",
+      "backend": "xl",
       "tool_path": null,
       "list": {
         "vehicle_sil_targets": 1,
@@ -539,6 +543,7 @@ The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell
       "name": "BODY_LIN",
       "kind": "lin",
       "tool": null,
+      "backend": null,
       "tool_path": null,
       "list": null
     }
@@ -553,15 +558,16 @@ The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell
 | `vehicle_sil` | The vehicle-sil version. |
 | `file` | The file as given. |
 | `result` | `listed`: every bridge that is on this computer made its list (a bridge that is not, `tool-missing`, is part of the answer). `failed`: a bridge that is there could not make its list, or the file has errors (also a network's kind). `unreadable`: the file cannot be read. `usage`: the command line is wrong. |
-| `networks[]` | The networks in the order of the file; with `--network`, that one. |
+| `networks[]` | The networks in the order of the file; with `--network`, that one. A network has one entry for each backend that is listed on this computer, one after the other (on Linux an Ethernet network has `packet` and `tap`). |
 | `networks[].name` | The network's name. |
 | `networks[].kind` | `can`, `ethernet` or `lin`; `null` if its kind in the file has an error. |
-| `networks[].tool` | The bridge's executable; `null` where there is no bridge for the network on this computer (`lin`, and `can` elsewhere than on Windows) and for an unknown kind. |
+| `networks[].tool` | The bridge's executable; `null` where there is no bridge for the network (`lin`) and for an unknown kind. |
+| `networks[].backend` | The backend of the entry (`npcap`, `packet`, `tap`, `xl`, `socketcan`); `null` where `tool` is `null`. |
 | `networks[].tool_path` | Where the launcher found it; `null` if it did not, or there is no bridge. |
 | `networks[].list` | The bridge's list as the bridge wrote it, every key passed on: the form of "[The list as JSON](ethernet-bridge.md#the-list-as-json---json)" and "[The channel list as JSON](bridges.md#the-channel-list-as-json---json)". For a bridge that gives no list, a list of the same form that the launcher makes (below). `null` where `tool` is `null`. |
 | `findings` | Why the file cannot be read, the usage error, or the errors of the file, as in `check --json`; otherwise empty. |
 
-`value` of a target with `usable: true` is what `--connect <network>=<value>` takes (a program passes it as one argument, without a shell): the launcher sets `usable: false` and the `reason` of a target that `--connect` does not take (the `cannot be used` and `cannot be connected` lines above), so the text and the JSON say the same. When the launcher cannot get a list from the bridge, it makes one with no targets and the error. The bridge's own codes (`library-missing`, `permission-denied`, `backend-unavailable`, `driver-missing`, `failed`) come in the bridge's list.
+`value` of a target with `usable: true` is what `--connect <network>=<value>` takes (a program passes it as one argument, without a shell): the name that the bridge lists, with `<backend>:` before it where `--connect` needs it (a backend that is not the default of this OS, a name that is `none` or begins with a backend's word). The launcher writes it in `value` in place of the bridge's own text. the launcher sets `usable: false` and the `reason` of a target that `--connect` does not take (the `cannot be used` and `cannot be connected` lines above), so the text and the JSON say the same. When the launcher cannot get a list from the bridge, it makes one with no targets and the error. The bridge's own codes (`library-missing`, `permission-denied`, `backend-unavailable`, `driver-missing`, `failed`) come in the bridge's list.
 
 | `error.code` | When |
 |---|---|

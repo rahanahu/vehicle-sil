@@ -27,9 +27,10 @@ inline constexpr int kTargetsFormat = 1;
 /// How long one bridge may take for its list.
 inline constexpr std::chrono::milliseconds kListTimeout{30000};
 
-/// The arguments with which a bridge of a network of `kind` lists its targets as JSON:
-/// --list-interfaces --json (ethernet), --list-channels --json (can); none for LIN.
-[[nodiscard]] std::vector<std::string> list_arguments(NetworkKind kind);
+/// The arguments with which the bridge of `backend` for a network of `kind` lists its targets as
+/// JSON: --list-interfaces --backend <backend> --json (ethernet), --list-channels --json (can);
+/// none for LIN.
+[[nodiscard]] std::vector<std::string> list_arguments(NetworkKind kind, std::string_view backend);
 
 /// One target of a list ("targets[]").
 struct ListedTarget
@@ -74,7 +75,7 @@ inline constexpr std::size_t kMaxListDepth = 64;
 /// A list that the launcher makes for `tool`: no targets, and the error `code` with `message`.
 [[nodiscard]] TargetList failed_list(std::string_view tool, std::string_view code, std::string message);
 
-/// The list of `tool` (bridge_tool(kind)) from one run of it with list_arguments(kind): what it
+/// The list of `tool` (bridge_tool(kind, backend)) from one run of it with list_arguments(): what it
 /// wrote (also a list with an error, with which a bridge ends with exit code 3); or else a failed
 /// list with the code tool-cannot-start (it could not be started, or Windows did not start it
 /// for a DLL), tool-timeout (it did not end within the run's time limit) or tool-bad-output (it
@@ -83,15 +84,19 @@ inline constexpr std::size_t kMaxListDepth = 64;
 
 /// Why `--connect <network>=<value>` cannot connect `network` (of `kind`) at `target`, or empty:
 /// the network's name has '=' or starts with "--" (the command line cannot name it), or
-/// target_problem(), or the value is kNoTarget (with the pcap name to give instead, or else
-/// that the interface needs another name).
+/// target_problem() of its value (on `os`).
 [[nodiscard]] std::optional<std::string> refused_target(std::string_view network, NetworkKind kind,
-                                                        const ListedTarget& target);
+                                                        const ListedTarget& target, Os os = kThisOs);
 
 /// Makes each usable target of `list` that refused_target() refuses unusable, with that reason
 /// (ListedTarget::refused): so the text and the JSON say the same, and a usable target's value is
 /// what --connect takes.
-void refuse_targets(std::string_view network, NetworkKind kind, TargetList& list);
+void refuse_targets(std::string_view network, NetworkKind kind, TargetList& list, Os os = kThisOs);
+
+/// Gives each target of the list of `backend` the value that --connect takes: the name the bridge
+/// listed, with "<backend>:" before it unless that is what --connect reads without it (the
+/// default backend, and a name that does not read as "none" or as another backend's prefix).
+void prefix_targets(NetworkKind kind, std::string_view backend, TargetList& list, Os os = kThisOs);
 
 /// One network of the file and where it can be connected.
 struct NetworkConnections
@@ -99,11 +104,13 @@ struct NetworkConnections
     std::string name;
     /// Empty if the file's kind of it has an error (the check reports it): nothing is listed.
     std::optional<NetworkKind> kind{};
-    std::string tool{};                  ///< bridge_tool(); "" if there is none here
+    std::string tool{};                  ///< bridge_tool() of the backend; "" if there is none here
     std::filesystem::path tool_path{};   ///< where find_tool() found it; empty: not found, or no tool
     std::optional<TargetList> list{};    ///< empty if there is no bridge here, or the kind is unknown
     /// Why there is no bridge for it on this computer (no_bridge_here()), or "".
     std::string no_bridge{};
+    /// The backend the list is of (the "<backend>:" of its targets, where they need it); "" for LIN.
+    std::string backend{};
 };
 
 /// What `vehicle_sil_launch connections` found.
@@ -127,10 +134,11 @@ struct ConnectionsReport
 };
 
 /// The networks of `config` (with `network`, that one only: it must be one of them) and their
-/// lists: each bridge is looked for and asked once (`tools`: find, describe for the run of the
-/// list), also for two networks of its kind; a bridge that is not found has the failed list
-/// tool-missing, or, where there is no bridge for the kind on this OS (`tools.can_bridge`), no
-/// list (NetworkConnections::no_bridge). Each list goes through refuse_targets().
+/// lists, one entry for each backend that the OS lists for the kind (listed_backends() of
+/// `tools.os`; an entry without a list for LIN): each bridge is looked for and asked once for a
+/// backend (`tools`: find, describe for the run of the list), also for two networks of its kind;
+/// a bridge that is not found has the failed list tool-missing. Each list goes through
+/// prefix_targets() and refuse_targets().
 [[nodiscard]] std::vector<NetworkConnections> connections_of(const SimulationConfig& config,
                                                              const std::optional<std::string>& network,
                                                              const ConnectTools& tools);

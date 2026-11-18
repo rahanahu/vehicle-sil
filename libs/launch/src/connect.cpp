@@ -67,18 +67,134 @@ std::optional<ConnectRequest> parse_connect(std::string_view text)
     return ConnectRequest{std::string(text.substr(0, equals)), std::string(text.substr(equals + 1))};
 }
 
-std::string_view bridge_tool(NetworkKind kind)
+namespace {
+
+constexpr std::string_view kEthernetTool = "vehicle_sil_ethernet_bridge";
+constexpr std::string_view kXlTool = "vehicle_sil_vector_xl_bridge";
+constexpr std::string_view kSocketCanTool = "vehicle_sil_socketcan_bridge";
+
+constexpr ConnectBackend kBackends[] = {
+    {NetworkKind::Ethernet, "npcap", kEthernetTool, false, true, false, true},
+    {NetworkKind::Ethernet, "packet", kEthernetTool, true, false, true, false},
+    {NetworkKind::Ethernet, "tap", kEthernetTool, true, false, true, false},
+    {NetworkKind::Can, "xl", kXlTool, true, true, false, true},
+    {NetworkKind::Can, "socketcan", kSocketCanTool, true, false, true, false},
+};
+
+bool on_os(const ConnectBackend& b, Os os) { return os == Os::Linux ? b.on_linux : b.on_windows; }
+
+std::string_view os_name(Os os) { return os == Os::Linux ? "Linux" : "Windows"; }
+
+std::string_view default_backend(NetworkKind kind, std::string_view selector, Os os)
 {
-    switch (kind)
+    if (kind == NetworkKind::Ethernet)
     {
-    case NetworkKind::Ethernet:
-        return "vehicle_sil_ethernet_bridge";
-    case NetworkKind::Can:
-        return "vehicle_sil_vector_xl_bridge";
-    case NetworkKind::Lin:
-        break;
+        return os == Os::Linux ? "packet" : "npcap";
     }
-    return "";
+    if (kind == NetworkKind::Can)
+    {
+        return can_target(selector) || os == Os::Windows ? "xl" : "socketcan";
+    }
+    return {};
+}
+
+} // namespace
+
+std::span<const ConnectBackend> connect_backends() { return kBackends; }
+
+const ConnectBackend* find_backend(NetworkKind kind, std::string_view name)
+{
+    for (const ConnectBackend& b : kBackends)
+    {
+        if (b.kind == kind && b.name == name)
+        {
+            return &b;
+        }
+    }
+    return nullptr;
+}
+
+std::vector<const ConnectBackend*> backends_on(NetworkKind kind, Os os)
+{
+    std::vector<const ConnectBackend*> out;
+    for (const ConnectBackend& b : kBackends)
+    {
+        if (b.kind == kind && on_os(b, os))
+        {
+            out.push_back(&b);
+        }
+    }
+    return out;
+}
+
+std::vector<const ConnectBackend*> listed_backends(NetworkKind kind, Os os)
+{
+    std::vector<const ConnectBackend*> out;
+    for (const ConnectBackend& b : kBackends)
+    {
+        if (b.kind == kind && (os == Os::Linux ? b.listed_on_linux : b.listed_on_windows))
+        {
+            out.push_back(&b);
+        }
+    }
+    return out;
+}
+
+ConnectTarget read_connect_target(NetworkKind kind, std::string_view target, Os os)
+{
+    ConnectTarget out;
+    if (target == kNoTarget)
+    {
+        out.none = true;
+        return out;
+    }
+    out.selector = target;
+    if (const std::size_t colon = target.find(':'); colon != std::string_view::npos)
+    {
+        if (const ConnectBackend* backend = find_backend(kind, target.substr(0, colon)))
+        {
+            out.prefixed = true;
+            out.backend = backend->name;
+            out.selector = target.substr(colon + 1);
+            return out;
+        }
+    }
+    out.backend = default_backend(kind, out.selector, os);
+    return out;
+}
+
+std::string_view bridge_tool(NetworkKind kind, std::string_view backend)
+{
+    const ConnectBackend* row = find_backend(kind, backend);
+    return row ? row->tool : std::string_view{};
+}
+
+bool is_bridge_tool(std::string_view tool)
+{
+    return std::any_of(std::begin(kBackends), std::end(kBackends), [tool](const ConnectBackend& b) { return b.tool == tool; });
+}
+
+bool is_can_bridge_tool(std::string_view tool)
+{
+    return std::any_of(std::begin(kBackends), std::end(kBackends),
+                       [tool](const ConnectBackend& b) { return b.kind == NetworkKind::Can && b.tool == tool; });
+}
+
+std::optional<std::string> backend_problem(NetworkKind kind, std::string_view target, Os os)
+{
+    const ConnectTarget read = read_connect_target(kind, target, os);
+    if (!read.prefixed || on_os(*find_backend(kind, read.backend), os))
+    {
+        return std::nullopt;
+    }
+    std::string names;
+    for (const ConnectBackend* b : backends_on(kind, os))
+    {
+        names += (names.empty() ? "" : ", ") + std::string(b->name);
+    }
+    return "the backend '" + std::string(read.backend) + "' is not for " + std::string(os_name(os)) + ": the " +
+           std::string(to_string(kind)) + " backends here are " + names + " (give the target without the prefix to take the default, " +
+           std::string(default_backend(kind, "", os)) + "); vehicle_sil_launch connections <file> lists the targets of each";
 }
 
 std::size_t detail::unicode_control_at(std::string_view text) noexcept
@@ -107,13 +223,13 @@ bool detail::has_unicode_control(std::string_view text) noexcept
     return false;
 }
 
-std::optional<std::string> no_bridge_here(NetworkKind kind, bool can_bridge)
+std::optional<std::string> no_bridge_here(NetworkKind kind, std::string_view backend, Os os)
 {
     if (kind == NetworkKind::Lin)
     {
         return std::string("there is no bridge for LIN");
     }
-    if (kind == NetworkKind::Can && !can_bridge)
+    if (kind == NetworkKind::Can && backend == "xl" && os != Os::Windows)
     {
         return std::string("the Vector XL bridge is for Windows");
     }
@@ -127,7 +243,7 @@ std::filesystem::path bridge_working_directory(const std::filesystem::path& tool
 
 std::string bridge_participant(std::string_view network) { return "bridge." + std::string(network); }
 
-std::optional<std::string> target_problem(NetworkKind kind, std::string_view target)
+std::optional<std::string> target_problem(NetworkKind kind, std::string_view target, Os os)
 {
     if (target == kNoTarget)
     {
@@ -151,25 +267,36 @@ std::optional<std::string> target_problem(NetworkKind kind, std::string_view tar
     {
         return "the target has a control character";
     }
-    if (target.front() == '-')
+    if (auto problem = backend_problem(kind, target, os))
+    {
+        return problem;
+    }
+    const ConnectTarget read = read_connect_target(kind, target, os);
+    if (read.selector.empty())
+    {
+        return "the target has nothing after '" + std::string(read.backend) + ":': give the " +
+               (kind == NetworkKind::Can ? "channel or interface" : "interface") + " name";
+    }
+    if (read.selector.front() == '-')
     {
         return "the target starts with '-', which the bridge would take for an option";
     }
-    if (kind == NetworkKind::Can && !can_target(target))
+    if (kind == NetworkKind::Can && read.backend == "xl" && !can_target(read.selector))
     {
-        return "a CAN target is virtual:<n> or physical:<n>, with the channel number <n> from 1";
+        return "a Vector XL target is virtual:<n> or physical:<n>, with the channel number <n> from 1";
     }
     return std::nullopt;
 }
 
 std::vector<std::string> bridge_arguments(const NetworkConfig& network, std::string_view target,
-                                          const std::vector<eth::MacAddress>& macs)
+                                          const std::vector<eth::MacAddress>& macs, Os os)
 {
     std::vector<std::string> out{"--network", network.name};
     const NetworkExternal external = network.external.value_or(NetworkExternal{});
+    const ConnectTarget read = read_connect_target(network.kind, target, os);
     if (network.kind == NetworkKind::Ethernet)
     {
-        out.insert(out.end(), {"--interface", std::string(target)});
+        out.insert(out.end(), {"--backend", std::string(read.backend), "--interface", std::string(read.selector)});
         if (external.all_frames)
         {
             out.emplace_back("--all-frames");
@@ -203,9 +330,16 @@ std::vector<std::string> bridge_arguments(const NetworkConfig& network, std::str
     }
     else if (network.kind == NetworkKind::Can)
     {
-        const std::optional<CanTarget> can = can_target(target);
-        out.insert(out.end(), {"--xl-target", std::string(can ? can->xl_target : ""), "--xl-channel",
-                               std::string(can ? can->channel : "")});
+        if (read.backend == "socketcan")
+        {
+            out.insert(out.end(), {"--interface", std::string(read.selector)});
+        }
+        else
+        {
+            const std::optional<CanTarget> can = can_target(read.selector);
+            out.insert(out.end(), {"--xl-target", std::string(can ? can->xl_target : ""), "--xl-channel",
+                                   std::string(can ? can->channel : "")});
+        }
         if (external.bitrate)
         {
             out.insert(out.end(), {"--bitrate", std::to_string(*external.bitrate)});
@@ -223,9 +357,9 @@ std::vector<std::string> bridge_run_arguments(const NetworkOutside& outside, std
     return out;
 }
 
-std::string connect_device_key(NetworkKind kind, std::string_view target, bool ignore_case)
+std::string connect_device_key(NetworkKind kind, std::string_view target, Os os)
 {
-    if (kind == NetworkKind::Lin || target_problem(kind, target))
+    if (kind == NetworkKind::Lin || target_problem(kind, target, os))
     {
         return {};
     }
@@ -233,9 +367,11 @@ std::string connect_device_key(NetworkKind kind, std::string_view target, bool i
     {
         return {};
     }
-    if (kind == NetworkKind::Can)
+    const ConnectTarget read = read_connect_target(kind, target, os);
+    std::string key(read.selector);
+    if (kind == NetworkKind::Can && read.backend == "xl")
     {
-        const std::optional<CanTarget> can = can_target(target);
+        const std::optional<CanTarget> can = can_target(read.selector);
         if (!can)
         {
             return {};
@@ -248,8 +384,7 @@ std::string connect_device_key(NetworkKind kind, std::string_view target, bool i
         std::from_chars(can->channel.data(), can->channel.data() + can->channel.size(), value);
         return "physical:" + std::to_string(value);
     }
-    std::string key(target);
-    if (ignore_case)
+    if (os == Os::Windows)
     {
         for (char& c : key)
         {
@@ -294,11 +429,12 @@ std::string tool_not_found(const std::filesystem::path& launcher_dir)
                                 : "neither next to vehicle_sil_launch (" + process::shown_path(launcher_dir) + ") nor on PATH";
 }
 
-std::string tool_missing_fix(NetworkKind kind)
+std::string tool_missing_fix(std::string_view tool)
 {
-    return std::string(kind == NetworkKind::Can ? "build it with the Vector XL Driver Library (docs/bridges.md)"
-                                                : "build it (docs/ethernet-bridge.md)") +
-           " and put it next to vehicle_sil_launch, or its directory on PATH";
+    const char* how = tool == kXlTool        ? "build it with the Vector XL Driver Library (docs/bridges.md)"
+                      : tool == kSocketCanTool ? "build it on Linux (docs/socketcan-bridge.md)"
+                                               : "build it (docs/ethernet-bridge.md)";
+    return std::string(how) + " and put it next to vehicle_sil_launch, or its directory on PATH";
 }
 
 } // namespace vehicle_sil::launch

@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: MIT
+//
+// TEST ONLY. The link factory of the bridge executable built for the process tests on the fake
+// pcap library (vehicle_sil_ethernet_bridge_on_fake_pcap): as bridges/ethernet/app/os_link_factory.cpp,
+// but every backend but tap opens the pcap link, so that a launcher that always gives --backend
+// (packet on Linux, npcap on Windows) still reaches the fake pcap library and its devices.
+#include "link_factory.hpp"
+#include "pcap_library.hpp"
+
+#include "vehicle_sil/eth_link/os_links.hpp"
+#include "vehicle_sil/eth_link/pcap_link.hpp"
+#include "vehicle_sil/ethernet_bridge/bridge_app.hpp"
+#include "vehicle_sil/ethernet_bridge/interface_list.hpp"
+
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace vehicle_sil::ethernet_bridge {
+
+std::unique_ptr<eth_link::ExternalLink> make_external_link(const BridgeOptions& options)
+{
+    if (options.backend == Backend::Tap)
+    {
+        if (const auto why = backend_unavailable(options.backend, host_os()))
+        {
+            throw BackendUnavailableError(*why);
+        }
+        return eth_link::make_tap_link({options.interface_name, options.tap_create});
+    }
+    // Loads the library: a computer without it is told so here, before SIL Kit is touched.
+    return eth_link::make_pcap_link({options.interface_name, options.promiscuous, pcap_library()});
+}
+
+std::string interface_list(const BridgeOptions& options)
+{
+    if (!options.backend)
+    {
+        throw std::logic_error("no backend: the executable gives parse_bridge_options() the default of this OS");
+    }
+    const Backend backend = *options.backend;
+    // The marks of the bridges that use an interface, looked at without placing one.
+    std::vector<bridge_runtime::DevicePeers> inUse;
+    const auto look = [&inUse](const std::string& device) {
+        inUse.push_back(bridge_runtime::look_for_marks(bridge_runtime::kEthernetDevice, device_mark_identity(device)));
+    };
+    if (backend != Backend::Tap)
+    {
+        const auto list = eth_link::pcap_interfaces(pcap_library());
+        for (const auto& device : list.devices)
+        {
+            look(device.name);
+        }
+        return options.json ? pcap_interfaces_json(backend, list, inUse) : format_pcap_list(list, inUse);
+    }
+    const auto interfaces = eth_link::list_interfaces();
+    for (const auto& entry : interfaces)
+    {
+        look(entry.name);
+    }
+    return options.json ? os_interfaces_json(backend, interfaces, inUse) : format_os_interface_list(interfaces, inUse);
+}
+
+} // namespace vehicle_sil::ethernet_bridge

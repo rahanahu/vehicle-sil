@@ -220,6 +220,7 @@ sudo setcap -r build/<preset>/bridges/ethernet/vehicle_sil_ethernet_bridge
 ```
 
 - Without step 2, the run fails with `connect-failed`, and the bridge's line says which `setcap` command to run.
+- The launcher gives the bridge `--backend packet` here, the default on Linux. To connect a TAP device that you created (see "[First connection](#first-connection)") instead, write the backend in the target: `--connect ETH=tap:vsil0`; on Windows the default is `npcap` (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md).
 - A real device on a NIC is connected the same way: give `--connect ETH=<the NIC's name>` instead of `vsil0`. For an automatic test with the device, run a scenario with `--speed 1 --strict` (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md).
 - The test `ethernet_bridge.netns.launch` does the same in a network namespace, where it needs neither `sudo` nor `setcap` (see "[`ethernet_bridge.netns.*`](#ethernet_bridgenetns)").
 

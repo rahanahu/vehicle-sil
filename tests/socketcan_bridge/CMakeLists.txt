@@ -36,3 +36,16 @@ foreach(_scenario roundtrip link refused shared)
   set_tests_properties(socketcan_bridge.netns.${_scenario}
     PROPERTIES LABELS "integration;socketcan_bridge" TIMEOUT 300 SKIP_RETURN_CODE 77)
 endforeach()
+
+# launch: vehicle_sil_launch run --connect J1939_CAN=vcan0 starts the bridge itself, beside the engine ECU.
+if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
+  add_test(NAME socketcan_bridge.netns.launch
+    COMMAND "${_socketcan_netns_python}" ${CMAKE_CURRENT_SOURCE_DIR}/bridge_netns.py --scenario launch
+            --bridge $<TARGET_FILE:vehicle_sil_socketcan_bridge>
+            --peer $<TARGET_FILE:vehicle_sil_vector_xl_it_peer>
+            --registry $<TARGET_FILE:sil-kit-registry>
+            --launch $<TARGET_FILE:vehicle_sil_launch>
+            --ecu $<TARGET_FILE:vehicle_sil_engine_ecu>)
+  set_tests_properties(socketcan_bridge.netns.launch
+    PROPERTIES LABELS "integration;socketcan_bridge" TIMEOUT 300 SKIP_RETURN_CODE 77)
+endif()

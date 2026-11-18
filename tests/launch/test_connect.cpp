@@ -139,27 +139,94 @@ TEST_CASE(parse_connect_splits_at_the_first_equals_sign)
 
 TEST_CASE(the_bridge_of_each_kind)
 {
-    check_text(std::string(bridge_tool(NetworkKind::Ethernet)), "vehicle_sil_ethernet_bridge");
-    check_text(std::string(bridge_tool(NetworkKind::Can)), "vehicle_sil_vector_xl_bridge");
-    CHECK(bridge_tool(NetworkKind::Lin).empty());
+    CHECK(bridge_tool(NetworkKind::Lin, "xl").empty());
     check_text(bridge_participant("ETH_EXT"), "bridge.ETH_EXT");
-    check_text(no_bridge_here(NetworkKind::Lin, true).value_or("-"), "there is no bridge for LIN");
-    check_text(no_bridge_here(NetworkKind::Can, false).value_or("-"), "the Vector XL bridge is for Windows");
-    CHECK(!no_bridge_here(NetworkKind::Can, true) && !no_bridge_here(NetworkKind::Ethernet, false));
+    check_text(no_bridge_here(NetworkKind::Lin, {}, Os::Linux).value_or("-"), "there is no bridge for LIN");
+    check_text(no_bridge_here(NetworkKind::Can, "xl", Os::Linux).value_or("-"), "the Vector XL bridge is for Windows");
+    CHECK(!no_bridge_here(NetworkKind::Can, "xl", Os::Windows) && !no_bridge_here(NetworkKind::Can, "socketcan", Os::Linux) &&
+          !no_bridge_here(NetworkKind::Ethernet, "tap", Os::Linux));
+    check_text(std::string(bridge_tool(NetworkKind::Can, "socketcan")), "vehicle_sil_socketcan_bridge");
+    check_text(std::string(bridge_tool(NetworkKind::Can, "xl")), "vehicle_sil_vector_xl_bridge");
+    for (const char* backend : {"npcap", "packet", "tap"})
+    {
+        check_text(std::string(bridge_tool(NetworkKind::Ethernet, backend)), "vehicle_sil_ethernet_bridge", backend);
+    }
+    CHECK(bridge_tool(NetworkKind::Ethernet, "xl").empty() && bridge_tool(NetworkKind::Can, "tap").empty());
+    CHECK(is_bridge_tool("vehicle_sil_socketcan_bridge") && is_can_bridge_tool("vehicle_sil_socketcan_bridge") &&
+          is_can_bridge_tool("vehicle_sil_vector_xl_bridge") && !is_can_bridge_tool("vehicle_sil_ethernet_bridge") &&
+          is_bridge_tool("vehicle_sil_ethernet_bridge") && !is_bridge_tool("sh"));
     // A bridge runs in its own directory, never the configuration file's.
     CHECK(bridge_working_directory(fs::path("/opt/vsil/bin/vehicle_sil_ethernet_bridge")) == fs::absolute(fs::path("/opt/vsil/bin")));
     CHECK(bridge_working_directory(fs::path("tools") / "vehicle_sil_vector_xl_bridge") == fs::absolute(fs::path("tools")));
 }
 
+TEST_CASE(a_target_reads_a_backend_only_where_the_table_has_the_word)
+{
+    const auto read = [](NetworkKind kind, std::string_view target, Os os = Os::Linux) {
+        const ConnectTarget t = read_connect_target(kind, target, os);
+        return std::string(t.none ? "none" : t.backend) + "|" + std::string(t.selector) + (t.prefixed ? "|prefixed" : "");
+    };
+    // The words of the table, lower case only; any other word before ':' is part of the selector.
+    check_text(read(NetworkKind::Ethernet, "tap:vsil0"), "tap|vsil0|prefixed");
+    check_text(read(NetworkKind::Ethernet, "packet:enp3s0"), "packet|enp3s0|prefixed");
+    check_text(read(NetworkKind::Ethernet, "enp3s0"), "packet|enp3s0");
+    check_text(read(NetworkKind::Ethernet, "eth0:1"), "packet|eth0:1");
+    check_text(read(NetworkKind::Ethernet, "TAP:vsil0"), "packet|TAP:vsil0");
+    check_text(read(NetworkKind::Ethernet, "pcap:x"), "packet|pcap:x");
+    check_text(read(NetworkKind::Ethernet, "xl:x"), "packet|xl:x");  // a word of another kind
+    check_text(read(NetworkKind::Ethernet, "npcap:tap:x"), "npcap|tap:x|prefixed");
+    check_text(read(NetworkKind::Ethernet, "tap:"), "tap||prefixed");
+    // none is the target that connects nothing only without a prefix.
+    check_text(read(NetworkKind::Ethernet, "none"), "none|");
+    check_text(read(NetworkKind::Ethernet, "packet:none"), "packet|none|prefixed");
+    check_text(read(NetworkKind::Ethernet, "None"), "packet|None");
+    // The default backend of each kind on each OS.
+    check_text(read(NetworkKind::Ethernet, "Ethernet 2", Os::Windows), "npcap|Ethernet 2");
+    check_text(read(NetworkKind::Can, "can0"), "socketcan|can0");
+    check_text(read(NetworkKind::Can, "vcan0"), "socketcan|vcan0");
+    check_text(read(NetworkKind::Can, "virtual:1"), "xl|virtual:1");
+    check_text(read(NetworkKind::Can, "physical:2"), "xl|physical:2");
+    check_text(read(NetworkKind::Can, "virtual:0"), "socketcan|virtual:0");
+    check_text(read(NetworkKind::Can, "xl:virtual:1"), "xl|virtual:1|prefixed");
+    check_text(read(NetworkKind::Can, "socketcan:can0"), "socketcan|can0|prefixed");
+    check_text(read(NetworkKind::Can, "virtual:1", Os::Windows), "xl|virtual:1");
+    check_text(read(NetworkKind::Can, "can0", Os::Windows), "xl|can0");
+}
+
+TEST_CASE(a_backend_that_the_os_cannot_use_is_a_backend_problem)
+{
+    const auto problem = [](NetworkKind kind, std::string_view target, Os os) {
+        return backend_problem(kind, target, os).value_or("ok");
+    };
+    check_text(problem(NetworkKind::Ethernet, "tap:x", Os::Linux), "ok");
+    check_text(problem(NetworkKind::Ethernet, "packet:x", Os::Linux), "ok");
+    check_text(problem(NetworkKind::Ethernet, "x", Os::Windows), "ok");
+    check_text(problem(NetworkKind::Ethernet, "none", Os::Windows), "ok");
+    check_text(problem(NetworkKind::Ethernet, "tap:x", Os::Windows),
+               "the backend 'tap' is not for Windows: the ethernet backends here are npcap (give the target without the "
+               "prefix to take the default, npcap); vehicle_sil_launch connections <file> lists the targets of each");
+    check_text(problem(NetworkKind::Ethernet, "npcap:Ethernet 2", Os::Linux),
+               "the backend 'npcap' is not for Linux: the ethernet backends here are packet, tap (give the target without "
+               "the prefix to take the default, packet); vehicle_sil_launch connections <file> lists the targets of each");
+    check_text(problem(NetworkKind::Can, "socketcan:can0", Os::Windows),
+               "the backend 'socketcan' is not for Windows: the can backends here are xl (give the target without the "
+               "prefix to take the default, xl); vehicle_sil_launch connections <file> lists the targets of each");
+    // The Vector XL backend is named on Linux too; the bridge for it is what is missing there.
+    check_text(problem(NetworkKind::Can, "xl:virtual:1", Os::Linux), "ok");
+    // target_problem() says it as well, before anything about the selector.
+    CHECK(target_problem(NetworkKind::Ethernet, "tap:x", Os::Windows) == backend_problem(NetworkKind::Ethernet, "tap:x", Os::Windows));
+}
+
 TEST_CASE(target_problem_says_what_is_wrong_with_a_target)
 {
     const auto problem = [](NetworkKind kind, std::string_view target) {
-        return target_problem(kind, target).value_or("ok");
+        return target_problem(kind, target, Os::Linux).value_or("ok");
     };
     check_text(problem(NetworkKind::Ethernet, "vEthernet (A)"), "ok");
     check_text(problem(NetworkKind::Ethernet, "\\Device\\NPF_{0A1B}"), "ok");
     check_text(problem(NetworkKind::Ethernet, "\xE3\x82\xA4\xE3\x83\xBC\xE3\x82\xB5\xE3\x83\x8D\xE3\x83\x83\xE3\x83\x88"), "ok");
     check_text(problem(NetworkKind::Ethernet, "none"), "ok");
+    check_text(problem(NetworkKind::Ethernet, "packet:none"), "ok");
     check_text(problem(NetworkKind::Can, "none"), "ok");
     check_text(problem(NetworkKind::Ethernet, ""), "the target is empty");
     check_text(problem(NetworkKind::Ethernet, std::string(kMaxTargetBytes, 'a')), "ok");
@@ -176,53 +243,81 @@ TEST_CASE(target_problem_says_what_is_wrong_with_a_target)
 
     check_text(problem(NetworkKind::Ethernet, "--all-frames"),
                "the target starts with '-', which the bridge would take for an option");
+    check_text(problem(NetworkKind::Ethernet, "tap:-x"),
+               "the target starts with '-', which the bridge would take for an option");
+    check_text(problem(NetworkKind::Ethernet, "tap:"), "the target has nothing after 'tap:': give the interface name");
+    check_text(problem(NetworkKind::Can, "socketcan:"),
+               "the target has nothing after 'socketcan:': give the channel or interface name");
     check_text(problem(NetworkKind::Can, "virtual:1"), "ok");
     check_text(problem(NetworkKind::Can, "physical:12"), "ok");
-    const std::string can = "a CAN target is virtual:<n> or physical:<n>, with the channel number <n> from 1";
-    for (const char* wrong : {"physical:0", "physical:", "physical", "Physical:1", "virtual:-1", "virtual:1a", "usb:1",
-                              "physical:1234567890", "eth0"})
+    check_text(problem(NetworkKind::Can, "xl:physical:12"), "ok");
+    // A SocketCAN interface needs no particular form.
+    for (const char* interface : {"can0", "vcan0", "eth0", "usb:1", "socketcan:virtual:1", "Physical:1", "virtual:0"})
+    {
+        check_text(problem(NetworkKind::Can, interface), "ok", interface);
+    }
+    const std::string can = "a Vector XL target is virtual:<n> or physical:<n>, with the channel number <n> from 1";
+    for (const char* wrong : {"xl:physical:0", "xl:physical:", "xl:physical", "xl:Physical:1", "xl:virtual:-1", "xl:virtual:1a",
+                              "xl:usb:1", "xl:physical:1234567890", "xl:can0"})
     {
         check_text(problem(NetworkKind::Can, wrong), can, wrong);
     }
+    // On Windows the default backend of a CAN network is the Vector XL one.
+    check_text(target_problem(NetworkKind::Can, "can0", Os::Windows).value_or("ok"), can);
+    check_text(target_problem(NetworkKind::Can, "virtual:1", Os::Windows).value_or("ok"), "ok");
 }
 
 TEST_CASE(bridge_arguments_of_an_ethernet_network)
 {
-    // The participants' MAC addresses, in their order, each once.
+    // The participants' MAC addresses, in their order, each once; the backend always.
     check_text(words(bridge_arguments(network("ETH", NetworkKind::Ethernet), "vEthernet (A)",
-                                      {mac("02:00:00:00:00:02"), mac("02:00:00:00:00:01"), mac("02:00:00:00:00:02")})),
-               "--network ETH --interface vEthernet (A) --src-mac 02:00:00:00:00:02,02:00:00:00:00:01");
-    check_text(words(bridge_arguments(network("ETH", NetworkKind::Ethernet), "eth0", {})), "--network ETH --interface eth0");
+                                      {mac("02:00:00:00:00:02"), mac("02:00:00:00:00:01"), mac("02:00:00:00:00:02")},
+                                      Os::Windows)),
+               "--network ETH --backend npcap --interface vEthernet (A) --src-mac 02:00:00:00:00:02,02:00:00:00:00:01");
+    check_text(words(bridge_arguments(network("ETH", NetworkKind::Ethernet), "eth0", {}, Os::Linux)),
+               "--network ETH --backend packet --interface eth0");
+    check_text(words(bridge_arguments(network("ETH", NetworkKind::Ethernet), "tap:vsil0", {}, Os::Linux)),
+               "--network ETH --backend tap --interface vsil0");
+    check_text(words(bridge_arguments(network("ETH", NetworkKind::Ethernet), "packet:tap", {}, Os::Linux)),
+               "--network ETH --backend packet --interface tap");
+    check_text(words(bridge_arguments(network("ETH", NetworkKind::Ethernet), "packet:none", {}, Os::Linux)),
+               "--network ETH --backend packet --interface none");
     NetworkExternal types;
     types.ethertypes = {0x88b5, 0x0800};
-    check_text(words(bridge_arguments(network("ETH", NetworkKind::Ethernet, types), "eth0", {mac("02:00:00:00:00:01")})),
-               "--network ETH --interface eth0 --ethertype 0x88b5,0x0800");
+    check_text(words(bridge_arguments(network("ETH", NetworkKind::Ethernet, types), "eth0", {mac("02:00:00:00:00:01")}, Os::Linux)),
+               "--network ETH --backend packet --interface eth0 --ethertype 0x88b5,0x0800");
     NetworkExternal all;
     all.all_frames = true;
-    check_text(words(bridge_arguments(network("ETH", NetworkKind::Ethernet, all), "eth0", {mac("02:00:00:00:00:01")})),
-               "--network ETH --interface eth0 --all-frames");
+    check_text(words(bridge_arguments(network("ETH", NetworkKind::Ethernet, all), "eth0", {mac("02:00:00:00:00:01")}, Os::Linux)),
+               "--network ETH --backend packet --interface eth0 --all-frames");
 }
 
 TEST_CASE(bridge_arguments_of_a_can_network)
 {
-    check_text(words(bridge_arguments(network("CAN1", NetworkKind::Can), "physical:2", {})),
+    check_text(words(bridge_arguments(network("CAN1", NetworkKind::Can), "physical:2", {}, Os::Linux)),
                "--network CAN1 --xl-target physical --xl-channel 2");
     NetworkExternal rate;
     rate.bitrate = 250000;
-    check_text(words(bridge_arguments(network("CAN1", NetworkKind::Can, rate), "virtual:1", {})),
+    check_text(words(bridge_arguments(network("CAN1", NetworkKind::Can, rate), "virtual:1", {}, Os::Windows)),
                "--network CAN1 --xl-target virtual --xl-channel 1 --bitrate 250000");
+    check_text(words(bridge_arguments(network("CAN1", NetworkKind::Can), "xl:virtual:1", {}, Os::Linux)),
+               "--network CAN1 --xl-target virtual --xl-channel 1");
+    // SocketCAN: the interface, then the bit rate if the file gives one.
+    check_text(words(bridge_arguments(network("CAN1", NetworkKind::Can), "can0", {}, Os::Linux)), "--network CAN1 --interface can0");
+    check_text(words(bridge_arguments(network("CAN1", NetworkKind::Can, rate), "socketcan:vcan0", {}, Os::Linux)),
+               "--network CAN1 --interface vcan0 --bitrate 250000");
 }
 
 TEST_CASE(bridge_run_arguments_add_what_run_gives_after_the_checked_ones)
 {
     // An adapter's name with a placeholder in it stays as it is (run replaces none for a bridge).
     NetworkOutside eth{"ETH", "vehicle_sil_ethernet_bridge", "/opt/vehicle_sil_ethernet_bridge", "lab {name} (2)", "bridge.ETH",
-                       bridge_arguments(network("ETH", NetworkKind::Ethernet), "lab {name} (2)", {mac("02:00:00:00:00:01")})};
+                       bridge_arguments(network("ETH", NetworkKind::Ethernet), "lab {name} (2)", {mac("02:00:00:00:00:01")}, Os::Linux)};
     check_text(words(bridge_run_arguments(eth, "silkit://127.0.0.1:41234", 30000)),
-               "--network ETH --interface lab {name} (2) --src-mac 02:00:00:00:00:01 --name bridge.ETH --registry-uri "
+               "--network ETH --backend packet --interface lab {name} (2) --src-mac 02:00:00:00:00:01 --name bridge.ETH --registry-uri "
                "silkit://127.0.0.1:41234 --start-timeout-ms 30000 --stats-every-ms 1000");
     NetworkOutside can{"CAN1", "vehicle_sil_vector_xl_bridge", "/opt/vehicle_sil_vector_xl_bridge", "virtual:1", "bridge.CAN1",
-                       bridge_arguments(network("CAN1", NetworkKind::Can), "virtual:1", {})};
+                       bridge_arguments(network("CAN1", NetworkKind::Can), "virtual:1", {}, Os::Linux)};
     check_text(words(bridge_run_arguments(can, "silkit://127.0.0.1:8500", 5000)),
                "--network CAN1 --xl-target virtual --xl-channel 1 --name bridge.CAN1 --registry-uri silkit://127.0.0.1:8500 "
                "--start-timeout-ms 5000 --stats-every-ms 1000");
@@ -278,17 +373,30 @@ TEST_CASE(find_tool_takes_a_runnable_file_only)
 
 TEST_CASE(connect_device_key_names_the_device_a_target_uses)
 {
-    CHECK(connect_device_key(NetworkKind::Ethernet, "eth0", false) == "eth0");
-    CHECK(connect_device_key(NetworkKind::Ethernet, "eth0", false) != connect_device_key(NetworkKind::Ethernet, "ETH0", false));
+    const auto key = [](NetworkKind kind, std::string_view target, Os os = Os::Linux) {
+        return connect_device_key(kind, target, os);
+    };
+    CHECK(key(NetworkKind::Ethernet, "eth0") == "eth0");
+    CHECK(key(NetworkKind::Ethernet, "eth0") != key(NetworkKind::Ethernet, "ETH0"));
     // Windows adapter names do not differ by case.
-    CHECK(connect_device_key(NetworkKind::Ethernet, "Ethernet 2", true) == connect_device_key(NetworkKind::Ethernet, "ETHERNET 2", true));
-    CHECK(connect_device_key(NetworkKind::Can, "physical:1") != connect_device_key(NetworkKind::Can, "physical:2"));
-    CHECK(connect_device_key(NetworkKind::Can, "physical:1") == connect_device_key(NetworkKind::Can, "physical:01"));
-    CHECK(connect_device_key(NetworkKind::Can, "virtual:1") == connect_device_key(NetworkKind::Can, "virtual:2"));
-    CHECK(connect_device_key(NetworkKind::Can, "virtual:1") != connect_device_key(NetworkKind::Can, "physical:1"));
-    CHECK(connect_device_key(NetworkKind::Ethernet, "none").empty());
-    CHECK(connect_device_key(NetworkKind::Can, "usb:1").empty());
-    CHECK(connect_device_key(NetworkKind::Lin, "x").empty());
+    CHECK(key(NetworkKind::Ethernet, "Ethernet 2", Os::Windows) == key(NetworkKind::Ethernet, "ETHERNET 2", Os::Windows));
+    // The backend is not part of the device: one interface is one device through packet and tap.
+    CHECK(key(NetworkKind::Ethernet, "enp3s0") == "enp3s0");
+    CHECK(key(NetworkKind::Ethernet, "packet:enp3s0") == key(NetworkKind::Ethernet, "enp3s0"));
+    CHECK(key(NetworkKind::Ethernet, "tap:enp3s0") == key(NetworkKind::Ethernet, "enp3s0"));
+    CHECK(key(NetworkKind::Ethernet, "packet:none") == "none");
+    CHECK(key(NetworkKind::Can, "physical:1") != key(NetworkKind::Can, "physical:2"));
+    CHECK(key(NetworkKind::Can, "physical:1") == key(NetworkKind::Can, "physical:01"));
+    CHECK(key(NetworkKind::Can, "physical:1") == key(NetworkKind::Can, "xl:physical:1"));
+    CHECK(key(NetworkKind::Can, "virtual:1") == key(NetworkKind::Can, "virtual:2"));
+    CHECK(key(NetworkKind::Can, "virtual:1") != key(NetworkKind::Can, "physical:1"));
+    CHECK(key(NetworkKind::Can, "can0") == "can0" && key(NetworkKind::Can, "socketcan:can0") == "can0");
+    CHECK(key(NetworkKind::Can, "can0") != key(NetworkKind::Can, "can1"));
+    CHECK(key(NetworkKind::Ethernet, "none").empty());
+    CHECK(key(NetworkKind::Can, "xl:usb:1").empty());
+    CHECK(key(NetworkKind::Can, "can0", Os::Windows).empty());
+    CHECK(key(NetworkKind::Ethernet, "tap:x", Os::Windows).empty());
+    CHECK(key(NetworkKind::Lin, "x").empty());
 }
 
 TEST_CASE(networks_are_joined_through_participants)
