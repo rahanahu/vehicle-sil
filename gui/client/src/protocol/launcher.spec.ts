@@ -28,8 +28,6 @@ const PASSED_THROUGH: readonly string[] = [
   'check result: participants[].variables[].items',
   'check result: participants[].variables[].step',
   'check result: participants[].network_map',
-  // The revision of the ECU's message format; screens read it from raw
-  'check result: participants[].control.wire_revision',
   'check result: participants[].j1939_nodes',
   'check result: scenario.inputs',
   'check result: scenario.lines',

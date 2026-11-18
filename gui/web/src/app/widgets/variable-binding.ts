@@ -12,6 +12,7 @@ import {
   BoundVariable,
   HistoryPoint,
   ValueCondition,
+  VariableAvailability,
   VariableInfo,
   VariableReading,
   VariableRef,
@@ -53,6 +54,8 @@ export interface VariableBinding {
   readonly ref: Signal<VariableRef>;
   /** 変数の定義（いまの実行になければ undefined）。 */
   readonly info: Signal<VariableInfo | undefined>;
+  /** ECU がその変数をいま使っているか（表示だけの情報。書けるかどうかは変わらない。いまの実行になければ unknown）。 */
+  readonly availability: Signal<VariableAvailability>;
   /** 最後の値（まだない、見えていないときは undefined）。 */
   readonly reading: Signal<VariableReading | undefined>;
   /** 履歴（古い順。BindOptions.history を頼んだときだけ）。 */
@@ -152,6 +155,7 @@ export function bindVariable(ref: () => VariableRef, options: BindOptions = {}):
   return {
     ref: current,
     info,
+    availability: computed(() => state()?.availability ?? 'unknown'),
     reading: computed(() => state()?.reading),
     history: computed(() => {
       state(); // 値が届くたびに読み直させる

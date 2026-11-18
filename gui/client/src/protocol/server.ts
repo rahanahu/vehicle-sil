@@ -831,6 +831,17 @@ export const readTimeResponse = (value: unknown): TimeAnswer => {
  * The first message sent right after connecting. With session and from_seq, the server resends from where that left
  * off.
  */
+/**
+ * Whether the ECU uses a variable now (information only; it never changes how the variable is read or written).
+ * unknown: the ECU has not said yet; active: in use (also every variable that does not report it); inactive: not used
+ * by the ECU now.
+ */
+export type VariableAvailability = 'unknown' | 'active' | 'inactive';
+
+/** Reads an availability. A value this library does not know, or none (an older server), is `active`. */
+export const readAvailability = (value: unknown): VariableAvailability =>
+  value === 'unknown' || value === 'inactive' ? value : 'active';
+
 /** Definition of one variable (`variables.peers[].variables[]` of the summary). */
 export interface VariableSummary {
   name: string;
@@ -844,6 +855,8 @@ export interface VariableSummary {
   description: string;
   /** Items of an enum (when type is enum; null otherwise). */
   enum: { name: string; value: number }[] | null;
+  /** Whether the ECU uses it now (`active` from a server that does not say). */
+  availability: VariableAvailability;
 }
 
 /** Result of a write (the `operation` notification, and `variables.operations[]` of the summary). */
@@ -933,6 +946,7 @@ const readVariableSummary: Reader<VariableSummary> = (value, path) => {
         null,
       ),
     ),
+    availability: readAvailability(f['availability']),
   };
 };
 
@@ -1250,7 +1264,16 @@ export type ServerMessage =
   /** Values of the watched variables. */
   | ValuesMessage
   /** The result of a write changed. */
-  | ({ type: 'operation'; session: number } & OperationReport);
+  | ({ type: 'operation'; session: number } & OperationReport)
+  /**
+   * Whether ECUs use their variables changed. For each participant listed, the state of every variable it reports
+   * (replaces what came before for that participant; a variable not listed is `active`).
+   */
+  | {
+      type: 'availability';
+      session: number;
+      peers: Record<string, Record<string, VariableAvailability>>;
+    };
 
 /**
  * Reads one WebSocket notification. Unknown notifications, and notifications wrapping an unknown event, are null
@@ -1344,6 +1367,17 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
         type,
         session: field(f, path, 'session', integer),
         ...readOperationReport(value, path),
+      };
+    case 'availability':
+      return {
+        type,
+        session: field(f, path, 'session', integer),
+        peers: field(
+          f,
+          path,
+          'peers',
+          record((v, p) => record((x) => readAvailability(x))(v, p)),
+        ),
       };
     default:
       return null;

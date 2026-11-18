@@ -244,6 +244,11 @@ export interface VariableView {
   stale: boolean;
   /** One English sentence when the value is not a live one (waiting, paused, stale, ended, ...); null while live. */
   note: string | null;
+  /**
+   * Whether the ECU uses the variable now (information only: `can_write`, `why`, `note` and `condition` do not look at
+   * it). `active` from a server that does not say; `unknown` while the ECU has not said or the variable is not in the run.
+   */
+  availability: 'unknown' | 'active' | 'inactive';
   /** Whether it can be written: the variable's own conditions and what the launcher accepts (`state.allowed.write`). */
   can_write: boolean;
   /** Why the variable cannot be written (null if it can). */

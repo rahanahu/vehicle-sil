@@ -1625,6 +1625,14 @@
     "2801277815975594602": {
       "source": " 書く ",
       "target": " Write "
+    },
+    "3599633625644188035": {
+      "source": "この ECU はいま使っていません",
+      "target": "Not used by this ECU now"
+    },
+    "7912602377845951306": {
+      "source": "未使用",
+      "target": "Not in use"
     }
   }
 }

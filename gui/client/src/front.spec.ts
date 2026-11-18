@@ -1569,6 +1569,21 @@ describe('the front door', () => {
       });
     });
 
+    it('shows the availability beside the other conditions and leaves them alone', async () => {
+      const rig = await withVariable();
+      const variable = rig.front.variable(named);
+      const before = variable.get();
+      expect(before.availability).toBe('active');
+      await rig.deliver({
+        type: 'availability',
+        session: 1,
+        peers: { Engine: { 'engine.offset': 'inactive' } },
+      });
+      const after = variable.get();
+      expect(after.availability).toBe('inactive');
+      expect({ ...after, availability: 'active' }).toEqual(before);
+    });
+
     it("shows a refused write in the view and rejects with the server's code", async () => {
       const rig = await open();
       await rig.deliver(

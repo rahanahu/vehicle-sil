@@ -224,6 +224,7 @@ export type {
   VariableSummary,
   VariablesSummary,
   OperationReport,
+  VariableAvailability,
   WatchMessage,
   WriteAnswer,
 } from './protocol';

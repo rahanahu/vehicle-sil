@@ -299,7 +299,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | `variables` | `{session, variables}`。その実行の変数の機能の状態か一覧（要約の `variables` と同じ形） | `ws-variables.json`、`ws-variables-failed.json` |
 | `values` | `{id, session, sim_ms, paused, peers}`。watch している変数の最後の値（下の「ECU の変数」） | `ws-variables.json` |
 | `operation` | `{session, seq, state, done, peers}`。書き込みの結果が変わった（下の「ECU の変数」）。全部の接続へ送り、落とさない | `ws-variables.json` |
-| `availability` | `{session, peers}`。ECU が変数を使っているかが変わった（下の「ECU の変数」）。全部の接続へ送る | まだない（形は下の「利用状態」） |
+| `availability` | `{session, peers}`。ECU が変数を使っているかが変わった（下の「ECU の変数」）。全部の接続へ送る | `ws-availability.json`（下の「利用状態」） |
 
 `session` を送るのは、次のときです。`session_without_check` を頼んだ接続には、`check` のフィールドがありません。
 

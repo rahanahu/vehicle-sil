@@ -174,6 +174,30 @@ describe('the readers accept every example of gui/protocol', () => {
     expect(readTimeResponse({ session_id: 1, command: { command: 'pause', id: 7 } }).id).toBe(7);
   });
 
+  it('reads the participants and states of an availability notification', async () => {
+    const examples = await webSocketExamples();
+    const told = examples
+      .flatMap((example) => example.server.map((m) => readServerMessage(m)))
+      .flatMap((m) => (m?.type === 'availability' ? [m] : []));
+    expect(told.length).toBeGreaterThan(0);
+    for (const m of told) {
+      const states = Object.values(m.peers).flatMap((peer) => Object.values(peer));
+      expect(states.length).toBeGreaterThan(0);
+      expect(states.every((s) => ['unknown', 'active', 'inactive'].includes(s))).toBe(true);
+    }
+    expect(
+      readServerMessage({
+        type: 'availability',
+        session: 3,
+        peers: { Engine: { a: 'inactive', b: 'sometimes', c: 7 } },
+      }),
+    ).toEqual({
+      type: 'availability',
+      session: 3,
+      peers: { Engine: { a: 'inactive', b: 'active', c: 'active' } },
+    });
+  });
+
   it('reads every WebSocket message, passing over what it does not know', async () => {
     const examples = await webSocketExamples();
     expect(examples.map((example) => example.name)).toContain('ws-pass');
@@ -271,8 +295,8 @@ describe('the readers accept every example of gui/protocol', () => {
       m?.type === 'event' && m.event.event === 'check' ? [m.event.check] : [],
     )[0];
     expect(check?.participants.map((p) => p.control)).toEqual([
-      { transport: 'silkit', wire_version: 2 },
-      { transport: 'silkit', wire_version: 2 },
+      { transport: 'silkit', wire_version: 2, wire_revision: 1 },
+      { transport: 'silkit', wire_version: 2, wire_revision: 1 },
       null,
       null,
     ]);

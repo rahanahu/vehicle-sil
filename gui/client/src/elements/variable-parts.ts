@@ -42,6 +42,7 @@ abstract class VariablePart extends Part {
       watch(variable, (v) => {
         setData(this, 'stale', String(v.stale));
         setData(this, 'canWrite', String(v.can_write));
+        setData(this, 'availability', v.availability);
         if (this.writes) note.textContent = writeNote(v);
         note.hidden = false;
         show(v);

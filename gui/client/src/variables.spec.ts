@@ -250,6 +250,7 @@ describe('variables', () => {
           ],
         },
       ],
+      availability: new Map([['A', new Map([['x', 'active']])]]),
       peersOmitted: 0,
       variablesOmitted: 3,
     });
