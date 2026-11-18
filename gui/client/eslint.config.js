@@ -63,6 +63,52 @@ module.exports = defineConfig([
     rules: { 'no-restricted-globals': 'off' },
   },
   {
+    // The bundle of the parts (build-elements.mjs) leaves only '../index' outside it: a part that imports another
+    // module of the client would copy that module into the bundle, and the page would have two connections.
+    // Types cost nothing at run time, so they may come from anywhere.
+    files: ['src/elements/**/*.ts'],
+    ignores: ['src/elements/**/*.spec.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              regex: '^(?!\\./)(?!\\.\\./index$)',
+              allowTypeImports: true,
+              message:
+                "A part takes its values only from '../index' (the bundle of the parts leaves just that module outside); import types from anywhere.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The rest of the client must not import the parts: they need the DOM, and Node loads this code too.
+    files: ['src/**/*.ts'],
+    ignores: ['src/elements/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              regex: '^[^.]',
+              message:
+                'gui/client depends on nothing: import only its own files (a relative path). Framework glue belongs in the app (gui/web/src/app/core/).',
+            },
+            {
+              regex: '(^|/)elements(/|$)',
+              message:
+                'Nothing outside src/elements imports the parts: they need the DOM and are bundled apart.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // The tests of the parts run in a browser and use its test API (vitest/browser); the parts themselves import nothing
     files: ['src/elements/**/*.spec.ts'],
     rules: { 'no-restricted-imports': 'off' },

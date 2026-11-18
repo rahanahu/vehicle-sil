@@ -6,6 +6,7 @@ import type { Reason } from '../index';
 export type ReasonText = (reason: Reason) => string | null | undefined;
 
 let custom: ReasonText | null = null;
+let reported = false;
 
 /**
  * Replaces the sentences that the parts show for reasons (`controls.*.reason`, `caution`, `status.problem`, and a
@@ -15,9 +16,22 @@ let custom: ReasonText | null = null;
  */
 export function setReasonText(fn: ReasonText | null): void {
   custom = fn;
+  reported = false;
 }
 
 /** The sentence for `reason`. */
 export function reasonText(reason: Reason): string {
-  return custom?.(reason) ?? reason.message;
+  if (!custom) return reason.message;
+  try {
+    return custom(reason) ?? reason.message;
+  } catch (error) {
+    if (!reported) {
+      reported = true;
+      console.error(
+        'The function given to setReasonText threw, so the parts show the English sentences instead. Fix the function; this is said once.',
+        error,
+      );
+    }
+    return reason.message;
+  }
 }

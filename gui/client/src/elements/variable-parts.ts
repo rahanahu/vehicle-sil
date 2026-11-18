@@ -76,9 +76,15 @@ export class VsilSliderElement extends VariablePart {
 
   protected build(variable: FrontVariable, root: HTMLElement, note: HTMLElement) {
     const input = h('input', { type: 'range', 'aria-describedby': note.id });
-    const output = h('output');
+    // Inside a page's <label> the name is the label's text: the range input already says its value, and the note
+    // reaches it as its description (aria-describedby works on a hidden element), so neither goes into the name.
+    const output = h('output', { 'aria-hidden': 'true' });
+    note.setAttribute('aria-hidden', 'true');
     let dragging = false;
-    input.addEventListener('input', () => (dragging = true));
+    input.addEventListener('input', () => {
+      dragging = true;
+      input.removeAttribute('aria-valuetext'); // while the knob moves it says its own position, not the value read
+    });
     input.addEventListener('change', () => {
       dragging = false;
       void quietly(() => variable.write(Number(input.value)));
@@ -101,6 +107,9 @@ export class VsilSliderElement extends VariablePart {
       // while a write is on its way the knob stays where it was put (the view still has the value that was read)
       if (!dragging && !v.writing && typeof v.value === 'number') input.value = String(v.value);
       output.textContent = v.value === null ? '-' : `${v.text}${v.unit ? ` ${v.unit}` : ''}`;
+      // the output is hidden from a screen reader (it would become part of a label's name): the knob says the value itself
+      if (v.value === null || dragging || v.writing) input.removeAttribute('aria-valuetext');
+      else input.setAttribute('aria-valuetext', output.textContent);
     };
   }
 }

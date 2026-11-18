@@ -59,6 +59,34 @@ describe('<vsil-value>', () => {
 });
 
 describe('<vsil-slider>', () => {
+  it('is named by the label of the page alone, and the value and the note are not in the name', async () => {
+    const front = fakeFront();
+    const label = document.createElement('label');
+    label.append('Throttle ');
+    document.body.append(label);
+    const part = document.createElement('vsil-slider');
+    part.setAttribute('variable', 'Engine.e.throttle');
+    part.client = front;
+    label.append(part);
+    await settle();
+    front.variables.get('Engine.e.throttle')!.cell.set(
+      viewOf({
+        value: 30,
+        text: '30',
+        unit: '%',
+        min: 0,
+        max: 100,
+        step: 5,
+        can_write: false,
+        why: { code: 'x', message: 'Not now.' },
+      }),
+    );
+    await expect.element(part.querySelector('input')!).toHaveAccessibleName('Throttle');
+    await expect.element(part.querySelector('input')!).toHaveAccessibleDescription('Not now.');
+    // the value with its unit reaches a screen reader through the knob itself (the output is hidden from it)
+    expect(part.querySelector('input')!.getAttribute('aria-valuetext')).toBe('30 %');
+  });
+
   it('takes range and value from the variable and writes the number when the knob is released', async () => {
     const front = fakeFront();
     const part = await mount('vsil-slider', front, { variable: 'Engine.e.throttle' });
