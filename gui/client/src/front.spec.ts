@@ -855,6 +855,28 @@ describe('the front door', () => {
       expect(rig.http.requests.filter((r) => r.request.path === 'api/run')).toHaveLength(1);
     });
 
+    it('refuses a start with a field it does not know, without sending', async () => {
+      const rig = await open();
+      await rig.deliver(
+        {
+          type: 'hello',
+          vehicle_sil_gui: 1,
+          version: '0.1.0',
+          instance: 'x',
+          session: null,
+          allowed: serverAllowed(1, startOk, notRunning),
+          replay: null,
+        },
+        { type: 'synced', session: null, last_seq: null },
+      );
+      const misspelt = { scenaro: 'drive' } as unknown as Parameters<typeof rig.front.run.start>[0];
+      await expect(rig.front.run.start(misspelt, { file: 'sim.yaml' })).rejects.toMatchObject({
+        code: 'unknown-field',
+        outcome: 'refused',
+      });
+      expect(rig.http.requests.filter((r) => r.request.path === 'api/run')).toHaveLength(0);
+    });
+
     it('refuses an argument of the wrong form without sending', async () => {
       const rig = await running(pausedState(1));
       await expect(rig.front.time.step(0)).rejects.toMatchObject({ code: 'invalid-argument' });

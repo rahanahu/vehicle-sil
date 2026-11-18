@@ -85,6 +85,17 @@ interface Waiting {
  */
 const MOVES = new Set(['pause', 'resume']);
 
+/** The fields of an `Intent` (what `run.start()` takes). */
+const INTENT_FIELDS = new Set([
+  'disable',
+  'manual',
+  'scenario',
+  'variant',
+  'params',
+  'speed',
+  'start_paused',
+]);
+
 export class FrontActions {
   private readonly busyValue: Writable<ReadonlySet<OperationName>>;
   private readonly failureValue: Writable<Failure | null>;
@@ -123,6 +134,18 @@ export class FrontActions {
         new ActionError(
           'no-file',
           'no configuration file was given and the server has none to start with: pass { file } (a path from client.low.configs())',
+          'refused',
+        ),
+      );
+    }
+    // A field the client does not know (a misspelt `scenaro` from plain JavaScript) would be dropped and the run
+    // started without it: refuse it instead.
+    const unknown = Object.keys(intent).filter((k) => !INTENT_FIELDS.has(k));
+    if (unknown.length > 0) {
+      return this.fail(
+        new ActionError(
+          'unknown-field',
+          `start does not know ${unknown.join(', ')}: the fields are ${[...INTENT_FIELDS].join(', ')}`,
           'refused',
         ),
       );
