@@ -299,7 +299,7 @@ After authentication, a screen can send variable `watch` and `unwatch` messages 
 | `variables` | `{session, variables}`. The state or list of that run's variable feature (same shape as `variables` in the summary) | `ws-variables.json`, `ws-variables-failed.json` |
 | `values` | `{id, session, sim_ms, paused, peers}`. The last values of the watched variables ("ECU variables" below) | `ws-variables.json` |
 | `operation` | `{session, seq, state, done, peers}`. The result of a write changed ("ECU variables" below). Sent to every connection, never dropped | `ws-variables.json` |
-| `availability` | `{session, peers}`. Whether the ECUs use their variables changed ("ECU variables" below). Sent to every connection | None yet ("Availability" below has its shape) |
+| `availability` | `{session, peers}`. Whether the ECUs use their variables changed ("ECU variables" below). Sent to every connection | `ws-availability.json` ("Availability" below) |
 
 The server sends `session` at these times. Connections that asked for `session_without_check` get it without the `check` field.
 

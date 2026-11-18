@@ -20,6 +20,7 @@ import { VariableBinding } from './variable-binding';
       [attr.aria-labelledby]="variable().id + '-name'"
       [attr.data-condition]="variable().condition().kind"
       [attr.data-write]="variable().writeStatus().kind"
+      [attr.data-availability]="variable().availability()"
       [attr.data-variable]="variable().ref().peer + '/' + variable().ref().name"
     >
       <header class="head">
@@ -28,6 +29,10 @@ import { VariableBinding } from './variable-binding';
         </span>
         @if (role()) {
           <span class="role">{{ role() }}</span>
+        }
+        @if (variable().availability() === 'inactive') {
+          <!-- 表示だけ。操作は止めない -->
+          <span class="unused" title="この ECU はいま使っていません" i18n-title i18n>未使用</span>
         }
       </header>
       <div class="body">
@@ -58,7 +63,13 @@ import { VariableBinding } from './variable-binding';
             }
           }
         </p>
-        <p class="why" [id]="variable().id + '-why'" data-testid="widget-why">{{ why() }}</p>
+        <p class="why" [id]="variable().id + '-why'" data-testid="widget-why">
+          {{ why() }}
+          @if (variable().availability() === 'inactive') {
+            <!-- 操作に Tab で入ったとき、理由の文と一緒に読まれる（見た目には出さない） -->
+            <span class="sr" i18n>この ECU はいま使っていません</span>
+          }
+        </p>
       }
     </section>
   `,
@@ -119,6 +130,26 @@ import { VariableBinding } from './variable-binding';
     [data-condition='stale'] .condition,
     [data-condition='missing'] .condition {
       color: var(--mat-sys-error);
+    }
+
+    /* ECU がいま使っていない変数の値と操作は薄くする（操作はそのまま使える）。見出し、印、理由、誤りの文、フォーカスの輪は
+       薄くしない（小さい文字のコントラストを保つ） */
+    [data-availability='inactive'] .body {
+      opacity: 0.6;
+    }
+
+    .sr {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .unused {
+      font: var(--mat-sys-label-small);
+      color: var(--mat-sys-on-surface-variant);
     }
 
     .mark {
