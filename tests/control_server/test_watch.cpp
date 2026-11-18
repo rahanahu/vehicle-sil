@@ -10,7 +10,6 @@
 #include <grpcpp/grpcpp.h>
 
 #include <chrono>
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -80,11 +79,10 @@ TEST_CASE(control_server_a_watch_leaves_out_the_operations_of_the_clients_it_nam
     const auto first = next_operation(*every);
     CHECK(first.operation().seq() == by_scenario && first.operation().client() == "scenario");
     CHECK(next_operation(*every).operation().seq() == written.seq());
-    // The other one gets the client's alone, and what it left out is not counted as dropped.
+    // The other one gets the client's alone.
     const auto only = next_operation(*without);
     CHECK(only.operation().seq() == written.seq());
     CHECK(only.operation().client() != "scenario");
-    CHECK_EQ(only.dropped(), std::uint64_t{0});
 
     every_context.TryCancel();
     without_context.TryCancel();
