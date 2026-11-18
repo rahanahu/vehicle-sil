@@ -672,6 +672,15 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                                                   : std::string("stopped the participants before the simulation started")),
             nullptr);
     }
+    if (const std::vector<std::string> forced = ended_by_force(outcome); !forced.empty())
+    {
+        add(Severity::Note, "ended-by-force",
+            "the launcher did not wait for " + detail::and_list(forced) + " to end, because it was asked to stop again (or while it "
+            "waited for the participants to end): it ended " + (forced.size() == 1 ? "it" : "them") +
+                " by force, with the processes started. This is no error of a run that was stopped that way; whether " +
+                (forced.size() == 1 ? "it ends" : "they end") + " when asked to is not known from this run (stop once and wait to see)",
+            nullptr);
+    }
     if (const RunTiming& t = outcome.timing; t.late_steps > 0)
     {
         const auto actual = t.actual_speed();
@@ -796,6 +805,11 @@ std::vector<Finding> detail::settled_findings(const RunOutcome& outcome)
             f.code == "outside-link-down" || f.code == "outside-bus-off" || f.code == "outside-bus-errors" ||
             f.code == "outside-frames-dropped" || f.code == "outside-loop-suspected" || f.code == "outside-device-shared" ||
             f.code == "connect-target-shared")
+        {
+            continue;
+        }
+        // Whom the launcher ended by force is known once the participants have ended.
+        if (f.code == "ended-by-force")
         {
             continue;
         }

@@ -28,13 +28,13 @@
       },
       "stop": "forced",
       "phase": "stopping",
-      "last_seq": 244,
-      "last_t_ms": 2440,
+      "last_seq": 233,
+      "last_t_ms": 2330,
       "time": {
         "event": "time",
-        "seq": 233,
-        "t_ms": 2330,
-        "sim_ms": 100390,
+        "seq": 222,
+        "t_ms": 2220,
+        "sim_ms": 94740,
         "actual_speed": 1.5,
         "late_steps": 0,
         "max_late_ms": 0,
@@ -373,13 +373,13 @@
           "line": null,
           "participant": null,
           "network": null,
-          "message": "stopped (stop command): the launcher stopped the simulation and the participants",
+          "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
           "detail": null
         }
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 223,
+        "seq": 210,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -388,7 +388,7 @@
         "id": null
       },
       "launcher_state": {
-        "seq": 238,
+        "seq": 227,
         "rev": 8,
         "phase": "stopping",
         "paused": false,
@@ -476,7 +476,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 201,
+          "kept": 190,
           "dropped": 0
         }
       },

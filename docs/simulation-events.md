@@ -459,7 +459,7 @@ How "no progress for 30 seconds" is measured:
 
 When the simulation ends, `vehicle_sil_launch` waits until it has written `result`. It waits at most 30 seconds (the value of `--events-stall-ms`), even if the reader is reading. With many waiting events and a slow reader, the reader may not receive `result`. The launcher stops waiting when 2 or more stop requests have arrived while writing has made no progress for 0.5 seconds (or at the first request, if there was no request before).
 
-If `result` cannot be written, the exit code is 3 and stderr gets `error: cannot write the result to the standard output (<reason>)`. A run stopped by a stop request exits with the code of its result (0 or 5 for a `stop` command, 130 for an interrupt) and does not write this line.
+If `result` cannot be written, the exit code is 3 and stderr gets `error: cannot write the result to the standard output (<reason>)`. This also holds for a run that a `stop` command stopped (its exit code would have been 0 or 5, or 1 with errors): whoever waits for the result did not get it. Only an interrupted run (a signal, the end of stdin, a closed stdout) exits with 130 and does not write this line.
 
 ### When the reader goes away
 

@@ -200,7 +200,7 @@ vehicle-sil-gui --web my-screen simulation.live.yaml   # ブラウザを開く�
 |---|---|
 | 開いた直後 | 一番上の行は `ready`。`Engine.engine.speed: -` と、変数がいまは使えない（実行がない）という文。 |
 | 「Start」を押す | 一番上の行は `running` と仮想時間。`Engine.engine.speed: 1200 rpm` |
-| 「Stop」を押す | 一番上の行は `The run was stopped (stop command) without errors`。`Engine.engine.speed: 1200 rpm` と、「the last value of the run that has ended」 |
+| 「Stop」を押す | 一番上の行は `The run was stopped by a stop request without errors`。`Engine.engine.speed: 1200 rpm` と、「the last value of the run that has ended」 |
 
 ### ブラウザなしで確かめる（API と Node.js）
 

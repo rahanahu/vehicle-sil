@@ -301,12 +301,18 @@ void expect_stopped_in_order(const std::optional<vehicle_sil::process::ExitStatu
     const bool byOperator = by == "stop command";
     const int code = byOperator ? 0 : 130;
     const std::string word = byOperator ? "stopped" : "interrupted";
+    // In words for people, by the kind of what asked; interrupted_by has the name for programs.
+    const std::string phrase = byOperator ? "by a stop request"
+                               : by == "end of input" ? "because its input closed"
+                               : by == "output closed" ? "because its output closed"
+                                                       : "by a signal";
+    const std::string text = byOperator ? "stopped by a stop request" : "interrupted (" + by + ")";
     require(status.has_value() && status->code == code && !status->signal,
             "the launcher ends with " + std::to_string(code) + " when " + word + " (" + by + "), not " +
                 (status ? std::to_string(status->code) : std::string("running")) + ":\n" + all);
     const std::string& result = lines.back();
     require(contains(result, "\"result\":\"" + word + "\",\"end\":\"" + word + "\",\"ok\":" + (byOperator ? "true" : "false") +
-                                 ",\"message\":\"The run was " + word + " (" + by + ")" + (byOperator ? " without errors" : "") + "\",") &&
+                                 ",\"message\":\"The run was " + word + " " + phrase + (byOperator ? " without errors" : "") + "\",") &&
                 contains(result, "\"simulation\":\"interrupted\"") && contains(result, "\"interrupted_by\":\"" + by + "\""),
             "the result of a run stopped by " + by + ":\n" + result);
     for (const std::string name : {"Engine", "Brake"})
@@ -316,7 +322,7 @@ void expect_stopped_in_order(const std::optional<vehicle_sil::process::ExitStatu
                 name + " ended by itself with 0:\n" + result);
     }
     const auto note = events_with(lines, {"\"event\":\"finding\"", "\"code\":\"" + word + "\"",
-                                          "\"message\":\"" + word + " (" + by + "): the launcher stopped the simulation and the "
+                                          "\"message\":\"" + text + ": the launcher stopped the simulation and the "
                                                                               "participants\""});
     require(note.size() == 1, "the note " + word + " as a finding:\n" + all);
     // Known when the simulation has stopped: written then, before the participants are ended.
@@ -423,9 +429,14 @@ void stdin_twice(const Options& o)
     const auto [status, lines] = live.finish();
     const bool gone = all_gone(dir, {"Deaf.pid"}, 30s);
     // The second stop command skips the waits: the run is still the operator's stop, and ending
-    // Deaf at once is what was asked for.
+    // Deaf at once is what was asked for (no error), but the result says that it was ended by force.
     require(status.has_value() && status->code == 0, "the launcher ends with 0 after the second stop, not " + code_text(status));
-    require(contains(lines.back(), "\"result\":\"stopped\",\"end\":\"stopped\",\"ok\":true,"), "the result:\n" + lines.back());
+    require(contains(lines.back(), "\"result\":\"stopped\",\"end\":\"stopped\",\"ok\":true,\"message\":\"The run was stopped by a stop "
+                                   "request; Deaf was ended by force, without waiting\",") &&
+                contains(lines.back(), "{\"severity\":\"note\",\"code\":\"ended-by-force\"") &&
+                contains(lines.back(), "the launcher did not wait for Deaf to end"),
+            "the result:\n" + lines.back());
+    require(events_with(lines, {"\"event\":\"finding\"", "\"code\":\"ended-by-force\""}).size() == 1, "the note is an event too");
     require(events_with(lines, {"\"name\":\"Deaf\"", "\"state\":\"killed\""}).size() == 1, "Deaf was killed");
     require(contains(lines.back(), "\"ended\":\"killed\""), "the result says so:\n" + lines.back());
     require(gone, "Deaf has ended");
@@ -699,8 +710,9 @@ void events_stalled(const Options& o)
         checks.expect(!run.live->process().poll().has_value(), "the launcher waits for its reader to write the result");
         run.live->write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = run.end(30s);
-        checks.expect(status.has_value() && status->code == 0,
-                      "a second stop command ends the wait: 0 (the operator stopped the run), " + code_text(status) + " after " + std::to_string(ms_since(asked)) + " ms");
+        // The result of the stopped run could not be written: not a success for whoever waits for it.
+        checks.expect(status.has_value() && status->code == 3,
+                      "a second stop command ends the wait: 3 (the result was not written), " + code_text(status) + " after " + std::to_string(ms_since(asked)) + " ms");
         check_cut_events(lines);
     }
     // --timeout-ms aborts the simulation while the reader does not read. The run has to be under

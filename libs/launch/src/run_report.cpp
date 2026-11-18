@@ -3,6 +3,7 @@
 // What a run's report adds up to: the counts of errors, warnings and notes, why the run ended, the
 // result, the exit code and the sentence for people. The findings themselves come from assess_run()
 // (run_assess.cpp).
+#include "check_words.hpp"
 #include "exit_codes.hpp"
 #include "vehicle_sil/launch/run.hpp"
 
@@ -40,6 +41,26 @@ EndReason end_reason(const RunOutcome& outcome)
     }
     const bool ended = outcome.end.simulation == SimulationEnd::ReachedStopAt || outcome.end.simulation == SimulationEnd::Ended;
     return ended ? EndReason::Completed : EndReason::Failed;
+}
+
+std::vector<std::string> ended_by_force(const RunOutcome& outcome)
+{
+    std::vector<std::string> names;
+    if (end_reason(outcome) != EndReason::Stopped)
+    {
+        return names;
+    }
+    const bool ran = outcome.end.simulation != SimulationEnd::NotStarted;
+    for (const ParticipantRun& p : outcome.participants)
+    {
+        // Not one that the launcher could not ask to stop, and not one it waited for in full (the
+        // finding did-not-end says that).
+        if (p.ending == Ending::Killed && !p.stop_request_failed && !(p.stopped_after_end && ran))
+        {
+            names.push_back(p.name);
+        }
+    }
+    return names;
 }
 
 const char* end_reason_name(EndReason reason) noexcept
@@ -136,19 +157,25 @@ std::string with_first_problem(const RunReport& report, std::string lead)
 std::string RunReport::message() const
 {
     const ScenarioRun* scenario = run && run->scenario.result ? &*run->scenario.result : nullptr;
-    const std::string by = run ? run->end.interrupted_by : std::string{};
+    const std::string by = run ? run->end.stop_phrase() : std::string{};
+    // The operator did not wait for them: no error, but said.
+    const std::vector<std::string> forced = run ? ended_by_force(*run) : std::vector<std::string>{};
+    const std::string force =
+        forced.empty() ? std::string{}
+                       : "; " + detail::and_list(forced) + (forced.size() == 1 ? " was" : " were") + " ended by force, without waiting";
     switch (result())
     {
     case RunResult::Passed:
         return scenario != nullptr ? "The run reached its end without errors, and the scenario passed"
                                    : "The run reached its end without errors";
     case RunResult::Stopped:
-        return "The run was stopped (" + by + ") without errors" + (scenario != nullptr ? ", after the scenario had passed" : "");
+        return "The run was stopped " + by + (forced.empty() ? " without errors" : "") +
+               (scenario != nullptr ? ", after the scenario had passed" : "") + force;
     case RunResult::Incomplete:
-        return "The run was stopped (" + by + ") before the scenario reached its end, so the scenario has no verdict";
-    case RunResult::Interrupted: return "The run was interrupted (" + by + ")";
+        return "The run was stopped " + by + " before the scenario reached its end, so the scenario has no verdict" + force;
+    case RunResult::Interrupted: return "The run was interrupted " + by;
     case RunResult::Failed:
-        return with_first_problem(*this, end_reason(*run) == EndReason::Stopped ? "The run was stopped (" + by + ") and failed"
+        return with_first_problem(*this, end_reason(*run) == EndReason::Stopped ? "The run was stopped " + by + " and failed"
                                                                                   : "The run failed");
     case RunResult::SetupFailed: return with_first_problem(*this, "The run failed before anything was started");
     case RunResult::CheckFailed: return with_first_problem(*this, "Nothing was started, because the check failed");

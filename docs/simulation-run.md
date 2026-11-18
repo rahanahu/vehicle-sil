@@ -599,6 +599,7 @@ When the simulation ends (also after an abort and on Ctrl+C), `run` ends the par
 | A participant that you start yourself (manual) | None of the items apply (see "How to stop" in [Starting a participant yourself](simulation-config.md#starting-a-participant-yourself-manual---manual)). |
 | The simulation did not start | Item 1 is skipped and the order starts at item 2 (this is not an error of that participant). |
 | On Windows, `vehicle_sil_launch` has no console | Ctrl+Break cannot be sent, so `run` kills the participant at once instead of item 2 (the message says so). |
+| A second stop request (Ctrl+C or the `stop` command again), or one that comes during item 1 | The waits are skipped: `run` asks the participants to stop at once and kills what does not end. A participant killed this way gives no `did-not-end`. In a run that a `stop` command stopped, the note `ended-by-force` and the `message` of the result name it; the exit code stays 0 (you chose not to wait). |
 
 An ecu_main executable that is asked to stop before the start ends at once (see [ecu-executable.md](ecu-executable.md)).
 
@@ -944,6 +945,7 @@ When the simulation started, the result shows after the participant table whethe
 | `timeline-limit` | Note | The `--timeline` file dropped older points at its limits |
 | `interrupted` | Note | The run was interrupted (a signal, the end of stdin, a closed stdout) |
 | `stopped` | Note | A command stopped the run (`{"command":"stop"}`, `Stop` of the Control API) |
+| `ended-by-force` | Note | In a run that a command stopped: participants that did not end when asked to were killed without the full wait, because the stop was asked for again (or while `run` waited for the participants to end) |
 
 Notes on individual codes:
 
@@ -987,7 +989,7 @@ These are the exit codes of `run`. For the full table that includes `check` and 
 | Exit code | Meaning | `result` of `--json` |
 |---|---|---|
 | 0 | The simulation ended normally and every required participant exited with 0 (with `--strict`, also no warnings) | `"passed"` |
-| 0 | A command stopped the run (`{"command":"stop"}`, `Stop` from a Control Server client), and nothing was wrong | `"stopped"` |
+| 0 | A command stopped the run (`{"command":"stop"}`, `Stop` from a Control Server client), and nothing was wrong. A participant that was killed because the stop was asked for twice is not an error here (the note `ended-by-force` names it) | `"stopped"` |
 | 1 | Check errors; nothing was started | `"check_failed"` |
 | 1 | Run errors (a participant failed, the participants did not all join, a participant did not end when stopped, and so on) | `"failed"` |
 | 3 | The configuration file cannot be read (missing file, syntax error, unknown format version, and so on) | `"unreadable"` |
@@ -1007,7 +1009,7 @@ The result says three things about the end, in the JSON of `run --json` and in t
 |---|---|
 | `end` | Why the run ended (the table below). `null` if nothing was started |
 | `ok` | `true` exactly when the exit code is 0 |
-| `message` | One English sentence for a person that says what the result is; for a failure, it ends with the first error |
+| `message` | One English line for a person that says what the result is. It names what stopped the run by its kind (`by a stop request`, `by a signal`, `because its input closed`, `because its output closed`; the exact name is `interrupted_by`). For a failure, it ends with the whole message of the first error, which can be long |
 
 | `end` | Why the run ended | `result` |
 |---|---|---|

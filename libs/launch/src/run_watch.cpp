@@ -296,6 +296,11 @@ int RunWatch::settle(SimulationController& controller, const Watched& over)
         }
         outcome_.end.simulation = SimulationEnd::Interrupted;
         ctx_.note_interrupt(outcome_.end);
+        if (watched.state != orch::ParticipantState::Shutdown)
+        {
+            // Stopped, but the simulation did not shut down: an error, as when the scenario's end stopped it.
+            outcome_.end.controller_state = watched.state ? orch::to_string(*watched.state) : std::string("unknown");
+        }
         out_.say(outcome_.end.stop_text() + ": the simulation was stopped");
         break;
     }

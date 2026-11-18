@@ -1499,7 +1499,7 @@
         "event": "time",
         "seq": 33,
         "t_ms": 330,
-        "sim_ms": 805,
+        "sim_ms": 810,
         "actual_speed": 1.5,
         "late_steps": 1,
         "max_late_ms": 200,
@@ -1555,7 +1555,7 @@
         "event": "time",
         "seq": 37,
         "t_ms": 370,
-        "sim_ms": 1110,
+        "sim_ms": 1115,
         "actual_speed": 1.5,
         "late_steps": 1,
         "max_late_ms": 200,
@@ -1570,7 +1570,7 @@
         "event": "time",
         "seq": 38,
         "t_ms": 380,
-        "sim_ms": 1210,
+        "sim_ms": 1215,
         "actual_speed": 1.5,
         "late_steps": 1,
         "max_late_ms": 200,
@@ -1670,7 +1670,7 @@
         "event": "time",
         "seq": 41,
         "t_ms": 410,
-        "sim_ms": 1230,
+        "sim_ms": 1235,
         "actual_speed": 1.5,
         "late_steps": 1,
         "max_late_ms": 200,
@@ -1682,27 +1682,81 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "log",
+        "event": "state",
         "seq": 42,
         "t_ms": 420,
-        "source": "vehicle_sil_launch",
-        "line": "stopped (stop command): the simulation was stopped"
+        "rev": 7,
+        "phase": "running",
+        "paused": false,
+        "paused_at_ms": null,
+        "holding": false,
+        "speed": 1,
+        "pacing": "not-paced",
+        "stop": {
+          "requests": 1,
+          "by": "stop command"
+        },
+        "scenario": false,
+        "allowed": {
+          "pause": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): pause works from the start of the run until the simulation ends",
+            "caution": null
+          },
+          "resume": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): resume works from the start of the run until the simulation ends",
+            "caution": null
+          },
+          "step": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): step works from the start of the run until the simulation ends",
+            "caution": null,
+            "min_ms": 1,
+            "max_ms": 1000000000000
+          },
+          "speed": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): speed works from the start of the run until the simulation ends",
+            "caution": null,
+            "min": 1e-06,
+            "max": 1000000.0
+          },
+          "run_until": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
+            "caution": null
+          },
+          "stop": {
+            "ok": true,
+            "reason": null,
+            "message": null,
+            "caution": null
+          },
+          "write": {
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "caution": null
+          }
+        },
+        "outside": []
       }
     },
     {
       "type": "event",
       "session": 1,
       "event": {
-        "event": "finding",
+        "event": "log",
         "seq": 43,
         "t_ms": 430,
-        "severity": "warning",
-        "code": "behind-real-time",
-        "file": "late.yaml",
-        "line": null,
-        "participant": null,
-        "network": null,
-        "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+        "source": "vehicle_sil_launch",
+        "line": "stopped by a stop request: the simulation was stopped"
       }
     },
     {
@@ -1712,13 +1766,29 @@
         "event": "finding",
         "seq": 44,
         "t_ms": 440,
+        "severity": "warning",
+        "code": "behind-real-time",
+        "file": "late.yaml",
+        "line": null,
+        "participant": null,
+        "network": null,
+        "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "finding",
+        "seq": 45,
+        "t_ms": 450,
         "severity": "note",
         "code": "stopped",
         "file": "late.yaml",
         "line": null,
         "participant": null,
         "network": null,
-        "message": "stopped (stop command): the launcher stopped the simulation and the participants",
+        "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
         "detail": null
       }
     },
@@ -1727,8 +1797,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 45,
-        "t_ms": 450,
+        "seq": 46,
+        "t_ms": 460,
         "phase": "stopping"
       }
     },
@@ -1737,8 +1807,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 46,
-        "t_ms": 460,
+        "seq": 47,
+        "t_ms": 470,
         "rev": 8,
         "phase": "stopping",
         "paused": false,
@@ -1807,8 +1877,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 47,
-        "t_ms": 470,
+        "seq": 48,
+        "t_ms": 480,
         "source": "vehicle_sil_launch",
         "line": "Engine exited with code 0"
       }
@@ -1818,8 +1888,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 48,
-        "t_ms": 480,
+        "seq": 49,
+        "t_ms": 490,
         "name": "Engine",
         "state": "ended",
         "exit_code": 0,
@@ -1831,8 +1901,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 49,
-        "t_ms": 490,
+        "seq": 50,
+        "t_ms": 500,
         "source": "vehicle_sil_launch",
         "line": "Dashboard exited with code 0"
       }
@@ -1842,8 +1912,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 50,
-        "t_ms": 500,
+        "seq": 51,
+        "t_ms": 510,
         "name": "Dashboard",
         "state": "ended",
         "exit_code": 0,
@@ -1855,8 +1925,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 51,
-        "t_ms": 510,
+        "seq": 52,
+        "t_ms": 520,
         "phase": "ended"
       }
     },
@@ -1865,8 +1935,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 52,
-        "t_ms": 520,
+        "seq": 53,
+        "t_ms": 530,
         "rev": 9,
         "phase": "ended",
         "paused": false,
@@ -1935,8 +2005,8 @@
       "session": 1,
       "event": {
         "event": "result",
-        "seq": 53,
-        "t_ms": 530,
+        "seq": 54,
+        "t_ms": 540,
         "result": {
           "vehicle_sil_run": 2,
           "vehicle_sil": "0.1.0",
@@ -1944,7 +2014,7 @@
           "result": "stopped",
           "end": "stopped",
           "ok": true,
-          "message": "The run was stopped (stop command) without errors",
+          "message": "The run was stopped by a stop request without errors",
           "strict": false,
           "errors": 0,
           "warnings": 1,
@@ -1958,10 +2028,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 0,
             "late_tolerance_ms": 10,
-            "sim_ms": 1230,
+            "sim_ms": 1235,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 246,
+            "paced_steps": 247,
             "late_steps": 1,
             "max_late_ms": 200,
             "slipped_ms": 200,
@@ -2008,7 +2078,7 @@
           ],
           "outside": [],
           "traffic": {
-            "before_ms": 1230,
+            "before_ms": 1235,
             "unplaced": [],
             "networks": [
               {
@@ -2025,7 +2095,7 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 1220,
+                    "at_ms": 1230,
                     "frames_sent": 14,
                     "frames_received": 0
                   },
@@ -2034,7 +2104,7 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 1220,
+                    "at_ms": 1230,
                     "frames_sent": 0,
                     "frames_received": 14
                   }
@@ -2050,7 +2120,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+              "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
             },
             {
               "severity": "note",
@@ -2059,7 +2129,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "stopped (stop command): the launcher stopped the simulation and the participants",
+              "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
               "detail": null
             }
           ],
@@ -2318,13 +2388,13 @@
         },
         "stop": "requested",
         "phase": "ended",
-        "last_seq": 53,
-        "last_t_ms": 530,
+        "last_seq": 54,
+        "last_t_ms": 540,
         "time": {
           "event": "time",
           "seq": 41,
           "t_ms": 410,
-          "sim_ms": 1230,
+          "sim_ms": 1235,
           "actual_speed": 1.5,
           "late_steps": 1,
           "max_late_ms": 200,
@@ -2618,7 +2688,7 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+            "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
           },
           {
             "severity": "note",
@@ -2627,7 +2697,7 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "stopped (stop command): the launcher stopped the simulation and the participants",
+            "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
             "detail": null
           }
         ],
@@ -2642,7 +2712,7 @@
           "id": null
         },
         "launcher_state": {
-          "seq": 52,
+          "seq": 53,
           "rev": 9,
           "phase": "ended",
           "paused": false,
@@ -2730,7 +2800,7 @@
           "result": "stopped",
           "end": "stopped",
           "ok": true,
-          "message": "The run was stopped (stop command) without errors",
+          "message": "The run was stopped by a stop request without errors",
           "strict": false,
           "errors": 0,
           "warnings": 1,
@@ -2744,10 +2814,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 0,
             "late_tolerance_ms": 10,
-            "sim_ms": 1230,
+            "sim_ms": 1235,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 246,
+            "paced_steps": 247,
             "late_steps": 1,
             "max_late_ms": 200,
             "slipped_ms": 200,
@@ -2794,7 +2864,7 @@
           ],
           "outside": [],
           "traffic": {
-            "before_ms": 1230,
+            "before_ms": 1235,
             "unplaced": [],
             "networks": [
               {
@@ -2811,7 +2881,7 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 1220,
+                    "at_ms": 1230,
                     "frames_sent": 14,
                     "frames_received": 0
                   },
@@ -2820,7 +2890,7 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 1220,
+                    "at_ms": 1230,
                     "frames_sent": 0,
                     "frames_received": 14
                   }
@@ -2836,7 +2906,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+              "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
             },
             {
               "severity": "note",
@@ -2845,7 +2915,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "stopped (stop command): the launcher stopped the simulation and the participants",
+              "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
               "detail": null
             }
           ],

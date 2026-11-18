@@ -797,7 +797,7 @@ int finish_events(launch::EventStream& events, const launch::RunReport& report, 
     const bool written = events.result(launch::format_result_event(report),
                                        [requests] { return g_stops.count() > std::min(requests, 1); });
     finish_threads();
-    if (!written && !(report.run && !report.run->end.interrupted_by.empty()))
+    if (!written && report.result() != launch::RunResult::Interrupted)
     {
         // stderr may go where the events go: not read either.
         write_stderr_line_without_waiting("error: cannot write the result to the standard output (" + events.close_reason() + ")");

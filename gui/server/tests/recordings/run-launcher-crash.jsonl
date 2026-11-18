@@ -16,9 +16,9 @@
 {"out": {"event": "participant", "name": "Logger", "state": "started", "pid": "<pid>", "command": ["<root>/logger/can_logger", "silkit://127.0.0.1:8500"], "log": null}}
 {"out": {"event": "phase", "phase": "waiting"}}
 {"out": {"event": "state", "rev": 4, "phase": "waiting", "paused": false, "paused_at_ms": null, "holding": false, "speed": "max", "pacing": "not-paced", "stop": {"requests": 0, "by": null}, "scenario": false, "allowed": {"pause": {"ok": true, "reason": null, "message": null, "caution": null}, "resume": {"ok": true, "reason": null, "message": null, "caution": null}, "step": {"ok": false, "reason": "not-paused", "message": "step works while the simulation is paused: send {\"command\":\"pause\"} first (or run with --start-paused)", "caution": null, "min_ms": 1, "max_ms": 1000000000000}, "speed": {"ok": true, "reason": null, "message": null, "caution": null, "min": 1e-06, "max": 1000000.0}, "run_until": {"ok": true, "reason": null, "message": null, "caution": null}, "stop": {"ok": true, "reason": null, "message": null, "caution": null}, "write": {"ok": false, "reason": "no-control-server", "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)", "caution": null}}, "outside": []}}
-{"gap_ms": 100}
 {"out": {"event": "participant", "name": "Engine", "state": "joined"}}
 {"out": {"event": "participant", "name": "Dashboard", "state": "joined"}}
+{"gap_ms": 100}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=0 ms engine speed 0 rpm (0 messages)"}}
 {"out": {"event": "control_link", "name": "Engine", "state": "connected", "variables": 22}}
 {"out": {"event": "control_link", "name": "Dashboard", "state": "connected", "variables": 22}}

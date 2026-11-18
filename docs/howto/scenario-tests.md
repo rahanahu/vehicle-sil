@@ -629,6 +629,7 @@ The exit code gives the result, for `check`, `run` and `test` alike.
 | 1 | A step failed, or the check found an error. With `--strict`, a warning also gives 1. |
 | 3 | The configuration file cannot be read. |
 | 4 | The arguments are wrong. |
+| 5 | `run` only: a `stop` command stopped the scenario before its end, so it has no verdict (see "Exit codes" in [simulation-run.md](../simulation-run.md#exit-codes)). |
 | 130 | The run was interrupted, for example with Ctrl+C. |
 
 To read the failures from a program, add `--json`. The result is written to stdout as one JSON document.

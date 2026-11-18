@@ -512,7 +512,7 @@ describe('the front door', () => {
             result: 'stopped',
             end: 'stopped',
             ok: true,
-            message: 'The run was stopped (control server stop) without errors',
+            message: 'The run was stopped by a stop request without errors',
             interrupted_by: 'control server stop',
             errors: 0,
             warnings: 0,
@@ -536,7 +536,7 @@ describe('the front door', () => {
         end: 'stopped',
         ok: true,
         scenario: null,
-        message: 'The run was stopped (control server stop) without errors',
+        message: 'The run was stopped by a stop request without errors',
       });
       expect(status.problem).toBeNull();
       expect(rig.front.controls.get().start.ok).toBe(true);
@@ -545,7 +545,7 @@ describe('the front door', () => {
     it('shows a scenario that a stop cut short as the problem, in the words of the launcher', async () => {
       const rig = await running();
       const message =
-        'The run was stopped (stop command) before the scenario reached its end, so the scenario has no verdict';
+        'The run was stopped by a stop request before the scenario reached its end, so the scenario has no verdict';
       await rig.deliver(
         event({
           event: 'result',

@@ -781,11 +781,11 @@ void scenario_failures(const Options& o)
         const auto [status, lines] = live.finish();
         require(status && status->code == 5, "a stop command during a scenario: 5, not " + code_text(status));
         const std::string& result = lines.back();
-        require(contains(result, "\"result\":\"incomplete\",\"end\":\"stopped\",\"ok\":false,\"message\":\"The run was stopped (stop command) "
+        require(contains(result, "\"result\":\"incomplete\",\"end\":\"stopped\",\"ok\":false,\"message\":\"The run was stopped by a stop request "
                                  "before the scenario reached its end, so the scenario has no verdict\",\"strict\":false,\"errors\":0,") &&
                     contains(result, "\"simulation\":\"interrupted\"") &&
                     contains(result, "{\"severity\":\"note\",\"code\":\"scenario-incomplete\"") &&
-                    contains(result, "; the run was stopped (stop command) before the scenario's end\"") &&
+                    contains(result, "; the run was stopped by a stop request before the scenario's end\"") &&
                     contains(result, "\"name\":null,\"status\":\"incomplete\",\"over_at_ms\":null,") &&
                     contains(result, "\"status\":\"unfinished\""),
                 "the stopped scenario:\n" + result);

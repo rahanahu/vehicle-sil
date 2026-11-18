@@ -36,7 +36,6 @@ struct ResultMeaning
     return {1, false};
 }
 
-[[nodiscard]] constexpr int exit_code_of(RunResult result) { return meaning_of(result).exit_code; }
 
 [[nodiscard]] constexpr int exit_code_of(TestResult result)
 {

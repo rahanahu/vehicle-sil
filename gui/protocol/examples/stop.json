@@ -26,8 +26,8 @@
       },
       "stop": "requested",
       "phase": "running",
-      "last_seq": 75,
-      "last_t_ms": 750,
+      "last_seq": 27,
+      "last_t_ms": 270,
       "time": {
         "event": "time",
         "seq": 26,
@@ -450,7 +450,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 50,
+          "kept": 2,
           "dropped": 0
         }
       },

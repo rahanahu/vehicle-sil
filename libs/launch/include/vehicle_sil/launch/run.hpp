@@ -268,11 +268,21 @@ struct OutcomeEnd
     /// The kind of what asked first (stop_kind() of the first stop request's source); set with
     /// interrupted_by. It decides between EndReason::Stopped and EndReason::Interrupted.
     std::optional<StopKind> interrupted_kind{};
-    /// How messages name it: "stopped (stop command)" for an operator, "interrupted (SIGINT)" for
-    /// anything else.
+    /// What asked, in words for people, by its kind: "by a stop request" (an operator), "because
+    /// its input closed" or "because its output closed" (the supervisor went away), else "by a
+    /// signal". What exactly asked is interrupted_by, for programs.
+    [[nodiscard]] std::string stop_phrase() const
+    {
+        return interrupted_kind == StopKind::Operator ? "by a stop request"
+               : interrupted_kind != StopKind::Supervisor ? "by a signal"
+               : interrupted_by == stop_source_name(stop_source::kEndOfInput) ? "because its input closed"
+                                                                              : "because its output closed";
+    }
+    /// How the launcher's lines and findings name it: "stopped by a stop request" for an operator,
+    /// "interrupted (SIGINT)" for anything else.
     [[nodiscard]] std::string stop_text() const
     {
-        return std::string(interrupted_kind == StopKind::Operator ? "stopped (" : "interrupted (") + interrupted_by + ")";
+        return interrupted_kind == StopKind::Operator ? "stopped " + stop_phrase() : "interrupted (" + interrupted_by + ")";
     }
     /// The interrupt came after the simulation had ended, while the launcher waited for the
     /// participants to end.
@@ -389,6 +399,13 @@ enum class EndReason
 /// (an operator: Stopped; anything else: Interrupted), whatever came after it; then how far the
 /// simulation got. A run whose scenario was over is Completed.
 [[nodiscard]] EndReason end_reason(const RunOutcome& outcome);
+
+/// The participants that the launcher ended by force in a run that an operator stopped, without
+/// having waited for them in full: the stop request was repeated, or came while the launcher
+/// waited for them to end. They did not end when asked to (not those the launcher could not ask),
+/// and are no error of such a run (the operator chose not to wait); the note "ended-by-force" and
+/// the result's message name them. Empty for any other run.
+[[nodiscard]] std::vector<std::string> ended_by_force(const RunOutcome& outcome);
 
 /// "completed", "stopped", "interrupted", "failed" or "setup_failed": the member "end" of the result.
 [[nodiscard]] const char* end_reason_name(EndReason reason) noexcept;

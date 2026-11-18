@@ -599,6 +599,7 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 | 利用者が起動する（manual の）participant | どの手順も適用しません（[participant を自分で起動する](simulation-config.md#participant-を自分で起動するmanual--manual)の「止め方」）。 |
 | シミュレーションが始まらなかった | 1 を飛ばして 2 からです（その participant のエラーにはしません）。 |
 | Windows で `vehicle_sil_launch` にコンソールがない | Ctrl+Break を送信できないので、2 の代わりにすぐ強制終了します（メッセージにそう書きます）。 |
+| 止める要求の 2 回目（Ctrl+C か `stop` コマンドをもう 1 回）、または 1 の間に来た要求 | 待ちを飛ばします。participant にすぐ止めるよう頼み、終わらないものを強制終了します。こうして強制終了した participant は `did-not-end` になりません。`stop` コマンドで止めた実行では、注記 `ended-by-force` と結果の `message` が名前を書きます。終了コードは 0 のままです（待たないことを選んだため）。 |
 
 ecu_main の実行ファイルは、始まる前に止まるよう求められると、すぐに終わります（[ecu-executable.md](ecu-executable.md)）。
 
@@ -944,6 +945,7 @@ passed: 0 errors, 1 warning, 1 note
 | `timeline-limit` | 注記 | `--timeline` のファイルが、上限で古い側の点を捨てた |
 | `interrupted` | 注記 | 中断された（シグナル、標準入力の終わり、閉じた標準出力） |
 | `stopped` | 注記 | コマンドで止めた（`{"command":"stop"}`、Control API の `Stop`） |
+| `ended-by-force` | 注記 | コマンドで止めた実行で、止める要求がもう 1 回来た（または participant の終わりを待つ間に来た）ため、頼んでも終わらなかった participant を、待ち切らずに強制終了した |
 
 `code` ごとの補足:
 
@@ -987,7 +989,7 @@ passed: 0 errors, 1 warning, 1 note
 | 終了コード | 意味 | `--json` の `result` |
 |---|---|---|
 | 0 | シミュレーションが正常に終わり、必須の participant がどれも 0 で終わった（`--strict` では警告もない） | `"passed"` |
-| 0 | コマンド（`{"command":"stop"}`、Control Server のクライアントの `Stop`）で止め、ほかに問題がなかった | `"stopped"` |
+| 0 | コマンド（`{"command":"stop"}`、Control Server のクライアントの `Stop`）で止め、ほかに問題がなかった。止める要求を 2 回出したために強制終了された participant は、ここではエラーにしません（注記 `ended-by-force` が名前を書きます） | `"stopped"` |
 | 1 | 照合のエラーで、何も起動しなかった | `"check_failed"` |
 | 1 | 実行のエラー（participant が失敗した、そろわなかった、止めても終わらなかったなど） | `"failed"` |
 | 3 | 設定ファイルを読めない（ファイルがない、文法のエラー、知らない形式のバージョンなど） | `"unreadable"` |
@@ -1007,7 +1009,7 @@ passed: 0 errors, 1 warning, 1 note
 |---|---|
 | `end` | 実行が終わった理由（下の表）。何も起動しなかったときは `null` |
 | `ok` | 終了コードが 0 のときだけ `true` |
-| `message` | 結果を人に伝える英語の 1 文。失敗のときは、最初のエラーの文が続く |
+| `message` | 結果を人に伝える英語の 1 行。実行を止めたものは種類で書きます（`by a stop request`、`by a signal`、`because its input closed`、`because its output closed`。正確な名前は `interrupted_by`）。失敗のときは、最初のエラーの文の全体が続くので、長くなることがあります |
 
 | `end` | 終わった理由 | `result` |
 |---|---|---|

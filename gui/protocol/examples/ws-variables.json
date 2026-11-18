@@ -1003,8 +1003,8 @@
         },
         "stop": "requested",
         "phase": "ended",
-        "last_seq": 46,
-        "last_t_ms": 460,
+        "last_seq": 45,
+        "last_t_ms": 450,
         "time": {
           "event": "time",
           "seq": 32,
@@ -1338,7 +1338,7 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "stopped (stop command): the launcher stopped the simulation and the participants",
+            "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
             "detail": null
           }
         ],
@@ -1353,7 +1353,7 @@
           "id": null
         },
         "launcher_state": {
-          "seq": 45,
+          "seq": 44,
           "rev": 11,
           "phase": "ended",
           "paused": false,
@@ -1441,7 +1441,7 @@
           "result": "stopped",
           "end": "stopped",
           "ok": true,
-          "message": "The run was stopped (stop command) without errors",
+          "message": "The run was stopped by a stop request without errors",
           "strict": false,
           "errors": 0,
           "warnings": 0,
@@ -1565,7 +1565,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "stopped (stop command): the launcher stopped the simulation and the participants",
+              "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
               "detail": null
             }
           ],

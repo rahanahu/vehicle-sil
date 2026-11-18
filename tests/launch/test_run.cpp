@@ -1097,7 +1097,7 @@ TEST_CASE(the_json_report)
                "  \"result\": \"interrupted\",\n"
                "  \"end\": \"interrupted\",\n"
                "  \"ok\": false,\n"
-               "  \"message\": \"The run was interrupted (SIGINT)\",\n"
+               "  \"message\": \"The run was interrupted by a signal\",\n"
                "  \"strict\": false,\n"
                "  \"errors\": 0,\n"
                "  \"warnings\": 1,\n"
@@ -2916,22 +2916,22 @@ TEST_CASE(each_result_has_its_exit_code_its_ok_and_a_message)
     // An operator stopped it: a success without a scenario (or after it had passed).
     const RunReport stopped = report_of(stopped_run("stop command", StopKind::Operator));
     check_meaning(stopped, {RunResult::Stopped, 0, true, "\"stopped\""}, "stopped");
-    check_text(stopped.message(), "The run was stopped (stop command) without errors");
-    check_text(lines(stopped.findings), "N 0 stopped: stopped (stop command): the launcher stopped the simulation and the participants\n");
+    check_text(stopped.message(), "The run was stopped by a stop request without errors");
+    check_text(lines(stopped.findings), "N 0 stopped: stopped by a stop request: the launcher stopped the simulation and the participants\n");
     CHECK(format_run_text(stopped).ends_with("\nstopped: 0 errors, 0 warnings, 1 note\n"));
-    CHECK(format_run_text(stopped).find("run: stopped (stop command): the simulation was stopped\n") != std::string::npos);
+    CHECK(format_run_text(stopped).find("run: stopped by a stop request: the simulation was stopped\n") != std::string::npos);
     CHECK(format_run_json(stopped).find("  \"result\": \"stopped\",\n  \"end\": \"stopped\",\n  \"ok\": true,\n") != std::string::npos);
     CHECK(format_run_json(stopped).find("  \"simulation\": \"interrupted\",\n  \"interrupted_by\": \"stop command\",\n") != std::string::npos);
     const RunReport afterPass = report_of(with_scenario(stopped_run("control server stop", StopKind::Operator), ScenarioStatus::Passed));
     check_meaning(afterPass, {RunResult::Stopped, 0, true, "\"stopped\""}, "stopped after the scenario passed");
-    check_text(afterPass.message(), "The run was stopped (control server stop) without errors, after the scenario had passed");
+    check_text(afterPass.message(), "The run was stopped by a stop request without errors, after the scenario had passed");
     // An operator stopped it before the scenario's end: no verdict, 5; the finding is a note.
     const RunReport incomplete = report_of(with_scenario(stopped_run("stop command", StopKind::Operator), ScenarioStatus::Incomplete));
     check_meaning(incomplete, {RunResult::Incomplete, 5, false, "\"stopped\""}, "incomplete");
-    check_text(incomplete.message(), "The run was stopped (stop command) before the scenario reached its end, so the scenario has no verdict");
+    check_text(incomplete.message(), "The run was stopped by a stop request before the scenario reached its end, so the scenario has no verdict");
     CHECK_EQ(incomplete.errors(), 0U);
     CHECK(lines(incomplete.findings).find("N 4 scenario-incomplete: the scenario did not get to its end") != std::string::npos);
-    CHECK(lines(incomplete.findings).find("; the run was stopped (stop command) before the scenario's end\n") != std::string::npos);
+    CHECK(lines(incomplete.findings).find("; the run was stopped by a stop request before the scenario's end\n") != std::string::npos);
     CHECK(format_run_text(incomplete).ends_with("\nincomplete: 0 errors, 0 warnings, 2 notes\n"));
     // ... or before the scenario began.
     RunOutcome early = with_scenario(stopped_run("stop command", StopKind::Operator), ScenarioStatus::NotRun);
@@ -2940,12 +2940,12 @@ TEST_CASE(each_result_has_its_exit_code_its_ok_and_a_message)
     // An operator stopped it, and something is wrong: failed.
     const RunReport failedCheck = report_of(with_scenario(stopped_run("stop command", StopKind::Operator), ScenarioStatus::Failed));
     check_meaning(failedCheck, {RunResult::Failed, 1, false, "\"stopped\""}, "stopped after a failed step");
-    check_text(failedCheck.message(), "The run was stopped (stop command) and failed: expect Body.level == 1: it was 0");
+    check_text(failedCheck.message(), "The run was stopped by a stop request and failed: expect Body.level == 1: it was 0");
     RunOutcome warned = stopped_run("stop command", StopKind::Operator);
     warned.participants[0].left_processes = true;
     check_meaning(report_of(warned), {RunResult::Stopped, 0, true, "\"stopped\""}, "stopped with a warning");
     check_meaning(report_of(warned, true), {RunResult::Failed, 1, false, "\"stopped\""}, "stopped with a warning, --strict");
-    CHECK(report_of(warned, true).message().starts_with("The run was stopped (stop command) and failed: a warning counts as an error with --strict: "));
+    CHECK(report_of(warned, true).message().starts_with("The run was stopped by a stop request and failed: a warning counts as an error with --strict: "));
     // A stop while the participants were ending did not cut the scenario short: the finding stays an error.
     RunOutcome late = with_scenario(passed_run(), ScenarioStatus::Incomplete);
     late.end.simulation = SimulationEnd::Ended;
@@ -2964,7 +2964,7 @@ TEST_CASE(each_result_has_its_exit_code_its_ok_and_a_message)
         check_meaning(report_of(with_scenario(stopped_run(by, kind), ScenarioStatus::Failed)),
                       {RunResult::Interrupted, 130, false, "\"interrupted\""}, by);
     }
-    check_text(report_of(stopped_run("SIGINT", StopKind::Signal)).message(), "The run was interrupted (SIGINT)");
+    check_text(report_of(stopped_run("SIGINT", StopKind::Signal)).message(), "The run was interrupted by a signal");
     const RunReport cut = report_of(with_scenario(stopped_run("SIGINT", StopKind::Signal), ScenarioStatus::Incomplete));
     CHECK(lines(cut.findings).find("N 4 scenario-incomplete: ") != std::string::npos);
     CHECK(lines(cut.findings).find("; the run was interrupted (SIGINT) before the scenario's end\n") != std::string::npos);
@@ -3003,4 +3003,70 @@ TEST_CASE(each_result_has_its_exit_code_its_ok_and_a_message)
     usage.check.findings.push_back(Finding{Severity::Error, "usage", "unknown option --x", 0, "", ""});
     check_meaning(usage, {RunResult::Usage, 4, false, "null"}, "usage");
     check_text(usage.message(), "Nothing was started, because the command line is wrong: unknown option --x");
+}
+
+TEST_CASE(a_participant_ended_by_force_in_a_stopped_run_is_no_error_but_is_said)
+{
+    using vehicle_sil::launch::ended_by_force;
+    using vehicle_sil::launch::StopKind;
+    // The operator did not wait (a second stop request, or one while the launcher waited): Engine
+    // was ended by force. The run is still a success, and the note and the message name Engine.
+    RunOutcome o = stopped_run("stop command", StopKind::Operator);
+    o.participants[0].ending = Ending::Killed;
+    o.participants[0].exit.reset();
+    CHECK(ended_by_force(o) == std::vector<std::string>{"Engine"});
+    const RunReport forced = report_of(o);
+    check_meaning(forced, {RunResult::Stopped, 0, true, "\"stopped\""}, "ended by force");
+    check_text(forced.message(), "The run was stopped by a stop request; Engine was ended by force, without waiting");
+    check_text(lines(forced.findings),
+               "N 0 stopped: stopped by a stop request: the launcher stopped the simulation and the participants\n"
+               "N 0 ended-by-force: the launcher did not wait for Engine to end, because it was asked to stop again (or while it "
+               "waited for the participants to end): it ended it by force, with the processes started. This is no error of a run "
+               "that was stopped that way; whether it ends when asked to is not known from this run (stop once and wait to see)\n");
+    // Known once the participants have ended: not among the findings written before that.
+    CHECK(lines(launch::detail::settled_findings(o)).find("ended-by-force") == std::string::npos);
+    // Two of them, in a scenario that was cut short.
+    RunOutcome both = with_scenario(o, ScenarioStatus::Incomplete);
+    both.participants[1].ending = Ending::Killed;
+    both.participants[1].exit.reset();
+    check_text(report_of(both).message(), "The run was stopped by a stop request before the scenario reached its end, so the scenario "
+                                          "has no verdict; Engine and Brake were ended by force, without waiting");
+    CHECK(lines(report_of(both).findings).find("did not wait for Engine and Brake to end") != std::string::npos);
+    check_meaning(report_of(both), {RunResult::Incomplete, 5, false, "\"stopped\""}, "two ended by force");
+    // One that the launcher waited for in full is the error did-not-end, not this note.
+    RunOutcome waited = o;
+    waited.participants[0].stopped_after_end = true;
+    CHECK(ended_by_force(waited).empty());
+    check_meaning(report_of(waited), {RunResult::Failed, 1, false, "\"stopped\""}, "waited in full");
+    CHECK(lines(report_of(waited).findings).find("E 5 did-not-end: ") != std::string::npos);
+    // One that could not be asked to stop (no console) was not disobedient.
+    RunOutcome unasked = o;
+    unasked.participants[0].stop_request_failed = true;
+    CHECK(ended_by_force(unasked).empty());
+    check_text(report_of(unasked).message(), "The run was stopped by a stop request without errors");
+    // Not for an interrupt: its result is no success anyway, and its output is as it was.
+    RunOutcome signal = stopped_run("SIGINT", StopKind::Signal);
+    signal.participants[0].ending = Ending::Killed;
+    signal.participants[0].exit.reset();
+    CHECK(ended_by_force(signal).empty());
+    check_text(lines(report_of(signal).findings), "N 0 interrupted: interrupted (SIGINT): the launcher stopped the simulation and the participants\n");
+}
+
+TEST_CASE(what_asked_to_stop_is_said_in_words_by_its_kind)
+{
+    using vehicle_sil::launch::StopKind;
+    check_text(report_of(stopped_run("stop command", StopKind::Operator)).message(), "The run was stopped by a stop request without errors");
+    check_text(report_of(stopped_run("control server stop", StopKind::Operator)).message(), "The run was stopped by a stop request without errors");
+    check_text(report_of(stopped_run("SIGTERM", StopKind::Signal)).message(), "The run was interrupted by a signal");
+    check_text(report_of(stopped_run("Ctrl+C", StopKind::Signal)).message(), "The run was interrupted by a signal");
+    check_text(report_of(stopped_run("end of input", StopKind::Supervisor)).message(), "The run was interrupted because its input closed");
+    check_text(report_of(stopped_run("output closed", StopKind::Supervisor)).message(), "The run was interrupted because its output closed");
+    // The name for programs stays in interrupted_by.
+    CHECK(format_run_json(report_of(stopped_run("control server stop", StopKind::Operator))).find("  \"interrupted_by\": \"control server stop\",\n") !=
+          std::string::npos);
+    // Stopped, but the simulation did not shut down: an error, also of a run that an operator stopped.
+    RunOutcome stuck = stopped_run("stop command", StopKind::Operator);
+    stuck.end.controller_state = "Error";
+    check_meaning(report_of(stuck), {RunResult::Failed, 1, false, "\"stopped\""}, "stopped, not shut down");
+    CHECK(report_of(stuck).message().starts_with("The run was stopped by a stop request and failed: the simulation ended in state Error"));
 }
