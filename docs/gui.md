@@ -918,6 +918,7 @@ The rules that apply to your own screen served with `--web`. For the steps to bu
 |---|---|
 | Getting the library file or package | "[Get the library](#get-the-library)" |
 | Which files are served and which are not | "[Files served with `--web`](#files-served-with---web)" |
+| Loading the library and the parts from the server | "[Files served under `vsil/`](#files-served-under-vsil)" |
 | What a screen cannot use (inline scripts, CDNs and others) | "[CSP restrictions](#csp-restrictions)" |
 | Handling the token | "[Receiving the token](#receiving-the-token)" |
 | Working with a development server such as Vite | "[Use a development server](#use-a-development-server)" |
@@ -931,9 +932,11 @@ The rules that apply to your own screen served with `--web`. For the steps to bu
 | Form | Location in the prebuilt tools | Command to build it in the repository (run in `gui/web`) |
 |---|---|---|
 | Bundled file (`vehicle-sil-gui-client.mjs`) | `client/` and `gui_starter/` | `npm run build:client` (creates `build/gui-client/vehicle-sil-gui-client.mjs`) |
+| The parts (`vehicle-sil-gui-elements.mjs`, which imports the file above) | `client/` | `npm run build:client` (creates `build/gui-client/vehicle-sil-gui-elements.mjs`) |
 | npm package (`vehicle-sil-gui-client-<version>.tgz`) | `client/` (the releases page has the same file) | `npm run pack:client` (creates `build/gui-client/vehicle-sil-gui-client-<version>.tgz`) |
 
 - **Bundled file**: put it in your screen's directory and import it with a relative path (it loads in the browser and in Node 22 or later).
+- **From the GUI server**: the server serves the bundled file and the parts as `/vsil/vehicle-sil-gui-client.mjs` and `/vsil/vehicle-sil-gui-elements.mjs`, so a screen without a build needs no copy of them (`<script type="module" src="/vsil/vehicle-sil-gui-elements.mjs">`, `import { connect } from '/vsil/vehicle-sil-gui-client.mjs'`). Load both from `/vsil/` or both from copies, never one of each: the parts import the client library by its file name, and a second copy of it makes a second connection. See "[Files served under `vsil/`](#files-served-under-vsil)".
 - **Package**: run `npm install <that .tgz>` in your project, then import it as `@vehicle-sil/gui-client` (`npm install <its URL>` also works). It is not published to the npm registry.
   - It contains the bundled ESM (`dist/index.js`), the types (`types/`), a `package.json` with `exports`, the README and the LICENSE, and has no dependencies. Its version is the same as the GUI server's.
   - Its types use the browser types (`DOM` in `lib`: `WebSocket` and others).
@@ -974,11 +977,22 @@ After opening a file, the server checks again that it is the same file it checke
 
 - Whether a request is a page load is decided by `Sec-Fetch-Mode: navigate`, or, for browsers that do not send it, by `text/html` in `Accept`.
 - Files without an extension are not served, even if they exist.
-- `api/`, `ws` and `panels/` directly under the root are the server API, so screen paths cannot use them.
+- `api/`, `ws`, `panels/` and `vsil/` directly under the root are the server's own, so screen paths cannot use them.
 
 **Cache and Service Workers**: screen files get `Cache-Control: no-cache` (the browser revalidates every time, so after a rebuild, reloading the page shows the new files). Service Workers cannot be registered (requests with `Service-Worker: script` get 404). A registered Service Worker would keep showing an old screen even from a server started later on the same port, and that screen would receive the new token.
 
 **`baseUrl`**: set the client's `baseUrl` to the server root (`createClient({ baseUrl: new URL('/', location.href).href, ... })`). On a page without `<base href="/">`, `document.baseURI` is the current screen path (such as `/settings/foo`), and the API URL would become `/settings/api/app` (the sample screens have `<base href="/">`, so they use `document.baseURI`).
+
+### Files served under `vsil/`
+
+The server serves the client library and the parts to a screen of your own, with the sample screens' headers and without the token (they are public library code, as the timeline page). `vsil/` is the server's, also when your `--web` directory has a `vsil/` of its own: that one is not served.
+
+| Request | Response |
+|---|---|
+| `GET /vsil/vehicle-sil-gui-client.mjs` | The bundled client library (`text/javascript`). |
+| `GET /vsil/vehicle-sil-gui-elements.mjs` | The parts. It imports `./vehicle-sil-gui-client.mjs`, which is the URL above. |
+| Any other name under `vsil/` (other files of the directory, another letter case, `..` and encoded paths) | 404. Only these two names are served, and no path is built from the request. |
+| The files are not built (in the repository, `build/gui-client/`) | 404 that names the two files and says to run `npm run build:client` in `gui/web`; the server also says so once on stderr, at the first such request. The tools archive has the files inside the GUI. |
 
 ### CSP restrictions
 

@@ -1,5 +1,5 @@
 // The page's own script: it asks for the connection that the parts use, and has a button of its own.
-import { connect } from './vehicle-sil-gui-client.mjs';
+import { connect } from '/vsil/vehicle-sil-gui-client.mjs';
 
 const client = await connect();
 // Pausing with no run is refused: the refusal shows in <vsil-status>, because the parts use this same connection.

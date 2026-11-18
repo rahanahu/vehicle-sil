@@ -32,10 +32,12 @@ Where to find the 3 files:
 | File                                   | Prebuilt tools                                        | Build in the repository (run in `gui/web`)                                            |
 | -------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `vehicle-sil-gui-client.mjs`           | `<tools>/client/vehicle-sil-gui-client.mjs`           | `npm run build:client` creates `build/gui-client/vehicle-sil-gui-client.mjs`          |
-| `vehicle-sil-gui-elements.mjs`         | (not in the archive)                                  | `npm run build:client` creates `build/gui-client/vehicle-sil-gui-elements.mjs`        |
+| `vehicle-sil-gui-elements.mjs`         | `<tools>/client/vehicle-sil-gui-elements.mjs`         | `npm run build:client` creates `build/gui-client/vehicle-sil-gui-elements.mjs`        |
 | `vehicle-sil-gui-client-<version>.tgz` | `<tools>/client/vehicle-sil-gui-client-<version>.tgz` | `npm run pack:client` creates `build/gui-client/vehicle-sil-gui-client-<version>.tgz` |
 
 The releases page has the same `.tgz`. `build/` is the one at the top of the repository and is not tracked in Git.
+
+The GUI server also serves the two `.mjs` files, without the token, as `/vsil/vehicle-sil-gui-client.mjs` and `/vsil/vehicle-sil-gui-elements.mjs` (in the repository, from `build/gui-client/`; it says what to run when they are not built). A screen without a build can load them from there and copy nothing.
 
 - **Bundled file**: loads in the browser and in Node (22 or later). `scripts/verify-gui.py` runs an example that uses this file from Node against the replay launcher.
 - **Package**: contains the bundled ESM, `.d.ts` files, `exports`, the README and the LICENSE (`pack.mjs` builds it). Its version is the same as the GUI server's. Its types use the browser types (`DOM` in `lib`). Its entry points are `.`, `./elements` and `./timeline` (`testing` and `internal` are not included).
@@ -379,7 +381,7 @@ The view has `value`, `text` (an enum shows the item's name), `unit`, `min`, `ma
 A variable is written `ECU.variable` (cut at the first dot), as for `client.variable()`.
 
 ```html
-<script type="module" src="./vehicle-sil-gui-elements.mjs"></script>
+<script type="module" src="/vsil/vehicle-sil-gui-elements.mjs"></script>
 <vsil-status></vsil-status> <vsil-run-controls></vsil-run-controls>
 <label>Throttle <vsil-slider variable="Engine.engine.throttle"></vsil-slider></label>
 <vsil-write
@@ -399,7 +401,7 @@ A variable is written `ECU.variable` (cut at the first dot), as for `client.vari
 ### What the parts promise
 
 - **The page's connection.** A part calls `connect()` without options, so the page's own script and all the parts share one connection (one WebSocket), and a refusal of your own button shows in `<vsil-status>`. To give a part another connection, set its `client` property (a part that is in the document binds again).
-- **One set of files.** Use the package, or the single files, not both. The parts import the main entry; they do not carry a copy of it. In a project (the package) the parts and your script both import `@vehicle-sil/gui-client`. With the single files, put `vehicle-sil-gui-elements.mjs` next to `vehicle-sil-gui-client.mjs` and import the client from that same file. A second copy of the library makes a second connection.
+- **One set of files.** Use the package, the copies of the single files, or the GUI server's `/vsil/` files, not a mix. The parts import the main entry by its file name; they do not carry a copy of it. In a project (the package) the parts and your script both import `@vehicle-sil/gui-client`. With copies, put `vehicle-sil-gui-elements.mjs` next to `vehicle-sil-gui-client.mjs` and import the client from that same file. With the server, load the parts from `/vsil/vehicle-sil-gui-elements.mjs` and the client from `/vsil/vehicle-sil-gui-client.mjs` (the parts' own import resolves to it). A second copy of the library, such as a copy of the client next to the page and the parts from `/vsil/`, makes a second connection.
 - **Your markup and your CSS.** There is no shadow DOM. A part draws into one `<span class="vsil">` that it adds, and the children you put in the element stay. It sets `data-*` attributes for CSS: `data-link`, `data-run`, `data-pacing` (`<vsil-status>`), `data-stale`, `data-can-write` and `data-on` (the variable parts), `data-status` (`<vsil-scenario-result>` and its steps), and on each button of `<vsil-run-controls>` and `<vsil-time-controls>`, and on the speed select, `data-reason` and `data-caution` (the code, when there is one).
 - **A button that cannot be used** is not `disabled`: it has `aria-disabled="true"` (so it keeps the focus), pressing it does nothing, and the reason is a sentence in an element that `aria-describedby` points to (the speed select is described the same way). A reason that only says there is nothing to do (`not-running`, `offline`) is in that element too, but the element is `hidden`: a screen reader reads it, and the page does not repeat it beside every button (`<vsil-status>` shows the state). The same goes for `<vsil-write>` when the variable already has the value ("already false"). A slider that cannot be written, or has no range, is `disabled`, and the reason is next to it.
 - **Life.** A part subscribes when it enters the document and stops everything when it leaves. When it leaves while it waits for the connection, it draws nothing. When `variable` or another attribute changes, it binds again.
