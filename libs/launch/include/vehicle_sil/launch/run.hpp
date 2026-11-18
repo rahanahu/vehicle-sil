@@ -170,6 +170,19 @@ struct OutsideLink
     /// Why the launcher stopped the run while the bridge itself went on ("link down for 30 s"), or
     /// empty (OutsideState::lost()).
     std::string lost{};
+    /// "device=" of the link line: the device the bridge opened, as the bridge names it (the same
+    /// for the same device whatever --connect said), or empty.
+    std::string device{};
+    /// Other vehicle-sil bridges on the device that are not this run's (detail::foreign_sharing()):
+    /// the most there were at once (0: none was seen), the process ids seen (Linux; the bridge
+    /// reports them), and when the first was seen, in milliseconds from the start of the run.
+    std::uint32_t shared_most = 0;
+    std::vector<long> shared_peers{};
+    std::optional<std::chrono::milliseconds> shared_first{};
+    /// Whether the launcher stopped the run for it, and when: before it started, or after the
+    /// sharing had lasted kOutsideSharedAfter (--strict only).
+    enum class SharedStop { None, AtStart, AfterDelay };
+    SharedStop shared_stop = SharedStop::None;
 };
 
 /// A network that the run connected to a real bus (--connect; the result's "outside").
@@ -384,6 +397,14 @@ public:
 /// How long a bridge of --connect may report the link or the bus down before the launcher stops the
 /// run (RunOptions::outside_lost_after).
 inline constexpr std::chrono::milliseconds kOutsideLostAfter{30000};
+/// With --strict: how long a bridge of --connect may share its device with a bridge that is not of
+/// this run before the launcher stops the run (OutsideState::shared_for()). A bridge that another
+/// run started later and that ends before its ECUs start must not take this run down with it.
+inline constexpr std::chrono::milliseconds kOutsideSharedAfter{3000};
+/// With --strict: the longest the launcher waits, after the bridges run, for the first link line of
+/// each, which says whether the device is shared and comes before the bridge starts its lifecycle.
+/// A bridge that has not said by then is taken as one that shares nothing.
+inline constexpr std::chrono::milliseconds kOutsideFirstLineWait{2000};
 
 struct RunOptions
 {
@@ -697,12 +718,19 @@ struct OutsideCounts
 /// The state of the link and of the bus that a link line says ("link link=down", "link bus=bus-off").
 enum class OutsideLinkValue { Unknown, Up, Down };
 enum class OutsideBusValue { Unknown, Active, Passive, BusOff };
-/// The keys of a link line that this launcher knows; a key it does not know (device, marked, shared,
-/// peers, or a new one) or a value it does not know is left out: empty.
+/// The keys of a link line that this launcher knows; a key it does not know or a value it does not
+/// know is left out: empty.
 struct OutsideLinkLine
 {
     std::optional<OutsideLinkValue> link{};
     std::optional<OutsideBusValue> bus{};
+    /// device=<hash>, marked=0|1, shared=<n> and peers=<pid>,<pid> (Linux): the other
+    /// vehicle-sil bridges on the same device (docs/bridges.md, "Device in use by another bridge").
+    /// `peers` is read with `shared` and is empty when the line has none.
+    std::optional<std::string> device{};
+    std::optional<bool> marked{};
+    std::optional<std::uint32_t> shared{};
+    std::vector<long> peers{};
 };
 /// The known keys of a link line, or empty for a line that is none (is_link_line()) or whose parts
 /// are not "key=value". A part of another form or a repeated key is skipped.
@@ -723,6 +751,47 @@ inline constexpr std::string_view kOutsideBusErrorsKey = "error_frames";
 /// the order of the table.
 [[nodiscard]] std::vector<std::pair<std::string, std::uint64_t>> dropped_counts(const std::map<std::string, std::uint64_t>& counts);
 
+/// Whether `line` is the warning that a bridge writes when its device is used by another vehicle-sil
+/// bridge ("warning: <device> is also used by another vehicle-sil bridge (process N): ..."). Run
+/// does not show it: the launcher tells it as the finding outside-device-shared, once the bridges
+/// of this run are subtracted. One function for the form of the line (the bridges' own text,
+/// bridges/common/src/device_mark.cpp).
+[[nodiscard]] bool is_shared_warning(std::string_view line);
+
+/// What a bridge's link line says of its device (the sharing keys), kept by OutsideState.
+struct OutsideSharing
+{
+    bool seen = false; ///< a link line was read
+    std::string device{};
+    bool marked = false;
+    std::uint32_t shared = 0;
+    std::vector<long> peers{};
+};
+/// What the launcher knows of a bridge of its own, by the participant's index (the bridge's own
+/// participant and every other index of the run): whether its process runs now, and its process id
+/// (0: not known).
+struct OutsideOwn
+{
+    bool alive = false;
+    long pid = 0;
+};
+/// The bridges on the device of bridge `i` that are not this run's.
+struct OutsideForeign
+{
+    std::uint32_t count = 0;
+    std::vector<long> pids{}; ///< their process ids if the bridge reports them (Linux), else empty
+};
+/// Bridge `index`'s `shared`, less the bridges of this run. With `peers` (Linux), the ids of the
+/// bridges this run started are taken from them (even those that have ended since: their mark may
+/// still be in a report). Without (Windows), the number of the run's other bridges that are alive,
+/// have placed a mark (marked) and report the same `device`. Nothing if a bridge of the run has not
+/// reported yet and the count would need it. Pure; `all` and `own` have one entry per participant.
+[[nodiscard]] OutsideForeign foreign_sharing(std::size_t index, const std::vector<OutsideSharing>& all,
+                                             const std::vector<OutsideOwn>& own);
+/// "another vehicle-sil bridge (process 4321)", "2 other vehicle-sil bridges (processes 4321, 4400)"
+/// (Windows: no ids, "another vehicle-sil bridge").
+[[nodiscard]] std::string shared_text(const OutsideForeign& foreign);
+
 /// What one bridge's link line and counts add up to. Pure like OutsideNote: time is an argument, no
 /// clock, no thread, no lock (RunOutput's mutex guards it).
 class OutsideState
@@ -741,6 +810,18 @@ public:
     [[nodiscard]] std::string lost(std::chrono::steady_clock::time_point now, std::chrono::milliseconds limit) const;
     /// The sums at `now` (a down or bus-off that is still on counts to `now`), with `lost` empty.
     [[nodiscard]] OutsideLink summary(std::chrono::steady_clock::time_point now) const;
+    /// A link line has been read.
+    [[nodiscard]] bool link_line_seen() const { return sharing_.seen; }
+    /// What the link lines said of the device (foreign_sharing() takes it from every bridge).
+    [[nodiscard]] const OutsideSharing& sharing() const { return sharing_; }
+    /// The bridges outside this run on the device, as foreign_sharing() has them at `now` (`since_start`
+    /// into the run). true: more than ever before, which people are told once.
+    bool on_foreign(const OutsideForeign& foreign, std::chrono::steady_clock::time_point now,
+                    std::chrono::milliseconds since_start);
+    /// The device has been shared with a bridge outside this run for `limit` or more.
+    [[nodiscard]] bool shared_for(std::chrono::steady_clock::time_point now, std::chrono::milliseconds limit) const;
+    /// The run is stopped (or not started) for it; summary() says so.
+    void stop_shared(OutsideLink::SharedStop how) { shared_stop_ = how; }
 
 private:
     struct Span
@@ -758,6 +839,12 @@ private:
     Span bus_off_;
     Span passive_;
     std::map<std::string, std::uint64_t> counts_;
+    OutsideSharing sharing_;
+    Span foreign_;
+    std::uint32_t foreign_most_ = 0;
+    std::vector<long> foreign_pids_;
+    std::optional<std::chrono::milliseconds> foreign_first_{};
+    OutsideLink::SharedStop shared_stop_ = OutsideLink::SharedStop::None;
 };
 
 /// When run --events writes the event "outside" of one bridge: when its counts have changed

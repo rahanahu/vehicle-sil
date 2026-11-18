@@ -290,13 +290,16 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   # run --connect: the bridges of connect_tools (above) on the fake pcap library and the fake XL
   # driver, with the Ethernet ECU of the bridge's tests.
   add_dependencies(vehicle_sil_launch_run_launcher vehicle_sil_launch_connect_tools vehicle_sil_ethernet_bridge_it_ecu
-                   vehicle_sil_fake_pcap)
+                   vehicle_sil_fake_pcap sil-kit-registry)
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
     PREFIX launch_run LABELS integration launch TIMEOUT 300
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
     SCENARIOS
       connect_bus_off
       connect_bus_off_lost
+      connect_device_shared
+      connect_device_shared_later
+      connect_device_shared_own
       connect_dies_while_waiting
       connect_lost_exit0
       connect_lost_kill
@@ -313,7 +316,8 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
          --docs ${VEHICLE_SIL_TESTED_DOCS}
          --connect-tools ${_connect_tools}
          --bridge-ecu $<TARGET_FILE:vehicle_sil_ethernet_bridge_it_ecu>
-         --fake-pcap-dir ${VEHICLE_SIL_FAKE_PCAP_DIR})
+         --fake-pcap-dir ${VEHICLE_SIL_FAKE_PCAP_DIR}
+         --registry $<TARGET_FILE:sil-kit-registry>)
   # The guide docs/howto/scenario-tests.md: what its reader does with the two ECUs of examples/ecu_main
   # (the scenarios that come with them, the ones of examples/scenario_tests the guide has the reader
   # write, check, run and test), in the guide's order; the files, the outputs and the exit codes must

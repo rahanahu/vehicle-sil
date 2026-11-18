@@ -368,6 +368,8 @@ nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the b
 
 Linux の `peers` のプロセス ID は、印を置いたブリッジの PID 名前空間での番号です。PID 名前空間が別で、ネットワーク名前空間が同じコンテナーのブリッジは、コンテナーの中の番号で出ます。
 
+`vehicle_sil_launch run --connect` は、これらのキーを読みます。`shared` から自分の実行のブリッジを引き（Linux は `peers` のプロセス ID、Windows は数）、ブリッジの警告は、プロセス ID を付けたランチャー自身の 1 行にして、残りを所見 `outside-device-shared` にします。`--strict` では、デバイスが共有されている実行を始めず、共有が 3 秒続く実行は止めます（simulation-run.md の「[別の実行も使っているデバイス](simulation-run.md#別の実行も使っているデバイス)」）。同じキーを書く自作のブリッジも、同じに読まれます。
+
 印の置き方です（自作のブリッジ、設定ファイルの `role: bridge` も、同じ印を置けば、ほかのブリッジに見つかります）。
 
 | OS | 印 |

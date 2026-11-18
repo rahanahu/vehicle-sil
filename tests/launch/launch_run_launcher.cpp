@@ -23,6 +23,7 @@ Options parse(int argc, char** argv)
     o.connect_tools = args.str("connect-tools", "");
     o.bridge_ecu = args.str("bridge-ecu", "");
     o.fake_pcap_dir = args.str("fake-pcap-dir", "");
+    o.registry = args.str("registry", "");
     return o;
 }
 
@@ -46,6 +47,9 @@ int main(int argc, char** argv)
             {"check", check},
             {"connect_bus_off", connect_bus_off},
             {"connect_bus_off_lost", connect_bus_off_lost},
+            {"connect_device_shared", connect_device_shared},
+            {"connect_device_shared_later", connect_device_shared_later},
+            {"connect_device_shared_own", connect_device_shared_own},
             {"connect_dies_while_waiting", connect_dies_while_waiting},
             {"connect_lost_exit0", connect_lost_exit0},
             {"connect_lost_kill", connect_lost_kill},

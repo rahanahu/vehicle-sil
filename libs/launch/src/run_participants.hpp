@@ -43,6 +43,10 @@ public:
         return children_[i] != nullptr || (ctx_.config.participants[i].enabled && ctx_.config.participants[i].manual);
     }
 
+    /// For OutsideState's count of the bridges outside this run: per participant, whether it is a
+    /// bridge of --connect whose process runs now and its process id. Main thread.
+    [[nodiscard]] std::vector<OutsideOwn> own_bridges() const;
+
     /// Which participants start_children() starts.
     enum class Which
     {

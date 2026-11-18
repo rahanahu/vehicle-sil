@@ -413,6 +413,26 @@ The kinds of loss are told from the counts of the statistics line and the link l
 
 The other counts (`own_tx_dropped`, `filtered_to_ext`, `filtered_from_ext`, `mac_unguarded`, `oversize`, `malformed`, `ext_checksum_incomplete`) are no losses of the bridge and give no finding; they are in the result, as the bridge wrote them. The messages say what happened, whether to trust the result and what to check, for example `network 'ETH_EXT' -> enp3s0: the link was down once, for 2.70 s in all. The run went on, but frames sent meanwhile did not reach the devices, ...`. These findings are made at the end, from what was read until then.
 
+### A device that another run uses too
+
+A bridge puts a mark on the device it opens and reports how many other vehicle-sil bridges are on it (`shared`, and on Linux their process IDs in `peers`; see "[Device in use by another bridge](bridges.md#device-in-use-by-another-bridge)"). Two runs on one device, or a bridge left over from an earlier run, mix their frames: the devices of this run get frames meant for the other, and the other's get this run's. `run` takes the bridges of its own run out of the count, so only a bridge that is not part of this run counts, and tells it once, with the time since the run began and, on Linux, the process ID:
+
+```text
+outside: CAN1 -> can0: also used by another vehicle-sil bridge (process 4321) at 3.10 s
+```
+
+The bridge's own warning about it (`warning: ... is also used by another vehicle-sil bridge ...`) is not shown in the run's output, as the link line is not; the bridge's log file (`--log-dir`) has it.
+
+| When | Without `--strict` | With `--strict` |
+|---|---|---|
+| The device is shared when the bridges have started | The run goes on | `run` starts no ECU and ends the run: the error `outside-device-shared`, result `failed`. It waits up to 2 s (`kOutsideFirstLineWait`) for the first link line of each bridge, which comes before the bridge's lifecycle; a bridge that has not written it by then is taken as one that shares nothing |
+| It begins while the simulation runs | The run goes on | When it has lasted 3 s (`kOutsideSharedAfter`), `run` aborts the simulation as for a bridge that ended: the error `outside-device-shared`. A bridge that another run started and that is gone again within 3 s does not stop this run, so one run that stops before its ECUs start does not take the other down |
+| At the end | The warning `outside-device-shared`: the process IDs, when it was first seen | The same warning, and `--strict` fails on it; the error where `run` stopped the run |
+
+The message says what happens (the frames of both mix, so what the run says of the devices cannot be trusted) and what to do: connect each run to a device of its own, or stop the bridge left over from an earlier run.
+
+If two networks of this run have different `--connect` values (so the check does not see it) but their bridges report one device, `run` warns with `connect-target-shared` in the form of the check's ("the same device under two names"). Two networks with the same target are the check's (see [simulation-check.md](simulation-check.md)); `run` does not repeat it.
+
 ### Where a network can be connected (`vehicle_sil_launch connections`)
 
 ```text
@@ -895,6 +915,8 @@ When the simulation started, the result shows after the participant table whethe
 | `connect-nothing-received` | Note | With `--connect`, the bridge of a network sent frames to the real bus, and none came from a device there (one for each such network; see [Counting the frames to and from the bus](#counting-the-frames-to-and-from-the-bus)) |
 | `outside-link-down`, `outside-bus-off` | Warning | The link or the bus of a connected network was down while the simulation ran, and the bridge went on: how many times and how long in all (see [The state of the link and the bus](#the-state-of-the-link-and-the-bus)) |
 | `outside-bus-errors`, `outside-frames-dropped`, `outside-loop-suspected` | Warning | The bridge of a connected network was error passive, dropped frames (even one), or stopped a loop of MAC addresses (the same section) |
+| `outside-device-shared` | Warning (error where `--strict` stopped or did not start the run) | The device of a connected network was also used by a vehicle-sil bridge that is not part of this run: the process IDs, and when it was first seen (see [A device that another run uses too](#a-device-that-another-run-uses-too)) |
+| `connect-target-shared` | Warning | Two networks of the run have different `--connect` values, but their bridges report one device (the same finding as the check's, for the case the check cannot see; same section) |
 | `exit-code` | Error (warning for `required: false`) | A participant's exit code is not 0, or it ended by a signal (when none of the above applies) |
 | `did-not-end` | Error | A required participant was still running `stop_timeout_ms` after the end of the simulation |
 | `left-processes` | Warning | Processes started by a participant were still running after the participant ended |

@@ -190,6 +190,12 @@ void RunOutput::on_line(std::size_t index, std::string_view line)
             last_statistics_[index] = std::string(line);
             return;
         }
+        // The bridge's warning that its device is shared: the launcher tells it, with the bridges of
+        // this run taken out (outside_shared()); the log keeps it.
+        if (is_shared_warning(line))
+        {
+            return;
+        }
         // The state of the bridge's link, for the launcher; the log keeps it.
         if (is_link_line(line))
         {
@@ -226,6 +232,11 @@ void RunOutput::say_link_change(std::size_t index, const std::string& what, std:
     std::snprintf(seconds, sizeof seconds, "%.2f", std::chrono::duration<double>(now - began_).count());
     say_held("outside: " + network + " -> " + (outside != ctx_.check.outside.end() ? outside->target : std::string{}) + ": " +
              what + " at " + seconds + " s");
+}
+
+void RunOutput::say_outside_shared(std::size_t index, const OutsideForeign& foreign, std::chrono::steady_clock::time_point now)
+{
+    say_link_change(index, "also used by " + shared_text(foreign), now);
 }
 
 void RunOutput::show(std::size_t index, std::string_view line) const
@@ -269,6 +280,43 @@ std::optional<std::pair<std::size_t, std::string>> RunOutput::outside_lost(std::
         }
     }
     return std::nullopt;
+}
+
+std::optional<std::size_t> RunOutput::outside_shared(std::chrono::steady_clock::time_point now, const std::vector<OutsideOwn>& own,
+                                                      std::optional<std::chrono::milliseconds> stop_after)
+{
+    const std::lock_guard lock(mutex_);
+    std::vector<OutsideSharing> all;
+    for (const OutsideState& state : states_)
+    {
+        all.push_back(state.sharing());
+    }
+    const auto since_start = std::chrono::duration_cast<std::chrono::milliseconds>(now - began_);
+    std::optional<std::size_t> stop;
+    for (std::size_t i = 0; i < states_.size(); ++i)
+    {
+        if (tools_[i].empty())
+        {
+            continue; // not a bridge of --connect
+        }
+        const OutsideForeign foreign = foreign_sharing(i, all, own);
+        if (states_[i].on_foreign(foreign, now, since_start))
+        {
+            say_outside_shared(i, foreign, now);
+        }
+        if (stop_after && !stop && states_[i].shared_for(now, *stop_after))
+        {
+            states_[i].stop_shared(stop_after->count() == 0 ? OutsideLink::SharedStop::AtStart : OutsideLink::SharedStop::AfterDelay);
+            stop = i;
+        }
+    }
+    return stop;
+}
+
+bool RunOutput::link_lines_read(const std::vector<std::size_t>& bridges)
+{
+    const std::lock_guard lock(mutex_);
+    return std::all_of(bridges.begin(), bridges.end(), [this](std::size_t i) { return states_[i].link_line_seen(); });
 }
 
 OutsideLink RunOutput::take_link(std::size_t index, std::chrono::steady_clock::time_point now)

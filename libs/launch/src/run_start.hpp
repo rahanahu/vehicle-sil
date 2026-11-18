@@ -116,8 +116,9 @@ public:
     /// After the bridges of --connect have been started, before anything else: waits until each
     /// that was started runs in SIL Kit (Running, as the controller sees it), up to start_timeout_ms.
     /// false if one ended, left (Error or Shutdown), did not get there in time, or the run was
-    /// interrupted: the outcome says why, and nothing else is to be started. true at once without
-    /// bridges.
+    /// interrupted: the outcome says why, and nothing else is to be started. With --strict, also
+    /// false if a bridge shares its device with a bridge that is not of this run (the finding
+    /// outside-device-shared). true at once without bridges.
     [[nodiscard]] bool wait_for_bridges(SimulationController& controller);
 
     /// Waits until every required participant has joined, then starts the simulation. false if
@@ -138,6 +139,11 @@ public:
     [[nodiscard]] bool hold_timed_out() const { return shared_.hold_timed_out.load(); }
 
 private:
+    /// --strict: waits (up to kOutsideFirstLineWait) for the first link line of each of `bridges`, then
+    /// looks at whether one shares its device with a bridge that is not this run's. true: one does,
+    /// the run is not to start (the outcome's bridge says so, and so does a line). Also true if the
+    /// run was interrupted meanwhile.
+    [[nodiscard]] bool stopped_for_shared_device(const std::vector<std::size_t>& bridges);
     /// The give_up of the start: a required participant has left, or the start's limit has passed
     /// (the participants that hold it up named).
     [[nodiscard]] std::string start_given_up(SimulationController& controller);

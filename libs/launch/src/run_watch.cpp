@@ -163,6 +163,15 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
             processFailed = true;
             return true;
         }
+        // A device that a bridge outside this run uses too: told, and with --strict the run is
+        // stopped once it has lasted (the first line of a --strict run has been looked at before the start).
+        if (const auto shared = out_.outside_shared(std::chrono::steady_clock::now(), participants_.own_bridges(),
+                                                    ctx_.options.check.strict ? std::optional(kOutsideSharedAfter) : std::nullopt))
+        {
+            outcome_.failed_participant = outcome_.participants[*shared].name;
+            processFailed = true;
+            return true;
+        }
         std::vector<bool> known;
         for (const auto& run : outcome_.participants)
         {
