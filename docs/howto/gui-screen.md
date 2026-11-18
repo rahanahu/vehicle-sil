@@ -288,6 +288,46 @@ The answer to this request only says that the server took it: the `session` in i
 | The screen does not change after you edit a file | The browser shows the old page. | Reload the page. You do not need to restart the GUI server. |
 | `cannot listen on 127.0.0.1:<port> (Address already in use)` | You started a second GUI server with the `--port` of one that is running. | Stop the first one, or choose another `--port` (or leave it out). Without `--port`, the second server starts on another port with its own token and its own launcher: use the URL it prints. |
 
+## Connect a network outside (optional)
+
+A `can` or `ethernet` network of your configuration file can be connected to a real bus through the launcher's bridge (see "Connecting a bus outside (`--connect`)" in [simulation-run.md](../simulation-run.md#connecting-a-bus-outside---connect)). Two parts do it:
+
+```html
+<label>ETH_EXT <vsil-connect network="ETH_EXT"></vsil-connect></label>
+<vsil-outside></vsil-outside>
+```
+
+| Element | What it shows or does |
+|---|---|
+| `<vsil-connect network="...">` | Where the network is connected in the next run. It starts at `SIL Kit only (not connected)`. It asks for the list of targets only when you open it, and the list is that of the PC where the GUI server runs, not of the PC of the browser. After you choose, it shows what the check says about that choice, in the launcher's words (for example, that the run then keeps real time). **Start** of `<vsil-run-controls>` starts with the choice. |
+| `<vsil-outside>` | While the run goes, one row for each network that it connected: the link or the bus, the condition and the frame counts. Nothing when there is none. |
+
+A run connected outside keeps real time, so pause and step cannot be used. To use them anyway, set the time policy from a script of your own: `pageIntent.update({ time_policy: 'free' })` (`pageIntent` is exported by `/vsil/vehicle-sil-gui-elements.mjs`; the check then says what that means).
+
+A test bench can keep its choices in a [request file](../simulation-run.md#request-files---request). A script can read one into the choice of the next run, and save the choice as one; the GUI server writes no file:
+
+```js
+import { pageIntent } from '/vsil/vehicle-sil-gui-elements.mjs';
+
+// <input type="file" id="request">: read the request file that the user picks
+document.querySelector('#request').addEventListener('change', async (event) => {
+  const request = JSON.parse(await event.target.files[0].text());
+  delete request.$schema; // for an editor only
+  pageIntent.update(request);
+});
+// <button type="button" id="save">: save the choice of the next run as a request file
+document.querySelector('#save').addEventListener('click', () => {
+  const text = JSON.stringify({ vehicle_sil_run_request: 1, ...pageIntent.get() }, null, 2);
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  link.download = 'request.json';
+  link.click();
+});
+```
+
+- `<vsil-connect>` shows a target read from a file as written. The GUI server takes a target only from its last list of that network, so open the choice before you start: a target that the list does not offer goes back to SIL Kit only. Without a list, the start is refused with `target-not-listed`.
+- `scenario` of a request file is a path from the directory of the configuration file; the GUI server takes the path from its list of scenarios instead (`<vsil-scenario-select>` writes it).
+
 ## What to read next
 
 - Add a display, a button or a rule of your own with a script: `main.js` of the template, and "The front door (`connect()`)" in [gui/client/README.md](../../gui/client/README.md#the-front-door-connect). The script uses the same connection as the parts.

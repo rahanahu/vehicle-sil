@@ -1,7 +1,14 @@
 // Shapes of the front door (`connect()` in front.ts). Data fields use the wire's names (snake_case: the same words as
 // the launcher's `state` event and the GUI server's `allowed`); functions use JavaScript's (`forceStop`, `runUntil`).
 import type { GuiClient } from './client';
-import type { Finding, RunEnd, ScenarioStatus, ScenarioStep } from './protocol';
+import type {
+  CheckResult,
+  Finding,
+  OutsideState,
+  RunEnd,
+  ScenarioStatus,
+  ScenarioStep,
+} from './protocol';
 import type { ValueCondition, WriteBlock, WriteStatus } from './variable-state';
 import type { VariableRef, VariableValue } from './variables';
 import type { Readable } from './values';
@@ -125,8 +132,7 @@ export class ActionError extends Error {
 
 /**
  * What a start asks for: the keys of the request file (`schema/run-request.schema.json`), with its names and value
- * forms. A choice that is not made is left out of the object: there is no null. (`connect` and `time_policy` of the
- * file are not here yet: a connected start needs the list of POST api/connections, which this client does not ask for.)
+ * forms. A choice that is not made is left out of the object: there is no null.
  */
 export interface Intent {
   /** The format of the request file: 1, or left out (the client adds none). */
@@ -140,6 +146,63 @@ export interface Intent {
   speed?: number | 'max';
   start_paused?: boolean;
   strict?: boolean;
+  /**
+   * Network name to where it is connected outside the simulation: a `value` that `connections()` gave with `usable`
+   * true, as written there, or `'none'` (SIL Kit only; the same as leaving the network out). The server refuses a value
+   * that its last list of that network did not give (`target-not-listed`).
+   */
+  connect?: Record<string, string>;
+  /** A run connected outside keeps real time (`realtime`, the launcher's default) unless `free` is chosen. */
+  time_policy?: 'realtime' | 'free';
+}
+
+/** A place where a network can be connected, as the bridge of one backend listed it. */
+export interface ConnectTarget {
+  /** The bridge's backend (`packet`, `tap`, `socketcan`, `npcap`, ...); null if the list did not say. */
+  backend: string | null;
+  /** What `connect` gives the network. */
+  value: string;
+  label: string;
+  /** One English line from the bridge (state, and a device in use by another bridge). */
+  detail: string;
+  /** false: it cannot be chosen; `reason` says why. */
+  usable: boolean;
+  reason: string | null;
+}
+
+/** A backend whose bridge could not list (it is missing on this computer, or it failed). */
+export interface ConnectListError {
+  backend: string | null;
+  /** The launcher's English sentence. */
+  error: string;
+}
+
+/** One entry of `connections()`: a target, or a backend that has no list. */
+export type ConnectEntry = ConnectTarget | ConnectListError;
+
+/**
+ * A network connected outside the simulation in the run (`outside[]` of the launcher's `state`), with the counts of its
+ * `outside` events.
+ */
+export interface Outside {
+  network: string;
+  target: string | null;
+  /** The bridge (`bridge.<network>`). */
+  participant: string | null;
+  /** Ethernet: `up`, `down` or `unknown` (null before the bridge has said). */
+  link: OutsideState['link'];
+  /** CAN: `active`, `passive`, `bus-off` or `unknown` (null for Ethernet, or before the bridge has said). */
+  bus: OutsideState['bus'];
+  /** `ok`, `interrupted` or `degraded`. */
+  condition: OutsideState['condition'];
+  /** Codes, in the launcher's order (empty when the condition is ok). */
+  reasons: readonly string[];
+  /** Frames went to the bus and nothing came back for 10 s (apart from `condition`, which can still be `ok`). */
+  nothing_received: boolean;
+  /** Frames the bridge sent to the bus so far; null until an `outside` event has arrived on this page. */
+  to_outside: number | null;
+  /** Frames that came from a device on the bus so far; null until an `outside` event has arrived on this page. */
+  from_outside: number | null;
 }
 
 /** Operations of the run. Each resolves when the server has taken the request; whether the run began is `status.run`. */
@@ -212,6 +275,26 @@ export interface Front {
   readonly scenario: Readable<FrontScenario | null>;
   readonly run: FrontRun;
   readonly time: FrontTime;
+  /**
+   * The networks of the run that the start's `connect` connected outside (empty when there are none, when no run is
+   * going, and in a run that a `role: bridge` participant of the file connects: do not read "connected or not" from it).
+   * Changes as the launcher's `state` and `outside` events arrive.
+   */
+  readonly outside: Readable<readonly Outside[]>;
+  /**
+   * Where `network` of `file` (default: the start-up file, as for `run.start`) can be connected on the computer of the
+   * GUI server: the entries of every backend, in the launcher's order. It starts that network's bridge to list it (on
+   * Windows, Npcap may ask to raise the rights): call it when the user opens the choice, not when the page opens. A
+   * backend that cannot list is an entry with `error`, not a failure. Rejects with an ActionError (`check-busy`,
+   * `unknown-network`, ...).
+   */
+  connections(request: { network: string }, options?: { file?: string }): Promise<ConnectEntry[]>;
+  /**
+   * Checks what `intent` would start, without starting it (`POST api/check`), and returns the launcher's check result
+   * (`findings`; `time_lock` and `networks[].outside` are in `raw`). Rejects with an ActionError (`target-not-listed`,
+   * `check-busy`, `unknown-field`, ...); a failure is not put into `status.problem`.
+   */
+  check(intent?: Intent, options?: { file?: string }): Promise<CheckResult>;
   /** A variable by `"Peer.variable"` (cut at the first dot) or `{peer, name}` (for a peer whose name has a dot). */
   variable(ref: string | VariableRef): FrontVariable;
   /** Disconnects and fails what is waiting. A connection that `connect()` shares is made again by the next `connect()`. */

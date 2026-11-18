@@ -32,9 +32,9 @@ const PASSED_THROUGH: readonly string[] = [
   'check result: scenario.inputs',
   'check result: scenario.lines',
   'check result: networks[].line',
-  // --connect: where the network is connected (null without it); the GUI cannot give --connect yet
+  // --connect: where the network is connected (null without it); screens read it from raw
   'check result: networks[].outside',
-  // whether a run that is connected outside keeps real time, and because of what; the GUI does not show it yet
+  // whether a run that is connected outside keeps real time, and because of what; screens read it from raw
   'check result: time_lock',
   'run result: vehicle_sil_run',
   'run result: vehicle_sil',
@@ -42,7 +42,7 @@ const PASSED_THROUGH: readonly string[] = [
   // Where the run's registry listened: the same as the uri of the registry event, which the parser types
   'run result: registry_uri',
   // --connect: the bridges the run started (for_network null for a participant of the file) and the networks
-  // connected (empty without --connect); the GUI cannot give --connect yet
+  // connected (empty without --connect); screens read them from raw
   'run result: participants[].for_network',
   'run result: outside',
   'run result: scenario.inputs',
@@ -53,12 +53,11 @@ const PASSED_THROUGH: readonly string[] = [
   'event participant: command',
   'event participant: log',
   'event log: colour',
-  // The ranges of step and speed, and what is connected outside (empty now)
+  // The ranges of step and speed
   'event state: allowed.speed.max',
   'event state: allowed.speed.min',
   'event state: allowed.step.max_ms',
   'event state: allowed.step.min_ms',
-  'event state: outside',
 ];
 
 /**

@@ -28,6 +28,9 @@ export { connect, createFront, until, watch } from './front';
 export type { ConnectOptions } from './front';
 export { ActionError } from './front-types';
 export type {
+  ConnectEntry,
+  ConnectListError,
+  ConnectTarget,
   Control,
   EndKind,
   Front,
@@ -42,6 +45,7 @@ export type {
   Intent,
   Link,
   OperationName,
+  Outside,
   Pacing,
   Reason,
   RunState,
@@ -174,6 +178,7 @@ export type {
   LauncherFields,
   LogCounts,
   Open,
+  OutsideState,
   ParticipantRole,
   ParticipantState,
   Phase,

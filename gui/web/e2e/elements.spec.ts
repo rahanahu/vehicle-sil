@@ -50,7 +50,11 @@ test.beforeAll(async () => {
 });
 
 /** A GUI server that serves the screen, with `config` as the file that a start without a file runs. */
-async function serve(config: string, features?: string): Promise<GuiServer> {
+async function serve(
+  config: string,
+  features?: string,
+  env: Record<string, string> = {},
+): Promise<GuiServer> {
   return launchGuiServer({
     launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
@@ -59,6 +63,7 @@ async function serve(config: string, features?: string): Promise<GuiServer> {
       REPLAY_TICK_MS: '50',
       REPLAY_VARIABLES: 'more',
       ...(features ? { REPLAY_FEATURES: features } : {}),
+      ...env,
     },
     port: 0,
     web: screen,
@@ -259,4 +264,58 @@ test('the time part steps a paused run, then resumes it and pauses it again', as
   await expect(status).toHaveAttribute('data-run', 'paused');
   await button('run', 'Stop').click();
   await expect(status).not.toHaveAttribute('data-run', 'paused', { timeout: RUN_TIMEOUT });
+});
+
+test('the connect part lists its network only when it is opened, and the run it starts shows the connected row', async ({
+  page,
+}) => {
+  // At the recorded pace the run of the recording is connected for about 10 s: long enough to see its row
+  const server = await serve('connect.yaml', undefined, { REPLAY_TICK_MS: '1000' });
+  cleanups.push(() => server.stop());
+  test.setTimeout(120_000);
+  const posted: { path: string; body: unknown }[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST')
+      posted.push({ path: new URL(request.url()).pathname, body: request.postDataJSON() });
+  });
+  const listed = () => posted.filter((p) => p.path === '/api/connections');
+  await page.goto(server.url);
+  await expect(page.locator('body')).toHaveAttribute('data-own', 'connected');
+  const status = page.getByTestId('status');
+  await expect(status).toHaveAttribute('data-link', 'online');
+  const connect = page.getByTestId('connect');
+  const select = connect.getByRole('combobox');
+  await expect(connect).toHaveAttribute('data-chosen', 'none');
+  await expect(select).toHaveValue('none');
+  // Opening the page asks for no list (no bridge starts on a computer that only runs SIL Kit)
+  expect(listed()).toEqual([]);
+
+  await select.focus();
+  await expect(select.locator('option[value="fake0"]')).toHaveCount(1);
+  expect(listed()).toEqual([
+    { path: '/api/connections', body: { file: 'connect.yaml', network: 'ETH_EXT' } },
+  ]);
+  // A target that the launcher says cannot be used cannot be chosen, and says why
+  await expect(select.locator('option[value="tap:lo"]')).toBeDisabled();
+  await expect(select.locator('option[value="tap:lo"]')).toContainText('not Ethernet');
+
+  await select.selectOption('fake0');
+  await expect(connect).toHaveAttribute('data-chosen', 'fake0');
+  // The check says, in the launcher's words, that the run keeps real time
+  await expect(connect.locator('.vsil-findings li[data-code="outside-speed-set"]')).toHaveText(
+    /real time/,
+  );
+  await expect(page.getByTestId('outside').locator('li')).toHaveCount(0);
+
+  await page.getByTestId('run').getByRole('button', { name: 'Start', exact: true }).click();
+  const row = page.getByTestId('outside').locator('li');
+  await expect(row).toHaveAttribute('data-network', 'ETH_EXT', { timeout: RUN_TIMEOUT });
+  await expect(row).toContainText('fake0');
+  expect(posted.filter((p) => p.path === '/api/run')).toEqual([
+    { path: '/api/run', body: expect.objectContaining({ connect: { ETH_EXT: 'fake0' } }) },
+  ]);
+  // The run goes to its end, and the row goes with it
+  await expect(status).toHaveAttribute('data-run', 'ended', { timeout: 3 * RUN_TIMEOUT });
+  await expect(page.getByTestId('outside').locator('li')).toHaveCount(0);
+  expect(listed()).toHaveLength(1);
 });

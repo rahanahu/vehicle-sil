@@ -6,6 +6,8 @@ import {
   CheckRequest,
   CheckResult,
   ConfigList,
+  Connections,
+  ConnectionsRequest,
   DashboardResponse,
   Recording,
   ScenarioList,
@@ -13,6 +15,7 @@ import {
   readAppInfo,
   readCheckResponse,
   readConfigList,
+  readConnections,
   readDashboardResponse,
   readRecording,
   readScenarioList,
@@ -125,6 +128,12 @@ export interface GuiClient {
    * the default HTTP timeout.
    */
   check(request: CheckRequest): Promise<CheckResult>;
+  /**
+   * `POST api/connections`: where one network of a configuration file can be connected on the computer of the GUI
+   * server. It starts that network's bridge to list (on Windows, Npcap may ask to raise the rights), so ask only when
+   * the user opens the choice. Waits in the queue of the checks, as long as `check`.
+   */
+  connections(request: ConnectionsRequest): Promise<Connections>;
   /** `GET api/session`: summary of the current session (null if none). Also applied to the session copy. */
   fetchSession(): Promise<SessionSummary | null>;
   /**
@@ -318,6 +327,16 @@ export function buildClient(options: ClientOptions): ClientParts {
           timeoutMs: longRequestMs(limits.get()),
         },
         readCheckResponse,
+      ),
+    connections: (body) =>
+      call(
+        {
+          method: 'POST',
+          path: 'api/connections',
+          body,
+          timeoutMs: longRequestMs(limits.get()),
+        },
+        readConnections,
       ),
     fetchSession: () =>
       new Promise<SessionSummary | null>((resolve, reject) =>

@@ -8,7 +8,7 @@ import type { FrontControls, Intent, OperationName, RunState } from './front-typ
 import { ActionError } from './front-types';
 import type { Snapshot } from './front-compose';
 import { linkOf, standsAt } from './front-compose';
-import type { LauncherEvent, RunRequest, ServerMessage } from './protocol';
+import type { CheckResult, LauncherEvent, RunRequest, ServerMessage } from './protocol';
 import { ErrorSink, Readable, Writable } from './values';
 
 /** The time operations. */
@@ -97,6 +97,8 @@ const INTENT_FIELDS = new Set([
   'speed',
   'start_paused',
   'strict',
+  'connect',
+  'time_policy',
 ]);
 
 export class FrontActions {
@@ -131,32 +133,44 @@ export class FrontActions {
   // --- run ---------------------------------------------------------------------------------------
 
   start(intent: Intent = {}, options: { file?: string } = {}): Promise<void> {
+    const request = this.requestOf(intent, options);
+    if (request instanceof ActionError) return this.fail(request);
+    const own = this.refusalOfStart();
+    if (own) return this.fail(own);
+    return this.guarded('start', () => this.src.low.run.start(request).then(() => undefined));
+  }
+
+  /** Checks what `intent` would start (`api/check`). Its failure is the caller's: it is not kept for `status.problem`. */
+  check(intent: Intent = {}, options: { file?: string } = {}): Promise<CheckResult> {
+    const request = this.requestOf(intent, options);
+    if (request instanceof ActionError) return Promise.reject(request);
+    return this.src.low.check(request).catch((error: unknown) => {
+      throw actionError(error);
+    });
+  }
+
+  /** The body of api/run and api/check for `intent`, or why it cannot be sent. */
+  private requestOf(intent: Intent, options: { file?: string }): RunRequest | ActionError {
     const file = options.file ?? this.src.initialFile();
     if (file === null) {
-      return this.fail(
-        new ActionError(
-          'no-file',
-          'no configuration file was given and the server has none to start with: pass { file } (a path from client.low.configs())',
-          'refused',
-        ),
+      return new ActionError(
+        'no-file',
+        'no configuration file was given and the server has none to start with: pass { file } (a path from client.low.configs())',
+        'refused',
       );
     }
     // A field the client does not know (a misspelt `scenaro` from plain JavaScript) would be dropped and the run
     // started without it: refuse it instead.
     const unknown = Object.keys(intent).filter((k) => !INTENT_FIELDS.has(k));
     if (unknown.length > 0) {
-      return this.fail(
-        new ActionError(
-          'unknown-field',
-          `start does not know ${unknown.join(', ')}: the fields are ${[...INTENT_FIELDS].join(', ')}`,
-          'refused',
-        ),
+      return new ActionError(
+        'unknown-field',
+        `the intent has ${unknown.join(', ')}, which start and check do not know: the fields are ${[...INTENT_FIELDS].join(', ')}`,
+        'refused',
       );
     }
-    const own = this.refusalOfStart();
-    if (own) return this.fail(own);
     // The server takes the intent as the request file has it: a choice that is not made is not sent (no null)
-    const request: RunRequest = {
+    return {
       file,
       disable: intent.disable ?? [],
       ...(intent.vehicle_sil_run_request
@@ -170,8 +184,9 @@ export class FrontActions {
       ...(intent.speed !== undefined ? { speed: intent.speed } : {}),
       ...(intent.start_paused ? { start_paused: true } : {}),
       ...(intent.strict ? { strict: true } : {}),
+      ...(intent.connect ? { connect: intent.connect } : {}),
+      ...(intent.time_policy !== undefined ? { time_policy: intent.time_policy } : {}),
     };
-    return this.guarded('start', () => this.src.low.run.start(request).then(() => undefined));
   }
 
   /** What the client refuses before it sends a start: the connection, and a start of this page still on its way. */

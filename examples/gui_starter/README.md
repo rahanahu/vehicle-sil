@@ -90,6 +90,10 @@ A variable is written `<participant>.<variable>`, cut at the first dot (`Engine.
 
 What the starter leaves out, because the sample screens do it: choosing the configuration file, **Check**, and a field to choose any variable and type a value. To choose the file, list the files with `client.low.configs()` and start with your own button: `client.run.start(intent, { file })` (`<vsil-run-controls>` starts the file of the last run). `client.low` is the lower library of the same connection (`check`, `variables.bind` and more); see "[Build widgets (`bind`)](../../gui/client/README.md#build-widgets-bind)" for widgets of your own.
 
+### Connect a network outside
+
+To connect a `can` or `ethernet` network of your configuration file to a real bus, add `<vsil-connect network="<network>">` (where it is connected in the next run; it starts at SIL Kit only and lists the targets of the GUI server's PC only when it is opened) and `<vsil-outside>` (the connected networks while the run goes). The starter has neither, because the network names are those of your configuration file. A run connected outside keeps real time; `pageIntent.update({ time_policy: 'free' })` from your script lifts that. How to read a request file of a test bench into the next run and save one is in "Connect a network outside (optional)" in the [guide](../../docs/howto/gui-screen.md#connect-a-network-outside-optional).
+
 ### A project with a framework
 
 The library comes as a typed npm package (`.tgz`) with the parts. Run `npm install <that .tgz>` in your project, then import it as `@vehicle-sil/gui-client`. It has no dependencies.

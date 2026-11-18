@@ -846,6 +846,8 @@ export type LauncherEvent =
   | (EventBase & { event: 'command' } & CommandReport)
   /** What the run accepts now (docs/simulation-events.md): written whenever that changes. */
   | (EventBase & { event: 'state' } & StateReport)
+  /** The counts of a network that `--connect` connected (at most once a second for each network). */
+  | (EventBase & { event: 'outside'; network: string; to_outside: number; from_outside: number })
   /** A scenario step started (status running) or was decided. */
   | (EventBase & { event: 'scenario_step'; step: ScenarioStep })
   | (EventBase & { event: 'result'; result: RunResult });
@@ -972,8 +974,42 @@ const readLauncherAllowedItem: Reader<LauncherAllowedItem> = (value, path) => {
 };
 
 /**
- * The state event: where the run stands and what it accepts now. Keys not named here (`outside`) are in `raw`. The
- * set of keys of `allowed` can grow.
+ * One network that `--connect` connected to a real bus, as `outside[]` of the state event has it ("The state of the
+ * link and the bus" in docs/simulation-events.md). The counts are in the `outside` event.
+ */
+export interface OutsideState extends FromLauncher {
+  network: string;
+  /** What `--connect` gave for the network. */
+  target: string | null;
+  /** The bridge (`bridge.<network>`). */
+  participant: string | null;
+  /** Ethernet: up, down or unknown; null before the bridge has said. */
+  link: Open<'up' | 'down' | 'unknown'> | null;
+  /** CAN: active, passive, bus-off or unknown; null for Ethernet, or before the bridge has said. */
+  bus: Open<'active' | 'passive' | 'bus-off' | 'unknown'> | null;
+  /** Frames went to the bus and nothing came from a device there for 10 s. */
+  nothing_received: boolean;
+  condition: Open<'ok' | 'interrupted' | 'degraded'>;
+  /** Codes of why the condition is not ok, in the launcher's order (empty when it is). */
+  reasons: string[];
+}
+
+const readOutsideState = (value: unknown, path: string, u?: Unreadable): OutsideState => {
+  const f = object(value, path);
+  return withRaw(f, {
+    network: field(f, path, 'network', string),
+    target: field(f, path, 'target', soft(nullable(string), null, u)),
+    participant: field(f, path, 'participant', soft(nullable(string), null, u)),
+    link: field(f, path, 'link', soft(nullable(string), null, u)),
+    bus: field(f, path, 'bus', soft(nullable(string), null, u)),
+    nothing_received: field(f, path, 'nothing_received', soft(boolean, false, u)),
+    condition: field(f, path, 'condition', lenient(string, '', u)),
+    reasons: field(f, path, 'reasons', soft(items(string, u), [], u)),
+  });
+};
+
+/**
+ * The state event: where the run stands and what it accepts now. The set of keys of `allowed` can grow.
  */
 export interface StateReport {
   /** Goes up with each change: tells a newer state from the same one sent again. */
@@ -999,6 +1035,12 @@ export interface StateReport {
   scenario: boolean | null;
   /** The operations: pause, resume, step, speed, run_until, stop, write. */
   allowed: Record<string, LauncherAllowedItem>;
+  /**
+   * The networks that `--connect` connected, in the order of the bridges; empty without `--connect`, and in a run that
+   * a `role: bridge` participant of the file connects (so it does not tell whether the run is connected outside).
+   * The parsers always set it (empty from a launcher that does not write it); absent on an object built by hand.
+   */
+  outside?: OutsideState[];
 }
 
 export function readStateFields(f: Fields, path: string, u?: Unreadable): StateReport {
@@ -1028,6 +1070,16 @@ export function readStateFields(f: Fields, path: string, u?: Unreadable): StateR
     ),
     scenario: field(f, path, 'scenario', soft(nullable(boolean), null, u)),
     allowed: field(f, path, 'allowed', lenient(record(readLauncherAllowedItem), {}, u)),
+    outside: field(
+      f,
+      path,
+      'outside',
+      soft(
+        items((v, p) => readOutsideState(v, p, u), u),
+        [],
+        u,
+      ),
+    ),
   };
 }
 
@@ -1141,6 +1193,14 @@ function readEventFields(
       return { ...base, event: kind, ...readCommandFields(f, path, u) };
     case 'state':
       return { ...base, event: kind, ...readStateFields(f, path, u) };
+    case 'outside':
+      return {
+        ...base,
+        event: kind,
+        network: field(f, path, 'network', string),
+        to_outside: field(f, path, 'to_outside', integer),
+        from_outside: field(f, path, 'from_outside', integer),
+      };
     case 'scenario_step':
       // The step's fields sit directly in the event line
       return { ...base, event: kind, step: readScenarioStepFields(f, path, u) };
