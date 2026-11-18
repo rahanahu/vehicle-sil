@@ -410,7 +410,7 @@ While the run is paced at a numeric speed (not as fast as possible), the screen 
 | `POST api/time` `{"command": "step", "ms": <ms>}` | Step (only while paused; the launcher rounds up to a multiple of the time step) |
 | `POST api/time` `{"command": "speed", "value": <number or "max">}` | Change the speed (a pause stays a pause) |
 
-`api/time` passes the same checks as the rest of the API (token, `Host`, `Origin`, JSON body). The server writes the command as one line to the launcher's stdin and returns at once, without waiting for the launcher's answer (so a request never hangs on a stuck launcher; even with a launcher that does not read its input, it returns within about 2 seconds). Whether the command was accepted arrives in the launcher's `command` event. For the shapes and the error `code`s, see [gui/protocol/README.md](../gui/protocol/README.md).
+`api/time` passes the same checks as the rest of the API (token, `Host`, `Origin`, JSON body). The server writes the command as one line to the launcher's stdin and returns at once, without waiting for the launcher's answer (so a request never hangs on a stuck launcher; even with a launcher that does not read its input, it returns within about 2 seconds). Whether the command was accepted arrives in the launcher's `command` event. A command may carry an `id` (a whole number from 0 to 2^53); the launcher returns it in the `command` event that answers it, so a screen can tell that answer from the answers to other commands. For the shapes and the error `code`s, see [gui/protocol/README.md](../gui/protocol/README.md).
 
 ## Scenarios
 

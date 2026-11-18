@@ -337,8 +337,8 @@ void stdin_stop(const Options& o)
     require(contains(commands[0], "\"command\":null,\"source\":\"stdin\",\"accepted\":false,\"message\":\"the line is "
                                   "not a JSON object: "),
             "a line that is no JSON object:\n" + commands[0]);
-    require(contains(commands[1], "\"message\":\"unknown command 'jump': the commands are stop, pause, resume, step and "
-                                  "speed\""),
+    require(contains(commands[1], "\"message\":\"unknown command 'jump': the commands are stop, pause, resume, step, "
+                                  "run_until and speed\""),
             "an unknown command:\n" + commands[1]);
     require(contains(commands[2], "\"command\":\"stop\",\"source\":\"stdin\",\"accepted\":true,\"message\":null,\"reason\":null,\"id\":null}"),
             "the stop:\n" + commands[2]);

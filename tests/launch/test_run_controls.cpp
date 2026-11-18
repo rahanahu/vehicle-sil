@@ -457,10 +457,11 @@ TEST_CASE(the_state_of_a_run_with_a_scenario_refuses_what_only_a_control_server_
     t.controls.publish();
     const RunState s = t.states.back();
     CHECK(s.scenario);
-    // Standard input's commands are taken; the write and the run_until are a control server's.
+    // Standard input's commands are taken, the run_until among them; the write is a control server's.
     CHECK(s.allowed.pause.ok && s.allowed.resume.ok && s.allowed.speed.ok && s.allowed.stop.ok);
     CHECK(!s.allowed.write.ok && s.allowed.write.reason == "scenario-running");
-    CHECK(!s.allowed.run_until.ok && s.allowed.run_until.reason == "scenario-running");
+    CHECK(s.allowed.run_until == t.controls.allowed(Operation::RunUntil, Entry::Stdin));
+    CHECK(t.controls.allowed(Operation::RunUntil, Entry::ControlServer).reason == "scenario-running");
     // The same answers as the rules give those entries.
     CHECK(s.allowed.write == t.controls.allowed(Operation::Write, Entry::ControlServer));
     CHECK(s.allowed.pause == t.controls.allowed(Operation::Pause, Entry::Stdin));
@@ -468,9 +469,9 @@ TEST_CASE(the_state_of_a_run_with_a_scenario_refuses_what_only_a_control_server_
 
 TEST_CASE(the_state_of_a_run_without_a_control_server_refuses_what_only_a_control_server_has)
 {
-    // Whether a scenario plays or not, and wherever the run stands: nothing can send a run_until
-    // or a write, and the state says so with one reason. What standard input takes is as with a
-    // control server.
+    // Whether a scenario plays or not, and wherever the run stands: nothing can send a write, and
+    // the state says so with one reason. What standard input takes (the run_until too) is as with
+    // a control server.
     for (const bool scenario : {false, true})
     {
         Told t(false, scenario, false);
@@ -479,18 +480,15 @@ TEST_CASE(the_state_of_a_run_without_a_control_server_refuses_what_only_a_contro
             t.controls.publish();
             with.controls.publish();
             const RunState s = t.states.back();
-            for (const auto* a : {&s.allowed.run_until, &s.allowed.write})
-            {
-                CHECK(!a->ok);
-                CHECK(a->reason == "no-control-server");
-                CHECK(a->message.find("--control <address>") != std::string::npos);
-                CHECK(!a->range && !a->caution);
-            }
-            CHECK(s.allowed.run_until.message.find("send run_until") != std::string::npos);
+            CHECK(!s.allowed.write.ok);
+            CHECK(s.allowed.write.reason == "no-control-server");
+            CHECK(s.allowed.write.message.find("--control <address>") != std::string::npos);
+            CHECK(!s.allowed.write.range && !s.allowed.write.caution);
             CHECK(s.allowed.write.message.find("write a variable") != std::string::npos);
             const RunState& other = with.states.back();
             CHECK(s.allowed.pause == other.allowed.pause && s.allowed.resume == other.allowed.resume &&
-                  s.allowed.step == other.allowed.step && s.allowed.speed == other.allowed.speed &&
+                  s.allowed.step == other.allowed.step && s.allowed.run_until == other.allowed.run_until &&
+                  s.allowed.speed == other.allowed.speed &&
                   s.allowed.stop == other.allowed.stop);
             // The rules themselves answer as before: the state alone knows that the entry is not there.
             CHECK(other.allowed.write == t.controls.allowed(Operation::Write, Entry::ControlServer));
@@ -518,6 +516,44 @@ TEST_CASE(the_state_of_a_run_without_a_control_server_refuses_what_only_a_contro
     StopRequests stops;
     RunControls plain(stops);
     CHECK(plain.state().allowed.write.reason == "no-control-server");
+}
+
+TEST_CASE(a_run_until_of_stdin_is_refused_by_the_time_lock_and_the_state_says_so)
+{
+    // With and without a control server: the state's run_until is standard input's answer, so
+    // the lock's reason is there in both, and the command gets the same answer.
+    for (const bool control_server : {false, true})
+    {
+        StopRequests stops;
+        std::vector<RunState> states;
+        std::vector<std::string> answers;
+        RunControls::Observers observers;
+        observers.on_state = [&states](const RunState& s) { states.push_back(s); };
+        observers.on_command = [&answers](const Command& c, std::string_view source) {
+            answers.push_back(*c.name + " " + std::string(source) + " " + (c.accepted ? "accepted" : c.reason));
+        };
+        RunControls controls(stops, false, std::move(observers));
+        controls.set_control_server(control_server);
+        Command until = command("run_until");
+        until.at_ms = 5000;
+        // Before the lock is known it waits; the lock then refuses it.
+        CHECK(controls.time().apply(until, "stdin").pending);
+        vehicle_sil::launch::TimeLock lock;
+        lock.locked = true;
+        lock.connected = {"CAN1"};
+        controls.set_time_lock(lock);
+        CHECK((answers == std::vector<std::string>{"run_until stdin outside-real-time"}));
+        CHECK(!states.empty());
+        const RunState::Operations& allowed = states.back().allowed;
+        CHECK(!allowed.run_until.ok && allowed.run_until.reason == "outside-real-time");
+        CHECK(allowed.run_until == controls.allowed(Operation::RunUntil, Entry::Stdin));
+        // After the lock: refused at once, and nothing reaches the simulation.
+        const Command late = controls.time().apply(until, "stdin");
+        CHECK(!late.accepted && !late.pending && late.reason == "outside-real-time");
+        CHECK(late.message.find("run_until is refused") != std::string::npos);
+        CHECK(late.message.find("--time-policy free") != std::string::npos);
+        CHECK_EQ(answers.size(), std::size_t{2});
+    }
 }
 
 TEST_CASE(the_state_says_the_hold_while_it_lasts)

@@ -3,8 +3,8 @@
 Each message is turned into text once, however many screens get it. A screen that reads too slowly does not
 make the server keep everything for it: when its queue is over its limit (messages or bytes), the log lines and
 the events that are not in the summary are dropped from the queue and counted in one `dropped` message (a
-launcher's `log_dropped` adds its counts to the log lines of its sources), `time` events are reduced to the last
-one, and heartbeats are dropped without a count (the server watches them; a screen does not need them). Only when that is not enough is the queue emptied, and the screen gets
+launcher's `log_dropped` adds its counts to the log lines of its sources), `time` and `state` events are reduced to the last
+one of each, and heartbeats are dropped without a count (the server watches them; a screen does not need them). Only when that is not enough is the queue emptied, and the screen gets
 `resync` followed by a fresh hello (what a reconnection gets).
 
 A screen that asked for it in its auth (`session_without_check`) gets the `session` messages without the summary's
@@ -79,8 +79,8 @@ class Outgoing:
                 for source, count in message["event"].get("sources", {}).items():
                     key = log_key(source) if log_key is not None else source
                     self.counts[key] = self.counts.get(key, 0) + count
-            elif event == "time":
-                self.kind = "time"
+            elif event in ("time", "state"):  # only the last of each is worth sending to a slow screen
+                self.kind = event
             elif event == "heartbeat":
                 self.kind = "beat"
             elif event not in SUMMARY_EVENTS:
@@ -161,20 +161,20 @@ class Client:
         self.sheds += 1
         kept: deque = deque()
         notices: dict[int | None, _Dropped] = {}
-        last_time: dict[int | None, Outgoing] = {}
+        last_of: dict[tuple[str, int | None], Outgoing] = {}
         for item in self.items:
-            if isinstance(item, Outgoing) and item.kind == "time":
-                last_time[item.session] = item
+            if isinstance(item, Outgoing) and item.kind in ("time", "state"):
+                last_of[item.kind, item.session] = item
         for item in self.items:
             if isinstance(item, _Dropped) and item.session not in notices:
                 notices[item.session] = item
                 kept.append(item)
                 continue
             if not isinstance(item, Outgoing) or item.kind == "keep" or \
-                    (item.kind == "time" and last_time.get(item.session) is item):
+                    (item.kind in ("time", "state") and last_of.get((item.kind, item.session)) is item):
                 kept.append(item)
                 continue
-            if item.kind in ("time", "beat"):
+            if item.kind in ("time", "state", "beat"):
                 continue
             notice = notices.get(item.session)
             if notice is None:
@@ -227,6 +227,7 @@ class Hub:
         self.max_bytes = max_bytes
         self.clients: set[Client] = set()
         self.closed = False
+        self.told_allowed_rev = 0  # the largest `allowed.rev` sent to every screen (in a `session` or `allowed`)
 
     def client(self, send: Callable[[str], Awaitable[None]]) -> Client:
         return Client(send, self.limit, self.max_bytes)
@@ -236,6 +237,11 @@ class Hub:
         bug) is left out and logged, and the others are sent. Whether every message could be."""
         items, ok = [], True
         for m in messages:
+            told = m.get("allowed") if m.get("type") == "allowed" else \
+                m["session"].get("allowed") if m.get("type") == "session" and isinstance(m.get("session"), dict) \
+                else None
+            if isinstance(told, dict) and isinstance(told.get("rev"), int):
+                self.told_allowed_rev = max(self.told_allowed_rev, told["rev"])
             try:
                 items.append(Outgoing(m, log_key))
             except (ValueError, TypeError, RecursionError, KeyError):

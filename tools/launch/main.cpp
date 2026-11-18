@@ -125,7 +125,8 @@ constexpr const char* kUsage =
     "                              at most <ms> for it to take the result (1000 or more; default 30000)\n"
     "  --stdin-commands            run: read commands from stdin, one JSON object per line: {\"command\":\"stop\"}\n"
     "                              stops in order (twice: without waiting); the end of stdin stops as well;\n"
-    "                              pause, resume, step (with \"ms\") and speed (with \"value\") control the time\n"
+    "                              pause, resume, step (with \"ms\"), run_until (with \"at_ms\") and speed (with\n"
+    "                              \"value\") control the time\n"
     "  --start-paused              run --stdin-commands or --control: stand still at 0 until a resume or step\n"
     "                              command (with --control: before the first step, so that a client's writes\n"
     "                              take effect at 0)\n"
@@ -1217,7 +1218,7 @@ int run(const cli::Args& args, launch::EventStream* events)
             new launch::RunControls(g_stops, options.start_paused, std::move(observers), args.has("scenario"));
         // The state names the first stop request as the result does.
         shared().controls->set_stop_name(interrupt_name);
-        // Without --control nothing can send a run_until or a write: the state says so.
+        // Without --control nothing can send a write: the state says so.
         shared().controls->set_control_server(control);
         options.controls = shared().controls;
     }

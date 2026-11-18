@@ -364,7 +364,7 @@ With the state, each peer's result says which of its writes took effect and whic
 
 ### Variable map (`set_variable_map()`)
 
-`set_variable_map(participant, map)` (`MappedSchema` in `control/variable_map.hpp`) shows that participant's variables to every reader and writer with the mapped names and values. The launcher passes it from `participants[].variables` in the configuration file (on the first call of `RunControl::hub()`, before any Agent connects).
+`set_variable_map(participant, map)` (`MappedSchema` in `control/variable_map.hpp`) shows that participant's variables to every reader and writer with the mapped names and values. The launcher passes it from `participants[].variables` in the configuration file (on the first call of `RunControl::shared_hub()`, at the beginning of the run, before any Agent connects).
 
 The conversion happens in only 4 places in the Hub. The list that is shown is built outside the lock and swapped in inside it; the other 3 conversions run inside the lock. The transport and the reading APIs (tap, latest values, subscriptions, the Control Server) do not know about the conversion.
 

@@ -80,7 +80,9 @@
 // - The RunConnection itself (the thread's own hold): the transport, the controller, the registry,
 //   and through the transport's destructor the hub (control::Hub::agent_ended() for every link
 //   that is still open). The hub then tells its subscriptions, which keep themselves (the hub
-//   holds them weakly), and no tap: Runner::run() takes the tap off before the hand-over.
+//   holds them weakly), and no tap: Runner::run() takes the tap off before the hand-over. The
+//   thread's share of the hub may be the last one (the Runner and a control server have gone
+//   meanwhile): then the hub is destroyed on the closing thread, which frees the hub's own only.
 // - The functions given to the controller's participant by the transport (the observer of the
 //   peers' states, the three subscribers) hold the transport's own state, which keeps itself and
 //   does nothing once the transport has gone. Those of the controller (the step, the hold, the
@@ -88,14 +90,17 @@
 // - The start window's function (Runner::run() gives it to the controller; it names the Runner,
 //   the transport and the controller): never called by the closing thread. It runs only inside
 //   SimulationController::start(), which waits for it before it returns or throws, and the
-//   controller's destructor completes a window that opens later without calling it.
+//   controller's destructor completes a window that opens later without calling it. The
+//   controller keeps the function until it goes, so the Runner it names may be gone by then:
+//   the function is destroyed there, not called (it holds pointers only).
 // - Nothing of TimeCommands: it is detached on the main thread before the hand-over, and has no
 //   function in the controller (it calls the controller, never the other way round). The same
 //   holds for the watch of the simulation (FailureCheck, SimulationWatch: they ask the controller
 //   on the main thread and leave nothing in it) and for the scenario's thread (joined before).
-// So a closing thread that was left touches the RunConnection only. run_file() still never
-// destroys the Runner of such a run (and the caller ends the process without destructors): that
-// is kept as it was, and is no longer what the closing thread's safety rests on.
+// So a closing thread that was left touches the RunConnection only, and run_file() destroys the
+// Runner of such a run as that of any other: nothing of the Runner has to outlive run(). What is
+// left for the caller is to end the process without the destructors of static objects (the thread
+// is inside SIL Kit): RunOutcome::connection_not_closed_ms.
 #include "vehicle_sil/launch/run.hpp"
 
 #include "run_close.hpp"
@@ -121,6 +126,7 @@
 #include <silkit/vendor/CreateSilKitRegistry.hpp>
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -192,10 +198,11 @@ using detail::RunStart;
 using detail::RunWatch;
 using detail::uri_for_participants;
 
-/// One run: its parts, and the order of its phases (run()). The hub is made with the Runner and
-/// lives as long as it (and as whoever else holds it). The registry, the controller and the hub's
-/// transport live in run() only, in a RunConnection; the parts are given the controller in the
-/// calls that need it.
+/// One run: its parts, and the order of its phases (run()). The hub is made with the Runner (by
+/// its RunControl) and lives as long as it (and as whoever else holds it). The registry, the
+/// controller and the hub's transport live in run() only, in a RunConnection; the parts are given
+/// the controller in the calls that need it. A Runner can be destroyed whenever run() has
+/// returned, also while the closing thread of its run is still closing (it was left at its limit).
 class Runner
 {
     static std::vector<std::string> participant_names(const SimulationConfig& config)
@@ -216,7 +223,7 @@ public:
       own_controls_(std::move(own)), check_(std::move(checked)),
       ctx_{*check_.config, check_, options, check_.scenario && check_.scenario->scenario ? &*check_.scenario->scenario : nullptr,
            controls, controls.time()},
-      out_(ctx_), hub_(std::make_shared<control::Hub>()), control_(ctx_, out_, hub_),
+      out_(ctx_), control_(ctx_, out_),
       samples_(participant_names(*check_.config), detail::traffic_plan(*check_.config, check_)),
       notes_(ctx_, participants_), scenario_(ctx_, out_, control_, samples_),
       start_(ctx_, out_, control_, notes_, scenario_, participants_, outcome_),
@@ -272,8 +279,10 @@ public:
         // ECUs' control agents, on the controller's participant), with the hub. Before the guards
         // below, so that it goes after them: if run() leaves before close_connection(), the three
         // go here, on this thread, in the connection's order (transport, controller, registry).
-        // run() is its only holder until it gives it to close_connection().
-        auto connection = std::make_shared<RunConnection>(hub_);
+        // run() is its only holder until it gives it to close_connection(). Its hub is the run's
+        // one hub (RunControl's, which gets the variable maps here): the transport below is made
+        // on the connection's hub, so what the closing thread reaches is what the connection keeps.
+        auto connection = std::make_shared<RunConnection>(control_.shared_hub());
         // Whatever happens, the time commands end with the run (they are refused from then on),
         // and before the controller they are given to goes: the thread that reads the commands
         // may apply one at any time.
@@ -381,9 +390,9 @@ public:
             // Before the participants start and before the controller does: SIL Kit connects the
             // publisher of the commands and the subscribers with every participant that starts.
             connection->transport =
-                std::make_unique<control_silkit::HubTransport>(control_.hub(), connection->controller->runtime());
+                std::make_unique<control_silkit::HubTransport>(*connection->hub, connection->controller->runtime());
             // Called inside SimulationController::start() only (wait_for_start() below), never
-            // once that has returned: not by the closing thread.
+            // once that has returned: not by the closing thread, which may outlive this Runner.
             connection->controller->set_start_window(
                 [this, t = connection->transport.get(), c = connection->controller.get()](const StartWindow& window) {
                     start_.window(*t, *c, window);
@@ -534,10 +543,13 @@ private:
     /// hub (RunOutcome::connection_not_closed_ms), and the run goes on to its result.
     void close_connection(std::shared_ptr<RunConnection> connection)
     {
+        // The tap reads the controller's time and belongs to this Runner, which may be destroyed
+        // while the closing thread still closes: it is off before the thread has the connection.
+        assert(!samples_.tapped());
         const int interrupts = ctx_.interrupts();
         // The thread keeps the connection, and reaches nothing else of this run (the list at the
-        // top of this file). run_file() never destroys the Runner of a run whose thread was left
-        // all the same.
+        // top of this file): the Runner may be destroyed while the thread is still closing.
+        // `interrupted` is asked on this thread, during the wait only.
         const auto left = detail::close_connection_within(std::move(connection), close_limit_, ctx_.options.poll,
                                                           [this, interrupts] { return ctx_.interrupts() > interrupts; });
         if (!left)
@@ -556,17 +568,15 @@ private:
     // outlive run()); they are destroyed in the reverse order.
     /// Without RunOptions::controls: what ctx_ refers to, kept here for the same reason as check_.
     std::unique_ptr<OwnControls> own_controls_;
-    /// What ctx_ refers to: kept here, so that it stays with a Runner that run_file() never
-    /// destroys (a connection that did not close).
+    /// What ctx_ refers to (the check with the bridges of --connect, which is not run_file()'s report).
     const CheckReport check_;
     const RunContext ctx_;
     RunOutcome outcome_; ///< the main thread's: the other threads of the run never see it
     RunOutput out_;
-    /// The hub of this run. Before the parts that use it (control_, samples_, scenario_), so that it
-    /// outlives them; the RunConnection of run() and whoever was given it by a callback of
-    /// RunOptions hold it too.
-    const std::shared_ptr<control::Hub> hub_;
-    RunControl control_; ///< before scenario_: the scenario's engine and port use the hub through it
+    /// Makes and holds the hub of this run; the RunConnection of run() and whoever was given the
+    /// hub by a callback of RunOptions hold it too. Before samples_ and scenario_, which use the
+    /// hub until they are destroyed (the tap, the scenario's engine and port).
+    RunControl control_;
     RunSamples samples_; ///< after control_ (its tap is on the hub), before scenario_ (which takes from it)
     RunNotes notes_;
     RunScenario scenario_;
@@ -609,8 +619,7 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
             emit(*options.events);
         }
     };
-    // The controls of this run: the caller's, or its own, which go with the Runner once there is
-    // one (run_file() may never destroy it).
+    // The controls of this run: the caller's, or its own, which go with the Runner once there is one.
     std::unique_ptr<OwnControls> own = options.controls == nullptr ? std::make_unique<OwnControls>(options) : nullptr;
     RunControls& controls = own ? own->controls : *options.controls;
     RunReport report;
@@ -648,28 +657,23 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
         }
     });
     const std::filesystem::path base = path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
-    auto runner = std::make_unique<Runner>(detail::with_bridges(report.check), base, options, controls, std::move(own));
-    report.run = runner->run();
+    // Destroyed when run_file() returns, also if the run's closing thread was left at its limit
+    // (RunOutcome::connection_not_closed_ms): that thread uses nothing of the Runner.
+    Runner runner(detail::with_bridges(report.check), base, options, controls, std::move(own));
+    report.run = runner.run();
     report.findings = assess_run(*report.run);
     {
         // run --timeline: the file has the scenario's findings of the check and of the run.
         std::vector<Finding> findings = report.check.findings;
         findings.insert(findings.end(), report.findings.begin(), report.findings.end());
-        if (const std::string error = runner->write_timeline(report.check, std::move(findings)); !error.empty())
+        if (const std::string error = runner.write_timeline(report.check, std::move(findings)); !error.empty())
         {
             report.run->timeline_error = error;
             report.findings = assess_run(*report.run);
         }
     }
-    runner->publish_findings(true);
+    runner.publish_findings(true);
     controls.set_phase(Phase::Ended);
-    if (report.run->connection_not_closed_ms)
-    {
-        // A thread of the run still closes the connection, and may use the parts of the run for
-        // as long as the process lives: they are never destroyed. The participants' processes
-        // have ended, and their logs are written line by line.
-        static_cast<void>(runner.release());
-    }
     return report;
 }
 

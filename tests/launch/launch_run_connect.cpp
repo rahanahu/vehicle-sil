@@ -36,7 +36,8 @@
 //   connect_time_locked         the time commands of a run that keeps real time: a pause and a
 //                               speed written at once (before the configuration is read) and
 //                               again while it runs are refused with outside-real-time, in their
-//                               order; a speed of 1 and a resume are taken; the state says the same;
+//                               order, and so are a step and a run_until of standard input; a speed
+//                               of 1 and a resume are taken; the state says the same;
 //                               no finding. A file that cannot be read: what was written at once
 //                               is refused with not-running.
 //   connect_time_changed        with --time-policy free: paused while it runs, then a speed, a
@@ -598,14 +599,16 @@ void connect_time_locked(const Options& base)
         live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
         // While it runs: the same answers.
         live.write("{\"command\":\"pause\",\"id\":5}\n{\"command\":\"speed\",\"value\":\"max\",\"id\":6}\n"
-                   "{\"command\":\"step\",\"ms\":10,\"id\":7}\n{\"command\":\"speed\",\"value\":1,\"id\":8}\n");
-        live.wait_for({"\"event\":\"command\"", "\"id\":8"});
+                   "{\"command\":\"step\",\"ms\":10,\"id\":7}\n{\"command\":\"run_until\",\"at_ms\":60000,\"id\":8}\n"
+                   "{\"command\":\"speed\",\"value\":1,\"id\":9}\n");
+        live.wait_for({"\"event\":\"command\"", "\"id\":9"});
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish();
         require(status && status->code == 130, "stopped by a command: exit code " + code_text(status) + "\n" + out_of(lines));
         const std::vector<std::string> expected{"pause 1 outside-real-time", "speed 2 outside-real-time", "speed 3 accepted",
                                                 "resume 4 accepted",         "pause 5 outside-real-time", "speed 6 outside-real-time",
-                                                "step 7 outside-real-time",  "speed 8 accepted",          "stop null accepted"};
+                                                "step 7 outside-real-time",  "run_until 8 outside-real-time",
+                                                "speed 9 accepted",          "stop null accepted"};
         require(answers(lines) == expected, "each command has its answer, in the order they were written:\n" + out_of(lines));
         const std::string pause = events_with(lines, {"\"event\":\"command\"", "\"id\":1}"}).front();
         require(contains(pause, "\"accepted\":false,") && contains(pause, "\"reason\":\"outside-real-time\"") &&
@@ -624,9 +627,10 @@ void connect_time_locked(const Options& base)
         const std::string& state = states.front();
         require(contains(state, "\"pause\":{\"ok\":false,\"reason\":\"outside-real-time\"") &&
                     contains(state, "\"step\":{\"ok\":false,\"reason\":\"outside-real-time\"") &&
+                    contains(state, "\"run_until\":{\"ok\":false,\"reason\":\"outside-real-time\"") &&
                     contains(state, "\"resume\":{\"ok\":true,") && contains(state, "\"stop\":{\"ok\":true,") &&
                     contains(state, "\"speed\":{\"ok\":true,\"reason\":null,\"message\":null,\"caution\":null,\"min\":1,\"max\":1}"),
-                "the state refuses a pause and a step, and takes the speed 1 only:\n" + state);
+                "the state refuses a pause, a step and a run_until, and takes the speed 1 only:\n" + state);
         for (const std::string& line : events_with(lines, {"\"event\":\"state\""}))
         {
             // The first state of a run comes with its first phase, before the configuration is

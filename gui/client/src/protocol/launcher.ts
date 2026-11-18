@@ -819,6 +819,8 @@ export type LauncherEvent =
   | (EventBase & { event: 'finding'; finding: Finding })
   | (EventBase & { event: 'time' } & TimeReport)
   | (EventBase & { event: 'command' } & CommandReport)
+  /** What the run accepts now (docs/simulation-events.md): written whenever that changes. */
+  | (EventBase & { event: 'state' } & StateReport)
   /** A scenario step started (status running) or was decided. */
   | (EventBase & { event: 'scenario_step'; step: ScenarioStep })
   | (EventBase & { event: 'result'; result: RunResult });
@@ -874,6 +876,13 @@ export interface CommandReport {
    * otherwise.
    */
   ms: number | null;
+  /** Why it was not accepted, as a code that stays the same (an entry of `reason` in the launcher's documents). null if accepted. */
+  reason: string | null;
+  /**
+   * The `id` the line had (the GUI server passes the `id` of POST api/time on), so an answer is tied to the command it
+   * answers. null when the line had none, and from a launcher before `state`.
+   */
+  id: number | null;
 }
 
 /**
@@ -889,8 +898,106 @@ export function readCommandFields(f: Fields, path: string, u?: Unreadable): Comm
     accepted: field(f, path, 'accepted', boolean),
     message: field(f, path, 'message', soft(nullable(string), null, u)),
     ms: field(f, path, 'ms', soft(nullable(integer), null, u)),
+    reason: field(f, path, 'reason', soft(nullable(string), null, u)),
+    id: field(f, path, 'id', soft(nullable(integer), null, u)),
   };
 }
+
+/** A reason with an English sentence: the `caution` of an operation the launcher accepts with a warning. */
+export interface Caution {
+  code: string;
+  message: string;
+}
+
+/**
+ * Whether the launcher accepts one operation now (an entry of `allowed` in the `state` event). `ok` says "it would
+ * accept it", not "it would change something". The other keys of the entry (`min_ms`, `max_ms` of step, `min`, `max`
+ * of speed) are in `raw`.
+ */
+export interface LauncherAllowedItem extends FromLauncher {
+  ok: boolean;
+  /** Why not: a code that stays the same. null if ok. */
+  reason: string | null;
+  /** Why not, in one English sentence. null if ok. */
+  message: string | null;
+  /** Accepted, with a warning. null if none. */
+  caution: Caution | null;
+}
+
+const readLauncherAllowedItem: Reader<LauncherAllowedItem> = (value, path) => {
+  const f = object(value, path);
+  return withRaw(f, {
+    ok: field(f, path, 'ok', boolean),
+    reason: field(f, path, 'reason', soft(nullable(string), null)),
+    message: field(f, path, 'message', soft(nullable(string), null)),
+    caution: field(
+      f,
+      path,
+      'caution',
+      soft(
+        nullable((v, p): Caution => {
+          const c = object(v, p);
+          return { code: field(c, p, 'code', string), message: field(c, p, 'message', string) };
+        }),
+        null,
+      ),
+    ),
+  });
+};
+
+/**
+ * The state event: where the run stands and what it accepts now. Keys not named here (`outside`) are in `raw`. The
+ * set of keys of `allowed` can grow.
+ */
+export interface StateReport {
+  /** Goes up with each change: tells a newer state from the same one sent again. */
+  rev: number;
+  /** The phase (as in the phase event). */
+  phase: string;
+  /** Whether the simulation stands still. null if not written. */
+  paused: boolean | null;
+  /** The speed that was asked for. null before the launcher knows it. */
+  speed: Speed;
+  /** Whether the run keeps to its speed: not-paced, on-time or late. */
+  pacing: Open<'not-paced' | 'on-time' | 'late'> | null;
+  /** The stop requests the run has had, and the first source. */
+  stop: { requests: number; by: string | null } | null;
+  /** Whether the run plays a scenario. */
+  scenario: boolean | null;
+  /** The operations: pause, resume, step, speed, run_until, stop, write. */
+  allowed: Record<string, LauncherAllowedItem>;
+}
+
+export function readStateFields(f: Fields, path: string, u?: Unreadable): StateReport {
+  return {
+    rev: field(f, path, 'rev', integer),
+    phase: field(f, path, 'phase', lenient(string, '', u)),
+    paused: field(f, path, 'paused', soft(nullable(boolean), null, u)),
+    speed: field(f, path, 'speed', soft(readSpeed, null, u)),
+    pacing: field(f, path, 'pacing', soft(nullable(string), null, u)),
+    stop: field(
+      f,
+      path,
+      'stop',
+      soft(
+        nullable((v, p) => {
+          const s = object(v, p);
+          return {
+            requests: field(s, p, 'requests', integer),
+            by: field(s, p, 'by', nullable(string)),
+          };
+        }),
+        null,
+        u,
+      ),
+    ),
+    scenario: field(f, path, 'scenario', soft(nullable(boolean), null, u)),
+    allowed: field(f, path, 'allowed', lenient(record(readLauncherAllowedItem), {}, u)),
+  };
+}
+
+/** The last state event, as the summary of the session keeps it: with that event's seq. */
+export type SummaryState = StateReport & { seq: number | null };
 
 /**
  * Reads one launcher event. An unknown event is null (skipped). If partly is true, reads part by part: an unreadable
@@ -997,6 +1104,8 @@ function readEventFields(
       return { ...base, event: kind, ...readTimeFields(f, path, u) };
     case 'command':
       return { ...base, event: kind, ...readCommandFields(f, path, u) };
+    case 'state':
+      return { ...base, event: kind, ...readStateFields(f, path, u) };
     case 'scenario_step':
       // The step's fields sit directly in the event line
       return { ...base, event: kind, step: readScenarioStepFields(f, path, u) };

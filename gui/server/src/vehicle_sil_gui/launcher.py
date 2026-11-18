@@ -26,10 +26,14 @@ PARAM_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SPEED_MIN = 0.000001
 SPEED_MAX = 1000000.0
 STEP_MS_MAX = 10 ** 12
-TIME_COMMANDS = ("pause", "resume", "step", "speed")
+TIME_COMMANDS = ("pause", "resume", "step", "run_until", "speed")
+MAX_ID = 2 ** 53  # the largest id of a time command (an integer that JavaScript reads exactly)
 FEATURE_SPEED = "speed"
 FEATURE_START_PAUSED = "start-paused"
 FEATURE_TIME_COMMANDS = "time-commands"
+FEATURE_STDIN_RUN_UNTIL = "stdin-run-until"
+# The launcher's `state` event (what it accepts now), and the "id" of a stdin command that its `command` event returns.
+FEATURE_STATE = "state"
 # The control links (the launcher's side of the ECUs' variables): the event that says, once per started participant
 # before the simulation runs, where its link stands ({"name", "state", "variables" | "version"}). The states
 # (connected, no_hello, version_mismatch, not_offered, none) are passed on as they are: the server does not read
@@ -274,34 +278,53 @@ def speed_argument(speed: float | str) -> str:
 
 def check_time_command(body: dict) -> dict:
     """The body of POST api/time as the command line it becomes: {"command": "pause" | "resume"},
-    {"command": "step", "ms": <1 to 10^12>} or {"command": "speed", "value": <a speed or "max">}. Other keys
-    are refused (they would be ignored by the launcher, and a typo should not pass silently)."""
+    {"command": "step", "ms": <1 to 10^12>}, {"command": "run_until", "at_ms": <0 to 10^12>} or
+    {"command": "speed", "value": <a speed or "max">}, each with an
+    optional "id" (a whole number from 0 to 2^53: the launcher's `command` event answering it has the same id).
+    Other keys are refused (they would be ignored by the launcher, and a typo should not pass silently)."""
     name = body.get("command")
     if name not in TIME_COMMANDS:
         raise InvalidRequest("invalid-field", f"command must be one of {', '.join(TIME_COMMANDS)} (to stop, use "
                                               "POST api/stop)")
-    allowed = {"command", *({"step": ("ms",), "speed": ("value",)}.get(name, ()))}
+    allowed = {"command", "id", *({"step": ("ms",), "run_until": ("at_ms",), "speed": ("value",)}.get(name, ()))}
     extra = sorted(k for k in body if k not in allowed)
     if extra:
         raise InvalidRequest("invalid-field", f"{name} takes no {', '.join(extra)}: send "
                                               f"{_time_example(name)}")
+    request = {}
+    if "id" in body:
+        number = body["id"]
+        if isinstance(number, bool) or not isinstance(number, int) or not 0 <= number <= MAX_ID:
+            raise InvalidRequest("invalid-field", f"id must be a whole number from 0 to {MAX_ID} (the launcher's "
+                                                  "answer carries it back): leave it out, or send "
+                                                  f"{_time_example(name, 7)}")
+        request["id"] = number
     if name == "step":
         ms = body.get("ms")
         if isinstance(ms, bool) or not isinstance(ms, int) or not 1 <= ms <= STEP_MS_MAX:
             raise InvalidRequest("invalid-field", f"step needs ms, a whole number of milliseconds of virtual time "
                                                   f"from 1 to {STEP_MS_MAX}: send {_time_example(name)}")
-        return {"command": name, "ms": ms}
+        return {"command": name, "ms": ms, **request}
+    if name == "run_until":
+        at_ms = body.get("at_ms")
+        if isinstance(at_ms, bool) or not isinstance(at_ms, int) or not 0 <= at_ms <= STEP_MS_MAX:
+            raise InvalidRequest("invalid-field", f"run_until needs at_ms, the virtual time to stand still at, a whole "
+                                                  f"number of milliseconds from 0 to {STEP_MS_MAX}: send "
+                                                  f"{_time_example(name)}")
+        return {"command": name, "at_ms": at_ms, **request}
     if name == "speed":
         value = body.get("value")
         if value is None:
             raise InvalidRequest("invalid-field", f"speed needs value: send {_time_example(name)}")
-        return {"command": name, "value": "max" if value == "max" else check_speed(value)}
-    return {"command": name}
+        return {"command": name, "value": "max" if value == "max" else check_speed(value), **request}
+    return {"command": name, **request}
 
 
-def _time_example(name: str) -> str:
-    return {"step": '{"command":"step","ms":100}', "speed": '{"command":"speed","value":1}'}.get(
-        name, f'{{"command":"{name}"}}')
+def _time_example(name: str, id: int | None = None) -> str:
+    text = {"step": '{"command":"step","ms":100}', "run_until": '{"command":"run_until","at_ms":5000}',
+            "speed": '{"command":"speed","value":1}'}.get(name, f'{{"command":"{name}"}}')
+    return text if id is None else f'{text[:-1]},"id":{id}}}'
+
 
 
 def command_line(command: dict) -> bytes:
@@ -309,7 +332,8 @@ def command_line(command: dict) -> bytes:
     if command["command"] == "speed":
         value = command["value"]
         text = '"max"' if value == "max" else speed_argument(value)
-        return f'{{"command":"speed","value":{text}}}\n'.encode()
+        number = f',"id":{command["id"]}' if "id" in command else ""
+        return f'{{"command":"speed","value":{text}{number}}}\n'.encode()
     return (json.dumps(command, separators=(",", ":")) + "\n").encode()
 
 

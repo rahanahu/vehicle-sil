@@ -44,7 +44,9 @@ def test_concurrent_runs_start_one_launcher(tmp_path: Path, checked_first: bool)
                 assert (await c.post("api/check", {"file": "forever.yaml"}))[0] == 200
             replies = await asyncio.gather(*(c.post("api/run", {"file": "forever.yaml"}) for _ in range(4)))
             assert sorted(s for s, _ in replies) == [200, 409, 409, 409], replies
-            assert all(b["error"]["code"] == "already-running" for s, b in replies if s == 409)
+            # a start in progress is `starting`; once its run is registered, `already-running`
+            assert all(b["error"]["code"] in ("starting", "already-running") for s, b in replies if s == 409)
+            assert any(b["error"]["code"] == "starting" for s, b in replies if s == 409), replies
             # The run's launcher is the one child (not a launcher that checks the names) ...
             async def the_run_alone() -> bool:
                 found = children(gui.proc.pid)

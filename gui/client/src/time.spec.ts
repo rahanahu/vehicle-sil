@@ -32,6 +32,7 @@ function view(client: GuiClient) {
     pause: () => control.pause(),
     resume: () => control.resume(),
     step: (ms: number) => control.step(ms),
+    runUntil: (atMs: number) => control.send({ command: 'run_until', at_ms: atMs }),
   };
 }
 type TimeView = ReturnType<typeof view>;
@@ -165,6 +166,15 @@ describe('TimeControl', () => {
     expect(time.controllable()).toBe(false);
     expect([time.canPause(), time.canResume(), time.canStep()]).toEqual([false, false, false]);
     expect(time.paused()).toBe(false);
+  });
+
+  it('sends run_until with the time to pause at', async () => {
+    const { time, socket } = await open();
+    await play(socket, 'ws-time', 0, timeEvent({ paused: true }));
+    expect(time.runUntil(500)).toEqual({ sent: true });
+    const sent = http.expectOne('api/time');
+    expect(sent.request.body).toEqual({ command: 'run_until', at_ms: 500 });
+    expect(time.sending()).toBe('run_until');
   });
 
   it('takes no command once the simulation is ending, though nobody asked it to stop', async () => {
