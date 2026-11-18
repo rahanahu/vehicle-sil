@@ -38,6 +38,7 @@ export class RunCommands {
       ...(request.manual ? { manual: request.manual } : {}),
       ...(request.scenario !== undefined ? { scenario: request.scenario } : {}),
       ...(request.speed !== undefined ? { speed: request.speed } : {}),
+      ...(request.connect !== undefined ? { connect: request.connect } : {}),
     };
     this.send(() => this.front.run.start(intent, { file: request.file }));
   }

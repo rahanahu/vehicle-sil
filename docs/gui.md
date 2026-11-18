@@ -543,6 +543,7 @@ An Angular app in `gui/web`. It is built only on the client library and its Angu
 | Place widgets you wrote yourself | Place custom elements on the dashboard (see "[Custom panels](#custom-panels)"). |
 | Select and run a scenario | Select a `.yaml` from `scenarios` next to the configuration file: the check also covers the scenario, the run advances the step table, and the screen shows the result at the end (see "[Scenarios](#scenarios)"). |
 | Save your actions as a scenario | Save the values you wrote in the GUI that were applied as scenario YAML through the browser (see "[Save your actions as a scenario](#save-your-actions-as-a-scenario)"). |
+| Connect a network outside | Choose where the next run connects a `can` or `ethernet` network outside the simulation (`--connect`), and see the connected networks while it runs (see "[Connecting a network outside](#connecting-a-network-outside)"). |
 | Reopen the screen, open it in another tab | See the state of the same run. |
 | Switch the language | The screen is in English or Japanese. It follows the browser's language (English if the browser prefers neither), and the language menu in the toolbar changes it (the browser remembers the choice). |
 
@@ -573,6 +574,16 @@ Available only when the launcher's `features` have `manual-participants`. For th
 - A participant with `manual: true` in the configuration file starts out as **Start it yourself** (the screen cannot change that back).
 - If you stop before it joins, the simulation does not start, and the screen shows **Did not join (start it yourself)**.
 - The launcher does not end participants that you started yourself. If the launcher reports that one remains after the end, the screen shows that.
+
+### Connecting a network outside
+
+Shown when the check of the selected file has a `can` or `ethernet` network. For what the launcher does, see "Connecting a bus outside (`--connect`)" in [simulation-run.md](simulation-run.md#connecting-a-bus-outside---connect).
+
+- **Choosing**: under **Configuration file**, each such network has a choice, which starts at `SIL Kit only (not connected)`. The screen asks for the list of targets only when you open a choice (with the mouse, or with a key other than Tab and Escape), so a computer that only runs SIL Kit starts no bridge. The list is that of the computer the GUI server runs on, not of the browser's computer. A target that cannot be used cannot be chosen, and says why. The bridge's line about each target (for example, that another vehicle-sil bridge uses the device) appears as the bridge wrote it. The words of the choice are English in both languages (they are the client library's part `<vsil-connect>`).
+- **Before the start**: under the status bar, the screen shows which networks the start connects, and where. The check runs again with the choice, and its findings (`connect-*`, `outside-*`, such as the note that the run keeps real time) appear under the choice and in the **Check** card.
+- **While the run goes on**: the card **Networks connected outside** has a row for each connected network: the link or the bus, the condition and its reasons, and the frame counts (the part `<vsil-outside>`). A run connected outside keeps real time, so pause and step cannot be used, and the **Time** card shows the launcher's reason. **Stop** can always be used. A bridge that fails (`connect-failed`, `connect-lost`) and the findings at the end appear in the result.
+- **Not kept**: the screen does not save the choice. After a run, after reloading the screen and after switching the language, every network is back at `SIL Kit only (not connected)`.
+- **Time policy**: the screen always keeps real time. For `time_policy: free`, run from the command line (`--time-policy free`) or from a screen of your own.
 
 ### The Variables screen and widgets
 
@@ -1286,7 +1297,7 @@ The library does not enforce these rules for you. The sample screens follow them
 | Variable values | The last value at the time the GUI server read it, not a record of every value (in a fast simulation, the values in between do not arrive). |
 | Values that remain after the end | The last values read. If the launcher closes the Control Server early, they may be slightly older than the values at the end. |
 | A GUI server installed outside the repository | The optional dependency `vehicle-sil-gui[variables]` (grpcio, protobuf) alone is not enough for variables. |
-| Connecting a network outside | The sample screens have no control for it. A screen of your own lists the targets with `POST api/connections` and sends `connect` (see "Connecting a network outside" in gui/protocol/README.md). |
+| Connecting a network outside | The sample screens choose only where to connect, and always keep real time: they do not send `time_policy`. A screen of your own can send it (see "Connecting a network outside" in gui/protocol/README.md). |
 | Windows | Only starting and checking are verified (`scripts/package.py verify`). |
 
 - **gRPC stubs**: reading and writing variables assumes the `vehicle-sil-gui` of the prebuilt tools (which bundles the stubs), or a GUI server run inside the repository (`uv run vehicle-sil-gui` after `uv sync`). The reason: the gRPC stubs are generated from the repository's `proto/` with `grpcio-tools` (or, failing that, the ones that `python -m vehicle_sil_control.generate` made are used).
