@@ -143,6 +143,8 @@ template <typename S>
 Command decide_and_do(S& s, const Command& command, std::string_view source, const std::function<void()>& accepted)
 {
     Command out = command;
+    /// An accepted step: where it ends (the command event's "at_ms").
+    std::optional<SimTime> step_to;
     const std::string name = command.name.value_or("");
     // A pause at a time, or run_until: they need the controller's step to round to.
     const bool at_time = command.at_ms.has_value() && (name == "pause" || name == "run_until");
@@ -162,6 +164,19 @@ Command decide_and_do(S& s, const Command& command, std::string_view source, con
     {
         // Whole steps of the controller: the simulation can stand still only at one of them.
         out.ms = whole_steps(command.ms.value_or(1), s.step_ms);
+        if (SimulationController* c = s.controller)
+        {
+            // From where it stands, or will stand after the steps asked for before. Read here,
+            // before the command's event, so that the event says where this step ends. The gate
+            // may go on between this look and run_until() below, but never past `step_to`: a step
+            // is taken only once a pause was asked for, so the gate stands still, or does at its
+            // next step or at its target, and each of those is at or before `step_to`.
+            const TimeState t = c->time_state();
+            const SimTime from = t.pause_target && *t.pause_target > t.now ? *t.pause_target : t.now;
+            const SimDuration d = std::chrono::milliseconds(*out.ms);
+            step_to = d >= SimTime::max() - from ? SimTime::max() : from + d;
+            out.at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(step_to->time_since_epoch()).count();
+        }
     }
     else if (at_time)
     {
@@ -249,13 +264,9 @@ Command decide_and_do(S& s, const Command& command, std::string_view source, con
             s.speed = command.speed;
         }
     }
-    else if (name == "step" && c != nullptr)
+    else if (name == "step" && c != nullptr && step_to)
     {
-        // From where it stands, or will stand after the steps asked for before.
-        const TimeState t = c->time_state();
-        const SimTime from = t.pause_target && *t.pause_target > t.now ? *t.pause_target : t.now;
-        const SimDuration d = std::chrono::milliseconds(*out.ms);
-        c->run_until(d >= SimTime::max() - from ? SimTime::max() : from + d);
+        c->run_until(*step_to);
     }
     return out;
 }

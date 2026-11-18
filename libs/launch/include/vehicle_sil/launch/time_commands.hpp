@@ -33,8 +33,8 @@ struct TimeChange
     std::string command;     ///< "pause", "step", "run_until" or "speed"
     std::string source;      ///< as apply() was given it ("stdin", "control_server")
     std::int64_t sim_ms = 0; ///< the virtual time when it was accepted (0 before the start)
-    /// step: how far (whole steps of the controller); pause at a time, run_until: where it was to
-    /// stand still. As the command event says.
+    /// step: how far (whole steps of the controller) and where it was to stand still after it;
+    /// pause at a time, run_until: where it was to stand still. As the command event says.
     std::optional<std::int64_t> ms{};
     std::optional<std::int64_t> at_ms{};
     std::optional<double> speed{}; ///< speed: its value (empty: max)
@@ -118,7 +118,9 @@ public:
     /// Decides whether the time command (Command::is_time()) can be done now (decide(), with
     /// entry_of(source) and the command's arguments); writes its command
     /// event (`source`) with that answer (and, for step, how far the simulation goes: "ms" rounded
-    /// up to whole steps of the controller; for run_until and pause with at_ms, where it will stand
+    /// up to whole steps of the controller, and where it will stand still after it: "at_ms", counted
+    /// from where it stands or, while it still goes, from the time the commands before sent it to;
+    /// for run_until and pause with at_ms, where it will stand
     /// still: "at_ms" rounded up the same way), then does it, then tells OnChange. The event comes
     /// before what the command changes. Returns the command as written; one that was refused has
     /// the code of the row that refused it (Command::reason) and its message. What is refused is

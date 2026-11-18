@@ -891,7 +891,7 @@ void EventStream::command(const Command& command, std::string_view source)
              {
                  w.integer("ms", *command.ms);
              }
-             // pause at, run_until (a control client): where it will stand.
+             // step, run_until, pause at (a control client): where it will stand.
              if (command.accepted && command.at_ms)
              {
                  w.integer("at_ms", *command.at_ms);
