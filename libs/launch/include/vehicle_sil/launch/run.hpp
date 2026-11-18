@@ -234,7 +234,7 @@ struct OutcomeStart
     bool timed_out = false;
     /// They all joined, but the controller could not start the simulation: why.
     std::string error{};
-    /// RunOptions::before_start threw: the simulation had started, and the launcher aborted it. Why.
+    /// RunObservers::before_start threw: the simulation had started, and the launcher aborted it. Why.
     std::string before_start_error{};
     /// How long the start waited at most for the required participants (the configuration's
     /// start_timeout_ms; not the run's --timeout, which is OutcomeEnd::timeout_ms).
@@ -323,7 +323,7 @@ struct OutcomeScenario
     std::optional<ScenarioRun> result{};
     /// The scenario's thread failed unexpectedly: why (the scenario is Incomplete).
     std::string error{};
-    /// The timeline file as the user named it (RunOptions::timeline_shown), once it was opened; ""
+    /// The timeline file as the user named it (RunHost::timeline), once it was opened; ""
     /// without one.
     std::string timeline{};
     /// What the scenario's engine noted for the timeline; null if the scenario did not begin.
@@ -342,7 +342,7 @@ struct OutcomeClose
     /// had ended: how long it waited, in milliseconds (the limit: the controller's shutdown
     /// timeout and stop_timeout_ms, at least 5000 ms for the latter). A thread of the run is left
     /// closing it; it keeps the three and the run's hub, and uses nothing else of the run or of
-    /// what the caller gave the run (RunOptions): both may be destroyed. The result is complete.
+    /// what the caller gave the run (its request, its observers): both may be destroyed. The result is complete.
     /// The caller ends the process without running the destructors of static objects (std::_Exit();
     /// Windows: TerminateProcess()) when it has written the result: the thread is inside SIL Kit.
     std::optional<std::int64_t> not_closed_ms{};
@@ -477,7 +477,7 @@ struct ControlServerInfo
     bool credentials = false;
 };
 
-/// run --control: the control server of one run, as the run sees it (RunOptions::control_endpoint).
+/// run --control: the control server of one run, as the run sees it (RunLent::control_endpoint).
 /// The caller makes it before the run, with the run's controls (its time operations go to their
 /// time commands); run_file() starts it; the caller ends it after run_file().
 class ControlEndpoint
@@ -485,7 +485,7 @@ class ControlEndpoint
 public:
     virtual ~ControlEndpoint() = default;
     /// Starts listening on `hub`, the run's (never null), and keeps it for as long as the server
-    /// uses it (as RunOptions::before_start says of the hub); says where it listens. Throws
+    /// uses it (as RunObservers::before_start says of the hub); says where it listens. Throws
     /// std::exception if it cannot listen.
     virtual ControlServerInfo start(std::shared_ptr<control::Hub> hub) = 0;
     /// Ends every call (the waits and watches return); idempotent.
@@ -493,7 +493,7 @@ public:
 };
 
 /// How long a bridge of --connect may report the link or the bus down before the launcher stops the
-/// run (RunOptions::outside_lost_after).
+/// run (RunLimits::outside_lost_after).
 inline constexpr std::chrono::milliseconds kOutsideLostAfter{30000};
 /// With --strict: how long a bridge of --connect may share its device with a bridge that is not of
 /// this run before the launcher stops the run (OutsideState::shared_for()). A bridge that another
@@ -504,34 +504,10 @@ inline constexpr std::chrono::milliseconds kOutsideSharedAfter{3000};
 /// A bridge that has not said by then is taken as one that shares nothing.
 inline constexpr std::chrono::milliseconds kOutsideFirstLineWait{2000};
 
-struct RunOptions
+/// What a run tells while it lasts, and the one thing it lets its caller do: the caller's
+/// functions, which the run calls back. A run keeps its own copy.
+struct RunObservers
 {
-    CheckOptions check{};
-    /// --speed: replaces the configuration's speed (the inner empty: "max"). With the time lock
-    /// (CheckReport::time_lock) the run goes at speed 1 whatever this says (planned_speed()), and
-    /// its check refuses another speed: run_file() gives the check this speed and `start_paused`
-    /// (CheckOptions::run_speed, CheckOptions::start_paused), so they are written here only.
-    std::optional<std::optional<double>> speed{};
-    /// --start-paused: the simulation stands still at 0 until a resume or step command. With the
-    /// time lock the check refuses it.
-    bool start_paused = false;
-    /// The run's controls (run_controls.hpp), the caller's: the stop requests the run reads (as
-    /// `stops` below says), the time commands it attaches its controller to (--stdin-commands, a
-    /// control server) and the phase it sets. For this one run: controls that a run has used
-    /// take no time command any more. With `events`, the caller gives the controls the observers
-    /// that write the command and phase events (the run writes neither by itself then). Null: the
-    /// run makes its own for this run, on `stops`; no one outside reaches its time commands, and
-    /// the run writes its phases to `events`. With `events` the controls must have both observers, and
-    /// `stops` must be null or the controls' own: run_file() throws std::invalid_argument otherwise.
-    RunControls* controls = nullptr;
-    /// A file of each participant's output in this directory (created if needed); empty: none.
-    std::filesystem::path log_dir{};
-    /// run --timeline, with a scenario: the timeline file of the run (timeline.hpp; its directory
-    /// is created if needed), and its name as the user gave it; empty: none. The file is opened
-    /// before anything starts (OutcomeSetup::error if that fails) and written when the run
-    /// is over, whatever became of the scenario.
-    std::filesystem::path timeline{};
-    std::string timeline_shown{};
     /// Writes one line (without its end) for the person watching: the participants' output as
     /// "[<name>] <line>", the launcher's own as "[vehicle_sil_launch] <text>". Called from several
     /// threads, one call at a time. Not called when `events` is set.
@@ -539,27 +515,14 @@ struct RunOptions
     /// run --events: what happens, as events (events.hpp) instead of write_line(): the phases, the
     /// check, the participants, the lines, the run's findings, the virtual time. run_file() writes
     /// every event but hello and the result (the caller writes them). No call waits for the
-    /// reader of the events. May be null.
+    /// reader of the events. May be null. Borrowed: it outlives run_file().
     EventStream* events = nullptr;
-    /// Without `controls`: the requests to stop (the caller's: its signal handler and whatever
-    /// else asks). The run reads their count: 1 stops the simulation in order, 2 or more skip the
-    /// waits for the participants to end. May be null. Not read with `controls`, which has its own
-    /// (RunControls::stops()).
-    StopRequests* stops = nullptr;
-    /// The name of the first interrupt ("SIGINT"), for the result and, without `controls`, for the
-    /// state events (RunControls::set_stop_name()). Called from any thread that changes the run's
-    /// state (the run's own, a control server's, the hold's), under the time commands' mutex, and
-    /// by run_file() for the result: safe from several threads, short, no wait, no call into the
-    /// run or its controls.
+    /// The name of the first interrupt ("SIGINT"), for the result and, without RunLent::controls,
+    /// for the state events (RunControls::set_stop_name()). Called from any thread that changes the
+    /// run's state (the run's own, a control server's, the hold's), under the time commands' mutex,
+    /// and by run_file() for the result: safe from several threads, short, no wait, no call into
+    /// the run or its controls.
     std::function<std::string()> interrupt_name{};
-    /// How often the launcher looks at the participants and the simulation.
-    std::chrono::milliseconds poll{20};
-    /// How long a bridge of --connect may report the link or the bus down (link=down, bus=bus-off)
-    /// before the launcher stops the run as for a bridge that ended (OutsideState::lost()). Only tests make it shorter.
-    std::chrono::milliseconds outside_lost_after = kOutsideLostAfter;
-    /// The longest the simulation may run, from its start to its end (wall clock); then it is
-    /// aborted (OutcomeEnd::timed_out). Empty: no limit.
-    std::optional<std::chrono::milliseconds> timeout{};
     /// Called in the window before the start (SimulationController::set_start_window()), on a
     /// thread of the controller, after the wait for the agents' hellos: every participant waits
     /// before its first step, and a write that an agent accepts now (control::Hub::write(),
@@ -571,10 +534,26 @@ struct RunOptions
     /// the hub from any thread while the simulation runs and after run_file() has returned (it
     /// then holds what the agents said last).
     std::function<void(const std::shared_ptr<control::Hub>& hub)> before_start{};
-    /// How long the start waits for the hello of each required ECU that describes variables and
-    /// offers them in the launcher's version of the messages (it is there before the wait begins,
-    /// by the order in which SIL Kit sets the participants up: the limit is a last line).
-    std::chrono::milliseconds control_hello_timeout{5000};
+};
+
+/// What a run borrows of its caller: all of it outlives run_file().
+struct RunLent
+{
+    /// The run's controls (run_controls.hpp), the caller's: the stop requests the run reads (as
+    /// `stops` below says), the time commands it attaches its controller to (--stdin-commands, a
+    /// control server) and the phase it sets. For this one run: controls that a run has used
+    /// take no time command any more. With RunObservers::events, the caller gives the controls the
+    /// observers that write the command and phase events (the run writes neither by itself then).
+    /// Null: the run makes its own for this run, on `stops`; no one outside reaches its time
+    /// commands, and the run writes its phases to RunObservers::events. With events the controls
+    /// must have both observers, and `stops` must be null or the controls' own: run_file() throws
+    /// std::invalid_argument otherwise.
+    RunControls* controls = nullptr;
+    /// Without `controls`: the requests to stop (the caller's: its signal handler and whatever
+    /// else asks). The run reads their count: 1 stops the simulation in order, 2 or more skip the
+    /// waits for the participants to end. May be null. Not read with `controls`, which has its own
+    /// (RunControls::stops()).
+    StopRequests* stops = nullptr;
     /// run --control: the control server of this run, the caller's; null: none. run_file() starts
     /// it on the run's hub (ControlEndpoint::start()) once, on the main thread, when the check has
     /// passed and the run's files are open, before the registry starts; the run then writes the
@@ -582,22 +561,48 @@ struct RunOptions
     /// nothing is started (OutcomeSetup::error). The server must stay usable while run_file()
     /// runs (its time operations go to the time commands of `controls`, which must be set); the
     /// caller ends it after run_file().
-    /// With start_paused, the run holds before the first step (TimeCommands::hold_before_start()).
+    /// With RunIntent::start_paused, the run holds before the first step
+    /// (TimeCommands::hold_before_start()).
     ControlEndpoint* control_endpoint = nullptr;
 };
 
-/// The options of a run that `request` asks for (check_options_of(), the speed, --start-paused, the
-/// logs, the timeline and the time limit); the rest of RunOptions (the controls, where the lines go,
-/// the server) is the caller's.
-[[nodiscard]] RunOptions run_options_of(const RunRequest& request);
+/// The waits of a run that no user sets: only tests make them shorter.
+struct RunLimits
+{
+    /// How often the launcher looks at the participants and the simulation.
+    std::chrono::milliseconds poll{20};
+    /// How long a bridge of --connect may report the link or the bus down (link=down, bus=bus-off)
+    /// before the launcher stops the run as for a bridge that ended (OutsideState::lost()).
+    std::chrono::milliseconds outside_lost_after = kOutsideLostAfter;
+    /// How long the start waits for the hello of each required ECU that describes variables and
+    /// offers them in the launcher's version of the messages (it is there before the wait begins,
+    /// by the order in which SIL Kit sets the participants up: the limit is a last line).
+    std::chrono::milliseconds control_hello_timeout{5000};
+};
 
-/// Runs the file `path` (shown as `shown_as`): check_file(); if it passed, the simulation; with
-/// CheckOptions::scenario (in `options.check`), the scenario in it (docs/scenario.md; the run then
-/// ends when the scenario is over). Never
-/// throws for a problem of the file, an executable or a participant: they are findings. Must be
-/// called from the thread that lives longest (the main thread): on Linux, the participants end
-/// when it ends (process::Process).
-[[nodiscard]] RunReport run_file(const std::filesystem::path& path, const std::string& shown_as, const RunOptions& options);
+/// Runs what `request` asks for: check_file() of its file; if it passed, the simulation; with
+/// RunIntent::scenario, the scenario in it (docs/scenario.md; the run then ends when the scenario
+/// is over). Never throws for a problem of the file, an executable or a participant: they are
+/// findings. Must be called from the thread that lives longest (the main thread): on Linux, the
+/// participants end when it ends (process::Process).
+///
+/// Of `request` the run reads what the check reads, and of the rest: RunIntent::speed (replaces
+/// the configuration's speed; the inner empty: "max"; with the time lock the run goes at speed 1
+/// whatever it says, planned_speed(), and its check refuses another speed), RunIntent::start_paused
+/// (the simulation stands still at 0 until a resume or step command; with the time lock the check
+/// refuses it), RunHost::log_dir (created if needed), RunHost::timeline (with a scenario: the
+/// timeline file of the run, timeline.hpp; its directory is created if needed; the file is opened
+/// before anything starts, OutcomeSetup::error if that fails, and written when the run is over,
+/// whatever became of the scenario) and RunHost::timeout (then the run is aborted:
+/// OutcomeEnd::timed_out). Whether a control server and the commands of standard input were asked
+/// for (RunHost::control, stdin_commands) is the caller's to act on: the run has the server it is
+/// lent (`lent`). The request is read before anything starts and not kept: nothing reads it after
+/// run_file() has returned, also not a closing thread that was left (OutcomeClose::not_closed_ms).
+///
+/// `check`: of it the run reads `params_for_many` and `fastest_by_default` (a test's runs); a run
+/// never reads the file only.
+[[nodiscard]] RunReport run_file(const RunRequest& request, const RunObservers& observers = {}, const RunLent& lent = {},
+                                 const RunLimits& limits = {}, const CheckOptions& check = {});
 
 /// Where the registry listens if the start waits for a participant someone starts by hand and the
 /// file has no registry_uri: a fixed port, so that the command to start it is the same in every

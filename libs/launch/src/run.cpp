@@ -4,7 +4,7 @@
 // (Runner::run()), and run_file(). The parts of a run are in the files beside this one:
 //
 //   run_plan.*           RunPlan, plan_run(), planned_outcome()   what is settled before the run: a value
-//   run_context.hpp      RunContext, RunObservers   what the run is given (the plan, the observers,
+//   run_context.hpp      RunContext                 what the run is given (the plan, the observers,
 //                        the controls it borrows); never written
 //   run_output.*         RunOutput        the lines, the log files, the events
 //   run_connection.hpp   ConnectionOf     the hub with the registry, the controller and the hub's
@@ -57,8 +57,8 @@
 // The locks, in the only orders they are taken together (a lock not named under another is never
 // taken while that one is held):
 // - TimeCommands' mutex, then the event stream's, the controller's time gate's, or what
-//   RunOptions' callbacks take (on_detach, the `accepted` of a stop).
-// - RunOutput's mutex, then the event stream's (and RunOptions::write_line).
+//   the caller's callbacks take (on_detach, the `accepted` of a stop).
+// - RunOutput's mutex, then the event stream's (and RunObservers::write_line).
 // - RunOutput's mutex, then TimeCommands' (RunOutput::tell_outside() calls RunControls::set_outside(),
 //   which tells the state of the bridges). The reverse is never taken: what runs under TimeCommands'
 //   mutex (OnCommand, OnChange, the state's observer, `accepted`, on_detach) writes events and
@@ -75,9 +75,12 @@
 // the main thread; the hold's begin and end on the window's thread, where TimeCommands' mutex is
 // taken already).
 //
-// What a run is given is of three kinds, and run_file() takes RunOptions apart into them:
-// - The plan (RunPlan, made by plan_run() before the Runner): values only. The Runner keeps it and
-//   no thread writes it, so every thread of the run reads it without a lock.
+// What a run is given is of three kinds:
+// - The request (RunRequest) and the limits (RunLimits), of which run_file() makes the plan
+//   (RunPlan, by plan_run() before the Runner): values only. The Runner keeps the plan, by value,
+//   and no thread writes it, so every thread of the run reads it without a lock. The request
+//   itself is not kept: no thread of the run reads it, so a run whose closing thread was left
+//   (OutcomeClose::not_closed_ms) holds nothing of it.
 // - The observers (RunObservers: write_line, events, interrupt_name, before_start): the caller's
 //   functions, of which the Runner keeps a copy. The threads that call each, and the locks held
 //   then, are those of the lists above (RunOutput's mutex for write_line and the lines' events,
@@ -85,7 +88,7 @@
 // - What it borrows: the controls (RunControls, the caller's or run_file()'s own), which outlive
 //   the Runner. The Runner holds a reference and never destroys them.
 //
-// A control server (RunOptions::control_endpoint) is not the Runner's: run_file() starts it on the
+// A control server (RunLent::control_endpoint) is not the Runner's: run_file() starts it on the
 // main thread between the Runner's two stages (prepare(), then run()), on the hub that prepare()
 // gives it, and tells run() how that went (ControlServerStart); the Runner never calls the server.
 // The server has threads of its own. Of the run they touch the
@@ -137,6 +140,7 @@
 
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/timeline_format.hpp"
+#include "vehicle_sil/process/paths.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
@@ -182,8 +186,8 @@ using RunConnection = detail::ConnectionOf<control::Hub, SilKit::Vendor::Vector:
                                            control_silkit::HubTransport>;
 
 using detail::RunNotes;
-/// The controls of a run that was given none (RunOptions::controls): made by run_file() for that
-/// run, on the caller's stop requests if there are any. Its phases go to RunOptions::events.
+/// The controls of a run that was given none (RunLent::controls): made by run_file() for that
+/// run, on the caller's stop requests if there are any. Its phases go to RunObservers::events.
 struct OwnControls
 {
     static RunControls::Observers observers(EventStream* events)
@@ -197,16 +201,16 @@ struct OwnControls
         return out;
     }
 
-    explicit OwnControls(const RunOptions& options) :
-      controls(options.stops != nullptr ? *options.stops : none, options.start_paused, observers(options.events))
+    OwnControls(StopRequests* stops, bool start_paused, const RunObservers& given) :
+      controls(stops != nullptr ? *stops : none, start_paused, observers(given.events))
     {
-        if (options.interrupt_name)
+        if (given.interrupt_name)
         {
-            controls.set_stop_name(options.interrupt_name);
+            controls.set_stop_name(given.interrupt_name);
         }
     }
 
-    StopRequests none; ///< without RunOptions::stops: nothing ever asks
+    StopRequests none; ///< without RunLent::stops: nothing ever asks
     RunControls controls;
 };
 
@@ -219,7 +223,7 @@ using detail::RunWatch;
 using detail::uri_for_participants;
 
 /// What run_file() did between the two stages of a Runner (prepare(), then run()): whether it
-/// started a control server (RunOptions::control_endpoint), and how that went. As made: none.
+/// started a control server (RunLent::control_endpoint), and how that went. As made: none.
 struct ControlServerStart
 {
     std::optional<ControlServerInfo> listening; ///< the server listens there
@@ -247,8 +251,8 @@ class Runner
 
 public:
     /// `plan`: plan_run() of the check that passed. `observers`: the caller's functions, copied.
-    /// `controls`: RunOptions::controls, or the run's own; they outlive the Runner.
-    Runner(RunPlan plan, detail::RunObservers observers, RunControls& controls) :
+    /// `controls`: RunLent::controls, or the run's own; they outlive the Runner.
+    Runner(RunPlan plan, RunObservers observers, RunControls& controls) :
       plan_(std::move(plan)), observers_(std::move(observers)),
       ctx_{plan_.config(), plan_.check, plan_, observers_, plan_.scenario(), controls, controls.time()},
       outcome_(planned_outcome(plan_)), out_(ctx_), control_(ctx_, out_),
@@ -583,12 +587,12 @@ private:
     /// What ctx_ refers to: the plan (with the check that has the bridges of --connect, which is
     /// not run_file()'s report) and the observers. Never written after the constructor.
     const RunPlan plan_;
-    const detail::RunObservers observers_;
+    const RunObservers observers_;
     const RunContext ctx_;
     RunOutcome outcome_; ///< the main thread's: the other threads of the run never see it
     RunOutput out_;
     /// Makes and holds the hub of this run; the RunConnection of run() and whoever was given the
-    /// hub by a callback of RunOptions hold it too. Before samples_ and scenario_, which use the
+    /// hub by a callback of RunObservers hold it too. Before samples_ and scenario_, which use the
     /// hub until they are destroyed (the tap, the scenario's engine and port).
     RunControl control_;
     RunSamples samples_; ///< after control_ (its tap is on the hub), before scenario_ (which takes from it)
@@ -608,47 +612,48 @@ private:
 
 } // namespace
 
-RunReport run_file(const std::filesystem::path& path, const std::string& shown_as, const RunOptions& options)
+RunReport run_file(const RunRequest& request, const RunObservers& observers, const RunLent& lent, const RunLimits& limits,
+                   const CheckOptions& check_options)
 {
-    if (options.controls != nullptr)
+    if (lent.controls != nullptr)
     {
-        if (options.stops != nullptr && options.stops != &options.controls->stops())
+        if (lent.stops != nullptr && lent.stops != &lent.controls->stops())
         {
             throw std::invalid_argument(
-              "RunOptions: both `controls` and `stops` are set, and the run reads only the stop requests of `controls`; "
+              "RunLent: both `controls` and `stops` are set, and the run reads only the stop requests of `controls`; "
               "make the RunControls on the same StopRequests and leave `stops` null.");
         }
-        if (options.events != nullptr && (!options.controls->has_phase_observer() || !options.controls->has_command_observer() ||
-                                          !options.controls->has_state_observer()))
+        if (observers.events != nullptr && (!lent.controls->has_phase_observer() || !lent.controls->has_command_observer() ||
+                                            !lent.controls->has_state_observer()))
         {
             throw std::invalid_argument(
-              "RunOptions: `controls` and `events` are both set, but the controls have no observer for the "
+              "RunLent::controls and RunObservers::events are both set, but the controls have no observer for the "
               "events the run leaves to them; set RunControls::Observers::on_phase to call EventStream::phase(), "
               "Observers::on_command to call EventStream::command() and Observers::on_state to call "
               "EventStream::state(), or leave `events` null.");
         }
     }
-    const auto event = [&options](auto emit) {
-        if (options.events != nullptr)
+    const auto event = [&observers](auto emit) {
+        if (observers.events != nullptr)
         {
-            emit(*options.events);
+            emit(*observers.events);
         }
     };
     // The controls of this run: the caller's, or its own. Declared before the Runner, which
     // borrows them: they outlive it.
-    const std::unique_ptr<OwnControls> own = options.controls == nullptr ? std::make_unique<OwnControls>(options) : nullptr;
-    RunControls& controls = own ? own->controls : *options.controls;
+    const std::unique_ptr<OwnControls> own =
+        lent.controls == nullptr ? std::make_unique<OwnControls>(lent.stops, request.intent.start_paused, observers) : nullptr;
+    RunControls& controls = own ? own->controls : *lent.controls;
     RunReport report;
-    report.strict = options.check.strict;
+    report.strict = request.intent.strict;
     controls.set_phase(Phase::Checking);
-    // The check judges the time by what this run does: its speed and --start-paused are written
-    // in RunOptions only. A test's speed is its default, not one the user asked for.
-    CheckOptions check = options.check;
-    check.run_speed = check.fastest_by_default ? std::optional<std::optional<double>>{} : options.speed;
-    check.start_paused = options.start_paused;
+    // The check judges the time by what this run does (its speed and --start-paused, which it
+    // reads in the request). A run reads the whole, whatever the caller's options say.
+    CheckOptions check = check_options;
+    check.file_only = false;
     // The controls get the time lock as soon as the configuration has been read, before any
     // --describe: the time commands that came until then wait for it, and are decided there.
-    report.check = check_file(path, shown_as, check, [&controls](const TimeLock& lock) { controls.set_time_lock(lock); });
+    report.check = check_file(request, check, [&controls](const TimeLock& lock) { controls.set_time_lock(lock); });
     event([&report](EventStream& e) { e.check(report.check); });
     if (!report.check.config)
     {
@@ -672,23 +677,23 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
             }
         }
     });
+    const std::filesystem::path path = process::path_from_utf8(request.host.config);
     const std::filesystem::path base = path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
     // Destroyed when run_file() returns, also if the run's closing thread was left at its limit
     // (OutcomeClose::not_closed_ms): that thread uses nothing of the Runner.
     // What the run is given, in three kinds: the plan (a value, settled here), the observers (the
     // caller's functions) and what it borrows (the controls; the control server stays here).
-    Runner runner(plan_run(report.check, base, options),
-                  detail::RunObservers{options.write_line, options.events, options.interrupt_name, options.before_start}, controls);
+    Runner runner(plan_run(report.check, base, request, limits, lent.control_endpoint != nullptr), observers, controls);
     // The control server between the Runner's two stages: after the run's files are open, before
     // the registry listens. The Runner does not know the server; it is told what became of it.
     ControlServerStart server;
     try
     {
-        if (const std::shared_ptr<control::Hub> hub = runner.prepare(); hub && options.control_endpoint != nullptr)
+        if (const std::shared_ptr<control::Hub> hub = runner.prepare(); hub && lent.control_endpoint != nullptr)
         {
             try
             {
-                server.listening = options.control_endpoint->start(hub);
+                server.listening = lent.control_endpoint->start(hub);
             }
             catch (const std::exception& e)
             {

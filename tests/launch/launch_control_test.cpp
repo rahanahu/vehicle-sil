@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
 // vehicle_sil_launch's run as a library (run_file()), whose hub the caller keeps from the start
-// window on (RunOptions::before_start), and ECUs in their
+// window on (RunObservers::before_start), and ECUs in their
 // own processes (run_test_ecu.cpp, behaviour "variables"): a parameter written in the window
 // before the start is accepted by every ECU and seen by its step at 0; when the simulation has
 // reached stop_at_ms, the hub has the values of the last steps before it; nothing arrived late.
@@ -45,7 +45,7 @@ using namespace std::chrono_literals;
 using vehicle_sil::test::scaled_timeout;
 using namespace vehicle_sil;
 namespace fs = std::filesystem;
-/// The source of a stop request where the run does not read it (RunOptions::interrupt_name names it).
+/// The source of a stop request where the run does not read it (RunObservers::interrupt_name names it).
 constexpr int kAnySource = 1;
 
 void require(bool condition, const std::string& what)
@@ -54,6 +54,14 @@ void require(bool condition, const std::string& what)
     {
         throw std::runtime_error(what);
     }
+}
+
+/// The request of a run of the file sim.yaml in `dir`.
+launch::RunRequest sim_of(const fs::path& dir)
+{
+    launch::RunRequest request;
+    request.host.config = process::utf8_from_path(dir / "sim.yaml");
+    return request;
 }
 
 std::string yaml_quote(const std::string& text)
@@ -114,8 +122,11 @@ void one_run(const fs::path& ecu, const fs::path& dir, int round)
     std::uint64_t seq = 0;
     std::optional<control::OperationResult> queued;
     std::size_t peers_in_window = 0;
-    launch::RunOptions options;
-    options.before_start = [&](const std::shared_ptr<control::Hub>& given) {
+    launch::RunRequest asked = sim_of(dir);
+    launch::RunObservers watching;
+    launch::RunLent lent;
+    launch::RunLimits limits;
+    watching.before_start = [&](const std::shared_ptr<control::Hub>& given) {
         kept = given;
         control::Hub& h = *given;
         peers_in_window = h.peers().size();
@@ -128,8 +139,8 @@ void one_run(const fs::path& ecu, const fs::path& dir, int round)
         queued = h.wait_queued(seq, scaled_timeout(30s));
     };
     std::string lines;
-    options.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };
-    const launch::RunReport report = launch::run_file(dir / "sim.yaml", "sim.yaml", options);
+    watching.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };
+    const launch::RunReport report = launch::run_file(asked, watching, lent, limits);
     const std::string shown = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
 
     require(report.result() == launch::RunResult::Passed, "the run did not pass" + shown);
@@ -183,12 +194,15 @@ void failing_start(const fs::path& ecu, const fs::path& dir)
         << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
                yaml_quote(process::shown_path(ecu)) + "]\n";
     std::ofstream(dir / "Engine.behaviour") << "variables\n";
-    launch::RunOptions options;
-    options.before_start = [](const std::shared_ptr<control::Hub>&) { throw std::runtime_error("the scenario could not be set up"); };
+    launch::RunRequest asked = sim_of(dir);
+    launch::RunObservers watching;
+    launch::RunLent lent;
+    launch::RunLimits limits;
+    watching.before_start = [](const std::shared_ptr<control::Hub>&) { throw std::runtime_error("the scenario could not be set up"); };
     std::string lines;
-    options.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };
+    watching.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };
     const auto begin = std::chrono::steady_clock::now();
-    const launch::RunReport report = launch::run_file(dir / "sim.yaml", "sim.yaml", options);
+    const launch::RunReport report = launch::run_file(asked, watching, lent, limits);
     const std::string shown = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
     // Without stop_at_ms the simulation would run for ever: it was ended for the failure.
     require(std::chrono::steady_clock::now() - begin < 60s, "the run took too long" + shown);
@@ -212,16 +226,19 @@ void failing_start_with_a_stop(const fs::path& ecu, const fs::path& dir)
                yaml_quote(process::shown_path(ecu)) + "]\n";
     std::ofstream(dir / "Engine.behaviour") << "variables\n";
     launch::StopRequests stops;
-    launch::RunOptions options;
-    options.stops = &stops;
-    options.interrupt_name = [] { return std::string("control server stop"); };
-    options.before_start = [&stops](const std::shared_ptr<control::Hub>&) {
+    launch::RunRequest asked = sim_of(dir);
+    launch::RunObservers watching;
+    launch::RunLent lent;
+    launch::RunLimits limits;
+    lent.stops = &stops;
+    watching.interrupt_name = [] { return std::string("control server stop"); };
+    watching.before_start = [&stops](const std::shared_ptr<control::Hub>&) {
         stops.request(kAnySource);
         throw std::runtime_error("the scenario could not be set up");
     };
     std::string lines;
-    options.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };
-    const launch::RunReport report = launch::run_file(dir / "sim.yaml", "sim.yaml", options);
+    watching.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };
+    const launch::RunReport report = launch::run_file(asked, watching, lent, limits);
     const std::string shown = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
     require(report.run.has_value() && !report.run->end.interrupted_while_ending &&
                 lines.find("no more waiting for the participants to end") == std::string::npos,
@@ -242,10 +259,13 @@ void hello_without_an_answer(const fs::path& ecu, const fs::path& dir)
     std::ofstream(dir / "test-ecu-no-control") << "\n";
     namespace topics = control_silkit::detail;
     std::unique_ptr<SilKit::IParticipant> impostor;
-    launch::RunOptions options;
-    options.control_hello_timeout = 700ms;
+    launch::RunRequest asked = sim_of(dir);
+    launch::RunObservers watching;
+    launch::RunLent lent;
+    launch::RunLimits limits;
+    limits.control_hello_timeout = 700ms;
     std::string lines;
-    options.write_line = [&](std::string_view line) {
+    watching.write_line = [&](std::string_view line) {
         lines += std::string(line) + "\n";
         const std::string_view head = "[vehicle_sil_launch] registry at ";
         if (line.substr(0, head.size()) == head && !impostor)
@@ -267,7 +287,7 @@ void hello_without_an_answer(const fs::path& ecu, const fs::path& dir)
             step_out->Publish(topics::span_of(junk));
         }
     };
-    const launch::RunReport report = launch::run_file(dir / "sim.yaml", "sim.yaml", options);
+    const launch::RunReport report = launch::run_file(asked, watching, lent, limits);
     impostor.reset();
     fs::remove(dir / "test-ecu-no-control");
     const std::string shown = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
@@ -302,11 +322,14 @@ void an_ecu_without_variables_is_waited_for(const fs::path& ecu, const fs::path&
     fs::remove(dir / "Engine.behaviour");
     std::ofstream(dir / "test-ecu-no-control") << "\n";
     std::ofstream(dir / "test-ecu-no-variables") << "\n";
-    launch::RunOptions options;
-    options.control_hello_timeout = 300ms;
+    launch::RunRequest asked = sim_of(dir);
+    launch::RunObservers watching;
+    launch::RunLent lent;
+    launch::RunLimits limits;
+    limits.control_hello_timeout = 300ms;
     std::string lines;
-    options.write_line = [&](std::string_view line) { lines += std::string(line) + "\n"; };
-    const launch::RunReport report = launch::run_file(dir / "sim.yaml", "sim.yaml", options);
+    watching.write_line = [&](std::string_view line) { lines += std::string(line) + "\n"; };
+    const launch::RunReport report = launch::run_file(asked, watching, lent, limits);
     fs::remove(dir / "test-ecu-no-control");
     fs::remove(dir / "test-ecu-no-variables");
     const std::string shown = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
@@ -378,8 +401,11 @@ void a_late_hello(const fs::path& ecu, const fs::path& dir, bool in_window)
     };
     bool hello_arrived = false;
     bool marker_arrived = false;
-    launch::RunOptions options;
-    options.before_start = [&](const std::shared_ptr<control::Hub>& given) {
+    launch::RunRequest asked = sim_of(dir);
+    launch::RunObservers watching;
+    launch::RunLent lent;
+    launch::RunLimits limits;
+    watching.before_start = [&](const std::shared_ptr<control::Hub>& given) {
         hub = given;
         if (in_window)
         {
@@ -397,7 +423,7 @@ void a_late_hello(const fs::path& ecu, const fs::path& dir, bool in_window)
         }
     };
     std::string lines;
-    options.write_line = [&](std::string_view line) {
+    watching.write_line = [&](std::string_view line) {
         lines += std::string(line) + "\n";
         const std::string_view head = "[vehicle_sil_launch] registry at ";
         if (line.substr(0, head.size()) == head && !impostor)
@@ -428,7 +454,7 @@ void a_late_hello(const fs::path& ecu, const fs::path& dir, bool in_window)
             hello_arrived = wait_for_peer("Body");
         }
     };
-    const launch::RunReport report = launch::run_file(dir / "sim.yaml", "sim.yaml", options);
+    const launch::RunReport report = launch::run_file(asked, watching, lent, limits);
     impostor.reset();
     fs::remove(dir / "test-ecu-no-control");
     const std::string shown = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
@@ -490,18 +516,21 @@ HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& di
     std::unique_ptr<SilKit::IParticipant> participant;
     std::thread holder;
     HoldRun out;
-    launch::RunOptions options;
-    options.start_paused = start_paused;
-    options.controls = &controls;
-    options.timeout = timeout;
-    options.interrupt_name = [] { return std::string("SIGINT"); };
+    launch::RunRequest asked = sim_of(dir);
+    launch::RunObservers watching;
+    launch::RunLent lent;
+    launch::RunLimits limits;
+    asked.intent.start_paused = start_paused;
+    lent.controls = &controls;
+    asked.host.timeout = timeout;
+    watching.interrupt_name = [] { return std::string("SIGINT"); };
     struct NoServer final : launch::ControlEndpoint
     {
         launch::ControlServerInfo start(std::shared_ptr<control::Hub>) override { return {"(test)", false, false}; }
         void end() override {}
     } endpoint;
-    options.control_endpoint = &endpoint;
-    options.write_line = [&](std::string_view line) {
+    lent.control_endpoint = &endpoint;
+    watching.write_line = [&](std::string_view line) {
         out.lines += std::string(line) + "\n";
         const std::string_view registry = "[vehicle_sil_launch] registry at ";
         if (stuck && line.substr(0, registry.size()) == registry && !participant)
@@ -529,7 +558,7 @@ HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& di
         }
     };
     const auto begin = std::chrono::steady_clock::now();
-    out.report = launch::run_file(dir / "sim.yaml", "sim.yaml", options);
+    out.report = launch::run_file(asked, watching, lent, limits);
     out.took = std::chrono::steady_clock::now() - begin;
     if (holder.joinable())
     {
@@ -709,9 +738,10 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
         << "vehicle_sil_simulation: 1\nstop_at_ms: 200\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
                yaml_quote(process::shown_path(ecu)) + "]\n";
     fs::remove(dir / "Engine.behaviour");
-    const auto run = [&dir](launch::RunOptions options, std::string& lines) {
-        options.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };
-        const launch::RunReport report = launch::run_file(dir / "sim.yaml", "sim.yaml", options);
+    const auto run = [](const launch::RunRequest& asked, const launch::RunLent& lent, std::string& lines) {
+        launch::RunObservers watching;
+        watching.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };
+        const launch::RunReport report = launch::run_file(asked, watching, lent);
         lines = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
         return report;
     };
@@ -729,10 +759,11 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
             logs_open = fs::exists(dir / "logs");
             registry_said = lines.find(registry_line) != std::string::npos;
         };
-        launch::RunOptions options;
-        options.log_dir = dir / "logs";
-        options.control_endpoint = &endpoint;
-        const launch::RunReport report = run(options, lines);
+        launch::RunRequest asked = sim_of(dir);
+        launch::RunLent lent;
+        asked.host.log_dir = dir / "logs";
+        lent.control_endpoint = &endpoint;
+        const launch::RunReport report = run(asked, lent, lines);
         require(report.result() == launch::RunResult::Passed, "the run passed" + lines);
         require(endpoint.starts == 1 && endpoint.hub != nullptr, "the server was started once, on a hub" + lines);
         require(logs_open, "the log directory was there when the server started" + lines);
@@ -748,9 +779,10 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
         CountingEndpoint endpoint;
         endpoint.fail = true;
         std::string lines;
-        launch::RunOptions options;
-        options.control_endpoint = &endpoint;
-        const launch::RunReport report = run(options, lines);
+        launch::RunRequest asked = sim_of(dir);
+        launch::RunLent lent;
+        lent.control_endpoint = &endpoint;
+        const launch::RunReport report = run(asked, lent, lines);
         require(endpoint.starts == 1, "the server was started once" + lines);
         require(report.run && report.run->setup.error == "the control server cannot be started: no port to listen on",
                 "the outcome says why" + lines);
@@ -768,10 +800,11 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
         std::string lines;
         launch::StopRequests stops;
         stops.request(kAnySource);
-        launch::RunOptions options;
-        options.stops = &stops;
-        options.control_endpoint = &endpoint;
-        const launch::RunReport report = run(options, lines);
+        launch::RunRequest asked = sim_of(dir);
+        launch::RunLent lent;
+        lent.stops = &stops;
+        lent.control_endpoint = &endpoint;
+        const launch::RunReport report = run(asked, lent, lines);
         require(endpoint.starts == 0, "the server of a run that was interrupted before it began was not started" + lines);
         require(report.result() == launch::RunResult::Interrupted, "the run was interrupted" + lines);
     }
@@ -780,10 +813,11 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
         std::ofstream(dir / "not-a-directory") << "x";
         CountingEndpoint endpoint;
         std::string lines;
-        launch::RunOptions options;
-        options.log_dir = dir / "not-a-directory" / "logs";
-        options.control_endpoint = &endpoint;
-        const launch::RunReport report = run(options, lines);
+        launch::RunRequest asked = sim_of(dir);
+        launch::RunLent lent;
+        asked.host.log_dir = dir / "not-a-directory" / "logs";
+        lent.control_endpoint = &endpoint;
+        const launch::RunReport report = run(asked, lent, lines);
         require(endpoint.starts == 0, "the server of a run whose logs cannot be opened was not started" + lines);
         require(report.run && !report.run->setup.error.empty() && report.run->setup.registry_uri.empty(),
                 "the run was not set up" + lines);
@@ -804,15 +838,18 @@ void what_leaves_run_file_between_the_stages_ends_the_time_commands(const fs::pa
             "a command before the run waits for the time lock");
     CountingEndpoint endpoint;
     endpoint.fail_with_no_exception_type = true;
-    launch::RunOptions options;
-    options.start_paused = true;
-    options.controls = &controls;
-    options.control_endpoint = &endpoint;
-    options.write_line = [](std::string_view) {};
+    launch::RunRequest asked = sim_of(dir);
+    launch::RunObservers watching;
+    launch::RunLent lent;
+    launch::RunLimits limits;
+    asked.intent.start_paused = true;
+    lent.controls = &controls;
+    lent.control_endpoint = &endpoint;
+    watching.write_line = [](std::string_view) {};
     bool thrown = false;
     try
     {
-        static_cast<void>(launch::run_file(dir / "sim.yaml", "sim.yaml", options));
+        static_cast<void>(launch::run_file(asked, watching, lent, limits));
     }
     catch (int)
     {

@@ -401,7 +401,7 @@ outside: ETH_EXT -> enp3s0: link up at 15.10 s
 
 | 種類 | `run` がすること | 終わりに |
 |---|---|---|
-| リンクやバスがしばらく落ちていて（`link=down`、`bus=bus-off`）、ブリッジは動いている | 続けます。30 秒続いたら（`RunOptions::outside_lost_after`）、ブリッジが終わったときと同じに、シミュレーションを中断します。抜いたケーブルの差し直しや機器の再起動は数秒ですが、つなぐつもりの実行が、バスなしで最後まで走ってはいけないからです。 | 警告（`outside-link-down`、`outside-bus-off`。回数と合計の時間）。30 秒のときは誤り `connect-lost`（「link down for 30 s」「bus off for 30 s」） |
+| リンクやバスがしばらく落ちていて（`link=down`、`bus=bus-off`）、ブリッジは動いている | 続けます。30 秒続いたら（`RunLimits::outside_lost_after`）、ブリッジが終わったときと同じに、シミュレーションを中断します。抜いたケーブルの差し直しや機器の再起動は数秒ですが、つなぐつもりの実行が、バスなしで最後まで走ってはいけないからです。 | 警告（`outside-link-down`、`outside-bus-off`。回数と合計の時間）。30 秒のときは誤り `connect-lost`（「link down for 30 s」「bus off for 30 s」） |
 | つながっているが、フレームが失われた | 続けます | 起きた種類ごとの警告（下）。1 フレームでも出します |
 | ブリッジが続けられない | シミュレーションを中断します | 誤り `connect-lost`（上） |
 

@@ -401,7 +401,7 @@ The first line of a bridge says nothing when all is well (`up`, `active`). `run`
 
 | Kind | What `run` does | At the end |
 |---|---|---|
-| The link or the bus is down for a while (`link=down`, `bus=bus-off`) and the bridge goes on | Goes on. When it has lasted 30 s (`RunOptions::outside_lost_after`), `run` aborts the simulation as for a bridge that ended: an unplugged cable that is plugged in again, or a device that restarts, is a matter of seconds, but a run that is meant to be connected must not go on to its end without the bus. | A warning (`outside-link-down`, `outside-bus-off`: how many times, and how long in all), or, for the 30 s, the error `connect-lost` ("link down for 30 s", "bus off for 30 s"). |
+| The link or the bus is down for a while (`link=down`, `bus=bus-off`) and the bridge goes on | Goes on. When it has lasted 30 s (`RunLimits::outside_lost_after`), `run` aborts the simulation as for a bridge that ended: an unplugged cable that is plugged in again, or a device that restarts, is a matter of seconds, but a run that is meant to be connected must not go on to its end without the bus. | A warning (`outside-link-down`, `outside-bus-off`: how many times, and how long in all), or, for the 30 s, the error `connect-lost` ("link down for 30 s", "bus off for 30 s"). |
 | The bridge is connected, but frames were lost | Goes on | A warning for each kind that happened (below). One frame is enough. |
 | The bridge cannot go on | Aborts the simulation | The error `connect-lost` (above) |
 

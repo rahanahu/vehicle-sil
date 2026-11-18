@@ -30,7 +30,7 @@ namespace vehicle_sil::launch::detail {
 ///
 /// Lock: `mutex_` guards the order of the lines (one line at a time, a participant's line with
 /// its log file) and the log files. It is taken last but for the event stream's own mutex,
-/// RunOptions::write_line and, to tell the state of the bridges, TimeCommands' mutex (through
+/// RunObservers::write_line and, to tell the state of the bridges, TimeCommands' mutex (through
 /// RunControls::set_outside(), then the event stream's, as TimeCommands' mutex always does): the
 /// order is `mutex_`, then TimeCommands'. The reverse never happens: what runs under TimeCommands'
 /// mutex (the command and state observers, `accepted`, on_detach) writes events and never calls
@@ -97,7 +97,7 @@ public:
     void outside_due(std::chrono::steady_clock::time_point now);
 
     /// Why the run must stop for a bridge at `now`: its link or bus has been down for
-    /// RunOptions::outside_lost_after. The bridge's index and the reason ("link down for 30 s"), or
+    /// RunLimits::outside_lost_after. The bridge's index and the reason ("link down for 30 s"), or
     /// empty. The thread that watches the simulation, at each look.
     [[nodiscard]] std::optional<std::pair<std::size_t, std::string>> outside_lost(std::chrono::steady_clock::time_point now);
 

@@ -24,8 +24,10 @@ inline constexpr int kTestFormat = 1;
 /// One scenario file of a test.
 struct TestScenario
 {
-    std::filesystem::path path;
-    std::string shown; ///< as the outputs name it (UTF-8)
+    /// The file as the user could name it (UTF-8), and as the outputs name it: test_file() reads it
+    /// by this name (process::path_from_utf8()), and each run takes it as its scenario
+    /// (RunIntent::scenario).
+    std::string shown;
 };
 
 /// What list_scenarios() found.
@@ -132,12 +134,20 @@ struct TestReport
 
 struct TestOptions
 {
-    /// For every run: the check's options (strict, --disable and --enable, the parameters, the
-    /// --describe limit), the speed, the time limit of one run, where the lines go, the
-    /// interrupts (RunOptions::stops). Its variant and scenario are set for each run. Its controls
-    /// must be null (test_file() throws std::invalid_argument otherwise): each run makes its own
-    /// (RunControls serves one run).
-    RunOptions run{};
+    /// For every run: the file, what the check reads (strict, --disable and --enable, the
+    /// parameters, the --describe limit), the speed and the time limit of one run. Its variant and
+    /// scenario are set for each run.
+    RunRequest request{};
+    /// For every run: where the lines go, and the name of an interrupt.
+    RunObservers observers{};
+    /// For every run: the interrupts (RunLent::stops). Its controls must be null (test_file()
+    /// throws std::invalid_argument otherwise): each run makes its own (RunControls serves one run).
+    RunLent lent{};
+    /// For every run: the waits that only tests shorten.
+    RunLimits limits{};
+    /// CheckOptions::fastest_by_default of every run: RunIntent::speed of `request` is the test's
+    /// default, not a speed the user asked for.
+    bool fastest_by_default = false;
     /// --variant: only these variants (each must be one of the file's); empty: all of them.
     std::vector<std::string> variants{};
     std::vector<TestScenario> scenarios{};
@@ -145,15 +155,15 @@ struct TestOptions
     bool fail_fast = false;
 };
 
-/// Runs every scenario for every variant of the file `path` (shown as `shown_as`), one after the
+/// Runs every scenario for every variant of the file of TestOptions::request, one after the
 /// other, in the order of TestReport::runs. Before the first run: the file is read (an unreadable
 /// one ends the test), the variants are looked up, and these are usage errors: a parameter of the
 /// command line that no scenario declares or uses, and an enabled participant that someone starts
 /// by hand (manual: every run would wait for a person). A failed run does not end the test (unless
 /// `fail_fast`); an interrupt ends the current run in order and the test with it. Writes a line
-/// before and after each run (RunOptions::write_line). As run_file(): from the main thread, and
+/// before and after each run (RunObservers::write_line). As run_file(): from the main thread, and
 /// never throws for a problem of a file, an executable or a participant.
-[[nodiscard]] TestReport test_file(const std::filesystem::path& path, const std::string& shown_as, const TestOptions& options);
+[[nodiscard]] TestReport test_file(const TestOptions& options);
 
 /// The report for people: a table with one row for each run (the variant if the file has
 /// variants, the scenario, the result, why), how to see one failed run in full (the command of

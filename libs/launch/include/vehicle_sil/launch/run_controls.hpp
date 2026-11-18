@@ -2,7 +2,7 @@
 //
 // The controls of a run: what can be asked of it from outside while it lasts (stop it, move its
 // time) and where it stands (its phase), in one object that the run borrows (RunControls). Used by
-// the run (run.hpp: RunOptions::controls). Internal.
+// the run (run.hpp: RunLent::controls). Internal.
 #pragma once
 
 #include "vehicle_sil/launch/stop_requests.hpp"
@@ -112,7 +112,7 @@ struct RunState
 /// stop requests are the part that several runs share. The caller of run_file() makes it before
 /// the run and keeps it for as long as any of its threads may use it (vehicle_sil_launch run:
 /// never destroyed, as the reader of standard input uses it until the process ends). Without
-/// RunOptions::controls the run makes its own for that run.
+/// RunLent::controls the run makes its own for that run.
 ///
 /// The state (RunState) is put together here from its owners: the phase and the pacing (told by
 /// the run), the stop requests, and the time commands' facts. publish() tells Observers::on_state
@@ -202,11 +202,11 @@ public:
     void end_without_time_lock();
 
     /// How the first stop request is called in the state (RunState::stopped_by): as the result's
-    /// interrupted_by (RunOptions::interrupt_name). Without it: "interrupt". Called while the
+    /// interrupted_by (RunObservers::interrupt_name). Without it: "interrupt". Called while the
     /// state is put together, under TimeCommands' mutex: short, no wait. Set before the run and
     /// before any other thread uses this object.
     void set_stop_name(std::function<std::string()> name) { stop_name_ = std::move(name); }
-    /// Whether the run has a control server (RunOptions::control_endpoint), for the state: without
+    /// Whether the run has a control server (RunLent::control_endpoint), for the state: without
     /// one, RunState::allowed refuses what only a control server's client can send (write).
     /// Not given: none. It changes no rule and no command's answer. Set before the run and
     /// before any other thread uses this object.
