@@ -146,10 +146,11 @@ const char* const kVariants = "vehicle_sil_simulation: 1\nnetworks: []\nparticip
                               "  - name: A\n    command: [missing/a]\nvariants:\n  winter: {}\n  summer: {}\n";
 const char* const kDrive = "vehicle_sil_scenario: 1\nparams: { x: 0 }\nsteps:\n  - set: { A.level: \"${x}\" }\n";
 
-/// The files above in a directory of their own.
-std::filesystem::path request_files()
+/// The files above in a directory of their own: one for each test, since CTest may run two tests at
+/// once and each starts by removing what was there.
+std::filesystem::path request_files(const char* name)
 {
-    const std::filesystem::path dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "request";
+    const std::filesystem::path dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "request" / name;
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
     std::ofstream(dir / "sim.yaml", std::ios::binary) << kSim;
@@ -206,7 +207,7 @@ TEST_CASE(a_check_reads_every_field_of_the_request_that_is_the_checks)
 {
     // One field changes at a time from the request of the file alone: the check differs in what
     // that field is for. (Its executables are missing: nothing is run.)
-    const std::filesystem::path dir = request_files();
+    const std::filesystem::path dir = request_files("check-fields");
     const vehicle_sil::launch::test::InDirectory there(dir);
     const CheckOptions file_only{.params_for_many = false, .file_only = true, .fastest_by_default = false};
     const CheckReport none = check_file(of_file("sim.yaml"));
@@ -331,7 +332,7 @@ TEST_CASE(a_plan_takes_every_field_of_the_request_that_the_run_reads)
 
 TEST_CASE(the_check_of_a_run_is_the_check_of_its_request)
 {
-    const std::filesystem::path dir = request_files();
+    const std::filesystem::path dir = request_files("check-of-run");
     const vehicle_sil::launch::test::InDirectory there(dir);
     RunRequest r = of_file("variants.yaml");
     r.intent.strict = true;
