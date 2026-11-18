@@ -38,8 +38,10 @@ async def run_to_end(c: Client, body: dict) -> list[dict]:
     return got
 
 
-SPEED = {"REPLAY_FEATURES": "events,stdin-commands,request,check-variables,speed"}
-OLD = {"REPLAY_FEATURES": "events,stdin-commands,request,check-variables"}
+
+
+# The features that every launcher of this GUI's version has and that the server requires at its start.
+REQUIRED = "events,stdin-commands,request,time-commands,stdin-run-until,state"
 
 
 def is_time(**fields) -> Callable[[dict], bool]:
@@ -71,7 +73,7 @@ def test_a_run_that_passes(tmp_path: Path) -> None:
         assert all(not alive(pid) for pid in started_pids(got))
         status, body = await c.get("api/session")
         assert without_variables(body["session"]) == end and body["session"]["variables"]["state"] == "off"
-    with gui_server(tmp_path, env=SPEED) as gui:
+    with gui_server(tmp_path) as gui:
         run_async(main, gui)
 
 
@@ -513,6 +515,10 @@ def test_a_killed_server_leaves_no_run(tmp_path: Path) -> None:
 @pytest.mark.parametrize("env,args,expected", [
     ({"REPLAY_FEATURES": "events"}, (), "has no 'stdin-commands'"),
     ({"REPLAY_FEATURES": ""}, (), "has no 'events'"),
+    *[({"REPLAY_FEATURES": ",".join(f for f in REQUIRED.split(",") if f != missing)}, (),
+       f"has no '{missing}' (its features: ")
+      for missing in ("request", "time-commands", "stdin-run-until", "state")],
+    ({"REPLAY_FEATURES": "events"}, (), "use the vehicle_sil_launch of the same vehicle-sil version"),
     ({}, ("--port", "70000"), "--port"),
     ({}, ("--port", "80"), "--port 80"),
     ({}, ("/nonexistent/x.yaml",), "no such file"),
@@ -639,43 +645,6 @@ def test_time_commands_are_checked(tmp_path: Path) -> None:
         run_async(main, gui)
 
 
-def test_a_launcher_without_time_commands(tmp_path: Path) -> None:
-    async def main(c: Client) -> None:
-        status, app = await c.get("api/app")
-        assert "time-commands" not in app["launcher"]["version"]["features"]
-        # The server does not send a command that the launcher cannot read.
-        sock = await c.ws()
-        await sock.until(is_synced)
-        await c.post("api/run", {"file": "forever.yaml"})
-        await sock.until(is_time(sim_ms=0))
-        status, body = await c.post("api/time", {"command": "pause"})
-        assert status == 400 and body["error"]["code"] == "unsupported" and "cannot pause" in body["error"]["message"]
-        await c.post("api/stop")
-        await sock.until(is_ended)
-    with gui_server(tmp_path, env=OLD) as gui:
-        run_async(main, gui)
-
-
-def test_a_launcher_without_state_does_not_get_an_id(tmp_path: Path) -> None:
-    """The launcher returns the id of a command only with the feature `state`: another is not sent one it would
-    not read as an id."""
-    features = "events,stdin-commands,request,check-variables,speed,start-paused,time-commands"
-
-    async def main(c: Client) -> None:
-        sock = await c.ws()
-        await sock.until(is_synced)
-        await c.post("api/run", {"file": "forever.yaml"})
-        await sock.until(is_time(sim_ms=0))
-        status, body = await c.post("api/time", {"command": "pause", "id": 3})
-        assert status == 400 and body["error"]["code"] == "unsupported" and "id" in body["error"]["message"], body
-        status, body = await c.post("api/time", {"command": "pause", "id": -1})
-        assert status == 400 and body["error"]["code"] == "invalid-field", body
-        await c.post("api/stop")  # nothing was written for the two above
-        await sock.until(is_ended)
-    with gui_server(tmp_path, env={"REPLAY_FEATURES": features}) as gui:
-        run_async(main, gui)
-
-
 def test_allowed_follows_the_run_and_the_summary_keeps_the_last_state(tmp_path: Path) -> None:
     def start(allowed: dict) -> object:
         return allowed["start"]["reason"]
@@ -721,7 +690,7 @@ def test_the_probe_that_changes_the_launcher_is_pushed_to_the_other_screens(tmp_
                             f"runpy.run_path({str(REPLAY)!r}, run_name='__main__')\n")
         launcher.chmod(0o755)
 
-    write("events,stdin-commands,request,check-variables")
+    write(REQUIRED)
     with gui_server(tmp_path, launcher=launcher) as gui:
         async def main(c: Client) -> None:
             other = await c.ws()
@@ -735,7 +704,7 @@ def test_the_probe_that_changes_the_launcher_is_pushed_to_the_other_screens(tmp_
             # a screen that reads api/session now makes no new number: the other screens already have it
             status, body = await c.get("api/session")
             assert body["allowed"]["rev"] == unusable["rev"]
-            write("events,stdin-commands,request,check-variables,speed")  # usable again
+            write(REQUIRED + ",speed")  # usable again
             await c.get("api/app")
             got = await other.until(lambda m: m["type"] == "allowed" and m["allowed"]["start"]["ok"])
             assert got[-1]["allowed"]["rev"] > unusable["rev"]
@@ -858,32 +827,4 @@ def test_a_launcher_that_does_not_read_its_input_holds_no_request(tmp_path: Path
         await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "log")
         assert len(events(sock.received, "log")) >= logs + 2
     with gui_server(tmp_path, env={"REPLAY_TICK_MS": "100"}, args=("--stop-timeout", "1")) as gui:
-        run_async(main, gui)
-
-
-@pytest.mark.skipif(not POSIX, reason="file modes")
-def test_time_commands_follow_the_launcher_of_the_run(tmp_path: Path) -> None:
-    """A launcher built again while a run goes: the commands the running one can take decide, not the new one's."""
-    launcher = tmp_path / "vehicle_sil_launch"
-
-    def write(features: str) -> None:  # another size each time: the server asks the new one for its version
-        launcher.write_text(f"#!{sys.executable}\n# {features}\nimport os, runpy\n"
-                            f"os.environ['REPLAY_FEATURES'] = {features!r}\n"
-                            f"runpy.run_path({str(REPLAY)!r}, run_name='__main__')\n")
-        launcher.chmod(0o755)
-
-    write("events,stdin-commands,request,check-variables")
-    with gui_server(tmp_path, launcher=launcher) as gui:
-        async def main(c: Client) -> None:
-            sock = await c.ws()
-            await sock.until(is_synced)
-            await c.post("api/run", {"file": "forever.yaml"})
-            await sock.until(is_time(sim_ms=0))
-            write("events,stdin-commands,request,check-variables,speed,start-paused,time-commands")
-            status, app = await c.get("api/app")
-            assert "time-commands" in app["launcher"]["version"]["features"]
-            status, body = await c.post("api/time", {"command": "pause"})
-            assert status == 400 and body["error"]["code"] == "unsupported", body
-            await c.post("api/stop")
-            await sock.until(is_ended)
         run_async(main, gui)

@@ -24,8 +24,7 @@ from aiohttp import WSCloseCode, WSMsgType, web
 from . import __version__, control, dashboard, process
 from .allowed import Facts, Numbered, allowed as allowed_of
 from .hub import Client, Hub, Outgoing, encode
-from .launcher import (CONNECTIONS_FIELDS, NO_CONNECTION, REQUEST_FIELDS, FEATURE_SCENARIO_CONTROL, FEATURE_STATE,
-                       FEATURE_STDIN_RUN_UNTIL, FEATURE_TIME_COMMANDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN,
+from .launcher import (CONNECTIONS_FIELDS, NO_CONNECTION, REQUEST_FIELDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN,
                        STEP_MS_MAX, InvalidRequest, Launcher, check_command, check_connect, check_disable,
                        check_enable, check_fields, check_manual, check_network, check_params, check_speed,
                        check_strict, check_time_command, check_time_policy, check_variant, command_line,
@@ -660,11 +659,6 @@ class GuiServer:
             raise Refused(422, "check-failed", self._check_failed_message(config.relative, checked),
                           {"result": checked.get("result"), "findings": checked.get("findings", [])})
         why_not = await self._no_variables()
-        # The one place that decides whether a scenario's run has the launcher's control server: only a launcher
-        # with scenario-control can have it (it then refuses writes); the others refuse --scenario with --control.
-        if scenario is not None and why_not is None and FEATURE_SCENARIO_CONTROL not in self.launcher.features:
-            why_not = ("this run plays a scenario, and this launcher cannot have its control server during a "
-                       "scenario, so the variables cannot be read")
         self._not_closing()
         credentials = token = None
         if why_not is None:
@@ -766,18 +760,9 @@ class GuiServer:
                 or proc.stdin is None or proc.stdin.is_closing():
             return error(409, "not-running", "no simulation is running: time commands go to the run that is "
                                              "running")
-        # What the launcher that runs can do, not the one on disk now (it may have been built again since).
-        if FEATURE_TIME_COMMANDS not in run.features:
-            return error(400, "unsupported", "the launcher of this run cannot pause, resume, step or change the "
-                                             "speed")
-        if command["command"] == "run_until" and FEATURE_STDIN_RUN_UNTIL not in run.features:
-            return error(400, "unsupported", "the launcher of this run cannot run until a time")
         said = self._launcher_refuses(run, command["command"])
         if said is not None and said[0] == "not-running":  # the run is over (a late command could change nothing)
             return error(409, "not-running", said[1])
-        if "id" in command and FEATURE_STATE not in run.features:
-            return error(400, "unsupported", "the launcher of this run does not return the id of a command: "
-                                             "leave id out")
         gone = error(409, "not-running", "the launcher's input is closed (it is ending): the command was not sent")
         try:
             proc.stdin.write(command_line(command))  # written before any await: in the order the requests came

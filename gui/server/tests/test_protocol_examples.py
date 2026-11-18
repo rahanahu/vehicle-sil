@@ -353,18 +353,18 @@ def test_http_examples(tmp_path: Path) -> None:
 
 
 def test_the_error_of_a_feature_that_the_launcher_lacks(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"REPLAY_FEATURES": "events,stdin-commands,request,check-variables"}) as gui:
+    with gui_server(tmp_path) as gui:  # the default launcher is built without a control server
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
             status, body = await c.post("api/run", {"file": "forever.yaml"})
             assert status == 200, body
             await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
-            req = {"command": "pause"}
-            status, body = await c.post("api/time", req)
-            check_example("error-unsupported", http("A time command that the run's launcher cannot take (it lacks "
-                                                    "the feature time-commands).", "POST", "api/time", req, status,
-                                                    body), gui)
+            req = {"session": body["session"]["id"], "writes": {"Engine": {"engine.demand": 40}}}
+            status, body = await c.post("api/write", req)
+            check_example("error-unsupported", http("A write to a run whose launcher was built without a control "
+                                                    "server (it lacks the feature control-server).", "POST",
+                                                    "api/write", req, status, body), gui)
             await c.post("api/stop")
             await sock.until(is_ended)
         run_async(talk, gui)
@@ -738,7 +738,7 @@ def test_scenario_examples(tmp_path: Path, control_env: dict) -> None:
         run_async(talk, gui)
     # At speed 0.001 its second step runs for minutes: the scenario still runs when the write comes, however slow
     # the machine.
-    env = {**control_env, "REPLAY_FEATURES": CONTROL_FEATURES + ",scenario-control"}
+    env = {**control_env, "REPLAY_FEATURES": CONTROL_FEATURES}
     with gui_server(tmp_path, env=env) as gui:
         async def talk(c: Client) -> None:
             sock = await c.ws()

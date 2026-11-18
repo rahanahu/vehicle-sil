@@ -146,25 +146,10 @@ def test_a_run_with_a_scenario_keeps_its_steps_in_the_summary(gui, scenario: str
     run_async(talk, gui)
 
 
-def test_without_scenario_control_a_scenario_run_has_no_variables(tmp_path: Path, control_env: dict) -> None:
-    with gui_server(tmp_path, env=control_env) as gui:
-        async def talk(c: Client) -> None:
-            ws = await c.ws()
-            await ws.until(is_synced)
-            status, body = await c.post("api/run", {"file": "simulation.yaml", "scenario": PASS})
-            assert status == 200, body
-            v = body["session"]["variables"]
-            assert v["state"] == "off" and "control server" in v["reason"]
-            await ws.until(is_ended)
-            _, body = await c.get("api/session")
-            assert body["session"]["result"]["result"] == "passed"  # the launcher was not given --control
-        run_async(talk, gui)
-
-
 def test_with_scenario_control_variables_are_read_and_writes_refused(tmp_path: Path, control_env: dict) -> None:
     # At speed 0.001 the second step (a wait of 500 ms of virtual time) runs for minutes, and the file has no
     # stop_at_ms: the scenario is still running when the write comes, however slow the machine.
-    env = {**control_env, "REPLAY_FEATURES": CONTROL_FEATURES + ",scenario-control"}
+    env = {**control_env, "REPLAY_FEATURES": CONTROL_FEATURES}
     with gui_server(tmp_path, env=env) as gui:
         async def talk(c: Client) -> None:
             ws = await c.ws()
@@ -187,7 +172,7 @@ def test_with_scenario_control_variables_are_read_and_writes_refused(tmp_path: P
 def test_the_time_commands_go_to_the_launcher_while_a_scenario_runs(tmp_path: Path, control_env: dict) -> None:
     """The server's time commands are the launcher's standard input, which a scenario's run takes as any run does
     (docs/scenario.md; only the control server's clients are refused them): pause, a step, a speed, resume."""
-    env = {**control_env, "REPLAY_FEATURES": CONTROL_FEATURES + ",scenario-control"}
+    env = {**control_env, "REPLAY_FEATURES": CONTROL_FEATURES}
     with gui_server(tmp_path, env=env) as gui:
         async def talk(c: Client) -> None:
             ws = await c.ws()

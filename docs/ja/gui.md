@@ -226,7 +226,7 @@ GUI に自分のコードを足す道は 3 つあります。サンプルの画�
 | 機能 | 必要なもの |
 |---|---|
 | GUI サーバーの起動 | Python 3.11 以上と [uv](https://docs.astral.sh/uv/) |
-| シミュレーションの照合と実行 | `version --json` の `features` に `events` と `stdin-commands` がある `vehicle_sil_launch`（`run --events`、`run --stdin-commands`。[simulation-events.md](simulation-events.md) の「プログラムから使う」） |
+| シミュレーションの照合と実行 | `version --json` の `features` に `events`、`stdin-commands`、`request`、`time-commands`、`stdin-run-until`、`state` がある `vehicle_sil_launch`（同じ版の vehicle-sil のランチャーなら、すべてあります。[simulation-events.md](simulation-events.md) の「プログラムから使う」） |
 | 時間の操作 | `features` の `speed`、`start-paused`、`time-commands`（ないランチャーでは、その操作を表示しません） |
 | ECU の変数の読み書き | Control Server を持つランチャー（`features` に `control-server`。`-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` でビルドしたもの。[control-api.md](control-api.md)）と、GUI サーバーの Python の gRPC（`grpcio`、`protobuf`。`uv sync` がインストールします） |
 | 実行するシミュレーション | 設定ファイルと、そこに書いた ECU の実行ファイル（ランチャーが照合と実行で起動します） |
@@ -281,7 +281,7 @@ vehicle-sil-gui [options] [<configuration file>]
 | 場合 | 動作 |
 |---|---|
 | `PATH` で見つけたランチャーがカレントディレクトリにある | 使わずに、終了コード 2 で終わります。 |
-| ランチャーに `features` の `events` か `stdin-commands` がない | 何が足りないかを表示して、終了コード 2 で終わります。 |
+| ランチャーの `features` に、上の機能のどれかがない | 何が足りないかを表示して（同じ版の vehicle-sil の `vehicle_sil_launch` を使ってください）、終了コード 2 で終わります。サーバーの実行中に差し替えられたランチャーも、同じように断ります（`launcher-unusable`）。 |
 
 カレントディレクトリのランチャーを使わないのは、Windows がカレントディレクトリを `PATH` より先に探すためです。人から受け取ったフォルダで起動すると、そこにあるプログラムが動いてしまいます。そのランチャーを使うときは `--launcher` で指定します。
 
@@ -379,7 +379,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 | 実行中 | 「時刻」のカード | 仮想時間、いまの速度、実際の速度、一時停止しているかを見て、ステップ実行（ミリ秒を入力）と速度の変更をします。 |
 | 終了の後 | 「結果」のカード | 時間の進み方（速度、仮想時間、かかった実時間、実際の速度、一時停止していた時間、速度を合わせたときの遅れ）を見ます。 |
 
-- ランチャーの `features` に `speed`、`start-paused`、`time-commands` がなければ、それぞれの操作を表示しません（`speed` だけのランチャーでは、「時刻」のカードは見るだけです）。時間のコマンドを受け付けるかは、実行中のランチャー（開始したときの `version --json`）で決めます。
+- ランチャーの `features` に `speed`、`start-paused`、`time-commands` がなければ、それぞれの操作を表示しません（`speed` だけのランチャーでは、「時刻」のカードは見るだけです）。サーバーは、コマンドごとにランチャーの `features` を確かめません。時間のコマンドの機能は、起動時に必須として確かめます。
 - シミュレーションの外につながる実行（ファイルに `role: bridge` の participant がいる、または実行の要求に `connect` がある）では、ランチャーが、一時停止、ステップ、1 以外の速さを、理由 `outside-real-time` で断ります。コマンドラインのときと同じです（[simulation-run.md](simulation-run.md) の「外につながる実行の時間」）。これはランチャーの規則です。GUI サーバーは自分の規則を持たず、答えを中継します。要求の `time_policy`（`"free"`）がこれを外し、実行が実時間を守るかは、照合の `time_lock` が言います。「時刻」のカードは、一時停止とステップの下にランチャーの理由を出し、「等速」のほかの速さは選べません（カードが、この実行で選べる速さは等速だけだと言います）。
 - 時間の操作ごとの、使えるか、使えない理由、ステップと速さの範囲は、クライアントのライブラリの `controls` から来ます（[gui/client/README.ja.md](../../gui/client/README.ja.md)）。画面は自分の規則を持ちません。画面に言葉のある理由は画面の言語で、ほかの理由はランチャーの英語の文のままで出ます。注意（コマンドは受け付けるが、先に知っておくとよいこと。`outside-not-real-time` など）も同じ場所に出ます。
 - 途中から開いた画面や、別のタブも、同じ時間の状態を表示します（サーバーの要約に、最後の `time` と `command` のイベントがあるため）。
@@ -441,7 +441,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 - 手順の表は、ランチャーのイベント `scenario_step` で進み、結果が出たら、実行されなかった手順を含む全部の手順になります。途中から開いた画面も同じ表を表示します。
 - シナリオは止めた状態では開始できません（「止めた状態で始める」は押せなくなります）。
 - 一時停止、ステップ実行、速度の変更、停止は、シナリオのない実行と同じです（シナリオの結果は変わりません）。GUI はこれらをランチャーの標準入力のコマンドで送ります。Control Server のクライアントの時間の呼び出しも、同じ答えになります。
-- ランチャーの `features` に `scenario-control` があれば、「変数」の画面で値を見られます（書き込むコンポーネントは押せず、「シナリオの実行中は書けません」と表示されます）。ないランチャーでは、シナリオの実行に変数はなく、「変数」の画面は「シナリオの実行中は、変数を見られません」と表示します。
+- ランチャーに Control Server があれば（`features` に `control-server`。`scenario-control` も一緒にあります）、「変数」の画面で値を見られます（書き込むコンポーネントは押せず、「シナリオの実行中は書けません」と表示されます）。Control Server のないランチャーでは、シナリオの実行に変数はなく、「変数」の画面は「シナリオの実行中は、変数を見られません」と表示します。
 - サーバーの API は `GET api/scenarios?file=<configuration file>` と、`api/check`、`api/run` の `scenario`（[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「シナリオ」）、ライブラリでは `client.scenarios(file)` と、`check` と `run.start` の `scenario`、セッションのコピーの `scenario` です。
 
 ### シナリオの実行の時間の軸
@@ -1417,7 +1417,7 @@ python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> <cas
 | `test_real_variables.py`（Control Server を持つランチャーのとき） | 変数の読み書きと、保存したシナリオが本物の照合を通って実行できること、例 `examples/gui_client/variables.mjs` |
 | 画面の e2e（`gui/web/e2e/real/`） | 変数の画面で Engine のスロットルに書き込んで回転数が変わること、例のダッシュボードのファイルのとおりに並び、カスタムパネルが回転数を表示すること |
 
-ランチャーの `features` に `scenario-control` があれば、画面の e2e は、シナリオの実行中に値が見え、書き込むコンポーネントが理由を表示して書き込まず、一時停止、再開、停止ができることも確認します。
+ランチャーに Control Server があれば、画面の e2e は、シナリオの実行中に値が見え、書き込むコンポーネントが理由を表示して書き込まず、一時停止、再開、停止ができることも確認します。
 
 ## 関連するドキュメント
 
