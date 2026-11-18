@@ -95,7 +95,7 @@ public:
     /// end, if anything changed. Then (but at the end, where the detach of the time commands
     /// follows and does it) the run's state, if it changed: the pacing seen here, and what no call
     /// tells the controls (the gate stands still or goes on, a stop request of a signal handler).
-    void note_time(SimulationController& controller, TimeNote note, const RunOutcome& outcome);
+    void note_time(SimulationController& controller, TimeNote note);
 
 private:
     const RunContext& ctx_;

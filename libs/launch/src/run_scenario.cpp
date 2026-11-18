@@ -115,7 +115,7 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
     }
     port_ = std::make_unique<HubPort>(control_.hub());
     port_->give_up = cancelled;
-    if (!ctx_.options.timeline.empty())
+    if (!ctx_.plan.timeline.empty())
     {
         record_ = std::make_shared<TimelineRecord>(*ctx_.scenario);
     }

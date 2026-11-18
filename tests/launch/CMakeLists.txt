@@ -16,6 +16,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_j1939_nodes_match.cpp
     test_run.cpp
     test_run_controls.cpp
+    test_run_plan.cpp
     test_run_outside.cpp
     test_scenario.cpp
     test_scenario_line.cpp
