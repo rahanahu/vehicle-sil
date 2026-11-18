@@ -47,7 +47,7 @@ flowchart LR
 
 ## `--describe`
 
-`--describe` は、ブリッジが何かを、ecu_main の実行ファイルが `--describe` で書くのと同じ JSON で書き（[ecu-executable.md](ecu-executable.md) の「[JSON の形式](ecu-executable.md#json-の形式)」）、終了コード 0 で終わります。引数は実行のときと同じに確かめます（誤りは終了コード 4）。ただしデバイスを開かず、デバイスのライブラリも読まず、SIL Kit にもつなぎません。そのため、デバイスのない PC でも `check` は動きます。
+`--describe` は、ブリッジが何かを、ecu_main の実行ファイルが `--describe` で書くのと同じ JSON で書き（ecu-executable.md の「[JSON の形式](ecu-executable.md#json-の形式)」）、終了コード 0 で終わります。引数は実行のときと同じに確かめます（誤りは終了コード 4）。ただしデバイスを開かず、デバイスのライブラリも読まず、SIL Kit にもつなぎません。そのため、デバイスのない PC でも `check` は動きます。
 
 ```json
 {
