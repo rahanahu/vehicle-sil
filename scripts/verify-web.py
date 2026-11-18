@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Install, check, unit-test, build and end-to-end test the web front end (gui/web), with a short summary.
 
-Steps, in order: npm ci, npm run format:check, npm run lint (gui/web, gui/client and gui/timeline), npm test, npm run
+Steps, in order: npm ci, npm run format:check, npm run lint (gui/web, gui/client and gui/timeline), npm test (the Angular unit tests, in a
+headless Chromium that Playwright provides; scripts/doctor.py checks that it is installed), npm run
 test:client (the client library gui/client: a type check, then its unit tests: the library on Node without
 Angular, the parts in a headless Chromium that Playwright provides; scripts/doctor.py checks that it is installed), npm run test:timeline (the timeline element gui/timeline: whether vehicle-sil-timeline.js is what its sources
 make, then the unit tests of viewer.js on Node, no DOM),
@@ -96,7 +97,7 @@ SUMMARY_LINES = {
     "e2e-dev": E2E_SUMMARY,
 }
 
-# The unit tests of the parts (gui/client/src/elements) run in Chromium; Playwright says this when it is not installed.
+# The unit tests of gui/web and of the parts (gui/client/src/elements) run in Chromium; Playwright says this when it is not installed.
 BROWSER_MISSING = re.compile(r"Executable doesn't exist|npx playwright install")
 BROWSER_HINT = ("The browser of the unit tests is not installed. Install it with `npx playwright install "
                 "--only-shell chromium` in gui/web (add --with-deps on a fresh Linux); scripts/doctor.py checks it.")

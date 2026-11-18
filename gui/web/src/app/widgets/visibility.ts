@@ -3,7 +3,7 @@ import { Injectable } from '@angular/core';
 /**
  * 要素が画面に見えているか（少し外側も含める）を知らせる。部品が、見えている間だけ値を watch するため。
  * 監視は 1 つの IntersectionObserver でまとめる（部品が数百あっても 1 つ）。1 つの要素を何人が見てもよい（1 つの
- * 部品で bindVariable を 2 回呼ぶなど）。IntersectionObserver のない環境（単体試験の jsdom）では、いつも見えて
+ * 部品で bindVariable を 2 回呼ぶなど）。IntersectionObserver のない環境では、いつも見えて
  * いるとする。
  */
 @Injectable({ providedIn: 'root' })

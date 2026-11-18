@@ -321,15 +321,11 @@ describe('fileDashboard (a dashboard file, as the server checked it)', () => {
   });
 
   it('the JSON Schema (gui/protocol) lists the same widgets as the screen', async () => {
-    // node: の組み込みは、試験の束ねに含めず、実行のときに読む（testing/protocol-examples.ts と同じ）
-    const fsName = 'node:fs';
-    const fs = (await import(/* @vite-ignore */ fsName)) as {
-      readFileSync(path: string, encoding: 'utf8'): string;
+    // 本物のブラウザーはファイルを読めない。Node で動く命令（vitest-base.config.mts）が文字列を渡す
+    const { commands } = (await import('vitest/browser')) as unknown as {
+      commands: { readDashboardSchema(): Promise<string> };
     };
-    const cwd = (globalThis as unknown as { process: { cwd(): string } }).process.cwd();
-    const schema = JSON.parse(
-      fs.readFileSync(`${cwd}/../protocol/dashboard.schema.json`, 'utf8'),
-    ) as {
+    const schema = JSON.parse(await commands.readDashboardSchema()) as {
       $defs: { item: { oneOf: { properties: { widget?: { enum: string[] } } }[] } };
     };
     expect(schema.$defs.item.oneOf[0].properties.widget?.enum).toEqual([...WIDGET_KINDS]);
