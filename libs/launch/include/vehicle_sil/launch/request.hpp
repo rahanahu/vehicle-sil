@@ -50,6 +50,21 @@ struct RunIntent
     bool strict = false;
 };
 
+/// run --control: where the run's control server listens and the files it reads, as the caller
+/// gave them (UTF-8). run_file() reads and checks them before it checks anything else.
+struct ControlHost
+{
+    /// <port> (on 127.0.0.1; 0: any free port), <host>:<port> or unix:<path>.
+    std::string listen{};
+    /// The file of tokens and roles; empty: every client may call.
+    std::string credentials{};
+    /// TLS: the files of the PEM certificate chain and of the PEM private key; both or neither.
+    std::string tls_cert{};
+    std::string tls_key{};
+    /// The file that who changed what is appended to; empty: none.
+    std::string audit_log{};
+};
+
 /// What the caller that starts the launcher decides: where things are and how long they may take.
 struct RunHost
 {
@@ -64,8 +79,9 @@ struct RunHost
     std::string timeline{};
     /// The longest the simulation may run (wall clock); empty: no limit.
     std::optional<std::chrono::milliseconds> timeout{};
-    /// A control server is asked for.
-    bool control = false;
+    /// A control server is asked for (only in a build with VEHICLE_SIL_BUILD_CONTROL_SERVER:
+    /// run_file() throws std::invalid_argument in one without); empty: none.
+    std::optional<ControlHost> control{};
     /// The time commands are read from standard input.
     bool stdin_commands = false;
 };

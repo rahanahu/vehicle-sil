@@ -107,7 +107,7 @@ TEST_CASE(a_scenario_and_a_start_paused_are_refused_with_or_without_commands)
     r.host.stdin_commands = true;
     CHECK(messages(r) == list(kScenarioNotPaused));
     r.host.stdin_commands = false;
-    r.host.control = true; // its clients could not end the hold either
+    r.host.control.emplace(); // its clients could not end the hold either
     CHECK(messages(r) == list(kScenarioNotPaused));
 }
 
@@ -119,10 +119,10 @@ TEST_CASE(a_start_paused_needs_a_way_to_go_on)
     r.host.stdin_commands = true;
     CHECK(messages(r).empty());
     r.host.stdin_commands = false;
-    r.host.control = true;
+    r.host.control.emplace();
     CHECK(messages(r).empty());
     r.intent.start_paused = false;
-    r.host.control = false;
+    r.host.control.reset();
     CHECK(messages(r).empty());
 }
 
@@ -276,7 +276,7 @@ TEST_CASE(a_check_reads_every_field_of_the_request_that_is_the_checks)
     r.host.log_dir = "logs";
     r.host.timeline = "out/t.json";
     r.host.timeout = 900ms;
-    r.host.control = true;
+    r.host.control.emplace();
     r.host.stdin_commands = true;
     CHECK(codes(check_file(r), "") == codes(none, ""));
     CHECK(!std::filesystem::exists(dir / "logs") && !std::filesystem::exists(dir / "out"));

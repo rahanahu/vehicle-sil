@@ -206,7 +206,7 @@ public:
     /// state is put together, under TimeCommands' mutex: short, no wait. Set before the run and
     /// before any other thread uses this object.
     void set_stop_name(std::function<std::string()> name) { stop_name_ = std::move(name); }
-    /// Whether the run has a control server (RunLent::control_endpoint), for the state: without
+    /// Whether the run has a control server (RunHost::control), for the state: without
     /// one, RunState::allowed refuses what only a control server's client can send (write).
     /// Not given: none. It changes no rule and no command's answer. Set before the run and
     /// before any other thread uses this object.

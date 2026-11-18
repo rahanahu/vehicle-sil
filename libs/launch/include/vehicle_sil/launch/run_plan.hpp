@@ -76,7 +76,7 @@ struct RunPlan
 
 /// The plan of the run that `request` asks for. `check`: the check of the file, which passed (as
 /// check_file() returned it: the bridges of --connect are added here); `base`: the directory of
-/// the file; `control_server`: the run is lent one (RunLent::control_endpoint). Throws
+/// the file; `control_server`: the run has one (RunHost::control, or a lent RunLent::control_endpoint). Throws
 /// std::invalid_argument for a check without a configuration (CheckReport::config is empty: the
 /// file could not be read, so there is nothing to run).
 /// The plan has copies of what it reads of `request` and `limits`: neither is kept.
