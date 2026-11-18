@@ -1,6 +1,5 @@
 import { ConnectionState } from './connection';
-import { SessionView } from './session-state';
-import { TimeState } from './time';
+import { SessionView, isHolding } from './session-state';
 import { ErrorSink, Readable, Writable, callEach } from './values';
 import {
   ValueCondition,
@@ -137,7 +136,6 @@ export interface BindingSources {
     ): Promise<OperationView>;
   };
   readonly connection: Readable<ConnectionState>;
-  readonly time: Readable<TimeState>;
   readonly session: Readable<SessionView | null>;
   readonly onError: ErrorSink;
 }
@@ -239,7 +237,7 @@ export class VariableBinder {
       info: this.find(ref),
       status: this.sources.variables.state.get().status,
       connected: this.connected(),
-      beforeStart: this.sources.time.get().beforeStart,
+      beforeStart: isHolding(this.sources.session.get()),
       peerConnected: this.peerConnected(ref.peer),
     });
   }
@@ -448,7 +446,6 @@ class Binding implements VariableBinding {
     this.stops.push(
       sources.variables.state.subscribe(refresh),
       sources.connection.subscribe(refresh),
-      sources.time.subscribe(refresh),
       sources.session.subscribe(refresh),
       binder.onChange(ref, refresh),
     );

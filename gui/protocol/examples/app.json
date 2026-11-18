@@ -21,7 +21,7 @@
         "formats": {
           "check": 1,
           "run": 1,
-          "events": 1,
+          "events": 2,
           "describe": 1,
           "test": 1,
           "timeline": 1,

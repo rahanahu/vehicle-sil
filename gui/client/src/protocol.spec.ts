@@ -223,14 +223,17 @@ describe('the readers accept every example of gui/protocol', () => {
     const refused = events.filter((e) => e.event === 'command' && !e.accepted);
     expect(refused.length).toBe(1);
     const times = events.flatMap((e) => (e.event === 'time' ? [e] : []));
-    expect(times[0]).toMatchObject({ sim_ms: 0, speed: 'max', paused: true, late_steps: 0 });
-    expect(times.some((t) => t.speed === 1 && t.paused === false)).toBe(true);
+    expect(times[0]).toMatchObject({ sim_ms: 0, late_steps: 0 });
+    // Whether it stands still and the speed set are the state's to say
+    expect(times.some((t) => 'paused' in t || 'speed' in t)).toBe(false);
+    const states = events.flatMap((e) => (e.event === 'state' ? [e] : []));
+    expect(states.some((s) => s.speed === 1 && s.paused === false)).toBe(true);
     const end = time.at(-1);
     expect(end?.type === 'session' && end.session.result?.timing).toMatchObject({
       speed: 1,
       time_step_ms: 10,
     });
-    expect(end?.type === 'session' && end.session.time?.paused).toBe(false);
+    expect(end?.type === 'session' && end.session.launcher_state?.paused).toBe(false);
 
     const late = read('ws-late').flatMap((m) => (m?.type === 'event' ? [m.event] : []));
     expect(late.find((e) => e.event === 'time' && (e.late_ms ?? 0) > 0) as unknown).toMatchObject({
@@ -285,9 +288,9 @@ describe('the readers accept every example of gui/protocol', () => {
     ).toBe(0);
   });
 
-  it('reads a time event of an older launcher, which has only sim_ms', () => {
+  it('reads a time event that has only sim_ms', () => {
     const read = readLauncherEvent({ event: 'time', seq: 3, t_ms: 0, sim_ms: 1000 }, 'e', true);
-    expect(read).toMatchObject({ sim_ms: 1000, speed: null, paused: null, late_steps: null });
+    expect(read).toMatchObject({ sim_ms: 1000, actual_speed: null, late_steps: null });
     expect(read?.unreadable).toBeUndefined();
   });
 

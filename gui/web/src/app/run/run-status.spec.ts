@@ -241,10 +241,23 @@ describe('RunStatus', () => {
   });
 
   it('says when the simulation is paused, its speed, and how late it is, in words', async () => {
+    // 一時停止しているかと速さは、ランチャーの state が言う（time の事象には無い）
+    const state = (paused: boolean, speed: number | 'max' = 1) =>
+      ({
+        seq: 3,
+        rev: 3,
+        phase: 'running',
+        paused,
+        paused_at_ms: paused ? 0 : null,
+        holding: false,
+        speed,
+        pacing: null,
+        stop: null,
+        scenario: false,
+        allowed: {},
+      }) satisfies SessionSummary['launcher_state'];
     const time = (extra: Partial<NonNullable<SessionSummary['time']>> = {}) => ({
       sim_ms: 0,
-      speed: 1,
-      paused: true,
       actual_speed: null,
       late_steps: 0,
       max_late_ms: 0,
@@ -252,10 +265,9 @@ describe('RunStatus', () => {
       late_ms: 0,
       ...extra,
     });
-    await show(sessionViewFrom(summary({ sim_ms: 0, time: time() })));
+    await show(sessionViewFrom(summary({ sim_ms: 0, time: time(), launcher_state: state(true) })));
     expect(query('outcome')?.textContent).toContain('一時停止中');
     expect(query('speed')?.textContent).toContain('等速');
-    // 動いている間の 0 も出す（新しいランチャーは動いている間も知らせる）
     expect(query('sim-time')?.textContent).toContain('0.000');
     expect(query('late')?.textContent?.trim()).toBe('');
     // 読み上げるのは、遅れが「ある」になったときの決まった文だけ（数は読み上げない）
@@ -264,7 +276,11 @@ describe('RunStatus', () => {
     // 許容の内の小さな遅れ（刻みの同期のたびに出たり消えたりする）は、遅れとして言わない
     await show(
       sessionViewFrom(
-        summary({ sim_ms: 100, time: time({ sim_ms: 100, paused: false, late_ms: 3 }) }),
+        summary({
+          sim_ms: 100,
+          time: time({ sim_ms: 100, late_ms: 3 }),
+          launcher_state: state(false),
+        }),
       ),
     );
     expect(query('late')?.textContent?.trim()).toBe('');
@@ -273,13 +289,8 @@ describe('RunStatus', () => {
       sessionViewFrom(
         summary({
           sim_ms: 300,
-          time: time({
-            sim_ms: 300,
-            paused: false,
-            late_steps: 1,
-            max_late_ms: 200,
-            slipped_ms: 200,
-          }),
+          time: time({ sim_ms: 300, late_steps: 1, max_late_ms: 200, slipped_ms: 200 }),
+          launcher_state: state(false),
         }),
       ),
     );
@@ -292,13 +303,8 @@ describe('RunStatus', () => {
       sessionViewFrom(
         summary({
           sim_ms: 900,
-          time: time({
-            sim_ms: 900,
-            paused: false,
-            late_steps: 2,
-            max_late_ms: 300,
-            slipped_ms: 500,
-          }),
+          time: time({ sim_ms: 900, late_steps: 2, max_late_ms: 300, slipped_ms: 500 }),
+          launcher_state: state(false),
         }),
       ),
     );
@@ -307,7 +313,11 @@ describe('RunStatus', () => {
     // 途中で最速に変えても、それまでの遅れは出したまま
     await show(
       sessionViewFrom(
-        summary({ sim_ms: 300, time: time({ speed: 'max', paused: false, late_steps: 1 }) }),
+        summary({
+          sim_ms: 300,
+          time: time({ late_steps: 1 }),
+          launcher_state: state(false, 'max'),
+        }),
       ),
     );
     expect(query('late')?.textContent).toContain('実時間に遅れました');

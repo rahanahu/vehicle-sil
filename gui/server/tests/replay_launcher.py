@@ -63,7 +63,7 @@ first one after the phase running, "the next" the one after it.
                      finite (1e999, -1e999)
   loose-fields       after the first time event: known events with fields missing or of other types where the GUI
                      server does not check them
-  future-events      hello says vehicle_sil_events 2
+  future-events      hello says vehicle_sil_events 3
   flood              REPLAY_FLOOD (default 5000) log lines after the first time event
   finding-flood      the same number of finding events
   large-result       the same number of notes that the result lists too
@@ -288,7 +288,7 @@ def apply_fault(fault: str, entries: list[dict], head: dict) -> list[dict]:
     if fault == "future-events":
         for e in entries:
             if e.get("out", {}).get("event") == "hello":
-                e["out"]["vehicle_sil_events"] = 2
+                e["out"]["vehicle_sil_events"] = 3
         return entries
     if fault == "flood":
         return insert(first, {"out": {"event": "log", "source": names[0], "line": "flood line {n}"}, "repeat": flood})
@@ -516,6 +516,7 @@ class Player:
         self.last_time: dict | None = None  # that event
         self.time_step = 0  # the last move of the virtual time between two time events
         self.phase = None
+        self.paused: bool | None = None  # what the last state event written says (None: none yet, or it does not say)
         self.shift = 0  # added to the virtual times of the recording played (see go_on_with)
         self.time_events = 0
         self.peers = self._connected()
@@ -728,12 +729,12 @@ class Player:
                 self.run_on()
 
     def run_on(self) -> None:
-        """While it waits for a command where the simulation was running (the phase running, the last time event
-        not standing still), it runs on as the launcher would: a time event every 100 ms (scaled), the virtual time
+        """While it waits for a command where the simulation was running (the phase running, the last state not
+        paused), it runs on as the launcher would: a time event every 100 ms (scaled), the virtual time
         moved on by the last move between two time events of the recording. The recording's later times move on
         by as much."""
         last = self.last_time
-        if self.phase != "running" or last is None or last.get("paused") is not False or not self.time_step or \
+        if self.phase != "running" or last is None or self.paused is not False or not self.time_step or \
                 os.environ.get("REPLAY_RUN_ON") == "0":
             return
         self.shift += self.time_step
@@ -789,16 +790,21 @@ class Player:
             self.control.refuse_writes = "a scenario runs: variables cannot be written by a control client"
         self.control.set_time(0, "--start-paused" in self.argv, running=False)
 
-    def control_time(self, event: dict, last: bool) -> None:
-        """The stand-in's steps up to the time of a time event (the step that begins there too, unless the
-        simulation ends there), then its time."""
-        if self.control is None or not isinstance(event.get("sim_ms"), int):
-            return
-        sim = event["sim_ms"]
-        while self.control_ms < sim or (self.control_ms == sim and not last):
+    def control_steps(self, sim: int, ends: bool) -> None:
+        """The stand-in's steps up to the virtual time `sim` (the step that begins there too, unless the simulation
+        ends there), then its time. Whether it stands still is what the last state event said."""
+        while self.control_ms < sim or (self.control_ms == sim and not ends):
             self.control.step(self.control_ms)
             self.control_ms += STEP_MS
-        self.control.set_time(sim, bool(event.get("paused")))
+        self.control.set_time(sim, self.paused is True)
+
+    def control_time(self, event: dict, last: bool) -> None:
+        """What a time event means for the stand-in control server. `last`: the recording has no later time event,
+        so the simulation ends at this time, unless it stands still there (the state says so, before the time
+        event or after it: see side_effects)."""
+        if self.control is None or not isinstance(event.get("sim_ms"), int):
+            return
+        self.control_steps(event["sim_ms"], ends=last and self.paused is not True)
         self.time_events += 1
         if self.time_events == 3 and os.environ.get("REPLAY_CONTROL") == "closes":
             self.control.stop()
@@ -915,12 +921,19 @@ class Player:
         self.finish(0)
 
     def moved(self, event: dict) -> None:
-        """The virtual time moved on after a change of recording (time events, the result's timing)."""
+        """The virtual time moved on after a change of recording (time events, the time a state stands at, the time
+        a step or run_until ends at, the result's timing)."""
         if event.get("event") == "time" and isinstance(event.get("sim_ms"), int):
             event["sim_ms"] += self.shift
-            if self.last_time is not None and event["sim_ms"] > self.last_sim and event.get("paused") is False:
+            if self.last_time is not None and event["sim_ms"] > self.last_sim and self.paused is False:
                 self.time_step = event["sim_ms"] - self.last_sim
             self.last_sim, self.last_time = event["sim_ms"], dict(event)
+        if event.get("event") == "state":
+            self.paused = event["paused"] if isinstance(event.get("paused"), bool) else None
+            if isinstance(event.get("paused_at_ms"), int):
+                event["paused_at_ms"] += self.shift
+        if event.get("event") == "command" and event.get("accepted") is True and isinstance(event.get("at_ms"), int):
+            event["at_ms"] += self.shift  # where a step or a run_until ends
         result = event.get("result") if event.get("event") == "result" else None
         if self.shift and isinstance(result, dict) and isinstance(result.get("timing"), dict) and \
                 isinstance(result["timing"].get("sim_ms"), int):
@@ -936,6 +949,11 @@ class Player:
             pass  # started before it was written (see emit_control)
         elif kind == "time":
             self.control_time(recorded, last)
+        elif kind == "state":
+            # Whether the simulation stands still is the state's to say: the time event before it said where.
+            if self.control is not None and self.control.server is not None and self.phase == "running" and \
+                    recorded.get("phase") == "running" and self.time_events:
+                self.control_steps(self.last_sim, ends=self.paused is not True)
         elif kind == "participant" and recorded.get("state") in ("ended", "killed"):
             self.end_sleeper(recorded.get("name"))
         elif kind == "phase":

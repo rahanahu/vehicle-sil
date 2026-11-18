@@ -238,25 +238,28 @@ class LauncherTest(unittest.TestCase):
         self.assertTrue(any(s["allowed"]["run_until"]["ok"] for s in states), states)
         self.assertNotIn("no-control-server", json.dumps(states))
 
-    def test_the_time_events_of_a_step_from_the_hold_say_paused_only_where_it_stands(self):
+    def test_the_time_events_of_a_step_from_the_hold_begin_at_0_and_say_where_it_stands(self):
         # As fast as possible, the step may be over before the launcher writes the time event of
-        # the start (sim_ms 0): that one must not say "paused" for the stand at 100 ms. Several
-        # runs: which of the two comes first differs from run to run.
+        # the start: that one is the one of time 0 all the same, and the next says where the run
+        # stands (100 ms). Several runs: which of the two comes first differs from run to run.
         for run in range(5):
             with self.launch(f"hold_step_{run}", stop_at_ms=600_000, start_paused=True) as launch:
                 with Control(launch.address) as c:
                     self.assertEqual(c.sim.wait_paused(60).now, 0)
                     launch.send({"command": "step", "ms": 100})
                     # Taken, before the client waits: until then WaitPaused answers from the hold (0).
-                    launch.wait_for_event("command", command="step", accepted=True)
+                    step = launch.wait_for_event("command", command="step", accepted=True)
                     self.assertEqual(c.sim.wait_paused().now, ms(100))
-                    launch.wait_for_event("time", sim_ms=100, paused=True)
+                    stands = launch.wait_for_event("time", sim_ms=100)
+                    # The state after the step's own says that it stands still.
+                    launch.wait_for_event("state", after=step, phase="running", paused=True)
                     launch.stop()
                     launch.wait(120)
-            times = [(e["sim_ms"], e["paused"]) for e in launch.events if e["event"] == "time"]
-            stands = times.index((100, True))
-            self.assertEqual(times[0], (0, False), times)
-            self.assertEqual([t for t in times[:stands] if t[1]], [], times)
+            times = [e["sim_ms"] for e in launch.events if e["event"] == "time"]
+            self.assertEqual(times[0], 0, times)
+            self.assertEqual(times[-1], 100, times)
+            self.assertEqual([e for e in launch.events if e["event"] == "time" and ("paused" in e or "speed" in e)], [])
+            self.assertGreater(stands["seq"], step["seq"])
 
     def test_a_variable_map_is_what_a_client_sees_and_writes(self):
         path = config("mapped", 1000)
@@ -383,7 +386,7 @@ class LauncherTest(unittest.TestCase):
         calls.run("watch", lambda: watch_to_the_end(c))
         calls.run("operation", lambda: c.wait(seq, timeout=300))
         c.sim.resume()
-        running = launch.wait_for_event("time", paused=False)
+        running = launch.wait_for_event("state", phase="running", paused=False)
         if with_paused:
             calls.run("paused", lambda: c.sim.wait_paused(timeout=300))
         # The simulation has gone on for a moment (a time event after the first one).

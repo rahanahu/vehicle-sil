@@ -14,19 +14,15 @@ function view(client: GuiClient) {
   const s = () => control.state.get();
   return {
     supported: () => s().supported,
-    controllable: () => s().controllable,
     simMs: () => s().time?.simMs ?? null,
-    speed: () => s().time?.speed ?? null,
-    paused: () => s().time?.paused ?? null,
+    // Whether it is paused and the speed set are the launcher's state's to say (not the time's)
+    speed: () => client.session.session.get()?.launcherState?.speed ?? null,
+    paused: () => client.session.session.get()?.launcherState?.paused ?? null,
     paced: () => s().paced,
     lateness: () => s().lateness,
     behind: () => s().behind,
     lastCommand: () => s().lastCommand,
     sending: () => s().sending,
-    stepping: () => s().stepping,
-    canPause: () => s().canPause,
-    canResume: () => s().canResume,
-    canStep: () => s().canStep,
     error: () => s().failure?.message ?? null,
     errorFromServer: () => s().failure?.kind === 'server',
     pause: () => control.pause(),
@@ -110,17 +106,29 @@ describe('TimeControl', () => {
       );
     };
 
-  it('follows the time of a run, and allows only the commands that fit', async () => {
+  /** A state event of the launcher with these fields. */
+  const stateEvent =
+    (fields: Record<string, unknown>) =>
+    (m: Record<string, unknown>): boolean => {
+      const event = m['event'] as Record<string, unknown> | undefined;
+      return (
+        m['type'] === 'event' &&
+        event?.['event'] === 'state' &&
+        Object.entries(fields).every(([k, v]) => event[k] === v)
+      );
+    };
+  /** The state that says the run stands still. */
+  const standing = stateEvent({ phase: 'running', paused: true });
+
+  it('follows the time of a run and the answers to its commands', async () => {
     const { time, socket } = await open();
     expect(time.supported()).toBe(true);
-    expect(time.controllable()).toBe(false);
 
-    // Started paused: only resume and step
-    let at = await play(socket, 'ws-time', 0, timeEvent({ paused: true }));
+    // Started paused: the state says that it stands still, the time event where
+    let at = await play(socket, 'ws-time', 0, timeEvent({ sim_ms: 0 }));
     expect(time.simMs()).toBe(0);
     expect(time.paused()).toBe(true);
     expect(time.speed()).toBe('max');
-    expect([time.canPause(), time.canResume(), time.canStep()]).toEqual([false, true, true]);
 
     time.step(25);
     const step = http.expectOne('api/time');
@@ -131,21 +139,22 @@ describe('TimeControl', () => {
     // No further command is sent until the launcher's answer (the command event) arrives (a double click does not
     // advance twice)
     expect(time.sending()).toBe('step');
-    expect(time.canStep()).toBe(false);
     // An attempt to send while waiting sends nothing and says so (rather than dropping it silently)
     expect(time.step(25)).toEqual({ sent: false, reason: 'waiting' });
     http.expectNone('api/time');
 
     // The amount the launcher rounded up to the time step, and the time reached
-    at = await play(socket, 'ws-time', at, timeEvent({ sim_ms: 30, paused: true }));
-    expect(time.lastCommand()).toMatchObject({ name: 'step', accepted: true, ms: 30 });
+    at = await play(socket, 'ws-time', at, timeEvent({ sim_ms: 30 }));
+    expect(time.lastCommand()).toMatchObject({ name: 'step', accepted: true, ms: 30, atMs: 30 });
     expect(time.simMs()).toBe(30);
     expect(time.sending()).toBeNull();
-    expect(time.canStep()).toBe(true);
+    // The time event says where it is; the state after it says that it stands still there
+    at = await play(socket, 'ws-time', at, standing);
+    expect(time.paused()).toBe(true);
 
-    // Running: only pause. At real-time speed, lateness is counted
-    at = await play(socket, 'ws-time', at, timeEvent({ paused: false }));
-    expect([time.canPause(), time.canResume(), time.canStep()]).toEqual([true, false, false]);
+    // Running. At real-time speed, lateness is counted
+    at = await play(socket, 'ws-time', at, stateEvent({ paused: false, speed: 1 }));
+    expect(time.paused()).toBe(false);
     expect(time.speed()).toBe(1);
     expect(time.paced()).toBe(true);
     expect(time.lateness()).toEqual({ lateSteps: 0, maxLateMs: 0, slippedMs: 0, lateMs: 0 });
@@ -161,71 +170,23 @@ describe('TimeControl', () => {
     expect(time.lastCommand()).toMatchObject({ name: 'step', accepted: false });
     expect(time.lastCommand()?.message).toContain('paused');
 
-    // Once ended, nothing can be used
+    // Once ended, it stands still nowhere
     await play(socket, 'ws-time', at);
-    expect(time.controllable()).toBe(false);
-    expect([time.canPause(), time.canResume(), time.canStep()]).toEqual([false, false, false]);
     expect(time.paused()).toBe(false);
   });
 
   it('sends run_until with the time to pause at', async () => {
     const { time, socket } = await open();
-    await play(socket, 'ws-time', 0, timeEvent({ paused: true }));
+    await play(socket, 'ws-time', 0, standing);
     expect(time.runUntil(500)).toEqual({ sent: true });
     const sent = http.expectOne('api/time');
     expect(sent.request.body).toEqual({ command: 'run_until', at_ms: 500 });
     expect(time.sending()).toBe('run_until');
   });
 
-  it('takes no command once the simulation is ending, though nobody asked it to stop', async () => {
-    const { time, socket } = await open();
-    const phase = (name: string) => (m: Record<string, unknown>) =>
-      (m['event'] as Record<string, unknown> | undefined)?.['phase'] === name;
-    // ws-pass: reached stop_at_ms, and the launcher is ending the participants (no result yet)
-    let at = await play(socket, 'ws-pass', 0, timeEvent({ sim_ms: 0, paused: false }));
-    expect(time.controllable()).toBe(true);
-    expect(time.canPause()).toBe(true);
-    at = await play(socket, 'ws-pass', at, phase('stopping'));
-    const session = client.session.session.get();
-    expect([session?.phase, session?.stopRequests, session?.result]).toEqual(['stopping', 0, null]);
-    expect(time.controllable()).toBe(false);
-    expect([time.canPause(), time.canResume(), time.canStep()]).toEqual([false, false, false]);
-    await play(socket, 'ws-pass', at);
-  });
-
-  it('takes resume and another step during a step, as the launcher does', async () => {
-    const { time, socket } = await open();
-    await play(socket, 'ws-time', 0, timeEvent({ paused: true }));
-    const base = { seq: 1000, t_ms: 0 };
-    const send = (seq: number, event: Record<string, unknown>) =>
-      socket.send({ type: 'event', session: 1, event: { ...base, seq, ...event } });
-    send(1000, {
-      event: 'command',
-      command: 'step',
-      source: 'stdin',
-      accepted: true,
-      message: null,
-      ms: 600,
-    });
-    send(1001, {
-      event: 'time',
-      sim_ms: 100,
-      speed: 1,
-      paused: false,
-      actual_speed: null,
-      late_steps: 0,
-      max_late_ms: 0,
-      slipped_ms: 0,
-      late_ms: 0,
-    });
-    vi.advanceTimersByTime(BATCH_MS);
-    expect(time.stepping()).toBe(true);
-    expect([time.canPause(), time.canResume(), time.canStep()]).toEqual([true, true, true]);
-  });
-
   it('does not call a small lateness within the tolerance late', async () => {
     const { time, socket } = await open();
-    await play(socket, 'ws-time', 0, timeEvent({ paused: true }));
+    await play(socket, 'ws-time', 0, standing);
     socket.send({
       type: 'event',
       session: 1,
@@ -234,8 +195,6 @@ describe('TimeControl', () => {
         seq: 1000,
         t_ms: 0,
         sim_ms: 100,
-        speed: 1,
-        paused: false,
         actual_speed: 1,
         late_steps: 0,
         max_late_ms: 3,
@@ -275,7 +234,7 @@ describe('TimeControl', () => {
 
   it('stops waiting for an answer when the launcher has ended', async () => {
     const { time, socket } = await open();
-    await play(socket, 'ws-time', 0, timeEvent({ paused: true }));
+    await play(socket, 'ws-time', 0, standing);
     await sendStep(time);
     socket.send({ type: 'session', session: lastSummary((s) => (s['last_command'] = null)) });
     vi.advanceTimersByTime(BATCH_MS);
@@ -284,7 +243,7 @@ describe('TimeControl', () => {
 
   it('stops waiting for an answer when another run has started', async () => {
     const { time, socket } = await open();
-    await play(socket, 'ws-time', 0, timeEvent({ paused: true }));
+    await play(socket, 'ws-time', 0, standing);
     await sendStep(time);
     const next = lastSummary((s) => {
       running(s);
@@ -298,7 +257,7 @@ describe('TimeControl', () => {
 
   it('takes the answer from the summary of a reconnection', async () => {
     const { time, socket } = await open();
-    await play(socket, 'ws-time', 0, timeEvent({ paused: true }));
+    await play(socket, 'ws-time', 0, standing);
     await sendStep(time);
     const hello = (seq: number) => ({
       type: 'hello',
@@ -330,19 +289,17 @@ describe('TimeControl', () => {
 
   it('stops waiting after a while when the launcher does not answer, and says so', async () => {
     const { time, socket } = await open();
-    await play(socket, 'ws-time', 0, timeEvent({ paused: true }));
+    await play(socket, 'ws-time', 0, standing);
     await sendStep(time);
-    expect(time.canResume()).toBe(false);
     vi.advanceTimersByTime(ANSWER_MS);
     expect(time.sending()).toBeNull();
-    expect(time.canResume()).toBe(true);
     expect(time.error()).toContain('did not answer the command (step) within 1 s');
     expect(time.errorFromServer()).toBe(false);
   });
 
   it('says why the server refused a command, for the run it was sent to', async () => {
     const { time, socket } = await open();
-    await play(socket, 'ws-time', 0, timeEvent({ paused: true }));
+    await play(socket, 'ws-time', 0, standing);
     time.resume();
     http
       .expectOne('api/time')
@@ -373,17 +330,15 @@ describe('TimeControl', () => {
 
   it('stops waiting for an answer when the client is closed', async () => {
     const { time, socket } = await open();
-    await play(socket, 'ws-time', 0, timeEvent({ paused: true }));
+    await play(socket, 'ws-time', 0, standing);
     await sendStep(time);
     client.close();
     expect(time.sending()).toBeNull();
   });
 
-  it('offers no command to a launcher without time commands', async () => {
+  it('says that a launcher without time commands has none', async () => {
     const { time, socket } = await open(['events', 'stdin-commands', 'check-variables']);
-    await play(socket, 'ws-time', 0, timeEvent({ paused: true }));
+    await play(socket, 'ws-time', 0, standing);
     expect(time.supported()).toBe(false);
-    expect(time.controllable()).toBe(false);
-    expect(time.canResume()).toBe(false);
   });
 });

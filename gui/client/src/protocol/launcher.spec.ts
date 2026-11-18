@@ -53,12 +53,11 @@ const PASSED_THROUGH: readonly string[] = [
   'event participant: command',
   'event participant: log',
   'event log: colour',
-  // The ranges of step and speed, whether the run waits at a gate, and what is connected outside (empty now)
+  // The ranges of step and speed, and what is connected outside (empty now)
   'event state: allowed.speed.max',
   'event state: allowed.speed.min',
   'event state: allowed.step.max_ms',
   'event state: allowed.step.min_ms',
-  'event state: holding',
   'event state: outside',
 ];
 

@@ -168,7 +168,8 @@ test('started paused: the screen resumes the run from before its first step, and
   });
   const sent = page.waitForRequest((r) => r.url().endsWith('/api/time'));
   await page.getByTestId('resume').click();
-  expect((await sent).postDataJSON()).toEqual({ command: 'resume' });
+  // （正面の口が、答えを結ぶための id を付けて送る）
+  expect((await sent).postDataJSON()).toMatchObject({ command: 'resume' });
   await expect(result(page, session).getByTestId('result')).toContainText('成功', {
     timeout: RUN_TIMEOUT,
   });
