@@ -368,10 +368,10 @@ A real-time participant of your own does not stop either while the simulation is
 | Network | `to_outside` | `from_outside` |
 |---|---|---|
 | Ethernet | `silkit_to_ext` | `ext_from_devices`: frames whose source is not this computer, counted before the bridge's filter |
-| CAN | `silkit_to_xl` | `xl_to_silkit` |
+| CAN | `silkit_to_ext` | `ext_from_devices`: frames that came from other nodes on the bus |
 
 - The counts are in the result (`outside[]`; `outside:` lines of the human-readable result, such as `outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT): 152 frames out, 3 from devices`) and, with `--events`, in the event `outside` while the run goes (see "Counts of a connected network (`outside`)" in [simulation-events.md](simulation-events.md#counts-of-a-connected-network-outside)). They are the same with and without `--events`.
-- The statistics lines that `run` reads while the bridge runs are not shown as lines of the bridge (`[bridge.<network>] ...`) or as `log` events. When the bridge has ended, `run` shows the last one it read, once, as a line of the bridge: the bridge's report with every count, such as the frames that the filter kept from the ECUs (`filtered_from_ext`) or that were dropped at the stop (`xl_tx_unsent`). It is the line the bridge wrote when it stopped, or its last line while it ran if it was ended without one. The `--log-dir` file of the bridge has every line. A line that `run` cannot read (for example, of a bridge of another version without these keys) is shown as usual.
+- The statistics lines that `run` reads while the bridge runs are not shown as lines of the bridge (`[bridge.<network>] ...`) or as `log` events. When the bridge has ended, `run` shows the last one it read, once, as a line of the bridge: the bridge's report with every count, such as the frames that the filter kept from the ECUs (`filtered_from_ext`) or that were dropped at the stop (`ext_tx_unsent`). It is the line the bridge wrote when it stopped, or its last line while it ran if it was ended without one. The `--log-dir` file of the bridge has every line. A line that `run` cannot read (for example, of a bridge of another version without these keys) is shown as usual.
 - The counts are those of the last line read. A bridge that was ended without its last line (on Windows, where the launcher could not ask it to stop) has the counts of its last line while it ran. Without any line read, both are `null`.
 
 When the simulation ran and a bridge sent frames to the bus but none came from a device there before the run ended, the run ends with the note `connect-nothing-received`. A device that does not answer is not always a fault, so it is a note: `--strict` does not fail on it. A bridge that failed the run (`connect-failed`, `connect-lost`) and counts of `null` give no such note. On Ethernet, frames that this computer sends on the adapter (for example the IPv6 and ARP frames of the operating system on a Hyper-V `vEthernet` adapter) do not count, so a cable that is not plugged in gives the note. The bridges also warn while they run, 10 s after the first frame they sent with nothing from a device ("Hint when nothing comes from a device" in [ethernet-bridge.md](ethernet-bridge.md#hint-when-nothing-comes-from-a-device)).
@@ -407,7 +407,7 @@ The kinds of loss are told from the counts of the statistics line and the link l
 
 | Finding | From |
 |---|---|
-| `outside-frames-dropped` | Any of these counts is not 0: `ext_overruns`, `ext_queue_full`, `ext_tx_failures`, `silkit_tx_failures` (Ethernet); `overruns`, `xl_queue_full`, `xl_tx_failures`, `xl_tx_dropped`, `xl_tx_unsent`, `silkit_rejected`, `xl_rejected`, `silkit_tx_failures` (CAN). The message names each count that is not 0. |
+| `outside-frames-dropped` | Any of these counts is not 0: `ext_queue_full`, `ext_tx_failures`, `silkit_tx_failures` (both bridges); `ext_overruns` (Ethernet); `overruns`, `ext_tx_dropped`, `ext_tx_unsent`, `silkit_rejected`, `ext_rejected` (CAN). The message names each count that is not 0. |
 | `outside-loop-suspected` | `loop_suspected` is not 0: the Ethernet bridge found a source MAC address on both sides and drops its frames from then on. |
 | `outside-bus-errors` | The CAN bridge reported `bus=passive` (error passive): the message has the time in all and `error_frames`. |
 
@@ -1056,8 +1056,8 @@ Keys of `outside[]` (see [Connecting a bus outside](#connecting-a-bus-outside---
 | `network` | The network |
 | `target` | Where it is connected, as `--connect` gave it |
 | `participant` | The bridge's name in `participants[]` (`bridge.<network>`) |
-| `to_outside` | The frames that the bridge sent to the bus (Ethernet `silkit_to_ext`, CAN `silkit_to_xl`), or `null` if no statistics line of the bridge could be read |
-| `from_outside` | The frames that came from a device on the bus (Ethernet `ext_from_devices`, CAN `xl_to_silkit`), or `null` as `to_outside` (see [Counting the frames to and from the bus](#counting-the-frames-to-and-from-the-bus)) |
+| `to_outside` | The frames that the bridge sent to the bus (`silkit_to_ext` in both), or `null` if no statistics line of the bridge could be read |
+| `from_outside` | The frames that came from a device on the bus (`ext_from_devices` in both), or `null` as `to_outside` (see [Counting the frames to and from the bus](#counting-the-frames-to-and-from-the-bus)) |
 | `counts` | Every `key=N` of the last statistics line of the bridge, with the bridge's own keys (an object; `{}` if no line could be read) |
 
 Keys of `participants[].control_link` (see [Connection to ECU variables](#connection-to-ecu-variables-control_link)):

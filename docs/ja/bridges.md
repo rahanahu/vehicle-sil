@@ -225,7 +225,7 @@ Windows でコンソールのウィンドウを閉じたとき（ログオフ、
 - 終了コード
 - コンソールを閉じたときの 4 秒
 - 動いている間の統計の行（`--stats-every-ms`。`BridgeHooks::statistics_line()`、`RunBridgeOptions::statistics_interval`）
-- 送り先のバスの機器から何も来ないと言う時点（`NothingCameHint`、`nothing_came_hint.hpp`）。最初に外部へ送信してから 10 秒で 1 回。機器からフレームが来ていれば言わない。そのフレームを、イーサネットのブリッジは `ext_from_devices` に、このブリッジは `xl_to_silkit` に数える（「[統計](#統計)」）
+- 送り先のバスの機器から何も来ないと言う時点（`NothingCameHint`、`nothing_came_hint.hpp`）。最初に外部へ送信してから 10 秒で 1 回。機器からフレームが来ていれば言わない。そのフレームを、どちらのブリッジも `ext_from_devices` に数える（「[統計](#統計)」）
 
 ## エラーメッセージ
 
@@ -291,26 +291,27 @@ registry に接続できないときは、接続しようとしたアドレス�
 統計値は、終了時に 1 行で出力します。`stats` の後に、下の表のキーごとに ` <キー>=<数>` を、表の順に並べます。`--stats-every-ms <ms>` を指定すれば、動いている間にも出します（最初の間隔で 1 回、その後は数が変わった間隔ごと）。数は起動からの合計で、1 つずつ読むので、1 行の数が同じ瞬間のものとは限りません。キーとその順序は、行を読むプログラムのためにこのドキュメントが定め、テストが守ります。`vehicle_sil_launch run --connect` が起こしたブリッジには、ランチャーが `--stats-every-ms 1000` を渡し、数のためにこの行を読みます。実行の出力には、ブリッジが動いている間の行は出ず、ブリッジが終わったときに最後の 1 行が 1 回出ます（[simulation-run.md](simulation-run.md#外のバスとやりとりしたフレームの数) の「外のバスとやりとりしたフレームの数」）。
 
 ```
-stats silkit_to_xl=0 xl_to_silkit=0 own_tx_dropped=0 error_frames=0 overruns=0 silkit_rejected=0 xl_rejected=0 xl_queue_full=0 xl_tx_failures=0 silkit_tx_failures=0 xl_tx_dropped=0 xl_tx_unsent=0
+stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 error_frames=0 overruns=0 silkit_rejected=0 ext_rejected=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_tx_dropped=0 ext_tx_unsent=0
 ```
 
 
 | キー | 数えるもの |
 |---|---|
-| `silkit_to_xl` | XL の送信キューに渡したフレーム |
-| `xl_to_silkit` | XL から受信して SIL Kit へ転送したフレーム |
+| `silkit_to_ext` | XL の送信キューに渡したフレーム |
+| `ext_to_silkit` | XL から受信して SIL Kit へ転送したフレーム |
+| `ext_from_devices` | XL から受信した、バスのほかのノードが送ったフレーム（自分の送信のレシートは数えない）。ランチャーが機器から来たフレームとして読むキーで、イーサネットのブリッジと同じ名前 |
 | `own_tx_dropped` | 自分の送信のレシート（レシートが有効なら、バスに出たフレームと同じ数） |
 | `error_frames` | XL のエラーフレーム |
 | `overruns` | XL の受信キューのあふれ |
 | `silkit_rejected` | SIL Kit から来た、転送しないフレーム（CAN FD、CAN XL、不正な ID や DLC） |
-| `xl_rejected` | XL から来た、転送しないフレーム（実際には、DLC が 15 を超えるフレーム） |
-| `xl_queue_full` | XL の送信キューが満杯で捨てたフレーム |
-| `xl_tx_failures` | XL への送信の、そのほかの失敗 |
+| `ext_rejected` | XL から来た、転送しないフレーム（実際には、DLC が 15 を超えるフレーム） |
+| `ext_queue_full` | XL の送信キューが満杯で捨てたフレーム |
+| `ext_tx_failures` | XL への送信の、そのほかの失敗 |
 | `silkit_tx_failures` | `ICanController::SendFrame` が例外を投げたフレーム |
-| `xl_tx_dropped` | バスが詰まっているあいだ、`--tx-timeout-ms` によって捨てたフレーム |
-| `xl_tx_unsent` | XL に渡したのに、バスに出ないまま失われたフレーム（止めるとき、チャネルを有効にし直したとき） |
+| `ext_tx_dropped` | バスが詰まっているあいだ、`--tx-timeout-ms` によって捨てたフレーム |
+| `ext_tx_unsent` | XL に渡したのに、バスに出ないまま失われたフレーム（止めるとき、チャネルを有効にし直したとき） |
 
-`xl_to_silkit` に数えるのは、バスのほかのノードからのフレームだけです。自分の送信のレシートは `own_tx_dropped` です。ブリッジがチャンネルへフレームを送信し、最初の送信から 10 秒たってもバスからフレームが 1 つも来ないとき（`xl_to_silkit` が 0 のまま）、ブリッジはヒントを 1 回だけ警告します。
+`ext_to_silkit` と `ext_from_devices`（このブリッジでは同じ値）に数えるのは、バスのほかのノードからのフレームだけです。自分の送信のレシートは `own_tx_dropped` です。ブリッジがチャンネルへフレームを送信し、最初の送信から 10 秒たってもバスからフレームが 1 つも来ないとき（`ext_from_devices` が 0 のまま）、ブリッジはヒントを 1 回だけ警告します。
 
 ```
 nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the bridge first sent a frame there: if a device is meant to answer, check that it is on, its cable and termination, the bit rate, and that this is the channel it is on.
@@ -400,32 +401,32 @@ Linux の `peers` のプロセス ID は、印を置いたブリッジの PID �
 |---|---|
 | クラシック CAN のフレーム | 識別子（11 bit / 29 bit）、IDE、RTR、DLC、データを変えずに転送します。 |
 | SIL Kit から XL への DLC 9〜15 | DLC 8 として送信します。 |
-| CAN FD、CAN XL、不正な ID や DLC のフレーム | 転送せず、`silkit_rejected` または `xl_rejected` に数えます。 |
+| CAN FD、CAN XL、不正な ID や DLC のフレーム | 転送せず、`silkit_rejected` または `ext_rejected` に数えます。 |
 | XL のエラーフレーム | 転送せず、`error_frames` に数えます。 |
 | XL の受信キューのあふれ | `overruns` に数えます。 |
 
 - DLC 9〜15 を DLC 8 にするのは、`xlCanTransmit` が受け付ける DLC が 0〜8 のためです（XL Driver Library のマニュアル）。クラシック CAN では、DLC 9〜15 はどれもデータ 8 バイトです。XL から SIL Kit へは、受信した DLC のまま転送します。
-- XL 側の ID は受信イベントから 11/29 ビットで取り出すので、`xl_rejected` に数えるのは、実際には DLC が 15 を超えるフレームです。
+- XL 側の ID は受信イベントから 11/29 ビットで取り出すので、`ext_rejected` に数えるのは、実際には DLC が 15 を超えるフレームです。
 
 XL から SIL Kit への転送は、participant が SIL Kit の CommunicationReady に達してから始めます。ブリッジは、そこで SIL Kit のコントローラーを開始します（SIL Kit が勧めている時点です）。それまでに XL から受信したフレームは転送せず、数えません（起動の直後の短い間です）。SIL Kit から XL への転送は、その前から行います。
 
 ### バスに出たフレームの数え方（送信レシート）
 
-`silkit_to_xl` は XL の送信キューに渡した数です。バスに出られないフレーム（ACK を返す相手がいない、ビットレートが違う、ケーブルが抜けた）は、XL の送信キューに残り、バスに出られるようになった時点でまとめて送信されます。
+`silkit_to_ext` は XL の送信キューに渡した数です。バスに出られないフレーム（ACK を返す相手がいない、ビットレートが違う、ケーブルが抜けた）は、XL の送信キューに残り、バスに出られるようになった時点でまとめて送信されます。
 
 `XlCanPort` は送信レシートを有効にし、渡したのにまだレシートの来ないフレームを数えます。`own_tx_dropped`（自分の送信のレシートの数）が、バスに出た数です。
 
-レシートを使うのは、ポートがレシートを有効にできたとき（init 権限があるとき）か、レシートを 1 つでも受信した後です。init 権限がなく、ほかのアプリケーションがレシートを無効にしているチャネルでは、止めるときの待ちは働かず、`xl_tx_unsent` は 0 のままです。
+レシートを使うのは、ポートがレシートを有効にできたとき（init 権限があるとき）か、レシートを 1 つでも受信した後です。init 権限がなく、ほかのアプリケーションがレシートを無効にしているチャネルでは、止めるときの待ちは働かず、`ext_tx_unsent` は 0 のままです。
 
-止めるとき（`XlCanPort::stop()`）は、チャネルを無効にする前に、渡したフレームがバスに出るのを最長 1 秒待ちます（`XlCanPortOptions::drain_timeout`）。それでも出なかった数を `xl_tx_unsent` に数えます。チャネルを無効にすると、XL の送信キューに残ったフレームは捨てられるためです。相手のブリッジも同時に止まると ACK が返らなくなるので、待っても出ないことがあります。
+止めるとき（`XlCanPort::stop()`）は、チャネルを無効にする前に、渡したフレームがバスに出るのを最長 1 秒待ちます（`XlCanPortOptions::drain_timeout`）。それでも出なかった数を `ext_tx_unsent` に数えます。チャネルを無効にすると、XL の送信キューに残ったフレームは捨てられるためです。相手のブリッジも同時に止まると ACK が返らなくなるので、待っても出ないことがあります。
 
-シミュレーションがバスより速く進んでも、バックプレッシャーはありません。CAN の帯域を超える速度で動かすと、フレームは XL の送信キューにたまり、`--tx-timeout-ms` がなければ止めるときに `xl_tx_unsent` になります。
+シミュレーションがバスより速く進んでも、バックプレッシャーはありません。CAN の帯域を超える速度で動かすと、フレームは XL の送信キューにたまり、`--tx-timeout-ms` がなければ止めるときに `ext_tx_unsent` になります。
 
 XL の送信キューからフレームを消す `xlCanFlushTransmitQueue` は使いません。VN5620 では成功を返しても、キューのフレームはその後バスに出ました。
 
 #### `--tx-timeout-ms`（バスが詰まっているあいだフレームを捨てる）
 
-`--tx-timeout-ms <ms>`（100〜60000、`XlCanPortOptions::transmit_timeout`）を指定すると、バスが詰まっているあいだ、新しいフレームを XL に渡さずに捨て、`xl_tx_dropped` に数えます（`TransmitResult::Dropped`）。バスが詰まっているとは、最後の送信レシートの後に渡したフレームのどれにも、指定した時間レシートが来ない状態です。バスが直ったときにまとめて流れる古いフレームを、その時間ぶんと下の試しのフレームに抑えます。指定しなければ、フレームは何秒でも待ってから送信されます。
+`--tx-timeout-ms <ms>`（100〜60000、`XlCanPortOptions::transmit_timeout`）を指定すると、バスが詰まっているあいだ、新しいフレームを XL に渡さずに捨て、`ext_tx_dropped` に数えます（`TransmitResult::Dropped`）。バスが詰まっているとは、最後の送信レシートの後に渡したフレームのどれにも、指定した時間レシートが来ない状態です。バスが直ったときにまとめて流れる古いフレームを、その時間ぶんと下の試しのフレームに抑えます。指定しなければ、フレームは何秒でも待ってから送信されます。
 
 詰まっているかは、レシートが来た時刻だけで決めます。待っているフレームの数は使いません。数は、レシートが受信キューのあふれで失われるとずれるためです（あふれたら数を 0 に戻し、詰まりの判定もやり直します）。次のフレームのレシートが来れば、詰まりは解けます。
 
@@ -460,7 +461,7 @@ XL の送信キューからフレームを消す `xlCanFlushTransmitQueue` は�
 ブリッジの実行ファイルは 1 秒ごとに状態を見て、次のどちらかのときに 1 行出力します（`format_health_change()`）。
 
 - コントローラーのエラー状態が変わったとき（起動直後の最初のレスポンスがエラーアクティブの場合を除く）
-- 問題を表すカウンター（`error_frames`、`overruns`、`silkit_rejected`、`xl_rejected`、`xl_queue_full`、`xl_tx_failures`、`silkit_tx_failures`、`xl_tx_dropped`）が増えたとき
+- 問題を表すカウンター（`error_frames`、`overruns`、`silkit_rejected`、`ext_rejected`、`ext_queue_full`、`ext_tx_failures`、`silkit_tx_failures`、`ext_tx_dropped`）が増えたとき
 
 ```
 [bridge] XL bus: error passive (tx errors 128, rx errors 0); since the last report: error_frames +3650
@@ -475,7 +476,7 @@ XL の送信キューからフレームを消す `xlCanFlushTransmitQueue` は�
 VN5620 の XL ドライバは、チャネルを有効にしたままでは、バスが直った後もバスオフから戻りませんでした。そこで `XlCanPort` は、コントローラーがバスオフを 1 秒通知し続けたら、チャネルを無効にしてから有効にし直し（`xlDeactivateChannel`、`xlActivateChannel`）、コントローラーを戻します。時間は `XlCanPortOptions::bus_off_restart`（実行ファイルでは `--bus-off-restart-ms`）で、0 にすると無効です。
 
 - 有効にし直すのは、init 権限（`--bitrate`）があるときだけです。ほかのアプリケーションが設定しているチャネルで、自分のポートを無効にしたときに何が起きるかは分かっていないためです。init 権限がないのにオプションを指定すると、ブリッジは起動時に `warning:` を出力します。
-- XL の送信キューで待っていたフレームはチャネルとともに消えるので、`ExternalEventKind::TransmitUnsent` で通知し、`xl_tx_unsent` に数えます。
+- XL の送信キューで待っていたフレームはチャネルとともに消えるので、`ExternalEventKind::TransmitUnsent` で通知し、`ext_tx_unsent` に数えます。
 - 有効にし直したことは `ExternalEventKind::Warning` で通知し、実行ファイルは `warning: XL channel '...' was bus off for <ms> ms; restarted the channel ...` を出力します。行を出力するのは、バスが最後に動いて（フレームを受信するか、送信したフレームのレシートが来て）から 1、2、4、8 ... 回目の有効にし直しだけです。
 - バスがまだ壊れていれば、フレームを送信しているあいだ、コントローラーはまたバスオフになり、また有効にし直します。そのたびに待つ時間を倍にし、10 秒（指定がそれより長ければ指定の時間）で止めます。バスが動けば、元の時間に戻します。
 - 有効にし直せなければ（無効にするか有効にするのに失敗したら）、`TransmitUnsent` の後に `Fault` を通知して受信をやめます。
@@ -500,7 +501,7 @@ VN5620 の XL ドライバは、チャネルを有効にしたままでは、バ
 | SIL Kit から XL へ | SIL Kit の受信スレッド | `xlCanTransmit` |
 | XL から SIL Kit へ | `XlCanPort` の受信スレッド | `ICanController::SendFrame` |
 
-- XL の送信キューが満杯ならフレームを捨て、`xl_queue_full` に数えます。
+- XL の送信キューが満杯ならフレームを捨て、`ext_queue_full` に数えます。
 - XL の受信キューの容量は `--rx-queue-size` で決まります（2 のべき乗、16〜32768、既定 16384）。ドライバが実際に保持できるのは、その値から 1 を引いたイベント数です。
 - `xlReceive` は 1 回に 1 イベントずつ呼びます。Vector のサンプルも 1 件ずつ受け取っており、複数件を一度に受け取る使い方は確認していないためです。
 - チャネルは `XL_ACTIVATE_NONE` で有効にします。ブリッジはタイムスタンプを使わず、`XL_ACTIVATE_RESET_CLOCK` は Vector の新しい時刻同期プロトコルと併用できないためです。
@@ -587,7 +588,7 @@ XL バックエンドは 2 つに分かれます。
 - フェイクは、チャネルごとのバス、送信レシート、init 権限、受信キューのあふれ、エラーフレーム、コントローラーのエラー状態の問い合わせ、デバイスの喪失を模擬します。
 - フェイクは、XL の次の制約も模擬します: 送信レシートの設定とビットレートは init 権限が必要、送信の DLC は 0〜8、受信キューは指定した容量から 1 を引いた数、受信は 1 回に 1 件。
 - `xl_backend_vector.cpp` の変換（関数、定数、構造体のメンバーの対応）は自動テストの対象外です。
-- `tests/vector_xl/xl_bridge_it_launcher` の `no-answers` のシナリオは、後ろにノードのないチャンネルへ `--stats-every-ms 100` で送信し、動いている間に統計の行が、変わったときだけ、すべてのキーを順に並べて出て、`xl_to_silkit=0` であること、リンクの行が開始の行より前に出て、値ごとに 1 回であることを確かめます。何も来ないときのヒントは、単体試験（`bridge_runtime.nothing_came_hint_*`）でだけ、テストが時刻を与えて確かめます。
+- `tests/vector_xl/xl_bridge_it_launcher` の `no-answers` のシナリオは、後ろにノードのないチャンネルへ `--stats-every-ms 100` で送信し、動いている間に統計の行が、変わったときだけ、すべてのキーを順に並べて出て、`ext_to_silkit=0` であること、リンクの行が開始の行より前に出て、値ごとに 1 回であることを確かめます。何も来ないときのヒントは、単体試験（`bridge_runtime.nothing_came_hint_*`）でだけ、テストが時刻を与えて確かめます。
 - `device-shared` のシナリオは、Vector Virtual CAN にブリッジを起こします。偽のドライバーの既定のスコープでは、2 つのブリッジは互いを見つけません。同じスコープでは、`virtual:2` のブリッジと `virtual:1` のブリッジが、起動のときにも動いている間にも互いを見つけ、先のブリッジが警告し、一覧が両方の virtual のチャネルを使用中と言い、先のブリッジが終わると `shared` が 0 に戻ります。印そのもの（Linux と Windows、1 つのプロセスの中）は `bridge_runtime.device_mark_*` が確かめます。
 
 ### 確認したこと（Windows 11、Vector Virtual CAN と VN5620）
@@ -597,8 +598,8 @@ Windows 11 の MSYS2 UCRT64 で、XL Driver Library を使ったビルドとチ�
 VN5620 のループバックで、次の点も確認しています。
 
 - J1939 の 8 バイトを超えるメッセージ（BAM と RTS/CTS、RTS/CTS は最大の 1785 バイトまで）が、2 つのブリッジと物理のバスを通って、中断や再送要求なしに全部受信されること。CTS の往復がブリッジと物理のバスを通る分、1 件にかかる時間は SIL Kit だけの場合より長くなります。
-- 物理チャネルでも、送信レシートが init 権限の有無によらず返り、`own_tx_dropped` が送信した数と同じになること。CAN の帯域を超える速度で動かしたとき、止める時点で送信できなかったフレームが `xl_tx_unsent` に数えられること。
-- ACK を返す相手がいないとき、`--tx-timeout-ms` で新しいフレームを捨て（`xl_tx_dropped`）、XL に渡したフレームは相手が現れた後に全部バスに出ること（`silkit_to_xl` と `own_tx_dropped` が一致）。
+- 物理チャネルでも、送信レシートが init 権限の有無によらず返り、`own_tx_dropped` が送信した数と同じになること。CAN の帯域を超える速度で動かしたとき、止める時点で送信できなかったフレームが `ext_tx_unsent` に数えられること。
+- ACK を返す相手がいないとき、`--tx-timeout-ms` で新しいフレームを捨て（`ext_tx_dropped`）、XL に渡したフレームは相手が現れた後に全部バスに出ること（`silkit_to_ext` と `own_tx_dropped` が一致）。
 - 同じチャネルを別のアプリケーション（init 権限を持つ別のブリッジ）と使うと、そのアプリケーションが送信したフレームを、ブリッジは通常の受信として受け取り、SIL Kit へ転送します。後から `--bitrate` 付きで開いた側は、init 権限がないので起動に失敗します。
 - バスの監視（「[実行中のバスの監視](#実行中のバスの監視)」）。ACK を返す相手がいないとき、ビットレートが違うとき、ケーブルを抜いたときに、エラーパッシブとエラーフレームの増加を 1 秒ごとに表示し、直ると「no new problems」を表示します。送信だけをするコントローラーは、受信に成功するまで受信エラーカウンターが下がらないので、直った後もエラーパッシブのままのことがあります。
 - 実行中に USB を抜くと、`xlCanRequestChipState` が `XL_ERR_INVALID_ACCESS` で失敗し続け、ブリッジは終了コード 1 で終わります。ただし VN5620 は、挿し直しても USB のデバイスとして現れないことがあり、電源の入れ直しが必要でした。実行中には USB を抜かないでください。

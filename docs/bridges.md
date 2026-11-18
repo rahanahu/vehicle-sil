@@ -225,7 +225,7 @@ The bridge executables share the following through `run_bridge()` (`vehicle_sil:
 - The exit codes
 - The 4-second wait when the console window is closed
 - The statistics line while running (`--stats-every-ms`; `BridgeHooks::statistics_line()`, `RunBridgeOptions::statistics_interval`)
-- When to say that nothing came from a device on the bus the bridge sends to (`NothingCameHint`, `nothing_came_hint.hpp`): 10 seconds after the first frame sent out, once, unless a frame from a device has come. The Ethernet bridge counts those frames in `ext_from_devices`, this bridge in `xl_to_silkit` (see "[Statistics](#statistics)")
+- When to say that nothing came from a device on the bus the bridge sends to (`NothingCameHint`, `nothing_came_hint.hpp`): 10 seconds after the first frame sent out, once, unless a frame from a device has come. Both bridges count those frames in `ext_from_devices` (see "[Statistics](#statistics)")
 
 ## Error messages
 
@@ -291,26 +291,27 @@ The bridges (`vehicle_sil_vector_xl_bridge`, `vehicle_sil_ethernet_bridge`) and 
 When the bridge ends, it prints the statistics on one line: `stats`, then one ` <key>=<count>` for each key of the table below, in its order. With `--stats-every-ms <ms>` it also prints the line while it runs: at the first interval, then at each interval where a count changed. The counts are totals since the start, each read on its own (one line need not show one instant). The keys and their order are fixed by this page for programs that read the line, and the tests hold them. When `vehicle_sil_launch run --connect` starts the bridge, it passes `--stats-every-ms 1000` and reads the lines for its counts: the run's output does not show the lines while the bridge runs, and shows the last one once, when the bridge has ended (see "Counting the frames to and from the bus" in [simulation-run.md](simulation-run.md#counting-the-frames-to-and-from-the-bus)).
 
 ```
-stats silkit_to_xl=0 xl_to_silkit=0 own_tx_dropped=0 error_frames=0 overruns=0 silkit_rejected=0 xl_rejected=0 xl_queue_full=0 xl_tx_failures=0 silkit_tx_failures=0 xl_tx_dropped=0 xl_tx_unsent=0
+stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 error_frames=0 overruns=0 silkit_rejected=0 ext_rejected=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_tx_dropped=0 ext_tx_unsent=0
 ```
 
 
 | Key | Counts |
 |---|---|
-| `silkit_to_xl` | Frames handed to the XL transmit queue |
-| `xl_to_silkit` | Frames received from XL and forwarded to SIL Kit |
+| `silkit_to_ext` | Frames handed to the XL transmit queue |
+| `ext_to_silkit` | Frames received from XL and forwarded to SIL Kit |
+| `ext_from_devices` | Frames received from XL that another node on the bus sent (the receipts of the bridge's own transmissions are not counted). The key the launcher reads as the frames from a device; the same name as in the Ethernet bridge |
 | `own_tx_dropped` | Receipts of the bridge's own transmissions (with receipts enabled, the same as the number of frames that went out on the bus) |
 | `error_frames` | XL error frames |
 | `overruns` | Overflows of the XL receive queue |
 | `silkit_rejected` | Frames from SIL Kit that are not forwarded (CAN FD, CAN XL, invalid ID or DLC) |
-| `xl_rejected` | Frames from XL that are not forwarded (in practice, frames with a DLC above 15) |
-| `xl_queue_full` | Frames dropped because the XL transmit queue was full |
-| `xl_tx_failures` | Other failures to transmit to XL |
+| `ext_rejected` | Frames from XL that are not forwarded (in practice, frames with a DLC above 15) |
+| `ext_queue_full` | Frames dropped because the XL transmit queue was full |
+| `ext_tx_failures` | Other failures to transmit to XL |
 | `silkit_tx_failures` | Frames for which `ICanController::SendFrame` threw an exception |
-| `xl_tx_dropped` | Frames dropped by `--tx-timeout-ms` while the bus was congested |
-| `xl_tx_unsent` | Frames handed to XL that were lost without going out on the bus (on stop, or when the channel was reactivated) |
+| `ext_tx_dropped` | Frames dropped by `--tx-timeout-ms` while the bus was congested |
+| `ext_tx_unsent` | Frames handed to XL that were lost without going out on the bus (on stop, or when the channel was reactivated) |
 
-`xl_to_silkit` counts only frames from other nodes on the bus: the receipts of the bridge's own transmissions are in `own_tx_dropped`. If the bridge has sent frames to the channel and not one frame has come from the bus 10 seconds after the first (`xl_to_silkit` is still 0), it prints a hint as a warning, once:
+`ext_to_silkit` and `ext_from_devices` count only frames from other nodes on the bus (the two have the same value in this bridge): the receipts of the bridge's own transmissions are in `own_tx_dropped`. If the bridge has sent frames to the channel and not one frame has come from the bus 10 seconds after the first (`ext_from_devices` is still 0), it prints a hint as a warning, once:
 
 ```
 nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the bridge first sent a frame there: if a device is meant to answer, check that it is on, its cable and termination, the bit rate, and that this is the channel it is on.
@@ -400,32 +401,32 @@ Across a bridge, the order of frames breaks as well as their times. All frames t
 |---|---|
 | Classic CAN frames | Forwards the identifier (11-bit or 29-bit), IDE, RTR, DLC and data unchanged. |
 | DLC 9–15 from SIL Kit to XL | Sends them as DLC 8. |
-| CAN FD, CAN XL, and frames with an invalid ID or DLC | Does not forward them; counts them in `silkit_rejected` or `xl_rejected`. |
+| CAN FD, CAN XL, and frames with an invalid ID or DLC | Does not forward them; counts them in `silkit_rejected` or `ext_rejected`. |
 | XL error frames | Does not forward them; counts them in `error_frames`. |
 | Overflows of the XL receive queue | Counts them in `overruns`. |
 
 - DLC 9–15 becomes DLC 8 because `xlCanTransmit` accepts DLC 0–8 only (XL Driver Library manual). In classic CAN, DLC 9–15 all mean 8 data bytes. From XL to SIL Kit, the bridge forwards the DLC as received.
-- On the XL side, the ID is taken from the receive event as 11 or 29 bits, so in practice `xl_rejected` counts only frames with a DLC above 15.
+- On the XL side, the ID is taken from the receive event as 11 or 29 bits, so in practice `ext_rejected` counts only frames with a DLC above 15.
 
 Forwarding from XL to SIL Kit starts when the participant reaches CommunicationReady in SIL Kit's lifecycle. At that point the bridge starts the SIL Kit controller (the point that SIL Kit recommends). Frames received from XL before then, during a short time right after startup, are neither forwarded nor counted. Forwarding from SIL Kit to XL already runs before that point.
 
 ### Counting frames on the bus (transmit receipts)
 
-`silkit_to_xl` is the number of frames handed to the XL transmit queue. A frame that cannot go out on the bus (no node to acknowledge it, a different bit rate, an unplugged cable) stays in the XL transmit queue. All such frames go out together once the bus can take them.
+`silkit_to_ext` is the number of frames handed to the XL transmit queue. A frame that cannot go out on the bus (no node to acknowledge it, a different bit rate, an unplugged cable) stays in the XL transmit queue. All such frames go out together once the bus can take them.
 
 `XlCanPort` enables transmit receipts and counts the frames it handed over that have no receipt yet. `own_tx_dropped` (the number of receipts of the bridge's own transmissions) is the number of frames that went out on the bus.
 
-The port relies on receipts if it could enable them itself (with init access), or once at least one receipt has arrived. On a channel without init access where another application has disabled receipts, the wait on stop does not work and `xl_tx_unsent` stays 0.
+The port relies on receipts if it could enable them itself (with init access), or once at least one receipt has arrived. On a channel without init access where another application has disabled receipts, the wait on stop does not work and `ext_tx_unsent` stays 0.
 
-On stop (`XlCanPort::stop()`), before it deactivates the channel, the port waits up to 1 second for the handed-over frames to go out on the bus (`XlCanPortOptions::drain_timeout`). Frames that still have not gone out are counted in `xl_tx_unsent`, because deactivating the channel discards what is left in the XL transmit queue. If the bridge on the other side stops at the same time, no node acknowledges the frames, and they may never go out, however long the port waits.
+On stop (`XlCanPort::stop()`), before it deactivates the channel, the port waits up to 1 second for the handed-over frames to go out on the bus (`XlCanPortOptions::drain_timeout`). Frames that still have not gone out are counted in `ext_tx_unsent`, because deactivating the channel discards what is left in the XL transmit queue. If the bridge on the other side stops at the same time, no node acknowledges the frames, and they may never go out, however long the port waits.
 
-There is no backpressure when the simulation runs faster than the bus. If you run faster than the CAN bandwidth allows, frames pile up in the XL transmit queue and, without `--tx-timeout-ms`, end up in `xl_tx_unsent` on stop.
+There is no backpressure when the simulation runs faster than the bus. If you run faster than the CAN bandwidth allows, frames pile up in the XL transmit queue and, without `--tx-timeout-ms`, end up in `ext_tx_unsent` on stop.
 
 The bridge does not use `xlCanFlushTransmitQueue`, which removes frames from the XL transmit queue. On a VN5620 it returned success, but the frames in the queue still went out on the bus afterwards.
 
 #### `--tx-timeout-ms` (drop frames while the bus is congested)
 
-With `--tx-timeout-ms <ms>` (100–60000, `XlCanPortOptions::transmit_timeout`), while the bus is congested the bridge drops new frames instead of handing them to XL, and counts them in `xl_tx_dropped` (`TransmitResult::Dropped`). The bus is congested when none of the frames handed over since the last transmit receipt has received a receipt for the given time. This limits the stale frames that flood the bus when it recovers to that time's worth plus the probe frames described below. Without this option, frames wait as long as it takes, then go out.
+With `--tx-timeout-ms <ms>` (100–60000, `XlCanPortOptions::transmit_timeout`), while the bus is congested the bridge drops new frames instead of handing them to XL, and counts them in `ext_tx_dropped` (`TransmitResult::Dropped`). The bus is congested when none of the frames handed over since the last transmit receipt has received a receipt for the given time. This limits the stale frames that flood the bus when it recovers to that time's worth plus the probe frames described below. Without this option, frames wait as long as it takes, then go out.
 
 Congestion is decided only by when receipts arrive, not by the number of waiting frames. That count drifts when receipts are lost in an overflow of the receive queue (on an overflow, the count is reset to 0 and congestion is judged afresh). A receipt for the next frame ends the congestion.
 
@@ -460,7 +461,7 @@ In the first case, the executable prints `warning: ... the bus is not monitored,
 The bridge executable looks at the state every second and prints a line (`format_health_change()`) when either of these happens:
 
 - The error state of the controller changed (except when the first response after startup is error active).
-- A counter that indicates a problem (`error_frames`, `overruns`, `silkit_rejected`, `xl_rejected`, `xl_queue_full`, `xl_tx_failures`, `silkit_tx_failures`, `xl_tx_dropped`) increased.
+- A counter that indicates a problem (`error_frames`, `overruns`, `silkit_rejected`, `ext_rejected`, `ext_queue_full`, `ext_tx_failures`, `silkit_tx_failures`, `ext_tx_dropped`) increased.
 
 ```
 [bridge] XL bus: error passive (tx errors 128, rx errors 0); since the last report: error_frames +3650
@@ -475,7 +476,7 @@ On a `Fault`, the bridge prints `FAIL: <reason>`, prints the statistics and exit
 With the channel left active, the XL driver of a VN5620 did not leave bus-off even after the bus recovered. So when the controller has reported bus-off for 1 second, `XlCanPort` deactivates and reactivates the channel (`xlDeactivateChannel`, `xlActivateChannel`) to bring the controller back. The time is `XlCanPortOptions::bus_off_restart` (`--bus-off-restart-ms` in the executable); 0 disables it.
 
 - The channel is reactivated only with init access (`--bitrate`), because it is not known what happens when the bridge deactivates its port on a channel that another application configures. If you give the option without init access, the bridge prints a `warning:` at startup.
-- Frames waiting in the XL transmit queue disappear with the channel, so they are reported as `ExternalEventKind::TransmitUnsent` and counted in `xl_tx_unsent`.
+- Frames waiting in the XL transmit queue disappear with the channel, so they are reported as `ExternalEventKind::TransmitUnsent` and counted in `ext_tx_unsent`.
 - The reactivation is reported as `ExternalEventKind::Warning`, and the executable prints `warning: XL channel '...' was bus off for <ms> ms; restarted the channel ...`. The line is printed only for the 1st, 2nd, 4th, 8th ... reactivation since the bus last worked (since a frame was received or a receipt for a transmitted frame arrived).
 - If the bus is still broken, the controller goes bus-off again while frames are being sent, and the channel is reactivated again. Each time, the wait doubles, up to 10 seconds (or the given time if that is longer). Once the bus works, the wait returns to the original time.
 - If the channel cannot be reactivated (deactivating or activating fails), the port reports `TransmitUnsent`, then `Fault`, and stops receiving.
@@ -500,7 +501,7 @@ The bridge has no forwarding queue of its own.
 | SIL Kit to XL | SIL Kit receive thread | `xlCanTransmit` |
 | XL to SIL Kit | `XlCanPort` receive thread | `ICanController::SendFrame` |
 
-- If the XL transmit queue is full, the frame is dropped and counted in `xl_queue_full`.
+- If the XL transmit queue is full, the frame is dropped and counted in `ext_queue_full`.
 - `--rx-queue-size` sets the size of the XL receive queue (a power of two, 16–32768, default 16384). The driver actually holds 1 event fewer than that value.
 - `xlReceive` is called for one event at a time, because Vector's samples also receive one at a time and receiving several events in one call is not verified.
 - The channel is activated with `XL_ACTIVATE_NONE`, because the bridge does not use timestamps and `XL_ACTIVATE_RESET_CLOCK` cannot be combined with Vector's newer time synchronization protocol.
@@ -587,7 +588,7 @@ The XL backend has 2 parts.
 - The fake simulates a bus per channel, transmit receipts, init access, receive queue overflows, error frames, error state queries of the controller and loss of the device.
 - The fake also simulates these XL constraints: transmit receipt settings and the bit rate need init access, the transmit DLC is 0–8, the receive queue holds 1 fewer than the given size, and receiving returns one event per call.
 - The conversions in `xl_backend_vector.cpp` (the mapping of functions, constants and struct members) are not covered by automated tests.
-- The `no-answers` scenario of `tests/vector_xl/xl_bridge_it_launcher` sends to a channel with no node behind it, with `--stats-every-ms 100`: the statistics line comes while the bridge runs, only where it changed, with every key in order, and `xl_to_silkit=0`; the link line comes before the startup line, and a value is printed once. The hint when nothing came is checked in unit tests only (`bridge_runtime.nothing_came_hint_*`), with the time given by the test.
+- The `no-answers` scenario of `tests/vector_xl/xl_bridge_it_launcher` sends to a channel with no node behind it, with `--stats-every-ms 100`: the statistics line comes while the bridge runs, only where it changed, with every key in order, and `ext_to_silkit=0`; the link line comes before the startup line, and a value is printed once. The hint when nothing came is checked in unit tests only (`bridge_runtime.nothing_came_hint_*`), with the time given by the test.
 - The `device-shared` scenario starts bridges on Vector Virtual CAN: with the default scope of the fake driver two bridges do not find each other; with one scope a bridge on `virtual:2` and one on `virtual:1` find each other at the start and while running, the first warns, the list says both virtual channels are in use, and `shared` goes back to 0 once the first ends. The marks themselves (Linux and Windows, in one process) are checked by `bridge_runtime.device_mark_*`.
 
 ### Verified (Windows 11, Vector Virtual CAN and VN5620)
@@ -597,8 +598,8 @@ On Windows 11 in MSYS2 UCRT64, the build with the XL Driver Library and the chan
 The VN5620 loopback also verified the following:
 
 - J1939 messages longer than 8 bytes (BAM and RTS/CTS, RTS/CTS up to the maximum of 1785 bytes) pass through 2 bridges and the physical bus and are received in full, with no abort and no retransmission request. Because each CTS round trip passes through the bridges and the physical bus, one message takes longer than with SIL Kit alone.
-- On physical channels, too, transmit receipts come back with or without init access, and `own_tx_dropped` equals the number of frames sent. When the bridge runs faster than the CAN bandwidth allows, the frames that could not be sent by the time of the stop are counted in `xl_tx_unsent`.
-- With no node to acknowledge, `--tx-timeout-ms` drops new frames (`xl_tx_dropped`), and all frames already handed to XL go out on the bus once a node appears (`silkit_to_xl` and `own_tx_dropped` match).
+- On physical channels, too, transmit receipts come back with or without init access, and `own_tx_dropped` equals the number of frames sent. When the bridge runs faster than the CAN bandwidth allows, the frames that could not be sent by the time of the stop are counted in `ext_tx_unsent`.
+- With no node to acknowledge, `--tx-timeout-ms` drops new frames (`ext_tx_dropped`), and all frames already handed to XL go out on the bus once a node appears (`silkit_to_ext` and `own_tx_dropped` match).
 - If another application (another bridge with init access) uses the same channel, the bridge receives the frames that application sends as normal received frames and forwards them to SIL Kit. Whichever side opens the channel later with `--bitrate` fails to start, because it has no init access.
 - Bus monitoring (see "[Bus monitoring while running](#bus-monitoring-while-running)"): with no node to acknowledge, with a different bit rate, and with the cable unplugged, the bridge shows error passive and the increase in error frames every second, and shows "no new problems" once the bus recovers. A controller that only transmits does not lower its receive error counter until it receives successfully, so it may stay error passive after the bus recovers.
 - If you unplug the USB cable while the bridge runs, `xlCanRequestChipState` keeps failing with `XL_ERR_INVALID_ACCESS` and the bridge exits with code 1. However, the VN5620 sometimes did not reappear as a USB device after it was plugged back in, and had to be power-cycled. Do not unplug the USB cable while the bridge runs.

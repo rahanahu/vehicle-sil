@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <string_view>
 #include <vector>
 
 namespace vehicle_sil::can_bridge {
@@ -118,13 +119,13 @@ struct CanBridgeStatistics
     std::uint64_t external_transmit_unsent = 0;  ///< Accepted frames lost unsent (at stop, at a bus-off restart).
 };
 
-/// One line "stats silkit_to_xl=N xl_to_silkit=N ..." with every counter, in the order of
+/// One line "stats silkit_to_ext=N ext_to_silkit=N ext_from_devices=N ..." with every counter, in the order of
 /// CanBridgeStatistics. The keys and their order are part of the bridge's documented output
 /// (docs/bridges.md), for programs that read the line; tests hold them.
 [[nodiscard]] std::string format_statistics(const CanBridgeStatistics& statistics);
 
 /// The warning of a bridge that has sent frames to the XL channel for `after` and got none from a
-/// device there (xl_to_silkit is 0; bridge_runtime::NothingCameHint decides when). `channel`:
+/// device there (ext_from_devices is 0; bridge_runtime::NothingCameHint decides when). `channel`:
 /// what the start line names ("XL 'Virtual Channel 1'").
 [[nodiscard]] std::string nothing_came_warning(std::string_view channel, std::chrono::seconds after);
 
@@ -149,7 +150,8 @@ struct CanBridgeHealth
 [[nodiscard]] std::string_view link_line_value(const ExternalBusState& state) noexcept;
 
 /// One line about the external bus between two samples taken by the caller (the bridge
-/// executable samples once a second), or nullopt:
+/// executable samples once a second), or nullopt. `bus_label` is how the external port names its
+/// bus at the start of the line ("XL bus"; a SocketCAN port could say "CAN bus 'can0'"):
 ///  - a problem counter grew, or the controller's error state changed (except from Unknown to
 ///    error active, the first answer of a healthy bus):
 ///      "XL bus: error passive (tx errors 128, rx errors 0); since the last report: error_frames +3650"
@@ -158,7 +160,7 @@ struct CanBridgeHealth
 ///    receive error counter until it receives again), so this line is the sign of recovery:
 ///      "XL bus: error passive (tx errors 0, rx errors 128); no new problems since the last report"
 [[nodiscard]] std::optional<std::string> format_health_change(const CanBridgeHealth& before, const CanBridgeHealth& now,
-                                                              bool problems_before = false);
+                                                              std::string_view bus_label, bool problems_before = false);
 
 /// Checks that `frame` is a classic CAN 2.0 frame the bridge can carry: no CAN FD/XL flags,
 /// an 11 or 29 bit identifier, DLC 0..15 with a data field of min(DLC, 8) bytes (0 bytes for a

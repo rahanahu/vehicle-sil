@@ -28,7 +28,7 @@
 //   no-answers                registry + bridge (no echo node) with --stats-every-ms 100 + the
 //                             peer with --answers none: the bridge prints its statistics line
 //                             while it runs, a line only where it changed, and the one with every
-//                             frame sent out has xl_to_silkit=0, and the link line ("link bus=...")
+//                             frame sent out has ext_to_silkit=0, and the link line ("link bus=...")
 //                             comes before the start line, once per value. Only the lines while running are
 //                             checked, so that the bridge can be ended as on Windows.
 //   device-shared             bridges on Virtual CAN, whose channels are one bus: with the default
@@ -191,17 +191,17 @@ int run_echo(const Options& options, bool forceReceipts, bool physical)
 #else
     ok = expect(bridgeCode == 0, "bridge exit code " + exit_code_text(bridgeCode) + ", expected 0") && ok;
     const auto sent = stat(peerText, "sent");
-    const auto toXl = stat(bridgeText, "silkit_to_xl");
-    const auto toSilKit = stat(bridgeText, "xl_to_silkit");
+    const auto toXl = stat(bridgeText, "silkit_to_ext");
+    const auto toSilKit = stat(bridgeText, "ext_to_silkit");
     const auto dropped = stat(bridgeText, "own_tx_dropped");
     ok = expect(sent.has_value() && *sent > 0, "peer sent " + (sent ? std::to_string(*sent) : std::string("?")) + " frames") && ok;
-    ok = expect(sent && toXl == sent, "bridge silkit_to_xl == sent") && ok;
-    ok = expect(sent && toSilKit == sent, "bridge xl_to_silkit == sent (one answer per frame)") && ok;
+    ok = expect(sent && toXl == sent, "bridge silkit_to_ext == sent") && ok;
+    ok = expect(sent && toSilKit == sent, "bridge ext_to_silkit == sent (one answer per frame)") && ok;
     // TX receipts are always on (with init access the port switches them on itself): one per
     // frame, never forwarded.
     ok = expect(dropped == sent, "bridge own_tx_dropped == sent") && ok;
-    for (const char* key : {"error_frames", "overruns", "silkit_rejected", "xl_rejected", "xl_queue_full",
-                            "xl_tx_failures", "silkit_tx_failures", "xl_tx_dropped", "xl_tx_unsent"})
+    for (const char* key : {"error_frames", "overruns", "silkit_rejected", "ext_rejected", "ext_queue_full",
+                            "ext_tx_failures", "silkit_tx_failures", "ext_tx_dropped", "ext_tx_unsent"})
     {
         ok = expect(stat(bridgeText, key) == std::optional<unsigned long long>(0), std::string("bridge ") + key + " == 0") && ok;
     }
@@ -277,7 +277,7 @@ int run_device_lost(const Options& options)
                       cli::kExitFailed,
                       {"FAIL: XL channel 'Test CAN Device Channel 1' stopped working (device removed?): "
                        "xlCanRequestChipState failed: device lost (fake)",
-                       "stats silkit_to_xl=", "stopped"},
+                       "stats silkit_to_ext=", "stopped"},
                       {});
 }
 
@@ -492,7 +492,7 @@ int run_no_answers(const Options& options)
     while (sent && std::chrono::steady_clock::now() < deadline && !bridge.process().poll())
     {
         const auto lines = running_statistics(bridge.lines());
-        if (!lines.empty() && stat(lines.back(), "silkit_to_xl") == sent)
+        if (!lines.empty() && stat(lines.back(), "silkit_to_ext") == sent)
         {
             complete = lines.back();
             break;
@@ -505,8 +505,8 @@ int run_no_answers(const Options& options)
 
     bool ok = expect(peerCode == 0, "peer exit code " + exit_code_text(peerCode) + ", expected 0 (no frame came back)");
     ok = expect(sent.has_value() && *sent > 0, "peer sent " + (sent ? std::to_string(*sent) : std::string("?")) + " frames") && ok;
-    ok = expect(!complete.empty(), "bridge printed a statistics line with silkit_to_xl == sent while running") && ok;
-    ok = expect(stat(complete, "xl_to_silkit") == std::optional<unsigned long long>(0), "that line has xl_to_silkit=0") && ok;
+    ok = expect(!complete.empty(), "bridge printed a statistics line with silkit_to_ext == sent while running") && ok;
+    ok = expect(stat(complete, "ext_to_silkit") == std::optional<unsigned long long>(0), "that line has ext_to_silkit=0") && ok;
     // The link line: first, before the start line, then only where the value changed (the fake bus stays error active).
     const auto firstLink = text.find("link bus=");
     ok = expect(firstLink != std::string::npos && firstLink < text.find("Ctrl+C to stop"),
@@ -516,8 +516,8 @@ int run_no_answers(const Options& options)
     ok = expect(text.find("link bus=active", text.find("link bus=active") + 1) == std::string::npos,
                 "the link line with the same value is printed once") && ok;
     std::string keys = "stats";
-    for (const char* key : {"silkit_to_xl", "xl_to_silkit", "own_tx_dropped", "error_frames", "overruns", "silkit_rejected",
-                            "xl_rejected", "xl_queue_full", "xl_tx_failures", "silkit_tx_failures", "xl_tx_dropped", "xl_tx_unsent"})
+    for (const char* key : {"silkit_to_ext", "ext_to_silkit", "ext_from_devices", "own_tx_dropped", "error_frames", "overruns", "silkit_rejected",
+                            "ext_rejected", "ext_queue_full", "ext_tx_failures", "silkit_tx_failures", "ext_tx_dropped", "ext_tx_unsent"})
     {
         keys += std::string(" ") + key + "=";
     }
@@ -570,16 +570,16 @@ int run_stop_request(const Options& options)
                      "bridge exit code " + (status ? std::to_string(status->code) : std::string("none (still running)")) +
                          ", expected 0");
     const auto stopping = text.find("stopping\n");
-    const auto stats = text.find("stats silkit_to_xl=");
+    const auto stats = text.find("stats silkit_to_ext=");
     const auto stopped = text.find("stopped\n");
-    ok = expect(count(text, "stats silkit_to_xl=") == 1, "bridge printed one statistics line") && ok;
+    ok = expect(count(text, "stats silkit_to_ext=") == 1, "bridge printed one statistics line") && ok;
     ok = expect(stopping != std::string::npos && stats != std::string::npos && stopped != std::string::npos &&
                     stopping < stats && stats < stopped,
                 "bridge printed 'stopping', the statistics and 'stopped', in this order") &&
          ok;
     // Nothing was bridged: every counter of the statistics line is 0.
-    for (const char* key : {"silkit_to_xl", "xl_to_silkit", "own_tx_dropped", "error_frames", "overruns", "silkit_rejected",
-                            "xl_rejected", "xl_queue_full", "xl_tx_failures", "silkit_tx_failures", "xl_tx_dropped", "xl_tx_unsent"})
+    for (const char* key : {"silkit_to_ext", "ext_to_silkit", "ext_from_devices", "own_tx_dropped", "error_frames", "overruns", "silkit_rejected",
+                            "ext_rejected", "ext_queue_full", "ext_tx_failures", "silkit_tx_failures", "ext_tx_dropped", "ext_tx_unsent"})
     {
         ok = expect(stat(text, key) == std::optional<unsigned long long>(0), std::string("bridge ") + key + " == 0") && ok;
     }

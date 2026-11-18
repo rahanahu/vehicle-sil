@@ -30,18 +30,19 @@ constexpr std::size_t kMaxClassicPayload = 8;
 std::string format_statistics(const CanBridgeStatistics& s)
 {
     const std::pair<const char*, std::uint64_t> fields[] = {
-        {"silkit_to_xl", s.silkit_to_external},
-        {"xl_to_silkit", s.external_to_silkit},
+        {"silkit_to_ext", s.silkit_to_external},
+        {"ext_to_silkit", s.external_to_silkit},
+        {"ext_from_devices", s.external_to_silkit},
         {"own_tx_dropped", s.own_transmissions_dropped},
         {"error_frames", s.external_error_frames},
         {"overruns", s.external_overruns},
         {"silkit_rejected", s.silkit_rejected},
-        {"xl_rejected", s.external_rejected},
-        {"xl_queue_full", s.external_queue_full},
-        {"xl_tx_failures", s.external_transmit_failures},
+        {"ext_rejected", s.external_rejected},
+        {"ext_queue_full", s.external_queue_full},
+        {"ext_tx_failures", s.external_transmit_failures},
         {"silkit_tx_failures", s.silkit_transmit_failures},
-        {"xl_tx_dropped", s.external_transmit_dropped},
-        {"xl_tx_unsent", s.external_transmit_unsent},
+        {"ext_tx_dropped", s.external_transmit_dropped},
+        {"ext_tx_unsent", s.external_transmit_unsent},
     };
     std::string line = "stats";
     for (const auto& [key, value] : fields)
@@ -81,11 +82,11 @@ ProblemDeltas problem_deltas(const CanBridgeStatistics& b, const CanBridgeStatis
         {"error_frames", n.external_error_frames - b.external_error_frames},
         {"overruns", n.external_overruns - b.external_overruns},
         {"silkit_rejected", n.silkit_rejected - b.silkit_rejected},
-        {"xl_rejected", n.external_rejected - b.external_rejected},
-        {"xl_queue_full", n.external_queue_full - b.external_queue_full},
-        {"xl_tx_failures", n.external_transmit_failures - b.external_transmit_failures},
+        {"ext_rejected", n.external_rejected - b.external_rejected},
+        {"ext_queue_full", n.external_queue_full - b.external_queue_full},
+        {"ext_tx_failures", n.external_transmit_failures - b.external_transmit_failures},
         {"silkit_tx_failures", n.silkit_transmit_failures - b.silkit_transmit_failures},
-        {"xl_tx_dropped", n.external_transmit_dropped - b.external_transmit_dropped},
+        {"ext_tx_dropped", n.external_transmit_dropped - b.external_transmit_dropped},
     }};
 }
 
@@ -132,7 +133,7 @@ std::string_view link_line_value(const ExternalBusState& state) noexcept
 }
 
 std::optional<std::string> format_health_change(const CanBridgeHealth& before, const CanBridgeHealth& now,
-                                                bool problems_before)
+                                                std::string_view bus_label, bool problems_before)
 {
     std::string changes;
     for (const auto& [key, delta] : problem_deltas(before.statistics, now.statistics))
@@ -148,7 +149,7 @@ std::optional<std::string> format_health_change(const CanBridgeHealth& before, c
     const auto from = before.bus_state.level;
     const auto to = now.bus_state.level;
     const bool firstHealthyAnswer = from == ExternalBusState::Level::Unknown && to == ExternalBusState::Level::ErrorActive;
-    const std::string line = "XL bus: " + format_bus_state(now.bus_state);
+    const std::string line = std::string(bus_label) + ": " + format_bus_state(now.bus_state);
     if (!changes.empty() || (from != to && !firstHealthyAnswer))
     {
         return line + changes;

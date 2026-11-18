@@ -4,6 +4,7 @@
 // descriptions, the bridge tools found and their --describe (check.hpp). The rules that need the
 // whole simulation (the bridge as a user of its network, loops with a role: bridge participant)
 // are in check_participants() (check_rules.cpp).
+#include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/launch/check.hpp"
 
 
@@ -224,7 +225,16 @@ std::optional<std::string> describe_problem(const NetworkConfig& network, const 
         const std::string& name = SeenEcu(entry, ecu).name();
         if (name == participant && found)
         {
-            return std::nullopt;
+            // The bridge of --connect is started from the launcher's own folder: a bridge of another
+            // release may count or name things differently, so it is refused (a bridge of
+            // role: bridge in the YAML is the author's own and is not compared).
+            if (ecu.vehicle_sil_version == vehicle_sil::version())
+            {
+                return std::nullopt;
+            }
+            return prefix + run.command_text + " was built from vehicle-sil " +
+                   (ecu.vehicle_sil_version.empty() ? std::string("unknown") : ecu.vehicle_sil_version) +
+                   "; this launcher is " + vehicle_sil::version() + ": use the bridge of the same release";
         }
         described = "described itself as '" + name + "' on " + (on.empty() ? std::string("no network") : join(on)) +
                     ", not as '" + participant + "' on " + network.name + " (" + to_string(network.kind) + ")";

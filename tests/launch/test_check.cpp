@@ -6,6 +6,7 @@
 #include "launch_test_util.hpp"
 
 #include "vehicle_sil/control/wire.hpp"
+#include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
 
@@ -2993,9 +2994,11 @@ Setup connect_setup()
 }
 
 /// What a bridge of this repository writes for --describe (bridges/common/src/describe.cpp).
-std::string bridge_description(const std::string& name, const std::string& network, const std::string& kind)
+std::string bridge_description(const std::string& name, const std::string& network, const std::string& kind,
+                               const std::string& version = vehicle_sil::version())
 {
-    return R"({"vehicle_sil_ecu": 1, "vehicle_sil": "1.0.0", "name": ")" + name + R"(", "step_ns": null, "networks": [)" +
+    const std::string versionKey = version.empty() ? std::string{} : R"("vehicle_sil": ")" + version + R"(", )";
+    return R"({"vehicle_sil_ecu": 1, )" + versionKey + R"("name": ")" + name + R"(", "step_ns": null, "networks": [)" +
            R"({"name": ")" + network + R"(", "kind": ")" + kind + R"(", "use": ")" + (kind == "can" ? "raw" : "ethernet") +
            R"(", "nodes": [], "mac": null}], "variables": [], "control": null, "features": []})";
 }
@@ -3259,6 +3262,20 @@ TEST_CASE(check_connections_says_when_a_bridge_is_missing_or_fails)
     check_text(connect_lines(s, {{"CAN1", "virtual:1"}}, fake),
                "E 5 connect-tool-failed: network 'CAN1': x described itself as 'VectorXlBridge' on J1939_CAN1 (can), not "
                "as 'bridge.CAN1' on CAN1 (can): use the bridge built with the vehicle-sil of vehicle_sil_launch\n");
+    // A bridge of another release, or one that does not say which: refused.
+    other.standard_output = bridge_description("bridge.CAN1", "CAN1", "can", "0.0.1");
+    fake.answer = other;
+    check_text(connect_lines(s, {{"CAN1", "virtual:1"}}, fake),
+               "E 5 connect-tool-failed: network 'CAN1': x was built from vehicle-sil 0.0.1; this launcher is " +
+                   std::string(vehicle_sil::version()) + ": use the bridge of the same release\n");
+    other.standard_output = bridge_description("bridge.CAN1", "CAN1", "can", "");
+    fake.answer = other;
+    check_text(connect_lines(s, {{"CAN1", "virtual:1"}}, fake),
+               "E 5 connect-tool-failed: network 'CAN1': x was built from vehicle-sil unknown; this launcher is " +
+                   std::string(vehicle_sil::version()) + ": use the bridge of the same release\n");
+    other.standard_output = bridge_description("bridge.CAN1", "CAN1", "can");
+    fake.answer = other;
+    check_text(connect_lines(s, {{"CAN1", "virtual:1"}}, fake), "");
     other.standard_output = "hello";
     fake.answer = other;
     CHECK(connect_lines(s, {{"CAN1", "virtual:1"}}, fake).rfind("E 5 connect-tool-failed: network 'CAN1': x wrote no "

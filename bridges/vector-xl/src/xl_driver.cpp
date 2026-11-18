@@ -138,11 +138,11 @@ struct XlCanPort::Impl
     EventHandler handler;
 
     // Frames the driver accepted (transmit() Ok) and has not confirmed with a receipt yet, for
-    // the wait at stop and xl_tx_unsent. Changed under xl_mutex together with the driver call
+    // the wait at stop and ext_tx_unsent. Changed under xl_mutex together with the driver call
     // it accounts for, except that a receipt only decrements (never below 0). It can drift
     // (a receipt lost in an overrun resets it to 0), so the stuck decision does not use it.
     // The reset on an overrun is not under xl_mutex: a frame accepted around it may be counted
-    // or not, so xl_tx_unsent can come out low after an overrun.
+    // or not, so ext_tx_unsent can come out low after an overrun.
     std::atomic<std::int64_t> pending{0};
     /// This port switched the receipts on (init access): only then is transmit_timeout used.
     /// Without init access another application can switch them off at any time; a stuck state

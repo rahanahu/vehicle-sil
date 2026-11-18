@@ -44,19 +44,20 @@ bool refuses(const char* tool, const std::string& line) { return !read_outside_c
 TEST_CASE(read_outside_counts_takes_the_keys_of_each_bridge)
 {
     CHECK(reads(kEth, "[eth-bridge] stats silkit_to_ext=152 ext_to_silkit=9 ext_from_devices=3 own_tx_dropped=0", 152, 3));
-    CHECK(reads(kXl, "[bridge] stats silkit_to_xl=40 xl_to_silkit=7 own_tx_dropped=40", 40, 7));
+    CHECK(reads(kXl, "[bridge] stats silkit_to_ext=40 ext_from_devices=7 own_tx_dropped=40", 40, 7));
     // Without the tag, and with the "\r" of a Windows line end.
     CHECK(reads(kEth, "stats silkit_to_ext=1 ext_from_devices=0", 1, 0));
-    CHECK(reads(kXl, "[bridge] stats silkit_to_xl=0 xl_to_silkit=0\r", 0, 0));
+    CHECK(reads(kXl, "[bridge] stats silkit_to_ext=0 ext_from_devices=0\r", 0, 0));
     // The largest count that the JSON forms write (a signed 64-bit integer), and leading zeros.
     CHECK(reads(kEth, "stats silkit_to_ext=9223372036854775807 ext_from_devices=007", 9223372036854775807u, 7));
 }
 
 TEST_CASE(read_outside_counts_refuses_any_other_line)
 {
-    // Of the other bridge, or of a bridge of another version (no ext_from_devices).
-    CHECK(refuses(kXl, "[eth-bridge] stats silkit_to_ext=1 ext_from_devices=1"));
+    // Of a bridge of another version (no ext_from_devices).
     CHECK(refuses(kEth, "[eth-bridge] stats silkit_to_ext=12 ext_to_silkit=11 own_tx_dropped=0"));
+    // The names the CAN bridge used before: a bridge of another release.
+    CHECK(refuses(kXl, "[bridge] stats silkit_to_xl=40 xl_to_silkit=7 own_tx_dropped=40"));
     CHECK(refuses("some_tool", "stats silkit_to_ext=1 ext_from_devices=1"));
     // Not a statistics line.
     CHECK(refuses(kEth, "[eth-bridge] stopping"));
@@ -289,7 +290,7 @@ TEST_CASE(outside_state_says_lost_once_the_link_or_the_bus_has_been_down_for_the
 
 TEST_CASE(dropped_counts_names_the_keys_of_the_table_that_are_not_zero)
 {
-    std::map<std::string, std::uint64_t> counts{{"ext_queue_full", 3},     {"ext_overruns", 0},   {"xl_tx_unsent", 1},
+    std::map<std::string, std::uint64_t> counts{{"ext_queue_full", 3},     {"ext_overruns", 0},   {"ext_tx_unsent", 1},
                                                 {"silkit_rejected", 2},    {"own_tx_dropped", 9}, {"filtered_to_ext", 4},
                                                 {"oversize", 5},           {"malformed", 6},      {"mac_unguarded", 7},
                                                 {"ext_checksum_incomplete", 8}, {"loop_suspected", 1}, {"error_frames", 1}};
@@ -300,7 +301,7 @@ TEST_CASE(dropped_counts_names_the_keys_of_the_table_that_are_not_zero)
         return;
     }
     CHECK(dropped[0] == std::make_pair(std::string("ext_queue_full"), std::uint64_t{3}));
-    CHECK(dropped[1].first == "xl_tx_unsent" && dropped[2].first == "silkit_rejected");
+    CHECK(dropped[1].first == "ext_tx_unsent" && dropped[2].first == "silkit_rejected");
     // Every key of the table counts, and only those.
     for (const std::string_view key : launch::detail::kOutsideDroppedKeys)
     {

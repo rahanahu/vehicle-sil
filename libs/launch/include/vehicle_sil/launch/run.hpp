@@ -699,8 +699,7 @@ struct OutsideCounts
 /// The counts in one line of the bridge `tool` (bridge_tool()), or empty. The line is a statistics
 /// line of the bridge ("stats key=N key=N ...", after the tag the bridge puts first, such as
 /// "[eth-bridge] "; a "\r" at its end does not count) with the keys of `tool`: silkit_to_ext and
-/// ext_from_devices of vehicle_sil_ethernet_bridge, silkit_to_xl and xl_to_silkit of
-/// vehicle_sil_vector_xl_bridge. Empty for any other line, for a line with a key twice, with a
+/// ext_from_devices (the same for both bridges). Empty for any other line, for a line with a key twice, with a
 /// value that is not a decimal number up to 2^63 - 1 or with a part of another form, for one without
 /// either key (a bridge of another version), and for any other tool.
 [[nodiscard]] std::optional<OutsideCounts> read_outside_counts(std::string_view tool, std::string_view line);
@@ -736,13 +735,13 @@ struct OutsideLinkLine
 /// are not "key=value". A part of another form or a repeated key is skipped.
 [[nodiscard]] std::optional<OutsideLinkLine> read_outside_link_line(std::string_view line);
 
-/// What the counts of a bridge say about the frames it lost. The one table of the keys of each
-/// kind; they are the bridge's own names and change with them. Dropped: the queue was full, a send
-/// failed, a receive overran, a frame was refused. The others (own_tx_dropped, filtered_*,
+/// What the counts of a bridge say about the frames it lost. The one table of the keys of both
+/// bridges (names they have in common are listed once); they are the bridges' own names and change
+/// with them. Dropped: the queue was full, a send failed, a receive overran, a frame was refused. The others (own_tx_dropped, filtered_*,
 /// mac_unguarded, oversize, malformed, ext_checksum_incomplete) are not losses and are only carried.
-inline constexpr std::array<std::string_view, 11> kOutsideDroppedKeys{
-    "ext_overruns", "ext_queue_full", "ext_tx_failures", "silkit_tx_failures", "overruns",       "xl_queue_full",
-    "xl_tx_failures", "xl_tx_dropped", "xl_tx_unsent",    "silkit_rejected",    "xl_rejected"};
+inline constexpr std::array<std::string_view, 9> kOutsideDroppedKeys{
+    "ext_overruns", "ext_queue_full", "ext_tx_failures", "silkit_tx_failures", "overruns",
+    "ext_tx_dropped", "ext_tx_unsent", "silkit_rejected", "ext_rejected"};
 /// The count of frames the bridge stopped as a loop (Ethernet).
 inline constexpr std::string_view kOutsideLoopKey = "loop_suspected";
 /// The count of error frames the CAN controller saw.

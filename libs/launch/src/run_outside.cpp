@@ -86,9 +86,9 @@ std::optional<std::map<std::string, std::uint64_t>> read_outside_stats(std::stri
 std::optional<OutsideCounts> read_outside_counts(std::string_view tool, std::string_view line)
 {
     // The keys of each bridge: the frames it sent to the bus, and those that came from a device there.
-    const bool ethernet = tool == bridge_tool(NetworkKind::Ethernet);
-    const std::string toKey = ethernet ? "silkit_to_ext" : "silkit_to_xl";
-    const std::string fromKey = ethernet ? "ext_from_devices" : "xl_to_silkit";
+    // Both bridges use the same names.
+    const std::string toKey = "silkit_to_ext";
+    const std::string fromKey = "ext_from_devices";
     const auto all = read_outside_stats(tool, line);
     if (!all)
     {

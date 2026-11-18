@@ -90,7 +90,7 @@ public:
     std::optional<std::string> health_line() override
     {
         const CanBridgeHealth now = bridge_.health();
-        auto line = format_health_change(reported_, now, problems_before_);
+        auto line = format_health_change(reported_, now, "XL bus", problems_before_);
         problems_before_ = problems_grew(reported_.statistics, now.statistics);
         reported_ = now;
         return line;
