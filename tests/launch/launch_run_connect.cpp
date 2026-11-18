@@ -424,7 +424,8 @@ void connect_bus_off_lost(const Options& base)
     const fs::path dir = connect_dir(o, "bus_off_lost", "stop_at_ms: 300000\n", talker(o), {{"Talker", "talk CAN"}});
     const std::string timeout = std::to_string(scaled_timeout(120s).count());
     const auto began = std::chrono::steady_clock::now();
-    const Captured run = launch(o, {"run", "--events", "--speed", "1", "--timeout-ms", timeout, "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
+    const Captured run = launch(o, {"run", "--events", "--speed", "1", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0",
+                          "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
     const auto took = std::chrono::steady_clock::now() - began;
     set_environment("VEHICLE_SIL_FAKE_XL_BUS_OFF_AFTER_MS", "");
     const std::vector<std::string> lines = check_events(run.standard_output);
@@ -793,4 +794,288 @@ void connect_time_changed(const Options& base)
     require(contains(finding_in(lines, "outside-time-changed"), "the time command 'speed max' from stdin at ") &&
                 contains(lines.back(), "\"simulation\":\"reached_stop_at\"") && contains(lines.back(), "\"result\":\"passed\""),
             "the run went to its end and passed with the note:\n" + out_of(lines));
+}
+
+namespace {
+
+/// Sets an environment variable for as long as it lives, then clears it: a scenario that fails
+/// leaves the next one the environment it had.
+class ScopedEnvironment
+{
+public:
+    ScopedEnvironment(std::string name, const std::string& value) : name_(std::move(name)) { set_environment(name_, value); }
+    ~ScopedEnvironment()
+    {
+        try
+        {
+            set_environment(name_, "");
+        }
+        catch (...)
+        {
+        }
+    }
+    ScopedEnvironment(const ScopedEnvironment&) = delete;
+    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
+
+private:
+    std::string name_;
+};
+
+/// A bridge on the channel virtual:1 outside the run, in a registry of its own: the vehicle-sil
+/// bridge that another run (or a person) left running. It is ended when this goes, whether the
+/// scenario passed or failed, so that no process stays to be found by another test.
+class OutsideBridge
+{
+public:
+    OutsideBridge(const Options& o, const std::string& registry_uri)
+    {
+        vehicle_sil::process::ProcessOptions options;
+        options.on_line = [this](vehicle_sil::process::Stream, std::string_view line) {
+            const std::lock_guard lock(mutex_);
+            lines_ += std::string(line) + "\n";
+        };
+#ifdef _WIN32
+        const fs::path bridge = o.connect_tools / "vehicle_sil_vector_xl_bridge.exe";
+#else
+        const fs::path bridge = o.connect_tools / "vehicle_sil_vector_xl_bridge";
+#endif
+        process_ = std::make_unique<vehicle_sil::process::Process>(
+            bridge,
+            std::vector<std::string>{"--registry-uri", registry_uri, "--participant", "OutsideBridge", "--network", "OUTSIDE_CAN",
+                                     "--xl-target", "virtual", "--xl-channel", "1"},
+            std::move(options));
+    }
+    ~OutsideBridge()
+    {
+        process_->kill_tree();
+        static_cast<void>(process_->wait_for(10s));
+        process_->finish_output(10s);
+    }
+    OutsideBridge(const OutsideBridge&) = delete;
+    OutsideBridge& operator=(const OutsideBridge&) = delete;
+
+    /// Waits until it has said it runs (its link line, with the device it shares, is before that).
+    void wait_ready()
+    {
+        const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(60s);
+        while (!contains(lines(), "Ctrl+C to stop"))
+        {
+            require(!process_->poll().has_value() && std::chrono::steady_clock::now() < deadline,
+                    "the bridge outside the run did not start:\n" + lines());
+            std::this_thread::sleep_for(10ms);
+        }
+    }
+    long id() const { return process_->id(); }
+    std::string lines()
+    {
+        const std::lock_guard lock(mutex_);
+        return lines_;
+    }
+    bool running() { return !process_->poll().has_value(); }
+
+private:
+    std::mutex mutex_;
+    std::string lines_;
+    std::unique_ptr<vehicle_sil::process::Process> process_;
+};
+
+/// What the bridges of this process say of the pid of a bridge outside the run (Linux), else nothing.
+std::string who_text(long pid)
+{
+#ifdef __linux__
+    return " (process " + std::to_string(pid) + ")";
+#else
+    static_cast<void>(pid);
+    return {};
+#endif
+}
+
+/// The scope that makes the fake devices of the bridges of this scenario the same device (one per
+/// process otherwise, so that tests that run at the same time do not find each other).
+std::string device_scope(const std::string& name)
+{
+    return "launch-" + name + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+}
+
+/// Whether a bridge of this run wrote `part` as a line (a "log" event of `network`'s bridge).
+bool bridge_wrote(const std::vector<std::string>& lines, const std::string& network, const std::string& part)
+{
+    return index_of(lines, {"\"source\":\"bridge." + network + "\"", part}) < lines.size();
+}
+
+} // namespace
+
+/// connect_device_shared: another vehicle-sil bridge, which is not of the run, is on virtual:1
+/// before the run starts. Without --strict the run goes to its end and tells it as the warning
+/// outside-device-shared with that bridge's process id (the bridge's own warning is not shown, but
+/// its log has it); with --strict it is an error and the run does not start the ECUs.
+void connect_device_shared(const Options& base)
+{
+    const Options o = connect_options(base);
+    require(!o.registry.empty(), "the scenarios connect_device_shared* need --registry");
+    set_environment("VEHICLE_SIL_FAKE_XL_ECHO", "0");
+    const ScopedEnvironment scope("VEHICLE_SIL_FAKE_DEVICE_SCOPE", device_scope("device-shared"));
+    fs::create_directories(o.work_dir / "registry");
+    vehicle_sil::test::RegistryProcess registry(o.registry, o.work_dir / "registry");
+    OutsideBridge outside(o, registry.uri());
+    outside.wait_ready();
+    {
+        const fs::path dir = connect_dir(o, "device_shared", "stop_at_ms: 2500\n", talker(o), {{"Talker", "talk CAN"}});
+        const Captured run = launch(o, {"run", "--events", "--speed", "1", "--log-dir", "logs", "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
+        const std::vector<std::string> lines = check_events(run.standard_output);
+        expect_code(run, 0, "run --connect on a device that a bridge outside the run uses (a warning)");
+        const std::string found = finding_in(lines, "outside-device-shared");
+        require(contains(found, "\"severity\":\"warning\"") &&
+                    contains(found, "network 'CAN' -> virtual:1: the device was also used by another vehicle-sil bridge" + who_text(outside.id()) +
+                                        " that is not part of this run from ") &&
+                    contains(found, "\"warnings\":") == false,
+                "the warning outside-device-shared, with the pid of the bridge outside:\n" + out_of(lines));
+        require(index_of(lines, {"\"event\":\"log\"", "outside: CAN -> virtual:1: also used by another vehicle-sil bridge" + who_text(outside.id()) +
+                                                     " at "}) < lines.size(),
+                "the launcher said it when it found it:\n" + out_of(lines));
+        // The bridge's own warning and its link line are for the launcher: not shown; the log keeps them.
+        require(!bridge_wrote(lines, "CAN", "is also used by") && !bridge_wrote(lines, "CAN", "] link "),
+                "the bridge's warning about the device is not shown:\n" + out_of(lines));
+        require(contains(read_text(dir / "logs" / "bridge.CAN.log"), " shared=1"), "the bridge's log has its link line with shared=1");
+        require(finding_in(lines, "connect-target-shared").empty(), "nothing is said of the networks of this run:\n" + out_of(lines));
+        require(contains(lines.back(), "\"simulation\":\"reached_stop_at\"") && contains(lines.back(), "\"result\":\"passed\""),
+                "the run went to its end:\n" + lines.back());
+        require(outside.running(), "the bridge outside the run was not touched");
+    }
+    // --strict: an error, and the ECUs are not started.
+    const fs::path dir = connect_dir(o, "device_shared_strict", "stop_at_ms: 2500\n", talker(o), {{"Talker", "talk CAN"}});
+    const Captured run =
+        launch(o, {"run", "--events", "--strict", "--speed", "1", "--connect", "ETH_EXT=fake0", "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
+    const std::vector<std::string> lines = check_events(run.standard_output);
+    expect_code(run, 1, "run --strict --connect on a device that a bridge outside the run uses");
+    const std::string found = finding_in(lines, "outside-device-shared");
+    require(contains(found, "\"severity\":\"error\"") &&
+                contains(found, "the device is also used by another vehicle-sil bridge" + who_text(outside.id()) +
+                                    " that is not part of this run, and --strict does not start a run on it: "),
+            "the error outside-device-shared:\n" + out_of(lines));
+    require(contains(lines.back(), "\"simulation\":\"not_started\"") && contains(lines.back(), "\"result\":\"failed\""),
+            "the simulation did not start:\n" + lines.back());
+    for (const char* ecu : {"Pinger", "Talker"})
+    {
+        require(events_with(lines, {std::string("\"name\":\"") + ecu + "\"", "\"state\":\"started\""}).empty() &&
+                    events_with(lines, {std::string("\"name\":\"") + ecu + "\"", "\"state\":\"ended\""}).empty(),
+                std::string(ecu) + " was not started:\n" + out_of(lines));
+    }
+    for (const char* code : {"connect-failed", "participant-failed", "connect-lost"})
+    {
+        require(finding_in(lines, code).empty(), std::string("no finding ") + code + ":\n" + out_of(lines));
+    }
+    require(outside.running(), "the bridge outside the run was not touched");
+}
+
+/// connect_device_shared_later: a bridge outside the run comes to virtual:1 while a --strict run
+/// goes on. The launcher says it, waits 3 s, the real time (a bridge that another run started and
+/// that ends before its ECUs start must not take this run down), and then aborts the run: the
+/// error outside-device-shared, exit code 1, the simulation aborted. A bridge that is gone again
+/// within the 3 s does not stop the run: the warning, and --strict fails on it at the end.
+void connect_device_shared_later(const Options& base)
+{
+    const Options o = connect_options(base);
+    require(!o.registry.empty(), "the scenarios connect_device_shared* need --registry");
+    set_environment("VEHICLE_SIL_FAKE_XL_ECHO", "0");
+    const ScopedEnvironment scope("VEHICLE_SIL_FAKE_DEVICE_SCOPE", device_scope("device-shared-later"));
+    fs::create_directories(o.work_dir / "registry");
+    vehicle_sil::test::RegistryProcess registry(o.registry, o.work_dir / "registry");
+    const std::string timeout = std::to_string(scaled_timeout(120s).count());
+    {
+        const fs::path dir = connect_dir(o, "device_shared_later", "stop_at_ms: 300000\n", talker(o), {{"Talker", "talk CAN"}});
+        Live live(o, dir, {"run", "--events", "--strict", "--speed", "1", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0",
+                          "--connect", "CAN=virtual:1", "sim.yaml"});
+        live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
+        OutsideBridge outside(o, registry.uri());
+        outside.wait_ready();
+        live.wait_for({"\"event\":\"log\"", "outside: CAN -> virtual:1: also used by another vehicle-sil bridge" + who_text(outside.id()) + " at "});
+        const auto found_at = std::chrono::steady_clock::now();
+        const auto [status, lines] = live.finish();
+        const auto took = std::chrono::steady_clock::now() - found_at;
+        require(status && status->code == 1, "exit code " + code_text(status) + "\n" + out_of(lines));
+        // The 3 s count from when the launcher found it, which the line says: not before, and not much later.
+        require(took >= 2900ms && took < 3s + scaled_timeout(30s),
+                "the run was aborted 3 s after the launcher found the bridge: " +
+                    std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(took).count()) + " ms\n" + out_of(lines));
+        const std::string found = finding_in(lines, "outside-device-shared");
+        require(contains(found, "\"severity\":\"error\"") && contains(found, "network 'CAN' -> virtual:1: the device was also used by another "
+                                                                              "vehicle-sil bridge" + who_text(outside.id()) +
+                                                                              " that is not part of this run from ") &&
+                    contains(found, ", and --strict stopped the run after 3 s of it: "),
+                "the error outside-device-shared:\n" + out_of(lines));
+        require(contains(lines.back(), "\"simulation\":\"aborted\"") && contains(lines.back(), "\"result\":\"failed\""),
+                "the simulation was aborted:\n" + lines.back());
+        for (const char* code : {"participant-failed", "connect-lost", "exit-code"})
+        {
+            require(finding_in(lines, code).empty(), std::string("no finding ") + code + ":\n" + out_of(lines));
+        }
+        for (const char* ecu : {"Pinger", "Talker"})
+        {
+            require(events_with(lines, {std::string("\"name\":\"") + ecu + "\"", "\"state\":\"ended\""}).size() == 1,
+                    std::string(ecu) + " ended:\n" + out_of(lines));
+        }
+    }
+    // Gone again within 3 s: the run is not stopped.
+    const fs::path dir = connect_dir(o, "device_shared_gone", "stop_at_ms: 7000\n", talker(o), {{"Talker", "talk CAN"}});
+    Live live(o, dir, {"run", "--events", "--strict", "--speed", "1", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0",
+                          "--connect", "CAN=virtual:1", "sim.yaml"});
+    live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
+    {
+        OutsideBridge outside(o, registry.uri());
+        outside.wait_ready();
+        live.wait_for({"\"event\":\"log\"", "outside: CAN -> virtual:1: also used by another vehicle-sil bridge"});
+        std::this_thread::sleep_for(300ms);
+    }
+    const auto [status, lines] = live.finish();
+    require(status && status->code == 1, "--strict fails on the warning: exit code " + code_text(status) + "\n" + out_of(lines));
+    require(contains(finding_in(lines, "outside-device-shared"), "\"severity\":\"warning\""),
+            "the warning outside-device-shared:\n" + out_of(lines));
+    require(contains(lines.back(), "\"simulation\":\"reached_stop_at\"") && contains(lines.back(), "\"result\":\"failed\"") &&
+                contains(lines.back(), "\"errors\":0,"),
+            "the run went to its end:\n" + lines.back());
+}
+
+/// connect_device_shared_own: two networks of the run on Vector Virtual CAN, which is one bus, and
+/// so one device: the check says it (connect-target-shared) and the run goes on; the launcher
+/// takes the other bridge of the run out of what each bridge reports, so there is no
+/// outside-device-shared, and no line of the bridges' warnings.
+void connect_device_shared_own(const Options& base)
+{
+    const Options o = connect_options(base);
+    set_environment("VEHICLE_SIL_FAKE_XL_ECHO", "0");
+    const ScopedEnvironment scope("VEHICLE_SIL_FAKE_DEVICE_SCOPE", device_scope("device-shared-own"));
+    const fs::path dir = o.work_dir / "device_shared_own";
+    fs::create_directories(dir);
+    write_file(dir / "sim.yaml", "vehicle_sil_simulation: 1\n"
+                                 "speed: 1\n"
+                                 "late_tolerance_ms: 60000\n"
+                                 "registry_uri: silkit://127.0.0.1:0\n"
+                                 "stop_at_ms: 2500\n"
+                                 "networks:\n"
+                                 "  - name: CAN\n"
+                                 "    kind: can\n"
+                                 "  - name: CAN2\n"
+                                 "    kind: can\n"
+                                 "participants:\n"
+                                 "  - name: Talker\n"
+                                 "    command: [" + ecu(o) + "]\n");
+    write_file(dir / "Talker.behaviour", "talk CAN\n");
+    const Captured run =
+        launch(o, {"run", "--events", "--speed", "1", "--connect", "CAN=virtual:1", "--connect", "CAN2=virtual:2", "sim.yaml"}, dir);
+    const std::vector<std::string> lines = check_events(run.standard_output);
+    expect_code(run, 0, "run --connect with two networks on one device (a warning)");
+    require(finding_in(lines, "outside-device-shared").empty(), "no outside-device-shared:\n" + out_of(lines));
+    // The check says it (in its event, and in the result's copy of it), the run does not say it again.
+    const std::string& result = lines.back();
+    const auto begin = result.find("\"findings\":[");
+    const auto end = result.find("\"check\":{", begin);
+    require(index_of(lines, {"\"event\":\"check\"", "\"code\":\"connect-target-shared\""}) < lines.size() && begin != std::string::npos &&
+                end != std::string::npos && !contains(result.substr(begin, end - begin), "connect-target-shared"),
+            "the check's warning connect-target-shared, once:\n" + out_of(lines));
+    require(!bridge_wrote(lines, "CAN", "is also used by") && !bridge_wrote(lines, "CAN2", "is also used by"),
+            "the bridges' warnings about the device are not shown:\n" + out_of(lines));
+    require(index_of(lines, {"\"event\":\"log\"", "also used by another vehicle-sil bridge"}) == lines.size(),
+            "the launcher says nothing of it:\n" + out_of(lines));
+    require(contains(lines.back(), "\"simulation\":\"reached_stop_at\""), "the run went to its end:\n" + lines.back());
 }

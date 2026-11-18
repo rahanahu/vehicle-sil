@@ -413,6 +413,26 @@ outside: ETH_EXT -> enp3s0: link up at 15.10 s
 
 ほかの数（`own_tx_dropped`、`filtered_to_ext`、`filtered_from_ext`、`mac_unguarded`、`oversize`、`malformed`、`ext_checksum_incomplete`）はブリッジの失った分ではないので、所見にしません。結果には、ブリッジの書いたとおりに入ります。文は、何が起きたか、結果を信じてよいか、何を確かめるかを書きます。例: `network 'ETH_EXT' -> enp3s0: the link was down once, for 2.70 s in all. The run went on, but frames sent meanwhile did not reach the devices, ...`。この所見は、それまでに読んだものから、終わりに作ります。
 
+### 別の実行も使っているデバイス
+
+ブリッジは、開いたデバイスに印を置き、同じデバイスにいるほかの vehicle-sil のブリッジの数を報告します（`shared`。Linux では `peers` にそのプロセス ID。「[別のブリッジが使っているデバイス](bridges.md#別のブリッジが使っているデバイス)」）。1 つのデバイスに 2 つの実行、あるいは前の実行の残りのブリッジがいると、フレームが混ざります。この実行の機器にもう一方向けのフレームが届き、もう一方にはこの実行のフレームが届きます。`run` は、自分の実行のブリッジを数から引くので、この実行の外のブリッジだけが数に入ります。見つけたら、実行の始まりからの時間と、Linux ではプロセス ID を付けて、1 度だけ知らせます。
+
+```text
+outside: CAN1 -> can0: also used by another vehicle-sil bridge (process 4321) at 3.10 s
+```
+
+ブリッジ自身の警告（`warning: ... is also used by another vehicle-sil bridge ...`）は、リンクの行と同じく、実行の出力には出しません。ブリッジのログファイル（`--log-dir`）には残ります。
+
+| いつ | `--strict` なし | `--strict` あり |
+|---|---|---|
+| ブリッジが起きた時点で、デバイスが共有されている | 実行は続きます | `run` は ECU を起こさずに実行を終わらせます。誤り `outside-device-shared`、結果は `failed`。各ブリッジの最初のリンクの行（ブリッジのライフサイクルの前に出ます）を 2 秒まで待ちます（`kOutsideFirstLineWait`）。その間に書かなかったブリッジは、何も共有していないものとして扱います |
+| シミュレーションの実行中に始まった | 実行は続きます | 3 秒続いたら（`kOutsideSharedAfter`）、ブリッジが終わったときと同じに、`run` がシミュレーションを中断します。誤り `outside-device-shared`。別の実行が起こして、3 秒以内にまたいなくなったブリッジでは止まりません。ECU の前にやめる実行が、もう一方を巻き添えにしないためです |
+| 終わりに | 警告 `outside-device-shared`。プロセス ID と、最初に見つけた時刻 | 同じ警告で、`--strict` はそれを失敗にします。`run` が止めたときは誤り |
+
+文は、何が起きるか（両方のフレームが混ざるので、実行が機器について言うことを信じられない）と、どうするか（実行ごとに別のデバイスにつなぐ、前の実行の残りのブリッジを止める）を言います。
+
+この実行の 2 つのネットワークが、`--connect` の値は違う（それでチェックが見つけられない）のに、ブリッジが同じデバイスを報告したときは、`run` はチェックと同じ形の `connect-target-shared`（「the same device under two names」）で警告します。同じ先を 2 度書いたときはチェックの警告です（[simulation-check.md](simulation-check.md)）。`run` は繰り返しません。
+
 ### つなげる先の一覧（`vehicle_sil_launch connections`）
 
 ```text
@@ -895,6 +915,8 @@ passed: 0 errors, 1 warning, 1 note
 | `connect-nothing-received` | 注意 | `--connect` のある実行で、ネットワークのブリッジが実機のバスへフレームを送ったのに、そこの機器から 1 つも来なかった（そういうネットワークごとに 1 つ。[外のバスとやりとりしたフレームの数](#外のバスとやりとりしたフレームの数)） |
 | `outside-link-down`、`outside-bus-off` | 警告 | シミュレーションの実行中に、つないだネットワークのリンクやバスが落ち、ブリッジは動き続けた。回数と合計の時間（[リンクとバスの状態](#リンクとバスの状態)） |
 | `outside-bus-errors`、`outside-frames-dropped`、`outside-loop-suspected` | 警告 | つないだネットワークのブリッジが error passive になった、フレームを失った（1 つでも）、MAC アドレスのループを止めた（同じ節） |
+| `outside-device-shared` | 警告（`--strict` が止めた、または始めなかったときは誤り） | つないだネットワークのデバイスを、この実行の外の vehicle-sil のブリッジも使っていた。プロセス ID と、最初に見つけた時刻（[別の実行も使っているデバイス](#別の実行も使っているデバイス)） |
+| `connect-target-shared` | 警告 | 実行の 2 つのネットワークの `--connect` の値は違うが、ブリッジが同じデバイスを報告した（チェックが見つけられない場合の、チェックと同じ所見。同じ節） |
 | `exit-code` | エラー（`required: false` は警告） | participant の終了コードが 0 でない、またはシグナルで終わった（上のどれでもないとき） |
 | `did-not-end` | エラー | 必須の participant が、シミュレーションの終わりから `stop_timeout_ms` たっても動いていた |
 | `left-processes` | 警告 | participant が起動したプロセスが、その participant が終わった後も動いていた |

@@ -368,6 +368,8 @@ Two bridges that open the same device receive each other's frames: two networks,
 
 On Linux a process ID in `peers` is the one in the PID namespace of the bridge that placed the mark: a bridge in a container with its own PID namespace (and the same network namespace) shows its number in the container.
 
+`vehicle_sil_launch run --connect` reads these keys. It takes the bridges of its own run out of `shared` (by their process IDs in `peers`, on Windows by their number), shows the bridge's warning as one line of its own with the process ID, and makes the finding `outside-device-shared` of what is left; with `--strict` it does not start a run on a shared device, and stops one that shares it for 3 s (see "[A device that another run uses too](simulation-run.md#a-device-that-another-run-uses-too)" in simulation-run.md). A bridge of your own that writes the same keys is read the same way.
+
 How the mark is placed (a bridge of your own, `role: bridge` in a configuration file, can place the same mark so that the others find it):
 
 | OS | Mark |

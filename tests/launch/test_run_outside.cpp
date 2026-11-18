@@ -150,7 +150,11 @@ namespace {
 using launch::detail::OutsideBusValue;
 using launch::detail::OutsideLinkLine;
 using launch::detail::OutsideLinkValue;
+using launch::detail::OutsideForeign;
+using launch::detail::OutsideOwn;
+using launch::detail::OutsideSharing;
 using launch::detail::OutsideState;
+using launch::detail::foreign_sharing;
 using launch::detail::read_outside_link_line;
 using launch::detail::read_outside_stats;
 using Clock = std::chrono::steady_clock;
@@ -191,6 +195,16 @@ TEST_CASE(read_outside_link_line_takes_the_known_keys_and_skips_the_rest)
     CHECK(line && line->link == OutsideLinkValue::Up && !line->bus);
     line = read_outside_link_line("link link=unknown bus=unknown");
     CHECK(line && line->link == OutsideLinkValue::Unknown && line->bus == OutsideBusValue::Unknown);
+    // The sharing keys.
+    line = read_outside_link_line("[eth-bridge] link link=up device=ab12 marked=1 shared=2 peers=4321,4400");
+    CHECK(line && line->device == "ab12" && line->marked == true && line->shared == 2u && line->peers == std::vector<long>({4321, 4400}));
+    line = read_outside_link_line("link bus=active device=ff marked=0 shared=0");
+    CHECK(line && line->device == "ff" && line->marked == false && line->shared == 0u && line->peers.empty());
+    // A value that is not what the key says leaves the key out; the others stay.
+    line = read_outside_link_line("link device= marked=2 shared=x peers=1,,2 link=up");
+    CHECK(line && !line->device && !line->marked && !line->shared && line->peers.empty() && line->link == OutsideLinkValue::Up);
+    line = read_outside_link_line("link peers=4321,abc shared=-1");
+    CHECK(line && line->peers.empty() && !line->shared);
     // Not a link line.
     CHECK(!read_outside_link_line("stats link=up") && !read_outside_link_line("[eth-bridge] linked"));
     // A line with no known key is a link line that says nothing.
@@ -293,4 +307,128 @@ TEST_CASE(dropped_counts_names_the_keys_of_the_table_that_are_not_zero)
         CHECK(launch::detail::dropped_counts({{std::string(key), 1}}).size() == 1);
     }
     CHECK(launch::detail::dropped_counts({}).empty());
+}
+
+namespace {
+
+OutsideSharing sharing_of(std::string device, bool marked, std::uint32_t shared, std::vector<long> peers = {})
+{
+    return OutsideSharing{true, std::move(device), marked, shared, std::move(peers)};
+}
+
+} // namespace
+
+TEST_CASE(foreign_sharing_takes_the_pids_of_the_runs_own_bridges_from_the_peers)
+{
+    // Bridge 0 and 1 are the run's (pids 100 and 101) and share a device; 2 is not a bridge.
+    const std::vector<OutsideOwn> own{{true, 100}, {true, 101}, {}};
+    // Only the run's own bridge: nothing foreign.
+    std::vector<OutsideSharing> all{sharing_of("d", true, 1, {101}), sharing_of("d", true, 1, {100}), {}};
+    CHECK(foreign_sharing(0, all, own).count == 0);
+    // A bridge outside the run as well: it, and its pid.
+    all[0] = sharing_of("d", true, 2, {101, 4321});
+    OutsideForeign out = foreign_sharing(0, all, own);
+    CHECK(out.count == 1 && out.pids == std::vector<long>({4321}));
+    // One of the run's own that has ended is still in the peers of the other: not foreign either.
+    const std::vector<OutsideOwn> ended{{true, 100}, {false, 101}, {}};
+    all[0] = sharing_of("d", true, 1, {101});
+    CHECK(foreign_sharing(0, all, ended).count == 0);
+    // Two foreign.
+    all[0] = sharing_of("d", true, 3, {4400, 101, 4321});
+    out = foreign_sharing(0, all, own);
+    CHECK(out.count == 2 && out.pids == std::vector<long>({4400, 4321}));
+    // Not shared, or no line yet: none.
+    all[0] = sharing_of("d", true, 0);
+    CHECK(foreign_sharing(0, all, own).count == 0);
+    all[0] = OutsideSharing{};
+    CHECK(foreign_sharing(0, all, own).count == 0);
+}
+
+TEST_CASE(foreign_sharing_counts_without_the_pids_the_runs_own_live_marked_bridges_on_the_same_device)
+{
+    // As on Windows: shared, no peers.
+    const std::vector<OutsideOwn> own{{true, 100}, {true, 101}, {}};
+    std::vector<OutsideSharing> all{sharing_of("d", true, 1), sharing_of("d", true, 1), {}};
+    // One's own: the other bridge of the run.
+    CHECK(foreign_sharing(0, all, own).count == 0);
+    // One more outside.
+    all[0] = sharing_of("d", true, 2);
+    OutsideForeign out = foreign_sharing(0, all, own);
+    CHECK(out.count == 1 && out.pids.empty());
+    // The other bridge of the run has ended, or sits on another device, or placed no mark: it is not subtracted.
+    CHECK(foreign_sharing(0, all, {{true, 100}, {false, 101}, {}}).count == 2);
+    all[1] = sharing_of("other", true, 1);
+    CHECK(foreign_sharing(0, all, own).count == 2);
+    all[1] = sharing_of("d", false, 1);
+    CHECK(foreign_sharing(0, all, own).count == 2);
+    // The other bridge of the run has not written its first line: cannot tell yet.
+    all[1] = OutsideSharing{};
+    CHECK(foreign_sharing(0, all, own).count == 0);
+    // Never below 0 (the other has gone but the report is not renewed).
+    all[0] = sharing_of("d", true, 1);
+    all[1] = sharing_of("d", true, 1);
+    CHECK(foreign_sharing(0, all, {{true, 100}, {true, 101}, {}}).count == 0);
+    // A live bridge whose process id is not known: the numbers decide although the peers are there.
+    all[0] = sharing_of("d", true, 2, {101, 4321});
+    CHECK(foreign_sharing(0, all, {{true, 100}, {true, 0}, {}}).count == 1);
+}
+
+TEST_CASE(shared_text_names_the_bridges_and_their_pids)
+{
+    CHECK(launch::detail::shared_text({1, {4321}}) == "another vehicle-sil bridge (process 4321)");
+    CHECK(launch::detail::shared_text({2, {4321, 4400}}) == "2 other vehicle-sil bridges (processes 4321, 4400)");
+    CHECK(launch::detail::shared_text({1, {}}) == "another vehicle-sil bridge");
+    CHECK(launch::detail::shared_text({3, {}}) == "3 other vehicle-sil bridges");
+}
+
+TEST_CASE(is_shared_warning_takes_the_warnings_of_the_bridges_about_a_device_in_use)
+{
+    CHECK(launch::detail::is_shared_warning("[eth-bridge] warning: interface 'fake0' is also used by another vehicle-sil bridge (process 4321): the frames of both mix there: ..."));
+    CHECK(launch::detail::is_shared_warning("[bridge] warning: XL 'Virtual Channel 1' is also used by 2 more vehicle-sil bridges (processes 1, 2): ..."));
+    CHECK(launch::detail::is_shared_warning("warning: x is also used by another vehicle-sil bridge"));
+    CHECK(!launch::detail::is_shared_warning("[bridge] warning: --tx-timeout-ms is not used: it needs init access"));
+    CHECK(!launch::detail::is_shared_warning("[bridge] link link=up device=ab marked=1 shared=1"));
+    CHECK(!launch::detail::is_shared_warning("[bridge] FAIL: interface is also used by another vehicle-sil bridge"));
+}
+
+TEST_CASE(outside_state_keeps_the_device_and_the_bridges_outside_the_run)
+{
+    const auto t0 = Clock::time_point{} + 1h;
+    OutsideState state;
+    CHECK(!state.link_line_seen());
+    OutsideLinkLine line;
+    line.device = "ab12";
+    line.marked = true;
+    line.shared = 1;
+    line.peers = {4321};
+    state.on_link(line, t0);
+    CHECK(state.link_line_seen() && state.sharing().device == "ab12" && state.sharing().shared == 1 && state.sharing().peers == std::vector<long>({4321}));
+    // A line that says shared again replaces the peers (no peers key: none).
+    line.shared = 0;
+    line.peers = {};
+    state.on_link(line, t0 + 1s);
+    CHECK(state.sharing().shared == 0 && state.sharing().peers.empty());
+    // A line with no sharing keys leaves them as they were.
+    state.on_link(link_of(OutsideLinkValue::Up), t0 + 2s);
+    CHECK(state.sharing().device == "ab12");
+
+    // The first sight is told, the same count is not told again, a larger one is.
+    CHECK(!state.shared_for(t0 + 1h, 0ms));
+    CHECK(state.on_foreign({1, {4321}}, t0 + 3s, 3100ms));
+    CHECK(!state.on_foreign({1, {4321}}, t0 + 4s, 4100ms));
+    CHECK(state.on_foreign({2, {4321, 4400}}, t0 + 5s, 5100ms));
+    // For the limit: from the first sight on, counted again after a gap.
+    CHECK(!state.shared_for(t0 + 5s + 999ms, 3s));
+    CHECK(state.shared_for(t0 + 6s, 3s));
+    CHECK(!state.shared_for(t0 + 5s, 3s));
+    CHECK(!state.on_foreign({}, t0 + 6s, 6100ms));
+    CHECK(!state.shared_for(t0 + 1h, 3s));
+    CHECK(!state.on_foreign({1, {4321}}, t0 + 10s, 10100ms));
+    CHECK(!state.shared_for(t0 + 12s, 3s));
+    CHECK(state.shared_for(t0 + 13s, 3s));
+    // What the result gets.
+    state.stop_shared(OutsideLink::SharedStop::AfterDelay);
+    const OutsideLink sum = state.summary(t0 + 20s);
+    CHECK(sum.device == "ab12" && sum.shared_most == 2 && sum.shared_peers == std::vector<long>({4321, 4400}));
+    CHECK(sum.shared_first == 3100ms && sum.shared_stop == OutsideLink::SharedStop::AfterDelay);
 }

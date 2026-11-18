@@ -97,6 +97,19 @@ public:
     /// empty. The thread that watches the simulation, at each look.
     [[nodiscard]] std::optional<std::pair<std::size_t, std::string>> outside_lost(std::chrono::steady_clock::time_point now);
 
+    /// Looks at which bridges share their device with a bridge that is not this run's
+    /// (foreign_sharing() with `own`: one entry per participant), keeps what it finds, and says
+    /// once of each new one "outside: CAN -> can0: also used by ... at 3.10 s". With `stop_after`
+    /// (--strict): the first bridge whose device has been shared for that long or more, and the
+    /// bridge is marked in its OutsideLink (OutsideLink::shared_stop; `stop_after` 0 is "at the
+    /// start"). The thread that watches the simulation, at each look; the start of a --strict run.
+    [[nodiscard]] std::optional<std::size_t> outside_shared(std::chrono::steady_clock::time_point now,
+                                                            const std::vector<OutsideOwn>& own,
+                                                            std::optional<std::chrono::milliseconds> stop_after);
+
+    /// Every bridge of `bridges` has written a link line (it says whether the device is shared).
+    [[nodiscard]] bool link_lines_read(const std::vector<std::size_t>& bridges);
+
     /// What was read of the bridge `index`'s link line and counts, added up at `now` (OutsideState::summary()).
     /// After its output has been read to the end.
     [[nodiscard]] OutsideLink take_link(std::size_t index, std::chrono::steady_clock::time_point now);
@@ -120,6 +133,8 @@ private:
     void write_outside(std::size_t index, const OutsideCounts& counts) const;
     /// "outside: ETH_EXT -> enp3s0: link down at 12.40 s" for a change of the link line of the bridge `index`. Under the lock.
     void say_link_change(std::size_t index, const std::string& what, std::chrono::steady_clock::time_point now);
+    /// "outside: CAN -> can0: also used by another vehicle-sil bridge (process 4321) at 3.10 s". Under the lock.
+    void say_outside_shared(std::size_t index, const OutsideForeign& foreign, std::chrono::steady_clock::time_point now);
 
     const RunContext& ctx_;
     std::mutex mutex_;

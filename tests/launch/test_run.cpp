@@ -2682,6 +2682,92 @@ TEST_CASE(what_a_bridge_saw_of_the_real_bus_is_a_warning_for_each_kind)
     CHECK(lines(assess_run(o)).find("outside-link-down") == std::string::npos);
 }
 
+TEST_CASE(a_device_that_another_run_used_too_is_a_warning_with_the_pid_and_the_time)
+{
+    RunOutcome o = connected_run(stopped_bridge(0));
+    o.outside[0].tool = "vehicle_sil_ethernet_bridge";
+    o.outside[0].link.device = "ab12";
+    // Nobody else: no finding.
+    CHECK(assess_run(o).empty());
+    o.outside[0].link.shared_most = 1;
+    o.outside[0].link.shared_peers = {4321};
+    o.outside[0].link.shared_first = 3100ms;
+    const std::string found = lines(assess_run(o));
+    CHECK(found.find("W 3 outside-device-shared: network 'ETH' -> eth0: the device was also used by another vehicle-sil bridge "
+                     "(process 4321) that is not part of this run from 3.10 s on: the frames of both mix there") == 0);
+    CHECK(found.find("Connect each run to a device of its own, or stop the other bridge") != std::string::npos &&
+          found.find("--strict does not start a run on a device that is shared, and stops one that shares it for 3 s") != std::string::npos);
+    // --strict fails on the warning; the end of the participants decides (no event before).
+    CHECK(report_of(o, true).result() != RunResult::Passed);
+    CHECK(report_of(o).result() == RunResult::Passed);
+    CHECK(launch::detail::settled_findings(o).empty());
+    // No pid (Windows), and more than one.
+    o.outside[0].link.shared_peers = {};
+    CHECK(lines(assess_run(o)).find("used by another vehicle-sil bridge that is not part of this run") != std::string::npos);
+    o.outside[0].link.shared_most = 2;
+    o.outside[0].link.shared_peers = {4321, 4400};
+    CHECK(lines(assess_run(o)).find("used by 2 other vehicle-sil bridges (processes 4321, 4400) that is not part of this run") != std::string::npos);
+}
+
+TEST_CASE(a_strict_run_that_was_stopped_for_a_shared_device_says_so_as_an_error)
+{
+    // After 3 s of it: the bridge is blamed (the watch stopped the run), and what it says is the error.
+    RunOutcome o = connected_run(stopped_bridge(0));
+    o.outside[0].tool = "vehicle_sil_vector_xl_bridge";
+    o.outside[0].link.shared_most = 1;
+    o.outside[0].link.shared_peers = {4321};
+    o.outside[0].link.shared_first = 12500ms;
+    o.outside[0].link.shared_stop = OutsideLink::SharedStop::AfterDelay;
+    o.simulation = SimulationEnd::Aborted;
+    o.failed_participant = "bridge.ETH";
+    const std::string found = lines(assess_run(o));
+    CHECK(found.find("E 3 outside-device-shared: network 'ETH' -> eth0: the device was also used by another vehicle-sil bridge "
+                     "(process 4321) that is not part of this run from 12.50 s on, and --strict stopped the run after 3 s of it: ") == 0);
+    // Said once: neither participant-failed nor the warning again.
+    CHECK(found.find("participant-failed") == std::string::npos && found.find("W 3 outside-device-shared") == std::string::npos);
+    CHECK(launch::detail::settled_findings(o).empty());
+    // Before the simulation started: nothing else was started, the bridge did not fail.
+    RunOutcome start = connected_run(stopped_bridge(0));
+    start.outside[0].tool = "vehicle_sil_vector_xl_bridge";
+    start.outside[0].link.shared_most = 1;
+    start.outside[0].link.shared_first = 100ms;
+    start.outside[0].link.shared_stop = OutsideLink::SharedStop::AtStart;
+    start.simulation = SimulationEnd::NotStarted;
+    const std::string before = lines(assess_run(start));
+    CHECK(before.find("E 3 outside-device-shared: network 'ETH' -> eth0: the device is also used by another vehicle-sil bridge that is not "
+                      "part of this run, and --strict does not start a run on it: ") == 0);
+    CHECK(before.find("connect-failed") == std::string::npos && before.find("without --strict the run starts and warns") != std::string::npos);
+    CHECK(report_of(start).result() == RunResult::Failed);
+}
+
+TEST_CASE(two_networks_whose_bridges_report_one_device_under_two_names_are_connect_target_shared)
+{
+    RunOutcome o = connected_run(stopped_bridge(0));
+    o.outside[0].tool = "vehicle_sil_ethernet_bridge";
+    o.outside[0].link.device = "ab12";
+    ParticipantRun second = stopped_bridge(0);
+    second.name = "bridge.ETH2";
+    second.line = 4;
+    second.for_network = "ETH2";
+    o.participants.push_back(second);
+    o.outside.push_back(RunOutside{"ETH2", "br0", "bridge.ETH2", std::nullopt, std::nullopt});
+    o.outside[1].tool = "vehicle_sil_ethernet_bridge";
+    o.outside[1].link.device = "ab12";
+    const std::string found = lines(assess_run(o));
+    CHECK(found.find("W 0 connect-target-shared: networks 'ETH' and 'ETH2': --connect gives them the same device under two names "
+                     "('eth0' and 'br0'; the bridges report one device): the frames of both networks are mixed there: ") == 0);
+    // The same name twice: the check has said it.
+    o.outside[1].target = "eth0";
+    CHECK(assess_run(o).empty());
+    // Another device, or one that is not known: nothing.
+    o.outside[1].target = "br0";
+    o.outside[1].link.device = "cd34";
+    CHECK(assess_run(o).empty());
+    o.outside[1].link.device.clear();
+    o.outside[0].link.device.clear();
+    CHECK(assess_run(o).empty());
+}
+
 TEST_CASE(a_link_that_stayed_down_is_connect_lost_with_the_time_it_was_waited_for)
 {
     RunOutcome o = connected_run(stopped_bridge(0));

@@ -45,6 +45,45 @@ std::string lines_hint(const ParticipantRun& p)
                     : "the lines [" + p.name + "] above show what it wrote";
 }
 
+/// outside-device-shared of the bridge of `o`: another vehicle-sil bridge that is not this run's used its
+/// device. A warning; an error where the launcher stopped the run, or did not start it, for it
+/// (--strict).
+Finding shared_finding(const RunOutside& o, const ParticipantRun& bridge)
+{
+    const OutsideLink& link = o.link;
+    detail::OutsideForeign foreign{std::max<std::uint32_t>(link.shared_most, static_cast<std::uint32_t>(link.shared_peers.size())),
+                                   link.shared_peers};
+    const std::string who = detail::shared_text(foreign) + " that is not part of this run";
+    const std::string where = "network '" + o.network + "' -> " + o.target + ": ";
+    char at[32];
+    std::snprintf(at, sizeof at, "%.2f", link.shared_first ? static_cast<double>(link.shared_first->count()) / 1000.0 : 0.0);
+    const std::string mixed =
+        "the frames of both mix there: this run's devices get frames meant for the other and the other's get this run's, so "
+        "what this run says of them cannot be trusted";
+    const std::string fix =
+        ". Connect each run to a device of its own, or stop the other bridge (one left over from an earlier run, or "
+        "another run on this computer)";
+    const std::string limit = std::to_string(kOutsideSharedAfter.count() / 1000) + " s";
+    if (link.shared_stop == OutsideLink::SharedStop::AtStart)
+    {
+        return Finding{Severity::Error, "outside-device-shared",
+                       where + "the device is also used by " + who + ", and --strict does not start a run on it: " + mixed + fix +
+                           " and run again; without --strict the run starts and warns",
+                       bridge.line, bridge.name, o.network};
+    }
+    if (link.shared_stop == OutsideLink::SharedStop::AfterDelay)
+    {
+        return Finding{Severity::Error, "outside-device-shared",
+                       where + "the device was also used by " + who + " from " + at + " s on, and --strict stopped the run after " +
+                           limit + " of it: " + mixed + fix + ", then run again",
+                       bridge.line, bridge.name, o.network};
+    }
+    return Finding{Severity::Warning, "outside-device-shared",
+                   where + "the device was also used by " + who + " from " + at + " s on: " + mixed + fix +
+                       "; --strict does not start a run on a device that is shared, and stops one that shares it for " + limit,
+                   bridge.line, bridge.name, o.network};
+}
+
 /// connect-failed or connect-lost for the bridge `p` of --connect, or nothing: it did not fail the run.
 std::optional<Finding> bridge_failure(const RunOutcome& outcome, const ParticipantRun& p)
 {
@@ -61,6 +100,11 @@ std::optional<Finding> bridge_failure(const RunOutcome& outcome, const Participa
     const std::string how = p.exit && ended_by_itself(p) ? "its process " + exit_text(*p.exit)
                             : !outcome.failure_reason.empty() && blamed ? "it " + outcome.failure_reason
                                                                         : std::string("it left the simulation");
+    // The run's own stop: the device is shared with a bridge outside the run (--strict).
+    if (outside != outcome.outside.end() && outside->link.shared_stop != OutsideLink::SharedStop::None)
+    {
+        return shared_finding(*outside, p);
+    }
     // The run's own stop: the bridge went on, but its link or bus stayed down (OutsideState::lost()).
     if (blamed && ran && outside != outcome.outside.end() && !outside->link.lost.empty())
     {
@@ -261,6 +305,32 @@ std::vector<Finding> outside_findings(const RunOutcome& outcome)
     {
         return out;
     }
+    // Two networks of this run whose bridges report one device although --connect named it two
+    // ways: the check did not see it (it compares the names), so it is said here. The same name
+    // twice is the check's.
+    for (std::size_t i = 0; i < outcome.outside.size(); ++i)
+    {
+        for (std::size_t j = i + 1; j < outcome.outside.size(); ++j)
+        {
+            const RunOutside& a = outcome.outside[i];
+            const RunOutside& b = outcome.outside[j];
+            if (a.link.device.empty() || a.link.device != b.link.device || a.tool != b.tool)
+            {
+                continue;
+            }
+            const NetworkKind kind = a.tool == bridge_tool(NetworkKind::Can) ? NetworkKind::Can : NetworkKind::Ethernet;
+            if (connect_device_key(kind, a.target) == connect_device_key(kind, b.target))
+            {
+                continue;
+            }
+            out.push_back(Finding{Severity::Warning, "connect-target-shared",
+                                  "networks '" + a.network + "' and '" + b.network + "': --connect gives them the same device under two names ('" +
+                                      a.target + "' and '" + b.target +
+                                      "'; the bridges report one device): the frames of both networks are mixed there: connect them to different "
+                                      "channels (adapters) if they must stay apart, or make them one network in the file if they are one bus",
+                                  0, "", a.network});
+        }
+    }
     for (const RunOutside& o : outcome.outside)
     {
         const auto bridge = std::find_if(outcome.participants.begin(), outcome.participants.end(),
@@ -271,6 +341,10 @@ std::vector<Finding> outside_findings(const RunOutcome& outcome)
         }
         const OutsideLink& link = o.link;
         const bool can = o.tool == bridge_tool(NetworkKind::Can);
+        if (link.shared_most > 0)
+        {
+            out.push_back(shared_finding(o, *bridge));
+        }
         const std::string where = "network '" + o.network + "' -> " + o.target + ": ";
         const auto add = [&](const char* code, std::string message) {
             out.push_back(Finding{Severity::Warning, code, where + message, bridge->line, bridge->name, o.network});
@@ -710,7 +784,8 @@ std::vector<Finding> detail::settled_findings(const RunOutcome& outcome)
         // read to the end (after the participants have ended).
         if (f.code == "connect-failed" || f.code == "connect-lost" || f.code == "connect-nothing-received" ||
             f.code == "outside-link-down" || f.code == "outside-bus-off" || f.code == "outside-bus-errors" ||
-            f.code == "outside-frames-dropped" || f.code == "outside-loop-suspected")
+            f.code == "outside-frames-dropped" || f.code == "outside-loop-suspected" || f.code == "outside-device-shared" ||
+            f.code == "connect-target-shared")
         {
             continue;
         }

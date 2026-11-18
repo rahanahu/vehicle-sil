@@ -273,6 +273,21 @@ void RunParticipants::show_manual(const ParticipantConfig& p, const std::filesys
     held.say("  " + line);
 }
 
+std::vector<OutsideOwn> RunParticipants::own_bridges() const
+{
+    std::vector<OutsideOwn> out(outcome_.participants.size());
+    for (std::size_t i = 0; i < out.size(); ++i)
+    {
+        const ParticipantRun& run = outcome_.participants[i];
+        if (stops_run(run) && children_[i])
+        {
+            // A process that has ended may still be in another bridge's last report: its id counts as ours.
+            out[i] = OutsideOwn{!run.exit.has_value(), children_[i]->id()};
+        }
+    }
+    return out;
+}
+
 int RunParticipants::look_at_children(bool before_start, bool bridges_only)
 {
     int ended = -1;

@@ -66,6 +66,8 @@ struct Options
     fs::path connect_tools{};
     fs::path bridge_ecu{};
     fs::path fake_pcap_dir{};
+    /// sil-kit-registry, for the scenarios that start a bridge outside the run (connect_device_shared*).
+    fs::path registry{};
 };
 
 /// The scenario cannot run on this machine: main() exits with 77 (CTest's SKIP_RETURN_CODE).
@@ -513,6 +515,9 @@ void connect_dies_while_waiting(const Options& o);
 void connect_speed(const Options& o);
 void connect_time_changed(const Options& o);
 void connect_time_locked(const Options& o);
+void connect_device_shared(const Options& o);
+void connect_device_shared_later(const Options& o);
+void connect_device_shared_own(const Options& o);
 void docs(const Options& o);
 void check(const Options& o);
 void crash(const Options& o);
