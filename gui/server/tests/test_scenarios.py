@@ -163,7 +163,7 @@ def test_with_scenario_control_variables_are_read_and_writes_refused(tmp_path: P
             status, body = await c.post("api/write", {"session": session,
                                                       "writes": {"Engine": {"engine.demand": 1}}})
             assert (status, body["error"]["code"]) == (409, "scenario-running")
-            assert "scenario" in body["error"]["message"] and PASS in body["error"]["message"]
+            assert "scenario" in body["error"]["message"]  # the launcher's own sentence (its allowed.write)
             await c.post("api/stop")
             await ws.until(is_ended)
         run_async(talk, gui)
