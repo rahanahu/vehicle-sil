@@ -151,6 +151,8 @@ Tests:
 - `launch_run.scenario_expect_beside`: the sample that failed an `expect` beside `ramp` or `wave`, `expect_skipped`
 - `launch_run.scenario_dither`: a real ECU, out of range, the example `examples/ecu_main/scenarios/throttle_dither.yaml`
 - `launch_run.scenario_same`: the same result as fast as possible, at real-time speed, with a slow ECU and with pauses. The ECU reports the step in which a write was applied.
+- `launch_run.scenario_time_commands_same`: the reference for "the judgement depends on virtual time alone". One scenario (writes for 0 ms, a wave with an `expect`, `within_ms`, `hold_for_ms`, `wait_until`, a ramp) is run untouched and then with `pause`, `resume`, `step`, `run_until` and `speed` from stdin, at real times that differ from run to run and at the very times the scenario writes and decides at. The `scenario` of the result, the `scenario_step` events and the timeline file must be the same, byte for byte.
+- `launch_run.scenario_paused_timeout`: a scenario's run left paused until `--timeout-ms`: the run fails (`timeout`), the scenario is `incomplete`.
 - `launch_run.scenario_failures`
 - `core.time_gate_model_the_guard_*`, `core.virtual_time_gate_guard_*`
 - `control.control_hub_tap_*`

@@ -117,8 +117,8 @@
 // The server has threads of its own. Of the run they touch the
 // hub (thread safe; its subscriptions are bounded and never make the simulation wait; the server
 // holds the hub itself, so it may use it after the run) and the TimeCommands. With a scenario the
-// server only shows the run: its clients' calls that would write a variable or move the time are
-// refused in the server, before they reach either.
+// server refuses its clients' calls that would write a variable, before they reach the hub; the
+// time operations go to the TimeCommands as in any run.
 //
 // What the closing thread reaches, also when it is left at the limit and ends later (or never).
 // Everything that the three SIL Kit objects call was read for this list; a change that gives the

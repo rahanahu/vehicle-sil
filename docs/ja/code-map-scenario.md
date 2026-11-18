@@ -151,6 +151,8 @@
 - `launch_run.scenario_expect_beside`: 横の `expect` が外れたサンプル、`expect_skipped`
 - `launch_run.scenario_dither`: 本物の ECU、範囲の外、例 `examples/ecu_main/scenarios/throttle_dither.yaml`
 - `launch_run.scenario_same`: 最速、等速、遅い ECU、一時停止で同じ結果。書き込みが反映されたステップを、ECU が報告する
+- `launch_run.scenario_time_commands_same`: 「判定は仮想時間だけで決まる」ことの基準。1 つのシナリオ（0 ms の書き込み、`expect` つきの波形、`within_ms`、`hold_for_ms`、`wait_until`、ramp）を、だれも触らずに 1 回、標準入力の `pause`、`resume`、`step`、`run_until`、`speed` を混ぜて何回か実行する。コマンドは、実行ごとに違う実時間と、シナリオが書き込み、判定するちょうどその時刻に送る。結果の `scenario`、`scenario_step` のイベント、タイムラインのファイルが 1 バイトも違わないこと
+- `launch_run.scenario_paused_timeout`: 一時停止のまま `--timeout-ms` が切れたシナリオの実行。実行は失敗（`timeout`）、シナリオは `incomplete`
 - `launch_run.scenario_failures`
 - `core.time_gate_model_the_guard_*`、`core.virtual_time_gate_guard_*`
 - `control.control_hub_tap_*`

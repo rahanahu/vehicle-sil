@@ -1,6 +1,7 @@
 // A small stand-in for the front door, for the tests of the parts: each state is a cell that the test sets, and each
 // operation is a spy. The count of subscriptions shows whether a part cleaned up.
 import type {
+  CheckResult,
   Control,
   Front,
   FrontClock,
@@ -8,6 +9,7 @@ import type {
   FrontScenario,
   FrontStatus,
   FrontVariable,
+  Outside,
   Readable,
   VariableView,
 } from '../index';
@@ -69,6 +71,7 @@ export interface FakeFront extends Front {
     clock: Cell<FrontClock>;
     controls: Cell<FrontControls>;
     scenario: Cell<FrontScenario | null>;
+    outside: Cell<readonly Outside[]>;
   };
   variables: Map<string, FakeVariable>;
   spies: Record<
@@ -80,7 +83,9 @@ export interface FakeFront extends Front {
     | 'step'
     | 'setSpeed'
     | 'runUntil'
-    | 'scenarios',
+    | 'scenarios'
+    | 'connections'
+    | 'check',
     ReturnType<typeof vi.fn>
   >;
   /** How many listeners the states and the variables have now. */
@@ -112,6 +117,7 @@ export function fakeFront(): FakeFront {
     speed: { ...ok(), min: 0.1, max: 100 },
   });
   const scenario = new Cell<FrontScenario | null>(null);
+  const outside = new Cell<readonly Outside[]>([]);
   const variables = new Map<string, FakeVariable>();
   const spies = {
     start: vi.fn(async () => undefined),
@@ -129,6 +135,8 @@ export function fakeFront(): FakeFront {
       scenarios: [{ path: 'scenarios/a.yaml', name: 'a.yaml' }],
       truncated: false,
     })),
+    connections: vi.fn(async () => []),
+    check: vi.fn(async () => ({ findings: [] }) as unknown as CheckResult),
   };
   const front = {
     low: { scenarios: spies.scenarios },
@@ -136,6 +144,9 @@ export function fakeFront(): FakeFront {
     clock,
     controls,
     scenario,
+    outside,
+    connections: spies.connections,
+    check: spies.check,
     run: { start: spies.start, stop: spies.stop, forceStop: spies.forceStop },
     time: {
       pause: spies.pause,
@@ -159,14 +170,18 @@ export function fakeFront(): FakeFront {
       return variable;
     },
     close: vi.fn(),
-    cells: { status, clock, controls, scenario },
+    cells: { status, clock, controls, scenario, outside },
     variables,
     spies,
     subscriptions: () =>
-      [status, clock, controls, scenario, ...[...variables.values()].map((v) => v.cell)].reduce(
-        (sum, cell) => sum + cell.listeners.size,
-        0,
-      ),
+      [
+        status,
+        clock,
+        controls,
+        scenario,
+        outside,
+        ...[...variables.values()].map((v) => v.cell),
+      ].reduce((sum, cell) => sum + cell.listeners.size, 0),
   };
   return front as unknown as FakeFront;
 }

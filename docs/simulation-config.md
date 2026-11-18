@@ -973,7 +973,7 @@ Notes on individual options:
 | `--scenario` | `check` only checks; `run` checks, then runs. |
 | `--scenario` | When the scenario ends, the simulation stops. If a step failed, the run fails. |
 | `--scenario` | Cannot be used with `--start-paused`. |
-| `--scenario` | With `--control`, clients can only read (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)). |
+| `--scenario` | With `--control`, clients can read and move time, and cannot write (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)). |
 | `--variant` | Always required for a configuration file with variants. |
 | `--variant` | Not allowed for a configuration file without variants. |
 | `--variant` | In `test`, limits the variants to run (can be repeated; without it, all variants run). |

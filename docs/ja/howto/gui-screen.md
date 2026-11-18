@@ -288,6 +288,46 @@ rm token.header
 | ファイルを直したのに、画面が変わらない | ブラウザが前のページを表示しています。 | ページを読み込み直します（GUI サーバーの再起動は不要です）。 |
 | `cannot listen on 127.0.0.1:<port> (Address already in use)` | 動いているサーバーと同じ `--port` で、2 つ目の GUI サーバーを起動しました。 | 1 つ目を止めるか、別の `--port` を選びます（`--port` を付けなくてもかまいません）。`--port` なしなら、2 つ目は別のポートで、自分のトークンと自分のランチャーで起動します。表示された URL を使ってください。 |
 
+## ネットワークを外につなぐ（任意）
+
+構成ファイルの `can` か `ethernet` のネットワークは、ランチャーのブリッジを通して実機のバスにつなげます（[simulation-run.md](../simulation-run.md#バスを外につなぐ--connect) の「バスを外につなぐ（`--connect`）」）。部品 2 つで行います。
+
+```html
+<label>ETH_EXT <vsil-connect network="ETH_EXT"></vsil-connect></label>
+<vsil-outside></vsil-outside>
+```
+
+| 要素 | 表示や動き |
+|---|---|
+| `<vsil-connect network="...">` | 次の実行でネットワークをつなぐ先。最初は `SIL Kit only (not connected)` です。先の一覧は、開いたときにだけ取ります。一覧は GUI サーバーが動いている PC のもので、ブラウザーの PC のものではありません。選ぶと、その選択について check が言うことを、ランチャーの文のまま出します（たとえば、実行が実時間を保つこと）。`<vsil-run-controls>` の「Start」は、この選択で開始します。 |
+| `<vsil-outside>` | 実行中、つないだネットワークごとに 1 行: リンクかバス、状態、フレームの数。なければ何も出しません。 |
+
+外につないだ実行は実時間を保つので、一時停止とステップは使えません。それでも使うときは、つないだ先が実時間でないメッセージを受けても困らないときだけ、自分のスクリプトで時間の方針を決めます: `pageIntent.update({ time_policy: 'free' })`（`pageIntent` は `/vsil/vehicle-sil-gui-elements.mjs` が export します。それが何を意味するかは check が言います）。
+
+試験台は、選択を[要求ファイル](../simulation-run.md#要求ファイル--request)に持てます。スクリプトで、要求ファイルを次の実行の選択に読み込み、選択を要求ファイルとして保存できます。GUI サーバーはファイルを書きません。
+
+```js
+import { pageIntent } from '/vsil/vehicle-sil-gui-elements.mjs';
+
+// <input type="file" id="request">: read the request file that the user picks
+document.querySelector('#request').addEventListener('change', async (event) => {
+  const request = JSON.parse(await event.target.files[0].text());
+  delete request.$schema; // for an editor only
+  pageIntent.update(request);
+});
+// <button type="button" id="save">: save the choice of the next run as a request file
+document.querySelector('#save').addEventListener('click', () => {
+  const text = JSON.stringify({ vehicle_sil_run_request: 1, ...pageIntent.get() }, null, 2);
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  link.download = 'request.json';
+  link.click();
+});
+```
+
+- `<vsil-connect>` は、ファイルから読んだ先を書かれたとおりに出します。GUI サーバーは、そのネットワークの最後の一覧にある先だけを受けるので、開始の前に選択を開いてください。一覧にない先は SIL Kit だけに戻り、選択の下に、どの先をなぜ戻したかの 1 行が出ます。一覧がないと、開始は `target-not-listed` で断られます。
+- 要求ファイルの `scenario` は構成ファイルのディレクトリからのパスです。GUI サーバーは、代わりにシナリオの一覧のパスを受けます（`<vsil-scenario-select>` が書きます）。
+
 ## 次に読むもの
 
 - スクリプトで、自分の表示、ボタン、ルールを足す → テンプレートの `main.js`、[gui/client/README.md](../../../gui/client/README.ja.md#正面の口connect) の「正面の口（`connect()`）」。スクリプトは部品と同じ接続を使います。

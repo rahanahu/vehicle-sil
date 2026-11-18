@@ -95,15 +95,15 @@ vehicle_sil_launch run --events --stdin-commands --start-paused --control 0 simu
 
 ### シナリオの実行中
 
-シナリオの実行（`--scenario`）では、クライアントができるのは、読むこと、待つこと、止めることだけです。
+シナリオの実行（`--scenario`）では、クライアントは、読む、待つ、時刻を動かす、止めることができます。変数は書けません。
 
 | 呼び出し | シナリオの実行中 |
 |---|---|
 | 読む・待つ呼び出し、`Stop` | いつもどおりです。 |
 | 書く呼び出し（`Write`、`ForgetPeer`） | `FAILED_PRECONDITION` で拒否します。 |
-| 時刻を動かす呼び出し（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`） | `FAILED_PRECONDITION` で拒否します。 |
+| 時刻を動かす呼び出し（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`） | シナリオのない実行と同じように使えます（ランチャーの feature `scenario-time`）。シナリオの結果は変わりません。 |
 
-拒否の理由は、trailing metadata の `vehicle-sil-reason`（値は `scenario-running`）で見分けます。呼び出しごとの表と保証は [scenario.md](scenario.md) の「実行中に変数を見る」にあります。
+書き込みの拒否は、trailing metadata の `vehicle-sil-reason`（値は `scenario-running`）で見分けます。呼び出しごとの表と保証は [scenario.md](scenario.md) の「実行中に変数を見る」にあります。
 
 ### 外につながる実行
 
@@ -641,12 +641,12 @@ python -m vehicle_sil_control stop
 | 状態コード | 返るとき |
 |---|---|
 | `INVALID_ARGUMENT` | 引数のエラーです（範囲の外の速度、0 以下のステップ、`snapshot()` の名前が 1024 個を超える）。 |
-| `FAILED_PRECONDITION` | 今はできない呼び出しです（一時停止していないときの `step`、終わった後の `Stop`、シナリオの実行中の書き込みと時刻の操作、外につながっていて実時間を保つ実行での一時停止や速度の変更）。 |
+| `FAILED_PRECONDITION` | 今はできない呼び出しです（一時停止していないときの `step`、終わった後の `Stop`、シナリオの実行中の書き込み、外につながっていて実時間を保つ実行での一時停止や速度の変更）。 |
 | `CANCELLED` | 待っている間に、サーバーが閉じました（`WaitPaused`。`FAILED_PRECONDITION` のこともあります）。 |
 | `RESOURCE_EXHAUSTED` | `snapshot()` のレスポンスが、1 つのメッセージの上限（4 MiB）を超えました。 |
 | `UNIMPLEMENTED` | Server が、その呼び出しを持たない前のバージョンです。 |
 
-シナリオの実行中の書き込みと時刻の操作は、`reason` が `scenario-running` です。
+シナリオの実行中の書き込みは、`reason` が `scenario-running` です。
 
 | Python の例外と警告 | 出るとき |
 |---|---|

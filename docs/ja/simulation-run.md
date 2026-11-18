@@ -289,6 +289,8 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 | `--stdin-commands` だけ | 時刻 0 のステップを実行してから止まります。 |
 | `--control` がある | 時刻 0 のステップの前で止まります。 |
 
+シナリオつきの実行（`--scenario`）でも、これらのコマンドと呼び出しを受け付けます。シナリオは仮想時間だけで書き込み、判定するので、シナリオの結果は変わりません（[scenario.md](scenario.md) の「実行中に変数を見る」）。`--start-paused` は `--scenario` と一緒に使えません。
+
 `--connect` があると、実機のバスの機器はシミュレーションと一緒に止まらず、速さも変わりません。`--time-policy free` を付けなければ、`--start-paused` と 1 以外の `--speed` は断られます。実行中に止める、ステップで進める、速さを変えるコマンドも同じです（[外につながる実行の時間](#外につながる実行の時間--time-policy)）。
 
 ## バスを外につなぐ（`--connect`）
@@ -356,9 +358,9 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 | `resume`、`speed` 1 | 受け付けます（何も変わりません）。 | 受け付けます。 |
 | `stop` | 受け付けます。 | 受け付けます。 |
 
-- シナリオのない実行では、答えは、どの入口からでも同じです。`command` イベントは `accepted: false` と `reason: "outside-real-time"` になり、Control Server のクライアントには、その理由の付いた `FAILED_PRECONDITION` が返ります（[control-api.md](control-api.md) の「外につながる実行」）。`--events` がなければ、断った標準入力の行は標準エラーの 1 行になります。メッセージに、どうすればよいかがあります（`--time-policy free` で始め直すか、外につながずに実行する）。
+- 答えは、シナリオがあってもなくても、どの入口からでも同じです。`command` イベントは `accepted: false` と `reason: "outside-real-time"` になり、Control Server のクライアントには、その理由の付いた `FAILED_PRECONDITION` が返ります（[control-api.md](control-api.md) の「外につながる実行」）。`--events` がなければ、断った標準入力の行は標準エラーの 1 行になります。メッセージに、どうすればよいかがあります（`--time-policy free` で始め直すか、外につながずに実行する）。
 - 送る前に、`state` イベントで分かります。`realtime` では、`allowed.pause`、`allowed.step`、`allowed.run_until` が、この理由の `ok: false` になり、`allowed.speed` の `min` と `max` が 1 になります。`free` では `ok: true` で、コード `outside-not-real-time` の `caution` が付きます（[simulation-events.md](simulation-events.md) の「`state` のイベント」）。
-- シナリオつきの実行（`--scenario`）では、標準入力のコマンドがこの表に従います。Control Server のクライアントは、シナリオが終わるまで、読むことと `Stop` だけができます。実行はシナリオとともに終わります。時間の呼び出しは、`--time-policy` が何であっても、`outside-real-time` でなく、理由 `scenario-running` で拒否します（[control-api.md](control-api.md) の「シナリオの実行中」）。
+- シナリオつきの実行（`--scenario`）も、標準入力のコマンドと Control Server のクライアントのどちらについても、この表に従います。シナリオを理由に拒否するのは、クライアントの書き込みだけです（理由 `scenario-running`。[control-api.md](control-api.md) の「シナリオの実行中」）。
 - ランチャーが構成ファイルを読む前に届いたコマンドは待たされ、ファイルを読んだ後に答えが出ます。早く送っても、この規則をすり抜けません（[simulation-events.md](simulation-events.md) の「時間のコマンドを受け付ける条件」）。
 - `outside-time-changed` は、実行の終わりに 1 回書きます。受け付けたコマンドのうち、シミュレーションを止めるかステップで進めるか、1 以外の速さにした最初の 1 つについて、コマンドの名前と、どこから来たかと、来たときの仮想時間を書きます（コマンドはどれも `command` イベントにあります）。`resume`、速さ 1、`--start-paused` そのものは数えません。
 

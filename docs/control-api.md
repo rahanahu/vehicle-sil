@@ -95,15 +95,15 @@ When the run ends, whether normally, by a stop request, by `--timeout-ms` or by 
 
 ### While a scenario runs
 
-In a scenario run (`--scenario`), a client can only read, wait and stop.
+In a scenario run (`--scenario`), a client can read, wait, move time and stop. It cannot write variables.
 
 | Call | During a scenario |
 |---|---|
 | Read and wait calls, `Stop` | Work as usual. |
 | Write calls (`Write`, `ForgetPeer`) | Rejected with `FAILED_PRECONDITION`. |
-| Calls that move time (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) | Rejected with `FAILED_PRECONDITION`. |
+| Calls that move time (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) | Work as in a run without a scenario (launcher feature `scenario-time`). They do not change the result of the scenario. |
 
-`vehicle-sil-reason` in the trailing metadata (value `scenario-running`) identifies this rejection. For the table of calls and the guarantees, see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control).
+`vehicle-sil-reason` in the trailing metadata (value `scenario-running`) identifies the rejection of a write. For the table of calls and the guarantees, see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control).
 
 ### In a run that is connected outside
 
@@ -641,12 +641,12 @@ A failed call returns a gRPC status code. In Python, it raises the exception `Co
 | Status code | Returned when |
 |---|---|
 | `INVALID_ARGUMENT` | An argument is wrong (a speed out of range, a step of 0 or less, more than 1024 names for `snapshot()`). |
-| `FAILED_PRECONDITION` | The call is not possible now (`step` while not paused, `Stop` after the end, writes and time control during a scenario, a pause or another speed in a run that is connected outside and keeps real time). |
+| `FAILED_PRECONDITION` | The call is not possible now (`step` while not paused, `Stop` after the end, writes during a scenario, a pause or another speed in a run that is connected outside and keeps real time). |
 | `CANCELLED` | The server closed while the call was waiting (`WaitPaused`; it can also get `FAILED_PRECONDITION`). |
 | `RESOURCE_EXHAUSTED` | The response of `snapshot()` was larger than the limit of one message (4 MiB). |
 | `UNIMPLEMENTED` | The server is an earlier version without that call. |
 
-Writes and time control during a scenario have the `reason` `scenario-running`.
+Writes during a scenario have the `reason` `scenario-running`.
 
 | Python exception or warning | Raised when |
 |---|---|

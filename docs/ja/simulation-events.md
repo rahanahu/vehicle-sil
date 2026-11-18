@@ -213,7 +213,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 
 `ok` は「受け付けるか」の答えで、「何かが変わるか」ではありません。一時停止中も `pause` は `ok` です（受け付けて、何もしません）。`paused` が `false` でも `step` が `ok` のことがあります: `pause` を受け付けた直後でシミュレーションが止まるまでの間と、ステップを進めている間です。
 
-`pause`、`resume`、`step`、`run_until`、`speed`、`stop` は、標準入力のコマンドとして答えます。`write`（変数の書き込み）は Control Server のクライアントにしかないので、クライアントとして答えます。Control Server のない実行（`--control` なし）では、`write` を送る口がないので、実行の間ずっと、`ok` が `false`、理由は `no-control-server` です。シナリオの間は、この 2 つの入口で答えが違います: クライアントは時間を動かせず（`scenario-running`）、標準入力のコマンドは動かせます。上の 6 つは標準入力の答えです。
+`pause`、`resume`、`step`、`run_until`、`speed`、`stop` は、標準入力のコマンドとして答えます。`write`（変数の書き込み）は Control Server のクライアントにしかないので、クライアントとして答えます。Control Server のない実行（`--control` なし）では、`write` を送る口がないので、実行の間ずっと、`ok` が `false`、理由は `no-control-server` です。クライアントの時間の呼び出しへの答えは、シナリオの間も、標準入力のコマンドへの答えと同じです。シナリオを理由に断るのは `write` だけです（`scenario-running`）。
 
 シミュレーションの外につながっていて実時間を保つ実行（`--time-policy realtime`、既定）では、`pause`、`step`、`run_until` は、理由 `outside-real-time` で `ok` が `false` になります。`speed` は `min` と `max` が 1 になります（受け付けるのは速さ 1 だけです）。`--time-policy free` では、`ok` は `true` で、`caution` に `outside-not-real-time` が付きます。実行を外につないでいるものは、`check` イベントの `time_lock.because` にあります。
 
@@ -267,7 +267,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `not-set-up` | ランチャーがまだシミュレーションを準備していません（`step`、`run_until`、時刻つきの `pause`）。ランチャーが構成ファイルを読む前に、256 個を超えるコマンドが届いたときも、これです（[時間のコマンドを受け付ける条件](#時間のコマンドを受け付ける条件)） |
 | `not-paused` | 一時停止していないときの `step` |
 | `not-running` | シミュレーションが終わった、または始まりませんでした |
-| `scenario-running` | シナリオを再生する実行です。クライアントは変数を書けず、時間も動かせません |
+| `scenario-running` | シナリオを再生する実行です。クライアントは変数を書けません（時間は、標準入力と同じく動かせます） |
 | `no-control-server` | `state` の `allowed` にだけ出ます。Control Server のない実行（`--control` なし）で、Control Server のクライアントだけが送れる操作（`write`）です |
 | `outside-real-time` | 実行がシミュレーションの外につながっていて（`--connect`、または有効な `role: bridge` の participant）、実時間を保ちます（`--time-policy realtime`、既定）。`pause`、`step`、`run_until`、1 以外の `speed` は断ります。`resume`、`speed` 1、`stop` は受け付けます。時間を動かすには、`--time-policy free` で実行を始めます（[simulation-run.md](simulation-run.md) の「外につながる実行の時間」） |
 | `out-of-range` | 引数が範囲の外です（クライアントの速度、ステップ、時刻） |
@@ -626,6 +626,8 @@ participant の `log` の終わりの側には、保証がありません。part
 | 時刻つきの `pause` | 送れません。 | 送れます。 |
 | シミュレーションが終わった後の停止 | `stop` を受け付けて、何もしません。 | `Stop` を拒否します。 |
 
+シナリオつきの実行（`--scenario`）は、どちらからの時間のコマンドも受け付けます。シナリオの結果は変わりません（[scenario.md](scenario.md) の「実行中に変数を見る」）。
+
 ## バージョンと機能の一覧（`vehicle_sil_launch version`）
 
 `vehicle_sil_launch version`（`--version` も同じ）は、`vehicle_sil_launch <version>` の 1 行を書きます。`version --json` は、書く形式のバージョンと、機能の一覧を書きます。どちらもファイルを読まず、終了コードは 0 です。
@@ -733,6 +735,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `request` | `check` と `run` の `--request <file>`。何を走らせるかを要求ファイルから読みます（[simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
+| `scenario-time` | シナリオの実行中に、Control Server のクライアントが時間を動かせる（Control Server を持つビルドだけ） |
 
 名前ごとに、次のものがあることを示します。
 
@@ -758,9 +761,9 @@ participant の `log` の終わりの側には、保証がありません。part
 | `request` | `--request`、指摘 `connect-network-unused` と `request-params-unused`、照合と結果の JSON でパラメーターの `from` が `request_file` になること |
 | `control-server` | イベント `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 
-`scenario-control` のあるビルドでは、シナリオの実行中、クライアントは読む・待つ・止めるだけです。書く呼び出しと時刻を動かす呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。
+`scenario-control` のあるビルドでは、シナリオの実行中、クライアントは書けません。書く呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します。`scenario-time` のあるビルドでは、時刻を動かす呼び出し（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`）を、シナリオの実行中も、標準入力の同じコマンドと同じように受け付けます。シナリオの結果は変わりません。`scenario-control` だけのビルドは、これらも同じ理由で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。
 
-上の例は、Control Server を持たないビルドの出力です。持つビルドは、`features` の最後に `"control-server"` と `"scenario-control"` を追加します。この例も、CTest の `launch_cli.docs` が照合します（`vehicle_sil` のバージョンと、この 2 つを除いて、バイト単位で）。
+上の例は、Control Server を持たないビルドの出力です。持つビルドは、`features` の最後に `"control-server"`、`"scenario-control"`、`"scenario-time"` を追加します。この例も、CTest の `launch_cli.docs` が照合します（`vehicle_sil` のバージョンと、この 3 つを除いて、バイト単位で）。
 
 ## 関連するドキュメント
 

@@ -124,7 +124,9 @@ public:
         if (rule != nullptr && found && allows(*found, rule->need))
         {
             const Call call{*found, rule, context};
-            if (options_.observe_only && rule->effect != Effect::Read && rule->effect != Effect::End)
+            if (options_.observe_only &&
+                (rule->effect == Effect::Write ||
+                 (rule->effect == Effect::Time && options_.observe_only->refuses == ObserveOnly::Refuses::Changes)))
             {
                 // The one place that keeps an observe-only server's clients from changing the
                 // simulation: before the call's body, so nothing of it reaches the hub or the time.

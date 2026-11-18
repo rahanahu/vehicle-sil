@@ -63,9 +63,12 @@ inline constexpr std::array<std::string_view, 25> kFeatures{"events",
 /// a build lists it (format_version_json()'s `more`).
 inline constexpr std::string_view kControlServerFeature = "control-server";
 /// The feature of such a build that has the control server during a scenario too (run --scenario
-/// with --control: its clients read, and cannot write or move the time). After
-/// kControlServerFeature in `more`.
+/// with --control: its clients read, and cannot write). After kControlServerFeature in `more`.
 inline constexpr std::string_view kScenarioControlFeature = "scenario-control";
+/// The feature of such a build whose control server takes the time operations during a scenario
+/// (pause, resume, step, run_until, speed: as standard input does). After kScenarioControlFeature
+/// in `more`.
+inline constexpr std::string_view kScenarioTimeFeature = "scenario-time";
 
 /// `version --json`: the formats this launcher writes and reads, kFeatures, then `more` (what
 /// this build adds).

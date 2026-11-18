@@ -176,6 +176,7 @@ See the [diagram legend and layers](code-map-core.md#dependency-direction) and [
 | Target | Built when |
 |---|---|
 | `can_bridge_core` (`bridges/can`) | On every platform |
+| `can_external` (`bridges/can`; `ExternalPortAdapter`) | On every platform |
 | `vector_xl`, `vehicle_sil_vector_xl_bridge` | Only on Windows, when the XL Driver Library is available |
 | `bridge_runtime` (`bridges/common`) | On every platform |
 
@@ -184,9 +185,10 @@ See the [diagram legend and layers](code-map-core.md#dependency-direction) and [
 ```mermaid
 flowchart TD
     can_bridge_core --> SilKit["SilKit::SilKit"]
-    can_bridge_core --> can
-    can_bridge_core --> can_silkit
     can_bridge_core --> bridge_runtime
+    can_external --> can_bridge_core
+    can_external --> can
+    can_external --> can_silkit
     vector_xl_bridge_core --> SilKit
     vector_xl_bridge_core --> can_bridge_core
     vector_xl_bridge_core --> bridge_runtime

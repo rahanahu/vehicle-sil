@@ -220,35 +220,39 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 ### シナリオの実行中の Control Server
 
-シナリオの実行中の Control Server は、読み取り専用です。
+シナリオの実行中の Control Server は、書き込みを拒否します。クライアントは、読む、時刻を動かす、止めることができます。
 
 変える場所:
 
-- `ServerOptions::observe_only`
+- `ServerOptions::observe_only` と、その範囲（`ObserveOnly::Refuses`: 変える呼び出しの全部か、書き込みだけか）
+- ランチャーが尋ねる規則: `libs/launch/src/control_rules.cpp` の `scenario-running` の行と `always_refused()`
 - `libs/control_grpc/src/auth.hpp` の `Effect` と、`auth.cpp` の `rpc_rules()`
 - 拒否するコード: `control_service.cpp` の `guarded()`
 - 設定するコード: `libs/launch/src/control_server.cpp`
 
 合わせて直すドキュメント:
 
-- [scenario.md](scenario.md) の「実行中に変数を見る」（拒否する呼び出しの表、理由 `scenario-running`）
+- [scenario.md](scenario.md) の「実行中に変数を見る」（呼び出しの表、理由 `scenario-running`、時刻の呼び出しが結果を変えないという約束）
 - [control-api.md](control-api.md) の「ランチャーに接続する」と `ControlError.reason`
 - [simulation-config.md](simulation-config.md): 引数の表
-- [simulation-events.md](simulation-events.md): `features` の `scenario-control`（`kScenarioControlFeature`）
+- [simulation-events.md](simulation-events.md): `features` の `scenario-control` と `scenario-time`（`kScenarioControlFeature`、`kScenarioTimeFeature`）
 - [internals/control.md](internals/control.md) の「ランチャーの Control Server」
 
-`scenario-control` は、`control-server` と同じく、持つビルドだけが出力します。RPC を追加したら、`rpc_rules()` の表の行に種類を書きます（状態を変える RPC は `Effect::Change`）。
+`scenario-control` と `scenario-time` は、`control-server` と同じく、持つビルドだけが出力します。RPC を追加したら、`rpc_rules()` の表の行に種類を書きます。参加者が受け取るものを変える RPC は `Effect::Write`、時刻を動かすだけの RPC は `Effect::Time` です。
 
 守ること:
 
 - 拒否するのは、RPC の本体に入る前の 1 か所です。
+- シナリオの結果を変えうる呼び出し（参加者が何を、どの仮想時刻に受け取るか）は `Effect::Write` で、シナリオの実行中は拒否します。時刻の呼び出しは、ある仮想時刻に起きることを変えてはいけません。
 - クライアントの呼び出しから、実行の tap（`RunSamples`）、書き込み、ガードを操作する経路を追加しません。
 - Hub の購読と tap に、待つものを追加しません。
 
 テスト:
 
-- `control_server.control_server_observe_only_*`、`control_server.control_server_that_only_observes_*`（呼び出しごとの表は、テストの側にも書いてあります）
-- `control_server.launcher`: クライアントが読んでいても、いなくても、シナリオの結果が同じ。読み出さないクライアントがいても終わる
+- `control_server.control_server_observe_only_*`、`control_server.control_server_that_only_observes_*`、`control_server.control_server_that_refuses_writes_alone_*`（呼び出しごとの表は、テストの側にも書いてあります）
+- `control_server.launcher`: クライアントが読んでいても、いなくても、時刻を動かしても、動かさなくても、シナリオの結果が同じ。書き込みは拒否する。読み出さないクライアントがいても終わる
+- `launch_run.scenario_time_commands_same`: 時刻のコマンド（標準入力から）があってもなくても、シナリオの結果、`scenario_step` のイベント、タイムラインのファイルが 1 バイトも違わない。`launch_run.scenario_paused_timeout`: 一時停止のまま `--timeout-ms` が切れたシナリオは未完了
+- `launch.control_rules_*`: 行（シナリオは時刻のコマンドへの答えを変えない。2 つの入口の答えは同じ）
 - `control.control_hub_readers_that_never_read_*`
 
 ### 時刻と値をまとめて読む

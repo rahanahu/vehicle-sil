@@ -167,12 +167,16 @@ scripts/run-gui.py                   # ブラウザを開く（開かないと�
 
 ### テンプレートとビルド済みのツールを使う
 
-この始め方では、リポジトリをビルドする必要がありません。[リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)で次の 2 つを配布します。
+この始め方では、リポジトリをビルドする必要がありません。[リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)で次のものを配布します。
 
 | 配布物 | 内容 |
 |---|---|
 | テンプレート | 上の例と同じ 2 つの ECU、設定ファイル、シナリオが入った、出発点になる ECU のプロジェクトです（[template/](template/) と同じもの）。 |
 | ビルド済みのツール | `vehicle_sil_launch`、ブラウザの GUI、Python のクライアントを、OS ごとに 1 つのアーカイブにまとめたものです。 |
+| GUI のクライアント | 自分の画面を作るための npm のパッケージ `vehicle-sil-gui-client-<version>.tgz` です（[gui/client](gui/client/README.ja.md) を参照）。ビルド済みのツールにも同じファイルが入っています。 |
+| `SHA256SUMS` | ほかの配布物の SHA-256 のチェックサムです。 |
+
+同じリリースの配布物を組み合わせて使います。ランチャーは、読めない形式の説明を出す ECU の実行ファイル（別の版の vehicle-sil でビルドしたもの）を断ります。GUI のクライアントは、別の版の GUI のプロトコルを話す GUI サーバーを断ります。
 
 テンプレートを展開したディレクトリで、次の順に実行します。
 

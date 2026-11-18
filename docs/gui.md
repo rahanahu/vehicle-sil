@@ -431,7 +431,7 @@ Select and run a scenario ([scenario.md](scenario.md); a file that sets ECU vari
 - Scenario files elsewhere cannot be selected (see "[Security](#security)").
 - The step table advances with the launcher's `scenario_step` events. When the result arrives, it shows every step, including those that did not run. A screen opened during the run shows the same table.
 - A scenario cannot start paused (**Start paused** is disabled).
-- Pause, step, speed changes and stop work as in a run without a scenario (the scenario result does not change). The GUI sends them as commands on the launcher's stdin, so they are separate from the time calls that the Control Server refuses while a scenario runs.
+- Pause, step, speed changes and stop work as in a run without a scenario (the scenario result does not change). The GUI sends them as commands on the launcher's stdin; a Control Server client's time calls get the same answers.
 - If the launcher's `features` have `scenario-control`, the Variables screen shows the values (writing widgets are disabled and show "Cannot write while a scenario runs (view only)"). With a launcher without it, a scenario run has no variables, and the Variables screen shows "Variables are not available while a scenario runs:".
 - The server API is `GET api/scenarios?file=<configuration file>` and `scenario` of `api/check` and `api/run` (see "Scenarios" in [gui/protocol/README.md](../gui/protocol/README.md#scenarios)); in the library, `client.scenarios(file)`, `scenario` of `check` and `run.start`, and `scenario` of the session copy.
 

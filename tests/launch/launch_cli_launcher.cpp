@@ -328,9 +328,9 @@ void docs(const Options& o)
     // The version and what this launcher can do; it reads no file.
     const Captured version = launch(o, {"version", "--json"});
     expect_code(version, 0, "version --json");
-    // A build with the control server lists two more features, last; the docs show a build without.
+    // A build with the control server lists three more features, last; the docs show a build without.
     std::string features = version.standard_output;
-    replace_all(features, ",\n    \"control-server\",\n    \"scenario-control\"\n", "\n");
+    replace_all(features, ",\n    \"control-server\",\n    \"scenario-control\",\n    \"scenario-time\"\n", "\n");
     expect_text(without_versions(features),
                 without_versions(block_after(o.docs, "<!-- vehicle_sil_launch version --json -->")), "version --json");
     for (const std::vector<std::string>& args : {std::vector<std::string>{"version"}, {"--version"}, {"check", "--version"}})
@@ -615,7 +615,7 @@ void usage(const Options& o)
                  "2: twice as fast) or max (as fast as possible), not 'fast'");
     expect_usage({"run", "a.yaml", "--scenario", "s.yaml", "--start-paused"},
                  "--scenario cannot be used with --start-paused: the scenario writes its values for 0 before the first step and "
-                 "runs by itself; pause and step it with --stdin-commands if needed");
+                 "runs by itself; pause and step it with --stdin-commands or from a Control Server client (--control) if needed");
     expect_usage({"run", "a.yaml", "--start-paused", "--control-audit-log", "a.log"},
                  "--control-audit-log is for --control: without it there is no control server");
     expect_usage({"check", "a.yaml", "--events"}, "--events is for run: check starts no participant");

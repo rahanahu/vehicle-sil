@@ -842,11 +842,12 @@ The time lock (see "Time of a run that is connected outside (`--time-policy`)" i
 
 ### Observe-only server (`observe_only`)
 
-- When it runs a scenario (`run --scenario`), the launcher sets `ServerOptions::observe_only`. It does not decide this itself: it asks the rules of the run's controls whether a control server is refused everything but a stop for the whole run (`always_refused()` in `libs/launch/src/control_rules.cpp`), and takes the reason and the message from there.
-- Each row of the call table (`rpc_rules()` in `libs/control_grpc/src/auth.cpp`) states what the call does to the simulation (read, change, stop).
-- An `observe_only` server refuses "change" calls in one place, right after the permission check and before the body of the call (`FAILED_PRECONDITION`, trailing metadata `vehicle-sil-reason`).
-- A refused call reaches neither the Hub nor `TimeControl`.
-- In a scenario run that also keeps real time, a client's time calls are refused here, with the scenario's reason, before the rules of the time lock see them; stdin commands are refused by the time lock (`outside-real-time`).
+- When it runs a scenario (`run --scenario`), the launcher sets `ServerOptions::observe_only` with the scope "writes alone" (`ObserveOnly::Refuses::Writes`). It does not decide this itself: it asks the rules of the run's controls whether a control server's write is refused for the whole run (`always_refused()` in `libs/launch/src/control_rules.cpp`), and takes the reason and the message from there.
+- Each row of the call table (`rpc_rules()` in `libs/control_grpc/src/auth.cpp`) states what the call does to the simulation (`Effect`: read, write, time, end).
+- An `observe_only` server refuses calls in one place, right after the permission check and before the body of the call (`FAILED_PRECONDITION`, trailing metadata `vehicle-sil-reason`). The scope says which: `Refuses::Changes` (the default of the library) refuses the write and the time calls, `Refuses::Writes` the write calls (`Write`, `ForgetPeer`) alone.
+- A refused call does not reach the Hub.
+- The time calls of a scenario run go to `TimeControl` as in any run, and the rules of the controls answer them: the same answer as for the stdin command, the time lock included (`outside-real-time`).
+- Why the time calls are safe for a scenario: the scenario's guard and the pause are two separate holds of the time gate, and a step that either holds does not go on. The scenario writes and judges by virtual time alone (the writes for a step are handed over while the guard holds it; the judgement uses the samples before it). So where the time stands still and how fast it goes changes neither the result nor the timeline, in a run in which every participant is in the time synchronization. The CTest test `launch_run.scenario_time_commands_same` holds this (byte for byte).
 - Read calls access only the Hub (thread-safe; subscriptions are bounded and never make the transport thread wait) and `TimeCommands::inspect()`. They share nothing with the scenario's tap, writes or guard.
 
 ### When it starts and stops

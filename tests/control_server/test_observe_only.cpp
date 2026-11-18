@@ -2,8 +2,9 @@
 //
 // A server that only shows the simulation (ServerOptions::observe_only): which calls it refuses,
 // how, and that a refused call reaches neither the hub nor the time. The expected table is
-// written out here, apart from the server's code. Last, a time operation that refuses a call
-// itself, with a code (control_grpc::Refused): the same metadata.
+// written out here, apart from the server's code. Then a server that refuses the writes alone
+// (ObserveOnly::Refuses::Writes): the time operations get through. Last, a time operation that
+// refuses a call itself, with a code (control_grpc::Refused): the same metadata.
 #include "test_harness.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
@@ -100,7 +101,8 @@ struct Server
     std::unique_ptr<control_grpc::ControlServer> server;
     std::shared_ptr<grpc::Channel> channel;
 
-    explicit Server(bool observe_only, bool credentials = false)
+    explicit Server(bool observe_only, bool credentials = false,
+                    control_grpc::ObserveOnly::Refuses refuses = control_grpc::ObserveOnly::Refuses::Changes)
     {
         // One peer with a variable that can be written, and one that is gone (for ForgetPeer).
         control::VariableInfo level;
@@ -117,7 +119,7 @@ struct Server
         o.monitor_period = 0ms;
         if (observe_only)
         {
-            o.observe_only = control_grpc::ObserveOnly{"scenario-running", "a scenario plays; read, or stop"};
+            o.observe_only = control_grpc::ObserveOnly{"scenario-running", "a scenario plays; read, or stop", refuses};
         }
         if (credentials)
         {
@@ -242,6 +244,13 @@ bool changes(const std::string& method)
     return std::find(changing().begin(), changing().end(), method) != changing().end();
 }
 
+/// Of those, the calls that change what the participants get: a server that refuses the writes
+/// alone (ObserveOnly::Refuses::Writes) refuses exactly these, and takes the time operations.
+bool writes(const std::string& method)
+{
+    return method == "Write" || method == "ForgetPeer";
+}
+
 } // namespace
 
 TEST_CASE(control_server_observe_only_table_covers_every_rpc)
@@ -337,6 +346,66 @@ TEST_CASE(control_server_that_does_not_only_observe_takes_the_same_calls)
     CHECK_EQ(server.time.changes.load(), 5);
     CHECK_EQ(server.time.stops.load(), 1);
     CHECK_EQ(server.hub.peers().size(), std::size_t{1}); // "Gone" was forgotten
+}
+
+TEST_CASE(control_server_that_refuses_writes_alone_takes_the_time_operations)
+{
+    // Every RPC of the service again, on a server that refuses the writes alone: Write and
+    // ForgetPeer are refused as above, the five time operations reach the time control, and the
+    // rest is served.
+    Server server(true, false, control_grpc::ObserveOnly::Refuses::Writes);
+    std::size_t time_operations = 0;
+    for (const auto& [method, call] : calls())
+    {
+        const Answer a = call(*server.channel, nullptr);
+        if (writes(method))
+        {
+            CHECK(a.status.error_code() == grpc::StatusCode::FAILED_PRECONDITION);
+            CHECK(a.reason == "scenario-running");
+            CHECK(a.status.error_message().find(": a scenario plays; read, or stop") != std::string::npos);
+        }
+        else
+        {
+            if (!a.reason.empty() || (a.status.error_code() != grpc::StatusCode::OK && a.status.error_code() != grpc::StatusCode::NOT_FOUND))
+            {
+                std::fprintf(stderr, "%s: status %d '%s', reason '%s'\n", method.c_str(), static_cast<int>(a.status.error_code()),
+                             a.status.error_message().c_str(), a.reason.c_str());
+            }
+            CHECK(a.reason.empty());
+            CHECK(a.status.ok() || a.status.error_code() == grpc::StatusCode::NOT_FOUND);
+            time_operations += changes(method) ? 1 : 0;
+        }
+    }
+    CHECK_EQ(time_operations, std::size_t{5});
+    // The writes did not get through (no command to the agent, the peer that is gone still
+    // there); each time operation and the stop did.
+    CHECK_EQ(server.link->sent.load(), 0);
+    CHECK_EQ(server.hub.peers().size(), std::size_t{2});
+    CHECK_EQ(server.time.changes.load(), 5);
+    CHECK_EQ(server.time.stops.load(), 1);
+    std::size_t refused = 0;
+    for (const auto& line : server.lines())
+    {
+        refused += line.find("refused (scenario-running)") != std::string::npos ? 1 : 0;
+    }
+    CHECK_EQ(refused, std::size_t{2});
+}
+
+TEST_CASE(control_server_that_refuses_writes_alone_refuses_them_whatever_the_role)
+{
+    Server server(true, true, control_grpc::ObserveOnly::Refuses::Writes);
+    const auto table = calls();
+    for (const char* token : {kOperator, kAdmin})
+    {
+        const Answer write = table.at("Write")(*server.channel, token);
+        CHECK(write.status.error_code() == grpc::StatusCode::FAILED_PRECONDITION);
+        CHECK(write.reason == "scenario-running");
+        CHECK(table.at("Pause")(*server.channel, token).status.ok());
+    }
+    // The time operations still need their role: a viewer moves nothing.
+    CHECK(table.at("Pause")(*server.channel, kViewer).status.error_code() == grpc::StatusCode::PERMISSION_DENIED);
+    CHECK_EQ(server.time.changes.load(), 2);
+    CHECK_EQ(server.link->sent.load(), 0);
 }
 
 TEST_CASE(control_server_that_only_observes_refuses_whatever_the_role_after_the_authorization)

@@ -70,41 +70,55 @@ TEST_CASE(options_full_command_line)
 
 TEST_CASE(options_defaults_and_special_modes)
 {
-    const auto options = parse({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1"});
+    const auto options = parse({"--registry-uri", "silkit://h:1", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1"});
     CHECK(options.target == XlTarget::Virtual);
     CHECK(options.participant == std::string("VectorXlBridge"));
-    CHECK(options.network == std::string("J1939_CAN1"));
+    CHECK(options.network == std::string("CAN"));
     CHECK(!options.bitrate.has_value());
     CHECK(!options.bus_off_restart.has_value());
     CHECK_EQ(options.rx_queue_size, 16384u);
     CHECK(!options.tx_timeout.has_value());
 
-    CHECK(!parse({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--no-bus-monitor"}).bus_monitor);
-    CHECK(parse({"--list-channels"}).list_channels); // needs nothing else
+    CHECK(!parse({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--no-bus-monitor"}).bus_monitor);
+    CHECK(parse({"--list-channels"}).list_channels); // needs nothing else, not even --network
     CHECK(parse({"--help"}).help);
+}
+
+TEST_CASE(options_need_network_there_is_no_default)
+{
+    const auto missing = [](std::vector<std::string_view> args) {
+        return vehicle_sil::unit::throws_with<BridgeUsageError>(
+            [&] { (void)parse(std::move(args)); },
+            "missing --network: name the SIL Kit CAN network to bridge (there is no default");
+    };
+    CHECK(missing({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1"}));
+    CHECK(missing({"--describe", "--xl-target", "virtual", "--xl-channel", "1"}));
+    CHECK(missing({"--registry-uri", "u", "--network", "", "--xl-target", "virtual", "--xl-channel", "1"}));
+    CHECK(bridge_usage().find("(no default)") != std::string::npos);
+    CHECK(bridge_usage().find("J1939_CAN1") == std::string::npos);
 }
 
 TEST_CASE(options_reject_bad_command_lines)
 {
     CHECK(usage_error({}));
-    CHECK(usage_error({"--xl-target", "virtual", "--xl-channel", "1"}));                       // no registry
+    CHECK(usage_error({"--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1"}));                       // no registry
     CHECK(usage_error({"--registry-uri", "u", "--xl-channel", "1"}));                          // no target
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual"}));                     // no channel
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "cancase", "--xl-channel", "1"})); // bad target
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "0"}));
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "x"}));
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--bitrate", "100"}));
+    CHECK(usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual"}));                     // no channel
+    CHECK(usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "cancase", "--xl-channel", "1"})); // bad target
+    CHECK(usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "0"}));
+    CHECK(usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "x"}));
+    CHECK(usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--bitrate", "100"}));
     // xlCanSetChannelBitrate accepts 15000 ... 1000000 bit/s.
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--bitrate", "14999"}));
-    CHECK(!usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--bitrate", "15000"}));
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--bitrate", "2000000"}));
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--rx-queue-size", "1000"}));
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--rx-queue-size", "65536"}));
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--tx-timeout-ms", "99"}));
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--bus-off-restart-ms", "99"}));
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--bus-off-restart-ms", "60001"}));
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--tx-timeout-ms", "60001"}));
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--unknown", "1"}));
+    CHECK(usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--bitrate", "14999"}));
+    CHECK(!usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--bitrate", "15000"}));
+    CHECK(usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--bitrate", "2000000"}));
+    CHECK(usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--rx-queue-size", "1000"}));
+    CHECK(usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--rx-queue-size", "65536"}));
+    CHECK(usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--tx-timeout-ms", "99"}));
+    CHECK(usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--bus-off-restart-ms", "99"}));
+    CHECK(usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--bus-off-restart-ms", "60001"}));
+    CHECK(usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--tx-timeout-ms", "60001"}));
+    CHECK(usage_error({"--registry-uri", "u", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--unknown", "1"}));
     CHECK(usage_error({"--registry-uri"}));
     CHECK(usage_error({"positional"}));
 }
@@ -171,18 +185,18 @@ TEST_CASE(selection_channel_list_text)
 
 TEST_CASE(options_name_describe_and_start_timeout)
 {
-    const auto named = parse({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1", "--name",
+    const auto named = parse({"--registry-uri", "silkit://h:1", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--name",
                               "XlBridge", "--start-timeout-ms", "40000"});
     CHECK(named.participant == std::string("XlBridge"));
     CHECK(named.start_timeout == std::chrono::milliseconds(40000));
     CHECK(!named.describe);
-    CHECK(parse({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1"}).start_timeout ==
+    CHECK(parse({"--registry-uri", "silkit://h:1", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1"}).start_timeout ==
           std::chrono::milliseconds(15000));
-    CHECK(usage_error({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1", "--name", "A",
+    CHECK(usage_error({"--registry-uri", "silkit://h:1", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--name", "A",
                        "--participant", "B"}));
-    CHECK(usage_error({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1",
+    CHECK(usage_error({"--registry-uri", "silkit://h:1", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1",
                        "--start-timeout-ms", "0"}));
-    CHECK(usage_error({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1",
+    CHECK(usage_error({"--registry-uri", "silkit://h:1", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1",
                        "--start-timeout-ms", "1000000000001"}));
 
     // --describe needs no registry, and checks the rest as a run does.
@@ -191,17 +205,18 @@ TEST_CASE(options_name_describe_and_start_timeout)
     CHECK(described.describe);
     CHECK(described.registry_uri.empty());
     CHECK(described.network == std::string("VehicleCAN"));
-    CHECK(usage_error({"--describe", "--xl-target", "virtual"}));
+    CHECK(usage_error({"--describe", "--network", "CAN", "--xl-target", "virtual"}));
+    CHECK(parse({"--list-channels", "--json"}).list_channels); // the list forms need no --network
     CHECK(usage_error({"--describe", "--list-channels"}));
 }
 
 TEST_CASE(options_stats_every_is_how_often_the_statistics_line_comes_while_running)
 {
     const auto args = [](std::string_view every) {
-        return std::vector<std::string_view>{"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1",
+        return std::vector<std::string_view>{"--registry-uri", "silkit://h:1", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1",
                                              "--stats-every-ms", every};
     };
-    CHECK(!parse({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1"}).statistics_interval);
+    CHECK(!parse({"--registry-uri", "silkit://h:1", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1"}).statistics_interval);
     CHECK(parse(args("1000")).statistics_interval == std::chrono::milliseconds(1000));
     CHECK(parse(args("100")).statistics_interval == std::chrono::milliseconds(100));
     CHECK(parse(args("3600000")).statistics_interval == std::chrono::milliseconds(3600000));
@@ -232,8 +247,8 @@ TEST_CASE(options_json_is_for_list_channels_only)
                                                                 "--json is for --list-channels: it writes the list as JSON");
     };
     CHECK(json_alone({"--json"}));
-    CHECK(json_alone({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1", "--json"}));
-    CHECK(json_alone({"--describe", "--xl-target", "virtual", "--xl-channel", "1", "--json"}));
+    CHECK(json_alone({"--registry-uri", "silkit://h:1", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--json"}));
+    CHECK(json_alone({"--describe", "--network", "CAN", "--xl-target", "virtual", "--xl-channel", "1", "--json"}));
 }
 
 TEST_CASE(selection_channel_list_json_numbers_the_can_channels_of_each_target)

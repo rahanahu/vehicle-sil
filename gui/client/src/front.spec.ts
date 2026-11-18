@@ -1192,6 +1192,8 @@ describe('the front door', () => {
           enable: ['Spare'],
           manual: ['Dashboard'],
           strict: true,
+          connect: { ETH_EXT: 'eth0' },
+          time_policy: 'free',
         },
         { file: 'sim.yaml' },
       );
@@ -1205,6 +1207,8 @@ describe('the front door', () => {
         enable: ['Spare'],
         manual: ['Dashboard'],
         strict: true,
+        connect: { ETH_EXT: 'eth0' },
+        time_policy: 'free',
       });
       request.flush({ session: summary() });
       await start;
@@ -1217,6 +1221,263 @@ describe('the front door', () => {
         .catch((e: unknown) => e as ActionError);
       rig.http.expectOne('api/run').fail(HttpError.noAnswer('POST', 'api/run', 240_000));
       expect(await start).toMatchObject({ code: 'no-answer', outcome: 'unknown' });
+    });
+  });
+
+  describe('connecting outside', () => {
+    /** The answer of api/connections with `networks` as the launcher's list of that network. */
+    const listed = (networks: unknown[], more: Record<string, unknown> = {}) => ({
+      file: 'connect.yaml',
+      network: 'ETH_EXT',
+      exit_code: 0,
+      connections: {
+        vehicle_sil_connections: 1,
+        result: 'listed',
+        networks,
+        findings: [],
+        ...more,
+      },
+    });
+
+    it('lists one network of the file when asked, as one list of every backend in the answer order', async () => {
+      const rig = await open();
+      const example = (await httpExamples()).find((e) => e.name === 'connections')!;
+      const list = rig.front.connections({ network: 'ETH_EXT' }, { file: 'connect.yaml' });
+      const request = rig.http.expectOne('api/connections');
+      expect(request.request).toMatchObject({
+        method: 'POST',
+        body: { file: 'connect.yaml', network: 'ETH_EXT' },
+      });
+      request.flush(example.response);
+      const entries = await list;
+      expect(entries[0]).toEqual({
+        backend: 'packet',
+        value: 'fake0',
+        label: 'fake0',
+        detail: 'up, connected; Fake Ethernet adapter with a device that answers',
+        usable: true,
+        reason: null,
+      });
+      expect(entries.at(-1)).toEqual({
+        backend: 'tap',
+        value: 'tap:lo',
+        label: 'lo',
+        detail: 'not Ethernet (link type 772), down',
+        usable: false,
+        reason: 'not Ethernet (link type 772)',
+      });
+      expect(entries.map((e) => e.backend)).toEqual([
+        ...Array<string>(entries.length - 1).fill('packet'),
+        'tap',
+      ]);
+    });
+
+    it("gives a backend that cannot list as an entry with the launcher's sentence, not as a failure", async () => {
+      const rig = await open();
+      const list = rig.front.connections({ network: 'ETH_EXT' }, { file: 'connect.yaml' });
+      rig.http.expectOne('api/connections').flush(
+        listed(
+          [
+            {
+              name: 'ETH_EXT',
+              backend: 'packet',
+              list: {
+                backend: 'packet',
+                targets: [
+                  { value: 'eth0', label: 'eth0', detail: 'up', usable: true, reason: null },
+                ],
+                error: null,
+              },
+            },
+            {
+              name: 'ETH_EXT',
+              backend: 'tap',
+              list: {
+                backend: null,
+                targets: [],
+                error: { code: 'tool-missing', message: 'no bridge.' },
+              },
+            },
+            { name: 'ETH_EXT', backend: null, list: null },
+          ],
+          { result: 'incomplete' },
+        ),
+      );
+      expect(await list).toEqual([
+        {
+          backend: 'packet',
+          value: 'eth0',
+          label: 'eth0',
+          detail: 'up',
+          usable: true,
+          reason: null,
+        },
+        { backend: 'tap', error: 'no bridge.' },
+      ]);
+    });
+
+    it('gives an error finding of a file that cannot be listed as an entry of its own', async () => {
+      const rig = await open();
+      const list = rig.front.connections({ network: 'ETH_EXT' }, { file: 'connect.yaml' });
+      const answer = listed([], {
+        findings: [
+          { severity: 'error', code: 'yaml', message: 'connect.yaml: line 3 is not YAML.' },
+          { severity: 'warning', code: 'w', message: 'only a warning.' },
+        ],
+      });
+      rig.http.expectOne('api/connections').flush({ ...answer, exit_code: 1 });
+      expect(await list).toEqual([{ backend: null, error: 'connect.yaml: line 3 is not YAML.' }]);
+    });
+
+    it("rejects with the server's code, and refuses without a file", async () => {
+      const rig = await open();
+      const list = rig.front
+        .connections({ network: 'ETH_EXT' }, { file: 'connect.yaml' })
+        .catch((e: unknown) => e as ActionError);
+      rig.http
+        .expectOne('api/connections')
+        .flush(
+          { error: { code: 'check-busy', message: 'a check is running.', detail: null } },
+          { status: 503, statusText: 'Service Unavailable' },
+        );
+      expect(await list).toMatchObject({ code: 'check-busy', outcome: 'refused' });
+      // The app example has no start-up file
+      await expect(rig.front.connections({ network: 'ETH_EXT' })).rejects.toMatchObject({
+        code: 'no-file',
+      });
+      rig.http.expectNone('api/connections');
+      expect(rig.front.status.get().problem).toBeNull();
+    });
+
+    it('checks the intent as a start would send it, and leaves a refusal out of the problem', async () => {
+      const rig = await open();
+      const example = (await httpExamples()).find((e) => e.name === 'check-connect')!;
+      const check = rig.front.check(
+        { connect: { ETH_EXT: 'fake0' }, time_policy: 'free' },
+        { file: 'connect.yaml' },
+      );
+      const request = rig.http.expectOne('api/check');
+      expect(request.request.body).toEqual({
+        file: 'connect.yaml',
+        disable: [],
+        connect: { ETH_EXT: 'fake0' },
+        time_policy: 'free',
+      });
+      request.flush(example.response);
+      const result = await check;
+      expect(result.findings.map((f) => f.code)).toContain('outside-speed-set');
+      expect(result.raw?.['time_lock']).toEqual({ locked: true, because: ['ETH_EXT'] });
+
+      const refused = rig.front
+        .check({ connect: { ETH_EXT: 'fake9' } }, { file: 'connect.yaml' })
+        .catch((e: unknown) => e as ActionError);
+      rig.http
+        .expectOne('api/check')
+        .flush(
+          { error: { code: 'target-not-listed', message: 'list it again.', detail: null } },
+          { status: 400, statusText: 'Bad Request' },
+        );
+      expect(await refused).toMatchObject({ code: 'target-not-listed', message: 'list it again.' });
+      expect(rig.front.status.get().problem).toBeNull();
+    });
+
+    it('refuses to check an intent with a field it does not know, without sending', async () => {
+      const rig = await open();
+      const misspelt = { conect: { ETH_EXT: 'fake0' } } as unknown as Parameters<
+        typeof rig.front.check
+      >[0];
+      await expect(rig.front.check(misspelt, { file: 'connect.yaml' })).rejects.toMatchObject({
+        code: 'unknown-field',
+        outcome: 'refused',
+      });
+      rig.http.expectNone('api/check');
+      expect(rig.front.status.get().problem).toBeNull();
+    });
+
+    const row = (more: Record<string, unknown> = {}) => ({
+      network: 'ETH_EXT',
+      target: 'fake0',
+      participant: 'bridge.ETH_EXT',
+      link: 'up',
+      bus: null,
+      nothing_received: false,
+      condition: 'ok',
+      reasons: [],
+      ...more,
+    });
+    const counts = (network: string, to: number, from: number) => ({
+      event: 'outside',
+      t_ms: 1,
+      network,
+      to_outside: to,
+      from_outside: from,
+    });
+
+    it('shows the rows of the state with the counts of the outside events, while the run goes', async () => {
+      const rig = await running(stateEvent(1, { outside: [row()] }));
+      expect(rig.front.outside.get()).toEqual([
+        {
+          network: 'ETH_EXT',
+          target: 'fake0',
+          participant: 'bridge.ETH_EXT',
+          link: 'up',
+          bus: null,
+          condition: 'ok',
+          reasons: [],
+          nothing_received: false,
+          to_outside: null,
+          from_outside: null,
+        },
+      ]);
+      await rig.deliver(event(counts('ETH_EXT', 5, 2)), event(counts('ETH_EXT', 9, 4)));
+      expect(rig.front.outside.get()[0]).toMatchObject({ to_outside: 9, from_outside: 4 });
+      await rig.deliver(
+        event(
+          stateEvent(2, {
+            outside: [row({ link: 'down', condition: 'interrupted', reasons: ['link-down'] })],
+          }),
+        ),
+      );
+      expect(rig.front.outside.get()[0]).toMatchObject({
+        condition: 'interrupted',
+        reasons: ['link-down'],
+        to_outside: 9,
+      });
+      // The launcher has ended: no row
+      await rig.deliver({
+        type: 'session',
+        session: summary({
+          state: 'ended',
+          launcher: { pid: 1, running: false, exit_code: 0, signal: null, silent_s: null },
+        }),
+      });
+      expect(rig.front.outside.get()).toEqual([]);
+    });
+
+    it('starts again with no counts in the next run', async () => {
+      const rig = await running(stateEvent(1, { outside: [row()] }));
+      await rig.deliver(event(counts('ETH_EXT', 5, 2)));
+      await rig.deliver({ type: 'session', session: summary({}, 2) });
+      expect(rig.front.outside.get()).toEqual([]);
+      await rig.deliver(event(stateEvent(3, { outside: [row()] }), 2));
+      expect(rig.front.outside.get()[0]).toMatchObject({ to_outside: null, from_outside: null });
+    });
+
+    it('reads the rows from the summary of a page that joins a run on its way', async () => {
+      const rig = await open();
+      await rig.deliver(
+        {
+          type: 'hello',
+          vehicle_sil_gui: 1,
+          version: '0.1.0',
+          instance: 'x',
+          session: summary({ launcher_state: { ...stateEvent(4, { outside: [row()] }), seq: 14 } }),
+          allowed: serverAllowed(3, alreadyRunning),
+          replay: null,
+        },
+        { type: 'synced', session: 1, last_seq: 40 },
+      );
+      expect(rig.front.outside.get().map((o) => o.network)).toEqual(['ETH_EXT']);
     });
   });
 

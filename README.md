@@ -167,12 +167,16 @@ The `scripts/run-gui.py` script starts the GUI server with `examples/ecu_main/si
 
 ### Use the template and the prebuilt tools
 
-With this approach you do not build the repository. The [releases page](https://github.com/rahanahu/vehicle-sil/releases) provides 2 release assets:
+With this approach you do not build the repository. The [releases page](https://github.com/rahanahu/vehicle-sil/releases) provides these release assets:
 
 | Release asset | Contents |
 |---|---|
 | Template | A starting-point ECU project with the same 2 ECUs as the example above, configuration files and a scenario (the same as [template/](template/)). |
 | Prebuilt tools | `vehicle_sil_launch`, the browser GUI and the Python client, in one archive per OS. |
+| GUI client | The npm package `vehicle-sil-gui-client-<version>.tgz` for your own screen (see [gui/client](gui/client/README.md)). The prebuilt tools contain the same file. |
+| `SHA256SUMS` | The SHA-256 checksums of the other assets. |
+
+Use the assets of one release together. The launcher refuses an ECU executable whose description it cannot read (built with another vehicle-sil), and the GUI client refuses a GUI server that speaks another version of the GUI protocol.
 
 In the directory where you extracted the template, run these commands in order:
 
