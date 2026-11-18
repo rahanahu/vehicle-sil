@@ -13,7 +13,7 @@
 #include "silkit_test_util.hpp"
 
 #include "vehicle_sil/core/simulation_controller.hpp"
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/config.hpp"
 #include "vehicle_sil/launch/control_rules.hpp"
 #include "vehicle_sil/launch/run_controls.hpp"
 #include "vehicle_sil/launch/time_commands.hpp"

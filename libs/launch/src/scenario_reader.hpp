@@ -12,7 +12,7 @@
 #include "scenario_csv.hpp"
 #include "scenario_line.hpp"
 #include "scenario_shapes.hpp"
-#include "yaml_reader.hpp"
+#include "vehicle_sil/config/detail/yaml_reader.hpp"
 
 #include <algorithm>
 #include <array>

@@ -33,7 +33,7 @@
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/cli/console.hpp"
 #include "vehicle_sil/cli/utf8.hpp"
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/command_input.hpp"
 #include "vehicle_sil/launch/connections.hpp"

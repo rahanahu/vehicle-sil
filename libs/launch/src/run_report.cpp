@@ -3,7 +3,7 @@
 // What a run's report adds up to: the counts of errors, warnings and notes, why the run ended, the
 // result, the exit code and the sentence for people. The findings themselves come from assess_run()
 // (run_assess.cpp).
-#include "check_words.hpp"
+#include "vehicle_sil/config/detail/check_words.hpp"
 #include "exit_codes.hpp"
 #include "vehicle_sil/launch/run.hpp"
 

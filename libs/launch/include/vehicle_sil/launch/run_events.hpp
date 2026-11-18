@@ -7,7 +7,7 @@
 // Internal.
 #pragma once
 
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/config.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
 #include "vehicle_sil/process/process.hpp"
 

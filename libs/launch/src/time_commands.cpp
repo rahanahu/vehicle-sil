@@ -17,7 +17,7 @@
 // lock, and the order of the command events stays the order in which the commands took effect.
 #include "vehicle_sil/launch/time_commands.hpp"
 
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/config.hpp"
 
 #include "vehicle_sil/core/simulation_controller.hpp"
 

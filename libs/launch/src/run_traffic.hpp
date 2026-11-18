@@ -7,8 +7,8 @@
 
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
-#include "vehicle_sil/launch/check.hpp"
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/check.hpp"
+#include "vehicle_sil/config/config.hpp"
 #include "vehicle_sil/launch/run_outcome.hpp"
 #include "vehicle_sil/launch/run_plan.hpp"
 

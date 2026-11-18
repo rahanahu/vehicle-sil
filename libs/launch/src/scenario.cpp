@@ -2,7 +2,7 @@
 #include "vehicle_sil/launch/scenario.hpp"
 
 #include "scenario_reader.hpp"
-#include "yaml_reader.hpp"
+#include "vehicle_sil/config/detail/yaml_reader.hpp"
 
 #include <algorithm>
 #include <array>

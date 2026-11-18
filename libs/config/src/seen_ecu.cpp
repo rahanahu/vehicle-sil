@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include "seen_ecu.hpp"
+#include "vehicle_sil/config/detail/seen_ecu.hpp"
 
 #include <algorithm>
 

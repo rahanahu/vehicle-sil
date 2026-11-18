@@ -3,11 +3,11 @@
 // Connecting a network of the simulation outside, to a real bus (--connect <network>=<target>):
 // the request on the command line, the form of a target, the bridge tool of each kind of network,
 // the arguments the launcher gives it and the words about where the launcher looks for it. Pure
-// functions (the search itself is find_tool() in probe.hpp). Internal; the command line: docs/simulation-config.md, the findings:
+// functions (the search itself is find_tool() in the launcher's launch/probe.hpp). Internal; the command line: docs/simulation-config.md, the findings:
 // docs/simulation-check.md.
 #pragma once
 
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/config.hpp"
 
 #include <filesystem>
 #include <optional>

@@ -8,7 +8,7 @@
 // Internal; the command and its outputs: docs/simulation-run.md.
 #pragma once
 
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/request.hpp"
 
 #include <chrono>

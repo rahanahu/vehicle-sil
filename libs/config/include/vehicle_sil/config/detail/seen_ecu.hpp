@@ -7,7 +7,7 @@
 // (check_networks.cpp) read its networks. Internal.
 #pragma once
 
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 
 #include <optional>
 #include <string>

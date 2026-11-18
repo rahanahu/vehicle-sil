@@ -39,14 +39,14 @@ target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_S
                            # test_shared_values.cpp reads the GUI's sources.
                            VEHICLE_SIL_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
-# The sources of the launcher (its library and its tool) read the networks of a description in
+# The sources of the configuration, the launcher (its library and its tool) read the networks of a description in
 # one place (seen_networks(), which applies a participant's network_names and j1939_nodes; the J1939
 # nodes are members of the networks, so this keeps their values in the code from the rules too), and where --describe's
 # JSON is read and written back; the check itself must reject a read anywhere else (also one
 # through a pointer to the member), and pass the networks of the file.
 add_test(NAME launch.described_networks_are_read_in_one_place
-         COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DDIR=libs/launch,tools/launch
-                 -DFILES=libs/launch/src/check_networks.cpp,libs/launch/src/describe_read.cpp,libs/launch/src/reported_networks.cpp
+         COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DDIR=libs/config,libs/launch,tools/launch
+                 -DFILES=libs/config/src/check_networks.cpp,libs/config/src/describe_read.cpp,libs/launch/src/reported_networks.cpp
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckDescribedNetworks.cmake)
 add_test(NAME launch.described_networks_check_rejects_a_direct_read
          COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/network_fixtures/direct -DDIR=launch
@@ -58,54 +58,47 @@ set_tests_properties(launch.described_networks_check_rejects_a_direct_read PROPE
                      PASS_REGULAR_EXPRESSION "launch/src/rules\\.cpp: if \\(\\(result\\.ecu->description\\.\\*\\(&EcuDescription::networks\\)\\)\\.empty\\(\\)\\)[^:]*launch/src/rules\\.cpp: for \\(const auto& network : result\\.ecu->description\\.networks\\)"
                      FAIL_REGULAR_EXPRESSION "check_networks\\.cpp: |config\\.networks")
 
-# The files of the launcher that make up its pure layer (the configuration, the checks and the
-# scenario) include no SIL Kit header, no process header, no run, events, time-command or
+# The files of the launcher that make up its pure layer (the scenario and the outputs; the
+# configuration and its check are in libs/config, guarded by config.includes_no_runtime) include no
+# SIL Kit header, no process header, no run, events, time-command or
 # stop-request header (the run's controls are a run header),
 # no probe.hpp (what looks at the computer),
 # directly or through the headers they include (the private ones of libs/launch/src too). Add a
 # file to the list when it no longer includes them. The check itself must reject a fixture that
 # reaches them, and name the chain.
 set(_launch_pure_files
-    libs/launch/src/yaml_reader.hpp libs/launch/src/yaml_tree.hpp libs/launch/src/check_rules.cpp
-    libs/launch/src/config.cpp libs/launch/src/connect.cpp libs/launch/src/check_connect.cpp
     libs/launch/src/scenario_csv.cpp libs/launch/src/scenario_csv.hpp
-    libs/launch/src/time_plan.cpp libs/launch/include/vehicle_sil/launch/time_plan.hpp
     libs/launch/src/timeline.cpp libs/launch/include/vehicle_sil/launch/timeline_format.hpp
-    libs/launch/include/vehicle_sil/launch/check.hpp libs/launch/include/vehicle_sil/launch/connections.hpp
-    libs/launch/src/describe_read.cpp libs/launch/src/seen_ecu.cpp libs/launch/src/seen_ecu.hpp
-    libs/launch/src/check_words.hpp libs/launch/src/scenario.cpp libs/launch/src/scenario_reader.hpp
+    libs/launch/include/vehicle_sil/launch/connections.hpp
+    libs/launch/src/scenario.cpp libs/launch/src/scenario_reader.hpp
     libs/launch/src/scenario_values.cpp libs/launch/src/scenario_waves.cpp libs/launch/src/scenario_inputs.cpp
     libs/launch/src/scenario_shapes.cpp libs/launch/src/scenario_shapes.hpp libs/launch/src/scenario_line.cpp
     libs/launch/src/scenario_line.hpp libs/launch/src/scenario_run.cpp libs/launch/src/scenario_failure.cpp
-    libs/launch/src/scenario_failure.hpp libs/launch/include/vehicle_sil/launch/config.hpp
+    libs/launch/src/scenario_failure.hpp
     libs/launch/include/vehicle_sil/launch/scenario.hpp libs/launch/include/vehicle_sil/launch/scenario_run.hpp
-    libs/launch/include/vehicle_sil/launch/timeline.hpp libs/launch/include/vehicle_sil/launch/connect.hpp
+    libs/launch/include/vehicle_sil/launch/timeline.hpp
     libs/launch/include/vehicle_sil/launch/traffic.hpp libs/launch/include/vehicle_sil/launch/command.hpp
-    libs/launch/src/check_format.hpp libs/launch/src/check_format.cpp libs/launch/src/check_networks.cpp
+    libs/launch/src/check_format.hpp libs/launch/src/check_format.cpp
     libs/launch/src/timeline_format.cpp
     libs/launch/src/control_rules.cpp libs/launch/include/vehicle_sil/launch/control_rules.hpp
     libs/launch/src/request.cpp libs/launch/include/vehicle_sil/launch/request.hpp
     libs/launch/src/request_read.cpp libs/launch/include/vehicle_sil/launch/scenario_check.hpp
     libs/launch/include/vehicle_sil/launch/checked.hpp libs/launch/src/scenario_check.cpp
-    libs/launch/src/check_report.cpp libs/launch/src/reported_networks.cpp
+    libs/launch/src/reported_networks.cpp
     libs/launch/src/command_input.cpp libs/launch/include/vehicle_sil/launch/command_input.hpp)
 list(JOIN _launch_pure_files "," _launch_pure_files_arg)
 add_test(NAME launch.pure_files_include_no_runtime
          COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DFILES=${_launch_pure_files_arg}
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
-# The configuration's check and the files that read the configuration do not reach the scenario
+# The files that read the configuration do not reach the scenario
 # (vehicle_sil/launch/scenario*.hpp): the scenario depends on the configuration, not the other way
-# round. check.hpp is one of them; the scenario's result of a check is scenario_check.hpp.
+# round. The configuration's check itself (vehicle_sil/config/check.hpp) is in libs/config, which
+# includes nothing of vehicle_sil/launch/; the scenario's result of a check is scenario_check.hpp.
 # check.cpp (check_file(), the use case) and the outputs (check_format.*, reported_networks.cpp),
 # which take the scenario of --scenario too, are not listed.
 set(_launch_config_files
-    libs/launch/include/vehicle_sil/launch/check.hpp libs/launch/include/vehicle_sil/launch/config.hpp
-    libs/launch/include/vehicle_sil/launch/connect.hpp libs/launch/include/vehicle_sil/launch/time_plan.hpp
     libs/launch/include/vehicle_sil/launch/connections.hpp libs/launch/include/vehicle_sil/launch/request.hpp
-    libs/launch/src/request.cpp libs/launch/src/request_read.cpp libs/launch/src/check_rules.cpp libs/launch/src/config.cpp libs/launch/src/connect.cpp
-    libs/launch/src/check_connect.cpp libs/launch/src/describe_read.cpp libs/launch/src/seen_ecu.cpp
-    libs/launch/src/seen_ecu.hpp libs/launch/src/time_plan.cpp libs/launch/src/check_words.hpp
-    libs/launch/src/check_report.cpp libs/launch/src/check_networks.cpp)
+    libs/launch/src/request.cpp libs/launch/src/request_read.cpp)
 list(JOIN _launch_config_files "," _launch_config_files_arg)
 add_test(NAME launch.config_files_do_not_reach_the_scenario
          COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DFILES=${_launch_config_files_arg}

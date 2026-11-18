@@ -3,7 +3,7 @@
 // The configuration's side of a check's result: the counts of a CheckReport and the order of its
 // findings, and which of a request's --connect counts for a configuration (connect_for_config()).
 // Pure. check_file() (check.cpp) makes the report.
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 
 #include <algorithm>
 #include <span>

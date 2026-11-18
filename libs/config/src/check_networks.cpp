@@ -8,7 +8,7 @@
 // write_reported_networks() (reported_networks.cpp) writes what the executable said, as it said it.
 // tests/launch has a check (launch.described_networks_are_read_in_one_place) that no other source
 // of the launcher reads them.
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 
 #include <algorithm>
 #include <string>

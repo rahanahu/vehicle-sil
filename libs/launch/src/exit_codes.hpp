@@ -5,7 +5,7 @@
 // and `connections` (ConnectionsReport). Pure functions.
 #pragma once
 
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/connections.hpp"
 #include "vehicle_sil/launch/run.hpp"
 #include "vehicle_sil/launch/test.hpp"

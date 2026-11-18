@@ -1,4 +1,5 @@
-# Checks that the listed files (FILES, relative to ROOT) include none of the headers a layer
+# Checks that the listed files (FILES, relative to ROOT; DIR: every header and source under a
+# directory of ROOT, in place of or in addition to FILES) include none of the headers a layer
 # must not depend on, directly or through the headers they include: a SIL Kit header (silkit/...,
 # also any *_silkit/ library), vehicle_sil/core/participant_runtime.hpp,
 # vehicle_sil/core/participant_configuration.hpp (its definitions link SIL Kit; the loopback test is
@@ -10,7 +11,7 @@
 # directories) and the "..." includes of a header in the same directory as the including file (the
 # private headers of libs/launch/src). A failure names the listed file and the chain of includes
 # to the forbidden header; to fix it, move what the file needs out of that header, or take the file
-# off the list if it is meant to depend on it. The check reads the text: an include inside #if 0 or
+# off the list (or put it in another directory) if it is meant to depend on it. The check reads the text: an include inside #if 0 or
 # a comment counts, which errs on the safe side.
 # FORBIDDEN_PREFIXES (optional, comma separated): more headers that the listed files must not
 # reach, each as the start of the path they are included by (vehicle_sil/launch/scenario matches
@@ -18,13 +19,30 @@
 # private header included as "..." without a directory matches by its name and the last part of
 # the prefix ("scenario_csv.hpp" matches vehicle_sil/launch/scenario): the private headers of a
 # layer are named as its public ones.
-# Usage: cmake -DROOT=<directory> -DFILES=<file>[,<file>...] [-DFORBIDDEN_PREFIXES=<prefix>[,<prefix>...]]
-#        -P VehicleSilCheckIncludes.cmake
+# A prefix that ends with "/" names a directory of headers (vehicle_sil/launch/ matches every
+# header of the launcher's library).
+# Usage: cmake -DROOT=<directory> (-DFILES=<file>[,<file>...] | -DDIR=<directory>[,<directory>...])
+#        [-DFORBIDDEN_PREFIXES=<prefix>[,<prefix>...]] -P VehicleSilCheckIncludes.cmake
 cmake_minimum_required(VERSION 3.21)
-if(NOT DEFINED ROOT OR NOT DEFINED FILES)
-  message(FATAL_ERROR "VehicleSilCheckIncludes.cmake: ROOT and FILES are required")
+if(NOT DEFINED ROOT OR (NOT DEFINED FILES AND NOT DEFINED DIR))
+  message(FATAL_ERROR "VehicleSilCheckIncludes.cmake: ROOT and FILES or DIR are required")
 endif()
-string(REPLACE "," ";" FILES "${FILES}")
+if(DEFINED FILES)
+  string(REPLACE "," ";" FILES "${FILES}")
+else()
+  set(FILES "")
+endif()
+if(DEFINED DIR)
+  string(REPLACE "," ";" dirs "${DIR}")
+  foreach(dir IN LISTS dirs)
+    file(GLOB_RECURSE found RELATIVE "${ROOT}" "${ROOT}/${dir}/*.hpp" "${ROOT}/${dir}/*.h" "${ROOT}/${dir}/*.cpp")
+    if(NOT found)
+      message(FATAL_ERROR "VehicleSilCheckIncludes.cmake: no sources under ${ROOT}/${dir} (renamed or moved? "
+                          "update DIR)")
+    endif()
+    list(APPEND FILES ${found})
+  endforeach()
+endif()
 
 # Where a vehicle_sil/... include is found: every include directory of the project.
 get_filename_component(project "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
@@ -116,6 +134,6 @@ if(bad)
   message(FATAL_ERROR "Files that include a header their layer must not depend on (file: include chain to the "
                       "forbidden header):\n  ${text}\n"
                       "Move what the file needs out of that header into one without the dependency, or take the file "
-                      "off the list in tests/launch/CMakeLists.txt if it is meant to depend on it.")
+                      "off the list (or out of the directory) in the CMakeLists.txt of its tests if it is meant to depend on it.")
 endif()
 message(STATUS "${checked} files, no forbidden include (directly or through the headers they include)")

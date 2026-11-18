@@ -4,7 +4,7 @@
 // events of run --events. Internal.
 #pragma once
 
-#include "check_words.hpp"
+#include "vehicle_sil/config/detail/check_words.hpp"
 #include "run_context.hpp"
 
 #include "vehicle_sil/launch/run_detail.hpp"

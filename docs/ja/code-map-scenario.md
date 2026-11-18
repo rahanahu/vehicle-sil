@@ -41,7 +41,7 @@
 
 設定ファイルの `variants` と `params`、`--variant`、`--param`、シナリオの `params`・`${name}`・`only` です。`absent: true` の変数や、機種が無効にした participant の変数を使う手順のスキップも含みます。
 
-変える場所（設定ファイルの側。`libs/launch/src/config.cpp`）:
+変える場所（設定ファイルの側。`libs/config/src/config.cpp`）:
 
 - `read_variants()`
 - `kVariantKeys`、`kVariantParticipantKeys`（機種で変えられるキーの一覧）
@@ -49,7 +49,7 @@
 
 変える場所（シナリオの側とその周り）:
 
-- `params` の読み方: `yaml_reader.hpp` の `read_params()`
+- `params` の読み方: `libs/config/include/vehicle_sil/config/detail/yaml_reader.hpp` の `read_params()`
 - `scenario.cpp` の `take_params()`、`resolve_params()`、`read_only()`、`skip()`
 - 渡すコード: `check.cpp` の `ScenarioContext`
 - スキップするコード: `scenario_run.cpp` の `issue_step()`（`StepStatus::Skipped`）

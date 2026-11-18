@@ -9,7 +9,7 @@
 #include "vehicle_sil/can/host.hpp"
 #include "vehicle_sil/can/virtual_can_bus.hpp"
 #include "vehicle_sil/j1939/network.hpp"
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 
 #include <cstdint>
 #include <cstdio>

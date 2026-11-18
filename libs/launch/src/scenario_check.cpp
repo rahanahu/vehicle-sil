@@ -3,7 +3,7 @@
 // scenario_catalog(): the participants of a checked configuration as a scenario can use them.
 #include "vehicle_sil/launch/scenario_check.hpp"
 
-#include "seen_ecu.hpp"
+#include "vehicle_sil/config/detail/seen_ecu.hpp"
 
 #include <memory>
 #include <utility>

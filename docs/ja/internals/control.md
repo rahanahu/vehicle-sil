@@ -414,7 +414,7 @@ Peer ごとの状態は Sent → Queued（Agent が積んだ）→ Applied、Lat
 
 - `VariableMapping` のメンバー
 - `MappedSchema::make()` と変換
-- 設定ファイルを読む所（`libs/launch/src/config.cpp` の `kVariableMapKeys` と `read_variable()`）
+- 設定ファイルを読む所（`libs/config/src/config.cpp` の `kVariableMapKeys` と `read_variable()`）
 - `check --json` の `variable_map`（`check_format.cpp`）
 
 ### 覚えておく操作

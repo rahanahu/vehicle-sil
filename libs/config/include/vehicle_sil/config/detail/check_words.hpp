@@ -9,7 +9,7 @@
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/j1939/types.hpp"
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/config.hpp"
 
 #include <cstdint>
 #include <cstdio>

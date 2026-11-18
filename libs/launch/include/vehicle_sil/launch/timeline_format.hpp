@@ -6,7 +6,7 @@
 // schema/timeline.schema.json.
 #pragma once
 
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/config.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
 #include "vehicle_sil/launch/timeline.hpp"
 

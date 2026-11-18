@@ -3,12 +3,12 @@
 // The step of the launcher's controller (plan_time_step()) and the warning about a step that is
 // coarser than the ECUs' (coarse_time_step()); the time lock of a run that is connected outside
 // the simulation (time_lock(), planned_speed(), time_lock_findings()). See time_plan.hpp.
-#include "vehicle_sil/launch/time_plan.hpp"
+#include "vehicle_sil/config/time_plan.hpp"
 
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 
-#include "check_words.hpp"
-#include "seen_ecu.hpp"
+#include "vehicle_sil/config/detail/check_words.hpp"
+#include "vehicle_sil/config/detail/seen_ecu.hpp"
 
 #include <algorithm>
 #include <chrono>

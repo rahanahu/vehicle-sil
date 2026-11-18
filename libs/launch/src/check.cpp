@@ -8,12 +8,12 @@
 // check_report.cpp.
 #include "exit_codes.hpp"
 
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/launch/request.hpp"
-#include "vehicle_sil/launch/time_plan.hpp"
-#include "seen_ecu.hpp"
+#include "vehicle_sil/config/time_plan.hpp"
+#include "vehicle_sil/config/detail/seen_ecu.hpp"
 
 #include "vehicle_sil/core/registry_uri.hpp"
 #include "vehicle_sil/process/paths.hpp"

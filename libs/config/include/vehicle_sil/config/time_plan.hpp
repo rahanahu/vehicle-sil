@@ -7,8 +7,8 @@
 // request and what the check found: no state, no thread, no lock.
 #pragma once
 
-#include "vehicle_sil/launch/config.hpp"
-#include "vehicle_sil/launch/connect.hpp"
+#include "vehicle_sil/config/config.hpp"
+#include "vehicle_sil/config/connect.hpp"
 
 #include <cstdint>
 #include <optional>

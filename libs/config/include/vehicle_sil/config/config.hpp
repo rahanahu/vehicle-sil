@@ -481,7 +481,7 @@ struct ConfigRead
 /// required participant among the enabled ones).
 [[nodiscard]] ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides = {});
 
-/// An error if `path` (resolve_executable() in probe.hpp), where the file system has `status`, is
+/// An error if `path` (resolve_executable() in the launcher's launch/probe.hpp), where the file system has `status`, is
 /// not an executable file of `participant`: missing (with a hint for PATH and for arguments in one
 /// text), a directory, a batch file (.bat, .cmd), or (POSIX) without an execute permission.
 [[nodiscard]] std::optional<Finding> executable_finding(const ParticipantConfig& participant,

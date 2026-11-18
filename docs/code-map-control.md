@@ -143,7 +143,7 @@ Where to change:
 
 | What | Location |
 |---|---|
-| The code that reads it | `read_variables()` in `libs/launch/src/config.cpp` |
+| The code that reads it | `read_variables()` in `libs/config/src/config.cpp` |
 | Rules and conversion | `MappedSchema` in `libs/control/src/variable_map.cpp` |
 | Where the conversion is applied | `control::Hub` (`set_variable_map()`) |
 | Where it is passed to the Hub | `RunControl::shared_hub()` in `libs/launch/src/run_control.cpp` |
@@ -291,13 +291,13 @@ Where to change:
 
 Rules:
 
-- Both sides write `kVersion` and read only `kVersion`. A hello of another version is reported (its participant name is read) and makes no peer; any other message of another version is dropped. `vehicle_sil_launch` compares what `--describe` announces with `kVersion` (`libs/launch/src/check_rules.cpp`, `run_control.cpp`), and `control_version_fix()` in `libs/launch/src/check_words.hpp` says which side to build again.
+- Both sides write `kVersion` and read only `kVersion`. A hello of another version is reported (its participant name is read) and makes no peer; any other message of another version is dropped. `vehicle_sil_launch` compares what `--describe` announces with `kVersion` (`libs/config/src/check_rules.cpp`, `run_control.cpp`), and `control_version_fix()` in `libs/launch/src/check_words.hpp` says which side to build again.
 - Which writes of a command took effect, and which write a refusal is about, travel as numbers (`CommandResult::applied_writes`, `SubmitResult::failed_write`, and the Hub's `TargetResult` with the same two names). Do not read a `reason` for them (see "[Control Server core (`vehicle_sil::control::Hub`)](internals/control.md#control-server-core-vehicle_silcontrolhub)" in [internals/control.md](internals/control.md)).
 - To add a field, put it at the end of its element (a variable, write, result or event), or at the end of the message if it belongs to the message. Raise `kRevision` in `control/wire.hpp` by one, and read the field only from a writer of that revision or later. The decoder of an older build skips it.
 - A change that a reader must not skip (a field moved or removed, a new enumerator sent to a reader that does not know it) needs a new version. Raise `kVersion`: ECUs and launchers of different versions then cannot read and write variables together (the check says `control-link-version`).
 - `result_bytes()` and `event_bytes()` must return exactly what `write_result()` and `write_event()` write. `encode_step()` splits by them, so a value that is too small makes a message larger than its limit.
 - `kLeast` is the smallest size of each element. The decoder checks a count against it before it reads anything. Update it when an element gets a field.
-- `--describe` announces `kRevision` as `control.wire_revision`, and the check notes an ECU of an older revision (`control-link-revision` in `libs/launch/src/check_rules.cpp`). When you raise `kRevision`, say in that note what the older revision is missing.
+- `--describe` announces `kRevision` as `control.wire_revision`, and the check notes an ECU of an older revision (`control-link-revision` in `libs/config/src/check_rules.cpp`). When you raise `kRevision`, say in that note what the older revision is missing.
 - The availability (revision 1) is the last part of a step message, behind the values, and is read by its flag (`kStepAvailability`), never by the bytes left. `AgentTransport` reads `Agent::availability()` in its step sink: the states have no other way to the transport thread, and need none.
 - If you only add a kind that the other side can safely ignore, raise neither the version nor the revision. Unknown kinds are discarded (`Kind::LastWordReceived`, the reply to the last word, is an example).
 - Never change the eight bytes of the header, the participant name right after the header of a hello, or the session right after the header of every other message, in any version. This lets a peer with a different version read the name, and lets an ECU see whom a message is for.
@@ -346,7 +346,7 @@ The code that handles `control` of `--describe`:
 
 - The code that prints it: `libs/ecu/src/describe.cpp`
 - The code that adds it: `ecu_main`
-- The code that reads it: `libs/launch/src/describe_read.cpp`
+- The code that reads it: `libs/config/src/describe_read.cpp`
 
 Rules:
 

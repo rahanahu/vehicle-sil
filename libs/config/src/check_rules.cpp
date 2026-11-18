@@ -3,10 +3,10 @@
 // The rules of the check: what a run of --describe means (interpret_describe()) and the comparison
 // of the descriptions with the configuration (check_participants()): each participant against
 // its entry, then each network by its kind. Pure functions.
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 
-#include "check_words.hpp"
-#include "seen_ecu.hpp"
+#include "vehicle_sil/config/detail/check_words.hpp"
+#include "vehicle_sil/config/detail/seen_ecu.hpp"
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/core/registry_uri.hpp"
 #include "vehicle_sil/json/json_writer.hpp"

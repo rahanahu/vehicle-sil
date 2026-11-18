@@ -10,7 +10,7 @@
 #include "vehicle_sil/control/variable_map.hpp"
 #include "vehicle_sil/control/agent.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/config.hpp"
 
 #include <cstddef>
 #include <cstdint>

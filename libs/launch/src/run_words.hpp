@@ -7,7 +7,7 @@
 #include "vehicle_sil/launch/run_outcome.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 
-#include "check_words.hpp"
+#include "vehicle_sil/config/detail/check_words.hpp"
 
 #include <cstdint>
 #include <cstdio>

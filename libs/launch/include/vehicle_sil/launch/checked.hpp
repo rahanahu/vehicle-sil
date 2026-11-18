@@ -6,7 +6,7 @@
 // Checked; docs/simulation-check.md. Internal.
 #pragma once
 
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/scenario_check.hpp"
 
 #include <functional>

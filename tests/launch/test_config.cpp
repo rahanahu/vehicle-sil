@@ -6,7 +6,7 @@
 // executable_finding()); the placeholders; "did you mean".
 #include "launch_test_util.hpp"
 
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/config.hpp"
 #include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 
