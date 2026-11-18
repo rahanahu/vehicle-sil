@@ -15,7 +15,7 @@ import {
 } from './support/variables-page';
 
 const FEATURES =
-  'events,stdin-commands,request,stdin-run-until,state,check-variables,speed,start-paused,time-commands,control-links,scenario,' +
+  'events,stdin-commands,request,stdin-run-until,state,check-variables,speed,start-paused,manual-participants,time-commands,control-links,scenario,' +
   'control-server,scenario-control';
 const shots = process.env['VEHICLE_SIL_GUI_SHOTS'];
 

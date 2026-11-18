@@ -15,7 +15,7 @@ from vehicle_sil_gui.server import CSP
 from vehicle_sil_gui.timelines import KEPT, Timelines, api_path, find_page_dir, written_whole
 
 PASS, FAIL = "scenarios/throttle.yaml", "scenarios/fails.yaml"
-WITHOUT_TIMELINE = "events,stdin-commands,request,check-variables,speed,start-paused,time-commands,stdin-run-until,state,control-links,scenario"
+WITHOUT_TIMELINE = "events,stdin-commands,request,check-variables,speed,start-paused,time-commands,stdin-run-until,state,control-links,scenario,manual-participants"
 
 
 def is_hello_event(m: dict) -> bool:

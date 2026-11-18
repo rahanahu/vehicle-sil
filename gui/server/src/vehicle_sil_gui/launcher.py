@@ -20,9 +20,11 @@ ENV_VARIABLE = "VEHICLE_SIL_LAUNCH"
 # `request`: run --request and check --request read the run's intent from a file (schema/run-request.schema.json), which
 # is how this server gives the launcher everything that the browser chose. `time-commands`, `stdin-run-until` and
 # `state`: the time commands (with their `id`) that the server writes to the launcher's input, and the `state` event
-# that says what it accepts now. Every launcher of the same version has all of them, so the server does not ask per
-# run; a launcher without one is refused when the server starts (and when the launcher is replaced).
-REQUIRED_FEATURES = ("events", "stdin-commands", "request", "time-commands", "stdin-run-until", "state")
+# that says what it accepts now. `speed` and `start-paused`: the run's speed and its start paused; `scenario` and
+# `manual-participants`: the scenario runs and the manual participants.
+# Every launcher of the same version has all of them, so the server does not ask per run; a launcher without one is refused when the server starts (and when the launcher is replaced).
+REQUIRED_FEATURES = ("events", "stdin-commands", "request", "time-commands", "stdin-run-until", "state",
+                     "speed", "start-paused", "scenario", "manual-participants")
 VERSION_TIMEOUT_S = 10
 # The words of vehicle_sil_launch that this server uses, in one place ("Running at a set speed (`speed`)" in docs/simulation-run.md,
 # and docs/simulation-events.md): the range of a speed (the same for speed and the speed command), the most milliseconds

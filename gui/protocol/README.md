@@ -229,7 +229,7 @@ The codes that screens look at. The names do not change (new ones may be added).
 
 - `api/check` and `api/run` take the same fields: `file`, `$schema`, `vehicle_sil_run_request`, `scenario`, `variant`, `params`, `disable`, `enable`, `manual`, `strict`, `connect`, `time_policy`, `speed` and `start_paused`. `api/connections` takes `file` and `network`. Any other field (a misspelled one, or a key of the launcher's side) and any `null` give 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
 - Fields covered by `invalid-field`: `speed`, `start_paused`, `variant`, `params`, `enable`, `strict`, `connect`, `time_policy`, `network`, `force`, `disable`, `manual` (also the same name twice), `command`, `ms` and `value` of `api/time`, `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
-- Case of `unsupported`: `api/write` sent when the launcher lacks `control-server`. (The server requires `time-commands`, `stdin-run-until` and `state` when it starts, so `api/time` has no such case.)
+- Case of `unsupported`: `api/write` sent when the launcher lacks `control-server`. (The server requires `time-commands`, `stdin-run-until`, `state`, `speed`, `start-paused`, `scenario` and `manual-participants` when it starts, so `api/time` has no such case.)
 
 The example files. The GUI server's tests check the other codes.
 
