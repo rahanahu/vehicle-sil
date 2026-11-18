@@ -905,19 +905,27 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
     return out;
 }
 
-/// The file and the options both commands share.
-struct Common
+/// Refuses the first rule of the request that its fields so far break (launch::validate_request()).
+/// Called where the arguments are read in the order the user's mistakes are reported in: a rule
+/// whose fields are not read yet does not fire.
+void require_valid(const launch::RunRequest& request, launch::RequestCommand command)
 {
-    std::string file;
-    launch::CheckOptions options;
-};
+    const std::vector<launch::Finding> findings = launch::validate_request(request, command);
+    if (!findings.empty())
+    {
+        throw cli::UsageError(findings.front().message);
+    }
+}
 
-Common common(const cli::Args& args, const std::string& command)
+/// What check, run and test share: the configuration file and the arguments that say what to run.
+launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand command)
 {
+    const bool isTest = command == launch::RequestCommand::Test;
+    const std::string name = isTest ? "test" : command == launch::RequestCommand::Run ? "run" : "check";
     const auto& positionals = args.positionals();
     if (positionals.size() != 2)
     {
-        if (command == "test")
+        if (isTest)
         {
             throw cli::UsageError(positionals.size() < 2
                                       ? "test needs the configuration file: vehicle_sil_launch test <file> --scenarios <directory "
@@ -927,23 +935,25 @@ Common common(const cli::Args& args, const std::string& command)
                                             ": the scenarios come after --scenarios");
         }
         throw cli::UsageError(positionals.size() < 2
-                                  ? command + " needs the configuration file: vehicle_sil_launch " + command + " <file>"
-                                  : command + " takes one file, not " + std::to_string(positionals.size() - 1));
+                                  ? name + " needs the configuration file: vehicle_sil_launch " + name + " <file>"
+                                  : name + " takes one file, not " + std::to_string(positionals.size() - 1));
     }
-    Common c;
-    c.options.describe_timeout = args.millis("describe-timeout-ms", c.options.describe_timeout);
-    if (c.options.describe_timeout.count() == 0)
+    launch::RunRequest request;
+    launch::RunIntent& intent = request.intent;
+    launch::RunHost& host = request.host;
+    host.describe_timeout = args.millis("describe-timeout-ms", host.describe_timeout);
+    if (host.describe_timeout.count() == 0)
     {
         throw cli::UsageError("--describe-timeout-ms must be at least 1");
     }
-    c.options.strict = args.flag("strict");
-    c.options.overrides.disable = args.all("disable");
-    c.options.overrides.enable = args.all("enable");
-    c.options.overrides.manual = args.all("manual");
-    if (args.has("variant") && command != "test") // test: each of its --variant, in test()
+    intent.strict = args.flag("strict");
+    intent.disable = args.all("disable");
+    intent.enable = args.all("enable");
+    intent.manual = args.all("manual");
+    if (args.has("variant") && !isTest) // test: each of its --variant, in test()
     {
-        c.options.overrides.variant = args.str("variant", "");
-        if (c.options.overrides.variant->empty())
+        intent.variant = args.str("variant", "");
+        if (intent.variant->empty())
         {
             throw cli::UsageError("--variant needs the name of a variant of the file");
         }
@@ -961,7 +971,7 @@ Common common(const cli::Args& args, const std::string& command)
                                   "${<name>}: letters, digits and _), e.g. --param idle_rpm=650");
         }
         param.text = given.substr(equals + 1);
-        for (const launch::ParamValue& before : c.options.params)
+        for (const launch::ParamValue& before : intent.params)
         {
             if (before.name == param.name)
             {
@@ -969,34 +979,36 @@ Common common(const cli::Args& args, const std::string& command)
                                       "): give each parameter one value");
             }
         }
-        c.options.params.push_back(std::move(param));
+        intent.params.push_back(std::move(param));
     }
-    if (!c.options.params.empty() && !args.has("scenario") && command != "test")
+    // Given, not yet checked for a value: its error comes after the ones of --connect and --time-policy.
+    if (args.has("scenario"))
     {
-        throw cli::UsageError("--param sets a parameter of a scenario: give --scenario <file> too, or leave --param out");
+        intent.scenario = args.str("scenario", "");
     }
+    require_valid(request, command);
     for (const std::string& given : args.all("connect"))
     {
-        std::optional<launch::ConnectRequest> request = launch::parse_connect(given);
-        if (!request)
+        std::optional<launch::ConnectRequest> connect = launch::parse_connect(given);
+        if (!connect)
         {
             throw cli::UsageError("--connect " + given +
                                   ": write --connect <network>=<target>, the network as the file names it, e.g. --connect "
                                   "\"ETH_EXT=vEthernet (A)\" (none as the target: SIL Kit only)");
         }
-        for (const launch::ConnectRequest& before : c.options.connect)
+        for (const launch::ConnectRequest& before : intent.connect)
         {
-            if (before.network == request->network)
+            if (before.network == connect->network)
             {
-                throw cli::UsageError("--connect " + request->network + " is given twice (" + before.target + " and " +
-                                      request->target + "): connect each network once");
+                throw cli::UsageError("--connect " + connect->network + " is given twice (" + before.target + " and " +
+                                      connect->target + "): connect each network once");
             }
         }
-        c.options.connect.push_back(std::move(*request));
+        intent.connect.push_back(std::move(*connect));
     }
-    if (!c.options.connect.empty())
+    if (!intent.connect.empty())
     {
-        c.options.tool_directory = process::current_executable().parent_path();
+        host.tool_directory = process::current_executable().parent_path();
     }
     if (args.has("time-policy"))
     {
@@ -1007,19 +1019,17 @@ Common common(const cli::Args& args, const std::string& command)
                                   "speed 1; the default) or free (its speed and time can be changed), not '" +
                                   args.str("time-policy", "") + "'");
         }
-        c.options.time_policy = *policy;
+        intent.time_policy = *policy;
     }
-    if (args.has("scenario"))
+    if (intent.scenario)
     {
-        c.options.scenario_shown = args.str("scenario", "");
-        if (c.options.scenario_shown.empty())
+        if (intent.scenario->empty())
         {
             throw cli::UsageError("--scenario needs a scenario file");
         }
-        c.options.scenario = process::path_from_utf8(c.options.scenario_shown);
     }
-    c.file = positionals[1];
-    return c;
+    host.config = positionals[1];
+    return request;
 }
 
 int check(const cli::Args& args)
@@ -1033,11 +1043,13 @@ int check(const cli::Args& args)
             throw cli::UsageError("--" + std::string(runOnly) + " is for run: check starts no participant");
         }
     }
-    const Common c = common(args, "check");
-    const launch::CheckReport report = launch::check_file(process::path_from_utf8(c.file), c.file, c.options);
+    const launch::RunRequest request = read_request(args, launch::RequestCommand::Check);
+    const std::string& file = request.host.config;
+    const launch::CheckReport report =
+        launch::check_file(process::path_from_utf8(file), file, launch::check_options_of(request));
     if (report.usage)
     {
-        return usage_error(report.findings, args.flag("json"), Command::Check, c.file, nullptr, report.variants);
+        return usage_error(report.findings, args.flag("json"), Command::Check, file, nullptr, report.variants);
     }
     const int code = !report.config ? cli::kExitSetupFailed : report.passed() ? cli::kExitOk : cli::kExitFailed;
     return write_or_fail(args.flag("json") ? launch::format_json(report) : launch::format_text(report), code);
@@ -1079,7 +1091,9 @@ int connections(const cli::Args& args)
 
 int run(const cli::Args& args, launch::EventStream* events)
 {
-    const Common c = common(args, "run");
+    launch::RunRequest request = read_request(args, launch::RequestCommand::Run);
+    launch::RunHost& host = request.host;
+    const std::string& file = host.config;
     if (args.has("log-dir") && args.str("log-dir", "").empty())
     {
         throw cli::UsageError("--log-dir needs a directory");
@@ -1101,30 +1115,23 @@ int run(const cli::Args& args, launch::EventStream* events)
                                   std::to_string(kMaxEventsStallMs));
         }
     }
-    launch::RunOptions options;
-    options.check = c.options;
     if (args.has("log-dir"))
     {
-        options.log_dir = process::path_from_utf8(args.str("log-dir", ""));
+        host.log_dir = process::path_from_utf8(args.str("log-dir", ""));
     }
     if (args.has("timeline"))
     {
-        options.timeline_shown = args.str("timeline", "");
-        if (options.timeline_shown.empty())
+        host.timeline = args.str("timeline", "");
+        if (host.timeline.empty())
         {
             throw cli::UsageError("--timeline needs a file to write: --timeline <file>.json");
         }
-        if (!args.has("scenario"))
-        {
-            throw cli::UsageError("--timeline writes what a scenario did over the time: give --scenario <file> too, or leave "
-                                  "--timeline out");
-        }
-        options.timeline = process::path_from_utf8(options.timeline_shown);
+        require_valid(request, launch::RequestCommand::Run);
     }
     if (args.has("timeout-ms"))
     {
-        options.timeout = args.millis("timeout-ms", std::chrono::milliseconds(0));
-        if (options.timeout->count() == 0)
+        host.timeout = args.millis("timeout-ms", std::chrono::milliseconds(0));
+        if (host.timeout->count() == 0)
         {
             throw cli::UsageError("--timeout-ms must be at least 1");
         }
@@ -1138,7 +1145,7 @@ int run(const cli::Args& args, launch::EventStream* events)
                                   "1000000 (1: real time, 2: twice as fast) or max (as fast as possible), not '" +
                                   args.str("speed", "") + "'");
         }
-        options.speed.emplace(speed); // also an empty one: "max" replaces the file's speed
+        request.intent.speed.emplace(speed); // also an empty one: "max" replaces the file's speed
     }
     const bool control = args.has("control");
     for (const char* option : {"control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"})
@@ -1156,23 +1163,11 @@ int run(const cli::Args& args, launch::EventStream* events)
                               "version --json` lists control-server in its features when it has it (docs/control-api.md)");
     }
 #endif
-    if (args.has("scenario") && args.flag("start-paused"))
-    {
-        // Also with --control: its clients cannot move the time during a scenario, so they could
-        // not end the hold.
-        throw cli::UsageError("--scenario cannot be used with --start-paused: the scenario writes its values for 0 "
-                              "before the first step and runs by itself; pause and step it with --stdin-commands if "
-                              "needed");
-    }
-    if (args.flag("start-paused"))
-    {
-        if (!args.flag("stdin-commands") && !control)
-        {
-            throw cli::UsageError("--start-paused needs --stdin-commands or --control: without commands nothing could make "
-                                  "the simulation go on (resume, step)");
-        }
-        options.start_paused = true;
-    }
+    host.control = control;
+    host.stdin_commands = args.flag("stdin-commands");
+    request.intent.start_paused = args.flag("start-paused");
+    require_valid(request, launch::RequestCommand::Run);
+    launch::RunOptions options = launch::run_options_of(request);
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
     // The control server serves the run's hub, which the run makes and gives it when run_file()
     // starts it (RunOptions::control_endpoint); the server keeps the hub from then on.
@@ -1216,8 +1211,8 @@ int run(const cli::Args& args, launch::EventStream* events)
                 }
             };
         }
-        shared().controls =
-            new launch::RunControls(g_stops, options.start_paused, std::move(observers), args.has("scenario"));
+        shared().controls = new launch::RunControls(g_stops, options.start_paused, std::move(observers),
+                                                    request.intent.scenario.has_value());
         // The state names the first stop request as the result does.
         shared().controls->set_stop_name(interrupt_name);
         // Without --control nothing can send a write: the state says so.
@@ -1241,12 +1236,12 @@ int run(const cli::Args& args, launch::EventStream* events)
         options.control_endpoint = server.get();
     }
 #endif
-    if (args.flag("stdin-commands"))
+    if (host.stdin_commands)
     {
         start_reading_commands();
     }
     options.interrupt_name = interrupt_name;
-    const launch::RunReport report = launch::run_file(process::path_from_utf8(c.file), c.file, options);
+    const launch::RunReport report = launch::run_file(process::path_from_utf8(file), file, options);
     if (events == nullptr)
     {
         write_stdin_notes(true); // before the result
@@ -1260,7 +1255,7 @@ int run(const cli::Args& args, launch::EventStream* events)
 #endif
     if (report.check.usage)
     {
-        return usage_error(report.check.findings, args.flag("json"), Command::Run, c.file, events, report.check.variants);
+        return usage_error(report.check.findings, args.flag("json"), Command::Run, file, events, report.check.variants);
     }
     const int code = events != nullptr
                          ? finish_events(*events, report, report.exit_code())
@@ -1345,10 +1340,10 @@ int test(const cli::Args& args)
                                   "simulation): to use it, run one scenario with vehicle_sil_launch run --scenario <file>");
         }
     }
-    const Common c = common(args, "test");
+    launch::RunRequest request = read_request(args, launch::RequestCommand::Test);
+    const std::string& file = request.host.config;
     const bool json = args.flag("json");
     launch::TestOptions options;
-    options.run.check = c.options;
     options.variants = args.all("variant");
     for (const std::string& variant : options.variants)
     {
@@ -1360,8 +1355,8 @@ int test(const cli::Args& args)
     options.fail_fast = args.flag("fail-fast");
     if (args.has("timeout-ms"))
     {
-        options.run.timeout = args.millis("timeout-ms", std::chrono::milliseconds(0));
-        if (options.run.timeout->count() == 0)
+        request.host.timeout = args.millis("timeout-ms", std::chrono::milliseconds(0));
+        if (request.host.timeout->count() == 0)
         {
             throw cli::UsageError("--timeout-ms must be at least 1");
         }
@@ -1375,9 +1370,10 @@ int test(const cli::Args& args)
     launch::ScenarioList list = launch::list_scenarios(given);
     if (!list.errors.empty())
     {
-        return usage_error(list.errors, json, Command::Test, c.file, nullptr);
+        return usage_error(list.errors, json, Command::Test, file, nullptr);
     }
     options.scenarios = std::move(list.scenarios);
+    options.run = launch::run_options_of(request);
     // As fast as possible, whatever the file says (at speed 1 with the time lock): a default, not
     // a speed the user asked for, which the check would refuse with the time lock.
     options.run.speed.emplace(std::optional<double>{});
@@ -1386,10 +1382,10 @@ int test(const cli::Args& args)
     options.run.write_line = write_stderr_line;
     options.run.stops = &g_stops;
     options.run.interrupt_name = interrupt_name;
-    const launch::TestReport report = launch::test_file(process::path_from_utf8(c.file), c.file, options);
+    const launch::TestReport report = launch::test_file(process::path_from_utf8(file), file, options);
     if (report.usage)
     {
-        return usage_error(report.findings, json, Command::Test, c.file, nullptr);
+        return usage_error(report.findings, json, Command::Test, file, nullptr);
     }
     const int code = write_or_fail(json ? launch::format_test_json(report) : launch::format_test_text(report), report.exit_code());
     if (report.connection_not_closed)

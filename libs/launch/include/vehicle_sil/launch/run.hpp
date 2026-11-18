@@ -10,6 +10,7 @@
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/run_controls.hpp"
+#include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
 #include "vehicle_sil/launch/stop_requests.hpp"
 #include "vehicle_sil/launch/time_commands.hpp"
@@ -584,6 +585,11 @@ struct RunOptions
     /// With start_paused, the run holds before the first step (TimeCommands::hold_before_start()).
     ControlEndpoint* control_endpoint = nullptr;
 };
+
+/// The options of a run that `request` asks for (check_options_of(), the speed, --start-paused, the
+/// logs, the timeline and the time limit); the rest of RunOptions (the controls, where the lines go,
+/// the server) is the caller's.
+[[nodiscard]] RunOptions run_options_of(const RunRequest& request);
 
 /// Runs the file `path` (shown as `shown_as`): check_file(); if it passed, the simulation; with
 /// CheckOptions::scenario (in `options.check`), the scenario in it (docs/scenario.md; the run then
