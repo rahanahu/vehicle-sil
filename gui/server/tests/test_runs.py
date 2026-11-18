@@ -41,7 +41,8 @@ async def run_to_end(c: Client, body: dict) -> list[dict]:
 
 
 # The features that every launcher of this GUI's version has and that the server requires at its start.
-REQUIRED = "events,stdin-commands,request,time-commands,stdin-run-until,state"
+REQUIRED = ("events,stdin-commands,request,time-commands,stdin-run-until,state,"
+            "speed,start-paused,scenario,manual-participants")
 
 
 def is_time(**fields) -> Callable[[dict], bool]:
@@ -517,7 +518,8 @@ def test_a_killed_server_leaves_no_run(tmp_path: Path) -> None:
     ({"REPLAY_FEATURES": ""}, (), "has no 'events'"),
     *[({"REPLAY_FEATURES": ",".join(f for f in REQUIRED.split(",") if f != missing)}, (),
        f"has no '{missing}' (its features: ")
-      for missing in ("request", "time-commands", "stdin-run-until", "state")],
+      for missing in ("request", "time-commands", "stdin-run-until", "state", "speed", "start-paused", "scenario",
+                 "manual-participants")],
     ({"REPLAY_FEATURES": "events"}, (), "use the vehicle_sil_launch of the same vehicle-sil version"),
     ({}, ("--port", "70000"), "--port"),
     ({}, ("--port", "80"), "--port 80"),
@@ -704,7 +706,7 @@ def test_the_probe_that_changes_the_launcher_is_pushed_to_the_other_screens(tmp_
             # a screen that reads api/session now makes no new number: the other screens already have it
             status, body = await c.get("api/session")
             assert body["allowed"]["rev"] == unusable["rev"]
-            write(REQUIRED + ",speed")  # usable again
+            write(REQUIRED + ",check-variables")  # usable again
             await c.get("api/app")
             got = await other.until(lambda m: m["type"] == "allowed" and m["allowed"]["start"]["ok"])
             assert got[-1]["allowed"]["rev"] > unusable["rev"]
