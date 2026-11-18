@@ -85,7 +85,8 @@ Public headers:
 | `TimeCommands` | `launch/time_commands.hpp` |
 | The rules of the controls: `decide()` (whether the run takes an operation now, by the entry it came in and where the run stands; the table of the rows is in `src/control_rules.cpp`), `allowed()` (the same answer without arguments, with the range of the argument), `always_refused()` (whether an operation is refused for the whole run: a control server's write while a scenario plays), the reason codes `reason::*`. Pure | `launch/control_rules.hpp` |
 | `RunTraffic` (the result's `traffic`) | `launch/traffic.hpp` |
-| `EventStream`, `parse_command()` | `launch/events.hpp` |
+| `RunEvents`, the interface through which the parts of a run tell what happens while it lasts (the registry, the participants, the lines, the findings, the virtual time), with the values they pass (`ParticipantState`, `TimeEvent`). The run's parts include this header and not `events.hpp`: they do not know how the events are written | `launch/run_events.hpp` |
+| `EventStream`, which writes the events of `run --events` and implements `RunEvents`; `parse_command()` | `launch/events.hpp` |
 | `Command`, a command as it was read and as `TimeCommands` decided it | `launch/command.hpp` |
 | `read_scenario()`, which reads scenarios; `Waveform`, the interface for functions of time | `launch/scenario.hpp` |
 | `ScenarioEngine` | `launch/scenario_run.hpp` |

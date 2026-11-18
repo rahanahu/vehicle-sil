@@ -523,7 +523,9 @@ struct RunObservers
     /// run --events: what happens, as events (events.hpp) instead of write_line(): the phases, the
     /// check, the participants, the lines, the run's findings, the virtual time. run_file() writes
     /// every event but hello and the result (the caller writes them). No call waits for the
-    /// reader of the events. May be null. Borrowed: it outlives run_file().
+    /// reader of the events. May be null. Borrowed: it outlives run_file(). run_file() calls the
+    /// stream itself (the check, the phases, the state); the parts of the run are given it as
+    /// the interface they know (RunEvents, run_events.hpp) and do not read this member.
     EventStream* events = nullptr;
     /// The name of the first interrupt ("SIGINT"), for the result and, without RunLent::controls,
     /// for the state events (RunControls::set_stop_name()). Called from any thread that changes the

@@ -6,6 +6,7 @@
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/config.hpp"
 #include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/run_events.hpp"
 #include "vehicle_sil/launch/run_plan.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
 
@@ -23,7 +24,7 @@ namespace vehicle_sil::launch::detail {
 ///
 /// Threads and locks: any thread of the run reads it, and nothing here is written while the run
 /// lasts, so there is no lock. What it points to that does change keeps itself: the stop
-/// requests are atomics (StopRequests), TimeCommands and EventStream have their own mutexes, and the
+/// requests are atomics (StopRequests), TimeCommands and the RunEvents keep themselves, and the
 /// phase of the controls is the main thread's to set.
 struct RunContext
 {
@@ -35,6 +36,10 @@ struct RunContext
     /// The Runner's copy of the caller's functions (run.hpp says of each which thread calls it and
     /// what it may do); none of them is in the RunPlan.
     const RunObservers& observers;
+    /// What the run tells while it lasts (run --events), as the interface the run knows
+    /// (run_events.hpp): the object of RunObservers::events, which the parts of a run do not read.
+    /// Null: nothing is told this way, and the lines go to RunObservers::write_line.
+    RunEvents* events;
     /// run --scenario: the scenario the check read (RunPlan::scenario()); null without one.
     const Scenario* scenario;
     /// The run's controls: RunLent::controls, or the run's own (on RunLent::stops).

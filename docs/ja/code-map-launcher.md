@@ -85,7 +85,8 @@
 | `TimeCommands` | `launch/time_commands.hpp` |
 | 操作盤の規則: `decide()`（run がいまその操作を受けるか。入口と run の状態で決まります。行の表は `src/control_rules.cpp`）、`allowed()`（引数なしの同じ答えと、引数の範囲）、`always_refused()`（ある操作が run の間ずっと断られるか。シナリオの実行中の Control Server の書き込み）、理由のコード `reason::*`。純粋 | `launch/control_rules.hpp` |
 | `RunTraffic`（結果の `traffic`） | `launch/traffic.hpp` |
-| `EventStream`、`parse_command()` | `launch/events.hpp` |
+| `RunEvents`。run の部品が、実行中の出来事（レジストリ、参加者、行、所見、仮想時刻）を知らせるインターフェースと、渡す値（`ParticipantState`、`TimeEvent`）。run の部品は、このヘッダーを include し、`events.hpp` を include しません。イベントの書き方を知りません | `launch/run_events.hpp` |
+| `EventStream`（`run --events` のイベントを書き、`RunEvents` を実装します）、`parse_command()` | `launch/events.hpp` |
 | `Command`（読んだコマンドと、`TimeCommands` が決めた結果） | `launch/command.hpp` |
 | シナリオの `read_scenario()`、時間の関数のインターフェース `Waveform` | `launch/scenario.hpp` |
 | `ScenarioEngine` | `launch/scenario_run.hpp` |

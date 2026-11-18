@@ -3,8 +3,6 @@
 
 #include "run_words.hpp"
 
-#include "vehicle_sil/launch/events.hpp"
-
 #include <silkit/services/orchestration/string_utils.hpp>
 
 #include <algorithm>
