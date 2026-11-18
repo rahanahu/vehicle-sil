@@ -7,6 +7,7 @@
 #include "test_harness.hpp"
 
 #include "vehicle_sil/launch/checked.hpp"
+#include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/launch/run_plan.hpp"
 
 #include <chrono>

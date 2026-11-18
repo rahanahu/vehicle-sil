@@ -13,11 +13,10 @@ import type { ValueCondition, WriteBlock, WriteStatus } from './variable-state';
 import type { VariableRef, VariableValue } from './variables';
 import type { Readable } from './values';
 
-/** A reason: a code that stays the same (an entry of the launcher's reason codes, or one the client names below) and one English sentence. */
-export interface Reason {
-  code: string;
-  message: string;
-}
+import type { Reason } from './session-state';
+
+/** A reason: a code that stays the same and one English sentence (defined with the session copy, which reads them too). */
+export type { Reason };
 
 /** How the page stands with the GUI server. */
 export type Link = 'connecting' | 'online' | 'offline' | 'rejected' | 'incompatible';

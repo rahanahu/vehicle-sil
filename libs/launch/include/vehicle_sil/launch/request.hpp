@@ -10,7 +10,6 @@
 // the arguments over it. Values and pure functions: no state, no thread, no file, no process.
 #pragma once
 
-#include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/config.hpp"
 #include "vehicle_sil/launch/connect.hpp"
 #include "vehicle_sil/launch/time_plan.hpp"
@@ -24,6 +23,9 @@
 #include <vector>
 
 namespace vehicle_sil::launch {
+
+/// How long one --describe may take unless the request says otherwise (RunHost::describe_timeout).
+inline constexpr std::chrono::milliseconds kDescribeTimeout{10000};
 
 /// What the user wants of the run: the same for every way to ask (the command line, and others).
 struct RunIntent

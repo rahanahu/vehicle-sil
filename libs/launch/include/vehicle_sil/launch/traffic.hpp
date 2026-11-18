@@ -2,7 +2,7 @@
 //
 // What went over the networks of a run (RunTraffic, the result's "traffic"): per network, the
 // participants known to be on it with their J1939 counters, and those the launcher cannot place.
-// Part of the run's result (run.hpp). Internal; the output: docs/simulation-run.md.
+// Part of the run's result (run_outcome.hpp). Internal; the output: docs/simulation-run.md.
 #pragma once
 
 #include "vehicle_sil/core/sim_time.hpp"

@@ -1654,6 +1654,23 @@ describe('the front door', () => {
       expect({ ...after, availability: 'active' }).toEqual(before);
     });
 
+    it("says why a variable cannot be written in the launcher's words, and follows the launcher when it changes", async () => {
+      const playing =
+        'this run plays a scenario, and until it ends only the scenario writes variables';
+      const rig = await withVariable(
+        stateEvent(1, { scenario: true }, { write: refusal('scenario-running', playing) }),
+      );
+      const variable = rig.front.variable(named);
+      expect(variable.get()).toMatchObject({
+        can_write: false,
+        why: { code: 'scenario-running', message: playing },
+        block: 'launcher',
+      });
+      // A launcher that takes the write during a scenario: nothing in the client says otherwise
+      await rig.deliver(event(stateEvent(2, { scenario: true })));
+      expect(variable.get()).toMatchObject({ can_write: true, why: null, block: null });
+    });
+
     it("shows a refused write in the view and rejects with the server's code", async () => {
       const rig = await open();
       await rig.deliver(

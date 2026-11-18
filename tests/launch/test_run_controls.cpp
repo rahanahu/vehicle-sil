@@ -202,13 +202,13 @@ TEST_CASE(a_run_without_controls_makes_its_own_and_writes_its_phases)
 {
     Written written;
     const RunRequest asked = request_of("no-such-directory/sim.yaml");
-    RunObservers watching;
-    watching.events = written.stream.get();
-    const auto report = vehicle_sil::launch::run_file(asked, watching);
+    RunLent lent;
+    lent.events = written.stream.get();
+    const auto report = vehicle_sil::launch::run_file(asked, {}, lent);
     CHECK(!report.run.has_value());
     CHECK((written.phases() == std::vector<std::string>{"checking", "ended"}));
     // And again: each run has controls of its own, so the second begins as the first did.
-    static_cast<void>(vehicle_sil::launch::run_file(asked, watching));
+    static_cast<void>(vehicle_sil::launch::run_file(asked, {}, lent));
     CHECK((written.phases() == std::vector<std::string>{"checking", "ended", "checking", "ended"}));
 }
 
@@ -222,11 +222,10 @@ TEST_CASE(a_run_with_the_callers_controls_sets_their_phase_and_leaves_the_phase_
     observers.on_state = [](const RunState&) {};
     RunControls controls(stops, false, std::move(observers), false);
     Written written;
-    RunObservers watching;
-    watching.events = written.stream.get();
     RunLent lent;
     lent.controls = &controls;
-    const auto report = vehicle_sil::launch::run_file(request_of("no-such-directory/sim.yaml"), watching, lent);
+    lent.events = written.stream.get();
+    const auto report = vehicle_sil::launch::run_file(request_of("no-such-directory/sim.yaml"), {}, lent);
     CHECK(!report.run.has_value());
     CHECK(controls.phase() == Phase::Ended);
     CHECK((told == std::vector<Phase>{Phase::Checking, Phase::Ended}));
@@ -273,13 +272,13 @@ TEST_CASE(a_run_refuses_controls_with_events_when_the_controls_have_no_observer_
 {
     StopRequests stops;
     Written written;
-    RunObservers watching;
-    watching.events = written.stream.get();
+    EventStream* events = written.stream.get();
     const auto run = [&](RunControls& controls) {
         RunLent lent;
         lent.controls = &controls;
+        lent.events = events;
         return refusal(
-          [&] { static_cast<void>(vehicle_sil::launch::run_file(request_of("no-such-directory/sim.yaml"), watching, lent)); });
+          [&] { static_cast<void>(vehicle_sil::launch::run_file(request_of("no-such-directory/sim.yaml"), {}, lent)); });
     };
     RunControls none(stops);
     CHECK(run(none).find("on_phase") != std::string::npos);
@@ -297,7 +296,7 @@ TEST_CASE(a_run_refuses_controls_with_events_when_the_controls_have_no_observer_
     RunControls without_state(stops, false, std::move(no_state), false);
     CHECK(run(without_state).find("on_state") != std::string::npos);
     // Without `events` there is nothing to leave to the observers.
-    watching.events = nullptr;
+    events = nullptr;
     CHECK(run(none).empty());
 }
 
@@ -325,7 +324,18 @@ TEST_CASE(a_run_refuses_controls_made_for_another_request)
     CHECK(text.find("made with start_paused false and scenario false") != std::string::npos);
     CHECK(text.find("the request has start_paused false and scenario true") != std::string::npos);
     CHECK(text.find("RunIntent::scenario.has_value()") != std::string::npos);
-    CHECK(run(paused, plain).find("the request has start_paused true and scenario false") != std::string::npos);
+    CHECK(text.find("client must not write") != std::string::npos);
+    CHECK(text.find("--start-paused") == std::string::npos);
+    CHECK(text.ends_with(", or leave `controls` null."));
+    const std::string held_text = run(paused, plain);
+    CHECK(held_text.find("the request has start_paused true and scenario false") != std::string::npos);
+    CHECK(held_text.find("only a run with --start-paused takes a step") != std::string::npos);
+    CHECK(held_text.find("client must not write") == std::string::npos);
+    // With a control server of the run's own the run needs the caller's controls: leaving them
+    // null is no way out then.
+    RunRequest served = scenario;
+    served.host.control = vehicle_sil::launch::ControlHost{};
+    CHECK(run(served, plain).ends_with("RunIntent::scenario.has_value()."));
     CHECK(run(plain_request, plain).empty());
     RunControls playing(stops, false, RunControls::Observers{}, true);
     CHECK(playing.scenario() && !playing.start_paused());
@@ -342,9 +352,9 @@ TEST_CASE(a_run_that_makes_its_own_controls_says_whether_it_plays_a_scenario)
     Written written;
     RunRequest asked = request_of("no-such-directory/sim.yaml");
     asked.intent.scenario = "drive.scenario.yaml";
-    RunObservers watching;
-    watching.events = written.stream.get();
-    static_cast<void>(vehicle_sil::launch::run_file(asked, watching));
+    RunLent lent;
+    lent.events = written.stream.get();
+    static_cast<void>(vehicle_sil::launch::run_file(asked, {}, lent));
     CHECK(written.has("\"event\":\"state\""));
     CHECK(written.has("\"scenario\":true"));
     CHECK(!written.has("\"scenario\":false"));

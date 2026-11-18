@@ -5,8 +5,8 @@
 # in registry_uri.hpp),
 # vehicle_sil/process/child_process.hpp, vehicle_sil/process/process.hpp,
 # vehicle_sil/launch/run.hpp, vehicle_sil/launch/probe.hpp (what looks at the computer), and
-# headers named events.hpp, time_commands.hpp, stop_requests.hpp or run_*.hpp (run_controls.hpp
-# among them). The check follows the vehicle_sil/... includes (found in the project's include
+# headers named events.hpp, time_commands.hpp, stop_requests.hpp, runner.hpp or run_*.hpp
+# (run_controls.hpp among them). The check follows the vehicle_sil/... includes (found in the project's include
 # directories) and the "..." includes of a header in the same directory as the including file (the
 # private headers of libs/launch/src). A failure names the listed file and the chain of includes
 # to the forbidden header; to fix it, move what the file needs out of that header, or take the file
@@ -14,7 +14,10 @@
 # a comment counts, which errs on the safe side.
 # FORBIDDEN_PREFIXES (optional, comma separated): more headers that the listed files must not
 # reach, each as the start of the path they are included by (vehicle_sil/launch/scenario matches
-# scenario.hpp, scenario_run.hpp and scenario_check.hpp): a layer that must not know them.
+# scenario.hpp, scenario_run.hpp and scenario_check.hpp): a layer that must not know them. A
+# private header included as "..." without a directory matches by its name and the last part of
+# the prefix ("scenario_csv.hpp" matches vehicle_sil/launch/scenario): the private headers of a
+# layer are named as its public ones.
 # Usage: cmake -DROOT=<directory> -DFILES=<file>[,<file>...] [-DFORBIDDEN_PREFIXES=<prefix>[,<prefix>...]]
 #        -P VehicleSilCheckIncludes.cmake
 cmake_minimum_required(VERSION 3.21)
@@ -67,7 +70,7 @@ foreach(listed IN LISTS FILES)
       get_filename_component(base "${path}" NAME)
       if(lower MATCHES "^silkit/" OR lower MATCHES "_silkit/" OR path IN_LIST forbidden_exact
          OR base STREQUAL "events.hpp" OR base STREQUAL "time_commands.hpp"
-         OR base STREQUAL "stop_requests.hpp" OR base MATCHES "^run_[^/]*\\.hpp$")
+         OR base STREQUAL "stop_requests.hpp" OR base STREQUAL "runner.hpp" OR base MATCHES "^run_[^/]*\\.hpp$")
         list(APPEND bad "${chain} ${path}")
         continue()
       endif()
@@ -76,6 +79,13 @@ foreach(listed IN LISTS FILES)
         string(LENGTH "${prefix}" prefix_length)
         string(SUBSTRING "${path}" 0 ${prefix_length} start)
         if(start STREQUAL prefix)
+          set(prefixed TRUE)
+        endif()
+        # A private header beside the file: its name against the last part of the prefix.
+        get_filename_component(last "${prefix}" NAME)
+        string(LENGTH "${last}" last_length)
+        string(SUBSTRING "${base}" 0 ${last_length} base_start)
+        if(NOT last STREQUAL "" AND open STREQUAL "\"" AND path STREQUAL base AND base_start STREQUAL last)
           set(prefixed TRUE)
         endif()
       endforeach()

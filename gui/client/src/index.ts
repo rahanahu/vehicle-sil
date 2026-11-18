@@ -108,9 +108,10 @@ export { DEFAULT_TIMEOUT_MS, HttpError, errorMessage, fetchTransport } from './h
 export type { FetchTransportOptions, HttpOutcome, HttpRequest, HttpTransport } from './http';
 
 // Shape of the session copy
-export { isHolding, phaseIndex, runOutcome } from './session-state';
+export { isHolding, launcherAnswer, phaseIndex, runOutcome } from './session-state';
 export type {
   CommandView,
+  LauncherAnswer,
   LauncherView,
   LogLine,
   LogSource,

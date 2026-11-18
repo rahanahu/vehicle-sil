@@ -2,7 +2,9 @@
 //
 // What a run tells of itself while it lasts: the interface the parts of a run call (RunEvents),
 // and the values they pass. The run does not know how this is written: the events of
-// `run --events` (EventStream, events.hpp) are one implementation. Internal.
+// `run --events` (EventStream, events.hpp) are one implementation. Also the caller's functions
+// that the run calls back (RunObservers), and where a control server listens (ControlServerInfo).
+// Internal.
 #pragma once
 
 #include "vehicle_sil/launch/config.hpp"
@@ -11,11 +13,17 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+namespace vehicle_sil::control {
+class Hub;
+} // namespace vehicle_sil::control
 
 namespace vehicle_sil::launch {
 
@@ -36,21 +44,24 @@ struct TimeEvent
     std::int64_t late_ms = 0;
 };
 
-/// A participant's state in the event "participant".
+/// A participant's state as the run tells it. The parts of a run pass Joined, StopRequested and
+/// Killed to RunEvents::participant(), and each of NotStarted, Started, Manual, Failed and Ended to
+/// a call of its own; run_file() tells Disabled before the run begins. How each is written:
+/// participant_state_name() in events.hpp.
 enum class ParticipantState
 {
     Disabled,      ///< left out (enabled: false, --disable): not started
-    NotStarted,    ///< its process could not be started ("message" says why)
-    Started,       ///< its process runs ("pid", "command", "log")
-    Manual,        ///< someone starts it (manual): the launcher does not ("command", "working_directory", "command_line")
+    NotStarted,    ///< its process could not be started
+    Started,       ///< its process runs
+    Manual,        ///< someone starts it (manual): the launcher does not
     Joined,        ///< it joined the simulation (the controller saw its lifecycle)
-    Failed,        ///< the launcher decided that it failed, and ends the run ("reason", "message")
-    Ended,         ///< its process ended ("exit_code", "signal")
+    Failed,        ///< the launcher decided that it failed, and ends the run
+    Ended,         ///< its process ended
     StopRequested, ///< the launcher asked it to stop (SIGTERM, Ctrl+Break)
     Killed,        ///< the launcher ended it with the processes it started
 };
 
-/// What the parts of a run tell while it lasts (RunObservers::events, as the run sees it).
+/// What the parts of a run tell while it lasts (run_file(): RunLent::events, as the run sees it).
 ///
 /// Threads: every thread of the run calls it (run.cpp lists them: the main thread, the start
 /// window's, the scenario's, each participant's reader thread), some of them under RunOutput's
@@ -72,7 +83,7 @@ public:
     /// The run's control server listens at `address` (gRPC, the actual port), with TLS or not,
     /// with credentials (every call needs a token) or not.
     virtual void control_server(const std::string& address, bool tls, bool credentials) = 0;
-    /// Disabled, Joined, StopRequested, Killed.
+    /// Joined, StopRequested, Killed (run_file() also passes Disabled, through EventStream).
     virtual void participant(const std::string& name, ParticipantState state) = 0;
     virtual void participant_not_started(const std::string& name, const std::string& message) = 0;
     /// Failed. `reason`: "left_simulation" (it left the simulation while its process runs),
@@ -112,6 +123,44 @@ public:
     /// tell that only the time has moved while some wait: a reader that falls behind is not
     /// given up because of them.
     [[nodiscard]] virtual std::size_t waiting_events() const = 0;
+};
+
+/// Where the run's control server listens (ControlEndpoint::start()).
+struct ControlServerInfo
+{
+    /// host:port with the port it actually listens on (also for port 0).
+    std::string address{};
+    bool tls = false;
+    /// Every call needs a token of the server's credentials.
+    bool credentials = false;
+};
+
+/// What a run tells while it lasts, and the one thing it lets its caller do: the caller's
+/// functions, which the run calls back. A run keeps its own copy.
+struct RunObservers
+{
+    /// Writes one line (without its end) for the person watching: the participants' output as
+    /// "[<name>] <line>", the launcher's own as "[vehicle_sil_launch] <text>". Called from several
+    /// threads, one call at a time. Not called when the run tells its events instead (RunEvents;
+    /// run_file(): RunLent::events).
+    std::function<void(std::string_view line)> write_line{};
+    /// The name of the first interrupt ("SIGINT"), for the result and, without RunLent::controls,
+    /// for the state events (RunControls::set_stop_name()). Called from any thread that changes the
+    /// run's state (the run's own, a control server's, the hold's), under the time commands' mutex,
+    /// and by run_file() for the result: safe from several threads, short, no wait, no call into
+    /// the run or its controls.
+    std::function<std::string()> interrupt_name{};
+    /// Called in the window before the start (SimulationController::set_start_window()), on a
+    /// thread of the controller, after the wait for the agents' hellos: every participant waits
+    /// before its first step, and a write that an agent accepts now (control::Hub::write(),
+    /// wait_queued()) takes effect in its step at 0. The simulation starts when it returns. If it
+    /// throws, the launcher aborts the simulation as soon as it has started
+    /// (OutcomeStart::before_start_error). Not called if the start was given up before the window.
+    /// `hub`: the run's hub (never null), which the ECUs' control agents connect to over SIL Kit,
+    /// on the controller's participant. The run makes it. A caller that keeps the pointer may use
+    /// the hub from any thread while the simulation runs and after run_file() has returned (it
+    /// then holds what the agents said last).
+    std::function<void(const std::shared_ptr<control::Hub>& hub)> before_start{};
 };
 
 } // namespace vehicle_sil::launch

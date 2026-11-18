@@ -5,12 +5,10 @@
 // (j1939_nodes). The rules and the outputs of the check read the networks of a description only
 // through seen_networks() (SeenEcu::seen_networks(), seen_ecu.hpp), so that a renamed network is
 // under the simulation's name and a changed node has its new values in every one of them;
-// write_reported_networks() writes what the executable said, as it said it. tests/launch has a check
-// (launch.described_networks_are_read_in_one_place) that no other source of the launcher reads them.
+// write_reported_networks() (reported_networks.cpp) writes what the executable said, as it said it.
+// tests/launch has a check (launch.described_networks_are_read_in_one_place) that no other source
+// of the launcher reads them.
 #include "vehicle_sil/launch/check.hpp"
-
-#include "check_format.hpp"
-#include "vehicle_sil/json/json_writer.hpp"
 
 #include <algorithm>
 #include <string>
@@ -103,45 +101,6 @@ std::vector<std::size_t> unmatched_j1939_entries(const ParticipantConfig& partic
         }
     }
     return out;
-}
-
-void detail::write_reported_networks(vehicle_sil::json::JsonWriter& w, const EcuDescription& ecu)
-{
-    w.begin_array("networks");
-    for (const auto& network : ecu.networks)
-    {
-        w.begin_object();
-        w.string("name", network.name);
-        w.string("kind", to_string(network.kind()));
-        w.string("use", to_string(network.use));
-        w.begin_array("nodes");
-        for (const auto& node : network.nodes)
-        {
-            w.begin_object();
-            w.integer("address", node.address);
-            if (node.name)
-            {
-                w.string("j1939_name", vehicle_sil::json::hex64(node.name->value()));
-            }
-            else
-            {
-                w.null("j1939_name");
-            }
-            w.boolean("arbitrary_address_capable", node.arbitrary_address_capable());
-            w.end_object();
-        }
-        w.end_array();
-        if (network.mac)
-        {
-            w.string("mac", network.mac->to_string());
-        }
-        else
-        {
-            w.null("mac");
-        }
-        w.end_object();
-    }
-    w.end_array();
 }
 
 } // namespace vehicle_sil::launch

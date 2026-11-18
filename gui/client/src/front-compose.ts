@@ -11,7 +11,7 @@ import type {
   ServerAllowed,
   ServerAllowedItem,
 } from './protocol';
-import { SessionView, runOutcome } from './session-state';
+import { SessionView, launcherAnswer, runOutcome } from './session-state';
 import type {
   Control,
   FrontClock,
@@ -243,25 +243,10 @@ function fromServer(item: ServerAllowedItem, fallback: string): Control {
     : control(false, reason(item.reason ?? 'refused', item.message ?? fallback));
 }
 
-/** An entry of the launcher's `allowed`, passed on (with its caution). */
-function fromLauncher(item: LauncherAllowedItem): Control {
-  const caution = item.caution ? reason(item.caution.code, item.caution.message) : null;
-  return item.ok
-    ? control(true, null, caution)
-    : control(
-        false,
-        reason(item.reason ?? 'refused', item.message ?? 'the launcher does not accept it now'),
-        caution,
-      );
-}
-
 function numberOf(item: LauncherAllowedItem | undefined, key: string): number | null {
   const value = item?.raw?.[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
-
-const STATE_ITEM_MISSING = (name: string) =>
-  reason('unsupported', `this launcher does not say whether it accepts ${name}`);
 
 export function controlsOf(s: Snapshot, run: RunState): FrontControls {
   return composeControls(s, run).controls;
@@ -337,12 +322,8 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
     if (name !== 'write' && s.busy.has(name)) return control(false, busyReason(label));
     if (down) return control(false, down);
     if (!live) return control(false, reason('not-running', 'no run is going: start one first'));
-    if (!state) {
-      return control(false, reason('unsupported', 'this launcher does not say what it accepts'));
-    }
-    const item = state.allowed[name];
-    if (!item) return control(false, STATE_ITEM_MISSING(name));
-    return fromLauncher(item);
+    const said = launcherAnswer(state, name);
+    return control(said.reason === null, said.reason, said.caution);
   };
 
   const withReason = (base: Control, code: string, message: string): Control =>

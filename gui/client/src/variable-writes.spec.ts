@@ -41,6 +41,21 @@ const variables = (state: string, more: object = {}) => ({
   ...more,
 });
 
+/** The launcher's state of a running run that takes writes (until a `state` says so, bind does not write). */
+const TAKES_WRITES = {
+  seq: 5,
+  rev: 5,
+  phase: 'running',
+  paused: false,
+  holding: false,
+  speed: 1,
+  pacing: 'on-time',
+  stop: { requests: 0, by: null },
+  scenario: false,
+  allowed: { write: { ok: true, reason: null, message: null, caution: null } },
+  outside: [],
+};
+
 const hello = (id = 1, more: object = {}) => ({
   type: 'hello',
   vehicle_sil_gui: 1,
@@ -52,6 +67,7 @@ const hello = (id = 1, more: object = {}) => ({
     launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
     stop: 'none',
     variables: variables('ready', more),
+    launcher_state: TAKES_WRITES,
   },
   replay: null,
 });

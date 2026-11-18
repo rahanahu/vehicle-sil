@@ -8,7 +8,7 @@
 #include "check_words.hpp"
 
 #include "vehicle_sil/ethernet_bridge/ethernet_bridge.hpp"
-#include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/run_detail.hpp"
 #include "vehicle_sil/can_bridge/can_bridge.hpp"
 
 #include <chrono>

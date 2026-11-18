@@ -5,7 +5,8 @@
 
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/config.hpp"
-#include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/run_outcome.hpp"
+#include "vehicle_sil/launch/run_controls.hpp"
 #include "vehicle_sil/launch/run_events.hpp"
 #include "vehicle_sil/launch/run_plan.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
@@ -33,11 +34,11 @@ struct RunContext
     const SimulationConfig& config;
     const CheckReport& check;
     const RunPlan& plan;
-    /// The Runner's copy of the caller's functions (run.hpp says of each which thread calls it and
+    /// The Runner's copy of the caller's functions (run_events.hpp says of each which thread calls it and
     /// what it may do); none of them is in the RunPlan.
     const RunObservers& observers;
     /// What the run tells while it lasts (run --events), as the interface the run knows
-    /// (run_events.hpp): the object of RunObservers::events, which the parts of a run do not read.
+    /// (run_events.hpp): the object of RunLent::events, which the parts of a run do not read.
     /// Null: nothing is told this way, and the lines go to RunObservers::write_line.
     RunEvents* events;
     /// run --scenario: the scenario the check read (RunPlan::scenario()); null without one.
