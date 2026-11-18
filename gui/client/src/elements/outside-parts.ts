@@ -104,11 +104,12 @@ function targetText(target: ConnectTarget): string {
 /**
  * `<vsil-connect network="N">`: where network N of the next run is connected outside the simulation. The first choice
  * is SIL Kit only (`none`). The list of the GUI server's computer is asked for only when the user opens the select (a
- * press, or a key other than Tab, Escape and the modifiers). When the part leaves the page, or `network` changes, N
- * leaves `pageIntent.connect`: no run is connected by a choice that is not on the page.
+ * press, or a key other than Tab, Escape and the modifiers). When the part leaves the page, or `network` or `file`
+ * changes, N leaves `pageIntent.connect`: no run is connected by a choice that is not on the page. `file` names the
+ * configuration file that the page starts (default: the start-up file, as `run.start`).
  */
 export class VsilConnectElement extends Part {
-  static override observedAttributes = ['network'];
+  static override observedAttributes = ['network', 'file'];
 
   protected draw(client: Front, root: HTMLElement, alive: () => boolean): void {
     const network = this.getAttribute('network');
@@ -124,7 +125,7 @@ export class VsilConnectElement extends Part {
     root.append(select, notes, findings);
     setData(this, 'network', network);
 
-    const file = () => client.status.get().file ?? undefined;
+    const file = () => this.getAttribute('file') ?? client.status.get().file ?? undefined;
     const chosen = () => pageIntent.get().connect?.[network] ?? 'none';
     const say = (list: HTMLElement, lines: readonly string[]) =>
       list.replaceChildren(...lines.map((line) => h('li', {}, line)));

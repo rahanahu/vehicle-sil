@@ -888,7 +888,7 @@ void a_request_for_a_control_server_is_read_before_any_check(const fs::path& dir
     observers.on_phase = [&told](launch::Phase) { ++told; };
     observers.on_state = [&told](const launch::RunState&) { ++told; };
     observers.on_command = [&told](const launch::Command&, std::string_view) { ++told; };
-    launch::RunControls controls(stops, false, std::move(observers));
+    launch::RunControls controls(stops, false, std::move(observers), false);
     launch::RunLent lent;
     lent.controls = &controls;
     try

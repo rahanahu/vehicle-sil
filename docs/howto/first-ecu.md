@@ -360,7 +360,7 @@ To leave some of the other ECUs out, keep the configuration file as it is and pa
 
 <!-- first ECU: vehicle_sil_launch check simulation.yaml --disable Dashboard, the warning -->
 ```text
-warning: simulation.yaml:9: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it [single-participant]
+warning: simulation.yaml:9: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes) [single-participant]
 ```
 
 [simulation-check.md](../simulation-check.md) lists all finding codes.

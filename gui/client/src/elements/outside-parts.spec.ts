@@ -423,6 +423,30 @@ describe('<vsil-connect>', () => {
     expect(front.spies.check).not.toHaveBeenCalled(); // nothing is checked for a part that has left
   });
 
+  it('lists and checks the file that its file attribute names, and drops its choice when the file changes', async () => {
+    const front = fakeFront();
+    front.spies.connections.mockResolvedValue(LIST);
+    const part = await mount('vsil-connect', front, { network: 'ETH_EXT', file: 'connect.yaml' });
+    const select = part.querySelector('select')!;
+    select.dispatchEvent(new Event('pointerdown'));
+    await settle();
+    expect(front.spies.connections).toHaveBeenCalledWith(
+      { network: 'ETH_EXT' },
+      { file: 'connect.yaml' },
+    );
+    select.value = 'eth0';
+    select.dispatchEvent(new Event('change'));
+    await settleCheck();
+    expect(front.spies.check).toHaveBeenCalledWith(
+      { connect: { ETH_EXT: 'eth0' } },
+      { file: 'connect.yaml' },
+    );
+    part.setAttribute('file', 'other.yaml');
+    await settle();
+    expect(pageIntent.get().connect).toBeUndefined();
+    part.remove();
+  });
+
   it('needs the network attribute, and cleans up when it leaves', async () => {
     const front = fakeFront();
     const part = await mount('vsil-connect', front);

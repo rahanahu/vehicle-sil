@@ -429,7 +429,7 @@ TEST_CASE(an_unknown_network_names_the_networks_of_its_kind_that_may_be_the_same
                           "(j1939), which is not in networks. Another network of kind can in this simulation is "
                           "'J1939_CAN' (line 3, used by Engine)" + fix +
                           "W 3 single-participant: network 'J1939_CAN': only Engine is on it, so what it sends there "
-                          "reaches no one: add the other participants of this network, or remove it\n");
+                          "reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n");
 
     // Neither is in networks: each names the other's.
     s.config.networks.clear();
@@ -467,7 +467,7 @@ TEST_CASE(networks_without_participants_or_with_one_are_warnings)
     s.network("A", NetworkKind::Can, 3).network("B", NetworkKind::Can, 5);
     s.described(participant("P", 8), ecu("P", 10ms, {NetworkDescription{"A", NetworkUse::Raw, {}}}));
     check_text(s.check(), "W 3 single-participant: network 'A': only P is on it, so what it sends there reaches no one: "
-                          "add the other participants of this network, or remove it\n"
+                          "add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n"
                           "W 5 unused-network: network 'B': no participant uses it: remove it, or check the network names "
                           "in the ECUs\n");
     // Twice on the same network (j1939 and raw) is still one participant. With a participant
@@ -479,7 +479,7 @@ TEST_CASE(networks_without_participants_or_with_one_are_warnings)
                "its name, step and networks with this file\n"
                "N 3 single-participant: network 'A': only P is on it, so what it sends there reaches no one "
                "(participants with describe: false are not counted): add the other participants of this network, or "
-               "remove it\n"
+               "remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n"
                "N 5 unused-network: network 'B': no participant uses it (participants with describe: false are not "
                "counted): remove it, or check the network names in the ECUs\n");
 }
@@ -494,7 +494,7 @@ TEST_CASE(participants_for_testing_are_not_counted_as_the_ecus_of_a_network)
                 ecu("Spy", 10ms, {NetworkDescription{"A", NetworkUse::Raw, {}}}));
     check_text(s.check(), "W 3 single-participant: network 'A': only Engine is on it besides the participants for testing "
                           "(role: test: Spy), so what it sends there reaches no other ECU: add the other ECUs of this "
-                          "network, or remove it\n");
+                          "network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n");
     // Two ECUs (role: ecu written or not) and the spy: right.
     s.described(with_role(participant("Brake", 12), ParticipantRole::Ecu),
                 ecu("Brake", 10ms, {NetworkDescription{"A", NetworkUse::Raw, {}}}));
@@ -507,7 +507,7 @@ TEST_CASE(participants_for_testing_are_not_counted_as_the_ecus_of_a_network)
     t.described(with_role(participant("Tool", 9), ParticipantRole::Test),
                 ecu("Tool", 10ms, {NetworkDescription{"A", NetworkUse::Raw, {}}}));
     check_text(t.check(), "W 3 single-participant: network 'A': only participants for testing (role: test: Spy and Tool) "
-                          "are on it, so there is no ECU for them there: add the ECUs of this network, or remove it\n");
+                          "are on it, so there is no ECU for them there: add the ECUs of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n");
 }
 
 TEST_CASE(networks_of_one_kind_with_one_ecu_each_may_be_one_bus_named_twice)
@@ -526,22 +526,22 @@ TEST_CASE(networks_of_one_kind_with_one_ecu_each_may_be_one_bus_named_twice)
                ": " + removed + " } to the participant '" + who + "'\n";
     };
     check_text(s.check(), "W 3 single-participant: network 'J1939_CAN': only Engine is on it, so what it sends there "
-                          "reaches no one: add the other participants of this network, or remove it; the network "
+                          "reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes); the network "
                           "'VehicleCAN' (line 5, only Dashboard) of kind can also has one ECU: if it is meant to be the "
                           "same bus" + rest("J1939_CAN", "VehicleCAN", "Engine") +
                           "W 5 single-participant: network 'VehicleCAN': only Dashboard is on it, so what it sends there "
-                          "reaches no one: add the other participants of this network, or remove it; the network "
+                          "reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes); the network "
                           "'J1939_CAN' (line 3, only Engine) of kind can also has one ECU: if it is meant to be the same "
                           "bus" + rest("VehicleCAN", "J1939_CAN", "Dashboard") +
                           "W 7 single-participant: network 'Body': only Dashboard is on it, so what it sends there "
-                          "reaches no one: add the other participants of this network, or remove it\n");
+                          "reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n");
 
     // Not when the other network's one ECU is the same one, nor when it has two.
     s.results[1].ecu->description.networks.push_back(on_j1939("J1939_CAN", {node(0x28)}));
     check_text(s.check(), "W 5 single-participant: network 'VehicleCAN': only Dashboard is on it, so what it sends there "
-                          "reaches no one: add the other participants of this network, or remove it\n"
+                          "reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n"
                           "W 7 single-participant: network 'Body': only Dashboard is on it, so what it sends there "
-                          "reaches no one: add the other participants of this network, or remove it\n");
+                          "reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n");
 
     // One ECU alone on two networks of one kind: they are two buses of that ECU, not one.
     Setup u;
@@ -550,9 +550,9 @@ TEST_CASE(networks_of_one_kind_with_one_ecu_each_may_be_one_bus_named_twice)
         .described(participant("P", 6), ecu("P", 10ms, {NetworkDescription{"A", NetworkUse::Raw, {}},
                                                          NetworkDescription{"B", NetworkUse::Raw, {}}}));
     check_text(u.check(), "W 3 single-participant: network 'A': only P is on it, so what it sends there reaches no one: add "
-                          "the other participants of this network, or remove it\n"
+                          "the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n"
                           "W 4 single-participant: network 'B': only P is on it, so what it sends there reaches no one: add "
-                          "the other participants of this network, or remove it\n");
+                          "the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n");
 
     // Three such networks: each names the two others.
     Setup t;
@@ -563,7 +563,7 @@ TEST_CASE(networks_of_one_kind_with_one_ecu_each_may_be_one_bus_named_twice)
         .described(participant("Q", 9), ecu("Q", 10ms, {NetworkDescription{"B", NetworkUse::Raw, {}}}))
         .described(participant("R", 11), ecu("R", 10ms, {NetworkDescription{"C", NetworkUse::Raw, {}}}));
     CHECK(t.check().find("W 3 single-participant: network 'A': only P is on it, so what it sends there reaches no one: add "
-                         "the other participants of this network, or remove it; the networks 'B' (line 4, only Q) and 'C' "
+                         "the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes); the networks 'B' (line 4, only Q) and 'C' "
                          "(line 5, only R) of kind can also have one ECU each: if one of them is meant to be the same bus, "
                          "keep one of the two names: remove 'A' from networks and add network_names: { <that network>: A "
                          "} to the participant 'P'\n") != std::string::npos);
@@ -1822,7 +1822,7 @@ TEST_CASE(a_disabled_participant_is_a_note_and_the_rules_are_about_the_rest)
                "N 9 participant-disabled: participant 'Dashboard': disabled (enabled: false, or --disable): it is neither "
                "checked nor started, and the other findings are about the simulation without it\n"
                "W 3 single-participant: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: "
-               "add the other participants of this network, or remove it\n");
+               "add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n");
     // Whatever its result says (an entry with an error, or a description): disabled is decisive,
     // and it holds back no rule.
     for (const ParticipantStatus status : {ParticipantStatus::Skipped, ParticipantStatus::Described,
@@ -1836,7 +1836,7 @@ TEST_CASE(a_disabled_participant_is_a_note_and_the_rules_are_about_the_rest)
                    "N 9 participant-disabled: participants[1]: disabled (enabled: false, or --disable): it is neither "
                    "checked nor started, and the other findings are about the simulation without it\n"
                    "W 3 single-participant: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no "
-                   "one: add the other participants of this network, or remove it\n");
+                   "one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n");
     }
 }
 
@@ -1860,7 +1860,7 @@ TEST_CASE(the_reports_show_a_disabled_participant)
                "J1939_CAN  can   Engine\n"
                "\n"
                "warning: sim.yaml:3: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add "
-               "the other participants of this network, or remove it [single-participant]\n"
+               "the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes) [single-participant]\n"
                "note: sim.yaml:9: participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked "
                "nor started, and the other findings are about the simulation without it [participant-disabled]\n"
                "\n"
@@ -2114,12 +2114,12 @@ TEST_CASE(a_network_alone_under_a_renamed_name_says_which_line_to_replace)
                "participant 'Engine' (<simulation's name>: <executable's name>; the executable stays as it is); if 'Diag' "
                "is a bus of its own, add it to networks with kind: can\n"
                "W 3 single-participant: network 'VehicleCAN': only Engine is on it, so what it sends there reaches no "
-               "one: add the other participants of this network, or remove it; the network 'BodyCAN' (line 4, only "
+               "one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes); the network 'BodyCAN' (line 4, only "
                "Dashboard) of kind can also has one ECU: if it is meant to be the same bus, keep one of the two names: "
                "remove 'VehicleCAN' from networks and add network_names: { BodyCAN: J1939_CAN } to the participant "
                "'Engine' (in place of VehicleCAN: J1939_CAN)\n"
                "W 4 single-participant: network 'BodyCAN': only Dashboard is on it, so what it sends there reaches no "
-               "one: add the other participants of this network, or remove it; the network 'VehicleCAN' (line 3, only "
+               "one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes); the network 'VehicleCAN' (line 3, only "
                "Engine) of kind can also has one ECU: if it is meant to be the same bus, keep one of the two names: "
                "remove 'BodyCAN' from networks and add network_names: { VehicleCAN: BodyCAN } to the participant "
                "'Dashboard'\n");
@@ -2247,7 +2247,7 @@ TEST_CASE(a_disabled_participant_with_network_names_is_not_compared)
     check_text(s.check(), "N 6 participant-disabled: participant 'Engine': disabled (enabled: false, or --disable): it is "
                           "neither checked nor started, and the other findings are about the simulation without it\n"
                           "W 3 single-participant: network 'VehicleCAN': only Dashboard is on it, so what it sends there "
-                          "reaches no one: add the other participants of this network, or remove it\n");
+                          "reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n");
 }
 
 TEST_CASE(the_reports_show_both_names_of_a_renamed_network)
@@ -3700,6 +3700,23 @@ TEST_CASE(check_connections_without_tools_reads_only_the_requests)
     CHECK(fake.runs.empty());
 }
 
+TEST_CASE(a_network_with_external_is_a_note_when_it_is_not_connected)
+{
+    Setup s = connect_setup();
+    s.config.networks[0].external = NetworkExternal{4, {}, {}, true};
+    s.config.networks[1].external = NetworkExternal{6, 250000, {}, false};
+    // ETH and CAN1 each have one ECU and external: a note without --connect, and nothing with it.
+    const std::string text = lines(check_participants(s.config, s.results, "1.0.0"));
+    CHECK(text.find("N 3 single-participant: network 'ETH': only Camera is on it; it has external (the settings for "
+                    "connecting it outside), so what it sends there reaches an outside party in a run that connects it, "
+                    "and no one in this run: connect the network outside to use it, or ignore this in a run that does "
+                    "not\n") != std::string::npos);
+    CHECK(text.find("N 5 single-participant: network 'CAN1'") != std::string::npos);
+    CHECK(text.find("W 3 single-participant") == std::string::npos && text.find("W 5 single-participant") == std::string::npos);
+    const std::vector<std::string> outside{"ETH", "CAN1"};
+    CHECK(lines(check_participants(s.config, s.results, "1.0.0", outside)).find("single-participant") == std::string::npos);
+}
+
 TEST_CASE(a_connected_network_has_its_bridge_on_it)
 {
     Setup s = connect_setup();
@@ -3707,9 +3724,9 @@ TEST_CASE(a_connected_network_has_its_bridge_on_it)
     // Camera alone on ETH and Engine alone on CAN1: the bridges are on them too.
     check_text(lines(check_participants(s.config, s.results, "1.0.0")),
                "W 3 single-participant: network 'ETH': only Camera is on it, so what it sends there reaches no one: add the "
-               "other participants of this network, or remove it\n"
+               "other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n"
                "W 5 single-participant: network 'CAN1': only Engine is on it, so what it sends there reaches no one: add "
-               "the other participants of this network, or remove it\n"
+               "the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n"
                "W 7 unused-network: network 'BODY': no participant uses it: remove it, or check the network names in the "
                "ECUs\n");
     check_text(lines(check_participants(s.config, s.results, "1.0.0", outside)),
@@ -3770,7 +3787,7 @@ TEST_CASE(a_role_bridge_participant_on_a_connected_network_is_a_loop)
                "ETH out)\n"
                "N 5 single-participant: network 'CAN1': only Engine is on it, so what it sends there reaches no one "
                "(participants with describe: false are not counted): add the other participants of this network, or "
-               "remove it\n"
+               "remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)\n"
                "N 7 unused-network: network 'BODY': no participant uses it (participants with describe: false are not "
                "counted): remove it, or check the network names in the ECUs\n");
 }
