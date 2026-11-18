@@ -171,7 +171,7 @@ TEST_CASE(list_json_of_npcap_with_the_loopback_alone_has_the_note)
 
 TEST_CASE(list_json_of_the_os_interfaces_does_not_offer_what_is_not_ethernet)
 {
-    const std::vector<InterfaceInfo> interfaces = {{"lo", false, 772, true}, {"enp3s0", true, 1, false}};
+    const std::vector<InterfaceInfo> interfaces = {{"lo", false, 772, true, std::nullopt}, {"enp3s0", true, 1, false, std::nullopt}};
     CHECK_TEXT(os_interfaces_json(Backend::Packet, interfaces),
                "{\n"
                "  \"vehicle_sil_targets\": 1,\n"
@@ -247,7 +247,7 @@ TEST_CASE(list_json_of_an_error_has_its_code_and_the_message)
 TEST_CASE(list_says_which_interfaces_vehicle_sil_bridges_use)
 {
     using vehicle_sil::bridge_runtime::DevicePeers;
-    const std::vector<InterfaceInfo> interfaces{{"eth0", true, 1, true}, {"eth1", true, 1, true}};
+    const std::vector<InterfaceInfo> interfaces{{"eth0", true, 1, true, std::nullopt}, {"eth1", true, 1, true, std::nullopt}};
     const std::vector<DevicePeers> inUse{{2, {4321, 4400}}};
     const std::string json = os_interfaces_json(Backend::Packet, interfaces, inUse);
     CHECK(contains(json, "      \"detail\": \"Ethernet, up; in use by 2 vehicle-sil bridges (processes 4321, 4400)\",\n"

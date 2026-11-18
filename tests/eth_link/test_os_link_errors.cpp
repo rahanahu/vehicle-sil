@@ -169,18 +169,37 @@ TEST_CASE(os_link_checksum_incomplete_warning_tells_where_to_turn_the_offload_of
 
 TEST_CASE(os_link_interface_list_is_one_aligned_line_per_interface)
 {
-    const std::vector<InterfaceInfo> interfaces = {{"lo", false, 772, true}, {"enp3s0", true, 1, true}, {"vsil0", true, 1, false}};
+    const std::vector<InterfaceInfo> interfaces = {{"lo", false, 772, true, std::nullopt}, {"enp3s0", true, 1, true, std::nullopt}, {"vsil0", true, 1, false, std::nullopt}};
     CHECK_TEXT(format_interface_list(interfaces), "  --interface lo      not Ethernet (link type 772), up\n"
                                                   "  --interface enp3s0  Ethernet, up\n"
                                                   "  --interface vsil0   Ethernet, down\n");
     // Aligned by the columns a name takes in a console, not by its bytes: two wide characters
     // (kanji, 6 bytes) take 4 columns, an accented letter (2 bytes) takes 1.
     const std::vector<InterfaceInfo> named = {
-        {"\xE8\xA9\xA6\xE9\xA8\x93", true, 1, true}, {"\xC3\xA9th0", true, 1, true}, {"lo", false, 772, true}};
+        {"\xE8\xA9\xA6\xE9\xA8\x93", true, 1, true, std::nullopt}, {"\xC3\xA9th0", true, 1, true, std::nullopt}, {"lo", false, 772, true, std::nullopt}};
     CHECK_TEXT(format_interface_list(named), "  --interface \xE8\xA9\xA6\xE9\xA8\x93  Ethernet, up\n"
                                              "  --interface \xC3\xA9th0  Ethernet, up\n"
                                              "  --interface lo    not Ethernet (link type 772), up\n");
     CHECK_TEXT(format_interface_list({}), "");
+}
+
+TEST_CASE(os_link_interface_detail_says_the_carrier_of_an_up_interface)
+{
+    InterfaceInfo entry{"enp3s0", true, 1, true, true};
+    CHECK_TEXT(interface_detail(entry), "Ethernet, up, connected");
+    entry.carrier = false;
+    CHECK_TEXT(interface_detail(entry), "Ethernet, up, disconnected");
+    entry.carrier = std::nullopt;
+    CHECK_TEXT(interface_detail(entry), "Ethernet, up");
+    // A down interface has no carrier to speak of, whatever the OS answered.
+    entry.up = false;
+    entry.carrier = false;
+    CHECK_TEXT(interface_detail(entry), "Ethernet, down");
+    entry.ethernet = false;
+    entry.link_type = 772;
+    entry.up = true;
+    entry.carrier = true;
+    CHECK_TEXT(interface_detail(entry), "not Ethernet (link type 772), up, connected");
 }
 
 TEST_CASE(os_links_exist_on_linux_only)
