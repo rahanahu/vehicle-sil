@@ -182,11 +182,27 @@ void sort_findings(std::vector<Finding>& findings)
 
 namespace {
 
+/// The note for the params of a request file that nothing uses: one file serves several
+/// scenarios, so they are left alone.
+[[nodiscard]] Finding unused_request_params(const std::string& file, const std::vector<std::string>& names, const std::string& why)
+{
+    std::string list;
+    for (const std::string& name : names)
+    {
+        list += (list.empty() ? "" : ", ") + name;
+    }
+    return Finding{Severity::Note, "request-params-unused",
+                   std::string("params ") + list + " in " + file + " " + (names.size() == 1 ? "is" : "are") +
+                       " not used: " + why + "; they are ignored",
+                   0, "", ""};
+}
+
 /// --scenario: reads the scenario file and checks it against the participants of `report`.
 /// @returns the usage errors that only the scenario can tell (ScenarioRead::usage_errors); then
 /// `report` has no scenario.
 [[nodiscard]] std::vector<Finding> check_scenario_file(CheckReport& report, const RunIntent& intent, const std::string& named,
-                                                       bool params_for_many)
+                                                       bool params_for_many,
+                                                       const RequestOrigin& origin)
 {
     ScenarioCheck check;
     check.file = named;
@@ -209,6 +225,10 @@ namespace {
         context.params = report.config->params;
         context.params.insert(context.params.end(), intent.params.begin(), intent.params.end());
         context.params_for_many = params_for_many;
+        if (origin.has("scenario"))
+        {
+            context.request_file = origin.file; // the file's own scenario: its params must fit it
+        }
         context.read_file = files_beside(path);
         ScenarioRead read = read_scenario(text, scenario_catalog(report), context);
         check.name = std::move(read.name);
@@ -222,6 +242,11 @@ namespace {
         if (!read.usage_errors.empty())
         {
             return std::move(read.usage_errors);
+        }
+        if (!read.unused_request_params.empty())
+        {
+            report.findings.push_back(unused_request_params(origin.file, read.unused_request_params,
+                                                            "the scenario has no parameter of that name"));
         }
         for (Finding& finding : read.findings)
         {
@@ -410,7 +435,7 @@ CheckReport check_file(const RunRequest& request, const CheckOptions& options,
         {
             named = process::shown_path(path.parent_path() / process::path_from_utf8(named));
         }
-        if (auto wrong = check_scenario_file(report, intent, named, options.params_for_many); !wrong.empty())
+        if (auto wrong = check_scenario_file(report, intent, named, options.params_for_many, request.origin); !wrong.empty())
         {
             // As for the other usage errors: the findings alone, and no configuration.
             CheckReport usage;
@@ -420,6 +445,21 @@ CheckReport check_file(const RunRequest& request, const CheckOptions& options,
             usage.usage = true;
             usage.findings = std::move(wrong);
             return usage;
+        }
+    }
+    else
+    {
+        std::vector<std::string> unused;
+        for (const ParamValue& param : intent.params)
+        {
+            if (param.source == ParamSource::RequestFile)
+            {
+                unused.push_back(param.name);
+            }
+        }
+        if (!unused.empty())
+        {
+            report.findings.push_back(unused_request_params(request.origin.file, unused, "this run has no scenario"));
         }
     }
     sort_findings(report.findings);

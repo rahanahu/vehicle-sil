@@ -301,6 +301,11 @@ struct ScenarioContext
     /// this scenario neither declares nor uses is left alone (no ScenarioRead::usage_errors). The
     /// caller says it if no scenario has it (unused_test_params()).
     bool params_for_many = false;
+    /// The request file (as the user named it) whose own `scenario` this is: its params
+    /// (ParamSource::RequestFile) that the scenario neither declares nor uses are then a usage
+    /// error too, naming the file. Empty: they are left alone and named in
+    /// ScenarioRead::unused_request_params (one file serves several scenarios).
+    std::string request_file{};
     /// Reads a file the scenario names (a wave's `points: { file: <path> }`). `path` is as the
     /// scenario writes it, already checked: relative, '/' between directories, no "..". Returns the
     /// bytes, or empty and `problem` (what is wrong and how to fix it, after "<path> ").
@@ -339,6 +344,10 @@ struct ScenarioRead
     /// parameter given from the command line (ParamSource::CommandLine) that the scenario neither
     /// declares nor uses. Looked for only when the text has no error of its parameters.
     std::vector<Finding> usage_errors{};
+    /// The names of the request file's params (ParamSource::RequestFile) that the scenario neither
+    /// declares nor uses, when ScenarioContext::request_file is empty: left alone, for the caller
+    /// to note.
+    std::vector<std::string> unused_request_params{};
 };
 
 /// Reads a scenario (YAML, or JSON if it starts with '{') and checks all of it: the form, unknown

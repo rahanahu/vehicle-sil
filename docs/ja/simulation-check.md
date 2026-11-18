@@ -111,6 +111,7 @@
 | `test-participant-talks-on-bridged-network` | 警告 | `role: test` で J1939 のノードを持つ participant と、ブリッジが、同じネットワークにいるかもしれません。 | その participant をそのネットワークでは受信だけにする（J1939 のノードを作らない）か、その実行ではブリッジを無効にします。 |
 | `connect-network` | 誤り | `--connect` が、`networks` にないネットワークを指しています。 | 名前を直します（指摘の文が近い名前を出します）。名前に `=` を含むネットワークはつなげないので、名前を変えます。 |
 | `connect-network-unused` | 注記 | 要求ファイル（`--request`）の `connect` が、`networks` にないネットワークを指しています。そのネットワークは外します。つながず、時間のロックもかけません。 | そのファイルをほかの設定ファイルでも使うなら、直すものはありません。そうでなければ、要求ファイルの名前を直します。 |
+| `request-params-unused` | 注記 | 要求ファイル（`--request`）の `params` が、実行で使わないパラメーターを指しています。シナリオにない名前（シナリオが `--scenario` から来て、ファイルのシナリオでないとき）か、シナリオなしの実行です。無視します。ファイルが自分でシナリオを書いているときは、同じ名前が使い方の誤り（終了コード 4）になります。 | そのファイルをほかのシナリオでも使うなら、直すものはありません。そうでなければ、要求ファイルの名前を直します。 |
 | `connect-kind` | 誤り | `--connect` が LIN のネットワークを指しています（LIN をつなぐブリッジはありません）。 | その `--connect` を外します。 |
 | `connect-backend` | 誤り | `--connect` の先が、この OS にない backend（`tap:`、`packet:`、`npcap:`、`xl:`、`socketcan:`）で始まっています。 | 接頭辞なしで書くか、メッセージに並ぶ backend を書きます。`vehicle_sil_launch connections <file>` が、backend ごとの先を出します。 |
 | `connect-target` | 誤り | `--connect` の先が、空、256 バイトより長い、UTF-8 でない、制御文字を含む、のどれかです。selector（backend の後ろ）が、空か `-` で始まる場合も、`xl` の backend で `virtual:<n>` か `physical:<n>`（`<n>` は 1 から）でない場合も誤りです。 | `vehicle_sil_launch connections <file>` が出す先か、`none` を書きます。 |

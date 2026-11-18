@@ -665,8 +665,8 @@ Where a request file differs from the arguments:
 |---|---|---|
 | A relative scenario path | From the working directory | From the directory of the configuration file |
 | A network to connect that the configuration file does not have | The error `connect-network` | The note `connect-network-unused`; the network is left out (one file serves several configuration files) |
-| A parameter that the scenario does not have | Usage error | Ignored (one file serves several scenarios) |
-| Parameters without a scenario | Usage error | Ignored (one file serves runs with and without a scenario) |
+| A parameter that the scenario does not have | Usage error | Usage error if the file names the scenario itself (`params idle_rmp in bench.json: …`). Otherwise (the scenario is from `--scenario`, which replaces the file's) ignored, with the note `request-params-unused` (one file serves several scenarios) |
+| Parameters without a scenario | Usage error | Ignored, with the note `request-params-unused` (one file serves runs with and without a scenario) |
 
 A participant in `disable`, `enable` or `manual` that the configuration file does not have is a usage error from the file too, as it is from an argument; the message names the key and the file (`manual Engine in bench.json: …`).
 

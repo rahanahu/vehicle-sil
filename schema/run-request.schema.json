@@ -31,7 +31,7 @@
         "not": { "type": "string", "pattern": "\\$\\{" },
         "description": "One value: a number, true or false, or a text. It cannot use another parameter (${...})."
       },
-      "description": "Values of the scenario's parameters ${name}, over the scenario's, the configuration's and the variant's params. --param <name>=<value> replaces one by name. Used only when a scenario runs: without a scenario they are ignored, and so is a parameter here that the scenario does not have (one file serves several scenarios).",
+      "description": "Values of the scenario's parameters ${name}, over the scenario's, the configuration's and the variant's params. --param <name>=<value> replaces one by name. Used only when a scenario runs: without a scenario they are ignored with the note request-params-unused. If the file names the scenario itself, a name that scenario does not have is a usage error; if the scenario comes from --scenario, it is ignored with the same note (one file serves several scenarios).",
       "examples": [{ "target_speed": 80 }]
     },
     "scenario": {
