@@ -493,7 +493,7 @@ public:
         input.file = check.file;
         input.variant = ctx_.config.variant;
         input.params = check.scenario->params;
-        input.time_step_ms = outcome_.timing.time_step_ms;
+        input.time_step_ms = ctx_.plan.timing.time_step_ms;
         input.scenario = ctx_.scenario;
         input.run = &*outcome_.scenario;
         input.catalog = &catalog;

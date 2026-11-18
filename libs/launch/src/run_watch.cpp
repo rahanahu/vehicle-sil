@@ -125,7 +125,7 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         const bool running = controller.runtime().state() == orch::ParticipantState::Running;
         // The events of what changed (here: the one look per poll the watch gives).
         notes_.note_joined(controller, outcome_);
-        notes_.note_time(controller, TimeNote::Poll, outcome_);
+        notes_.note_time(controller, TimeNote::Poll);
         out_.outside_due(std::chrono::steady_clock::now());
         const TimeState time = controller.time_state();
         if (!running)
@@ -246,7 +246,7 @@ int RunWatch::settle(SimulationController& controller, const Watched& over)
     // The run's end is known: what the participants' steps before it said of the networks. The
     // hub's tap goes with it.
     outcome_.traffic = samples_.finish(outcome_.timing.sim_ms);
-    notes_.note_time(controller, TimeNote::Last, outcome_);
+    notes_.note_time(controller, TimeNote::Last);
     // No time command from here on: the simulation is over.
     ctx_.commands.detach();
     // The commands' threads (standard input, a control server) noted it; none is accepted any more.

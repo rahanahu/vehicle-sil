@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -160,6 +161,33 @@ TEST_CASE(the_bridges_are_the_last_participants_of_the_plan_and_do_not_count_for
           !outcome.participants[1].required);
     CHECK(outcome.outside[0].network == "CAN1" && outcome.outside[0].target == "virtual:1" &&
           outcome.outside[0].participant == "bridge.CAN1" && outcome.outside[0].tool == "vehicle_sil_vector_xl_bridge");
+}
+
+TEST_CASE(a_bridge_of_the_file_counts_for_the_step_as_any_participant_with_a_step)
+{
+    // role: bridge in the file, not a bridge that --connect adds (for_network is empty): the step
+    // divides its step too, 5 ms and 2 ms meet every 1 ms. Left out, the step would be 5 ms.
+    CheckReport check = checked({5000, 2000});
+    check.config->participants[1].role = ParticipantRole::Bridge;
+    CHECK(check.config->participants[1].for_network.empty());
+    CHECK(timed(check, at_speed(Speed(1.0))) == (Timed{1, 1.0}));
+}
+
+TEST_CASE(a_check_without_a_configuration_has_no_plan)
+{
+    CheckReport check;
+    check.file = "sim.yaml";
+    bool thrown = false;
+    try
+    {
+        static_cast<void>(plan_run(check, "dir", RunOptions{}));
+    }
+    catch (const std::invalid_argument& e)
+    {
+        thrown = std::string(e.what()) == "plan_run: the check has no configuration (CheckReport::config is empty); call it "
+                                          "only with a check that passed (CheckReport::passed())";
+    }
+    CHECK(thrown);
 }
 
 TEST_CASE(the_plan_takes_the_limits_and_the_files_as_given_and_the_outcome_begins_with_them)

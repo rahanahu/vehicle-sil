@@ -30,7 +30,8 @@ struct RunPlan
     /// The directory of the simulation file: what the participants' relative paths start from.
     std::filesystem::path base;
     /// The step of the launcher's controller, the speed the run starts at (empty: as fast as
-    /// possible) and the late tolerance; the numbers a run measures are 0.
+    /// possible) and the late tolerance; the numbers a run measures are 0. The run reads its
+    /// settings here; the speed at its end and what it measured are in RunOutcome::timing.
     RunTiming timing;
     /// --strict (CheckOptions::strict): a bridge that shares its device stops the run.
     bool strict = false;
@@ -57,7 +58,8 @@ struct RunPlan
 
 /// The plan of the run that `options` asks for. `check`: the check of the file, which passed (as
 /// check_file() returned it: the bridges of --connect are added here); `base`: the directory of
-/// the file. Reads the values of `options` only (of its pointers, whether there is a control
+/// the file. Throws std::invalid_argument for a check without a configuration (CheckReport::config
+/// is empty: the file could not be read, so there is nothing to run). Reads the values of `options` only (of its pointers, whether there is a control
 /// server), and calls nothing of it.
 /// - The speed is planned_speed(): 1 with the time lock, else RunOptions::speed, else the file's.
 /// - With a scenario the step does not follow the speed: the same steps at every speed.

@@ -6,12 +6,18 @@
 #include "vehicle_sil/launch/scenario_run.hpp"
 
 #include <algorithm>
+#include <stdexcept>
 #include <utility>
 
 namespace vehicle_sil::launch {
 
 RunPlan plan_run(const CheckReport& check, std::filesystem::path base, const RunOptions& options)
 {
+    if (!check.config)
+    {
+        throw std::invalid_argument("plan_run: the check has no configuration (CheckReport::config is empty); call it only "
+                                    "with a check that passed (CheckReport::passed())");
+    }
     RunPlan plan;
     plan.check = detail::with_bridges(check);
     plan.base = std::move(base);

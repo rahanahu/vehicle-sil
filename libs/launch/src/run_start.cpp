@@ -544,7 +544,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
     out_.say("simulation running");
     // Every participant starts at virtual time 0.
     wait_for_pause_at_start(controller);
-    notes_.note_time(controller, TimeNote::Start, outcome_);
+    notes_.note_time(controller, TimeNote::Start);
     return true;
 }
 

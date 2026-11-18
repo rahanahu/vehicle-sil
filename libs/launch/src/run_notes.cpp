@@ -74,7 +74,7 @@ void RunNotes::note_joined(SimulationController& controller, const RunOutcome& o
     }
 }
 
-void RunNotes::note_time(SimulationController& controller, TimeNote note, const RunOutcome& outcome)
+void RunNotes::note_time(SimulationController& controller, TimeNote note)
 {
     if (ctx_.observers.events == nullptr)
     {
@@ -116,7 +116,7 @@ void RunNotes::note_time(SimulationController& controller, TimeNote note, const 
     // The state after the time event of the same look (history first); not at the end, where the
     // time commands' detach tells it.
     ctx_.controls.set_pacing(
-        pacing_.look(wall, !paused && s.speed.has_value(), late > outcome.timing.late_tolerance_ms, s.late_steps));
+        pacing_.look(wall, !paused && s.speed.has_value(), late > ctx_.plan.timing.late_tolerance_ms, s.late_steps));
     struct Publish
     {
         RunControls* controls;
@@ -128,7 +128,7 @@ void RunNotes::note_time(SimulationController& controller, TimeNote note, const 
             }
         }
     } const publish{note == TimeNote::Last ? nullptr : &ctx_.controls};
-    const bool stalled = late > outcome.timing.late_tolerance_ms && late != last_late_ms_;
+    const bool stalled = late > ctx_.plan.timing.late_tolerance_ms && late != last_late_ms_;
     // Only that it moved, or is late: not while other events wait for a slow reader (they
     // would pile up).
     const bool moved = (ms > last_time_ms_ || stalled || s.late_steps != last_late_steps_) &&
