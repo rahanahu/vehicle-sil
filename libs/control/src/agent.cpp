@@ -105,6 +105,18 @@ void Agent::complete_schema()
     {
         complete_(); // may throw: the schema stays open
     }
+    close_schema();
+}
+
+void Agent::close_schema()
+{
+    // Here and not in a step: the step thread allocates nothing for the availability. The store
+    // below publishes the vector to the threads that look at completed_ first.
+    availability_.resize(infos_.size());
+    for (std::size_t i = 0; i < infos_.size(); ++i)
+    {
+        availability_[i] = infos_[i].availability.value_or(Availability::Active);
+    }
     completed_.store(true, std::memory_order_release);
 }
 
@@ -121,6 +133,10 @@ void Agent::add(VariableInfo info, Variable variable)
     if (index_.count(info.name) != 0)
     {
         throw bad("is declared twice: give each variable of the agent its own name");
+    }
+    if (info.availability && static_cast<std::uint8_t>(*info.availability) > static_cast<std::uint8_t>(Availability::Inactive))
+    {
+        throw bad("has an availability that is none of Unknown, Active and Inactive");
     }
     if ((info.min && std::isnan(*info.min)) || (info.max && std::isnan(*info.max)))
     {
@@ -384,7 +400,9 @@ void Agent::on_step_begin(SimTime now)
                                    "that gave bind_driver() a completion function must call complete_schema() before "
                                    "its first step");
         }
-        completed_.store(true, std::memory_order_release);
+        // Nothing to run, so the lock is free but for a first submit() that completes at this
+        // moment (once, in the first step).
+        complete_schema();
     }
     sealed_.store(true, std::memory_order_release);
     if (last_step_ && now <= *last_step_)
@@ -551,6 +569,38 @@ void Agent::log(EventLevel level, std::string text)
     if (!events_.try_push(event))
     {
         stats_.events_dropped.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void Agent::set_availability(std::string_view name, Availability state)
+{
+    const auto bad = [&](const std::string& why) {
+        return std::invalid_argument("vehicle_sil::control::Agent::set_availability(): " + why);
+    };
+    if (!completed_.load(std::memory_order_acquire))
+    {
+        throw std::logic_error("vehicle_sil::control::Agent::set_availability(): the schema is not complete yet, so '"
+                               + std::string(name) + "' has no state to change: give the state it starts with in its "
+                                 "declaration (VariableOptions::availability), and call set_availability() from a step");
+    }
+    const auto it = index_.find(name);
+    if (it == index_.end())
+    {
+        throw bad("the agent has no variable '" + std::string(name) + "': use the name it was declared with");
+    }
+    if (!infos_[it->second].availability)
+    {
+        throw bad("variable '" + std::string(name) + "' does not report its availability: declare it with "
+                  "VariableOptions::availability (the state it starts with, e.g. Availability::Unknown)");
+    }
+    if (static_cast<std::uint8_t>(state) > static_cast<std::uint8_t>(Availability::Inactive))
+    {
+        throw bad("the state given for '" + std::string(name) + "' is none of Unknown, Active and Inactive");
+    }
+    if (availability_[it->second] != state)
+    {
+        availability_[it->second] = state;
+        ++availability_version_;
     }
 }
 

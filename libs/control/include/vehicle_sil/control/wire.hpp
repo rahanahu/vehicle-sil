@@ -44,9 +44,18 @@ namespace vehicle_sil::control::wire {
 /// - A new kind that the other side may ignore changes neither the version nor the revision.
 ///
 /// Version 1 (vehicle-sil 0.1.0) had no sizes and no revision; it is not read any more.
+///
+/// Revision 1 added the availability of the variables (control::Availability), which either side
+/// may skip:
+/// - a variable of a hello ends with one byte: 0 if the variable does not report its
+///   availability, else 1 + the state it starts with (VariableInfo::availability);
+/// - a step message may carry, behind the values and announced by a flag of its own, a part of
+///   the availability of all variables (AvailabilityPart).
+/// A reader of revision 0 skips both and so takes every variable as Active; from a writer of
+/// revision 0 neither arrives, which a reader of revision 1 takes as "no variable reports".
 inline constexpr std::uint16_t kVersion = 2;
 /// The revision this build writes, and up to which it knows the fields.
-inline constexpr std::uint8_t kRevision = 0;
+inline constexpr std::uint8_t kRevision = 1;
 
 /// The largest command, submitted and step message. What an agent has to say in a step (results,
 /// events, the values) is split into as many step messages as it takes (encode_step()); a command
@@ -144,6 +153,23 @@ struct ValuesPart
     std::vector<Value> values;
 };
 
+/// A part of the availability of an agent's variables: `states` are the variables first,
+/// first + 1, ... of `total` (all variables in schema order; one that does not report is Active).
+struct AvailabilityPart
+{
+    std::uint64_t version = 0; ///< Agent::availability_version() of the states: the parts of one list share it
+    std::uint32_t total = 0;
+    std::uint32_t first = 0;
+    std::vector<Availability> states;
+};
+
+/// The availability of all variables of an agent, for encode_step().
+struct AvailabilityView
+{
+    std::uint64_t version = 0;               ///< Agent::availability_version()
+    std::span<const Availability> states{};  ///< Agent::availability()
+};
+
 struct StepMessage
 {
     std::uint64_t session = 0;
@@ -153,6 +179,8 @@ struct StepMessage
     std::vector<Event> events;
     bool has_values = false;
     ValuesPart values; ///< with has_values (not an optional: a decoder that is given the same message object again reuses its storage)
+    bool has_availability = false; ///< always false in a message of a writer of revision 0
+    AvailabilityPart availability; ///< with has_availability (as `values`)
 };
 
 /// The kind and version of a message, without decoding it. An Error for bytes that do not begin
@@ -179,13 +207,14 @@ void encode_submitted(const SubmittedMessage& message, Bytes& out);
 void encode_session(Kind kind, std::uint64_t session, Bytes& out);
 /// What a step at `time` produced, as step messages of at most `max_bytes` each (kMinMessageBytes
 /// ..kMaxMessageBytes; std::invalid_argument otherwise), given to `emit` in order: the results,
-/// then the events, then `sample` (null: none) in as many parts as it takes. Nothing is emitted
-/// for nothing to say, unless `final` (the last message then has StepMessage::final). `scratch`
-/// is the buffer the messages are built in (kept by the caller, so that a step allocates nothing
-/// once it has grown).
+/// then the events, then `sample` (null: none) in as many parts as it takes, then `availability`
+/// (null: none) in as many parts as it takes (a message has at most one part of each). Nothing is
+/// emitted for nothing to say, unless `final` (the last message then has StepMessage::final).
+/// `scratch` is the buffer the messages are built in (kept by the caller, so that a step
+/// allocates nothing once it has grown).
 void encode_step(std::uint64_t session, SimTime time, bool final, std::span<const CommandResult> results,
-                 std::span<const Event> events, const Snapshot* sample, std::size_t max_bytes, Bytes& scratch,
-                 const std::function<void(const Bytes& message)>& emit);
+                 std::span<const Event> events, const Snapshot* sample, const AvailabilityView* availability,
+                 std::size_t max_bytes, Bytes& scratch, const std::function<void(const Bytes& message)>& emit);
 
 /// The decoders never throw and never read outside `bytes`; `out` is unspecified after an error.
 /// They read kVersion only, and Error::revision of what they return says which revision wrote it.

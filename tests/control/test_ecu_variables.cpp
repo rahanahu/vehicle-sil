@@ -496,3 +496,41 @@ TEST_CASE(ecu_variables_a_transport_left_on_the_agent_is_found)
     control::TransportLease lease(ecu.agent());
     CHECK_EQ(ecu.agent().transports(), std::size_t{1});
 }
+
+TEST_CASE(ecu_variables_report_their_availability_from_the_steps)
+{
+    const std::optional<SilKitOptions> local;
+    Simulation sim(local);
+    Ecu& ecu = sim.add_ecu("Nvm", 10ms);
+    double x = 0.0;
+    double y = 0.0;
+    CHECK(throws_with<std::invalid_argument>([&] { ecu.set_availability("nvm.x", control::Availability::Active); },
+                                             "has no variable \"nvm.x\""));
+    ecu.input("nvm.x", &x, {.availability = control::Availability::Unknown});
+    ecu.output("nvm.y", &y);
+    // In the set-up the declaration gives the first state.
+    CHECK(throws_with<std::logic_error>([&] { ecu.set_availability("nvm.x", control::Availability::Active); }, "\"Nvm\""));
+    int steps = 0;
+    ecu.every(10ms, [&](SimTime) {
+        if (++steps == 3)
+        {
+            ecu.set_availability("nvm.x", control::Availability::Inactive);
+        }
+    });
+    sim.run_for(50ms);
+    const auto& schema = ecu.agent().schema();
+    std::size_t at_x = 0;
+    while (at_x < schema.size() && schema[at_x].name != "nvm.x")
+    {
+        ++at_x;
+    }
+    CHECK(at_x < schema.size());
+    CHECK(ecu.agent().availability()[at_x] == control::Availability::Inactive);
+    CHECK(ecu.agent().availability()[0] == control::Availability::Active); // ecu.connected
+    CHECK_EQ(ecu.agent().availability_version(), std::uint64_t{1});
+    // The variables vehicle-sil gives an ECU never report; one declared without it does not either.
+    CHECK(throws_with<std::invalid_argument>([&] { ecu.set_availability("ecu.connected", control::Availability::Inactive); },
+                                             "vehicle-sil gives the ECU"));
+    CHECK(throws_with<std::invalid_argument>([&] { ecu.set_availability("nvm.y", control::Availability::Inactive); },
+                                             "\"Nvm\""));
+}

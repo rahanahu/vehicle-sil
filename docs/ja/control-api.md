@@ -303,6 +303,7 @@ private:
 | `step` | 値の刻み幅です。 |
 | `description` | 説明です。 |
 | `parameter` | 真にすると、最初のステップの前だけ書ける変数（Parameter）になります。 |
+| `availability` | 設定すると、変数が使われているかを報告する変数になり、この値が最初の状態です（ふつうは `Availability::Unknown`）。下の「変数の利用状態」を参照してください。 |
 
 | 宣言のルール | 内容 |
 |---|---|
@@ -346,6 +347,34 @@ ECU ごとの結果は、どの書き込みが反映されたかを返します�
 | GUI のコンポーネント（`client.variables.bind`） | 速く続けた書き込みは、数が減ります（[gui.md](gui.md)）。 |
 
 GUI のコンポーネントは、サーバーが前の書き込みを受け取るまでの間に来た値を、最後の 1 つにまとめます。
+
+### 変数の利用状態
+
+どの入出力を使うかを実行中に決める ECU（たとえば最初の数ステップで読む設定で決めるもの）は、変数ごとにそれを知らせられます。画面は使わない変数を灰色にできます。利用状態は情報だけです。書き込み、読み取り、標本、シナリオは見ません。`Inactive` の変数への書き込みも、ほかと同じく検査して反映します。
+
+| 状態（`vehicle_sil::control::Availability`） | 意味 |
+|---|---|
+| `Unknown` | アプリケーションがまだ決めていない。 |
+| `Active` | 使っている。利用状態を報告しない変数は、すべて `Active` とみなします。 |
+| `Inactive` | ECU の今の構成では使っていない。 |
+
+| 決まり | 内容 |
+|---|---|
+| 報告する変数 | `VariableOptions::availability` を付けて宣言した変数です。この値が最初の状態です。どの変数が報告するかは宣言で決まり、実行中は変わりません。 |
+| 状態を変える | ECU のステップ（`on_step()`、`every()`、`at()`、ハンドラー）から `ecu.set_availability(name, state)` を呼びます。同じ状態をもう一度渡しても何も起きません。 |
+| エラー | ECU が宣言していない名前、`availability` なしで宣言した変数、vehicle-sil がどの ECU にも足す変数（`ecu.connected`、監視の出力）は `std::invalid_argument` です。組み立ての間（実行の前）は `std::logic_error` です。最初の状態は宣言で渡してください。 |
+| 状態の行き先 | 変わったときと、シミュレーション時間の 1 秒ごとに、Control Server へ送ります（後からつながったサーバーにも届きます）。Hub の購読は、頼んだとき（`SubscriptionOptions::availability`）だけ受け取ります。gRPC のサービスと GUI は渡しません。 |
+| 古い vehicle-sil で作った ECU | 何も報告しません。変数はすべて `Active` とみなします。check が注記します（`control-link-revision`）。 |
+
+```cpp
+ecu.input("io.relay", &relay_, {.availability = vehicle_sil::control::Availability::Unknown});
+ecu.every(10ms, [this, &ecu](vehicle_sil::SimTime) {
+    if (config_read_) {
+        ecu.set_availability("io.relay", relay_fitted_ ? vehicle_sil::control::Availability::Active
+                                                       : vehicle_sil::control::Availability::Inactive);
+    }
+});
+```
 
 ### 接続のしかた
 

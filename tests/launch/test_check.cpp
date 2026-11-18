@@ -828,11 +828,12 @@ TEST_CASE(reads_what_an_executable_says_about_offering_its_variables)
     // Not said (an executable of an earlier vehicle-sil), or null (--no-control): not offered.
     CHECK(!read_description(to_json(d)).description.control.has_value());
     CHECK(!read_description(R"({"vehicle_sil_ecu": 1, "name": "A", "step_ns": 1000, "networks": []})").description.control.has_value());
-    d.control = ControlOffer{"silkit", 3};
+    d.control = ControlOffer{"silkit", 3, 7};
     const ReportedEcu read = read_description(to_json(d));
     CHECK(read.description == d);
     CHECK(read.description.control->transport == "silkit");
     CHECK_EQ(read.description.control->wire_version, 3);
+    CHECK_EQ(read.description.control->wire_revision, 7);
     // Keys it does not know are ignored; what is there must be of the right kind.
     const std::string head = R"({"vehicle_sil_ecu": 1, "name": "A", "step_ns": 1000, "networks": [], "control": )";
     const ControlOffer other{"other", 2};
@@ -854,6 +855,10 @@ TEST_CASE(reads_what_an_executable_says_about_offering_its_variables)
     check_text(refused(R"({"transport": "silkit", "wire_version": -1})"), "control.wire_version is -1, not a version");
     check_text(refused(R"({"transport": "silkit", "wire_version": 0})"), "control.wire_version is 0, not a version");
     check_text(refused(R"({"transport": "silkit", "wire_version": 70000})"), "control.wire_version is 70000, not a version");
+    // No revision (an executable of an earlier vehicle-sil): revision 0.
+    CHECK_EQ(read_description(head + R"({"transport": "silkit", "wire_version": 2}})").description.control->wire_revision, 0);
+    check_text(refused(R"({"transport": "silkit", "wire_version": 2, "wire_revision": 256})"),
+               "control.wire_revision is 256, not a revision");
 }
 
 TEST_CASE(variables_that_are_not_offered_are_a_note_and_another_version_of_the_messages_a_warning)
@@ -863,9 +868,20 @@ TEST_CASE(variables_that_are_not_offered_are_a_note_and_another_version_of_the_m
     s.results[0].ecu->description.variables = {variable("x")};
     // No variables: nothing to offer, whatever the executable says.
     s.results[1].ecu->description.control.reset();
-    s.results[0].ecu->description.control = ControlOffer{"silkit", 2};
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 1};
     check_text(s.check(), "");
     CHECK_EQ(control::wire::kVersion, std::uint16_t{2});
+    CHECK_EQ(control::wire::kRevision, std::uint8_t{1});
+    // An older revision of the same version: the variables work, without what the newer added
+    // (a note, the check passes); a newer one: nothing to say (this side skips what it added).
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 0};
+    check_text(s.check(), "N 6 control-link-revision: participant 'Engine': it offers its variables as silkit messages of "
+                          "revision 0, older than revision 1 of this vehicle_sil_launch: its variables are read and written "
+                          "as usual, but they report no availability, so every one of them looks Active: build the "
+                          "executable with this vehicle-sil to have its availability reported\n");
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 2};
+    check_text(s.check(), "");
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 1};
     // Variables that the executable does not offer (--no-control, an earlier vehicle-sil).
     s.results[1].ecu->description.variables = {variable("y")};
     check_text(s.check(), "N 9 control-link-not-offered: participant 'Dashboard': it describes variables, but does not offer "
@@ -892,7 +908,7 @@ TEST_CASE(variables_that_are_not_offered_are_a_note_and_another_version_of_the_m
                               "vehicle_sil_launch run cannot read or write them: make the executable offer them over silkit "
                               "(as ecu_main does), or use a vehicle_sil_launch that knows the transport other\n");
     }
-    s.results[0].ecu->description.control = ControlOffer{"silkit", 2};
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 1};
     s.results[1].ecu->description.control = ControlOffer{"silkit", 3};
     // The check's JSON says what each executable offers.
     CheckReport r;
@@ -900,9 +916,9 @@ TEST_CASE(variables_that_are_not_offered_are_a_note_and_another_version_of_the_m
     r.config = s.config;
     r.participants = s.results;
     const std::string json = format_json(r);
-    CHECK(json.find("      \"control\": {\n        \"transport\": \"silkit\",\n        \"wire_version\": 2\n      }\n") !=
-          std::string::npos);
-    CHECK(json.find("\"wire_version\": 3\n") != std::string::npos);
+    CHECK(json.find("      \"control\": {\n        \"transport\": \"silkit\",\n        \"wire_version\": 2,\n"
+                    "        \"wire_revision\": 1\n      }\n") != std::string::npos);
+    CHECK(json.find("\"wire_version\": 3,\n        \"wire_revision\": 0\n") != std::string::npos);
     // A disabled participant is not in the simulation: nothing about its variables.
     s.config.participants[1].enabled = false;
     CHECK(s.check().find("control-link") == std::string::npos);
@@ -927,7 +943,8 @@ TEST_CASE(every_mapping_of_variables_must_fit_what_the_executable_describes)
     Setup s = good_pair();
     s.results[0].ecu->description.variables = {rpm, gear, lamp, variable("boost")};
     s.results[0].ecu->variables_reported = true;
-    s.results[0].ecu->description.control = ControlOffer{"silkit", static_cast<int>(control::wire::kVersion)};
+    s.results[0].ecu->description.control = ControlOffer{"silkit", static_cast<int>(control::wire::kVersion),
+                                                                static_cast<int>(control::wire::kRevision)};
     ParticipantConfig& engine = s.config.participants[0];
     control::VariableMapping speed = mapping("engine.speed", "rpm_x10");
     speed.scale = 0.1;
@@ -993,7 +1010,8 @@ TEST_CASE(a_scenario_may_write_what_the_hub_takes_of_a_converted_variable)
     Setup s = good_pair();
     s.results[0].ecu->description.variables = {bar, raw};
     s.results[0].ecu->variables_reported = true;
-    s.results[0].ecu->description.control = ControlOffer{"silkit", static_cast<int>(control::wire::kVersion)};
+    s.results[0].ecu->description.control = ControlOffer{"silkit", static_cast<int>(control::wire::kVersion),
+                                                                static_cast<int>(control::wire::kRevision)};
     control::VariableMapping pressure;
     pressure.name = "pressure";
     pressure.from = "pressure_bar";

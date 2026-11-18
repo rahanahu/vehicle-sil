@@ -168,8 +168,8 @@ struct OperationResult
     [[nodiscard]] bool done() const noexcept;
 };
 
-/// What a subscriber receives. Peers, operations and values are kept as the latest state per
-/// peer or operation; events are kept in order.
+/// What a subscriber receives. Peers, operations, values and the availability are kept as the
+/// latest state per peer or operation; events are kept in order.
 struct PeerUpdate
 {
     PeerInfo peer;
@@ -191,7 +191,20 @@ struct OperationUpdate
 {
     OperationResult operation;
 };
-using Update = std::variant<PeerUpdate, ValuesUpdate, EventUpdate, OperationUpdate>;
+/// The availability of all variables of a peer now (control::Availability): `states` has one
+/// entry per variable of PeerInfo::schema of that incarnation, in its order (a variable that does
+/// not report is Active). Only for a peer with a variable that reports
+/// (VariableInfo::availability), and only to a subscription that asks
+/// (SubscriptionOptions::availability). It is what the ECU's application said, passed on as it
+/// is: the hub decides nothing by it (a write to an Inactive variable is routed like any other).
+/// The states stay as they are when the peer disconnects.
+struct AvailabilityUpdate
+{
+    std::string peer;
+    std::string incarnation; ///< the schema the states follow
+    std::vector<Availability> states;
+};
+using Update = std::variant<PeerUpdate, ValuesUpdate, EventUpdate, OperationUpdate, AvailabilityUpdate>;
 
 /// The latest sample of a peer, as Hub::latest_of() reads it.
 struct LatestValues
@@ -214,9 +227,13 @@ struct SubscriptionOptions
     bool values = true;
     bool events = true;
     bool operations = true;
+    /// AvailabilityUpdate for the peers with a variable that reports its availability: when such
+    /// a peer connects as a new incarnation (the states its variables start with) and whenever
+    /// its states change. Off unless asked for.
+    bool availability = false;
     /// Bound of the unread events and of the unread operation updates (each). Beyond it the
-    /// oldest event, or the operation that changed longest ago, is dropped and counted. Peers and
-    /// values keep one entry per peer. Must be > 0.
+    /// oldest event, or the operation that changed longest ago, is dropped and counted. Peers,
+    /// values and the availability keep one entry per peer. Must be > 0.
     std::size_t capacity = 1024;
 };
 
@@ -226,8 +243,9 @@ class Hub;
 class Subscription
 {
 public:
-    /// Takes up to `max` updates (0: all), in this order: peers, operations (by seq), events (in
-    /// order), values. Waits up to `timeout` if there is none and the subscription is open.
+    /// Takes up to `max` updates (0: all), in this order: peers, the availability, operations (by
+    /// seq), events (in order), values. Waits up to `timeout` if there is none and the
+    /// subscription is open.
     std::vector<Update> poll(std::size_t max, std::chrono::milliseconds timeout);
     /// Updates dropped because a queue was full, since the subscription began.
     [[nodiscard]] std::uint64_t dropped() const;
@@ -245,6 +263,8 @@ private:
     void put_event(EventUpdate update);
     void put_values(const std::string& peer, const std::string& incarnation, std::shared_ptr<const Snapshot> snapshot);
     void drop_values(const std::string& peer);
+    /// The peer's entry is replaced by `update`, or removed for none.
+    void put_availability(const std::string& peer, std::optional<AvailabilityUpdate> update);
 
     SubscriptionOptions options_;
     mutable std::mutex mutex_;
@@ -256,6 +276,7 @@ private:
     std::uint64_t change_order_ = 0;
     std::deque<EventUpdate> events_;
     std::map<std::string, ValuesUpdate> values_;
+    std::map<std::string, AvailabilityUpdate> availability_;
     std::uint64_t dropped_ = 0;
 };
 
@@ -334,6 +355,12 @@ public:
     /// The agent's latest sample (only from the current connection; an older sample and one that
     /// does not match the schema are ignored).
     void agent_values(ConnectionId connection, Snapshot snapshot);
+    /// The availability of all variables of the agent, in the order of its schema, and
+    /// Agent::availability_version() of them (only from the current connection; states of an
+    /// older version than the hub has, a list that does not match the schema and one from an
+    /// agent none of whose variables report are ignored). A variable map does not touch it: the
+    /// seen schema has the same variables in the same order.
+    void agent_availability(ConnectionId connection, std::uint64_t version, std::vector<Availability> states);
     void agent_events(ConnectionId connection, const std::vector<Event>& events);
     void agent_status(ConnectionId connection, PeerStatus status);
 
@@ -368,7 +395,8 @@ public:
     /// Waits until every target is final. @returns the operation, or nullopt on timeout or for an
     /// unknown seq.
     std::optional<OperationResult> wait_done(std::uint64_t seq, std::chrono::milliseconds timeout);
-    /// The current peers and their latest values are delivered first.
+    /// The current peers and their latest values are delivered first, and with
+    /// SubscriptionOptions::availability the availability of the peers that report it.
     std::shared_ptr<Subscription> subscribe(SubscriptionOptions options = {});
 
     /// Every sample the hub takes, as it takes it: `participant`, the incarnation whose schema it
@@ -392,6 +420,11 @@ private:
         std::size_t max_pending = 0;
         std::shared_ptr<const Snapshot> latest;
         std::shared_ptr<const MappedSchema> mapped; ///< of its incarnation; nullptr: no variable map
+        /// Of its incarnation, one per variable: what the schema declares until the agent says
+        /// otherwise (agent_availability()).
+        std::vector<Availability> availability;
+        std::uint64_t availability_version = 0; ///< of `availability`, as the agent counts
+        bool reports_availability = false;      ///< a variable of the schema reports
         std::deque<std::uint64_t> outbox; ///< seqs to send, in order
         bool sending = false;            ///< a thread is in AgentLink::send() for this peer
         std::uint64_t generation = 0;    ///< unique per entry: tells an entry made again after forget_peer() apart
@@ -429,6 +462,8 @@ private:
     void target_changed(Operation& op);
     void for_subscribers(const std::string& peer, const std::function<void(Subscription&)>& fn);
     void announce_peer(const PeerEntry& entry);
+    /// The peer's availability to the subscriptions that ask for it.
+    void announce_availability(const PeerEntry& entry);
     /// An agent's reason in the names the clients see (with the hub's lock held).
     [[nodiscard]] std::string reason_as_seen(const std::string& participant, const std::string& reason) const;
     void forget_finished();

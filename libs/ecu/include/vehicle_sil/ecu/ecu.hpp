@@ -258,6 +258,15 @@ public:
         require_not_started("output_enum()");
         declare(name, [&](control::Agent& target) { target.output_enum(std::move(name), std::move(get), std::move(items), std::move(options)); });
     }
+    /// Reports whether the variable `name` is in use now (control::Agent::set_availability()): for
+    /// a variable declared with VariableOptions::availability, which gives the state it starts
+    /// with. It is information for whoever looks at the variable; writes, values, samples and
+    /// scenarios do not depend on it. Call it from a step of this ECU (on_step(), every(), at(), a
+    /// handler). std::invalid_argument for a name this ECU did not declare, for a variable
+    /// declared without VariableOptions::availability, and for the variables vehicle-sil gives
+    /// every ECU ("ecu.connected", the monitoring outputs); std::logic_error before the schema is
+    /// complete (during the set-up: give the first state in the declaration instead).
+    void set_availability(std::string_view name, control::Availability state);
     /// The options of this ECU's agent (queue sizes, AgentOptions::sample_period). Before the
     /// agent is made: before the first input(), output() or agent() (std::logic_error
     /// afterwards, and once the run has started). std::invalid_argument for bad options
@@ -478,6 +487,35 @@ public:
             throw std::logic_error(who_ + e.what());
         }
     }
+    /// control::Agent::set_availability() on the agent; its exceptions come back of the same type
+    /// with `who` in front. Without an agent, and for the variables vehicle-sil gives an ECU (the
+    /// reserved names of declare()), which never report their availability: std::invalid_argument.
+    void set_availability(std::string_view name, control::Availability state)
+    {
+        if (monitor_names::reserved_prefix(name) != nullptr || name.starts_with(kBuiltinPrefix))
+        {
+            throw std::invalid_argument(who_ + "set_availability(): \"" + std::string(name) +
+                                        "\" is a variable vehicle-sil gives the ECU, and those always count as Active: "
+                                        "report the availability of a variable the application declares");
+        }
+        if (!agent_)
+        {
+            throw std::invalid_argument(who_ + "set_availability(): the ECU has no variable \"" + std::string(name) +
+                                        "\": declare it with input() or output() and VariableOptions::availability");
+        }
+        try
+        {
+            agent_->set_availability(name, state);
+        }
+        catch (const std::invalid_argument& e)
+        {
+            throw std::invalid_argument(who_ + e.what());
+        }
+        catch (const std::logic_error& e)
+        {
+            throw std::logic_error(who_ + e.what());
+        }
+    }
     /// The agent, or std::logic_error if there is none (after the run started).
     control::Agent& existing() const
     {
@@ -666,6 +704,11 @@ inline void Ecu::set_agent_options(control::AgentOptions options)
 inline void Ecu::declare(const std::string& name, const std::function<void(control::Agent&)>& add)
 {
     ecu_agent().declare(name, add);
+}
+
+inline void Ecu::set_availability(std::string_view name, control::Availability state)
+{
+    ecu_agent().set_availability(name, state);
 }
 
 inline control::Agent& Ecu::agent()

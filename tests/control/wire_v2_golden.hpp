@@ -6,7 +6,8 @@
 // element or of a message and counts the revision up; it must still read these bytes, and write
 // them to a peer of revision 0 but for the revision byte and what it added. Do not regenerate
 // them from the encoder; a change of what is here is a change of the format. When a revision adds
-// a field, pin its bytes beside these (a new array), and leave these as they are.
+// a field, pin its bytes beside these (a new array), and leave these as they are. What revision 1
+// added is pinned at the end of the file ("Revision 1").
 //
 // Every number is little endian. A text is its length (u32) and its bytes. Every message begins
 // with a header of 8 bytes: 'V' 'S' 'C' 'W', the version (u16), the kind (u8) and the revision
@@ -440,6 +441,158 @@ inline constexpr std::uint8_t kLastWordReceived[] = {
     0x07,                                           // kind: last word received
     0x00,                                           // revision 0
     0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, // session
+};
+
+
+// =============================================================================================
+// Revision 1: the availability of the variables. A variable of a hello ends with one byte (0: it
+// does not report, else 1 + the state it starts with); a step message may carry, behind the
+// values and with flag 4, a part of the availability: version u64, total u32, first u32, count
+// u32 and one byte per state (0 unknown, 1 active, 2 inactive).
+
+// ---------------------------------------------------------------------------------------------
+// Hello (kind 1) of revision 1: one variable of each byte the availability can have.
+
+inline wire::Hello hello_revision_1()
+{
+    wire::Hello h;
+    h.participant = "Engine";
+    h.session = kSession;
+    h.virtual_time = true;
+    h.step = SimDuration{1'000'000};           // 1 ms
+    h.sample_period = SimDuration{10'000'000}; // 10 ms
+    h.max_pending = 256;
+    const auto variable = [](const char* name, ValueType type, Causality causality, std::optional<Availability> availability) {
+        VariableInfo v;
+        v.name = name;
+        v.type = type;
+        v.causality = causality;
+        v.availability = availability;
+        return v;
+    };
+    h.schema = {variable("a", ValueType::Bool, Causality::Input, Availability::Unknown),
+                variable("b", ValueType::Integer, Causality::Output, Availability::Inactive),
+                variable("c", ValueType::Real, Causality::Input, Availability::Active),
+                variable("d", ValueType::Bool, Causality::Output, std::nullopt)};
+    return h;
+}
+
+inline constexpr std::uint8_t kHelloRevision1[] = {
+    'V', 'S', 'C', 'W',                             // magic
+    0x02, 0x00,                                     // version 2
+    0x01,                                           // kind: hello
+    0x01,                                           // revision 1
+    0x06, 0x00, 0x00, 0x00,                         // participant: 6 bytes
+    'E', 'n', 'g', 'i', 'n', 'e',                   //   "Engine"
+    0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, // session
+    0x01,                                           // virtual time: yes
+    0x40, 0x42, 0x0F, 0x00, 0x00, 0x00, 0x00, 0x00, // step: 1'000'000 ns
+    0x80, 0x96, 0x98, 0x00, 0x00, 0x00, 0x00, 0x00, // sample period: 10'000'000 ns
+    0x00, 0x01, 0x00, 0x00,                         // max pending: 256
+    0x04, 0x00, 0x00, 0x00,                         // variables: 4
+    // variable 1
+    0x15, 0x00, 0x00, 0x00,                         // size: 21 bytes
+    0x01, 0x00, 0x00, 0x00, 'a',                    // name "a"
+    0x00,                                           // type: bool
+    0x00,                                           // causality: input
+    0x00, 0x00, 0x00, 0x00,                         // unit: 0 bytes
+    0x00,                                           // has: nothing
+    0x00, 0x00, 0x00, 0x00,                         // description: 0 bytes
+    0x00, 0x00, 0x00, 0x00,                         // enum items: 0
+    0x01,                                           // availability: reports, starts unknown
+    // variable 2
+    0x15, 0x00, 0x00, 0x00,                         // size: 21 bytes
+    0x01, 0x00, 0x00, 0x00, 'b',                    // name "b"
+    0x01,                                           // type: integer
+    0x01,                                           // causality: output
+    0x00, 0x00, 0x00, 0x00,                         // unit: 0 bytes
+    0x00,                                           // has: nothing
+    0x00, 0x00, 0x00, 0x00,                         // description: 0 bytes
+    0x00, 0x00, 0x00, 0x00,                         // enum items: 0
+    0x03,                                           // availability: reports, starts inactive
+    // variable 3
+    0x15, 0x00, 0x00, 0x00,                         // size: 21 bytes
+    0x01, 0x00, 0x00, 0x00, 'c',                    // name "c"
+    0x02,                                           // type: real
+    0x00,                                           // causality: input
+    0x00, 0x00, 0x00, 0x00,                         // unit: 0 bytes
+    0x00,                                           // has: nothing
+    0x00, 0x00, 0x00, 0x00,                         // description: 0 bytes
+    0x00, 0x00, 0x00, 0x00,                         // enum items: 0
+    0x02,                                           // availability: reports, starts active
+    // variable 4
+    0x15, 0x00, 0x00, 0x00,                         // size: 21 bytes
+    0x01, 0x00, 0x00, 0x00, 'd',                    // name "d"
+    0x00,                                           // type: bool
+    0x01,                                           // causality: output
+    0x00, 0x00, 0x00, 0x00,                         // unit: 0 bytes
+    0x00,                                           // has: nothing
+    0x00, 0x00, 0x00, 0x00,                         // description: 0 bytes
+    0x00, 0x00, 0x00, 0x00,                         // enum items: 0
+    0x00,                                           // availability: does not report
+};
+
+// ---------------------------------------------------------------------------------------------
+// Step (kind 4) of revision 1: a sample of the four variables of hello_revision_1() and their
+// availability behind it; then a step with the availability and nothing else.
+
+inline Snapshot step_sample_revision_1()
+{
+    return {at_ns(2'000'000), 3, {Value{true}, Value{std::int64_t{7}}, Value{2.5}, Value{false}}};
+}
+
+inline constexpr std::uint64_t kAvailabilityVersion = 2;
+
+inline std::vector<Availability> step_availability()
+{
+    return {Availability::Unknown, Availability::Inactive, Availability::Active, Availability::Active};
+}
+
+inline constexpr std::uint8_t kStepRevision1[] = {
+    'V', 'S', 'C', 'W',                             // magic
+    0x02, 0x00,                                     // version 2
+    0x04,                                           // kind: step
+    0x01,                                           // revision 1
+    0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, // session
+    0x80, 0x84, 0x1E, 0x00, 0x00, 0x00, 0x00, 0x00, // time: 2'000'000 ns
+    0x06,                                           // flags: 2 values | 4 availability
+    0x00, 0x00,                                     // results: 0
+    0x00, 0x00,                                     // events: 0
+    // values
+    0x80, 0x84, 0x1E, 0x00, 0x00, 0x00, 0x00, 0x00, // sample time: 2'000'000 ns
+    0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // sample sequence: 3
+    0x04, 0x00, 0x00, 0x00,                         // total: 4
+    0x00, 0x00, 0x00, 0x00,                         // first: 0
+    0x04, 0x00, 0x00, 0x00,                         // count: 4
+    0x00, 0x01,                                     // bool: true
+    0x01,                                           // integer:
+    0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //   7 (i64)
+    0x02,                                           // real:
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x40, //   2.5 (f64)
+    0x00, 0x00,                                     // bool: false
+    // availability
+    0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // version: 2
+    0x04, 0x00, 0x00, 0x00,                         // total: 4
+    0x00, 0x00, 0x00, 0x00,                         // first: 0
+    0x04, 0x00, 0x00, 0x00,                         // count: 4
+    0x00, 0x02, 0x01, 0x01,                         // unknown, inactive, active, active
+};
+
+inline constexpr std::uint8_t kStepAvailabilityOnly[] = {
+    'V', 'S', 'C', 'W',                             // magic
+    0x02, 0x00,                                     // version 2
+    0x04,                                           // kind: step
+    0x01,                                           // revision 1
+    0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, // session
+    0x80, 0x84, 0x1E, 0x00, 0x00, 0x00, 0x00, 0x00, // time: 2'000'000 ns
+    0x04,                                           // flags: 4 availability
+    0x00, 0x00,                                     // results: 0
+    0x00, 0x00,                                     // events: 0
+    0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // version: 2
+    0x04, 0x00, 0x00, 0x00,                         // total: 4
+    0x00, 0x00, 0x00, 0x00,                         // first: 0
+    0x04, 0x00, 0x00, 0x00,                         // count: 4
+    0x00, 0x02, 0x01, 0x01,                         // unknown, inactive, active, active
 };
 
 } // namespace vehicle_sil::control::wire_v2_golden

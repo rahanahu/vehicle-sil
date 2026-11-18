@@ -17,6 +17,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -49,6 +50,17 @@ enum class Causality
 
 using Value = std::variant<bool, std::int64_t, double>;
 
+/// Whether a variable is in use right now, as the ECU's application reports it
+/// (Agent::set_availability()). It is information for whoever looks at the variable (a screen
+/// shows an inactive one greyed out): nothing in vehicle-sil decides by it. A variable is read,
+/// written, checked and sampled in the same way whatever its availability is.
+enum class Availability : std::uint8_t
+{
+    Unknown = 0,  ///< the application has not decided yet
+    Active = 1,   ///< in use (also every variable that does not report its availability)
+    Inactive = 2, ///< not in use in the present set-up of the ECU
+};
+
 struct EnumItem
 {
     std::string name;
@@ -69,6 +81,10 @@ struct VariableInfo
     std::optional<double> step; ///< a hint for editors (slider resolution); not enforced
     std::string description;
     std::vector<EnumItem> items; ///< Enum only: the allowed values
+    /// Set: the variable reports its availability while the simulation runs, and this is the state
+    /// it starts with (VariableOptions::availability). Empty: it does not report (always Active).
+    /// The state it has now is not here: Agent::availability(), and AvailabilityUpdate of a hub.
+    std::optional<Availability> availability = std::nullopt; // an initializer: the lists that end before it stay complete
 
     friend bool operator==(const VariableInfo&, const VariableInfo&) = default;
 };
@@ -82,6 +98,11 @@ struct VariableOptions
     std::string description{};
     /// Writable only before the first step (Causality::Parameter) instead of at any time.
     bool parameter = false;
+    /// Makes the variable report its availability while the simulation runs: the value is the
+    /// state it starts with (usually Availability::Unknown, until the application has decided),
+    /// and Agent::set_availability() changes it. Empty: the variable does not report (it is always
+    /// Active). Which variables report is fixed with the schema, as the variables are.
+    std::optional<Availability> availability = std::nullopt; // an initializer: the lists that end before it stay complete
 };
 
 struct Write
@@ -204,7 +225,8 @@ struct AgentOptions
 ///
 /// Two sides use it:
 /// - the step thread (the ECU's simulation steps): on_step_begin(), on_step_end(), log(), and
-///   finish() after the last step (the ECU calls on_step_begin(), on_step_end() and finish()).
+///   set_availability(), and finish() after the last step (the ECU calls on_step_begin(),
+///   on_step_end() and finish()).
 ///   Call them from one thread at a time. The setters and getters of the variables run only
 ///   here, so the model needs no locks. The step thread never waits for the transport side.
 /// - the transport side (the connection to a control server, or a test): submit(),
@@ -384,6 +406,24 @@ public:
     void on_step_end(SimTime now);
     /// Queues an event (dropped and counted when the queue is full).
     void log(EventLevel level, std::string text);
+    /// Reports whether the variable `name` is in use now. Only for a variable declared with
+    /// VariableOptions::availability. Nothing else changes with it: the variable is still read,
+    /// written, checked and sampled as before (see Availability). The same state again does
+    /// nothing. Allocates nothing.
+    ///
+    /// From a step, or on the set-up thread between the completion of the schema and the first
+    /// step. Before the schema is complete there is no state to change yet, and the state a
+    /// variable starts with is the one of its declaration: std::logic_error.
+    /// std::invalid_argument for a name the agent does not have, for a variable that was declared
+    /// without VariableOptions::availability, and for a state that is no Availability.
+    void set_availability(std::string_view name, Availability state);
+    /// The availability of every variable now, in schema order (a variable that does not report:
+    /// Active). Empty until the schema is complete. For the step thread only (a StepSink, a test
+    /// that runs the steps): no other thread may read it while steps run.
+    [[nodiscard]] std::span<const Availability> availability() const noexcept { return availability_; }
+    /// Goes up by one each time set_availability() changes a state (0: every variable still has
+    /// the state of its declaration). For the step thread only, as availability().
+    [[nodiscard]] std::uint64_t availability_version() const noexcept { return availability_version_; }
     /// After the last step (no step runs any more, and none will): every command still waiting
     /// is Cancelled, and later submit() calls are Invalid.
     void finish();
@@ -415,6 +455,8 @@ private:
     void add(VariableInfo info, Variable variable);
     /// std::logic_error (naming `what`) once the schema is complete.
     void require_registering(const std::string& what) const;
+    /// With schema_mutex_ held, once: the registration closes and the availability gets its place.
+    void close_schema();
     [[nodiscard]] std::optional<std::string> check(const Write& write, std::pair<std::size_t, Value>& out, bool& parameter) const;
     void apply(Pending& command, SimTime now, bool late);
     void push_result(CommandResult result);
@@ -460,6 +502,10 @@ private:
     std::optional<SimTime> last_step_;
     std::optional<SimTime> next_sample_;
     StepSink step_sink_; ///< set before the first step, then read by the step thread only
+    /// One per variable, filled from the declarations when the schema is completed and never
+    /// resized afterwards; then the step thread only (the set-up thread before the first step).
+    std::vector<Availability> availability_;
+    std::uint64_t availability_version_ = 0; ///< as availability_
 
     // Values: a triple buffer. The step thread fills buffers_[back_] and swaps it with the
     // middle one; latest() swaps the middle one with buffers_[front_] when it is newer.
@@ -572,6 +618,7 @@ void Agent::add_typed(std::string name, std::function<T()> get, std::function<vo
     info.step = options.step;
     info.description = std::move(options.description);
     info.items = std::move(items);
+    info.availability = options.availability;
     Variable variable;
     variable.get = [g = std::move(get)] { return detail::to_value<T>(g()); };
     if (set)

@@ -97,6 +97,16 @@ public:
                 fail("control.wire_version is " + std::to_string(version) + ", not a version");
             }
             offer.wire_version = static_cast<int>(version);
+            // Absent (an executable of an earlier vehicle-sil): revision 0.
+            if (const auto revision = find(control, "wire_revision"); revision != ryml::NONE)
+            {
+                const auto number = integer(revision, "control.wire_revision");
+                if (number < 0 || number > 255)
+                {
+                    fail("control.wire_revision is " + std::to_string(number) + ", not a revision");
+                }
+                offer.wire_revision = static_cast<int>(number);
+            }
             out.description.control = std::move(offer);
         }
         // Absent (an executable of an earlier vehicle-sil): none. An open list: every name is kept,

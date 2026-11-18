@@ -293,6 +293,8 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 - 読み飛ばしてはいけない変更（項目の移動や削除、相手が知らない列挙の値を送ること）には、新しいバージョンが必要です。`kVersion` を上げます。バージョンの違う ECU とランチャーは、変数を一緒に読み書きできなくなります（照合が `control-link-version` を出します）。
 - `result_bytes()` と `event_bytes()` は、`write_result()` と `write_event()` が書くバイト数とちょうど同じ値を返すようにします。`encode_step()` はこの値で分割するので、小さすぎるとメッセージが上限を超えます。
 - `kLeast` は、要素の最小の大きさです。復号は、何かを読む前に、個数をこの値と照らします。要素に項目を追加したら、ここも直します。
+- `--describe` は `kRevision` を `control.wire_revision` として出し、check は古い改訂の ECU を注記します（`libs/launch/src/check_rules.cpp` の `control-link-revision`）。`kRevision` を上げたら、古い改訂に何が欠けるかを、その注記に書きます。
+- 利用状態（改訂 1）は、ステップのメッセージの最後の部分で、値の後ろにあります。フラグ（`kStepAvailability`）で読み、残りのバイト数からは読みません。`AgentTransport` は、ステップのシンクの中で `Agent::availability()` を読みます。状態をトランスポートのスレッドへ渡す道はほかになく、要りません。
 - 相手が知らなくても困らない種類を追加するだけなら、バージョンも改訂番号も上げません。知らない種類は捨てられます（最後の通知への返事 `Kind::LastWordReceived` がその例です）。
 - ヘッダーの 8 バイト、hello のヘッダーの直後の participant 名、ほかのメッセージのヘッダーの直後の session は、どのバージョンでも変えません。バージョンの違う相手の名前を読むためと、ECU がメッセージの宛先を見るためです。
 
@@ -306,6 +308,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 - `^control\.wire_v2_`: バージョン 2（メッセージは `tests/control/test_wire_v2.cpp` にも手で書いてあります）。古いバージョンと新しいバージョンを読まないこと、新しい改訂番号から読み飛ばすものと同じ改訂番号から断るもの、要素の大きさ、ステップのメッセージが上限ちょうどまで詰まること。
 - `^control\.wire_building_`: ステップのメッセージを組み立てるとき、バッファが育った後はメモリを確保しないこと（専用の実行ファイル、`tests/control/test_wire_allocation.cpp`）。
 - `^control\.wire_v2_revision_0_`: バージョン 2、改訂 0 のバイト列（`tests/control/wire_v2_golden.hpp` に手で書いたもの）。項目を追加するときは、新しい改訂のバイト列を横に追加し、これは変えません。
+- `^control\.wire_v2_revision_1_`: 改訂 1 で足したバイト列（利用状態）。同じファイルにあります。
 - `control_silkit.a_hello_of_another_version_is_reported_and_makes_no_peer`、`control_silkit.an_agent_does_not_answer_what_is_written_to_it_in_another_version`: 古いバージョンと新しいバージョンを、それぞれの側で。
 
 ### SIL Kit の上のトランスポートと開始前の窓
@@ -346,6 +349,7 @@ simulation-run.md に書いてあるランチャーの出力:
 - `AgentTransport` のデストラクターは、Hub の返事を待ちます（`AgentTransportOptions::last_word_wait`）。
 - 待ちを長くする変更や、なくす変更は、ECU の終わりの遅れと、実行の終わりの結果（Cancelled か Unknown か）を変えます。
 - 値と結果は、ステップのスレッドから、値を読んだ直後に送信します。別のスレッドに渡すと、順序の保証がなくなります（`HubTransportStats::late_messages` が数えます）。
+- 利用状態は、遅れてつながった Hub のために、ステップの時刻で 1 秒ごとに送り直します（`agent_transport.cpp` の `kAvailabilityResend`。`control_silkit.the_availability_is_said_again_each_second_of_step_time`、`control_silkit.a_hub_that_comes_late_gets_the_availability_the_ecu_has_now`）。
 - Hub の側の受信のハンドラーには、待つものと重い処理を追加しません。シミュレーション全体が待つことになります。
 
 テスト:
