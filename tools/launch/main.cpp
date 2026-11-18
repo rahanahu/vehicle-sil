@@ -35,6 +35,7 @@
 #include "vehicle_sil/cli/utf8.hpp"
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/connections.hpp"
+#include "vehicle_sil/launch/error_result.hpp"
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/launch/request.hpp"
@@ -815,22 +816,13 @@ int finish_events(launch::EventStream& events, const launch::RunReport& report, 
     return code;
 }
 
-enum class Command
-{
-    Check,
-    Run,
-    Test,
-    Connections,
-};
-
 /// A wrong command line: each error and the usage on stderr; with --json also the JSON (result
 /// "usage") on stdout, with --events the result event, so that a program that reads it gets an
 /// answer. `file`: the configuration file if the arguments name one, else "" (null in the JSON).
 /// `variants`: the variants the file defines, if it was read (the JSON lists what --variant takes).
-int usage_error(const std::vector<launch::Finding>& errors, bool json, Command command, const std::string& file,
+int usage_error(const std::vector<launch::Finding>& errors, bool json, launch::CommandKind command, const std::string& file,
                 launch::EventStream* events, const std::vector<std::string>& variants = {})
 {
-    const bool run = command == Command::Run;
     for (const auto& error : errors)
     {
         write_stderr_line("error: " + error.message);
@@ -843,43 +835,14 @@ int usage_error(const std::vector<launch::Finding>& errors, bool json, Command c
             std::fflush(stderr);
         }
     }
-    if (json && command == Command::Connections)
+    if (events != nullptr)
     {
-        launch::ConnectionsReport report;
-        report.file = file;
-        report.usage = true;
-        report.findings = errors;
-        return write_or_fail(launch::format_connections_json(report), cli::kExitUsage);
+        return finish_events(*events, launch::usage_run_report(file, errors, variants), cli::kExitUsage);
     }
-    if (json && command == Command::Test)
-    {
-        launch::TestReport test;
-        test.file = file;
-        test.usage = true;
-        test.findings = errors;
-        return write_or_fail(launch::format_test_json(test), cli::kExitUsage);
-    }
-    if (json || events != nullptr)
-    {
-        launch::CheckReport check;
-        check.file = file;
-        check.usage = true;
-        check.variants = variants;
-        check.findings = errors;
-        if (run)
-        {
-            launch::RunReport report;
-            report.check = std::move(check);
-            report.usage = true;
-            return events != nullptr ? finish_events(*events, report, cli::kExitUsage)
-                                     : write_or_fail(launch::format_run_json(report), cli::kExitUsage);
-        }
-        return write_or_fail(launch::format_json(check), cli::kExitUsage);
-    }
-    return cli::kExitUsage;
+    return json ? write_or_fail(launch::format_usage_json(command, file, errors, variants), cli::kExitUsage) : cli::kExitUsage;
 }
 
-int usage_error(const std::string& message, bool json, Command command, const std::string& file, launch::EventStream* events)
+int usage_error(const std::string& message, bool json, launch::CommandKind command, const std::string& file, launch::EventStream* events)
 {
     return usage_error({launch::Finding{launch::Severity::Error, "usage", message, 0, "", ""}}, json, command, file, events);
 }
@@ -1144,10 +1107,9 @@ int check(const cli::Args& args)
     const launch::CheckReport report = launch::check_file(request);
     if (report.usage)
     {
-        return usage_error(report.findings, args.flag("json"), Command::Check, file, nullptr, report.variants);
+        return usage_error(report.findings, args.flag("json"), launch::CommandKind::Check, file, nullptr, report.variants);
     }
-    const int code = !report.config ? cli::kExitSetupFailed : report.passed() ? cli::kExitOk : cli::kExitFailed;
-    return write_or_fail(args.flag("json") ? launch::format_json(report) : launch::format_text(report), code);
+    return write_or_fail(args.flag("json") ? launch::format_json(report) : launch::format_text(report), report.exit_code());
 }
 
 /// `connections [--json] [--network <name>] <file>`.
@@ -1178,7 +1140,7 @@ int connections(const cli::Args& args)
     const launch::ConnectionsReport report = launch::list_connections(process::path_from_utf8(file), file, options);
     if (report.usage)
     {
-        return usage_error(report.findings, args.flag("json"), Command::Connections, file, nullptr);
+        return usage_error(report.findings, args.flag("json"), launch::CommandKind::Connections, file, nullptr);
     }
     return write_or_fail(args.flag("json") ? launch::format_connections_json(report) : launch::format_connections_text(report),
                          report.exit_code());
@@ -1350,7 +1312,7 @@ int run(const cli::Args& args, launch::EventStream* events)
     }
     if (report.check.usage)
     {
-        return usage_error(report.check.findings, args.flag("json"), Command::Run, file, events, report.check.variants);
+        return usage_error(report.check.findings, args.flag("json"), launch::CommandKind::Run, file, events, report.check.variants);
     }
     const int code = events != nullptr
                          ? finish_events(*events, report, report.exit_code())
@@ -1469,7 +1431,7 @@ int test(const cli::Args& args)
     launch::ScenarioList list = launch::list_scenarios(given);
     if (!list.errors.empty())
     {
-        return usage_error(list.errors, json, Command::Test, file, nullptr);
+        return usage_error(list.errors, json, launch::CommandKind::Test, file, nullptr);
     }
     options.scenarios = std::move(list.scenarios);
     // As fast as possible, whatever the file says (at speed 1 with the time lock): a default, not
@@ -1484,7 +1446,7 @@ int test(const cli::Args& args)
     const launch::TestReport report = launch::test_file(options);
     if (report.usage)
     {
-        return usage_error(report.findings, json, Command::Test, file, nullptr);
+        return usage_error(report.findings, json, launch::CommandKind::Test, file, nullptr);
     }
     const int code = write_or_fail(json ? launch::format_test_json(report) : launch::format_test_text(report), report.exit_code());
     if (report.connection_not_closed)
@@ -1574,7 +1536,7 @@ int main(int argc, char** argv)
     const bool isRun = !positionals.empty() && positionals.front() == "run";
     const bool isTest = !positionals.empty() && positionals.front() == "test";
     const bool isConnections = !positionals.empty() && positionals.front() == "connections";
-    const Command command = isRun ? Command::Run : isTest ? Command::Test : isConnections ? Command::Connections : Command::Check;
+    const launch::CommandKind command = isRun ? launch::CommandKind::Run : isTest ? launch::CommandKind::Test : isConnections ? launch::CommandKind::Connections : launch::CommandKind::Check;
     const std::string file = positionals.size() == 2 ? positionals[1] : std::string{};
     if (!positionals.empty() && positionals.front() == "version")
     {
@@ -1592,7 +1554,7 @@ int main(int argc, char** argv)
             {
                 return usage_error("--events needs a standard output to write the events to, and there is none (it is "
                                    "closed): start vehicle_sil_launch with its standard output as a pipe or a file",
-                                   false, Command::Run, file, nullptr);
+                                   false, launch::CommandKind::Run, file, nullptr);
             }
         }
     }
@@ -1647,30 +1609,11 @@ int main(int argc, char** argv)
         write_stderr_line(std::string("error: ") + e.what());
         if (stream != nullptr)
         {
-            launch::RunReport report;
-            report.findings.push_back(launch::Finding{launch::Severity::Error, "internal", e.what(), 0, "", ""});
-            static_cast<void>(finish_events(*stream, report, cli::kExitSetupFailed));
+            static_cast<void>(finish_events(*stream, launch::internal_error_run_report(e.what()), cli::kExitSetupFailed));
         }
         else if (json)
         {
-            if (isConnections)
-            {
-                launch::ConnectionsReport report;
-                report.file = file;
-                report.findings.push_back(launch::Finding{launch::Severity::Error, "internal", e.what(), 0, "", ""});
-                static_cast<void>(write_or_fail(launch::format_connections_json(report), cli::kExitSetupFailed));
-            }
-            else if (isTest)
-            {
-                launch::TestReport report;
-                report.unreadable = true;
-                report.findings.push_back(launch::Finding{launch::Severity::Error, "internal", e.what(), 0, "", ""});
-                static_cast<void>(write_or_fail(launch::format_test_json(report), cli::kExitSetupFailed));
-            }
-            else
-            {
-                static_cast<void>(write_or_fail(launch::format_internal_error_json(isRun, e.what()), cli::kExitSetupFailed));
-            }
+            static_cast<void>(write_or_fail(launch::format_internal_error_json(command, file, e.what()), cli::kExitSetupFailed));
         }
         code = cli::kExitSetupFailed;
     }
