@@ -275,3 +275,27 @@ TEST_CASE(find_tool_takes_a_runnable_file_only)
     CHECK(find_tool("vehicle_sil_ethernet_bridge", base) == beside);
 #endif
 }
+
+TEST_CASE(connect_device_key_names_the_device_a_target_uses)
+{
+    CHECK(connect_device_key(NetworkKind::Ethernet, "eth0", false) == "eth0");
+    CHECK(connect_device_key(NetworkKind::Ethernet, "eth0", false) != connect_device_key(NetworkKind::Ethernet, "ETH0", false));
+    // Windows adapter names do not differ by case.
+    CHECK(connect_device_key(NetworkKind::Ethernet, "Ethernet 2", true) == connect_device_key(NetworkKind::Ethernet, "ETHERNET 2", true));
+    CHECK(connect_device_key(NetworkKind::Can, "physical:1") != connect_device_key(NetworkKind::Can, "physical:2"));
+    CHECK(connect_device_key(NetworkKind::Can, "physical:1") == connect_device_key(NetworkKind::Can, "physical:01"));
+    CHECK(connect_device_key(NetworkKind::Can, "virtual:1") == connect_device_key(NetworkKind::Can, "virtual:2"));
+    CHECK(connect_device_key(NetworkKind::Can, "virtual:1") != connect_device_key(NetworkKind::Can, "physical:1"));
+    CHECK(connect_device_key(NetworkKind::Ethernet, "none").empty());
+    CHECK(connect_device_key(NetworkKind::Can, "usb:1").empty());
+    CHECK(connect_device_key(NetworkKind::Lin, "x").empty());
+}
+
+TEST_CASE(networks_are_joined_through_participants)
+{
+    const std::vector<std::vector<std::string>> p{{"A", "C"}, {"C", "B"}, {"D"}};
+    CHECK(networks_are_joined(p, "A", "C"));
+    CHECK(networks_are_joined(p, "A", "B"));
+    CHECK(!networks_are_joined(p, "A", "D"));
+    CHECK(!networks_are_joined({}, "A", "B"));
+}

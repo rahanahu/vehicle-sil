@@ -40,6 +40,7 @@
 #include "vehicle_sil/launch/test.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
+#include "control_arguments.hpp"
 #include "control_server.hpp"
 #include "vehicle_sil/control/hub.hpp"
 #endif
@@ -125,7 +126,8 @@ constexpr const char* kUsage =
     "                              at most <ms> for it to take the result (1000 or more; default 30000)\n"
     "  --stdin-commands            run: read commands from stdin, one JSON object per line: {\"command\":\"stop\"}\n"
     "                              stops in order (twice: without waiting); the end of stdin stops as well;\n"
-    "                              pause, resume, step (with \"ms\") and speed (with \"value\") control the time\n"
+    "                              pause, resume, step (with \"ms\"), run_until (with \"at_ms\") and speed (with\n"
+    "                              \"value\") control the time\n"
     "  --start-paused              run --stdin-commands or --control: stand still at 0 until a resume or step\n"
     "                              command (with --control: before the first step, so that a client's writes\n"
     "                              take effect at 0)\n"
@@ -174,9 +176,11 @@ constexpr const char* kUsage =
     "  --time-policy realtime|free the time of a run that is connected outside the simulation (by --connect, or by\n"
     "                              an enabled participant with role: bridge). realtime (the default): it goes at\n"
     "                              speed 1 whatever speed <file> has; another --speed and --start-paused are the\n"
-    "                              error outside-real-time. free: the speed and the time are yours to change as\n"
-    "                              in any run; the bridge still carries frames both ways, so what is connected\n"
-    "                              there sees the simulation pause or run ahead. No effect on other runs\n"
+    "                              error outside-real-time, and the commands that pause or step it or change its\n"
+    "                              speed are refused while it runs. free: the speed and the time are yours to\n"
+    "                              change as in any run; the bridge still carries frames both ways, so what is\n"
+    "                              connected there sees the simulation pause or run ahead. No effect on other\n"
+    "                              runs\n"
     "  --network <name>            connections: only the network <name>\n"
     "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable\n"
     "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable\n"
@@ -226,6 +230,11 @@ struct Shared
     /// The controls of the run (run), on g_stops: the reader of stdin hands the time commands to
     /// the run through them, a control server its time operations.
     launch::RunControls* controls = nullptr;
+    /// Without --events: the lines about refused commands of standard input that are not written
+    /// yet (write_stdin_notes()). They are decided under the time commands' mutex, where nothing
+    /// may wait for stderr, so they are kept here and written outside it.
+    std::mutex stdin_notes_mutex;
+    std::vector<std::string> stdin_notes;
 };
 
 Shared& shared()
@@ -629,27 +638,77 @@ launch::EventStream* start_events(const std::string& file, const std::vector<std
 
 // --- the commands on standard input (run --stdin-commands) ---
 
+/// At most this many lines wait in Shared::stdin_notes (more are left out: nobody reads stderr).
+constexpr std::size_t kMaxStdinNotes = 1024;
+
+std::string stdin_ignored_line(const launch::Command& command)
+{
+    return "vehicle_sil_launch: a line of the standard input was ignored: " + command.message;
+}
+
+/// Without --events: a line of standard input that was not accepted, as a line on stderr. From
+/// the thread that reads standard input, outside every mutex of the run.
+void note_stdin_ignored(const launch::Command& command)
+{
+    note_from_thread(stdin_ignored_line(command));
+}
+
+/// note_stdin_ignored() for where nothing may wait (under the time commands' mutex): the line is
+/// kept for write_stdin_notes().
+void keep_stdin_note(const launch::Command& command)
+{
+    const std::lock_guard lock(shared().stdin_notes_mutex);
+    if (shared().stdin_notes.size() < kMaxStdinNotes)
+    {
+        shared().stdin_notes.push_back(stdin_ignored_line(command));
+    }
+}
+
+/// Writes the lines keep_stdin_note() kept, outside the time commands' mutex: `from_main` as
+/// write_stderr_line() (main does not wait for stderr without a limit), else as
+/// note_from_thread(). The lines of one call keep their order.
+void write_stdin_notes(bool from_main)
+{
+    std::vector<std::string> lines;
+    {
+        const std::lock_guard lock(shared().stdin_notes_mutex);
+        lines.swap(shared().stdin_notes);
+    }
+    for (const std::string& line : lines)
+    {
+        from_main ? write_stderr_line(line) : note_from_thread(line);
+    }
+}
+
 /// Reads standard input to its end on a thread of its own: each command as an event (or, without
-/// --events, a line on stderr for one that was not accepted); a stop as one Ctrl+C. Its end is a
-/// stop unless one was requested before.
+/// --events, a line on stderr for one that was not accepted: a time command's from the controls'
+/// observer, which also has the answer of one that waited for the run to read its configuration);
+/// a stop as one Ctrl+C. Its end is a stop unless one was requested before.
 void start_reading_commands()
 {
     std::thread([] {
         launch::EventStream* events = shared().events;
         launch::RunControls* controls = shared().controls;
         launch::CommandInput input([events, controls](const launch::Command& command) {
-            // The time commands: the run decides whether one can be done now, and writes its event
-            // before it does it (neither waits for the run or the reader of the events).
-            const launch::Command done =
-                command.is_time() && controls != nullptr ? controls->time().apply(command, "stdin") : command;
+            // The time commands: the run decides whether one can be done (now, or once it has read
+            // its configuration), and writes its event before it does it (neither waits for the run
+            // or the reader of the events). What it answers goes to the controls' observer.
+            if (command.is_time() && controls != nullptr)
+            {
+                static_cast<void>(controls->time().apply(command, "stdin"));
+                if (events == nullptr)
+                {
+                    write_stdin_notes(false);
+                }
+            }
             // The event first: it comes before what the stop does (it does not wait for its reader).
-            if (events != nullptr && !command.is_time())
+            else if (events != nullptr && !command.is_time())
             {
                 events->command(command, "stdin");
             }
-            else if (events == nullptr && !done.accepted)
+            else if (events == nullptr && !command.accepted)
             {
-                note_from_thread("vehicle_sil_launch: a line of the standard input was ignored: " + done.message);
+                note_stdin_ignored(command);
             }
             if (command.is_stop())
             {
@@ -1114,9 +1173,9 @@ int run(const cli::Args& args, launch::EventStream* events)
         options.start_paused = true;
     }
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
-    // The control server serves the run's hub, which the run makes and gives it when it starts it
-    // (RunOptions::serve_control); the server keeps the hub from then on.
-    std::unique_ptr<launch_cli::LauncherControlServer> server;
+    // The control server serves the run's hub, which the run makes and gives it when run_file()
+    // starts it (RunOptions::control_endpoint); the server keeps the hub from then on.
+    std::unique_ptr<launch::ControlEndpoint> server;
 #endif
     watch_interrupts();
     if (events != nullptr)
@@ -1125,7 +1184,13 @@ int run(const cli::Args& args, launch::EventStream* events)
     }
     else
     {
-        options.write_line = write_stderr_line;
+        // The answers of commands that waited for the configuration are kept (keep_stdin_note()):
+        // they are written before the run's next line, and after the run. Like the line itself,
+        // this does not wait for stderr without a limit.
+        options.write_line = [](std::string_view line) {
+            write_stdin_notes(true);
+            write_stderr_line(line);
+        };
     }
     {
         // The controls of this run, on the stop requests of the process. Never destroyed: the
@@ -1139,11 +1204,22 @@ int run(const cli::Args& args, launch::EventStream* events)
             observers.on_phase = [events](launch::Phase phase) { events->phase(phase); };
             observers.on_state = [events](const launch::RunState& state) { events->state(state); };
         }
+        else
+        {
+            // No event says what became of a command: a refused one of standard input is a line,
+            // written once the time commands' mutex is left (this is called under it).
+            observers.on_command = [](const launch::Command& command, std::string_view source) {
+                if (!command.accepted && source == "stdin")
+                {
+                    keep_stdin_note(command);
+                }
+            };
+        }
         shared().controls =
             new launch::RunControls(g_stops, options.start_paused, std::move(observers), args.has("scenario"));
         // The state names the first stop request as the result does.
         shared().controls->set_stop_name(interrupt_name);
-        // Without --control nothing can send a run_until or a write: the state says so.
+        // Without --control nothing can send a write: the state says so.
         shared().controls->set_control_server(control);
         options.controls = shared().controls;
     }
@@ -1160,8 +1236,8 @@ int run(const cli::Args& args, launch::EventStream* events)
         hooks.controls = shared().controls;
         // Its event (and its refusal once the run is over) comes from the time commands.
         hooks.stop = [] { g_stops.request(kControlStop); };
-        server = launch_cli::make_control_server(a, std::move(hooks));
-        options.serve_control = [&server](const std::shared_ptr<control::Hub>& hub) { return server->start(hub); };
+        server = launch_cli::make_control_server(launch_cli::read_control_options(a), std::move(hooks));
+        options.control_endpoint = server.get();
     }
 #endif
     if (args.flag("stdin-commands"))
@@ -1170,6 +1246,10 @@ int run(const cli::Args& args, launch::EventStream* events)
     }
     options.interrupt_name = interrupt_name;
     const launch::RunReport report = launch::run_file(process::path_from_utf8(c.file), c.file, options);
+    if (events == nullptr)
+    {
+        write_stdin_notes(true); // before the result
+    }
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
     // Before the result: every call of a client ends (a watch, a wait) and none comes any more.
     if (server)

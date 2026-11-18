@@ -364,7 +364,7 @@ Peer ごとの状態は Sent → Queued（Agent が積んだ）→ Applied、Lat
 
 ### 変数の対応表（`set_variable_map()`）
 
-`set_variable_map(participant, map)`（`control/variable_map.hpp` の `MappedSchema`）は、その participant の変数を、読む側と書く側の全員に、対応の後の名前と値で見せます。ランチャーが、設定ファイルの `participants[].variables` から渡します（`RunControl::hub()` の最初の呼び出しで、Agent が接続する前）。
+`set_variable_map(participant, map)`（`control/variable_map.hpp` の `MappedSchema`）は、その participant の変数を、読む側と書く側の全員に、対応の後の名前と値で見せます。ランチャーが、設定ファイルの `participants[].variables` から渡します（`RunControl::shared_hub()` の最初の呼び出しで。実行の初めで、Agent が接続する前）。
 
 変換は Hub の中の 4 か所だけです。見せる一覧はロックの外で作ってロックの中で入れ替え、ほかの 3 つはロックの中で行います。トランスポートと読む API（tap、最新の値、購読、Control Server）は、変換を知りません。
 
@@ -816,18 +816,30 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 | gRPC のスレッド（時間の操作） | `TimeCommands::apply()`（`source` は `control_server`） | `TimeCommands` のミューテックスの中で、controller の時間ゲートに渡す |
 | gRPC のスレッド（値の読み書き） | Hub | Hub のロック |
 
+時間のロック（[simulation-run.md](../simulation-run.md) の「外につながる実行の時間」）:
+
+- run が `TimeCommands` に時間のロックを渡す（`set_time_lock()`。run のスレッドが、構成を読んだ直後、どの `--describe` よりも前に呼ぶ）まで、`apply()` は停止のほかを決めません。それより前に届いたコマンドは、届いた順に溜め（256 個まで）、保留として返します。イベントは書きません。
+- `set_time_lock()` は、溜めたコマンドを、その順に、ミューテックスの中で、後から届くどのコマンドよりも先に決め、それぞれの `command` イベントを書きます。構成が読めなければ、`detach()` が同じことをし、溜めたコマンドはすべて断られます。
+- だから、ロックなしで決まるコマンドはなく、`command` イベントの順は、コマンドが効いた順のままです。
+- `attach()` は、ロックを渡される前の controller を断ります（`std::logic_error`）。
+- Control Server が listen を始めるのは照合の後なので、クライアントの呼び出しがこの形で待つことはありません。
+- 規則が断った時刻の呼び出しは、理由のコードを持つ `control_grpc::Refused` で知らせます。サーバーは、それを `FAILED_PRECONDITION` の trailing metadata `vehicle-sil-reason` として送ります。
+
 ### 見るだけのサーバー（`observe_only`）
 
 - シナリオの実行（`run --scenario`）では、ランチャーが `ServerOptions::observe_only` を付けます。ランチャーは自分で決めず、run の操作盤の規則に「Control Server は、run の間ずっと、停止のほかをすべて断られるか」を尋ね（`libs/launch/src/control_rules.cpp` の `always_refused()`）、理由と文をそこから取ります。
 - 呼び出しの表（`libs/control_grpc/src/auth.cpp` の `rpc_rules()`）の各行に、シミュレーションに何をするか（読む、変える、止める）があります。
 - `observe_only` のサーバーは、「変える」呼び出しを、権限の確認の直後、本体に入る前の 1 か所で拒否します（`FAILED_PRECONDITION`、trailing metadata `vehicle-sil-reason`）。
 - 拒否した呼び出しは、Hub にも `TimeControl` にも届きません。
+- 実時間も保つシナリオの実行では、クライアントの時刻の呼び出しは、時間のロックの規則が見る前に、ここでシナリオの理由で拒否します。標準入力のコマンドは、時間のロックが断ります（`outside-real-time`）。
 - 読む呼び出しがアクセスするのは、Hub（スレッド安全。購読は上限つきで、トランスポートのスレッドを待たせない）と `TimeCommands::inspect()` だけで、シナリオの tap、書き込み、ガードとは何も共有しません。
 
 ### 起動と終了の時期
 
-- 照合が通った後、registry より前に、`run_file()` が `RunOptions::serve_control` を呼びます（main のスレッド）。
-- Hub は実行が作り、`std::shared_ptr` で `serve_control` に渡します。Server がそれを持ち続けるので、Hub は実行と Server の両方が手放すまで生きています。
+- ランチャーは実行の前に Server を作り、そのポインターを実行に渡します（`RunOptions::control_endpoint`。型は `launch::ControlEndpoint`）。
+- `run_file()` は 1 回の実行を 2 つの段（`Runner::prepare()`、次に `Runner::run()`）で進め、その間に main のスレッドで Server を起動します。照合が通り、実行のファイル（ログ、タイムライン）を開いた後で、registry より前です。実行そのものは Server を呼びません。`run_file()` が Server の待ち受け先を実行に伝え、実行がイベント `control_server` とその行を書きます。
+- Hub は実行が作り、`run_file()` が `std::shared_ptr` で `ControlEndpoint::start()` に渡します。Server がそれを持ち続けるので、Hub は実行と Server の両方が手放すまで生きています。
+- 始まる前に中断された実行と、ファイルを開けなかった実行は、Server を起動しません。
 - Server を起動できなければ、何も起動しません（`setup`）。
 - 閉じるのは、`run_file()` が戻った後、結果を書く前です（main のスレッド。`ControlServer::shutdown()`）。
 

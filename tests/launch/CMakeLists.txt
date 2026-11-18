@@ -24,6 +24,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_traffic.cpp
   LINK vehicle_sil::launch vehicle_sil::core # core: the time commands with a controller (test_events.cpp)
        vehicle_sil::control # the hub that the run's samples come from (test_traffic.cpp)
+       vehicle_sil::control_silkit # the hub's transport of a real connection (test_run.cpp)
        vehicle_sil_cli # the other tools' exit codes and durations (test_shared_values.cpp)
        vehicle_sil::signal # the shapes as the launcher makes them (test_scenario_line.cpp: scenario_shapes.hpp)
        vehicle_sil::j1939 # the network that applies j1939_nodes too (test_j1939_nodes_match.cpp)
@@ -260,6 +261,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       scenario_failures
       scenario_same
       scenario_wave
+      run_until_stdin
       speed_change
       stall
       stand_still
@@ -301,6 +303,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       connect_roundtrip
       connect_speed
       connect_time_changed
+      connect_time_locked
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
@@ -364,7 +367,8 @@ if(TARGET vehicle_sil_launch_test_ecu)
   # not answer, an ECU without variables that is waited for, a variable map that does not fit an agent whose hello comes late, the limits of the start before and after the hold of --start-paused with a
   # control server (a participant of the test that never gets ready), a hold longer than the
   # ECUs' own limit for the start, --timeout-ms and Ctrl+C in
-  # the hold, a resume before the window.
+  # the hold, a resume before the window, when the control server is started and when it is not,
+  # what its start throws out of run_file().
   foreach(part IN ITEMS a_write_in_the_start_window_reaches_each_process_before_its_first_step
                         what_fails_before_the_start_aborts_the_simulation
                         a_stop_while_what_is_done_before_the_start_fails_does_not_cut_the_end_short
@@ -374,7 +378,9 @@ if(TARGET vehicle_sil_launch_test_ecu)
                         a_mapping_that_does_not_fit_is_reported_for_a_hello_after_the_start
                         the_start_is_limited_before_and_after_the_hold_but_not_in_it
                         the_ecus_wait_as_long_as_the_run_stands_still
-                        timeout_counts_the_hold an_interrupt_ends_the_hold a_resume_before_the_window_means_no_hold)
+                        timeout_counts_the_hold an_interrupt_ends_the_hold a_resume_before_the_window_means_no_hold
+                        the_control_server_is_started_after_the_runs_files_and_before_the_registry
+                        what_leaves_run_file_between_the_stages_ends_the_time_commands)
     add_test(NAME launch_control.${part}
              COMMAND vehicle_sil_launch_control_test $<TARGET_FILE:vehicle_sil_launch_test_ecu>
                      ${CMAKE_CURRENT_BINARY_DIR}/control $<TARGET_FILE:vehicle_sil_process_helper> ${part})

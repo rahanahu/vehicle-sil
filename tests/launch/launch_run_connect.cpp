@@ -33,9 +33,17 @@
 //                               outside-real-time, and nothing starts; with --time-policy free the
 //                               note outside-not-real-time, and it runs (with --strict too). A
 //                               file with another speed: the run goes at speed 1 (outside-speed-set).
-//   connect_time_changed        paused while it runs, then a speed, a resume and a stop: one
-//                               warning connect-time-changed, about the pause; with --strict, a
-//                               speed command (written at once) fails the run after its end.
+//   connect_time_locked         the time commands of a run that keeps real time: a pause and a
+//                               speed written at once (before the configuration is read) and
+//                               again while it runs are refused with outside-real-time, in their
+//                               order, and so are a step and a run_until of standard input; a speed
+//                               of 1 and a resume are taken; the state says the same;
+//                               no finding. A file that cannot be read: what was written at once
+//                               is refused with not-running.
+//   connect_time_changed        with --time-policy free: paused while it runs, then a speed, a
+//                               resume and a stop: one note outside-time-changed, about the
+//                               pause, and the state's caution; with --strict, a speed command
+//                               (written at once) is taken and the run passes with the note.
 #include "launch_run_support.hpp"
 
 #include <algorithm>
@@ -562,19 +570,120 @@ void connect_speed(const Options& base)
             "the note outside-not-real-time:\n" + out_of(lines));
     require(contains(lines.back(), "\"simulation\":\"reached_stop_at\""), "it ran to its end:\n" + lines.back());
     // Starting paused and the resume do not change the time of a run that goes on in real time.
-    require(finding_in(lines, "connect-time-changed").empty(), "no connect-time-changed:\n" + out_of(lines));
+    require(finding_in(lines, "outside-time-changed").empty(), "no outside-time-changed:\n" + out_of(lines));
+}
+
+void connect_time_locked(const Options& base)
+{
+    const Options o = connect_options(base);
+    const std::vector<std::string> run{"run", "--events", "--stdin-commands", "--connect", "ETH_EXT=fake0", "--connect",
+                                       "CAN=virtual:1", "sim.yaml"};
+    /// The command events of standard input, in their order, each as "<command> <id> <accepted or the reason>".
+    const auto answers = [](const std::vector<std::string>& lines) {
+        std::vector<std::string> out;
+        for (const std::string& line : events_with(lines, {"\"event\":\"command\"", "\"source\":\"stdin\""}))
+        {
+            out.push_back(value_of(line, "command") + " " + value_of(line, "id") + " " +
+                          (contains(line, "\"accepted\":true") ? "accepted" : value_of(line, "reason")));
+        }
+        return out;
+    };
+    {
+        // No stop_at_ms: the commands do not have to come within a time of the run; a stop ends it.
+        const fs::path dir = connect_dir(o, "time_locked", "", talker(o), {{"Talker", "talk CAN"}});
+        Live live(o, dir, run);
+        // At once: most likely before the launcher has read the configuration, and whenever they
+        // come, the answer is the lock's. In the order they were written.
+        live.write("{\"command\":\"pause\",\"id\":1}\n{\"command\":\"speed\",\"value\":5,\"id\":2}\n"
+                   "{\"command\":\"speed\",\"value\":1,\"id\":3}\n{\"command\":\"resume\",\"id\":4}\n");
+        live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
+        // While it runs: the same answers.
+        live.write("{\"command\":\"pause\",\"id\":5}\n{\"command\":\"speed\",\"value\":\"max\",\"id\":6}\n"
+                   "{\"command\":\"step\",\"ms\":10,\"id\":7}\n{\"command\":\"run_until\",\"at_ms\":60000,\"id\":8}\n"
+                   "{\"command\":\"speed\",\"value\":1,\"id\":9}\n");
+        live.wait_for({"\"event\":\"command\"", "\"id\":9"});
+        live.write("{\"command\":\"stop\"}\n");
+        const auto [status, lines] = live.finish();
+        require(status && status->code == 130, "stopped by a command: exit code " + code_text(status) + "\n" + out_of(lines));
+        const std::vector<std::string> expected{"pause 1 outside-real-time", "speed 2 outside-real-time", "speed 3 accepted",
+                                                "resume 4 accepted",         "pause 5 outside-real-time", "speed 6 outside-real-time",
+                                                "step 7 outside-real-time",  "run_until 8 outside-real-time",
+                                                "speed 9 accepted",          "stop null accepted"};
+        require(answers(lines) == expected, "each command has its answer, in the order they were written:\n" + out_of(lines));
+        const std::string pause = events_with(lines, {"\"event\":\"command\"", "\"id\":1}"}).front();
+        require(contains(pause, "\"accepted\":false,") && contains(pause, "\"reason\":\"outside-real-time\"") &&
+                    contains(pause, "pause is refused, because what is connected does not wait") &&
+                    contains(pause, "start the run again with --time-policy free"),
+                "the refusal says why and what to do:\n" + pause);
+        // Nothing of it reached the simulation: it never stood still and went at speed 1.
+        require(events_with(lines, {"\"event\":\"time\"", "\"paused\":true"}).empty() &&
+                    events_with(lines, {"\"event\":\"time\"", "\"speed\":5,"}).empty() &&
+                    events_with(lines, {"\"event\":\"time\"", "\"speed\":null,"}).empty() &&
+                    contains(lines.back(), "\"timing\":{\"speed\":1,"),
+                "the simulation went on at speed 1:\n" + out_of(lines));
+        // The state says what the commands were told: from the first one after the configuration.
+        const std::vector<std::string> states = events_with(lines, {"\"event\":\"state\"", "\"phase\":\"running\""});
+        require(!states.empty(), "a state while it runs:\n" + out_of(lines));
+        const std::string& state = states.front();
+        require(contains(state, "\"pause\":{\"ok\":false,\"reason\":\"outside-real-time\"") &&
+                    contains(state, "\"step\":{\"ok\":false,\"reason\":\"outside-real-time\"") &&
+                    contains(state, "\"run_until\":{\"ok\":false,\"reason\":\"outside-real-time\"") &&
+                    contains(state, "\"resume\":{\"ok\":true,") && contains(state, "\"stop\":{\"ok\":true,") &&
+                    contains(state, "\"speed\":{\"ok\":true,\"reason\":null,\"message\":null,\"caution\":null,\"min\":1,\"max\":1}"),
+                "the state refuses a pause, a step and a run_until, and takes the speed 1 only:\n" + state);
+        for (const std::string& line : events_with(lines, {"\"event\":\"state\""}))
+        {
+            // The first state of a run comes with its first phase, before the configuration is
+            // read; every one after the check has the lock.
+            require(contains(line, "\"phase\":\"checking\"") || contains(line, "\"pause\":{\"ok\":false,"),
+                    "no state after the check takes a pause:\n" + line);
+        }
+        require(finding_in(lines, "outside-time-changed").empty() && contains(lines.back(), "\"errors\":0,\"warnings\":0,"),
+                "nothing changed the time, so no finding says so:\n" + lines.back());
+    }
+    {
+        // Without --events: the answers of the commands that were refused are lines on stderr,
+        // those written at once too.
+        const fs::path dir = connect_dir(o, "time_locked_text", "stop_at_ms: 300\n", talker(o), {{"Talker", "talk CAN"}});
+        Live live(o, dir, {"run", "--stdin-commands", "--connect", "ETH_EXT=fake0", "--connect", "CAN=virtual:1", "sim.yaml"});
+        live.write("{\"command\":\"pause\"}\n{\"command\":\"resume\"}\n");
+        const auto [status, lines] = live.finish_unchecked();
+        require(status && status->code == 0, "exit code " + code_text(status) + "\n" + out_of(lines));
+        const std::string err = lf(live.err());
+        const std::string line = "vehicle_sil_launch: a line of the standard input was ignored: this run is connected outside "
+                                 "the simulation and keeps to real time (--time-policy realtime, the default): pause is refused";
+        require(contains(err, line) && err.find(line) == err.rfind(line), "one line on stderr about the pause:\n" + err);
+    }
+    {
+        // A file that cannot be read: nothing starts, and the commands that waited for the
+        // configuration are told so, in their order, before the result.
+        const fs::path dir = connect_dir(o, "time_locked_no_file", "", talker(o), {{"Talker", "talk CAN"}});
+        std::vector<std::string> args = run;
+        args.back() = "no-such.yaml";
+        Live live(o, dir, args);
+        live.write("{\"command\":\"pause\",\"id\":1}\n{\"command\":\"speed\",\"value\":5,\"id\":2}\n");
+        const auto [status, lines] = live.finish();
+        require(status && status->code == 3, "a file that cannot be read: " + code_text(status) + "\n" + out_of(lines));
+        const std::vector<std::string> got = answers(lines);
+        // The launcher may have ended before it read a line (then there is none): what it read
+        // is refused, never accepted, and in order.
+        require(got.empty() || got == std::vector<std::string>{"pause 1 not-running"} ||
+                    got == std::vector<std::string>{"pause 1 not-running", "speed 2 not-running"},
+                "the commands of a run that does not start are refused:\n" + out_of(lines));
+        require(contains(lines.back(), "\"result\":\"unreadable\""), "the file could not be read:\n" + lines.back());
+    }
 }
 
 void connect_time_changed(const Options& base)
 {
     const Options o = connect_options(base);
-    const std::string code = "\"code\":\"connect-time-changed\"";
-    // Both networks connected, as connect_roundtrip: the check has no finding, so --strict fails on this one only.
+    const std::string code = "\"code\":\"outside-time-changed\"";
+    // Both networks connected, as connect_roundtrip: the check has no finding of its own.
     // No stop_at_ms: the commands do not have to come within a time of the run; a stop ends it.
     {
         const fs::path dir = connect_dir(o, "time_changed", "", talker(o), {{"Talker", "talk CAN"}});
-        Live live(o, dir, {"run", "--events", "--stdin-commands", "--connect", "ETH_EXT=fake0", "--connect", "CAN=virtual:1",
-                           "sim.yaml"});
+        Live live(o, dir, {"run", "--events", "--stdin-commands", "--time-policy", "free", "--connect", "ETH_EXT=fake0",
+                           "--connect", "CAN=virtual:1", "sim.yaml"});
         live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
         live.write("{\"command\":\"pause\"}\n");
         const std::string paused = live.wait_for({"\"event\":\"time\"", "\"paused\":true,"});
@@ -583,28 +692,37 @@ void connect_time_changed(const Options& base)
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish();
         require(status && status->code == 130, "stopped by a command: exit code " + code_text(status) + "\n" + out_of(lines));
+        require(events_with(lines, {"\"event\":\"command\"", "\"accepted\":false"}).empty(),
+                "every command was accepted:\n" + out_of(lines));
         // One finding, about the first command, at the time it came (not after where it stood still).
         const std::vector<std::string> found = events_with(lines, {"\"event\":\"finding\"", code});
-        require(found.size() == 1, "one finding connect-time-changed:\n" + out_of(lines));
+        require(found.size() == 1 && contains(found[0], "\"severity\":\"note\""), "one note outside-time-changed:\n" + out_of(lines));
         std::smatch match;
         const bool named = std::regex_search(found[0], match,
-                                             std::regex("the time command 'pause' from stdin at ([0-9]+) ms: the simulation "
-                                                        "stood still while the devices there went on in real time"));
+                                             std::regex("with --time-policy free the run took the time command 'pause' from "
+                                                        "stdin at ([0-9]+) ms: the simulation stood still while what is "
+                                                        "connected there went on in real time"));
         require(named && std::stoll(match[1].str()) <= std::stoll(value_of(paused, "sim_ms")),
                 "the finding names the pause and when it came:\n" + found[0] + "\n" + paused);
-        require(contains(lines.back(), "\"errors\":0,\"warnings\":1,"), "this warning only, no error:\n" + lines.back());
+        require(contains(lines.back(), "\"errors\":0,\"warnings\":0,"), "notes only:\n" + lines.back());
+        // The state takes the commands, and says what there is to know about them.
+        const std::vector<std::string> states = events_with(lines, {"\"event\":\"state\"", "\"phase\":\"running\""});
+        require(!states.empty() &&
+                    contains(states.front(), "\"pause\":{\"ok\":true,\"reason\":null,\"message\":null,\"caution\":{\"code\":"
+                                             "\"outside-not-real-time\",\"message\":\"") &&
+                    contains(states.front(), "\"resume\":{\"ok\":true,\"reason\":null,\"message\":null,\"caution\":null") &&
+                    contains(states.front(), "\"stop\":{\"ok\":true,\"reason\":null,\"message\":null,\"caution\":null"),
+                "the state's caution:\n" + (states.empty() ? out_of(lines) : states.front()));
     }
-    // With --strict the warning fails the run, after it has run to its end. The speed is written at
-    // once: a command before the simulation starts is kept and counts as well, so it cannot come too
-    // late; stop_at_ms leaves room for a slow reader all the same.
-    const fs::path dir = connect_dir(o, "time_changed_strict", "stop_at_ms: " + std::to_string(scaled_timeout(10s).count()) + "\n",
-                                     talker(o), {{"Talker", "talk CAN"}});
-    Live live(o, dir, {"run", "--events", "--strict", "--stdin-commands", "--connect", "ETH_EXT=fake0", "--connect",
-                       "CAN=virtual:1", "sim.yaml"});
+    // With --strict the note does not fail the run. The speed is written at once: a command before
+    // the simulation starts waits for the configuration, is taken and kept, and counts as well.
+    const fs::path dir = connect_dir(o, "time_changed_strict", "stop_at_ms: 300\n", talker(o), {{"Talker", "talk CAN"}});
+    Live live(o, dir, {"run", "--events", "--strict", "--stdin-commands", "--time-policy", "free", "--connect", "ETH_EXT=fake0",
+                       "--connect", "CAN=virtual:1", "sim.yaml"});
     live.write("{\"command\":\"speed\",\"value\":\"max\"}\n");
     const auto [status, lines] = live.finish();
-    require(status && status->code == 1, "--strict: exit code " + code_text(status) + "\n" + out_of(lines));
-    require(contains(finding_in(lines, "connect-time-changed"), "the time command 'speed max' from stdin at ") &&
-                contains(lines.back(), "\"simulation\":\"reached_stop_at\"") && contains(lines.back(), "\"result\":\"failed\""),
-            "the run went to its end and failed on the warning:\n" + out_of(lines));
+    require(status && status->code == 0, "--strict: exit code " + code_text(status) + "\n" + out_of(lines));
+    require(contains(finding_in(lines, "outside-time-changed"), "the time command 'speed max' from stdin at ") &&
+                contains(lines.back(), "\"simulation\":\"reached_stop_at\"") && contains(lines.back(), "\"result\":\"passed\""),
+            "the run went to its end and passed with the note:\n" + out_of(lines));
 }

@@ -62,9 +62,9 @@ struct RunState
     /// The run plays a scenario.
     bool scenario = false;
     /// What the run takes now (launch::allowed()), each as from the entry that has the operation:
-    /// pause, resume, step, speed and stop as from standard input; run_until and write as from a
-    /// control server (standard input has neither). In a run without a control server
-    /// (RunControls::set_control_server()) nothing can send those two: refused, with
+    /// pause, resume, step, run_until, speed and stop as from standard input; write as from a
+    /// control server (standard input has none). In a run without a control server
+    /// (RunControls::set_control_server()) nothing can send a write: refused, with
     /// reason::kNoControlServer.
     struct Operations
     {
@@ -152,9 +152,10 @@ public:
     /// Whether `entry` is refused everything but a stop for the whole run, and why
     /// (TimeCommands::always_refused()): a control server then only shows the run.
     [[nodiscard]] std::optional<Decision> always_refused(Entry entry) const { return time_.always_refused(entry); }
-    /// Whether something that does not wait for the virtual time keeps this run to real time
-    /// (TimeCommands::set_time_lock()): once, right after the configuration has been read.
-    void set_time_lock(bool locked) { time_.set_time_lock(locked); }
+    /// Whether this run is connected outside the simulation and keeps to real time
+    /// (TimeCommands::set_time_lock()): once, right after the configuration has been read. Until
+    /// then the time commands wait undecided; this decides them, each with its command event.
+    void set_time_lock(const TimeLock& lock) { time_.set_time_lock(lock); }
 
     /// The phase the run entered last; Phase::Checking before it has said any.
     [[nodiscard]] Phase phase() const noexcept { return phase_.load(); }
@@ -162,14 +163,21 @@ public:
     /// then publish().
     void set_phase(Phase phase);
 
+    /// The run ends before it could give the time lock (its configuration could not be read, so
+    /// nothing starts): as set_phase(Phase::Ended), with the time commands detached before the
+    /// state is told. The commands that waited for the lock are refused there, each with its
+    /// command event, and one state tells both the end and that no time command is taken any
+    /// more. The run's alone, as set_phase().
+    void end_without_time_lock();
+
     /// How the first stop request is called in the state (RunState::stopped_by): as the result's
     /// interrupted_by (RunOptions::interrupt_name). Without it: "interrupt". Called while the
     /// state is put together, under TimeCommands' mutex: short, no wait. Set before the run and
     /// before any other thread uses this object.
     void set_stop_name(std::function<std::string()> name) { stop_name_ = std::move(name); }
-    /// Whether the run has a control server (RunOptions::serve_control), for the state: without
-    /// one, RunState::allowed refuses what only a control server's client can send (run_until,
-    /// write). Not given: none. It changes no rule and no command's answer. Set before the run and
+    /// Whether the run has a control server (RunOptions::control_endpoint), for the state: without
+    /// one, RunState::allowed refuses what only a control server's client can send (write).
+    /// Not given: none. It changes no rule and no command's answer. Set before the run and
     /// before any other thread uses this object.
     void set_control_server(bool present) noexcept { control_server_ = present; }
     /// The run's alone: whether it keeps up with its speed, as its watch saw it last. publish()

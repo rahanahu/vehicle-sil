@@ -314,9 +314,32 @@ nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the b
 
 A frame from the bus that came earlier keeps the hint back as well. The hint also appears when no answer is expected (when the bridge only sends), so the text is conditional. The Ethernet bridge gives the same hint (see "Hint when nothing comes from a device" in [ethernet-bridge.md](ethernet-bridge.md#hint-when-nothing-comes-from-a-device)).
 
+## Link line
+
+For programs that read the output (the launcher, a script of yours), the bridge prints the state of the external bus on one line, apart from the health lines for people: `link bus=<value>`, after the tag like the statistics line.
+
+```
+[bridge] link bus=active
+```
+
+| Value | Meaning |
+|---|---|
+| `active` | Error active, or error warning (an error counter reached the warning limit; the controller is still error active) |
+| `passive` | Error passive |
+| `bus-off` | Bus off |
+| `unknown` | The first answer to the error state query has not come yet, or no answer comes (`--no-bus-monitor`, or a driver that does not answer; see "[Error state queries](#error-state-queries)") |
+
+- The first line is printed once the XL port is open, before the bridge starts the SIL Kit lifecycle (before the startup line, and so before the participant can be Running). It is `unknown` until the first answer, which comes later.
+- After that, the bridge looks once a second (like the health line) and prints a line only when the value has changed. The same value is never printed twice in a row.
+- No line comes when the bridge ends (`FAIL:`, stop): the state of the participant says it.
+- `link_line_value()` gives the value, `bridge_runtime::format_link_line()` the line (`bridges/common`, shared with the Ethernet bridge).
+- A program that reads the line must skip keys and values it does not know: values and keys may be added.
+- `vehicle_sil_launch run --connect` does not show the line in the run's output, as with the statistics line.
+
 ## Physical CAN and virtual time
 
 - When you connect to physical CAN, run the simulation in real time as a rule. `vehicle_sil_launch` does so by default: a run with `--connect`, or with an enabled `role: bridge` participant in its file, goes at speed 1 (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
+- While such a run lasts, `vehicle_sil_launch` refuses the commands that pause or step it or change its speed (the reason `outside-real-time`), from stdin, a Control Server client and the GUI alike. With `--time-policy free` it accepts them; the bridge still carries frames both ways meanwhile, and the run ends with the note `outside-time-changed`.
 - Treat Vector Virtual CAN, too, as not synchronized automatically with SIL Kit's virtual time.
 - The Vector XL CAN Bridge uses the autonomous lifecycle and runs in real time. Do not make it a participant of a virtual-time simulation.
 - A protocol stack placed directly on an XL channel (`ExternalPortAdapter`) also runs in real time only. Registering it with a host that runs with time synchronization is a configuration error.
@@ -518,7 +541,7 @@ The XL backend has 2 parts.
 - The fake simulates a bus per channel, transmit receipts, init access, receive queue overflows, error frames, error state queries of the controller and loss of the device.
 - The fake also simulates these XL constraints: transmit receipt settings and the bit rate need init access, the transmit DLC is 0–8, the receive queue holds 1 fewer than the given size, and receiving returns one event per call.
 - The conversions in `xl_backend_vector.cpp` (the mapping of functions, constants and struct members) are not covered by automated tests.
-- The `no-answers` scenario of `tests/vector_xl/xl_bridge_it_launcher` sends to a channel with no node behind it, with `--stats-every-ms 100`: the statistics line comes while the bridge runs, only where it changed, with every key in order, and `xl_to_silkit=0`. The hint when nothing came is checked in unit tests only (`bridge_runtime.nothing_came_hint_*`), with the time given by the test.
+- The `no-answers` scenario of `tests/vector_xl/xl_bridge_it_launcher` sends to a channel with no node behind it, with `--stats-every-ms 100`: the statistics line comes while the bridge runs, only where it changed, with every key in order, and `xl_to_silkit=0`; the link line comes before the startup line, and a value is printed once. The hint when nothing came is checked in unit tests only (`bridge_runtime.nothing_came_hint_*`), with the time given by the test.
 
 ### Verified (Windows 11, Vector Virtual CAN and VN5620)
 

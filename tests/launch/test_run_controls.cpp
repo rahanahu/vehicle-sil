@@ -3,7 +3,8 @@
 // The controls of a run (launch::RunControls) by themselves: what they are made of, the phase they
 // keep and tell, the state they put together and when they tell it, and the controls a run makes
 // for itself when it is given none (run_file() on a file that cannot be read: nothing starts).
-// Whether a run keeps up with its speed (PacingWatch), as written.
+// Whether a run keeps up with its speed (PacingWatch), as written. And when a run gives its
+// controls the time lock: the time commands that came before run_file() are decided with it.
 
 #include "test_harness.hpp"
 #include "silkit_test_util.hpp"
@@ -19,6 +20,8 @@
 
 #include <chrono>
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -138,6 +141,7 @@ TEST_CASE(run_controls_without_observers_keep_the_phase)
 {
     StopRequests stops;
     RunControls controls(stops);
+    controls.set_time_lock({});
     controls.set_phase(Phase::Stopping);
     CHECK(controls.phase() == Phase::Stopping);
     CHECK(controls.time().apply(command("pause"), "stdin").accepted);
@@ -152,6 +156,7 @@ TEST_CASE(run_controls_hand_the_time_commands_their_observer_and_the_start_pause
         seen.push_back(std::string(source) + " " + c.name.value_or("") + (c.accepted ? " accepted" : " refused"));
     };
     RunControls paused(stops, true, std::move(observers));
+    paused.set_time_lock({});
     CHECK(&paused.time() == &paused.time());
     CHECK(paused.time().apply(command("pause"), "stdin").accepted);
     CHECK(!paused.time().apply(command("step"), "control_server").accepted); // no controller is attached
@@ -160,6 +165,7 @@ TEST_CASE(run_controls_hand_the_time_commands_their_observer_and_the_start_pause
     const auto give_up = [] { return true; };
     CHECK(paused.time().hold_before_start(give_up, 1ms) == TimeCommands::Hold::GaveUp);
     RunControls running(stops, false);
+    running.set_time_lock({});
     CHECK(running.time().hold_before_start(give_up, 1ms) == TimeCommands::Hold::None);
     // A stop is no affair of the time commands: nothing here asks for one.
     CHECK_EQ(stops.count(), 0);
@@ -285,6 +291,9 @@ struct Told
       controls(stops, start_paused, observers(), scenario)
     {
         controls.set_control_server(control_server);
+        // A run that is not connected outside: no state is told for it, and the commands are
+        // decided as they come.
+        controls.set_time_lock({});
     }
 
     RunControls::Observers observers()
@@ -448,10 +457,11 @@ TEST_CASE(the_state_of_a_run_with_a_scenario_refuses_what_only_a_control_server_
     t.controls.publish();
     const RunState s = t.states.back();
     CHECK(s.scenario);
-    // Standard input's commands are taken; the write and the run_until are a control server's.
+    // Standard input's commands are taken, the run_until among them; the write is a control server's.
     CHECK(s.allowed.pause.ok && s.allowed.resume.ok && s.allowed.speed.ok && s.allowed.stop.ok);
     CHECK(!s.allowed.write.ok && s.allowed.write.reason == "scenario-running");
-    CHECK(!s.allowed.run_until.ok && s.allowed.run_until.reason == "scenario-running");
+    CHECK(s.allowed.run_until == t.controls.allowed(Operation::RunUntil, Entry::Stdin));
+    CHECK(t.controls.allowed(Operation::RunUntil, Entry::ControlServer).reason == "scenario-running");
     // The same answers as the rules give those entries.
     CHECK(s.allowed.write == t.controls.allowed(Operation::Write, Entry::ControlServer));
     CHECK(s.allowed.pause == t.controls.allowed(Operation::Pause, Entry::Stdin));
@@ -459,9 +469,9 @@ TEST_CASE(the_state_of_a_run_with_a_scenario_refuses_what_only_a_control_server_
 
 TEST_CASE(the_state_of_a_run_without_a_control_server_refuses_what_only_a_control_server_has)
 {
-    // Whether a scenario plays or not, and wherever the run stands: nothing can send a run_until
-    // or a write, and the state says so with one reason. What standard input takes is as with a
-    // control server.
+    // Whether a scenario plays or not, and wherever the run stands: nothing can send a write, and
+    // the state says so with one reason. What standard input takes (the run_until too) is as with
+    // a control server.
     for (const bool scenario : {false, true})
     {
         Told t(false, scenario, false);
@@ -470,18 +480,15 @@ TEST_CASE(the_state_of_a_run_without_a_control_server_refuses_what_only_a_contro
             t.controls.publish();
             with.controls.publish();
             const RunState s = t.states.back();
-            for (const auto* a : {&s.allowed.run_until, &s.allowed.write})
-            {
-                CHECK(!a->ok);
-                CHECK(a->reason == "no-control-server");
-                CHECK(a->message.find("--control <address>") != std::string::npos);
-                CHECK(!a->range && !a->caution);
-            }
-            CHECK(s.allowed.run_until.message.find("send run_until") != std::string::npos);
+            CHECK(!s.allowed.write.ok);
+            CHECK(s.allowed.write.reason == "no-control-server");
+            CHECK(s.allowed.write.message.find("--control <address>") != std::string::npos);
+            CHECK(!s.allowed.write.range && !s.allowed.write.caution);
             CHECK(s.allowed.write.message.find("write a variable") != std::string::npos);
             const RunState& other = with.states.back();
             CHECK(s.allowed.pause == other.allowed.pause && s.allowed.resume == other.allowed.resume &&
-                  s.allowed.step == other.allowed.step && s.allowed.speed == other.allowed.speed &&
+                  s.allowed.step == other.allowed.step && s.allowed.run_until == other.allowed.run_until &&
+                  s.allowed.speed == other.allowed.speed &&
                   s.allowed.stop == other.allowed.stop);
             // The rules themselves answer as before: the state alone knows that the entry is not there.
             CHECK(other.allowed.write == t.controls.allowed(Operation::Write, Entry::ControlServer));
@@ -509,6 +516,44 @@ TEST_CASE(the_state_of_a_run_without_a_control_server_refuses_what_only_a_contro
     StopRequests stops;
     RunControls plain(stops);
     CHECK(plain.state().allowed.write.reason == "no-control-server");
+}
+
+TEST_CASE(a_run_until_of_stdin_is_refused_by_the_time_lock_and_the_state_says_so)
+{
+    // With and without a control server: the state's run_until is standard input's answer, so
+    // the lock's reason is there in both, and the command gets the same answer.
+    for (const bool control_server : {false, true})
+    {
+        StopRequests stops;
+        std::vector<RunState> states;
+        std::vector<std::string> answers;
+        RunControls::Observers observers;
+        observers.on_state = [&states](const RunState& s) { states.push_back(s); };
+        observers.on_command = [&answers](const Command& c, std::string_view source) {
+            answers.push_back(*c.name + " " + std::string(source) + " " + (c.accepted ? "accepted" : c.reason));
+        };
+        RunControls controls(stops, false, std::move(observers));
+        controls.set_control_server(control_server);
+        Command until = command("run_until");
+        until.at_ms = 5000;
+        // Before the lock is known it waits; the lock then refuses it.
+        CHECK(controls.time().apply(until, "stdin").pending);
+        vehicle_sil::launch::TimeLock lock;
+        lock.locked = true;
+        lock.connected = {"CAN1"};
+        controls.set_time_lock(lock);
+        CHECK((answers == std::vector<std::string>{"run_until stdin outside-real-time"}));
+        CHECK(!states.empty());
+        const RunState::Operations& allowed = states.back().allowed;
+        CHECK(!allowed.run_until.ok && allowed.run_until.reason == "outside-real-time");
+        CHECK(allowed.run_until == controls.allowed(Operation::RunUntil, Entry::Stdin));
+        // After the lock: refused at once, and nothing reaches the simulation.
+        const Command late = controls.time().apply(until, "stdin");
+        CHECK(!late.accepted && !late.pending && late.reason == "outside-real-time");
+        CHECK(late.message.find("run_until is refused") != std::string::npos);
+        CHECK(late.message.find("--time-policy free") != std::string::npos);
+        CHECK_EQ(answers.size(), std::size_t{2});
+    }
 }
 
 TEST_CASE(the_state_says_the_hold_while_it_lasts)
@@ -557,6 +602,7 @@ TEST_CASE(the_state_event_follows_the_command_event_of_the_command_that_made_it)
     observers.on_phase = [events](Phase phase) { events->phase(phase); };
     observers.on_state = [events](const RunState& s) { events->state(s); };
     RunControls controls(stops, false, std::move(observers));
+    controls.set_time_lock({});
     // Each state is written before the next is made (one that waits would be replaced).
     controls.set_phase(Phase::Starting);
     CHECK(written.stream->wait_written(10s));
@@ -610,6 +656,108 @@ TEST_CASE(the_pacing_is_late_until_five_seconds_have_passed_without_a_late_step)
     CHECK(std::string(vehicle_sil::launch::pacing_name(Pacing::NotPaced)) == "not-paced");
     CHECK(std::string(vehicle_sil::launch::pacing_name(Pacing::OnTime)) == "on-time");
     CHECK(std::string(vehicle_sil::launch::pacing_name(Pacing::Late)) == "late");
+}
+
+namespace {
+
+/// What a run that does not get past its check tells of the commands that came before it:
+/// "<name> accepted" or "<name> <reason>", in their order; and the `allowed.pause` of each state.
+struct Answers
+{
+    std::vector<std::string> commands;
+    std::vector<std::string> pause; ///< "ok", or the reason
+
+    RunControls::Observers observers()
+    {
+        RunControls::Observers out;
+        out.on_command = [this](const Command& c, std::string_view) {
+            commands.push_back(c.name.value_or("") + " " + (c.accepted ? std::string("accepted") : c.reason));
+        };
+        out.on_state = [this](const RunState& s) { pause.push_back(s.allowed.pause.ok ? "ok" : s.allowed.pause.reason); };
+        return out;
+    }
+};
+
+/// A configuration file with `participants` (YAML lines), whose executables are not there: the
+/// check reads the file, then fails, and nothing starts.
+std::filesystem::path config_file(const std::string& name, const std::string& participants)
+{
+    const std::filesystem::path dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "run_controls";
+    std::filesystem::create_directories(dir);
+    const std::filesystem::path file = dir / name;
+    std::ofstream(file, std::ios::binary) << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n" << participants;
+    return file;
+}
+
+} // namespace
+
+TEST_CASE(a_run_decides_the_time_commands_that_came_before_it_with_its_time_lock)
+{
+    const std::string engine = "  - name: Engine\n    command: [no-such-engine]\n";
+    const std::string gateway = "  - name: Gateway\n    role: bridge\n    describe: false\n    required: false\n"
+                                "    command: [no-such-bridge]\n";
+    Command fast = command("speed");
+    fast.speed = 5.0;
+    /// run_file() of `file` on controls that got a pause, a speed of 5 and a resume before it.
+    const auto run = [&fast](const std::filesystem::path& file, RunOptions options, Answers& answers) {
+        StopRequests stops;
+        RunControls controls(stops, false, answers.observers());
+        CHECK(controls.time().apply(command("pause"), "stdin").pending);
+        CHECK(controls.time().apply(fast, "stdin").pending);
+        CHECK(controls.time().apply(command("resume"), "stdin").pending);
+        CHECK(answers.commands.empty());
+        options.controls = &controls;
+        const auto report = vehicle_sil::launch::run_file(file, "sim.yaml", options);
+        CHECK(!report.run.has_value());
+        return report;
+    };
+    {
+        // A participant that is a bridge: the run keeps real time, and says so to what waited,
+        // although its check then fails (the bridge's executable is not there).
+        Answers answers;
+        const auto report = run(config_file("bridged.yaml", engine + gateway), RunOptions{}, answers);
+        CHECK(report.check.config.has_value());
+        CHECK(report.check.time_lock.locked);
+        CHECK((answers.commands == std::vector<std::string>{"pause outside-real-time", "speed outside-real-time", "resume accepted"}));
+        // The states: the first before the file is read; from the lock on, no pause.
+        CHECK(answers.pause.size() >= 2);
+        CHECK(answers.pause.front() == "ok");
+        CHECK(answers.pause.back() == "outside-real-time");
+    }
+    {
+        // The same file with --time-policy free, and one without a bridge: taken, in their order.
+        RunOptions free;
+        free.check.time_policy = vehicle_sil::launch::TimePolicy::Free;
+        Answers answers;
+        const auto report = run(config_file("bridged.yaml", engine + gateway), free, answers);
+        CHECK(!report.check.time_lock.locked);
+        CHECK((answers.commands == std::vector<std::string>{"pause accepted", "speed accepted", "resume accepted"}));
+        Answers plain;
+        static_cast<void>(run(config_file("plain.yaml", engine), RunOptions{}, plain));
+        CHECK((plain.commands == std::vector<std::string>{"pause accepted", "speed accepted", "resume accepted"}));
+        for (const std::string& pause : plain.pause)
+        {
+            CHECK(pause == "ok");
+        }
+    }
+    {
+        // --disable takes the bridge out before the lock is made.
+        RunOptions disabled;
+        disabled.check.overrides.disable = {"Gateway"};
+        Answers answers;
+        const auto report = run(config_file("bridged.yaml", engine + gateway), disabled, answers);
+        CHECK(!report.check.time_lock.locked);
+        CHECK((answers.commands == std::vector<std::string>{"pause accepted", "speed accepted", "resume accepted"}));
+    }
+    {
+        // A file that cannot be read: no lock, nothing starts, and what waited is refused.
+        Answers answers;
+        const auto report = run("no-such-directory/sim.yaml", RunOptions{}, answers);
+        CHECK(!report.check.config.has_value());
+        CHECK((answers.commands == std::vector<std::string>{"pause not-running", "speed not-running", "resume not-running"}));
+        CHECK(!answers.pause.empty());
+        CHECK(answers.pause.back() == "not-running");
+    }
 }
 
 TEST_CASE(a_test_refuses_controls_because_every_run_needs_its_own)

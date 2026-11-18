@@ -184,6 +184,22 @@ std::optional<Command> parse_command(std::string_view line)
             }
             out.ms = value;
         }
+        else if (*out.name == "run_until")
+        {
+            const auto at = scalar("at_ms");
+            std::int64_t value = 0;
+            const char* end = at ? at->first.data() + at->first.size() : nullptr;
+            if (!at || at->second || at->first.empty() || std::from_chars(at->first.data(), end, value).ptr != end ||
+                value < 0 || value > kMaxMillis)
+            {
+                out.message = "run_until needs \"at_ms\", the virtual time to stand still at, a whole number of "
+                              "milliseconds from 0 to " +
+                              std::to_string(kMaxMillis) + ", such as {\"command\":\"run_until\",\"at_ms\":5000}";
+                out.reason = reason::kInvalidArgument;
+                return out;
+            }
+            out.at_ms = value;
+        }
         else if (*out.name == "speed")
         {
             const auto value = scalar("value");
@@ -202,12 +218,12 @@ std::optional<Command> parse_command(std::string_view line)
         out.reason = reason::kInvalidCommand;
         return out;
     }
-    static constexpr std::string_view kNames[] = {"stop", "pause", "resume", "step", "speed"};
+    static constexpr std::string_view kNames[] = {"stop", "pause", "resume", "step", "run_until", "speed"};
     if (std::find(std::begin(kNames), std::end(kNames), *out.name) == std::end(kNames))
     {
         // The name as far as it is worth showing.
         const std::string shown = out.name->size() > 64 ? out.name->substr(0, 64) + "..." : *out.name;
-        out.message = "unknown command '" + shown + "': the commands are stop, pause, resume, step and speed";
+        out.message = "unknown command '" + shown + "': the commands are stop, pause, resume, step, run_until and speed";
         out.reason = reason::kUnknownCommand;
         return out;
     }
@@ -875,7 +891,7 @@ void EventStream::command(const Command& command, std::string_view source)
              {
                  w.integer("ms", *command.ms);
              }
-             // pause at, run_until (a control client): where it will stand.
+             // step, run_until, pause at (a control client): where it will stand.
              if (command.accepted && command.at_ms)
              {
                  w.integer("at_ms", *command.at_ms);

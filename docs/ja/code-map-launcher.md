@@ -40,7 +40,7 @@
 - `launch_run.ethernet`: `examples/ethernet` の 2 つの ECU の照合とシナリオ
 - `launch_run.test_command`、`launch_run.test_interrupt`: `vehicle_sil_launch test`
 - `launch_run.live`: 止めるまで動く例の設定ファイル `simulation.live.yaml` の照合と、1000 ms を超えて動かしてから止める実行
-- `launch_run.connect_*`（`launch_run_connect.cpp`）: `connect_tools/` のブリッジでの `run --connect`（偽の pcap ライブラリの装置 `fake0` が答え、偽の XL ドライバーが `virtual:1` で返す）。ブリッジがどの ECU の起動より前に参加すること、両向きのフレーム、起動できないブリッジ（`connect-failed`。時間の上限でなく、プロセスで気づく）、手で起動する participant を待つ間に終わるブリッジ、実行中に強制終了または終了コード 0 で終わるブリッジ（`connect-lost`）、`--strict` と `--start-paused` での速さの警告、`connect-time-changed`（実行の最初の一時停止についての警告 1 つ。`--strict` では速さの命令で実行が失敗する）、数（`connect_roundtrip`: 結果、`outside` イベント、ログの中のブリッジの最後の統計の行が一致し、ブリッジの統計の行は最後の 1 行だけが 1 回 `log` イベントになる。`connect_nothing_received`: `fake1` と返す相手のないチャンネルで、両方のネットワークに `connect-nothing-received`。`--strict` でも通る注意。`--json` でも）。どれもイベントか行を待ち（眠らない）、起きてはいけないことは終わった後の出力の全体で確かめる
+- `launch_run.connect_*`（`launch_run_connect.cpp`）: `connect_tools/` のブリッジでの `run --connect`（偽の pcap ライブラリの装置 `fake0` が答え、偽の XL ドライバーが `virtual:1` で返す）。ブリッジがどの ECU の起動より前に参加すること、両向きのフレーム、起動できないブリッジ（`connect-failed`。時間の上限でなく、プロセスで気づく）、手で起動する participant を待つ間に終わるブリッジ、実行中に強制終了または終了コード 0 で終わるブリッジ（`connect-lost`）、`--strict` と `--start-paused` での速さの警告、実時間を保つ実行の時間のコマンド（`connect_time_locked`: 構成を読む前に書いたものも含めて、届いた順に `outside-real-time` で断り、state も同じことを言う）、`--time-policy free` での `outside-time-changed`（`connect_time_changed`: 実行の最初の一時停止についての注記 1 つ。`--strict` でも通る）、数（`connect_roundtrip`: 結果、`outside` イベント、ログの中のブリッジの最後の統計の行が一致し、ブリッジの統計の行は最後の 1 行だけが 1 回 `log` イベントになる。`connect_nothing_received`: `fake1` と返す相手のないチャンネルで、両方のネットワークに `connect-nothing-received`。`--strict` でも通る注意。`--json` でも）。どれもイベントか行を待ち（眠らない）、起きてはいけないことは終わった後の出力の全体で確かめる
 
 `process.*` が確認すること:
 
@@ -104,11 +104,11 @@
 | 設定ファイルとシナリオの読み取りの共通の部分 | `src/yaml_reader.hpp` |
 | `run` の全体の流れ | `src/run.cpp` |
 | `run` を分担するクラス | `src/run_*.cpp`、`src/time_commands.cpp` |
-| 1 回の実行の Hub と、registry、コントローラー、Hub の transport を 1 つにまとめたもの（`detail::ConnectionOf`）: 閉じる順と、持ち主。`Runner::run()` が作り、1 人で持つ。終わりに、閉じるスレッドが引き取り（`detail::close_connection_within()`。`src/run_close.hpp` の `close_within()` の上）、期限を過ぎて放置されたら持ち続ける。放置された閉じるスレッドが触りうるものの一覧は `src/run.cpp` の頭のコメント | `src/run_connection.hpp` |
+| 1 回の実行の Hub と、registry、コントローラー、Hub の transport を 1 つにまとめたもの（`detail::ConnectionOf`）: 閉じる順と、持ち主。`Runner::run()` が、`RunControl` の作った Hub の上に作り、1 人で持つ。終わりに、閉じるスレッドが引き取り（`detail::close_connection_within()`。`src/run_close.hpp` の `close_within()` の上）、期限を過ぎて放置されたら持ち続ける。放置されたスレッドは実行のほかのものに触らないので、`run_file()` は `Runner` をほかの実行の後と同じに破棄する。放置された閉じるスレッドが触りうるものの一覧は `src/run.cpp` の頭のコメント | `src/run_connection.hpp` |
 | この PC のアドレス（ほかの PC に示す URI） | `src/host_addresses.cpp` |
 | 動いているシミュレーションの見張り（`RunWatch::watch()`）、終わったときに確定すること（`RunWatch::settle()`: シナリオの終わり、時間、traffic、シミュレーションの終わり方）、仮想時間が進まないことを報告する `StandStill` | `src/run_watch.cpp` |
 | コマンドラインと、標準入力・標準出力のスレッド | `tools/launch/main.cpp` |
-| `run --control` の Control Server（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ） | `tools/launch/control_server.cpp` |
+| `run --control` の Control Server（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ）。実行からは `ControlEndpoint` として見える（`launch/run.hpp` の `RunOptions::control_endpoint`）。`run_file()` が、実行の 2 つの段（`src/run.cpp` の `Runner::prepare()` と `Runner::run()`）の間で起動する | `tools/launch/control_server.cpp`（サーバー）、`tools/launch/control_arguments.cpp`（その引数） |
 
 `run` を分担するクラスの役割と、どのスレッドがどの状態をどのロックで扱うかは、`run.cpp` の先頭のコメントと、各 `run_*.hpp` のクラスのコメントにあります。
 
@@ -382,6 +382,8 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 変える場所:
 
 - `libs/launch/src/time_commands.cpp` の `TimeCommands`
+- 操作盤の時間のロック: `check_file()` が、構成を読んだ直後（どの `--describe` よりも前）に `on_time_lock` を呼び、`run_file()` がそこで `RunControls::set_time_lock()` にロックを渡します。それまで `TimeCommands::apply()` は停止のほかを決めません。コマンドは届いた順に待ち、`set_time_lock()` が決めます（構成が読めなければ `detach()` が断ります）。ロックの行と `--time-policy free` の注意は `control_rules.cpp`（`ControlSituation::time_locked`、`time_free`）
+- 注記 `outside-time-changed` と `unsynchronized-time-changed`: `run_assess.cpp` の `time_changed_findings()`。材料は `RunOutcome::time_changed`、`time_lock`、`real_time_peers`（`time_plan.cpp` の `detail::real_time_peers()`）
 - 時刻のコマンド、停止、書き込みを受けるかどうかと、断るときの文: `libs/launch/src/control_rules.cpp` の行（`TimeCommands::apply()`、`RunControls::allowed()`、Control Server の `observe_only` が読む 1 か所。行のテストは `tests/launch/test_control_rules.cpp`）
 - `time_plan.cpp` の `detail::plan_time_step()`（controller のタイムステップの既定）、`detail::coarse_time_step()`、`RunTiming::actual_speed()`（宣言は `time_plan.hpp`。`check.cpp` は `run.hpp` なしで使います）
 - `time_plan.cpp` の `time_lock()`、`planned_speed()`、`time_lock_findings()`: シミュレーションの外につながる実行が実時間を保つかどうか（`--time-policy`）、始めるときの速さ、照合の指摘 `outside-*`。`check_file()` が結果を `CheckReport::time_lock` に置き、実行はそこから速さを読みます

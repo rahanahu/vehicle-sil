@@ -62,6 +62,17 @@ def config(name: str, stop_at_ms: int) -> pathlib.Path:
     return path
 
 
+def bridged_config(name: str, stop_at_ms: int) -> pathlib.Path:
+    """config() with a participant that is a bridge (role: bridge; here a process that only waits): the run
+    is connected outside the simulation, as one with --connect."""
+    path = config(name, stop_at_ms)
+    python = pathlib.Path(sys.executable).as_posix()
+    with path.open("a") as f:
+        f.write(f"  - name: Gateway\n    role: bridge\n    describe: false\n    required: false\n"
+                f"    command: ['{python}', '-c', 'import time; time.sleep(3600)']\n")
+    return path
+
+
 # As examples/ecu_main/scenarios/throttle_step.yaml: writes, a ramp, waits and comparisons.
 THROTTLE_STEP = """vehicle_sil_scenario: 1
 name: throttle step
@@ -179,7 +190,9 @@ class LauncherTest(unittest.TestCase):
                 done = c.wait(seq)
                 self.assertEqual((done.target("Engine").status, done.target("Engine").applied_at), ("applied", 0))
                 # The control server's: rounded up to the controller's steps (10 ms).
-                c.sim.step(ms(45))
+                # Its answer says where it ends: the time it runs on to, or that it stands there.
+                answer = c.sim.step(ms(45))
+                self.assertTrue(answer.pause_target == ms(150) or (answer.paused and answer.now == ms(150)), answer)
                 self.assertEqual(c.sim.wait_paused().now, ms(150))
                 c.sim.run_until(ms(201))
                 self.assertEqual(c.sim.wait_paused().now, ms(210))
@@ -199,8 +212,8 @@ class LauncherTest(unittest.TestCase):
                 c.sim.stop("the test is done")
             result = launch.wait()
         self.assertEqual(commands_of(launch), [
-            ("step", "stdin", True, 100, None),
-            ("step", "control_server", True, 50, None),
+            ("step", "stdin", True, 100, 100),  # at_ms: where the step ends
+            ("step", "control_server", True, 50, 150),
             ("run_until", "control_server", True, None, 210),
             ("resume", "control_server", True, None, None),
             ("step", "control_server", False, None, None),
@@ -678,6 +691,97 @@ class LauncherTest(unittest.TestCase):
         self.assertEqual(result["scenario"]["status"], "incomplete")
         self.assertIn(("error", "scenario-incomplete", None), findings_of(result))
         self.assertEqual([s["status"] for s in result["scenario"]["steps"]], ["passed", "not_run"])
+
+    def test_a_run_that_is_connected_outside_refuses_what_moves_its_time_away_from_real_time(self):
+        with Launch(LAUNCH, bridged_config("time_locked", 3_600_000)) as launch:
+            with Control(launch.address) as c:
+                launch.wait_for_event("phase", phase="running")
+                wait_until(self, "the engine's values", lambda: c.values("Engine") is not None and c.sim.time().now > ms(50))
+                refusals = {
+                    "pause": lambda: c.sim.pause(),
+                    "pause at a time": lambda: c.sim.pause(ms(100_000)),
+                    "step": lambda: c.sim.step(ms(10)),
+                    "run until": lambda: c.sim.run_until(ms(100_000)),
+                    "set another speed": lambda: c.sim.set_speed(2.0),
+                    "set the speed max": lambda: c.sim.set_speed(None),
+                    # The lock answers before the range of an argument does, as in the command event.
+                    "step of 0": lambda: c.sim.step(ms(0)),
+                    "set the speed 0": lambda: c.sim.set_speed(0.0),
+                    "pause before 0": lambda: c.sim.pause(ms(-1)),
+                }
+                for what, call in refusals.items():
+                    with self.assertRaises(ControlError) as refused:
+                        call()
+                    e = refused.exception
+                    self.assertEqual((e.code, e.reason), (grpc.StatusCode.FAILED_PRECONDITION, "outside-real-time"), what)
+                    self.assertIn("this run is connected outside the simulation and keeps to real time (--time-policy "
+                                  "realtime, the default)", str(e), what)
+                    self.assertIn("start the run again with --time-policy free", str(e), what)
+                # What keeps it in real time is taken, and so is a write (the lock is about the time).
+                self.assertFalse(c.sim.resume().paused)
+                self.assertEqual(c.sim.set_speed(1.0).speed, 1.0)
+                seq = c.write({"Engine": {"engine.throttle": 10.0}})
+                self.assertEqual(c.wait(seq).target("Engine").status, "applied")
+                t = c.sim.time()
+                self.assertEqual((t.paused, t.running, t.speed), (False, True, 1.0))
+                # The state says what the calls were told; standard input gets the same answer.
+                allowed = launch.wait_for_event("state", phase="running")["allowed"]
+                for name in ("pause", "step", "run_until"):
+                    self.assertEqual((allowed[name]["ok"], allowed[name]["reason"]), (False, "outside-real-time"), name)
+                self.assertEqual((allowed["speed"]["ok"], allowed["speed"]["min"], allowed["speed"]["max"]), (True, 1, 1))
+                self.assertTrue(allowed["resume"]["ok"] and allowed["stop"]["ok"] and allowed["write"]["ok"])
+                launch.send({"command": "pause"})
+                told = launch.wait_for_event("command", command="pause", source="stdin")
+                self.assertEqual((told["accepted"], told["reason"]), (False, "outside-real-time"))
+                c.sim.stop("enough")
+            result = launch.wait()
+        commands = [(e["command"], e["source"], e["accepted"], e["reason"]) for e in launch.events if e["event"] == "command"]
+        self.assertEqual(commands, [
+            ("pause", "control_server", False, "outside-real-time"),
+            ("pause", "control_server", False, "outside-real-time"),
+            ("step", "control_server", False, "outside-real-time"),
+            ("run_until", "control_server", False, "outside-real-time"),
+            ("speed", "control_server", False, "outside-real-time"),
+            ("speed", "control_server", False, "outside-real-time"),
+            ("step", "control_server", False, "outside-real-time"),
+            ("speed", "control_server", False, "outside-real-time"),
+            ("pause", "control_server", False, "outside-real-time"),
+            ("resume", "control_server", True, None),
+            ("speed", "control_server", True, None),
+            ("pause", "stdin", False, "outside-real-time"),
+            ("stop", "control_server", True, None),
+        ])
+        self.assertEqual(result["timing"]["speed"], 1)
+        self.assertEqual(result["timing"]["paused_ms"], 0)
+        self.assertNotIn("outside-time-changed", [f["code"] for f in result["findings"]])
+
+    def test_with_the_time_policy_free_a_run_that_is_connected_outside_takes_the_time_commands(self):
+        arguments = ["--time-policy", "free", "--speed", "1"]
+        with Launch(LAUNCH, bridged_config("time_free", 3_600_000), arguments=arguments) as launch:
+            with Control(launch.address) as c:
+                launch.wait_for_event("phase", phase="running")
+                wait_until(self, "the time goes", lambda: c.sim.time().now > ms(50))
+                allowed = launch.wait_for_event("state", phase="running")["allowed"]
+                for name in ("pause", "speed", "run_until"):
+                    self.assertTrue(allowed[name]["ok"], name)
+                    self.assertEqual(allowed[name]["caution"]["code"], "outside-not-real-time", name)
+                    self.assertIn("the run then ends with the note outside-time-changed", allowed[name]["caution"]["message"])
+                self.assertIsNone(allowed["resume"]["caution"])
+                self.assertIsNone(allowed["write"]["caution"])
+                # A refusal of another row has its code too: a step while the simulation goes.
+                with self.assertRaises(ControlError) as refused:
+                    c.sim.step(ms(10))
+                self.assertEqual((refused.exception.code, refused.exception.reason),
+                                 (grpc.StatusCode.FAILED_PRECONDITION, "not-paused"))
+                self.assertTrue(c.sim.pause().paused or c.sim.wait_paused().paused)
+                c.sim.resume()
+                c.sim.stop("enough")
+            result = launch.wait()
+        self.assertEqual(launch.returncode, 130)
+        notes = [f for f in result["findings"] if f["code"] == "outside-time-changed"]
+        self.assertEqual([f["severity"] for f in notes], ["note"])
+        self.assertIn("participant 'Gateway' is a bridge (role: bridge) to something outside the simulation", notes[0]["message"])
+        self.assertIn("the time command 'pause' from control_server at ", notes[0]["message"])
 
     def test_version_lists_scenario_control(self):
         out = self.run_launcher("version", "--json")

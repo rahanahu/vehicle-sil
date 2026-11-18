@@ -42,7 +42,8 @@
 {"err": "                              at most <ms> for it to take the result (1000 or more; default 30000)"}
 {"err": "  --stdin-commands            run: read commands from stdin, one JSON object per line: {\"command\":\"stop\"}"}
 {"err": "                              stops in order (twice: without waiting); the end of stdin stops as well;"}
-{"err": "                              pause, resume, step (with \"ms\") and speed (with \"value\") control the time"}
+{"err": "                              pause, resume, step (with \"ms\"), run_until (with \"at_ms\") and speed (with"}
+{"err": "                              \"value\") control the time"}
 {"err": "  --start-paused              run --stdin-commands or --control: stand still at 0 until a resume or step"}
 {"err": "                              command (with --control: before the first step, so that a client's writes"}
 {"err": "                              take effect at 0)"}
@@ -91,9 +92,11 @@
 {"err": "  --time-policy realtime|free the time of a run that is connected outside the simulation (by --connect, or by"}
 {"err": "                              an enabled participant with role: bridge). realtime (the default): it goes at"}
 {"err": "                              speed 1 whatever speed <file> has; another --speed and --start-paused are the"}
-{"err": "                              error outside-real-time. free: the speed and the time are yours to change as"}
-{"err": "                              in any run; the bridge still carries frames both ways, so what is connected"}
-{"err": "                              there sees the simulation pause or run ahead. No effect on other runs"}
+{"err": "                              error outside-real-time, and the commands that pause or step it or change its"}
+{"err": "                              speed are refused while it runs. free: the speed and the time are yours to"}
+{"err": "                              change as in any run; the bridge still carries frames both ways, so what is"}
+{"err": "                              connected there sees the simulation pause or run ahead. No effect on other"}
+{"err": "                              runs"}
 {"err": "  --network <name>            connections: only the network <name>"}
 {"err": "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable"}
 {"err": "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable"}

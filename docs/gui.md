@@ -369,6 +369,7 @@ The launcher advances time; the GUI only passes commands and shows the results. 
 | After the end | The **Result** card | See how time went (speed, virtual time, real time taken, actual speed, time paused, lateness when the speed was paced). |
 
 - If the launcher's `features` lack `speed`, `start-paused` or `time-commands`, the screen does not show the matching control (with a launcher that has only `speed`, the **Time** card is view-only). Whether time commands are accepted is decided by the launcher of the running run (its `version --json` at the start).
+- In a run that is connected outside the simulation (a `role: bridge` participant in the file, or a launcher started with `--connect`), the launcher refuses pause, step and a speed other than 1 with the reason `outside-real-time`, as it does on the command line (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)). The rule is the launcher's: the GUI server has none of its own and passes the answer on.
 - A screen opened during a run, and other tabs, show the same time state (the server's summary holds the last `time` and `command` events).
 - The findings `behind-real-time` and `coarse-time-step` appear among the result's findings, like any other finding.
 

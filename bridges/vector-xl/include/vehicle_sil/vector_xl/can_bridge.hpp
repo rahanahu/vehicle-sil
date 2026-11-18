@@ -142,6 +142,12 @@ struct CanBridgeHealth
 /// "error passive (tx errors 128, rx errors 0)", or "state unknown".
 [[nodiscard]] std::string format_bus_state(const ExternalBusState& state);
 
+/// The value of the "link bus=<value>" line for the error state of the external controller:
+/// "active" (error active and error warning), "passive", "bus-off", or "unknown" (not reported
+/// yet, or the bus is not monitored). The bridge executable puts it into the line with
+/// bridge_runtime::format_link_line().
+[[nodiscard]] std::string_view link_line_value(const ExternalBusState& state) noexcept;
+
 /// One line about the external bus between two samples taken by the caller (the bridge
 /// executable samples once a second), or nullopt:
 ///  - a problem counter grew, or the controller's error state changed (except from Unknown to

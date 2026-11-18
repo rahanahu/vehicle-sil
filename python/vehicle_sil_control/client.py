@@ -42,8 +42,12 @@ def _warn_every_time(message: str) -> None:
 
 class ControlError(Exception):
     """A call failed; `code` is the gRPC status code. `reason` is the server's word for why it
-    refused the call, for a program that must tell the refusals apart ("scenario-running": the run
-    plays a scenario, and a client cannot write or move the time meanwhile); "" if it gave none."""
+    refused the call, for a program that must tell the refusals apart; "" if it gave none. The
+    launcher gives one with FAILED_PRECONDITION: "scenario-running" (the run plays a scenario, and
+    a client cannot write or move the time meanwhile), "outside-real-time" (the run is connected
+    outside the simulation and keeps to real time: no pause, step, run_until or speed other than
+    1; start it with --time-policy free to move its time), and the other reasons of a refused
+    command ("not-running", "not-paused", "not-set-up": docs/simulation-events.md lists them)."""
 
     def __init__(self, code: grpc.StatusCode, message: str, reason: str = ""):
         super().__init__(f"{code.name}: {message}")

@@ -11,7 +11,14 @@
 #include "run_close.hpp"
 #include "run_connection.hpp"
 #include "run_notes.hpp"
+#include "run_samples.hpp"
 #include "run_start_limit.hpp"
+#include "silkit_test_util.hpp"
+
+#include "vehicle_sil/control/hub.hpp"
+#include "vehicle_sil/control_silkit/hub_transport.hpp"
+#include "vehicle_sil/core/participant_runtime.hpp"
+#include "vehicle_sil/core/simulation_controller.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -24,6 +31,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <thread>
 #include <initializer_list>
 #include <vector>
 
@@ -658,6 +666,120 @@ TEST_CASE(a_connection_whose_close_was_left_keeps_itself_and_the_hub_until_the_c
     CHECK(going->order == (std::vector<std::string>{"transport", "controller", "registry", "hub"}));
     CHECK(going->hub_was_there);
     CHECK(hub.expired());
+}
+
+namespace {
+
+/// The hub's transport of a connection made of the real parts, whose end waits for a latch
+/// first: a close that does not end for as long as the test wants.
+struct HeldTransport
+{
+    struct Latch
+    {
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool open = false;
+    };
+
+    HeldTransport(std::shared_ptr<Latch> l, control::Hub& hub, ParticipantRuntime& runtime) :
+      latch(std::move(l)), transport(hub, runtime)
+    {
+    }
+    ~HeldTransport()
+    {
+        // The real transport goes after this body, when the latch is open.
+        std::unique_lock lock(latch->mutex);
+        latch->changed.wait(lock, [this] { return latch->open; });
+    }
+
+    std::shared_ptr<Latch> latch;
+    control_silkit::HubTransport transport;
+};
+
+using HeldConnection =
+    launch::detail::ConnectionOf<control::Hub, vehicle_sil::unit::InProcessRegistry, SimulationController, HeldTransport>;
+
+/// What a run has beside its connection, and the connection's parts are given pointers to (as
+/// the Runner of run.cpp): what the start window's function names, and the hub's tap.
+struct RunParts
+{
+    explicit RunParts(std::shared_ptr<control::Hub> h) : hub(std::move(h)) {}
+    std::shared_ptr<control::Hub> hub;
+    launch::detail::RunSamples samples{{}, {}};
+    int windows = 0; ///< the start window's thread; read once start() has returned
+};
+
+} // namespace
+
+TEST_CASE(what_a_run_has_beside_its_connection_can_be_destroyed_while_a_close_that_was_left_still_goes_on)
+{
+    // The real hub, registry, controller and transport, a simulation that started (the start
+    // window's function ran) and ended, and a close that stands in the transport's end beyond its
+    // limit. The run's own parts are destroyed then, as run_file() destroys its Runner; the
+    // closing thread ends later and must not have used them (under AddressSanitizer and
+    // ThreadSanitizer this is the test; the count of the window's calls says it everywhere).
+    const auto latch = std::make_shared<HeldTransport::Latch>();
+    const auto window_calls = std::make_shared<std::atomic<int>>(0);
+    // Where the hub was destroyed, told once it has gone.
+    // Held by the deleter too, so a left closing thread that ends after this test gave up waiting
+    // still writes into a live promise.
+    const auto hub_gone = std::make_shared<std::promise<std::thread::id>>();
+    std::future<std::thread::id> hub_went = hub_gone->get_future();
+    std::weak_ptr<HeldConnection> watched;
+    std::optional<launch::detail::CloseLeft> left;
+    {
+        auto parts = std::make_unique<RunParts>(std::shared_ptr<control::Hub>(new control::Hub, [hub_gone](control::Hub* hub) {
+            delete hub;
+            hub_gone->set_value(std::this_thread::get_id());
+        }));
+        auto connection = std::make_shared<HeldConnection>(parts->hub);
+        watched = connection;
+        connection->registry = std::make_unique<vehicle_sil::unit::InProcessRegistry>();
+        SimulationControllerOptions options;
+        options.registry_uri = connection->registry->uri;
+        options.required_participants = {"Ecu"};
+        options.stop_at = 10ms;
+        connection->controller = std::make_unique<SimulationController>(options);
+        connection->transport = std::make_unique<HeldTransport>(latch, *connection->hub, connection->controller->runtime());
+        connection->controller->set_start_window([run = parts.get(), window_calls](const StartWindow&) {
+            ++run->windows;
+            ++*window_calls;
+        });
+        parts->samples.tap(*parts->hub, 1ms, [c = connection->controller.get()] { return c->runtime().now(); });
+        {
+            // The run's one participant, which ends before the close as a run's participants do.
+            ParticipantRuntime ecu(vehicle_sil::unit::coordinated_options("Ecu", connection->registry->uri, VirtualTimeOptions{1ms}));
+            ecu.set_step_handler([](SimTime, SimDuration) {});
+            std::thread start_ecu([&ecu] { ecu.start(60s); });
+            connection->controller->start(60s);
+            start_ecu.join();
+            CHECK_EQ(parts->windows, 1);
+            CHECK(connection->controller->wait_until_finished(vehicle_sil::test::scaled_timeout(30s)).has_value());
+            ecu.stop("done");
+        }
+        parts->samples.untap();
+        left = launch::detail::close_connection_within(std::move(connection), 100ms, 5ms, [] { return false; });
+        // Here the run's parts go: the tap's owner, what the window's function names, and the
+        // run's hold of the hub.
+    }
+    CHECK(left.has_value());
+    CHECK(!watched.expired());
+    CHECK(hub_went.wait_for(0s) == std::future_status::timeout); // the connection keeps the hub
+    {
+        const std::lock_guard lock(latch->mutex);
+        latch->open = true;
+    }
+    latch->changed.notify_all();
+    // The closing thread destroys the transport, the controller and the registry, and then the
+    // hub, as its last holder.
+    const bool ended = hub_went.wait_for(vehicle_sil::test::scaled_timeout(60s)) == std::future_status::ready;
+    CHECK(ended);
+    if (ended)
+    {
+        CHECK(hub_went.get() != std::this_thread::get_id());
+    }
+    CHECK(watched.expired());
+    CHECK_EQ(window_calls->load(), 1); // not called again by the controller's end
 }
 
 TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)
@@ -1425,6 +1547,24 @@ TEST_CASE(a_controller_step_coarser_than_the_ecus_steps_is_a_warning_when_a_spee
     o.timing.time_step_ms = 1;
     o.timing.fine_step_ms = 1;
     check_text(lines(assess_run(o)), "");
+}
+
+TEST_CASE(the_participants_in_real_time_are_the_described_ecus_and_test_participants_without_a_step)
+{
+    launch::SimulationConfig config = config_of(7);
+    config.participants[1].role = launch::ParticipantRole::Test;
+    config.participants[3].role = launch::ParticipantRole::Bridge; // a bridge locks the time: not one of them
+    config.participants[4].enabled = false;
+    config.participants[5].for_network = "CAN"; // a bridge of --connect
+    // Ecu0 and Ecu1 (a test participant) describe no step; Ecu2 has one; Ecu6 is not described.
+    const std::vector<std::string> peers =
+        launch::detail::real_time_peers(config, described(config, {0, 0, 10'000, 0, 0, 0, -1}));
+    CHECK((peers == std::vector<std::string>{"Ecu0", "Ecu1"}));
+    CHECK(launch::detail::real_time_peers(config, described(config, {10'000, 5'000, 10'000, 0, 0, 0, -1})).empty());
+    // A check that has fewer results than the file has participants (it stopped early): no reach beyond.
+    launch::CheckReport cut = described(config, {0, 0, 0, 0, 0, 0, 0});
+    cut.participants.resize(1);
+    CHECK((launch::detail::real_time_peers(config, cut) == std::vector<std::string>{"Ecu0"}));
 }
 
 TEST_CASE(what_ends_just_as_an_interrupt_comes_has_ended)
@@ -2284,19 +2424,23 @@ TEST_CASE(a_bridge_that_the_launcher_stopped_after_the_run_is_no_finding)
                "what it wrote\n");
 }
 
-TEST_CASE(a_time_command_in_a_connected_run_is_one_warning_about_the_first)
+TEST_CASE(a_time_command_in_a_run_that_is_connected_outside_is_one_note_about_the_first)
 {
+    // Such a run takes the command only with --time-policy free: the lock names what connects it.
     RunOutcome o = connected_run(stopped_bridge(0));
+    o.time_lock = TimeLock{false, {"ETH"}, {}};
     o.time_changed = TimeChange{"pause", "stdin", 1200, std::nullopt, std::nullopt, std::nullopt};
     check_text(lines(report_of(o).findings),
-               "W 0 connect-time-changed: --connect connects ETH to a real bus, which does not wait for the virtual time, "
-               "and the run took the time command 'pause' from stdin at 1200 ms: the simulation stood still while the "
-               "devices there went on in real time, so from then on they got the messages at the wrong times. It is the "
-               "first command of the run that paused, stepped or changed the speed (the command events show each one). To "
-               "pause, step or change the speed, run without --connect (on SIL Kit only); --strict makes this a failure, for "
-               "an automatic test\n");
+               "N 0 outside-time-changed: --connect connects ETH to a real bus, which does not wait for the virtual time, "
+               "and with --time-policy free the run took the time command 'pause' from stdin at 1200 ms: the simulation "
+               "stood still while what is connected there went on in real time, so from then on it got the messages at "
+               "the wrong times, and the bridge carried frames both ways all the while (frames from outside pile up while "
+               "the simulation stands still). It is the first command of the run that paused, stepped or changed the "
+               "speed (the command events show each one). To keep the run to real time, leave --time-policy free out; to "
+               "pause, step or change the speed with nothing outside, run without --connect\n");
+    // A note: the user chose it, so --strict passes too.
     CHECK(report_of(o).result() == RunResult::Passed);
-    CHECK(report_of(o, true).result() == RunResult::Failed);
+    CHECK(report_of(o, true).result() == RunResult::Passed);
     // Known once the simulation is over: an event before the participants have ended.
     CHECK(launch::detail::settled_findings(o).size() == 1);
     // How each command is named, and what it did.
@@ -2304,7 +2448,7 @@ TEST_CASE(a_time_command_in_a_connected_run_is_one_warning_about_the_first)
         o.time_changed = std::move(t);
         const std::vector<Finding> f = assess_run(o);
         CHECK(f.size() == 1);
-        return f[0].message;
+        return f.empty() ? std::string() : f[0].message;
     };
     const auto contains = [](const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; };
     CHECK(contains(said({"step", "control_server", 0, 50, std::nullopt, std::nullopt}),
@@ -2314,17 +2458,101 @@ TEST_CASE(a_time_command_in_a_connected_run_is_one_warning_about_the_first)
     CHECK(contains(said({"pause", "control_server", 70, std::nullopt, 500, std::nullopt}),
                    "the time command 'pause at 500 ms' from control_server at 70 ms: the simulation stood still while"));
     CHECK(contains(said({"speed", "stdin", 400, std::nullopt, std::nullopt, 2.5}),
-                   "the time command 'speed 2.5' from stdin at 400 ms: the simulation ran at speed 2.5 while the devices"));
+                   "the time command 'speed 2.5' from stdin at 400 ms: the simulation ran at speed 2.5 while what is"));
     CHECK(contains(said({"speed", "stdin", 400, std::nullopt, std::nullopt, std::nullopt}),
                    "the time command 'speed max' from stdin at 400 ms: the simulation ran as fast as possible while"));
-    // Two networks: both named.
-    o.outside.push_back(RunOutside{"CAN", "virtual:1", "bridge.CAN", std::nullopt, std::nullopt});
-    CHECK(contains(said({"pause", "stdin", 0, std::nullopt, std::nullopt, std::nullopt}), "--connect connects ETH and CAN to a real bus"));
-    // Without --connect, or without such a command: nothing.
+    // Two networks and a participant that is a bridge: all named, and how to run without each.
+    o.time_lock = TimeLock{false, {"ETH", "CAN"}, {"Gateway"}};
+    const std::string all = said({"pause", "stdin", 0, std::nullopt, std::nullopt, std::nullopt});
+    CHECK(contains(all, "--connect connects ETH and CAN to a real bus, and participant 'Gateway' is a bridge (role: bridge) "
+                        "to something outside the simulation, which does not wait"));
+    CHECK(contains(all, "run without --connect and with --disable Gateway"));
+    // A participant that is a bridge alone (no --connect, so no `outside` in the result).
+    RunOutcome bridged = passed_run();
+    bridged.time_lock = TimeLock{false, {}, {"Gateway"}};
+    bridged.time_changed = TimeChange{"pause", "stdin", 1200, std::nullopt, std::nullopt, std::nullopt};
+    check_text(lines(assess_run(bridged)).substr(0, 60), "N 0 outside-time-changed: participant 'Gateway' is a bridge ");
+    // Not connected outside, or without such a command: nothing.
     RunOutcome plain = passed_run();
     plain.time_changed = TimeChange{"pause", "stdin", 1200, std::nullopt, std::nullopt, std::nullopt};
     CHECK(assess_run(plain).empty());
-    CHECK(assess_run(connected_run(stopped_bridge(0))).empty());
+    RunOutcome quiet = connected_run(stopped_bridge(0));
+    quiet.time_lock = TimeLock{false, {"ETH"}, {}};
+    CHECK(assess_run(quiet).empty());
+    quiet.time_lock = TimeLock{true, {"ETH"}, {}};
+    CHECK(assess_run(quiet).empty());
+}
+
+TEST_CASE(a_time_command_in_a_run_with_a_participant_in_real_time_is_one_note_about_the_first)
+{
+    RunOutcome o = passed_run();
+    o.real_time_peers = {"Tool"};
+    CHECK(assess_run(o).empty()); // no such command: nothing
+    o.time_changed = TimeChange{"pause", "stdin", 1200, std::nullopt, std::nullopt, std::nullopt};
+    check_text(lines(report_of(o).findings),
+               "N 0 unsynchronized-time-changed: participant 'Tool' runs in real time (no step: the virtual time does not "
+               "move it), and the run took the time command 'pause' from stdin at 1200 ms: the simulation stood still "
+               "while that participant went on, so what it sent and saw from then on does not fit the virtual time, and "
+               "another run with the same commands may go differently. It is the first command of the run that paused, "
+               "stepped or changed the speed (the command events show each one). For a run that repeats, give the "
+               "participant a step (so that it follows the virtual time), or do not pause, step or change the speed\n");
+    CHECK(report_of(o, true).result() == RunResult::Passed);
+    CHECK(launch::detail::settled_findings(o).size() == 1);
+    o.real_time_peers = {"Tool", "Spy"};
+    o.time_changed = TimeChange{"speed", "control_server", 0, std::nullopt, std::nullopt, 4.0};
+    const std::vector<Finding> two = assess_run(o);
+    CHECK(two.size() == 1);
+    if (two.size() == 1)
+    {
+        CHECK(two[0].message.find("participants 'Tool' and 'Spy' run in real time (no step: the virtual time does not move "
+                                  "them), and the run took the time command 'speed 4' from control_server at 0 ms: the "
+                                  "simulation ran at speed 4 while those participants went on, so what they sent") !=
+              std::string::npos);
+        CHECK(two[0].message.find("give each of them a step") != std::string::npos);
+    }
+    // Connected outside as well (with --time-policy free): both notes, the outside one first.
+    o.time_lock = TimeLock{false, {"ETH"}, {}};
+    const std::vector<Finding> both = assess_run(o);
+    CHECK(both.size() == 2);
+    if (both.size() == 2)
+    {
+        check_text(both[0].code, "outside-time-changed");
+        check_text(both[1].code, "unsynchronized-time-changed");
+        CHECK(both[0].severity == Severity::Note && both[1].severity == Severity::Note);
+    }
+}
+
+TEST_CASE(behind_real_time_says_that_what_is_connected_outside_does_not_wait)
+{
+    RunOutcome o = passed_run();
+    o.timing.speed = 1.0;
+    o.timing.time_step_ms = 10;
+    o.timing.paced_steps = 100;
+    o.timing.late_steps = 3;
+    o.timing.max_late_ms = 40;
+    o.timing.slipped_ms = 90;
+    o.timing.late_tolerance_ms = 20;
+    const auto message = [](const RunOutcome& outcome) {
+        for (const Finding& f : assess_run(outcome))
+        {
+            if (f.code == "behind-real-time")
+            {
+                CHECK(f.severity == Severity::Warning);
+                return f.message;
+            }
+        }
+        return std::string();
+    };
+    const std::string plain = message(o);
+    CHECK(plain.find("a device attached in real time got the ECUs' messages late by up to that. Lower the speed") !=
+          std::string::npos);
+    o.time_lock = TimeLock{true, {"ETH"}, {}};
+    CHECK(message(o).find("got the ECUs' messages late by up to that (--connect connects ETH to a real bus: what is "
+                          "connected there does not wait, so the run was that far off from it). Lower the speed") !=
+          std::string::npos);
+    // With --time-policy free the run is not kept to real time: the plain message.
+    o.time_lock = TimeLock{false, {"ETH"}, {}};
+    check_text(message(o), plain);
 }
 
 TEST_CASE(the_outputs_of_a_connected_run_have_the_bridge_and_where_it_connects)

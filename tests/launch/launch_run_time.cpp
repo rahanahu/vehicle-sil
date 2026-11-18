@@ -9,6 +9,8 @@
 //                (not about a participant), --strict fails, the time events count them
 //   pause_step   --start-paused and the time commands: step (rounded up to the controller's steps),
 //                resume, a refused step, speed, pause, stop; it stands still where it paused
+//   run_until_stdin run_until on stdin: runs to the time (rounded up), stands still there, a line without a time
+//                is refused
 //   paused_failures while it stands still: a process that ends fails the run, --timeout-ms aborts it,
 //                an interrupt stops it (the last time event says paused false each time),
 //                start_timeout_ms is not counted
@@ -290,6 +292,37 @@ void stand_still(const Options& o)
     require(!contains(run.standard_error, "has not advanced for 60 s"), "nothing more:\n" + run.standard_error);
 }
 
+void run_until_stdin(const Options& o)
+{
+    // No scenario, no control server: started paused, a run_until runs to its time (rounded up to
+    // the controller's 10 ms) and stands still there; the state says the command is taken, and a
+    // line without a time is refused with the form of a step's.
+    const fs::path dir = one_ecu(o, "", "pid");
+    Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
+    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":0,", "\"paused\":true,"});
+    live.wait_for({"\"event\":\"state\"", "\"paused\":true,", "\"run_until\":{\"ok\":true,\"reason\":null,"});
+    live.write("{\"command\":\"run_until\",\"at_ms\":95,\"id\":5}\n");
+    live.wait_for({"\"command\":\"run_until\"", "\"source\":\"stdin\"", "\"accepted\":true,\"message\":null,\"reason\":null,"
+                   "\"at_ms\":100,\"id\":5}"});
+    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":100,", "\"paused\":true,"});
+    std::this_thread::sleep_for(300ms);
+    require(events_with(live.lines(), {"\"sim_ms\":110,"}).empty(), "it stands still at 100 ms");
+    // A time that has passed while it stands still at 100: accepted, and nothing moves (the at_ms is
+    // the time asked for, rounded up, not a time it stops at).
+    live.write("{\"command\":\"run_until\",\"at_ms\":50,\"id\":7}\n");
+    live.wait_for({"\"command\":\"run_until\"", "\"accepted\":true,\"message\":null,\"reason\":null,"
+                   "\"at_ms\":50,\"id\":7}"});
+    std::this_thread::sleep_for(300ms);
+    require(events_with(live.lines(), {"\"sim_ms\":110,"}).empty(), "a time that has passed moves nothing");
+    live.write("{\"command\":\"run_until\",\"id\":6}\n");
+    live.wait_for({"\"command\":\"run_until\"", "\"accepted\":false", "\"reason\":\"invalid-argument\",\"id\":6}"});
+    live.write("{\"command\":\"stop\"}\n");
+    const auto [status, lines] = live.finish();
+    const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
+    require(status && status->code == 130, "stopped while paused: 130");
+    require(gone, "no participant is left");
+}
+
 void speed_change(const Options& o)
 {
     // Speed 1 up to 200 ms or a little further, then speed 4: the 800 ms (or a little less) that
@@ -488,19 +521,42 @@ void pause_step(const Options& o)
                    "\"step\":{\"ok\":true,\"reason\":null,\"message\":null,\"caution\":null,\"min_ms\":1,"});
     // A step goes the time given, in whole steps of the controller (10 ms), and stands still.
     live.write("{\"command\":\"step\",\"ms\":50}\n");
-    live.wait_for({"\"command\":\"step\"", "\"accepted\":true,\"message\":null,\"reason\":null,\"ms\":50,\"id\":null}"});
+    // Its event says where it will stand ("at_ms"), before it is there.
+    live.wait_for({"\"command\":\"step\"", "\"accepted\":true,\"message\":null,\"reason\":null,\"ms\":50,\"at_ms\":50,\"id\":null}"});
     live.wait_for({"\"event\":\"time\"", "\"sim_ms\":50,", "\"paused\":true,"});
     std::this_thread::sleep_for(300ms);
     require(events_with(live.lines(), {"\"sim_ms\":60,"}).empty(), "it stands still at 50 ms");
     // With the sender's number, which comes back.
     live.write("{\"command\":\"step\",\"ms\":15,\"id\":7}\n");
-    live.wait_for({"\"command\":\"step\"", "\"ms\":20,\"id\":7}"});
+    live.wait_for({"\"command\":\"step\"", "\"ms\":20,\"at_ms\":70,\"id\":7}"});
     live.wait_for({"\"event\":\"time\"", "\"sim_ms\":70,", "\"paused\":true,"});
+    // Two steps at once: the second counts from where the first ends, and says so when it is taken.
+    live.write("{\"command\":\"step\",\"ms\":100,\"id\":11}\n{\"command\":\"step\",\"ms\":30,\"id\":12}\n");
+    live.wait_for({"\"command\":\"step\"", "\"ms\":100,\"at_ms\":170,\"id\":11}"});
+    live.wait_for({"\"command\":\"step\"", "\"ms\":30,\"at_ms\":200,\"id\":12}"});
+    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":200,", "\"paused\":true,"});
     // Running: a step is refused; the speed changes.
     live.write("{\"command\":\"resume\"}\n");
     live.wait_for({"\"event\":\"time\"", "\"paused\":false,"});
     // The state: it goes, and a step is refused with the reason the command would get.
     live.wait_for({"\"event\":\"state\"", "\"paused\":false,", "\"step\":{\"ok\":false,\"reason\":\"not-paused\","});
+    // A pause and a step at once, while it runs as fast as it can: the step is taken whether the
+    // simulation has paused yet or not, and its "at_ms" is where it stands still after both.
+    live.write("{\"command\":\"pause\",\"id\":20}\n{\"command\":\"step\",\"ms\":30,\"id\":21}\n");
+    const std::string stepped = live.wait_for({"\"command\":\"step\"", "\"accepted\":true,", "\"ms\":30,\"at_ms\":", "\"id\":21}"});
+    const std::int64_t to = std::stoll(value_of(stepped, "at_ms"));
+    require(to >= 230 && to % 10 == 0, "the step after a pause ends at a later step of the controller:\n" + stepped);
+    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(to) + ",", "\"paused\":true,"});
+    std::this_thread::sleep_for(300ms);
+    for (const auto& time : events_with(live.lines(), {"\"event\":\"time\""}))
+    {
+        require(std::stoll(value_of(time, "sim_ms")) <= to, "it stands still at the step's at_ms (" + std::to_string(to) + "):\n" + time);
+    }
+    live.write("{\"command\":\"step\",\"ms\":10,\"id\":22}\n");
+    live.wait_for({"\"command\":\"step\"", "\"ms\":10,\"at_ms\":" + std::to_string(to + 10) + ",\"id\":22}"});
+    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(to + 10) + ",", "\"paused\":true,"});
+    live.write("{\"command\":\"resume\",\"id\":23}\n");
+    live.wait_for({"\"command\":\"resume\"", "\"accepted\":true,", "\"id\":23}"});
     live.write("{\"command\":\"step\",\"ms\":10,\"id\":8}\n{\"command\":\"speed\",\"value\":1}\n");
     live.wait_for({"\"command\":\"step\"", "\"accepted\":false", "\"reason\":\"not-paused\",\"id\":8}"});
     live.wait_for({"\"event\":\"time\"", "\"speed\":1,", "\"paused\":false,"});
@@ -537,7 +593,7 @@ void pause_step(const Options& o)
                             [&](const std::string& l) { return std::all_of(parts.begin(), parts.end(), [&](const std::string& p) { return contains(l, p); }); }) -
                lines.begin();
     };
-    require(at({"\"ms\":50,\"id\":null}"}) < at({"\"sim_ms\":50,"}), "the step comes before the time it reaches:\n" + all);
+    require(at({"\"ms\":50,\"at_ms\":50,\"id\":null}"}) < at({"\"sim_ms\":50,"}), "the step comes before the time it reaches:\n" + all);
     require(!events_with(lines, {"\"command\":\"step\"", "\"accepted\":false,\"message\":\"step works while the simulation is "
                                                          "paused: send {\\\"command\\\":\\\"pause\\\"} first (or run with "
                                                          "--start-paused)\",\"reason\":\"not-paused\",\"id\":8}"})
@@ -552,7 +608,7 @@ void pause_step(const Options& o)
                 "rev goes up from state to state:\n" + states[i - 1] + "\n" + states[i]);
     }
     // (A step goes too, and is still taken: the first state that goes is the first step's.)
-    require(at({"\"ms\":50,\"id\":null}"}) < at({"\"event\":\"state\"", "\"phase\":\"running\",\"paused\":false,"}) &&
+    require(at({"\"ms\":50,\"at_ms\":50,\"id\":null}"}) < at({"\"event\":\"state\"", "\"phase\":\"running\",\"paused\":false,"}) &&
                 at({"\"command\":\"resume\""}) < at({"\"event\":\"state\"", "\"step\":{\"ok\":false,\"reason\":\"not-paused\","}),
             "the step and the resume come before the states they made:\n" + all);
     require(at({"\"command\":\"speed\""}) < at({"\"event\":\"state\"", "\"speed\":1,"}),
@@ -565,12 +621,13 @@ void pause_step(const Options& o)
                 contains(states.back(), "\"pause\":{\"ok\":false,\"reason\":\"not-running\",") &&
                 contains(states.back(), "\"stop\":{\"ok\":true,\"reason\":null,"),
             "the last state is the end:\n" + all);
-    // This run has no control server: no state says that a run_until or a write would be taken.
+    // This run has no control server: no state says that a write would be taken, and run_until is
+    // standard input's, so it is never refused for that.
     for (const std::string& state : states)
     {
-        require(contains(state, "\"run_until\":{\"ok\":false,\"reason\":\"no-control-server\",") &&
-                    contains(state, "\"write\":{\"ok\":false,\"reason\":\"no-control-server\","),
-                "a run without --control refuses run_until and write in every state:\n" + state);
+        require(contains(state, "\"write\":{\"ok\":false,\"reason\":\"no-control-server\",") &&
+                    !contains(state, "\"run_until\":{\"ok\":false,\"reason\":\"no-control-server\","),
+                "a run without --control refuses write in every state, and not run_until for that reason:\n" + state);
     }
     // The result: stood still for at least the waits above.
     const std::string& result = lines.back();

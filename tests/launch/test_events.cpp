@@ -880,7 +880,7 @@ TEST_CASE(a_command_is_a_json_object_with_the_command_stop)
     check_text(read(R"({"command":{"name":"stop"}})"), "refused -: \"command\" is not a string: write one JSON object "
                                                        "per line, such as {\"command\":\"stop\"}");
     check_text(read(R"({"command":"jump"})"),
-               "refused 'jump': unknown command 'jump': the commands are stop, pause, resume, step and speed");
+               "refused 'jump': unknown command 'jump': the commands are stop, pause, resume, step, run_until and speed");
     CHECK(!parse_command(R"({"command":"jump"})")->is_stop());
     // Each refusal has its code; an accepted line has none.
     const auto reason = [](std::string_view line) { return parse_command(line)->reason; };
@@ -932,6 +932,7 @@ TEST_CASE(a_command_may_carry_the_senders_number_which_comes_back_in_its_event)
     Sink sink;
     EventStream& e = sink.start();
     TimeCommands commands(false, [&e](const Command& done, std::string_view source) { e.command(done, source); });
+    commands.set_time_lock({});
     static_cast<void>(commands.apply(*parse_command(R"({"command":"pause","id":41})"), "stdin"));
     static_cast<void>(commands.apply(*parse_command(R"({"command":"step","ms":10,"id":42})"), "stdin"));
     e.command(*parse_command(R"({"command":"jump","id":43})"), "stdin");
@@ -939,7 +940,7 @@ TEST_CASE(a_command_may_carry_the_senders_number_which_comes_back_in_its_event)
     CHECK(e.wait_written(10s));
     check_text(shape(sink.lines()), R"(command "command":"pause","source":"stdin","accepted":true,"message":null,"reason":null,"id":41}
 command "command":"step","source":"stdin","accepted":false,"message":"the simulation has not been set up yet: step works once it stands still (a time event with paused true), with --start-paused from the start","reason":"not-set-up","id":42}
-command "command":"jump","source":"stdin","accepted":false,"message":"unknown command 'jump': the commands are stop, pause, resume, step and speed","reason":"unknown-command","id":43}
+command "command":"jump","source":"stdin","accepted":false,"message":"unknown command 'jump': the commands are stop, pause, resume, step, run_until and speed","reason":"unknown-command","id":43}
 command "command":null,"source":"stdin","accepted":false,"message":"the line is not a JSON object: write one JSON object per line, such as {\"command\":\"stop\"}","reason":"invalid-command","id":null}
 )");
 }
@@ -949,13 +950,25 @@ TEST_CASE(the_time_commands_are_read_with_their_values)
     const auto read = [](std::string_view line) {
         const auto c = parse_command(line);
         return std::string(c->accepted ? "accepted " : "refused ") + (c->name ? *c->name : "-") +
-               (c->ms ? " ms " + std::to_string(*c->ms) : "") + (c->speed ? " value " + speed_text(c->speed) : "") + ": " +
+               (c->ms ? " ms " + std::to_string(*c->ms) : "") + (c->at_ms ? " at_ms " + std::to_string(*c->at_ms) : "") + (c->speed ? " value " + speed_text(c->speed) : "") + ": " +
                c->message;
     };
     check_text(read(R"({"command":"pause"})"), "accepted pause: ");
     check_text(read(R"({"command":"resume","ms":5})"), "accepted resume: "); // other keys are ignored
     check_text(read(R"({"command":"step","ms":100})"), "accepted step ms 100: ");
     check_text(read(R"({"command":"step","ms":1000000000000})"), "accepted step ms 1000000000000: ");
+    check_text(read(R"({"command":"run_until","at_ms":5000})"), "accepted run_until at_ms 5000: ");
+    check_text(read(R"({"command":"run_until","at_ms":0})"), "accepted run_until at_ms 0: ");
+    const std::string until = "refused run_until: run_until needs \"at_ms\", the virtual time to stand still at, a whole "
+                              "number of milliseconds from 0 to 1000000000000, such as "
+                              "{\"command\":\"run_until\",\"at_ms\":5000}";
+    for (const char* bad : {R"({"command":"run_until"})", R"({"command":"run_until","at_ms":-1})",
+                            R"({"command":"run_until","at_ms":1.5})", R"({"command":"run_until","at_ms":"5"})",
+                            R"({"command":"run_until","at_ms":1000000000001})"})
+    {
+        check_text(read(bad), until);
+        check_text(parse_command(bad)->reason, "invalid-argument");
+    }
     check_text(read(R"({"command":"speed","value":1})"), "accepted speed value 1: ");
     check_text(read(R"({"command":"speed","value":0.25})"), "accepted speed value 0.25: ");
     check_text(read(R"({"command":"speed","value":"max"})"), "accepted speed: ");
@@ -984,6 +997,7 @@ TEST_CASE(time_commands_before_the_simulation_are_kept_and_after_it_refused)
     Sink sink;
     EventStream& e = sink.start(Sink::quiet());
     TimeCommands commands(false, [&e](const Command& command, std::string_view source) { e.command(command, source); });
+    commands.set_time_lock({});
     const auto command = [](const std::string& line) { return *parse_command(line); };
     // Before the run has its controller: pause, resume and speed are kept; a step cannot be told
     // how far it goes yet.
@@ -1009,6 +1023,7 @@ command "command":"pause","source":"stdin","accepted":false,"message":"the simul
 )");
     // Without events: only the answer.
     TimeCommands quiet(true);
+    quiet.set_time_lock({});
     CHECK(quiet.apply(command(R"({"command":"speed","value":"max"})"), "stdin").accepted);
 }
 
@@ -1024,6 +1039,7 @@ TEST_CASE(time_commands_between_the_controller_and_the_start_take_effect_at_the_
     SimulationController controller(options);
     const auto command = [](const std::string& line) { return *parse_command(line); };
     TimeCommands commands(true);
+    commands.set_time_lock({});
     CHECK(commands.apply(command(R"({"command":"speed","value":0.5})"), "stdin").accepted);
     commands.attach(controller, 10, std::optional<double>(2.0));
     // The speed command before attach() wins over the configuration's speed; the run starts paused.
@@ -1034,9 +1050,11 @@ TEST_CASE(time_commands_between_the_controller_and_the_start_take_effect_at_the_
     Command step = commands.apply(command(R"({"command":"step","ms":25})"), "stdin");
     CHECK(step.accepted);
     CHECK(step.ms == std::optional<std::int64_t>(30));
+    CHECK(step.at_ms == std::optional<std::int64_t>(30)); // where it will stand: said with the answer
     CHECK(controller.time_state().pause_target == std::optional<SimTime>(SimTime{} + std::chrono::milliseconds(30)));
     step = commands.apply(command(R"({"command":"step","ms":5})"), "stdin");
     CHECK(step.ms == std::optional<std::int64_t>(10));
+    CHECK(step.at_ms == std::optional<std::int64_t>(40)); // from where the step before ends
     CHECK(controller.time_state().pause_target == std::optional<SimTime>(SimTime{} + std::chrono::milliseconds(40)));
     CHECK(commands.apply(command(R"({"command":"speed","value":"max"})"), "stdin").accepted);
     CHECK(!controller.time_state().speed);
@@ -1045,6 +1063,61 @@ TEST_CASE(time_commands_between_the_controller_and_the_start_take_effect_at_the_
     CHECK(s.paced_steps == 0 && s.running_for.count() == 0 && s.paused_for.count() == 0 && !s.paused);
     commands.detach();
     CHECK(!commands.apply(command(R"({"command":"resume"})"), "stdin").accepted);
+}
+
+TEST_CASE(an_accepted_step_says_where_it_ends_in_its_command_event)
+{
+    // The command event of a step has "at_ms": the virtual time at which the simulation stands
+    // still after it, known when the step is accepted, and the gate is sent to that same time.
+    vehicle_sil::unit::InProcessRegistry registry;
+    SimulationControllerOptions options;
+    options.registry_uri = registry.uri;
+    options.required_participants = {"NeverJoins"};
+    options.time_control = TimeControlOptions{.step = std::chrono::milliseconds(10)};
+    SimulationController controller(options);
+    const auto command = [](const std::string& line) { return *parse_command(line); };
+    const auto target = [&controller] { return controller.time_state().pause_target; };
+    const auto at = [](std::int64_t ms) { return std::optional<SimTime>(SimTime{} + std::chrono::milliseconds(ms)); };
+    Sink sink;
+    EventStream& events = sink.start();
+    // Not started paused: the gate goes on (here it waits for the start) until a pause.
+    TimeCommands commands(false, [&events](const Command& c, std::string_view source) { events.command(c, source); });
+    commands.set_time_lock({});
+    commands.attach(controller, 10, std::nullopt);
+    // Refused (not paused): no "at_ms".
+    Command step = commands.apply(command(R"({"command":"step","ms":10,"id":1})"), "stdin");
+    CHECK(!step.accepted && !step.at_ms);
+    // A pause was accepted and the simulation has not paused yet: the step counts from the
+    // controller's step in progress (0 here), and its event says where that is.
+    CHECK(commands.apply(command(R"({"command":"pause"})"), "stdin").accepted);
+    CHECK(!controller.time_state().paused);
+    step = commands.apply(command(R"({"command":"step","ms":15,"id":2})"), "stdin");
+    CHECK(step.accepted && step.ms == std::optional<std::int64_t>(20) && step.at_ms == std::optional<std::int64_t>(20));
+    CHECK(target() == at(20));
+    // A second step while the first is in progress: from where the first ends.
+    step = commands.apply(command(R"({"command":"step","ms":30,"id":3})"), "control_server");
+    CHECK(step.at_ms == std::optional<std::int64_t>(50));
+    CHECK(target() == at(50));
+    // After a run_until: from the time of the run_until.
+    CHECK(commands.apply(command(R"({"command":"run_until","at_ms":195})"), "stdin").at_ms == std::optional<std::int64_t>(200));
+    step = commands.apply(command(R"({"command":"step","ms":10})"), "stdin");
+    CHECK(step.at_ms == std::optional<std::int64_t>(210));
+    CHECK(target() == at(210));
+    // A resume ends it: the next step is refused and has no "at_ms".
+    CHECK(commands.apply(command(R"({"command":"resume"})"), "stdin").accepted);
+    CHECK(!commands.apply(command(R"({"command":"step","ms":10})"), "stdin").at_ms);
+    commands.detach();
+    CHECK(events.wait_written(10s));
+    const std::string refused = R"x(,"accepted":false,"message":"step works while the simulation is paused: send {\"command\":\"pause\"} first (or run with --start-paused)","reason":"not-paused")x";
+    check_text(shape(sink.lines()), R"(command "command":"step","source":"stdin")" + refused + R"(,"id":1}
+command "command":"pause","source":"stdin","accepted":true,"message":null,"reason":null,"id":null}
+command "command":"step","source":"stdin","accepted":true,"message":null,"reason":null,"ms":20,"at_ms":20,"id":2}
+command "command":"step","source":"control_server","accepted":true,"message":null,"reason":null,"ms":30,"at_ms":50,"id":3}
+command "command":"run_until","source":"stdin","accepted":true,"message":null,"reason":null,"at_ms":200,"id":null}
+command "command":"step","source":"stdin","accepted":true,"message":null,"reason":null,"ms":10,"at_ms":210,"id":null}
+command "command":"resume","source":"stdin","accepted":true,"message":null,"reason":null,"id":null}
+command "command":"step","source":"stdin")" + refused + R"(,"id":null}
+)");
 }
 
 TEST_CASE(time_commands_from_another_thread_never_reach_a_controller_that_is_gone)
@@ -1059,6 +1132,7 @@ TEST_CASE(time_commands_from_another_thread_never_reach_a_controller_that_is_gon
     {
         vehicle_sil::unit::InProcessRegistry registry;
         TimeCommands commands(round % 2 == 0);
+        commands.set_time_lock({});
         std::atomic<bool> done{false};
         std::atomic<int> refused_after_detach{0};
         std::atomic<bool> detached{false};
@@ -1110,6 +1184,7 @@ TEST_CASE(time_commands_of_a_control_server_run_until_and_pause_at_a_time_and_ar
     Sink sink;
     EventStream& e = sink.start(Sink::quiet());
     TimeCommands commands(false, [&e](const Command& command, std::string_view source) { e.command(command, source); });
+    commands.set_time_lock({});
     const auto command = [](const char* name) {
         Command c;
         c.name = name;
@@ -1145,7 +1220,7 @@ TEST_CASE(time_commands_of_a_control_server_run_until_and_pause_at_a_time_and_ar
     check_text(shape(sink.lines()),
                R"(command "command":"run_until","source":"control_server","accepted":false,"message":"the simulation has not been set up yet: run_until at a time works once the participants have been started","reason":"not-set-up","id":null}
 command "command":"run_until","source":"control_server","accepted":true,"message":null,"reason":null,"at_ms":30,"id":null}
-command "command":"step","source":"control_server","accepted":true,"message":null,"reason":null,"ms":10,"id":null}
+command "command":"step","source":"control_server","accepted":true,"message":null,"reason":null,"ms":10,"at_ms":40,"id":null}
 command "command":"pause","source":"control_server","accepted":true,"message":null,"reason":null,"at_ms":110,"id":null}
 command "command":"speed","source":"control_server","accepted":false,"message":"the speed must be from 0.000001 to 1000000 simulation seconds per wall-clock second, or max","reason":"out-of-range","id":null}
 command "command":"step","source":"control_server","accepted":false,"message":"step needs a time from 1 to 1000000000000 ms","reason":"out-of-range","id":null}
@@ -1164,6 +1239,7 @@ TEST_CASE(time_commands_note_the_first_that_changed_how_the_time_goes)
     const auto command = [](const std::string& line) { return *parse_command(line); };
     // Starting paused, a resume, a speed of 1, a stop and a refused command change nothing.
     TimeCommands commands(true);
+    commands.set_time_lock({});
     CHECK(commands.apply(command(R"({"command":"resume"})"), "stdin").accepted);
     CHECK(commands.apply(command(R"({"command":"speed","value":1})"), "stdin").accepted);
     CHECK(!commands.apply(command(R"({"command":"step","ms":10})"), "stdin").accepted);
@@ -1182,19 +1258,23 @@ TEST_CASE(time_commands_note_the_first_that_changed_how_the_time_goes)
     const std::optional<TimeChange> first = commands.first_time_change();
     CHECK(first && first->command == "pause" && first->source == "control_server" && first->sim_ms == 0);
     CHECK(first->at_ms == std::optional<std::int64_t>(30) && !first->ms && !first->speed);
-    // A step, with how far it goes in whole steps.
+    // A step, with how far it goes in whole steps and where it was to stand after it.
     TimeCommands stepped(true);
+    stepped.set_time_lock({});
     stepped.attach(controller, 10, std::nullopt);
     CHECK(stepped.apply(command(R"({"command":"step","ms":25})"), "stdin").accepted);
     stepped.detach();
     const std::optional<TimeChange> step = stepped.first_time_change();
-    CHECK(step && step->command == "step" && step->ms == std::optional<std::int64_t>(30) && !step->at_ms);
+    CHECK(step && step->command == "step" && step->ms == std::optional<std::int64_t>(30) &&
+          step->at_ms == std::optional<std::int64_t>(30));
     // A speed before the controller: max, and any other than 1.
     TimeCommands fastest(false);
+    fastest.set_time_lock({});
     CHECK(fastest.apply(command(R"({"command":"speed","value":"max"})"), "stdin").accepted);
     const std::optional<TimeChange> max = fastest.first_time_change();
     CHECK(max && max->command == "speed" && !max->speed && max->sim_ms == 0 && max->source == "stdin");
     TimeCommands slower(false);
+    slower.set_time_lock({});
     CHECK(slower.apply(command(R"({"command":"speed","value":0.5})"), "stdin").accepted);
     CHECK(slower.first_time_change() && slower.first_time_change()->speed == std::optional<double>(0.5));
 }
@@ -1212,6 +1292,7 @@ TEST_CASE(the_hold_before_the_start_ends_with_resume_step_or_run_until_a_give_up
     for (const char* release : {R"({"command":"resume"})", R"({"command":"step","ms":10})", "run_until", "pause_at"})
     {
         TimeCommands commands(true);
+        commands.set_time_lock({});
         commands.attach(controller, 10, std::nullopt);
         std::atomic<int> result{-1};
         std::atomic<int> began{0};
@@ -1246,6 +1327,7 @@ TEST_CASE(the_hold_before_the_start_ends_with_resume_step_or_run_until_a_give_up
     }
     // A give-up ends it, and so does the end of the run.
     TimeCommands commands(true);
+    commands.set_time_lock({});
     commands.attach(controller, 10, std::nullopt);
     std::atomic<bool> give_up{false};
     std::atomic<int> result{-1};
@@ -1295,12 +1377,14 @@ TEST_CASE(the_commands_before_the_window_decide_whether_the_run_holds)
     {
         // A resume before attach() and one after it.
         TimeCommands before(true);
+        before.set_time_lock({});
         CHECK(before.apply(command(R"({"command":"resume"})"), "control_server").accepted);
         before.attach(controller, 10, std::nullopt);
         CHECK(hold(before) == Hold::None);
         CHECK(!controller.time_state().pause_target); // it goes on from 0
         before.detach();
         TimeCommands after(true);
+        after.set_time_lock({});
         after.attach(controller, 10, std::nullopt);
         CHECK(after.apply(command(R"({"command":"resume"})"), "stdin").accepted);
         CHECK(hold(after) == Hold::None);
@@ -1309,6 +1393,7 @@ TEST_CASE(the_commands_before_the_window_decide_whether_the_run_holds)
     {
         // A step before the window: done from 0 (it stands still at 20), without a hold.
         TimeCommands commands(true);
+        commands.set_time_lock({});
         commands.attach(controller, 10, std::nullopt);
         CHECK(commands.apply(command(R"({"command":"step","ms":15})"), "stdin").accepted);
         CHECK(hold(commands) == Hold::None);
@@ -1318,6 +1403,7 @@ TEST_CASE(the_commands_before_the_window_decide_whether_the_run_holds)
     {
         // A resume and then a pause: it holds again.
         TimeCommands commands(true);
+        commands.set_time_lock({});
         commands.attach(controller, 10, std::nullopt);
         CHECK(commands.apply(command(R"({"command":"resume"})"), "stdin").accepted);
         CHECK(commands.apply(command(R"({"command":"pause"})"), "control_server").accepted);
@@ -1327,6 +1413,7 @@ TEST_CASE(the_commands_before_the_window_decide_whether_the_run_holds)
     {
         // Not started paused, a pause before the window: it holds.
         TimeCommands commands(false);
+        commands.set_time_lock({});
         CHECK(commands.apply(command(R"({"command":"pause"})"), "stdin").accepted);
         commands.attach(controller, 10, std::nullopt);
         CHECK(hold(commands) == Hold::GaveUp);
@@ -1335,6 +1422,7 @@ TEST_CASE(the_commands_before_the_window_decide_whether_the_run_holds)
     {
         // Not started paused, nothing asked: no hold.
         TimeCommands commands(false);
+        commands.set_time_lock({});
         commands.attach(controller, 10, std::nullopt);
         CHECK(hold(commands) == Hold::None);
         commands.detach();
@@ -1407,18 +1495,20 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "connections",
     "connect-counts",
     "state",
-    "time-policy"
+    "time-policy",
+    "stdin-run-until"
   ]
 }
 )");
     // A build with the control server adds its features last.
     const std::string with = format_version_json({kControlServerFeature, kScenarioControlFeature});
-    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"control-server\",\n    \"scenario-control\"\n  ]") != std::string::npos);
+    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"stdin-run-until\",\n    \"control-server\",\n    \"scenario-control\"\n  ]") != std::string::npos);
 }
 
 TEST_CASE(an_accepted_stop_is_asked_for_before_the_detach_and_a_refused_one_not_at_all)
 {
     TimeCommands commands(false);
+    commands.set_time_lock({});
     Command stop;
     stop.name = "stop";
     stop.accepted = true;

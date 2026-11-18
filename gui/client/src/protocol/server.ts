@@ -733,7 +733,7 @@ export interface StopRequestBody {
 }
 
 /** Names of the time commands (the launcher's stdin commands other than stop). */
-export type TimeCommandName = 'pause' | 'resume' | 'step' | 'speed' | 'run_until';
+export type TimeCommandName = 'pause' | 'resume' | 'step' | 'run_until' | 'speed';
 
 /**
  * Body of POST api/time. The server passes it to the launcher as one line and returns at once. Whether it was accepted
@@ -744,9 +744,12 @@ export type TimeCommand = (
   | { command: 'resume' }
   /** Only while paused. Advances by ms and pauses again (the launcher rounds up to a multiple of the time step). */
   | { command: 'step'; ms: number }
-  | { command: 'speed'; value: number | 'max' }
-  /** Not taken by the GUI server yet (it refuses it); the front door sends it so that a server that takes it works at once. */
+  /**
+   * Runs on and pauses at at_ms (0 to limits.step_ms_max; the launcher rounds up to a multiple of the time step). Refused
+   * with 400 unsupported by a launcher without the stdin-run-until feature.
+   */
   | { command: 'run_until'; at_ms: number }
+  | { command: 'speed'; value: number | 'max' }
 ) & {
   /**
    * A whole number from 0 to 2^53 of the sender's choice. The launcher returns it as `id` of the command event that

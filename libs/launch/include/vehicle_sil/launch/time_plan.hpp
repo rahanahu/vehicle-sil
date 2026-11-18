@@ -129,6 +129,18 @@ struct RunTiming
 };
 
 namespace detail {
+/// What connects a run outside, for a message: "--connect connects CAN1 to a real bus",
+/// "participant 'Gateway' is a bridge (role: bridge) to something outside the simulation", or
+/// both. "" if `lock` names nothing.
+[[nodiscard]] std::string connected_outside(const TimeLock& lock);
+/// How to run on SIL Kit only, for a message: "without --connect", "with --disable Gateway
+/// --disable Tap", or both ("without --connect and with --disable Gateway": it takes both).
+[[nodiscard]] std::string not_connected(const TimeLock& lock);
+/// The enabled participants of the file that run in real time, in the file's order: an ecu or a
+/// test participant (not a bridge) whose --describe output `check` has and names no step. The
+/// time gate does not move them, and they do not stand still when the simulation does. One with
+/// describe: false is not known, and not named.
+[[nodiscard]] std::vector<std::string> real_time_peers(const SimulationConfig& config, const CheckReport& check);
 /// The step of the launcher's controller for a run at `speed` (empty: as fast as possible; `fine`:
 /// as with a speed, whatever the speed is: a run with a scenario, whose results must not depend on
 /// the speed), and

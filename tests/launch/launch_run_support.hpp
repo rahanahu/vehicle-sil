@@ -510,6 +510,7 @@ void connect_lost_exit0(const Options& o);
 void connect_dies_while_waiting(const Options& o);
 void connect_speed(const Options& o);
 void connect_time_changed(const Options& o);
+void connect_time_locked(const Options& o);
 void docs(const Options& o);
 void check(const Options& o);
 void crash(const Options& o);
@@ -558,6 +559,7 @@ void stand_still(const Options& o);
 void speed_change(const Options& o);
 void step_width(const Options& o);
 void pause_step(const Options& o);
+void run_until_stdin(const Options& o);
 void paused_failures(const Options& o);
 void time_usage(const Options& o);
 

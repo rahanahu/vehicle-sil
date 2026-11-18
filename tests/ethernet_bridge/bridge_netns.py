@@ -25,7 +25,7 @@ packet  the bridge on one end of a veth pair, this script on the other: frames w
         va and vb; what the bridge sends does not come back to it. --promiscuous sets the interface's promiscuity while the bridge
         runs only. The
         messages for an interface that is missing, not Ethernet, and (with the capability
-        dropped) not allowed to be opened. The link down and up: the monitor lines. UDP that the
+        dropped) not allowed to be opened. The link down and up: the monitor lines and the link lines. UDP that the
         OS's own stack sends (from the other end of the veth pair, and on the bridge's own
         interface) has no checksum yet: the bridge passes it, counts it (ext_checksum_incomplete)
         and warns once where to turn the offload off; with the offload off as the warning says,
@@ -36,7 +36,7 @@ pcap    the same veth pair with --backend pcap, which loads the libpcap of this 
         device unless it is from the address of an interface (libpcap lists them); what the bridge sends
         does not come back to it. --promiscuous, --list-interfaces. The messages for an interface
         that is missing, not Ethernet, down, and (with the capability dropped) not allowed to be
-        opened. The link down and up: the monitor lines. The interface removed: exit code 1.
+        opened. The link down and up: the monitor lines and the link lines. The interface removed: exit code 1.
 launch  vehicle_sil_launch run --connect ETH_EXT=va starts the bridge itself (found on PATH, with
         its default backend, packet) on one end of a veth pair; this script answers at the other
         end. A scenario (--speed 1 --strict) expects 3 answers at the ECU eth_bridge_it_ecu; the
@@ -196,6 +196,22 @@ class Proc:
                 if time.monotonic() > end or (self.p.poll() is not None and not self.reader.is_alive()):
                     fail(f"no line with {part!r} within {timeout} s; the output:\n{chr(10).join(self.lines)}")
                 self.lock.wait(0.2)
+
+    def link_values(self) -> list[str]:
+        """The values of the `link link=<value>` lines so far, in order; a first `unknown` (printed
+        before the link's first report arrived) is left out."""
+        with self.lock:
+            values = [line.split("link link=", 1)[1] for line in self.lines if line.startswith("[eth-bridge] link link=")]
+        return values[1:] if values[:1] == ["unknown"] else values
+
+    def wait_for_link_values(self, expected: list[str], timeout: float = WAIT) -> None:
+        """Waits until the `link link=<value>` lines are exactly `expected` (a line is printed only when the value
+        changes, so two equal values never follow each other)."""
+        end = time.monotonic() + timeout
+        while self.link_values() != expected:
+            if time.monotonic() > end:
+                fail(f"the link lines are {self.link_values()}, not {expected}; the output:\n{self.text()}")
+            time.sleep(0.1)
 
     def wait(self, timeout: float = WAIT) -> int:
         try:
@@ -455,6 +471,7 @@ def tap(world: World) -> None:
                   "link set vsil1 up'.")
     sh("ip", "link", "set", "vsil1", "up")
     made.wait_for("[eth-bridge] interface vsil1: link up")
+    made.wait_for_link_values(["up"])  # not known while it is down (the first line), then up
     wire1 = Wire("vsil1")
     round_trips(world, wire1, [frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 46, 6)], "tap made by the bridge")
     check(made.stop() == 0, "the bridge that made its TAP device stops with exit code 0:\n" + made.text())
@@ -548,10 +565,13 @@ def packet(world: World) -> None:
     requests.append(last)
 
     # The link down and up again: the monitor lines.
+    bridge.wait_for_link_values(["up"])  # the first line after the start: up, once
     sh("ip", "link", "set", "vb", "down")
     bridge.wait_for("[eth-bridge] interface va: link down")
+    bridge.wait_for_link_values(["up", "down"])
     sh("ip", "link", "set", "vb", "up")
     bridge.wait_for("[eth-bridge] interface va: link up")
+    bridge.wait_for_link_values(["up", "down", "up"])
     say("packet: the link down and up again: the bridge said so")
 
     check(bridge.stop() == 0, "the bridge stops with exit code 0:\n" + bridge.text())
@@ -740,10 +760,13 @@ def pcap(world: World) -> None:
     requests.append(last)
 
     # The link down and up again: the monitor lines, and frames pass again afterwards.
+    bridge.wait_for_link_values(["up"])  # the first line after the start: up, once
     sh("ip", "link", "set", "vb", "down")
     bridge.wait_for("[eth-bridge] interface va: link down")
+    bridge.wait_for_link_values(["up", "down"])
     sh("ip", "link", "set", "vb", "up")
     bridge.wait_for("[eth-bridge] interface va: link up")
+    bridge.wait_for_link_values(["up", "down", "up"])
     far.s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)  # this script's own socket on vb: "network is down", once
     after = frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 46, 10)
     round_trips(world, far, [after], "pcap, after the link was down")

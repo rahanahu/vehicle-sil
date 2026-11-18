@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
-// run --control: the Control Server of vehicle_sil_launch (control_server.hpp).
+// run --control: the Control Server of vehicle_sil_launch (control_server.hpp). It takes the checked
+// options (control_arguments.hpp reads them from the command line) and knows nothing of the command line.
 //
 // The server's time operations are commands of the run like those on standard input: they go
 // through launch::TimeCommands with the source "control_server" (one mutex for every source, the
@@ -10,25 +11,21 @@
 // reaches a controller that has gone.
 #include "control_server.hpp"
 
-#include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/control_grpc/server.hpp"
 #include "vehicle_sil/core/failure_check.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/launch/events.hpp"
-#include "vehicle_sil/process/child_process.hpp"
 
 #include <silkit/services/orchestration/string_utils.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
-#include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -147,26 +144,26 @@ public:
         {
             c.at_ms = at_ms(*at);
         }
-        apply(c, at && *at < SimTime{});
+        apply(c);
     }
-    void resume() override { apply(command("resume"), false); }
+    void resume() override { apply(command("resume")); }
     void run_until(SimTime t) override
     {
         launch::Command c = command("run_until");
         c.at_ms = at_ms(t);
-        apply(c, t < SimTime{});
+        apply(c);
     }
     void step(SimDuration d) override
     {
         launch::Command c = command("step");
         c.ms = d.count() > 0 ? ceil_ms(d.count()) : 0;
-        apply(c, d.count() <= 0 || *c.ms > launch::kMaxMillis);
+        apply(c);
     }
     void set_speed(std::optional<double> speed) override
     {
         launch::Command c = command("speed");
         c.speed = speed;
-        apply(c, speed && !(*speed >= launch::kMinSpeed && *speed <= launch::kMaxSpeed));
+        apply(c);
     }
     std::optional<SimTime> wait_paused(std::chrono::milliseconds timeout) override { return commands_.wait_paused(timeout); }
     void stop(const std::string&) override
@@ -174,7 +171,7 @@ public:
         // Decided and written with the time commands (refused once the run is over), and, under
         // their mutex, a stop request as {"command":"stop"} on standard input: an accepted stop
         // reaches the run before it detaches the commands (not while it ends the participants).
-        apply(command("stop"), false, stop_);
+        apply(command("stop"), stop_);
     }
 
     std::vector<std::pair<std::string, std::string>> participants() const override
@@ -230,18 +227,28 @@ private:
 
     /// The command through the run's time commands (its event, its rules; `accepted` as
     /// TimeCommands::apply() calls it); a refusal as the
-    /// exception the server answers with: std::invalid_argument (INVALID_ARGUMENT) for a
-    /// `bad_argument` while the run lasts, else std::logic_error (FAILED_PRECONDITION).
-    void apply(const launch::Command& c, bool bad_argument, const std::function<void()>& accepted = {})
+    /// exception the server answers with, chosen by the rule that refused (so the client and the
+    /// command event name the same reason): std::invalid_argument (INVALID_ARGUMENT) when it was
+    /// the argument (out-of-range, missing-argument), else control_grpc::Refused
+    /// (FAILED_PRECONDITION, with the code of the refusal, as the command event's "reason", for
+    /// the client's program).
+    void apply(const launch::Command& c, const std::function<void()>& accepted = {})
     {
         const launch::Command done = commands_.apply(c, kSource, accepted);
+        if (done.pending)
+        {
+            // Not while this server listens: the run gives its time commands the time lock before
+            // it starts the server. If it ever happens, the client is told what became of its call.
+            throw std::logic_error("the run has not read its configuration yet: the command waits and is decided once "
+                                   "it has (its command event says how); it is not sent again by this call");
+        }
         if (!done.accepted)
         {
-            if (bad_argument && commands_.inspect([](SimulationController&, bool) {}) != launch::TimeCommands::Stage::Detached)
+            if (done.reason == launch::reason::kOutOfRange || done.reason == launch::reason::kMissingArgument)
             {
                 throw std::invalid_argument(done.message);
             }
-            throw std::logic_error(done.message);
+            throw control_grpc::Refused(done.reason, done.message);
         }
     }
 
@@ -253,49 +260,6 @@ private:
     mutable std::optional<LeftParticipant> last_left_{};
 };
 
-std::string read_file(const std::string& path, const char* option)
-{
-    // The argument is UTF-8 (on Windows too): as a path, not as the narrow code page.
-    std::ifstream in(process::path_from_utf8(path), std::ios::binary);
-    if (!in)
-    {
-        throw cli::UsageError("cannot read " + path + " (" + option + ")");
-    }
-    std::ostringstream text;
-    text << in.rdbuf();
-    return text.str();
-}
-
-/// --control's value as a gRPC address: a port alone is on 127.0.0.1.
-std::string listen_address(const std::string& value)
-{
-    if (!value.empty() && value.find_first_not_of("0123456789") == std::string::npos)
-    {
-        if (value.size() > 5 || std::stoi(value) > 65535)
-        {
-            throw cli::UsageError("--control " + value + ": a port is from 0 to 65535 (0: any free port)");
-        }
-        return "127.0.0.1:" + value;
-    }
-    if (value.rfind("unix:", 0) == 0)
-    {
-        if (const std::string problem = control_grpc::unix_socket_path_problem(value); !problem.empty())
-        {
-            throw cli::UsageError("--control " + value + ": " + problem);
-        }
-        return value;
-    }
-    const auto colon = value.rfind(':');
-    const std::string port = colon == std::string::npos ? std::string() : value.substr(colon + 1);
-    if (colon == std::string::npos || colon == 0 || port.empty() || port.find_first_not_of("0123456789") != std::string::npos ||
-        port.size() > 5 || std::stoi(port) > 65535)
-    {
-        throw cli::UsageError("--control must be <port> (on 127.0.0.1; 0: any free port), <host>:<port> (a port from 0 to "
-                              "65535) or unix:<path>, not '" + value + "'");
-    }
-    return value;
-}
-
 /// The address with the port the server listens on (port 0 picks one).
 std::string actual_address(const std::string& listen, int port)
 {
@@ -306,12 +270,11 @@ std::string actual_address(const std::string& listen, int port)
     return listen.substr(0, listen.rfind(':') + 1) + std::to_string(port);
 }
 
-class Server final : public LauncherControlServer
+class Server final : public launch::ControlEndpoint
 {
 public:
-    Server(control_grpc::ServerOptions options, std::unique_ptr<LaunchTimeControl> time,
-           std::shared_ptr<std::ofstream> audit) :
-      options_(std::move(options)), time_(std::move(time)), audit_(std::move(audit))
+    Server(control_grpc::ServerOptions options, std::unique_ptr<LaunchTimeControl> time) :
+      options_(std::move(options)), time_(std::move(time))
     {
     }
     ~Server() override { end(); }
@@ -341,68 +304,14 @@ public:
 private:
     control_grpc::ServerOptions options_;
     std::unique_ptr<LaunchTimeControl> time_; ///< outlives the server
-    std::shared_ptr<std::ofstream> audit_;
     std::shared_ptr<control::Hub> hub_; ///< the run's, from start(); before server_, which serves it: it goes after it
     std::unique_ptr<control_grpc::ControlServer> server_;
 };
 
 } // namespace
 
-std::unique_ptr<LauncherControlServer> make_control_server(const ControlArguments& arguments, ControlHooks hooks)
+std::unique_ptr<launch::ControlEndpoint> make_control_server(control_grpc::ServerOptions options, ControlHooks hooks)
 {
-    control_grpc::ServerOptions options;
-    options.listen = listen_address(arguments.address);
-    if (arguments.tls_cert.empty() != arguments.tls_key.empty())
-    {
-        throw cli::UsageError("--control-tls-cert and --control-tls-key go together: TLS needs the certificate chain and "
-                              "the private key");
-    }
-    if (!arguments.tls_cert.empty())
-    {
-        options.security.certificate_chain_pem = read_file(arguments.tls_cert, "--control-tls-cert");
-        options.security.private_key_pem = read_file(arguments.tls_key, "--control-tls-key");
-    }
-    if (!arguments.credentials.empty())
-    {
-        const std::string text = read_file(arguments.credentials, "--control-credentials");
-        try
-        {
-            options.security.credentials = control_grpc::parse_credentials(text, arguments.credentials);
-        }
-        catch (const std::exception& e)
-        {
-            throw cli::UsageError(std::string("--control-credentials: ") + e.what());
-        }
-        // An empty file would leave the server open to everyone, against what the option says.
-        if (options.security.credentials.empty())
-        {
-            throw cli::UsageError("--control-credentials: " + arguments.credentials +
-                                  " has no credential: write one line per token, <role> <name> <token> (the roles are "
-                                  "viewer, operator and admin)");
-        }
-    }
-    if (!control_grpc::is_loopback_address(options.listen) &&
-        (options.security.certificate_chain_pem.empty() || options.security.credentials.empty()))
-    {
-        throw cli::UsageError("--control " + arguments.address +
-                              " is reachable from other computers: a control server there needs TLS and credentials "
-                              "(--control-tls-cert, --control-tls-key and --control-credentials); on this computer only, "
-                              "give a port (on 127.0.0.1) or 127.0.0.1:<port>");
-    }
-    std::shared_ptr<std::ofstream> audit;
-    if (!arguments.audit_log.empty())
-    {
-        audit = std::make_shared<std::ofstream>(process::path_from_utf8(arguments.audit_log), std::ios::app);
-        if (!*audit)
-        {
-            throw cli::UsageError("cannot open " + arguments.audit_log + " (--control-audit-log)");
-        }
-        auto mutex = std::make_shared<std::mutex>();
-        options.audit = [audit, mutex](const std::string& line) {
-            const std::lock_guard lock(*mutex);
-            *audit << line << std::endl;
-        };
-    }
     // A run that plays a scenario: what a client writes, and when it lets the time go on, is not
     // in the scenario's file: with it, the same scenario would not give the same result any more.
     // Reading changes nothing (the hub's subscriptions are bounded and never make the simulation
@@ -413,7 +322,7 @@ std::unique_ptr<LauncherControlServer> make_control_server(const ControlArgument
         options.observe_only = control_grpc::ObserveOnly{std::move(only->reason), std::move(only->message)};
     }
     auto time = std::make_unique<LaunchTimeControl>(hooks.controls->time(), std::move(hooks.stop));
-    return std::make_unique<Server>(std::move(options), std::move(time), std::move(audit));
+    return std::make_unique<Server>(std::move(options), std::move(time));
 }
 
 } // namespace vehicle_sil::launch_cli

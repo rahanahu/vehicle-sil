@@ -65,6 +65,8 @@ public:
     /// Takes the tap off (once it returns, the tap is not running and is not called again). Main
     /// thread; before the hub's transport and the controller go. Does nothing without a tap.
     void untap();
+    /// The tap is set (between tap() and untap()). Main thread.
+    [[nodiscard]] bool tapped() const { return tapped_; }
 
     /// From here on the scenario gets samples: those the tap takes after this call, of the
     /// control agents `incarnations` names (per participant of the configuration; "": none of it).

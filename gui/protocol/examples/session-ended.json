@@ -25,8 +25,8 @@
       },
       "stop": "none",
       "phase": "ended",
-      "last_seq": 43,
-      "last_t_ms": 430,
+      "last_seq": 42,
+      "last_t_ms": 420,
       "time": {
         "event": "time",
         "seq": 29,
@@ -370,7 +370,7 @@
       "findings_omitted": 0,
       "last_command": null,
       "launcher_state": {
-        "seq": 42,
+        "seq": 41,
         "rev": 8,
         "phase": "ended",
         "paused": false,
@@ -413,8 +413,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
             "caution": null
           },
           "stop": {
@@ -859,7 +859,7 @@
       "scenario": null,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, time-policy, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, time-policy, stdin-run-until, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,

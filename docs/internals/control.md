@@ -364,7 +364,7 @@ With the state, each peer's result says which of its writes took effect and whic
 
 ### Variable map (`set_variable_map()`)
 
-`set_variable_map(participant, map)` (`MappedSchema` in `control/variable_map.hpp`) shows that participant's variables to every reader and writer with the mapped names and values. The launcher passes it from `participants[].variables` in the configuration file (on the first call of `RunControl::hub()`, before any Agent connects).
+`set_variable_map(participant, map)` (`MappedSchema` in `control/variable_map.hpp`) shows that participant's variables to every reader and writer with the mapped names and values. The launcher passes it from `participants[].variables` in the configuration file (on the first call of `RunControl::shared_hub()`, at the beginning of the run, before any Agent connects).
 
 The conversion happens in only 4 places in the Hub. The list that is shown is built outside the lock and swapped in inside it; the other 3 conversions run inside the lock. The transport and the reading APIs (tap, latest values, subscriptions, the Control Server) do not know about the conversion.
 
@@ -816,18 +816,30 @@ Only a `vehicle_sil_launch` built with `VEHICLE_SIL_BUILD_CONTROL_SERVER` has it
 | gRPC threads (time control) | `TimeCommands::apply()` (`source` is `control_server`) | Passes the command to the controller's time gate inside the `TimeCommands` mutex |
 | gRPC threads (reading and writing values) | The Hub | The Hub's lock |
 
+The time lock (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](../simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)):
+
+- Until the run has given `TimeCommands` its time lock (`set_time_lock()`, called by the thread of the run right after the configuration is read and before any `--describe`), `apply()` decides nothing but a stop. A command that arrives earlier is kept in its order (at most 256) and returned as pending; no event is written.
+- `set_time_lock()` decides the kept commands in that order, inside the mutex, each with its `command` event, before any later command. If the configuration cannot be read, `detach()` does the same, and every kept command is refused.
+- So no command is decided without the lock, and the order of the `command` events stays the order in which the commands took effect.
+- `attach()` refuses a controller before the lock is given (`std::logic_error`).
+- The Control Server starts listening after the check, so a client's call never waits this way.
+- A time call that the rules refuse is reported with `control_grpc::Refused`, which carries the reason code: the server sends it as the trailing metadata `vehicle-sil-reason` with `FAILED_PRECONDITION`.
+
 ### Observe-only server (`observe_only`)
 
 - When it runs a scenario (`run --scenario`), the launcher sets `ServerOptions::observe_only`. It does not decide this itself: it asks the rules of the run's controls whether a control server is refused everything but a stop for the whole run (`always_refused()` in `libs/launch/src/control_rules.cpp`), and takes the reason and the message from there.
 - Each row of the call table (`rpc_rules()` in `libs/control_grpc/src/auth.cpp`) states what the call does to the simulation (read, change, stop).
 - An `observe_only` server refuses "change" calls in one place, right after the permission check and before the body of the call (`FAILED_PRECONDITION`, trailing metadata `vehicle-sil-reason`).
 - A refused call reaches neither the Hub nor `TimeControl`.
+- In a scenario run that also keeps real time, a client's time calls are refused here, with the scenario's reason, before the rules of the time lock see them; stdin commands are refused by the time lock (`outside-real-time`).
 - Read calls access only the Hub (thread-safe; subscriptions are bounded and never make the transport thread wait) and `TimeCommands::inspect()`. They share nothing with the scenario's tap, writes or guard.
 
 ### When it starts and stops
 
-- After the check passes and before the registry starts, `run_file()` calls `RunOptions::serve_control` (on the main thread).
-- The run makes the Hub and passes it to `serve_control` as a `std::shared_ptr`. The Server keeps it, so the Hub lives until both the run and the Server have let go of it.
+- The launcher makes the Server before the run and gives the run a pointer to it (`RunOptions::control_endpoint`, a `launch::ControlEndpoint`).
+- `run_file()` runs a run in two stages (`Runner::prepare()`, then `Runner::run()`) and starts the Server between them, on the main thread: after the check has passed and the run's files (the logs, the timeline) are open, and before the registry starts. The run itself never calls the Server; `run_file()` tells it where the Server listens, and the run writes the event `control_server` and its line.
+- The run makes the Hub and `run_file()` passes it to `ControlEndpoint::start()` as a `std::shared_ptr`. The Server keeps it, so the Hub lives until both the run and the Server have let go of it.
+- A run that was interrupted before it began, or whose files cannot be opened, does not start the Server.
 - If the Server cannot start, nothing is started (`setup`).
 - The Server is closed after `run_file()` returns and before the result is written (on the main thread; `ControlServer::shutdown()`).
 

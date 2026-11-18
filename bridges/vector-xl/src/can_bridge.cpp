@@ -117,6 +117,20 @@ std::string format_bus_state(const ExternalBusState& state)
     return text;
 }
 
+std::string_view link_line_value(const ExternalBusState& state) noexcept
+{
+    using Level = ExternalBusState::Level;
+    switch (state.level)
+    {
+    case Level::ErrorActive:
+    case Level::ErrorWarning: return "active";
+    case Level::ErrorPassive: return "passive";
+    case Level::BusOff: return "bus-off";
+    case Level::Unknown: break;
+    }
+    return "unknown";
+}
+
 std::optional<std::string> format_health_change(const CanBridgeHealth& before, const CanBridgeHealth& now,
                                                 bool problems_before)
 {

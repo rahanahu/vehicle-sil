@@ -143,6 +143,7 @@ int run_bridge(BridgeParticipant& participant, BridgeHooks& hooks, const RunBrid
     auto nextReport = began + options.health_interval;
     auto nextStatistics = began + options.statistics_interval.value_or(std::chrono::milliseconds{0});
     std::optional<std::string> printedStatistics; // the last statistics line printed while running
+    std::optional<std::string> printedLink = options.link_line_printed; // the last link line printed
     bool reachedRunning = false;
     bool noticedStarting = false;
     while (g_stop_requested.load() == 0)
@@ -197,6 +198,11 @@ int run_bridge(BridgeParticipant& participant, BridgeHooks& hooks, const RunBrid
             if (const auto line = hooks.health_line())
             {
                 print(*line);
+            }
+            if (auto link = hooks.link_line(); link && link != printedLink)
+            {
+                print(*link);
+                printedLink = std::move(link);
             }
         }
         if (options.statistics_interval && std::chrono::steady_clock::now() >= nextStatistics)
