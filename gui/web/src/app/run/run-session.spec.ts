@@ -50,7 +50,7 @@ describe('RunSession', () => {
     expect(run.outcome()).toBe('running');
   });
 
-  it('shows why the server refused', () => {
+  it('shows why the server refused', async () => {
     run.forceStop();
     expect(run.stopping()).toBe('force');
     http
@@ -60,6 +60,7 @@ describe('RunSession', () => {
         { status: 503, statusText: 'Service Unavailable' },
       );
     expect(run.stopping()).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve));
     expect(run.actionError()).toBe('the server is shutting down');
   });
 });

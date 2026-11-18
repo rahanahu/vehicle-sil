@@ -374,6 +374,50 @@
       "source": "送った命令へのランチャーの答えを待っています。",
       "target": "Waiting for the launcher to answer the command."
     },
+    "3546224380235485503": {
+      "source": "実行中は開始できません。",
+      "target": "Cannot start while a run is in progress."
+    },
+    "1267568114596218673": {
+      "source": "開始の応答を待っています。",
+      "target": "Waiting for a response to Start."
+    },
+    "8919550949935609324": {
+      "source": "サーバーと揃うまで、開始できません。",
+      "target": "Cannot start until the page is in sync with the server."
+    },
+    "2354410522725296762": {
+      "source": "サーバーと揃うまで、操作できません。",
+      "target": "Cannot be used until the page is in sync with the server."
+    },
+    "8999701534865922195": {
+      "source": "サーバーとの接続が切れています。つなぎ直したら、もう一度押してください。",
+      "target": "The connection to the server is down. Press again once it has reconnected."
+    },
+    "8870991040093646901": {
+      "source": "止めるよう頼みました。",
+      "target": "Stop requested."
+    },
+    "5201109295240183808": {
+      "source": "時刻の操作は、実行が動いている間だけできます。",
+      "target": "Time controls are available only while a run is in progress."
+    },
+    "7946498218330436713": {
+      "source": "止める実行はありません。",
+      "target": "There is no run to stop."
+    },
+    "3234026008411750840": {
+      "source": "ステップ送りは、一時停止している間だけできます。",
+      "target": "Stepping is available only while paused."
+    },
+    "8250261857910166731": {
+      "source": "一時停止していません。",
+      "target": "The simulation is not paused."
+    },
+    "555892234646771352": {
+      "source": "すでに一時停止しています。",
+      "target": "The simulation is already paused."
+    },
     "7779081102281014893": {
       "source": "変数: つながった",
       "target": "Variables: connected"
@@ -934,34 +978,6 @@
       "source": "経過",
       "target": "Elapsed"
     },
-    "3546224380235485503": {
-      "source": "実行中は開始できません。",
-      "target": "Cannot start while a run is in progress."
-    },
-    "1267568114596218673": {
-      "source": "開始の応答を待っています。",
-      "target": "Waiting for a response to Start."
-    },
-    "7351220620640842749": {
-      "source": "停止の応答を待っています。",
-      "target": "Waiting for a response to Stop."
-    },
-    "8919550949935609324": {
-      "source": "サーバーと揃うまで、開始できません。",
-      "target": "Cannot start until the page is in sync with the server."
-    },
-    "7946498218330436713": {
-      "source": "止める実行はありません。",
-      "target": "There is no run to stop."
-    },
-    "8870991040093646901": {
-      "source": "止めるよう頼みました。",
-      "target": "Stop requested."
-    },
-    "1831517223422252813": {
-      "source": "サーバーに届かないので、止めるよう頼めません。",
-      "target": "Cannot request a stop: the server is unreachable."
-    },
     "428710078700780985": {
       "source": "最新の状態は見えていませんが、止めるよう頼むことはできます。",
       "target": "The latest state is unknown, but you can still request a stop."
@@ -1141,14 +1157,6 @@
     "1241904257650615775": {
       "source": "前のステップ送りで進む量: {$ms} ms（ランチャーが刻みの倍数に切り上げます）。",
       "target": "The last step advanced {$ms} ms (the launcher rounds a step up to whole time steps)."
-    },
-    "5201109295240183808": {
-      "source": "時刻の操作は、実行が動いている間だけできます。",
-      "target": "Time controls are available only while a run is in progress."
-    },
-    "3234026008411750840": {
-      "source": "ステップ送りは、一時停止している間だけできます。",
-      "target": "Stepping is available only while paused."
     },
     "8740020504692323756": {
       "source": "時間の軸を閉じる",

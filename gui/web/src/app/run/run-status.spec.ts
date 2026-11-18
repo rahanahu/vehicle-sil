@@ -1,6 +1,13 @@
-import { Component, signal } from '@angular/core';
+import { Component, computed, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { RunOutcome, SessionSummary, SessionView, runOutcome } from '@vehicle-sil/gui-client';
+import {
+  Control,
+  FrontControls,
+  RunOutcome,
+  SessionSummary,
+  SessionView,
+  runOutcome,
+} from '@vehicle-sil/gui-client';
 import { sessionViewFrom } from '@vehicle-sil/gui-client/testing';
 import { StopAction } from './run-session';
 import { ACTION_GUARD, RunStatus } from './run-status';
@@ -14,11 +21,11 @@ const GUARD_MS = 200;
     <app-run-status
       [session]="session()"
       [outcome]="outcome()"
+      [controls]="controls()"
       [ready]="ready()"
       [starting]="starting()"
       [stopping]="stopping()"
       [stopWhileStarting]="stopWhileStarting()"
-      [reachable]="reachable()"
       [elapsedMs]="null"
       [blockedBy]="[]"
       [otherFile]="otherFile()"
@@ -33,10 +40,42 @@ class Host {
   readonly starting = signal(false);
   readonly stopping = signal<StopAction | null>(null);
   readonly stopWhileStarting = signal(false);
-  readonly reachable = signal(true);
   readonly otherFile = signal(false);
   starts = 0;
   stops = 0;
+  /** 正面の口の代わり: 持ち主の言う可否を、この試験の状態から組み立てる（理由の code は持ち主のもの）。 */
+  readonly controls = computed<FrontControls>(() => {
+    const session = this.session();
+    const running = session?.launcher.running ?? false;
+    const asked = (session?.stopRequests ?? 0) > 0 || this.stopping() !== null;
+    const no = (code: string): Control => ({
+      ok: false,
+      reason: { code, message: code },
+      caution: null,
+    });
+    const yes: Control = { ok: true, reason: null, caution: null };
+    const idle = no('not-running');
+    return {
+      start: !this.ready()
+        ? no('connecting')
+        : running
+          ? no('already-running')
+          : this.starting()
+            ? no('busy')
+            : yes,
+      stop: !(running || this.starting())
+        ? no('not-running')
+        : asked || this.stopWhileStarting()
+          ? no('already-stopping')
+          : yes,
+      force_stop: running && this.ready() && this.stopping() === null ? yes : idle,
+      pause: idle,
+      resume: idle,
+      step: { ...idle, min_ms: 1, max_ms: 1000 },
+      run_until: idle,
+      speed: { ...idle, min: 0.1, max: 10 },
+    };
+  });
   outcome(): RunOutcome | null {
     const session = this.session();
     return session ? runOutcome(session) : null;
@@ -307,14 +346,6 @@ describe('RunStatus', () => {
     await show(sessionViewFrom(summary(ENDED)));
     expect(startButton().getAttribute('aria-disabled')).toBe('true');
     expect(query('blocked')?.textContent).toContain('サーバーと揃うまで');
-  });
-
-  it('does not offer to stop when the server cannot be reached at all', async () => {
-    host.ready.set(false);
-    host.reachable.set(false);
-    await show(sessionViewFrom(summary()));
-    expect(stopButton().getAttribute('aria-disabled')).toBe('true');
-    expect(query('blocked')?.textContent).toContain('サーバーに届かない');
   });
 
   it('shows a run the user stopped in a neutral tone, not as a failure', async () => {
