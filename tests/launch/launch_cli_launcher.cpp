@@ -15,6 +15,10 @@
 //   usage       command lines that are wrong (exit 4, the message) and --help (exit 0)
 //   enabled     a disabled participant whose executable does not exist (exit 0, --strict too),
 //               --enable and --disable, and the names they must have (exit 4)
+//   request     --request <file>: the same report as with the arguments, an argument wins, the
+//               file's scenario beside the configuration, no file read that is not named, a file
+//               that cannot be read or is no request file (exit 4, also as JSON and as the result
+//               event), not for test
 //   connect     --connect with the bridges of this repository (on fake libraries) under their real
 //               names: found on PATH and next to the launcher, not in the working directory or the
 //               configuration file's; the networks' "outside" in the JSON; a bridge that refuses
@@ -621,7 +625,7 @@ void usage(const Options& o)
         const Captured help = launch(o, args);
         expect_code(help, 0, "vehicle_sil_launch --help");
         require(lf(help.standard_output).rfind("usage: vehicle_sil_launch check [--json]", 0) == 0 && help.standard_error.empty() &&
-                    contains(help.standard_output, "[--time-policy realtime|free]") &&
+                    contains(help.standard_output, "[--time-policy realtime|free] [--request <file>]\n") &&
                     contains(help.standard_output, "\n  --time-policy realtime|free the time of a run that is connected outside"),
                 "--help wrote:\n" + help.standard_output + help.standard_error);
     }
@@ -644,6 +648,218 @@ void usage(const Options& o)
     require(dashed.standard_output.rfind("error: -h: the file does not exist", 0) == 0,
             "check -- -h wrote:\n" + dashed.standard_output);
     log("CHECK usage errors: exit code 4 and the message; --help: exit code 0 -> ok");
+}
+
+void set_environment(const std::string& name, const std::string& value);
+
+/// A file that is removed again, whatever the test does meanwhile (it lies where other tests look).
+class FileForAWhile
+{
+public:
+    FileForAWhile(fs::path path, const std::string& text) : path_(std::move(path)) { write_file(path_, text); }
+    ~FileForAWhile()
+    {
+        std::error_code ignored; // a destructor must not throw
+        fs::remove(path_, ignored);
+    }
+    FileForAWhile(const FileForAWhile&) = delete;
+    FileForAWhile& operator=(const FileForAWhile&) = delete;
+
+private:
+    fs::path path_;
+};
+
+/// --request <file>: the request file gives what the arguments give, an argument wins, the file's
+/// scenario is from the directory of the configuration file, a file that cannot be read is a usage
+/// error, and no file is read that is not named.
+void request(const Options& o)
+{
+    const fs::path dir = example_copy(o);
+    const std::string config = shown_path(dir / "simulation.yaml");
+    fs::create_directories(dir / "scenarios");
+    write_file(dir / "scenarios" / "level.yaml", "vehicle_sil_scenario: 1\n"
+                                                 "name: level\n"
+                                                 "params: { level: 10 }\n"
+                                                 "steps:\n"
+                                                 "  - at_ms: 0\n"
+                                                 "    set: { Engine.engine.throttle: \"${level}\" }\n"
+                                                 "  - expect: { Engine.engine.speed: { ge: 0 } }\n"
+                                                 "    within_ms: 100\n");
+    // Somewhere else than the configuration, and not the working directory either.
+    fs::create_directories(o.work_dir / "bench");
+    const std::string bench = shown_path(o.work_dir / "bench" / "bench.json");
+    write_file(o.work_dir / "bench" / "bench.json", "{\n"
+                                                    "  \"vehicle_sil_run_request\": 1,\n"
+                                                    "  \"scenario\": \"scenarios/level.yaml\",\n"
+                                                    "  \"params\": { \"level\": 30 },\n"
+                                                    "  \"strict\": true\n"
+                                                    "}\n");
+    const std::string scenario = shown_path(dir / "scenarios" / "level.yaml");
+    // check: the same report as with the arguments, but for where the parameter is from.
+    const Captured byArguments = launch(o, {"check", "--json", "--scenario", scenario, "--param", "level=30", "--strict", config});
+    expect_code(byArguments, 0, "check with the arguments");
+    const Captured byFile = launch(o, {"check", "--json", "--request", bench, config});
+    expect_code(byFile, 0, "check --request");
+    require(contains(byArguments.standard_output, "\"from\": \"command_line\"") &&
+                contains(byFile.standard_output, "\"from\": \"request_file\""),
+            "check --request: where the parameter is from:\n" + byFile.standard_output);
+    std::string same = byFile.standard_output;
+    replace_all(same, "\"from\": \"request_file\"", "\"from\": \"command_line\"");
+    expect_text(same, byArguments.standard_output, "check --request and check with the same arguments");
+    // For people: the parameter's origin in words.
+    const Captured text = launch(o, {"check", "--request", bench, config});
+    expect_code(text, 0, "check --request (text)");
+    require(contains(text.standard_output, "level = 30 (the request file's params)"), "check --request wrote:\n" + text.standard_output);
+    // An argument wins, by name.
+    const Captured over = launch(o, {"check", "--json", "--request", bench, "--param", "level=40", config});
+    expect_code(over, 0, "check --request --param");
+    require(contains(over.standard_output, "\"from\": \"command_line\"") && !contains(over.standard_output, "\"request_file\""),
+            "check --request --param wrote:\n" + over.standard_output);
+    // The same name as an argument is from the working directory, where it is not.
+    const Captured typed = launch(o, {"check", "--scenario", "scenarios/level.yaml", config});
+    expect_code(typed, 1, "check --scenario with the path of the request file");
+    require(contains(typed.standard_output, "the scenario file does not exist"), "check --scenario wrote:\n" + typed.standard_output);
+    // Only the file that is named is read: files with likely names next to the configuration and
+    // in the working directory, and an environment variable, change nothing.
+    const Captured before = launch(o, {"check", "--json", config});
+    expect_code(before, 0, "check");
+    const std::string lie = "{ \"vehicle_sil_run_request\": 1, \"disable\": [\"Dashboard\"], \"bogus\": 1 }\n";
+    for (const fs::path& lying : {dir / "run-request.json", dir / "simulation.request.json", dir / "request.json"})
+    {
+        write_file(lying, lie);
+    }
+    set_environment("VEHICLE_SIL_RUN_REQUEST", shown_path(dir / "run-request.json"));
+    set_environment("VEHICLE_SIL_REQUEST", shown_path(dir / "run-request.json"));
+    Captured after;
+    {
+        const FileForAWhile inWorkingDirectory(fs::current_path() / "vehicle_sil_run_request.json", lie);
+        after = launch(o, {"check", "--json", config});
+    }
+    expect_text(after.standard_output, before.standard_output, "check without --request, with request files lying around");
+    // run: the scenario of the file runs, as with the arguments.
+    for (const std::vector<std::string>& args :
+         {std::vector<std::string>{"run", "--json", "--scenario", scenario, "--param", "level=30", "--speed", "max", "--strict", config},
+          std::vector<std::string>{"run", "--json", "--request", bench, "--speed", "max", config}})
+    {
+        const Captured run = launch(o, args);
+        expect_code(run, 0, "vehicle_sil_launch " + args[2] + " (run)");
+        require(contains(run.standard_output, "\"result\": \"passed\"") && contains(run.standard_output, "\"name\": \"level\"") &&
+                    contains(run.standard_output, "\"strict\": true") && contains(run.standard_output, "\"speed\": \"max\""),
+                "run " + args[2] + " wrote:\n" + run.standard_output);
+    }
+    // A request file that cannot be read, or is no request file: a usage error, also as JSON and as the result event.
+    const auto expect_usage = [&](const std::vector<std::string>& args, const std::string& error) {
+        const Captured run = launch(o, args);
+        expect_code(run, 4, "vehicle_sil_launch " + error);
+        const bool json = std::find(args.begin(), args.end(), "--json") != args.end();
+        const bool events = std::find(args.begin(), args.end(), "--events") != args.end();
+        require(json ? contains(run.standard_output, "\"result\": \"usage\"") && contains(run.standard_output, json_string(error))
+                     : events ? contains(run.standard_output, "\"result\":\"usage\"") : run.standard_output.empty(),
+                "usage error, stdout: " + run.standard_output);
+        require(events || lf(run.standard_error).rfind("error: " + error + "\nusage: vehicle_sil_launch check [--json]", 0) == 0,
+                "for the error '" + error + "' vehicle_sil_launch wrote:\n" + run.standard_error);
+    };
+    const std::string absent = shown_path(o.work_dir / "bench" / "absent.json");
+    for (const char* command : {"check", "run"})
+    {
+        expect_usage({command, "--request", absent, config}, "--request " + absent + ": the file does not exist: check the path");
+        expect_usage({command, "--json", "--request", absent, config},
+                     "--request " + absent + ": the file does not exist: check the path");
+        expect_usage({command, "--request", shown_path(o.work_dir / "bench"), config},
+                     "--request " + shown_path(o.work_dir / "bench") + ": this is not a regular file: name the request file");
+    }
+    expect_usage({"run", "--events", "--request", absent, config}, "--request " + absent + ": the file does not exist: check the path");
+    const std::string wrong = shown_path(o.work_dir / "bench" / "wrong.json");
+    write_file(o.work_dir / "bench" / "wrong.json", "{\n  \"vehicle_sil_run_request\": 1,\n  \"conect\": {}\n}\n");
+    const std::string unknown = wrong + ", line 3: unknown key 'conect': did you mean 'connect'? (the keys here: "
+                                        "vehicle_sil_run_request, variant, params, scenario, disable, enable, manual, connect, "
+                                        "time_policy, speed, start_paused, strict)";
+    expect_usage({"check", "--request", wrong, config}, unknown);
+    expect_usage({"run", "--json", "--request", wrong, config}, unknown);
+    {
+        const Captured json = launch(o, {"check", "--json", "--request", wrong, config});
+        require(contains(json.standard_output, "\n  \"file\": " + json_string(config) + ",\n  \"result\": \"usage\",\n") &&
+                    contains(json.standard_output, "\n      \"code\": \"usage\",\n"),
+                "check --json --request with an unknown key wrote:\n" + json.standard_output);
+    }
+    expect_usage({"check", "--request", "", config}, "--request needs a request file: --request <file>.json");
+    expect_usage({"check", "--request"}, "missing value for --request");
+    // A rule about the file's values names the key and the file.
+    const std::string held = shown_path(o.work_dir / "bench" / "held.json");
+    write_file(o.work_dir / "bench" / "held.json", "{ \"vehicle_sil_run_request\": 1, \"start_paused\": true }\n");
+    expect_usage({"run", "--request", held, config},
+                 "start_paused in " + held + " needs --stdin-commands or --control: without commands nothing could make the "
+                                             "simulation go on (resume, step)");
+    {
+        const Captured check = launch(o, {"check", "--request", held, config});
+        expect_code(check, 0, "check --request with start_paused");
+    }
+    // With the commands that the rule asks for, the run is taken: it stands still at 0, and the
+    // end of its standard input (there is none here) or its time limit ends it. Not a usage error.
+    {
+        const auto taken = [&](const std::vector<std::string>& args, const std::string& what) {
+            const Captured run = launch(o, args);
+            require(run.exit_code.has_value() && *run.exit_code != 4 &&
+                        !contains(run.standard_error, "needs --stdin-commands or --control") &&
+                        !contains(run.standard_error, "usage: vehicle_sil_launch"),
+                    what + " is taken; it wrote (exit code " + (run.exit_code ? std::to_string(*run.exit_code) : "none") +
+                        "):\n" + run.standard_output + run.standard_error);
+        };
+        taken({"run", "--request", held, "--stdin-commands", "--timeout-ms", "2000", config}, "run --request with start_paused, --stdin-commands");
+        const Captured version = launch(o, {"version", "--json"});
+        if (contains(version.standard_output, "\"control-server\""))
+        {
+            taken({"run", "--request", held, "--control", "0", "--timeout-ms", "1000", config},
+                  "run --request with start_paused, --control");
+        }
+        else
+        {
+            log("this build has no control server: run --request with start_paused and --control is not run");
+        }
+    }
+    // The rules wait for every argument: a file's scenario is the scenario that --timeline and --param need.
+    {
+        const std::string timeline = shown_path(o.work_dir / "bench" / "timeline.json");
+        const Captured run = launch(o, {"run", "--json", "--request", bench, "--speed", "max", "--timeline", timeline, config});
+        expect_code(run, 0, "run --request (with a scenario) --timeline");
+        require(fs::exists(o.work_dir / "bench" / "timeline.json"), "run --request --timeline wrote the timeline");
+    }
+    // The file's params without a scenario are left for a run that has one; --param is not.
+    const std::string onlyParams = shown_path(o.work_dir / "bench" / "params.json");
+    write_file(o.work_dir / "bench" / "params.json", "{ \"vehicle_sil_run_request\": 1, \"params\": { \"level\": 30 } }\n");
+    {
+        const Captured check = launch(o, {"check", "--request", onlyParams, config});
+        expect_code(check, 0, "check --request with params and no scenario");
+    }
+    expect_usage({"check", "--request", onlyParams, "--param", "level=40", config},
+                 "--param sets a parameter of a scenario: give --scenario <file> too, or leave --param out");
+    // null is no value.
+    const std::string nothing = shown_path(o.work_dir / "bench" / "null.json");
+    write_file(o.work_dir / "bench" / "null.json", "{ \"vehicle_sil_run_request\": 1, \"variant\": null }\n");
+    expect_usage({"check", "--request", nothing, config},
+                 nothing + ", line 1: variant must be the name of a variant of the configuration as a text, not empty");
+    // A participant of the file that the configuration lacks: the key and the file, not an option.
+    const std::string names = shown_path(o.work_dir / "bench" / "names.json");
+    write_file(o.work_dir / "bench" / "names.json", "{ \"vehicle_sil_run_request\": 1, \"manual\": [\"Nobody\"] }\n");
+    {
+        const Captured check = launch(o, {"check", "--request", names, config});
+        expect_code(check, 4, "check --request with a participant the configuration lacks");
+        require(contains(lf(check.standard_error),
+                         "error: manual Nobody in " + names + ": the configuration file has no participant with this name; its participants are "),
+                "check --request with manual: [Nobody] wrote:\n" + check.standard_error);
+        const Captured typed2 = launch(o, {"check", "--manual", "Nobody", config});
+        require(contains(lf(typed2.standard_error), "error: --manual Nobody: the file has no participant with this name; its participants are "),
+                "check --manual Nobody wrote:\n" + typed2.standard_error);
+    }
+    // test takes no request file.
+    expect_usage({"test", config, "--request", bench, "--scenarios", shown_path(dir / "scenarios")},
+                 "--request is for check and run: test takes its variants and scenarios itself (--variant, --scenarios); to use "
+                 "the request file, run one scenario with vehicle_sil_launch run --request <file>");
+    // --help has the option.
+    const Captured help = launch(o, {"--help"});
+    require(contains(help.standard_output, "\n  --request <file>            check, run: what to run, from the request file <file>"),
+            "--help wrote:\n" + help.standard_output);
+    log("CHECK --request: as the arguments, an argument wins, the scenario beside the configuration, usage errors -> ok");
 }
 
 void enabled(const Options& o)
@@ -994,6 +1210,35 @@ void connect(const Options& o)
                 "check --connect ETH_EXT=none wrote:\n" + none.standard_output);
         require(contains(none.standard_output, "  \"time_lock\": {\n    \"locked\": false,\n    \"because\": []\n  },\n"),
                 "check --connect ETH_EXT=none: no time lock:\n" + none.standard_output);
+        // The same targets from a request file: the same check. A network of the file that this
+        // configuration lacks is a note, and --connect <network>=none takes the file's target away.
+        const fs::path bench = o.work_dir / "bench.json";
+        write_file(bench, "{ \"vehicle_sil_run_request\": 1,\n"
+                          "  \"connect\": { \"ETH_EXT\": \"eth0\", \"J1939_CAN1\": \"virtual:1\", \"LIN_BODY\": \"0\" } }\n");
+        const Captured asked = launch(o, {"check", "--json", "--request", shown_path(bench), shown_path(config)});
+        expect_outside(asked, "check --request with connect", tools);
+        require(contains(asked.standard_output, "\"code\": \"connect-network-unused\"") &&
+                    contains(asked.standard_output,
+                             "\"message\": " + json_string("the network LIN_BODY of connect in " + shown_path(bench) +
+                                                           " is not in this configuration: it is left out")) &&
+                    contains(asked.standard_output, "\"errors\": 0,"),
+                "check --request with a network the configuration lacks wrote:\n" + asked.standard_output);
+        const Captured typed = launch(o, {"check", "--json", "--connect", "LIN_BODY=0", shown_path(config)});
+        expect_code(typed, 1, "check --connect with a network the configuration lacks");
+        require(contains(typed.standard_output, "\"code\": \"connect-network\""), "check --connect LIN_BODY=0 wrote:\n" + typed.standard_output);
+        const Captured taken = launch(o, {"check", "--json", "--request", shown_path(bench), "--connect", "ETH_EXT=none", "--connect",
+                                          "J1939_CAN1=none", shown_path(config)});
+        expect_code(taken, 0, "check --request --connect <network>=none");
+        require(contains(taken.standard_output, "  \"time_lock\": {\n    \"locked\": false,\n    \"because\": []\n  },\n") &&
+                    !contains(taken.standard_output, "\"tool_path\"") &&
+                    contains(taken.standard_output, "\"code\": \"connect-network-unused\""),
+                "check --request --connect <network>=none wrote:\n" + taken.standard_output);
+        const Captured one = launch(o, {"check", "--json", "--request", shown_path(bench), "--connect", "ETH_EXT=eth1", "--connect",
+                                        "J1939_CAN1=none", shown_path(config)});
+        expect_code(one, 0, "check --request --connect <network>=<another target>");
+        require(contains(one.standard_output, "        \"target\": \"eth1\",\n") && !contains(one.standard_output, "\"target\": \"eth0\"") &&
+                    !contains(one.standard_output, "\"target\": \"virtual:1\""),
+                "check --request --connect ETH_EXT=eth1 wrote:\n" + one.standard_output);
         time_policy(o, text);
     }
     {
@@ -1329,6 +1574,10 @@ int main(int argc, char** argv)
         else if (o.scenario == "enabled")
         {
             enabled(o);
+        }
+        else if (o.scenario == "request")
+        {
+            request(o);
         }
         else if (o.scenario == "connect")
         {

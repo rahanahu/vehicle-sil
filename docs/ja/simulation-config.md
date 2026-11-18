@@ -582,6 +582,7 @@ vehicle_sil_launch run --speed 1 --connect ETH_EXT=tap:vsil0 --connect J1939_CAN
 `vehicle_sil_launch connections <file>` は、この PC での各ネットワークの先を、写して使える `--connect` の行で出します（simulation-run.md の「[つなげる先の一覧](simulation-run.md#つなげる先の一覧vehicle_sil_launch-connections)」）。
 
 - 先を `none` にすると SIL Kit の中だけで、そのネットワークに `--connect` を書かないのと同じです（スクリプトで「つながない」と書くため）。`none` という名前のインターフェースは、backend を付けて `packet:none` と書きます。
+- 1 台の PC の先を、毎回打たずにファイルに置くには、要求ファイルの `"connect"` に書いて `--request <file>` を渡します。そのとき `--connect` は、1 つのネットワークの先を置き換えるか外します（[simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）。
 - 1 つのネットワークは 1 回だけ書きます。ネットワークの名前は最初の `=` までなので、名前に `=` を含むネットワークはつなげません（名前を変えます）。
 - 先に空白があるときは、引数全体を引用符で囲みます（`--connect "ETH_EXT=vEthernet (A)"`）。
 - ランチャーは、ブリッジを `vehicle_sil_launch` の隣で探し、次に `PATH` の絶対パスのディレクトリで探します。作業ディレクトリと設定ファイルのディレクトリは見ません。探すのは `--connect` で渡したネットワークのブリッジだけなので、`--connect` のない照合の出力は、どの PC でも同じです。ブリッジ（`--describe`、`connections` の一覧、run）は、ブリッジ自身のディレクトリで起動します。設定ファイルのディレクトリでは起動しません。人から受け取ったフォルダーに置かれた DLL を読み込ませないためです。ファイルの participant は、これまでどおり設定ファイルのディレクトリで起動します。
@@ -900,7 +901,7 @@ variants:
 ```text
 vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
-                         [--time-policy realtime|free] [--disable <name>]...
+                         [--time-policy realtime|free] [--request <file>] [--disable <name>]...
                          [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
@@ -908,7 +909,7 @@ vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-com
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
-                       [--time-policy realtime|free] [--disable <name>]...
+                       [--time-policy realtime|free] [--request <file>] [--disable <name>]...
                        [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
@@ -950,6 +951,7 @@ vehicle_sil_launch version [--json]
 | `--describe-timeout-ms <ms>` | | 1 つの実行ファイルの `--describe` を待つ時間です（1 以上の整数。既定は 10000）。 |
 | `--connect <network>=<target>` | `check` と `run` | ネットワークを、ブリッジで `<target>` の実機のバスにつなぎます。`none` は SIL Kit の中だけです（繰り返せます。1 つのネットワークは 1 回。[ネットワークを外につなぐ](#ネットワークを外につなぐexternal--connect)）。 |
 | `--time-policy realtime\|free` | | シミュレーションの外につながる実行の時間です。`realtime`（既定）は速さ 1 に保ち、`free` は速さと時間の操作を利用者に任せます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。 |
+| `--request <file>` | `check` と `run` | 何を走らせるかを要求ファイル（JSON）から読みます。欄ごとに、引数がファイルに勝ちます（[simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）。 |
 | `--network <name>` | `connections` だけ | ネットワーク `<name>` だけを出します。 |
 | `--disable <name>` | | participant `<name>` を無効にします（`enabled: false` と同じ。繰り返せます）。 |
 | `--enable <name>` | | participant `<name>` を有効に戻します（`enabled: true` と同じ。繰り返せます）。 |
@@ -985,6 +987,8 @@ vehicle_sil_launch version [--json]
 | `--timeout-ms` | 超えたら、中断してエラーにします。 |
 | `--manual` | `run` は起動せず、コマンドを表示して待ちます。 |
 | `--connect` | `run` は、ほかの participant より先にブリッジ `bridge.<network>` を起動します（[simulation-run.md](simulation-run.md#バスを外につなぐ--connect)「バスを外につなぐ」）。`test` では使い方の誤りです。各シナリオをできるだけ速く走らせるためです。 |
+| `--request` | 読むのは指定したファイルだけです。ランチャーが探すことはありません。 |
+| `--request` | ファイルの `scenario` は、作業ディレクトリからでなく、設定ファイルのディレクトリから読みます。 |
 | `--time-policy` | ファイルに有効な `role: bridge` の participant がいるとき、`test` は各シナリオを速さ 1 で実行します。`--time-policy free` を付ければ、それでも最速で実行します。 |
 
 Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。

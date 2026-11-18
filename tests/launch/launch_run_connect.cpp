@@ -33,6 +33,10 @@
 //                               outside-real-time, and nothing starts; with --time-policy free the
 //                               note outside-not-real-time, and it runs (with --strict too). A
 //                               file with another speed: the run goes at speed 1 (outside-speed-set).
+//   connect_request             the targets from a request file (run --request): the bridges run as
+//                               with --connect; the file's network that the configuration lacks is
+//                               a note; --connect <network>=none takes the file's target away; the
+//                               file's speed and time_policy are named with the file.
 //   connect_time_locked         the time commands of a run that keeps real time: a pause and a
 //                               speed written at once (before the configuration is read) and
 //                               again while it runs are refused with outside-real-time, in their
@@ -646,6 +650,86 @@ void connect_speed(const Options& base)
     require(contains(lines.back(), "\"simulation\":\"reached_stop_at\""), "it ran to its end:\n" + lines.back());
     // Starting paused and the resume do not change the time of a run that goes on in real time.
     require(finding_in(lines, "outside-time-changed").empty(), "no outside-time-changed:\n" + out_of(lines));
+}
+
+void connect_request(const Options& base)
+{
+    const Options o = connect_options(base);
+    const fs::path dir = connect_dir(o, "request", "stop_at_ms: 300\n", talker(o), {{"Talker", "talk CAN"}});
+    const auto bench = [&dir](const std::string& more) {
+        write_file(dir / "bench.json", "{ \"vehicle_sil_run_request\": 1,\n"
+                                       "  \"connect\": { \"ETH_EXT\": \"fake0\", \"CAN\": \"virtual:1\", \"LIN_BODY\": \"1\" }" +
+                                           more + " }\n");
+    };
+    const std::string unused = "the network LIN_BODY of connect in bench.json is not in this configuration: it is left out";
+    // The file's targets: both bridges run; the network that this configuration lacks is a note,
+    // which --strict lets pass.
+    bench("");
+    {
+        const Captured run = launch(o, {"run", "--events", "--strict", "--request", "bench.json", "sim.yaml"}, dir);
+        const std::vector<std::string> lines = check_events(run.standard_output);
+        expect_code(run, 0, "run --request with connect");
+        require(run_counts(lines.back()) == "\"result\":\"passed\",\"strict\":true,\"errors\":0,\"warnings\":0,\"notes\":1",
+                "one note:\n" + lines.back());
+        require(contains(lines.back(), "\"severity\":\"note\",\"code\":\"connect-network-unused\"") && contains(lines.back(), unused),
+                "the note about the network of the file:\n" + lines.back());
+        for (const char* bridge : {"bridge.ETH_EXT", "bridge.CAN"})
+        {
+            require(index_of(lines, {"\"name\":\"" + std::string(bridge) + "\"", "\"state\":\"joined\""}) < lines.size(),
+                    std::string(bridge) + " joined:\n" + out_of(lines));
+        }
+        require(contains(lines.back(), "\"outside\":[{\"network\":\"ETH_EXT\",\"target\":\"fake0\",") &&
+                    contains(lines.back(), "{\"network\":\"CAN\",\"target\":\"virtual:1\",") &&
+                    !contains(lines.back(), "bridge.LIN_BODY"),
+                "the result has the two networks outside:\n" + lines.back());
+    }
+    // --connect <network>=none takes the file's target away: one bridge, and none.
+    {
+        const Captured run = launch(o, {"run", "--events", "--request", "bench.json", "--connect", "ETH_EXT=none", "sim.yaml"}, dir);
+        const std::vector<std::string> lines = check_events(run.standard_output);
+        expect_code(run, 0, "run --request --connect ETH_EXT=none");
+        require(index_of(lines, {"\"name\":\"bridge.CAN\"", "\"state\":\"joined\""}) < lines.size() &&
+                    events_with(lines, {"\"name\":\"bridge.ETH_EXT\""}).empty(),
+                "only the CAN bridge ran:\n" + out_of(lines));
+        const Captured alone = launch(
+            o, {"run", "--events", "--request", "bench.json", "--connect", "ETH_EXT=none", "--connect", "CAN=none", "sim.yaml"}, dir);
+        const std::vector<std::string> aloneLines = check_events(alone.standard_output);
+        expect_code(alone, 0, "run --request --connect <network>=none for both");
+        require(events_with(aloneLines, {"\"name\":\"bridge."}).empty() && contains(aloneLines.back(), unused),
+                "no bridge ran:\n" + out_of(aloneLines));
+    }
+    // The file's speed is refused as --speed is, and named with the file; --speed 1 wins over it.
+    bench(", \"speed\": 2");
+    {
+        const Captured run = launch(o, {"run", "--events", "--request", "bench.json", "sim.yaml"}, dir);
+        const std::vector<std::string> lines = check_events(run.standard_output);
+        expect_code(run, 1, "run --request with speed 2 and connect");
+        require(contains(lines.back(), "\"severity\":\"error\",\"code\":\"outside-real-time\"") &&
+                    contains(lines.back(), "speed 2 in bench.json is refused. Take speed out of bench.json, or pass --speed 1") &&
+                    contains(lines.back(), "\"result\":\"check_failed\"") &&
+                    events_with(lines, {"\"event\":\"participant\"", "\"state\":\"started\""}).empty(),
+                "the file's speed is refused, and nothing was started:\n" + out_of(lines));
+        const Captured one = launch(o, {"run", "--events", "--request", "bench.json", "--speed", "1", "sim.yaml"}, dir);
+        expect_code(one, 0, "run --request with speed 2, --speed 1");
+    }
+    // The file's time_policy free: the note names the file; --time-policy realtime wins over it.
+    bench(", \"speed\": 2, \"time_policy\": \"free\"");
+    {
+        const Captured run = launch(o, {"run", "--events", "--strict", "--request", "bench.json", "sim.yaml"}, dir);
+        const std::vector<std::string> lines = check_events(run.standard_output);
+        expect_code(run, 0, "run --request with time_policy free");
+        require(contains(finding_in(lines, "outside-not-real-time"),
+                         "with time_policy free in bench.json speed 2 in bench.json runs the simulation at that speed") &&
+                    contains(finding_in(lines, "outside-not-real-time"),
+                             "leave time_policy free in bench.json and speed in bench.json out") &&
+                    contains(lines.back(), "\"timing\":{\"speed\":2,"),
+                "the note names the file:\n" + out_of(lines));
+        const Captured locked = launch(o, {"run", "--events", "--time-policy", "realtime", "--request", "bench.json", "sim.yaml"}, dir);
+        const std::vector<std::string> lockedLines = check_events(locked.standard_output);
+        expect_code(locked, 1, "run --request with time_policy free, --time-policy realtime");
+        require(contains(lockedLines.back(), "speed 2 in bench.json is refused"),
+                "--time-policy realtime wins over the file:\n" + out_of(lockedLines));
+    }
 }
 
 void connect_time_locked(const Options& base)

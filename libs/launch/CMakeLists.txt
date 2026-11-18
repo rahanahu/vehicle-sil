@@ -23,6 +23,7 @@ add_library(vehicle_sil_launch_lib STATIC
   src/host_addresses.cpp
   src/probe.cpp
   src/request.cpp
+  src/request_read.cpp
   src/run.cpp
   src/run_assess.cpp
   src/run_connect.cpp

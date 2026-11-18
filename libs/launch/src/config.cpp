@@ -2323,7 +2323,11 @@ std::vector<Finding> apply_overrides(SimulationConfig& config, const EnabledOver
     }
     std::vector<std::string> reported;
     const auto unknown = [&](const char* option, const std::string& name) {
-        const std::string key = std::string(option) + " " + name;
+        // "--manual Engine", or "manual Engine in bench.json" for a name of the request file.
+        const std::string written = std::string(option + 2) + " " + name;
+        const std::vector<std::string>& ofFile = overrides.origin.participants;
+        const bool fromFile = std::find(ofFile.begin(), ofFile.end(), written) != ofFile.end();
+        const std::string key = fromFile ? written + " in " + overrides.origin.file : std::string(option) + " " + name;
         if (!check_names || std::find(names.begin(), names.end(), name) != names.end() ||
             std::find(reported.begin(), reported.end(), key) != reported.end())
         {
@@ -2341,7 +2345,8 @@ std::vector<Finding> apply_overrides(SimulationConfig& config, const EnabledOver
             return;
         }
         const std::string guess = detail::closest(name, names);
-        errors.push_back(usage(key + ": the file has no participant with this name" +
+        errors.push_back(usage(key + (fromFile ? ": the configuration file has no participant with this name"
+                                               : ": the file has no participant with this name") +
                                (guess.empty() ? "" : " (did you mean '" + guess + "'?)") + "; its participants are " +
                                join(names)));
     };
@@ -2761,6 +2766,7 @@ const char* param_source_name(ParamSource source)
     case ParamSource::Configuration: return "configuration";
     case ParamSource::Variant: return "variant";
     case ParamSource::CommandLine: return "command_line";
+    case ParamSource::RequestFile: return "request_file";
     }
     return "configuration";
 }
@@ -2773,6 +2779,7 @@ const char* param_source_text(ParamSource source)
     case ParamSource::Configuration: return "the configuration's params";
     case ParamSource::Variant: return "the variant's params";
     case ParamSource::CommandLine: return "--param";
+    case ParamSource::RequestFile: return "the request file's params";
     }
     return "the configuration's params";
 }

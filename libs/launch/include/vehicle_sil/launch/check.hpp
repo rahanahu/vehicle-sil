@@ -292,6 +292,22 @@ struct ConnectCheck
 [[nodiscard]] ConnectCheck check_connections(const SimulationConfig& config, const std::vector<ParticipantResult>& results,
                                              const std::vector<ConnectRequest>& requests, const ConnectTools* tools);
 
+/// The --connect requests that count for `config`, and what was left out (connect_for_config()).
+struct ConfigConnect
+{
+    std::vector<ConnectRequest> connect;
+    /// One note connect-network-unused for each request left out.
+    std::vector<Finding> notes;
+};
+/// `connect` (merge_connect() in request.hpp) without the requests that a request file gave
+/// (`origin.connected`) for a network that `config` does not have: one request file serves several
+/// configurations, so such a request is left out with a note, and connects nothing and does not
+/// lock the time. A request of the command line for such a network stays: check_connections()
+/// reports it as the error connect-network. Pure; check_file() calls it before anything reads the
+/// requests, and whoever else reads a request file's "connect" for a configuration calls it too.
+[[nodiscard]] ConfigConnect connect_for_config(const SimulationConfig& config, std::span<const ConnectRequest> connect,
+                                               const RequestOrigin& origin);
+
 /// The scenario that was checked with the configuration (--scenario).
 struct ScenarioCheck
 {
@@ -391,7 +407,10 @@ struct CheckOptions
 /// executables, runs each --describe in turn (not in parallel), compares. A disabled participant's
 /// executable is neither looked for nor run. With RunIntent::scenario, the scenario file is read
 /// and checked against the participants' descriptions as well (if the configuration could be
-/// read). Never throws for a problem of a file or of an executable: they are findings.
+/// read). Never throws for a problem of a file or of an executable: they are findings. The
+/// scenario of a request file (RunRequest::origin has "scenario") is read from the directory of the
+/// configuration file, and shown as the path from the working directory; any other from the
+/// working directory, as it is named.
 ///
 /// Of `request` it reads the file, the intent (the speed and --start-paused for
 /// time_lock_findings(): the speed unless `options.fastest_by_default`), the --describe limit and

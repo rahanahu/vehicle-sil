@@ -8,6 +8,8 @@ add_subdirectory(dashboard)
 configure_file(simulation.yaml simulation.yaml COPYONLY)
 # A scenario for the two (vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml).
 configure_file(scenarios/throttle_step.yaml scenarios/throttle_step.yaml COPYONLY)
+# The same as a request file (vehicle_sil_launch run --request requests/throttle_step.json simulation.yaml).
+configure_file(requests/throttle_step.json requests/throttle_step.json COPYONLY)
 # Taking the engine off the bus and back (--scenario scenarios/engine_disconnect.yaml).
 configure_file(scenarios/engine_disconnect.yaml scenarios/engine_disconnect.yaml COPYONLY)
 # The throttle moved in shapes (--scenario scenarios/throttle_wave.yaml).

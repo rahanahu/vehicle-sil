@@ -914,7 +914,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `unchecked_expects` | あるときだけ | 確認しない横の `expect` の数 |
 | `inputs`、`lines` | いつも（`dither` のないシナリオでは空の配列。シナリオを読めなかったときは `null`） | 次の表。`run --json` の `scenario` にも同じものがあります |
 
-`params` の `value` は有効な値（`true`・`false`、数、文字列）で、`from` は `scenario`、`configuration`、`variant`、`command_line` のどれかです。
+`params` の `value` は有効な値（`true`・`false`、数、文字列）で、`from` は `scenario`、`configuration`、`variant`、`command_line`、`request_file`（`--request` のファイルの `params`）のどれかです。
 
 `dither` についてのキー:
 

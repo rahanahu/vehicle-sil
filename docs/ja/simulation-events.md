@@ -668,7 +668,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "connect-counts",
     "state",
     "time-policy",
-    "stdin-run-until"
+    "stdin-run-until",
+    "request"
   ]
 }
 ```
@@ -729,6 +730,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `state` | イベント `state`: 実行がいまどこにいるかと、いま受け付ける操作（[`state` のイベント](#state-のイベント)） |
 | `time-policy` | `check`、`run`、`test` の `--time-policy`。シミュレーションの外につながる実行は、`free` を選ばなければ実時間を保ちます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」） |
 | `stdin-run-until` | 標準入力の `run_until`（[標準入力のコマンド](#標準入力のコマンドrun---stdin-commands)を見てください） |
+| `request` | `check` と `run` の `--request <file>`。何を走らせるかを要求ファイルから読みます（[simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 
@@ -753,6 +755,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `connect-counts` | イベント `outside`、結果の `outside[].to_outside` と `from_outside` の数（この機能の前は `null`）、人向けの結果の `outside:` の行の末尾の数、指摘 `connect-nothing-received`、`run` が起こすブリッジのコマンドの `--stats-every-ms 1000` |
 | `state` | イベント `state`、イベント `command` の `reason` と `id`、標準入力のコマンドの `id` |
 | `time-policy` | `--time-policy`、照合の JSON の `time_lock`、指摘 `outside-real-time`、`outside-speed-set`、`outside-not-real-time`、`outside-time-changed`、`unsynchronized-time-changed`、断ったコマンドと `allowed` の理由 `outside-real-time`、注意 `outside-not-real-time`（この機能の前は、警告 `connect-not-real-time`、`connect-start-paused`、`connect-time-changed` で、`--connect` のある実行はファイルの速さで動き、時間のコマンドをすべて受け付けました） |
+| `request` | `--request`、指摘 `connect-network-unused`、照合と結果の JSON でパラメーターの `from` が `request_file` になること |
 | `control-server` | イベント `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは読む・待つ・止めるだけです。書く呼び出しと時刻を動かす呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。

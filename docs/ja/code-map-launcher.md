@@ -30,6 +30,7 @@
 - [docs/simulation-config.md](simulation-config.md) の例とバイト単位で照合
 - `--describe` に失敗する実行ファイル、`--strict`、読めないファイル、引数のエラー
 - `launch_cli.connect`: 2 つのブリッジ（`main()` を偽の pcap ライブラリと偽の XL ドライバーで作ったもの）を、本当の名前でビルドディレクトリの `connect_tools/` に写して `check --connect`。`PATH` と、写した `vehicle_sil_launch` の隣で見つかり、作業ディレクトリでは見つからないこと、`networks[].outside`、引数を受けないブリッジ、`run --disable bridge.<network>` と `test --connect` を断ること
+- `launch_cli.request`: 要求ファイルを付けた `check --request` と `run --request`。引数と同じ結果になる、引数が勝つ、ファイルのシナリオは設定ファイルの隣から読む、指定していないファイルは読まない、ファイルの間違いは使い方の誤りになる。
 - `launch_cli.connections`: 同じブリッジで `connections`。`--connect` の行と、それを `check` が受けること、`--json`（ブリッジの一覧をそのまま渡す。LIN は一覧なし）、`--network`、一覧を作れないブリッジ（`library-missing`、`driver-missing`）とブリッジがないとき（`tool-missing`。終了コード 1）、コマンドライン（終了コード 4）と読めないファイル（終了コード 3）。ほかは `launch.connections_*`（`test_connections.cpp`）がプロセスなしで確かめます: 引用、一覧の読み、ランチャーが作る一覧、各ブリッジに 1 回だけ聞くこと、文と JSON の全体
 
 `launch_run.*` が確認すること:
@@ -75,7 +76,8 @@
 | `run_file()` | `launch/run.hpp` |
 | 実行が見たこと。部分に分けた値: `RunOutcome` の `setup`、`start`、`end`（シミュレーションがどう、なぜ終わったか）、`control`（制御の agent が捨てたもの）、`scenario`（シナリオとタイムラインのファイル）、`close`（ランチャーの接続の閉じ方）と、`timing`、`participants`、`outside`、`time_changed`、`time_lock`、`real_time_peers`、`traffic`。`assess_run()` が判定し、`format_run_text()`、`format_run_json()` が書く | `launch/run.hpp` |
 | 実行の前に決まることを値にしたもの: `RunPlan`（通った check に `--connect` のブリッジを末尾に足したもの、`members`: participant ごとの `RunMember`。実行が `--connect` のために足したブリッジかどうかと、つなぐ先を持つ、ファイルのディレクトリ、コントローラーの刻みと開始時の速さ、最初の刻みの前で保留するか、期限、ログとタイムラインの書き先）、`plan_run()`（純粋: check、要求、`RunLimits` から）、`planned_outcome()`（実行が最初に持つ `RunOutcome`）。`run_file()` は、要求（`RunRequest`）、観察者（`launch/run.hpp` の `RunObservers`: `write_line`、`events`、`interrupt_name`、`before_start`）、実行が借りるもの（`RunLent`: 操作盤か停止の要求、Control Server）、試験だけが短くする待ち時間（`RunLimits`）を受けます。要求と待ち時間からこの計画を作り、要求は持ち続けないので、実行のどのスレッドも要求を読みません。実行の部品は、計画、観察者、操作盤を `detail::RunContext` から読みます。プロセスなしの試験は `tests/launch/test_run_plan.cpp` | `launch/run_plan.hpp`、`src/run_plan.cpp` |
-| check、run、test が何を頼まれたかを、値にしたもの: `RunRequest`。2 つの部分に分かれる。`RunIntent`（利用者のもの: variant、パラメーター、利用者が書いたとおりのシナリオ、`--disable`、`--enable`、`--manual`、`--connect`、`--time-policy`、速さ、`--start-paused`、`--strict`）と `RunHost`（呼ぶ側のもの: 利用者が書いたとおりのファイル、道具とログの場所、`--describe` と実行の期限、利用者が書いたとおりのタイムラインのファイル、求められた Control Server（アドレスとファイルの名前）、標準入力の命令を求めているか）。`validate_request()`（純粋）が、一緒には使えない欄の規則（`--param` と `--timeline` にはシナリオが要る、`--start-paused` をシナリオと使う、続ける手段なしに使う）を、code が `usage` の指摘として持つ。`check_file()`、`run_file()`、`test_file()`（`TestOptions::request`）がこれを受け、名前からパスを作る。`CheckOptions` に残るのは、頼まれたことではないものだけ（`file_only`、`params_for_many`、`fastest_by_default`）。`tools/launch/main.cpp` の `read_request()` と `run()` が、誤りを報告する順に引数を読み、3 か所で `validate_request()` を呼んで最初の指摘を断る。プロセスなしの試験は `tests/launch/test_request.cpp`（規則と、check と計画が欄ごとに読むもの） | `launch/request.hpp`、`src/request.cpp` |
+| check、run、test が何を頼まれたかを、値にしたもの: `RunRequest`。2 つの部分に分かれる。`RunIntent`（利用者のもの: variant、パラメーター、利用者が書いたとおりのシナリオ、`--disable`、`--enable`、`--manual`、`--connect`、`--time-policy`、速さ、`--start-paused`、`--strict`）と `RunHost`（呼ぶ側のもの: 利用者が書いたとおりのファイル、道具とログの場所、`--describe` と実行の期限、利用者が書いたとおりのタイムラインのファイル、求められた Control Server（アドレスとファイルの名前）、標準入力の命令を求めているか）。`validate_request()`（純粋）が、一緒には使えない欄の規則（`--param` と `--timeline` にはシナリオが要る、`--start-paused` をシナリオと使う、続ける手段なしに使う）を、code が `usage` の指摘として持つ。`check_file()`、`run_file()`、`test_file()`（`TestOptions::request`）がこれを受け、名前からパスを作る。`CheckOptions` に残るのは、頼まれたことではないものだけ（`file_only`、`params_for_many`、`fastest_by_default`）。`tools/launch/main.cpp` の `read_request()` と `run()` が、誤りを報告する順に引数を読み、3 か所で `validate_request()` を呼んで最初の指摘を断る（`--request` があるときは、全部の引数を読んだ後に 1 度）。プロセスなしの試験は `tests/launch/test_request.cpp`（規則と、check と計画が欄ごとに読むもの） | `launch/request.hpp`、`src/request.cpp` |
+| `--request` の要求ファイル（意図を JSON にしたもの）: `read_request_file()` が文を読む（純粋。この形式の読み手は 1 つで、`YamlReader` から作ってあるので、知らないキーと 2 回書いたキーの文がほかのファイルと同じになる）。`with_request_file()` が欄ごとに引数を重ね、`connect` は `merge_connect()` が重ねる。`RunRequest::origin`（`launch/config.hpp` の `RequestOrigin`: ファイルの名前と、値がファイルから来たキーとネットワーク）を見て、`validate_request()` と `time_lock_findings()` の文がファイル名を書く。`connect_for_config()`（`launch/check.hpp`。実体は `check.cpp`）が、設定ファイルにないファイルのネットワークを外す（`connect-network-unused`）。`check_file()` は、ファイルのシナリオを設定ファイルのディレクトリから読む。ファイルを読むのは `probe.cpp`（`read_request_file_text()`）で、`tools/launch/main.cpp` は名前を渡すだけ（`read_request_argument()`）。プロセスなしの試験は `tests/launch/test_request_file.cpp`、ランチャーを使う試験は `launch_cli.request`、`launch_cli.connect`、`launch_run.connect_request` | `launch/request.hpp`、`src/request_read.cpp`、`src/request.cpp` |
 | `StopRequests`。`run_file()` や `test_file()` を呼ぶ側が持って貸す、停止の要求（run が読む回数と、最初の要求の出どころ）、`StopKind`（operator、signal、supervisor）、ライブラリが知る 4 つの出どころ（`stop_source::kStopCommand` など）とその名前、`stop_kind()`。シグナルとコンソールのイベントの名前は CLI に残る | `launch/stop_requests.hpp` |
 | `RunControls`。1 回の run の操作盤で、run が呼ぶ側から借りるか、自分で作ります: 停止の要求（借りたもの）、`TimeCommands`、覚えて観察者に知らせる段階。`Phase`、`phase_name()`。`RunState`（イベント `state` が書く run の状態）。`RunControls::publish()` が、その 3 つから組み立て、変わったときに観察者に知らせます | `launch/run_controls.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |
@@ -167,6 +169,7 @@
 |---|---|
 | `schema/simulation.schema.json` | 設定ファイル |
 | `schema/scenario.schema.json` | シナリオ |
+| `schema/run-request.schema.json` | `check --request` と `run --request` の要求ファイル（読むコードは `libs/launch/src/request_read.cpp`） |
 | `schema/timeline.schema.json` | `run --timeline` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。ツールのアーカイブの `schema/` に入れ、テンプレートの `template/schema/` には置かない |
 | `gui/protocol/dashboard.schema.json` | ダッシュボード |
 
@@ -174,8 +177,8 @@
 
 | コピーの場所 | 内容 |
 |---|---|
-| `template/schema/` | 3 つのスキーマのコピー |
-| ツールのアーカイブの `schema/` | 同じ 3 つと `timeline.schema.json`（`template/get_tools.py` が、全部をプロジェクトの `schema/` にコピーする） |
+| `template/schema/` | 設定ファイル、シナリオ、要求ファイル、ダッシュボードのスキーマのコピー |
+| ツールのアーカイブの `schema/` | 同じスキーマと `timeline.schema.json`（`template/get_tools.py` が、全部をプロジェクトの `schema/` にコピーする） |
 | ビルドのディレクトリ | 例をビルドするとき、configure のときにコピーする（最上位の `CMakeLists.txt`） |
 
 ビルドのディレクトリにコピーされた例の YAML の 1 行目は、そこにコピーされたスキーマを指します。
@@ -260,6 +263,7 @@
 - テンプレートのコピー: `cp schema/*.schema.json template/schema/`（ダッシュボードは `gui/protocol/dashboard.schema.json` から）
 - 知らないキーのエラーの文が使う一覧（`config.cpp` と `scenario_reader.hpp` の先頭の `k...Keys`）
 - `tests/schema/test_schemas.py` の見本（`CONFIG_SAMPLES`、`SCENARIO_SAMPLES`）
+- 要求ファイルのキーなら: `schema/run-request.schema.json` とそのコピー、`request_read.cpp` の `kKeys`、`REQUEST_SAMPLES`、`docs/simulation-run.md` のキーの表、`with_request_file()` での引数の重ね方
 
 キーを受ける分岐と一覧の関係:
 

@@ -36,6 +36,8 @@
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/connections.hpp"
 #include "vehicle_sil/launch/events.hpp"
+#include "vehicle_sil/launch/probe.hpp"
+#include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/launch/run.hpp"
 #include "vehicle_sil/launch/stop_requests.hpp"
 #include "vehicle_sil/launch/test.hpp"
@@ -83,7 +85,7 @@ using namespace vehicle_sil;
 constexpr const char* kUsage =
     "usage: vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]\n"
     "                                [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
-    "                                [--time-policy realtime|free]\n"
+    "                                [--time-policy realtime|free] [--request <file>]\n"
     "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]\n"
     "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
@@ -92,7 +94,7 @@ constexpr const char* kUsage =
     "                              [--speed <speed>] [--strict] [--log-dir <dir>]\n"
     "                              [--timeout-ms <ms>]\n"
     "                              [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
-    "                              [--time-policy realtime|free]\n"
+    "                              [--time-policy realtime|free] [--request <file>]\n"
     "                              [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...\n"
     "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]\n"
@@ -177,6 +179,12 @@ constexpr const char* kUsage =
     "                              change as in any run; the bridge still carries frames both ways, so what is\n"
     "                              connected there sees the simulation pause or run ahead. No effect on other\n"
     "                              runs\n"
+    "  --request <file>            check, run: what to run, from the request file <file> (JSON: variant, params,\n"
+    "                              scenario, disable, enable, manual, connect, time_policy, speed, start_paused,\n"
+    "                              strict; schema/run-request.schema.json). An argument wins over the file, field\n"
+    "                              by field: --connect and --param by name, --connect <network>=none takes the\n"
+    "                              file's target away; the lists add up. scenario in <file> is from the directory\n"
+    "                              of the configuration file. Only this file is read: none is looked for\n"
     "  --network <name>            connections: only the network <name>\n"
     "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable\n"
     "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable\n"
@@ -896,7 +904,7 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
                  a == "--disable" || a == "--enable" || a == "--manual" || a == "--speed" || a == "--scenario" || a == "--control" ||
                  a == "--variant" || a == "--param" || a == "--scenarios" || a == "--timeline" || a == "--connect" ||
-                 a == "--network" || a == "--time-policy" ||
+                 a == "--network" || a == "--time-policy" || a == "--request" ||
                  a == "--control-credentials" ||
                  a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log")
         {
@@ -906,11 +914,78 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
     return out;
 }
 
+/// What is wrong with the file of --request: every error of it, for usage_error().
+struct RequestFileError
+{
+    std::vector<launch::Finding> findings;
+};
+
+/// --request <file>: the request file, which the arguments are laid over. Without the option
+/// there is none, and a request is the arguments alone.
+struct RequestArgument
+{
+    std::optional<launch::RequestFile> file{};
+    /// --time-policy is given: it wins over the file's, also as realtime.
+    bool time_policy_given = false;
+
+    /// `arguments` with what the file adds (launch::with_request_file()).
+    [[nodiscard]] launch::RunRequest over(const launch::RunRequest& arguments) const
+    {
+        if (!file)
+        {
+            return arguments;
+        }
+        launch::RunRequest request = launch::with_request_file(arguments, *file, time_policy_given);
+        if (!request.intent.connect.empty())
+        {
+            request.host.tool_directory = process::current_executable().parent_path();
+        }
+        return request;
+    }
+};
+
+/// Reads the file of --request, if the option is given. Only this file: none is looked for.
+/// Throws RequestFileError with what is wrong with it.
+RequestArgument read_request_argument(const cli::Args& args)
+{
+    RequestArgument out;
+    if (!args.has("request"))
+    {
+        return out;
+    }
+    const std::string name = args.str("request", "");
+    if (name.empty())
+    {
+        throw cli::UsageError("--request needs a request file: --request <file>.json");
+    }
+    std::string text;
+    if (const std::string problem = launch::read_request_file_text(process::path_from_utf8(name), text); !problem.empty())
+    {
+        launch::Finding finding{launch::Severity::Error, "usage", "--request " + name + ": " + problem, 0, "", ""};
+        finding.file = name;
+        throw RequestFileError{{std::move(finding)}};
+    }
+    launch::RequestFileRead read = launch::read_request_file(text, name);
+    if (!read.file)
+    {
+        throw RequestFileError{std::move(read.findings)};
+    }
+    out.file = std::move(read.file);
+    out.time_policy_given = args.has("time-policy");
+    return out;
+}
+
 /// Refuses the first rule of the request that its fields so far break (launch::validate_request()).
 /// Called where the arguments are read in the order the user's mistakes are reported in: a rule
-/// whose fields are not read yet does not fire.
-void require_valid(const launch::RunRequest& request, launch::RequestCommand command)
+/// whose fields are not read yet does not fire. With a request file (`asked`) nothing is judged
+/// here: the file gives fields too, so the rules wait until every argument is read
+/// (whole_request()).
+void require_valid(const launch::RunRequest& request, launch::RequestCommand command, const RequestArgument& asked = {})
 {
+    if (asked.file)
+    {
+        return;
+    }
     const std::vector<launch::Finding> findings = launch::validate_request(request, command);
     if (!findings.empty())
     {
@@ -918,8 +993,26 @@ void require_valid(const launch::RunRequest& request, launch::RequestCommand com
     }
 }
 
+/// The request of the command once every argument is read: `arguments` over the request file, if
+/// there is one, judged as a whole (launch::validate_request(); the first rule broken is refused).
+launch::RunRequest whole_request(const launch::RunRequest& arguments, launch::RequestCommand command,
+                                 const RequestArgument& asked)
+{
+    if (!asked.file)
+    {
+        return arguments; // judged as the arguments were read (require_valid())
+    }
+    launch::RunRequest request = asked.over(arguments);
+    const std::vector<launch::Finding> findings = launch::validate_request(request, command);
+    if (!findings.empty())
+    {
+        throw cli::UsageError(findings.front().message);
+    }
+    return request;
+}
+
 /// What check, run and test share: the configuration file and the arguments that say what to run.
-launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand command)
+launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand command, const RequestArgument& asked = {})
 {
     const bool isTest = command == launch::RequestCommand::Test;
     const std::string name = isTest ? "test" : command == launch::RequestCommand::Run ? "run" : "check";
@@ -987,7 +1080,7 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
     {
         intent.scenario = args.str("scenario", "");
     }
-    require_valid(request, command);
+    require_valid(request, command, asked);
     for (const std::string& given : args.all("connect"))
     {
         std::optional<launch::ConnectRequest> connect = launch::parse_connect(given);
@@ -1044,7 +1137,9 @@ int check(const cli::Args& args)
             throw cli::UsageError("--" + std::string(runOnly) + " is for run: check starts no participant");
         }
     }
-    const launch::RunRequest request = read_request(args, launch::RequestCommand::Check);
+    const RequestArgument asked = read_request_argument(args);
+    const launch::RunRequest request =
+        whole_request(read_request(args, launch::RequestCommand::Check, asked), launch::RequestCommand::Check, asked);
     const std::string& file = request.host.config;
     const launch::CheckReport report = launch::check_file(request);
     if (report.usage)
@@ -1091,7 +1186,8 @@ int connections(const cli::Args& args)
 
 int run(const cli::Args& args, launch::EventStream* events)
 {
-    launch::RunRequest request = read_request(args, launch::RequestCommand::Run);
+    const RequestArgument asked = read_request_argument(args);
+    launch::RunRequest request = read_request(args, launch::RequestCommand::Run, asked);
     launch::RunHost& host = request.host;
     const std::string& file = host.config;
     if (args.has("log-dir") && args.str("log-dir", "").empty())
@@ -1126,7 +1222,7 @@ int run(const cli::Args& args, launch::EventStream* events)
         {
             throw cli::UsageError("--timeline needs a file to write: --timeline <file>.json");
         }
-        require_valid(request, launch::RequestCommand::Run);
+        require_valid(request, launch::RequestCommand::Run, asked);
     }
     if (args.has("timeout-ms"))
     {
@@ -1176,7 +1272,10 @@ int run(const cli::Args& args, launch::EventStream* events)
     }
     host.stdin_commands = args.flag("stdin-commands");
     request.intent.start_paused = args.flag("start-paused");
-    require_valid(request, launch::RequestCommand::Run);
+    require_valid(request, launch::RequestCommand::Run, asked);
+    // From here on the request is the whole of it: the arguments over the file of --request,
+    // judged now that the fields the rules need (--stdin-commands, --control) are read.
+    request = whole_request(request, launch::RequestCommand::Run, asked);
     launch::RunObservers watching;
     launch::RunLent lent;
     watch_interrupts();
@@ -1322,6 +1421,12 @@ int test(const cli::Args& args)
         throw cli::UsageError("--connect is not for test: test is made for runs that go as fast as possible, one after the "
                               "other, and a real bus does not wait for the virtual time; for a test with a device, run one scenario: vehicle_sil_launch "
                               "run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>");
+    }
+    if (args.has("request"))
+    {
+        throw cli::UsageError("--request is for check and run: test takes its variants and scenarios itself (--variant, "
+                              "--scenarios); to use the request file, run one scenario with vehicle_sil_launch run --request "
+                              "<file>");
     }
     for (const char* runOnly : {"log-dir", "events-stall-ms", "events", "stdin-commands", "speed", "start-paused", "manual", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline"})
@@ -1504,13 +1609,13 @@ int main(int argc, char** argv)
             : isTest ? cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline",
-                                "time-policy"},
+                                "time-policy", "request"},
                                {"json", "strict", "events", "stdin-commands", "start-paused", "fail-fast"},
                                {"disable", "enable", "manual", "param", "variant", "scenarios", "connect"})
                    : cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "variant",
-                                "timeline", "time-policy"},
+                                "timeline", "time-policy", "request"},
                                {"json", "strict", "events", "stdin-commands", "start-paused"},
                                {"disable", "enable", "manual", "param", "connect"});
         if (args.positionals().empty())
@@ -1532,6 +1637,10 @@ int main(int argc, char** argv)
     catch (const cli::UsageError& e)
     {
         code = usage_error(e.what(), json, command, file, stream);
+    }
+    catch (const RequestFileError& e)
+    {
+        code = usage_error(e.findings, json, command, file, stream);
     }
     catch (const std::exception& e)
     {

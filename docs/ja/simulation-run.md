@@ -7,6 +7,7 @@
 | 調べること | 節 |
 |---|---|
 | `run` が何をどの順にするか | [実行の流れ](#実行の流れ) |
+| 実行の選択（機種、シナリオ、participant、接続、速さ）をファイルにまとめる | [要求ファイル](#要求ファイル--request) |
 | どんなときに中断するか、タイムアウトの数え方 | [中断する条件とタイムアウト](#中断する条件とタイムアウト) |
 | ECU の変数を読み書きできるか（`control_link`） | [ECU の変数との接続](#ecu-の変数との接続control_link) |
 | `speed` と、実時間からの遅れの数え方 | [速度を指定して動かす](#速度を指定して動かすspeed) |
@@ -584,6 +585,79 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 | 1 | あるブリッジが一覧を作れなかった（`tool-cannot-start`、`tool-timeout`、`tool-bad-output`、ブリッジ自身の誤り）か、ファイルに誤りがあります。 |
 | 3 | ファイルを読めません。 |
 | 4 | 使い方の誤りです。 |
+
+## 要求ファイル（`--request`）
+
+要求ファイルには、何を走らせるかを書きます。機種、シナリオとそのパラメーター、外す participant と手で起動する participant、ネットワークを外のどこにつなぐか、速さです。`check` と `run` が `--request <file>` で読みます。1 台の PC や 1 種類の実行でいつも同じものを書き（例: 試験台のアダプター）、設定ファイルは全員で同じものを使います。
+
+例として、ネットワーク `ETH_EXT` と `CAN1` を持つ試験台の設定ファイルの場合です（例の設定ファイルのように、どちらも持たない設定ファイルでは、`check` が 2 つとも使われないと注意し、何もつなぎません）。
+
+```json
+{
+  "vehicle_sil_run_request": 1,
+  "connect": { "ETH_EXT": "enp3s0", "CAN1": "physical:1" }
+}
+```
+
+```sh
+vehicle_sil_launch run simulation.yaml                                           # SIL Kit only
+vehicle_sil_launch check --request bench.json simulation.yaml                    # what the next line would run
+vehicle_sil_launch run --request bench.json simulation.yaml                      # connected as bench.json says
+vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml  # this run: CAN1 on SIL Kit only
+```
+
+- 欄ごとに、引数がファイルより優先されます（[引数と要求ファイルを一緒に使う](#引数と要求ファイルを一緒に使う)）。
+- ランチャーが読むのは、`--request` で指定したファイルだけです。設定ファイルの隣、作業ディレクトリ、ホームディレクトリ、環境変数から探すことはありません。
+- `check --request` は、`run --request` と同じ要求を照合します（[時間のロック](#外につながる実行の時間--time-policy)に関わる速さと `start_paused` も含みます）。先に照合してから実行します。`run` だけが見る規則が 1 つあります。`start_paused` には `--stdin-commands` か `--control` が要る、という規則です（どちらも `run` だけの引数のため）。
+- `test` は `--request` を受けません（使い方の誤り）。
+- ファイルは JSON で書きます。ランチャーはそれより緩い書き方を読めることがありますが、約束しません。スキーマと、このファイルを読むほかのツールは、JSON だけを受けます。
+- ファイルの間違い（知らないキー、2 回書いたキー、型の違う値、`null`、別の版）は、ファイル名と行を示す使い方の誤り（終了コード 4）で、照合も起動もしません。指定しないキーは書きません。
+- JSON Schema は [schema/run-request.schema.json](../../schema/run-request.schema.json) です。`"$schema"` にそのパスを書いたファイルは、エディターが補完と検査をします。
+- ランチャーを呼ぶ側が決めるものは、ファイルに書けません。設定ファイル、`--log-dir`、`--timeline`、`--timeout-ms`、`--control`、`--events`、`--stdin-commands`、`--json` は引数だけです。
+- `examples/ecu_main/requests/throttle_step.json` は、例の要求ファイルです（`vehicle_sil_launch run --request requests/throttle_step.json simulation.yaml`）。
+
+### 要求ファイルのキー
+
+| キー | 値 | 同じ意味の引数 |
+|---|---|---|
+| `vehicle_sil_run_request` | `1`（必須） | |
+| `$schema` | エディターのための、スキーマのパスか URL です。ランチャーは読み飛ばします。 | |
+| `variant` | 文字列 | `--variant` |
+| `params` | パラメーターの名前から値（数、`true`・`false`、文字列）への対応。シナリオを実行するときだけ使います。 | `--param` |
+| `scenario` | シナリオのファイルのパス。相対パスは、設定ファイルのディレクトリから読みます。 | `--scenario` |
+| `disable` | participant の名前の一覧 | `--disable` |
+| `enable` | participant の名前の一覧 | `--enable` |
+| `manual` | participant の名前の一覧 | `--manual` |
+| `connect` | ネットワークの名前から、つなぐ先への対応。先は `--connect` と同じ書き方で、`"none"` はそのネットワークを書かないのと同じです。 | `--connect` |
+| `time_policy` | `"realtime"` か `"free"` | `--time-policy` |
+| `speed` | 0.000001 から 1000000 の数か `"max"` | `--speed` |
+| `start_paused` | `true` か `false`。`run` では、続ける手段として `--stdin-commands` か `--control` も要ります。 | `--start-paused` |
+| `strict` | `true` か `false` | `--strict` |
+
+### 引数と要求ファイルを一緒に使う
+
+欄ごとに、引数がファイルに勝ちます。
+
+| キー | 同じものを引数でも指定したとき |
+|---|---|
+| `variant`、`scenario`、`speed`、`time_policy` | 引数が、ファイルの値を置き換えます。 |
+| `start_paused`、`strict` | ファイルか引数のどちらかが指定すれば有効です。無効にする引数はありません。 |
+| `connect` | ネットワークごとです。`--connect <network>=<target>` はそのネットワークのファイルの先を置き換え、`--connect <network>=none` はこの実行だけ外します。ファイルのほかのネットワークは残ります。 |
+| `params` | 名前ごとです。`--param <name>=<value>` は、そのパラメーターのファイルの値を置き換えます。ほかは残り、照合の JSON の `from` は `request_file` です。 |
+| `disable`、`enable`、`manual` | ファイルの名前と引数の名前を合わせます。同じ名前で食い違うとき（ファイルの `disable` と `--enable`、ファイルの `enable` や `manual` と `--disable`、ファイルの `disable` と `--manual`）は、引数が勝ちます。 |
+
+要求ファイルが引数と違うところ:
+
+| 場合 | 引数 | 要求ファイル |
+|---|---|---|
+| シナリオの相対パス | 作業ディレクトリから | 設定ファイルのディレクトリから |
+| つなぐネットワークが設定ファイルにない | 誤り `connect-network` | 注記 `connect-network-unused` を出して、そのネットワークを外します（1 つのファイルを複数の設定ファイルで使うため） |
+| シナリオにないパラメーター | 使い方の誤り | 無視します（1 つのファイルを複数のシナリオで使うため） |
+| シナリオなしのパラメーター | 使い方の誤り | 無視します（1 つのファイルを、シナリオのある実行とない実行で使うため） |
+
+`disable`、`enable`、`manual` の participant が設定ファイルにないときは、引数のときと同じく、ファイルから来ても使い方の誤りです。文はキーとファイル名を書きます（`manual Engine in bench.json: …`）。
+
+ファイルから来た値についての文は、引数の名前ではなく、キーとファイル名を書きます（`speed 5 in bench.json is refused`）。ファイルがつなぐネットワークを外して走らせる方法は、ファイルの `connect` から外すか `--connect <network>=none` を渡す、と書きます。ファイルに `"time_policy": "free"` があるときは、注記 `outside-not-real-time` にもファイル名が出ます。そのファイルを使う全員の時間のロックを外すためです（[外につながる実行の時間](#外につながる実行の時間--time-policy)）。
 
 ## 止め方
 
