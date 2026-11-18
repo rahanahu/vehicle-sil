@@ -167,12 +167,14 @@ TEST_CASE(device_mark_shared_warning_comes_when_more_bridges_share_the_device)
 {
     CHECK(!detail::shared_warning("interface 'eth0'", {}, {}).has_value());
     CHECK_SAME(detail::shared_warning("interface 'eth0'", {}, {1, {4321}}).value_or(""),
-             std::string("interface 'eth0' is also used by another vehicle-sil bridge (process 4321): their frames and this "
-                         "bridge's mix there; give each run its own device, or stop a bridge that is left over"));
+             std::string("interface 'eth0' is also used by another vehicle-sil bridge (process 4321): the frames of both "
+                         "mix there: if that is not meant, connect them to different devices, or stop a bridge left over "
+                         "from an earlier run"));
     // Only the processes that came.
     CHECK_SAME(detail::shared_warning("XL 'Virtual Channel 1'", {1, {4321}}, {3, {4321, 4400, 4500}}).value_or(""),
-             std::string("XL 'Virtual Channel 1' is also used by 2 more vehicle-sil bridges (processes 4400, 4500): their frames "
-                         "and this bridge's mix there; give each run its own device, or stop a bridge that is left over"));
+             std::string("XL 'Virtual Channel 1' is also used by 2 more vehicle-sil bridges (processes 4400, 4500): the frames of "
+                         "both mix there: if that is not meant, connect them to different devices, or stop a bridge left "
+                         "over from an earlier run"));
     // Windows: no process ids.
     CHECK(detail::shared_warning("interface 'Ethernet'", {}, {1, {}}).value_or("").starts_with(
         "interface 'Ethernet' is also used by another vehicle-sil bridge: "));

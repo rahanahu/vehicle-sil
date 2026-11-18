@@ -242,7 +242,9 @@ int run(const BridgeOptions& options)
         bridge = std::make_unique<CanBridge>(controller, *port);
         runtime->add_communication_ready_handler([b = bridge.get()] { b->start_controller(); });
         bridge->start();
-        // The first link line, before the lifecycle starts (a program that waits for Running has read it).
+        // The first link line, before the lifecycle starts (a program that waits for Running has read it),
+        // with a count as of now: connecting to the registry may have taken a while since the mark.
+        share.count();
         firstLinkLine = bridge_runtime::format_link_line("bus", link_line_value(bridge->health().bus_state)) + share.link_keys();
         log(kTag, "%s", firstLinkLine.c_str());
         runtime->start(options.start_timeout);

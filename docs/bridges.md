@@ -346,7 +346,7 @@ Two bridges that open the same device receive each other's frames: two networks,
 
 ```
 [bridge] link bus=active device=552dd508e2f03efe marked=1 shared=1 peers=4321
-[bridge] warning: XL 'Virtual Channel 1' (Vector Virtual CAN, whose channels are all one bus) is also used by another vehicle-sil bridge (process 4321): their frames and this bridge's mix there; give each run its own device, or stop a bridge that is left over
+[bridge] warning: XL 'Virtual Channel 1' (Vector Virtual CAN, whose channels are all one bus) is also used by another vehicle-sil bridge (process 4321): the frames of both mix there: if that is not meant, connect them to different devices, or stop a bridge left over from an earlier run
 ```
 
 | Key of the link line | Meaning |

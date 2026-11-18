@@ -7,6 +7,7 @@
 #include <chrono>
 #include <random>
 #include <utility>
+#include <vector>
 
 #if defined(__linux__)
 #include <cerrno>
@@ -130,6 +131,20 @@ namespace {
 
 constexpr const char* kSpaces[] = {"Global\\", "Local\\"};
 
+/// The namespaces where marks are placed and looked for: Global\, then Local\ for a user who may
+/// not create global names. In session 0 (services, an OpenSSH login, a CI runner that runs as a
+/// service) Local\ is Global\, so there only Global\: looking in both would count each mark twice,
+/// this bridge's own among them.
+std::vector<const char*> spaces()
+{
+    DWORD session = 0;
+    if (ProcessIdToSessionId(GetCurrentProcessId(), &session) != 0 && session == 0)
+    {
+        return {kSpaces[0]};
+    }
+    return {kSpaces[0], kSpaces[1]};
+}
+
 /// The names are ASCII.
 std::wstring wide(const std::string& text)
 {
@@ -183,7 +198,7 @@ bool seen(const std::wstring& name)
 DevicePeers count(const std::string& hash, const std::string& own_space, unsigned own_number)
 {
     DevicePeers peers;
-    for (const char* space : kSpaces)
+    for (const char* space : spaces())
     {
         for (unsigned number = 0; number < detail::kWindowsMarks; ++number)
         {
@@ -228,7 +243,7 @@ DeviceMark DeviceMark::place(std::string_view kind, std::string_view identity)
     auto impl = std::make_unique<Impl>();
     impl->device = detail::device_hash(kind, identity);
     Everyone everyone;
-    for (const char* space : kSpaces)
+    for (const char* space : spaces())
     {
         bool tryLocal = false;
         for (unsigned number = 0; number < detail::kWindowsMarks; ++number)

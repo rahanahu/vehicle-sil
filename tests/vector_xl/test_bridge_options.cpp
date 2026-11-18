@@ -398,7 +398,7 @@ TEST_CASE(selection_channel_list_says_which_channels_vehicle_sil_bridges_use)
                     "      \"in_use_by\": [],\n"
                     "      \"in_use_count\": 0,\n") != std::string::npos);
     const std::string text = format_channel_list(sample_channels(), inUse);
-    CHECK(text.find("Virtual Channel 2                hwType=100 hwIndex=0 hwChannel=0 serial=0 ; in use by a vehicle-sil bridge "
+    CHECK(text.find("Virtual Channel 2                hwType=100 hwIndex=0 hwChannel=0 serial=0; in use by a vehicle-sil bridge "
                     "(process 4321)\n") != std::string::npos);
     CHECK(text.find("CANcaseXL Channel 1              hwType=200 hwIndex=0 hwChannel=0 serial=0 \n") != std::string::npos);
 }

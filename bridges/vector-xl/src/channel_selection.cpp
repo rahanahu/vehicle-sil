@@ -102,6 +102,11 @@ std::string format_channel_list(const std::vector<XlChannelInfo>& channels, cons
             text += line;
             if (const std::string inUse = bridge_runtime::in_use_text(peers_of(in_use, info)); !inUse.empty())
             {
+                // Without the space that the format leaves where the channel has no transceiver name.
+                while (!text.empty() && text.back() == ' ')
+                {
+                    text.pop_back();
+                }
                 text += "; " + inUse;
             }
             text += "\n";

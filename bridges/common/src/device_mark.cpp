@@ -191,8 +191,8 @@ std::optional<std::string> shared_warning(std::string_view device_text, const De
     std::string text = std::string(device_text) + " is also used by " +
                        (more == 1 ? std::string("another vehicle-sil bridge") : std::to_string(more) + " more vehicle-sil bridges") +
                        processes(added) +
-                       ": their frames and this bridge's mix there; give each run its own device, or stop a bridge that "
-                       "is left over";
+                       ": the frames of both mix there: if that is not meant, connect them to different devices, or "
+                       "stop a bridge left over from an earlier run";
     return text;
 }
 
