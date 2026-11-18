@@ -7,10 +7,12 @@
 
 #include <linux/can/error.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -215,7 +217,7 @@ TEST_CASE(port_other_write_errors_fail_and_say_why)
     rig.start();
     rig.device.set_write_error(EINVAL);
     CHECK(rig.port.transmit(silkit_frame(1, 0, 0, {})) == TransmitResult::Failed);
-    CHECK(rig.port.last_error().find("sending failed: Invalid argument") != std::string::npos);
+    CHECK(rig.port.last_error().find("sending on 'vcan0' failed: Invalid argument") != std::string::npos);
     CHECK_EQ(rig.count(ExternalEventKind::Fault), std::size_t{0});
 }
 
@@ -377,25 +379,132 @@ TEST_CASE(port_other_read_errors_are_faults_and_transient_ones_are_not)
     CHECK(rig.wait_for(ExternalEventKind::Fault));
 }
 
-TEST_CASE(port_transmit_timeout_drops_while_the_bus_takes_nothing)
+namespace {
+
+/// Tries to send a frame every 10 ms for `duration`; the results.
+std::vector<TransmitResult> send_for(SocketCanPort& port, std::chrono::milliseconds duration)
+{
+    std::vector<TransmitResult> results;
+    const auto end = std::chrono::steady_clock::now() + duration;
+    while (std::chrono::steady_clock::now() < end)
+    {
+        results.push_back(port.transmit(silkit_frame(1, 0, 0, {})));
+        std::this_thread::sleep_for(10ms);
+    }
+    return results;
+}
+
+std::size_t count_of(const std::vector<TransmitResult>& results, TransmitResult wanted)
+{
+    return static_cast<std::size_t>(std::count(results.begin(), results.end(), wanted));
+}
+
+SocketCanPortOptions with_timeout(std::chrono::milliseconds timeout)
 {
     SocketCanPortOptions options;
-    options.transmit_timeout = 100ms;
-    Rig rig(options);
+    options.transmit_timeout = timeout;
+    return options;
+}
+
+} // namespace
+
+TEST_CASE(port_transmit_timeout_drops_while_the_bus_takes_nothing)
+{
+    Rig rig(with_timeout(100ms));
     rig.start();
-    CHECK(rig.port.transmit(silkit_frame(1, 0, 0, {})) == TransmitResult::Ok);
-    std::this_thread::sleep_for(150ms);
-    // No receipt for longer than the timeout: the next frame is not sent... except as the probe that
-    // goes out once the timeout has passed since the last one.
-    CHECK(rig.port.transmit(silkit_frame(2, 0, 0, {})) == TransmitResult::Ok); // the probe
-    CHECK(rig.port.transmit(silkit_frame(3, 0, 0, {})) == TransmitResult::Dropped);
-    CHECK(rig.port.transmit(silkit_frame(4, 0, 0, {})) == TransmitResult::Dropped);
-    CHECK_EQ(rig.device.written().size(), std::size_t{2});
+    // The first frame gets no receipt: after the timeout the frames are dropped, except one probe each timeout.
+    const auto results = send_for(rig.port, 450ms);
+    CHECK(count_of(results, TransmitResult::Dropped) >= 10);
+    CHECK(count_of(results, TransmitResult::Ok) >= 8);
+    CHECK_EQ(count_of(results, TransmitResult::Ok) + count_of(results, TransmitResult::Dropped), results.size());
+    CHECK_EQ(rig.device.written().size(), count_of(results, TransmitResult::Ok));
     // A receipt: the bus works again.
     rig.device.push_frame(frame(2, {}, /*confirm=*/true));
     CHECK(rig.wait_for(ExternalEventKind::OwnTransmission));
-    CHECK(rig.port.transmit(silkit_frame(5, 0, 0, {})) == TransmitResult::Ok);
-    CHECK(rig.port.transmit(silkit_frame(6, 0, 0, {})) == TransmitResult::Ok);
+    CHECK(count_of(send_for(rig.port, 60ms), TransmitResult::Dropped) == 0);
+}
+
+TEST_CASE(port_transmit_timeout_is_not_fooled_by_a_receipt_inside_write)
+{
+    // On vcan the kernel gives the receipt back inside send(): the thread may handle it before transmit() returns.
+    Rig rig(with_timeout(100ms));
+    rig.start();
+    rig.device.on_write = [&] { rig.device.push_frame(frame(1, {}, /*confirm=*/true)); };
+    for (int i = 0; i < 10; ++i)
+    {
+        CHECK(rig.port.transmit(silkit_frame(1, 0, 0, {})) == TransmitResult::Ok);
+        CHECK(rig.wait_for(ExternalEventKind::OwnTransmission, static_cast<std::size_t>(i + 1)));
+    }
+    rig.device.on_write = nullptr;
+    // Nothing is waiting for a receipt: after a long pause three frames in a row all go out.
+    std::this_thread::sleep_for(300ms);
+    for (int i = 0; i < 3; ++i)
+    {
+        CHECK(rig.port.transmit(silkit_frame(1, 0, 0, {})) == TransmitResult::Ok);
+    }
+}
+
+TEST_CASE(port_transmit_timeout_forgets_a_receipt_that_never_came_after_a_pause)
+{
+    // A frame the kernel lost (its queue was emptied by a bus-off, or the receipt overflowed): the next frames after a
+    // pause are not dropped.
+    Rig rig(with_timeout(100ms));
+    rig.start();
+    CHECK(rig.port.transmit(silkit_frame(1, 0, 0, {})) == TransmitResult::Ok);
+    std::this_thread::sleep_for(300ms);
+    for (int i = 0; i < 3; ++i)
+    {
+        CHECK(rig.port.transmit(silkit_frame(1, 0, 0, {})) == TransmitResult::Ok);
+    }
+}
+
+TEST_CASE(port_transmit_timeout_forgets_what_waited_when_the_interface_comes_up_again)
+{
+    Rig rig(with_timeout(100ms));
+    rig.start();
+    CHECK(eventually([&] { return rig.port.link_state() == LinkState::Up; }, 5000ms, 2ms));
+    // Keep trying, so that the pause does not forget the frame by itself: the port is stuck.
+    const auto results = send_for(rig.port, 250ms);
+    CHECK(count_of(results, TransmitResult::Dropped) > 0);
+    rig.device.set_up(false);
+    CHECK(eventually([&] { return rig.port.link_state() == LinkState::Down; }, 5000ms, 2ms));
+    rig.device.set_up(true);
+    CHECK(eventually([&] { return rig.port.link_state() == LinkState::Up; }, 5000ms, 2ms));
+    // Right after the interface is up again, frames go out for a whole timeout.
+    CHECK(rig.port.transmit(silkit_frame(1, 0, 0, {})) == TransmitResult::Ok);
+    CHECK(rig.port.transmit(silkit_frame(1, 0, 0, {})) == TransmitResult::Ok);
+}
+
+TEST_CASE(port_failed_write_leaves_no_frame_waiting_for_a_receipt)
+{
+    Rig rig(with_timeout(100ms));
+    rig.start();
+    rig.device.set_write_error(ENOBUFS);
+    CHECK(rig.port.transmit(silkit_frame(1, 0, 0, {})) == TransmitResult::QueueFull);
+    rig.device.set_write_error(0);
+    std::this_thread::sleep_for(30ms);
+    // Had the failed frame started the clock, these (kept up for longer than the timeout) would be dropped.
+    CHECK(count_of(send_for(rig.port, 70ms), TransmitResult::Dropped) == 0);
+}
+
+TEST_CASE(port_send_failure_names_the_interface)
+{
+    Rig rig;
+    rig.start();
+    rig.device.set_write_error(ENETDOWN);
+    CHECK(rig.port.transmit(silkit_frame(1, 0, 0, {})) == TransmitResult::Failed);
+    CHECK(rig.port.last_error() == "sending on 'vcan0' failed: Network is down (the interface is down: sudo ip link set vcan0 up)");
+}
+
+TEST_CASE(port_does_not_spin_on_a_wake_with_nothing_to_read)
+{
+    Rig rig;
+    rig.device.spurious_readable = true;
+    rig.start();
+    std::this_thread::sleep_for(200ms);
+    const auto waits = rig.device.waits.load();
+    rig.device.spurious_readable = false;
+    CHECK(waits < 100);
 }
 
 TEST_CASE(port_without_a_transmit_timeout_frames_wait)

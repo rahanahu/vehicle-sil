@@ -319,9 +319,9 @@ def wait_for_link(bridge: Proc, value: str) -> None:
         time.sleep(0.1)
 
 
-def start_peer(world: World) -> Proc:
+def start_peer(world: World, *more: str) -> Proc:
     peer = world.run([world.args.peer, "--registry-uri", REGISTRY_URI, "--network", NETWORK, "--bridge", PARTICIPANT,
-                      "--timeout-ms", str(int(WAIT * 1000))])
+                      "--timeout-ms", str(int(WAIT * 1000)), *more])
     return peer
 
 
@@ -330,7 +330,8 @@ def roundtrip(world: World) -> None:
     make("ip", "link", "set", "vcan0", "up")
     echo = world.device("vcan0", echo=True)
     other = world.device("vcan0")
-    bridge = world.bridge("vcan0", ["--bitrate", "250000"])
+    # --tx-timeout-ms: the bridge sent nothing for longer than the timeout when the peer starts, and a healthy bus drops nothing.
+    bridge = world.bridge("vcan0", ["--bitrate", "250000", "--tx-timeout-ms", "100"])
     started = bridge.wait_for("Ctrl+C to stop")
     check(f"(participant '{PARTICIPANT}', {REGISTRY_URI}) <-> CAN interface 'vcan0'; Ctrl+C to stop" in started,
           "the start line names the interface:\n" + started)
@@ -368,7 +369,7 @@ def link(world: World) -> None:
     make("ip", "link", "add", "vcan0", "type", "vcan")
     make("ip", "link", "set", "vcan0", "up")
     device = world.device("vcan0")
-    bridge = world.bridge("vcan0")
+    bridge = world.bridge("vcan0", ["--tx-timeout-ms", "100"])
     bridge.wait_for("Ctrl+C to stop")
     wait_for_link(bridge, "up")
 
@@ -387,7 +388,15 @@ def link(world: World) -> None:
     device.s.bind(("vcan0",))
     device.send(0x100, b"\x01")
     wait_for_statistics(bridge, ext_from_devices=1)
-    say("link: the link lines said up, down, up; the bridge heard the bus again")
+    # ... and it sends again: the frames of the peer (no device answers) all go out, none is dropped or fails.
+    peer = start_peer(world, "--answers", "none")
+    code = peer.wait(2 * WAIT)
+    check(code == 0, f"the peer ends well (exit code {code}):\n{peer.text()}")
+    wait_for_statistics(bridge, silkit_to_ext=MATRIX_FRAMES)
+    stats = statistics(bridge.text())
+    check(stats["silkit_to_ext"] == MATRIX_FRAMES and stats["ext_tx_failures"] == 0 and stats["ext_tx_dropped"] == 0,
+          f"after down and up the bridge sends every frame: {stats}\n{bridge.text()}")
+    say("link: the link lines said up, down, up; the bridge heard the bus again and sent again")
 
     sh("ip", "link", "del", "vcan0")
     code = bridge.wait()
@@ -464,7 +473,9 @@ def inner(args: argparse.Namespace) -> None:
     r = subprocess.run(["mount", "-t", "tmpfs", "none", "/tmp"], capture_output=True, text=True)
     if r.returncode != 0:
         skip_no_namespace("mount -t tmpfs none /tmp: " + r.stderr.strip())
-    make("ip", "link", "set", "lo", "up")
+    r = subprocess.run(["ip", "link", "set", "lo", "up"], capture_output=True, text=True)
+    if r.returncode != 0:
+        skip_no_namespace("ip link set lo up: " + (r.stderr.strip() or f"exit {r.returncode}"))
     world = World(args)
     try:
         {"roundtrip": roundtrip, "link": link, "refused": refused, "shared": shared}[args.scenario](world)

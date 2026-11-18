@@ -37,7 +37,10 @@ private:
 
 } // namespace
 
-std::vector<CanInterfaceInfo> read_can_interfaces()
+namespace {
+
+/// Asks RTM_GETLINK (a dump of every link, or of the one with `index`) and returns what the kernel answers.
+LinkMessages ask_links(bool dump, unsigned index, std::vector<CanInterfaceInfo>& interfaces)
 {
     const Socket netlink;
     if (netlink.get() < 0)
@@ -55,16 +58,16 @@ std::vector<CanInterfaceInfo> read_can_interfaces()
     } request{};
     request.header.nlmsg_len = sizeof(request);
     request.header.nlmsg_type = RTM_GETLINK;
-    request.header.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+    request.header.nlmsg_flags = static_cast<std::uint16_t>(NLM_F_REQUEST | (dump ? NLM_F_DUMP : 0));
     request.header.nlmsg_seq = 1;
     request.info.ifi_family = AF_UNSPEC;
+    request.info.ifi_index = static_cast<int>(index);
     if (::send(netlink.get(), &request, sizeof(request), 0) < 0)
     {
         throw std::runtime_error(std::string("cannot ask the kernel for the CAN interfaces (RTM_GETLINK): ") +
                                  std::strerror(errno));
     }
 
-    std::vector<CanInterfaceInfo> result;
     std::array<std::uint8_t, 32768> buffer{};
     for (;;)
     {
@@ -81,18 +84,42 @@ std::vector<CanInterfaceInfo> read_can_interfaces()
         auto messages = parse_link_messages(std::span<const std::uint8_t>(buffer.data(), static_cast<std::size_t>(received)));
         for (auto& info : messages.interfaces)
         {
-            result.push_back(std::move(info));
+            interfaces.push_back(std::move(info));
         }
-        if (!messages.error.empty())
+        // A question for one link is answered by one message, without NLMSG_DONE.
+        if (messages.done || received == 0 || !dump)
         {
-            throw std::runtime_error("the kernel refused the question for the CAN interfaces: " + messages.error);
-        }
-        if (messages.done || received == 0)
-        {
-            break;
+            return messages;
         }
     }
+}
+
+} // namespace
+
+std::vector<CanInterfaceInfo> read_can_interfaces()
+{
+    std::vector<CanInterfaceInfo> result;
+    const LinkMessages end = ask_links(true, 0, result);
+    if (!end.error.empty())
+    {
+        throw std::runtime_error("the kernel refused the question for the CAN interfaces: " + end.error);
+    }
     return result;
+}
+
+std::optional<CanInterfaceInfo> read_can_interface(unsigned index)
+{
+    std::vector<CanInterfaceInfo> found;
+    const LinkMessages end = ask_links(false, index, found);
+    if (!found.empty())
+    {
+        return std::move(found.front());
+    }
+    if (end.error_code != 0 && end.error_code != ENODEV)
+    {
+        throw std::runtime_error("the kernel refused the question for the CAN interface " + std::to_string(index) + ": " + end.error);
+    }
+    return std::nullopt;
 }
 
 } // namespace vehicle_sil::socketcan

@@ -29,6 +29,8 @@ public:
     explicit LinuxCanDevice(std::string name) : name_(std::move(name)) {}
     ~LinuxCanDevice() override { close(); }
 
+    const std::string& name() const noexcept override { return name_; }
+
     void open() override
     {
         close();
@@ -145,12 +147,12 @@ public:
 
     std::optional<CanInterfaceInfo> interface() override
     {
-        const auto found = find_can_interface(name_);
-        if (found && found->index == index_)
+        auto found = read_can_interface(index_);
+        if (found && found->name == name_)
         {
             return found;
         }
-        return std::nullopt;
+        return std::nullopt; // gone, or renamed
     }
 
     void wake() noexcept override

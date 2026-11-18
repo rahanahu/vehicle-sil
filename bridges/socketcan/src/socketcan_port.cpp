@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <cstring>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace vehicle_sil::socketcan {
@@ -24,6 +25,8 @@ constexpr std::uint32_t kExtendedMask = 0x1FFFFFFFu;
 constexpr std::uint32_t kStandardMask = 0x7FFu;
 /// Frames read in a row before the thread looks at the stop request again.
 constexpr int kFramesPerWake = 64;
+/// The pause after a wait that said "readable" and a read that found nothing.
+constexpr auto kSpuriousWakePause = std::chrono::milliseconds(5);
 
 constexpr can::CanFrameFlagMask flag(can::CanFrameFlag f) noexcept
 {
@@ -64,8 +67,8 @@ void SocketCanPort::start(EventHandler handler)
     }
     {
         const std::lock_guard tx(tx_mutex_);
-        outstanding_ = 0;
-        progress_ = {};
+        unconfirmed_since_.reset();
+        last_attempt_ = {};
         last_probe_ = {};
     }
     // The first look before the thread runs: the first link line a program reads is not "unknown".
@@ -107,16 +110,31 @@ TransmitResult SocketCanPort::transmit(const can::CanFrame& frame)
         return TransmitResult::Failed; // last_error() tells the fault
     }
     const auto now = std::chrono::steady_clock::now();
+    // The time of the oldest frame no receipt has answered, as it was before this frame (to put back if the write fails).
+    std::optional<std::chrono::steady_clock::time_point> unconfirmed_before;
     if (options_.transmit_timeout)
     {
         const std::lock_guard tx(tx_mutex_);
-        if (outstanding_ > 0 && now - progress_ > *options_.transmit_timeout)
+        // Nothing was sent for a whole timeout: a receipt the kernel never gave back (a queue emptied by a bus-off or an
+        // interface that went down, an overflow) must not make the next frames look stuck.
+        if (unconfirmed_since_ && now - last_attempt_ >= *options_.transmit_timeout)
+        {
+            unconfirmed_since_.reset();
+        }
+        last_attempt_ = now;
+        if (unconfirmed_since_ && now - *unconfirmed_since_ > *options_.transmit_timeout)
         {
             if (now - last_probe_ < *options_.transmit_timeout)
             {
                 return TransmitResult::Dropped;
             }
             last_probe_ = now; // a probe: one frame goes to the kernel to find out whether the bus works again
+        }
+        unconfirmed_before = unconfirmed_since_;
+        // Before the write: with a receipt that the kernel gives back inside write(), the thread may handle it first.
+        if (!unconfirmed_since_)
+        {
+            unconfirmed_since_ = now;
         }
     }
 
@@ -134,36 +152,39 @@ TransmitResult SocketCanPort::transmit(const can::CanFrame& frame)
     const int error = device_.write(raw);
     if (error == 0)
     {
-        if (options_.transmit_timeout)
-        {
-            const std::lock_guard tx(tx_mutex_);
-            if (outstanding_ == 0)
-            {
-                progress_ = now;
-            }
-            ++outstanding_;
-        }
         return TransmitResult::Ok;
     }
+    if (options_.transmit_timeout)
+    {
+        const std::lock_guard tx(tx_mutex_);
+        if (unconfirmed_since_ && unconfirmed_since_ == now)
+        {
+            unconfirmed_since_ = unconfirmed_before; // the frame did not go: it waits for no receipt
+        }
+    }
     const std::string name = std::strerror(error);
+    const std::string where = "sending on '" + device_.name() + "' failed: " + name;
     if (error == ENOBUFS || error == EAGAIN || error == EWOULDBLOCK)
     {
         return TransmitResult::QueueFull;
     }
     if (error == ENETDOWN)
     {
-        set_last_error("sending failed: " + name + " (the interface is down: sudo ip link set <interface> up)");
-        watch_requested_.store(true);
-        device_.wake(); // the thread looks at the interface now
+        set_last_error(where + " (the interface is down: sudo ip link set " + device_.name() + " up)");
+        if (link_.load() != LinkState::Down)
+        {
+            watch_requested_.store(true);
+            device_.wake(); // the thread looks at the interface now
+        }
     }
     else if (error == ENODEV || error == ENXIO)
     {
-        set_last_error("sending failed: " + name);
+        set_last_error(where);
         request_fault("the interface is gone (removed while the bridge ran): " + name);
     }
     else
     {
-        set_last_error("sending failed: " + name);
+        set_last_error(where);
     }
     return TransmitResult::Failed;
 }
@@ -239,14 +260,14 @@ void SocketCanPort::note_receipt()
     {
         return;
     }
+    // A receipt: the bus took a frame. Whatever else is waiting is not known to be stuck; the next frame starts the clock again.
+    forget_unconfirmed();
+}
+
+void SocketCanPort::forget_unconfirmed()
+{
     const std::lock_guard tx(tx_mutex_);
-    const auto now = std::chrono::steady_clock::now();
-    if (outstanding_ > 0)
-    {
-        // After a stuck period the frames the kernel lost are not counted any more.
-        outstanding_ = now - progress_ > *options_.transmit_timeout ? 0 : outstanding_ - 1;
-    }
-    progress_ = now;
+    unconfirmed_since_.reset();
 }
 
 bool SocketCanPort::watch()
@@ -268,6 +289,10 @@ bool SocketCanPort::watch()
     const LinkState now = info->up ? LinkState::Up : LinkState::Down;
     if (const LinkState before = link_.exchange(now); before != now && before != LinkState::Unknown)
     {
+        if (now == LinkState::Up && options_.transmit_timeout)
+        {
+            forget_unconfirmed(); // the kernel emptied the queue of the interface that went down
+        }
         report_warning(now == LinkState::Down
                            ? "interface " + info->name + " is down: frames are not sent or received until it is up again (sudo ip link set " +
                                  info->name + " up)"
@@ -311,6 +336,11 @@ void SocketCanPort::run(bool alive)
                 const ReadResult result = device_.read();
                 if (result.status == ReadStatus::Empty)
                 {
+                    if (i == 0)
+                    {
+                        // Woken to read, and there was nothing (a socket flag that stays set): do not spin on it.
+                        std::this_thread::sleep_for(kSpuriousWakePause);
+                    }
                     break;
                 }
                 if (result.status == ReadStatus::Error)

@@ -50,6 +50,7 @@ struct LinkMessages
     std::vector<CanInterfaceInfo> interfaces; ///< the CAN interfaces in it, in order
     bool done = false;                        ///< it holds NLMSG_DONE (or an error): the answer ends here
     std::string error;                        ///< the kernel's NLMSG_ERROR as text, or empty
+    int error_code = 0;                       ///< its errno (positive), or 0
 };
 
 /// Reads one datagram of the answer. Malformed parts are left out; nothing here throws.
@@ -58,6 +59,10 @@ struct LinkMessages
 /// The CAN interfaces of this computer, by name. Throws std::runtime_error (with the reason) where
 /// the kernel cannot be asked.
 [[nodiscard]] std::vector<CanInterfaceInfo> read_can_interfaces();
+
+/// The interface with index `index`, asked for by itself (RTM_GETLINK with the index, no dump), or nullopt where there
+/// is none, or it is not a CAN interface. Throws std::runtime_error where the kernel cannot be asked.
+[[nodiscard]] std::optional<CanInterfaceInfo> read_can_interface(unsigned index);
 
 /// The interface called `name`, or nullopt.
 [[nodiscard]] std::optional<CanInterfaceInfo> find_can_interface(std::string_view name);

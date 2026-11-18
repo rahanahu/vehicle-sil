@@ -54,6 +54,9 @@ class CanDevice
 public:
     virtual ~CanDevice() = default;
 
+    /// The interface's name, for messages.
+    [[nodiscard]] virtual const std::string& name() const noexcept = 0;
+
     /// Opens a raw CAN socket on the interface: classic frames only, the frames this socket sends
     /// come back marked (CAN_RAW_RECV_OWN_MSGS), error frames are received (CAN_RAW_ERR_FILTER),
     /// non-blocking. Throws std::runtime_error with the reason and the way to fix it.

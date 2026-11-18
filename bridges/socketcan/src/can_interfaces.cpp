@@ -241,6 +241,7 @@ LinkMessages parse_link_messages(Bytes datagram)
             if (code != 0)
             {
                 result.error = std::strerror(-code);
+                result.error_code = -code;
             }
             break;
         }

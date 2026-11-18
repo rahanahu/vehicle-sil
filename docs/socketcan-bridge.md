@@ -78,7 +78,8 @@ On a vcan interface, which has no bit rate, `--bitrate` is noted in a `warning:`
 - Every other frame is forwarded and counted in `ext_from_devices`, **including frames that other programs of this computer send on the interface** (`cansend`, `cangen`, another bridge's socket): they are the devices the bridge is for, on `vcan0` as on `can0`. The kernel marks them `MSG_DONTROUTE`; the bridge does not use the mark to leave them out.
 - Classic CAN only. CAN FD frames are not received (the bridge does not enable `CAN_RAW_FD_FRAMES`, so the kernel does not hand them to the socket and nothing counts them), and SIL Kit frames that are not classic CAN are counted in `silkit_rejected`. A DLC of 9..15 is sent as 8 bytes.
 - The kernel's receive queue of the socket can overflow on a busy bus without the bridge being told (`overruns` stays 0).
-- A full transmit queue of the interface (`ENOBUFS`) drops the frame and counts it in `ext_queue_full`. With `--tx-timeout-ms`, frames are dropped (`ext_tx_dropped`) while no receipt came for that long, and one frame in the same interval goes out as a probe; a receipt ends the drops.
+- A full transmit queue of the interface (`ENOBUFS`) drops the frame and counts it in `ext_queue_full`. With `--tx-timeout-ms`, frames are dropped (`ext_tx_dropped`) while the oldest frame without a receipt is older than that, and one frame in the same interval goes out as a probe; a receipt ends the drops. Only that time counts, never a count of frames, as in the Vector XL bridge: a receipt the kernel never gives back (its queue was emptied by a bus-off, or the receipt overflowed) is forgotten once the bridge sent nothing for the timeout, and when the interface comes up again.
+- `ext_tx_unsent` stays 0: the bridge does not learn of frames the kernel lost from its queue. The receipt (`MSG_CONFIRM`) comes after the frame reached the bus only where the driver echoes it; on a driver that does not (not verified), the receipt comes when the frame is handed over, so `own_tx_dropped` does not count frames that went out on the bus and `--tx-timeout-ms` does not see a stuck bus.
 
 ## Link line
 
@@ -96,7 +97,7 @@ The bridge asks for the error frames (`CAN_RAW_ERR_FILTER`) and reads the contro
 
 ## When the interface goes away
 
-`ENODEV` and `ENXIO` (an adapter unplugged, `ip link del`) and an interface that is gone or renamed at a look end the bridge: `FAIL: the interface is gone ...` and exit code 1. `vehicle_sil_launch` reports this as a lost connection.
+`ENODEV` and `ENXIO` (an adapter unplugged, `ip link del`) and an interface that is gone or renamed at a look end the bridge: `FAIL: the interface is gone ...` and exit code 1. Once the launcher starts this bridge from `--connect`, it will report this as a lost connection; for now it is the failure of a participant.
 
 ## Device in use by another bridge
 

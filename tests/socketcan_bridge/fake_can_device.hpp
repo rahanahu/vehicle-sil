@@ -6,7 +6,9 @@
 
 #include "vehicle_sil/socketcan/can_device.hpp"
 
+#include <atomic>
 #include <condition_variable>
+#include <functional>
 #include <deque>
 #include <mutex>
 #include <stdexcept>
@@ -18,6 +20,11 @@ class FakeCanDevice final : public socketcan::CanDevice
 public:
     // --- test controls
     bool fail_open = false;
+    /// Called inside write(), before it returns (the kernel gives a receipt back inside send() on vcan).
+    std::function<void()> on_write;
+    /// wait() says "readable" at once, though there is nothing to read (a flag of the socket that stays set).
+    std::atomic<bool> spurious_readable{false};
+    std::atomic<std::uint64_t> waits{0};
 
     void push_frame(const socketcan::RawFrame& frame)
     {
@@ -64,6 +71,7 @@ public:
     }
 
     // --- socketcan::CanDevice
+    const std::string& name() const noexcept override { return name_; }
     void open() override
     {
         const std::lock_guard lock(mutex_);
@@ -75,6 +83,11 @@ public:
     }
     socketcan::WaitResult wait(std::chrono::milliseconds timeout) override
     {
+        ++waits;
+        if (spurious_readable.load())
+        {
+            return socketcan::WaitResult::Readable;
+        }
         std::unique_lock lock(mutex_);
         cv_.wait_for(lock, timeout, [&] { return woken_ || !inbox_.empty(); });
         if (woken_)
@@ -97,6 +110,10 @@ public:
     }
     int write(const socketcan::RawFrame& frame) override
     {
+        if (on_write)
+        {
+            on_write();
+        }
         const std::lock_guard lock(mutex_);
         if (write_error_ == 0)
         {
@@ -133,6 +150,7 @@ private:
         cv_.notify_all();
     }
 
+    const std::string name_ = "vcan0";
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::deque<socketcan::ReadResult> inbox_;

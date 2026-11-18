@@ -20,9 +20,11 @@ struct SocketCanPortOptions
 {
     /// When no frame this port sent reached the bus (came back as a receipt) for this long, transmit()
     /// refuses new frames (TransmitResult::Dropped) until a receipt comes, so that frames do not
-    /// pile up in the kernel's queue and go out late in a burst. One frame still goes to the
-    /// kernel as a probe each time this long has passed, in case the queue lost the frames
-    /// waiting (a bus-off restart empties it). Unset: frames wait as long as it takes.
+    /// pile up in the kernel's queue and go out late in a burst. The time that counts is that of the oldest
+    /// frame no receipt has answered (as in the XL port), not a count of frames: a receipt the kernel never
+    /// gives back is forgotten once nothing was sent for this long, and when the interface comes up again.
+    /// One frame still goes to the kernel as a probe each time this long has passed. Unset: frames wait
+    /// as long as it takes.
     std::optional<std::chrono::milliseconds> transmit_timeout;
     /// How often the thread looks at the interface (up or down, still there, the controller's state).
     std::chrono::milliseconds watch_interval{250};
@@ -49,8 +51,8 @@ enum class LinkState
 /// Sending: Ok; ENOBUFS and EAGAIN (the queue of the interface is full) are QueueFull; ENETDOWN
 /// (the interface is down) is Failed and link_state() Down; ENODEV and ENXIO are Failed and a Fault.
 ///
-/// Threading: transmit() from any thread; the handler from the port's thread; start() and stop()
-/// from one thread at a time.
+/// Threading: transmit() from any thread; the handler from the port's thread, and from start() for the
+/// first look at the interface (before the thread runs); start() and stop() from one thread at a time.
 class SocketCanPort final : public can_bridge::ExternalCanPort
 {
 public:
@@ -78,6 +80,7 @@ private:
     void report_warning(const std::string& text);
     void report_bus_state(can_bridge::ExternalBusState::Level level, std::uint8_t tx_errors, std::uint8_t rx_errors);
     void note_receipt();
+    void forget_unconfirmed();
     void set_last_error(std::string text);
     void request_fault(std::string detail);
     [[nodiscard]] std::optional<std::string> requested_fault() const;
@@ -103,10 +106,11 @@ private:
     std::string last_error_;
     std::optional<std::string> requested_fault_;
 
-    // The transmit timeout: frames accepted that no receipt has answered.
+    // The transmit timeout: only the time of the oldest frame without a receipt counts, never a count of frames.
     std::mutex tx_mutex_;
-    std::uint64_t outstanding_ = 0;
-    std::chrono::steady_clock::time_point progress_;
+    /// When the oldest frame sent since the last receipt was handed to the kernel (before write(), as the XL port does).
+    std::optional<std::chrono::steady_clock::time_point> unconfirmed_since_;
+    std::chrono::steady_clock::time_point last_attempt_; ///< the last transmit(), whether it sent or not
     std::chrono::steady_clock::time_point last_probe_;
 };
 

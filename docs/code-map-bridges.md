@@ -107,7 +107,7 @@ One test uses a real participant with an in-process registry (on a free port). T
 | `interpret_error_frame()` | `socketcan/error_frame.hpp` |
 | The arguments | `socketcan/bridge_options.hpp` |
 
-- Threads: `SocketCanPort` has one thread that reads the socket and looks at the interface; `transmit()` comes from any thread and takes the device lock shared, `stop()` takes it exclusively before it closes the socket. A send that finds the interface gone or down only asks the thread to look (`watch_requested_`, `requested_fault_`): events come from the thread alone.
+- Threads: `SocketCanPort` has one thread that reads the socket and looks at the interface; `transmit()` comes from any thread and takes the device lock shared, `stop()` takes it exclusively before it closes the socket. A send that finds the interface gone or down only asks the thread to look (`watch_requested_`, `requested_fault_`): events come from the thread alone, except those of the first look at the interface, which `start()` makes before the thread runs.
 - Tests: `tests/socketcan_bridge` (`fake_can_device.hpp` there is the fake socket layer; the netns tests use the peer of `tests/vector_xl`)
 - `ctest -R`: `^socketcan_bridge\.`
 

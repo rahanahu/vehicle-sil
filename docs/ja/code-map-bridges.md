@@ -107,7 +107,7 @@ E2E で確認すること:
 | `interpret_error_frame()` | `socketcan/error_frame.hpp` |
 | 引数 | `socketcan/bridge_options.hpp` |
 
-- スレッド: `SocketCanPort` はソケットを読み、インターフェースを見るスレッドを 1 つ持ちます。`transmit()` は任意のスレッドから来て、デバイスのロックを共有で取ります。`stop()` はソケットを閉じる前に排他で取ります。送信がインターフェースの消失や down を見つけたときは、スレッドに見るよう頼むだけです（`watch_requested_`、`requested_fault_`）。イベントはスレッドだけが出します。
+- スレッド: `SocketCanPort` はソケットを読み、インターフェースを見るスレッドを 1 つ持ちます。`transmit()` は任意のスレッドから来て、デバイスのロックを共有で取ります。`stop()` はソケットを閉じる前に排他で取ります。送信がインターフェースの消失や down を見つけたときは、スレッドに見るよう頼むだけです（`watch_requested_`、`requested_fault_`）。イベントはスレッドだけが出します。ただし、スレッドが動く前に `start()` が行う最初の look のイベントは除きます。
 - テスト: `tests/socketcan_bridge`（`fake_can_device.hpp` が偽のソケットの層。netns の試験は `tests/vector_xl` のピアを使う）
 - `ctest -R`: `^socketcan_bridge\.`
 
