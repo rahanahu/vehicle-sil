@@ -63,9 +63,9 @@ struct FoundExecutable
 /// ".exe"). Without a match: resolve_executable()'s path.
 [[nodiscard]] FoundExecutable find_executable(std::string_view executable, const std::filesystem::path& base_dir);
 
-/// Looks at what is at `path` (resolve_executable()) and gives executable_finding() of it: an error
-/// if it is not an executable file of `participant`.
-[[nodiscard]] std::optional<Finding> check_executable(const ParticipantConfig& participant, const std::filesystem::path& path);
+/// What the file system has at `path` (resolve_executable()), looked at once: whether something is
+/// there, its type and its permissions. executable_finding() (config.hpp) judges it.
+[[nodiscard]] std::filesystem::file_status executable_status(const std::filesystem::path& path);
 
 namespace detail {
 /// `path` is a regular file that can be run (POSIX: one with an execute permission).

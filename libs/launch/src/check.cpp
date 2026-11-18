@@ -240,7 +240,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         const std::string written = expand_placeholders({p.command.front()}, "", "").front();
         const FoundExecutable found = find_executable(written, base);
         const std::filesystem::path& executable = found.path;
-        if (auto bad = check_executable(p, executable))
+        if (auto bad = executable_finding(p, executable, executable_status(executable)))
         {
             report.findings.push_back(std::move(*bad));
             result.status = ParticipantStatus::Failed;
