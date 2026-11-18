@@ -11,6 +11,8 @@
 //                resume, a refused step, speed, pause, stop; it stands still where it paused
 //   run_until_stdin run_until on stdin: runs to the time (rounded up), stands still there, a line without a time
 //                is refused
+//   state_on_arrival a step and a run_until that the simulation reaches: the look that finds it standing
+//                still writes the time event and then the state that says paused, before the next command
 //   paused_failures while it stands still: a process that ends fails the run, --timeout-ms aborts it,
 //                an interrupt stops it (the last time event says paused false each time),
 //                start_timeout_ms is not counted
@@ -321,6 +323,106 @@ void run_until_stdin(const Options& o)
     const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
     require(status && status->code == 130, "stopped while paused: 130");
     require(gone, "no participant is left");
+}
+
+void state_on_arrival(const Options& o)
+{
+    // As fast as possible, started paused. The simulation reaches the end of a step, and the time of a
+    // run_until, between two looks of the launcher. The look that finds it standing still writes the
+    // time event and, right after it, the state that says paused: a reader that sends its next command
+    // once the latest state says paused has both before that command's event.
+    const fs::path dir = one_ecu(o, "", "pid");
+    Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
+    const std::string stateEvent = "\"event\":\"state\"";
+    const auto says_paused = [](const std::string& state) { return contains(state, "\"paused\":true,\"holding\":"); };
+    // Waits for the time event that stands still at `ms`, then until the latest state says paused.
+    const auto stands_at = [&](std::int64_t ms) {
+        live.wait_for({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(ms) + ",", "\"paused\":true,"});
+        const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(120s);
+        while (true)
+        {
+            const std::vector<std::string> states = events_with(live.lines(), {stateEvent});
+            if (!states.empty() && says_paused(states.back()))
+            {
+                return;
+            }
+            require(std::chrono::steady_clock::now() < deadline,
+                    "the state does not say paused although the time event at " + std::to_string(ms) + " ms does");
+            std::this_thread::sleep_for(2ms);
+        }
+    };
+    stands_at(0);
+    live.write("{\"command\":\"step\",\"ms\":30,\"id\":1}\n");
+    stands_at(30);
+    live.write("{\"command\":\"run_until\",\"at_ms\":95,\"id\":2}\n");
+    stands_at(100);
+    live.write("{\"command\":\"resume\",\"id\":3}\n");
+    live.wait_for({"\"command\":\"resume\"", "\"accepted\":true,", "\"id\":3}"});
+    live.write("{\"command\":\"stop\"}\n");
+    const auto [status, lines] = live.finish();
+    const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
+    require(status && status->code == 130, "stopped by a command: 130");
+    require(gone, "no participant is left");
+    std::string all;
+    for (const auto& line : lines)
+    {
+        all += line.substr(0, 200) + "\n";
+    }
+    const auto at = [&lines](const std::vector<std::string>& parts, std::size_t from = 0) {
+        for (std::size_t i = from; i < lines.size(); ++i)
+        {
+            if (std::all_of(parts.begin(), parts.end(), [&](const std::string& p) { return contains(lines[i], p); }))
+            {
+                return i;
+            }
+        }
+        return lines.size();
+    };
+    const auto arrival = [&](const std::string& id, std::int64_t ms, const std::string& next) {
+        const std::size_t sent = at({"\"event\":\"command\"", "\"accepted\":true,", "\"id\":" + id + "}"});
+        const std::size_t time = at({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(ms) + ",", "\"paused\":true,"}, sent);
+        const std::size_t after = at({"\"event\":\"command\"", "\"id\":" + next + "}"}, sent);
+        require(sent < time && time < after && after < lines.size(),
+                "command " + id + ", the time event that stands still at " + std::to_string(ms) + " ms, command " + next + ":\n" + all);
+        // The states the command and the arrival made (none, if the simulation was there before the
+        // command's state was put together: the state before the command said paused, and still does).
+        std::vector<std::size_t> states;
+        for (std::size_t i = sent; i < after; ++i)
+        {
+            if (contains(lines[i], stateEvent))
+            {
+                states.push_back(i);
+            }
+        }
+        if (states.empty())
+        {
+            return;
+        }
+        // It goes (the command's state), then it stands still (the look's state, after the look's time
+        // event): one change each, so the rev goes up by one.
+        require(states.size() == 2 && !says_paused(lines[states[0]]) && states[0] < time && says_paused(lines[states[1]]) &&
+                    time < states[1],
+                "after command " + id + ": a state that goes, the time event at " + std::to_string(ms) +
+                    " ms, a state that says paused:\n" + all);
+        require(std::stoll(value_of(lines[states[1]], "rev")) == std::stoll(value_of(lines[states[0]], "rev")) + 1,
+                "the state that says paused is the next one (rev) after the state that goes:\n" + all);
+    };
+    arrival("1", 30, "2");
+    arrival("2", 100, "3");
+    // Whatever came between: the state before each next command says paused.
+    for (const std::string id : {"2", "3"})
+    {
+        const std::size_t next = at({"\"event\":\"command\"", "\"id\":" + id + "}"});
+        std::size_t last = lines.size();
+        for (std::size_t i = 0; i < next; ++i)
+        {
+            if (contains(lines[i], stateEvent))
+            {
+                last = i;
+            }
+        }
+        require(last < lines.size() && says_paused(lines[last]), "the state before command " + id + " says paused:\n" + all);
+    }
 }
 
 void speed_change(const Options& o)
