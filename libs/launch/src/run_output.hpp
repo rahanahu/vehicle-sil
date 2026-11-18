@@ -7,6 +7,8 @@
 #include "check_words.hpp"
 #include "run_context.hpp"
 
+#include "vehicle_sil/launch/run_detail.hpp"
+
 #include <chrono>
 #include <cstddef>
 #include <fstream>

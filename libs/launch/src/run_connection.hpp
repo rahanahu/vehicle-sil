@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
 // vehicle_sil_launch run: what one run has of SIL Kit, with the hub that it serves, as one thing
-// with one owner (Runner::run(), as RunConnection in run.cpp), which the closing thread takes over
+// with one owner (Runner::run(), as RunConnection in runner.hpp), which the closing thread takes over
 // at the end (Runner::close_connection()). No dependencies but run_close.hpp: the order and the
 // lifetime are tested as written, with parts that only note when they go.
 #pragma once

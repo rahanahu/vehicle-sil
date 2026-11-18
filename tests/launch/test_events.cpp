@@ -11,6 +11,7 @@
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
+#include "vehicle_sil/launch/command_input.hpp"
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/run.hpp"
 

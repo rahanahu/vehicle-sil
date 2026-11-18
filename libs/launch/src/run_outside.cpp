@@ -5,7 +5,7 @@
 // those add up to (OutsideState, with the bridges outside the run that share a device,
 // foreign_sharing()), and when the event "outside" goes out (OutsideNote). Pure: no
 // clock, no thread, no lock. RunOutput calls them under its mutex.
-#include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/run_detail.hpp"
 
 #include "check_words.hpp"
 

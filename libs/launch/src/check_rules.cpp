@@ -1033,7 +1033,7 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
                 p.name, network.name);
         }
     }
-    // The variables: whether vehicle_sil_launch run can read and write them (run.hpp, ControlLink).
+    // The variables: whether vehicle_sil_launch run can read and write them (run_outcome.hpp, ControlLink).
     if (ecu.has_variables())
     {
         const auto& offer = ecu.control();

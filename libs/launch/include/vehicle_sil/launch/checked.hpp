@@ -17,6 +17,9 @@ namespace vehicle_sil::launch {
 
 struct RunRequest; // request.hpp
 
+/// The version of the JSON that format_json() writes (its "vehicle_sil_check" key).
+inline constexpr int kCheckFormat = 1;
+
 /// What check_file() returns: the check of the configuration, with the scenario of --scenario.
 /// The findings of the scenario are in CheckReport::findings (with Finding::file set), so that the
 /// counts, the exit code and the order stay one: `scenario` only says what was read. A run, a test

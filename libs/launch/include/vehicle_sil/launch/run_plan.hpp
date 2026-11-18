@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
 //
-// What is settled about a run before it begins (RunPlan), made from the check that passed and
-// what the caller asked for (plan_run()), and the outcome a run begins with (planned_outcome()).
+// What is settled about a run before it begins (RunPlan), made from the check that passed, what
+// the caller asked for and the run's waits (RunLimits) by plan_run(), and the outcome a run begins
+// with (planned_outcome()).
 // Values and pure functions: no state, no thread, no lock, nothing that the run calls back.
 #pragma once
 
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/config.hpp"
-#include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/run_outcome.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
 #include "vehicle_sil/launch/scenario_check.hpp"
 #include "vehicle_sil/launch/time_plan.hpp"
@@ -20,6 +21,32 @@
 #include <vector>
 
 namespace vehicle_sil::launch {
+
+/// How long a bridge of --connect may report the link or the bus down before the launcher stops the
+/// run (RunLimits::outside_lost_after).
+inline constexpr std::chrono::milliseconds kOutsideLostAfter{30000};
+/// With --strict: how long a bridge of --connect may share its device with a bridge that is not of
+/// this run before the launcher stops the run (OutsideState::shared_for()). A bridge that another
+/// run started later and that ends before its ECUs start must not take this run down with it.
+inline constexpr std::chrono::milliseconds kOutsideSharedAfter{3000};
+/// With --strict: the longest the launcher waits, after the bridges run, for the first link line of
+/// each, which says whether the device is shared and comes before the bridge starts its lifecycle.
+/// A bridge that has not said by then is taken as one that shares nothing.
+inline constexpr std::chrono::milliseconds kOutsideFirstLineWait{2000};
+
+/// The waits of a run that no user sets: only tests make them shorter.
+struct RunLimits
+{
+    /// How often the launcher looks at the participants and the simulation.
+    std::chrono::milliseconds poll{20};
+    /// How long a bridge of --connect may report the link or the bus down (link=down, bus=bus-off)
+    /// before the launcher stops the run as for a bridge that ended (OutsideState::lost()).
+    std::chrono::milliseconds outside_lost_after = kOutsideLostAfter;
+    /// How long the start waits for the hello of each required ECU that describes variables and
+    /// offers them in the launcher's version of the messages (it is there before the wait begins,
+    /// by the order in which SIL Kit sets the participants up: the limit is a last line).
+    std::chrono::milliseconds control_hello_timeout{5000};
+};
 
 /// What the plan knows of one participant of the run beside its entry in the configuration: what
 /// the run itself adds to the file. The configuration (ParticipantConfig) is what the file says.

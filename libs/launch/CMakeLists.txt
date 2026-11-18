@@ -13,7 +13,9 @@ add_library(vehicle_sil_launch_lib STATIC
   src/check_connect.cpp
   src/check_format.cpp
   src/check_networks.cpp
+  src/check_report.cpp
   src/check_rules.cpp
+  src/command_input.cpp
   src/config.cpp
   src/connect.cpp
   src/connections.cpp
@@ -23,6 +25,7 @@ add_library(vehicle_sil_launch_lib STATIC
   src/events.cpp
   src/host_addresses.cpp
   src/probe.cpp
+  src/reported_networks.cpp
   src/request.cpp
   src/request_read.cpp
   src/run.cpp
@@ -30,6 +33,7 @@ add_library(vehicle_sil_launch_lib STATIC
   src/run_connect.cpp
   src/run_control.cpp
   src/run_controls.cpp
+  src/run_file.cpp
   src/run_format.cpp
   src/run_notes.cpp
   src/run_output.cpp
@@ -62,7 +66,7 @@ add_library(vehicle_sil_launch_lib STATIC
 add_library(vehicle_sil::launch ALIAS vehicle_sil_launch_lib)
 target_include_directories(vehicle_sil_launch_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::ecu vehicle_sil::process)
-# The simulation time (run.hpp: TimeCommands::wait_paused()); no SIL Kit.
+# The simulation time (time_commands.hpp: TimeCommands::wait_paused()); no SIL Kit.
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::sim_base)
 # The public headers include control's (hub.hpp, agent.hpp, variable_map.hpp).
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::control)

@@ -2,7 +2,9 @@
 //
 // What a run tells of itself while it lasts: the interface the parts of a run call (RunEvents),
 // and the values they pass. The run does not know how this is written: the events of
-// `run --events` (EventStream, events.hpp) are one implementation. Internal.
+// `run --events` (EventStream, events.hpp) are one implementation. Also the caller's functions
+// that the run calls back (RunObservers), and where a control server listens (ControlServerInfo).
+// Internal.
 #pragma once
 
 #include "vehicle_sil/launch/config.hpp"
@@ -11,13 +13,21 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+namespace vehicle_sil::control {
+class Hub;
+} // namespace vehicle_sil::control
+
 namespace vehicle_sil::launch {
+
+class EventStream;
 
 /// The event "time": the virtual time and how it keeps up. Whether the simulation stands still and
 /// the speed set are in the event "state" (RunState), not here.
@@ -112,6 +122,50 @@ public:
     /// tell that only the time has moved while some wait: a reader that falls behind is not
     /// given up because of them.
     [[nodiscard]] virtual std::size_t waiting_events() const = 0;
+};
+
+/// Where the run's control server listens (ControlEndpoint::start()).
+struct ControlServerInfo
+{
+    /// host:port with the port it actually listens on (also for port 0).
+    std::string address{};
+    bool tls = false;
+    /// Every call needs a token of the server's credentials.
+    bool credentials = false;
+};
+
+/// What a run tells while it lasts, and the one thing it lets its caller do: the caller's
+/// functions, which the run calls back. A run keeps its own copy.
+struct RunObservers
+{
+    /// Writes one line (without its end) for the person watching: the participants' output as
+    /// "[<name>] <line>", the launcher's own as "[vehicle_sil_launch] <text>". Called from several
+    /// threads, one call at a time. Not called when `events` is set.
+    std::function<void(std::string_view line)> write_line{};
+    /// run --events: what happens, as events (events.hpp) instead of write_line(): the phases, the
+    /// check, the participants, the lines, the run's findings, the virtual time. run_file() writes
+    /// every event but hello and the result (the caller writes them). No call waits for the
+    /// reader of the events. May be null. Borrowed: it outlives run_file(). run_file() calls the
+    /// stream itself (the check, the phases, the state); the parts of the run are given it as
+    /// the interface they know (RunEvents, run_events.hpp) and do not read this member.
+    EventStream* events = nullptr;
+    /// The name of the first interrupt ("SIGINT"), for the result and, without RunLent::controls,
+    /// for the state events (RunControls::set_stop_name()). Called from any thread that changes the
+    /// run's state (the run's own, a control server's, the hold's), under the time commands' mutex,
+    /// and by run_file() for the result: safe from several threads, short, no wait, no call into
+    /// the run or its controls.
+    std::function<std::string()> interrupt_name{};
+    /// Called in the window before the start (SimulationController::set_start_window()), on a
+    /// thread of the controller, after the wait for the agents' hellos: every participant waits
+    /// before its first step, and a write that an agent accepts now (control::Hub::write(),
+    /// wait_queued()) takes effect in its step at 0. The simulation starts when it returns. If it
+    /// throws, the launcher aborts the simulation as soon as it has started
+    /// (OutcomeStart::before_start_error). Not called if the start was given up before the window.
+    /// `hub`: the run's hub (never null), which the ECUs' control agents connect to over SIL Kit,
+    /// on the controller's participant. The run makes it. A caller that keeps the pointer may use
+    /// the hub from any thread while the simulation runs and after run_file() has returned (it
+    /// then holds what the agents said last).
+    std::function<void(const std::shared_ptr<control::Hub>& hub)> before_start{};
 };
 
 } // namespace vehicle_sil::launch

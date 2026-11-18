@@ -5,7 +5,7 @@
 // result, the logs, the events, the processes) has them without a list of its own. How they are
 // started and when they stop the run: run.cpp, run_participants.cpp, run_start.cpp and
 // run_watch.cpp; their findings: run_assess.cpp.
-#include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/run_detail.hpp"
 
 #include <algorithm>
 #include <utility>

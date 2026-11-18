@@ -3,7 +3,7 @@
 // What a run's outcome means: the findings (assess_run()). Pure functions of the configuration and
 // the RunOutcome: no state, no thread, no lock. The counts, the result and the exit code of the
 // report are in run_report.cpp.
-#include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/run_outcome.hpp"
 
 #include "check_words.hpp"
 #include "run_words.hpp"
@@ -12,6 +12,7 @@
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
 #include "vehicle_sil/launch/connect.hpp"
+#include "vehicle_sil/launch/run_detail.hpp"
 
 #include <algorithm>
 #include <cmath>

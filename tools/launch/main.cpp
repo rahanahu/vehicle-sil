@@ -35,6 +35,7 @@
 #include "vehicle_sil/cli/utf8.hpp"
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/checked.hpp"
+#include "vehicle_sil/launch/command_input.hpp"
 #include "vehicle_sil/launch/connections.hpp"
 #include "vehicle_sil/launch/error_result.hpp"
 #include "vehicle_sil/launch/events.hpp"
