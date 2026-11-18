@@ -27,6 +27,9 @@ type Cell =
   | {
       kind: 'widget';
       key: string;
+      /** 部品を作るまで代わりに出す名前（部品の見出しと同じ）。 */
+      name: string;
+      widget: WidgetKind;
       component: Type<unknown>;
       inputs: Record<string, unknown>;
     }
@@ -37,7 +40,8 @@ type Cell =
  * ダッシュボードを描く: まとまりごとに見出しと部品を、幅に合わせて並べる。描くのは DashboardSpec だけで、
  * どこから来たか（変数の一覧から自動で作った、ファイルから読んだ）は問わない。部品の種類が変数に合わなければ
  * （checkItem）、その場所に理由を出し、ほかの部品は描く。畳んだまとまり（collapsed）は、開くまで部品を作らない
- * （値も受け取らない）。部品は、見えている間だけ値を watch する。
+ * （値も受け取らない）。開いたまとまりの部品も、画面に近づいてから作る（@defer の viewport。それまでは変数の名前だけの
+ * 枠を置く。ページ内検索で名前が見つかる）。部品は、見えている間だけ値を watch する。
  */
 @Component({
   selector: 'app-dashboard-view',
@@ -73,10 +77,21 @@ type Cell =
               @if (cell.kind === 'panel') {
                 <app-panel-host [panel]="cell.panel" [modules]="modules()" />
               } @else if (cell.kind === 'widget') {
-                <ng-container
-                  [ngComponentOutlet]="cell.component"
-                  [ngComponentOutletInputs]="cell.inputs"
-                />
+                <!-- 部品は、画面に近づいてから作る（変数が数千あっても、画面に入るのが重くならない） -->
+                @defer (on viewport({ rootMargin: '100% 0px' })) {
+                  <ng-container
+                    [ngComponentOutlet]="cell.component"
+                    [ngComponentOutletInputs]="cell.inputs"
+                  />
+                } @placeholder {
+                  <div
+                    class="placeholder"
+                    data-testid="widget-placeholder"
+                    [attr.data-widget]="cell.widget"
+                  >
+                    <span class="name">{{ cell.name }}</span>
+                  </div>
+                }
               } @else {
                 <p class="problem" data-testid="widget-problem">
                   <span class="name">{{ cell.name }}</span>
@@ -136,6 +151,35 @@ type Cell =
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
       gap: var(--app-space-3);
+    }
+
+    /* 作る前の部品の代わり: 部品の枠と同じ形と、おおよその高さ（作ったときに並びが大きく動かないように） */
+    .placeholder {
+      box-sizing: border-box;
+      min-block-size: 7rem;
+      padding: var(--app-space-3);
+      border: 1px solid var(--mat-sys-outline-variant);
+      border-radius: var(--mat-sys-corner-medium);
+      background: var(--mat-sys-surface);
+      min-inline-size: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .placeholder[data-widget='select'] {
+      min-block-size: 7.75rem;
+    }
+
+    .placeholder[data-widget='number'] {
+      min-block-size: 10.5rem;
+    }
+
+    .placeholder[data-widget='slider'],
+    .placeholder[data-widget='graph'] {
+      min-block-size: 12.25rem;
+    }
+
+    .placeholder .name {
+      font: var(--mat-sys-title-small);
     }
 
     .problem {
@@ -208,6 +252,8 @@ export class DashboardView {
         return {
           kind: 'widget',
           key,
+          name: item.label ?? item.name,
+          widget: item.widget as WidgetKind,
           component: WIDGETS[item.widget as WidgetKind],
           inputs: {
             ref: { peer: item.peer, name: item.name },

@@ -107,7 +107,7 @@
 | `ethernet-duplicate-mac` | エラー | 1 つのイーサネットのネットワークで、2 つ以上の participant が同じ MAC アドレスを `--describe` に出力しています。 | participant ごとに別のアドレスにします（`eth::ChannelOptions::mac` と、送信するフレームの送信元のアドレス）。 |
 | `ethernet-mac-unknown` | 注記 | イーサネットのネットワークに、MAC アドレスを `--describe` に出力しない participant がいます。 | `ethernet()` にアドレスを渡す（`eth::ChannelOptions::mac`）か、アドレスが重ならないことを自分で確認します。 |
 | `unused-network` | 警告（`describe: false` の participant がいるときは注記） | どの participant も使わないネットワークです。 | ネットワークを削除するか、ECU の側のネットワーク名を確認します。 |
-| `single-participant` | 警告（`describe: false` の participant がいるときは注記） | participant が 1 つだけのネットワークです（送信したものを誰も受信しない）。 | そのネットワークのほかの participant を追加するか、ネットワークを削除します。 |
+| `single-participant` | 警告（`describe: false` の participant がいるとき、またはネットワークに `external` があるときは注記） | participant が 1 つだけのネットワークです（送信したものを誰も受信しない）。 | そのネットワークのほかの participant を追加するか、ネットワークを削除します。外の機器とだけ話すネットワークなら、外につないで走らせます（`external` で何を通すかを書けます）。 |
 | `test-participant-talks-on-bridged-network` | 警告 | `role: test` で J1939 のノードを持つ participant と、ブリッジが、同じネットワークにいるかもしれません。 | その participant をそのネットワークでは受信だけにする（J1939 のノードを作らない）か、その実行ではブリッジを無効にします。 |
 | `connect-network` | 誤り | `--connect` が、`networks` にないネットワークを指しています。 | 名前を直します（指摘の文が近い名前を出します）。名前に `=` を含むネットワークはつなげないので、名前を変えます。 |
 | `connect-network-unused` | 注記 | 要求ファイル（`--request`）の `connect` が、`networks` にないネットワークを指しています。そのネットワークは外します。つながず、時間のロックもかけません。 | そのファイルをほかの設定ファイルでも使うなら、直すものはありません。そうでなければ、要求ファイルの名前を直します。 |
@@ -178,7 +178,7 @@
 | `test-participant-talks-on-bridged-network` | その participant の送信とアドレスの要求（Address Claimed）が、実機のバスに出ます。 |
 | `test-participant-talks-on-bridged-network` | 指摘の文は、ブリッジが確かにいるのか、いるかもしれないのかと、直し方を言います（[テスト用の participant とブリッジ](simulation-config.md#テスト用の-participant-とブリッジrole)）。 |
 | `test-participant-talks-on-bridged-network` | `--connect` でつなぐネットワークにも、ブリッジがいます。そのときの指摘の文は、その participant を使う実行では `--connect` を外すように言います。 |
-| `single-participant` | `--connect` でつなぐネットワークでは出ません。ブリッジを participant として数えます。participant のいないつなぐネットワークは、今までどおり `unused-network` です。 |
+| `single-participant` | `--connect` でつなぐネットワークでは出ません。ブリッジを participant として数えます。`external` があるネットワークをつながない実行では注記になります（その実行では送ったものを誰も受信しないが、つなぐ実行では外の相手が受信するため）。participant のいないつなぐネットワークは、今までどおり `unused-network` です。 |
 | `connect-*` | `--connect` のときだけです（[simulation-config.md](simulation-config.md#ネットワークを外につなぐexternal--connect)「ネットワークを外につなぐ」）。照合だけの誤りと警告で、照合はアダプターもチャンネルも開きません。`run` の照合にもあるので、警告は何かを起こす前に `run --strict` を失敗させます。ブリッジを動かしてからの `run` の指摘は `connect-failed` と `connect-lost` です（[simulation-run.md](simulation-run.md#バスを外につなぐ--connect)「バスを外につなぐ」）。 |
 | `connect-filter` | 説明を読めない participant（`failed`、`skipped`）がいる間は出しません。先にその誤りを直します。無効の participant と、`role: bridge`、`role: test` の participant は数えません。既定の絞り込みが通すのは ECU のフレームだけです。 |
 | `connect-tool-failed` | 指摘の文は、コマンドと、ブリッジの行（`[eth-bridge]` などの札の後が `error:` か `FAIL` で始まる最後の行、なければ最後の行）を出します。別の版を答えるブリッジには、`<tool> was built from vehicle-sil <X>; this launcher is <Y>` と言います（版を答えないブリッジは `unknown`）。比べるのは `--connect` が起こすブリッジだけです。YAML の `role: bridge` の participant は作者のもので、別のリリースで作られていてもかまいません。照合がブリッジを走らせるのは、そのネットワークの `--connect` にほかの誤りがなく、有効な participant の説明をすべて読めたときだけです（読めないと、通すフレームが決まらないため）。終了状態 `0xC0000135`、`0xC0000139`（DLL のために Windows がブリッジを起動しなかった）は、そう言います。`vehicle_sil_vector_xl_bridge` では、文が `vxlapi64.dll` を名指しします。 |
@@ -198,7 +198,7 @@
 
 **`unknown-network`**: 指摘の文は、同じ種類のネットワークで、その participant が使わず、ほかの participant が使うものがあれば、それを名指しします（`networks` にあるものも、ないものも）。そのうえで、1 つのバスのつもりなら、その participant に書く `network_names` の行（`network_names: { J1939_CAN: VehicleCAN }`。向きは「シミュレーションの名前: 実行ファイルの名前」。実行ファイルは変えない）を、別のバスなら `networks` に追加することを言います。挙げたネットワークがどれも `networks` にないときは、先に名前を 1 つ決めて `networks` に追加することを言います。名指しするネットワークがなければ、`networks` に追加することを先に言います。`network_names` で名前を替えたネットワークは、替えた後の名前で比べます。
 
-**`single-participant`**: `role: test` の participant は数えません。そのため、ECU が 1 つとテスト用の participant（受信するだけの spy など）のネットワークでも、テスト用の participant だけのネットワークでも出ます。同じ種類のほかのネットワークにも、別の ECU が 1 つだけいるときは、指摘の文はそのネットワークを挙げ、1 つのバスのつもりなら、片方の名前を `networks` から削除して、その ECU に書く `network_names` の行を言います。
+**`single-participant`**: `external` があるネットワークは、外につなぐために書かれているので、外の相手がもう一方になります。つながない実行では注記になり、その旨を言います。直し方は、ネットワークを外につなぐことです（[ネットワークを外につなぐ](simulation-config.md#ネットワークを外につなぐexternal--connect) を参照）。SIL Kit だけで走らせるつもりの実行では、そのままで構いません。`role: test` の participant は数えません。そのため、ECU が 1 つとテスト用の participant（受信するだけの spy など）のネットワークでも、テスト用の participant だけのネットワークでも出ます。同じ種類のほかのネットワークにも、別の ECU が 1 つだけいるときは、指摘の文はそのネットワークを挙げ、1 つのバスのつもりなら、片方の名前を `networks` から削除して、その ECU に書く `network_names` の行を言います。
 
 **`ethernet-duplicate-mac`**: 指摘の文は、participant とアドレスを言います。同じアドレスをわざと使う設定（待機系と現用系など）では、1 つを残して、ほかの participant の `eth::ChannelOptions::mac` を渡さずにおきます。そうすると、`ethernet-mac-unknown` の注記だけになります。ただし、`mac` のないチャネルは `Accept::Addressed` を使えません。同じステップで送信したフレームの順は、SIL Kit では実行ごとに変わりえます。
 
@@ -610,7 +610,7 @@ participants:
       "line": 3,
       "participant": null,
       "network": "J1939_CAN",
-      "message": "network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it",
+      "message": "network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)",
       "detail": null
     }
   ]

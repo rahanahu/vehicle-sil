@@ -96,6 +96,11 @@ mat-card-content {
   margin: 0;
 }
 
+.connect-summary {
+  margin: 0 0 var(--app-space-3);
+  overflow-wrap: anywhere;
+}
+
 .action-error {
   margin: 0 0 var(--app-space-3);
   color: var(--mat-sys-error);
