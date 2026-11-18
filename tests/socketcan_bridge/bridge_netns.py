@@ -5,8 +5,9 @@ network namespace of a user namespace (as tests/ethernet_bridge/bridge_netns.py 
 registry and the SIL Kit peer of the Vector XL bridge's tests inside. The "device outside" is this script, with raw
 CAN sockets of its own.
 
-  bridge_netns.py --scenario <roundtrip|link|refused|shared> --bridge <vehicle_sil_socketcan_bridge>
+  bridge_netns.py --scenario <roundtrip|link|refused|shared|launch> --bridge <vehicle_sil_socketcan_bridge>
                   --peer <vehicle_sil_vector_xl_it_peer> --registry <sil-kit-registry>
+                  [--launch <vehicle_sil_launch> --ecu <vehicle_sil_engine_ecu>]   (launch)
 
 roundtrip  every frame of the peer's matrix (11 and 29 bit identifiers, DLC 0..8, remote frames, DLC 15) reaches a
            device on vcan0 unchanged, which answers each (inverted bytes, or 0,1,2,... for a remote frame), and the
@@ -20,6 +21,10 @@ refused    exit code 3 with the reason and the way to fix it: no such interface,
            registry. --list-channels (text and JSON); a bridge that stops on SIGTERM ends with exit code 0.
 shared     a second bridge on the same interface: both warn, the link lines say shared and the peers, the list
            says the interface is in use; when the second one ends, shared is 0 again.
+launch     vehicle_sil_launch run --connect J1939_CAN=vcan0 starts the bridge itself (found on PATH; the target has no
+           prefix and is not an XL channel, so the launcher takes the socketcan backend) beside the engine ECU of
+           examples/ecu_main. The ECU's frames reach a device on vcan0, a frame of the device reaches the run (the bridge's
+           statistics line counts both); the launcher stopped the bridge with exit code 0 at the end.
 
 Exit code 77 (skipped), with the reason, where this cannot be made:
  - no user namespaces (not Linux; no unshare or ip; unprivileged user namespaces turned off): a failure instead
@@ -102,7 +107,8 @@ def outer(args: argparse.Namespace) -> None:
         skip_no_namespace("unshare -Urnm fails, so unprivileged user namespaces are turned off here (for example "
                           "kernel.apparmor_restrict_unprivileged_userns=1): " + (probe.stderr.strip() or f"exit {probe.returncode}"))
     run = subprocess.run(["unshare", "-Urnm", "--propagation", "private", sys.executable, os.path.abspath(__file__), "--inner",
-                          "--scenario", args.scenario, "--bridge", args.bridge, "--peer", args.peer, "--registry", args.registry],
+                          "--scenario", args.scenario, "--bridge", args.bridge, "--peer", args.peer, "--registry", args.registry,
+                          *(["--launch", args.launch, "--ecu", args.ecu] if args.scenario == "launch" else [])],
                          timeout=600 * SCALE)
     sys.exit(run.returncode)
 
@@ -468,6 +474,93 @@ def shared(world: World) -> None:
     say("shared: when the second bridge ended, the first one's shared went back to 0")
 
 
+def launch(world: World) -> None:
+    make("ip", "link", "add", "vcan0", "type", "vcan")
+    make("ip", "link", "set", "vcan0", "up")
+    device = world.device("vcan0")
+    # The device reads what the simulation sends, and sends a frame of its own now and then (a 29-bit one, as a J1939
+    # device would).
+    from_simulation: list[int] = []
+    stop = threading.Event()
+
+    def listen() -> None:
+        while not stop.is_set():
+            try:
+                raw = device.s.recv(FRAME.size)
+            except (socket.timeout, TimeoutError):
+                continue
+            except OSError:
+                return
+            can_id, length, _ = FRAME.unpack(raw)
+            if can_id & CAN_EFF_FLAG:
+                from_simulation.append(can_id & 0x1FFFFFFF)
+
+    def talk() -> None:
+        while not stop.wait(0.2):
+            try:
+                device.send(0x18FEF1F9 & 0x1FFFFFFF, b"\x01\x02\x03\x04", extended=True)
+            except OSError:
+                return
+
+    threads = [threading.Thread(target=listen, daemon=True), threading.Thread(target=talk, daemon=True)]
+    for t in threads:
+        t.start()
+    with open(os.path.join(world.work, "sim.yaml"), "w", encoding="utf-8") as f:
+        f.write("vehicle_sil_simulation: 1\n"
+                "stop_at_ms: 3000\n"
+                "speed: 1\n"
+                "registry_uri: silkit://127.0.0.1:0\n"
+                "networks:\n"
+                "  - name: J1939_CAN\n"
+                "    kind: can\n"
+                "participants:\n"
+                "  - name: Engine\n"
+                f"    command: [{json.dumps(world.args.ecu)}]\n"
+                "    step_ms: 10\n")
+    # The launcher finds the bridge on PATH (it is not next to vehicle_sil_launch in the build).
+    env = dict(os.environ, PATH=os.path.dirname(world.bridge_path) + os.pathsep + os.environ.get("PATH", ""))
+    run = subprocess.Popen([world.args.launch, "run", "--events", "--log-dir", "logs", "--connect", "J1939_CAN=vcan0", "sim.yaml"],
+                           cwd=world.work, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           text=True, start_new_session=True)
+    try:
+        text, _ = run.communicate(timeout=4 * WAIT)
+    except subprocess.TimeoutExpired:
+        os.killpg(run.pid, signal.SIGKILL)
+        fail("the run did not end:\n" + (run.communicate()[0] or ""))
+    finally:
+        stop.set()
+        for t in threads:
+            t.join(5)
+    events = [json.loads(line) for line in text.splitlines() if line.startswith("{\"event\":")]
+    results = [e["result"] for e in events if e["event"] == "result"]
+    check(run.returncode == 0 and len(results) == 1, f"the run ends with exit code 0 (not {run.returncode}):\n{text}")
+    result = results[0]
+    outside = result["outside"]
+    check(len(outside) == 1 and {k: outside[0][k] for k in ("network", "target", "participant")}
+          == {"network": "J1939_CAN", "target": "vcan0", "participant": "bridge.J1939_CAN"},
+          f"the result says where J1939_CAN was connected:\n{outside}")
+    check(isinstance(outside[0]["to_outside"], int) and outside[0]["to_outside"] >= 1
+          and isinstance(outside[0]["from_outside"], int) and outside[0]["from_outside"] >= 1,
+          f"the result counts the frames to the device and from it:\n{outside}")
+    check(len(from_simulation) >= 1, f"the frames of the ECU reached the device on vcan0 ({len(from_simulation)} seen):\n{outside}")
+    # The bridge's last statistics line (in its log): the frames of the device came in, and the ECU's frames went out.
+    with open(os.path.join(world.work, "logs", "bridge.J1939_CAN.log"), encoding="utf-8") as f:
+        logged = [line for line in f.read().splitlines() if "] stats " in line]
+    check(logged != [], f"the bridge's log has its statistics line:\n{text}")
+    stats = dict(pair.split("=") for pair in logged[-1].split("] stats ", 1)[1].split())
+    check(int(stats["silkit_to_ext"]) >= 1 and int(stats["ext_from_devices"]) >= 1,
+          f"the bridge forwarded the ECU's frames to the device and the device's frames to the run: {stats}")
+    bridge = [p for p in result["participants"] if p["name"] == "bridge.J1939_CAN"]
+    check(len(bridge) == 1 and bridge[0]["for_network"] == "J1939_CAN" and bridge[0]["ended"] == "stopped"
+          and bridge[0]["exit_code"] == 0, f"the launcher stopped the bridge at the end, with exit code 0:\n{bridge}")
+    started = [e for e in events if e["event"] == "participant" and e.get("name") == "bridge.J1939_CAN" and e["state"] == "started"]
+    check(len(started) == 1 and started[0]["command"][0] == world.bridge_path
+          and started[0]["command"][1:5] == ["--network", "J1939_CAN", "--interface", "vcan0"],
+          f"the launcher started the SocketCAN bridge of PATH on vcan0:\n{started}")
+    say(f"launch: run --connect J1939_CAN=vcan0 started the SocketCAN bridge; {len(from_simulation)} frames reached the device "
+        f"and {stats['ext_from_devices']} of its frames reached the run")
+
+
 def inner(args: argparse.Namespace) -> None:
     # As root of the user namespace. A /tmp of its own: SIL Kit's local-domain sockets are paths there.
     r = subprocess.run(["mount", "-t", "tmpfs", "none", "/tmp"], capture_output=True, text=True)
@@ -478,7 +571,7 @@ def inner(args: argparse.Namespace) -> None:
         skip_no_namespace("ip link set lo up: " + (r.stderr.strip() or f"exit {r.returncode}"))
     world = World(args)
     try:
-        {"roundtrip": roundtrip, "link": link, "refused": refused, "shared": shared}[args.scenario](world)
+        {"roundtrip": roundtrip, "link": link, "refused": refused, "shared": shared, "launch": launch}[args.scenario](world)
     finally:
         world.end()
     say("PASS")
@@ -486,13 +579,18 @@ def inner(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--scenario", required=True, choices=("roundtrip", "link", "refused", "shared"))
+    parser.add_argument("--scenario", required=True, choices=("roundtrip", "link", "refused", "shared", "launch"))
     parser.add_argument("--bridge", required=True, help="vehicle_sil_socketcan_bridge")
     parser.add_argument("--peer", required=True, help="vehicle_sil_vector_xl_it_peer")
     parser.add_argument("--registry", required=True, help="sil-kit-registry")
+    parser.add_argument("--launch", help="vehicle_sil_launch (launch)")
+    parser.add_argument("--ecu", help="vehicle_sil_engine_ecu (launch)")
     parser.add_argument("--inner", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.scenario == "launch" and not (args.launch and args.ecu):
+        parser.error("--scenario launch needs --launch and --ecu")
     args.bridge, args.peer, args.registry = (os.path.abspath(p) for p in (args.bridge, args.peer, args.registry))
+    args.launch, args.ecu = (os.path.abspath(p) if p else p for p in (args.launch, args.ecu))
     if args.inner:
         inner(args)
     else:

@@ -48,6 +48,7 @@ const stateEvent = (
   rev,
   phase: 'running',
   paused: false,
+  paused_at_ms: null,
   holding: false,
   speed: 1,
   pacing: 'on-time',
@@ -58,20 +59,20 @@ const stateEvent = (
   ...more,
 });
 
-const pausedState = (rev: number) =>
+/** A state that says paused; `at`: where (`paused_at_ms`; null: the simulation has not come to a stand yet). */
+const pausedState = (rev: number, at: number | null = null) =>
   stateEvent(
     rev,
-    { paused: true },
+    { paused: true, paused_at_ms: at },
     { pause: ok, resume: ok, step: { ...ok, min_ms: 10, max_ms: 5000 } },
   );
 
-const timeEvent = (seq: number, simMs: number, paused: boolean) => ({
+/** A `time` event: where virtual time is (whether it stands still is the state's to say). */
+const timeEvent = (seq: number, simMs: number) => ({
   event: 'time',
   seq,
   t_ms: seq,
   sim_ms: simMs,
-  speed: 1,
-  paused,
   actual_speed: 1,
 });
 
@@ -236,7 +237,7 @@ describe('the front door', () => {
         replay: null,
       },
       event(state),
-      event(timeEvent(30, 500, (state as { paused: boolean }).paused)),
+      event(timeEvent(30, 500)),
       { type: 'synced', session: 1, last_seq: 40 },
     );
     return rig;
@@ -308,7 +309,7 @@ describe('the front door', () => {
     it('keeps the same object while nothing changed', async () => {
       const rig = await running();
       const before = [rig.front.status.get(), rig.front.controls.get(), rig.front.clock.get()];
-      await rig.deliver(event(timeEvent(31, 500, false)));
+      await rig.deliver(event(timeEvent(31, 500)));
       expect([rig.front.status.get(), rig.front.controls.get(), rig.front.clock.get()]).toEqual(
         before,
       );
@@ -414,16 +415,63 @@ describe('the front door', () => {
       expect(rig.front.status.get()).toMatchObject({ run: 'stopping', result: null });
     });
 
-    it('does not call the run not paused when its state lags behind a step that has ended', async () => {
+    it('claims neither pause nor resume to change nothing while a step is on its way', async () => {
       const rig = await running(pausedState(1));
-      // the step is on its way: state says not paused; then the time event says paused again, and no new state follows
+      const controls = () => {
+        const { pause, resume } = rig.front.controls.get();
+        return [pause.reason?.code ?? null, resume.reason?.code ?? null];
+      };
+      expect(controls()).toEqual(['paused', null]);
+      // The step is accepted (to 530 ms). The state from before the command still says paused: not believed
+      await rig.deliver(event(commandEvent(60, 'step', null, { ms: 30, at_ms: 530 })));
+      expect(controls()).toEqual([null, null]);
+      // The command's state says not paused, and the launcher still takes a resume: not called "not paused"
+      await rig.deliver(event(stateEvent(2, { paused: false }, { pause: ok, resume: ok })));
+      expect(controls()).toEqual([null, null]);
+      // Time is there, but the state that says so has not come (the launcher writes it right after)
+      await rig.deliver(event(timeEvent(61, 530)));
+      expect(controls()).toEqual([null, null]);
+      // Arrived: time at the command's at_ms, and the latest state says paused
+      await rig.deliver(event(pausedState(3, 530)));
+      expect(controls()).toEqual(['paused', null]);
+    });
+
+    it('takes the arrival from a state that says where it stands, before the time event of that time', async () => {
+      const rig = await running(pausedState(1, 500));
+      // The state from before the command stands at 500: not there. Then the simulation was there before the
+      // command's own state was put together: that state says paused at 530 already, and no time event has said so
+      await rig.deliver(event(commandEvent(60, 'step', null, { ms: 30, at_ms: 530 })));
+      expect(rig.front.controls.get().pause.ok).toBe(true);
+      await rig.deliver(event(pausedState(2, 530)));
+      expect(rig.front.controls.get().pause.reason?.code).toBe('paused');
+      // The clock is where the state says it stands, though the last time event is older
+      expect(rig.front.clock.get().sim_ms).toBe(530);
+      await rig.deliver(event(timeEvent(61, 530)));
+      expect(rig.front.clock.get().sim_ms).toBe(530);
+    });
+
+    it('does not take a state that says paused without saying where for the arrival', async () => {
+      const rig = await running(pausedState(1));
       await rig.deliver(
-        event(stateEvent(2, { paused: false }, { pause: ok, resume: ok })),
-        event(timeEvent(40, 25, true)),
+        event(commandEvent(60, 'step', null, { ms: 30, at_ms: 530 })),
+        event(pausedState(2)),
       );
-      const { pause, resume } = rig.front.controls.get();
-      expect(resume.ok).toBe(true);
-      expect(pause.ok).toBe(true);
+      expect(rig.front.controls.get().pause.ok).toBe(true);
+      // A time event at the target is not the arrival either: the state must say where it stands
+      await rig.deliver(event(timeEvent(61, 530)));
+      expect(rig.front.controls.get().pause.ok).toBe(true);
+      await rig.deliver(event(pausedState(3, 530)));
+      expect(rig.front.controls.get().pause.reason?.code).toBe('paused');
+    });
+
+    it('goes back to the state once another command ends the step on its way', async () => {
+      const rig = await running(pausedState(1));
+      await rig.deliver(
+        event(commandEvent(60, 'step', null, { ms: 1000, at_ms: 1500 })),
+        event(stateEvent(2, { paused: false }, { pause: ok, resume: ok })),
+        event(commandEvent(62, 'resume', null)),
+      );
+      expect(rig.front.controls.get().resume.reason?.code).toBe('not-paused');
     });
 
     it('lets the run be stopped while the launcher runs on after its result, as the server says', async () => {
@@ -762,11 +810,24 @@ describe('the front door', () => {
         event(stateEvent(2, { paused: false })),
       );
       expect(done).toBe(false);
-      await rig.deliver(event(timeEvent(61, 520, false)));
+      await rig.deliver(event(timeEvent(61, 520)));
       expect(done).toBe(false);
-      await rig.deliver(event(timeEvent(62, 530, true)));
+      await rig.deliver(event(timeEvent(62, 530)));
       expect(done).toBe(false);
-      await rig.deliver(event(pausedState(3)));
+      await rig.deliver(event(pausedState(3, 530)));
+      await step;
+      expect(done).toBe(true);
+      expect(rig.front.clock.get().sim_ms).toBe(530);
+    });
+
+    it('resolves a step when the state says that it stands at the target, without a time event', async () => {
+      const rig = await running(pausedState(1, 500));
+      let done = false;
+      const step = rig.front.time.step(25).then(() => (done = true));
+      const id = rig.timeBody().id;
+      await rig.deliver(event(commandEvent(60, 'step', id, { ms: 30, at_ms: 530 })));
+      expect(done).toBe(false); // the state from before the command stands at 500
+      await rig.deliver(event(pausedState(2, 530)));
       await step;
       expect(done).toBe(true);
       expect(rig.front.clock.get().sim_ms).toBe(530);
@@ -813,7 +874,7 @@ describe('the front door', () => {
       const id2 = rig.timeBody().id;
       await rig.deliver(event(commandEvent(61, 'step', id2, { ms: 50, at_ms: 650 })));
       expect(done).toBe(false);
-      await rig.deliver(event(timeEvent(62, 650, true)), event(pausedState(3)));
+      await rig.deliver(event(timeEvent(62, 650)), event(pausedState(3, 650)));
       await first;
       expect(done).toBe(true);
     });
@@ -825,11 +886,11 @@ describe('the front door', () => {
       const id = rig.timeBody().id;
       // the launcher was still stopping from the pause: the last time seen (500) is not where the step starts
       await rig.deliver(
-        event(timeEvent(60, 540, true)),
+        event(timeEvent(60, 540)),
         event(commandEvent(61, 'step', id, { ms: 10, at_ms: 550 })),
       );
       expect(done).toBe(false);
-      await rig.deliver(event(timeEvent(62, 550, true)), event(pausedState(3)));
+      await rig.deliver(event(timeEvent(62, 550)), event(pausedState(3, 550)));
       await step;
       expect(done).toBe(true);
     });
@@ -864,7 +925,25 @@ describe('the front door', () => {
         event(commandEvent(60, 'run_until', body.id)),
         event(stateEvent(2, { paused: false })),
       );
-      await rig.deliver(event(timeEvent(61, 900, true)), event(pausedState(3)));
+      await rig.deliver(event(timeEvent(61, 900)), event(pausedState(3, 900)));
+      await until;
+      expect(done).toBe(true);
+    });
+
+    it('waits for the state to say where it stands after a run_until to a time already passed', async () => {
+      const rig = await running(pausedState(1, 500));
+      await rig.deliver(event(timeEvent(50, 1000)));
+      let done = false;
+      const until = rig.front.time.runUntil(900).then(() => (done = true));
+      const body = rig.timeBody();
+      await rig.deliver(
+        event(commandEvent(60, 'run_until', body.id)),
+        event(stateEvent(2, { paused: false })),
+      );
+      // At the maximum speed it is paused but not yet standing at a time; the last time event (1000) is old
+      await rig.deliver(event(pausedState(3, null)));
+      expect(done).toBe(false);
+      await rig.deliver(event(pausedState(4, 1010)));
       await until;
       expect(done).toBe(true);
     });
@@ -1167,11 +1246,11 @@ describe('the front door', () => {
         seen.push(`${status.run}@${clock.sim_ms}`),
       );
       expect(seen).toEqual(['running@500']);
-      await rig.deliver(event(timeEvent(31, 600, false)));
+      await rig.deliver(event(timeEvent(31, 600)));
       expect(seen.at(-1)).toBe('running@600');
       stop();
       const count = seen.length;
-      await rig.deliver(event(timeEvent(32, 700, false)));
+      await rig.deliver(event(timeEvent(32, 700)));
       expect(seen).toHaveLength(count);
     });
 

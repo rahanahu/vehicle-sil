@@ -271,7 +271,7 @@ std::vector<Finding> nothing_received_findings(const RunOutcome& outcome)
         {
             continue;
         }
-        const bool can = o.tool == bridge_tool(NetworkKind::Can);
+        const bool can = is_can_bridge_tool(o.tool);
         out.push_back(Finding{
             Severity::Note, "connect-nothing-received",
             "network '" + o.network + "': nothing came from a device on the real bus (" + o.target + ") before the run ended: " + o.participant +
@@ -318,7 +318,7 @@ std::vector<Finding> outside_findings(const RunOutcome& outcome)
             {
                 continue;
             }
-            const NetworkKind kind = a.tool == bridge_tool(NetworkKind::Can) ? NetworkKind::Can : NetworkKind::Ethernet;
+            const NetworkKind kind = is_can_bridge_tool(a.tool) ? NetworkKind::Can : NetworkKind::Ethernet;
             if (connect_device_key(kind, a.target) == connect_device_key(kind, b.target))
             {
                 continue;
@@ -340,7 +340,7 @@ std::vector<Finding> outside_findings(const RunOutcome& outcome)
             continue;
         }
         const OutsideLink& link = o.link;
-        const bool can = o.tool == bridge_tool(NetworkKind::Can);
+        const bool can = is_can_bridge_tool(o.tool);
         if (link.shared_most > 0)
         {
             out.push_back(shared_finding(o, *bridge));

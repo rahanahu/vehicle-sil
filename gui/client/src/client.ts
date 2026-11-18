@@ -27,7 +27,11 @@ import { VariableBinder } from './variable-binding';
 import { ClientVariables, VariablesFeed } from './variables';
 import { ErrorSink, Readable, Writable } from './values';
 
-/** Limits used while they are unknown (before the api/app answer). The same as the launcher's and server's defaults. */
+/**
+ * Limits used while they are unknown (before the api/app answer). The same as the launcher's and server's defaults.
+ * During a run, the ranges of step and speed are the launcher's (`allowed.step`, `allowed.speed` of its state;
+ * `controls` of connect() carries them); the ones here are for choosing the speed of a run that has not started.
+ */
 export const DEFAULT_LIMITS: AppInfo['limits'] = {
   speed_min: 0.000001,
   speed_max: 1000000,
@@ -203,18 +207,15 @@ export function buildClient(options: ClientOptions): ClientParts {
   const run = new RunControl(session, http, onError, () => longRequestMs(limits.get()));
   const time = new TimeControl(
     session.session,
-    session.ready,
     app.readonly(),
     http,
     options.answerTimeoutMs ?? ANSWER_TIMEOUT_MS,
     onError,
-    variables.state,
   );
 
   const binder = new VariableBinder({
     variables,
     connection: connection.state,
-    time: time.state,
     session: session.session,
     onError,
   });

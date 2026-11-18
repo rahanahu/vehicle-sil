@@ -37,7 +37,7 @@ def kinds(messages: list[dict]) -> list[str]:
 
 def test_session_follows_the_events() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=1, pid=42))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2, pid=42))
     check = {"participants": [{"name": "A", "required": True, "enabled": True, "variables": []},
                               {"name": "B", "required": False, "enabled": False, "variables": None}]}
     s.feed_line(line("check", 1, check=check))
@@ -68,7 +68,7 @@ def test_session_follows_the_events() -> None:
 
 def test_only_the_last_state_of_the_launcher_is_kept() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     assert s.summary()["launcher_state"] is None
     first = {"rev": 1, "phase": "starting", "allowed": {"pause": {"ok": True, "reason": None}}}
     out = s.feed_line(line("state", 1, **first))
@@ -83,7 +83,7 @@ def test_only_the_last_state_of_the_launcher_is_kept() -> None:
     # too large to keep: it is shown now, the one kept stays, and the server says so once
     big = {"rev": 4, "allowed": {}, "outside": ["x" * 5000]}
     small = new_session(state_bytes=1000)
-    small.feed_line(line("hello", 0, vehicle_sil_events=1))
+    small.feed_line(line("hello", 0, vehicle_sil_events=2))
     small.feed_line(line("state", 1, rev=1, allowed={}))
     out = small.feed_line(line("state", 2, **big))
     assert kinds(out) == ["error:kept-limit", "event"] and small.summary()["launcher_state"]["rev"] == 1
@@ -91,7 +91,7 @@ def test_only_the_last_state_of_the_launcher_is_kept() -> None:
 
 def test_the_command_event_returns_the_id_and_the_reason() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     s.feed_line(line("command", 1, command="step", accepted=False, message="m", reason="not-paused", id=7))
     assert s.summary()["last_command"] == {"seq": 1, "command": "step", "accepted": False, "message": "m",
                                            "reason": "not-paused", "id": 7}
@@ -182,7 +182,7 @@ NOT_FINITE = {"<1e999>": "1e999", "<-1e999>": "-1e999", "<1E400>": "1E400"}
 WRONG_VALUES = [None, True, 0, -1, 2.5, "x", "", [], [1], {}, {"a": 1}, [{"name": 1}], "\ud800", 2 ** 64, -(2 ** 64),
                 *NOT_FINITE]
 KNOWN = {
-    "hello": {"vehicle_sil_events": 1, "pid": 1},
+    "hello": {"vehicle_sil_events": 2, "pid": 1},
     "phase": {"phase": "running"},
     "check": {"check": {"participants": [{"name": "A", "required": True}]}},
     "registry": {"uri": "u"},
@@ -231,7 +231,7 @@ def test_no_field_of_the_wrong_type_stops_the_reading() -> None:
 
 def test_numbers_that_are_not_finite_are_not_events() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     for n, number in enumerate(("1e999", "-1e999", "1E400", "-0.5e+999")):
         out = s.feed_line(f'{{"event":"time","seq":{n + 1},"t_ms":0,"sim_ms":5,"actual_speed":{number}}}')
         assert kinds(out) == ["error:launcher-output"], number
@@ -242,7 +242,7 @@ def test_numbers_that_are_not_finite_are_not_events() -> None:
 
 def test_seq_and_t_ms_are_integers_javascript_reads_exactly() -> None:
     s = new_session(dropped_seqs=4, log_line_bytes=10)
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     for seq in (2 ** 63, 2 ** 64, 2 ** 53 + 1, -1):
         assert kinds(s.feed_line(line("log", seq, source="A", line="x"))) == ["error:launcher-output"], seq
     out = s.feed_line(json.dumps({"event": "log", "seq": 1, "t_ms": 2 ** 64, "source": "A", "line": "x"}))
@@ -254,7 +254,7 @@ def test_seq_and_t_ms_are_integers_javascript_reads_exactly() -> None:
 
 def test_a_known_event_of_the_wrong_shape_is_not_passed_on() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     out = s.feed_line(line("check", 1, check={"participants": 5}))
     assert kinds(out) == ["error:bad-event"] and s.summary()["check"] is None and s.last_seq == 1
     assert kinds(s.feed_line(line("log", 2, source=None, line="x"))) == ["error:bad-event"]
@@ -263,19 +263,19 @@ def test_a_known_event_of_the_wrong_shape_is_not_passed_on() -> None:
 
 def test_a_different_events_format_is_reported_but_passed_on() -> None:
     s = new_session()
-    out = s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    out = s.feed_line(line("hello", 0, vehicle_sil_events=3))
     assert kinds(out) == ["error:events-format", "event"]
 
 
 def test_ending_without_a_result_is_reported() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     s.launcher_exited(70)
     out = s.ended()
     assert kinds(out) == ["error:no-result", "session"]
     assert s.summary()["launcher"]["exit_code"] == 70 and s.summary()["problems"][0]["detail"] == {"exit_code": 70}
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     s.feed_line(line("result", 1, result={"result": "passed"}))
     s.launcher_exited(0)
     assert kinds(s.ended(output_cut=True)) == ["error:output-left-open", "session"]
@@ -310,7 +310,7 @@ def test_junk_does_not_hide_the_servers_notices_or_the_last_stderr_lines() -> No
 
 def test_the_log_is_kept_per_source_and_bounded() -> None:
     s = new_session(log_lines_per_source=3, log_sources=2)
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     seq = 1
     for n in range(5):
         for source in ("A", "B", "C"):  # C is the third source: it shares the log of the later sources
@@ -335,7 +335,7 @@ def test_the_log_is_kept_per_source_and_bounded() -> None:
 
 def test_memory_is_bounded_in_bytes() -> None:
     s = new_session(dropped_seqs=100)
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     seq = 1
     for n in range(3000):  # 3000 lines of 2 KiB from 20 sources: 6 MiB in all, 1 MiB per source at most
         s.feed_line(line("log", seq, source=f"S{n % 20}", line="x" * 2048))
@@ -377,7 +377,7 @@ def test_memory_is_bounded_in_bytes() -> None:
 
 def test_dropped_counts_are_exact_with_a_line_too_long_to_keep() -> None:
     s = new_session(log_lines_per_source=5)
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     for seq in range(1, 12):  # seq 6 is too long to keep: dropped when it comes, before 1..5
         s.feed_line(line("log", seq, source="A", line="x" * (70_000 if seq == 6 else 1)))
     for from_seq, want in ((None, 6), (1, 6), (4, 3), (6, 1)):
@@ -385,7 +385,7 @@ def test_dropped_counts_are_exact_with_a_line_too_long_to_keep() -> None:
         assert dropped["log"] == {"A": want} and dropped["at_least"] == [], from_seq
     assert s.replay(7)[0] is None
     small = new_session(log_lines_per_source=2, dropped_seqs=3)  # fewer recorded than dropped
-    small.feed_line(line("hello", 0, vehicle_sil_events=1))
+    small.feed_line(line("hello", 0, vehicle_sil_events=2))
     for seq in range(1, 9):  # 4 too long: dropped first; kept 7, 8; dropped 1..6
         small.feed_line(line("log", seq, source="A", line="x" * (70_000 if seq == 4 else 1)))
     assert small.replay(4)[0]["log"] == {"A": 3} and small.replay(4)[0]["at_least"] == []  # 4, 5, 6
@@ -394,7 +394,7 @@ def test_dropped_counts_are_exact_with_a_line_too_long_to_keep() -> None:
 
 def test_log_dropped_is_counted_and_kept_where_it_came() -> None:
     s = new_session(log_lines_per_source=3)
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     s.feed_line(line("log", 1, source="A", line="a1"))
     out = s.feed_line(line("log_dropped", 2, count=125, sources={"A": 120, "vehicle_sil_launch": 5}))
     assert kinds(out) == ["event"]
@@ -413,7 +413,7 @@ def test_log_dropped_is_counted_and_kept_where_it_came() -> None:
 
 def test_a_launcher_that_writes_nothing_is_reported_as_silent() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     start = s.last_line_at
     assert s.check_silence(start + 4.9, 5) == []
     out = s.check_silence(start + 5.2, 5)
@@ -432,7 +432,7 @@ def test_a_launcher_that_writes_nothing_is_reported_as_silent() -> None:
 
 def test_a_participant_state_this_server_does_not_know_passes_through() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     s.feed_line(line("participant", 1, name="A", state="started", pid=7, command=["a"], log=None))
     out = s.feed_line(line("participant", 2, name="A", state="failed", reason="process_ended", message="m"))
     assert kinds(out) == ["event"]
@@ -448,7 +448,7 @@ def test_the_control_link_of_a_participant_is_kept_in_its_entry() -> None:
     """The control event (a state of the participant's link to its variables) is laid over the participant's entry
     as one field, so that a screen opened later sees it; a state this server does not know passes through."""
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     s.feed_line(line("participant", 1, name="A", state="started", pid=7))
     s.feed_line(line("participant", 2, name="A", state="joined"))
     out = s.feed_line(line("control_link", 3, name="A", state="connected", variables=17))
@@ -468,7 +468,7 @@ def test_an_event_this_server_does_not_know_is_passed_on_and_the_reading_goes_on
     """A launcher newer than this server may write events it does not know: they reach the screens as they are
     (the screen skips what it does not know), nothing is reported, and the events after them are read as usual."""
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     out = s.feed_line(line("future_thing", 1, payload={"a": [1, 2]}, note="n"))
     assert kinds(out) == ["event"] and out[0]["event"]["payload"] == {"a": [1, 2]}
     out = s.feed_line(line("phase", 2, phase="running"))
@@ -478,7 +478,7 @@ def test_an_event_this_server_does_not_know_is_passed_on_and_the_reading_goes_on
 
 def test_the_essential_fields_of_a_large_small_event_are_kept() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     long_command = [f"--argument-{n}-" + "x" * 100 for n in range(45)]  # about 5 KiB
     out = s.feed_line(line("participant", 1, name="Engine", state="started", pid=7, command=long_command,
                            log="engine.log"))
@@ -507,18 +507,18 @@ def test_the_essential_fields_of_a_large_small_event_are_kept() -> None:
     out = s.feed_line(line("participant", 10, name="N" * 5000, state="started"))  # not even the name fits
     assert kinds(out) == ["event"] and len(s.summary()["participants"]) == 2
     # The time with its lateness, however large the event: a screen opened later still sees how late it is
-    s.feed_line(line("time", 11, sim_ms=300, speed=1, paused=False, actual_speed=0.9, late_steps=1, max_late_ms=200,
+    s.feed_line(line("time", 11, sim_ms=300, actual_speed=0.9, late_steps=1, max_late_ms=200,
                      slipped_ms=200, late_ms=0, detail="d" * 5000))
     time = s.summary()["time"]
-    assert {k: time[k] for k in ("sim_ms", "speed", "paused", "late_steps", "max_late_ms", "slipped_ms", "late_ms")} \
-        == {"sim_ms": 300, "speed": 1, "paused": False, "late_steps": 1, "max_late_ms": 200, "slipped_ms": 200,
+    assert {k: time[k] for k in ("sim_ms", "late_steps", "max_late_ms", "slipped_ms", "late_ms")} \
+        == {"sim_ms": 300, "late_steps": 1, "max_late_ms": 200, "slipped_ms": 200,
             "late_ms": 0}
     assert time["omitted_fields"] == ["detail"]
 
 
 def test_dropped_counts_are_exact_while_recorded() -> None:
     s = new_session(log_lines_per_source=10, dropped_seqs=20)
-    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("hello", 0, vehicle_sil_events=2))
     for seq in range(1, 101):
         s.feed_line(line("log", seq, source="A", line=str(seq)))
     # kept: seq 91..100; dropped: 1..90, of which 71..90 recorded
@@ -660,7 +660,7 @@ def test_one_line_that_cannot_be_passed_on_does_not_stop_the_reading() -> None:
     session.feed_line = lambda text: next(calls, feed)(text)
     server.relay(session, line("time", 1, sim_ms=1))  # a message that cannot be turned into JSON
     server.relay(session, line("time", 2, sim_ms=2))  # an exception while reading it
-    server.relay(session, line("hello", 0, vehicle_sil_events=1))
+    server.relay(session, line("hello", 0, vehicle_sil_events=2))
     assert kinds(sent[1:]) == ["error:bad-event", "error:bad-event", "event"]
     assert "ZeroDivisionError" in sent[2]["message"]
 

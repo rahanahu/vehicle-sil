@@ -38,16 +38,16 @@ enum class TimeNote
     return std::chrono::duration_cast<std::chrono::milliseconds>(t.time_since_epoch()).count();
 }
 
-/// What a "time" event says in `paused`, from one look at the gate. It stands still, or is at
-/// (or beyond) the time it is to stand still at and does so with its next step. An ended
-/// simulation stands still nowhere, however it ended: the look at the end says false whatever
-/// the gate says (an aborted simulation's gate keeps `paused` until the abort has gone round,
-/// which the launcher does not wait for), so a run whose last event said true gets one more
-/// that says false. The event at the start is the one of virtual time 0 (its
-/// sim_ms is 0 whatever the gate says): a simulation that has gone on by then (a step or
-/// run_until from the hold before the first step, as fast as possible) and stands still at a
-/// later time did not stand still at 0, and the next look writes where it does.
-[[nodiscard]] inline bool noted_paused(const TimeState& s, TimeNote note) noexcept
+/// Whether the simulation stands still, from one look at the gate, as the "time" events count it
+/// (the state's `paused` is the controls': RunControls). It stands still, or is at (or beyond)
+/// the time it is to stand still at and does so with its next step. An ended simulation stands
+/// still nowhere, however it ended: the look at the end says false whatever the gate says (an
+/// aborted simulation's gate keeps `paused` until the abort has gone round, which the launcher
+/// does not wait for). The event at the start is the one of virtual time 0 (its sim_ms is 0
+/// whatever the gate says): a simulation that has gone on by then (a step or run_until from the
+/// hold before the first step, as fast as possible) and stands still at a later time did not
+/// stand still at 0, and the next look writes where it does.
+[[nodiscard]] inline bool noted_standing(const TimeState& s, TimeNote note) noexcept
 {
     if (note == TimeNote::Start && s.now > SimTime{})
     {
@@ -90,9 +90,9 @@ public:
     /// last look (also an optional one; not after its process has ended).
     void note_joined(SimulationController& controller, const RunOutcome& outcome);
 
-    /// The controller's virtual time and how it goes. At the start 0; then when it stands still
-    /// or runs on, or the speed changes, at once; when it has moved, at most every 100 ms; at the
-    /// end, if anything changed. Then (but at the end, where the detach of the time commands
+    /// The controller's virtual time and how it keeps up. At the start 0; then when it stands
+    /// still at another time than the last one written, at once; when it has moved or is late, at
+    /// most every 100 ms; at the end, if it has moved since. Then (but at the end, where the detach of the time commands
     /// follows and does it) the run's state, if it changed: the pacing seen here, and what no call
     /// tells the controls (the gate stands still or goes on, a stop request of a signal handler).
     void note_time(SimulationController& controller, TimeNote note);
@@ -104,9 +104,10 @@ private:
     // The last "time" event written.
     std::int64_t last_time_ms_ = -1;
     std::chrono::steady_clock::time_point last_time_wall_{};
-    bool last_paused_ = false;
     std::int64_t last_late_ms_ = 0;
     std::uint64_t last_late_steps_ = 0;
+    // The last look: the actual speed is measured while it ran at one speed.
+    bool last_paused_ = false;
     std::optional<double> last_speed_{};
     std::deque<std::pair<std::chrono::steady_clock::time_point, std::int64_t>> samples_; ///< (wall, sim_ms)
     std::vector<Finding> published_; ///< the findings written

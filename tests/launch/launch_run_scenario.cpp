@@ -176,7 +176,7 @@ void scenario_same(const Options& o)
         Live live(o, dir, {"run", "--events", "--stdin-commands", "--scenario", "s.yaml", "--speed", "0.1", "sim.yaml"});
         live.wait_for({"\"event\":\"scenario_step\"", "\"line\":6,", "\"status\":\"passed\""});
         live.write("{\"command\":\"pause\"}\n");
-        live.wait_for({"\"event\":\"time\"", "\"paused\":true,"});
+        live.wait_paused();
         live.write("{\"command\":\"step\",\"ms\":30}\n");
         live.wait_for({"\"command\":\"step\"", "\"accepted\":true"});
         std::this_thread::sleep_for(100ms);
@@ -531,8 +531,8 @@ void live(const Options& o)
     std::int64_t reached = 0;
     for (std::size_t n = 1; reached <= 1000; ++n)
     {
-        run.wait_for_count({"\"event\":\"time\"", "\"speed\":1,"}, n);
-        reached = std::stoll(value_of(events_with(run.lines(), {"\"event\":\"time\"", "\"speed\":1,"})[n - 1], "sim_ms"));
+        run.wait_for_count({"\"event\":\"time\""}, n);
+        reached = std::stoll(value_of(events_with(run.lines(), {"\"event\":\"time\""})[n - 1], "sim_ms"));
     }
     // Speed 1 is a bound on one side: the virtual time is never ahead of the clock.
     const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count();

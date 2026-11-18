@@ -110,7 +110,7 @@ describe('applyEvents', () => {
       events(
         {
           event: 'hello',
-          vehicle_sil_events: 1,
+          vehicle_sil_events: 2,
           vehicle_sil: '1',
           pid: 1,
           file: 'sim.yaml',
@@ -445,8 +445,6 @@ describe('applyEvents', () => {
     const time = {
       event: 'time',
       sim_ms: 300,
-      speed: 1,
-      paused: true,
       actual_speed: null,
       late_steps: 1,
       max_late_ms: 200,
@@ -456,8 +454,6 @@ describe('applyEvents', () => {
     const session = applyEvents(emptySession(), events(time));
     expect(session.time).toEqual({
       simMs: 300,
-      speed: 1,
-      paused: true,
       actualSpeed: null,
       lateSteps: 1,
       maxLateMs: 200,
@@ -490,6 +486,7 @@ describe('applyEvents', () => {
       accepted: true,
       message: null,
       ms: null,
+      atMs: null,
       seq: 8,
     });
   });

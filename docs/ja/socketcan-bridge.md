@@ -4,7 +4,7 @@
 
 `vehicle_sil_socketcan_bridge` は、SIL Kit の CAN ネットワークと、動かしている Linux コンピューターの SocketCAN インターフェース（CAN アダプターの `can0`、または仮想の `vcan0`）の間で、クラシック CAN のフレームを双方向に転送します。特権は要らず、インターフェースには何も設定しません。このドキュメントには、接続の手順、引数、インターフェースの一覧、出力する行、確認済みの範囲と未確認の範囲が書いてあります。Windows 用の Vector XL ブリッジ（[bridges.md](bridges.md)）と、同じ意味の引数、統計、プログラム向けの行は同じです。
 
-ランチャーの `--connect` からはまだこのブリッジを起動しません。手で起動するか、構成ファイルに `describe: true` の参加者として書きます（[bridges.md](bridges.md#設定ファイルから起こす) の「設定ファイルから起こす」）。
+ランチャーは `--connect` からこのブリッジを起動します。Linux では `vehicle_sil_launch run --connect CAN=can0 simulation.yaml` で、CAN のネットワーク `CAN` をインターフェース `can0` につなぎます（backend `socketcan` は、先が `virtual:<n>` でも `physical:<n>` でもないときの Linux の既定です。simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。手で起動するか、構成ファイルに `describe: true` の参加者として書きます（[bridges.md](bridges.md#設定ファイルから起こす) の「設定ファイルから起こす」）。
 
 | 接続するもの | `--interface` | 必要なもの | 確認済み | 未確認 |
 |---|---|---|---|---|
@@ -97,7 +97,7 @@ CAN interfaces (--interface):
 
 ## インターフェースがなくなったとき
 
-`ENODEV` と `ENXIO`（アダプターの抜去、`ip link del`）と、見たときにインターフェースがなくなっている（名前が変わった）ことで、ブリッジは終わります。`FAIL: the interface is gone ...`、終了コード 1。ランチャーが `--connect` からこのブリッジを起動するようになったら、これは接続が切れたこととして報告されます。いまは参加者の失敗です。
+`ENODEV` と `ENXIO`（アダプターの抜去、`ip link del`）と、見たときにインターフェースがなくなっている（名前が変わった）ことで、ブリッジは終わります。`FAIL: the interface is gone ...`、終了コード 1。ランチャーが `--connect` から起動したブリッジなら、これは接続が切れたこと（`connect-lost`）として報告されます。
 
 ## 別のブリッジが使っているデバイス
 
@@ -112,7 +112,7 @@ Linux だけです。CMake は他のものと一緒に `vehicle_sil_socketcan_br
 | 試験 | 確かめること |
 |---|---|
 | `socketcan_bridge.*` | コマンドライン、netlink の応答とインターフェースの確認、一覧、エラーのフレーム、偽のソケットの層での `SocketCanPort`（受領、エラーのフレーム、bus-off、`ENOBUFS`、`ENETDOWN`、`ENODEV`、送信のタイムアウト） |
-| `socketcan_bridge.netns.*` | ネットワーク名前空間の `vcan0` での実行ファイル（フレームの表の往復、受領、別のソケットのフレーム、down と up、削除、断る場合、一覧、2 つ目のブリッジ） |
+| `socketcan_bridge.netns.*` | ネットワーク名前空間の `vcan0` での実行ファイル（フレームの表の往復、受領、別のソケットのフレーム、down と up、削除、断る場合、一覧、2 つ目のブリッジ、`vehicle_sil_launch run --connect J1939_CAN=vcan0` が `examples/ecu_main` のエンジン ECU と一緒にブリッジを起こすこと） |
 
 `netns` の試験は、ネットワーク名前空間や `vcan0` を作れない所（`vcan` モジュールがない: `sudo modprobe vcan`、またはユーザー名前空間が無効）では飛ばします（77）。`VEHICLE_SIL_REQUIRE_SOCKETCAN=1` なら失敗にします（CI はモジュールを読み込んでこれを付けます）。
 

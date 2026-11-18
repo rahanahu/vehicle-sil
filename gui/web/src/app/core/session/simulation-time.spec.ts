@@ -51,10 +51,11 @@ describe('SimulationTime', () => {
     TestBed.tick();
     http.expectOne('api/app').flush(app);
     fake.last().open();
+    // 止めて始めた実行: state が一時停止と言い、その後の time が時刻 0 を言う
     for (const message of server.get('ws-time') ?? []) {
       fake.last().send(message);
-      const event = (message as { event?: { event?: string; paused?: boolean } }).event;
-      if (event?.event === 'time' && event.paused === true) break;
+      const event = (message as { event?: { event?: string; sim_ms?: number } }).event;
+      if (event?.event === 'time' && event.sim_ms === 0) break;
     }
     vi.advanceTimersByTime(BATCH_MS);
     return time;

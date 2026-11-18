@@ -170,26 +170,20 @@ export class RunStatus {
     const ms = this.elapsedMs();
     return ms === null ? null : ms / 1000;
   });
-  /**
-   * 仮想時刻。古いランチャー（time の事象に paused がない）は、動き始めた 0 と stop_at_ms に達したときしか知らせない
-   * ので、動いている間の 0 は出さない（止まって見えるため）。新しいランチャーは動いている間も知らせるので、0 も出す。
-   */
+  /** 仮想時刻。 */
   protected readonly simSeconds = computed(() => {
-    const session = this.session();
-    const simMs = session?.simMs ?? null;
-    const moves = session?.time?.paused !== null && session?.time?.paused !== undefined;
-    if (simMs === null || (simMs === 0 && session?.launcher.running && !moves)) return null;
-    return simMs / 1000;
+    const simMs = this.session()?.simMs ?? null;
+    return simMs === null ? null : simMs / 1000;
   });
-  /** いまの速度（ランチャーが書くとき。実行中だけ）。 */
+  /** いまの速度（ランチャーの `state` から。実行中だけ）。 */
   protected readonly speedText = computed(() => {
     const session = this.session();
-    const speed = session?.launcher.running ? (session.time?.speed ?? null) : null;
+    const speed = session?.launcher.running ? (session.launcherState?.speed ?? null) : null;
     return speed === null ? null : speedLabel(speed);
   });
   /** 一時停止している（実行中で、止めるよう頼んでいないとき）。 */
   private readonly paused = computed(
-    () => this.outcome() === 'running' && this.session()?.time?.paused === true,
+    () => this.outcome() === 'running' && this.session()?.launcherState?.paused === true,
   );
   /**
    * 実時間への遅れ（実行中で、許容を超えて遅れた刻みがあるとき。色だけでなく文で）。途中で最速に変えても、それまでの

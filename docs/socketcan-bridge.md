@@ -4,7 +4,7 @@
 
 `vehicle_sil_socketcan_bridge` forwards classic CAN frames in both directions between a SIL Kit CAN network and a SocketCAN interface of the Linux computer it runs on: a CAN adapter (`can0`) or a virtual one (`vcan0`). It needs no privileges and sets nothing on the interface. This page covers the connection steps, the arguments, the list of interfaces, the lines it prints and what is and is not verified. The Vector XL bridge for Windows ([bridges.md](bridges.md)) has the same arguments where they mean the same, the same statistics, and the same lines for programs.
 
-The launcher does not start this bridge from `--connect` yet: start it by hand, or list it as a participant with `describe: true` in the configuration file (see "Starting from a configuration file" in [bridges.md](bridges.md#starting-from-a-configuration-file)).
+The launcher starts this bridge from `--connect`: on Linux, `vehicle_sil_launch run --connect CAN=can0 simulation.yaml` connects the CAN network `CAN` to the interface `can0` (the backend `socketcan` is the default on Linux for a target that is not `virtual:<n>` or `physical:<n>`; see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md). You can also start it by hand, or list it as a participant with `describe: true` in the configuration file (see "Starting from a configuration file" in [bridges.md](bridges.md#starting-from-a-configuration-file)).
 
 | Connects to | `--interface` | Requirement | Verified | Not verified |
 |---|---|---|---|---|
@@ -97,7 +97,7 @@ The bridge asks for the error frames (`CAN_RAW_ERR_FILTER`) and reads the contro
 
 ## When the interface goes away
 
-`ENODEV` and `ENXIO` (an adapter unplugged, `ip link del`) and an interface that is gone or renamed at a look end the bridge: `FAIL: the interface is gone ...` and exit code 1. Once the launcher starts this bridge from `--connect`, it will report this as a lost connection; for now it is the failure of a participant.
+`ENODEV` and `ENXIO` (an adapter unplugged, `ip link del`) and an interface that is gone or renamed at a look end the bridge: `FAIL: the interface is gone ...` and exit code 1. When the launcher started the bridge from `--connect`, it reports this as a lost connection (`connect-lost`).
 
 ## Device in use by another bridge
 
@@ -112,7 +112,7 @@ Linux only; CMake builds `vehicle_sil_socketcan_bridge` with everything else (no
 | Test | Checks |
 |---|---|
 | `socketcan_bridge.*` | The command line, the netlink answers and the checks of an interface, the lists, the error frames, and `SocketCanPort` on a fake socket layer: receipts, error frames, bus-off, `ENOBUFS`, `ENETDOWN`, `ENODEV`, the transmit timeout |
-| `socketcan_bridge.netns.*` | The executable on `vcan0` in a network namespace: the round trip of the frame matrix, receipts, frames of another socket, down and up, removal, the refusals, the list, a second bridge |
+| `socketcan_bridge.netns.*` | The executable on `vcan0` in a network namespace: the round trip of the frame matrix, receipts, frames of another socket, down and up, removal, the refusals, the list, a second bridge, and `vehicle_sil_launch run --connect J1939_CAN=vcan0` starting the bridge beside the engine ECU of `examples/ecu_main` |
 
 The `netns` tests are skipped (77) where a network namespace or `vcan0` cannot be made (no `vcan` module: `sudo modprobe vcan`, or user namespaces turned off); with `VEHICLE_SIL_REQUIRE_SOCKETCAN=1` they fail instead, as they do in CI, which loads the modules.
 

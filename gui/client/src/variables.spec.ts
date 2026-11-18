@@ -1,6 +1,7 @@
 import { createClient } from './client';
 import { BATCH_MS } from './connection';
 import { HttpError } from './http';
+import { isHolding } from './session-state';
 import { FakeHttp } from './testing/fake-http';
 import { FakeSocket, FakeWebSockets } from './testing/fake-web-socket';
 import { WebSocketExample, httpExamples, webSocketExamples } from './testing/protocol-examples';
@@ -41,6 +42,21 @@ function setup() {
     s.sent.filter((m) => (m as { type: string }).type !== 'auth');
   return { client, sockets, socket, http, errors, deliver, sent };
 }
+
+/** The launcher's state of a run that waits before its first step (as the summary carries it). */
+const holdingState = {
+  seq: 5,
+  rev: 5,
+  phase: 'waiting',
+  paused: true,
+  holding: true,
+  speed: 'max',
+  pacing: 'not-paced',
+  stop: { requests: 0, by: null },
+  scenario: false,
+  allowed: {},
+  outside: [],
+};
 
 const summary = (id: number, variables?: unknown) => ({
   id,
@@ -732,7 +748,7 @@ describe('variables', () => {
     expect([kept[0].seq, kept[kept.length - 1].seq]).toEqual([11, OPERATIONS_KEPT + 10]);
   });
 
-  it('lets a run that stands still before its first step be resumed and stepped', async () => {
+  it('calls a run holding while it stands still before its first step, as the launcher says', async () => {
     const { client, http, deliver } = setup();
     const app = (await httpExamples()).find((e) => e.name === 'app')?.response;
     const loading = client.loadApp();
@@ -744,20 +760,27 @@ describe('variables', () => {
       start_paused: true,
       time: null,
       result: null,
+      launcher_state: holdingState,
     };
     await deliver(hello(1), { type: 'synced', session: 1, last_seq: 0 });
-    expect(client.time.state.get()).toMatchObject({ beforeStart: false, canResume: false });
+    expect(isHolding(client.session.session.get())).toBe(false);
     await deliver({ ...hello(1), session: standing }, { type: 'synced', session: 1, last_seq: 0 });
-    expect(client.time.state.get()).toMatchObject({
-      beforeStart: true,
-      controllable: true,
-      canResume: true,
-      canStep: true,
-      canPause: false,
+    expect(isHolding(client.session.session.get())).toBe(true);
+    // The first step has begun (a resume, a step): the launcher's next state says so
+    await deliver({
+      type: 'event',
+      session: 1,
+      event: {
+        event: 'state',
+        t_ms: 0,
+        ...holdingState,
+        seq: 6,
+        rev: 6,
+        phase: 'running',
+        holding: false,
+      },
     });
-    // A run without variables (no Control Server) pauses after the step at time 0 and reports it with a time event
-    await deliver({ type: 'variables', session: 1, variables: { state: 'off', reason: 'none' } });
-    expect(client.time.state.get()).toMatchObject({ beforeStart: false, canResume: false });
+    expect(isHolding(client.session.session.get())).toBe(false);
   });
 });
 
@@ -1002,12 +1025,13 @@ describe('variables: what the review found', () => {
       start_paused: true,
       time: null,
       result: null,
+      launcher_state: holdingState,
     };
     await deliver({ ...hello(1), session: standing }, { type: 'synced', session: 1, last_seq: 0 });
-    expect(client.time.state.get().beforeStart).toBe(true);
+    expect(isHolding(client.session.session.get())).toBe(true);
     const dead = { ...standing, launcher: { ...standing.launcher, running: false, exit_code: 70 } };
     await deliver({ type: 'session', session: dead });
-    expect(client.time.state.get()).toMatchObject({ beforeStart: false, canResume: false });
+    expect(isHolding(client.session.session.get())).toBe(false);
   });
 });
 

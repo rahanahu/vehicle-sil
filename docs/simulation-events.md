@@ -44,8 +44,8 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `outside` | With `--connect`, the counts of a bridge change (at most once a second for each network) | `network`, `to_outside`, `from_outside` |
 | `finding` | A run finding is decided | The same keys as one entry of `findings[]` in the result |
 | `scenario_step` | A step of the `--scenario` scenario starts or is decided | The same keys as one entry of `scenario.steps[]` in the result |
-| `time` | Virtual time advances, the simulation pauses or resumes, or the speed changes | `sim_ms`, `speed`, `paused`, `actual_speed`, `late_steps`, `max_late_ms`, `slipped_ms`, `late_ms` |
-| `state` | Where the run stands, or what it accepts, has changed | `rev`, `phase`, `paused`, `holding`, `speed`, `pacing`, `stop`, `scenario`, `allowed`, `outside` |
+| `time` | Virtual time advances, the simulation pauses at another time, or the run is late | `sim_ms`, `actual_speed`, `late_steps`, `max_late_ms`, `slipped_ms`, `late_ms` |
+| `state` | Where the run stands, or what it accepts, has changed | `rev`, `phase`, `paused`, `paused_at_ms`, `holding`, `speed`, `pacing`, `stop`, `scenario`, `allowed`, `outside` |
 | `command` | A command arrives | `command`, `source`, `accepted`, `message`, `reason`, `ms`, `at_ms`, `id` |
 | `heartbeat` | Nothing was written for 1 second | None (only the 3 common keys) |
 | `result` | Last line | `result` |
@@ -56,7 +56,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 
 | Key | Value |
 |---|---|
-| `vehicle_sil_events` | Version of the event format (currently 1) |
+| `vehicle_sil_events` | Version of the event format (currently 2) |
 | `vehicle_sil` | vehicle-sil version |
 | `pid` | Process ID of `vehicle_sil_launch` |
 | `file` | The configuration file (as given in the arguments; `null` if unknown) |
@@ -117,22 +117,17 @@ For the keys of `scenario_step`, see "Output" in [scenario.md](scenario.md#outpu
 | Key | Value |
 |---|---|
 | `sim_ms` | Virtual time as the controller sees it (milliseconds; never decreases) |
-| `speed` | Current speed (a number or `"max"`) |
-| `paused` | Whether the simulation is paused |
 | `actual_speed` | Virtual time advanced ÷ real time, over roughly the last second (3 decimal places) |
 | `late_steps` | Number of late time steps so far |
 | `max_late_ms` | Largest lateness so far |
 | `slipped_ms` | Total slip so far |
 | `late_ms` | Current lateness of a time step that is past its deadline and has not started yet (0 if there is none) |
 
-- `actual_speed` is `null` when the simulation has run only for a short time, and while it is paused.
+- `actual_speed` is `null` when the simulation has run only for a short time, and in a `time` that is written while it is paused.
+- Whether the simulation is paused, where, and the speed set, are not in `time`: read `paused`, `paused_at_ms` and `speed` of the latest `state`.
+- While the simulation is paused, the last `time` can be from before the pause: its `sim_ms` can be earlier than `paused_at_ms` (until the launcher's next look, 20 ms), and its `actual_speed` and `late_ms` can be the values from before the pause (when the simulation pauses at the time of the last `time`, no new `time` is written).
 - `late_steps`, `max_late_ms` and `slipped_ms` have the same meaning as in the result's `timing`. They are the values the result would have if the run ended now.
 - While the simulation is stalled (virtual time does not advance and `late_ms` grows beyond the tolerance), `time` is still written, at most once every 100 ms.
-
-An event with `paused: true` is normally written after the simulation has paused. The first `time` of `--start-paused` is also written after the simulation has paused at time 0, so the result's `paused_ms` counts from before this event. There are 2 exceptions. In both, `true` is written while the simulation has reached the time at which it is to pause but has not paused yet, and `paused_ms` counts from when it actually pauses:
-
-- The simulation has not paused at time 0 within 2 seconds after the start (the launcher stops waiting and writes the event).
-- A `pause` or `run_until` names a time at or before the current time while the simulation is running, and the simulation pauses at the next time step.
 
 `command`:
 
@@ -162,6 +157,7 @@ Unlike every other event, `state` is not history. Only the latest one matters: w
 | `rev` | Counts the states the launcher made: 1, 2, 3, ... (a gap means that states were replaced before they were written; nothing is lost) |
 | `phase` | The current phase (the values of the `phase` event) |
 | `paused` | Whether the simulation is paused. Before the simulation starts: whether it will pause at time 0 (`--start-paused`, a `pause`). `false` once the simulation has ended |
+| `paused_at_ms` | The virtual time (milliseconds) at which the simulation is paused. `null` while `paused` is `false`, and while `paused` is `true` but the simulation has not come to a stand yet (see below) |
 | `holding` | Whether the run waits before the step at time 0 (`--control` with `--start-paused`; see "Write before the start (`--start-paused`)" in [control-api.md](control-api.md#write-before-the-start---start-paused)) |
 | `speed` | The speed set: a number or `"max"`. `null` while it is not known yet (before the launcher has set up the simulation, unless a `speed` command has arrived) |
 | `pacing` | Whether the run keeps the speed set: `"not-paced"`, `"on-time"` or `"late"` (see below) |
@@ -184,6 +180,15 @@ Unlike every other event, `state` is not history. Only the latest one matters: w
 The 5 s hold keeps a `state` from flickering. A bridge that has ended is not shown here (see `participant`, and the error `connect-lost`). The counts themselves are in `outside` events.
 
 `state` has only values that change in steps. Virtual time and the numbers that keep growing are in `time` (and, for a connected network, in `outside`).
+
+`paused`:
+
+A `state` with `paused` `true` is normally written after the simulation has paused. The first one of `--start-paused` is also written after the simulation has paused at time 0, so the result's `paused_ms` counts from before this event. There are 2 exceptions. In both, `true` is written while the simulation has reached the time at which it is to pause but has not paused yet, and `paused_ms` counts from when it actually pauses:
+
+- The simulation has not paused at time 0 within 2 seconds after the start (the launcher stops waiting and writes the events).
+- A `pause` or `run_until` names a time at or before the current time while the simulation is running, and the simulation pauses at the next time step.
+
+Where the simulation is paused is `paused_at_ms`: it is in the same `state` as `paused`, so you do not need a `time` event to know it. It is `null` while the simulation has not come to a stand: before the simulation starts (a `--start-paused` run that has not reached time 0), and in the 2 exceptions above. While the run holds before its first step (`holding` `true`), it is `0`. The `state` with the time follows when the simulation has paused. A change of `paused_at_ms` alone (a step ends at another time) also writes a `state`.
 
 `pacing`:
 
@@ -217,12 +222,12 @@ When `state` is written:
 | Moment | What is written |
 |---|---|
 | The phase changes | A `state` with the new phase is written; normally after the `phase` event. |
-| A command changes the state (a pause, a speed, a stop from stdin or a client) | A `state` with the change is written after the `command` event of that command. A command that changes nothing writes no `state`. |
-| The simulation pauses or continues, the pacing changes, a signal asks to stop | When the launcher next looks (every 20 ms while the simulation runs). A look that finds the simulation paused or continuing writes the `time` event first and this `state` right after it. |
+| A command changes the state (a pause, a speed, a stop from stdin or a client) | A `state` with the change is written after the `command` event of that command. A command that changes nothing writes no `state`. A `pause` can take effect at once (a time step is waiting to keep the speed): this `state` then has `paused` `true` and `paused_at_ms` already. |
+| The simulation pauses or continues, the pacing changes, a signal asks to stop | When the launcher next looks (every 20 ms while the simulation runs). A look that finds the simulation paused at another time than the last `time` said writes the `time` event with that time first and this `state` (with `paused_at_ms`) right after it. |
 
 Several threads of the launcher write `state`, so do not rely on the exact place of a `state` among the other events. Next to a `phase` event, the `command` event of a stdin `stop`, or a `time` event, one `state` that was made just before that event can follow it and does not show it yet, and the `state` with a new phase can come just before its `phase` event. A `state` that shows the change is always written, and the last `state` is correct: use the latest `state`, not the first one after an event.
 
-A `step` or a `run_until` ends with the simulation paused at the `at_ms` of its `command` event. Reaching that time writes nothing by itself: the launcher's next look writes the `time` event with that `sim_ms`, then the `state` with `paused` `true`. To send a command once the simulation is there, wait for that `time` event and until the latest `state` has `paused` `true`. A command sent as soon as the `time` event comes can be decided before that `state` is written; the next `state` then shows what the command did.
+A `step` or a `run_until` ends with the simulation paused at the `at_ms` of its `command` event. Reaching that time writes nothing by itself: the launcher's next look writes the `time` event with that `sim_ms`, then the `state` with `paused` `true` and that time in `paused_at_ms`. To send a command once the simulation is there, wait until the latest `state` has `paused` `true` and `paused_at_ms` at (or after) the `at_ms`. A `state` can say so before the `time` event of that time is written (the command's own `state`, if the simulation was already there). A command sent as soon as the `time` event comes can be decided before that `state` is written; the next `state` then shows what the command did.
 
 A stop request by a signal (Ctrl+C) that arrives before the simulation runs appears in the next `state` (the one of the next phase).
 
@@ -234,6 +239,7 @@ A `state` of a run with `--control` (pretty-printed here; it is one line in the 
   "rev": 9,
   "phase": "running",
   "paused": false,
+  "paused_at_ms": null,
   "holding": false,
   "speed": 1,
   "pacing": "on-time",
@@ -357,13 +363,15 @@ When `time` is written:
 |---|---|
 | The phase becomes `running` | A `time` at time 0. |
 | Virtual time advances | At most once every 100 ms of real time. |
-| The simulation pauses or resumes, or the speed changes | Immediately. |
-| The time changes while the simulation stays paused (after a step) | Immediately. |
-| The simulation ends | The state at that moment, whatever the interval (an ended simulation is not paused). |
+| The simulation is paused at another time than the last `time` said (a pause has taken effect, a step has ended) | Immediately. |
+| The run is late (`late_ms` beyond the tolerance, or another late time step) | At most once every 100 ms of real time. |
+| The simulation ends | If virtual time has advanced since the last `time`, or the run is late: the time at that moment, whatever the interval. |
 
-The first `time` is at time 0. Its `paused` is `true` only when the simulation is paused (or is to pause) at time 0. If the simulation is already past 0 when the event is written, `paused` is `false`, even if the simulation is paused at a later time. This happens, for example, after a `step` or `run_until` that was accepted before the start. If the simulation is still paused afterwards, the next `time` (with `paused` `true`) carries the time at which it paused. If another command advances the simulation first, or the simulation ends, that `time` is not written.
+That the simulation pauses or resumes, and a change of the speed, write no `time` by themselves: they write a `state`. The time at which the simulation is paused is `paused_at_ms` of `state`; the `time` with that time follows at the launcher's next look, if the last `time` was of another time.
 
-`sim_ms` never decreases (it can keep the previous value across a pause or a speed change). `vehicle_sil_launch` reads the state every 20 ms, so it may not write changes shorter than that (for example, in the middle of a single-step at maximum speed). The last state is always written.
+The first `time` is at time 0, even if the simulation is already past 0 when the event is written. This happens, for example, after a `step` or `run_until` that was accepted before the start. If the simulation is paused afterwards, the next `time` carries the time at which it paused. If another command advances the simulation first, or the simulation ends, that `time` is not written.
+
+`sim_ms` never decreases. `vehicle_sil_launch` reads the state every 20 ms, so it may not write changes shorter than that (for example, in the middle of a single-step at maximum speed). The last time is always written.
 
 `finding` is a run finding; the check's findings are inside `check`. When the simulation ends (or does not start), the launcher writes the findings decided at that point, and writes the rest after it has ended the participants. A `finding` once written appears unchanged in the `findings` of `result`. The same finding is never written twice. Reading `result` alone gives the full result.
 
@@ -433,7 +441,7 @@ When events pile up because they cannot be written:
 |---|---|
 | `log` | While more than 4096 lines or 1 MiB of `log` are waiting, new ones are counted instead of written. |
 | `time` that only reports that virtual time advanced | Not created while other events are waiting to be written. |
-| `time` that reports a pause or a speed change | Created. |
+| `time` that reports the time at which the simulation is paused | Created. |
 | Other events | Never dropped. |
 
 The counted `log` events are reported by one `log_dropped` line in their place (the reader receives it when it reads again). `count` and `sources` cover what was counted up to the moment that line is written.
@@ -485,7 +493,7 @@ The behavior is the same when stdout is a pipe set not to block on writes (`O_NO
 
 If no `result` arrives, use the exit code of the process.
 
-`event` values, keys, reason codes, and the values of `phase` and of a participant's `state` can be added without a version change. When the meaning of a key changes or a key is removed, `vehicle_sil_events` goes up.
+`event` values, keys, reason codes, and the values of `phase` and of a participant's `state` can be added without a version change. When the meaning of a key changes or a key is removed, `vehicle_sil_events` goes up. Format 2 took `paused` and `speed` out of `time`; they are in `state`.
 
 With `--events`, stderr gets only the notices of `vehicle_sil_launch` itself (usage errors, events can no longer be written, the result cannot be written, unexpected failures). Participant lines and progress lines do not go there. Anything a library inside `vehicle_sil_launch` writes to stdout goes to stderr (it never mixes with the event lines).
 
@@ -504,7 +512,7 @@ All lines of a short run. `--disable Dashboard` leaves only Engine, so the outpu
 
 <!-- vehicle_sil_launch run simulation.yaml --events --disable Dashboard -->
 ```text
-{"event":"hello","seq":0,"t_ms":<t_ms>,"vehicle_sil_events":1,"vehicle_sil":"<version>","pid":<pid>,"file":"simulation.yaml","arguments":["run","simulation.yaml","--events","--disable","Dashboard"]}
+{"event":"hello","seq":0,"t_ms":<t_ms>,"vehicle_sil_events":2,"vehicle_sil":"<version>","pid":<pid>,"file":"simulation.yaml","arguments":["run","simulation.yaml","--events","--disable","Dashboard"]}
 {"event":"phase","seq":1,"t_ms":<t_ms>,"phase":"checking"}
 {"event":"check","seq":2,"t_ms":<t_ms>,"check":{"vehicle_sil_check":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"stop_at_ms":1000,"start_timeout_ms":30000,"stop_timeout_ms":10000,"registry_uri":null,"participants":[{"name":"Engine","line":11,"command":["engine/vehicle_sil_engine_ecu"],"describe":true,"required":true,"enabled":true,"manual":false,"role":"ecu","step_ms":10,"status":"described","reported":{"vehicle_sil":"<version>","name":"Engine","step_ns":10000000,"networks":[{"name":"J1939_CAN","kind":"can","use":"j1939","nodes":[{"address":0,"j1939_name":"0x00000000FE000001","arbitrary_address_capable":false}],"mac":null}]},"variables":[{"name":"ecu.connected","type":"bool","causality":"input","unit":"","min":null,"max":null,"step":null,"description":"on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on","items":[],"builtin":true},{"name":"engine.throttle","type":"real","causality":"input","unit":"%","min":0,"max":100,"step":null,"description":"accelerator pedal position","items":[],"builtin":false},{"name":"engine.speed","type":"integer","causality":"output","unit":"rpm","min":null,"max":null,"step":null,"description":"","items":[],"builtin":false}],"network_map":null,"j1939_nodes":null,"control":{"transport":"silkit","wire_version":2}},{"name":"Dashboard","line":14,"command":["dashboard/vehicle_sil_dashboard_ecu"],"describe":true,"required":true,"enabled":false,"manual":false,"role":"ecu","step_ms":5,"status":"disabled","reported":null,"variables":null,"network_map":null,"j1939_nodes":null,"control":null}],"networks":[{"name":"J1939_CAN","kind":"can","line":8,"participants":["Engine"],"outside":null}],"time_lock":{"locked":false,"because":[]},"findings":[{"severity":"warning","code":"single-participant","file":"simulation.yaml","line":8,"participant":null,"network":"J1939_CAN","message":"network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it","detail":null},{"severity":"note","code":"participant-disabled","file":"simulation.yaml","line":14,"participant":"Dashboard","network":null,"message":"participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it","detail":null}]}}
 {"event":"participant","seq":3,"t_ms":<t_ms>,"name":"Dashboard","state":"disabled"}
@@ -519,8 +527,8 @@ All lines of a short run. `--disable Dashboard` leaves only Engine, so the outpu
 {"event":"control_link","seq":12,"t_ms":<t_ms>,"name":"Engine","state":"connected","variables":22}
 {"event":"phase","seq":13,"t_ms":<t_ms>,"phase":"running"}
 {"event":"log","seq":14,"t_ms":<t_ms>,"source":"vehicle_sil_launch","line":"simulation running"}
-{"event":"time","seq":15,"t_ms":<t_ms>,"sim_ms":0,"speed":"max","paused":false,"actual_speed":<actual_speed>,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0}
-{"event":"time","seq":16,"t_ms":<t_ms>,"sim_ms":1000,"speed":"max","paused":false,"actual_speed":<actual_speed>,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0}
+{"event":"time","seq":15,"t_ms":<t_ms>,"sim_ms":0,"actual_speed":<actual_speed>,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0}
+{"event":"time","seq":16,"t_ms":<t_ms>,"sim_ms":1000,"actual_speed":<actual_speed>,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0}
 {"event":"log","seq":17,"t_ms":<t_ms>,"source":"vehicle_sil_launch","line":"the simulation ended"}
 {"event":"phase","seq":18,"t_ms":<t_ms>,"phase":"stopping"}
 {"event":"log","seq":19,"t_ms":<t_ms>,"source":"vehicle_sil_launch","line":"Engine exited with code 0"}
@@ -555,10 +563,10 @@ The launcher reads stdin only with `--stdin-commands`. Without it, stdin is not 
 | `pause` | The simulation pauses at a boundary of the controller's time steps (at a time step that is waiting to keep the speed, if there is one; otherwise at the next time step). |
 | `resume` | Speed keeping starts over from here. |
 | `step` | Rounded up to a multiple of the time step (the `ms` of the `command` event is the actual amount). |
-| `step` | The `at_ms` of the `command` event is the virtual time at which the simulation pauses after the step. To know that the step has arrived, wait for a `time` event with `paused: true` and that `sim_ms`, instead of adding `ms` to a time you read earlier. A later `pause`, `resume`, `run_until` or `step`, or the end of the run, changes where the simulation pauses. |
+| `step` | The `at_ms` of the `command` event is the virtual time at which the simulation pauses after the step. To know that the step has arrived, wait until the latest `state` has `paused` `true` and that time (or a later one) in `paused_at_ms`, instead of adding `ms` to a time you read earlier. A later `pause`, `resume`, `run_until` or `step`, or the end of the run, changes where the simulation pauses. |
 | `step` | Sent while a previous `step` or a `run_until` is in progress, it counts from the time at which that one pauses. |
 | `step` | Sent after a `pause` was accepted and before the simulation has paused, it counts from the time step in progress: the `pause` has ended the `run_until` or `step` that was in progress, whether or not a time step was waiting to keep the speed at that moment. |
-| `run_until` | Works while running and while paused. If the simulation is paused at or after the time, it stays paused and nothing happens. If the time has passed while it runs, it pauses at the next time step. The `at_ms` of the `command` event is the time asked for, rounded up to a multiple of the time step; for a time that has passed, it is not the time at which the simulation pauses (read `sim_ms` of the next `time` event with `paused: true`, or the `state` event, instead of waiting for `at_ms`). |
+| `run_until` | Works while running and while paused. If the simulation is paused at or after the time, it stays paused and nothing happens. If the time has passed while it runs, it pauses at the next time step. The `at_ms` of the `command` event is the time asked for, rounded up to a multiple of the time step; for a time that has passed, it is not the time at which the simulation pauses (wait until the latest `state` has `paused` `true` and a `paused_at_ms`, and read that, instead of waiting for `at_ms`). |
 | `speed` | A pause stays in effect. |
 | EOF | If a stop request (`stop`, a signal, a closed stdout) has already arrived, does nothing (it does not count as a second one and no `command` event is written). |
 | Anything else | This covers a line that is not a JSON object, has no `command`, has an unknown command, has an `id` that is not an integer from 0 to 2^53, or is longer than 64 KiB. |
@@ -582,7 +590,7 @@ For a time command (`pause`, `resume`, `step`, `run_until`, `speed`), the thread
 
 The reason for not accepting goes into `message` (a sentence) and `reason` (a code; see [Reason codes](#reason-codes)). `allowed` of the `state` event says the same before a command is sent. A `pause` received before the controller exists pauses at 0, as `--start-paused` does.
 
-A pause leaves `phase` at `running`. The `paused` of `state` and of `time` reports the pause.
+A pause leaves `phase` at `running`. The `paused` of `state` reports the pause.
 
 Whether a run keeps real time (`--connect`, a `role: bridge` participant, `--time-policy`) is known only once the launcher has read the configuration file, so a time command that arrives earlier is not decided when it arrives:
 
@@ -630,7 +638,7 @@ The time operations (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) and `Sto
   "formats": {
     "check": 1,
     "run": 1,
-    "events": 1,
+    "events": 2,
     "describe": 1,
     "test": 1,
     "timeline": 1,
@@ -728,7 +736,7 @@ Each name indicates that the following are present:
 
 | Name in `features` | Includes |
 |---|---|
-| `speed` | `speed`, `time_step_ms` and `late_tolerance_ms` in the configuration file, `run --speed`, `timing` in the result, the findings `behind-real-time` and `coarse-time-step`, and `speed`, `paused`, `actual_speed`, `late_steps`, `max_late_ms`, `slipped_ms` and `late_ms` in the `time` event |
+| `speed` | `speed`, `time_step_ms` and `late_tolerance_ms` in the configuration file, `run --speed`, `timing` in the result, the findings `behind-real-time` and `coarse-time-step`, and `actual_speed`, `late_steps`, `max_late_ms`, `slipped_ms` and `late_ms` in the `time` event |
 | `control-links` | The event `control_link`, `participants[].control_link` in the result, `participants[].control` in the check JSON, the findings `control-link-no-hello`, `control-link-version`, `control-link-late-values`, `control-link-dropped` and `control-link-not-offered` |
 | `manual-participants` | `manual` in the configuration file, `--manual`, `participants[].manual` in the check and result JSON, the finding `participant-manual`, and the `state` `manual` of the event `participant` |
 | `scenario` | `scenario` in the result and check JSON, the event `scenario_step`, the findings `scenario-*`, and a finding's `file` being the scenario file |

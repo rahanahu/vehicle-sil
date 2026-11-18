@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import (CONFIGS, REPLAY, Client, Gui, alive, gui_server, is_ended, is_synced, run_async, scaled, wait_until,
+from conftest import (CONFIGS, REPLAY, Client, Gui, alive, gui_server, is_ended, is_state, is_synced, run_async, scaled, wait_until,
                       without_variables)
 
 POSIX = sys.platform != "win32"
@@ -506,37 +506,38 @@ def test_pause_step_resume_and_speed(tmp_path: Path) -> None:
             status, body = await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"], "speed": "max",
                                                     "start_paused": True})
             assert status == 200 and body["session"]["start_paused"] is True, body
-            await sock.until(is_time(sim_ms=0, paused=True))
+            await sock.until_stands(0)
             hello = events(sock.received, "hello")[0]
             assert hello["arguments"] == ["run", "--events", "--stdin-commands", "--disable", "Logger", "--speed",
                                           "max", "--start-paused", "--", "forever.yaml"]
             status, body = await c.post("api/time", {"command": "step", "ms": 25})
             assert status == 200 and body == {"session_id": 1, "command": {"command": "step", "ms": 25}}, body
-            got = await sock.until(is_time(sim_ms=30, paused=True))
-            step = next(e for e in events(got, "command"))
+            await sock.until_stands(30)
+            step = next(e for e in events(sock.received, "command"))
             assert step["accepted"] and step["ms"] == 30  # whole steps of 10 ms
             status, body = await c.post("api/time", {"command": "speed", "value": 2, "id": 7})
             assert status == 200 and body["command"] == {"command": "speed", "value": 2.0, "id": 7}
-            await sock.until(is_time(speed=2, paused=True))
+            await sock.until_stands(speed=2)
             # the launcher returns the id in the answer to that line, and null in the others
             answers = {e["command"]: e["id"] for e in events(sock.received, "command")}
             assert answers == {"step": None, "speed": 7}, answers
             await c.post("api/time", {"command": "resume"})
-            await sock.until(is_time(paused=False))
+            await sock.until(is_state(paused=False))
             status, body = await c.post("api/time", {"command": "step", "ms": 10})
             assert status == 200  # the server passes it on; the launcher refuses it
             got = await sock.until(is_command("step", False))
             assert "paused" in got[-1]["event"]["message"]
             await c.post("api/time", {"command": "pause"})
-            await sock.until(is_time(paused=True))
+            await sock.until_stands()
             status, body = await c.get("api/session")
             summary = body["session"]
-            assert summary["time"]["paused"] is True and summary["time"]["speed"] == 2
+            assert "paused" not in summary["time"] and "speed" not in summary["time"]
+            assert summary["launcher_state"]["paused"] is True and summary["launcher_state"]["speed"] == 2
             assert summary["last_command"]["command"] == "pause" and summary["last_command"]["accepted"] is True
             await c.post("api/stop")
             got = await sock.until(is_ended)
             end = got[-1]["session"]
-            assert end["result"]["result"] == "interrupted" and end["time"]["paused"] is False
+            assert end["result"]["result"] == "interrupted" and end["launcher_state"]["paused"] is False
             timing = end["result"]["timing"]
             assert timing["speed"] == 2 and timing["time_step_ms"] == 10 and timing["paused_ms"] > 0
             status, body = await c.post("api/time", {"command": "resume"})

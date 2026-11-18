@@ -138,7 +138,7 @@
         "event": "hello",
         "seq": 0,
         "t_ms": 0,
-        "vehicle_sil_events": 1,
+        "vehicle_sil_events": 2,
         "vehicle_sil": "0.1.0",
         "pid": 10001,
         "file": "control-trouble.yaml",
@@ -171,6 +171,7 @@
         "rev": 1,
         "phase": "checking",
         "paused": false,
+        "paused_at_ms": null,
         "holding": false,
         "speed": null,
         "pacing": "not-paced",
@@ -195,7 +196,7 @@
           "step": {
             "ok": false,
             "reason": "not-set-up",
-            "message": "the simulation has not been set up yet: step works once it stands still (a time event with paused true), with --start-paused from the start",
+            "message": "the simulation has not been set up yet: step works once it stands still (a state event with paused true), with --start-paused from the start",
             "caution": null,
             "min_ms": 1,
             "max_ms": 1000000000000
@@ -560,6 +561,7 @@
         "rev": 2,
         "phase": "starting",
         "paused": false,
+        "paused_at_ms": null,
         "holding": false,
         "speed": null,
         "pacing": "not-paced",
@@ -584,7 +586,7 @@
           "step": {
             "ok": false,
             "reason": "not-set-up",
-            "message": "the simulation has not been set up yet: step works once it stands still (a time event with paused true), with --start-paused from the start",
+            "message": "the simulation has not been set up yet: step works once it stands still (a state event with paused true), with --start-paused from the start",
             "caution": null,
             "min_ms": 1,
             "max_ms": 1000000000000
@@ -650,6 +652,7 @@
         "rev": 3,
         "phase": "starting",
         "paused": false,
+        "paused_at_ms": null,
         "holding": false,
         "speed": "max",
         "pacing": "not-paced",
@@ -851,6 +854,7 @@
         "rev": 4,
         "phase": "waiting",
         "paused": false,
+        "paused_at_ms": null,
         "holding": false,
         "speed": "max",
         "pacing": "not-paced",
@@ -947,20 +951,9 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "log",
+        "event": "control_link",
         "seq": 22,
         "t_ms": 220,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "control_link",
-        "seq": 23,
-        "t_ms": 230,
         "name": "Engine",
         "state": "no_hello"
       }
@@ -970,8 +963,8 @@
       "session": 1,
       "event": {
         "event": "control_link",
-        "seq": 24,
-        "t_ms": 240,
+        "seq": 23,
+        "t_ms": 230,
         "name": "Dashboard",
         "state": "version_mismatch",
         "version": 1
@@ -982,8 +975,8 @@
       "session": 1,
       "event": {
         "event": "control_link",
-        "seq": 25,
-        "t_ms": 250,
+        "seq": 24,
+        "t_ms": 240,
         "name": "Gauge",
         "state": "not_offered"
       }
@@ -993,8 +986,8 @@
       "session": 1,
       "event": {
         "event": "control_link",
-        "seq": 26,
-        "t_ms": 260,
+        "seq": 25,
+        "t_ms": 250,
         "name": "Logger",
         "state": "none"
       }
@@ -1004,8 +997,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 27,
-        "t_ms": 270,
+        "seq": 26,
+        "t_ms": 260,
         "phase": "running"
       }
     },
@@ -1014,11 +1007,12 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 28,
-        "t_ms": 280,
+        "seq": 27,
+        "t_ms": 270,
         "rev": 5,
         "phase": "running",
         "paused": false,
+        "paused_at_ms": null,
         "holding": false,
         "speed": "max",
         "pacing": "not-paced",
@@ -1083,8 +1077,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 29,
-        "t_ms": 290,
+        "seq": 28,
+        "t_ms": 280,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -1094,16 +1088,25 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 30,
-        "t_ms": 300,
+        "seq": 29,
+        "t_ms": 290,
         "sim_ms": 0,
-        "speed": "max",
-        "paused": false,
-        "actual_speed": 1.5,
+        "actual_speed": null,
         "late_steps": 0,
         "max_late_ms": 0,
         "slipped_ms": 0,
         "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 30,
+        "t_ms": 300,
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -1125,9 +1128,7 @@
         "seq": 32,
         "t_ms": 320,
         "sim_ms": 1000,
-        "speed": "max",
-        "paused": false,
-        "actual_speed": 1.5,
+        "actual_speed": null,
         "late_steps": 0,
         "max_late_ms": 0,
         "slipped_ms": 0,
@@ -1144,6 +1145,7 @@
         "rev": 6,
         "phase": "running",
         "paused": false,
+        "paused_at_ms": null,
         "holding": false,
         "speed": "max",
         "pacing": "not-paced",
@@ -1234,6 +1236,7 @@
         "rev": 7,
         "phase": "stopping",
         "paused": false,
+        "paused_at_ms": null,
         "holding": false,
         "speed": "max",
         "pacing": "not-paced",
@@ -1431,6 +1434,7 @@
         "rev": 8,
         "phase": "ended",
         "paused": false,
+        "paused_at_ms": null,
         "holding": false,
         "speed": "max",
         "pacing": "not-paced",
@@ -2037,9 +2041,7 @@
           "seq": 32,
           "t_ms": 320,
           "sim_ms": 1000,
-          "speed": "max",
-          "paused": false,
-          "actual_speed": 1.5,
+          "actual_speed": null,
           "late_steps": 0,
           "max_late_ms": 0,
           "slipped_ms": 0,
@@ -2452,6 +2454,7 @@
           "rev": 8,
           "phase": "ended",
           "paused": false,
+          "paused_at_ms": null,
           "holding": false,
           "speed": "max",
           "pacing": "not-paced",

@@ -64,8 +64,13 @@ std::string last_line(const std::string& text)
 }
 
 /// Where to see the targets of a network of `kind`.
-std::string target_hint(NetworkKind kind)
+std::string target_hint(NetworkKind kind, Os os)
 {
+    if (kind == NetworkKind::Can && os == Os::Linux)
+    {
+        return "give a SocketCAN interface (can0), or a Vector XL channel as xl:virtual:<n> or xl:physical:<n> "
+               "(vehicle_sil_launch connections <file> lists those of this computer), or none for SIL Kit only";
+    }
     return kind == NetworkKind::Can
                ? "give a channel as virtual:<n> or physical:<n> (vehicle_sil_launch connections <file> lists those of "
                  "this computer), or none for SIL Kit only"
@@ -282,7 +287,7 @@ std::vector<std::vector<std::string>> ecu_networks(const SimulationConfig& confi
 /// the loop is reported.
 void check_shared_targets(const SimulationConfig& config, const std::vector<ParticipantResult>& results,
                           const std::vector<std::pair<const NetworkConfig*, const ConnectRequest*>>& known,
-                          ConnectCheck& out)
+                          Os os, ConnectCheck& out)
 {
     const bool described = results.size() == config.participants.size();
     std::vector<std::string> unknown;
@@ -291,12 +296,12 @@ void check_shared_targets(const SimulationConfig& config, const std::vector<Part
     for (std::size_t i = 0; i < known.size(); ++i)
     {
         const NetworkConfig& first = *known[i].first;
-        const std::string key = known[i].first->valid ? connect_device_key(first.kind, known[i].second->target) : "";
+        const std::string key = known[i].first->valid ? connect_device_key(first.kind, known[i].second->target, os) : "";
         for (std::size_t j = i + 1; !key.empty() && j < known.size(); ++j)
         {
             const NetworkConfig& second = *known[j].first;
             if (!second.valid || second.kind != first.kind ||
-                connect_device_key(second.kind, known[j].second->target) != key)
+                connect_device_key(second.kind, known[j].second->target, os) != key)
             {
                 continue;
             }
@@ -346,6 +351,7 @@ ConnectCheck check_connections(const SimulationConfig& config, const std::vector
                                const std::vector<ConnectRequest>& requests, const ConnectTools* tools)
 {
     ConnectCheck out;
+    const Os os = tools != nullptr ? tools->os : kThisOs;
     const auto add = [&out](Severity severity, const char* code, std::size_t line, std::string message,
                             const std::string& participant, const std::string& network) {
         out.findings.push_back(Finding{severity, code, std::move(message), line, participant, network});
@@ -409,14 +415,23 @@ ConnectCheck check_connections(const SimulationConfig& config, const std::vector
         const std::size_t before = out.findings.size();
         NetworkOutside outside;
         outside.network = network->name;
-        outside.tool = std::string(bridge_tool(network->kind));
+        const ConnectTarget read = read_connect_target(network->kind, request->target, os);
+        outside.tool = std::string(bridge_tool(network->kind, read.backend));
         outside.target = request->target;
         outside.participant = bridge_participant(network->name);
-        if (auto problem = target_problem(network->kind, request->target))
+        if (auto problem = backend_problem(network->kind, request->target, os))
+        {
+            add(Severity::Error, "connect-backend", network->line,
+                prefix + "--connect " + network->name + "=" + shown_target(request->target) + ": " + *problem, "",
+                network->name);
+            out.outside.push_back(std::move(outside));
+            continue;
+        }
+        if (auto problem = target_problem(network->kind, request->target, os))
         {
             add(Severity::Error, "connect-target", network->line,
                 prefix + "--connect " + network->name + "=" + shown_target(request->target) + ": " + *problem + ": " +
-                    target_hint(network->kind),
+                    target_hint(network->kind, os),
                 "", network->name);
         }
         for (const ParticipantConfig& p : config.participants)
@@ -449,7 +464,7 @@ ConnectCheck check_connections(const SimulationConfig& config, const std::vector
             }
             macs = std::move(on.macs);
         }
-        const std::vector<std::string> bridgeArguments = bridge_arguments(*network, request->target, macs);
+        const std::vector<std::string> bridgeArguments = bridge_arguments(*network, request->target, macs, os);
         if (tools != nullptr && tools->find)
         {
             if (auto found = tools->find(outside.tool))
@@ -458,13 +473,13 @@ ConnectCheck check_connections(const SimulationConfig& config, const std::vector
             }
             else
             {
-                const std::optional<std::string> none = no_bridge_here(network->kind, tools->can_bridge);
+                const std::optional<std::string> none = no_bridge_here(network->kind, read.backend, os);
                 add(Severity::Error, "connect-tool-missing", network->line,
                     none ? prefix + "--connect needs " + outside.tool + ", and " + *none +
                                ": on this computer the network runs on SIL Kit only: leave --connect " + network->name +
                                " out (or give " + network->name + "=none)"
                          : prefix + "--connect needs " + outside.tool + ", which is " + tool_not_found(tools->launcher_dir) +
-                               ": " + tool_missing_fix(network->kind),
+                               ": " + tool_missing_fix(outside.tool),
                     "", network->name);
             }
         }
@@ -483,7 +498,7 @@ ConnectCheck check_connections(const SimulationConfig& config, const std::vector
         }
         out.outside.push_back(std::move(outside));
     }
-    check_shared_targets(config, results, known, out);
+    check_shared_targets(config, results, known, os, out);
 
     return out;
 }

@@ -37,7 +37,7 @@ bool is_shared_warning(std::string_view line)
 
 std::optional<std::map<std::string, std::uint64_t>> read_outside_stats(std::string_view tool, std::string_view line)
 {
-    if (tool != bridge_tool(NetworkKind::Ethernet) && tool != bridge_tool(NetworkKind::Can))
+    if (!is_bridge_tool(tool))
     {
         return std::nullopt;
     }

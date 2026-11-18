@@ -134,7 +134,7 @@ class TheGuide(unittest.TestCase):
                 if event["event"] == "log" and event["source"] == "Dashboard":
                     seen.append(f"[Dashboard] {event['line']}")
                 # Each command once the run stands still: a step is refused otherwise.
-                if event["event"] == "time" and event["paused"] and sent < len(commands):
+                if event["event"] == "state" and event["phase"] == "running" and event["paused"] and sent < len(commands):
                     run.stdin.write(commands[sent] + "\n")
                     run.stdin.flush()
                     sent += 1

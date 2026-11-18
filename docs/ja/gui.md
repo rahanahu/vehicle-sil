@@ -386,7 +386,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 - 止めた状態で始めると、全員がそろったところで仮想時間 0 に止まり、再開かステップ実行を待ちます。
 - 速度は前の実行のものが選ばれていますが、「止めた状態で始める」は前の実行から引き継ぎません（気づかずに止まったまま始まらないように）。
 - 変数を読み書きできる実行（ランチャーが Control Server を持つ）では、最初のステップの前（時刻 0 のステップが走る前）で止まります（ランチャーのルール。[control-api.md](control-api.md) の「始まる前に書く」）。この間に書き込んだ変数は、時刻 0 のステップで反映されます。
-- ランチャーは、最初のステップの前で止まっている間は `time` のイベントを出力しませんが、再開とステップ実行を受け付けます（ライブラリの `client.time.state` の `beforeStart`）。
+- ランチャーは、最初のステップの前で止まっている間は `time` のイベントを出力しませんが、再開とステップ実行を受け付けます（ランチャーの `state` のイベントの `holding`。ライブラリでは `isHolding(session)`）。
 - `--no-variables` で起動したときと、Control Server を持たないランチャーでは、時刻 0 のステップの後に止まります。
 
 ### 一時停止、再開、ステップ実行
@@ -774,25 +774,23 @@ const spec: DashboardSpec = {
 |---|---|
 | `supported` | ランチャーが時間のコマンドを持つか |
 | `time` | 最後の `time` のイベント（まだなければ `null`） |
-| `simMs`、`speed`、`paused`、`actualSpeed` | `time` の各フィールド（古いランチャーが出力しないフィールドは `null`） |
+| `simMs`、`actualSpeed` | 仮想時刻と実際の速度: ライブラリの `connect()` の `clock` の `sim_ms` と `actual_speed`（一時停止中は、ランチャーの `state` が言う止まった時刻と、`null`） |
+| `speed`、`paused` | 指定の速度と、一時停止しているか: ランチャーの最後の `state` のイベントの `speed` と `paused`（最初の `state` の前と、ランチャーが動いていないときは `null`） |
 | `paced` | 速度が数値か（遅れを数えているか） |
 | `lateness`、`behind` | 遅れの数と、実時間に遅れたか（許容を超えて遅れたステップがある） |
-| `lastCommand` | 最後の `command` のイベント（`name`、`accepted`、`message`、`ms`） |
-| `controllable` | 時間のコマンドが意味を持つか |
-| `beforeStart` | 最初のステップの前で、再開かステップ実行を待っているか |
-| `canPause`、`canResume`、`canStep` | いま押してよいか |
-| `stepping` | ステップ実行の途中か（ランチャーは一時停止の扱い） |
-| `sending` | 送って、ランチャーの応答（`command` のイベント）をまだ見ていないコマンド |
-| `error`、`errorFromServer` | 最後のコマンドが失敗した理由と、それがサーバーの文か |
+| `lastCommand` | 最後の `command` のイベント（`name`、`accepted`、`message`、`ms`、`atMs`） |
+| `beforeStart` | 最初のステップの前で、再開かステップ実行を待っているか（ランチャーの `state` の `holding`） |
+| `controls` | 操作ごとに、いま押してよいか、押せない理由、範囲（ライブラリの `connect()` の `controls`） |
+| `waiting` | 送って、応答をまだ見ていないコマンドがあるか |
+| `error`、`errorFromServer` | 最後のコマンドが失敗した理由と、それがサーバーかランチャーの文か |
 
-- `time` のフィールドは `simMs`、`speed`、`paused`、`actualSpeed`、`lateSteps`、`maxLateMs`、`slippedMs`、`lateMs` です。
-- `controllable` が真になるのは、ランチャーが対応し、段階が running で、`time` のイベントが来ていて、結果がまだで、停止を頼んでいないときです（サーバーと同じ条件）。`beforeStart` の間も真です。
-- `beforeStart` が真になるのは、止めた状態で始めた実行で、ランチャーが変数を読み書きする API を持つときです。このとき `time` はまだ `null` で、`canResume` と `canStep` が真になります。
-- `canPause`、`canResume`、`canStep` は、`controllable` で、さらに前のコマンドの応答を待っていないときに真になります。一時停止しているか、ステップ実行の途中かで分かれます。
-- `sending` は、応答が届く、ランチャーが終わる、実行が替わる、サーバーが拒否する、再接続した要約に応答がある、のどれかで解除されます。5 秒（`ANSWER_TIMEOUT_MS`）たっても応答がなければ、待つのをやめます。
-- `error` は、サーバーが拒否した文なら英語のまま、応答がなかったときは画面の文です。
+- `time` のフィールドは `simMs`、`actualSpeed`、`lateSteps`、`maxLateMs`、`slippedMs`、`lateMs` です。
+- 画面は、押してよいかを自分で判断しません。`controls` が、ランチャーが受け付けると言っていること（`state` のイベントの `allowed`）、GUI サーバーが言っていること、接続の状態を合わせます。
+- `beforeStart` が真になるのは、止めた状態で始めた実行で、ランチャーが変数を読み書きする API を持つときです。このとき `time` はまだ `null` で、`controls.resume` と `controls.step` が `ok` です。
+- `waiting` は、応答が届く、ランチャーが終わる、実行が替わる、サーバーが拒否する、のどれかで解除されます。5 秒（`ANSWER_TIMEOUT_MS`）たっても応答がなければ、コマンドは `no-answer` のコードで失敗します。
+- `error` は、コマンドが断られたときはサーバーかランチャーの文（英語のまま）、応答がなかったときは画面の文です。
 
-コマンドは `pause()`、`resume()`、`step(ms)`、`setSpeed(value)`（どれも `send(command)` を通る）です。前のコマンドの応答を待っている間と、実行がないときは送らず、`{sent: false, reason: 'waiting' | 'no-session'}` を返します（送ったら `{sent: true}`）。押せるかは、送る前に `canPause` などで確認します。
+コマンドは `pause()`、`resume()`、`step(ms)`、`setSpeed(value)` です。どれも Promise を返し、コマンドが済んだときに完了します（ステップ実行は、その時刻でまた一時停止したとき）。失敗は `error` に出て、Promise は失敗しません。送る前に `controls` を確認します。
 
 状態の帯に操作を追加するときは、`<app-run-status>` の中に `runStatusActions` の属性を付けた要素を置きます（「開始」と「停止」の後、「待たずに止める」の前に並びます。「開始」と「停止」の位置は動きません）。
 
@@ -1310,7 +1308,7 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 **変数に書き込めるか**: コンポーネントを `client.variables.bind` で作れば、`state` の `block` がこのルールを確認します。`write` を直接呼ぶ画面は、自分で確認します。
 
 - `writable` が偽の変数（`output`）には書き込めません。
-- `parameter` は最初のステップの前（`client.time.state` の `beforeStart`）だけです。
+- `parameter` は最初のステップの前（ランチャーの `state` の `holding`。ライブラリでは `isHolding(session)`）だけです。
 - シナリオを実行している実行（セッションのコピーに `scenario` があり、ランチャーが動いている）には書き込めません。
 - Control Server と接続していない participant（`client.variables.state` の `peers[].connected` が偽）にも書き込めません。
 
@@ -1333,7 +1331,6 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 | 変数の値 | GUI サーバーが読んだ時点の最後の値で、全部の値の記録ではありません（速いシミュレーションでは、間の値は届きません）。 |
 | 終了の後に残る値 | 最後に読めた値で、ランチャーが Control Server を閉じるのが早ければ、終了時の値より少し古いことがあります。 |
 | リポジトリの外にインストールした GUI サーバー | 任意の依存 `vehicle-sil-gui[variables]`（grpcio、protobuf）だけでは変数を使えません。 |
-| 古いランチャー（`time` のイベントに `paused` がない） | 仮想時間を開始時（0）と `stop_at_ms` に達したときにしか通知しないので、動いている間の 0 は表示しません。 |
 | Windows | 起動と照合だけを確認しています（`scripts/package.py verify`）。 |
 
 - **gRPC のスタブ**: 変数の読み書きは、ビルド済みのツールの `vehicle-sil-gui`（スタブを同梱）か、リポジトリの中で動かす GUI サーバー（`uv sync` の後の `uv run vehicle-sil-gui`）が前提です。gRPC のスタブを、リポジトリの `proto/` から `grpcio-tools` で作る（なければ `python -m vehicle_sil_control.generate` が作ったものを使う）ためです。

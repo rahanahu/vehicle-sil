@@ -766,8 +766,12 @@ private:
 
 #ifdef _WIN32
 constexpr const char* kExe = ".exe";
+/// The backend that the launcher gives the Ethernet bridge on this OS.
+constexpr const char* kOsBackend = "npcap";
 #else
 constexpr const char* kExe = "";
+/// The backend that the launcher gives the Ethernet bridge on this OS.
+constexpr const char* kOsBackend = "packet";
 #endif
 
 /// PATH without the bridges: empty, but on Windows the directories of PATH with the MinGW
@@ -901,6 +905,8 @@ void connect(const Options& o)
               "          \"vehicle_sil_ethernet_bridge\",\n"
               "          \"--network\",\n"
               "          \"ETH_EXT\",\n"
+              "          \"--backend\",\n"
+              "          \"" + std::string(kOsBackend) + "\",\n"
               "          \"--interface\",\n"
               "          \"eth0\",\n"
               "          \"--src-mac\",\n"
@@ -1082,13 +1088,13 @@ void connections(const Options& o)
     return;
 #endif
     require(!o.fake_pcap_dir.empty(), "the scenario connections needs --fake-pcap-dir");
-    // The bridge's backend without --backend: that of the OS (the fake library stands in for its library).
+    // The backend that the launcher gives (packet on Linux, npcap on Windows): the bridge for the tests opens the fake library for it.
 #ifdef _WIN32
     const std::string library = shown_path(o.fake_pcap_dir / "vehicle_sil_fake_pcap.dll");
     const std::string backend = "npcap";
 #else
     const std::string library = shown_path(o.fake_pcap_dir / "vehicle_sil_fake_pcap.so");
-    const std::string backend = "pcap";
+    const std::string backend = "packet";
 #endif
     set_environment("VEHICLE_SIL_TEST_PCAP_LIBRARY", library);
     set_environment("VEHICLE_SIL_FAKE_XL_FAIL_OPEN", "0");
@@ -1131,16 +1137,27 @@ void connections(const Options& o)
                     "ETH_EXT (ethernet; vehicle_sil_ethernet_bridge, " + backend + ": fake pcap version 1.0 (TEST ONLY)):\n"
                     "  --connect ETH_EXT=fake0  ",
              "\n  --connect ETH_EXT=fake-echo  ",
+#ifdef _WIN32
              "\nJ1939_CAN1 (can; vehicle_sil_vector_xl_bridge):\n"
              "  --connect J1939_CAN1=virtual:1   Virtual Channel 1; virtual 1; ",
+#else
+             "\nETH_EXT (ethernet; vehicle_sil_ethernet_bridge, tap",
+             "\nJ1939_CAN1 (can; vehicle_sil_socketcan_bridge):\n  cannot list: vehicle_sil_socketcan_bridge is neither next to ",
+#endif
              "\nBODY_LIN (lin): SIL Kit only (there is no bridge for LIN)\n"})
     {
         require(contains(out, part), "connections has not\n" + part + "--- it wrote ---\n" + out);
     }
     require(text.standard_error.empty(), "connections wrote on stderr:\n" + text.standard_error);
     // What a line says is what check --connect takes.
-    const Captured checked = connections_of({"check", "--connect", first_connect(out, "ETH_EXT"), "--connect",
-                                             first_connect(out, "J1939_CAN1"), file});
+#ifdef _WIN32
+    const std::string can_line = first_connect(out, "J1939_CAN1");
+#else
+    // Linux lists SocketCAN interfaces for a CAN network (that bridge is not among the tools of this test): the Vector XL
+    // channel is given by hand.
+    const std::string can_line = "J1939_CAN1=virtual:1";
+#endif
+    const Captured checked = connections_of({"check", "--connect", first_connect(out, "ETH_EXT"), "--connect", can_line, file});
     expect_code(checked, 0, "check with the --connect lines of connections");
     require(contains(lf(checked.standard_output), "ETH_EXT     ethernet  Camera        fake0\n") &&
                 contains(lf(checked.standard_output), "J1939_CAN1  can       Engine        virtual:1\n"),
@@ -1162,12 +1179,16 @@ void connections(const Options& o)
              "{\n  \"vehicle_sil_connections\": 1,\n",
              "  \"file\": " + json_string(file) + ",\n  \"result\": \"listed\",\n",
              "      \"name\": \"ETH_EXT\",\n      \"kind\": \"ethernet\",\n      \"tool\": \"vehicle_sil_ethernet_bridge\",\n"
+             "      \"backend\": \"" + backend + "\",\n"
              "      \"tool_path\": " + json_string(found + "/vehicle_sil_ethernet_bridge" + kExe) + ",\n"
              "      \"list\": {\n        \"vehicle_sil_targets\": 1,\n        \"tool\": \"vehicle_sil_ethernet_bridge\",\n"
              "        \"backend\": \"" + backend + "\",\n",
              "            \"value\": \"fake0\",\n",
+#ifdef _WIN32
              "            \"can\": {\n              \"target\": \"virtual\",\n              \"number\": 1,\n",
-             "      \"name\": \"BODY_LIN\",\n      \"kind\": \"lin\",\n      \"tool\": null,\n      \"tool_path\": null,\n"
+#endif
+             "      \"name\": \"BODY_LIN\",\n      \"kind\": \"lin\",\n      \"tool\": null,\n      \"backend\": null,\n"
+             "      \"tool_path\": null,\n"
              "      \"list\": null\n",
              "  \"findings\": []\n}\n"})
     {
@@ -1194,11 +1215,15 @@ void connections(const Options& o)
     set_environment("VEHICLE_SIL_TEST_PCAP_LIBRARY", library);
     set_environment("VEHICLE_SIL_FAKE_XL_FAIL_OPEN", "0");
     expect_code(failed, 1, "connections with bridges that cannot list");
+#ifdef _WIN32
+    const bool canFailed = contains(lf(failed.standard_output), "J1939_CAN1 (can; vehicle_sil_vector_xl_bridge):\n  cannot list: "
+                                                                "cannot open the Vector XL driver: ") &&
+                           contains(failed.standard_output, " [driver-missing]\n");
+#else
+    const bool canFailed = true;
+#endif
     require(contains(lf(failed.standard_output), "ETH_EXT (ethernet; vehicle_sil_ethernet_bridge, " + backend + "):\n  cannot list: ") &&
-                contains(failed.standard_output, " [library-missing]\n") &&
-                contains(lf(failed.standard_output), "J1939_CAN1 (can; vehicle_sil_vector_xl_bridge):\n  cannot list: cannot open "
-                                                     "the Vector XL driver: ") &&
-                contains(failed.standard_output, " [driver-missing]\n"),
+                contains(failed.standard_output, " [library-missing]\n") && canFailed,
             "connections with bridges that cannot list wrote:\n" + failed.standard_output);
 
     // Without the bridges (the launcher of the build, PATH without them): tool-missing, which is an
@@ -1209,10 +1234,11 @@ void connections(const Options& o)
     for (const std::string& part : std::vector<std::string>{
              "  \"result\": \"listed\",\n",
 #ifdef _WIN32
-             "      \"tool\": \"vehicle_sil_vector_xl_bridge\",\n      \"tool_path\": null,\n",
+             "      \"tool\": \"vehicle_sil_vector_xl_bridge\",\n      \"backend\": \"xl\",\n      \"tool_path\": null,\n",
 #else
-             "      \"name\": \"J1939_CAN1\",\n      \"kind\": \"can\",\n      \"tool\": null,\n      \"tool_path\": null,\n"
-             "      \"list\": null\n",
+             // Linux: the CAN network is listed by the SocketCAN bridge, which is not found either.
+             "      \"name\": \"J1939_CAN1\",\n      \"kind\": \"can\",\n      \"tool\": \"vehicle_sil_socketcan_bridge\",\n"
+             "      \"backend\": \"socketcan\",\n      \"tool_path\": null,\n",
 #endif
              "          \"code\": \"tool-missing\",\n          \"message\": " +
                  json_string("vehicle_sil_ethernet_bridge is neither next to vehicle_sil_launch (" + launcherDir +

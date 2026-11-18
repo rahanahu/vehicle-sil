@@ -853,15 +853,6 @@ void EventStream::time(const TimeEvent& time)
 {
     emit("time", object([&](Writer& w) {
              w.integer("sim_ms", time.sim_ms);
-             if (time.speed)
-             {
-                 w.real("speed", time.speed);
-             }
-             else
-             {
-                 w.string("speed", "max");
-             }
-             w.boolean("paused", time.paused);
              w.real("actual_speed", time.actual_speed);
              w.integer("late_steps", static_cast<std::int64_t>(time.late_steps));
              w.integer("max_late_ms", time.max_late_ms);
@@ -952,6 +943,14 @@ void EventStream::state(const RunState& state)
              w.integer("rev", static_cast<std::int64_t>(state.rev));
              w.string("phase", phase_name(state.phase));
              w.boolean("paused", state.paused);
+             if (state.paused_at_ms)
+             {
+                 w.integer("paused_at_ms", *state.paused_at_ms);
+             }
+             else
+             {
+                 w.null("paused_at_ms");
+             }
              w.boolean("holding", state.holding);
              if (!state.speed)
              {

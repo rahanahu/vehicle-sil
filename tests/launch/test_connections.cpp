@@ -82,13 +82,13 @@ struct FakeTools
     std::map<std::string, std::string> lists;
     std::vector<std::string> found;
     std::vector<std::string> asked;
-    bool can_bridge = true; ///< as on Windows
+    Os os = Os::Windows;
 
     ConnectTools tools()
     {
         ConnectTools out;
         out.launcher_dir = fs::path("/opt/vsil/bin");
-        out.can_bridge = can_bridge;
+        out.os = os;
         out.find = [this](std::string_view name) -> std::optional<fs::path> {
             for (const std::string& f : found)
             {
@@ -119,9 +119,11 @@ struct FakeTools
 
 TEST_CASE(connections_list_arguments_of_each_kind)
 {
-    CHECK(list_arguments(NetworkKind::Ethernet) == std::vector<std::string>({"--list-interfaces", "--json"}));
-    CHECK(list_arguments(NetworkKind::Can) == std::vector<std::string>({"--list-channels", "--json"}));
-    CHECK(list_arguments(NetworkKind::Lin).empty());
+    CHECK(list_arguments(NetworkKind::Ethernet, "tap") ==
+          std::vector<std::string>({"--list-interfaces", "--backend", "tap", "--json"}));
+    CHECK(list_arguments(NetworkKind::Can, "socketcan") == std::vector<std::string>({"--list-channels", "--json"}));
+    CHECK(list_arguments(NetworkKind::Can, "xl") == std::vector<std::string>({"--list-channels", "--json"}));
+    CHECK(list_arguments(NetworkKind::Lin, "").empty());
 }
 
 TEST_CASE(connections_quote_a_target_for_every_shell_or_say_none_fits)
@@ -205,12 +207,13 @@ TEST_CASE(connections_read_a_bridges_list)
 TEST_CASE(connections_refuse_what_connect_does_not_take)
 {
     TargetList list = read_target_list(R"({"vehicle_sil_targets": 1, "tool": "vehicle_sil_ethernet_bridge",
-        "targets": [{"value": "none", "usable": true, "ethernet": {"pcap_name": "\\Device\\NPF_{9}"}},
-                    {"value": "none", "usable": true},
+        "targets": [{"value": "none", "usable": true},
                     {"value": "-x", "usable": true, "reason": null},
                     {"value": "eth0", "usable": true},
+                    {"value": "tap:x", "usable": true},
                     {"value": "lo", "usable": false, "reason": "loopback: not an Ethernet adapter"}]})");
-    refuse_targets("ETH", NetworkKind::Ethernet, list);
+    prefix_targets(NetworkKind::Ethernet, "packet", list, Os::Linux);
+    refuse_targets("ETH", NetworkKind::Ethernet, list, Os::Linux);
     const auto said = [&list] {
         std::string out;
         for (const ListedTarget& t : list.targets)
@@ -219,26 +222,36 @@ TEST_CASE(connections_refuse_what_connect_does_not_take)
         }
         return out;
     };
-    check_text(said(), "none: --connect takes none for SIL Kit only: give this adapter by its pcap name, \\Device\\NPF_{9} (refused)\n"
-                       "none: --connect takes none for SIL Kit only, so an interface of this name cannot be connected: rename "
-                       "the interface (refused)\n"
-                       "-x: --connect does not take it: the target starts with '-', which the bridge would take for an option "
-                       "(refused)\n"
+    // An interface named none or like another backend's prefix is given with its own backend's prefix.
+    check_text(said(), "packet:none: usable\n"
+                       "-x: --connect does not take it: the target starts with '-', which the bridge would take for an "
+                       "option (refused)\n"
                        "eth0: usable\n"
+                       "packet:tap:x: usable\n"
                        "lo: loopback: not an Ethernet adapter\n");
+    // The value of each backend: bare for the default of the OS, else with its prefix.
+    TargetList tap = read_target_list(R"({"vehicle_sil_targets": 1, "targets": [{"value": "vsil0"}]})");
+    prefix_targets(NetworkKind::Ethernet, "tap", tap, Os::Linux);
+    check_text(tap.targets[0].value, "tap:vsil0");
+    TargetList npcap = read_target_list(R"({"vehicle_sil_targets": 1, "targets": [{"value": "Ethernet 2"}]})");
+    prefix_targets(NetworkKind::Ethernet, "npcap", npcap, Os::Windows);
+    check_text(npcap.targets[0].value, "Ethernet 2");
+    TargetList socketcan = read_target_list(R"({"vehicle_sil_targets": 1, "targets": [{"value": "can0"}, {"value": "virtual:1"}]})");
+    prefix_targets(NetworkKind::Can, "socketcan", socketcan, Os::Linux);
+    check_text(socketcan.targets[0].value + "|" + socketcan.targets[1].value, "can0|socketcan:virtual:1");
     // CAN: the form of virtual:<n> and physical:<n>.
-    TargetList can = read_target_list(R"({"vehicle_sil_targets": 1, "targets": [{"value": "usb:1"}, {"value": "virtual:1"}]})");
-    refuse_targets("CAN1", NetworkKind::Can, can);
+    TargetList can = read_target_list(R"({"vehicle_sil_targets": 1, "targets": [{"value": "xl:usb:1"}, {"value": "virtual:1"}]})");
+    refuse_targets("CAN1", NetworkKind::Can, can, Os::Windows);
     CHECK(!can.targets[0].usable && can.targets[0].refused && can.targets[1].usable);
     // A network whose name --connect cannot give: none of its targets.
     for (const char* name : {"A=B", "--ETH"})
     {
         TargetList named = read_target_list(R"({"vehicle_sil_targets": 1, "targets": [{"value": "eth0"}]})");
-        refuse_targets(name, NetworkKind::Ethernet, named);
+        refuse_targets(name, NetworkKind::Ethernet, named, Os::Linux);
         CHECK(!named.targets[0].usable);
     }
     TargetList equals = read_target_list(R"({"vehicle_sil_targets": 1, "targets": [{"value": "eth0"}]})");
-    refuse_targets("A=B", NetworkKind::Ethernet, equals);
+    refuse_targets("A=B", NetworkKind::Ethernet, equals, Os::Linux);
     check_text(equals.targets[0].reason, "the network's name has '=', and --connect takes the network's name up to the first "
                                          "'=': rename the network (a name without '=')");
 }
@@ -304,13 +317,13 @@ TEST_CASE(connections_ask_each_bridge_once_and_list_every_network)
     fake.lists["vehicle_sil_ethernet_bridge"] = kEthernetList;
     fake.found = {"vehicle_sil_ethernet_bridge"};
     const std::vector<NetworkConnections> all = connections_of(config, std::nullopt, fake.tools());
-    CHECK(fake.asked == std::vector<std::string>{"vehicle_sil_ethernet_bridge --list-interfaces --json"});
+    CHECK(fake.asked == std::vector<std::string>{"vehicle_sil_ethernet_bridge --list-interfaces --backend npcap --json"});
     CHECK(all.size() == 5);
-    check_text(all[0].name + "|" + all[0].tool + "|" + all[0].tool_path.generic_string(),
-               "ETH_A|vehicle_sil_ethernet_bridge|/bin/vehicle_sil_ethernet_bridge");
+    check_text(all[0].name + "|" + all[0].tool + "|" + all[0].backend + "|" + all[0].tool_path.generic_string(),
+               "ETH_A|vehicle_sil_ethernet_bridge|npcap|/bin/vehicle_sil_ethernet_bridge");
     CHECK(all[0].list && all[0].list->targets.size() == 2 && all[0].list->error_code.empty());
     CHECK(all[3].list && all[3].list->json == all[0].list->json);
-    check_text(all[1].tool, "vehicle_sil_vector_xl_bridge");
+    check_text(all[1].tool + "|" + all[1].backend, "vehicle_sil_vector_xl_bridge|xl");
     CHECK(all[1].tool_path.empty());
     check_text(error_of(*all[1].list),
                "tool-missing: vehicle_sil_vector_xl_bridge is neither next to vehicle_sil_launch (" +
@@ -321,16 +334,29 @@ TEST_CASE(connections_ask_each_bridge_once_and_list_every_network)
           all[2].no_bridge == "there is no bridge for LIN");
     CHECK(!all[4].kind && !all[4].list && all[4].tool.empty());
 
-    // Not on Windows: a CAN network has no bridge (nothing to build), unless one is found anyway.
-    FakeTools other;
-    other.can_bridge = false;
-    other.lists = {{"vehicle_sil_ethernet_bridge", kEthernetList}, {"vehicle_sil_vector_xl_bridge", kCanList}};
-    const std::vector<NetworkConnections> none = connections_of(config, std::string("CAN1"), other.tools());
-    CHECK(none.size() == 1 && none[0].kind == NetworkKind::Can && none[0].tool.empty() && none[0].tool_path.empty() &&
-          !none[0].list && none[0].no_bridge == "the Vector XL bridge is for Windows" && other.asked.empty());
-    other.found = {"vehicle_sil_vector_xl_bridge"};
-    const std::vector<NetworkConnections> built = connections_of(config, std::string("CAN1"), other.tools());
-    CHECK(built[0].list && built[0].list->targets.size() == 1 && built[0].no_bridge.empty());
+    // Linux: Ethernet is listed for each of packet and tap, CAN for socketcan only (Vector XL is for Windows).
+    FakeTools linux_;
+    linux_.os = Os::Linux;
+    linux_.lists = {{"vehicle_sil_ethernet_bridge", kEthernetList}, {"vehicle_sil_socketcan_bridge", kCanList}};
+    linux_.found = {"vehicle_sil_ethernet_bridge", "vehicle_sil_socketcan_bridge"};
+    const std::vector<NetworkConnections> here = connections_of(config, std::nullopt, linux_.tools());
+    const std::vector<std::string> expected{"vehicle_sil_ethernet_bridge --list-interfaces --backend packet --json",
+                                            "vehicle_sil_ethernet_bridge --list-interfaces --backend tap --json",
+                                            "vehicle_sil_socketcan_bridge --list-channels --json"};
+    CHECK(linux_.asked == expected);
+    // ETH_A (packet, tap), CAN1 (socketcan), BODY_LIN, ETH_B (packet, tap), BROKEN.
+    CHECK(here.size() == 7);
+    check_text(here[0].backend + "|" + here[1].backend + "|" + here[2].backend + "|" + here[2].tool, "packet|tap|socketcan|vehicle_sil_socketcan_bridge");
+    // The value --connect takes: bare for the default backend, with the prefix for the other.
+    check_text(here[0].list->targets[0].value, "vEthernet (A)");
+    check_text(here[1].list->targets[0].value, "tap:vEthernet (A)");
+    check_text(here[2].list->targets[0].value, "socketcan:virtual:1");  // a name that reads as a Vector XL target
+    // Without a bridge on Linux: tool-missing for each backend, the same for both Ethernet networks.
+    FakeTools bare;
+    bare.os = Os::Linux;
+    const std::vector<NetworkConnections> missing = connections_of(config, std::string("CAN1"), bare.tools());
+    CHECK(missing.size() == 1 && missing[0].backend == "socketcan" && missing[0].list &&
+          missing[0].list->error_code == "tool-missing" && bare.asked.empty());
 
     // --network: that one only; its bridge only is asked.
     FakeTools one;
@@ -372,10 +398,11 @@ TEST_CASE(connections_text_has_lines_to_copy_and_why_the_others_cannot_be_used)
                     {"value": "-x", "detail": "up", "usable": true},
                     {"value": "tap0", "detail": "", "usable": true}],
         "notes": ["Npcap offers no network adapter here"], "error": null})");
-    refuse_targets("ETH_B", NetworkKind::Ethernet, odd);
+    prefix_targets(NetworkKind::Ethernet, "packet", odd, Os::Linux);
+    refuse_targets("ETH_B", NetworkKind::Ethernet, odd, Os::Linux);
     NetworkConnections other{"ETH_B", NetworkKind::Ethernet, "vehicle_sil_ethernet_bridge", fs::path("/bin/eth"), odd};
     TargetList unnamedList = read_target_list(kEthernetList);
-    refuse_targets("A=B", NetworkKind::Ethernet, unnamedList);
+    refuse_targets("A=B", NetworkKind::Ethernet, unnamedList, Os::Windows);
     NetworkConnections unnamed{"A=B", NetworkKind::Ethernet, "vehicle_sil_ethernet_bridge", fs::path("/bin/eth"), unnamedList};
     // A bridge's words that a terminal would act on.
     NetworkConnections odder{"ETH_D", NetworkKind::Ethernet, "vehicle_sil_ethernet_bridge", fs::path("/bin/eth"),
@@ -397,10 +424,9 @@ TEST_CASE(connections_text_has_lines_to_copy_and_why_the_others_cannot_be_used)
                "  --connect \"ETH_EXT=vEthernet (A)\"  up, connected; Hyper-V Virtual Ethernet Adapter; \\Device\\NPF_{0A1B}\n"
                "  cannot be used: \\Device\\NPF_Loopback  (loopback: not an Ethernet adapter)\n"
                "ETH_B (ethernet; vehicle_sil_ethernet_bridge, packet):\n"
-               "  --connect 'ETH_B=eth$1'  up\n"
+               "  --connect 'ETH_B=eth$1'      up\n"
+               "  --connect ETH_B=packet:none  none; up\n"
                "  --connect ETH_B=tap0\n"
-               "  cannot be used: none  (--connect takes none for SIL Kit only, so an interface of this name cannot be "
-               "connected: rename the interface)\n"
                "  cannot be used: -x  (--connect does not take it: the target starts with '-', which the bridge would take "
                "for an option)\n"
                "  note: the line of eth$1 is quoted for sh: PowerShell and cmd read one of \" $ ` % ! \\ \xE2\x80\x9C "
@@ -463,6 +489,7 @@ TEST_CASE(connections_json_passes_each_list_on_with_every_key)
                            failed_list("vehicle_sil_vector_xl_bridge", "tool-missing", "it is not here")},
         NetworkConnections{"BODY_LIN", NetworkKind::Lin, "", {}, std::nullopt},
         NetworkConnections{"BROKEN", std::nullopt, "", {}, std::nullopt}};
+    report.per_network[0].backend = "xl";
     std::string json = format_connections_json(report);
     const std::string version = "\"vehicle_sil\": \"" + std::string(vehicle_sil::version()) + "\"";
     json.replace(json.find(version), version.size(), "\"vehicle_sil\": \"<version>\"");
@@ -476,6 +503,7 @@ TEST_CASE(connections_json_passes_each_list_on_with_every_key)
       "name": "CAN1",
       "kind": "can",
       "tool": "vehicle_sil_vector_xl_bridge",
+      "backend": "xl",
       "tool_path": ")" + process::shown_path(fs::path("/bin/xl")) + R"(",
       "list": {
         "vehicle_sil_targets": 1,
@@ -505,6 +533,7 @@ TEST_CASE(connections_json_passes_each_list_on_with_every_key)
       "name": "CAN2",
       "kind": "can",
       "tool": "vehicle_sil_vector_xl_bridge",
+      "backend": null,
       "tool_path": null,
       "list": {
         "vehicle_sil_targets": 1,
@@ -523,6 +552,7 @@ TEST_CASE(connections_json_passes_each_list_on_with_every_key)
       "name": "BODY_LIN",
       "kind": "lin",
       "tool": null,
+      "backend": null,
       "tool_path": null,
       "list": null
     },
@@ -530,6 +560,7 @@ TEST_CASE(connections_json_passes_each_list_on_with_every_key)
       "name": "BROKEN",
       "kind": null,
       "tool": null,
+      "backend": null,
       "tool_path": null,
       "list": null
     }
@@ -550,13 +581,14 @@ TEST_CASE(connections_json_passes_each_list_on_with_every_key)
     TargetList refused = read_target_list(R"({"vehicle_sil_targets": 1, "targets": [
         {"value": "none", "usable": true, "reason": null, "ethernet": {"pcap_name": "\\Device\\NPF_{9}"}},
         {"value": "-x", "label": "-x"}, {"value": "eth0", "usable": true, "reason": null}]})");
-    refuse_targets("ETH", NetworkKind::Ethernet, refused);
+    prefix_targets(NetworkKind::Ethernet, "npcap", refused, Os::Windows);
+    refuse_targets("ETH", NetworkKind::Ethernet, refused, Os::Windows);
     report.per_network = {NetworkConnections{"ETH", NetworkKind::Ethernet, "vehicle_sil_ethernet_bridge", fs::path("/bin/eth"),
                                              refused}};
     json = format_connections_json(report);
-    CHECK(json.find("          {\n            \"value\": \"none\",\n            \"usable\": false,\n            \"reason\": "
-                    "\"--connect takes none for SIL Kit only: give this adapter by its pcap name, \\\\Device\\\\NPF_{9}\",\n"
-                    "            \"ethernet\": {\n") != std::string::npos);
+    // The value is what --connect takes: an interface named none has its backend before it.
+    CHECK(json.find("          {\n            \"value\": \"npcap:none\",\n            \"usable\": true,\n            \"reason\": "
+                    "null,\n            \"ethernet\": {\n") != std::string::npos);
     CHECK(json.find("          {\n            \"value\": \"-x\",\n            \"label\": \"-x\",\n            \"usable\": false,\n"
                     "            \"reason\": \"--connect does not take it: the target starts with '-', which the bridge would "
                     "take for an option\"\n          }") != std::string::npos);

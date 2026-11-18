@@ -288,7 +288,7 @@ def test_writes_that_are_wrong_are_refused_before_they_reach_the_launcher(tmp_pa
             # A parameter after the first step, as the second write: the control server's answer, as the
             # operation's result, with how many writes took effect and which one was refused.
             await c.post("api/time", {"command": "step", "ms": 100})
-            await ws.until(is_time(sim_ms=100, paused=True))
+            await ws.until_stands(100)
             status, body = await c.post("api/write", {"session": session["id"],
                                                       "writes": {"Engine": {"engine.demand": 1, "engine.mode": 1}}})
             assert status == 200
@@ -444,7 +444,7 @@ def test_no_variables_when_the_server_is_told_so_or_cannot_load_the_stubs(tmp_pa
                 assert session["variables"] == {**session["variables"], "state": "off",
                                                 "reason": app["variables"]["reason"]}
                 # Without the control server the launcher stands still after its first step, as before.
-                await ws.until(is_time(paused=True))
+                await ws.until_stands(0)
                 hello = next(m["event"] for m in ws.received if m["type"] == "event" and m["event"]["event"] == "hello")
                 assert "--control" not in hello["arguments"]
                 await c.post("api/time", {"command": "resume"})

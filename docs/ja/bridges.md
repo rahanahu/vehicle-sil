@@ -12,7 +12,7 @@
 > [!WARNING]
 > Windows 11 の MSYS2 UCRT64 ビルドと、実際の XL Driver Library を使った Vector Virtual CAN の送受信を確認済みです。VN5620 の 2 つのチャネルを接続した物理ループバックでも、送受信を確認しています。他の物理 CAN 構成や機器は未確認です。
 
-イーサネットのブリッジ（`vehicle_sil_ethernet_bridge`）は [ethernet-bridge.md](ethernet-bridge.md) に、Linux の SocketCAN のブリッジ（`vehicle_sil_socketcan_bridge`）は [socketcan-bridge.md](socketcan-bridge.md) にあります。
+イーサネットのブリッジ（`vehicle_sil_ethernet_bridge`）は [ethernet-bridge.md](ethernet-bridge.md) に、Linux の SocketCAN のブリッジ（`vehicle_sil_socketcan_bridge`）は [socketcan-bridge.md](socketcan-bridge.md) にあります。`vehicle_sil_launch run --connect <network>=xl:virtual:1`（`=virtual:1`、`=physical:<n>` でも）がこのブリッジを起動します。Linux では、XL のチャンネルでない CAN の先（`=can0`）が SocketCAN のブリッジを起動します（simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。
 
 ## 最初の接続
 

@@ -76,7 +76,7 @@ export function runOf(s: Snapshot): RunState {
   if (outcome === 'stopping' || outcome === 'forcing') return 'stopping';
   const state = session.launcherState;
   const phase = state?.phase || session.phase;
-  const paused = state ? state.paused : (session.time?.paused ?? null);
+  const paused = state?.paused ?? null;
   switch (phase) {
     case null:
     case 'checking':
@@ -177,6 +177,44 @@ export function statusOf(s: Snapshot, initialFile: string | null): Omit<FrontSta
   };
 }
 
+/**
+ * Where virtual time is, as far as the session copy knows: the last time event, or the time the launcher's state says
+ * it stands still at (`paused_at_ms`), whichever is later. The state can be ahead of the time events: the launcher
+ * writes the time event of a standstill at its next look.
+ */
+export function simMsOf(session: SessionView | null): number | null {
+  if (!session) return null;
+  const sim = session.time?.simMs ?? session.simMs;
+  const state = session.launcherState;
+  const stands = state?.paused === true ? state.paused_at_ms : null;
+  if (stands === null || stands === undefined) return sim;
+  return sim === null ? stands : Math.max(sim, stands);
+}
+
+/**
+ * Where the launcher's latest state says the run stands still (`paused_at_ms`), or null: not paused, or paused but not
+ * yet standing at a time (a run_until to a time already passed, at the maximum speed, until the next step). A time event
+ * is not used: the last one can be from before the run stood still.
+ */
+export function standsAt(session: SessionView | null): number | null {
+  const state = session?.launcherState;
+  return state?.paused === true ? (state.paused_at_ms ?? null) : null;
+}
+
+/**
+ * Whether a step or a run_until that the launcher accepted has not been seen to arrive. It has arrived when the latest
+ * state says the run stands still at or after the `at_ms` of its command event (standsAt). Another command after it (a
+ * pause, a resume) ends the question (it is then the last command), and so does the end of the run.
+ */
+export function onItsWay(session: SessionView | null): boolean {
+  const last = session?.lastCommand;
+  if (!session || !session.launcher.running || !last || !last.accepted || last.atMs === null)
+    return false;
+  if (last.name !== 'step' && last.name !== 'run_until') return false;
+  const stands = standsAt(session);
+  return !(stands !== null && stands >= last.atMs);
+}
+
 // --- clock ----------------------------------------------------------------------------------------
 
 export function clockOf(s: Snapshot): FrontClock {
@@ -186,9 +224,10 @@ export function clockOf(s: Snapshot): FrontClock {
   const live = !!session && session.launcher.running;
   const pacing = state?.pacing;
   return {
-    sim_ms: time?.simMs ?? session?.simMs ?? null,
-    speed: state?.speed ?? time?.speed ?? null,
-    actual_speed: time?.actualSpeed ?? null,
+    sim_ms: simMsOf(session ?? null),
+    speed: state?.speed ?? null,
+    // The last time event may be from before the pause: nothing moves while it stands still
+    actual_speed: state?.paused === true ? null : (time?.actualSpeed ?? null),
     pacing: !live
       ? NOT_PACED
       : pacing === 'late'
@@ -358,14 +397,10 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
 
   const withReason = (base: Control, code: string, message: string): Control =>
     base.ok ? control(false, reason(code, message), base.caution) : base;
-  // The launcher writes `paused` of its `state` when its loop turns, so after a step it can still say "not paused" while
-  // the time event already says paused: when the two disagree, neither pause nor resume claims to change nothing.
-  const timePaused = session?.time?.paused ?? null;
-  const paused = state
-    ? timePaused !== null && timePaused !== state.paused
-      ? null
-      : state.paused
-    : timePaused;
+  // While a step or a run_until is on its way, neither pause nor resume claims to change nothing: the launcher's state
+  // says "not paused" until its next look after the arrival, and the state from before the command may still be the
+  // latest. The launcher's own answer (`allowed`) stands meanwhile.
+  const paused = state && !onItsWay(session) ? state.paused : null;
 
   const pauseBase = timeControl('pause', 'pause');
   const pause =

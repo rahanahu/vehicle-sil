@@ -563,7 +563,7 @@ void connect_speed(const Options& base)
     require(contains(finding_in(freeLines, "outside-not-real-time"), "--speed 2 runs the simulation at that speed") &&
                 contains(freeLines.back(), "\"severity\":\"note\",\"code\":\"outside-not-real-time\"") &&
                 contains(finding_in(freeLines, "outside-not-real-time"), "the bridge still carries frames both ways") &&
-                !events_with(freeLines, {"\"event\":\"time\"", "\"speed\":2,"}).empty() &&
+                !events_with(freeLines, {"\"event\":\"state\"", "\"speed\":2,"}).empty() &&
                 contains(freeLines.back(), "\"simulation\":\"reached_stop_at\""),
             "the note is about --speed, and the run went at speed 2:\n" + out_of(freeLines));
     // No --speed, and another speed in the file: the run goes at speed 1, and a note says so.
@@ -577,8 +577,8 @@ void connect_speed(const Options& base)
         const std::vector<std::string> setLines = check_events(set.standard_output);
         expect_code(set, 0, "run --strict --connect of a file with speed: 8 (a note)");
         require(contains(finding_in(setLines, "outside-speed-set"), "not at the speed 8 of the file") &&
-                    !events_with(setLines, {"\"event\":\"time\"", "\"speed\":1,"}).empty() &&
-                    events_with(setLines, {"\"event\":\"time\"", "\"speed\":8,"}).empty() &&
+                    !events_with(setLines, {"\"event\":\"state\"", "\"speed\":1,"}).empty() &&
+                    events_with(setLines, {"\"event\":\"state\"", "\"speed\":8,"}).empty() &&
                     contains(setLines.back(), "\"timing\":{\"speed\":1,") &&
                     contains(setLines.back(), "\"simulation\":\"reached_stop_at\""),
                 "the run went at speed 1, and outside-speed-set says so:\n" + out_of(setLines));
@@ -637,7 +637,7 @@ void connect_speed(const Options& base)
     refused(launch(o, run_with({"--stdin-commands", "--start-paused"}), dir), "--start-paused");
     // With --time-policy free it is a note, and it runs after a resume.
     Live live(o, dir, run_with({"--strict", "--stdin-commands", "--time-policy", "free", "--start-paused"}));
-    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":0,", "\"paused\":true,"});
+    live.wait_standing(0);
     live.write("{\"command\":\"resume\"}\n");
     const auto [status, lines] = live.finish();
     require(status && status->code == 0, "exit code " + code_text(status) + "\n" + out_of(lines));
@@ -691,9 +691,9 @@ void connect_time_locked(const Options& base)
                     contains(pause, "start the run again with --time-policy free"),
                 "the refusal says why and what to do:\n" + pause);
         // Nothing of it reached the simulation: it never stood still and went at speed 1.
-        require(events_with(lines, {"\"event\":\"time\"", "\"paused\":true"}).empty() &&
-                    events_with(lines, {"\"event\":\"time\"", "\"speed\":5,"}).empty() &&
-                    events_with(lines, {"\"event\":\"time\"", "\"speed\":null,"}).empty() &&
+        require(events_with(lines, {"\"event\":\"state\"", "\"paused\":true"}).empty() &&
+                    events_with(lines, {"\"event\":\"state\"", "\"speed\":5,"}).empty() &&
+                    events_with(lines, {"\"event\":\"state\"", "\"speed\":\"max\","}).empty() &&
                     contains(lines.back(), "\"timing\":{\"speed\":1,"),
                 "the simulation went on at speed 1:\n" + out_of(lines));
         // The state says what the commands were told: from the first one after the configuration.
@@ -761,9 +761,11 @@ void connect_time_changed(const Options& base)
                            "--connect", "CAN=virtual:1", "sim.yaml"});
         live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
         live.write("{\"command\":\"pause\"}\n");
-        const std::string paused = live.wait_for({"\"event\":\"time\"", "\"paused\":true,"});
+        live.wait_paused();
         live.write("{\"command\":\"speed\",\"value\":2}\n{\"command\":\"resume\"}\n");
-        live.wait_for({"\"event\":\"time\"", "\"speed\":2,", "\"paused\":false,"});
+        live.wait_for({"\"event\":\"state\"", "\"paused\":false,", "\"speed\":2,"});
+        // A time after it went on: not before where it stood still.
+        const std::string paused = live.wait_for_after({"\"command\":\"resume\"", "\"accepted\":true,"}, {"\"event\":\"time\""});
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish();
         require(status && status->code == 130, "stopped by a command: exit code " + code_text(status) + "\n" + out_of(lines));

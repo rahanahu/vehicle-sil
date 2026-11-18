@@ -563,22 +563,32 @@ Other rules:
 ```sh
 vehicle_sil_launch check --connect "ETH_EXT=vEthernet (A)" --connect J1939_CAN1=physical:1 simulation.yaml
 vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" --connect J1939_CAN1=physical:1 simulation.yaml
+vehicle_sil_launch run --speed 1 --connect ETH_EXT=tap:vsil0 --connect J1939_CAN1=can0 simulation.yaml   # Linux
 ```
 
-| Kind | Bridge | `<target>` |
-|---|---|---|
-| `ethernet` | `vehicle_sil_ethernet_bridge` ([ethernet-bridge.md](ethernet-bridge.md)) | The adapter as the bridge's `--interface` takes it: on Windows the connection name (`vEthernet (A)`), the pcap name (`\Device\NPF_{...}`) or `{GUID}`; on Linux the interface name (`enp3s0`). |
-| `can` | `vehicle_sil_vector_xl_bridge` ([bridges.md](bridges.md)) | `virtual:<n>` or `physical:<n>`: the channel number from 1. |
-| `lin` | None | Cannot be connected (`connect-kind`). |
+A target is `none` or `[<backend>:]<selector>`. The backend says which way the network is connected; without it, the default of the OS takes the selector:
+
+| Kind | `<backend>:` | OS | Bridge | `<selector>` |
+|---|---|---|---|---|
+| `ethernet` | `npcap:` (default on Windows) | Windows | `vehicle_sil_ethernet_bridge` ([ethernet-bridge.md](ethernet-bridge.md)), `--backend npcap` | The adapter as the bridge's `--interface` takes it: the connection name (`vEthernet (A)`), the pcap name (`\Device\NPF_{...}`) or `{GUID}`. |
+| `ethernet` | `packet:` (default on Linux) | Linux | The same, `--backend packet` | The interface name (`enp3s0`). |
+| `ethernet` | `tap:` | Linux | The same, `--backend tap` | The name of a TAP device you created (`vsil0`). |
+| `can` | `xl:` (default on Windows, and on Linux when the selector is `virtual:<n>` or `physical:<n>`) | Named on any OS, runs on Windows | `vehicle_sil_vector_xl_bridge` ([bridges.md](bridges.md)) | `virtual:<n>` or `physical:<n>`: the channel number from 1. |
+| `can` | `socketcan:` (default on Linux, when the selector is not an XL channel) | Linux | `vehicle_sil_socketcan_bridge` ([socketcan-bridge.md](socketcan-bridge.md)) | The interface name (`can0`, `vcan0`). |
+| `lin` | None | | None | Cannot be connected (`connect-kind`). |
+
+- `<backend>:` is read only when the word before the first `:` is a backend of the kind in the table above, in lower case. Any other word before a `:` belongs to the selector (`virtual:1`, `eth0:1`, `TAP:x`, `pcap:x`). The selector after a prefix may have `:` too (`npcap:tap:x` is the adapter `tap:x`). A selector that starts with a backend's word, or is `none`, is given with its backend: `packet:none` is an interface named `none`.
+- A backend that the OS does not have (`tap:x` or `socketcan:can0` on Windows, `npcap:x` on Linux) is the error `connect-backend`: it lists the backends that this OS has and says to give the target without a prefix to take the default.
+- The launcher always passes the backend of an Ethernet network to the bridge (`--backend`), so the bridge does not choose by itself.
 
 `vehicle_sil_launch connections <file>` lists the targets of each network on this computer, as `--connect` lines to copy (see "[Where a network can be connected](simulation-run.md#where-a-network-can-be-connected-vehicle_sil_launch-connections)" in simulation-run.md).
 
-- `none` as the target: SIL Kit only, the same as no `--connect` for that network (for a script that says so outright). Give an adapter named `none` by its pcap name.
+- `none` as the target: SIL Kit only, the same as no `--connect` for that network (for a script that says so outright). Give an interface named `none` with its backend: `packet:none`.
 - Give each network once. The network's name ends at the first `=`, so a network whose name has `=` cannot be connected (rename it).
 - Quote the whole argument when the target has spaces: `--connect "ETH_EXT=vEthernet (A)"`.
 - The launcher looks for the bridge next to `vehicle_sil_launch`, then in the absolute directories of `PATH`. It never looks in the working directory or in the directory of the configuration file. It looks only for the bridges of the networks given with `--connect`, so a check without `--connect` writes the same on every computer. It starts a bridge (its `--describe`, its list for `connections`, its run) in the bridge's own directory, never in the directory of the configuration file, so that a DLL put into a folder received from someone is not loaded. The participants of the file start in the directory of the configuration file, as before.
-- The prebuilt tools archive has `vehicle_sil_ethernet_bridge` next to `vehicle_sil_launch` in `bin/`; the Vector XL CAN Bridge is not in it (build it, see "[Build](bridges.md#build)" in bridges.md).
-- The bridge of a `can` network (the Vector XL bridge) runs on Windows only. Elsewhere, `connect-tool-missing` says that the network runs on SIL Kit only, unless a bridge is found anyway (a build for tests).
+- The prebuilt tools archive has `vehicle_sil_ethernet_bridge` next to `vehicle_sil_launch` in `bin/`, and on Linux `vehicle_sil_socketcan_bridge`; the Vector XL CAN Bridge is not in it (build it, see "[Build](bridges.md#build)" in bridges.md).
+- The Vector XL bridge runs on Windows only. `xl:virtual:1` on Linux gives `connect-tool-missing`, which says that the network runs on SIL Kit only, unless a bridge is found anyway (a build for tests).
 - The check runs the bridge's `--describe` with the arguments below and `--name bridge.<network>`, the bridge's participant name. `run` starts it with the same arguments and `--name bridge.<network> --registry-uri <URI> --start-timeout-ms <start_timeout_ms>`. `bridge.<network>` is not a participant of the file: `--disable`, `--enable` and `--manual` do not take it. With `--describe`, the bridge opens neither the adapter nor the channel. A bridge that refuses the arguments is the error `connect-tool-failed`, with the bridge's own line.
 - On a connected network, the bridge counts as a participant (one ECU there is not `single-participant`), and a `role: bridge` participant on the same network is a loop (`connect-loop`).
 - A real bus does not wait for the virtual time: a run with `--connect` goes at speed 1 whatever `speed` the file has (the note `outside-speed-set`), and another `--speed` or `--start-paused` is the error `outside-real-time`. `--time-policy free` lifts this (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
@@ -587,8 +597,9 @@ The arguments that the launcher gives the bridge:
 
 | Kind | Arguments |
 |---|---|
-| `ethernet` | `--network <network> --interface <target>`, and the frames that pass: `--all-frames` (`all_frames: true`), `--ethertype` (`ethertypes`), or else `--src-mac` with the MAC addresses that the ECUs on the network report in their `--describe` output, not those of participants with `role: test` or `role: bridge` (if an ECU reports none, one has `describe: false`, or no ECU reports one, the error is `connect-filter`) |
-| `can` | `--network <network> --xl-target <virtual or physical> --xl-channel <n>`, and `--bitrate <bitrate>` with `bitrate` |
+| `ethernet` | `--network <network> --backend <backend> --interface <selector>`, and the frames that pass: `--all-frames` (`all_frames: true`), `--ethertype` (`ethertypes`), or else `--src-mac` with the MAC addresses that the ECUs on the network report in their `--describe` output, not those of participants with `role: test` or `role: bridge` (if an ECU reports none, one has `describe: false`, or no ECU reports one, the error is `connect-filter`) |
+| `can` with `xl` | `--network <network> --xl-target <virtual or physical> --xl-channel <n>`, and `--bitrate <bitrate>` with `bitrate` |
+| `can` with `socketcan` | `--network <network> --interface <selector>`, and `--bitrate <bitrate>` with `bitrate` (the bridge only checks that the interface runs at this rate; it never sets it) |
 
 The findings are the `connect-*` codes in [simulation-check.md](simulation-check.md#finding-codes). `check --json` writes the bridge, where it was found and its command line to `networks[].outside`, and the human-readable output adds the column `outside` to the network table.
 

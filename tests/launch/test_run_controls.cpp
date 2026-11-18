@@ -561,6 +561,7 @@ TEST_CASE(the_state_says_the_hold_while_it_lasts)
     Told t(true);
     t.controls.publish();
     CHECK(t.states.back().paused); // it will stand still at 0
+    CHECK(!t.states.back().paused_at_ms); // and does not yet
     CHECK(!t.states.back().holding);
     std::vector<bool> during;
     int asked = 0;
@@ -577,6 +578,9 @@ TEST_CASE(the_state_says_the_hold_while_it_lasts)
         holding.push_back(s.holding);
     }
     CHECK((holding == std::vector<bool>{false, true, false}));
+    // While it holds it stands still at 0; before and after, it is to stand still and does not yet.
+    CHECK(t.states.at(1).paused && t.states.at(1).paused_at_ms == std::optional<std::int64_t>{0});
+    CHECK(t.states.at(2).paused && !t.states.at(2).paused_at_ms);
 }
 
 TEST_CASE(a_command_of_a_source_that_is_no_entry_is_refused_and_changes_nothing)
