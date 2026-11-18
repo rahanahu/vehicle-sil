@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+import { userEvent } from 'vitest/browser';
 import { ActionError } from '../index';
 import { fakeFront, viewOf } from './fake-front';
 import type { FakeFront } from './fake-front';
@@ -131,19 +131,46 @@ describe('<vsil-slider>', () => {
     expect(input.value).toBe('60');
   });
 
-  it('follows the variable again when the knob is let go where it was picked up', async () => {
+  it('follows the variable when the real pointer takes the knob and puts it back', async () => {
     const front = fakeFront();
     const part = await mount('vsil-slider', front, { variable: 'Engine.e.throttle' });
-    const cell = front.variables.get('Engine.e.throttle')!.cell;
+    const variable = front.variables.get('Engine.e.throttle')!;
     const range = { min: 0, max: 100, step: 1 };
-    cell.set(viewOf({ value: 30, text: '30', ...range }));
+    variable.cell.set(viewOf({ value: 50, text: '50', ...range }));
     const input = part.querySelector('input')!;
-    input.value = '60';
-    input.dispatchEvent(new Event('input'));
-    input.value = '30'; // back where it was: the browser gives no `change`
-    input.dispatchEvent(new Event('pointerup'));
-    cell.set(viewOf({ value: 50, text: '50', ...range }));
+    input.style.width = '400px';
+    const box = input.getBoundingClientRect();
+    const knob = { x: box.left + box.width / 2, y: box.top + box.height / 2 }; // the knob of a middle value is in the middle
+    await userEvent.pointer([
+      { coords: knob, keys: '[MouseLeft>]' },
+      { coords: { x: knob.x + 100, y: knob.y } },
+    ]);
+    expect(Number(input.value)).toBeGreaterThan(50);
+    variable.cell.set(viewOf({ value: 40, text: '40', ...range }));
+    expect(Number(input.value)).toBeGreaterThan(50); // the knob in hand does not jump
+    await userEvent.pointer([{ coords: knob }, { keys: '[/MouseLeft]' }]);
     expect(input.value).toBe('50');
+    expect(variable.write).not.toHaveBeenCalled(); // back where it was: the browser gives no `change`
+    variable.cell.set(viewOf({ value: 70, text: '70', ...range }));
+    expect(input.value).toBe('70');
+  });
+
+  it('writes the value that the real pointer leaves the knob at', async () => {
+    const front = fakeFront();
+    const part = await mount('vsil-slider', front, { variable: 'Engine.e.throttle' });
+    const variable = front.variables.get('Engine.e.throttle')!;
+    variable.cell.set(viewOf({ value: 50, text: '50', min: 0, max: 100, step: 1 }));
+    const input = part.querySelector('input')!;
+    input.style.width = '400px';
+    const box = input.getBoundingClientRect();
+    const knob = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    await userEvent.pointer([
+      { coords: knob, keys: '[MouseLeft>]' },
+      { coords: { x: knob.x + 100, y: knob.y } },
+      { keys: '[/MouseLeft]' },
+    ]);
+    expect(variable.write).toHaveBeenCalledOnce();
+    expect(variable.write.mock.calls[0]![0]).toBeGreaterThan(50);
   });
 
   it('is not usable for a variable without a range, and says so', async () => {

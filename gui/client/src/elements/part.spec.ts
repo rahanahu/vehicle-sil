@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { fakeFront } from './fake-front';
 import './index';
 import { pageIntent, setReasonText } from './index';

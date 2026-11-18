@@ -1,6 +1,6 @@
 # A tag v<version> makes the release's files and puts them on a draft release; a person reads it and publishes it.
 #   web       the screen, the bundled client library and its npm package (scripts/verify-web.py, without the
-#             browser tests)
+#             end-to-end tests)
 #   linux     the tools archive for Linux x86_64, built on the oldest Ubuntu runner (an older glibc than the
 #             distributions it runs on), and checked as a user uses it (scripts/package.py tools, verify)
 #   windows   the same for Windows x86_64 with MSYS2 UCRT64
@@ -40,8 +40,14 @@ jobs:
           node-version-file: gui/web/.nvmrc
           cache: npm
           cache-dependency-path: gui/web/package-lock.json
+      - name: Install the packages
+        working-directory: gui/web
+        run: npm ci
+      - name: Install the browser of the unit tests of the GUI parts
+        working-directory: gui/web
+        run: npx playwright install --with-deps --only-shell chromium
       - name: Build the screen and the client library
-        run: python3 scripts/verify-web.py --skip-e2e --tag release
+        run: python3 scripts/verify-web.py --skip-install --skip-e2e --tag release
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: web

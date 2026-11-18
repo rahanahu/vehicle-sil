@@ -712,12 +712,14 @@ throttle.close();
 
 ツール（TypeScript、ESLint、Prettier、Vitest、esbuild）は `gui/web` の `node_modules` のものを使います。`gui/web` で次を実行します（`scripts/verify-web.py` も実行します）。
 
-| コマンド               | 内容                                                                                                                                    |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run test:client`  | 型の検査（`tsc -p ../client`）と単体テスト（Vitest。Node の上で、Angular なしに動く。部品の試験だけ jsdom の DOM を使う）               |
-| `npm run build:client` | 1 つの ESM のファイルにまとめ、部品はそれを import する 2 つ目のファイルにまとめる（esbuild。Angular のビルドのツールが持っているもの） |
-| `npm run lint`         | `gui/web` と、この `eslint.config.js`                                                                                                   |
-| `npm run format:check` | `gui/web` と、このディレクトリの書式（`gui/.prettierrc`）                                                                               |
+| コマンド               | 内容                                                                                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run test:client`  | 型の検査（`tsc -p ../client`）と単体テスト（Vitest。ライブラリは Node の上で、Angular なしに動く。`src/elements` の部品はヘッドレスの Chromium で動く） |
+| `npm run build:client` | 1 つの ESM のファイルにまとめ、部品はそれを import する 2 つ目のファイルにまとめる（esbuild。Angular のビルドのツールが持っているもの）                 |
+| `npm run lint`         | `gui/web` と、この `eslint.config.js`                                                                                                                   |
+| `npm run format:check` | `gui/web` と、このディレクトリの書式（`gui/.prettierrc`）                                                                                               |
+
+部品の試験には Playwright の Chromium が要ります（`gui/web` で `npx playwright install --only-shell chromium`。起動できるかは `scripts/doctor.py` が答えます）。ヘッドレスで動きます。画面で見るには、`gui/web` で `npx vitest --config ../client/vitest.config.mjs --project browser --browser.headless=false` を実行します。
 
 単体テストは、サーバーの通知を作らずに `gui/protocol/examples/` の例を流します（`testing/protocol-examples.ts`）。
 

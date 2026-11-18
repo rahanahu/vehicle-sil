@@ -111,6 +111,22 @@ def links(report: Report, cxx: str | None, name: str, flags: list[str], *, purpo
                f"{Path(cxx).name} {' '.join(flags)} does not link: {last}", needed=False, purpose=purpose, fix=fix)
 
 
+def chromium(report: Report) -> None:
+    """Whether Playwright can start the headless Chromium that the unit tests of the GUI parts use (the same call)."""
+    name, purpose = "Playwright Chromium", "the unit tests of the GUI parts (gui/client) and the GUI end-to-end tests"
+    fix = "run in gui/web: npx playwright install --with-deps --only-shell chromium (without --with-deps if you have no root)"
+    node, web = shutil.which("node"), ROOT / "gui" / "web"
+    if node is None or not (web / "node_modules" / "playwright").is_dir():
+        report.add(name, False, "gui/web/node_modules has no Playwright (or node is missing)", needed=False,
+                   purpose=purpose, fix="run npm ci in gui/web, then: npx playwright install --with-deps --only-shell chromium")
+        return
+    script = ("require(process.argv[1] + '/node_modules/playwright').chromium.launch({headless: true})"
+              ".then(b => b.close(), e => { console.log(String(e.message).split('\\n')[0]); process.exit(1); })")
+    code, text = run(node, "-e", script, str(web))
+    report.add(name, code == 0, "starts headless" if code == 0 else (text or "does not start"), needed=False,
+               purpose=purpose, fix=fix)
+
+
 def submodules(report: Report) -> None:
     fix = "git submodule update --init --recursive"
     if not (ROOT / ".git").exists():
@@ -163,6 +179,7 @@ def check() -> Report:
                 fix="install Node.js 24.15 or newer (see gui/web/package.json)")
     report.tool("npm", "npm", at_least=(11, 12), needed=False, purpose="the GUI screen and client library (gui/)",
                 fix="npm comes with Node.js; update it with: npm install -g npm")
+    chromium(report)
     report.tool("clang++", "clang++", needed=False,
                 purpose="the linux-clang-* presets, three of the five that scripts/verify.py --linux runs",
                 fix="install Clang (Fedora: dnf install clang; Ubuntu: apt install clang)")
