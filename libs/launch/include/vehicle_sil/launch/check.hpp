@@ -333,8 +333,6 @@ struct CheckReport
     [[nodiscard]] std::size_t notes() const;
     /// true if the file was read and has no error (with `strict`: and no warning).
     [[nodiscard]] bool passed() const;
-    /// The process exit code of `check`: 4 usage, 3 the file was not read, 1 it did not pass, 0 it passed.
-    [[nodiscard]] int exit_code() const;
 };
 
 /// Puts the findings in the report's order: the errors, the warnings, the notes, each by file (the

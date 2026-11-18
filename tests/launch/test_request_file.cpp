@@ -627,7 +627,7 @@ TEST_CASE(a_parameter_of_the_request_file_that_its_own_scenario_lacks_is_a_usage
                    "params leve in bench.json: the scenario has no parameter leve (did you mean level?): its parameters are "
                    "level; remove it from params in bench.json or correct the name");
     }
-    CHECK(wrong.exit_code() == 4);
+    CHECK(check_exit_code(wrong) == 4);
     // A name that the scenario has is fine.
     const Checked right = check_file(with_request_file(given, file("{\"level\": 2}"), false));
     CHECK(!right.usage && right.scenario.has_value() && codes(right, "request-params") == "");

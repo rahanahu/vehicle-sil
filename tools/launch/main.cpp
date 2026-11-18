@@ -1114,7 +1114,7 @@ int check(const cli::Args& args)
     {
         return usage_error(report.findings, args.flag("json"), launch::CommandKind::Check, file, nullptr, report.variants);
     }
-    return write_or_fail(args.flag("json") ? launch::format_json(report) : launch::format_text(report), report.exit_code());
+    return write_or_fail(args.flag("json") ? launch::format_json(report) : launch::format_text(report), launch::check_exit_code(report));
 }
 
 /// `connections [--json] [--network <name>] <file>`.
