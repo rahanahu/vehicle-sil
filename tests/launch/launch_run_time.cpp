@@ -9,6 +9,8 @@
 //                (not about a participant), --strict fails, the time events count them
 //   pause_step   --start-paused and the time commands: step (rounded up to the controller's steps),
 //                resume, a refused step, speed, pause, stop; it stands still where it paused
+//   run_until_stdin run_until on stdin: runs to the time (rounded up), stands still there, a line without a time
+//                is refused
 //   paused_failures while it stands still: a process that ends fails the run, --timeout-ms aborts it,
 //                an interrupt stops it (the last time event says paused false each time),
 //                start_timeout_ms is not counted
@@ -290,6 +292,37 @@ void stand_still(const Options& o)
     require(!contains(run.standard_error, "has not advanced for 60 s"), "nothing more:\n" + run.standard_error);
 }
 
+void run_until_stdin(const Options& o)
+{
+    // No scenario, no control server: started paused, a run_until runs to its time (rounded up to
+    // the controller's 10 ms) and stands still there; the state says the command is taken, and a
+    // line without a time is refused with the form of a step's.
+    const fs::path dir = one_ecu(o, "", "pid");
+    Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
+    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":0,", "\"paused\":true,"});
+    live.wait_for({"\"event\":\"state\"", "\"paused\":true,", "\"run_until\":{\"ok\":true,\"reason\":null,"});
+    live.write("{\"command\":\"run_until\",\"at_ms\":95,\"id\":5}\n");
+    live.wait_for({"\"command\":\"run_until\"", "\"source\":\"stdin\"", "\"accepted\":true,\"message\":null,\"reason\":null,"
+                   "\"at_ms\":100,\"id\":5}"});
+    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":100,", "\"paused\":true,"});
+    std::this_thread::sleep_for(300ms);
+    require(events_with(live.lines(), {"\"sim_ms\":110,"}).empty(), "it stands still at 100 ms");
+    // A time that has passed while it stands still at 100: accepted, and nothing moves (the at_ms is
+    // the time asked for, rounded up, not a time it stops at).
+    live.write("{\"command\":\"run_until\",\"at_ms\":50,\"id\":7}\n");
+    live.wait_for({"\"command\":\"run_until\"", "\"accepted\":true,\"message\":null,\"reason\":null,"
+                   "\"at_ms\":50,\"id\":7}"});
+    std::this_thread::sleep_for(300ms);
+    require(events_with(live.lines(), {"\"sim_ms\":110,"}).empty(), "a time that has passed moves nothing");
+    live.write("{\"command\":\"run_until\",\"id\":6}\n");
+    live.wait_for({"\"command\":\"run_until\"", "\"accepted\":false", "\"reason\":\"invalid-argument\",\"id\":6}"});
+    live.write("{\"command\":\"stop\"}\n");
+    const auto [status, lines] = live.finish();
+    const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
+    require(status && status->code == 130, "stopped while paused: 130");
+    require(gone, "no participant is left");
+}
+
 void speed_change(const Options& o)
 {
     // Speed 1 up to 200 ms or a little further, then speed 4: the 800 ms (or a little less) that
@@ -565,12 +598,13 @@ void pause_step(const Options& o)
                 contains(states.back(), "\"pause\":{\"ok\":false,\"reason\":\"not-running\",") &&
                 contains(states.back(), "\"stop\":{\"ok\":true,\"reason\":null,"),
             "the last state is the end:\n" + all);
-    // This run has no control server: no state says that a run_until or a write would be taken.
+    // This run has no control server: no state says that a write would be taken, and run_until is
+    // standard input's, so it is never refused for that.
     for (const std::string& state : states)
     {
-        require(contains(state, "\"run_until\":{\"ok\":false,\"reason\":\"no-control-server\",") &&
-                    contains(state, "\"write\":{\"ok\":false,\"reason\":\"no-control-server\","),
-                "a run without --control refuses run_until and write in every state:\n" + state);
+        require(contains(state, "\"write\":{\"ok\":false,\"reason\":\"no-control-server\",") &&
+                    !contains(state, "\"run_until\":{\"ok\":false,\"reason\":\"no-control-server\","),
+                "a run without --control refuses write in every state, and not run_until for that reason:\n" + state);
     }
     // The result: stood still for at least the waits above.
     const std::string& result = lines.back();

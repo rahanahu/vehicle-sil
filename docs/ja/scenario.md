@@ -1065,12 +1065,12 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | シナリオが controller のステップを保留している間 | 一時停止ではありません（`GetTime` の `paused` は偽、`GetSnapshot` の `consistent` も偽）。 |
 | 標準入力の `pause` で止めている間 | `paused` が真で、`consistent` もシナリオのない実行と同じです。 |
 
-標準入力のコマンド（`--stdin-commands`）は、Control Server があっても変わりません（`stop`、一時停止、ステップ実行、速度）。
+標準入力のコマンド（`--stdin-commands`）は、Control Server があっても変わりません（`stop`、一時停止、再開、ステップ実行、`run_until`、速度）。
 
 ## 一緒に使えない引数と制限
 
 - `--scenario` は `--start-paused` と一緒に使えません（引数のエラー。`--control` があっても同じです）。シナリオは、時刻 0 の書き込みを最初のステップの前に済ませて、自分で進みます。
-- `--stdin-commands` は使えます（`stop`、一時停止、ステップ実行、速度）。止めて進めても、シナリオの結果は変わりません。
+- `--stdin-commands` は使えます（`stop`、一時停止、再開、ステップ実行、`run_until`、速度）。止めて進めても、シナリオの結果は変わりません。
 - シナリオが使えるのは、設定ファイルにあって無効にしていない、`ecu_main` で作った、仮想時間で動く ECU の変数だけです。
 - フレームを直接待つ条件、式、機種ごとの切り替え、変数の対応表は、シナリオにはありません。
 

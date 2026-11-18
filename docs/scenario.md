@@ -1065,12 +1065,12 @@ What a client sees:
 | While the scenario holds a controller step | Not a pause (`paused` of `GetTime` is false, and so is `consistent` of `GetSnapshot`). |
 | While paused with `pause` from stdin | `paused` is true, and `consistent` behaves as in a run without a scenario. |
 
-The stdin commands (`--stdin-commands`: `stop`, pause, step, speed) work the same with a Control Server.
+The stdin commands (`--stdin-commands`: `stop`, pause, resume, step, `run_until`, speed) work the same with a Control Server.
 
 ## Incompatible options and limitations
 
 - `--scenario` cannot be combined with `--start-paused` (a usage error, also with `--control`). A scenario completes its writes for time 0 before the first simulation step, and then advances on its own.
-- `--stdin-commands` can be used (`stop`, pause, step, speed). Pausing and stepping do not change the result of the scenario.
+- `--stdin-commands` can be used (`stop`, pause, resume, step, `run_until`, speed). Pausing and stepping do not change the result of the scenario.
 - A scenario can use only variables of ECUs that are in the configuration file, are not disabled, are built with `ecu_main` and run in virtual time.
 - Scenarios have no conditions that wait for frames directly, no expressions, no per-variant branching and no variable maps.
 

@@ -132,7 +132,7 @@ For the keys of `scenario_step`, see "Output" in [scenario.md](scenario.md#outpu
 An event with `paused: true` is normally written after the simulation has paused. The first `time` of `--start-paused` is also written after the simulation has paused at time 0, so the result's `paused_ms` counts from before this event. There are 2 exceptions. In both, `true` is written while the simulation has reached the time at which it is to pause but has not paused yet, and `paused_ms` counts from when it actually pauses:
 
 - The simulation has not paused at time 0 within 2 seconds after the start (the launcher stops waiting and writes the event).
-- A `pause` or `run_until` names a time at or before the current time, and the simulation pauses at the next time step.
+- A `pause` or `run_until` names a time at or before the current time while the simulation is running, and the simulation pauses at the next time step.
 
 `command`:
 
@@ -144,10 +144,10 @@ An event with `paused: true` is normally written after the simulation has paused
 | `message` | Why the command was not accepted (`null` if it was accepted) |
 | `reason` | The code of why the command was not accepted (see [Reason codes](#reason-codes); `null` if it was accepted) |
 | `ms` | Only for an accepted `step`: the virtual time the simulation actually advances (rounded up to a multiple of the time step) |
-| `at_ms` | Only for an accepted `run_until` and an accepted `pause` with a time: the virtual time at which the simulation pauses (rounded up to a multiple of the time step) |
+| `at_ms` | Only for an accepted `run_until` and an accepted `pause` with a time: the virtual time asked for, rounded up to a multiple of the time step. It is the time at which the simulation pauses, except when that time has already passed (see "Stdin commands") |
 | `id` | The `id` of the stdin line, unchanged (`null` if the line had none, and for the other sources) |
 
-`command` is written when a command arrives on stdin (`--stdin-commands`) and when a Control Server client calls a time operation or a stop (`--control`). `run_until` and `pause` with a time come only from clients.
+`command` is written when a command arrives on stdin (`--stdin-commands`) and when a Control Server client calls a time operation or a stop (`--control`). `pause` with a time comes only from clients.
 
 A program that sends a command and waits for its answer puts a number of its own into `id` and waits for the `command` event with that `id`. Without `id`, a `command` event of the same name can be the answer to a line that another program sent.
 
@@ -195,7 +195,7 @@ How late the run is, and how fast it actually goes, are `late_ms`, `slipped_ms` 
 
 `ok` answers "would the run accept it", not "would it change anything": `pause` is `ok` while the simulation is paused (the command is accepted and does nothing). `step` can be `ok` while `paused` is `false`: right after a `pause` was accepted and until the simulation has paused, and while a step is being done.
 
-`pause`, `resume`, `step`, `speed` and `stop` are answered as for a stdin command. `run_until` and `write` (writing a variable) exist only for Control Server clients, so they are answered as for a client. In a run without a Control Server (no `--control`) nothing can send these two, so both have `ok` `false` with the reason `no-control-server` for the whole run. During a scenario the two entries differ: clients cannot move time (`scenario-running`), stdin commands can, and those five show the answer for stdin.
+`pause`, `resume`, `step`, `run_until`, `speed` and `stop` are answered as for a stdin command. `write` (writing a variable) exists only for Control Server clients, so it is answered as for a client. In a run without a Control Server (no `--control`) nothing can send a write, so `write` has `ok` `false` with the reason `no-control-server` for the whole run. During a scenario the two entries differ: clients cannot move time (`scenario-running`), stdin commands can, and those six show the answer for stdin.
 
 When `state` is written:
 
@@ -245,10 +245,10 @@ The `reason` of a `command` event that was not accepted, and of `allowed` in `st
 | `not-paused` | `step` while the simulation is not paused |
 | `not-running` | The simulation has ended, or did not start |
 | `scenario-running` | The run plays a scenario: a client can neither write variables nor move time |
-| `no-control-server` | Only in `allowed` of `state`: the run has no Control Server (`--control`), and only a Control Server client can send the operation (`run_until`, `write`) |
+| `no-control-server` | Only in `allowed` of `state`: the run has no Control Server (`--control`), and only a Control Server client can send the operation (`write`) |
 | `outside-real-time` | Something connected to the run does not wait for virtual time, so the run keeps to real time. Nothing sets this yet |
 | `out-of-range` | An argument is out of range (a client's speed, step or time) |
-| `missing-argument` | A client's `run_until` without a time |
+| `missing-argument` | A client's `run_until` without a time (on stdin it is `invalid-argument`) |
 | `not-a-time-command` | The name is not a time command |
 | `invalid-command` | A stdin line that is not a command: not a JSON object, no `command`, or longer than 64 KiB |
 | `unknown-command` | A stdin line with a command name that stdin does not accept |
@@ -516,6 +516,7 @@ The launcher reads stdin only with `--stdin-commands`. Without it, stdin is not 
 | `{"command":"pause"}` | Pauses. |
 | `{"command":"resume"}` | Ends the pause and continues. |
 | `{"command":"step","ms":<ms>}` | Only while paused: advances virtual time by `<ms>` (an integer from 1 to 10^12) and pauses again. |
+| `{"command":"run_until","at_ms":<ms>}` | Runs on and pauses at virtual time `<ms>` (an integer from 0 to 10^12; rounded up to a multiple of the time step). The same as `RunUntil` of the [Control API](control-api.md), and it does not need `--control`. |
 | `{"command":"speed","value":<speed>}` | Changes the speed (`<speed>` is a number or `"max"`, in the same range as `speed` in the configuration file). |
 | Any of the above with `"id":<id>` | The same; `<id>` (an integer from 0 to 2^53) comes back in the `id` of the line's `command` event. |
 | End of stdin (EOF) | The same as one `stop` (the program that started the launcher has gone, or closed the pipe). |
@@ -530,21 +531,22 @@ The launcher reads stdin only with `--stdin-commands`. Without it, stdin is not 
 | `resume` | Speed keeping starts over from here. |
 | `step` | Rounded up to a multiple of the time step (the `ms` of the `command` event is the actual amount). |
 | `step` | Sent while a previous `step` is in progress, it counts from the time at which that step pauses. |
+| `run_until` | Works while running and while paused. If the simulation is paused at or after the time, it stays paused and nothing happens. If the time has passed while it runs, it pauses at the next time step. The `at_ms` of the `command` event is the time asked for, rounded up to a multiple of the time step; for a time that has passed, it is not the time at which the simulation pauses (read `sim_ms` of the next `time` event with `paused: true`, or the `state` event, instead of waiting for `at_ms`). |
 | `speed` | A pause stays in effect. |
 | EOF | If a stop request (`stop`, a signal, a closed stdout) has already arrived, does nothing (it does not count as a second one and no `command` event is written). |
 | Anything else | This covers a line that is not a JSON object, has no `command`, has an unknown command, has an `id` that is not an integer from 0 to 2^53, or is longer than 64 KiB. |
 | Anything else | With `--events`, a `command` event (`accepted: false`, the `message` and the `reason`) is written; otherwise one line goes to stderr. |
 
-Other keys of the object are ignored. Commands are accepted and carried out even when nobody reads the events.
+Other keys of the object are ignored; a `pause` with an `at_ms` is a plain `pause` (to pause at a time, use `run_until`). The `state` event answers a `run_until` as for stdin even in a run without `--stdin-commands`. Commands are accepted and carried out even when nobody reads the events.
 
 ### When time commands are accepted
 
-For a time command (`pause`, `resume`, `step`, `speed`), the thread that reads stdin decides whether to accept it, writes the `command` event, and then hands the command to the controller. None of this blocks: neither the thread that drives the run nor the reader of the events waits. The controller applies the command at the next time step boundary.
+For a time command (`pause`, `resume`, `step`, `run_until`, `speed`), the thread that reads stdin decides whether to accept it, writes the `command` event, and then hands the command to the controller. None of this blocks: neither the thread that drives the run nor the reader of the events waits. The controller applies the command at the next time step boundary.
 
 | Case | Handling |
 |---|---|
 | `step` sent while not paused (after a `resume`, for example) | Not accepted. |
-| `step` sent before the controller exists (during the check, for example) | Not accepted. |
+| `step` or `run_until` sent before the controller exists (during the check, for example) | Not accepted. |
 | A time command after the simulation has ended (or did not start) | Not accepted. |
 | `pause` while paused, `resume` while running | Accepted; does nothing. |
 | `pause`, `resume` or `speed` received before the controller exists (during the check, for example) | Kept, and handed to the controller when it exists. |
@@ -553,7 +555,7 @@ The reason for not accepting goes into `message` (a sentence) and `reason` (a co
 
 A pause leaves `phase` at `running`. The `paused` of `state` and of `time` reports the pause.
 
-In a run with `--control` and `--start-paused` that pauses before the step at time 0, a `resume`, `step` or `pause` accepted before the pause also decides how the run pauses afterwards (see "Write before the start (`--start-paused`)" in [control-api.md](control-api.md#write-before-the-start---start-paused)).
+In a run with `--control` and `--start-paused` that pauses before the step at time 0, a `resume`, `step`, `run_until` or `pause` accepted before the pause also decides how the run pauses afterwards (see "Write before the start (`--start-paused`)" in [control-api.md](control-api.md#write-before-the-start---start-paused)).
 
 ### What `accepted` means, and the result of a stopped run
 
@@ -576,7 +578,7 @@ The time operations (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) and `Sto
 | Item | Stdin | Client |
 |---|---|---|
 | Without `--stdin-commands` | Not read. | Accepted. |
-| `run_until` and `pause` with a time | Cannot be sent. | Can be sent. |
+| `pause` with a time | Cannot be sent. | Can be sent. |
 | A stop after the simulation has ended | `stop` is accepted and does nothing. | `Stop` is rejected. |
 
 ## Version and features (`vehicle_sil_launch version`)
@@ -620,7 +622,8 @@ The time operations (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) and `Sto
     "connections",
     "connect-counts",
     "state",
-    "time-policy"
+    "time-policy",
+    "stdin-run-until"
   ]
 }
 ```
@@ -680,6 +683,7 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 | `connect-counts` | The frames that a connected network sent to the real bus and got from a device there (see "Counting the frames to and from the bus" in [simulation-run.md](simulation-run.md#counting-the-frames-to-and-from-the-bus)) |
 | `state` | The event `state`: where the run stands and what it accepts now (see [The `state` event](#the-state-event)) |
 | `time-policy` | `--time-policy` of `check`, `run` and `test`: a run that is connected outside the simulation keeps real time unless `free` is chosen (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)) |
+| `stdin-run-until` | `run_until` on stdin (see [Stdin commands](#stdin-commands-run---stdin-commands)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 
