@@ -1,7 +1,10 @@
 import { TestBed } from '@angular/core/testing';
 import { Visibility } from './visibility';
 
-/** 偽の IntersectionObserver: 試験が、見えたか・外れたかを知らせる。 */
+/**
+ * 偽の IntersectionObserver: 試験が、見えたか・外れたかを知らせる。本物のブラウザーでも偽物を使うのは、見えた・外れた
+ * の順序と回数を試験が決めるため（本物は描画の後に非同期で知らせ、順序を決められない）。
+ */
 class FakeObserver {
   static last: FakeObserver | null = null;
   readonly observed = new Set<Element>();

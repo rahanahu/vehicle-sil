@@ -41,7 +41,7 @@ Run these in `gui/web/`. Each reports success or failure through its exit code.
 | `npm ci`                  | Installs exactly what `package-lock.json` lists                                                                                                                    |
 | `npm start`               | Starts the development server (http://127.0.0.1:4200)                                                                                                              |
 | `npm run build`           | Production build (output in `dist/browser/`, license notices in `dist/3rdpartylicenses.txt`)                                                                       |
-| `npm test`                | Runs the unit tests (Vitest, jsdom) once and exits                                                                                                                 |
+| `npm test`                | Runs the unit tests (Vitest, in a headless Chromium) once and exits                                                                                                |
 | `npm run test:client`     | Type check and unit tests of the client library (`../client`) (Vitest; the library on Node, the parts in a headless Chromium; no Angular)                          |
 | `npm run test:timeline`   | Unit tests of the timeline element (`../timeline/viewer.js`) (Node's test runner; no DOM), after checking that `../timeline/vehicle-sil-timeline.js` is up to date |
 | `npm run bundle:timeline` | Makes `../timeline/vehicle-sil-timeline.js` from `messages.js`, `timeline.css` and `viewer.js`                                                                     |
@@ -409,7 +409,8 @@ To pass locally while a translation is unfinished, add `--allow-untranslated` (C
 
 **Unit tests**:
 
-- Unit tests use TestBed. Replace `Layout` with a fake that has signals (jsdom has no `matchMedia`).
+- Unit tests use TestBed and run in a real browser (headless Chromium, through Vitest's Browser Mode), so what needs a DOM is tested against a real one. Tests that need no DOM belong in `../client` and run on Node. Install the browser with `scripts/doctor.py`'s hint if it is missing. A test cannot read files: `vitest-base.config.mts` defines the Node-side commands it can call through `vitest/browser`.
+- Replace `Layout` with a fake that has signals, so the test decides the width class (the real one follows the window).
 - For a `resource`, make it send its request with `TestBed.tick()`, `flush` it with `HttpTestingController`, then `whenStable()` (`whenStable()` does not finish while a request has no response).
 - Replace the WebSocket with `FakeWebSockets` (`@vehicle-sil/gui-client/testing`) (`{ provide: SOCKET_FACTORY, useValue: fake.factory }`). The wrapper sends HTTP with `HttpClient`, so answer HTTP with `HttpTestingController`. Use Vitest's fake timers for time.
 - Feed the examples in `gui/protocol/examples/` instead of building server notifications (`webSocketExamples`, `httpExamples`).
