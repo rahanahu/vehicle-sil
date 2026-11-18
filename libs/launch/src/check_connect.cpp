@@ -236,6 +236,100 @@ std::optional<std::string> describe_problem(const NetworkConfig& network, const 
     return prefix + run.command_text + " " + described + ": " + fix;
 }
 
+/// The networks of each enabled ECU (not role: test or role: bridge, which carry no frames from one
+/// network to another) that was described. `unknown`: ECUs with describe: false.
+std::vector<std::vector<std::string>> ecu_networks(const SimulationConfig& config,
+                                                   const std::vector<ParticipantResult>& results,
+                                                   std::vector<std::string>& unknown)
+{
+    std::vector<std::vector<std::string>> out;
+    for (std::size_t i = 0; i < config.participants.size() && i < results.size(); ++i)
+    {
+        const ParticipantConfig& p = config.participants[i];
+        if (!p.enabled || p.role != ParticipantRole::Ecu)
+        {
+            continue;
+        }
+        if (results[i].status == ParticipantStatus::NotChecked)
+        {
+            unknown.push_back(p.name);
+        }
+        else if (results[i].status == ParticipantStatus::Described && results[i].ecu)
+        {
+            std::vector<std::string> networks;
+            for (const SeenNetwork& seen : SeenEcu(p, *results[i].ecu).seen_networks())
+            {
+                networks.push_back(seen.network.name);
+            }
+            out.push_back(std::move(networks));
+        }
+    }
+    return out;
+}
+
+/// connect-target-shared and connect-shared-loop: two networks of `requests` (valid, connected)
+/// whose targets are the same device. Where the two networks are joined through participants, only
+/// the loop is reported.
+void check_shared_targets(const SimulationConfig& config, const std::vector<ParticipantResult>& results,
+                          const std::vector<std::pair<const NetworkConfig*, const ConnectRequest*>>& known,
+                          ConnectCheck& out)
+{
+    const bool described = results.size() == config.participants.size();
+    std::vector<std::string> unknown;
+    const std::vector<std::vector<std::string>> joins =
+        described ? ecu_networks(config, results, unknown) : std::vector<std::vector<std::string>>{};
+    for (std::size_t i = 0; i < known.size(); ++i)
+    {
+        const NetworkConfig& first = *known[i].first;
+        const std::string key = known[i].first->valid ? connect_device_key(first.kind, known[i].second->target) : "";
+        for (std::size_t j = i + 1; !key.empty() && j < known.size(); ++j)
+        {
+            const NetworkConfig& second = *known[j].first;
+            if (!second.valid || second.kind != first.kind ||
+                connect_device_key(second.kind, known[j].second->target) != key)
+            {
+                continue;
+            }
+            const std::string same = key == "virtual" ? std::string("Vector Virtual CAN channels (all of them are one bus)")
+                                                      : "'" + shown_target(known[i].second->target) + "'";
+            const std::string both = "networks '" + first.name + "' and '" + second.name + "': --connect gives both " +
+                                     (key == "virtual" ? "" : "the same target ") + same;
+            const bool can = first.kind == NetworkKind::Can;
+            if (described && networks_are_joined(joins, first.name, second.name))
+            {
+                const std::string maybe =
+                    unknown.empty() ? std::string{}
+                                    : "; " + and_list(unknown) + (unknown.size() == 1 ? " has" : " have") +
+                                          " describe: false, so the check cannot see what " +
+                                          (unknown.size() == 1 ? "it joins" : "they join") + " (more may be joined)";
+                const std::string join_text = "an ECU is on both networks (or a chain of ECUs joins them)";
+                const std::string message =
+                    both + ", and " + join_text +
+                    ": when such an ECU forwards a frame from one to the other, the frame goes round between the " +
+                    (can ? "real bus" : "adapter") +
+                    " and the simulation, and the bridge's guard against that cuts the external device off from one of the "
+                    "networks: connect them to different " + (can ? "targets" : "adapters") +
+                    ", or make them one network in the file" + maybe;
+                out.findings.push_back(Finding{Severity::Error, "connect-shared-loop", std::move(message), first.line, "",
+                                               first.name});
+                for (NetworkOutside& o : out.outside)
+                {
+                    if (o.network == first.name || o.network == second.name)
+                    {
+                        o.arguments.reset();
+                    }
+                }
+                continue;
+            }
+            out.findings.push_back(Finding{Severity::Warning, "connect-target-shared",
+                                           both + ": the frames of both networks are mixed there: connect them to different "
+                                                  "channels (adapters) if they must stay apart, or make them one network in "
+                                                  "the file if they are one bus",
+                                           first.line, "", first.name});
+        }
+    }
+}
+
 } // namespace
 
 ConnectCheck check_connections(const SimulationConfig& config, const std::vector<ParticipantResult>& results,
@@ -379,6 +473,7 @@ ConnectCheck check_connections(const SimulationConfig& config, const std::vector
         }
         out.outside.push_back(std::move(outside));
     }
+    check_shared_targets(config, results, known, out);
 
     return out;
 }

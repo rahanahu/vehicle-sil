@@ -3464,6 +3464,126 @@ TEST_CASE(time_lock_findings_say_what_is_connected_and_how_to_go_on)
                "--time-policy free out\n");
 }
 
+namespace {
+
+/// Two Ethernet networks A (line 3) and B (line 4), each with its own ECU.
+Setup two_ethernets()
+{
+    Setup s;
+    s.network("A", NetworkKind::Ethernet, 3).network("B", NetworkKind::Ethernet, 4);
+    s.described(participant("EcuA", 10), ecu("EcuA", 10ms, {on_ethernet("A", mac_of(1))}));
+    s.described(participant("EcuB", 11), ecu("EcuB", 10ms, {on_ethernet("B", mac_of(2))}));
+    s.config.speed = 1.0;
+    return s;
+}
+
+/// Two CAN networks C1 (line 3) and C2 (line 4), each with its own ECU.
+Setup two_cans()
+{
+    Setup s;
+    s.network("C1", NetworkKind::Can, 3).network("C2", NetworkKind::Can, 4);
+    s.described(participant("EcuC1", 10), ecu("EcuC1", 10ms, {NetworkDescription{"C1", NetworkUse::Raw, {}}}));
+    s.described(participant("EcuC2", 11), ecu("EcuC2", 10ms, {NetworkDescription{"C2", NetworkUse::Raw, {}}}));
+    s.config.speed = 1.0;
+    return s;
+}
+
+std::string shared_lines(const Setup& s, const std::vector<ConnectRequest>& requests)
+{
+    FakeTools fake;
+    const ConnectTools tools = fake.tools();
+    std::string out;
+    for (const Finding& f : check_connections(s.config, s.results, requests, &tools).findings)
+    {
+        if (f.code.rfind("connect-target-shared", 0) == 0 || f.code.rfind("connect-shared-loop", 0) == 0)
+        {
+            out += std::string(f.severity == Severity::Error ? "E " : "W ") + f.code + ": " + f.message + "\n";
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE(connect_target_shared_warns_when_two_networks_use_one_device)
+{
+    const Setup s = two_ethernets();
+    check_text(shared_lines(s, {{"A", "eth0"}, {"B", "eth1"}}), "");
+    check_text(shared_lines(s, {{"A", "eth0"}, {"B", "none"}}), "");
+    check_text(shared_lines(s, {{"A", "eth0"}}), "");
+    check_text(shared_lines(s, {{"A", "eth0"}, {"B", "eth0"}}),
+               "W connect-target-shared: networks 'A' and 'B': --connect gives both the same target 'eth0': the frames of "
+               "both networks are mixed there: connect them to different channels (adapters) if they must stay apart, or "
+               "make them one network in the file if they are one bus\n");
+
+    // CAN: one physical channel is one device; two are two; all virtual channels are one bus.
+    const Setup c = two_cans();
+    check_text(shared_lines(c, {{"C1", "physical:1"}, {"C2", "physical:2"}}), "");
+    CHECK(shared_lines(c, {{"C1", "physical:1"}, {"C2", "physical:1"}}).rfind("W connect-target-shared: ", 0) == 0);
+    CHECK(shared_lines(c, {{"C1", "virtual:1"}, {"C2", "virtual:2"}}).find("Vector Virtual CAN channels") != std::string::npos);
+    check_text(shared_lines(c, {{"C1", "virtual:1"}, {"C2", "physical:1"}}), "");
+}
+
+TEST_CASE(connect_shared_loop_is_an_error_for_can_and_ethernet)
+{
+    // One ECU on both networks.
+    Setup e = two_ethernets();
+    e.described(participant("Gateway", 12), ecu("Gateway", 10ms, {on_ethernet("A", mac_of(3)), on_ethernet("B", mac_of(4))}));
+    const std::string eth = shared_lines(e, {{"A", "eth0"}, {"B", "eth0"}});
+    CHECK(eth.rfind("E connect-shared-loop: networks 'A' and 'B': ", 0) == 0);
+    CHECK(eth.find("different adapters") != std::string::npos);
+    CHECK(eth.find("MacSideTable") == std::string::npos);
+    CHECK(eth.find("connect-target-shared") == std::string::npos);
+    check_text(shared_lines(e, {{"A", "eth0"}, {"B", "eth1"}}), "");
+
+    Setup c = two_cans();
+    c.described(participant("Gateway", 12), ecu("Gateway", 10ms, {NetworkDescription{"C1", NetworkUse::Raw, {}},
+                                                                    NetworkDescription{"C2", NetworkUse::Raw, {}}}));
+    const std::string can = shared_lines(c, {{"C1", "virtual:1"}, {"C2", "virtual:2"}});
+    CHECK(can.rfind("E connect-shared-loop: networks 'C1' and 'C2': ", 0) == 0);
+    CHECK(can.find("goes round between the real bus and the simulation") != std::string::npos);
+    CHECK(can.find("describe: false") == std::string::npos);
+    c.unchecked("Hidden", 20);
+    CHECK(shared_lines(c, {{"C1", "virtual:1"}, {"C2", "virtual:2"}}).find("Hidden has describe: false") != std::string::npos);
+
+    // Through a chain: C1 - G1 - C3 - G2 - C2 (only the ends share a target).
+    Setup chain = two_cans();
+    chain.network("C3", NetworkKind::Can, 5);
+    chain.described(participant("G1", 12), ecu("G1", 10ms, {NetworkDescription{"C1", NetworkUse::Raw, {}},
+                                                              NetworkDescription{"C3", NetworkUse::Raw, {}}}));
+    chain.described(participant("G2", 13), ecu("G2", 10ms, {NetworkDescription{"C3", NetworkUse::Raw, {}},
+                                                              NetworkDescription{"C2", NetworkUse::Raw, {}}}));
+    CHECK(shared_lines(chain, {{"C1", "physical:1"}, {"C2", "physical:1"}}).rfind("E connect-shared-loop: ", 0) == 0);
+
+    // Only a participant with role: test on both networks, or a disabled one: not a loop.
+    Setup t = two_cans();
+    t.described(with_role(participant("Spy", 12), ParticipantRole::Test),
+                ecu("Spy", 10ms, {NetworkDescription{"C1", NetworkUse::Raw, {}}, NetworkDescription{"C2", NetworkUse::Raw, {}}}));
+    CHECK(shared_lines(t, {{"C1", "physical:1"}, {"C2", "physical:1"}}).rfind("W connect-target-shared: ", 0) == 0);
+    Setup off = c;
+    off.config.participants.at(2).enabled = false;
+    CHECK(shared_lines(off, {{"C1", "physical:1"}, {"C2", "physical:1"}}).rfind("W connect-target-shared: ", 0) == 0);
+
+    // The command of a CAN network with the loop error is not given.
+    FakeTools fake;
+    const ConnectTools tools = fake.tools();
+    const ConnectCheck check = check_connections(c.config, c.results, {{"C1", "physical:1"}, {"C2", "physical:1"}}, &tools);
+    CHECK(outside_text(check).find("(no command)") != std::string::npos);
+}
+
+TEST_CASE(a_shared_target_fails_the_check_with_strict_only)
+{
+    const Setup s = two_ethernets();
+    FakeTools fake;
+    const ConnectTools tools = fake.tools();
+    CheckReport r;
+    r.config = s.config;
+    r.findings = check_connections(s.config, s.results, {{"A", "eth0"}, {"B", "eth0"}}, &tools).findings;
+    CHECK(r.passed());
+    r.strict = true;
+    CHECK(!r.passed());
+}
+
 TEST_CASE(check_connections_without_tools_reads_only_the_requests)
 {
     Setup s = connect_setup();
