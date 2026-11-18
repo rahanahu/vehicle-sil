@@ -49,6 +49,7 @@ MAX_UNAUTHENTICATED = 16  # connections waiting for their auth; when full, the o
 AUTH_TIMEOUT_S = 5
 WS_CLOSE_TIMEOUT_S = 2  # waiting for the screen's answer to a close
 CHECK_TIMEOUT_S = 120
+USAGE_EXIT_CODE = 4  # vehicle_sil_launch: the command line is wrong
 MAX_CHECK_WAITING = 4  # api/check requests waiting for the one that runs
 MAX_NAMES_CACHED = 256
 MAX_LINE = 16 * 1024 * 1024  # one line of the launcher's events (a check with many variables is long)
@@ -93,6 +94,25 @@ def remember(cache: dict, key: object, value: object) -> None:
     cache[key] = value
     while len(cache) > MAX_NAMES_CACHED:
         del cache[next(iter(cache))]
+
+
+USABLE_SHOWN = 5  # the usable targets that a target-not-listed message names; the rest are counted
+
+
+def usable_text(usable: tuple[str, ...]) -> str:
+    """The usable targets of a list, for a message: the first few in the list's order, and how many more."""
+    if not usable:
+        return "it has no usable target"
+    shown = ", ".join(json.dumps(v, ensure_ascii=False) for v in usable[:USABLE_SHOWN])
+    more = len(usable) - USABLE_SHOWN
+    return f"the usable ones: {shown}" + (f" and {more} more" if more > 0 else "")
+
+
+def network_names(result: dict) -> list[str]:
+    """The networks of a check result (none when the check could not say: a usage error, a file not read)."""
+    networks = result.get("networks")
+    return [n["name"] for n in networks if isinstance(n, dict) and isinstance(n.get("name"), str)] \
+        if isinstance(networks, list) else []
 
 
 def error(status: int, code: str, message: str, detail: object = None) -> web.Response:
@@ -202,11 +222,9 @@ class GuiServer:
         self._checks: set[asyncio.subprocess.Process] = set()  # the checks and the launcher's version probes
         self.launcher.track = self._checks
         self._names: dict[tuple[str, str | None], tuple[tuple, list[str]]] = {}
-        # The networks of each file, from its last check that gave them: (the file's stamp, names).
-        self._networks: dict[str, tuple[tuple, list[str]]] = {}
         # Of each (file, network), the targets that its last list (POST api/connections) gave as usable, with the
         # file's stamp then: the only targets that a check or a run passes on (see _check_targets).
-        self._targets: dict[tuple[str, str], tuple[tuple, frozenset[str]]] = {}
+        self._targets: dict[tuple[str, str], tuple[tuple, tuple[str, ...]]] = {}
         self._sockets: dict[web.WebSocketResponse, web.BaseRequest] = {}
         self._unauthenticated: dict[web.WebSocketResponse, None] = {}  # oldest first
         self._authenticated: set[web.WebSocketResponse] = set()
@@ -513,7 +531,6 @@ class GuiServer:
             raise InvalidRequest("invalid-field", "start_paused must be true or false")
         connect = check_connect(body.get("connect"))
         time_policy = check_time_policy(body.get("time_policy"))
-        self._check_targets(config.relative, connect)
         wanted, wanted_manual = body.get("disable"), body.get("manual")
         known = await self.participant_names(config.relative, variant) if always or wanted or wanted_manual else []
         disable, manual = check_disable(wanted, known), check_manual(wanted_manual, known)
@@ -524,25 +541,29 @@ class GuiServer:
                   "connect": connect or None, "time_policy": time_policy}
         return {k: v for k, v in intent.items() if v is not None}, disable, manual
 
-    def _check_targets(self, relative: str, connect: dict[str, str]) -> None:
-        """The guard between the browser and the bridges' devices: a target other than "none" is passed on only when
-        the last list of that network of that file (POST api/connections), made from the file as it is now, gave it
-        as usable, exactly so written. Refused 400 target-not-listed otherwise."""
+    def _check_targets(self, relative: str, connect: dict[str, str], networks: list[str]) -> None:
+        """The guard between the browser and the bridges' devices: a target other than "none" of a network of the
+        configuration (networks: those of the check of this very request) is passed on only when the last list of
+        that network of that file (POST api/connections), made from the file as it is now, gave it as usable, exactly
+        so written. Refused 400 target-not-listed otherwise. A network that the configuration lacks connects nothing:
+        the launcher leaves it out with the note connect-network-unused, as it does for a request file."""
         for network, target in connect.items():
-            if target == NO_CONNECTION:
+            if target == NO_CONNECTION or network not in networks:
                 continue
             listed = self._targets.get((relative, network))
             if listed is None or listed[0] != self._stamp(relative):
                 why = (f"there is no list of where {network!r} of {relative} can be connected" if listed is None else
                        f"{relative} has changed since {network!r} was listed")
             elif target not in listed[1]:
-                why = f"the last list of {network!r} of {relative} does not have {target!r} as usable"
+                why = (f"the last list of {network!r} of {relative} does not have {target!r} as usable "
+                       f"({usable_text(listed[1])})")
             else:
                 continue
             raise Refused(400, "target-not-listed",
                           f"{why}: ask POST api/connections {{\"file\": {json.dumps(relative)}, \"network\": "
-                          f"{json.dumps(network)}}} and give a value that it lists with usable: true, or \"none\" "
-                          "to keep the network on SIL Kit only", {"network": network, "target": target})
+                          f"{json.dumps(network)}}} and give a value that it lists with usable: true, exactly as "
+                          "written there, or \"none\" to keep the network on SIL Kit only",
+                          {"network": network, "target": target})
 
     async def api_not_found(self, request: web.Request) -> web.Response:
         return error(404, "not-found", f"{request.method} {request.path}: no such API")
@@ -556,7 +577,7 @@ class GuiServer:
             await self._usable()
             scenario = self._scenario(config, body)
             intent, disable, manual = await self._intent(config, body, scenario, always=False)
-            code, result = await self._check(config.relative, intent)
+            code, result = await self._in_check_queue(lambda: self._check_and_guard(config.relative, intent))
         except (PathRejected, InvalidRequest, Refused) as e:
             return self._refusal(e)
         return web.json_response({"file": config.relative, "disable": disable, "manual": manual,
@@ -572,13 +593,16 @@ class GuiServer:
             network = check_network(body.get("network"))
             config = self.root.resolve(body.get("file"))
             await self._usable()
-            networks = await self.network_names(config.relative)
-            if network not in networks:
-                raise Refused(400, "unknown-network",
-                              f"no network named {network!r} in the last check of {config.relative}: the networks "
-                              f"are {', '.join(networks) or 'none'} (check the file again if it has changed)",
-                              {"network": network, "networks": networks})
+            # Asking for a new list ends the last one at once: no run starts with it while this one waits or runs
+            self._targets.pop((config.relative, network), None)
             code, result = await self._in_check_queue(lambda: self._list_targets(config.relative, network))
+            if code == USAGE_EXIT_CODE:  # the only usage error of this command line: a network the file lacks
+                findings = [f for f in result.get("findings", []) if isinstance(f, dict)]
+                said = "; ".join(f["message"] for f in findings if isinstance(f.get("message"), str))
+                raise Refused(400, "unknown-network",
+                              f"{config.relative} has no network {network!r} to list (the launcher says: "
+                              f"{said or 'usage error'}): give the name of a can or ethernet network of the file, "
+                              "as networks[].name of its check", {"network": network, "findings": findings})
         except (PathRejected, InvalidRequest, Refused) as e:
             return self._refusal(e)
         return web.json_response({"file": config.relative, "network": network, "exit_code": code,
@@ -646,9 +670,13 @@ class GuiServer:
         timeline = await asyncio.to_thread(self.timelines.new_file) \
             if scenario is not None and FEATURE_TIMELINE in self.launcher.features else None
         try:
+            # The last await is above: from here to the launcher's start no other request runs, so the targets are
+            # compared with the lists and the file as they are when the launcher is started.
+            self._check_targets(config.relative, intent.get("connect", {}), network_names(checked))
             request = self._make_request(intent)
         except BaseException:
             control.remove(credentials)
+            control.remove(timeline)
             raise
         argv = run_command(self.launcher, config.relative, request, credentials, timeline)
         try:
@@ -871,18 +899,15 @@ class GuiServer:
                                                  "api/configs lists") from None
         return (st.st_mtime_ns, st.st_size)
 
-    async def network_names(self, relative: str) -> list[str]:
-        """The network names of the file, from its last check that gave them, or from a new check (no intent) when the
-        file has changed since. Every variant has the networks of the file."""
-        cached = self._networks.get(relative)
-        if cached and cached[0] == self._stamp(relative):
-            return cached[1]
-        await self._check(relative, {})
-        return self._networks.get(relative, ((), []))[1]
-
     async def _check(self, relative: str, intent: dict) -> tuple[int, dict]:
         """check --json of the file with the intent (the keys of a request file), in the queue of the checks."""
         return await self._in_check_queue(lambda: self._check_locked(relative, intent))
+
+    async def _check_and_guard(self, relative: str, intent: dict) -> tuple[int, dict]:
+        """api/check in the queue: the check, then the guard of its connect against that check's networks."""
+        code, result = await self._check_locked(relative, intent)
+        self._check_targets(relative, intent.get("connect", {}), network_names(result))
+        return code, result
 
     async def _in_check_queue(self, work: Callable[[], Awaitable[tuple[int, dict]]]) -> tuple[int, dict]:
         """One check (or list) at a time: the others wait (MAX_CHECK_WAITING of them, check_timeout_s each)."""
@@ -946,11 +971,6 @@ class GuiServer:
         names = [p["name"] for p in result["participants"] if isinstance(p, dict) and isinstance(p.get("name"), str)]
         if names or result.get("result") not in ("usage",):
             remember(self._names, (relative, variant), (stamp, names))
-        networks = result.get("networks")
-        networks = [n["name"] for n in networks if isinstance(n, dict) and isinstance(n.get("name"), str)] \
-            if isinstance(networks, list) else []
-        if networks or result.get("result") not in ("usage",):
-            remember(self._networks, relative, (stamp, networks))
         return code, result
 
     async def _list_targets(self, relative: str, network: str) -> tuple[int, dict]:
@@ -977,13 +997,14 @@ class GuiServer:
             tail = err.decode("utf-8", "replace").strip().splitlines()[-10:]
             raise Refused(502, "launcher-output", f"connections --json exited with code {code} and did not write "
                                                   "the connections object", tail)
-        usable = frozenset(
+        usable = tuple(dict.fromkeys(
             t["value"] for n in result["networks"]
             if isinstance(n, dict) and n.get("name") == network and isinstance(n.get("list"), dict)
             and isinstance(n["list"].get("targets"), list)
             for t in n["list"]["targets"]
-            if isinstance(t, dict) and t.get("usable") is True and isinstance(t.get("value"), str))
-        remember(self._targets, (relative, network), (stamp, usable))
+            if isinstance(t, dict) and t.get("usable") is True and isinstance(t.get("value"), str)))
+        if code != USAGE_EXIT_CODE:  # no such network: nothing to remember
+            remember(self._targets, (relative, network), (stamp, usable))
         return code, result
 
     # ------------------------------------------------------------ the launcher's run

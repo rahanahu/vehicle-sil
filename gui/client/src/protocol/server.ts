@@ -244,11 +244,12 @@ export interface CheckRequest {
   /** true: fail on warnings too. */
   strict?: boolean;
   /**
-   * Where networks are connected outside the simulation: network name to target. A target other than `none` must be a
-   * `value` that the last `POST api/connections` of that network gave with `usable: true` (else 400 target-not-listed).
+   * Where networks are connected outside the simulation: network name to target. For a network of the file, a target
+   * other than `none` must be a `value` that the last `POST api/connections` of that network gave with `usable: true`
+   * (else 400 target-not-listed); a network that the file lacks is left out by the launcher, with a note.
    */
   connect?: Record<string, string>;
-  /** The time policy of a run connected outside (`realtime` or `free`; the launcher decides what it allows). */
+  /** The time policy of a run connected outside (a name that the launcher takes, e.g. `free`; it decides what it allows). */
   time_policy?: string;
 }
 
@@ -261,7 +262,7 @@ export interface ConnectionsRequest {
 }
 
 /** Answer of POST api/connections: where that network can be connected on this computer. */
-export interface ConnectionsAnswer {
+export interface Connections {
   file: string;
   network: string;
   /** The exit code of the launcher's `connections` (0: listed, 1: a list failed or the file has errors, 4: usage). */
@@ -274,8 +275,8 @@ export interface ConnectionsAnswer {
 }
 
 /** Reads the answer of POST api/connections. */
-export const readConnectionsResponse = (value: unknown): ConnectionsAnswer => {
-  const path = 'response';
+export const readConnections = (value: unknown): Connections => {
+  const path = 'connections';
   const f = object(value, path);
   return {
     file: field(f, path, 'file', string),

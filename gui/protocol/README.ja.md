@@ -124,11 +124,13 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 
 `can` と `ethernet` のネットワークは、ランチャーのブリッジを通して実機のバスにつなげます（[docs/simulation-run.md](../../docs/ja/simulation-run.md#バスを外につなぐ--connect) の「バスを外につなぐ（`--connect`）」）。画面は 3 段で行います。
 
-1. **一覧を取る**: `POST api/connections` `{"file": "simulation.yaml", "network": "ETH_EXT"}` は、ランチャーの `connections --json --network ETH_EXT` を走らせ、`{file, network, exit_code, connections}` を返します。`connections` はランチャーの JSON そのままです（docs/simulation-run.md の「`connections --json`」）。`networks[]` はこの OS の方式（backend）ごとに 1 つずつで、`list.targets[]` に `value`、`label`、`detail`、`usable`、`reason` があります。一覧は、利用者がそのネットワークを開いたときだけ頼みます。そのネットワークのブリッジだけが起動するので、SIL Kit だけを使うコンピューターに Npcap の確認は出ません。`network` は、そのファイルの直近の照合の `networks[].name` にある名前です（照合がまだないか、その後にファイルが変わったら、サーバーが意図なしで照合します）。ないと 400 `unknown-network` で、`detail.networks` に名前の一覧が入ります。一覧は照合と同じ順番を待ちます（`api/check` と同じく 503 `check-busy`）。例: `connections.json`。
+1. **一覧を取る**: `POST api/connections` `{"file": "simulation.yaml", "network": "ETH_EXT"}` は、ランチャーの `connections --json --network ETH_EXT` を走らせ、`{file, network, exit_code, connections}` を返します。`connections` はランチャーの JSON そのままです（docs/simulation-run.md の「`connections --json`」）。`networks[]` はこの OS の方式（backend）ごとに 1 つずつで、`list.targets[]` に `value`、`label`、`detail`、`usable`、`reason` があります。一覧は、利用者がそのネットワークを開いたときだけ頼みます。そのネットワークのブリッジだけが起動するので、SIL Kit だけを使うコンピューターに Npcap の確認は出ません。`network` は、そのファイルのネットワーク（照合の `networks[].name`）です。ネットワークはどの variant でも同じなので、variant なしで一覧を取ります。ファイルにない名前は、ランチャーの使い方の誤りを 400 `unknown-network` に読み替えます。メッセージにランチャーの文が入り、`detail` は `{network, findings}`（ランチャーの所見）です。一覧は照合と同じ順番を待ちます（`api/check` と同じく 503 `check-busy`）。例: `connections.json`。
 2. **選ぶ**: `api/check` と `api/run` に `connect` `{"<network>": "<target>"}` を、一覧の `value` で送ります。`"none"` はネットワークを SIL Kit だけに置き、一覧は要りません。
-3. **照合して始める**: 照合は、各ネットワークのつなぎ先（`networks[].outside`）と、実行が実時間を守るか（`time_lock`）を言います。`time_policy`（`"free"`）はその固定を外します。それが何を意味するか、一時停止、ステップ、速さの変更を受けるか（要約の `allowed`）は、ランチャーが決めます。サーバーは `connect` と `time_policy` を要求ファイルで渡すだけで、時間の規則を持ちません。例: `check-connect.json`、`run-connect.json`。
+3. **照合して始める**: 照合は、各ネットワークのつなぎ先（`networks[].outside`）と、実行が実時間を守るか（`time_lock`）を言います。`time_policy`（たとえば `"free"`）はその固定を外します。ネットワークはつながったままで、照合に注記 `outside-not-real-time` が出ます。方針が何を意味するか、一時停止、ステップ、速さの変更を受けるか（要約の `allowed`）は、ランチャーが決めます。サーバーは `connect` と `time_policy` を要求ファイルで渡すだけで、時間の規則を持ちません。例: `check-connect.json`、`run-connect.json`。
 
-**守り（`target-not-listed`）**: `"none"` 以外の先は、そのファイルのそのネットワークの直近の一覧に、ちょうど同じ文字列で `usable: true` として載っていて、その一覧の後にファイルが変わっていないときだけ渡します。そうでなければ、`api/check` と `api/run` は 400 `target-not-listed`（`detail` は `{network, target}`）で、何も始めません。ネットワークの一覧を取り直し、そこから選びます。こうして、ブラウザーからの値は、ランチャーがこのコンピューターで一覧に載せたときだけ、ブリッジのデバイスに届きます。あるネットワークの新しい一覧は、前の一覧を置き換えます。一覧に失敗すると（502 `launcher-output`）、一覧はなくなります。例: `error-target-not-listed.json`。
+**守り（`target-not-listed`）**: ファイルにあるネットワークの `"none"` 以外の先は、そのファイルのそのネットワークの直近の一覧に、ちょうど同じ文字列で `usable: true` として載っていて、その一覧の後にファイルが変わっていないときだけ渡します。`api/check` は照合の後に照合と同じ順番の中で、`api/run` はランチャーを起こす直前に照らします。そうでなければ 400 `target-not-listed`（`detail` は `{network, target}`。メッセージに一覧の使える値の先頭を挙げます）で、何も始めません。ネットワークの一覧を取り直し、そこから選びます。こうして、ブラウザーからの値は、ランチャーがこのコンピューターで一覧に載せたときだけ、ブリッジのデバイスに届きます。照らすのは文字列そのものです。ランチャーは `packet:enp3s0` と `enp3s0` を同じ先として受けますが、ここでは一覧の `enp3s0` と別のものなので、一覧の `value` のとおりに書きます。あるネットワークの新しい一覧を頼むと、前の一覧はその場でなくなり、答えのなかった一覧（502、504、サーバーの終わり）は一覧を残しません。例: `error-target-not-listed.json`。
+
+- `connect` にあってファイルにないネットワークは、何もつなぎません。サーバーはランチャーに任せ、ランチャーは台の要求ファイルのときと同じく、注記 `connect-network-unused` を出して外します（コマンドラインの `--connect` では、そのようなネットワークは誤りです）。
 
 - サーバーは、実行をまたいで選んだ先を覚えません。覚えたい画面は自分で覚えます。
 - ランチャーの `outside` イベントと、`state` イベントの `outside[]` は、そのまま渡します。
@@ -189,8 +191,8 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 400 | `outside-root` | 絶対パス、`..`、root の外へのシンボリックリンク |
 | 400 | `not-a-configuration` | `.yaml` / `.yml` の通常のファイルでない |
 | 400 | `unknown-participant` | `disable` か `manual` の名前が照合の結果にない |
-| 400 | `unknown-network` | `api/connections`: `network` が、そのファイルの直近の照合にない（`detail` に `{network, networks}`） |
-| 400 | `target-not-listed` | `connect` の先（`none` 以外）が、そのファイルのそのネットワークの直近の一覧で使えるものでない、またはその後にファイルが変わった（`detail` に `{network, target}`。上の「ネットワークを外につなぐ」）。例: `error-target-not-listed.json` |
+| 400 | `unknown-network` | `api/connections`: ファイルにそのネットワークがない（ランチャーの使い方の誤り。`detail` に `{network, findings}`） |
+| 400 | `target-not-listed` | ファイルにあるネットワークの `connect` の先（`none` 以外）が、そのファイルのそのネットワークの直近の一覧で使えるものでない、またはその後にファイルが変わった（`detail` に `{network, target}`。上の「ネットワークを外につなぐ」）。例: `error-target-not-listed.json` |
 | 400 | `scenario-not-listed` | `scenario` が、`api/scenarios` がその設定ファイルに挙げるシナリオでない（`scenarios` がない、リンク、ほかの場所のファイル） |
 | 400 | `unsupported` | ランチャーが持たない機能を使った（対象は表の下） |
 | 400 | `unknown-variable` | `api/write`: その participant か変数が、実行の変数の一覧にない（`detail` に `{peer, name}`） |

@@ -14,7 +14,7 @@
   "response": {
     "error": {
       "code": "target-not-listed",
-      "message": "there is no list of where 'ETH_EXT' of connect.yaml can be connected: ask POST api/connections {\"file\": \"connect.yaml\", \"network\": \"ETH_EXT\"} and give a value that it lists with usable: true, or \"none\" to keep the network on SIL Kit only",
+      "message": "there is no list of where 'ETH_EXT' of connect.yaml can be connected: ask POST api/connections {\"file\": \"connect.yaml\", \"network\": \"ETH_EXT\"} and give a value that it lists with usable: true, exactly as written there, or \"none\" to keep the network on SIL Kit only",
       "detail": {
         "network": "ETH_EXT",
         "target": "fake0"

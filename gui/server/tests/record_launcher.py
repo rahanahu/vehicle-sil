@@ -128,7 +128,8 @@ class Case:
     default: bool = False  # of the recordings of one command line, the one to play until a command says otherwise
     # A request file to give instead of the options of argv (which still name the case: replay_launcher.py turns
     # a --request back into such options). For what options cannot say: `check --start-paused` is refused as an
-    # option, and a request file may have start_paused for check (the launcher's rules about it are checked there).
+    # option, and a request file may have start_paused for check (the launcher's rules about it are checked there);
+    # a network of the request file's connect that the configuration lacks is left out with a note, not an error.
     request: dict | None = None
     tools: bool = False  # run the launcher next to the bridges on the fake drivers (see the top of this file)
     own_network: bool = False  # in a network namespace of its own (unshare -rn): this computer's interfaces unseen
@@ -192,7 +193,9 @@ class Recorder:
         if case.request is not None:
             path = self.root / ".request.json"
             path.write_text(json.dumps({"vehicle_sil_run_request": 1, **case.request}), encoding="utf-8")
-            argv = [*argv[:argv.index("--json") + 1], "--request", str(path), "--", argv[-1]]
+            # check: its --json; run: the options of RUN; the rest is in the request
+            keep = argv.index("--json") + 1 if "--json" in argv else len(RUN)
+            argv = [*argv[:keep], "--request", str(path), "--", argv[-1]]
         launcher, env = self.launcher, None
         if case.tools:
             assert self.tools is not None
@@ -1001,8 +1004,10 @@ def runs() -> list[Case]:
 def connects() -> list[Case]:
     """Connecting the Ethernet network of connect.yaml to the fake pcap library's adapter fake0, as the GUI server
     asks: the list of that one network, the checks (nothing connected: the one that names the networks; none;
-    connected; connected with the time policy free) and a run with it connected, to its end."""
+    connected; connected with the time policy free) and a run with it connected, to its end; a network that the
+    file lacks (listed: a usage error; in a request file's connect: a note); a file with variants."""
     target = ("--connect", "ETH_EXT=fake0")
+    unused = ("--connect", "CAN1=physical:1")
     return [
         Case("connections-connect", ["connections", "--json", "--network", "ETH_EXT", "--", "connect.yaml"],
              "where ETH_EXT can be connected (packet: the fake pcap library's adapters; tap: none but lo)",
@@ -1017,6 +1022,20 @@ def connects() -> list[Case]:
              "the check with ETH_EXT connected to fake0 and the time policy free: the time is not locked", tools=True),
         Case("run-connect", [*RUN, *target, "--", "connect.yaml"],
              "a run with ETH_EXT connected to fake0, at real time, to its end", tools=True),
+        Case("check-connect-can", ["check", "--json", "--connect", "J1939_CAN=fake0", "--", "connect.yaml"],
+             "the check with J1939_CAN connected to fake0 (on Linux the SocketCAN bridge, which is not among the "
+             "tools)", tools=True),
+        Case("connections-unknown-network", ["connections", "--json", "--network", "NOPE", "--", "connect.yaml"],
+             "the list of a network that connect.yaml lacks: a usage error"),
+        Case("connections-variants", ["connections", "--json", "--network", "J1939_CAN", "--", "variants.yaml"],
+             "where J1939_CAN of a file with variants can be connected (read without a variant; on Linux the "
+             "SocketCAN bridge, which is not among the tools)", tools=True),
+        Case("check-connect-unused", ["check", "--json", *unused, "--", "connect.yaml"],
+             "the check of a request whose connect has a network that connect.yaml lacks: the note "
+             "connect-network-unused", request={"connect": {"CAN1": "physical:1"}}),
+        Case("run-connect-unused", [*RUN, *unused, "--", "connect.yaml"],
+             "a run of a request whose connect has a network that connect.yaml lacks, to its end",
+             request={"connect": {"CAN1": "physical:1"}}),
     ]
 
 

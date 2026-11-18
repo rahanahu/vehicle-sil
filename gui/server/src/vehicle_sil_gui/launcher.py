@@ -232,8 +232,8 @@ def check_strict(strict: object) -> bool:
 
 def check_connect(connect: object) -> dict[str, str]:
     """The connect of the request: {network: target}. Whether the file has such a network and the target is one that
-    the launcher takes, the launcher says; whether this server passes the target on, the lists of POST
-    api/connections say (GuiServer._check_targets)."""
+    the launcher takes, the launcher says; whether this server passes the target of a network of the file on, the
+    lists of POST api/connections say (GuiServer._check_targets)."""
     if connect is None:
         return {}
     if not isinstance(connect, dict) or not all(isinstance(n, str) and n and isinstance(t, str)
@@ -249,8 +249,8 @@ def check_time_policy(policy: object) -> str | None:
     if policy is None:
         return None
     if not isinstance(policy, str) or not policy:
-        raise InvalidRequest("invalid-field", 'time_policy must be the name of a time policy ("realtime" or '
-                                              '"free"), or left out')
+        raise InvalidRequest("invalid-field", 'time_policy must be the name of a time policy that the launcher '
+                                              'takes (a string, e.g. "free"), or left out')
     return policy
 
 
