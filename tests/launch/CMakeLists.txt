@@ -185,6 +185,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
 
   # The scenarios by topic (launch_run_<topic>.cpp); launch_run_launcher.cpp has main().
   add_executable(vehicle_sil_launch_run_launcher
+    launch_run_availability.cpp
     launch_run_connect.cpp
     launch_run_events.cpp
     launch_run_launcher.cpp
@@ -215,6 +216,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     PREFIX launch_run LABELS integration launch TIMEOUT 300
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
     SCENARIOS
+      availability
       busy_port
       check
       control

@@ -97,6 +97,7 @@ has, or that came later than recorded) is added too: the tests make sure it stay
 Other environment variables: REPLAY_FEATURES (the features of version --json, comma-separated, to stand in for an
 older launcher; default: the recorded ones without control-server, a launcher built without the control server,
 so that only the tests that ask for it need gRPC), REPLAY_CHECK_DELAY_MS (how long check and connections take),
+REPLAY_AVAILABILITY=1 (the stand-in's peers report the availability of two variables: fake_control.availability),
 REPLAY_CONTROL (what goes wrong with the control server: wrong-token, unreachable, bad-address, closes: it ends after the third
 time event), REPLAY_RECORDINGS (another directory of recordings, with fake_control.py next to it). Standard library
 only, except fake_control (grpcio) for --control. A --control-credentials file that others can read ends it with
@@ -820,8 +821,10 @@ class Player:
                      if ln.strip() and not ln.lstrip().startswith("#")]
             role, token = lines[0][0], lines[0][2]
         peers = {name: fake_control.variables(name) for name in self.peers}
+        reports = {name: fake_control.availability(name) for name in self.peers} \
+            if os.environ.get("REPLAY_AVAILABILITY") == "1" else None
         self.control = fake_control.FakeControl(peers, token + "-other" if trouble == "wrong-token" and token
-                                                else token, role=role)
+                                                else token, role=role, availability=reports)
         self.control_address = self.control.start()
         if trouble == "unreachable":
             self.control.stop()

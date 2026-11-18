@@ -21,7 +21,10 @@ Watch; and GetValues and GetTime), with the contract of the real one where the G
   after its time ran before the command arrived"): at the next step it gets the result late and is not made,
   or, when asked, is made in that step with late true. So standing still at P, a write for P is late, as with the real one;
 - a parameter is refused once a step has run; an operation's number grows by one from 1;
-- a call needs the role its credential has: reading the role viewer, writing operator (as the real server).
+- a call needs the role its credential has: reading the role viewer, writing operator (as the real server);
+- the variables named in `availability` report whether they are in use: PeerInfo declares the state they start
+  with, and a Watch that asks for it gets each such peer's PeerAvailability with the first updates and when it
+  changes (set_availability; the first step sets the second state of each). Every peer's incarnation is "1".
 
 Each peer has the variables of variables() below: ecu.connected (a bool input, true at first, which
 changes nothing else here), <name>.demand (a real input, 0 to 100),
@@ -39,6 +42,14 @@ import threading
 from concurrent import futures
 
 NS_PER_MS = 1_000_000
+
+
+def availability(name: str) -> dict[str, tuple[str, str]]:
+    """What REPLAY_AVAILABILITY=1 makes a peer of the stand-in launcher report: of <name>.speed and <name>.demand
+    the state they start with and the one its first step sets (the demand is written and the speed follows it as
+    before: the availability is information only)."""
+    base = name.lower()
+    return {f"{base}.speed": ("unknown", "active"), f"{base}.demand": ("unknown", "inactive")}
 
 
 def variables(name: str) -> list[dict]:
@@ -104,9 +115,11 @@ def _make_stubs() -> str:
 
 class FakeControl:
     def __init__(self, peers: dict[str, list[dict]], token: str | None = None, role: str = "operator",
-                 snapshot: bool = True):
+                 snapshot: bool = True, availability: dict[str, dict[str, tuple[str, str]]] | None = None):
         """peers: the variables of each (the dicts of a check's `variables`). token: every call must carry it;
-        role: what the token may do (viewer: read; operator, admin: write too). snapshot: has GetSnapshot."""
+        role: what the token may do (viewer: read; operator, admin: write too). snapshot: has GetSnapshot.
+        availability: of each peer, its variables that report their availability, each with the state it starts
+        with and the state the first step sets (unknown, active, inactive)."""
         self.grpc, self.pb, self.rpc = load()
         self.token = token
         self.role = role
@@ -120,6 +133,11 @@ class FakeControl:
         self.version = 0
         self.peers = peers
         self.values = {name: [self._initial(v) for v in variables] for name, variables in peers.items()}
+        self.reports = availability or {}
+        # peer -> (the state of each variable in schema order, version); only the peers with a variable that reports
+        self.states: dict[str, tuple[list[str], int]] = {
+            name: ([self.reports[name][v["name"]][0] if v["name"] in self.reports[name] else "active"
+                    for v in variables], 0) for name, variables in peers.items() if self.reports.get(name)}
         self.samples: dict[str, tuple[int, int, list, int]] = {}  # peer -> (time_ns, sequence, values, version)
         self.operations: dict[int, dict] = {}
         self.queued: list[dict] = []
@@ -228,6 +246,9 @@ class FakeControl:
             self.steps += 1
             self.version += 1
             self.last_step_ms = start_ms
+            if self.steps == 1:  # every peer's in one go: a watch gets them together
+                for name, reports in self.reports.items():
+                    self._set_states(name, {variable: states[1] for variable, states in reports.items()})
             due = [q for q in self.queued if q["at_ms"] is None or q["at_ms"] <= start_ms]
             self.queued = [q for q in self.queued if q not in due]
             for q in sorted(due, key=lambda q: q["seq"]):
@@ -257,6 +278,20 @@ class FakeControl:
                         values[i] = demand > 50
                 self.samples[name] = (start_ms * NS_PER_MS, self.steps, list(values), self.version)
             self.changed.notify_all()
+
+    def set_availability(self, peer: str, states: dict[str, str]) -> None:
+        """Sets the availability of variables of the peer (each one that `availability` named for it)."""
+        with self.changed:
+            self.version += 1
+            self._set_states(peer, states)
+            self.changed.notify_all()
+
+    def _set_states(self, peer: str, states: dict[str, str]) -> None:
+        names = [v["name"] for v in self.peers[peer]]
+        now = list(self.states[peer][0])
+        for variable, state in states.items():
+            now[names.index(variable)] = state
+        self.states[peer] = (now, self.version)
 
     def set_time(self, sim_ms: int, paused: bool, running: bool = True, ended: bool = False) -> None:
         with self.changed:
@@ -300,16 +335,26 @@ class FakeControl:
                  "enum": pb.VALUE_TYPE_ENUM}
         roles = {"input": pb.CAUSALITY_INPUT, "output": pb.CAUSALITY_OUTPUT, "parameter": pb.CAUSALITY_PARAMETER}
         schema = []
+        reports = self.reports.get(name, {})
         for v in self.peers[name]:
             info = pb.VariableInfo(name=v["name"], type=types[v["type"]], causality=roles[v["causality"]],
                                    unit=v["unit"], description=v["description"],
                                    items=[pb.EnumItem(name=i["name"], value=i["value"]) for i in v["items"]])
+            if v["name"] in reports:
+                info.availability = self._availability(reports[v["name"]][0])
             for key in ("min", "max", "step"):
                 if v[key] is not None:
                     setattr(info, key, v[key])
             schema.append(info)
         return pb.PeerInfo(participant=name, incarnation="1", connected=not self.time["ended"], schema=schema,
                            has_agent=True, simulation_state="Running")
+
+    def _availability(self, state: str):
+        return getattr(self.pb, "AVAILABILITY_" + state.upper())
+
+    def _states(self, name: str):
+        return self.pb.PeerAvailability(peer=name, incarnation="1",
+                                        states=[self._availability(s) for s in self.states[name][0]])
 
     def _snapshot(self, name: str, sample: tuple):
         pb = self.pb
@@ -390,6 +435,8 @@ class FakeControl:
         with self.changed:
             seen = self.version
             first = [pb.Update(peer=self._peer(name)) for name in self.peers]
+            if request.availability:
+                first += [pb.Update(availability=self._states(name)) for name in self.states]
             if request.values:
                 first += [pb.Update(values=pb.PeerValues(peer=name, incarnation="1",
                                                          snapshot=self._snapshot(name, s)))
@@ -412,6 +459,9 @@ class FakeControl:
                     if request.values and s[3] > seen:
                         updates.append(pb.Update(values=pb.PeerValues(peer=name, incarnation="1",
                                                                       snapshot=self._snapshot(name, s))))
+                for name, (_, version) in self.states.items():
+                    if request.availability and version > seen:
+                        updates.append(pb.Update(availability=self._states(name)))
                 if request.time and self.time["version"] > seen:
                     updates.append(pb.Update(time=self._time()))
                 seen = self.version

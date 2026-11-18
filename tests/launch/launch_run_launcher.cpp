@@ -43,6 +43,7 @@ int main(int argc, char** argv)
         log("scenario " + o.scenario);
         // One a line, in the order of the names (the order has no meaning: the name is looked up).
         const std::vector<std::pair<std::string, void (*)(const Options&)>> scenarios = {
+            {"availability", availability},
             {"busy_port", busy_port},
             {"check", check},
             {"connect_bus_off", connect_bus_off},

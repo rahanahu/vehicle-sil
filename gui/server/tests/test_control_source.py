@@ -52,6 +52,9 @@ class Sink:
     def on_lost(self, reason, fatal):
         self._note("lost", reason, fatal)
 
+    def on_availability(self, peer, incarnation, states):
+        self._note("availability", peer, incarnation, states)
+
     def kinds(self) -> list[str]:
         return [c[0] for c in self.calls]
 
@@ -94,9 +97,10 @@ def test_the_state_the_values_a_write_and_its_result(fake) -> None:
         await sink.until("synced")
         kinds = sink.kinds()  # the peers (in one or more parts), the time, and then the word that this is all
         assert kinds[-2:] == ["time", "synced"] and set(kinds[:-2]) == {"peers"}
-        # What it asked the server to send along: the operations and the time, not the values.
+        # What it asked the server to send along: the operations, the time and the availability, not the values.
         asked = server.requests[0]
-        assert (asked.values, asked.events, asked.operations, asked.time) == (False, False, True, True)
+        assert (asked.values, asked.events, asked.operations, asked.time, asked.availability) == \
+            (False, False, True, True, True)
         assert [p.name for p in await source.read_peers(2)] == ["Engine", "Body"]
         engine = sink.peers["Engine"]
         # every ECU has ecu.connected first (vehicle-sil adds it), then its own variables
@@ -105,7 +109,7 @@ def test_the_state_the_values_a_write_and_its_result(fake) -> None:
                                                          "engine.mode"]
         assert engine.variables[1] == {"name": "engine.demand", "type": "real", "role": "input", "unit": "%",
                                        "min": 0.0, "max": 100.0, "step": None, "description": "requested level",
-                                       "enum": []}
+                                       "enum": [], "availability": None}
         assert engine.variables[3]["enum"] == [("off", 0), ("on", 1)] and engine.variables[3]["role"] == "parameter"
         # Before the first step: the time, and for every name asked for that there is no sample (a peer that
         # has none yet, a name that is no peer's).
@@ -161,6 +165,31 @@ def test_the_state_the_values_a_write_and_its_result(fake) -> None:
         with pytest.raises(SourceError) as e:
             await source.read_snapshot(["Engine"], 1)
         assert e.value.kind == "unavailable"
+    asyncio.run(main())
+
+
+def test_the_availability_of_the_variables_comes_after_the_peers(fake) -> None:
+    server = fake(availability={"Engine": {"engine.speed": ("unknown", "active"), "engine.demand": ("unknown",
+                                                                                                    "inactive")}})
+
+    async def main() -> None:
+        source = control.GrpcSource(library(), server.address, None)
+        sink = Sink()
+        source.start(sink)
+        await sink.until("synced")
+        # The peers declare which variables report and how they start; the states now come after the peers, for
+        # Engine only (Body reports none), before the word that this is all.
+        engine = sink.peers["Engine"]
+        assert [v["availability"] for v in engine.variables] == [None, "unknown", "unknown", None]
+        assert {v["availability"] for v in sink.peers["Body"].variables} == {None}
+        kinds = sink.kinds()
+        assert kinds.index("availability") > kinds.index("peers") and kinds[-1] == "synced"
+        assert [c[1:] for c in sink.calls if c[0] == "availability"] == \
+            [("Engine", "1", ["active", "unknown", "unknown", "active"])]
+        del sink.calls[:]
+        server.step(0)  # sets the states its availability names
+        assert (await sink.until("availability"))[1:] == ("Engine", "1", ["active", "inactive", "active", "active"])
+        await source.close()
     asyncio.run(main())
 
 

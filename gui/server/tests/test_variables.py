@@ -74,7 +74,8 @@ def test_watch_write_and_result(tmp_path: Path, control_env: dict) -> None:
             demand, speed, mode = by_name["engine.demand"], by_name["engine.speed"], by_name["engine.mode"]
             assert by_name["ecu.connected"]["writable"] is True
             assert demand == {"name": "engine.demand", "type": "real", "role": "input", "writable": True, "unit": "%",
-                              "min": 0, "max": 100, "step": None, "description": "requested level", "enum": None}
+                              "min": 0, "max": 100, "step": None, "description": "requested level", "enum": None,
+                              "availability": "active"}
             assert (speed["role"], speed["writable"], speed["type"]) == ("output", False, "integer")
             assert mode["enum"] == [{"name": "off", "value": 0}, {"name": "on", "value": 1}]
             # Standing still before the first step: no sample yet, and that is complete.
