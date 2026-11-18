@@ -3,6 +3,12 @@
 
 #include <linux/can/error.h>
 
+// Older kernel headers (for example those of the oldest Linux CI image) lack CAN_ERR_CNT. The value is fixed by the
+// kernel ABI: "error counters in data[6] and data[7]".
+#ifndef CAN_ERR_CNT
+#define CAN_ERR_CNT 0x00000200U
+#endif
+
 namespace vehicle_sil::socketcan {
 
 ErrorFrameState interpret_error_frame(std::uint32_t can_id, const std::array<std::uint8_t, 8>& data) noexcept

@@ -408,6 +408,8 @@ The first line of a bridge says nothing when all is well (`up`, `active`). `run`
 | The bridge is connected, but frames were lost | Goes on | A warning for each kind that happened (below). One frame is enough. |
 | The bridge cannot go on | Aborts the simulation | The error `connect-lost` (above) |
 
+Npcap does not read the state of the link, so when the link goes down, neither `outside-link-down` nor `connect-lost` follows: the frames that cannot be sent show in `frames-dropped` and, at the end, in `outside-frames-dropped`.
+
 The kinds of loss are told from the counts of the statistics line and the link line; one table in the launcher (`detail::kOutsideDroppedKeys`) holds the keys:
 
 | Finding | From |
