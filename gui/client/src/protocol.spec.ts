@@ -271,8 +271,8 @@ describe('the readers accept every example of gui/protocol', () => {
       m?.type === 'event' && m.event.event === 'check' ? [m.event.check] : [],
     )[0];
     expect(check?.participants.map((p) => p.control)).toEqual([
-      { transport: 'silkit', wire_version: 2 },
-      { transport: 'silkit', wire_version: 2 },
+      { transport: 'silkit', wire_version: 2, wire_revision: 1 },
+      { transport: 'silkit', wire_version: 2, wire_revision: 1 },
       null,
       null,
     ]);

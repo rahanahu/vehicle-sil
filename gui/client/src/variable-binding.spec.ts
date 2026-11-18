@@ -194,6 +194,109 @@ describe('client.variables.bind', () => {
     speed.close();
   });
 
+  describe('availability', () => {
+    const told = (peers: object, session = 1) => ({ type: 'availability', session, peers });
+    const withAvailability = (given: Record<string, string>) => ({
+      state: 'ready',
+      reason: null,
+      peers: [
+        {
+          name: 'Engine',
+          connected: true,
+          variables: SCHEMA.map((v) => ({
+            ...v,
+            ...(v.name in given ? { availability: given[v.name] } : {}),
+          })),
+        },
+      ],
+      peers_omitted: 0,
+      variables_omitted: 0,
+      operations: [],
+    });
+
+    it('is active without the field (an older server) and for a value it does not know', async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      expect(demand.state.get().availability).toBe('unknown');
+      await deliver(hello(), told({}));
+      expect(demand.state.get().availability).toBe('active');
+      await deliver({
+        type: 'variables',
+        session: 1,
+        variables: withAvailability({ 'engine.demand': 'sometimes' }),
+      });
+      expect(demand.state.get().availability).toBe('active');
+      demand.close();
+    });
+
+    it('is replaced by the summary and, per participant, by the notification', async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      const speed = client.variables.bind(ref('engine.speed'));
+      await deliver({
+        ...hello(),
+        session: {
+          ...hello().session,
+          variables: withAvailability({
+            'engine.demand': 'unknown',
+            'engine.speed': 'unknown',
+          }),
+        },
+      });
+      expect([demand, speed].map((b) => b.state.get().availability)).toEqual([
+        'unknown',
+        'unknown',
+      ]);
+      await deliver(told({ Engine: { 'engine.demand': 'inactive', 'engine.speed': 'active' } }));
+      expect([demand, speed].map((b) => b.state.get().availability)).toEqual([
+        'inactive',
+        'active',
+      ]);
+      // What the participant reports replaces its earlier states: a variable not listed is active again
+      await deliver(told({ Engine: { 'engine.speed': 'inactive' } }));
+      expect([demand, speed].map((b) => b.state.get().availability)).toEqual([
+        'active',
+        'inactive',
+      ]);
+      // A participant that is not listed, one that is not known, and another run's notification change nothing
+      await deliver(told({ Other: { 'engine.demand': 'inactive' } }), told({ Engine: {} }, 2));
+      expect([demand, speed].map((b) => b.state.get().availability)).toEqual([
+        'active',
+        'inactive',
+      ]);
+      // A new summary replaces them all
+      await deliver(changed());
+      expect([demand, speed].map((b) => b.state.get().availability)).toEqual(['active', 'active']);
+      demand.close();
+      speed.close();
+    });
+
+    it('stays what the ECU said when the connection or the ECU is lost', async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      await deliver(hello(), told({ Engine: { 'engine.demand': 'inactive' } }));
+      // The ECU left the Control Server: the summary keeps the state
+      const gone = withAvailability({ 'engine.demand': 'inactive' });
+      gone.peers[0].connected = false;
+      await deliver({ type: 'variables', session: 1, variables: gone });
+      expect(demand.state.get().availability).toBe('inactive');
+      // The connection between the client and the server dropped
+      socket().fail();
+      expect(demand.state.get().availability).toBe('inactive');
+      demand.close();
+    });
+
+    it('does not change whether the variable can be written, or what it says of the value', async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      await deliver(hello(), values(100, false, { 'engine.demand': 30 }));
+      const before = demand.state.get();
+      expect(before.block).toBeNull();
+      await deliver(told({ Engine: { 'engine.demand': 'inactive' } }));
+      const after = demand.state.get();
+      expect(after.availability).toBe('inactive');
+      expect({ ...after, availability: before.availability, info: before.info }).toEqual(before);
+      expect(after.block).toBeNull();
+      demand.close();
+    });
+  });
+
   it('says that a variable is not in this run', async () => {
     const nothing = client.variables.bind(ref('engine.nothing'));
     await deliver(hello());

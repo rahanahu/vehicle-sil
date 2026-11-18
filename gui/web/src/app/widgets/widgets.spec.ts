@@ -192,6 +192,32 @@ describe('variable widgets', () => {
     expect(text(fixture, 'widget-value')).toBe('1460 rpm');
   });
 
+  it('marks a variable the ECU does not use now on its frame, and leaves its controls enabled', async () => {
+    const fixture = await render(SwitchWidget, 'engine.enabled');
+    const frame = () => element(fixture, '[data-variable]');
+    // 知らせがない（古いサーバー）、unknown は、ふつうに出す
+    expect(frame().getAttribute('data-availability')).toBe('active');
+    expect(element(fixture, '.unused')).toBeNull();
+    await deliver(fixture, {
+      type: 'availability',
+      session: 1,
+      peers: { Engine: { 'engine.enabled': 'unknown' } },
+    });
+    expect(frame().getAttribute('data-availability')).toBe('unknown');
+    expect(element(fixture, '.unused')).toBeNull();
+    await deliver(fixture, {
+      type: 'availability',
+      session: 1,
+      peers: { Engine: { 'engine.enabled': 'inactive' } },
+    });
+    expect(frame().getAttribute('data-availability')).toBe('inactive');
+    expect(element(fixture, '.unused').getAttribute('title')).toBe('この ECU はいま使っていません');
+    // 操作は止めない
+    expect(element(fixture, 'button, [role=switch], input').hasAttribute('disabled')).toBe(false);
+    expect(element(fixture, '[aria-disabled=true]')).toBeNull();
+    expect(text(fixture, 'widget-why')).toBe('');
+  });
+
   it('says that a variable is not in this run', async () => {
     const fixture = await render(ValueWidget, 'engine.nothing');
     expect(text(fixture, 'widget-condition')).toBe('⚠ この実行にない変数です');

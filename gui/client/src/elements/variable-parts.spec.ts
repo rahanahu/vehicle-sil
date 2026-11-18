@@ -26,6 +26,31 @@ afterEach(() => {
   setReasonText(null);
 });
 
+describe('data-availability', () => {
+  it('is on every part, follows the variable, and does not disable anything', async () => {
+    const front = fakeFront();
+    const parts = [
+      await mount('vsil-value', front, { variable: 'E.e.a' }),
+      await mount('vsil-slider', front, { variable: 'E.e.a' }),
+      await mount('vsil-write', front, { variable: 'E.e.a', value: '1' }),
+    ];
+    const cell = front.variables.get('E.e.a')!.cell;
+    expect(parts.map((p) => p.dataset['availability'])).toEqual(['active', 'active', 'active']);
+    cell.set(viewOf({ availability: 'inactive', min: 0, max: 10, value: 5 }));
+    expect(parts.map((p) => p.dataset['availability'])).toEqual([
+      'inactive',
+      'inactive',
+      'inactive',
+    ]);
+    expect(parts.map((p) => p.dataset['canWrite'])).toEqual(['true', 'true', 'true']);
+    expect(parts[1].querySelector('input')!.disabled).toBe(false);
+    expect(parts[2].querySelector('button')!.getAttribute('aria-disabled')).toBe('false');
+    expect(parts.some((p) => p.hasAttribute('aria-disabled'))).toBe(false);
+    cell.set(viewOf({ availability: 'unknown', min: 0, max: 10, value: 5 }));
+    expect(parts.map((p) => p.dataset['availability'])).toEqual(['unknown', 'unknown', 'unknown']);
+  });
+});
+
 describe('<vsil-value>', () => {
   it('shows the text and the unit, and the stale mark in data-stale', async () => {
     const front = fakeFront();

@@ -1,3 +1,4 @@
+import type { VariableAvailability } from './protocol';
 import { ConnectionState } from './connection';
 import { SessionView, isHolding } from './session-state';
 import { ErrorSink, Readable, Writable, callEach } from './values';
@@ -56,6 +57,11 @@ export interface BoundVariable {
   readonly info: VariableInfo | undefined;
   /** The last value (undefined if none yet, or if values are not received (visible is false)). */
   readonly reading: VariableReading | undefined;
+  /**
+   * Whether the ECU uses the variable now (`unknown` if the variable is not in the current run). Information only: it
+   * does not enter condition or block, and a disconnection does not change it.
+   */
+  readonly availability: VariableAvailability;
   /** State of the value (stale, none yet, the value at the paused time and so on). */
   readonly condition: ValueCondition;
   /** Why the variable cannot be written now (null if it can). */
@@ -417,6 +423,7 @@ export class VariableBinder {
 function sameBound(a: BoundVariable, b: BoundVariable): boolean {
   return (
     a.info === b.info &&
+    a.availability === b.availability &&
     a.reading === b.reading &&
     a.block === b.block &&
     a.writeStatus === b.writeStatus &&
@@ -483,6 +490,7 @@ class Binding implements VariableBinding {
     return {
       ref,
       info,
+      availability: info?.availability ?? 'unknown',
       reading,
       condition,
       block: this.blockOf(info, reading, pending),

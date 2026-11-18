@@ -20,6 +20,7 @@ import { VariableBinding } from './variable-binding';
       [attr.aria-labelledby]="variable().id + '-name'"
       [attr.data-condition]="variable().condition().kind"
       [attr.data-write]="variable().writeStatus().kind"
+      [attr.data-availability]="variable().availability()"
       [attr.data-variable]="variable().ref().peer + '/' + variable().ref().name"
     >
       <header class="head">
@@ -28,6 +29,10 @@ import { VariableBinding } from './variable-binding';
         </span>
         @if (role()) {
           <span class="role">{{ role() }}</span>
+        }
+        @if (variable().availability() === 'inactive') {
+          <!-- 表示だけ。操作は止めない -->
+          <span class="unused" title="この ECU はいま使っていません" i18n-title i18n>未使用</span>
         }
       </header>
       <div class="body">
@@ -119,6 +124,16 @@ import { VariableBinding } from './variable-binding';
     [data-condition='stale'] .condition,
     [data-condition='missing'] .condition {
       color: var(--mat-sys-error);
+    }
+
+    /* ECU がいま使っていない変数は薄くする。操作はそのまま使える */
+    [data-availability='inactive'] {
+      opacity: 0.6;
+    }
+
+    .unused {
+      font: var(--mat-sys-label-small);
+      color: var(--mat-sys-on-surface-variant);
     }
 
     .mark {

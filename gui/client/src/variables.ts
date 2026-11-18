@@ -1,5 +1,6 @@
 import { HttpError, HttpTransport, errorMessage } from './http';
-import { Open } from './protocol';
+import { Open, readAvailability } from './protocol';
+import type { VariableAvailability } from './protocol';
 import { ErrorSink, Readable, Writable, rethrowLater } from './values';
 import type { BindOptions, VariableBinding } from './variable-binding';
 
@@ -31,6 +32,11 @@ export interface VariableInfo {
   description: string;
   /** Items of an enum (when type is enum; null otherwise). */
   enum: { name: string; value: number }[] | null;
+  /**
+   * Whether the ECU uses the variable now: information only (it changes neither how the variable is read nor whether it
+   * can be written). `active` when the server does not say.
+   */
+  availability: VariableAvailability;
 }
 
 /** A participant that has variables. */
@@ -342,6 +348,7 @@ export function readVariables(value: unknown, session: number | null): Variables
         step: numberOrNull(v['step']),
         description: text(v['description']),
         enum: items,
+        availability: readAvailability(v['availability']),
       });
     }
     peers.push({ name: p['name'], connected: p['connected'] === true, variables });
@@ -716,6 +723,12 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           }
           break;
         }
+        case 'availability': {
+          // Replaces the states of each participant listed. A disconnection changes nothing: the last states stay
+          if (message['session'] !== this.stateValue.get().session) break;
+          if (this.takeAvailability(message['peers'])) touchedAll = true;
+          break;
+        }
         case 'error': {
           // A watch was refused: on this connection, the values of that subscription do not arrive
           const code = message['code'];
@@ -728,6 +741,28 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     }
     flush();
     if (touchedAll || touched.size > 0) this.publish(touchedAll ? null : touched);
+  }
+
+  /** Returns whether any state changed. */
+  private takeAvailability(peers: unknown): boolean {
+    if (!isObject(peers)) return false;
+    const state = this.stateValue.get();
+    let changed = false;
+    const next = state.peers.map((peer) => {
+      const told = peers[peer.name];
+      if (!isObject(told)) return peer;
+      let own = false;
+      const variables = peer.variables.map((info) => {
+        const availability = readAvailability(told[info.name]);
+        if (availability === info.availability) return info;
+        own = true;
+        return { ...info, availability };
+      });
+      changed ||= own;
+      return own ? { ...peer, variables } : peer;
+    });
+    if (changed) this.stateValue.set({ ...state, peers: next });
+    return changed;
   }
 
   /** Applies the variables part of hello and of an HTTP summary (`session`). */
