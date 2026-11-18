@@ -64,6 +64,22 @@ describe('<vsil-status>', () => {
   });
 });
 
+describe('setReasonText', () => {
+  it('falls back to the owner sentence when the function throws, and says so once on the console', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const front = fakeFront();
+    front.cells.status.patch({ problem: { code: 'busy', message: 'Wait.' } });
+    setReasonText(() => {
+      throw new Error('boom');
+    });
+    const part = await mount('vsil-status', front);
+    front.cells.status.patch({ problem: { code: 'busy', message: 'Wait!' } });
+    expect(part.querySelector('[role=alert]')?.textContent).toBe('Wait!');
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+});
+
 describe('the buttons', () => {
   let front: FakeFront;
   beforeEach(() => (front = fakeFront()));
@@ -184,6 +200,9 @@ describe('<vsil-time-controls>', () => {
     const part = await mount('vsil-time-controls', front, { speeds: '1 max', 'step-ms': '25' });
     const [step, until] = [...part.querySelectorAll('input')];
     expect(step!.value).toBe('25');
+    expect(step!.min).toBe('1'); // from controls.step.min_ms
+    front.cells.controls.patch({ step: { ...ok(), min_ms: 5, max_ms: 1000 } });
+    expect(step!.min).toBe('5');
     button(part, 'Pause').click();
     button(part, 'Resume').click();
     button(part, 'Step').click();

@@ -144,6 +144,7 @@ export class VsilTimeControlsElement extends Part {
     );
     this.own(
       watch(client.controls, (controls) => {
+        stepMs.min = String(controls.step.min_ms);
         stepMs.max = String(controls.step.max_ms);
       }),
     );

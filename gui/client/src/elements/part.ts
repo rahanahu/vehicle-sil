@@ -93,6 +93,7 @@ export abstract class Part extends HTMLElement {
     return this.#client;
   }
   set client(value: Front | null) {
+    if (value === this.#client) return;
     this.#client = value;
     if (this.isConnected) void this.#bind();
   }

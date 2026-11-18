@@ -91,6 +91,18 @@ describe('the life of a part', () => {
     expect(part.querySelectorAll('.vsil')).toHaveLength(1);
   });
 
+  it('does not bind again when the same client is set again', async () => {
+    const front = fakeFront();
+    const part = document.createElement('vsil-status');
+    part.client = front;
+    document.body.append(part);
+    await settle();
+    const root = part.querySelector('.vsil');
+    part.client = front;
+    await settle();
+    expect(part.querySelector('.vsil')).toBe(root);
+  });
+
   it('keeps the children the page put in it', async () => {
     const front = fakeFront();
     const part = document.createElement('vsil-status');
