@@ -301,7 +301,7 @@ def test_schemas(tmp: Path) -> None:
     # What the tools archive must hold (package.py verify looks for these) covers every schema of the template, so
     # that none of a project's copies stays at the old version.
     template = {x.name for x in (ROOT / "template" / "schema").iterdir()}
-    packaged = set(re.findall(r'"schema/([a-z_]+\.schema\.json)"', PACKAGE.read_text(encoding="utf-8")))
+    packaged = set(re.findall(r'"schema/([a-z_-]+\.schema\.json)"', PACKAGE.read_text(encoding="utf-8")))
     check(template and template <= packaged,
           f"every schema of template/schema is in the tools archive's schema/ (only in the template: "
           f"{sorted(template - packaged)}): add it to the tools archive in scripts/package.py (tools and verify)")
