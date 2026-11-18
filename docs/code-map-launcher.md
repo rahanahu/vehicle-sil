@@ -22,6 +22,7 @@ For scenario, timeline or batch changes, see the [scenario change checklists](co
 | `launch_cli.*` | Runs `vehicle_sil_launch check` as an executable |
 | `launch_run.*` | Runs `vehicle_sil_launch run` as an executable |
 | `config.*` | The boundary of `libs/config` (what its headers and sources may include) |
+| `scenario.*` | The boundary of `libs/scenario` (what its headers and sources may include) |
 | `process.*` | Tests of child processes |
 
 `launch.*` compares a passing and a failing example of each rule, down to the message text and line numbers.
@@ -93,6 +94,24 @@ Implementation:
 - Tests: `tests/launch` (the rules and the readers), `tests/config` (the boundary)
 - `ctest -R`: `^launch\.` (the rules), `^config\.` (the boundary)
 
+### `libs/scenario`
+
+The scenario (pure: no process, no SIL Kit; `launch.*` tests it, `scenario.*` guards its boundary). Headers of `scenario/detail/` are for the library's own parts, for `probe.cpp` (`scenario_csv.hpp`) and for tests.
+
+Public headers:
+
+| Name | Location |
+|---|---|
+| `ScenarioCheck` (the scenario that `check --scenario` read) and `scenario_catalog()` (the participants of a checked configuration as a scenario can use them) | `scenario/scenario_check.hpp` |
+| `read_scenario()`, which reads scenarios; `Waveform`, the interface for functions of time | `scenario/scenario.hpp` |
+| `ScenarioEngine` | `scenario/scenario_run.hpp` |
+| `TimelineRecord`, the record of `run --timeline` | `scenario/timeline.hpp` |
+
+The files of the reader, the engine and the timeline are listed in [code-map-scenario.md](code-map-scenario.md). `scenario_catalog()` is in `src/scenario_check.cpp`.
+
+- Tests: `tests/launch` (the reader and the engine), `tests/scenario` (the boundary)
+- `ctest -R`: `^launch\.` (the reader and the engine), `^scenario\.` (the boundary)
+
 ### `libs/launch`, `tools/launch`
 
 Public headers:
@@ -100,7 +119,6 @@ Public headers:
 | Name | Location |
 |---|---|
 | `check_file()`, `Checked` (the check of the file with the scenario of `--scenario`; `format_text()` and `format_json()` of it) | `launch/checked.hpp` |
-| `ScenarioCheck` (the scenario that `check --scenario` read) and `scenario_catalog()` (the participants of a checked configuration as a scenario can use them) | `launch/scenario_check.hpp` |
 | What the launcher asks the computer it runs on: `find_executable()` and `executable_status()` (a participant's executable), `find_tool()` and `bridge_tools()` (a bridge), `run_tool()` (one run of `--describe` or of a bridge's list), `read_config_file()`, `read_scenario_file()`, `files_beside()`, `environment_value()` | `launch/probe.hpp` |
 | `vehicle_sil_launch connections`: `list_connections()`, `connections_of()` (each bridge asked once for each backend; `prefix_targets()` gives a value that `--connect` takes), `interpret_list()` (the bridge's list, or the one the launcher makes: `tool-*`), `check_requested()` (`--request`: whether the request file's targets are in the lists, by backend and name; the file is read and cut to the configuration by the functions of the request-file row), `quoted_for_shells()`, the outputs | `launch/connections.hpp` |
 | `run_file()`, its result (`RunReport`; `format_run_text()` and `format_run_json()` write it), what a run borrows (`RunLent`) and the control server as the run sees it (`ControlEndpoint`) | `launch/run.hpp` |
@@ -118,9 +136,6 @@ Public headers:
 | `EventStream`, which writes the events of `run --events` and implements `RunEvents` | `launch/events.hpp` |
 | `parse_command()` and `CommandInput`, which read the commands of `--stdin-commands` | `launch/command_input.hpp` |
 | `Command`, a command as it was read and as `TimeCommands` decided it | `launch/command.hpp` |
-| `read_scenario()`, which reads scenarios; `Waveform`, the interface for functions of time | `launch/scenario.hpp` |
-| `ScenarioEngine` | `launch/scenario_run.hpp` |
-| `TimelineRecord`, the record of `run --timeline` | `launch/timeline.hpp` |
 | `format_timeline_json()`, which writes the file of `run --timeline` from the record and the scenario's result | `launch/timeline_format.hpp` |
 
 Implementation:
@@ -128,7 +143,6 @@ Implementation:
 | What | Location |
 |---|---|
 | The overall flow of the check (`check_file()`) | `src/check.cpp` |
-| `scenario_catalog()` | `src/scenario_check.cpp` |
 | Looking at the computer: the file system (where an executable or a bridge is, the configuration, scenario and points files), the environment (`PATH`, `VEHICLE_SIL_LISTEN_ON_NETWORK`) and the processes run for their output. The rules get what was found as values (`executable_finding()` in `config.cpp` gets the file's status) or as functions (`ConnectTools`, `ScenarioContext::read_file`); one exception left: `bridge_working_directory()` in `connect.cpp` makes a relative directory absolute | `src/probe.cpp` |
 | The networks of the check's JSON as the executable described them (`write_reported_networks()`) | `src/reported_networks.cpp` |
 | `connections`: the bridges' lists read (`TargetReader`) and passed on with every key (`write_node()`), the lists the launcher makes, the text and the JSON. The bridges run through `run_tool()` of `src/probe.cpp` (`bridge_tools()`), as their `--describe` | `src/connections.cpp` |
@@ -204,7 +218,7 @@ What `launch_docs.integrate_ecus` (`tests/launch/integrate_ecus.cmake`) compares
 | `schema/timeline.schema.json` | The file that `run --timeline` writes. It describes launcher output, for the tools that read it. It is in `schema/` of the tools archive, not in the template's `template/schema/` |
 | `gui/protocol/dashboard.schema.json` | Dashboard |
 
-The configuration file and scenario schemas are for completion and checking in editors; the launcher does not read them. The code that the launcher uses to read files is `libs/config/src/config.cpp` and the scenario's reader (`scenario_reader.hpp` and the files it names).
+The configuration file and scenario schemas are for completion and checking in editors; the launcher does not read them. The code that the launcher uses to read files is `libs/config/src/config.cpp` and the scenario's reader (`libs/scenario/src/scenario_reader.hpp` and the files it names).
 
 | Where the copies are | Details |
 |---|---|
@@ -310,13 +324,13 @@ For scenario-specific changes, see [variants and parameters](code-map-scenario.m
 
 Where to change:
 
-- Keys of configuration files or scenarios, value forms, network kinds, step kinds (the code that reads files in `libs/config/src/config.cpp` and the scenario's reader, `scenario_reader.hpp` and the files it names)
+- Keys of configuration files or scenarios, value forms, network kinds, step kinds (the code that reads files in `libs/config/src/config.cpp` and the scenario's reader, `libs/scenario/src/scenario_reader.hpp` and the files it names)
 
 Code and files to update:
 
 - `schema/simulation.schema.json`, `schema/scenario.schema.json`: give every key a `description`. Editors show it as the description of the key.
 - The template's copies: `cp schema/*.schema.json template/schema/` (the dashboard schema comes from `gui/protocol/dashboard.schema.json`)
-- The lists that the unknown-key error messages use (`k...Keys` at the top of `config.cpp` and `scenario_reader.hpp`)
+- The lists that the unknown-key error messages use (`k...Keys` at the top of `config.cpp` and `libs/scenario/src/scenario_reader.hpp`)
 - The samples in `tests/schema/test_schemas.py` (`CONFIG_SAMPLES`, `SCENARIO_SAMPLES`)
 - For a key of the request file: `schema/run-request.schema.json` and its copy, `kKeys` in `request_read.cpp`, `REQUEST_SAMPLES`, the table of the keys in `docs/simulation-run.md`, and how `with_request_file()` lays an argument over it
 

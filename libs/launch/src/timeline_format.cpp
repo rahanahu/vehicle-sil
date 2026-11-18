@@ -6,8 +6,8 @@
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/ecu/describe_json.hpp"
 #include "vehicle_sil/json/json_writer.hpp"
-#include "vehicle_sil/launch/scenario_run.hpp"
-#include "vehicle_sil/launch/timeline.hpp"
+#include "vehicle_sil/scenario/scenario_run.hpp"
+#include "vehicle_sil/scenario/timeline.hpp"
 
 #include <algorithm>
 #include <optional>

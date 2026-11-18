@@ -7,11 +7,11 @@
 // ("inputs", dithers, and what the steps put on the inputs). Internal.
 #pragma once
 
-#include "vehicle_sil/launch/scenario.hpp"
+#include "vehicle_sil/scenario/scenario.hpp"
 
-#include "scenario_csv.hpp"
-#include "scenario_line.hpp"
-#include "scenario_shapes.hpp"
+#include "vehicle_sil/scenario/detail/scenario_csv.hpp"
+#include "vehicle_sil/scenario/detail/scenario_line.hpp"
+#include "vehicle_sil/scenario/detail/scenario_shapes.hpp"
 #include "vehicle_sil/config/detail/yaml_reader.hpp"
 
 #include <algorithm>

@@ -1,7 +1,7 @@
 # vehicle_sil_launch (library) - the run of the whole simulation of vehicle_sil_launch (registry,
-# controller, child processes), the scenario and the output for people and as JSON. The
-# configuration file and its check are vehicle_sil::config (libs/config). Internal; not part of the
-# library API. The file format: docs/simulation-config.md; the rules: docs/simulation-check.md.
+# controller, child processes) and the output for people and as JSON. The configuration file and
+# its check are vehicle_sil::config (libs/config); the scenario is vehicle_sil::scenario
+# (libs/scenario). Internal; not part of the library API. The file format: docs/simulation-config.md; the rules: docs/simulation-check.md.
 if(NOT TARGET rapidyaml)
   message(STATUS "vehicle-sil: SIL Kit's rapidyaml target is not available (SIL Kit not built from source); vehicle_sil_launch is skipped")
   return()
@@ -38,25 +38,15 @@ add_library(vehicle_sil_launch_lib STATIC
   src/run_start.cpp
   src/run_traffic.cpp
   src/run_watch.cpp
-  src/scenario.cpp
-  src/scenario_check.cpp
-  src/scenario_csv.cpp
-  src/scenario_failure.cpp
-  src/scenario_inputs.cpp
-  src/scenario_line.cpp
-  src/scenario_run.cpp
-  src/scenario_shapes.cpp
-  src/scenario_values.cpp
-  src/scenario_waves.cpp
   src/test.cpp
-  src/timeline.cpp
   src/timeline_format.cpp
   src/time_commands.cpp
 )
 add_library(vehicle_sil::launch ALIAS vehicle_sil_launch_lib)
 target_include_directories(vehicle_sil_launch_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-# The configuration and its check (vehicle_sil/config/...), which the public headers include.
-target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::config)
+# The configuration and its check (vehicle_sil/config/...), and the scenario (vehicle_sil/scenario/...),
+# which the public headers include.
+target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::config vehicle_sil::scenario)
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::ecu vehicle_sil::process)
 # The simulation time (time_commands.hpp: TimeCommands::wait_paused()); no SIL Kit.
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::sim_base)
@@ -64,8 +54,6 @@ target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::sim_base)
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::control)
 # The JSON writer that the launcher shares with --describe (vehicle_sil/json/json_writer.hpp).
 target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::json)
-# The shapes of a scenario's wave steps (scenario_shapes.cpp); header only.
-target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::signal)
 # The registry and the controller of vehicle_sil_launch run.
 target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::core)
 # The hub's end of the ECUs' control agents, on the controller's participant.

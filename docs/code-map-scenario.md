@@ -80,11 +80,11 @@ Where to change:
 
 | What | Location |
 |---|---|
-| Reading and checking | `libs/launch/src/scenario.cpp` (the file, parameters, variants, steps), `scenario_values.cpp` (variables and values), `scenario_waves.cpp` (waves and points), `scenario_inputs.cpp` (`inputs` and dithers). The class `Reader` is in `scenario_reader.hpp` |
-| Advancing the steps | `libs/launch/src/scenario_run.cpp` |
-| Why a step failed: the conditions not met and the writes not applied, in the message and in the record (`failed.conditions[]`, `failed.writes[]`) | `libs/launch/src/scenario_failure.cpp` (`unmet()`, `unmet_values()`, `failed_write()`, `applied_text()`, `during()`) |
-| The functions that compute `ramp` and `wave` values (implementations of `Waveform`) | `libs/launch/src/scenario_shapes.cpp` |
-| Reading `points` from a CSV file | `read_csv()` in `libs/launch/src/scenario_csv.cpp` splits the file into cells. `files_beside()` in `libs/launch/src/probe.cpp` reads it from the scenario file's directory. `path_problem()`, `file_points()` and `cell_value()` in `scenario_waves.cpp` check the path and convert the cells |
+| Reading and checking | `libs/scenario/src/scenario.cpp` (the file, parameters, variants, steps), `scenario_values.cpp` (variables and values), `scenario_waves.cpp` (waves and points), `scenario_inputs.cpp` (`inputs` and dithers). The class `Reader` is in `scenario_reader.hpp` |
+| Advancing the steps | `libs/scenario/src/scenario_run.cpp` |
+| Why a step failed: the conditions not met and the writes not applied, in the message and in the record (`failed.conditions[]`, `failed.writes[]`) | `libs/scenario/src/scenario_failure.cpp` (`unmet()`, `unmet_values()`, `failed_write()`, `applied_text()`, `during()`) |
+| The functions that compute `ramp` and `wave` values (implementations of `Waveform`) | `libs/scenario/src/scenario_shapes.cpp` |
+| Reading `points` from a CSV file | `read_csv()` in `libs/scenario/src/scenario_csv.cpp` splits the file into cells. `files_beside()` in `libs/launch/src/probe.cpp` reads it from the scenario file's directory. `path_problem()`, `file_points()` and `cell_value()` in `scenario_waves.cpp` check the path and convert the cells |
 | Waveform calculation | `signal/waveform.hpp` in `libs/signal` |
 | Integration into the launcher | `RunScenario` in `libs/launch/src/run_scenario.cpp` (`begin()`, `loop()`, `finish()`) |
 | The time gate's guard | `SimulationController::guard_from()` and `wait_guarded()` |
@@ -119,7 +119,7 @@ Rules (the specification is in the comment of `ScenarioEngine` in `scenario_run.
 - Only virtual time decides results. Real-time waits and timeouts do not decide a result.
 - The values of `ramp` and `wave` are functions only of the virtual time since the start of the step (`Waveform::value()`). They must not depend on how many times or in what order they are called.
 - Random values are built from the seed, the variable name and the time (`seed_of_variable()` in `scenario_shapes.cpp`). The calculation uses integers only and is the same on every OS.
-- The line of each input (the value that the scenario placed, and the `ramp` or `wave` moving it now) is `Line` in `libs/launch/src/scenario_line.hpp`. The start value of a motion without `from` or `around` is read from the line in step order, before the writes at the step's time are sent (`place()` in `scenario_run.cpp`).
+- The line of each input (the value that the scenario placed, and the `ramp` or `wave` moving it now) is `Line` in `libs/scenario/include/vehicle_sil/scenario/detail/scenario_line.hpp`. The start value of a motion without `from` or `around` is read from the line in step order, before the writes at the step's time are sent (`place()` in `scenario_run.cpp`).
 - One function, `motion_number()`, gives the values of a motion before rounding. The value to write is made in one place, `Line::written()` of the line, which adds the dither and then rounds to the type. The engine's `submit_one()` calls it. Code that you add to compute values calls the same function.
 - Whether the ECU sees a value (a short `pulse`, the `points` of `hold`) follows one rule, `seen_between()` in `scenario_waves.cpp`.
 - `read_scenario()` reads no file except through `ScenarioContext::read_file` (`check.cpp` and `test.cpp` pass `files_beside()`).
@@ -165,7 +165,7 @@ Where to change:
 
 | What | Location |
 |---|---|
-| The record, its limits and the rule that drops the older points | `TimelineRecord` in `libs/launch/src/timeline.cpp` |
+| The record, its limits and the rule that drops the older points | `TimelineRecord` in `libs/scenario/src/timeline.cpp` |
 | Where the engine records | In `scenario_run.cpp`: `submit_one()` (writes), `observe()` (samples), `place()` (the input lines `lines[]`; the contents of `shape` are `ScenarioMotion::described`, which the scenario's reader fills when it reads the scenario), `issue_step()` (watches), `fail()` (what failed; what it says comes from `scenario_failure.cpp`), `close_record()` (the end of the record, `recorded_to_ms`) |
 | The file format | `format_timeline_json()` in `timeline_format.cpp` |
 | One point per line | `JsonWriter::begin_array_on_one_line()` in `libs/json/include/vehicle_sil/json/json_writer.hpp` |
@@ -220,7 +220,7 @@ Where to change (`libs/launch/include/vehicle_sil/launch/test.hpp` and `src/test
 | `format_test_json()` | `kTestFormat` |
 | `TestReport::remarks()` | The findings for `test` as a whole: `test-nothing-run`, `test-runs-left` and `test-speed-set` |
 | `TestReport::result()` | Result and exit code |
-| `ScenarioCheck::not_for_variant` (`launch/scenario_check.hpp`) | Marks a run that does not match `only` as `skipped` |
+| `ScenarioCheck::not_for_variant` (`scenario/scenario_check.hpp`) | Marks a run that does not match `only` as `skipped` |
 | `CheckOptions::params_for_many` | Relaxes the check of `--param` |
 | `CheckOptions::file_only` | Reads only the configuration file |
 | `test()` and `spread_scenarios()` in `tools/launch/main.cpp` | Arguments |

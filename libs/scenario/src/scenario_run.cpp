@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-#include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/scenario/scenario_run.hpp"
 
 #include "scenario_failure.hpp"
-#include "scenario_line.hpp"
+#include "vehicle_sil/scenario/detail/scenario_line.hpp"
 
 #include <algorithm>
 #include <array>

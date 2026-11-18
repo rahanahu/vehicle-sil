@@ -7,11 +7,11 @@
 
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/config/check.hpp"
-#include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/scenario/scenario_run.hpp"
 #include "vehicle_sil/launch/stop_requests.hpp"
 #include "vehicle_sil/launch/time_commands.hpp"
 #include "vehicle_sil/config/time_plan.hpp"
-#include "vehicle_sil/launch/timeline.hpp"
+#include "vehicle_sil/scenario/timeline.hpp"
 #include "vehicle_sil/launch/traffic.hpp"
 #include "vehicle_sil/process/process.hpp"
 

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 //
-// The line of one input of a scenario (libs/launch/src/scenario_line.hpp) by itself: what the
+// The line of one input of a scenario (libs/scenario/include/vehicle_sil/scenario/detail/scenario_line.hpp) by itself: what the
 // scenario's engine cannot be made to do from a scenario file (two motions put at one time, a
 // motion read while it runs).
 
-#include "scenario_line.hpp"
-#include "scenario_shapes.hpp"
+#include "vehicle_sil/scenario/detail/scenario_line.hpp"
+#include "vehicle_sil/scenario/detail/scenario_shapes.hpp"
 #include "test_harness.hpp"
 
 #include <chrono>

@@ -160,7 +160,7 @@ Documentation to update:
 Rules:
 
 - Conversion happens only inside the Hub (do not add it to the read API or the communication layer).
-- Whether a value can be written is decided in one place, `MappedSchema::to_actual()`. The scenario check uses the same decision through `in_range()` (`libs/launch/src/scenario_values.cpp`).
+- Whether a value can be written is decided in one place, `MappedSchema::to_actual()`. The scenario check uses the same decision through `in_range()` (`libs/scenario/src/scenario_values.cpp`).
 - A mapping name that did not match cannot be written (`not_writable()`).
 - Values are converted before the Hub stores them (so that the read and write paths cannot disagree).
 - Writes are converted in the same place as the checks of `write()`.

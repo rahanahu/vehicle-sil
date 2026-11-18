@@ -10,7 +10,7 @@
 #include "vehicle_sil/launch/command.hpp"
 #include "vehicle_sil/launch/run_controls.hpp"
 #include "vehicle_sil/launch/run_events.hpp"
-#include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/scenario/scenario_run.hpp"
 #include "vehicle_sil/process/process.hpp"
 
 #include <array>
