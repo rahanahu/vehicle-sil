@@ -50,7 +50,7 @@ Tests of the Ethernet Bridge (all platforms). The `unit` label is also set.
 | `ethernet_bridge.silkit_*` | Checks the real SIL Kit side with an in-process registry (on a free port) |
 | `ethernet_bridge.integration.*` (`integration` label) | Runs an executable linked with a fake external link as a process, and checks round trips, exit codes and shutdown |
 | `ethernet_bridge.integration.pcap-*` | Checks the same with the executable for the OS external link, made to load a fake pcap library; `pcap-describe` checks `--describe`, and `pcap-launcher` starts the bridge with an ECU from a configuration file of `vehicle_sil_launch` |
-| `ethernet_bridge.netns.*` (Linux only, `integration` label) | Checks `tap`, `packet` and `pcap` (the real libpcap) of the real executable, and `launch` (`vehicle_sil_launch run --connect` starting it), with TAP devices and veth in a namespace |
+| `ethernet_bridge.netns.*` (Linux only, `integration` label) | Checks `tap`, `packet` and `pcap` (the real libpcap) of the real executable, and `launch` and `launch_tap` (`vehicle_sil_launch run --connect` starting it with `packet` and with `tap:`), with TAP devices and veth in a namespace |
 
 `ethernet_bridge.*` checks forwarding, filters, the bridge's own frames coming back, loops through 2 bridges (frame orders in which the loop stops and in which it does not), lost frames, `Fault`, warnings, the statistics and health lines, and the message texts of argument errors. `ethernet_bridge.netns.*` is skipped where a namespace cannot be created and where libpcap is missing.
 

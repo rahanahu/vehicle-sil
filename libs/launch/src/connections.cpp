@@ -256,24 +256,30 @@ void write_list(JsonWriter& w, std::string_view key, const ryml::Tree& tree, rym
         std::size_t index = 0;
         for (auto item = tree.first_child(child); item != ryml::NONE; item = tree.next_sibling(item), ++index)
         {
-            const ListedTarget* target = index < list.targets.size() && list.targets[index].refused ? &list.targets[index] : nullptr;
-            if (target == nullptr || !tree.is_map(item))
+            const ListedTarget* listed = index < list.targets.size() ? &list.targets[index] : nullptr;
+            if (listed == nullptr || !tree.is_map(item))
             {
                 write_node(w, {}, tree, item);
                 continue;
             }
+            const ListedTarget* target = listed->refused ? listed : nullptr;
             w.begin_object();
             bool usable = false;
             bool reason = false;
             for (auto member = tree.first_child(item); member != ryml::NONE; member = tree.next_sibling(member))
             {
                 const std::string m = detail::to_string(tree.key(member));
-                if (m == "usable")
+                if (m == "value")
+                {
+                    // What --connect takes: with the backend's prefix where the target needs one.
+                    w.string(m, listed->value);
+                }
+                else if (m == "usable" && target != nullptr)
                 {
                     w.boolean(m, false);
                     usable = true;
                 }
-                else if (m == "reason")
+                else if (m == "reason" && target != nullptr)
                 {
                     w.string(m, target->reason);
                     reason = true;
@@ -283,11 +289,11 @@ void write_list(JsonWriter& w, std::string_view key, const ryml::Tree& tree, rym
                     write_node(w, m, tree, member);
                 }
             }
-            if (!usable)
+            if (target != nullptr && !usable)
             {
                 w.boolean("usable", false);
             }
-            if (!reason)
+            if (target != nullptr && !reason)
             {
                 w.string("reason", target->reason);
             }
@@ -456,12 +462,12 @@ std::string list_text(const NetworkConnections& network)
 
 } // namespace
 
-std::vector<std::string> list_arguments(NetworkKind kind)
+std::vector<std::string> list_arguments(NetworkKind kind, std::string_view backend)
 {
     switch (kind)
     {
     case NetworkKind::Ethernet:
-        return {"--list-interfaces", "--json"};
+        return {"--list-interfaces", "--backend", std::string(backend), "--json"};
     case NetworkKind::Can:
         return {"--list-channels", "--json"};
     case NetworkKind::Lin:
@@ -559,27 +565,20 @@ TargetList interpret_list(NetworkKind kind, std::string_view tool, const Describ
     }
 }
 
-std::optional<std::string> refused_target(std::string_view network, NetworkKind kind, const ListedTarget& target)
+std::optional<std::string> refused_target(std::string_view network, NetworkKind kind, const ListedTarget& target, Os os)
 {
     if (std::optional<std::string> problem = network_problem(network))
     {
         return problem;
     }
-    if (target.value == kNoTarget)
-    {
-        return target.pcap_name.empty() || target.pcap_name == kNoTarget
-                   ? std::string("--connect takes none for SIL Kit only, so an interface of this name cannot be connected: "
-                                 "rename the interface")
-                   : "--connect takes none for SIL Kit only: give this adapter by its pcap name, " + target.pcap_name;
-    }
-    if (std::optional<std::string> problem = target_problem(kind, target.value))
+    if (std::optional<std::string> problem = target_problem(kind, target.value, os))
     {
         return "--connect does not take it: " + *problem;
     }
     return std::nullopt;
 }
 
-void refuse_targets(std::string_view network, NetworkKind kind, TargetList& list)
+void refuse_targets(std::string_view network, NetworkKind kind, TargetList& list, Os os)
 {
     for (ListedTarget& target : list.targets)
     {
@@ -587,11 +586,23 @@ void refuse_targets(std::string_view network, NetworkKind kind, TargetList& list
         {
             continue;
         }
-        if (std::optional<std::string> why = refused_target(network, kind, target))
+        if (std::optional<std::string> why = refused_target(network, kind, target, os))
         {
             target.usable = false;
             target.reason = std::move(*why);
             target.refused = true;
+        }
+    }
+}
+
+void prefix_targets(NetworkKind kind, std::string_view backend, TargetList& list, Os os)
+{
+    for (ListedTarget& target : list.targets)
+    {
+        const ConnectTarget read = read_connect_target(kind, target.value, os);
+        if (read.none || read.prefixed || read.backend != backend)
+        {
+            target.value = std::string(backend) + ":" + target.value;
         }
     }
 }
@@ -622,8 +633,8 @@ std::optional<Finding> unknown_network(const SimulationConfig& config, std::stri
 std::vector<NetworkConnections> connections_of(const SimulationConfig& config, const std::optional<std::string>& network,
                                                const ConnectTools& tools)
 {
-    // Each bridge once: where it is, and its list.
-    std::map<std::string, std::pair<std::filesystem::path, std::optional<TargetList>>, std::less<>> asked;
+    // Each bridge once for each backend: where it is, and its list.
+    std::map<std::string, std::pair<std::filesystem::path, TargetList>, std::less<>> asked;
     std::vector<NetworkConnections> out;
     for (const NetworkConfig& n : config.networks)
     {
@@ -639,37 +650,37 @@ std::vector<NetworkConnections> connections_of(const SimulationConfig& config, c
             continue;
         }
         entry.kind = n.kind;
-        const std::optional<std::string> none = no_bridge_here(n.kind, tools.can_bridge);
-        const std::string tool(bridge_tool(n.kind));
-        auto it = asked.find(tool);
-        if (!tool.empty() && it == asked.end())
+        const std::vector<const ConnectBackend*> backends = listed_backends(n.kind, tools.os);
+        if (backends.empty())
         {
-            std::optional<std::filesystem::path> path = tools.find ? tools.find(tool) : std::nullopt;
-            std::optional<TargetList> list;
-            if (path)
-            {
-                list = interpret_list(n.kind, tool, tools.describe(*path, list_arguments(n.kind)));
-            }
-            else if (!none)
-            {
-                list = failed_list(tool, "tool-missing", tool + " is " + tool_not_found(tools.launcher_dir) + ": " +
-                                                            tool_missing_fix(n.kind));
-            }
-            it = asked.emplace(tool, std::make_pair(path.value_or(std::filesystem::path{}), std::move(list))).first;
-        }
-        // No bridge for the kind here (LIN; CAN but on Windows): SIL Kit only, unless one was found
-        // anyway (a build for tests).
-        if (it == asked.end() || !it->second.second)
-        {
-            entry.no_bridge = none.value_or("");
+            // No bridge for the kind (LIN): SIL Kit only.
+            entry.no_bridge = no_bridge_here(n.kind, {}, tools.os).value_or("");
             out.push_back(std::move(entry));
             continue;
         }
-        entry.tool = tool;
-        entry.tool_path = it->second.first;
-        entry.list = it->second.second;
-        refuse_targets(n.name, n.kind, *entry.list);
-        out.push_back(std::move(entry));
+        for (const ConnectBackend* backend : backends)
+        {
+            const std::string tool(backend->tool);
+            const std::string key = tool + " " + std::string(backend->name);
+            auto it = asked.find(key);
+            if (it == asked.end())
+            {
+                std::optional<std::filesystem::path> path = tools.find ? tools.find(tool) : std::nullopt;
+                TargetList list =
+                    path ? interpret_list(n.kind, tool, tools.describe(*path, list_arguments(n.kind, backend->name)))
+                         : failed_list(tool, "tool-missing",
+                                       tool + " is " + tool_not_found(tools.launcher_dir) + ": " + tool_missing_fix(tool));
+                it = asked.emplace(key, std::make_pair(path.value_or(std::filesystem::path{}), std::move(list))).first;
+            }
+            NetworkConnections one = entry;
+            one.backend = std::string(backend->name);
+            one.tool = tool;
+            one.tool_path = it->second.first;
+            one.list = it->second.second;
+            prefix_targets(n.kind, backend->name, *one.list, tools.os);
+            refuse_targets(n.name, n.kind, *one.list, tools.os);
+            out.push_back(std::move(one));
+        }
     }
     return out;
 }
@@ -850,6 +861,7 @@ std::string format_connections_json(const ConnectionsReport& report)
         w.string("name", network.name);
         optional_text("kind", network.kind ? std::string(to_string(*network.kind)) : std::string{});
         optional_text("tool", network.tool);
+        optional_text("backend", network.backend);
         optional_text("tool_path", network.tool_path.empty() ? std::string{} : process::shown_path(network.tool_path));
         bool written = false;
         if (network.list)

@@ -11,6 +11,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,21 +38,84 @@ inline constexpr std::string_view kNoTarget = "none";
 /// The longest target, in bytes.
 inline constexpr std::size_t kMaxTargetBytes = 256;
 
-/// The executable that connects a network of `kind` outside: vehicle_sil_ethernet_bridge,
-/// vehicle_sil_vector_xl_bridge, or "" for LIN (there is no bridge for it).
-[[nodiscard]] std::string_view bridge_tool(NetworkKind kind);
-
-/// true where the bridge of a can network (vehicle_sil_vector_xl_bridge, on the Vector XL Driver
-/// Library) runs: Windows only.
+/// The operating system whose rules a target is read by (the backends it can name, the default).
+/// Functions that read a target take it so that the tests can read as either; the default is this
+/// computer's.
+enum class Os
+{
+    Linux,
+    Windows,
+};
 #ifdef _WIN32
-inline constexpr bool kCanBridgeOnThisOs = true;
+inline constexpr Os kThisOs = Os::Windows;
 #else
-inline constexpr bool kCanBridgeOnThisOs = false;
+inline constexpr Os kThisOs = Os::Linux;
 #endif
 
-/// Why a network of `kind` has no bridge on this computer (`can_bridge`: kCanBridgeOnThisOs), or
+/// One row of the table of backends: how a network of `kind` is connected outside. A target names
+/// one as "<backend>:<selector>" (the selector alone takes the default of the kind on the OS).
+struct ConnectBackend
+{
+    NetworkKind kind;
+    std::string_view name; ///< what a target writes before the ':' (lower case)
+    std::string_view tool; ///< the bridge executable
+    bool on_linux;         ///< a target can name it on Linux
+    bool on_windows;       ///< a target can name it on Windows
+    bool listed_on_linux;  ///< `connections` lists it on Linux
+    bool listed_on_windows;
+};
+
+/// Every backend of every kind (all OSes): the one place that says which bridge connects what.
+/// ethernet: npcap (Windows), packet and tap (Linux), all in vehicle_sil_ethernet_bridge. can: xl
+/// (vehicle_sil_vector_xl_bridge, named on any OS, listed on Windows) and socketcan
+/// (vehicle_sil_socketcan_bridge, Linux). LIN has none.
+[[nodiscard]] std::span<const ConnectBackend> connect_backends();
+
+/// The row of `name` for `kind` (a backend of any OS), or null.
+[[nodiscard]] const ConnectBackend* find_backend(NetworkKind kind, std::string_view name);
+
+/// The backends that a target can name on `os` for `kind`, in the table's order.
+[[nodiscard]] std::vector<const ConnectBackend*> backends_on(NetworkKind kind, Os os);
+
+/// The backends that `connections` lists on `os` for `kind`: those of backends_on() that can be
+/// listed there (Vector XL is only listed on Windows, though it can be named on Linux).
+[[nodiscard]] std::vector<const ConnectBackend*> listed_backends(NetworkKind kind, Os os);
+
+/// A target read by the grammar `none | [<backend>:]<selector>`. `<backend>:` is read only when
+/// the text before the first ':' is the name of a backend of `kind` in the table (lower case, any
+/// OS); a ':' after any other word belongs to the selector (`virtual:1`, `eth0:1`), and
+/// `packet:none` is an interface named none: only a target without a prefix can be kNoTarget.
+struct ConnectTarget
+{
+    bool none = false;
+    bool prefixed = false;        ///< the target wrote the backend
+    std::string_view backend;     ///< the backend as written, or the default of `kind` on the OS; empty for `none` and LIN
+    std::string_view selector;    ///< what follows the prefix (the whole target without one)
+};
+
+/// Reads `target` for a network of `kind` on `os`. The default backend: ethernet: packet on
+/// Linux, npcap on Windows; can: xl if the selector is virtual:<n> or physical:<n>, else
+/// socketcan on Linux and xl on Windows. The result views into `target`.
+[[nodiscard]] ConnectTarget read_connect_target(NetworkKind kind, std::string_view target, Os os = kThisOs);
+
+/// The executable of `backend` for `kind` ("" if the table has none), as in the table.
+[[nodiscard]] std::string_view bridge_tool(NetworkKind kind, std::string_view backend);
+
+/// true if `tool` is one of the bridge executables of the table.
+[[nodiscard]] bool is_bridge_tool(std::string_view tool);
+
+/// true if `tool` is one of the bridge executables of the can backends.
+[[nodiscard]] bool is_can_bridge_tool(std::string_view tool);
+
+/// Why a network of `kind` has no bridge for `backend` on `os` ("" is any backend of the kind), or
 /// empty: "there is no bridge for LIN", "the Vector XL bridge is for Windows".
-[[nodiscard]] std::optional<std::string> no_bridge_here(NetworkKind kind, bool can_bridge = kCanBridgeOnThisOs);
+[[nodiscard]] std::optional<std::string> no_bridge_here(NetworkKind kind, std::string_view backend = {},
+                                                        Os os = kThisOs);
+
+/// What is wrong with the backend that `target` writes (connect-backend), or empty: a backend of
+/// the table that `os` cannot use. The text lists the backends of `os` and says where to see the
+/// targets.
+[[nodiscard]] std::optional<std::string> backend_problem(NetworkKind kind, std::string_view target, Os os = kThisOs);
 
 /// The working directory of a bridge that the launcher starts (its --describe, its list, its run):
 /// the directory of its executable `tool`. Never the directory of the configuration file or the
@@ -61,34 +125,29 @@ inline constexpr bool kCanBridgeOnThisOs = false;
 /// The participant name of the bridge of `network`: "bridge.<network>".
 [[nodiscard]] std::string bridge_participant(std::string_view network);
 
-/// What is wrong with `target` for a network of `kind`, or empty: it is empty, longer than
-/// kMaxTargetBytes, not UTF-8, has a control character (C0, DEL, C1, or one of Unicode's that
-/// change the direction of text: U+202A to U+202E, U+2066 to U+2069) or starts with '-'; for CAN
-/// it is not virtual:<n> or physical:<n> with n from 1. kNoTarget is never wrong.
-[[nodiscard]] std::optional<std::string> target_problem(NetworkKind kind, std::string_view target);
+/// What is wrong with `target` for a network of `kind`, or empty: backend_problem(), it is empty,
+/// longer than kMaxTargetBytes, not UTF-8, has a control character (C0, DEL, C1, or one of
+/// Unicode's that change the direction of text: U+202A to U+202E, U+2066 to U+2069), the selector
+/// is empty or starts with '-'; with the xl backend the selector is not virtual:<n> or
+/// physical:<n> with n from 1. kNoTarget is never wrong.
+[[nodiscard]] std::optional<std::string> target_problem(NetworkKind kind, std::string_view target, Os os = kThisOs);
 
 /// The arguments of the bridge of `network` at `target` (target_problem() empty), without --name
-/// and what a run adds. ethernet: --network, --interface, and the frames that pass: --all-frames
-/// or --ethertype (external) or else --src-mac with `macs` (in their order, each once; none if
-/// `macs` is empty). can: --network, --xl-target, --xl-channel and --bitrate (external).
+/// and what a run adds. ethernet: --network, --backend, --interface, and the frames that pass:
+/// --all-frames or --ethertype (external) or else --src-mac with `macs` (in their order, each
+/// once; none if `macs` is empty). can with xl: --network, --xl-target, --xl-channel and --bitrate
+/// (external); with socketcan: --network, --interface and --bitrate (external).
 [[nodiscard]] std::vector<std::string> bridge_arguments(const NetworkConfig& network, std::string_view target,
-                                                        const std::vector<eth::MacAddress>& macs);
-
-/// true where adapter names are compared without regard to case (Windows).
-#ifdef _WIN32
-inline constexpr bool kAdapterNamesIgnoreCase = true;
-#else
-inline constexpr bool kAdapterNamesIgnoreCase = false;
-#endif
+                                                        const std::vector<eth::MacAddress>& macs, Os os = kThisOs);
 
 /// The device that `target` names for a network of `kind`, as a string to compare, or empty if it
 /// names none (kNoTarget, or a target that target_problem() refuses). Two networks whose targets
-/// have the same key use the same device. Ethernet: the interface name (lower case if
-/// `ignore_case`). CAN: "physical:<n>" per channel number; every "virtual:<n>" is "virtual" (the
-/// Vector Virtual CAN channels are one bus). Strings only: a connection name and the pcap name
+/// have the same key use the same device. The backend is left out: `enp3s0`, `packet:enp3s0` and
+/// `tap:enp3s0` are one key. Ethernet: the interface name (lower case on Windows). CAN: "physical:<n>"
+/// per xl channel number; every xl "virtual:<n>" is "virtual" (the Vector Virtual CAN channels are
+/// one bus); the name of a SocketCAN interface. Strings only: a connection name and the pcap name
 /// of the same adapter are not told apart.
-[[nodiscard]] std::string connect_device_key(NetworkKind kind, std::string_view target,
-                                             bool ignore_case = kAdapterNamesIgnoreCase);
+[[nodiscard]] std::string connect_device_key(NetworkKind kind, std::string_view target, Os os = kThisOs);
 
 /// true if the networks `a` and `b` are in one connected group when each entry of
 /// `participant_networks` (the networks one participant is on) joins its networks: they are on
@@ -109,8 +168,8 @@ namespace detail {
 /// vehicle_sil_launch (<launcher_dir>) nor on PATH", or "not on PATH" if `launcher_dir` is empty.
 [[nodiscard]] std::string tool_not_found(const std::filesystem::path& launcher_dir);
 
-/// What to do about a bridge of a network of `kind` that find_tool() does not find: build it
-/// (where the docs say how) and put it where the launcher looks.
-[[nodiscard]] std::string tool_missing_fix(NetworkKind kind);
+/// What to do about the bridge executable `tool` that find_tool() does not find: build it (where
+/// the docs say how) and put it where the launcher looks.
+[[nodiscard]] std::string tool_missing_fix(std::string_view tool);
 
 } // namespace vehicle_sil::launch

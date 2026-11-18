@@ -561,22 +561,32 @@ networks:
 ```sh
 vehicle_sil_launch check --connect "ETH_EXT=vEthernet (A)" --connect J1939_CAN1=physical:1 simulation.yaml
 vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" --connect J1939_CAN1=physical:1 simulation.yaml
+vehicle_sil_launch run --speed 1 --connect ETH_EXT=tap:vsil0 --connect J1939_CAN1=can0 simulation.yaml   # Linux
 ```
 
-| 種類 | ブリッジ | `<target>` |
-|---|---|---|
-| `ethernet` | `vehicle_sil_ethernet_bridge`（[ethernet-bridge.md](ethernet-bridge.md)） | ブリッジの `--interface` が受けるアダプターの名前です。Windows は接続名（`vEthernet (A)`）、pcap の名前（`\Device\NPF_{...}`）、`{GUID}`、Linux はインターフェース名（`enp3s0`）。 |
-| `can` | `vehicle_sil_vector_xl_bridge`（[bridges.md](bridges.md)） | `virtual:<n>` か `physical:<n>`。1 から始まるチャンネル番号です。 |
-| `lin` | なし | つなげません（`connect-kind`）。 |
+先は `none` か `[<backend>:]<selector>` です。backend は、ネットワークをどの方式でつなぐかを言います。付けなければ、OS の既定の方式が selector を受けます。
+
+| 種類 | `<backend>:` | OS | ブリッジ | `<selector>` |
+|---|---|---|---|---|
+| `ethernet` | `npcap:`（Windows の既定） | Windows | `vehicle_sil_ethernet_bridge`（[ethernet-bridge.md](ethernet-bridge.md)）、`--backend npcap` | ブリッジの `--interface` が受けるアダプターの名前です。接続名（`vEthernet (A)`）、pcap の名前（`\Device\NPF_{...}`）、`{GUID}`。 |
+| `ethernet` | `packet:`（Linux の既定） | Linux | 同じ、`--backend packet` | インターフェース名（`enp3s0`）です。 |
+| `ethernet` | `tap:` | Linux | 同じ、`--backend tap` | 自分で作った TAP デバイスの名前（`vsil0`）です。 |
+| `can` | `xl:`（Windows の既定。Linux では selector が `virtual:<n>` か `physical:<n>` のときの既定） | どの OS でも書ける。動くのは Windows | `vehicle_sil_vector_xl_bridge`（[bridges.md](bridges.md)） | `virtual:<n>` か `physical:<n>`。1 から始まるチャンネル番号です。 |
+| `can` | `socketcan:`（Linux の既定。selector が XL のチャンネルでないとき） | Linux | `vehicle_sil_socketcan_bridge`（[socketcan-bridge.md](socketcan-bridge.md)） | インターフェース名（`can0`、`vcan0`）です。 |
+| `lin` | なし | | なし | つなげません（`connect-kind`）。 |
+
+- `<backend>:` と読むのは、最初の `:` の前の語が、上の表にあるその種類の backend（小文字）のときだけです。ほかの語の後の `:` は selector の一部です（`virtual:1`、`eth0:1`、`TAP:x`、`pcap:x`）。接頭辞の後の selector にも `:` を書けます（`npcap:tap:x` はアダプター `tap:x` です）。selector が backend の語で始まるか `none` のときは、backend を付けて渡します。`packet:none` は `none` という名前のインターフェースです。
+- その OS にない backend（Windows の `tap:x` や `socketcan:can0`、Linux の `npcap:x`）は、誤り `connect-backend` です。その OS にある backend を並べ、接頭辞なしで書けば既定になることを言います。
+- ランチャーは、Ethernet のネットワークではいつも backend をブリッジに渡す（`--backend`）ので、ブリッジが自分で選ぶことはありません。
 
 `vehicle_sil_launch connections <file>` は、この PC での各ネットワークの先を、写して使える `--connect` の行で出します（simulation-run.md の「[つなげる先の一覧](simulation-run.md#つなげる先の一覧vehicle_sil_launch-connections)」）。
 
-- 先を `none` にすると SIL Kit の中だけで、そのネットワークに `--connect` を書かないのと同じです（スクリプトで「つながない」と書くため）。`none` という名前のアダプターは、pcap の名前で書きます。
+- 先を `none` にすると SIL Kit の中だけで、そのネットワークに `--connect` を書かないのと同じです（スクリプトで「つながない」と書くため）。`none` という名前のインターフェースは、backend を付けて `packet:none` と書きます。
 - 1 つのネットワークは 1 回だけ書きます。ネットワークの名前は最初の `=` までなので、名前に `=` を含むネットワークはつなげません（名前を変えます）。
 - 先に空白があるときは、引数全体を引用符で囲みます（`--connect "ETH_EXT=vEthernet (A)"`）。
 - ランチャーは、ブリッジを `vehicle_sil_launch` の隣で探し、次に `PATH` の絶対パスのディレクトリで探します。作業ディレクトリと設定ファイルのディレクトリは見ません。探すのは `--connect` で渡したネットワークのブリッジだけなので、`--connect` のない照合の出力は、どの PC でも同じです。ブリッジ（`--describe`、`connections` の一覧、run）は、ブリッジ自身のディレクトリで起動します。設定ファイルのディレクトリでは起動しません。人から受け取ったフォルダーに置かれた DLL を読み込ませないためです。ファイルの participant は、これまでどおり設定ファイルのディレクトリで起動します。
-- ビルド済みのツールのアーカイブでは、`bin/` の `vehicle_sil_launch` の隣に `vehicle_sil_ethernet_bridge` があります。Vector XL の CAN のブリッジは入っていません（ビルドします。[bridges.md](bridges.md) の「ビルド」）。
-- `can` のネットワークのブリッジ（Vector XL のブリッジ）は Windows でだけ動きます。ほかの OS では、`connect-tool-missing` が、そのネットワークは SIL Kit の中だけで動くと言います（見つかったブリッジ、つまり試験用のビルドがあれば、それを使います）。
+- ビルド済みのツールのアーカイブでは、`bin/` の `vehicle_sil_launch` の隣に `vehicle_sil_ethernet_bridge` があり、Linux では `vehicle_sil_socketcan_bridge` もあります。Vector XL の CAN のブリッジは入っていません（ビルドします。[bridges.md](bridges.md) の「ビルド」）。
+- Vector XL のブリッジは Windows でだけ動きます。Linux で `xl:virtual:1` と書くと、`connect-tool-missing` が、そのネットワークは SIL Kit の中だけで動くと言います（見つかったブリッジ、つまり試験用のビルドがあれば、それを使います）。
 - 照合は、下の引数と `--name bridge.<network>`（ブリッジの participant 名）でブリッジの `--describe` を走らせます。`run` は、同じ引数と `--name bridge.<network> --registry-uri <URI> --start-timeout-ms <start_timeout_ms>` でブリッジを起動します。`bridge.<network>` はファイルの participant ではないので、`--disable`、`--enable`、`--manual` には書けません。`--describe` のブリッジは、アダプターもチャンネルも開きません。引数を受けないブリッジは誤り `connect-tool-failed` で、ブリッジ自身の行を出します。
 - つなぐネットワークでは、ブリッジを participant として数えます（ECU が 1 つでも `single-participant` になりません）。同じネットワークに `role: bridge` の participant がいると、輪です（`connect-loop`）。
 - 実機のバスは仮想時間を待ちません。`--connect` のある実行は、ファイルの `speed` が何であっても速さ 1 で動きます（注記 `outside-speed-set`）。1 以外の `--speed` と `--start-paused` はエラー `outside-real-time` です。`--time-policy free` で外せます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
@@ -585,8 +595,9 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" --connect J19
 
 | 種類 | 引数 |
 |---|---|
-| `ethernet` | `--network <network> --interface <target>` と、通すフレーム。`--all-frames`（`all_frames: true`）、`--ethertype`（`ethertypes`）、どちらもなければ `--src-mac` で、そのネットワークの ECU が `--describe` に出力した MAC アドレス。`role: test` と `role: bridge` の participant のものは入れません（出力しない ECU や `describe: false` の participant がいる、または出力した ECU が 1 つもないと、誤り `connect-filter`） |
-| `can` | `--network <network> --xl-target <virtual か physical> --xl-channel <n>` と、`bitrate` があれば `--bitrate <bitrate>` |
+| `ethernet` | `--network <network> --backend <backend> --interface <selector>` と、通すフレーム。`--all-frames`（`all_frames: true`）、`--ethertype`（`ethertypes`）、どちらもなければ `--src-mac` で、そのネットワークの ECU が `--describe` に出力した MAC アドレス。`role: test` と `role: bridge` の participant のものは入れません（出力しない ECU や `describe: false` の participant がいる、または出力した ECU が 1 つもないと、誤り `connect-filter`） |
+| `xl` の `can` | `--network <network> --xl-target <virtual か physical> --xl-channel <n>` と、`bitrate` があれば `--bitrate <bitrate>` |
+| `socketcan` の `can` | `--network <network> --interface <selector>` と、`bitrate` があれば `--bitrate <bitrate>`（ブリッジはインターフェースがこの速さで動いているかを確かめるだけで、設定はしません） |
 
 指摘は [simulation-check.md](simulation-check.md#指摘のコード) の `connect-*` です。`check --json` は、ブリッジ、見つけた場所、コマンドラインを `networks[].outside` に書き、人向けの出力はネットワークの表に列 `outside` を足します。
 

@@ -232,7 +232,7 @@ j1939_nodes_unsupported(const ParticipantConfig& participant, const ReportedEcu&
 struct NetworkOutside
 {
     std::string network;
-    std::string tool;                ///< bridge_tool()
+    std::string tool;                ///< the bridge_tool() of the target's backend
     std::filesystem::path tool_path; ///< find_tool(); empty: not found (or not looked for)
     std::string target;              ///< as given
     std::string participant;         ///< bridge_participant()
@@ -266,14 +266,14 @@ struct ConnectTools
     /// One run of the tool with the arguments (bridge_arguments() and --describe --name <bridge>;
     /// list_arguments()), in bridge_working_directory().
     std::function<DescribeRun(const std::filesystem::path&, const std::vector<std::string>&)> describe;
-    /// Whether the bridge of a can network runs on this OS (no_bridge_here()). Where it does not, a
-    /// bridge that `find` finds anyway (a build for tests) is still used.
-    bool can_bridge = kCanBridgeOnThisOs;
+    /// The OS whose backends a target can name and whose default it takes (read_connect_target()).
+    Os os = kThisOs;
 };
 
 /// The findings of the --connect requests and the networks they connect (in the order of the
 /// file's networks; a request with kNoTarget connects nothing). In this order for each request:
-/// connect-network (no such network), connect-kind (LIN), connect-target (its form),
+/// connect-network (no such network), connect-kind (LIN), connect-backend (the backend it names is not for this OS),
+/// connect-target (its form),
 /// connect-name-taken (a participant of the file has the bridge's name), connect-filter (an
 /// Ethernet network without external.ethertypes or all_frames whose ECUs' MAC addresses are not
 /// all known; the default filter passes the frames of the ECUs only, not of participants with
