@@ -78,6 +78,8 @@ message VariableInfo {
 }
 
 message Snapshot {
+  // The start of the ECU step at whose end the values were read (as the conditions of a scenario
+  // see them: docs/scenario.md, "Values that conditions see").
   sint64 time_ns = 1;
   uint64 sequence = 2;
   repeated Value values = 3; // in schema order
@@ -263,10 +265,11 @@ message Update {
     SimulationState simulation = 9;
     PeerAvailability availability = 10; // only when the request asked for it
   }
-  // Updates dropped for this watch so far: changes of peers, values, events and operations, and
-  // states of the simulation the server could not hold while the client was slow (failures and
-  // the end are never lost: they stay in every later state). The availability is not counted: a
-  // watch keeps the latest state of each peer, and a newer one replaces it.
+  // Updates dropped for this watch so far: events and changes of operations, and states of the
+  // simulation, that the server could not hold while the client was slow (failures and the end are
+  // never lost: they stay in every later state). Peers, values and availability are not counted:
+  // a watch keeps the latest of each peer, and a newer one replaces it without a count, so the
+  // samples in between a slow client did not read are missing although this stays 0.
   uint64 dropped = 6;
 }
 

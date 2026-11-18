@@ -560,6 +560,8 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
 
 ### 時刻と値をまとめて読む（`snapshot()`）
 
+参加者の値の時刻（`Snapshot.time_ns`、Python の client の `Values.time`）は、その値を終わりに読んだ ECU のステップが始まった時刻です。[シナリオの「値の見え方」](scenario.md#値の見え方)と同じです。
+
 ```python
 c.sim.step(ms(100)); c.sim.wait_paused()
 snap = c.snapshot()                       # 全 Peer。c.snapshot(["Engine", "Body"]) で絞る

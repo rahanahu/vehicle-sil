@@ -560,6 +560,8 @@ A subscription to the simulation state returns `SimulationState`.
 
 ### Read time and values together (`snapshot()`)
 
+The time of a peer's values (`Snapshot.time_ns`, `Values.time` of the Python client) is the start of the ECU step at whose end they were read, as in [the scenario's "Values that conditions see"](scenario.md#values-that-conditions-see).
+
 ```python
 c.sim.step(ms(100)); c.sim.wait_paused()
 snap = c.snapshot()                       # all peers; c.snapshot(["Engine", "Body"]) to narrow it down
