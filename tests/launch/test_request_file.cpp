@@ -584,20 +584,67 @@ TEST_CASE(the_scenario_of_a_request_file_is_read_from_the_directory_of_the_confi
     CHECK(direct.scenario.has_value() && direct.scenario->file == absolute && codes(direct, "file").empty());
 }
 
-TEST_CASE(a_parameter_of_the_request_file_that_the_scenario_lacks_is_no_error)
+TEST_CASE(a_parameter_of_the_request_file_that_its_own_scenario_lacks_is_a_usage_error)
 {
-    // One request file serves several scenarios; a parameter typed on the command line is a
-    // usage error if the scenario has none of that name.
-    const std::filesystem::path dir = project("params_without_scenario");
+    const std::filesystem::path dir = project("params_own_scenario");
     const vehicle_sil::launch::test::InDirectory there(dir / "project");
+    // The scenario has the parameter "level"; the file writes it wrong.
+    std::ofstream(dir / "project" / "scenarios" / "drive.yaml", std::ios::binary)
+        << "vehicle_sil_scenario: 1\nparams: { level: 1 }\nsteps:\n  - at_ms: 0\n    set: { A.level: \"${level}\" }\n";
     RunRequest given;
     given.host.config = "sim.yaml";
-    const RequestFile bench =
-        *read_request_file(with("\"scenario\": \"scenarios/drive.yaml\", \"params\": {\"rpm\": 650}"), "bench.json").file;
-    const CheckReport fromFile = check_file(with_request_file(given, bench, false));
-    CHECK(!fromFile.usage && fromFile.scenario.has_value());
-    RunRequest typed = given;
-    typed.intent.scenario = "scenarios/drive.yaml";
-    typed.intent.params.push_back(argument("rpm", "650"));
-    CHECK(check_file(typed).usage);
+    const auto file = [](const char* params) {
+        return *read_request_file(with(std::string("\"scenario\": \"scenarios/drive.yaml\", \"params\": ") + params),
+                                  "bench.json")
+                    .file;
+    };
+    // The file's own scenario: a mistake in its params is a usage error naming the file.
+    const CheckReport wrong = check_file(with_request_file(given, file("{\"leve\": 2}"), false));
+    CHECK(wrong.usage && wrong.findings.size() == 1);
+    if (wrong.findings.size() == 1)
+    {
+        check_text(wrong.findings[0].message,
+                   "params leve in bench.json: the scenario has no parameter leve (did you mean level?): its parameters are "
+                   "level; remove it from params in bench.json or correct the name");
+    }
+    CHECK(wrong.exit_code() == 4);
+    // A name that the scenario has is fine.
+    const CheckReport right = check_file(with_request_file(given, file("{\"level\": 2}"), false));
+    CHECK(!right.usage && right.scenario.has_value() && codes(right, "request-params") == "");
+    // --scenario replaces the file's: no error, one note naming what was not used.
+    RunRequest other = given;
+    other.intent.scenario = "scenarios/drive.yaml";
+    const CheckReport replaced = check_file(with_request_file(other, file("{\"leve\": 2, \"mode\": 1}"), false));
+    CHECK(!replaced.usage && replaced.scenario.has_value());
+    check_text(codes(replaced, "request-params"), "request-params-unused ");
+    for (const Finding& f : replaced.findings)
+    {
+        if (f.code == "request-params-unused")
+        {
+            check_text(f.message,
+                       "params leve, mode in bench.json are not used: the scenario has no parameter of that name; they are "
+                       "ignored");
+            CHECK(f.severity == Severity::Note);
+        }
+    }
+    // A file without a scenario, the scenario from the arguments: the same note.
+    const RequestFile bare = *read_request_file(with("\"params\": {\"leve\": 2}"), "bench.json").file;
+    const CheckReport fromArguments = check_file(with_request_file(other, bare, false));
+    CHECK(!fromArguments.usage);
+    check_text(codes(fromArguments, "request-params"), "request-params-unused ");
+    // No scenario at all: the note says so.
+    const CheckReport none = check_file(with_request_file(given, bare, false));
+    CHECK(!none.usage);
+    check_text(codes(none, "request-params"), "request-params-unused ");
+    // A parameter typed on the command line stays a usage error, as before, with its own words.
+    RunRequest typed = other;
+    typed.intent.params.push_back(argument("leve", "2"));
+    const CheckReport fromOption = check_file(typed);
+    CHECK(fromOption.usage && fromOption.findings.size() == 1);
+    if (fromOption.findings.size() == 1)
+    {
+        check_text(fromOption.findings[0].message,
+                   "--param leve=2: the scenario has no parameter leve (did you mean level?): its parameters are level; remove "
+                   "the option or correct the name");
+    }
 }

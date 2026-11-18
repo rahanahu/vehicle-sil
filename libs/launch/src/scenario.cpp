@@ -329,6 +329,24 @@ void Reader::check_given_params()
     }
     for (const Known& k : params_)
     {
+        if (k.value.source == ParamSource::RequestFile && !k.declared && !k.used)
+        {
+            if (context_.request_file.empty())
+            {
+                out_.unused_request_params.push_back(k.value.name);
+                continue;
+            }
+            const std::string guess = detail::closest(k.value.name, names);
+            // The file's mistake, and the file is for this scenario: a usage error like --param.
+            out_.usage_errors.push_back(Finding{
+                Severity::Error, "usage",
+                  "params " + k.value.name + " in " + context_.request_file + ": the scenario has no parameter " +
+                      k.value.name + (guess.empty() ? "" : " (did you mean " + guess + "?)") + ": " +
+                      (names.empty() ? std::string("it uses none (a step uses one as ${name})")
+                                     : "its parameters are " + join(names)) +
+                      "; remove it from params in " + context_.request_file + " or correct the name",
+                0, "", ""});
+        }
         if (k.value.source == ParamSource::CommandLine && !k.declared && !k.used)
         {
             const std::string guess = detail::closest(k.value.name, names);
