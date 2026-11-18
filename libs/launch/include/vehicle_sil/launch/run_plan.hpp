@@ -51,15 +51,15 @@ struct RunPlan
     /// possible) and the late tolerance; the numbers a run measures are 0. The run reads its
     /// settings here; the speed at its end and what it measured are in RunOutcome::timing.
     RunTiming timing;
-    /// --strict (CheckOptions::strict): a bridge that shares its device stops the run.
+    /// --strict (RunIntent::strict): a bridge that shares its device stops the run.
     bool strict = false;
     /// run --start-paused with a control server: the run holds before the first step.
     bool holds_before_start = false;
-    /// RunOptions::log_dir, timeline and timeline_shown, as given.
+    /// RunHost::log_dir and timeline: the path of the timeline's file, and its name as given.
     std::filesystem::path log_dir;
     std::filesystem::path timeline;
     std::string timeline_shown;
-    /// RunOptions::poll, outside_lost_after, timeout and control_hello_timeout, as given.
+    /// RunLimits::poll, outside_lost_after and control_hello_timeout and RunHost::timeout, as given.
     std::chrono::milliseconds poll{};
     std::chrono::milliseconds outside_lost_after{};
     std::optional<std::chrono::milliseconds> timeout;
@@ -74,18 +74,19 @@ struct RunPlan
     }
 };
 
-/// The plan of the run that `options` asks for. `check`: the check of the file, which passed (as
+/// The plan of the run that `request` asks for. `check`: the check of the file, which passed (as
 /// check_file() returned it: the bridges of --connect are added here); `base`: the directory of
-/// the file. Throws std::invalid_argument for a check without a configuration (CheckReport::config
-/// is empty: the file could not be read, so there is nothing to run).
-/// Reads the values of `options` only (of its pointers, whether there is a control server), and
-/// calls nothing of it.
-/// - The speed is planned_speed(): 1 with the time lock, else RunOptions::speed, else the file's.
+/// the file; `control_server`: the run is lent one (RunLent::control_endpoint). Throws
+/// std::invalid_argument for a check without a configuration (CheckReport::config is empty: the
+/// file could not be read, so there is nothing to run).
+/// The plan has copies of what it reads of `request` and `limits`: neither is kept.
+/// - The speed is planned_speed(): 1 with the time lock, else RunIntent::speed, else the file's.
 /// - With a scenario the step does not follow the speed: the same steps at every speed.
 /// - The bridges are participants at the end of the plan's check, marked in RunPlan::members, and
 ///   do not count for the step: the step is planned from the participants of the file. One whose
 ///   role in the file is bridge is a participant of the file, and counts as any other.
-[[nodiscard]] RunPlan plan_run(const CheckReport& check, std::filesystem::path base, const RunOptions& options);
+[[nodiscard]] RunPlan plan_run(const CheckReport& check, std::filesystem::path base, const RunRequest& request,
+                               const RunLimits& limits = {}, bool control_server = false);
 
 /// The outcome a run of `plan` begins with: what the plan already says of the result (the limits,
 /// the timing, the participants in the plan's order, the scenario as not run, the networks

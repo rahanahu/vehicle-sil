@@ -28,7 +28,7 @@ struct ControlHooks
     std::function<void()> stop{};
 };
 
-/// The server while the run lasts (ControlEndpoint, for RunOptions::control_endpoint):
+/// The server while the run lasts (ControlEndpoint, for RunLent::control_endpoint):
 /// made here before the run from the checked options (read_control_options()), started by
 /// run_file(), ended after it.
 /// It keeps the run's hub from its start until it is destroyed (std::runtime_error from start() if

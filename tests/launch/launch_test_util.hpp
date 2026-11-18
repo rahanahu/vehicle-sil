@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 //
-// Helpers of the vehicle_sil::launch tests: findings as text, one per line, to compare whole.
+// Helpers of the vehicle_sil::launch tests: findings as text, one per line, to compare whole; the
+// working directory for a while.
 #pragma once
 
 #include "test_harness.hpp"
 
 #include "vehicle_sil/launch/check.hpp"
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -28,6 +30,23 @@ inline std::string lines(const std::vector<Finding>& findings)
     }
     return out;
 }
+
+/// The working directory is `dir` until it ends: a request names its files as the user wrote
+/// them, and the outputs repeat the names, so a test that compares them stands where its files are.
+class InDirectory
+{
+public:
+    explicit InDirectory(const std::filesystem::path& dir) : before_(std::filesystem::current_path())
+    {
+        std::filesystem::current_path(dir);
+    }
+    ~InDirectory() { std::filesystem::current_path(before_); }
+    InDirectory(const InDirectory&) = delete;
+    InDirectory& operator=(const InDirectory&) = delete;
+
+private:
+    std::filesystem::path before_;
+};
 
 /// Throws a Failure that shows both texts if they differ.
 inline void check_text(const std::string& actual, const std::string& expected, const char* what = "text")

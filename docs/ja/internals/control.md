@@ -836,7 +836,7 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 
 ### 起動と終了の時期
 
-- ランチャーは実行の前に Server を作り、そのポインターを実行に渡します（`RunOptions::control_endpoint`。型は `launch::ControlEndpoint`）。
+- ランチャーは実行の前に Server を作り、そのポインターを実行に渡します（`RunLent::control_endpoint`。型は `launch::ControlEndpoint`）。
 - `run_file()` は 1 回の実行を 2 つの段（`Runner::prepare()`、次に `Runner::run()`）で進め、その間に main のスレッドで Server を起動します。照合が通り、実行のファイル（ログ、タイムライン）を開いた後で、registry より前です。実行そのものは Server を呼びません。`run_file()` が Server の待ち受け先を実行に伝え、実行がイベント `control_server` とその行を書きます。
 - Hub は実行が作り、`run_file()` が `std::shared_ptr` で `ControlEndpoint::start()` に渡します。Server がそれを持ち続けるので、Hub は実行と Server の両方が手放すまで生きています。
 - 始まる前に中断された実行と、ファイルを開けなかった実行は、Server を起動しません。

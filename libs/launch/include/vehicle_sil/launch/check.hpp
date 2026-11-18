@@ -261,7 +261,7 @@ struct ConnectTools
 {
     /// Where the tool of that name is (find_tool()), or empty.
     std::function<std::optional<std::filesystem::path>(std::string_view)> find;
-    /// The first place `find` looks (CheckOptions::tool_directory), for the message when it finds nothing.
+    /// The first place `find` looks (RunHost::tool_directory), for the message when it finds nothing.
     std::filesystem::path launcher_dir{};
     /// One run of the tool with the arguments (bridge_arguments() and --describe --name <bridge>;
     /// list_arguments()), in bridge_working_directory().
@@ -327,7 +327,7 @@ struct CheckReport
     /// --connect: the networks connected to a real bus (check_connections()); empty without it.
     std::vector<NetworkOutside> outside{};
     /// Whether a run keeps real time because it is connected outside the simulation (time_lock()
-    /// of `config` and CheckOptions::connect, time_policy); nothing without `config`.
+    /// of `config` and RunIntent::connect, time_policy); nothing without `config`.
     TimeLock time_lock{};
     /// --strict: a warning fails the check too (a note never does).
     bool strict = false;
@@ -366,59 +366,43 @@ void sort_findings(std::vector<Finding>& findings);
 /// to_json(). docs/simulation-check.md has the keys.
 [[nodiscard]] std::string format_json(const CheckReport& report);
 
+/// How long one --describe may take unless the request says otherwise (RunHost::describe_timeout).
+inline constexpr std::chrono::milliseconds kDescribeTimeout{10000};
+
+struct RunRequest; // request.hpp
+
+/// How a check is made, beside what is asked for (RunRequest): what its caller is, not what the
+/// user wants.
 struct CheckOptions
 {
-    /// How long one --describe may take.
-    std::chrono::milliseconds describe_timeout{10000};
-    /// CheckReport::strict.
-    bool strict = false;
-    /// --variant, --disable, --enable and --manual.
-    EnabledOverrides overrides{};
-    /// --param <name>=<value>, each once (ParamSource::CommandLine): over the scenario's and the
-    /// configuration's parameters. Only with `scenario`.
-    std::vector<ParamValue> params{};
-    /// --scenario: a scenario file to check against the configuration (`scenario_shown`: as the
-    /// user named it); empty: none.
-    std::filesystem::path scenario{};
-    std::string scenario_shown{};
-    /// `params` are for many scenarios (ScenarioContext::params_for_many): one that `scenario`
-    /// does not have is no error.
+    /// The request's parameters are for many scenarios (ScenarioContext::params_for_many): one
+    /// that its scenario does not have is no error.
     bool params_for_many = false;
     /// Only read the file: no executable is looked for or run, and no scenario is read. The
     /// report has the file's findings, its variants and the overrides' usage errors.
     bool file_only = false;
-    /// --connect <network>=<target>, each network once (CheckReport::outside).
-    std::vector<ConnectRequest> connect{};
-    /// Where the launcher is: the first place to look for a bridge (find_tool()); empty: PATH only.
-    std::filesystem::path tool_directory{};
-    /// --time-policy: what a run that is connected outside the simulation does about time
-    /// (CheckReport::time_lock).
-    TimePolicy time_policy = TimePolicy::Realtime;
-    /// The --speed of the run this check is for, for time_lock_findings(); the outer optional
-    /// empty without it (check: always), and the file's speed counts. run_file() sets it from
-    /// RunOptions::speed (unless `fastest_by_default`), whatever is written here.
-    std::optional<std::optional<double>> run_speed{};
     /// test: without the time lock every run goes as fast as possible, whatever the file's speed
-    /// (which then does not count for time_lock_findings()); RunOptions::speed is that default
-    /// then, not a speed the user asked for, and run_file() leaves `run_speed` empty.
+    /// (which then does not count for time_lock_findings()); RunIntent::speed is that default
+    /// then, not a speed the user asked for, and the check does not judge it.
     bool fastest_by_default = false;
-    /// The --start-paused of the run this check is for, for time_lock_findings(). run_file() sets
-    /// it from RunOptions::start_paused, whatever is written here.
-    bool start_paused = false;
 };
 
-/// Checks the file `path` (shown as `shown_as`): reads it, checks the executables, runs each
-/// --describe in turn (not in parallel), compares. A disabled participant's executable is neither
-/// looked for nor run. With CheckOptions::scenario, the scenario file is read and checked against
-/// the participants' descriptions as well (if the configuration could be read). Never throws for a
-/// problem of a file or of an executable: they are findings.
+/// Checks the file of `request` (RunHost::config, shown as given): reads it, checks the
+/// executables, runs each --describe in turn (not in parallel), compares. A disabled participant's
+/// executable is neither looked for nor run. With RunIntent::scenario, the scenario file is read
+/// and checked against the participants' descriptions as well (if the configuration could be
+/// read). Never throws for a problem of a file or of an executable: they are findings.
+///
+/// Of `request` it reads the file, the intent (the speed and --start-paused for
+/// time_lock_findings(): the speed unless `options.fastest_by_default`), the --describe limit and
+/// where the tools are; what only a run has (the logs, the timeline, the time limit, the control
+/// server, the commands of standard input) it does not read.
 ///
 /// `on_time_lock`, if given, is called once with CheckReport::time_lock as soon as the
 /// configuration has been read (with --variant, --disable and --enable applied), before any
 /// executable is looked for or run; not at all if the configuration could not be read. A run
 /// gives its controls the lock there (run_file()), so that they know it before anything starts.
-[[nodiscard]] CheckReport check_file(const std::filesystem::path& path, const std::string& shown_as,
-                                     const CheckOptions& options,
+[[nodiscard]] CheckReport check_file(const RunRequest& request, const CheckOptions& options = {},
                                      const std::function<void(const TimeLock& lock)>& on_time_lock = {});
 
 } // namespace vehicle_sil::launch

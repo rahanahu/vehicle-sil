@@ -51,7 +51,7 @@ struct RunHost
     std::string config{};
     /// Where the launcher is, for the bridges of RunIntent::connect (empty: none is looked for next to it).
     std::filesystem::path tool_directory{};
-    std::chrono::milliseconds describe_timeout = CheckOptions{}.describe_timeout;
+    std::chrono::milliseconds describe_timeout = kDescribeTimeout;
     /// A file of each participant's output in this directory; empty: none.
     std::filesystem::path log_dir{};
     /// The file of the scenario's timeline as the user gave it; empty: none.
@@ -85,9 +85,5 @@ enum class RequestCommand
 /// What depends on the file or on what runs (a variant, a network, a participant) is not here:
 /// the check judges it.
 [[nodiscard]] std::vector<Finding> validate_request(const RunRequest& request, RequestCommand command);
-
-/// The options of the check that `request` asks for. `host.config` is not in them: it is the path
-/// the check is called with.
-[[nodiscard]] CheckOptions check_options_of(const RunRequest& request);
 
 } // namespace vehicle_sil::launch

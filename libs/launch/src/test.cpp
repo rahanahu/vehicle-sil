@@ -484,26 +484,28 @@ TestResult TestReport::result() const
 
 int TestReport::exit_code() const { return exit_code_of(result()); }
 
-TestReport test_file(const std::filesystem::path& path, const std::string& shown_as, const TestOptions& options)
+TestReport test_file(const TestOptions& options)
 {
-    if (options.run.controls != nullptr)
+    if (options.lent.controls != nullptr)
     {
         throw std::invalid_argument(
-          "TestOptions::run.controls must be null: every run of a test needs RunControls of its own, so test_file() "
-          "makes them for each run on `run.stops`.");
+          "TestOptions::lent.controls must be null: every run of a test needs RunControls of its own, so test_file() "
+          "makes them for each run on `lent.stops`.");
     }
+    const RunIntent& intent = options.request.intent;
+    const RunHost& host = options.request.host;
     TestReport report;
-    report.file = shown_as;
-    report.strict = options.run.check.strict;
+    report.file = host.config;
+    report.strict = intent.strict;
     report.given.variants = options.variants;
-    report.given.params = options.run.check.params;
-    report.given.disable = options.run.check.overrides.disable;
-    report.given.enable = options.run.check.overrides.enable;
-    report.given.timeout = options.run.timeout;
-    report.given.time_policy = options.run.check.time_policy;
-    if (options.run.check.describe_timeout != CheckOptions{}.describe_timeout)
+    report.given.params = intent.params;
+    report.given.disable = intent.disable;
+    report.given.enable = intent.enable;
+    report.given.timeout = host.timeout;
+    report.given.time_policy = intent.time_policy;
+    if (host.describe_timeout != kDescribeTimeout)
     {
-        report.given.describe_timeout = options.run.check.describe_timeout;
+        report.given.describe_timeout = host.describe_timeout;
     }
     for (const TestScenario& scenario : options.scenarios)
     {
@@ -517,10 +519,12 @@ TestReport test_file(const std::filesystem::path& path, const std::string& shown
 
     // The file alone, without a variant: what it defines. For a file with variants this is the
     // usage error of a check without --variant, which lists them.
-    CheckOptions read = options.run.check;
-    read.file_only = true;
-    read.overrides.variant.reset();
-    const CheckReport file = check_file(path, shown_as, read);
+    RunRequest read = options.request;
+    read.intent.variant.reset();
+    CheckOptions only;
+    only.file_only = true;
+    only.fastest_by_default = options.fastest_by_default;
+    const CheckReport file = check_file(read, only);
     const bool hasVariants = !file.variants.empty();
     if (file.usage && !hasVariants)
     {
@@ -535,8 +539,8 @@ TestReport test_file(const std::filesystem::path& path, const std::string& shown
     // Each --variant as a check takes it: the same errors, in the same words.
     for (const std::string& variant : options.variants)
     {
-        read.overrides.variant = variant;
-        if (CheckReport chosen = check_file(path, shown_as, read); chosen.usage)
+        read.intent.variant = variant;
+        if (CheckReport chosen = check_file(read, only); chosen.usage)
         {
             return refuse(std::move(chosen.findings));
         }
@@ -556,8 +560,8 @@ TestReport test_file(const std::filesystem::path& path, const std::string& shown
     std::vector<CheckReport> chosen;
     for (const std::string& variant : report.variants)
     {
-        read.overrides.variant = variant;
-        chosen.push_back(check_file(path, shown_as, read));
+        read.intent.variant = variant;
+        chosen.push_back(check_file(read, only));
         if (chosen.back().usage)
         {
             // Of the command line (--disable <no such name>), so of every run.
@@ -580,14 +584,14 @@ TestReport test_file(const std::filesystem::path& path, const std::string& shown
     {
         return refuse(std::move(manual));
     }
-    if (!options.run.check.params.empty())
+    if (!intent.params.empty())
     {
         std::vector<ParamValue> configured;
         for (const auto& [variant, config] : configs)
         {
             configured.insert(configured.end(), config->params.begin(), config->params.end());
         }
-        if (auto unused = unused_params(options.scenarios, configured, options.run.check.params); !unused.empty())
+        if (auto unused = unused_params(options.scenarios, configured, intent.params); !unused.empty())
         {
             return refuse(std::move(unused));
         }
@@ -601,12 +605,12 @@ TestReport test_file(const std::filesystem::path& path, const std::string& shown
         }
     }
     const auto say = [&options](const std::string& text) {
-        if (options.run.write_line)
+        if (options.observers.write_line)
         {
-            options.run.write_line(std::string(detail::kLauncherTag) + text);
+            options.observers.write_line(std::string(detail::kLauncherTag) + text);
         }
     };
-    const auto interrupted = [&options] { return options.run.stops != nullptr && options.run.stops->count() > 0; };
+    const auto interrupted = [&options] { return options.lent.stops != nullptr && options.lent.stops->count() > 0; };
     std::string left; // why the runs from here on are not run
     for (std::size_t i = 0; i < report.runs.size(); ++i)
     {
@@ -619,12 +623,13 @@ TestReport test_file(const std::filesystem::path& path, const std::string& shown
         const std::string which = "test " + std::to_string(i + 1) + " of " + std::to_string(report.runs.size()) + ": " +
                                   (run.variant.empty() ? "" : "variant " + run.variant + ", ") + "scenario " + run.scenario;
         say(which);
-        RunOptions one = options.run;
-        one.check.overrides.variant = run.variant.empty() ? std::optional<std::string>{} : run.variant;
-        one.check.scenario = options.scenarios[i % options.scenarios.size()].path;
-        one.check.scenario_shown = run.scenario;
-        one.check.params_for_many = true;
-        RunReport result = run_file(path, shown_as, one);
+        RunRequest one = options.request;
+        one.intent.variant = run.variant.empty() ? std::optional<std::string>{} : run.variant;
+        one.intent.scenario = run.scenario;
+        CheckOptions check;
+        check.params_for_many = true;
+        check.fastest_by_default = options.fastest_by_default;
+        RunReport result = run_file(one, options.observers, options.lent, options.limits, check);
         if (result.check.usage)
         {
             // Of the command line, so of every run: nothing more is run.

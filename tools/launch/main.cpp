@@ -385,7 +385,7 @@ void write_stderr_line_without_waiting(std::string line)
 // --- interrupts and stop requests (run) ---
 
 /// The stop requests of the process (run: those of the run's controls; test:
-/// launch::RunOptions::stops). The source of a request: a
+/// launch::RunLent::stops). The source of a request: a
 /// signal (POSIX), a console event + 1 (Windows), or one of launch::stop_source.
 constinit launch::StopRequests g_stops;
 using launch::stop_source::kControlStop;
@@ -1045,8 +1045,7 @@ int check(const cli::Args& args)
     }
     const launch::RunRequest request = read_request(args, launch::RequestCommand::Check);
     const std::string& file = request.host.config;
-    const launch::CheckReport report =
-        launch::check_file(process::path_from_utf8(file), file, launch::check_options_of(request));
+    const launch::CheckReport report = launch::check_file(request);
     if (report.usage)
     {
         return usage_error(report.findings, args.flag("json"), Command::Check, file, nullptr, report.variants);
@@ -1167,23 +1166,24 @@ int run(const cli::Args& args, launch::EventStream* events)
     host.stdin_commands = args.flag("stdin-commands");
     request.intent.start_paused = args.flag("start-paused");
     require_valid(request, launch::RequestCommand::Run);
-    launch::RunOptions options = launch::run_options_of(request);
+    launch::RunObservers watching;
+    launch::RunLent lent;
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
     // The control server serves the run's hub, which the run makes and gives it when run_file()
-    // starts it (RunOptions::control_endpoint); the server keeps the hub from then on.
+    // starts it (RunLent::control_endpoint); the server keeps the hub from then on.
     std::unique_ptr<launch::ControlEndpoint> server;
 #endif
     watch_interrupts();
     if (events != nullptr)
     {
-        options.events = events;
+        watching.events = events;
     }
     else
     {
         // The answers of commands that waited for the configuration are kept (keep_stdin_note()):
         // they are written before the run's next line, and after the run. Like the line itself,
         // this does not wait for stderr without a limit.
-        options.write_line = [](std::string_view line) {
+        watching.write_line = [](std::string_view line) {
             write_stdin_notes(true);
             write_stderr_line(line);
         };
@@ -1211,13 +1211,13 @@ int run(const cli::Args& args, launch::EventStream* events)
                 }
             };
         }
-        shared().controls = new launch::RunControls(g_stops, options.start_paused, std::move(observers),
+        shared().controls = new launch::RunControls(g_stops, request.intent.start_paused, std::move(observers),
                                                     request.intent.scenario.has_value());
         // The state names the first stop request as the result does.
         shared().controls->set_stop_name(interrupt_name);
         // Without --control nothing can send a write: the state says so.
         shared().controls->set_control_server(control);
-        options.controls = shared().controls;
+        lent.controls = shared().controls;
     }
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
     if (control)
@@ -1233,15 +1233,15 @@ int run(const cli::Args& args, launch::EventStream* events)
         // Its event (and its refusal once the run is over) comes from the time commands.
         hooks.stop = [] { g_stops.request(kControlStop); };
         server = launch::make_control_server(launch_cli::read_control_options(a), std::move(hooks));
-        options.control_endpoint = server.get();
+        lent.control_endpoint = server.get();
     }
 #endif
     if (host.stdin_commands)
     {
         start_reading_commands();
     }
-    options.interrupt_name = interrupt_name;
-    const launch::RunReport report = launch::run_file(process::path_from_utf8(file), file, options);
+    watching.interrupt_name = interrupt_name;
+    const launch::RunReport report = launch::run_file(request, watching, lent);
     if (events == nullptr)
     {
         write_stdin_notes(true); // before the result
@@ -1373,16 +1373,16 @@ int test(const cli::Args& args)
         return usage_error(list.errors, json, Command::Test, file, nullptr);
     }
     options.scenarios = std::move(list.scenarios);
-    options.run = launch::run_options_of(request);
     // As fast as possible, whatever the file says (at speed 1 with the time lock): a default, not
     // a speed the user asked for, which the check would refuse with the time lock.
-    options.run.speed.emplace(std::optional<double>{});
-    options.run.check.fastest_by_default = true;
+    request.intent.speed.emplace(std::optional<double>{});
+    options.fastest_by_default = true;
+    options.request = request;
     watch_interrupts();
-    options.run.write_line = write_stderr_line;
-    options.run.stops = &g_stops;
-    options.run.interrupt_name = interrupt_name;
-    const launch::TestReport report = launch::test_file(process::path_from_utf8(file), file, options);
+    options.observers.write_line = write_stderr_line;
+    options.lent.stops = &g_stops;
+    options.observers.interrupt_name = interrupt_name;
+    const launch::TestReport report = launch::test_file(options);
     if (report.usage)
     {
         return usage_error(report.findings, json, Command::Test, file, nullptr);

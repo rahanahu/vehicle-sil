@@ -4,6 +4,7 @@
 #include "vehicle_sil/launch/run_plan.hpp"
 
 #include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/process/paths.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -11,7 +12,8 @@
 
 namespace vehicle_sil::launch {
 
-RunPlan plan_run(const CheckReport& check, std::filesystem::path base, const RunOptions& options)
+RunPlan plan_run(const CheckReport& check, std::filesystem::path base, const RunRequest& request, const RunLimits& limits,
+                 bool control_server)
 {
     if (!check.config)
     {
@@ -31,22 +33,22 @@ RunPlan plan_run(const CheckReport& check, std::filesystem::path base, const Run
     // The file's participants only: a bridge of --connect runs in real time, the gate does not move it.
     const SimulationConfig& config = *check.config;
     // 1 with the time lock, whatever was asked for (the check refuses another --speed).
-    const std::optional<double> speed = planned_speed(plan.check.time_lock, options.speed, config.speed);
+    const std::optional<double> speed = planned_speed(plan.check.time_lock, request.intent.speed, config.speed);
     // With a scenario the step does not follow the speed: the same steps at every speed.
     plan.timing = detail::plan_time_step(config, check, speed, plan.scenario() != nullptr);
     plan.timing.speed = speed;
     plan.timing.coarse_step_checked = std::any_of(plan.check.findings.begin(), plan.check.findings.end(),
                                                   [](const Finding& f) { return f.code == "coarse-time-step"; });
     plan.timing.late_tolerance_ms = late_tolerance_ms(config);
-    plan.strict = options.check.strict;
-    plan.holds_before_start = options.start_paused && options.control_endpoint != nullptr;
-    plan.log_dir = options.log_dir;
-    plan.timeline = options.timeline;
-    plan.timeline_shown = options.timeline_shown;
-    plan.poll = options.poll;
-    plan.outside_lost_after = options.outside_lost_after;
-    plan.timeout = options.timeout;
-    plan.control_hello_timeout = options.control_hello_timeout;
+    plan.strict = request.intent.strict;
+    plan.holds_before_start = request.intent.start_paused && control_server;
+    plan.log_dir = request.host.log_dir;
+    plan.timeline = process::path_from_utf8(request.host.timeline);
+    plan.timeline_shown = request.host.timeline;
+    plan.poll = limits.poll;
+    plan.outside_lost_after = limits.outside_lost_after;
+    plan.timeout = request.host.timeout;
+    plan.control_hello_timeout = limits.control_hello_timeout;
     return plan;
 }
 

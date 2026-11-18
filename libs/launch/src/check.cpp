@@ -7,6 +7,7 @@
 // in the order of the steps. The outputs are in check_format.cpp.
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/probe.hpp"
+#include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/launch/time_plan.hpp"
 #include "seen_ecu.hpp"
 
@@ -157,15 +158,15 @@ namespace {
 /// --scenario: reads the scenario file and checks it against the participants of `report`.
 /// @returns the usage errors that only the scenario can tell (ScenarioRead::usage_errors); then
 /// `report` has no scenario.
-[[nodiscard]] std::vector<Finding> check_scenario_file(CheckReport& report, const CheckOptions& options)
+[[nodiscard]] std::vector<Finding> check_scenario_file(CheckReport& report, const RunIntent& intent, bool params_for_many)
 {
     ScenarioCheck check;
-    check.file = options.scenario_shown;
+    check.file = intent.scenario.value_or("");
     const auto add = [&](Finding finding) {
         finding.file = check.file;
         report.findings.push_back(std::move(finding));
     };
-    const std::filesystem::path& path = options.scenario;
+    const std::filesystem::path path = process::path_from_utf8(check.file);
     std::string text;
     const std::string problem = read_scenario_file(path, text);
     if (!problem.empty())
@@ -178,8 +179,8 @@ namespace {
         context.variant = report.config->variant;
         context.variants = report.variants;
         context.params = report.config->params;
-        context.params.insert(context.params.end(), options.params.begin(), options.params.end());
-        context.params_for_many = options.params_for_many;
+        context.params.insert(context.params.end(), intent.params.begin(), intent.params.end());
+        context.params_for_many = params_for_many;
         context.read_file = files_beside(path);
         ScenarioRead read = read_scenario(text, scenario_catalog(report), context);
         check.name = std::move(read.name);
@@ -205,14 +206,25 @@ namespace {
 
 } // namespace
 
-CheckReport check_file(const std::filesystem::path& path, const std::string& shown_as, const CheckOptions& options,
+CheckReport check_file(const RunRequest& request, const CheckOptions& options,
                        const std::function<void(const TimeLock& lock)>& on_time_lock)
 {
+    const RunIntent& intent = request.intent;
+    const RunHost& host = request.host;
+    const std::filesystem::path path = process::path_from_utf8(host.config);
+    EnabledOverrides overrides;
+    overrides.disable = intent.disable;
+    overrides.enable = intent.enable;
+    overrides.manual = intent.manual;
+    overrides.variant = intent.variant;
+    // The speed the run was asked for; a test's is its default, which is not judged.
+    const std::optional<std::optional<double>> run_speed =
+        options.fastest_by_default ? std::optional<std::optional<double>>{} : intent.speed;
     CheckReport report;
-    report.file = shown_as;
-    report.strict = options.strict;
+    report.file = host.config;
+    report.strict = intent.strict;
     // Known without the file.
-    if (auto conflicts = override_conflicts(options.overrides); !conflicts.empty())
+    if (auto conflicts = override_conflicts(overrides); !conflicts.empty())
     {
         report.usage = true;
         report.findings = std::move(conflicts);
@@ -224,7 +236,7 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         report.findings.push_back(Finding{Severity::Error, "file", problem, 0, "", ""});
         return report;
     }
-    ConfigRead read = read_config(text, options.overrides);
+    ConfigRead read = read_config(text, overrides);
     if (read.config)
     {
         for (const VariantConfig& variant : read.config->variants)
@@ -243,20 +255,20 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     if (report.config)
     {
         // The file and the request decide it: before any executable is asked.
-        report.time_lock = time_lock(*report.config, options.connect, options.time_policy);
+        report.time_lock = time_lock(*report.config, intent.connect, intent.time_policy);
         const std::vector<Finding> time =
-            time_lock_findings(report.time_lock, options.run_speed,
-                               options.fastest_by_default ? std::optional<double>{} : report.config->speed, options.start_paused);
+            time_lock_findings(report.time_lock, run_speed,
+                               options.fastest_by_default ? std::optional<double>{} : report.config->speed, intent.start_paused);
         report.findings.insert(report.findings.end(), time.begin(), time.end());
         if (on_time_lock)
         {
             on_time_lock(report.time_lock);
         }
     }
-    if (report.config && options.file_only && !options.connect.empty())
+    if (report.config && options.file_only && !intent.connect.empty())
     {
         // Only the form and the names: no tool is looked for.
-        ConnectCheck connect = check_connections(*report.config, {}, options.connect, nullptr);
+        ConnectCheck connect = check_connections(*report.config, {}, intent.connect, nullptr);
         report.findings.insert(report.findings.end(), connect.findings.begin(), connect.findings.end());
         report.outside = std::move(connect.outside);
         drop_unusable_commands(report);
@@ -318,7 +330,7 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         arguments.insert(arguments.end(), {"--describe", "--name", p.name});
         // As vehicle_sil_launch run starts it: in the directory of the configuration file.
         const DescribeRun run =
-            run_tool(executable, p.command.front(), arguments, options.describe_timeout, std::filesystem::absolute(base));
+            run_tool(executable, p.command.front(), arguments, host.describe_timeout, std::filesystem::absolute(base));
         DescribeOutcome outcome = interpret_describe(p, run);
         if (outcome.error)
         {
@@ -332,10 +344,10 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         }
         report.participants.push_back(std::move(result));
     }
-    if (!options.connect.empty())
+    if (!intent.connect.empty())
     {
-        const ConnectTools tools = bridge_tools(options.tool_directory, options.describe_timeout);
-        ConnectCheck connect = check_connections(*report.config, report.participants, options.connect, &tools);
+        const ConnectTools tools = bridge_tools(host.tool_directory, host.describe_timeout);
+        ConnectCheck connect = check_connections(*report.config, report.participants, intent.connect, &tools);
         report.findings.insert(report.findings.end(), connect.findings.begin(), connect.findings.end());
         report.outside = std::move(connect.outside);
     }
@@ -346,7 +358,7 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     // A run at the file's speed (1 with the time lock) with the file's time_step_ms: known before
     // it runs. A run with a speed of its own (run --speed, test) reports its own afterwards.
     if (const std::optional<double> speed = planned_speed(report.time_lock, {}, report.config->speed);
-        !options.run_speed && !options.fastest_by_default && speed && report.config->time_step_ms)
+        !run_speed && !options.fastest_by_default && speed && report.config->time_step_ms)
     {
         RunTiming timing = detail::plan_time_step(*report.config, report, speed);
         timing.speed = speed;
@@ -355,9 +367,9 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
             report.findings.push_back(std::move(*f));
         }
     }
-    if (!options.scenario.empty())
+    if (intent.scenario && !intent.scenario->empty())
     {
-        if (auto wrong = check_scenario_file(report, options); !wrong.empty())
+        if (auto wrong = check_scenario_file(report, intent, options.params_for_many); !wrong.empty())
         {
             // As for the other usage errors: the findings alone, and no configuration.
             CheckReport usage;

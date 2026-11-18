@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: MIT
 //
 // The request of a run (launch::RunRequest): the rules of validate_request() on fields that do not
-// go together, and the options that a request makes (check_options_of(), run_options_of()). No
-// process, no file.
+// go together, and what the check and the plan of a run read of a request, field by field. No
+// process.
 
-#include "test_harness.hpp"
+#include "launch_test_util.hpp"
 
-#include "vehicle_sil/launch/run.hpp"
 #include "vehicle_sil/launch/request.hpp"
+#include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/run_plan.hpp"
+#include "vehicle_sil/launch/test.hpp"
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <vector>
@@ -130,82 +134,199 @@ TEST_CASE(the_rules_are_reported_in_the_order_of_the_checks)
     CHECK(messages(r) == list(kParamNeedsScenario, kTimelineNeedsScenario, kPausedNeedsCommands));
 }
 
-TEST_CASE(check_options_take_every_field_of_the_request_that_the_check_reads)
-{
-    // One field changes at a time from the empty request: the options differ in that field only.
-    const CheckOptions none = check_options_of(RunRequest{});
-    CHECK(none.describe_timeout == 10000ms && !none.strict && none.params.empty() && none.scenario.empty() &&
-          none.scenario_shown.empty() && none.connect.empty() && none.tool_directory.empty() &&
-          none.time_policy == TimePolicy::Realtime && !none.overrides.variant && none.overrides.disable.empty() &&
-          none.overrides.enable.empty() && none.overrides.manual.empty() && !none.run_speed && !none.start_paused);
+namespace {
 
-    RunRequest r;
-    r.intent.variant = "winter";
-    CHECK(check_options_of(r).overrides.variant == std::optional<std::string>("winter"));
-    r = {};
-    r.intent.disable = {"A"};
-    CHECK(check_options_of(r).overrides.disable == list("A"));
-    r = {};
-    r.intent.enable = {"B"};
-    CHECK(check_options_of(r).overrides.enable == list("B"));
-    r = {};
-    r.intent.manual = {"C"};
-    CHECK(check_options_of(r).overrides.manual == list("C"));
-    r = {};
-    r.intent.strict = true;
-    CHECK(check_options_of(r).strict);
-    r = {};
-    r.intent.params.push_back(param("x", "1"));
-    CHECK(check_options_of(r).params.size() == 1 && check_options_of(r).params[0].name == "x");
-    r = {};
-    r.intent.scenario = "drive.yaml";
-    CHECK(check_options_of(r).scenario_shown == "drive.yaml" && check_options_of(r).scenario == "drive.yaml");
-    r = {};
-    r.intent.connect.push_back({"ETH_EXT", "none"});
-    CHECK(check_options_of(r).connect.size() == 1 && check_options_of(r).connect[0].network == "ETH_EXT");
-    r = {};
-    r.intent.time_policy = TimePolicy::Free;
-    CHECK(check_options_of(r).time_policy == TimePolicy::Free);
-    r = {};
-    r.host.tool_directory = "/opt/tools";
-    CHECK(check_options_of(r).tool_directory == "/opt/tools");
-    r = {};
-    r.host.describe_timeout = 5ms;
-    CHECK(check_options_of(r).describe_timeout == 5ms);
-    // What the run gives its check itself stays unset.
-    r = {};
-    r.intent.speed = std::optional<double>(2.0);
-    r.intent.start_paused = true;
-    CHECK(!check_options_of(r).run_speed && !check_options_of(r).start_paused);
+/// A file with two participants whose executables are missing (nothing is run) and a bridge, which
+/// sets the time lock; B is switched off.
+const char* const kSim = "vehicle_sil_simulation: 1\nnetworks:\n  - name: ETH1\n    kind: ethernet\nparticipants:\n"
+                         "  - name: A\n    command: [missing/a]\n"
+                         "  - name: B\n    command: [missing/b]\n    enabled: false\n"
+                         "  - name: Gateway\n    command: [missing/gateway]\n    role: bridge\n    describe: false\n";
+const char* const kVariants = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                              "  - name: A\n    command: [missing/a]\nvariants:\n  winter: {}\n  summer: {}\n";
+const char* const kDrive = "vehicle_sil_scenario: 1\nparams: { x: 0 }\nsteps:\n  - set: { A.level: \"${x}\" }\n";
+
+/// The files above in a directory of their own.
+std::filesystem::path request_files()
+{
+    const std::filesystem::path dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "request";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "sim.yaml", std::ios::binary) << kSim;
+    std::ofstream(dir / "variants.yaml", std::ios::binary) << kVariants;
+    std::ofstream(dir / "drive.yaml", std::ios::binary) << kDrive;
+    return dir;
 }
 
-TEST_CASE(run_options_take_every_field_of_the_request_that_the_run_reads)
+RunRequest of_file(const std::string& name)
 {
-    const RunOptions none = run_options_of(RunRequest{});
-    CHECK(!none.speed && !none.start_paused && none.log_dir.empty() && none.timeline.empty() && none.timeline_shown.empty() &&
-          !none.timeout);
+    RunRequest r;
+    r.host.config = name;
+    return r;
+}
+
+/// The codes of the findings that begin with `prefix`, each with a space after it.
+std::string codes(const CheckReport& report, std::string_view prefix)
+{
+    std::string out;
+    for (const Finding& f : report.findings)
+    {
+        if (f.code.rfind(prefix, 0) == 0)
+        {
+            out += f.code + " ";
+        }
+    }
+    return out;
+}
+
+bool says(const CheckReport& report, std::string_view text)
+{
+    for (const Finding& f : report.findings)
+    {
+        if (f.message.find(text) != std::string::npos)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+TEST_CASE(a_check_reads_every_field_of_the_request_that_is_the_checks)
+{
+    // One field changes at a time from the request of the file alone: the check differs in what
+    // that field is for. (Its executables are missing: nothing is run.)
+    const std::filesystem::path dir = request_files();
+    const vehicle_sil::launch::test::InDirectory there(dir);
+    const CheckOptions file_only{.params_for_many = false, .file_only = true, .fastest_by_default = false};
+    const CheckReport none = check_file(of_file("sim.yaml"));
+    CHECK(none.file == "sim.yaml" && none.config.has_value());
+    if (!none.config)
+    {
+        return;
+    }
+    CHECK(none.config->variant.empty() && none.config->participants.at(0).enabled && !none.config->participants.at(1).enabled &&
+          !none.config->participants.at(0).manual && !none.strict && !none.scenario && none.outside.empty() &&
+          none.time_lock.locked && codes(none, "outside-real-time").empty() && codes(none, "connect-").empty());
+
+    RunRequest r = of_file("variants.yaml");
+    CHECK(check_file(r).usage); // the file has variants: one must be named
+    r.intent.variant = "winter";
+    CHECK(check_file(r).config.has_value() && check_file(r).config->variant == "winter");
+    r = of_file("sim.yaml");
+    r.intent.disable = {"A"};
+    CHECK(!check_file(r).config->participants.at(0).enabled);
+    r = of_file("sim.yaml");
+    r.intent.enable = {"B"};
+    CHECK(check_file(r).config->participants.at(1).enabled);
+    r = of_file("sim.yaml");
+    r.intent.manual = {"A"};
+    CHECK(check_file(r).config->participants.at(0).manual);
+    r = of_file("sim.yaml");
+    r.intent.strict = true;
+    CHECK(check_file(r).strict);
+    r = of_file("sim.yaml");
+    r.intent.scenario = "drive.yaml";
+    const CheckReport driven = check_file(r);
+    CHECK(driven.scenario.has_value() && driven.scenario->file == "drive.yaml" && codes(driven, "file").empty());
+    CHECK(driven.scenario && driven.scenario->params.size() == 1 && driven.scenario->params[0].text == "0");
+    // A parameter is read with a scenario only (validate_request() asks for both).
+    r.intent.params.push_back(param("x", "1"));
+    const CheckReport set = check_file(r);
+    CHECK(set.scenario && set.scenario->params.size() == 1 && set.scenario->params[0].text == "1" &&
+          set.scenario->params[0].source == ParamSource::CommandLine);
+    r = of_file("sim.yaml");
+    r.intent.connect.push_back({"ETH_EXT", "none"});
+    CHECK(says(check_file(r, file_only), "ETH_EXT") && !codes(check_file(r, file_only), "connect-").empty());
+    r = of_file("sim.yaml");
+    r.intent.time_policy = TimePolicy::Free;
+    CHECK(!check_file(r).time_lock.locked);
+    // Where the tools are: the first place a bridge is looked for, which the finding of a bridge
+    // that is nowhere names. (An Ethernet bridge on PATH would be found, and this would say so.)
+    r = of_file("sim.yaml");
+    r.intent.connect.push_back({"ETH1", "eth-none0"});
+    CHECK(codes(check_file(r), "connect-tool-missing") == "connect-tool-missing " && !says(check_file(r), "/opt/tools"));
+    r.host.tool_directory = "/opt/tools";
+    CHECK(says(check_file(r), "(/opt/tools)"));
+    // The speed and --start-paused of the run that the request asks for, for the time lock; a
+    // test's speed is its default, which the check does not judge.
+    r = of_file("sim.yaml");
+    r.intent.speed = std::optional<double>(2.0);
+    CHECK(codes(check_file(r), "outside-real-time") == "outside-real-time ");
+    CHECK(codes(check_file(r, CheckOptions{.params_for_many = false, .file_only = false, .fastest_by_default = true}),
+                "outside-real-time")
+            .empty());
+    r = of_file("sim.yaml");
+    r.intent.start_paused = true;
+    CHECK(codes(check_file(r), "outside-real-time") == "outside-real-time ");
+    // What only a run has is not the check's: the same findings with it.
+    r = of_file("sim.yaml");
+    r.host.log_dir = "logs";
+    r.host.timeline = "out/t.json";
+    r.host.timeout = 900ms;
+    r.host.control = true;
+    r.host.stdin_commands = true;
+    CHECK(codes(check_file(r), "") == codes(none, ""));
+    CHECK(!std::filesystem::exists(dir / "logs") && !std::filesystem::exists(dir / "out"));
+}
+
+TEST_CASE(the_describe_limit_of_the_request_is_what_a_test_reports_and_defaults_to_the_checks)
+{
+    // The limit of one --describe needs a process that is slow to answer: the launcher's own
+    // tests hold that the check keeps to it (launch_cli.launcher). Here: the default, and that a
+    // test reads the request's (TestReport::given, before it reads the file).
+    CHECK(RunHost{}.describe_timeout == kDescribeTimeout && kDescribeTimeout == 10000ms);
+    TestOptions options;
+    options.request.host.config = "no-such-directory/sim.yaml";
+    CHECK(!test_file(options).given.describe_timeout);
+    options.request.host.describe_timeout = 5ms;
+    CHECK(test_file(options).given.describe_timeout == std::optional(std::chrono::milliseconds(5)));
+}
+
+TEST_CASE(a_plan_takes_every_field_of_the_request_that_the_run_reads)
+{
+    CheckReport check;
+    check.config.emplace();
+    const RunPlan none = plan_run(check, "dir", RunRequest{});
+    CHECK(!none.timing.speed && !none.holds_before_start && none.log_dir.empty() && none.timeline.empty() &&
+          none.timeline_shown.empty() && !none.timeout && !none.strict);
 
     RunRequest r;
     r.intent.speed = std::optional<double>(2.0);
-    CHECK(run_options_of(r).speed == std::optional<std::optional<double>>(2.0));
+    CHECK(plan_run(check, "dir", r).timing.speed == std::optional<double>(2.0));
     r = {};
+    check.config->speed = 3.0;
+    CHECK(plan_run(check, "dir", r).timing.speed == std::optional<double>(3.0)); // the file's
     r.intent.speed = std::optional<double>{}; // max: replaces the file's speed
-    CHECK(run_options_of(r).speed.has_value() && !run_options_of(r).speed->has_value());
+    CHECK(!plan_run(check, "dir", r).timing.speed);
+    check.config->speed.reset();
     r = {};
     r.intent.start_paused = true;
-    CHECK(run_options_of(r).start_paused);
+    CHECK(plan_run(check, "dir", r, {}, true).holds_before_start && !plan_run(check, "dir", r).holds_before_start);
     r = {};
     r.host.log_dir = "logs";
-    CHECK(run_options_of(r).log_dir == "logs");
+    CHECK(plan_run(check, "dir", r).log_dir == "logs");
     r = {};
     r.host.timeline = "out/t.json";
-    CHECK(run_options_of(r).timeline == "out/t.json" && run_options_of(r).timeline_shown == "out/t.json");
+    CHECK(plan_run(check, "dir", r).timeline == "out/t.json" && plan_run(check, "dir", r).timeline_shown == "out/t.json");
     r = {};
     r.host.timeout = 900ms;
-    CHECK(run_options_of(r).timeout == std::optional(900ms));
-    // The check inside is the request's check.
+    CHECK(plan_run(check, "dir", r).timeout == std::optional(900ms));
     r = {};
     r.intent.strict = true;
-    r.intent.variant = "v";
-    CHECK(run_options_of(r).check.strict && run_options_of(r).check.overrides.variant == std::optional<std::string>("v"));
+    CHECK(plan_run(check, "dir", r).strict);
+}
+
+TEST_CASE(the_check_of_a_run_is_the_check_of_its_request)
+{
+    const std::filesystem::path dir = request_files();
+    const vehicle_sil::launch::test::InDirectory there(dir);
+    RunRequest r = of_file("variants.yaml");
+    r.intent.strict = true;
+    r.intent.variant = "summer";
+    const RunReport report = run_file(r);
+    CHECK(!report.run.has_value()); // the executable is missing: nothing starts
+    CHECK(report.strict && report.check.strict && report.check.file == "variants.yaml" && report.check.config.has_value() &&
+          report.check.config->variant == "summer");
 }

@@ -8,6 +8,8 @@
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/request.hpp"
+#include "vehicle_sil/process/paths.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
 
 #include <algorithm>
@@ -1887,7 +1889,10 @@ TEST_CASE(check_file_neither_looks_for_nor_runs_a_disabled_executable)
     std::ofstream(file) << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
                            "  - name: Engine\n    command: [missing/engine]\n"
                            "  - name: Ghost\n    command: [missing/ghost]\n    enabled: false\n";
-    const CheckReport r = check_file(file, "sim.yaml", CheckOptions{});
+    const vehicle_sil::launch::test::InDirectory there(dir); // the files by their names
+    RunRequest plain;
+    plain.host.config = "sim.yaml";
+    const CheckReport r = check_file(plain);
     CHECK(r.config.has_value());
     CHECK(r.participants.size() == 2 && r.participants[0].status == ParticipantStatus::Failed &&
           r.participants[1].status == ParticipantStatus::Disabled && r.participants[1].executable.empty());
@@ -1898,14 +1903,15 @@ TEST_CASE(check_file_neither_looks_for_nor_runs_a_disabled_executable)
     }
     check_text(codes, "executable(Engine) participant-disabled(Ghost) ");
     // --disable and --enable change the file's choice; a name that the file does not have is a usage error.
-    CheckOptions swapped;
-    swapped.overrides = EnabledOverrides{{"Engine"}, {"Ghost"}};
-    const CheckReport s = check_file(file, "sim.yaml", swapped);
+    RunRequest swapped = plain;
+    swapped.intent.disable = {"Engine"};
+    swapped.intent.enable = {"Ghost"};
+    const CheckReport s = check_file(swapped);
     CHECK(!s.usage);
     CHECK(s.participants[0].status == ParticipantStatus::Disabled && s.participants[1].status == ParticipantStatus::Failed);
-    CheckOptions wrong;
-    wrong.overrides = EnabledOverrides{{"Gost"}, {}};
-    const CheckReport u = check_file(file, "sim.yaml", wrong);
+    RunRequest wrong = plain;
+    wrong.intent.disable = {"Gost"};
+    const CheckReport u = check_file(wrong);
     CHECK(u.usage && !u.config && !u.passed());
     check_text(lines(u.findings), "E 0 usage: --disable Gost: the file has no participant with this name (did you mean "
                                   "'Ghost'?); its participants are Engine, Ghost\n");
@@ -1913,9 +1919,11 @@ TEST_CASE(check_file_neither_looks_for_nor_runs_a_disabled_executable)
     const std::string json = format_json(u);
     CHECK(json.find("\n  \"file\": \"sim.yaml\",\n  \"result\": \"usage\",\n") != std::string::npos);
     // A name given to both is a usage error before the file is read (here: there is none).
-    CheckOptions both;
-    both.overrides = EnabledOverrides{{"Ghost"}, {"Ghost"}};
-    const CheckReport b = check_file(dir / "none.yaml", "none.yaml", both);
+    RunRequest both;
+    both.host.config = "none.yaml";
+    both.intent.disable = {"Ghost"};
+    both.intent.enable = {"Ghost"};
+    const CheckReport b = check_file(both);
     CHECK(b.usage);
     check_text(lines(b.findings), "E 0 usage: --disable and --enable both name Ghost: give one of them\n");
 }
@@ -1931,7 +1939,9 @@ TEST_CASE(check_file_a_disabled_entry_with_errors_and_an_unreadable_enabled)
                            "  - name: Engine\n    command: [missing/engine]\n"
                            "  - name: Ghost\n    enabled: false\n"
                            "  - name: Maybe\n    command: [missing/maybe]\n    enabled: no\n";
-    const CheckReport r = check_file(file, "sim.yaml", CheckOptions{});
+    RunRequest request;
+    request.host.config = process::utf8_from_path(file);
+    const CheckReport r = check_file(request);
     CHECK(r.participants.size() == 3 && r.participants[1].status == ParticipantStatus::Disabled &&
           r.participants[2].status == ParticipantStatus::Skipped);
     std::string codes;
@@ -3373,7 +3383,7 @@ TEST_CASE(time_policy_names)
     CHECK(std::string(to_string(TimePolicy::Realtime)) == "realtime" && std::string(to_string(TimePolicy::Free)) == "free");
     CHECK(time_policy_named("realtime") == TimePolicy::Realtime && time_policy_named("free") == TimePolicy::Free);
     CHECK(!time_policy_named("Realtime") && !time_policy_named("") && !time_policy_named("warn"));
-    CHECK(CheckOptions{}.time_policy == TimePolicy::Realtime);
+    CHECK(RunIntent{}.time_policy == TimePolicy::Realtime);
 }
 
 TEST_CASE(time_lock_counts_the_connect_requests_and_the_enabled_bridges)

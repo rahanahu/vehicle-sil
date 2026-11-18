@@ -17,18 +17,6 @@
 
 namespace vehicle_sil::launch::detail {
 
-/// What a run tells while it lasts, and the one thing it lets its caller do: the caller's
-/// functions, which the run calls back (RunOptions has the same members, and says of each which
-/// thread calls it and what it may do). A run keeps its own copy; none of them is in the RunPlan.
-struct RunObservers
-{
-    std::function<void(std::string_view line)> write_line{}; ///< RunOptions::write_line
-    EventStream* events = nullptr;                           ///< RunOptions::events
-    std::function<std::string()> interrupt_name{};           ///< RunOptions::interrupt_name
-    /// RunOptions::before_start
-    std::function<void(const std::shared_ptr<control::Hub>& hub)> before_start{};
-};
-
 /// What a run is given, fixed before it begins: the parts of the run (run_*.hpp) keep a reference.
 /// Three things: the plan (a value: what was settled before the run), the observers (what the run
 /// calls back) and the controls (borrowed: they may outlive the run).
@@ -44,10 +32,12 @@ struct RunContext
     const SimulationConfig& config;
     const CheckReport& check;
     const RunPlan& plan;
+    /// The Runner's copy of the caller's functions (run.hpp says of each which thread calls it and
+    /// what it may do); none of them is in the RunPlan.
     const RunObservers& observers;
     /// run --scenario: the scenario the check read (RunPlan::scenario()); null without one.
     const Scenario* scenario;
-    /// The run's controls: RunOptions::controls, or the run's own (on RunOptions::stops).
+    /// The run's controls: RunLent::controls, or the run's own (on RunLent::stops).
     RunControls& controls;
     /// The time commands of `controls`.
     TimeCommands& commands;

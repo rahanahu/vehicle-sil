@@ -17,6 +17,7 @@
 #include "vehicle_sil/launch/run.hpp"
 #include "vehicle_sil/launch/run_controls.hpp"
 #include "vehicle_sil/launch/test.hpp"
+#include "vehicle_sil/process/paths.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -42,7 +43,9 @@ using vehicle_sil::launch::Pacing;
 using vehicle_sil::launch::Phase;
 using vehicle_sil::launch::RunState;
 using vehicle_sil::launch::RunControls;
-using vehicle_sil::launch::RunOptions;
+using vehicle_sil::launch::RunLent;
+using vehicle_sil::launch::RunObservers;
+using vehicle_sil::launch::RunRequest;
 using vehicle_sil::launch::StopRequests;
 using vehicle_sil::launch::TimeCommands;
 
@@ -182,16 +185,29 @@ TEST_CASE(phase_names_are_those_of_the_phase_events)
     CHECK(std::string(phase_name(Phase::Ended)) == "ended");
 }
 
+namespace {
+
+/// The request of a run of `file`, as a user names it.
+RunRequest request_of(const std::string& file)
+{
+    RunRequest request;
+    request.host.config = file;
+    return request;
+}
+
+} // namespace
+
 TEST_CASE(a_run_without_controls_makes_its_own_and_writes_its_phases)
 {
     Written written;
-    RunOptions options;
-    options.events = written.stream.get();
-    const auto report = vehicle_sil::launch::run_file("no-such-directory/sim.yaml", "sim.yaml", options);
+    const RunRequest asked = request_of("no-such-directory/sim.yaml");
+    RunObservers watching;
+    watching.events = written.stream.get();
+    const auto report = vehicle_sil::launch::run_file(asked, watching);
     CHECK(!report.run.has_value());
     CHECK((written.phases() == std::vector<std::string>{"checking", "ended"}));
     // And again: each run has controls of its own, so the second begins as the first did.
-    static_cast<void>(vehicle_sil::launch::run_file("no-such-directory/sim.yaml", "sim.yaml", options));
+    static_cast<void>(vehicle_sil::launch::run_file(asked, watching));
     CHECK((written.phases() == std::vector<std::string>{"checking", "ended", "checking", "ended"}));
 }
 
@@ -205,10 +221,11 @@ TEST_CASE(a_run_with_the_callers_controls_sets_their_phase_and_leaves_the_phase_
     observers.on_state = [](const RunState&) {};
     RunControls controls(stops, false, std::move(observers));
     Written written;
-    RunOptions options;
-    options.controls = &controls;
-    options.events = written.stream.get();
-    const auto report = vehicle_sil::launch::run_file("no-such-directory/sim.yaml", "sim.yaml", options);
+    RunObservers watching;
+    watching.events = written.stream.get();
+    RunLent lent;
+    lent.controls = &controls;
+    const auto report = vehicle_sil::launch::run_file(request_of("no-such-directory/sim.yaml"), watching, lent);
     CHECK(!report.run.has_value());
     CHECK(controls.phase() == Phase::Ended);
     CHECK((told == std::vector<Phase>{Phase::Checking, Phase::Ended}));
@@ -240,14 +257,14 @@ TEST_CASE(a_run_refuses_controls_together_with_other_stop_requests)
     StopRequests stops;
     StopRequests other;
     RunControls controls(stops);
-    RunOptions options;
-    options.controls = &controls;
-    options.stops = &other;
-    const std::string text = refusal([&] { static_cast<void>(vehicle_sil::launch::run_file("none.yaml", "none.yaml", options)); });
+    RunLent lent;
+    lent.controls = &controls;
+    lent.stops = &other;
+    const std::string text = refusal([&] { static_cast<void>(vehicle_sil::launch::run_file(request_of("none.yaml"), {}, lent)); });
     CHECK(text.find("`controls` and `stops`") != std::string::npos);
     // The same stop requests as those of the controls say the same thing twice: accepted.
-    options.stops = &stops;
-    CHECK(refusal([&] { static_cast<void>(vehicle_sil::launch::run_file("no-such-directory/sim.yaml", "sim.yaml", options)); })
+    lent.stops = &stops;
+    CHECK(refusal([&] { static_cast<void>(vehicle_sil::launch::run_file(request_of("no-such-directory/sim.yaml"), {}, lent)); })
             .empty());
 }
 
@@ -255,11 +272,13 @@ TEST_CASE(a_run_refuses_controls_with_events_when_the_controls_have_no_observer_
 {
     StopRequests stops;
     Written written;
-    RunOptions options;
-    options.events = written.stream.get();
+    RunObservers watching;
+    watching.events = written.stream.get();
     const auto run = [&](RunControls& controls) {
-        options.controls = &controls;
-        return refusal([&] { static_cast<void>(vehicle_sil::launch::run_file("no-such-directory/sim.yaml", "sim.yaml", options)); });
+        RunLent lent;
+        lent.controls = &controls;
+        return refusal(
+          [&] { static_cast<void>(vehicle_sil::launch::run_file(request_of("no-such-directory/sim.yaml"), watching, lent)); });
     };
     RunControls none(stops);
     CHECK(run(none).find("on_phase") != std::string::npos);
@@ -277,7 +296,7 @@ TEST_CASE(a_run_refuses_controls_with_events_when_the_controls_have_no_observer_
     RunControls without_state(stops, false, std::move(no_state));
     CHECK(run(without_state).find("on_state") != std::string::npos);
     // Without `events` there is nothing to leave to the observers.
-    options.events = nullptr;
+    watching.events = nullptr;
     CHECK(run(none).empty());
 }
 
@@ -703,15 +722,17 @@ TEST_CASE(a_run_decides_the_time_commands_that_came_before_it_with_its_time_lock
     Command fast = command("speed");
     fast.speed = 5.0;
     /// run_file() of `file` on controls that got a pause, a speed of 5 and a resume before it.
-    const auto run = [&fast](const std::filesystem::path& file, RunOptions options, Answers& answers) {
+    const auto run = [&fast](const std::filesystem::path& file, RunRequest asked, Answers& answers) {
         StopRequests stops;
         RunControls controls(stops, false, answers.observers());
         CHECK(controls.time().apply(command("pause"), "stdin").pending);
         CHECK(controls.time().apply(fast, "stdin").pending);
         CHECK(controls.time().apply(command("resume"), "stdin").pending);
         CHECK(answers.commands.empty());
-        options.controls = &controls;
-        const auto report = vehicle_sil::launch::run_file(file, "sim.yaml", options);
+        RunLent lent;
+        lent.controls = &controls;
+        asked.host.config = vehicle_sil::process::utf8_from_path(file);
+        const auto report = vehicle_sil::launch::run_file(asked, {}, lent);
         CHECK(!report.run.has_value());
         return report;
     };
@@ -719,7 +740,7 @@ TEST_CASE(a_run_decides_the_time_commands_that_came_before_it_with_its_time_lock
         // A participant that is a bridge: the run keeps real time, and says so to what waited,
         // although its check then fails (the bridge's executable is not there).
         Answers answers;
-        const auto report = run(config_file("bridged.yaml", engine + gateway), RunOptions{}, answers);
+        const auto report = run(config_file("bridged.yaml", engine + gateway), RunRequest{}, answers);
         CHECK(report.check.config.has_value());
         CHECK(report.check.time_lock.locked);
         CHECK((answers.commands == std::vector<std::string>{"pause outside-real-time", "speed outside-real-time", "resume accepted"}));
@@ -730,14 +751,14 @@ TEST_CASE(a_run_decides_the_time_commands_that_came_before_it_with_its_time_lock
     }
     {
         // The same file with --time-policy free, and one without a bridge: taken, in their order.
-        RunOptions free;
-        free.check.time_policy = vehicle_sil::launch::TimePolicy::Free;
+        RunRequest free;
+        free.intent.time_policy = vehicle_sil::launch::TimePolicy::Free;
         Answers answers;
         const auto report = run(config_file("bridged.yaml", engine + gateway), free, answers);
         CHECK(!report.check.time_lock.locked);
         CHECK((answers.commands == std::vector<std::string>{"pause accepted", "speed accepted", "resume accepted"}));
         Answers plain;
-        static_cast<void>(run(config_file("plain.yaml", engine), RunOptions{}, plain));
+        static_cast<void>(run(config_file("plain.yaml", engine), RunRequest{}, plain));
         CHECK((plain.commands == std::vector<std::string>{"pause accepted", "speed accepted", "resume accepted"}));
         for (const std::string& pause : plain.pause)
         {
@@ -746,8 +767,8 @@ TEST_CASE(a_run_decides_the_time_commands_that_came_before_it_with_its_time_lock
     }
     {
         // --disable takes the bridge out before the lock is made.
-        RunOptions disabled;
-        disabled.check.overrides.disable = {"Gateway"};
+        RunRequest disabled;
+        disabled.intent.disable = {"Gateway"};
         Answers answers;
         const auto report = run(config_file("bridged.yaml", engine + gateway), disabled, answers);
         CHECK(!report.check.time_lock.locked);
@@ -756,7 +777,7 @@ TEST_CASE(a_run_decides_the_time_commands_that_came_before_it_with_its_time_lock
     {
         // A file that cannot be read: no lock, nothing starts, and what waited is refused.
         Answers answers;
-        const auto report = run("no-such-directory/sim.yaml", RunOptions{}, answers);
+        const auto report = run("no-such-directory/sim.yaml", RunRequest{}, answers);
         CHECK(!report.check.config.has_value());
         CHECK((answers.commands == std::vector<std::string>{"pause not-running", "speed not-running", "resume not-running"}));
         CHECK(!answers.pause.empty());
@@ -769,10 +790,10 @@ TEST_CASE(a_test_refuses_controls_because_every_run_needs_its_own)
     StopRequests stops;
     RunControls controls(stops);
     vehicle_sil::launch::TestOptions options;
-    options.run.controls = &controls;
-    const std::string text =
-      refusal([&] { static_cast<void>(vehicle_sil::launch::test_file("none.yaml", "none.yaml", options)); });
-    CHECK(text.find("TestOptions::run.controls") != std::string::npos);
+    options.request.host.config = "none.yaml";
+    options.lent.controls = &controls;
+    const std::string text = refusal([&] { static_cast<void>(vehicle_sil::launch::test_file(options)); });
+    CHECK(text.find("TestOptions::lent.controls") != std::string::npos);
 }
 
 TEST_CASE(run_controls_tell_the_state_of_the_bridges_once_for_each_change)

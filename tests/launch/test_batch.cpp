@@ -7,6 +7,7 @@
 #include "launch_test_util.hpp"
 
 #include "vehicle_sil/launch/test.hpp"
+#include "vehicle_sil/process/paths.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -44,6 +45,16 @@ std::string shown(const ScenarioList& list)
         out += "E " + error.code + ": " + error.message + "\n";
     }
     return out;
+}
+
+/// test_file() of the file `name` in `dir`, from that directory: the outputs name the file and the
+/// scenarios as a user who stands there does. (The scenarios are read by the names they are shown
+/// with.)
+TestReport test_in(const std::filesystem::path& dir, const std::string& name, TestOptions options)
+{
+    const vehicle_sil::launch::test::InDirectory there(dir);
+    options.request.host.config = name;
+    return test_file(options);
 }
 
 std::string results(const TestReport& report)
@@ -99,14 +110,14 @@ TEST_CASE(a_test_that_cannot_begin_runs_nothing)
     options.scenarios = {{dir / "plain.yaml", "plain.yaml"}, {dir / "other.yaml", "other.yaml"}};
 
     // A file that is not there.
-    const TestReport missing = test_file(dir / "none.yaml", "none.yaml", options);
+    const TestReport missing = test_in(dir, "none.yaml", options);
     CHECK(missing.result() == TestResult::Unreadable && missing.exit_code() == 3 && missing.runs.empty());
     check_text(format_test_text(missing), "error: none.yaml: the file does not exist: check the path [file]\n\n"
                                         "cannot read none.yaml: nothing was run\n");
 
     // A variant the file does not have: the check's words.
     options.variants = {"medium", "smal"};
-    const TestReport typo = test_file(dir / "sim.yaml", "sim.yaml", options);
+    const TestReport typo = test_in(dir, "sim.yaml", options);
     CHECK(typo.result() == TestResult::Usage && typo.exit_code() == 4 && typo.runs.empty());
     CHECK(typo.findings.size() == 1);
     if (!(typo.findings.size() == 1))
@@ -119,8 +130,8 @@ TEST_CASE(a_test_that_cannot_begin_runs_nothing)
 
     // A parameter no scenario has (the names: also one that only a variant gives a value); one
     // that only one of them has is fine.
-    options.run.check.params = {ParamValue{"fill", "3", false, ParamSource::CommandLine}, ParamValue{"dept", "2", false, ParamSource::CommandLine}};
-    const TestReport unused = test_file(dir / "sim.yaml", "sim.yaml", options);
+    options.request.intent.params = {ParamValue{"fill", "3", false, ParamSource::CommandLine}, ParamValue{"dept", "2", false, ParamSource::CommandLine}};
+    const TestReport unused = test_in(dir, "sim.yaml", options);
     CHECK(unused.result() == TestResult::Usage && unused.runs.empty());
     CHECK(unused.findings.size() == 1);
     if (!(unused.findings.size() == 1))
@@ -132,9 +143,9 @@ TEST_CASE(a_test_that_cannot_begin_runs_nothing)
              "depth; remove the option or correct the name");
     check_text(format_test_json(unused).substr(0, 24), "{\n  \"vehicle_sil_test\": ");
     CHECK(format_test_json(unused).find("\"result\": \"usage\",") != std::string::npos);
-    options.run.check.params = {ParamValue{"fill", "3", false, ParamSource::CommandLine}};
-    CHECK(test_file(dir / "sim.yaml", "sim.yaml", options).result() == TestResult::Failed);
-    options.run.check.params.clear();
+    options.request.intent.params = {ParamValue{"fill", "3", false, ParamSource::CommandLine}};
+    CHECK(test_in(dir, "sim.yaml", options).result() == TestResult::Failed);
+    options.request.intent.params.clear();
 
     // A participant that someone starts by hand: every run would wait for a person. Refused
     // before the first run, with what to do; left out with --disable, the test runs.
@@ -143,8 +154,8 @@ TEST_CASE(a_test_that_cannot_begin_runs_nothing)
                                "  - name: Hil\n    command: [missing/hil]\n    manual: true\n"
                                "  - name: Off\n    command: [missing/off]\n    manual: true\n    enabled: false\n");
     std::vector<std::string> lines;
-    options.run.write_line = [&lines](std::string_view line) { lines.emplace_back(line); };
-    const TestReport manual = test_file(dir / "manual.yaml", "manual.yaml", options);
+    options.observers.write_line = [&lines](std::string_view line) { lines.emplace_back(line); };
+    const TestReport manual = test_in(dir, "manual.yaml", options);
     CHECK(manual.result() == TestResult::Usage && manual.exit_code() == 4 && manual.runs.empty() && lines.empty());
     CHECK(manual.findings.size() == 1);
     if (!(manual.findings.size() == 1))
@@ -156,26 +167,27 @@ TEST_CASE(a_test_that_cannot_begin_runs_nothing)
              "itself, so each run would wait for it: leave it out with --disable Hil (a scenario with a step that uses its "
              "variables then fails its check), or run one scenario with it yourself: vehicle_sil_launch run <file> --scenario "
              "<file>");
-    options.run.check.overrides.disable = {"Hil"};
-    const TestReport without = test_file(dir / "manual.yaml", "manual.yaml", options);
+    options.request.intent.disable = {"Hil"};
+    const TestReport without = test_in(dir, "manual.yaml", options);
     CHECK(without.result() == TestResult::Failed && without.runs.size() == 2 && lines.size() == 4);
     // Taken in with --enable: refused as one that the file enables. With variants: which ones.
-    options.run.check.overrides.disable = {"Hil"};
-    options.run.check.overrides.enable = {"Off"};
-    const TestReport enabled = test_file(dir / "manual.yaml", "manual.yaml", options);
+    options.request.intent.disable = {"Hil"};
+    options.request.intent.enable = {"Off"};
+    const TestReport enabled = test_in(dir, "manual.yaml", options);
     CHECK(enabled.result() == TestResult::Usage && enabled.findings.size() == 1 &&
           enabled.findings[0].message.rfind("participant 'Off' is manual (manual: true in the file): ", 0) == 0);
-    options.run.check.overrides = {};
+    options.request.intent.disable.clear();
+    options.request.intent.enable.clear();
     write(dir / "manual-variants.yaml", "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
                                         "  - name: Hil\n    command: [missing/hil]\n    manual: true\n"
                                         "variants:\n  small: {}\n  medium: { participants: { Hil: { enabled: false } } }\n"
                                         "  large: {}\n");
-    const TestReport some = test_file(dir / "manual-variants.yaml", "manual-variants.yaml", options);
+    const TestReport some = test_in(dir, "manual-variants.yaml", options);
     CHECK(some.result() == TestResult::Usage && some.findings.size() == 1 &&
           some.findings[0].message.rfind("participant 'Hil' is manual (manual: true in the file, in the variants small and large): ", 0) == 0);
     // Only the variants that run count.
     options.variants = {"medium"};
-    CHECK(test_file(dir / "manual-variants.yaml", "manual-variants.yaml", options).result() == TestResult::Failed);
+    CHECK(test_in(dir, "manual-variants.yaml", options).result() == TestResult::Failed);
 }
 
 TEST_CASE(a_test_runs_every_variant_with_every_scenario_in_order)
@@ -187,12 +199,12 @@ TEST_CASE(a_test_runs_every_variant_with_every_scenario_in_order)
     TestOptions options;
     options.scenarios = {{dir / "plain.yaml", "plain.yaml"}, {dir / "only.yaml", "only.yaml"}};
     std::vector<std::string> lines;
-    options.run.write_line = [&lines](std::string_view line) { lines.emplace_back(line); };
+    options.observers.write_line = [&lines](std::string_view line) { lines.emplace_back(line); };
 
     // Every check fails (the executable is missing): the runs are all there, failed, in the
     // file's order of the variants. One that is not for the variant fails too while the check has
     // another error: it is skipped only if that is all that is wrong.
-    const TestReport all = test_file(dir / "sim.yaml", "sim.yaml", options);
+    const TestReport all = test_in(dir, "sim.yaml", options);
     check_text(results(all), "small plain.yaml 1\nsmall only.yaml 1\nmedium plain.yaml 1\nmedium only.yaml 1\n");
     CHECK(all.result() == TestResult::Failed && all.exit_code() == 1);
     CHECK(all.variants == std::vector<std::string>({"small", "medium"}));
@@ -208,10 +220,10 @@ TEST_CASE(a_test_runs_every_variant_with_every_scenario_in_order)
 
     // --variant chooses, in the file's order whatever the order given; --fail-fast leaves the rest.
     options.variants = {"medium"};
-    check_text(results(test_file(dir / "sim.yaml", "sim.yaml", options)), "medium plain.yaml 1\nmedium only.yaml 1\n");
+    check_text(results(test_in(dir, "sim.yaml", options)), "medium plain.yaml 1\nmedium only.yaml 1\n");
     options.variants = {"medium", "small"};
     options.fail_fast = true;
-    const TestReport fast = test_file(dir / "sim.yaml", "sim.yaml", options);
+    const TestReport fast = test_in(dir, "sim.yaml", options);
     check_text(results(fast), "small plain.yaml 1\nsmall only.yaml 4\nmedium plain.yaml 4\nmedium only.yaml 4\n");
     check_text(fast.runs[3].reason, "a run before it failed (--fail-fast)");
     CHECK(!fast.runs[3].run.has_value() && fast.exit_code() == 1);
@@ -220,8 +232,8 @@ TEST_CASE(a_test_runs_every_variant_with_every_scenario_in_order)
     StopRequests stops;
     stops.request(1); // the source is not read here (no interrupt_name)
     options.fail_fast = false;
-    options.run.stops = &stops;
-    const TestReport stopped = test_file(dir / "sim.yaml", "sim.yaml", options);
+    options.lent.stops = &stops;
+    const TestReport stopped = test_in(dir, "sim.yaml", options);
     CHECK(stopped.result() == TestResult::Interrupted && stopped.exit_code() == kExitInterrupted);
     check_text(stopped.runs[1].reason, "the test was interrupted before it");
     CHECK(stopped.count(TestRunResult::NotRun) == 3);
@@ -245,47 +257,49 @@ std::string codes_of(const CheckReport& check, std::string_view prefix)
     return out;
 }
 
-TEST_CASE(a_run_gives_its_check_the_speed_and_start_paused_of_its_own_options)
+TEST_CASE(a_run_gives_its_check_the_speed_and_start_paused_of_its_request)
 {
     const auto dir = fresh_dir("batch-time-lock");
     write(dir / "sim.yaml", kBridged);
-    const auto checked = [&dir](const RunOptions& options) {
-        const RunReport report = run_file(dir / "sim.yaml", "sim.yaml", options);
+    const auto checked = [&dir](RunRequest request, const CheckOptions& options = {}) {
+        request.host.config = vehicle_sil::process::utf8_from_path(dir / "sim.yaml");
+        const RunReport report = run_file(request, {}, {}, {}, options);
         CHECK(!report.run.has_value());
         return report.check;
     };
-    // RunOptions alone, nothing in RunOptions::check: the note, and the errors for what the run asks for.
-    RunOptions options;
-    CHECK(checked(options).time_lock.locked);
-    check_text(codes_of(checked(options), "outside-"), "outside-speed-set N\n");
-    options.speed = 2.0;
-    const CheckReport fast = checked(options);
+    // The request alone: the note, and the errors for what the run asks for.
+    RunRequest request;
+    CHECK(checked(request).time_lock.locked);
+    check_text(codes_of(checked(request), "outside-"), "outside-speed-set N\n");
+    request.intent.speed = 2.0;
+    const CheckReport fast = checked(request);
     check_text(codes_of(fast, "outside-"), "outside-real-time E\n");
     CHECK(format_text(fast).find("--speed 2 is refused") != std::string::npos);
-    options.speed.reset();
-    options.start_paused = true;
-    const CheckReport paused = checked(options);
+    request.intent.speed.reset();
+    request.intent.start_paused = true;
+    const CheckReport paused = checked(request);
     check_text(codes_of(paused, "outside-"), "outside-real-time E\noutside-speed-set N\n"); // errors first
-    options.speed = 1.0;
-    check_text(codes_of(checked(options), "outside-"), "outside-real-time E\n");
-    // What the check's own options say about the run does not count: the run's options do.
-    options.start_paused = false;
-    options.check.start_paused = true;
-    options.check.run_speed = std::optional<double>{2.0};
-    check_text(codes_of(checked(options), "outside-"), "");
+    request.intent.speed = 1.0;
+    check_text(codes_of(checked(request), "outside-"), "outside-real-time E\n");
+    // A run reads the whole, whatever the check's options say: the participants are looked for.
+    CheckOptions only;
+    only.file_only = true;
+    CHECK(checked(RunRequest{}, only).participants.size() == checked(RunRequest{}).participants.size());
+    CHECK(!checked(RunRequest{}, only).participants.empty());
     // A test's speed (as fast as possible) is its default: a note, not a refused --speed max.
-    options = RunOptions{};
-    options.speed.emplace(std::optional<double>{});
-    check_text(codes_of(checked(options), "outside-"), "outside-real-time E\n");
-    options.check.fastest_by_default = true;
-    const CheckReport test = checked(options);
+    request = RunRequest{};
+    request.intent.speed.emplace(std::optional<double>{});
+    check_text(codes_of(checked(request), "outside-"), "outside-real-time E\n");
+    CheckOptions test_options;
+    test_options.fastest_by_default = true;
+    const CheckReport test = checked(request, test_options);
     check_text(codes_of(test, "outside-"), "outside-speed-set N\n");
     // --time-policy free: the notes for the same requests.
-    options = RunOptions{};
-    options.check.time_policy = TimePolicy::Free;
-    options.speed = 2.0;
-    options.start_paused = true;
-    check_text(codes_of(checked(options), "outside-"), "outside-not-real-time N\noutside-not-real-time N\n");
+    request = RunRequest{};
+    request.intent.time_policy = TimePolicy::Free;
+    request.intent.speed = 2.0;
+    request.intent.start_paused = true;
+    check_text(codes_of(checked(request), "outside-"), "outside-not-real-time N\noutside-not-real-time N\n");
 }
 
 TEST_CASE(a_test_says_once_that_the_time_lock_set_its_runs_to_speed_1)

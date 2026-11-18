@@ -42,7 +42,7 @@ struct StartShared
     /// SimulationController::start() has returned. Guarded by `found_mutex`.
     std::mutex found_mutex;
     std::optional<ControlStart> control_start;
-    std::string before_start_error; ///< RunOptions::before_start failed with this
+    std::string before_start_error; ///< RunObservers::before_start failed with this
 
     /// When the launcher began to wait for the participants (steady-clock nanoseconds), in a run
     /// that waits for one started by hand and has --timeout-ms; -1 otherwise. The main thread
@@ -83,7 +83,7 @@ public:
     {
     }
 
-    /// Waits for the agents' hellos, then lets the caller write (RunOptions::before_start), begins
+    /// Waits for the agents' hellos, then lets the caller write (RunObservers::before_start), begins
     /// the scenario, and holds before the first step (--start-paused with a control server).
     void run(control_silkit::HubTransport& transport, SimulationController& controller, const StartWindow& window);
 

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/launch/request.hpp"
 
-#include "vehicle_sil/process/paths.hpp"
-
 namespace vehicle_sil::launch {
 namespace {
 
@@ -43,26 +41,6 @@ std::vector<Finding> validate_request(const RunRequest& request, RequestCommand 
         out.push_back(usage("--start-paused needs --stdin-commands or --control: without commands nothing could make the "
                             "simulation go on (resume, step)"));
     }
-    return out;
-}
-
-CheckOptions check_options_of(const RunRequest& request)
-{
-    const RunIntent& intent = request.intent;
-    const RunHost& host = request.host;
-    CheckOptions out;
-    out.describe_timeout = host.describe_timeout;
-    out.strict = intent.strict;
-    out.overrides.variant = intent.variant;
-    out.overrides.disable = intent.disable;
-    out.overrides.enable = intent.enable;
-    out.overrides.manual = intent.manual;
-    out.params = intent.params;
-    out.scenario_shown = intent.scenario.value_or("");
-    out.scenario = process::path_from_utf8(out.scenario_shown);
-    out.connect = intent.connect;
-    out.tool_directory = host.tool_directory;
-    out.time_policy = intent.time_policy;
     return out;
 }
 
