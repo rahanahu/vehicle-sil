@@ -8,7 +8,7 @@
 #pragma once
 
 #include "vehicle_sil/config/config.hpp"
-#include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/scenario/scenario_run.hpp"
 #include "vehicle_sil/process/process.hpp"
 
 #include <cstddef>

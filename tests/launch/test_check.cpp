@@ -9,10 +9,10 @@
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/checked.hpp"
-#include "vehicle_sil/launch/scenario_check.hpp"
+#include "vehicle_sil/scenario/scenario_check.hpp"
 #include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/process/paths.hpp"
-#include "vehicle_sil/launch/scenario.hpp"
+#include "vehicle_sil/scenario/scenario.hpp"
 
 #include <algorithm>
 #include <chrono>

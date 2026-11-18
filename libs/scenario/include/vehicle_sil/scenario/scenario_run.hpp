@@ -8,8 +8,8 @@
 
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
-#include "vehicle_sil/launch/scenario.hpp"
-#include "vehicle_sil/launch/timeline.hpp"
+#include "vehicle_sil/scenario/scenario.hpp"
+#include "vehicle_sil/scenario/timeline.hpp"
 
 #include <cstddef>
 #include <cstdint>

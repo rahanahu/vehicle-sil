@@ -80,11 +80,11 @@
 
 | 内容 | 場所 |
 |---|---|
-| 読み方と照合 | `libs/launch/src/scenario.cpp`（ファイル、パラメーター、variant、手順）、`scenario_values.cpp`（変数と値）、`scenario_waves.cpp`（波形と点）、`scenario_inputs.cpp`（`inputs` と dither）。クラス `Reader` は `scenario_reader.hpp` |
-| 手順を進める処理 | `libs/launch/src/scenario_run.cpp` |
-| 手順が失敗した理由: 満たさなかった条件と、反映されなかった書き込み。メッセージと記録（`failed.conditions[]`、`failed.writes[]`）の両方 | `libs/launch/src/scenario_failure.cpp`（`unmet()`、`unmet_values()`、`failed_write()`、`applied_text()`、`during()`） |
-| `ramp` と `wave` の値を計算する関数（`Waveform` の実装） | `libs/launch/src/scenario_shapes.cpp` |
-| `points` の CSV ファイル | 分けるのは `libs/launch/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `libs/launch/src/probe.cpp` の `files_beside()`、パスの検査とセルの意味は `scenario_waves.cpp` の `path_problem()`、`file_points()`、`cell_value()` |
+| 読み方と照合 | `libs/scenario/src/scenario.cpp`（ファイル、パラメーター、variant、手順）、`scenario_values.cpp`（変数と値）、`scenario_waves.cpp`（波形と点）、`scenario_inputs.cpp`（`inputs` と dither）。クラス `Reader` は `scenario_reader.hpp` |
+| 手順を進める処理 | `libs/scenario/src/scenario_run.cpp` |
+| 手順が失敗した理由: 満たさなかった条件と、反映されなかった書き込み。メッセージと記録（`failed.conditions[]`、`failed.writes[]`）の両方 | `libs/scenario/src/scenario_failure.cpp`（`unmet()`、`unmet_values()`、`failed_write()`、`applied_text()`、`during()`） |
+| `ramp` と `wave` の値を計算する関数（`Waveform` の実装） | `libs/scenario/src/scenario_shapes.cpp` |
+| `points` の CSV ファイル | 分けるのは `libs/scenario/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `libs/launch/src/probe.cpp` の `files_beside()`、パスの検査とセルの意味は `scenario_waves.cpp` の `path_problem()`、`file_points()`、`cell_value()` |
 | 波形の計算 | `libs/signal` の `signal/waveform.hpp` |
 | ランチャーへの組み込み | `libs/launch/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`） |
 | 時間のゲートのガード | `SimulationController::guard_from()` と `wait_guarded()` |
@@ -119,7 +119,7 @@
 - 判定に使うのは仮想時刻だけです。実時間の待ちと時間切れで、結果を決めません。
 - `ramp` と `wave` の値は、手順の始まりからの仮想時間だけの関数にします（`Waveform::value()`）。呼ばれた回数や順に依存させません。
 - 乱数は、種、変数の名前、時刻から作ります（`scenario_shapes.cpp` の `seed_of_variable()`）。整数だけの計算で、どの OS でも同じです。
-- 入力ごとの線（シナリオが置いた値と、いま動かしている `ramp` や `wave`）は、`libs/launch/src/scenario_line.hpp` の `Line` です。`from` や `around` を省いた動きの始まりの値は、手順の時刻の書き込みを送る前に、手順の順で線から読みます（`scenario_run.cpp` の `place()`）。
+- 入力ごとの線（シナリオが置いた値と、いま動かしている `ramp` や `wave`）は、`libs/scenario/include/vehicle_sil/scenario/detail/scenario_line.hpp` の `Line` です。`from` や `around` を省いた動きの始まりの値は、手順の時刻の書き込みを送る前に、手順の順で線から読みます（`scenario_run.cpp` の `place()`）。
 - 動きの値を出す関数は `motion_number()`（丸める前）の 1 つで、書く値は、線の `Line::written()` の 1 か所で、揺れ（`dither`）を足してから型に丸めます。エンジンの `submit_one()` はこれを呼びます。値を出す所を追加するときも、同じ関数を呼びます。
 - ECU に見えるかどうかの判定（短い `pulse`、`hold` の `points`）は、`scenario_waves.cpp` の `seen_between()` のルール 1 つに従います。
 - `read_scenario()` は、`ScenarioContext::read_file` のほかにファイルに触りません（`check.cpp` と `test.cpp` が `files_beside()` を渡します）。
@@ -165,7 +165,7 @@
 
 | 内容 | 場所 |
 |---|---|
-| 記録、上限、古い側を捨てる決まり | `libs/launch/src/timeline.cpp` の `TimelineRecord` |
+| 記録、上限、古い側を捨てる決まり | `libs/scenario/src/timeline.cpp` の `TimelineRecord` |
 | 記録に入れる所 | `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`place()`（入力の線 `lines[]`。`shape` の中身はシナリオの読み手が読んだ `ScenarioMotion::described`）、`issue_step()`（見張り）、`fail()`（失敗の中身。書く内容は `scenario_failure.cpp` が作る）、`close_record()`（記録の終わり `recorded_to_ms`） |
 | ファイルの形 | `timeline_format.cpp` の `format_timeline_json()` |
 | 1 行に 1 点 | `libs/json/include/vehicle_sil/json/json_writer.hpp` の `JsonWriter::begin_array_on_one_line()` |
@@ -220,7 +220,7 @@
 | `format_test_json()` | `kTestFormat` |
 | `TestReport::remarks()` | `test` 全体の指摘 `test-nothing-run`、`test-runs-left`、`test-speed-set` |
 | `TestReport::result()` | 結果と終了コード |
-| `ScenarioCheck::not_for_variant`（`launch/scenario_check.hpp`） | `only` に合わない組を `skipped` にする |
+| `ScenarioCheck::not_for_variant`（`scenario/scenario_check.hpp`） | `only` に合わない組を `skipped` にする |
 | `CheckOptions::params_for_many` | `--param` の検査を緩める |
 | `CheckOptions::file_only` | 設定ファイルだけ読む |
 | `tools/launch/main.cpp` の `test()` と `spread_scenarios()` | 引数 |

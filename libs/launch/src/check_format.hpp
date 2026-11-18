@@ -6,7 +6,7 @@
 
 #include "vehicle_sil/json/json_writer.hpp"
 #include "vehicle_sil/config/check.hpp"
-#include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/scenario/scenario_run.hpp"
 #include "vehicle_sil/launch/traffic.hpp"
 
 #include <cstddef>

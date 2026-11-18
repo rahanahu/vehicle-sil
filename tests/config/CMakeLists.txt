@@ -12,18 +12,18 @@ add_test(NAME config.no_silkit_boundary
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckNoSilKit.cmake)
 # ... and no header of the processes (child_process.hpp, process.hpp: the library links
 # vehicle_sil::process for process/paths.hpp, so the link cannot show it) and no header of the
-# layers that depend on it.
+# layers that depend on it (the launcher's library and the scenario).
 add_test(NAME config.includes_no_runtime
          COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DDIR=libs/config
-                 -DFORBIDDEN_PREFIXES=vehicle_sil/launch/
+                 -DFORBIDDEN_PREFIXES=vehicle_sil/launch/,vehicle_sil/scenario/
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
 # The check itself must reject a directory that reaches them, and name the chain.
 add_test(NAME config.include_check_rejects_a_forbidden_include
          COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/include_fixtures -DDIR=libs/config
-                 -DFORBIDDEN_PREFIXES=vehicle_sil/launch/
+                 -DFORBIDDEN_PREFIXES=vehicle_sil/launch/,vehicle_sil/scenario/
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
 set_tests_properties(config.no_silkit_boundary config.includes_no_runtime
                      config.include_check_rejects_a_forbidden_include PROPERTIES LABELS "unit;config" TIMEOUT 60)
 set_tests_properties(config.include_check_rejects_a_forbidden_include PROPERTIES
-                     PASS_REGULAR_EXPRESSION "uses_launch\\.cpp: vehicle_sil/launch/anything\\.hpp.*uses_launch\\.cpp: vehicle_sil/process/process\\.hpp"
+                     PASS_REGULAR_EXPRESSION "uses_launch\\.cpp: vehicle_sil/launch/anything\\.hpp.*uses_launch\\.cpp: vehicle_sil/scenario/anything\\.hpp.*uses_launch\\.cpp: vehicle_sil/process/process\\.hpp"
                      FAIL_REGULAR_EXPRESSION "clean\\.hpp:")

@@ -58,8 +58,9 @@ set_tests_properties(launch.described_networks_check_rejects_a_direct_read PROPE
                      PASS_REGULAR_EXPRESSION "launch/src/rules\\.cpp: if \\(\\(result\\.ecu->description\\.\\*\\(&EcuDescription::networks\\)\\)\\.empty\\(\\)\\)[^:]*launch/src/rules\\.cpp: for \\(const auto& network : result\\.ecu->description\\.networks\\)"
                      FAIL_REGULAR_EXPRESSION "check_networks\\.cpp: |config\\.networks")
 
-# The files of the launcher that make up its pure layer (the scenario and the outputs; the
-# configuration and its check are in libs/config, guarded by config.includes_no_runtime) include no
+# The files of the launcher that make up its pure layer (the outputs; the configuration and its check
+# are in libs/config, the scenario in libs/scenario, guarded by config.includes_no_runtime and
+# scenario.includes_no_runtime) include no
 # SIL Kit header, no process header, no run, events, time-command or
 # stop-request header (the run's controls are a run header),
 # no probe.hpp (what looks at the computer),
@@ -67,23 +68,15 @@ set_tests_properties(launch.described_networks_check_rejects_a_direct_read PROPE
 # file to the list when it no longer includes them. The check itself must reject a fixture that
 # reaches them, and name the chain.
 set(_launch_pure_files
-    libs/launch/src/scenario_csv.cpp libs/launch/src/scenario_csv.hpp
-    libs/launch/src/timeline.cpp libs/launch/include/vehicle_sil/launch/timeline_format.hpp
+    libs/launch/include/vehicle_sil/launch/timeline_format.hpp
     libs/launch/include/vehicle_sil/launch/connections.hpp
-    libs/launch/src/scenario.cpp libs/launch/src/scenario_reader.hpp
-    libs/launch/src/scenario_values.cpp libs/launch/src/scenario_waves.cpp libs/launch/src/scenario_inputs.cpp
-    libs/launch/src/scenario_shapes.cpp libs/launch/src/scenario_shapes.hpp libs/launch/src/scenario_line.cpp
-    libs/launch/src/scenario_line.hpp libs/launch/src/scenario_run.cpp libs/launch/src/scenario_failure.cpp
-    libs/launch/src/scenario_failure.hpp
-    libs/launch/include/vehicle_sil/launch/scenario.hpp libs/launch/include/vehicle_sil/launch/scenario_run.hpp
-    libs/launch/include/vehicle_sil/launch/timeline.hpp
     libs/launch/include/vehicle_sil/launch/traffic.hpp libs/launch/include/vehicle_sil/launch/command.hpp
     libs/launch/src/check_format.hpp libs/launch/src/check_format.cpp
     libs/launch/src/timeline_format.cpp
     libs/launch/src/control_rules.cpp libs/launch/include/vehicle_sil/launch/control_rules.hpp
     libs/launch/src/request.cpp libs/launch/include/vehicle_sil/launch/request.hpp
-    libs/launch/src/request_read.cpp libs/launch/include/vehicle_sil/launch/scenario_check.hpp
-    libs/launch/include/vehicle_sil/launch/checked.hpp libs/launch/src/scenario_check.cpp
+    libs/launch/src/request_read.cpp
+    libs/launch/include/vehicle_sil/launch/checked.hpp
     libs/launch/src/reported_networks.cpp
     libs/launch/src/command_input.cpp libs/launch/include/vehicle_sil/launch/command_input.hpp)
 list(JOIN _launch_pure_files "," _launch_pure_files_arg)
@@ -91,7 +84,7 @@ add_test(NAME launch.pure_files_include_no_runtime
          COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DFILES=${_launch_pure_files_arg}
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
 # The files that read the configuration do not reach the scenario
-# (vehicle_sil/launch/scenario*.hpp): the scenario depends on the configuration, not the other way
+# (vehicle_sil/scenario/): the scenario depends on the configuration, not the other way
 # round. The configuration's check itself (vehicle_sil/config/check.hpp) is in libs/config, which
 # includes nothing of vehicle_sil/launch/; the scenario's result of a check is scenario_check.hpp.
 # check.cpp (check_file(), the use case) and the outputs (check_format.*, reported_networks.cpp),
@@ -102,7 +95,7 @@ set(_launch_config_files
 list(JOIN _launch_config_files "," _launch_config_files_arg)
 add_test(NAME launch.config_files_do_not_reach_the_scenario
          COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DFILES=${_launch_config_files_arg}
-                 -DFORBIDDEN_PREFIXES=vehicle_sil/launch/scenario
+                 -DFORBIDDEN_PREFIXES=vehicle_sil/scenario/
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
 add_test(NAME launch.pure_files_check_rejects_a_forbidden_include
          COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/include_fixtures/direct
@@ -112,10 +105,10 @@ set_tests_properties(launch.pure_files_include_no_runtime launch.pure_files_chec
                      launch.config_files_do_not_reach_the_scenario PROPERTIES LABELS "unit;launch" TIMEOUT 60)
 add_test(NAME launch.config_files_check_rejects_a_scenario_include
          COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/include_fixtures/scenario
-                 -DFILES=launch/src/config.cpp -DFORBIDDEN_PREFIXES=vehicle_sil/launch/scenario
+                 -DFILES=launch/src/config.cpp -DFORBIDDEN_PREFIXES=vehicle_sil/scenario/
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
 set_tests_properties(launch.config_files_check_rejects_a_scenario_include PROPERTIES LABELS "unit;launch" TIMEOUT 60
-                     PASS_REGULAR_EXPRESSION "config\\.cpp: vehicle_sil/launch/scenario_x\\.hpp.*config\\.cpp: scenario_y\\.hpp")
+                     PASS_REGULAR_EXPRESSION "config\\.cpp: vehicle_sil/scenario/scenario_x\\.hpp")
 set_tests_properties(launch.pure_files_check_rejects_a_forbidden_include PROPERTIES
                      PASS_REGULAR_EXPRESSION "pure\\.cpp: helper\\.hpp -> silkit/SilKit\\.hpp"
                      FAIL_REGULAR_EXPRESSION "clean\\.hpp:")

@@ -958,7 +958,7 @@ flowchart LR
 
 ## シナリオ（`vehicle_sil_launch run --scenario`）
 
-シナリオ（[scenario.md](../scenario.md)）は、ランチャーの中で、Hub と時間ゲートを直接使って進めます。gRPC は使いません。保証のリファレンスは、`libs/launch/include/vehicle_sil/launch/scenario_run.hpp` の `ScenarioEngine` のコメントです。
+シナリオ（[scenario.md](../scenario.md)）は、ランチャーの中で、Hub と時間ゲートを直接使って進めます。gRPC は使いません。保証のリファレンスは、`libs/scenario/include/vehicle_sil/scenario/scenario_run.hpp` の `ScenarioEngine` のコメントです。
 
 データの流れは次のとおりです。矢印は、渡すものです。
 

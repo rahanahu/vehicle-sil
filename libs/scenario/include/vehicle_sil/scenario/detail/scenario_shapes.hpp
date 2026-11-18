@@ -8,7 +8,7 @@
 // step names (a ramp's from, a wave's around).
 #pragma once
 
-#include "vehicle_sil/launch/scenario.hpp"
+#include "vehicle_sil/scenario/scenario.hpp"
 #include "vehicle_sil/signal/waveform.hpp"
 
 #include <cstdint>

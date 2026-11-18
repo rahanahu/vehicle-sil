@@ -8,7 +8,7 @@
 #include "vehicle_sil/process/child_process.hpp"
 #include "vehicle_sil/process/paths.hpp"
 
-#include "scenario_csv.hpp"
+#include "vehicle_sil/scenario/detail/scenario_csv.hpp"
 
 #include <algorithm>
 #include <cctype>

@@ -13,7 +13,7 @@
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/core/simulation_watch.hpp"
-#include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/scenario/scenario_run.hpp"
 
 #include <atomic>
 #include <chrono>

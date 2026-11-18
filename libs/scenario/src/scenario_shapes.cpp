@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include "scenario_shapes.hpp"
+#include "vehicle_sil/scenario/detail/scenario_shapes.hpp"
 
 #include <utility>
 

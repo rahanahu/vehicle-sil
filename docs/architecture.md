@@ -63,7 +63,8 @@ vehicle-sil/
 ├── libs/spy/         vehicle_sil::spy  Spy, with which a listen-only participant writes what it hears on J1939 to ECU variables (independent of SIL Kit)
 ├── libs/process/     vehicle_sil::process  Child processes (output to a log file, capture of stdout and stderr with a timeout, line-by-line delivery, stop requests, ending a whole process tree; POSIX and Win32; internal)
 ├── libs/config/      vehicle_sil::config  Simulation configuration file and its check against the --describe output of the ECU executables (pure: no process, no SIL Kit; internal)
-├── libs/launch/      vehicle_sil::launch  Running the whole simulation, the scenario, the output of check and run (internal)
+├── libs/scenario/    vehicle_sil::scenario  Scenario: its file, the engine that steps through it, the timeline record (pure: no process, no SIL Kit; internal)
+├── libs/launch/      vehicle_sil::launch  Running the whole simulation, the output of check and run (internal)
 ├── libs/control/     vehicle_sil::control  Core of the Control Agent and the Control Server (Hub), byte format of the messages between them; independent of the transport and of SIL Kit
 ├── libs/control_silkit/ vehicle_sil::control_silkit  Layer that carries messages between Agent and Hub over SIL Kit publish/subscribe (AgentTransport, HubTransport)
 ├── libs/control_grpc/ vehicle_sil::control_grpc  gRPC layer of the Control API (ControlServer for clients; only with VEHICLE_SIL_BUILD_CONTROL_SERVER)
@@ -219,7 +220,7 @@ Messages sent reactively from a receive handler are outside SIL Kit's delivery g
 
 ```mermaid
 flowchart LR
-    pure["Pure side<br>libs/config (config, check rules, connect rules, time plan),<br>scenario, timeline records, check format"]
+    pure["Pure side<br>libs/config (config, check rules, connect rules, time plan),<br>libs/scenario (scenario, timeline records),<br>check format"]
     assemble["check_file(), list_connections(), run_tests()"]
     probe["Computer side<br>launch/probe.hpp, src/probe.cpp"]
     run["Run side<br>run, events, time_commands, run_*"]
@@ -233,7 +234,8 @@ flowchart LR
 - What the launcher finds out from the computer (the file system, the environment, the output of the processes it runs) goes into `probe`. `check_file()`, `list_connections()` and `run_tests()` call `probe` and pass what it found to the pure side as values or as functions. The run side (running the simulation) depends on both.
 - The test `launch.pure_files_include_no_runtime` (`cmake/VehicleSilCheckIncludes.cmake`) guards this. Add a new file of the pure side to `_launch_pure_files` in `tests/launch/CMakeLists.txt`.
 - The configuration and its check are the library `vehicle_sil::config` (`libs/config`). It links neither `core` nor `control_silkit`, includes nothing of `vehicle_sil/launch/`, nor `process.hpp` or `child_process.hpp` of `process`. The link does not show all of that (a header of `core` that needs no SIL Kit compiles, and `process` is linked for `paths.hpp`), so two tests read the directory: `config.no_silkit_boundary` (`cmake/VehicleSilCheckNoSilKit.cmake`) and `config.includes_no_runtime` (`cmake/VehicleSilCheckIncludes.cmake` with `DIR` and `FORBIDDEN_PREFIXES`). A new file in `libs/config` needs no entry.
-- The check of the configuration (`config/check.hpp`, `CheckReport`) does not know the scenario: the scenario depends on the configuration, not the other way round. What `check --scenario` read is `ScenarioCheck` (`launch/scenario_check.hpp`), and `check_file()` returns it with the `CheckReport` as `Checked` (a `CheckReport` plus the scenario; copying it into a `CheckReport` drops the scenario, so take the result as a `Checked`) (`launch/checked.hpp`). The test `launch.config_files_do_not_reach_the_scenario` guards this; add a new file of the configuration side to `_launch_config_files` in `tests/launch/CMakeLists.txt`.
+- The scenario is the library `vehicle_sil::scenario` (`libs/scenario`). It links `config`, `control` and `sim_base`, and neither `core` nor `control_silkit`. It is guarded the same way (`scenario.no_silkit_boundary`, `scenario.includes_no_runtime`: no header under `vehicle_sil/launch/`, no `child_process.hpp` or `process.hpp`), and `config.includes_no_runtime` also keeps `libs/config` from including `vehicle_sil/scenario/`.
+- The check of the configuration (`config/check.hpp`, `CheckReport`) does not know the scenario: the scenario depends on the configuration, not the other way round. What `check --scenario` read is `ScenarioCheck` (`scenario/scenario_check.hpp`), and `check_file()` returns it with the `CheckReport` as `Checked` (a `CheckReport` plus the scenario; copying it into a `CheckReport` drops the scenario, so take the result as a `Checked`) (`launch/checked.hpp`). The test `launch.config_files_do_not_reach_the_scenario` guards this; add a new file of the configuration side to `_launch_config_files` in `tests/launch/CMakeLists.txt`.
 - One exception is left: `bridge_working_directory()` in `connect.cpp` makes a relative directory absolute.
 - Do not add code that looks at the computer to the pure side. Put it in `probe` and pass the result in. The files of each part are listed in [code-map-launcher.md](code-map-launcher.md).
 

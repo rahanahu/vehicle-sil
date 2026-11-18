@@ -9,7 +9,7 @@
 #include "vehicle_sil/launch/run_controls.hpp"
 #include "vehicle_sil/launch/run_events.hpp"
 #include "vehicle_sil/launch/run_plan.hpp"
-#include "vehicle_sil/launch/scenario.hpp"
+#include "vehicle_sil/scenario/scenario.hpp"
 
 #include <algorithm>
 #include <functional>
