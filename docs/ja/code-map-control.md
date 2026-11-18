@@ -192,7 +192,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 変える場所:
 
-- `tools/launch/control_server.cpp`
+- `tools/launch/control_arguments.cpp`（`--control` の引数の読み取りと検査。usage の誤り）と `tools/launch/control_server.cpp`（検査済みの `ServerOptions` から作るサーバー）
 - `launch::ControlEndpoint` と `RunOptions::control_endpoint`（`launch/run.hpp`）。`libs/launch/src/run.cpp` の `run_file()` が、`Runner::prepare()` と `Runner::run()` の間で Server を起動します
 - `TimeCommands` の `hold_before_start()`、`inspect()`、`wait_paused()`
 - `ServerOptions::external_hub`
