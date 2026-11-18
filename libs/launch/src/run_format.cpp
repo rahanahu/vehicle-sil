@@ -254,20 +254,6 @@ std::string sim_millis_text(SimTime t)
     return millis_text(to_ns(t));
 }
 
-const char* step_result_text(StepStatus status)
-{
-    switch (status)
-    {
-    case StepStatus::NotRun: return "not run";
-    case StepStatus::Running: return "running";
-    case StepStatus::Passed: return "ok";
-    case StepStatus::Failed: return "FAILED";
-    case StepStatus::Unfinished: return "unfinished";
-    case StepStatus::Skipped: return "skipped";
-    }
-    return "not run";
-}
-
 } // namespace
 
 std::string detail::traffic_text(const RunTraffic& traffic)
@@ -359,13 +345,6 @@ std::string detail::traffic_text(const RunTraffic& traffic)
         }
     }
     return "traffic: " + line + " (steps before " + std::to_string(traffic.before_ms) + " ms)\n\n" + detail::table_text(rows);
-}
-
-std::string detail::scenario_step_text(const ScenarioStepRun& step)
-{
-    return "line " + std::to_string(step.line) + ": " + step.text + ": " + step_result_text(step.status) +
-           (step.at ? " at " + sim_millis_text(*step.at) + " ms" : std::string{}) +
-           (step.status == StepStatus::Failed || step.status == StepStatus::Skipped ? " (" + step.message + ")" : std::string{});
 }
 
 std::string detail::scenario_text(const ScenarioRun& scenario)

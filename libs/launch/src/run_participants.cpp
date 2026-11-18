@@ -219,7 +219,7 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
             // Its lines wait (RunOutput::on_line() takes the output's lock) until its "started" event is out.
             const auto held = out_.hold();
             children_[i] = std::make_unique<process::Process>(executable, arguments, std::move(options));
-            out_.event([&](EventStream& e) {
+            out_.event([&](RunEvents& e) {
                 std::vector<std::string> command{process::shown_path(executable)};
                 command.insert(command.end(), arguments.begin(), arguments.end());
                 e.participant_started(p.name, children_[i]->id(), command, run.log);
@@ -228,7 +228,7 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
         catch (const std::exception& e)
         {
             run.start_error = one_line(e.what());
-            out_.event([&](EventStream& stream) { stream.participant_not_started(p.name, run.start_error); });
+            out_.event([&](RunEvents& stream) { stream.participant_not_started(p.name, run.start_error); });
             out_.say(p.name + " could not be started: " + run.start_error);
             if (p.required || bridge)
             {
@@ -255,7 +255,7 @@ void RunParticipants::show_manual(const ParticipantConfig& p, const std::filesys
         environment.emplace_back(kListenOnNetworkVariable, listen_variable_value(ctx_.config));
     }
     const auto held = out_.hold();
-    out_.event([&](EventStream& e) {
+    out_.event([&](RunEvents& e) {
         std::vector<std::string> command{process::shown_path(executable)};
         command.insert(command.end(), arguments.begin(), arguments.end());
         e.participant_manual(p.name, command, process::shown_path(workDir), line, environment);
@@ -301,7 +301,7 @@ int RunParticipants::look_at_children(bool before_start, bool bridges_only)
             run.exit = status;
             run.ending = before_start ? Ending::ExitedBeforeStart : Ending::Exited;
             out_.say(run.name + " " + exit_text(*status));
-            out_.event([&](EventStream& e) { e.participant_ended(run.name, *status); });
+            out_.event([&](RunEvents& e) { e.participant_ended(run.name, *status); });
             if ((run.required || stops_run(run)) && ended < 0)
             {
                 ended = static_cast<int>(i);
@@ -367,18 +367,18 @@ void RunParticipants::end_children(bool ran, int interrupts_at_end)
         {
         case detail::StopRequest::Sent:
             out_.say("asking " + run.name + " to stop (" + std::string(stop_request_name()) + ")");
-            out_.event([&run](EventStream& e) { e.participant(run.name, ParticipantState::StopRequested); });
+            out_.event([&run](RunEvents& e) { e.participant(run.name, ParticipantState::StopRequested); });
             asked.push_back(i);
             break;
         case detail::StopRequest::HadEnded:
             out_.say(run.name + " " + exit_text(*run.exit));
-            out_.event([&run](EventStream& e) { e.participant_ended(run.name, *run.exit); });
+            out_.event([&run](RunEvents& e) { e.participant_ended(run.name, *run.exit); });
             break;
         case detail::StopRequest::CannotSend:
             out_.say("cannot ask " + run.name + " to stop: ending it");
             children_[i]->kill_tree();
             run.ending = Ending::Killed;
-            out_.event([&run](EventStream& e) { e.participant(run.name, ParticipantState::Killed); });
+            out_.event([&run](RunEvents& e) { e.participant(run.name, ParticipantState::Killed); });
             break;
         }
     }
@@ -399,14 +399,14 @@ void RunParticipants::end_children(bool ran, int interrupts_at_end)
         {
             run.exit = status;
             run.ending = Ending::Stopped;
-            out_.event([&run](EventStream& e) { e.participant_ended(run.name, *run.exit); });
+            out_.event([&run](RunEvents& e) { e.participant_ended(run.name, *run.exit); });
         }
         else
         {
             out_.say("ending " + run.name + " (it did not stop)");
             children_[i]->kill_tree();
             run.ending = Ending::Killed;
-            out_.event([&run](EventStream& e) { e.participant(run.name, ParticipantState::Killed); });
+            out_.event([&run](RunEvents& e) { e.participant(run.name, ParticipantState::Killed); });
         }
     }
     for (std::size_t i = 0; i < children_.size(); ++i)

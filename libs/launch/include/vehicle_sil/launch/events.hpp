@@ -9,6 +9,7 @@
 #include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/command.hpp"
 #include "vehicle_sil/launch/run_controls.hpp"
+#include "vehicle_sil/launch/run_events.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
 #include "vehicle_sil/process/process.hpp"
 
@@ -106,36 +107,7 @@ private:
     bool skipping_ = false; ///< in a line that was too long, until its end
 };
 
-/// The event "time": the virtual time and how it keeps up. Whether the simulation stands still and
-/// the speed set are in the event "state" (RunState), not here.
-struct TimeEvent
-{
-    std::int64_t sim_ms = 0;
-    /// Virtual time / wall-clock time over about the last second while it ran; empty (null) if
-    /// that cannot be told (too short, or it stood still).
-    std::optional<double> actual_speed{};
-    /// The pacing numbers so far, as if the run ended now (RunTiming has their meaning): they
-    /// include a step that has not begun although its real time has come.
-    std::uint64_t late_steps = 0;
-    std::int64_t max_late_ms = 0;
-    std::int64_t slipped_ms = 0;
-    /// How late the step that has not begun yet is by now; 0 if none is overdue.
-    std::int64_t late_ms = 0;
-};
-
-/// A participant's state in the event "participant".
-enum class ParticipantState
-{
-    Disabled,      ///< left out (enabled: false, --disable): not started
-    NotStarted,    ///< its process could not be started ("message" says why)
-    Started,       ///< its process runs ("pid", "command", "log")
-    Manual,        ///< someone starts it (manual): the launcher does not ("command", "working_directory", "command_line")
-    Joined,        ///< it joined the simulation (the controller saw its lifecycle)
-    Failed,        ///< the launcher decided that it failed, and ends the run ("reason", "message")
-    Ended,         ///< its process ended ("exit_code", "signal")
-    StopRequested, ///< the launcher asked it to stop (SIGTERM, Ctrl+Break)
-    Killed,        ///< the launcher ended it with the processes it started
-};
+/// The name of a participant's state in the event "participant": "disabled", "not_started", ...
 [[nodiscard]] const char* participant_state_name(ParticipantState state);
 
 /// What one call of EventStream's `write` did.
@@ -224,7 +196,11 @@ struct EventStreamOptions
 /// pipe blocks, or writes 0 bytes if the pipe is in no-wait mode (the same answer), and a write to
 /// a console blocks while the console holds its output; a closed pipe fails the write on both
 /// (SIGPIPE is ignored).
-class EventStream
+///
+/// What the run itself tells is RunEvents (run_events.hpp), which this implements: the parts of a
+/// run call those members and do not know this class. The other members are for whoever runs the
+/// launcher's commands (hello, check, phase, command, state, result).
+class EventStream : public RunEvents
 {
 public:
     /// Writes the beginning of `bytes` to the output (as much as it takes); may block while the
@@ -234,7 +210,7 @@ public:
     using OnClosed = std::function<void(const std::string& reason)>;
 
     EventStream(Write write, OnClosed on_closed, EventStreamOptions options = {});
-    ~EventStream();
+    ~EventStream() override;
 
     EventStream(const EventStream&) = delete;
     EventStream& operator=(const EventStream&) = delete;
@@ -244,47 +220,47 @@ public:
     void phase(Phase phase);
     /// The check's result, as `check --json` writes it.
     void check(const Checked& report);
-    void registry(const std::string& uri);
+    void registry(const std::string& uri) override;
     /// "control_server": the run's control server listens at `address` (gRPC, the actual port),
     /// with TLS or not, with credentials (every call needs a token) or not.
-    void control_server(const std::string& address, bool tls, bool credentials);
+    void control_server(const std::string& address, bool tls, bool credentials) override;
     /// Disabled, Joined, StopRequested, Killed.
-    void participant(const std::string& name, ParticipantState state);
-    void participant_not_started(const std::string& name, const std::string& message);
+    void participant(const std::string& name, ParticipantState state) override;
+    void participant_not_started(const std::string& name, const std::string& message) override;
     /// Failed. `reason`: "left_simulation" (it left the simulation while its process runs),
     /// "process_ended" (its process ended as a failure while the simulation ran) or
     /// "ended_before_start" (its process ended before the simulation started). `message`: its
     /// finding's message if that is settled, or "" (no "message").
-    void participant_failed(const std::string& name, std::string_view reason, const std::string& message);
+    void participant_failed(const std::string& name, std::string_view reason, const std::string& message) override;
     /// `command`: the executable as started and its arguments; `log`: its log file, or "" (null).
     void participant_started(const std::string& name, long pid, const std::vector<std::string>& command,
-                             const std::string& log);
-    void participant_ended(const std::string& name, const process::ExitStatus& status);
+                             const std::string& log) override;
+    void participant_ended(const std::string& name, const process::ExitStatus& status) override;
     /// Manual: `command` the executable and its arguments, `working_directory` where to start it
     /// (both as shown in the outputs), `command_line` the same as one line for this system's shell,
     /// `environment` the variables to set for it (name, value; "environment" only if there are any).
     void participant_manual(const std::string& name, const std::vector<std::string>& command,
                             const std::string& working_directory, const std::string& command_line,
-                            const std::vector<std::pair<std::string, std::string>>& environment = {});
+                            const std::vector<std::pair<std::string, std::string>>& environment = {}) override;
     /// "control_link": where a started participant's control agent stands when the simulation
     /// has started: `state` is control_link_name(); "variables" with "connected" (how many its
     /// agent offers), "version" with "version_mismatch" (the version of the messages it speaks).
     void control_link(const std::string& name, std::string_view state, std::optional<std::size_t> variables,
-                      std::optional<int> version);
+                      std::optional<int> version) override;
     /// "scenario_step" (run --scenario): a step of the scenario began ("status": "running") or was
     /// decided ("passed", "failed"), with the members of the result's "scenario"."steps".
-    void scenario_step(const ScenarioStepRun& step);
+    void scenario_step(const ScenarioStepRun& step) override;
     /// One line of a participant's output (`source`: its name) or of the launcher
     /// ("vehicle_sil_launch"), as the text output shows it but without "[<source>] ". The only
     /// event that may be dropped (see above).
-    void log(const std::string& source, const std::string& line);
+    void log(const std::string& source, const std::string& line) override;
     /// "outside" (run --connect): what the bridge of `network` has counted so far (the result's
     /// outside[].to_outside and from_outside). Not dropped, unlike "log".
-    void outside(const std::string& network, std::uint64_t to_outside, std::uint64_t from_outside);
+    void outside(const std::string& network, std::uint64_t to_outside, std::uint64_t from_outside) override;
     /// One of the run's findings, with the fields of the results' "findings".
-    void finding(const std::string& file, const Finding& finding);
+    void finding(const std::string& file, const Finding& finding) override;
     /// The simulation's virtual time as the controller sees it, and how it goes.
-    void time(const TimeEvent& time);
+    void time(const TimeEvent& time) override;
     /// A command from standard input (`source` "stdin"), its end ("eof"), or a call of a control
     /// client ("control_server").
     void command(const Command& command, std::string_view source);
@@ -309,7 +285,7 @@ public:
     /// How many events but "log" wait to be written now (takes only the queue's mutex). The run
     /// makes no "time" event that says only that the time has moved while some wait: a reader that
     /// falls behind is not given up because of them (max_other_events).
-    [[nodiscard]] std::size_t waiting_events() const;
+    [[nodiscard]] std::size_t waiting_events() const override;
     [[nodiscard]] bool closed() const;
     /// Why it closed, or "".
     [[nodiscard]] std::string close_reason() const;

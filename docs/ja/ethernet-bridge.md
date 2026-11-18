@@ -24,7 +24,7 @@ Linux で、PC の中の TAP デバイスに接続する手順です。先に作
 
 | 手順 | すること | 確認 |
 |---|---|---|
-| 1 | 自分のユーザーを所有者にして TAP デバイスを作り、up にします。 | `--list-interfaces` に `vsil0  Ethernet, up` と表示されます。 |
+| 1 | 自分のユーザーを所有者にして TAP デバイスを作り、up にします。 | `--list-interfaces` に `vsil0  Ethernet, up, disconnected` と表示されます（TAP デバイスは、プログラムが開くまで carrier がありません）。 |
 | 2 | SIL Kit の registry を起動します。 | registry が `silkit://127.0.0.1:8500` で待ち受けます。 |
 | 3 | 別の端末でブリッジを起動します。 | `bridging SIL Kit network ...` の行が表示されます。 |
 | 4 | Ctrl+C で止めます。 | `stopping`、統計、`stopped` の順に表示され、終了コード 0 で終わります。 |
@@ -167,7 +167,7 @@ veth のペアをケーブルの代わりにします。ブリッジが一方の
 
 | 手順 | すること | 見えるもの |
 |---|---|---|
-| 1 | veth のペアを作り、両端を up にします。 | `vehicle_sil_ethernet_bridge --list-interfaces` に、`vsil0` と `vsil1` が `Ethernet, up` で出ます。 |
+| 1 | veth のペアを作り、両端を up にします。 | `vehicle_sil_ethernet_bridge --list-interfaces` に、`vsil0` と `vsil1` が `Ethernet, up, connected` で出ます。 |
 | 2 | ブリッジに `CAP_NET_RAW` を与えます（「[`packet`](#packet)」）。 | 何も出ません。 |
 | 3 | 別の端末で、もう一方の端を見ます。 | `tcpdump` が待ちます。 |
 | 4 | 例を速さ 1、`--connect ETH=vsil0` で実行します。 | `outside: ETH -> vsil0 (bridge.ETH)` の行、参加者の表に `stopped (SIGTERM), exit code 0` の `bridge.ETH`、`passed: 0 errors, 0 warnings, 0 notes` が出ます。 |
@@ -357,7 +357,7 @@ interface 'vsil0' is down: no frame passes until it is up. Bring it up with 'sud
 ```
 interfaces of this computer (--backend packet and --backend pcap take the Ethernet ones; --backend tap takes a TAP device):
   --interface lo      not Ethernet (link type 772), up
-  --interface enp3s0  Ethernet, up
+  --interface enp3s0  Ethernet, up, connected
   --interface vsil0   Ethernet, down
 ```
 
