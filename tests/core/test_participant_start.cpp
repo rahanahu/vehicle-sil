@@ -396,9 +396,9 @@ TEST_CASE(participant_without_virtual_time_passes_on_a_stop_when_it_runs_after_s
 TEST_CASE(participant_start_reports_a_failure_that_a_handler_reported_before_start_was_back_from_the_lifecycle)
 {
     // An autonomous participant's CommunicationReady handlers run on the SIL Kit thread as soon as
-    // StartLifecycle() has queued the start, which can be before start() notes that SIL Kit takes
-    // an error. The probe holds start() there until the handlers are through; the failure of the
-    // first one must not be lost.
+    // StartLifecycle() has queued the start, which can be before start() is back from it. The
+    // probe holds start() there until the handlers are through; the failure of the first one must
+    // not be lost.
     InProcessRegistry registry;
     Meeting meeting;
     const ProbeInPlace probe([&meeting](StartProbePoint point) {
@@ -434,6 +434,141 @@ TEST_CASE(participant_start_reports_a_failure_that_a_handler_reported_before_sta
     CHECK(state == std::optional(orch::ParticipantState::Error));
 }
 
+namespace {
+
+/// A coordinated participant with virtual time whose run is short: the simulation is stopped in
+/// its first step. It reports a failure in the way `way` names, and the probe holds its start()
+/// behind StartLifecycle() until others have seen it in Error or in Shutdown. Throws unless they
+/// saw the Error with the failure's reason.
+void expect_the_error_of_a_short_run_whose_start_is_held(const std::string& way)
+{
+    InProcessRegistry registry;
+    unit::StateLog seen(registry.uri, "Body");
+    bool heldUntilTheEnd = false;
+    // Only the body is started here, so the probe is its start().
+    const ProbeInPlace probe([&](StartProbePoint point) {
+        if (point == StartProbePoint::AfterStartLifecycle)
+        {
+            heldUntilTheEnd = unit::eventually(
+                [&] { return seen.reached(orch::ParticipantState::Error) || seen.reached(orch::ParticipantState::Shutdown); }, 20s);
+        }
+    });
+    ParticipantRuntimeOptions options{"Body", registry.uri};
+    options.lifecycle_mode = LifecycleMode::Coordinated;
+    options.virtual_time = VirtualTimeOptions{1ms, std::nullopt};
+    ParticipantRuntime body(options);
+    const auto fail = [&body] { body.report_failure("the controller did not start"); };
+    if (way == "in an added CommunicationReady handler")
+    {
+        body.add_communication_ready_handler(fail);
+    }
+    else if (way == "in the CommunicationReady handler that was set")
+    {
+        body.set_communication_ready_handler(fail);
+    }
+    else if (way == "in the asynchronous CommunicationReady handler")
+    {
+        body.set_communication_ready_handler_async([&body, fail] {
+            fail();
+            body.complete_communication_ready();
+        });
+    }
+    body.set_step_handler([&body, fail, inStep = way == "in the first step"](SimTime, SimDuration) {
+        if (inStep)
+        {
+            fail();
+        }
+        body.request_stop("test: the run is over");
+    });
+    ParticipantRuntime boss(ParticipantRuntimeOptions{"Boss", registry.uri});
+    auto* const controller = SilKit::Experimental::Participant::CreateSystemController(&boss.participant());
+    controller->SetWorkflowConfiguration(orch::WorkflowConfiguration{{"Body"}});
+
+    std::string startError;
+    try
+    {
+        body.start(unit::scaled_timeout(30s));
+    }
+    catch (const std::exception& e)
+    {
+        startError = e.what();
+    }
+    const bool sawError = unit::eventually([&] { return seen.reached(orch::ParticipantState::Error); }, 2s);
+    const std::string reason = seen.reason_of(orch::ParticipantState::Error);
+    body.stop("test");
+
+    if (!heldUntilTheEnd || !sawError || reason.find("the controller did not start") == std::string::npos)
+    {
+        throw vehicle_sil::unit::Failure(
+            "the failure reported " + way + " was lost: others " +
+            (sawError ? "saw the participant in Error for the reason \"" + reason + "\"" : "never saw the participant in Error") +
+            " (the states they saw: " + seen.text() + "; start() " +
+            (startError.empty() ? "returned" : "threw \"" + startError + "\"") +
+            (heldUntilTheEnd ? ")" : "; they saw neither Error nor Shutdown while start() was held)"));
+    }
+}
+
+} // namespace
+
+TEST_CASE(participant_start_does_not_lose_a_handler_failure_when_the_run_ends_before_start_is_back_from_the_lifecycle)
+{
+    // The same place as above, for a run that can end while start() stands there. A failure that
+    // is only kept for start() to report would come too late: the handler returns, the participant
+    // goes on to Running, the step stops the run, and SIL Kit drops an error reported after
+    // Shutdown. The failure must reach SIL Kit while the handler runs, whichever way the handler
+    // was given.
+    for (const std::string way : {"in an added CommunicationReady handler", "in the CommunicationReady handler that was set",
+                                  "in the asynchronous CommunicationReady handler"})
+    {
+        expect_the_error_of_a_short_run_whose_start_is_held(way);
+    }
+}
+
+TEST_CASE(participant_start_does_not_lose_a_step_failure_of_a_participant_without_handlers_when_the_run_ends_first)
+{
+    // As above, for a participant that was given no CommunicationReady handler: its first step
+    // reports the failure and returns. SIL Kit takes errors from the moment it would have called
+    // such a handler, so the failure is not kept until start() comes back.
+    expect_the_error_of_a_short_run_whose_start_is_held("in the first step");
+}
+
+TEST_CASE(participant_start_reports_a_failure_that_came_before_it_noted_that_the_lifecycle_takes_errors)
+{
+    // The other way into the same place: a failure reported before SIL Kit has called the
+    // CommunicationReady handler and before start() has noted that SIL Kit takes an error. It is
+    // kept, and start() reports it. The participant is coordinated and nobody says which
+    // participants are required, so SIL Kit does not get to the handler.
+    InProcessRegistry registry;
+    unit::StateLog seen(registry.uri, "Starter");
+    ParticipantRuntime* started = nullptr;
+    const ProbeInPlace probe([&started](StartProbePoint point) {
+        if (point == StartProbePoint::AfterStartLifecycle)
+        {
+            started->report_failure("reported before start() was back");
+        }
+    });
+    ParticipantRuntimeOptions options{"Starter", registry.uri};
+    options.lifecycle_mode = LifecycleMode::Coordinated;
+    ParticipantRuntime runtime(options);
+    started = &runtime;
+
+    try
+    {
+        runtime.start(unit::scaled_timeout(30s));
+    }
+    catch (const std::exception&) // NOLINT(bugprone-empty-catch)
+    {
+        // start() says that the participant failed; what counts is what others see.
+    }
+    const bool sawError = unit::eventually([&] { return seen.reached(orch::ParticipantState::Error); }, 10s);
+    const std::string reason = seen.reason_of(orch::ParticipantState::Error);
+    runtime.stop("test");
+
+    CHECK(sawError);
+    CHECK(reason.find("reported before start() was back") != std::string::npos);
+    CHECK(!seen.reached(orch::ParticipantState::CommunicationInitialized));
+}
+
 TEST_CASE(participant_start_takes_a_run_whose_first_step_failed_between_its_two_looks_for_a_start)
 {
     // Only an Error before the participant began to run is a start that failed. Here start() has
@@ -461,7 +596,7 @@ TEST_CASE(participant_start_takes_a_run_whose_first_step_failed_between_its_two_
         meeting.changed.notify_all();
         // The stop observer is called when the runtime has handled the status of its own end.
         sawError = unit::eventually(
-            [&] { return endSeen.load() > 0 && started->state() == orch::ParticipantState::Error; }, unit::scaled_timeout(20s));
+            [&] { return endSeen.load() > 0 && started->state() == orch::ParticipantState::Error; }, 20s);
     });
     ParticipantRuntimeOptions options{"Starter", registry.uri};
     options.virtual_time = VirtualTimeOptions{1ms, std::nullopt};
@@ -553,7 +688,7 @@ TEST_CASE(participant_start_fails_for_a_participant_that_is_not_required_and_it_
     // in Running, or not at all.
     const auto strangerEnd = stranger.state();
     const bool endSeen =
-        unit::eventually([&] { return seen.reached(orch::ParticipantState::Shutdown); }, unit::scaled_timeout(10s));
+        unit::eventually([&] { return seen.reached(orch::ParticipantState::Shutdown); }, 10s);
     // The stranger has left; the member still runs.
     const auto memberState = member.state();
     member.stop("test");

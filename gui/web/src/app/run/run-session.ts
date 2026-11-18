@@ -1,5 +1,5 @@
 import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
-import { RunOutcome, RunRequest, runOutcome } from '@vehicle-sil/gui-client';
+import { RunRequest } from '@vehicle-sil/gui-client';
 import { RunCommands } from '../core/session/run-commands';
 import { ServerConnection } from '../core/session/server-connection';
 
@@ -36,11 +36,8 @@ export class RunSession {
   readonly incompatible = this.server.incompatible;
   /** ランチャーが動いているか（結果が出た後も、終わるまでは動いている）。止められるかはこれで決める。 */
   readonly launcherRunning = computed(() => this.session()?.launcher.running ?? false);
-  /** 実行がいまどうなっているか。セッションがなければ null。 */
-  readonly outcome = computed<RunOutcome | null>(() => {
-    const session = this.session();
-    return session ? runOutcome(session) : null;
-  });
+  /** 実行がいまどうなっているか（`run`）と、終わった実行の結果（`result`）。正面の口の `status`。 */
+  readonly status = this.commands.status;
   /** 実行の操作（開始、停止、待たずに止める）を押せるか、押せない理由（正面の口が言う）。 */
   readonly controls = this.commands.controls;
   /** 開始を送って、応答を待っている。 */

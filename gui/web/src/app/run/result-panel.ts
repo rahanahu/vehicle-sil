@@ -1,11 +1,14 @@
 import { Component, LOCALE_ID, computed, inject, input } from '@angular/core';
-import { RunResult } from '@vehicle-sil/gui-client';
+import { FrontResult, RunResult } from '@vehicle-sil/gui-client';
 import { MeasurePipe } from '../core/format/measure-pipe';
 import { FindingsList } from './findings-list';
 import {
+  TONE_MARKS,
+  cutShort,
   interruptedByLabel,
   latenessText,
-  runOutcomeLabel,
+  resultLine,
+  resultTone,
   simulationLabel,
   speedLabel,
 } from './labels';
@@ -18,7 +21,7 @@ import {
     <!-- ランチャーの英語の値（result、simulation、interrupted_by）は、日本語の横に並べず title に置く -->
     <p class="outcome" [attr.data-tone]="tone()" [title]="result().result" data-testid="result">
       <span class="mark" aria-hidden="true">{{ mark() }}</span>
-      {{ outcome() }}
+      <span [attr.lang]="line().english ? 'en' : null">{{ line().text }}</span>
     </p>
     <dl class="facts">
       @if (result().simulation; as simulation) {
@@ -136,18 +139,16 @@ import {
 })
 export class ResultPanel {
   private readonly list = new Intl.ListFormat(inject(LOCALE_ID), { type: 'conjunction' });
+  /** ランチャーの結果（どう終わったか、時間の進み方、所見）。 */
   readonly result = input.required<RunResult>();
+  /** 正面の口の `status.result`: 結果の色と文は、ここから決める。 */
+  readonly outcome = input.required<FrontResult>();
 
+  private readonly cut = computed(() => cutShort(this.outcome(), this.result().result));
   /** 成功は ✓、止めた実行と中断は ■ で色を付けない（失敗ではない）、ほかは ✕。 */
-  protected readonly tone = computed(() =>
-    this.result().result === 'passed'
-      ? 'good'
-      : ['stopped', 'incomplete', 'interrupted'].includes(this.result().result)
-        ? 'neutral'
-        : 'bad',
-  );
-  protected readonly mark = computed(() => ({ good: '✓', neutral: '■', bad: '✕' })[this.tone()]);
-  protected readonly outcome = computed(() => runOutcomeLabel(this.result().result));
+  protected readonly tone = computed(() => resultTone(this.outcome(), this.cut()));
+  protected readonly mark = computed(() => TONE_MARKS[this.tone()]);
+  protected readonly line = computed(() => resultLine(this.outcome(), this.result().result));
   protected readonly speedText = computed(() => speedLabel(this.result().timing?.speed ?? null));
   /**
    * 実時間への遅れ（許容を超えて遅れた刻みがあったときだけ。ランチャーが所見 behind-real-time を出す条件と同じ）。
