@@ -33,15 +33,23 @@ flowchart LR
 
 | 引数 | いつ | 意味 |
 |---|---|---|
-| `--network <name>` | いつも | ブリッジがつなぐ SIL Kit のネットワークです。 |
+| `--network <name>` | `--connect` | ブリッジがつなぐ SIL Kit のネットワークです。`role: bridge` の participant には、ランチャーは足しません。`command` に書きます。 |
 | `--name <name>` | `--describe` と実行 | participant の名前です。`--connect` では `bridge.<network>`、`role: bridge` の participant ではファイルに書いた名前です。`--participant <name>` も同じです（どちらか一方を指定します）。 |
 | `--registry-uri <uri>` | 実行 | SIL Kit の registry です。`--describe` と一覧には要りません。 |
-| `--start-timeout-ms <ms>` | 実行 | participant が Running になるまで待つ時間です（1 から 10^12、既定 15000）。過ぎると、ブリッジは終了コード 3 で終わります。 |
+| `--start-timeout-ms <ms>` | 実行 | `start()` が participant の Running を待つ時間です（1 から 10^12、既定 15000）。過ぎると、ブリッジは終了コード 3 で、`FAIL setup: SIL Kit lifecycle of '<name>' did not reach Running within <ms> ms, state: <状態>` の行を出して終わります。「[実行中の participant の状態](#実行中の-participant-の状態)」の 15000 ms とは別で、そちらは固定です。 |
 | `--stats-every-ms <ms>` | `--connect` の実行（1000） | 動いている間も統計の行を出します（100 から 3600000）。「[統計の行](#統計の行)」。 |
 | `--describe` | `check` | ブリッジが何かを書いて終わります。「[`--describe`](#--describe)」。 |
-| `--list-interfaces --backend <backend> --json` | `connections`、Ethernet | デバイスの一覧です。 |
+| `--list-interfaces --backend <backend> --json` | `connections`、Ethernet | デバイスの一覧です。手で動かすときの `--backend` は省略できます。省略すると OS の既定（Linux は `packet`、Windows は `npcap`）になります。ランチャーは必ず付けます。 |
 | `--list-channels --json` | `connections`、CAN | デバイスの一覧です。 |
-| デバイスを決める引数 | `--connect` | どのデバイスを開くかです。ブリッジごとの引数（`--backend` と `--interface`、`--xl-target` と `--xl-channel`、`--interface`、それと `--bitrate`）で、各ブリッジのページと「[ランチャーがブリッジに渡す引数](simulation-config.md#--connect)」にあります。 |
+| デバイスを決める引数 | `--connect` | どのデバイスを開くかです。ブリッジごとに下の表のとおりです。各ブリッジのページと「[ランチャーがブリッジに渡す引数](simulation-config.md#--connect)」にもあります。 |
+
+`--connect` が、`--network <name>` に続けて各ブリッジに渡すデバイスの引数です。
+
+| 実行ファイル | デバイスの引数 |
+|---|---|
+| `vehicle_sil_ethernet_bridge` | `--backend <backend> --interface <name>`、続けて絞り込みを 1 つ。`--all-frames`、なければ `--ethertype <list>`、それもなければ `--src-mac <list>`（ネットワークのノードの MAC アドレス。なければ付けません） |
+| `vehicle_sil_vector_xl_bridge` | `--xl-target <target> --xl-channel <number>`。ネットワークにビットレートがあれば `--bitrate <bit/s>` |
+| `vehicle_sil_socketcan_bridge` | `--interface <name>`。ネットワークにビットレートがあれば `--bitrate <bit/s>` |
 
 引数のエラーは、終了コード 4 で、標準エラーに 2 行を出して終わります。1 行目は `error: <何が違うか、どう直すか>`、2 行目は `Run '<実行ファイル> --help' for the options.` です。`--help` は使い方の全部を出します。ランチャーは、`error:` か `FAIL` で始まる行を、所見 `connect-tool-failed` の理由として見せます。
 
@@ -78,6 +86,8 @@ flowchart LR
 | `networks` | 1 つで、`--network` のネットワークです。`kind` は `can` か `ethernet`、`use` は `can` なら `raw`、`ethernet` なら `ethernet` で、`nodes` は空、`mac` は `null` です。 |
 | `variables`、`features` | 空の配列です。 |
 | `control` | `null` です。 |
+
+ランチャーが必須にするのは、`vehicle_sil_ecu`（1 でなければなりません）、`name`、`step_ns`、`networks` と、各ネットワークの `name`、`kind`、`use`、`nodes` だけです。`vehicle_sil` は、`--connect` のブリッジでは要ります（下）。ほかのキーは省いてかまいません。自作のブリッジは、これだけを出せば足ります。
 
 `--connect` が起こすブリッジは、版を言わなければなりません。ランチャーは `vehicle_sil` を自分の版と比べ、別の vehicle-sil でビルドされたブリッジと、版を言わないブリッジを、エラー `connect-tool-failed`（`<tool> was built from vehicle-sil <X>; this launcher is <Y>`。版がなければ `unknown`）にします。違う版のランチャーとブリッジが、実行の前にたがいを断る仕組みです。`role: bridge` の participant は比べません。自作のものなので、別の版からビルドしていてかまいません。終了コードがエラーのブリッジは、`check` が `describe-failed` と報告します。Windows で、要る DLL がなくて起動できないブリッジも同じです。
 
@@ -146,10 +156,10 @@ flowchart LR
 終了コード 1 になるのは、次のときです。
 
 - SIL Kit の participant が、止まる途中か終わった状態になった（registry の停止や接続断）。
-- participant が、起動の途中のまま Running にならない。
+- participant が、監視を始めてから 15000 ms たっても起動の途中のままである（固定の制限で、`--start-timeout-ms` ではありません。下の表）。
 - デバイスが使えなくなった（外した、インターフェースがなくなった）。
 
-終了コード 3 は、転送を始める前の失敗です。デバイスやライブラリがない、デバイスが拒んだ、registry が答えない、一覧を作れない、などです。原因は各ブリッジのページにあります。その行は `FAIL setup:` で始まります。
+終了コード 3 は、転送を始める前の失敗です。デバイスやライブラリがない、デバイスが拒んだ、registry が答えない、participant が `--start-timeout-ms` 以内に Running にならない、一覧を作れない、などです。原因は各ブリッジのページにあります。その行は `FAIL setup:` で始まります。
 
 ブリッジは、止める要求を受けると順に終わります。実行が終わると、ランチャーは自分が起こしたブリッジに止める要求を送ります。Linux では SIGTERM、Windows では Ctrl+Break です。制限時間までに終わらないブリッジは、強制的に終わらせます（simulation-run.md の「[止め方](simulation-run.md#止め方)」）。
 
@@ -160,10 +170,10 @@ flowchart LR
 | 止まる途中か終わった状態（Stopping、Stopped、Error、ShuttingDown、Shutdown、Aborting） | 失敗にします（終了コード 1）。 | `FAIL: SIL Kit participant left Running (state <状態>)` |
 | 同じ状態に、Running になる前になった | 失敗にします（終了コード 1）。 | `FAIL: SIL Kit participant stopped before it reached Running (state <状態>)` |
 | 起動の途中の状態（ReadyToRun など）で、監視を始めてから 1 秒たった | 失敗にしません。 | `waiting for the SIL Kit participant to reach Running (state <状態>; at most 15000 ms)` を 1 回 |
-| 起動の途中の状態のまま、15 秒たった | 失敗にします（終了コード 1）。 | `FAIL: SIL Kit participant did not reach Running within 15000 ms (state <状態>); its SIL Kit log may say why` |
+| 起動の途中の状態のまま、監視を始めてから 15000 ms たった | 失敗にします（終了コード 1）。 | `FAIL: SIL Kit participant did not reach Running within 15000 ms (state <状態>); its SIL Kit log may say why` |
 | Paused | 失敗にしません。 | なし |
 
-ブリッジは、自分では一時停止しません。15 秒は `--start-timeout-ms` です。
+ブリッジは、自分では一時停止しません。15000 ms は `run_bridge()` の固定の値で、`--start-timeout-ms` には従いません。`--start-timeout-ms` は、この監視の前にある `start()` の待ち時間で、過ぎると終了コード 3 で終わります（上）。監視を始める時点で `start()` はもう Running を待ち終えているので、15000 ms に当たることはまれです。
 
 ### コンソールのウィンドウを閉じたとき（Windows）
 
@@ -180,11 +190,11 @@ Windows でコンソールのウィンドウを閉じたとき（ログオフ、
 - コンソールを閉じたときの 4 秒
 - 動いている間の統計の行（`--stats-every-ms`。`BridgeHooks::statistics_line()`）
 - 1 秒ごとのリンクの行と監視の行
-- 機器から何も来ないと言う時点（`NothingCameHint`）。最初に外部へ送信してから 10 秒で 1 回。機器からフレームが来ていれば（`ext_from_devices` が 0 でなければ）言わない。文はブリッジごとに違い、条件つきです。返事が要らないときにも出ます。
+- 機器から何も来ないと言う時点（`NothingCameHint`）。最初に外部へ送信してから 10 秒で 1 回。機器からフレームが来ていれば（`ext_from_devices` が 0 でなければ）言わない。文はブリッジごとに違い、機器からフレームが来ていないと言う `warning:` の行です。ほかの機器が返事をしないバスでも出るので、故障の証拠ではなく、ケーブル、機器、チャネルを確かめるきっかけとして読みます。
 
 ## ブリッジが出す行
 
-行はどれも UTF-8 の 1 行で、`[<tag>] <文>` の形です。タグは `bridge` か `eth-bridge` です。行を読むプログラムは、タグ（`[`、空白のない語、`] `。ある行だけ）と行末の `\r` を取ってから、文の先頭を見ます。
+行はどれも UTF-8 の 1 行で、`[<tag>] <文>` の形です。このリポジトリの 3 つのブリッジのタグは、`bridge`（Vector XL、SocketCAN）か `eth-bridge`（Ethernet）です。自作のブリッジは、この形のタグなら何でも、タグなしでもかまいません。ランチャーはその行を読まないからです。自分のスクリプトで全部のブリッジの行を同じに読みたければ、`bridge` にします。行を読むプログラムは、タグ（`[`、空白のない語、`] `。ある行だけ）と行末の `\r` を取ってから、文の先頭を見ます。
 
 | 文の先頭 | 意味 | ランチャーが読むか |
 |---|---|---|
@@ -258,6 +268,7 @@ stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_s
 | `bus` | `active`、`passive`、`bus-off`、`unknown` | CAN コントローラーのエラー状態です。`unknown` は、最初の答えが来るまで、または答えが来ないとき（vcan のインターフェース、`--no-bus-monitor`）です。CAN のブリッジ |
 
 - 最初の行は、デバイスを開いてから、SIL Kit のライフサイクルを始める前（participant が Running になりうる前）に出します。そのとき分からない値は `unknown` です。
+- 行はどれも、すべてのキーを持ちます。`link` か `bus`（表のとおり、両方のこともあります）、`device`、`marked`、`shared` です。なくなりうるのは `peers` だけで、ほかのブリッジがそのデバイスを使っていないときは書かず、Windows では常に書きません。`peers` のない行は、いないという意味です。
 - その後は 1 秒ごとに見て、値かデバイスの印のキーが変わったときだけ行を出します。同じ行を続けて 2 回は出しません。
 - ブリッジが終わるとき（`FAIL:`、停止）には、行は出ません。participant の状態がそれを言います。
 - ランチャーは、同じキーが繰り返されたら最初のものを読み、`<キー>=<値>` の形でない部分、知らないキー、知らない値を読み飛ばします。
@@ -324,7 +335,7 @@ stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_s
 
 | リンクの行のキー | 意味 |
 |---|---|
-| `device` | デバイスで、ハッシュの 16 桁の 16 進数です。バックエンドにかかわらず、デバイスが同じならどのブリッジでも同じです |
+| `device` | デバイスで、ハッシュの小文字 16 桁の 16 進数です（下の `<device>`）。バックエンドにかかわらず、デバイスが同じならどのブリッジでも同じです |
 | `marked` | `1` は、ブリッジが印を置いたことです。`0` は、置けなかったことで、理由を警告で言います。ほかのブリッジはこのブリッジを見つけられませんが、このブリッジはほかを見つけます |
 | `shared` | いま、そのデバイスに印を付けているほかのブリッジの数です |
 | `peers` | そのプロセス ID を `,` で区切ったものです（Linux だけ。ないときは書きません） |
@@ -347,9 +358,10 @@ Linux で `peers` にあるプロセス ID は、印を置いたブリッジの 
 
 | OS | 印 |
 |---|---|
-| Linux | 抽象名 `vehicle-sil/device/<kind>/<identity>/<pid>/<random>` に bind した Unix ソケット（close-on-exec）で、ブリッジが動いている間は開いたままにします。数えるときは、`/proc/net/unix` から、名前が `vehicle-sil/device/<kind>/<identity>/` で始まるものを読みます |
+| Linux | 抽象名 `vehicle-sil/device/<kind>/<identity>/<pid>/<random>` に bind した Unix ソケット（close-on-exec）で、ブリッジが動いている間は開いたままにします。数えるときは、`/proc/net/unix` から、名前が `vehicle-sil/device/<kind>/<identity>/` で始まるものを読みます（`/proc/net/unix` が抽象名の前に付ける `@` は除きます。下） |
 | Windows | 名前付き mutex `Global\vehicle-sil-device-<device>-<n>` で、所有せず、継承もしません。`<n>` は 0 から 15 の最初の空き番号で、ブリッジが動いている間は開いたままにします。セキュリティ記述子は、全員が `SYNCHRONIZE` で開けるようにします。このユーザーがグローバルな名前を作れない場所では、印は `Local\`（このセッション）に付きます。数えるときは、ほかの番号を両方で開き、すぐ閉じます |
 
+- `sockaddr_un` では、`sun_path` の最初の 1 バイトが NUL で、名前はその後に続きます。`bind` に渡す長さは、`sun_path` のオフセットに 1 と名前の長さを足したものです。`/proc/net/unix` は、この NUL を `@` で見せます。その `@` は名前の一部ではなく、この節の前置きは `@` の後から始まります。
 - `<kind>` は `ethernet` か `can` です。
 - `<pid>` はプロセス ID の 10 進数です。`<random>` は、小文字の 16 進数（`0-9`、`a-f`）のちょうど 16 桁で、名前がふさがっていれば別の値で試します。同じ前置きの下の名前でも、`<pid>/<random>` がこの形でなければ印ではなく、数えません。大文字の 16 進数や別の長さを使う自作のブリッジは、見つけてもらえません。
 - `<identity>` はデバイスの名前です。
@@ -361,8 +373,8 @@ Linux で `peers` にあるプロセス ID は、印を置いたブリッジの 
   | Vector のハードウェアのチャネル | `xl-<hwType>-<hwIndex>-<serial>-<hwChannel>`（XL ドライバが報告する値） |
   | Vector Virtual CAN | `xl-virtual` |
 
-  `<identity>` に、ASCII の英数字と `._:@+-` 以外の文字があるとき、または名前全体が抽象名の 107 バイトを超えるときは、代わりに `device` のハッシュを使います。
-- `<device>` は `device` のキーで、`<kind>/<identity>` のハッシュ（FNV-1a、64 ビット）です。
+  `<identity>` に、ASCII の英数字と `._:@+-` 以外の文字があるとき、または名前全体が 107 バイトを超えるときは、代わりに `device` のハッシュを使います。107 バイトは、先頭の NUL を除いた名前の長さです（`sun_path` は 108 バイト）。名前 `vehicle-sil/device/<kind>/<identity>/<pid>/<random>` の全体を数え、`<pid>` はプロセス ID にかかわらず 10 桁として数えます。名前の形がプロセス ID で変わらないようにするためです。`<identity>` をそのまま使うのは、`len("vehicle-sil/device/<kind>/") + len(<identity>) + 1 + 27 <= 107` のときだけです。
+- `<device>` は `device` のキーで、文字列 `<kind>/<identity>` のバイト列（UTF-8。identity は実際には ASCII）の 64 ビット FNV-1a ハッシュです。オフセット基底は標準の `0xcbf29ce484222325`、素数は `0x100000001b3` で、バイトごとに XOR してから掛けます（2^64 を法とします）。書き方は、64 ビットの値そのものを、先頭に 0 を補った小文字 16 桁の 16 進数（`%016llx`）にし、上の桁から並べます。
 - C++ のブリッジは `bridge_runtime::DeviceMark` と `DeviceShareWatch`（`bridges/common`）を使います。ほかの言語のブリッジは、上の表のとおりに印を置きます。
 - テスト用にビルドしたブリッジは、偽のデバイスの印をプロセスごとに付けます。同時に動くテストがたがいを見つけないようにするためです。2 つのブリッジに 1 つのデバイスを共有させたいテストは、両方に同じ `VEHICLE_SIL_FAKE_DEVICE_SCOPE` を渡します。
 
@@ -385,9 +397,11 @@ participants:
 | `check` | `--describe --name MyBridge` |
 | `run` | `--name MyBridge --registry-uri <URI> --start-timeout-ms <ms>` |
 
-- `command` に `--name`、`--participant`、`--registry-uri` は書きません。ランチャーが足します。URI はランチャーから来るので、`registry_uri` のポートは 0 でもかまいません。
+- `command` に `--network <name>` を書きます。ランチャーは足しません。`--name`、`--participant`、`--registry-uri` は書きません。ランチャーが足します（この `command` の `{registry_uri}` と `{name}` はエラーです）。URI は本当のものです。ファイルの `registry_uri` のポートが 0 でも、実行が選んだポートに置き換わっています。
+- `--start-timeout-ms` は `start_timeout_ms` + `stop_timeout_ms` + 10000 です（最大 10^12）。ランチャーより先にブリッジが諦めないようにするためです。`--stats-every-ms` は足しません。
 - `check` は `--describe` を実行します。引数のエラー（終了コード 4）は、ブリッジの文を添えて `describe-failed` と報告します。`check` は出力から、ブリッジがどのネットワークを運ぶかを知ります（simulation-config.md の「[テスト用の participant とブリッジ（`role`）](simulation-config.md#テスト用の-participant-とブリッジrole)」）。ブリッジには自分の MAC アドレスがないので、注意 `ethernet-mac-unknown` の原因にはなりません。
 - `required: false`: シミュレーションはブリッジを待たず、実行が終わるとランチャーがブリッジに止める要求を送ります（上）。ブリッジが加わる前に送ったフレームについては、bridges.md の「[起動の順序](bridges.md#起動の順序)」を見てください。
+- `role: bridge` の participant が実行中に自分で終わったとき（終了コード 1、3、そのほか何でも）、実行は止まりません（止まるのは `--connect` のブリッジだけです）。`required: false` なので、ランチャーは所見 `exit-code` を警告として報告し、シミュレーションはブリッジなしで続きます。そのために `run` の終了コードが 0 でなくなるのは、`--strict` のときだけです。
 - ランチャーがブリッジに求めるのは、上の引数を受け取ること、運ぶネットワークを `--describe` で言うこと、止める要求（SIGTERM、Ctrl+Break）を受けたら終了コード 0 で終わることだけです。上の行はスクリプトのため、デバイスの印はほかのブリッジのためです。
 
 このリポジトリのブリッジは、ファイルに書かなくても、`check` と `run` に `--connect <network>=<target>` を渡せばランチャーが起こします（simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。

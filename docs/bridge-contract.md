@@ -33,15 +33,23 @@ The launcher passes these. A bridge takes them whatever else it takes.
 
 | Argument | When | Meaning |
 |---|---|---|
-| `--network <name>` | Always | The SIL Kit network the bridge joins. |
+| `--network <name>` | `--connect` | The SIL Kit network the bridge joins. For a `role: bridge` participant the launcher does not add it: write it in `command`. |
 | `--name <name>` | `--describe` and run | The participant name. With `--connect` it is `bridge.<network>`; for a `role: bridge` participant it is the name in the file. `--participant <name>` is the same (give one of them). |
 | `--registry-uri <uri>` | Run | The SIL Kit registry. `--describe` and the lists do not need it. |
-| `--start-timeout-ms <ms>` | Run | How long to wait for the participant to reach Running (1 to 10^12, default 15000). Past it, the bridge ends with exit code 3. |
+| `--start-timeout-ms <ms>` | Run | How long `start()` waits for the participant to reach Running (1 to 10^12, default 15000). Past it, the bridge ends with exit code 3 and the line `FAIL setup: SIL Kit lifecycle of '<name>' did not reach Running within <ms> ms, state: <state>`. This is not the 15000 ms of "[Participant state while running](#participant-state-while-running)", which is fixed. |
 | `--stats-every-ms <ms>` | Run with `--connect` (1000) | Print the statistics line while running (100 to 3600000). See "[Statistics line](#statistics-line)". |
 | `--describe` | `check` | Write what the bridge is and exit. See "[`--describe`](#--describe)". |
-| `--list-interfaces --backend <backend> --json` | `connections`, Ethernet | The list of devices. |
+| `--list-interfaces --backend <backend> --json` | `connections`, Ethernet | The list of devices. `--backend` is optional by hand: without it the bridge takes the default of the OS (`packet` on Linux, `npcap` on Windows). The launcher always gives it. |
 | `--list-channels --json` | `connections`, CAN | The list of devices. |
-| The arguments of the device | `--connect` | Which device to open: the bridge's own arguments (`--backend` and `--interface`, `--xl-target` and `--xl-channel`, `--interface`, and `--bitrate`). See the page of the bridge, and "[The arguments that the launcher gives the bridge](simulation-config.md#--connect)". |
+| The arguments of the device | `--connect` | Which device to open, for each bridge as in the table below. See the page of the bridge, and "[The arguments that the launcher gives the bridge](simulation-config.md#--connect)". |
+
+What `--connect` gives each bridge for the device, after `--network <name>`:
+
+| Executable | Arguments for the device |
+|---|---|
+| `vehicle_sil_ethernet_bridge` | `--backend <backend> --interface <name>`, then one filter: `--all-frames`, or `--ethertype <list>`, or else `--src-mac <list>` (the MAC addresses of the network's nodes; left out when there are none) |
+| `vehicle_sil_vector_xl_bridge` | `--xl-target <target> --xl-channel <number>`, and `--bitrate <bit/s>` when the network has one |
+| `vehicle_sil_socketcan_bridge` | `--interface <name>`, and `--bitrate <bit/s>` when the network has one |
 
 An argument error ends the bridge with exit code 4 and 2 lines on stderr: `error: <what is wrong and how to fix it>`, then `Run '<executable> --help' for the options.` `--help` prints the full usage. The launcher shows the line that starts with `error:` or `FAIL` as the reason in its finding `connect-tool-failed`.
 
@@ -78,6 +86,8 @@ An argument error ends the bridge with exit code 4 and 2 lines on stderr: `error
 | `networks` | One network, the one of `--network`. `kind` is `can` or `ethernet`; `use` is `raw` for `can` and `ethernet` for `ethernet`; `nodes` is empty and `mac` is `null`. |
 | `variables`, `features` | Empty arrays. |
 | `control` | `null`. |
+
+The launcher requires only `vehicle_sil_ecu` (it must be 1), `name`, `step_ns` and `networks`, and in each network `name`, `kind`, `use` and `nodes`. `vehicle_sil` is needed for a bridge from `--connect` (below). The other keys may be left out; a bridge of your own can print just these.
 
 A bridge started by `--connect` must say its version: the launcher compares `vehicle_sil` with its own, and a bridge built from another vehicle-sil, or one that gives no version, is the error `connect-tool-failed` (`<tool> was built from vehicle-sil <X>; this launcher is <Y>`, with `unknown` for no version). This is how a launcher and a bridge of different releases stop each other before a run. A `role: bridge` participant is not compared: it is yours and may come from another release. `check` also reports `describe-failed` for a bridge that exits with an error, and (Windows) for one that cannot start because a DLL it needs is missing.
 
@@ -146,10 +156,10 @@ When the list cannot be made, the bridge still writes the JSON, with no targets 
 Exit code 1 is the case where
 
 - the SIL Kit participant went into a stopping or ended state (the registry stopped, or the connection was lost);
-- the participant stayed in a starting state and never reached Running;
+- the participant was still in a starting state 15000 ms after the monitoring began (a fixed limit, not `--start-timeout-ms`; see the table below);
 - the device became unusable (it was removed, or the interface is gone).
 
-Exit code 3 is a failure before forwarding: a device or library that is missing, the device refused, no answer from the registry, a list that could not be made. The page of each bridge names its causes. The line that says it starts with `FAIL setup:`.
+Exit code 3 is a failure before forwarding: a device or library that is missing, the device refused, no answer from the registry, the participant not at Running within `--start-timeout-ms`, a list that could not be made. The page of each bridge names its causes. The line that says it starts with `FAIL setup:`.
 
 A bridge ends in order when it is asked to stop, and the launcher asks the bridges it started when the run ends: on Linux with SIGTERM, on Windows with Ctrl+Break. A bridge that does not end within the time limit is killed (see "[Stopping a run](simulation-run.md#stopping-a-run)" in simulation-run.md).
 
@@ -160,10 +170,10 @@ A bridge ends in order when it is asked to stop, and the launcher asks the bridg
 | A stopping or ended state (Stopping, Stopped, Error, ShuttingDown, Shutdown, Aborting) | Failure (exit code 1). | `FAIL: SIL Kit participant left Running (state <state>)` |
 | The same states, reached before Running | Failure (exit code 1). | `FAIL: SIL Kit participant stopped before it reached Running (state <state>)` |
 | A starting state (ReadyToRun and others), 1 second after monitoring began | Not a failure. | `waiting for the SIL Kit participant to reach Running (state <state>; at most 15000 ms)`, once |
-| Still in a starting state after 15 seconds | Failure (exit code 1). | `FAIL: SIL Kit participant did not reach Running within 15000 ms (state <state>); its SIL Kit log may say why` |
+| Still in a starting state 15000 ms after monitoring began | Failure (exit code 1). | `FAIL: SIL Kit participant did not reach Running within 15000 ms (state <state>); its SIL Kit log may say why` |
 | Paused | Not a failure. | None |
 
-The bridges never pause on their own. The 15 seconds is `--start-timeout-ms`.
+The bridges never pause on their own. The 15000 ms is fixed in `run_bridge()` and does not follow `--start-timeout-ms`. That one is the wait of `start()`, which comes before this monitoring: when it runs out, the bridge ends with exit code 3 (above). The 15000 ms rarely matters, because `start()` has already waited for Running when the monitoring begins.
 
 ### Closing the console window (Windows)
 
@@ -180,11 +190,11 @@ The three executables share the following through `run_bridge()` (`vehicle_sil::
 - The 4-second wait when the console window is closed
 - The statistics line while running (`--stats-every-ms`; `BridgeHooks::statistics_line()`)
 - The link line and the health line, once a second
-- The hint that nothing came from a device (`NothingCameHint`): once, 10 seconds after the first frame the bridge sent out, unless a frame from a device has come (`ext_from_devices` is still 0). The text is that of each bridge, and is conditional: it appears also where no answer is expected.
+- The hint that nothing came from a device (`NothingCameHint`): once, 10 seconds after the first frame the bridge sent out, unless a frame from a device has come (`ext_from_devices` is still 0). The text is that of each bridge: a `warning:` line that says no frame has come from a device. A bus on which no other device answers also gets it, so take it as a reason to check the cable, the device and the channel, not as proof of a fault.
 
 ## Lines the bridge prints
 
-Every line is one line of text in UTF-8: `[<tag>] <text>`. The tag is `bridge` or `eth-bridge`. A program that reads the lines takes off the tag (`[`, a word without a space, `] `, if the line has it) and a `\r` at the end, and then looks at the start of the text.
+Every line is one line of text in UTF-8: `[<tag>] <text>`. The tag of the three bridges of this repository is `bridge` (Vector XL, SocketCAN) or `eth-bridge` (Ethernet). A bridge of your own may use any tag of this form, or none, because the launcher does not read its lines; `bridge` is the one to take if you want your script to read the lines of all bridges alike. A program that reads the lines takes off the tag (`[`, a word without a space, `] `, if the line has it) and a `\r` at the end, and then looks at the start of the text.
 
 | Text starts with | Meaning | The launcher reads it |
 |---|---|---|
@@ -258,6 +268,7 @@ A bridge of your own that prints a `stats` line for a script should use these na
 | `bus` | `active`, `passive`, `bus-off`, `unknown` | The error state of the CAN controller. `unknown` is until the first answer, or always where no answer comes (a vcan interface, `--no-bus-monitor`). The CAN bridges |
 
 - The first line is printed once the device is open, before the bridge starts the SIL Kit lifecycle (before the participant can be Running). A value that is not known then is `unknown`.
+- Every line carries all its keys: `link` or `bus` (or both, as the table says), `device`, `marked` and `shared`. Only `peers` can be missing: it is left out when no other bridge shares the device, and always on Windows. A line without `peers` means that there is none.
 - After that, the bridge looks once a second, and prints a line only when a value or a key of the device mark has changed. The same line is never printed twice in a row.
 - No line comes when the bridge ends (`FAIL:`, a stop): the state of the participant says it.
 - The launcher takes the first of a key that is repeated, and skips a part that is not `<key>=<value>`, a key it does not know and a value it does not know.
@@ -324,7 +335,7 @@ Two bridges that open the same device receive each other's frames: two networks,
 
 | Key of the link line | Meaning |
 |---|---|
-| `device` | The device, as 16 hexadecimal digits of a hash: the same in every bridge on the device, whatever its backend |
+| `device` | The device, as 16 lowercase hexadecimal digits of a hash (see `<device>` below): the same in every bridge on the device, whatever its backend |
 | `marked` | `1`: the bridge placed its mark. `0`: it could not, and said why in a warning; the other bridges cannot find it, but it still finds them |
 | `shared` | How many other bridges have marked the device now |
 | `peers` | Their process IDs, separated by `,` (Linux only; left out where there are none) |
@@ -347,9 +358,10 @@ On Linux a process ID in `peers` is the one in the PID namespace of the bridge t
 
 | OS | Mark |
 |---|---|
-| Linux | A Unix socket (close-on-exec) bound to the abstract name `vehicle-sil/device/<kind>/<identity>/<pid>/<random>`, kept open while the bridge runs. Counting reads `/proc/net/unix` for the names that begin with `vehicle-sil/device/<kind>/<identity>/` |
+| Linux | A Unix socket (close-on-exec) bound to the abstract name `vehicle-sil/device/<kind>/<identity>/<pid>/<random>`, kept open while the bridge runs. Counting reads `/proc/net/unix` for the names that begin with `vehicle-sil/device/<kind>/<identity>/` (the `@` that `/proc/net/unix` puts before an abstract name is left out, see below) |
 | Windows | A named mutex `Global\vehicle-sil-device-<device>-<n>`, not owned and not inherited, with the first free `<n>` from 0 to 15, kept open while the bridge runs; its security descriptor lets everyone open it with `SYNCHRONIZE`. Where this user may not create global names, the marks go to `Local\` (this session). Counting opens the other numbers in both and closes them at once |
 
+- In `sockaddr_un`, the first byte of `sun_path` is a NUL and the name follows it; the length given to `bind` is the offset of `sun_path`, plus 1, plus the length of the name. `/proc/net/unix` shows the NUL as `@`. That `@` is not part of the name: the prefixes in this section start after it.
 - `<kind>` is `ethernet` or `can`.
 - `<pid>` is the process ID in decimal digits. `<random>` is exactly 16 lowercase hexadecimal digits (`0-9`, `a-f`), and another one is tried where the name is taken. A name under the same prefix whose `<pid>/<random>` is not of this form is not a mark: counting leaves it out, so a bridge of your own that uses uppercase digits or another length is not found.
 - `<identity>` names the device:
@@ -361,8 +373,8 @@ On Linux a process ID in `peers` is the one in the PID namespace of the bridge t
   | Channel of Vector hardware | `xl-<hwType>-<hwIndex>-<serial>-<hwChannel>`, as the XL driver reports them |
   | Vector Virtual CAN | `xl-virtual` |
 
-  Where the identity has a character other than ASCII letters, digits and `._:@+-`, or the whole name would exceed the 107 bytes of an abstract name, `<identity>` is the `device` hash instead.
-- `<device>` is the `device` key: the hash (FNV-1a, 64 bits) of `<kind>/<identity>`.
+  Where the identity has a character other than ASCII letters, digits and `._:@+-`, or the whole name would exceed 107 bytes, `<identity>` is the `device` hash instead. The 107 bytes are the name without the NUL in front (`sun_path` has 108). They count the whole name `vehicle-sil/device/<kind>/<identity>/<pid>/<random>`, with `<pid>` taken as 10 digits whatever the process ID is, so that the form of the name does not depend on the process ID. The identity is used as it is only when `len("vehicle-sil/device/<kind>/") + len(<identity>) + 1 + 27 <= 107`.
+- `<device>` is the `device` key: the 64-bit FNV-1a hash of the bytes of the string `<kind>/<identity>` (UTF-8; an identity is ASCII in practice), with the usual offset basis `0xcbf29ce484222325` and prime `0x100000001b3` (for each byte: XOR it in, then multiply, modulo 2^64). It is written as the 64-bit value itself in 16 lowercase hexadecimal digits with leading zeros (`%016llx`), the most significant digit first.
 - The C++ bridges use `bridge_runtime::DeviceMark` and `DeviceShareWatch` (`bridges/common`). A bridge of another language places the mark by the table above.
 - The bridges built for the tests mark their fake devices per process, so that tests that run at the same time do not find each other; a test that wants two of them to share a device gives both the same `VEHICLE_SIL_FAKE_DEVICE_SCOPE`.
 
@@ -385,9 +397,11 @@ The network (`VehicleCAN`) must be in `networks`, with the `kind` that the bridg
 | `check` | `--describe --name MyBridge` |
 | `run` | `--name MyBridge --registry-uri <URI> --start-timeout-ms <ms>` |
 
-- Do not write `--name`, `--participant` or `--registry-uri` in `command`: the launcher adds them. Because the URI comes from the launcher, `registry_uri` may have port 0.
+- Write `--network <name>` in `command`; the launcher does not add it. Do not write `--name`, `--participant` or `--registry-uri` there: the launcher adds them (`{registry_uri}` and `{name}` in this `command` are an error). The URI is the real one: a port 0 in the file's `registry_uri` has already been replaced by the port the run chose.
+- `--start-timeout-ms` is `start_timeout_ms` + `stop_timeout_ms` + 10000 (at most 10^12), so that the bridge does not give up before the launcher does. `--stats-every-ms` is not added.
 - `check` runs `--describe`. An argument error (exit code 4) is reported as `describe-failed` with the bridge's message. `check` knows from the output which network the bridge carries (see "[Test participants and bridges (`role`)](simulation-config.md#test-participants-and-bridges-role)" in simulation-config.md). The bridge has no MAC address of its own, so it does not cause the note `ethernet-mac-unknown`.
 - `required: false`: the simulation does not wait for the bridge, and when the run ends, the launcher asks it to stop (above). For frames sent before the bridge joins, see "[Startup order](bridges.md#startup-order)" in bridges.md.
+- A `role: bridge` participant that ends by itself during the run, with exit code 1, 3 or any other, does not stop the run (only a bridge of `--connect` does). With `required: false` the launcher reports the finding `exit-code` as a warning and the simulation goes on without the bridge; the exit code of `run` becomes nonzero for it only with `--strict`.
 - All the launcher needs of a bridge is that it takes the arguments above, says in `--describe` the network it carries, and ends with exit code 0 when it is asked to stop (SIGTERM, Ctrl+Break). The lines above are for scripts, and the device mark is for the other bridges.
 
 To have the launcher start a bridge of this repository without an entry in the file, give `--connect <network>=<target>` to `check` and `run` (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md).
