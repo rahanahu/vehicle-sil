@@ -306,7 +306,7 @@ std::string actual_address(const std::string& listen, int port)
     return listen.substr(0, listen.rfind(':') + 1) + std::to_string(port);
 }
 
-class Server final : public LauncherControlServer
+class Server final : public launch::ControlEndpoint
 {
 public:
     Server(control_grpc::ServerOptions options, std::unique_ptr<LaunchTimeControl> time,
@@ -348,7 +348,7 @@ private:
 
 } // namespace
 
-std::unique_ptr<LauncherControlServer> make_control_server(const ControlArguments& arguments, ControlHooks hooks)
+std::unique_ptr<launch::ControlEndpoint> make_control_server(const ControlArguments& arguments, ControlHooks hooks)
 {
     control_grpc::ServerOptions options;
     options.listen = listen_address(arguments.address);
