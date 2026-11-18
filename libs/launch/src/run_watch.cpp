@@ -91,7 +91,7 @@ void RunWatch::note_timing(SimulationController& controller)
 RunWatch::Watched RunWatch::watch(SimulationController& controller)
 {
     WatchOptions watch;
-    watch.poll = ctx_.options.poll;
+    watch.poll = ctx_.plan.poll;
     // A scenario that is over stops the simulation in order, as an interrupt does (which
     // comes first if both are there).
     // A required participant that has failed comes before the scenario, whichever is seen
@@ -166,7 +166,7 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         // A device that a bridge outside this run uses too: told, and with --strict the run is
         // stopped once it has lasted (the first line of a --strict run has been looked at before the start).
         if (const auto shared = out_.outside_shared(std::chrono::steady_clock::now(), participants_.own_bridges(),
-                                                    ctx_.options.check.strict ? std::optional(kOutsideSharedAfter) : std::nullopt))
+                                                    ctx_.plan.strict ? std::optional(kOutsideSharedAfter) : std::nullopt))
         {
             outcome_.failed_participant = outcome_.participants[*shared].name;
             processFailed = true;
@@ -192,7 +192,7 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         }
         return false;
     };
-    if (ctx_.options.timeout)
+    if (ctx_.plan.timeout)
     {
         // From the start, or from the hold before the first step (it counts as standing still).
         const std::int64_t held = start_.hold_began_ns();
@@ -204,13 +204,13 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         watch.deadline = start_.manual_wait_began().value_or(
                              held >= 0 ? std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(held))
                                        : std::chrono::steady_clock::now()) +
-                         *ctx_.options.timeout;
+                         *ctx_.plan.timeout;
         outcome_.timed_out_while_holding = start_.hold_timed_out();
     }
     watch.before_abort = [this](const WatchResult& why) {
         if (why.end == WatchEnd::TimedOut)
         {
-            out_.say("the simulation did not end within --timeout-ms (" + std::to_string(ctx_.options.timeout->count()) +
+            out_.say("the simulation did not end within --timeout-ms (" + std::to_string(ctx_.plan.timeout->count()) +
                 " ms): aborting it");
         }
         else
