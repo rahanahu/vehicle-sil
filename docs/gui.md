@@ -683,7 +683,7 @@ When reading values keeps failing (the Control Server does not answer before its
 - When the run changes, the previous run's state and sent value disappear.
 - A write is sent to the run current at that moment (`session` of `api/write`). If the run changes before the write reaches the server, it is not written to the next run.
 
-**Keeping the load down**: widgets watch values only while they are visible on the screen (and a little beyond). Even with hundreds of variables laid out, only the visible widgets receive values.
+**Keeping the load down**: widgets watch values only while they are visible on the screen (and a little beyond). Even with hundreds of variables laid out, only the visible widgets receive values. The Variables screen also creates a widget only when it first comes within about one screen height of the visible area; until then, a frame with the variable's name stands in its place, so finding the name in the page still works.
 
 **Operation**: everything can be operated with the keyboard. For screen readers, a widget is a group named after the variable, and its controls are also named after the variable (a slider reads its value with the unit). Values that change quickly do not get `aria-live`. Widgets are laid out at their own width and work at any window width from 360 px up to full screen.
 
