@@ -218,3 +218,44 @@ test('the resume part button resumes a run that started paused', async ({ page }
   // the run goes on to its end by itself
   await expect(status).toHaveAttribute('data-run', 'ended', { timeout: RUN_TIMEOUT });
 });
+
+test('the time part steps a paused run, then resumes it and pauses it again', async ({ page }) => {
+  const server = await serve('forever.yaml');
+  cleanups.push(() => server.stop());
+  await page.goto(server.url.replace('#', '?paused#'));
+  await expect(page.locator('body')).toHaveAttribute('data-own', 'connected');
+  const status = page.getByTestId('status');
+  const button = (testid: string, name: string) =>
+    page.getByTestId(testid).getByRole('button', { name, exact: true });
+  await expect(status).toHaveAttribute('data-link', 'online');
+  await button('run', 'Start').click();
+  await expect(status).toHaveAttribute('data-run', 'paused', { timeout: RUN_TIMEOUT });
+  await expect(status.locator('.vsil-time')).toHaveText(/^0 ms/);
+
+  // A step moves the time on (the launcher rounds the amount up to its tick) and the run is paused again
+  await page.getByTestId('time').getByRole('spinbutton', { name: 'Step (ms)' }).fill('25');
+  await button('time', 'Step').click();
+  await expect(status.locator('.vsil-time')).toHaveText(/^30 ms/);
+  await expect(status).toHaveAttribute('data-run', 'paused');
+
+  // The resume button can be pressed again, and the run goes on
+  await expect(button('time', 'Resume')).toHaveAttribute('aria-disabled', 'false');
+  await button('time', 'Resume').click();
+  await expect(status).toHaveAttribute('data-run', 'running', { timeout: RUN_TIMEOUT });
+  await expect(button('time', 'Resume')).toHaveAttribute('aria-disabled', 'true');
+  await expect(button('time', 'Step')).toHaveAttribute('aria-disabled', 'true');
+  await expect(status.locator('.vsil-time')).not.toHaveText(/^30 ms/);
+
+  // The pause button stops it: the time stays where it is
+  await expect(button('time', 'Pause')).toHaveAttribute('aria-disabled', 'false');
+  await button('time', 'Pause').click();
+  await expect(status).toHaveAttribute('data-run', 'paused', { timeout: RUN_TIMEOUT });
+  await expect(button('time', 'Resume')).toHaveAttribute('aria-disabled', 'false');
+
+  // The rest of what the recording expects: a speed that the page offers, then the stop
+  await page.getByTestId('time').evaluate((element) => element.setAttribute('speeds', '1 2 max'));
+  await page.getByTestId('time').getByRole('combobox').selectOption({ label: '2×' });
+  await expect(status).toHaveAttribute('data-run', 'paused');
+  await button('run', 'Stop').click();
+  await expect(status).not.toHaveAttribute('data-run', 'paused', { timeout: RUN_TIMEOUT });
+});
