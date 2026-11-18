@@ -27,8 +27,9 @@
 // detached and may still wait when the process ends. With --control (a build with the control
 // server), gRPC's threads serve the clients: their time operations go through the same
 // TimeCommands (source "control_server"), a Stop is a stop request like {"command":"stop"}, and
-// their writes and reads go to the run's hub; main ends the server after the run, before the
-// result.
+// their writes and reads go to the run's hub; the run (launch::run_file()) makes the server from
+// the request and ends it after the simulation, before main writes the result; main lets go of
+// what is left of it after the result.
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/cli/console.hpp"
 #include "vehicle_sil/cli/utf8.hpp"
@@ -39,11 +40,6 @@
 #include "vehicle_sil/launch/stop_requests.hpp"
 #include "vehicle_sil/launch/test.hpp"
 #include "vehicle_sil/process/child_process.hpp"
-#ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
-#include "control_arguments.hpp"
-#include "vehicle_sil/control/hub.hpp"
-#include "vehicle_sil/launch/control_server.hpp"
-#endif
 
 #include <algorithm>
 #include <atomic>
@@ -388,7 +384,6 @@ void write_stderr_line_without_waiting(std::string line)
 /// launch::RunLent::stops). The source of a request: a
 /// signal (POSIX), a console event + 1 (Windows), or one of launch::stop_source.
 constinit launch::StopRequests g_stops;
-using launch::stop_source::kControlStop;
 using launch::stop_source::kEndOfInput;
 using launch::stop_source::kOutputClosed;
 using launch::stop_source::kStopCommand;
@@ -687,6 +682,12 @@ void write_stdin_notes(bool from_main)
 /// a stop as one Ctrl+C. Its end is a stop unless one was requested before.
 void start_reading_commands()
 {
+    // Once: a second reader would take lines of the same standard input.
+    static std::atomic<bool> started{false};
+    if (started.exchange(true))
+    {
+        return;
+    }
     std::thread([] {
         launch::EventStream* events = shared().events;
         launch::RunControls* controls = shared().controls;
@@ -1162,17 +1163,22 @@ int run(const cli::Args& args, launch::EventStream* events)
                               "version --json` lists control-server in its features when it has it (docs/control-api.md)");
     }
 #endif
-    host.control = control;
+    if (control)
+    {
+        // As given: the run reads and checks them (launch::run_file()), and a value that is wrong
+        // comes back as a usage error of the run.
+        launch::ControlHost& server = host.control.emplace();
+        server.listen = args.str("control", "");
+        server.credentials = args.str("control-credentials", "");
+        server.tls_cert = args.str("control-tls-cert", "");
+        server.tls_key = args.str("control-tls-key", "");
+        server.audit_log = args.str("control-audit-log", "");
+    }
     host.stdin_commands = args.flag("stdin-commands");
     request.intent.start_paused = args.flag("start-paused");
     require_valid(request, launch::RequestCommand::Run);
     launch::RunObservers watching;
     launch::RunLent lent;
-#ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
-    // The control server serves the run's hub, which the run makes and gives it when run_file()
-    // starts it (RunLent::control_endpoint); the server keeps the hub from then on.
-    std::unique_ptr<launch::ControlEndpoint> server;
-#endif
     watch_interrupts();
     if (events != nullptr)
     {
@@ -1192,12 +1198,26 @@ int run(const cli::Args& args, launch::EventStream* events)
         // The controls of this run, on the stop requests of the process. Never destroyed: the
         // reader of stdin may use them until the process ends.
         launch::RunControls::Observers observers;
+        // The reader of standard input starts when the run begins its check, the first thing a
+        // run tells: before any --describe, so that a command given at once is read while the
+        // check runs. A run that is refused before its check (--control with a value that is
+        // wrong) reads no command, and its only event is the result.
+        const bool reads_commands = host.stdin_commands;
+        observers.on_phase = [events, reads_commands](launch::Phase phase) {
+            if (phase == launch::Phase::Checking && reads_commands)
+            {
+                start_reading_commands();
+            }
+            if (events != nullptr)
+            {
+                events->phase(phase);
+            }
+        };
         if (events != nullptr)
         {
             observers.on_command = [events](const launch::Command& command, std::string_view source) {
                 events->command(command, source);
             };
-            observers.on_phase = [events](launch::Phase phase) { events->phase(phase); };
             observers.on_state = [events](const launch::RunState& state) { events->state(state); };
         }
         else
@@ -1219,40 +1239,16 @@ int run(const cli::Args& args, launch::EventStream* events)
         shared().controls->set_control_server(control);
         lent.controls = shared().controls;
     }
-#ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
-    if (control)
-    {
-        launch_cli::ControlArguments a;
-        a.address = args.str("control", "");
-        a.credentials = args.str("control-credentials", "");
-        a.tls_cert = args.str("control-tls-cert", "");
-        a.tls_key = args.str("control-tls-key", "");
-        a.audit_log = args.str("control-audit-log", "");
-        launch::ControlHooks hooks;
-        hooks.controls = shared().controls;
-        // Its event (and its refusal once the run is over) comes from the time commands.
-        hooks.stop = [] { g_stops.request(kControlStop); };
-        server = launch::make_control_server(launch_cli::read_control_options(a), std::move(hooks));
-        lent.control_endpoint = server.get();
-    }
-#endif
-    if (host.stdin_commands)
-    {
-        start_reading_commands();
-    }
     watching.interrupt_name = interrupt_name;
-    const launch::RunReport report = launch::run_file(request, watching, lent);
+    // With --control, the run's control server has ended when this returns: every call of a client
+    // has ended (a watch, a wait), none comes any more, and its audit log is complete. The report
+    // holds what is left of it, which goes after the result is written: when this function
+    // returns, or below, before the process is ended at once.
+    launch::RunReport report = launch::run_file(request, watching, lent);
     if (events == nullptr)
     {
         write_stdin_notes(true); // before the result
     }
-#ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
-    // Before the result: every call of a client ends (a watch, a wait) and none comes any more.
-    if (server)
-    {
-        server->end();
-    }
-#endif
     if (report.check.usage)
     {
         return usage_error(report.check.findings, args.flag("json"), Command::Run, file, events, report.check.variants);
@@ -1263,9 +1259,7 @@ int run(const cli::Args& args, launch::EventStream* events)
                                          report.exit_code());
     if (report.run && report.run->close.not_closed_ms)
     {
-#ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
-        server.reset(); // its audit log is complete; the hub stays, with the thread that was left closing
-#endif
+        report.ended_control_server.reset(); // the hub stays, with the thread that was left closing
         end_process_at_once(code);
     }
     return code;
