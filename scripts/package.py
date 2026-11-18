@@ -506,7 +506,7 @@ def tools_command(args: argparse.Namespace) -> int:
                         "other distributions: install it (Fedora: libstdc++-static; Debian and Ubuntu: it is in "
                         "libstdc++-<n>-dev), or pass --shared-runtime for an archive that needs the system's "
                         "libstdc++ (for a local try, not for a release)")
-    bundles = [client.with_name(name) for name in CLIENT_BUNDLES]
+    bundles = [client, client.with_name(CLIENT_BUNDLES[1])]  # the parts: next to the library, under their name
     if not (web / "index.html").is_file() or not client.is_file() or not all(b.is_file() for b in bundles):
         raise Usage(f"the built screen ({web}/index.html) or the client library and the parts ({client} and "
                     f"{CLIENT_BUNDLES[1]} next to it) are missing: build them "
@@ -591,8 +591,8 @@ def tools_command(args: argparse.Namespace) -> int:
         copy_tree(ROOT / "gui" / "server" / "src" / "vehicle_sil_gui", py / "vehicle_sil_gui")
         shutil.copytree(web, py / "vehicle_sil_gui" / "web")
         (py / "vehicle_sil_gui" / "client").mkdir()
-        for bundle in bundles:
-            shutil.copy2(bundle, py / "vehicle_sil_gui" / "client" / bundle.name)
+        for bundle, name in zip(bundles, CLIENT_BUNDLES):
+            shutil.copy2(bundle, py / "vehicle_sil_gui" / "client" / name)
         (py / "vehicle_sil_gui" / "timeline").mkdir()
         for name in TIMELINE_PAGE:
             shutil.copy2(ROOT / "gui" / "timeline" / name, py / "vehicle_sil_gui" / "timeline" / name)
@@ -1216,7 +1216,8 @@ def main() -> int:
     tools.add_argument("--web", default=str(ROOT / "gui" / "web" / "dist" / "browser"),
                        help="the built screen (default: gui/web/dist/browser)")
     tools.add_argument("--client", default=str(ROOT / "build" / "gui-client" / "vehicle-sil-gui-client.mjs"),
-                       help="the bundled client library (default: build/gui-client/vehicle-sil-gui-client.mjs)")
+                       help="the bundled client library (default: build/gui-client/vehicle-sil-gui-client.mjs); the parts are "
+                            "vehicle-sil-gui-elements.mjs in the same directory")
     tools.add_argument("--client-package",
                        help="the client library's npm package (default: build/gui-client/vehicle-sil-gui-client-"
                             "<version>.tgz)")

@@ -977,7 +977,7 @@ After opening a file, the server checks again that it is the same file it checke
 
 - Whether a request is a page load is decided by `Sec-Fetch-Mode: navigate`, or, for browsers that do not send it, by `text/html` in `Accept`.
 - Files without an extension are not served, even if they exist.
-- `api/`, `ws`, `panels/` and `vsil/` directly under the root are the server's own, so screen paths cannot use them.
+- `api/`, `ws`, `panels/`, `timeline/` and `vsil/` directly under the root are the server's own, so screen paths cannot use them.
 
 **Cache and Service Workers**: screen files get `Cache-Control: no-cache` (the browser revalidates every time, so after a rebuild, reloading the page shows the new files). Service Workers cannot be registered (requests with `Service-Worker: script` get 404). A registered Service Worker would keep showing an old screen even from a server started later on the same port, and that screen would receive the new token.
 
@@ -992,7 +992,7 @@ The server serves the client library and the parts to a screen of your own, with
 | `GET /vsil/vehicle-sil-gui-client.mjs` | The bundled client library (`text/javascript`). |
 | `GET /vsil/vehicle-sil-gui-elements.mjs` | The parts. It imports `./vehicle-sil-gui-client.mjs`, which is the URL above. |
 | Any other name under `vsil/` (other files of the directory, another letter case, `..` and encoded paths) | 404. Only these two names are served, and no path is built from the request. |
-| The files are not built (in the repository, `build/gui-client/`) | 404 that names the two files and says to run `npm run build:client` in `gui/web`; the server also says so once on stderr, at the first such request. The tools archive has the files inside the GUI. |
+| The files are not built (in the repository, `build/gui-client/`) | 404 that names the two files and the two places it looked, and says what to run (`npm ci && npm run build:client` in `gui/web` of the repository; unpack the tools archive again). The server looks again at each request, so a build made after it started is found; it also says so once on stderr, at the first such request. The tools archive has the files inside the GUI. |
 
 ### CSP restrictions
 
@@ -1049,6 +1049,7 @@ export default {
     strictPort: true,
     proxy: {
       '/api/': { target: gui },
+      '/vsil/': { target: gui }, // only for a screen that loads the library and the parts from the server
       '^/ws$': { target: gui, ws: true },
     },
   },

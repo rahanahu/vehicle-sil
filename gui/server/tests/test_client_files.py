@@ -95,6 +95,8 @@ def test_the_servers_files_win_over_a_vsil_directory_of_the_screen(tmp_path: Pat
     (web / "index.html").write_text("<!doctype html>")
     (web / "vsil" / CLIENT).write_text("the screen's own copy")
     (web / "vsil" / "own.mjs").write_text("the screen's own file")
+    (web / "timeline").mkdir()
+    (web / "timeline" / "page.js").write_text("the screen's own timeline file")
     _, ts = serving(directory, web, monkeypatch)
 
     async def main() -> None:
@@ -103,6 +105,12 @@ def test_the_servers_files_win_over_a_vsil_directory_of_the_screen(tmp_path: Pat
             assert status == 200 and body == (directory / CLIENT).read_bytes()
             status, _, _ = await fetch(ts, "/vsil/own.mjs")  # the directory is not the screen's to fill
             assert status == 404
+            # An encoded slash does not match the route of vsil/ (aiohttp matches the path as it was sent), and
+            # falls to the screen's files: the names of the server's own directories are reserved there.
+            for path in (f"/vsil%2F{CLIENT}", f"/vsil%2F{ELEMENTS}", "/vsil%2Fown.mjs", "/timeline%2Fpage.js",
+                         "/vsil%2f" + CLIENT):
+                status, body, _ = await fetch(ts, path)
+                assert status == 404 and b"the screen's own" not in body, path
 
     asyncio.run(main())
 
@@ -126,7 +134,12 @@ def test_a_missing_build_says_what_to_run(tmp_path: Path, monkeypatch) -> None:
             status, body, _ = await fetch(ts, f"/vsil/{CLIENT}")
             error = json.loads(body)["error"]
             assert status == 404 and error["code"] == "not-found"
-            assert "npm run build:client" in error["message"] and "gui/web" in error["message"], error
+            assert "npm ci && npm run build:client" in error["message"] and "gui/web" in error["message"], error
+            assert "tools archive" in error["message"]
+            # where it looked is for the server's log only: this answer needs no token, and the paths name this computer
+            for directory in client_files.candidates():
+                assert str(directory) not in error["message"], error
+                assert str(directory) in client_files.missing_message(where=True)
             assert CLIENT in error["message"] and ELEMENTS in error["message"]
 
     asyncio.run(main())
@@ -134,8 +147,8 @@ def test_a_missing_build_says_what_to_run(tmp_path: Path, monkeypatch) -> None:
 
 def test_a_missing_build_is_said_once_on_stderr_and_only_when_a_file_is_asked_for(tmp_path: Path, monkeypatch,
                                                                                   caplog) -> None:
-    _, missing = serving(None, monkeypatch=monkeypatch)
     _, present = serving(built(tmp_path / "gui-client"), monkeypatch=monkeypatch)
+    _, missing = serving(None, monkeypatch=monkeypatch)  # (last: the lookup that a request repeats finds nothing)
 
     async def main() -> None:
         async with missing:
@@ -146,7 +159,7 @@ def test_a_missing_build_is_said_once_on_stderr_and_only_when_a_file_is_asked_fo
                 status, _, _ = await fetch(missing, f"/vsil/{CLIENT}")
                 assert status == 404
             await fetch(missing, f"/vsil/{ELEMENTS}")
-            assert [r.getMessage() for r in caplog.records] == [client_files.missing_message()]
+            assert [r.getMessage() for r in caplog.records] == [client_files.missing_message(where=True)]
         caplog.clear()
         async with present:
             for name in (CLIENT, ELEMENTS, "other.mjs"):
@@ -164,7 +177,7 @@ def test_a_file_that_disappears_is_a_404_that_says_how_to_build_it(tmp_path: Pat
     async def main() -> None:
         async with ts:
             status, body, _ = await fetch(ts, f"/vsil/{ELEMENTS}")
-            assert status == 404 and "npm run build:client" in json.loads(body)["error"]["message"]
+            assert status == 404 and "npm ci && npm run build:client" in json.loads(body)["error"]["message"]
 
     asyncio.run(main())
 
@@ -183,9 +196,39 @@ def test_the_directory_is_found_only_with_both_files(tmp_path: Path, monkeypatch
     assert module.find_dir() == fake / "client"
 
 
-def test_the_repository_is_searched_in_its_build_directory() -> None:
-    # The build of gui/web (npm run build:client) is where the server finds the files from the repository.
-    here = Path(client_files.__file__).resolve().parent
-    assert here.parents[3] == REPOSITORY
-    found = client_files.find_dir()
-    assert found is None or found in (here / "client", REPOSITORY / "build" / "gui-client")
+def test_the_repository_is_searched_where_the_build_writes() -> None:
+    packaged, built = client_files.candidates()
+    assert built == REPOSITORY / "build" / "gui-client"
+    script = json.loads((REPOSITORY / "gui" / "web" / "package.json").read_text(encoding="utf-8"))["scripts"][
+        "build:client"]
+    for name in client_files.FILES:  # npm run build:client writes the files to build/gui-client
+        assert f"../../build/gui-client/{name}" in script, name
+
+
+def test_the_files_are_found_when_they_are_built_after_the_server_started(tmp_path: Path, monkeypatch) -> None:
+    server, ts = serving(None, monkeypatch=monkeypatch)
+
+    async def main() -> None:
+        async with ts:
+            assert (await fetch(ts, f"/vsil/{CLIENT}"))[0] == 404
+            directory = built(tmp_path / "gui-client")
+            monkeypatch.setattr(client_files, "find_dir", lambda: directory)
+            status, body, _ = await fetch(ts, f"/vsil/{CLIENT}")
+            assert status == 200 and body == (directory / CLIENT).read_bytes()
+
+    asyncio.run(main())
+
+
+def test_head_and_the_cache_header(tmp_path: Path, monkeypatch) -> None:
+    _, ts = serving(built(tmp_path / "gui-client"), monkeypatch=monkeypatch)
+
+    async def main() -> None:
+        async with ts:
+            async with aiohttp.ClientSession() as http:
+                for method in (http.get, http.head):
+                    async with method(ts.make_url(f"/vsil/{CLIENT}")) as r:
+                        assert r.status == 200, method
+                        # A new server must not be answered with an old library from the browser's cache.
+                        assert r.headers["Cache-Control"] in ("no-cache", "no-store"), r.headers
+
+    asyncio.run(main())

@@ -985,7 +985,7 @@ sections:
 
 - ページの読み込みかどうかは、`Sec-Fetch-Mode: navigate`、それを送らないブラウザでは `Accept` に `text/html` があるかで判定します。
 - 拡張子のないファイルは、あっても配信しません。
-- ルートの直下の `api/`、`ws`、`panels/`、`vsil/` はサーバー自身のものなので、画面のパスに使えません。
+- ルートの直下の `api/`、`ws`、`panels/`、`timeline/`、`vsil/` はサーバー自身のものなので、画面のパスに使えません。
 
 **キャッシュと Service Worker**: 画面のファイルには `Cache-Control: no-cache` を付けます（ブラウザは毎回確認するので、ビルドし直したらページを読み込み直せば新しいものが表示されます）。Service Worker は登録できません（`Service-Worker: script` の付いたリクエストは 404）。登録した Service Worker は、後で同じポートで起動したサーバーでも古い画面を表示し、その画面が新しいトークンを受け取ってしまうためです。
 
@@ -1000,7 +1000,7 @@ sections:
 | `GET /vsil/vehicle-sil-gui-client.mjs` | 1 つにまとめた client ライブラリ（`text/javascript`）。 |
 | `GET /vsil/vehicle-sil-gui-elements.mjs` | 部品。`./vehicle-sil-gui-client.mjs`（上の URL）を import します。 |
 | `vsil/` の下のほかの名前（ディレクトリの別のファイル、大文字小文字の違い、`..` や符号化したパス） | 404。配るのはこの 2 つの名前だけで、リクエストからパスを組み立てません。 |
-| ファイルがビルドされていない（リポジトリでは `build/gui-client/`） | 2 つのファイルの名前と、`gui/web` で `npm run build:client` を実行することを書いた 404。サーバーは、最初にそのリクエストを受けたときに、標準エラーにも同じことを 1 回だけ書きます。ビルド済みのツールの圧縮ファイルでは、GUI の中にあります。 |
+| ファイルがビルドされていない（リポジトリでは `build/gui-client/`） | 2 つのファイルの名前と、探した 2 つの場所と、すること（リポジトリでは `gui/web` で `npm ci && npm run build:client`、ビルド済みのツールの圧縮ファイルでは展開し直す）を書いた 404。サーバーはリクエストのたびに探し直すので、起動した後に作ったビルドも見つかります。最初にそのリクエストを受けたときに、標準エラーにも同じことを 1 回だけ書きます。ビルド済みのツールの圧縮ファイルでは、GUI の中にあります。 |
 
 ### CSP による制限
 
@@ -1057,6 +1057,7 @@ export default {
     strictPort: true,
     proxy: {
       '/api/': { target: gui },
+      '/vsil/': { target: gui }, // only for a screen that loads the library and the parts from the server
       '^/ws$': { target: gui, ws: true },
     },
   },

@@ -256,8 +256,8 @@ class GuiServer:
         app.router.add_get("/panels/{key}/{path:.*}", self.get_panel)
         app.router.add_get("/timeline", self.get_timeline_page)
         app.router.add_get("/timeline/{name:.*}", self.get_timeline_page)
-        app.router.add_get("/vsil", self.get_client_file)
-        app.router.add_get("/vsil/{name:.*}", self.get_client_file)
+        app.router.add_get("/" + client_files.PATH.rstrip("/"), self.get_client_file)
+        app.router.add_get(f"/{client_files.PATH}{{name:.*}}", self.get_client_file)
         app.router.add_get("/{path:.*}", self.get_static)
         return app
 
@@ -460,13 +460,15 @@ class GuiServer:
         if found is None:
             return error(404, "not-found", f"GET {request.path}: the GUI server serves only "
                                            + " and ".join(f"/{client_files.PATH}{n}" for n in client_files.FILES))
+        if self.client_dir is None:  # not built when the server started: looked for again (the build may be done now)
+            self.client_dir = await asyncio.to_thread(client_files.find_dir)
         if self.client_dir is None:
-            self._warn_client_files(client_files.missing_message())
+            self._warn_client_files(client_files.missing_message(where=True))
             return error(404, "not-found", client_files.missing_message())
         body = await asyncio.to_thread(read_page_file, self.client_dir, request.match_info["name"])
         if body is None:
             message = (f"GET {request.path}: {request.match_info['name']} cannot be read: build it again with "
-                       f"`{client_files.BUILD_COMMAND}` in gui/web")
+                       f"`{client_files.BUILD_COMMAND}` in gui/web (in the tools archive: unpack it again)")
             self._warn_client_files(message)
             return error(404, "not-found", message)
         return web.Response(body=body, headers={"Content-Type": found})
