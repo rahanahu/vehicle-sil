@@ -2,7 +2,7 @@
 
 [English](../../howto/gui-screen.md)
 
-画面のテンプレート（`gui_starter`）をコピーし、中の変数の名前を自分の ECU のものに変えて、ECU の変数を 1 つ表示する画面にし、GUI サーバー（`vehicle-sil-gui`）に配信させる手順です。画面は、あらかじめ用意した部品（`<vsil-slider>`、`<vsil-value>` など）でできているので、書くのは HTML だけで、スクリプトは書きません。ビルドも Node.js も使いません（手順 4 で値を API から確認するときだけ、Node.js を使います）。各手順の「確認」には、ブラウザがなくても `curl` でできる方法も書いてあります。
+画面のテンプレート（`gui_starter`）をコピーし、中の変数の名前を自分の ECU のものに変えて、ECU の変数を 1 つ表示する画面にし、GUI サーバー（`vehicle-sil-gui`）に配信させる手順です。画面は、あらかじめ用意した部品（`<vsil-slider>`、`<vsil-value>` など）でできているので、書くのは HTML だけで、スクリプトは書きません。ビルドは使いません。各手順の「確認」には、ブラウザで確かめる方法と、できるときはブラウザなしの方法（`curl`。手順 4 では Node.js も）が書いてあります。何が要るかは、次の前提に書いてあります。
 
 自分の画面は、サンプルの画面と置き換わります。サンプルの画面を残して自分の ECU の部品を足すなら、代わりにカスタムパネルを書きます。3 つの道を比べた表と、自分の画面を作る 3 つのステップ（部品だけ、自分のスクリプト、フレームワークのプロジェクト）は、[gui.md](../gui.md#自分の画面を作る) の「自分の画面を作る」にあります。
 
@@ -12,8 +12,9 @@
 |---|---|
 | テンプレートのプロジェクト | [最初の ECU を作る](first-ecu.md) の手順 1 まで済ませて、ECU をビルドし、ツールの `bin` を `PATH` に追加しておきます。 |
 | Python | 3.11 以上が必要で、[uv](https://docs.astral.sh/uv/) があれば、Python とパッケージは uv がインストールします。 |
-| ブラウザか `curl` | ブラウザは、GUI サーバーと同じ PC のものを使います。 |
-| Node.js | 22 以上。ブラウザを使わずに、手順 4 で値を確認するときだけ使います。 |
+| ブラウザ | 画面で確かめるときに使います。GUI サーバーと同じ PC のものを使います。 |
+| `curl` | ブラウザなしで確かめるときに使います。 |
+| Node.js | 22 以上。ブラウザなしで値を読むときだけ使います（手順 4 の最後）。 |
 
 コマンドは、テンプレートのプロジェクトのディレクトリ（`simulation.yaml` のある所）で実行します。ビルド済みのツールのディレクトリを次の変数に設定し、その `bin` を `PATH` に入れておきます（新しいシェルでは、もう一度実行します）。
 
@@ -58,6 +59,8 @@ vehicle-sil-gui --web my-screen simulation.live.yaml   # ブラウザを開く�
 | `style.css` | 部品の見た目です。 |
 | `README.md` | テンプレートの説明です（配信されません）。 |
 | `README.ja.md` | 同じ説明の日本語版です（配信されません）。 |
+
+`index.html` は、部品とライブラリを `my-screen/` からではなく GUI サーバーから読みます。`/vsil/vehicle-sil-gui-elements.mjs`（部品）、`/vsil/vehicle-sil-gui-client.mjs`（部品と `main.js` が import するライブラリ）、`/timeline/vehicle-sil-timeline.js` です。どれかが 404 になるときは、[gui.md](../gui.md#vsil-で配るファイル) の「`vsil/` で配るファイル」を見てください。
 
 ### 確認
 
@@ -114,7 +117,7 @@ for p in json.load(sys.stdin)['participants']:
 
 ### 確認
 
-participant の名前、変数の名前、型、入出力の向き、単位、説明が表示されます。説明は ECU の作者が書いたもので、空のこともあります。どの変数かを名前と説明で決められないときは、ECU の作者に確認します。
+一覧に出るのは、設定ファイルの ECU が宣言した変数です（このテンプレートでは 4 つ。自分の ECU を使うなら、その変数が出ます）。participant の名前、変数の名前、型、入出力の向き、単位、説明が表示されます。説明は ECU の作者が書いたもので、空のこともあります。どの変数かを名前と説明で決められないときは、ECU の作者に確認します。
 
 ```text
 Engine | engine.throttle | real | input | % | accelerator pedal position
@@ -162,6 +165,13 @@ Dashboard | dashboard.engine_lost | bool | output |  | no engine speed for more 
 | `<vsil-run-controls>` | 「Start」と「Stop」。「Start」は、サーバーの起動時に渡した設定ファイルを実行します。 |
 | `<vsil-value variable="...">` | 単位つきの値。生きている値でないときは、理由の文が出ます（まだ実行がない、一時停止、古い、実行が終わった）。 |
 
+このページで使っていない `<vsil-value>` の属性です。
+
+| 属性 | 意味 |
+|---|---|
+| `on`、`off` | bool の変数で、true と false に出す文字です（`on="LOST" off="ok"` なら `LOST` か `ok` と出ます）。指定しないと `on` と `off` と出ます。 |
+| `no-unit` | 単位を出しません（`1200 rpm` でなく `1200`）。 |
+
 部品の全部と属性は、[gui/client/README.md](../../../gui/client/README.ja.md#部品custom-element) の「部品（custom element）」にあります。テンプレートは、そのほとんど（スライダー、値を書き込むボタン、ランプ、時間とシナリオの操作）を使っています。
 
 このページにはスクリプトがないので、`main.js` はもう使いません。`main.js` と `style.css` は消してかまいません（テンプレートにあるのは、この手順より先のためです）。部品には自分の見た目がありません。`data-*` 属性が付いた部品の見た目の付け方は、テンプレートの `style.css` にあります。
@@ -176,11 +186,13 @@ Dashboard | dashboard.engine_lost | bool | output |  | no engine speed for more 
 
 ## 手順 4: 配信して確認する
 
+手順 1 のサーバーが動いたままなら、起動し直さず、ブラウザでページを読み込み直します（サーバーはリクエストのたびにファイルを読み直します）。サーバーを起動するには、次を実行します。
+
 ```sh
 vehicle-sil-gui --web my-screen simulation.live.yaml   # ブラウザを開く（開かないときは --no-browser で URL だけ表示）。Ctrl+C で止まる
 ```
 
-### 確認
+### 画面で確かめる
 
 ブラウザに「エンジンの回転数」の画面が開きます。
 
@@ -190,7 +202,9 @@ vehicle-sil-gui --web my-screen simulation.live.yaml   # ブラウザを開く�
 | 「Start」を押す | 一番上の行は `running` と仮想時間。`Engine.engine.speed: 1200 rpm` |
 | 「Stop」を押す | 一番上の行は `the run was stopped`。`Engine.engine.speed: 1200 rpm` と、「the last value of the run that has ended」 |
 
-ブラウザがないときは、配信されていることを `curl` で確認します。`URL` と `BASE` は、手順 1 と同じように、今回表示された URL で設定し直します。
+### ブラウザなしで確かめる（API と Node.js）
+
+まず `curl` で、ファイルが配信されていることを確かめます。`URL` と `BASE` は、手順 1 と同じように、今回表示された URL で設定します。
 
 ```sh
 URL='<サーバーが表示した URL>'
@@ -204,7 +218,7 @@ curl -s -o /dev/null -w '%{http_code} %{content_type}\n' "$BASE/vsil/vehicle-sil
 200 text/javascript; charset=utf-8
 ```
 
-値まで確認するには、API を呼びます。API にはトークンが必要で、`POST` には `Origin` も必要です。トークンをコマンドの引数に書くと、同じ PC のほかの利用者にプロセスの一覧から見えるので、ヘッダーをファイルに置いて渡します。
+次に、API を呼びます。API にはトークンが必要で、`POST` には `Origin` も必要です。トークンをコマンドの引数に書くと、同じ PC のほかの利用者にプロセスの一覧から見えるので、ヘッダーをファイルに置いて渡します。実行を開始します。
 
 ```sh
 (umask 077; printf 'Authorization: Bearer %s\n' "${URL##*#token=}" > token.header)
@@ -219,11 +233,15 @@ curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: applicatio
 {"session": {"id": 1, "file": "simulation.live.yaml", "disab
 ```
 
-値は WebSocket で届くので、`curl` では読めません。Node.js（22 以上）があれば、画面と同じライブラリで読めます。ライブラリのファイル（ツールでは `$TOOLS/client/`、リポジトリでは `build/gui-client/`）を、プロジェクトのディレクトリに `read-value.mjs` と並べてコピーし、次の内容を `read-value.mjs` として保存して、そこで実行します。
+値は WebSocket で届くので、`curl` では読めません。値は、Node.js（22 以上）と、画面と同じライブラリで読みます。
+
+ライブラリのファイルを、プロジェクトのディレクトリにコピーします（ツールでは `$TOOLS/client/`、リポジトリでは `build/gui-client/` にあります）。
 
 ```sh
 cp "$TOOLS/client/vehicle-sil-gui-client.mjs" .
 ```
+
+次の内容を、プロジェクトのディレクトリに `read-value.mjs` として保存します。
 
 ```js
 // 自分の画面と同じライブラリで、変数の値を 1 回読み取って表示する（Node 22 以上）。
@@ -238,6 +256,8 @@ console.log(`Engine.engine.speed = ${view.text} ${view.unit}`);
 client.close();
 ```
 
+同じ場所で実行します。
+
 ```sh
 VEHICLE_SIL_GUI_URL="$URL" node read-value.mjs
 ```
@@ -246,13 +266,15 @@ VEHICLE_SIL_GUI_URL="$URL" node read-value.mjs
 Engine.engine.speed = 1200 rpm
 ```
 
-終わったら、実行を停止し、トークンのファイルを消して、Ctrl+C で GUI サーバーを止めます。
+終わったら、実行を停止し、トークンのファイルを消します。`{"force": false}` は、実行を順に止めます。`{"force": true}` は、待たずに止めます。
 
 ```sh
 curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: application/json' \
   -d '{"force": false}' "$BASE/api/stop" > /dev/null
 rm token.header
 ```
+
+この要求への答えは、サーバーが要求を受け付けたことを言うだけです。答えの中の `session` は、まだ `"state": "running"` と `"stop": "requested"` を示します。実行が終わるのは数秒後です（`GET $BASE/api/session` の `session` の `phase` が `ended` になります）。そのあと、Ctrl+C で GUI サーバーを止めます。
 
 ### うまくいかないとき
 
@@ -264,6 +286,7 @@ rm token.header
 | ファイルが 404 になる | 配信されない拡張子か、`.` で始まる名前、シンボリックリンクです。 | [gui.md](../gui.md) の「`--web` で配信するファイル」の表を確認します。 |
 | `curl` の `POST` が `forbidden-origin` で拒否される | `Origin` ヘッダーがないか、サーバー自身の origin と違います。 | `-H "Origin: http://127.0.0.1:<port>"` を付けます。 |
 | ファイルを直したのに、画面が変わらない | ブラウザが前のページを表示しています。 | ページを読み込み直します（GUI サーバーの再起動は不要です）。 |
+| `cannot listen on 127.0.0.1:<port> (Address already in use)` | 動いているサーバーと同じ `--port` で、2 つ目の GUI サーバーを起動しました。 | 1 つ目を止めるか、別の `--port` を選びます（`--port` を付けなくてもかまいません）。`--port` なしなら、2 つ目は別のポートで、自分のトークンと自分のランチャーで起動します。表示された URL を使ってください。 |
 
 ## 次に読むもの
 

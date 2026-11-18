@@ -2,7 +2,7 @@
 
 [日本語](../ja/howto/gui-screen.md)
 
-In this guide you copy the screen template (`gui_starter`), change the variable names in it to your ECU's so that it shows one ECU variable, and have the GUI server (`vehicle-sil-gui`) serve it. The screen is made of ready-made parts (`<vsil-slider>`, `<vsil-value>` and others), so you write HTML and no script; it needs no build and no Node.js. Step 4 uses Node.js only to read the value through the API. Each "Verify" section also shows how to verify with `curl`, without a browser.
+In this guide you copy the screen template (`gui_starter`), change the variable names in it to your ECU's so that it shows one ECU variable, and have the GUI server (`vehicle-sil-gui`) serve it. The screen is made of ready-made parts (`<vsil-slider>`, `<vsil-value>` and others), so you write HTML and no script; it needs no build. Each "Verify" section shows how to verify in a browser and, where that is possible, without one (with `curl`; in step 4 also with Node.js). The prerequisites below say what each way needs.
 
 Your own screen replaces the sample screens. To keep them and add a part for your ECU, write a custom panel instead; "Build your own screen" in [gui.md](../gui.md#build-your-own-screen) compares the ways, and the 3 steps of building one (parts only, a script of your own, a project with a framework).
 
@@ -12,8 +12,9 @@ Your own screen replaces the sample screens. To keep them and add a part for you
 |---|---|
 | Template project | You have done step 1 of [Create your first ECU](first-ecu.md): the ECUs are built and the tools' `bin` directory is in `PATH`. |
 | Python | 3.11 or later. If you have [uv](https://docs.astral.sh/uv/), uv installs Python and the packages. |
-| A browser or `curl` | Use a browser on the same computer as the GUI server. |
-| Node.js | 22 or later. Needed only to verify the value in step 4 without a browser. |
+| A browser | To verify on the screen. Use one on the same computer as the GUI server. |
+| `curl` | To verify without a browser. |
+| Node.js | 22 or later. Only to read a value without a browser (the last part of step 4). |
 
 Run the commands in the template project directory (the one that contains `simulation.yaml`). Set this variable to the directory of the prebuilt tools, and put its `bin` directory in `PATH` (again in every new shell):
 
@@ -58,6 +59,8 @@ vehicle-sil-gui --web my-screen simulation.live.yaml   # opens a browser (add --
 | `style.css` | The styles for the parts |
 | `README.md` | A description of the template (not served) |
 | `README.ja.md` | The same description in Japanese (not served) |
+
+`index.html` loads the parts and the library from the GUI server, not from `my-screen/`: `/vsil/vehicle-sil-gui-elements.mjs` (the parts) and `/vsil/vehicle-sil-gui-client.mjs` (the library that the parts and `main.js` import), and `/timeline/vehicle-sil-timeline.js`. If one of them returns 404, see "Files served under `vsil/`" in [gui.md](../gui.md#files-served-under-vsil).
 
 ### Verify the template screen
 
@@ -114,7 +117,7 @@ for p in json.load(sys.stdin)['participants']:
 
 ### Verify the variable name
 
-Each line shows the participant name, the variable name, the type, the direction (input or output), the unit and the description. The ECU author writes the description, and it can be empty. If the name and the description do not tell you which variable you need, ask the ECU author.
+The list has the variables that the ECUs of the configuration file declare: the 4 of the template here, and those of your own ECUs if you use them. Each line shows the participant name, the variable name, the type, the direction (input or output), the unit and the description. The ECU author writes the description, and it can be empty. If the name and the description do not tell you which variable you need, ask the ECU author.
 
 ```text
 Engine | engine.throttle | real | input | % | accelerator pedal position
@@ -162,6 +165,13 @@ The parts of this page:
 | `<vsil-run-controls>` | **Start** and **Stop**. **Start** runs the configuration file that you gave the server at startup. |
 | `<vsil-value variable="...">` | The value with its unit. When it is not a live value, a sentence says why (no run yet, paused, stale, the run has ended). |
 
+Attributes of `<vsil-value>` that this page does not use:
+
+| Attribute | Meaning |
+|---|---|
+| `on`, `off` | For a bool variable: the words to show for true and false (`on="LOST" off="ok"` shows `LOST` or `ok`). Without them it shows `on` and `off`. |
+| `no-unit` | Leave the unit out (`1200` instead of `1200 rpm`). |
+
 All the parts and their attributes are in "Parts" in [gui/client/README.md](../../gui/client/README.md#parts-custom-elements); the template uses most of them (a slider, a button that writes a value, a lamp, time and scenario controls).
 
 The page has no script, so `main.js` is no longer used and you can delete `main.js` and `style.css` (the template has them for the steps after this one). The parts have no look of their own: the template's `style.css` shows how to style what they mark with `data-*` attributes.
@@ -176,11 +186,13 @@ Some details of this page:
 
 ## Step 4: Serve the screen and verify it
 
+If the server of step 1 is still running, do not start it again: reload the page in the browser (the server reads the files again at each request). To start a server, run:
+
 ```sh
 vehicle-sil-gui --web my-screen simulation.live.yaml   # opens a browser (add --no-browser to only print the URL); Ctrl+C stops it
 ```
 
-### Verify your screen
+### Verify on the screen
 
 The browser opens the "Engine speed" screen.
 
@@ -190,7 +202,9 @@ The browser opens the "Engine speed" screen.
 | Click **Start** | The top line says `running` and the virtual time. `Engine.engine.speed: 1200 rpm` |
 | Click **Stop** | The top line says `the run was stopped`. `Engine.engine.speed: 1200 rpm` and "the last value of the run that has ended" |
 
-Without a browser, verify with `curl` that the files are served. Set `URL` and `BASE` again from the URL printed this time, as in step 1.
+### Verify without a browser (the API and Node.js)
+
+First, verify with `curl` that the files are served. Set `URL` and `BASE` from the URL printed this time, as in step 1.
 
 ```sh
 URL='<the URL that the server printed>'
@@ -204,7 +218,7 @@ curl -s -o /dev/null -w '%{http_code} %{content_type}\n' "$BASE/vsil/vehicle-sil
 200 text/javascript; charset=utf-8
 ```
 
-To verify the value itself, call the API. The API needs the token, and a `POST` also needs the `Origin` header. A token in a command argument is visible to other users of the same computer in the process list, so put the header in a file and pass the file.
+Next, call the API. The API needs the token, and a `POST` also needs the `Origin` header. A token in a command argument is visible to other users of the same computer in the process list, so put the header in a file and pass the file. Start a run:
 
 ```sh
 (umask 077; printf 'Authorization: Bearer %s\n' "${URL##*#token=}" > token.header)
@@ -219,11 +233,15 @@ curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: applicatio
 {"session": {"id": 1, "file": "simulation.live.yaml", "disab
 ```
 
-Values arrive over WebSocket, so `curl` cannot read them. With Node.js (22 or later), you can read them with the same library as the screen. Copy the library file next to a new file `read-value.mjs` in the project directory (`$TOOLS/client/` of the tools; in the repository, `build/gui-client/`), save the following as `read-value.mjs`, and run it there.
+Values arrive over WebSocket, so `curl` cannot read them. Read the value with Node.js (22 or later) and the same library as the screen.
+
+Copy the library file to the project directory (it is in `$TOOLS/client/` of the tools, and in `build/gui-client/` of the repository):
 
 ```sh
 cp "$TOOLS/client/vehicle-sil-gui-client.mjs" .
 ```
+
+Save the following as `read-value.mjs` in the project directory:
 
 ```js
 // Read the value of a variable once with the same library as your screen, and print it (Node 22 or later).
@@ -238,6 +256,8 @@ console.log(`Engine.engine.speed = ${view.text} ${view.unit}`);
 client.close();
 ```
 
+Run it there:
+
 ```sh
 VEHICLE_SIL_GUI_URL="$URL" node read-value.mjs
 ```
@@ -246,13 +266,15 @@ VEHICLE_SIL_GUI_URL="$URL" node read-value.mjs
 Engine.engine.speed = 1200 rpm
 ```
 
-When you are done, stop the run, delete the token file, and stop the GUI server with Ctrl+C.
+When you are done, stop the run and delete the token file. `{"force": false}` stops the run in order; `{"force": true}` stops it without waiting.
 
 ```sh
 curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: application/json' \
   -d '{"force": false}' "$BASE/api/stop" > /dev/null
 rm token.header
 ```
+
+The answer to this request only says that the server took it: the `session` in it still shows `"state": "running"` and `"stop": "requested"`. The run ends a few seconds later (`phase` in the `session` of `GET $BASE/api/session` is `ended`). Then stop the GUI server with Ctrl+C.
 
 ### Troubleshoot your screen
 
@@ -264,6 +286,7 @@ rm token.header
 | A file returns 404 | Its extension is not served, its name starts with `.`, or it is a symbolic link. | See the table in "Files served with `--web`" in [gui.md](../gui.md#files-served-with---web). |
 | A `POST` with `curl` is rejected with `forbidden-origin` | The `Origin` header is missing or differs from the server's own origin. | Add `-H "Origin: http://127.0.0.1:<port>"`. |
 | The screen does not change after you edit a file | The browser shows the old page. | Reload the page. You do not need to restart the GUI server. |
+| `cannot listen on 127.0.0.1:<port> (Address already in use)` | You started a second GUI server with the `--port` of one that is running. | Stop the first one, or choose another `--port` (or leave it out). Without `--port`, the second server starts on another port with its own token and its own launcher: use the URL it prints. |
 
 ## What to read next
 
