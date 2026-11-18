@@ -4,6 +4,8 @@
 // connected, read and passed on, and the outputs for people and as JSON.
 #include "vehicle_sil/launch/connections.hpp"
 
+#include "exit_codes.hpp"
+
 #include "vehicle_sil/json/json_writer.hpp"
 #include "vehicle_sil/launch/connect.hpp"
 #include "vehicle_sil/launch/probe.hpp"
@@ -895,18 +897,7 @@ bool ConnectionsReport::request_unusable() const
                                   [](const RequestedTarget& t) { return !t.usable; });
 }
 
-int ConnectionsReport::exit_code() const
-{
-    if (usage)
-    {
-        return 4;
-    }
-    if (!readable)
-    {
-        return 3;
-    }
-    return incomplete() || request_unusable() ? 1 : 0;
-}
+int ConnectionsReport::exit_code() const { return exit_code_of(*this); }
 
 std::optional<std::string> quoted_for_shells(std::string_view word)
 {

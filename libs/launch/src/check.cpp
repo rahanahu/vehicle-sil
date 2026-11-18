@@ -5,6 +5,8 @@
 // with the file (check_rules.cpp), reads the scenario (scenario.cpp). What it needs from the
 // computer (the files, the executables and their output, the environment) it gets from probe.cpp,
 // in the order of the steps. The outputs are in check_format.cpp.
+#include "exit_codes.hpp"
+
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/launch/request.hpp"
@@ -160,6 +162,8 @@ bool CheckReport::passed() const
 {
     return !usage && config.has_value() && errors() == 0 && (!strict || warnings() == 0);
 }
+
+int CheckReport::exit_code() const { return exit_code_of(*this); }
 
 void sort_findings(std::vector<Finding>& findings)
 {
