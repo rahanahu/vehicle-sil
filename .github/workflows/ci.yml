@@ -37,15 +37,23 @@ jobs:
   # runners. A push to main runs everything.
   # - Only Markdown files changed: the checks that read the documents: the links (python), the examples that
   #   the launcher's tests compare with the documents (linux-gcc-debug), and the format of the GUI's READMEs (gui).
+  #   Two more checks run when a changed document is one that a test reads: the GUI server's tests and the
+  #   timeline element's test when the file is in gui/ or in `gui_reads` below, and linux-gcc-control (the
+  #   control server's tests of the guides; 15 to 19 minutes instead of 5) when it is in `control_reads`.
+  #   A new test that reads a document outside the directory of its job adds the document to the list.
   # - Otherwise: linux-gcc-debug, linux-clang-tsan, linux-gcc-control, Windows and python. The presets
   #   linux-gcc-release and linux-gcc-static and the oldest CMake are added when the pull request changes how
   #   things are built (the `build` list below). Every check that only one preset makes is in linux-gcc-debug
   #   (two computers, the Ethernet bridge on real interfaces, the GUI's recordings), so the left-out jobs add
   #   the other build types only, and main still runs them after the merge.
+  # - Only a push to main adds linux-clang-asan (the address sanitizer). A leg that builds linux-gcc-release (a
+  #   push to main, or a pull request that changes how things are built) also runs the test that builds the ECU
+  #   project template with FetchContent.
   # - The gui job is left out when every changed file is in the `not_gui` list below and none is in `gui_reads`.
   #   The job builds no C++; the GUI server against the launcher runs in linux-gcc-control. Rule for the lists:
   #   a path outside gui/ that a test of the gui job reads belongs in `gui_reads`, never only in `not_gui`.
-  # The job's name is a required check of main's branch protection: keep it.
+  # The job `all checks` at the end is the one required check of main's branch protection: keep its name. The
+  # names of the other jobs may change.
   changes:
     name: changes (documents only?)
     runs-on: ubuntu-24.04
@@ -54,6 +62,7 @@ jobs:
       docs_only: ${{ steps.look.outputs.docs_only }}
       full: ${{ steps.look.outputs.full }}
       gui: ${{ steps.look.outputs.gui }}
+      gui_docs: ${{ steps.look.outputs.gui_docs }}
       presets: ${{ steps.look.outputs.presets }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,6 +77,15 @@ jobs:
           docs_only=false
           full=true
           gui=true
+          gui_docs=false
+          control_docs=false
+          # Paths outside gui/ that the gui job's tests read: the launcher's reference timelines (gui/timeline's and
+          # gui/web's tests), the manual that the GUI server's tests and the timeline's test hold against the code
+          # (docs/gui.md and its Japanese page), and the starter's READMEs that the client library's package check
+          # tries the code of.
+          gui_reads='^tests/launch/timeline/|^docs/(ja/)?gui\.md$|^examples/gui_starter/README(\.ja)?\.md$'
+          # The guides that the control server's tests (tests/control_server) hold against the examples.
+          control_reads='^docs/howto/(first-ecu|operate-signals)\.md$'
           if [ "$EVENT" = pull_request ]; then
             files=$(git diff --name-only --no-renames HEAD^1 HEAD)
             echo "$files"
@@ -75,24 +93,31 @@ jobs:
               if ! grep -qv '\.md$' <<<"$files"; then docs_only=true; fi
               build='(^|/)CMakeLists\.txt$|\.cmake$|^cmake/|(^|/)CMakePresets\.json$|^patches/|^external/|^\.gitmodules$|^\.github/'
               if ! grep -qE "$build" <<<"$files"; then full=false; fi
-              # gui/timeline's and gui/web's tests draw the launcher's reference timeline files.
-              gui_reads='^tests/launch/timeline/'
               not_gui='^(libs|tests|bridges|tools|cmake|patches|external|template|docs)/|^examples/([^g]|g[^u]|gu[^i]|gui[^_])|(^|/)CMakeLists\.txt$|^CMakePresets\.json$'
               if [ "$docs_only" = false ] && ! grep -qE "$gui_reads" <<<"$files" && ! grep -qvE "$not_gui" <<<"$files"; then
                 gui=false
               fi
+              if [ "$docs_only" = true ] && grep -qE "^gui/|$gui_reads" <<<"$files"; then gui_docs=true; fi
+              if [ "$docs_only" = true ] && grep -qE "$control_reads" <<<"$files"; then control_docs=true; fi
             fi
           fi
           if [ "$docs_only" = true ]; then
             presets='["linux-gcc-debug"]'
+            if [ "$control_docs" = true ]; then presets='["linux-gcc-debug", "linux-gcc-control"]'; fi
           elif [ "$full" = true ]; then
             presets='["linux-gcc-debug", "linux-gcc-release", "linux-gcc-static", "linux-clang-tsan", "linux-gcc-control"]'
           else
             presets='["linux-gcc-debug", "linux-clang-tsan", "linux-gcc-control"]'
           fi
+          # The address sanitizer only after a merge: a pull request is not held for it (the job `all checks` still
+          # looks at it, so that a failure on main shows).
+          if [ "$EVENT" != pull_request ]; then
+            presets=${presets%]}', "linux-clang-asan"]'
+          fi
           echo "docs_only=$docs_only" | tee -a "$GITHUB_OUTPUT"
           echo "full=$full" | tee -a "$GITHUB_OUTPUT"
           echo "gui=$gui" | tee -a "$GITHUB_OUTPUT"
+          echo "gui_docs=$gui_docs" | tee -a "$GITHUB_OUTPUT"
           echo "presets=$presets" | tee -a "$GITHUB_OUTPUT"
 
   linux:
@@ -100,11 +125,15 @@ jobs:
     name: linux (${{ matrix.preset }})
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    # A race that only the thread sanitizer finds is reported but does not hold a merge: the leg's check shows
+    # its failure, the job's result (what `all checks` reads) stays a success. Every other leg is a gate.
+    continue-on-error: ${{ matrix.preset == 'linux-clang-tsan' }}
     strategy:
       fail-fast: false
       matrix:
         # linux-gcc-static: VEHICLE_SIL_STATIC=ON (SIL Kit and the C++ runtime linked into each executable)
         # linux-clang-tsan: the thread sanitizer; a race in a test or in the product shows only here
+        # linux-clang-asan: the address sanitizer (a push to main only)
         # linux-gcc-control: VEHICLE_SIL_BUILD_CONTROL_SERVER=ON (the pinned gRPC built with FetchContent, the
         # control server's tests, and the GUI server against this launcher and its control server)
         preset: ${{ fromJSON(needs.changes.outputs.presets) }}
@@ -137,9 +166,9 @@ jobs:
         run: >-
           sudo apt-get install -y -q --no-install-recommends
           libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
-      # The thread sanitizer cannot map its shadow memory when the kernel randomizes addresses with more bits.
-      - name: Address space layout for the thread sanitizer
-        if: matrix.preset == 'linux-clang-tsan'
+      # The sanitizers cannot map their shadow memory when the kernel randomizes addresses with more bits.
+      - name: Address space layout for the sanitizers
+        if: matrix.preset == 'linux-clang-tsan' || matrix.preset == 'linux-clang-asan'
         run: sudo sysctl -w vm.mmap_rnd_bits=28 && clang++ --version | head -n 1
       # multi_host.two_hosts makes two computers as network namespaces in a user namespace, which Ubuntu's AppArmor
       # does not let a user make by default; with VEHICLE_SIL_REQUIRE_MULTI_HOST=1 the test fails rather than skips.
@@ -176,6 +205,16 @@ jobs:
           # namespace, the test fails rather than skips.
           VEHICLE_SIL_REQUIRE_SOCKETCAN: ${{ matrix.preset == 'linux-gcc-debug' && '1' || '' }}
         run: python3 scripts/verify.py ${{ matrix.preset }} --tag ci
+      # The ECU project template built the way a user builds it: FetchContent takes vehicle-sil from this checkout
+      # (no network), the simulation is checked and run with this build's launcher, and its output is held against
+      # the manual. Only the leg that builds the release type, so that it runs where a build change can break
+      # it. fetchcontent.consumer (a clone from a git URL) is not run. The configure keeps the cache of the step
+      # before and adds the option; the build that follows has nothing new to build in this tree.
+      - name: The template built with FetchContent
+        if: matrix.preset == 'linux-gcc-release'
+        run: |
+          cmake --preset linux-gcc-release -DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON -DVEHICLE_SIL_TEST_FETCHCONTENT=ON
+          python3 scripts/verify.py linux-gcc-release --no-configure --tests '^fetchcontent\.template$' --tag ci-fetchcontent
       # The GUI's tests play recordings of the launcher (gui/server/tests/recordings): are they still what this
       # launcher and the ecu_main example ECUs write? (Standard library only. Cases that need the control server
       # are skipped and said so: the preset is built without it; linux-gcc-control compares them.)
@@ -393,6 +432,13 @@ jobs:
       - name: Server, screen and examples
         if: needs.changes.outputs.docs_only != 'true'
         run: python3 scripts/verify-gui.py --skip-install --tag ci
+      # Only documents changed, and one of them is read by a test of this job (the `gui_reads` list of the job
+      # `changes`): the GUI server's tests and the timeline element's test, which need no browser and no C++ build.
+      - name: Tests that read the changed documents (the server, the timeline element)
+        if: needs.changes.outputs.docs_only == 'true' && needs.changes.outputs.gui_docs == 'true'
+        run: |
+          python3 scripts/verify-gui.py --skip-web --no-wait --tag ci
+          npm --prefix gui/web run test:timeline
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -411,8 +457,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The checkout of a pull request is its merge into the base: the first parent is the base.
+          fetch-depth: 2
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      # The title of the pull request becomes the commit's title when it is squash-merged. Its commits are not
+      # checked one by one: a fix of an earlier one would need a force push. A new push checks a changed title.
+      - name: Title of the pull request, and files that must not be committed
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          printf '%s\n' "$PR_TITLE" > "$RUNNER_TEMP/pr-title.txt"
+          python3 scripts/check-commits.py --message "$RUNNER_TEMP/pr-title.txt"
+          python3 scripts/check-commits.py --changed HEAD^1..HEAD
       - name: Links in the documents
         run: python3 scripts/check-docs.py --require-english
       - name: Python checks
@@ -423,3 +481,30 @@ jobs:
           name: logs-python
           path: build/logs
           retention-days: 14
+
+  # The one check that main's branch protection requires: it passes when every job above passed or was left
+  # out (skipped), and fails when one failed or was cancelled. A new job goes into `needs`. Keep the name.
+  # The thread sanitizer's leg of `linux` does not count (continue-on-error there); the address sanitizer's does,
+  # and it runs on main only.
+  all-checks:
+    name: all checks
+    needs: [changes, linux, linux-oldest-cmake, windows, gui, python]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed or was left out
+        env:
+          RESULTS: |
+            changes ${{ needs.changes.result }}
+            linux ${{ needs.linux.result }}
+            linux-oldest-cmake ${{ needs.linux-oldest-cmake.result }}
+            windows ${{ needs.windows.result }}
+            gui ${{ needs.gui.result }}
+            python ${{ needs.python.result }}
+        run: |
+          echo "$RESULTS"
+          if grep -qE ' (failure|cancelled)$' <<<"$RESULTS"; then
+            echo "::error::A job failed or was cancelled (listed above): open it, fix it, or re-run it"
+            exit 1
+          fi
