@@ -19,6 +19,7 @@
 #include "vehicle_sil/eth_link/external_link.hpp"
 
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -35,6 +36,8 @@ struct InterfaceInfo
     unsigned link_type = 0;
     /// Switched on by the administrator ("ip link set <name> up").
     bool up = false;
+    /// The link has a carrier (a cable and a peer that answer); nullopt: the OS does not say.
+    std::optional<bool> carrier;
 };
 
 /// Whether make_tap_link() and make_packet_link() work on this operating system.
@@ -44,14 +47,15 @@ struct InterfaceInfo
 [[nodiscard]] std::vector<InterfaceInfo> list_interfaces();
 
 /// One line per interface, for --list-interfaces:
-///   "  --interface enp3s0  Ethernet, up"
+///   "  --interface enp3s0  Ethernet, up, connected"
 ///   "  --interface lo      not Ethernet (link type 772), up"
 /// `notes`: by position, a text that ends the line ("; <note>"); an empty one or none adds nothing.
 [[nodiscard]] std::string format_interface_list(const std::vector<InterfaceInfo>& interfaces,
                                                 std::span<const std::string> notes = {});
 
-/// What a line of format_interface_list() says after the name: "Ethernet, up",
-/// "not Ethernet (link type 772), up".
+/// What a line of format_interface_list() says after the name: "Ethernet, up, connected",
+/// "Ethernet, up, disconnected" (no carrier), "Ethernet, up" (the OS does not say),
+/// "not Ethernet (link type 772), up". A down interface says nothing about the carrier.
 [[nodiscard]] std::string interface_detail(const InterfaceInfo& entry);
 
 struct TapLinkOptions
