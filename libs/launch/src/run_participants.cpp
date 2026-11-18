@@ -450,6 +450,13 @@ void RunParticipants::note_last_lines()
                     o.to_outside = counts->to_outside;
                     o.from_outside = counts->from_outside;
                 }
+                if (o.network == run.for_network)
+                {
+                    // The run's own stop for it (RunWatch) stays.
+                    std::string lost = std::move(o.link.lost);
+                    o.link = out_.take_link(i, std::chrono::steady_clock::now());
+                    o.link.lost = std::move(lost);
+                }
             }
         }
     }

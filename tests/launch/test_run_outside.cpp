@@ -12,8 +12,10 @@
 #include "vehicle_sil/vector_xl/can_bridge.hpp"
 
 #include <chrono>
+#include <map>
 #include <optional>
 #include <string>
+#include <utility>
 
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
@@ -141,4 +143,154 @@ TEST_CASE(without_tag_takes_off_a_word_in_brackets)
     check_text(std::string(launch::detail::without_tag("[not a tag] FAIL")), "[not a tag] FAIL");
     check_text(std::string(launch::detail::without_tag("[] FAIL")), "[] FAIL");
     check_text(std::string(launch::detail::without_tag("[bridge]FAIL")), "[bridge]FAIL");
+}
+
+namespace {
+
+using launch::detail::OutsideBusValue;
+using launch::detail::OutsideLinkLine;
+using launch::detail::OutsideLinkValue;
+using launch::detail::OutsideState;
+using launch::detail::read_outside_link_line;
+using launch::detail::read_outside_stats;
+using Clock = std::chrono::steady_clock;
+
+OutsideLinkLine link_of(OutsideLinkValue v) { return OutsideLinkLine{v, std::nullopt}; }
+OutsideLinkLine bus_of(OutsideBusValue v) { return OutsideLinkLine{std::nullopt, v}; }
+
+} // namespace
+
+TEST_CASE(read_outside_stats_takes_every_key_and_refuses_what_read_outside_counts_refuses)
+{
+    const auto all = read_outside_stats(kEth, "[eth-bridge] stats silkit_to_ext=1 ext_from_devices=2 ext_queue_full=3 new_key=4");
+    CHECK(all.has_value());
+    if (!all)
+    {
+        return;
+    }
+    CHECK(all->size() == 4 && all->at("ext_queue_full") == 3 && all->at("new_key") == 4);
+    // Also without the two keys that read_outside_counts needs.
+    CHECK(read_outside_stats(kXl, "stats error_frames=5")->at("error_frames") == 5);
+    CHECK(!read_outside_stats(kXl, "stats a=1 a=2") && !read_outside_stats(kXl, "stats a=x") && !read_outside_stats(kXl, "link link=up"));
+    CHECK(!read_outside_stats("some_tool", "stats a=1"));
+}
+
+TEST_CASE(read_outside_link_line_takes_the_known_keys_and_skips_the_rest)
+{
+    auto line = read_outside_link_line("[eth-bridge] link link=down");
+    CHECK(line.has_value());
+    if (!line)
+    {
+        return;
+    }
+    CHECK(line->link == OutsideLinkValue::Down && !line->bus);
+    line = read_outside_link_line("[bridge] link bus=bus-off\r");
+    CHECK(line && !line->link && line->bus == OutsideBusValue::BusOff);
+    // Keys of later versions, a value that is not known, a part of another form: skipped.
+    line = read_outside_link_line("link link=up device=ab12 marked=1 shared=0 peers=4321,77 bus=nonsense loose =x");
+    CHECK(line && line->link == OutsideLinkValue::Up && !line->bus);
+    line = read_outside_link_line("link link=unknown bus=unknown");
+    CHECK(line && line->link == OutsideLinkValue::Unknown && line->bus == OutsideBusValue::Unknown);
+    // Not a link line.
+    CHECK(!read_outside_link_line("stats link=up") && !read_outside_link_line("[eth-bridge] linked"));
+    // A line with no known key is a link line that says nothing.
+    line = read_outside_link_line("link future=1");
+    CHECK(line && !line->link && !line->bus);
+}
+
+TEST_CASE(outside_state_adds_up_the_down_spans_and_counts_one_that_is_still_on)
+{
+    const auto t0 = Clock::time_point{} + 1h;
+    OutsideState state;
+    CHECK(state.link_text().empty());
+    CHECK(state.on_link(link_of(OutsideLinkValue::Up), t0) && state.link_text() == "up");
+    // The same value again is no change.
+    CHECK(!state.on_link(link_of(OutsideLinkValue::Up), t0 + 1s));
+    CHECK(state.on_link(link_of(OutsideLinkValue::Down), t0 + 10s));
+    CHECK(state.on_link(link_of(OutsideLinkValue::Up), t0 + 12s + 700ms));
+    // Down again, and still down when the summary is asked: it counts to then.
+    CHECK(state.on_link(link_of(OutsideLinkValue::Down), t0 + 20s));
+    const OutsideLink sum = state.summary(t0 + 21s);
+    CHECK(sum.down_count == 2 && sum.down_total == 3700ms);
+    CHECK(sum.bus_off_count == 0 && sum.passive_total == 0ms && sum.lost.empty());
+    // A line without the key leaves the value alone.
+    CHECK(state.on_link(bus_of(OutsideBusValue::Unknown), t0 + 22s));
+    CHECK(state.link_text() == "down");
+}
+
+TEST_CASE(outside_state_does_not_count_unknown_as_down)
+{
+    const auto t0 = Clock::time_point{} + 1h;
+    OutsideState state;
+    state.on_link(link_of(OutsideLinkValue::Unknown), t0);
+    state.on_link(bus_of(OutsideBusValue::Unknown), t0);
+    CHECK(state.summary(t0 + 100s).down_count == 0 && state.summary(t0 + 100s).bus_off_count == 0);
+    CHECK(state.lost(t0 + 100s, 30s).empty());
+    // Down, then unknown: the span ends there.
+    state.on_link(link_of(OutsideLinkValue::Down), t0 + 100s);
+    state.on_link(link_of(OutsideLinkValue::Unknown), t0 + 101s);
+    const OutsideLink sum = state.summary(t0 + 200s);
+    CHECK(sum.down_count == 1 && sum.down_total == 1s);
+    CHECK(state.lost(t0 + 200s, 30s).empty());
+}
+
+TEST_CASE(outside_state_counts_bus_off_and_passive_apart)
+{
+    const auto t0 = Clock::time_point{} + 1h;
+    OutsideState state;
+    state.on_link(bus_of(OutsideBusValue::Active), t0);
+    state.on_link(bus_of(OutsideBusValue::Passive), t0 + 1s);
+    state.on_link(bus_of(OutsideBusValue::BusOff), t0 + 3s);   // passive 2 s
+    state.on_link(bus_of(OutsideBusValue::Active), t0 + 4500ms); // bus off 1.5 s
+    state.on_link(bus_of(OutsideBusValue::Passive), t0 + 5s);
+    const OutsideLink sum = state.summary(t0 + 6s);
+    CHECK(sum.bus_off_count == 1 && sum.bus_off_total == 1500ms);
+    CHECK(sum.passive_total == 3s);
+    CHECK(sum.down_count == 0);
+    CHECK(state.bus_text() == "passive");
+}
+
+TEST_CASE(outside_state_says_lost_once_the_link_or_the_bus_has_been_down_for_the_limit)
+{
+    const auto t0 = Clock::time_point{} + 1h;
+    OutsideState state;
+    state.on_link(link_of(OutsideLinkValue::Down), t0);
+    CHECK(state.lost(t0 + 29999ms, 30s).empty());
+    CHECK(state.lost(t0 + 30s, 30s) == "link down for 30 s");
+    // Back up: no more, and the next down starts again at 0.
+    state.on_link(link_of(OutsideLinkValue::Up), t0 + 31s);
+    CHECK(state.lost(t0 + 100s, 30s).empty());
+    state.on_link(link_of(OutsideLinkValue::Down), t0 + 100s);
+    CHECK(state.lost(t0 + 120s, 30s).empty());
+    // A short limit (the tests').
+    CHECK(state.lost(t0 + 101s, 1s) == "link down for 1 s");
+    OutsideState can;
+    can.on_link(bus_of(OutsideBusValue::BusOff), t0);
+    CHECK(can.lost(t0 + 30s, 30s) == "bus off for 30 s");
+    // Passive is not down.
+    OutsideState passive;
+    passive.on_link(bus_of(OutsideBusValue::Passive), t0);
+    CHECK(passive.lost(t0 + 1h, 30s).empty());
+}
+
+TEST_CASE(dropped_counts_names_the_keys_of_the_table_that_are_not_zero)
+{
+    std::map<std::string, std::uint64_t> counts{{"ext_queue_full", 3},     {"ext_overruns", 0},   {"xl_tx_unsent", 1},
+                                                {"silkit_rejected", 2},    {"own_tx_dropped", 9}, {"filtered_to_ext", 4},
+                                                {"oversize", 5},           {"malformed", 6},      {"mac_unguarded", 7},
+                                                {"ext_checksum_incomplete", 8}, {"loop_suspected", 1}, {"error_frames", 1}};
+    const auto dropped = launch::detail::dropped_counts(counts);
+    CHECK(dropped.size() == 3);
+    if (dropped.size() != 3)
+    {
+        return;
+    }
+    CHECK(dropped[0] == std::make_pair(std::string("ext_queue_full"), std::uint64_t{3}));
+    CHECK(dropped[1].first == "xl_tx_unsent" && dropped[2].first == "silkit_rejected");
+    // Every key of the table counts, and only those.
+    for (const std::string_view key : launch::detail::kOutsideDroppedKeys)
+    {
+        CHECK(launch::detail::dropped_counts({{std::string(key), 1}}).size() == 1);
+    }
+    CHECK(launch::detail::dropped_counts({}).empty());
 }

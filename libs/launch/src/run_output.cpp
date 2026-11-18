@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <set>
 
@@ -89,6 +90,7 @@ RunOutput::RunOutput(const RunContext& ctx) : ctx_(ctx)
     logs_.resize(ctx.config.participants.size());
     last_lines_.resize(ctx.config.participants.size());
     outside_.resize(ctx.config.participants.size());
+    states_.resize(ctx.config.participants.size());
     last_statistics_.resize(ctx.config.participants.size());
     for (const ParticipantConfig& p : ctx.config.participants)
     {
@@ -175,6 +177,10 @@ void RunOutput::on_line(std::size_t index, std::string_view line)
         last_lines_[index].add(line);
         // The launcher's to read while the bridge runs: the event "outside" and the result show its
         // counts; the last such line is shown once at the end (take_counts()).
+        if (const auto all = read_outside_stats(tools_[index], line))
+        {
+            states_[index].on_counts(*all);
+        }
         if (const auto counts = read_outside_counts(tools_[index], line))
         {
             if (const auto now = outside_[index].on_counts(*counts, std::chrono::steady_clock::now()))
@@ -184,13 +190,42 @@ void RunOutput::on_line(std::size_t index, std::string_view line)
             last_statistics_[index] = std::string(line);
             return;
         }
-        // The state of the bridge's link, for the launcher (not read yet); the log keeps it.
+        // The state of the bridge's link, for the launcher; the log keeps it.
         if (is_link_line(line))
         {
+            if (const auto link = read_outside_link_line(line))
+            {
+                const auto now = std::chrono::steady_clock::now();
+                const std::string before_link = states_[index].link_text();
+                const std::string before_bus = states_[index].bus_text();
+                if (states_[index].on_link(*link, now))
+                {
+                    // The first line says "up" or "active" when all is well: nothing to tell.
+                    const auto change = [&](const std::string& was, const std::string& is, const char* what) {
+                        if (is != was && !(was.empty() && (is == "up" || is == "active")))
+                        {
+                            say_link_change(index, std::string(what) + " " + is, now);
+                        }
+                    };
+                    change(before_link, states_[index].link_text(), "link");
+                    change(before_bus, states_[index].bus_text(), "bus");
+                }
+            }
             return;
         }
     }
     show(index, line);
+}
+
+void RunOutput::say_link_change(std::size_t index, const std::string& what, std::chrono::steady_clock::time_point now)
+{
+    const std::string& network = ctx_.config.participants[index].for_network;
+    const auto outside = std::find_if(ctx_.check.outside.begin(), ctx_.check.outside.end(),
+                                      [&network](const NetworkOutside& o) { return o.network == network; });
+    char seconds[32];
+    std::snprintf(seconds, sizeof seconds, "%.2f", std::chrono::duration<double>(now - began_).count());
+    say_held("outside: " + network + " -> " + (outside != ctx_.check.outside.end() ? outside->target : std::string{}) + ": " +
+             what + " at " + seconds + " s");
 }
 
 void RunOutput::show(std::size_t index, std::string_view line) const
@@ -221,6 +256,25 @@ void RunOutput::outside_due(std::chrono::steady_clock::time_point now)
             write_outside(i, *counts);
         }
     }
+}
+
+std::optional<std::pair<std::size_t, std::string>> RunOutput::outside_lost(std::chrono::steady_clock::time_point now)
+{
+    const std::lock_guard lock(mutex_);
+    for (std::size_t i = 0; i < states_.size(); ++i)
+    {
+        if (std::string why = states_[i].lost(now, ctx_.options.outside_lost_after); !why.empty())
+        {
+            return std::make_pair(i, std::move(why));
+        }
+    }
+    return std::nullopt;
+}
+
+OutsideLink RunOutput::take_link(std::size_t index, std::chrono::steady_clock::time_point now)
+{
+    const std::lock_guard lock(mutex_);
+    return states_[index].summary(now);
 }
 
 std::optional<OutsideCounts> RunOutput::take_counts(std::size_t index)

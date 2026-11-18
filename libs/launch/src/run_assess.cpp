@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <iterator>
 #include <numeric>
 #include <utility>
@@ -60,6 +61,18 @@ std::optional<Finding> bridge_failure(const RunOutcome& outcome, const Participa
     const std::string how = p.exit && ended_by_itself(p) ? "its process " + exit_text(*p.exit)
                             : !outcome.failure_reason.empty() && blamed ? "it " + outcome.failure_reason
                                                                         : std::string("it left the simulation");
+    // The run's own stop: the bridge went on, but its link or bus stayed down (OutsideState::lost()).
+    if (blamed && ran && outside != outcome.outside.end() && !outside->link.lost.empty())
+    {
+        return Finding{Severity::Error, "connect-lost",
+                       "network '" + p.for_network + "': the connection to the real bus (" + target +
+                           ") was lost while the simulation was running: " + p.name + " reported " + outside->link.lost +
+                           " (the longest the launcher waits for it to come back), so the launcher aborted the "
+                           "simulation. The devices on the bus missed what came after. Check the cable, the device on the "
+                           "other end and the adapter or the bus it is on, then run again; a link that is down for a few "
+                           "seconds only (a cable plugged in again) does not stop the run",
+                       p.line, p.name, p.for_network};
+    }
     if (blamed && ran)
     {
         return Finding{Severity::Error, "connect-lost",
@@ -226,6 +239,91 @@ std::vector<Finding> nothing_received_findings(const RunOutcome& outcome)
                      : "its cable, and that --connect names the adapter it is on") +
                 "; a short run can end before a device answers",
             bridge->line, bridge->name, o.network});
+    }
+    return out;
+}
+
+std::string seconds_text(std::chrono::milliseconds ms)
+{
+    char text[32];
+    std::snprintf(text, sizeof text, "%.2f", static_cast<double>(ms.count()) / 1000.0);
+    return text;
+}
+
+/// outside-link-down, outside-bus-off, outside-bus-errors, outside-frames-dropped and
+/// outside-loop-suspected: what the bridges of --connect saw of the real bus while the simulation
+/// ran, for each network. A warning each (--strict fails on it): the run went on, but what it says of
+/// the devices outside may be wrong. Not for a bridge that failed the run (connect-lost says more).
+std::vector<Finding> outside_findings(const RunOutcome& outcome)
+{
+    std::vector<Finding> out;
+    if (outcome.simulation == SimulationEnd::NotStarted)
+    {
+        return out;
+    }
+    for (const RunOutside& o : outcome.outside)
+    {
+        const auto bridge = std::find_if(outcome.participants.begin(), outcome.participants.end(),
+                                         [&o](const ParticipantRun& p) { return p.for_network == o.network; });
+        if (bridge == outcome.participants.end() || bridge_failure(outcome, *bridge))
+        {
+            continue;
+        }
+        const OutsideLink& link = o.link;
+        const bool can = o.tool == bridge_tool(NetworkKind::Can);
+        const std::string where = "network '" + o.network + "' -> " + o.target + ": ";
+        const auto add = [&](const char* code, std::string message) {
+            out.push_back(Finding{Severity::Warning, code, where + message, bridge->line, bridge->name, o.network});
+        };
+        const auto times = [](std::uint32_t n) { return n == 1 ? std::string("once") : std::to_string(n) + " times"; };
+        if (link.down_count > 0)
+        {
+            add("outside-link-down",
+                "the link was down " + times(link.down_count) + ", for " + seconds_text(link.down_total) +
+                    " s in all. The run went on, but frames sent meanwhile did not reach the devices, and the devices' did "
+                    "not reach the simulation, so what this run says of them may be wrong. Check the cable, the device or "
+                    "switch on the other end and the adapter; a run that must not lose the link is run with --strict");
+        }
+        if (link.bus_off_count > 0)
+        {
+            add("outside-bus-off",
+                "the controller was bus off " + times(link.bus_off_count) + ", for " + seconds_text(link.bus_off_total) +
+                    " s in all. The run went on, but no frame passed while it was, so what this run says of the devices "
+                    "may be wrong. A bus off comes from too many errors: check the bit rate (it must be the bus's), "
+                    "the termination and the cable, and that another device is on the bus");
+        }
+        const auto errors = link.counts.find(std::string(detail::kOutsideBusErrorsKey));
+        const std::uint64_t errorFrames = errors != link.counts.end() ? errors->second : 0;
+        if (link.passive_total.count() > 0)
+        {
+            add("outside-bus-errors",
+                "the controller was error passive for " + seconds_text(link.passive_total) + " s in all (" +
+                    std::string(detail::kOutsideBusErrorsKey) + "=" + std::to_string(errorFrames) +
+                    "). Frames may have been lost or repeated on the bus. Check the bit rate, the termination and the "
+                    "cable");
+        }
+        if (const auto dropped = detail::dropped_counts(link.counts); !dropped.empty())
+        {
+            std::string what;
+            for (const auto& [key, count] : dropped)
+            {
+                what += (what.empty() ? "" : ", ") + key + "=" + std::to_string(count);
+            }
+            add("outside-frames-dropped",
+                "the bridge dropped frames (" + what + "): the devices or the simulation did not get them, so what this "
+                    "run says of them may be wrong. A full queue means the bus or the simulation sent faster than the "
+                    "bridge could pass; a failed send means the adapter or the bus refused it" +
+                    (can ? "; --tx-timeout-ms of the bridge decides how long a congested bus is waited for" : std::string{}));
+        }
+        if (const auto loop = link.counts.find(std::string(detail::kOutsideLoopKey)); loop != link.counts.end() && loop->second > 0)
+        {
+            add("outside-loop-suspected",
+                "the bridge stopped " + std::to_string(loop->second) + (loop->second == 1 ? " frame" : " frames") +
+                    " whose source MAC address was on both sides (" + std::string(detail::kOutsideLoopKey) +
+                    "), and from then on drops every frame from such an address in both directions. Two bridges between "
+                    "the same networks, or one MAC address on the bus and in the simulation, cause it: give every device "
+                    "one address, and connect a network to one bus only");
+        }
     }
     return out;
 }
@@ -595,6 +693,10 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                 " ms): a participant stopped it; if that is not expected, the lines above show which one",
             nullptr);
     }
+    for (Finding& f : outside_findings(outcome))
+    {
+        out.push_back(std::move(f));
+    }
     sort_findings(out);
     return out;
 }
@@ -604,9 +706,11 @@ std::vector<Finding> detail::settled_findings(const RunOutcome& outcome)
     std::vector<Finding> out;
     for (Finding& f : assess_run(outcome))
     {
-        // A bridge's quotes its last line, or its counts, which are known once its output has been
+        // A bridge's quotes its last line, or its counts (and the outside-* findings are made of them), which are known once its output has been
         // read to the end (after the participants have ended).
-        if (f.code == "connect-failed" || f.code == "connect-lost" || f.code == "connect-nothing-received")
+        if (f.code == "connect-failed" || f.code == "connect-lost" || f.code == "connect-nothing-received" ||
+            f.code == "outside-link-down" || f.code == "outside-bus-off" || f.code == "outside-bus-errors" ||
+            f.code == "outside-frames-dropped" || f.code == "outside-loop-suspected")
         {
             continue;
         }

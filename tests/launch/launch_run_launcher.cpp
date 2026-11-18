@@ -44,6 +44,8 @@ int main(int argc, char** argv)
         const std::vector<std::pair<std::string, void (*)(const Options&)>> scenarios = {
             {"busy_port", busy_port},
             {"check", check},
+            {"connect_bus_off", connect_bus_off},
+            {"connect_bus_off_lost", connect_bus_off_lost},
             {"connect_dies_while_waiting", connect_dies_while_waiting},
             {"connect_lost_exit0", connect_lost_exit0},
             {"connect_lost_kill", connect_lost_kill},

@@ -97,6 +97,7 @@ struct State
     bool chip_state_refused = false;
     unsigned chip_state_refusals = 0; // the next requests that fail, then the answers come again
     std::optional<std::chrono::steady_clock::time_point> lose_device_at;
+    std::optional<std::chrono::steady_clock::time_point> bus_off_at; ///< from then on every channel answers bus off
     unsigned chip_state_requests = 0;
 };
 
@@ -283,6 +284,7 @@ void reset()
     s.chip_state_refused = false;
     s.chip_state_refusals = 0;
     s.lose_device_at.reset();
+    s.bus_off_at.reset();
     s.chip_state_requests = 0;
 }
 
@@ -541,6 +543,10 @@ Status open_driver()
     if (const char* lose = std::getenv("VEHICLE_SIL_FAKE_XL_LOSE_DEVICE_AFTER_MS"); lose != nullptr && *lose != '\0')
     {
         s.lose_device_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(std::strtoul(lose, nullptr, 10));
+    }
+    if (const char* off = std::getenv("VEHICLE_SIL_FAKE_XL_BUS_OFF_AFTER_MS"); off != nullptr && *off != '\0')
+    {
+        s.bus_off_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(std::strtoul(off, nullptr, 10));
     }
     ++s.driver_refs;
     return status(fake_xl::kStatusOk);
@@ -819,6 +825,10 @@ Status request_chip_state(PortHandle handle, ChannelMask channels)
     ReceivedEvent answer;
     const auto it = s.chip_states.find(port->channel);
     answer.chip_state = it != s.chip_states.end() ? it->second : ChipState{ChipLevel::ErrorActive, 0, 0};
+    if (s.bus_off_at && std::chrono::steady_clock::now() >= *s.bus_off_at)
+    {
+        answer.chip_state = ChipState{ChipLevel::BusOff, 0, 0};
+    }
     fake_xl::enqueue(*port, answer);
     return status(fake_xl::kStatusOk);
 }
