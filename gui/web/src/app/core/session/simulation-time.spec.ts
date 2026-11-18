@@ -60,43 +60,52 @@ describe('SimulationTime', () => {
     return time;
   }
 
-  it('follows the time of the run, and sends a command with the token', () => {
+  it('follows the time of the run, and sends a command with the token', async () => {
     const time = openPaused();
     expect(time.supported()).toBe(true);
     expect([time.simMs(), time.paused(), time.speed()]).toEqual([0, true, 'max']);
-    expect([time.canPause(), time.canResume(), time.canStep()]).toEqual([false, true, true]);
+    const { pause, resume, step } = time.controls();
+    expect([pause.ok, resume.ok, step.ok]).toEqual([false, true, true]);
 
-    expect(time.step(25)).toEqual({ sent: true });
-    const step = http.expectOne('api/time');
-    expect(step.request.body).toEqual({ command: 'step', ms: 25 });
-    expect(step.request.headers.get('Authorization')).toBe('Bearer secret');
-    expect(time.sending()).toBe('step');
-    step.flush({ session_id: 1, command: { command: 'step', ms: 25 } });
-    expect(time.sending()).toBe('step');
-    expect(time.step(25)).toEqual({ sent: false, reason: 'waiting' });
+    const sent = time.step(25);
+    const request = http.expectOne('api/time');
+    expect(request.request.body).toMatchObject({ command: 'step', ms: 25 });
+    expect(request.request.headers.get('Authorization')).toBe('Bearer secret');
+    expect(time.waiting()).toBe(true);
+    expect(time.controls().step.reason?.code).toBe('busy');
+    request.flush({ session_id: 1, command: { command: 'step', ms: 25 } });
+    expect(time.waiting()).toBe(true);
+    // 答えを待つ間に同じ命令を送っても、2 つ目は送らない
+    await time.step(25);
+    http.expectNone('api/time');
+    expect(time.error()).toContain('answered');
+    vi.advanceTimersByTime(ANSWER_MS);
+    await sent;
   });
 
-  it('says in the words of the screen that the launcher did not answer', () => {
+  it('says in the words of the screen that the launcher did not answer', async () => {
     const time = openPaused();
-    time.step(10);
+    const sent = time.step(10);
     http.expectOne('api/time').flush({ session_id: 1, command: { command: 'step', ms: 10 } });
-    vi.advanceTimersByTime(ANSWER_MS);
-    expect(time.sending()).toBeNull();
+    await vi.advanceTimersByTimeAsync(ANSWER_MS);
+    await sent;
+    expect(time.waiting()).toBe(false);
     expect(time.error()).toContain('答えません');
     expect(time.error()).toContain('step');
     expect(time.errorFromServer()).toBe(false);
   });
 
-  it('shows the words of the server when it refused a command', () => {
+  it('shows the words of the server when it refused a command', async () => {
     const time = openPaused();
-    time.resume();
+    const sent = time.resume();
     http
       .expectOne('api/time')
       .flush(
-        { error: { code: 'not-running', message: 'no simulation is running', detail: null } },
+        { error: { code: 'not-paused', message: 'the simulation is not paused', detail: null } },
         { status: 409, statusText: 'Conflict' },
       );
-    expect(time.error()).toBe('no simulation is running');
+    await sent;
+    expect(time.error()).toBe('the simulation is not paused');
     expect(time.errorFromServer()).toBe(true);
   });
 

@@ -19,7 +19,6 @@ import {
   FEATURE_SCENARIO,
   FEATURE_SPEED,
   FEATURE_START_PAUSED,
-  HttpError,
   Speed,
   errorMessage,
 } from '@vehicle-sil/gui-client';
@@ -180,16 +179,6 @@ export class RunPage {
     const error = this.handshake.error();
     return error ? errorMessage(error) : null;
   });
-  /**
-   * HTTP でサーバーに届くか。WebSocket が切れて、理由を確かめる api/app も届かなかった（状態 0）ときだけ偽。
-   * WebSocket だけが切れているなら、停止は HTTP で頼める。
-   */
-  protected readonly reachable = computed(() => {
-    if (this.run.connectionState() === 'open') return true;
-    const error = this.handshake.error();
-    return !(error instanceof HttpError && error.status === 0);
-  });
-
   protected readonly session = this.run.session;
   /** ランチャーが動いている（設定を変えられず、照合もしない）。 */
   protected readonly running = this.run.launcherRunning;

@@ -11,12 +11,13 @@ import {
 import {
   ANSWER_TIMEOUT_MS,
   DEFAULT_TIMEOUT_MS,
+  Front,
   GuiClient,
   HttpError,
   HttpTransport,
   Readable,
   SocketFactory,
-  createClient,
+  createFront,
   errorMessage,
   webSocketFactory,
 } from '@vehicle-sil/gui-client';
@@ -65,13 +66,16 @@ export function httpClientTransport(http: HttpClient): HttpTransport {
   };
 }
 
-/** アプリ全体で 1 つの GUI サーバーのクライアント。注入した側が connect() する（ServerConnection）。 */
-export const GUI_CLIENT = new InjectionToken<GuiClient>('GUI_CLIENT', {
+/**
+ * アプリ全体で 1 つの GUI サーバーの正面の口（gui-client の `createFront`）。実行の画面は、操作の可否と理由、状態、
+ * 操作をここから読む。接続は GUI_CLIENT（`front.low`）と同じ 1 本。注入した側が connect() する（ServerConnection）。
+ */
+export const GUI_FRONT = new InjectionToken<Front>('GUI_FRONT', {
   providedIn: 'root',
   factory: () => {
     const auth = inject(AuthToken);
     const errors = inject(ErrorHandler);
-    const client = createClient({
+    const front = createFront({
       baseUrl: inject(DOCUMENT).baseURI,
       token: () => auth.token(),
       http: httpClientTransport(inject(HttpClient)),
@@ -80,9 +84,15 @@ export const GUI_CLIENT = new InjectionToken<GuiClient>('GUI_CLIENT', {
       // 購読（signal に写すところ）が投げたものは、Angular の誤りの扱いへ
       onError: (error) => errors.handleError(error),
     });
-    inject(DestroyRef).onDestroy(() => client.close());
-    return client;
+    inject(DestroyRef).onDestroy(() => front.close());
+    return front;
   },
+});
+
+/** アプリ全体で 1 つの GUI サーバーのクライアント（正面の口と同じ接続: `front.low`）。 */
+export const GUI_CLIENT = new InjectionToken<GuiClient>('GUI_CLIENT', {
+  providedIn: 'root',
+  factory: () => inject(GUI_FRONT).low,
 });
 
 /**

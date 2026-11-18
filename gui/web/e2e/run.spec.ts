@@ -58,7 +58,8 @@ async function command(page: Page, button: Locator, body: object): Promise<void>
   const sent = page.waitForRequest((r) => r.url().endsWith('/api/time'));
   await expect(button).not.toHaveAttribute('aria-disabled', 'true');
   await button.click();
-  expect((await sent).postDataJSON()).toEqual(body);
+  // 画面は、答えを結ぶための id を付けて送る
+  expect((await sent).postDataJSON()).toEqual({ ...body, id: expect.any(Number) });
 }
 
 test('started paused: a step, resume, pause, a new speed, stop', async ({ page }) => {
@@ -92,7 +93,7 @@ test('started paused: a step, resume, pause, a new speed, stop', async ({ page }
   await expect(page.getByTestId('step-hint')).toContainText('30 ms');
   await expect(page.getByTestId('time-sim')).toHaveText('0.030 s');
   await expect(page.getByTestId('time-state')).toHaveText('一時停止中');
-  expect(steps).toEqual([{ command: 'step', ms: 25 }]);
+  expect(steps).toEqual([{ command: 'step', ms: 25, id: expect.any(Number) }]);
 
   await command(page, resumeButton(page), { command: 'resume' });
   await expect(page.getByTestId('outcome')).toContainText('実行中');
@@ -425,6 +426,19 @@ test('a click meant for stop as the run ends does not start a new run', async ({
         launcher: { ...(now?.launcher ?? {}), running: false, exit_code: 0 },
         phase: 'ended',
         result: ended['result'],
+      },
+    }),
+  );
+  // 本物のサーバーはまだ動いているので、「開始できる」という知らせも差し込む（開始の可否はサーバーが言う）
+  route?.send(
+    JSON.stringify({
+      type: 'allowed',
+      session: null,
+      allowed: {
+        rev: 1_000_000,
+        start: { ok: true, reason: null, message: null },
+        stop: { ok: false, reason: 'not-running', message: 'no simulation is running' },
+        force: { ok: false, reason: 'not-running', message: 'no simulation is running' },
       },
     }),
   );

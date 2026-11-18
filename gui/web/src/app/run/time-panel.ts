@@ -5,9 +5,8 @@ import { MatInputModule } from '@angular/material/input';
 import { Speed } from '@vehicle-sil/gui-client';
 import { MeasurePipe } from '../core/format/measure-pipe';
 import { numberText } from '../core/format/number-text';
-import { ServerInfo } from '../core/session/server-info';
 import { SimulationTime } from '../core/session/simulation-time';
-import { WAITING_TEXT, latenessText, speedLabel } from './labels';
+import { latenessText, reasonText, speedLabel } from './labels';
 import { SpeedPicker } from './speed-picker';
 
 /** ステップ送りの量の最初の値（ミリ秒）。 */
@@ -105,7 +104,7 @@ export const DEFAULT_STEP_MS = 100;
           data-testid="step"
           [disabled]="!canStep()"
           disabledInteractive
-          [attr.aria-describedby]="time.canStep() ? null : 'time-step-why'"
+          [attr.aria-describedby]="controls().step.ok ? null : 'time-step-why'"
           i18n
         >
           ステップ送り
@@ -127,9 +126,9 @@ export const DEFAULT_STEP_MS = 100;
         <app-speed-picker
           [withFile]="false"
           [label]="speedLabelText"
-          [min]="info.limits().speed_min"
-          [max]="info.limits().speed_max"
-          [locked]="!time.controllable()"
+          [min]="controls().speed.min"
+          [max]="controls().speed.max"
+          [locked]="speedLocked()"
           [(speed)]="newSpeed"
           [(invalid)]="newSpeedInvalid"
         />
@@ -218,7 +217,8 @@ export const DEFAULT_STEP_MS = 100;
 })
 export class TimePanel {
   protected readonly time = inject(SimulationTime);
-  protected readonly info = inject(ServerInfo);
+  /** 押せるか、押せない理由、範囲（正面の口が言う）。 */
+  protected readonly controls = this.time.controls;
   protected readonly speedLabelText = $localize`新しい速度`;
 
   protected readonly simSeconds = computed(() => {
@@ -242,11 +242,11 @@ export class TimePanel {
   private readonly stepMs = computed(() => {
     const text = numberText(this.stepText());
     const ms = Number(text);
-    return /^\d+$/.test(text) && ms >= 1 && ms <= this.info.limits().step_ms_max ? ms : null;
+    return /^\d+$/.test(text) && ms >= 1 && ms <= this.controls().step.max_ms ? ms : null;
   });
   protected readonly stepError = computed(() =>
     this.stepMs() === null
-      ? $localize`ステップ送りの量は 1 から ${this.info.limits().step_ms_max}:max: までの整数（ミリ秒）にしてください。`
+      ? $localize`ステップ送りの量は 1 から ${this.controls().step.max_ms}:max: までの整数（ミリ秒）にしてください。`
       : null,
   );
   /** 量の誤りを出してよいか: 欄を離れたか送った後。打ち直すと消す。 */
@@ -254,9 +254,8 @@ export class TimePanel {
   protected readonly shownStepError = computed(() =>
     this.stepChecked() ? this.stepError() : null,
   );
-  protected readonly canStep = computed(
-    () => this.time.canStep() && this.stepMs() !== null && this.time.sending() === null,
-  );
+  /** ステップ送りを押せるか: 正面の口が許し、量の欄が整数として読める。 */
+  protected readonly canStep = computed(() => this.controls().step.ok && this.stepMs() !== null);
   /** ステップ送りの説明: 押せない理由か、前のステップ送りで実際に進む量。 */
   protected readonly stepHint = computed(() => {
     const last = this.time.lastCommand();
@@ -264,25 +263,23 @@ export class TimePanel {
       last?.name === 'step' && last.accepted && last.ms !== null
         ? $localize`前のステップ送りで進む量: ${last.ms}:ms: ms（ランチャーが刻みの倍数に切り上げます）。`
         : null;
-    if (this.time.canStep()) return moved ?? '';
-    const reason = !this.time.controllable()
-      ? $localize`時刻の操作は、実行が動いている間だけできます。`
-      : this.time.sending() !== null
-        ? WAITING_TEXT
-        : $localize`ステップ送りは、一時停止している間だけできます。`;
-    return moved ? `${reason} ${moved}` : reason;
+    const reason = this.controls().step.reason;
+    if (!reason) return moved ?? '';
+    const text = reasonText('step', reason);
+    return moved ? `${text} ${moved}` : text;
   });
 
   /** 変える先の速度。いまの速度から始め、いまの速度が変わったら、それに戻す。 */
   protected readonly newSpeed = linkedSignal<Speed>(() => this.time.speed() ?? 1);
   protected readonly newSpeedInvalid = signal(false);
   protected readonly canSetSpeed = computed(
-    () =>
-      this.time.controllable() &&
-      !this.newSpeedInvalid() &&
-      this.newSpeed() !== null &&
-      this.time.sending() === null,
+    () => this.controls().speed.ok && !this.newSpeedInvalid() && this.newSpeed() !== null,
   );
+  /** 速度の欄を触れなくする: 実行が速度を受け付けない間（応答を待っている間は触れる）。 */
+  protected readonly speedLocked = computed(() => {
+    const speed = this.controls().speed;
+    return !speed.ok && speed.reason?.code !== 'busy';
+  });
 
   /** 断られた命令の理由: サーバーが断った（HTTP）か、ランチャーが受け付けなかった（停止の命令を除く）。 */
   protected readonly refusal = computed<{ text: string; english: boolean } | null>(() => {
@@ -304,11 +301,11 @@ export class TimePanel {
     event.preventDefault();
     this.stepChecked.set(true);
     const ms = this.stepMs();
-    if (ms !== null && this.canStep()) this.time.step(ms);
+    if (ms !== null && this.canStep()) void this.time.step(ms);
   }
 
   protected setSpeed(): void {
     const speed = this.newSpeed();
-    if (speed !== null && this.canSetSpeed()) this.time.setSpeed(speed);
+    if (speed !== null && this.canSetSpeed()) void this.time.setSpeed(speed);
   }
 }

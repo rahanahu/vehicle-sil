@@ -70,7 +70,7 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 
 | 種類   | 名前                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 関数   | `connect(options?)`、`watch(source, fn)`、`until(source, test, options?)`                                                                                                                                                                                                                                                                                                                                                                  |
+| 関数   | `connect(options?)`、`createFront(options)`、`watch(source, fn)`、`until(source, test, options?)`                                                                                                                                                                                                                                                                                                                                          |
 | クラス | `ActionError`（`code`、`message`、`outcome`、`findings`）                                                                                                                                                                                                                                                                                                                                                                                  |
 | 型     | `ConnectOptions`（`base_url`、`token`、`origin`、`http`、`socket`、`answer_timeout_ms`、`on_error`）、`Front`（`low`、`status`、`clock`、`controls`、`scenario`、`run`、`time`、`variable()`、`close()`）、`FrontStatus`、`FrontResult`、`FrontClock`、`FrontControls`、`Control`、`Reason`、`FrontScenario`、`FrontRun`、`FrontTime`、`FrontVariable`、`VariableView`、`Intent`、`Link`、`RunState`、`EndKind`、`Pacing`、`OperationName` |
 
@@ -261,6 +261,8 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 
 `connect()` は、ライブラリの正面の口を返します。画面が見せるもの（`status`、`clock`、`controls`、`scenario`）、Promise で返す操作（`run`、`time`）、変数 1 つ（`variable()`）です。ここまでに説明したクライアントの上に作ってあり、そちらは何も変えません。`front.low` は同じ `GuiClient`（イベント、ログ、所見、参加者）で、`createClient` もこれまでどおり使えます。画面が決めなければならないこと（「いまはどの状態か」「このボタンはいま押せるか、押せないなら理由は何か」）には正面の口を使い、それ以外には `low` を使います。
 
+サーバーが答える前から、また届かない間も画面を出す必要のあるアプリ（標準の画面）は、代わりに `createFront(options)` を使います。`createClient` と同じく、接続せずに正面の口を作るだけで、アプリが自分で `front.low.connect()` と `front.low.loadApp()` を呼びます。`loadApp()` が答えるまで、正面の口は起動時のファイルもランチャーの機能も知りません。
+
 ```ts
 import { ActionError, connect, until, watch } from '@vehicle-sil/gui-client';
 
@@ -314,14 +316,14 @@ try {
 
 各項目は `{ ok, reason, caution }` です。`ok` が偽のとき `reason` は `{ code, message }`、`caution` は、受けるが先に知っておくことがある操作に付く同じ形です。コードは変わりません（増えることはありますが、意味は変わりません）。文は英語で、規則の持ち主が書いたものです。
 
-| 項目                                            | 出どころ                                                                                                                                                                                                |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `start`                                         | GUI サーバーの `allowed.start`（`starting`、`already-running`、`launcher-unusable`、`shutting-down`）とその文                                                                                           |
-| `stop`、`force_stop`                            | GUI サーバーの `allowed.stop` と `allowed.force`。`stop` は、最後に知った実行（か、向かっている開始）があれば、切断中でも `ok`。`force_stop` は、1 回目の停止の後だけ `ok`（それまでは `not-stopping`） |
-| `pause`、`resume`、`step`、`speed`、`run_until` | ランチャーの `state.allowed`（理由、文、`caution` はランチャーが書いたまま。`step` と `speed` の範囲も）。コピーに実行がなければ `not-running`、`state` を出さないランチャーなら `unsupported`          |
-| `pause`、`resume`（何も変わらないとき）         | 一時停止中は `pause` が `ok` でなく（`paused`）、止まっていなければ `resume` が `ok` でありません（`not-paused`）。ランチャーはどちらも受けますが、ボタンにはすることがありません                       |
-| `run_until`                                     | ランチャーが機能 `stdin-run-until` を持つまで `unsupported`                                                                                                                                             |
-| すべて                                          | 接続: `rejected`、`incompatible`、`offline`、`connecting` では不可になります（`stop` と `force_stop` は上のとおり）。このページの同じ操作が答えを待つ間は `busy`                                        |
+| 項目                                            | 出どころ                                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `start`                                         | GUI サーバーの `allowed.start`（`starting`、`already-running`、`launcher-unusable`、`shutting-down`）とその文                                                                                                                                                                                    |
+| `stop`、`force_stop`                            | GUI サーバーの `allowed.stop` と `allowed.force`。`stop` は、最後に知った実行（か、向かっている開始）があれば、切断中でも、結果の後もランチャーが動いているとサーバーが言う間も `ok`。`force_stop` は、1 回目の停止の後だけ `ok`（それまでは `not-stopping`）                                    |
+| `pause`、`resume`、`step`、`speed`、`run_until` | ランチャーの `state.allowed`（理由、文、`caution` はランチャーが書いたまま。`step` と `speed` の範囲も）。コピーに実行がなければ `not-running`、`state` を出さないランチャーなら `unsupported`                                                                                                   |
+| `pause`、`resume`（何も変わらないとき）         | 一時停止中は `pause` が `ok` でなく（`paused`）、止まっていなければ `resume` が `ok` でありません（`not-paused`）。ランチャーはどちらも受けますが、ボタンにはすることがありません。ランチャーの `state` と最後の `time` の事象が食い違うとき（ステップ送りが終わった直後）は、どちらも言いません |
+| `run_until`                                     | ランチャーが機能 `stdin-run-until` を持つまで `unsupported`                                                                                                                                                                                                                                      |
+| すべて                                          | 接続: `rejected`、`incompatible`、`offline`、`connecting` では不可になります（`stop` と `force_stop` は上のとおり）。このページの同じ操作が答えを待つ間は `busy`                                                                                                                                 |
 
 ### 操作
 

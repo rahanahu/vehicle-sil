@@ -16,9 +16,11 @@ import { WAITING_TEXT } from './labels';
       matButton="tonal"
       type="button"
       data-testid="pause"
-      [disabled]="!time.canPause()"
+      [disabled]="!controls().pause.ok"
       disabledInteractive
-      [attr.aria-describedby]="why() ? 'time-buttons-why' : time.canPause() ? null : 'run-outcome'"
+      [attr.aria-describedby]="
+        why() ? 'time-buttons-why' : controls().pause.ok ? null : 'run-outcome'
+      "
       (click)="pause()"
     >
       <span class="mark" aria-hidden="true">‖</span>
@@ -28,9 +30,11 @@ import { WAITING_TEXT } from './labels';
       matButton="tonal"
       type="button"
       data-testid="resume"
-      [disabled]="!time.canResume()"
+      [disabled]="!controls().resume.ok"
       disabledInteractive
-      [attr.aria-describedby]="why() ? 'time-buttons-why' : time.canResume() ? null : 'run-outcome'"
+      [attr.aria-describedby]="
+        why() ? 'time-buttons-why' : controls().resume.ok ? null : 'run-outcome'
+      "
       (click)="resume()"
     >
       <span class="mark" aria-hidden="true">▶</span>
@@ -77,19 +81,21 @@ import { WAITING_TEXT } from './labels';
 })
 export class TimeButtons {
   protected readonly time = inject(SimulationTime);
+  /** 押せるか、押せない理由（正面の口が言う）。 */
+  protected readonly controls = this.time.controls;
   protected readonly pauseText = $localize`一時停止`;
   protected readonly resumeText = $localize`再開`;
   /** 押せない（または前の命令がうまくいかなかった）理由のうち、帯の文にないもの。なければ ''。 */
   protected readonly why = computed(() => {
-    if (this.time.controllable() && this.time.sending() !== null) return WAITING_TEXT;
+    if (this.time.waiting()) return WAITING_TEXT;
     return this.time.error() ?? '';
   });
 
   protected pause(): void {
-    if (this.time.canPause()) this.time.pause();
+    if (this.controls().pause.ok) this.time.pause();
   }
 
   protected resume(): void {
-    if (this.time.canResume()) this.time.resume();
+    if (this.controls().resume.ok) this.time.resume();
   }
 }

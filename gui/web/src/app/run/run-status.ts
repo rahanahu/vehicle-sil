@@ -15,11 +15,25 @@ import {
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog, MatDialogRef } from '@angular/material/dialog';
-import { PHASES, RunOutcome, SessionView, phaseIndex, severityRank } from '@vehicle-sil/gui-client';
+import {
+  FrontControls,
+  PHASES,
+  RunOutcome,
+  SessionView,
+  phaseIndex,
+  severityRank,
+} from '@vehicle-sil/gui-client';
 import { MeasurePipe } from '../core/format/measure-pipe';
 import { settledAfter } from '../core/streams/stream-signals';
 import { ForceStopDialog } from './force-stop-dialog';
-import { LATE_ANNOUNCEMENT, latenessText, phaseLabel, runOutcomeLabel, speedLabel } from './labels';
+import {
+  LATE_ANNOUNCEMENT,
+  latenessText,
+  phaseLabel,
+  reasonText,
+  runOutcomeLabel,
+  speedLabel,
+} from './labels';
 import { StopAction } from './run-session';
 
 /**
@@ -59,7 +73,9 @@ export class RunStatus {
 
   readonly session = input.required<SessionView | null>();
   readonly outcome = input.required<RunOutcome | null>();
-  /** サーバーと揃っている（つながっていて、再送を受け終えた）。揃っていなければ開始しない。 */
+  /** 開始、停止、待たずに止めるを押せるか、押せない理由（正面の口の `controls`）。 */
+  readonly controls = input.required<FrontControls>();
+  /** サーバーと揃っている（つながっていて、再送を受け終えた）。揃っていないときの、帯の一言に使う。 */
   readonly ready = input.required<boolean>();
   /** 開始を送って、応答を待っている。 */
   readonly starting = input(false);
@@ -67,8 +83,6 @@ export class RunStatus {
   readonly stopping = input<StopAction | null>(null);
   /** 開始の応答を待っている間に、止めるよう頼んだ。 */
   readonly stopWhileStarting = input(false);
-  /** HTTP でサーバーに届く（届かないとわかっていたら偽）。停止は、WebSocket が切れていても HTTP で頼める。 */
-  readonly reachable = input(true);
   readonly elapsedMs = input.required<number | null>();
   /** 始められない理由（なければ空）。 */
   readonly blockedBy = input.required<readonly string[]>();
@@ -91,12 +105,10 @@ export class RunStatus {
   private readonly running = computed(() => this.session()?.launcher.running ?? false);
   private readonly stopRequests = computed(() => this.session()?.stopRequests ?? 0);
 
-  /** 開始を押せない理由（押せるなら null）。 */
+  /** 開始を押せない理由（押せるなら null）: 正面の口の理由を先に、次にこの画面の入力の都合。 */
   protected readonly startBlocked = computed<string | null>(() => {
-    if (this.running()) return $localize`実行中は開始できません。`;
-    if (this.starting()) return $localize`開始の応答を待っています。`;
-    if (this.stopping() !== null) return $localize`停止の応答を待っています。`;
-    if (!this.ready()) return $localize`サーバーと揃うまで、開始できません。`;
+    const control = this.controls().start;
+    if (control.reason) return reasonText('start', control.reason);
     return this.blockedBy()[0] ?? null;
   });
 
@@ -111,25 +123,27 @@ export class RunStatus {
   );
 
   /**
-   * 停止が意味を持つか: ランチャーが動いている（と最後に知った）か、開始の応答を待っている。WebSocket が切れていて
-   * 最新の状態が見えなくても、HTTP で頼める（順に止める停止は何度頼んでも同じ）。
+   * 停止が意味を持つか: ランチャーが動いている（と最後に知った）か、開始の応答を待っている。帯の一言が、開始と
+   * 停止のどちらの事情を言うかを決める表示の都合。
    */
   protected readonly stopApplies = computed(() => this.running() || this.starting());
 
   /** 停止を押せない理由（押せるなら null）。止めている最中は、ボタンの文が言う。 */
   protected readonly stopBlocked = computed<string | null>(() => {
-    if (!this.stopApplies()) return $localize`止める実行はありません。`;
-    if (this.stopInProgress()) return $localize`止めるよう頼みました。`;
-    if (!this.reachable()) return $localize`サーバーに届かないので、止めるよう頼めません。`;
-    return null;
+    const reason = this.controls().stop.reason;
+    return reason ? reasonText('stop', reason) : null;
   });
 
-  /** 「待たずに止める」を出すか: 順に止めるよう頼んだ後、まだ待たずに止めるよう頼んでいないとき。 */
-  protected readonly canForce = computed(() => this.running() && this.stopRequests() === 1);
-  /** 「待たずに止める」を押せるか（最新の状態が見えているときだけ）。 */
-  private readonly forceEnabled = computed(
-    () => this.canForce() && this.ready() && this.stopping() === null,
-  );
+  /**
+   * 「待たずに止める」を出すか: 順に止めるよう頼んだ後、まだ待たずに止めるよう頼んでいないとき（押せるかは
+   * `controls.force_stop`）。
+   */
+  protected readonly canForce = computed(() => {
+    const force = this.controls().force_stop;
+    return this.stopRequests() >= 1 && (force.ok || force.reason?.code === 'busy');
+  });
+  /** 「待たずに止める」を押せるか。 */
+  private readonly forceEnabled = computed(() => this.controls().force_stop.ok);
 
   protected readonly startArmed = settledAfter(
     computed(() => this.startBlocked() === null),
@@ -144,7 +158,6 @@ export class RunStatus {
   /** 帯に出す理由の 1 行: 開始が関係する間は開始できない理由、止められる間は停止の事情。 */
   protected readonly reason = computed<string | null>(() => {
     if (this.stopApplies()) {
-      if (!this.reachable()) return this.stopBlocked();
       if (!this.ready() && !this.stopInProgress()) {
         return $localize`最新の状態は見えていませんが、止めるよう頼むことはできます。`;
       }

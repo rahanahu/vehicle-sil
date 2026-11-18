@@ -4,6 +4,7 @@ import {
   CheckStatus,
   ControlLink,
   ParticipantState,
+  OperationName,
   Phase,
   RunResultName,
   Severity,
@@ -168,6 +169,45 @@ export const LATE_ANNOUNCEMENT = $localize`実時間に遅れました。`;
 
 /** 送った時刻の命令に、ランチャーがまだ答えていない（command の事象が来ていない）。 */
 export const WAITING_TEXT = $localize`送った命令へのランチャーの答えを待っています。`;
+
+/**
+ * 正面の口が言う、操作できない理由（`controls.<op>.reason`）の、画面の言葉。持ち主（ランチャー、GUI サーバー、
+ * 接続）の理由の code から引き、op（どの操作の理由か）で言い分ける。表にない code は、理由の英語の文をそのまま出す。
+ */
+export function reasonText(op: OperationName, reason: { code: string; message: string }): string {
+  const time = op !== 'start' && op !== 'stop' && op !== 'force_stop';
+  switch (reason.code) {
+    case 'already-running':
+      return $localize`実行中は開始できません。`;
+    case 'starting':
+      return $localize`開始の応答を待っています。`;
+    case 'connecting':
+      return op === 'start'
+        ? $localize`サーバーと揃うまで、開始できません。`
+        : $localize`サーバーと揃うまで、操作できません。`;
+    case 'offline':
+      return $localize`サーバーとの接続が切れています。つなぎ直したら、もう一度押してください。`;
+    case 'busy':
+      if (op === 'start') return $localize`開始の応答を待っています。`;
+      if (time) return WAITING_TEXT;
+      return $localize`止めるよう頼みました。`;
+    case 'already-stopping':
+    case 'already-forced':
+      return $localize`止めるよう頼みました。`;
+    case 'not-running':
+      return time
+        ? $localize`時刻の操作は、実行が動いている間だけできます。`
+        : $localize`止める実行はありません。`;
+    case 'not-paused':
+      return op === 'step'
+        ? $localize`ステップ送りは、一時停止している間だけできます。`
+        : $localize`一時停止していません。`;
+    case 'paused':
+      return $localize`すでに一時停止しています。`;
+    default:
+      return reason.message;
+  }
+}
 
 /**
  * ECU の変数との接続の状態の 1 文。trouble: この実行では変数を読み書きできない（ランチャーが警告を出す）。
