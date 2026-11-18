@@ -215,7 +215,9 @@ describe('variable widgets', () => {
     // 操作は止めない
     expect(element(fixture, 'button, [role=switch], input').hasAttribute('disabled')).toBe(false);
     expect(element(fixture, '[aria-disabled=true]')).toBeNull();
-    expect(text(fixture, 'widget-why')).toBe('');
+    // 操作の説明（理由の文）に「使っていません」が入る（Tab で操作に入ったとき読まれる）
+    expect(text(fixture, 'widget-why')).toBe('この ECU はいま使っていません');
+    expect(element(fixture, '[data-testid=widget-why] .sr')).not.toBeNull();
   });
 
   it('says that a variable is not in this run', async () => {

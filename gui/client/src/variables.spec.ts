@@ -181,7 +181,6 @@ describe('variables', () => {
       step: null,
       description: '',
       enum: null,
-      availability: 'active',
     });
     // A session notification of the same run has no variables: keep the current state
     await deliver({ type: 'session', session: summary(1) });
@@ -247,11 +246,11 @@ describe('variables', () => {
               step: null,
               description: '',
               enum: [{ name: 'b', value: 1 }],
-              availability: 'active',
             },
           ],
         },
       ],
+      availability: new Map([['A', new Map([['x', 'active']])]]),
       peersOmitted: 0,
       variablesOmitted: 3,
     });

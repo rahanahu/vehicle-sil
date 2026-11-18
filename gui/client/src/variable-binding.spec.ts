@@ -283,6 +283,32 @@ describe('client.variables.bind', () => {
       demand.close();
     });
 
+    it("goes back to unknown when another run starts, then follows that run's summary", async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      await deliver(hello(), told({ Engine: { 'engine.demand': 'inactive' } }));
+      expect(demand.state.get().availability).toBe('inactive');
+      await deliver({ type: 'session', session: { ...hello().session, id: 2 } });
+      expect(demand.state.get().availability).toBe('unknown');
+      await deliver({
+        type: 'variables',
+        session: 2,
+        variables: withAvailability({ 'engine.demand': 'inactive', 'engine.speed': 'active' }),
+      });
+      expect(demand.state.get().availability).toBe('inactive');
+      demand.close();
+    });
+
+    it('leaves the list of variables as it is (a notification replaces only the states)', async () => {
+      await deliver(hello());
+      const peers = client.variables.state.get().peers;
+      const first = peers[0]!.variables;
+      await deliver(told({ Engine: { 'engine.demand': 'inactive' } }));
+      const state = client.variables.state.get();
+      expect(state.peers).toBe(peers);
+      expect(state.peers[0]!.variables).toBe(first);
+      expect(state.availability.get('Engine')?.get('engine.demand')).toBe('inactive');
+    });
+
     it('does not change whether the variable can be written, or what it says of the value', async () => {
       const demand = client.variables.bind(ref('engine.demand'));
       await deliver(hello(), values(100, false, { 'engine.demand': 30 }));
@@ -291,7 +317,7 @@ describe('client.variables.bind', () => {
       await deliver(told({ Engine: { 'engine.demand': 'inactive' } }));
       const after = demand.state.get();
       expect(after.availability).toBe('inactive');
-      expect({ ...after, availability: before.availability, info: before.info }).toEqual(before);
+      expect({ ...after, availability: before.availability }).toEqual(before);
       expect(after.block).toBeNull();
       demand.close();
     });

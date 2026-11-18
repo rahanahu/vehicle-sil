@@ -63,7 +63,13 @@ import { VariableBinding } from './variable-binding';
             }
           }
         </p>
-        <p class="why" [id]="variable().id + '-why'" data-testid="widget-why">{{ why() }}</p>
+        <p class="why" [id]="variable().id + '-why'" data-testid="widget-why">
+          {{ why() }}
+          @if (variable().availability() === 'inactive') {
+            <!-- 操作に Tab で入ったとき、理由の文と一緒に読まれる（見た目には出さない） -->
+            <span class="sr" i18n>この ECU はいま使っていません</span>
+          }
+        </p>
       }
     </section>
   `,
@@ -126,9 +132,19 @@ import { VariableBinding } from './variable-binding';
       color: var(--mat-sys-error);
     }
 
-    /* ECU がいま使っていない変数は薄くする。操作はそのまま使える */
-    [data-availability='inactive'] {
+    /* ECU がいま使っていない変数の値と操作は薄くする（操作はそのまま使える）。見出し、印、理由、誤りの文、フォーカスの輪は
+       薄くしない（小さい文字のコントラストを保つ） */
+    [data-availability='inactive'] .body {
       opacity: 0.6;
+    }
+
+    .sr {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
     }
 
     .unused {

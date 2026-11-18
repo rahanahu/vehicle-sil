@@ -43,7 +43,7 @@ test.afterEach(async ({ page }) => {
   if (target) await stopRun(page, target);
 });
 
-test('a variable the ECU does not use now is shown thinner, and is still written and read', async ({
+test('a variable the ECU does not use now is dimmed, and is still written and read', async ({
   page,
 }) => {
   await startRun(page, target, 'forever.yaml', true);
@@ -61,12 +61,14 @@ test('a variable the ECU does not use now is shown thinner, and is still written
   );
   await expect(demand.locator('.unused')).toHaveCount(0);
 
-  // 最初のステップのあと: demand は inactive（薄く、見出しに印と title）、speed は active
+  // 最初のステップのあと: demand は inactive（値と操作が薄く、見出しに印と title）、speed は active
   await timeCommand(page, target, 'resume');
   await expect(demand).toHaveAttribute('data-availability', 'inactive');
   await expect(speed).toHaveAttribute('data-availability', 'active');
   await expect(demand.locator('.unused')).toHaveAttribute('title', 'この ECU はいま使っていません');
-  await expect(demand).toHaveCSS('opacity', '0.6');
+  await expect(demand.locator('.body')).toHaveCSS('opacity', '0.6');
+  await expect(demand.locator('.unused')).toBeVisible();
+  await expect(demand).toHaveCSS('opacity', '1');
 
   // 操作は止まらない: 書け（反映される）、無効の印は付かない
   await expect(slider).toBeEnabled();

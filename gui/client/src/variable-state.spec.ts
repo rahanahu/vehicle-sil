@@ -18,7 +18,6 @@ const info = (fields: Partial<VariableInfo>): VariableInfo => ({
   step: null,
   description: '',
   enum: null,
-  availability: 'active',
   ...fields,
 });
 

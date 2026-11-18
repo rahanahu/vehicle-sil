@@ -490,7 +490,7 @@ class Binding implements VariableBinding {
     return {
       ref,
       info,
-      availability: info?.availability ?? 'unknown',
+      availability: variables.availability.get(ref.peer)?.get(ref.name) ?? 'unknown',
       reading,
       condition,
       block: this.blockOf(info, reading, pending),
