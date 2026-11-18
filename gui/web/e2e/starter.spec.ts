@@ -78,6 +78,23 @@ async function serve(config: string): Promise<GuiServer> {
   return server;
 }
 
+test('a starter opened without the token tells the failure once, and every part carries the mark', async ({
+  page,
+}) => {
+  const server = await serve('forever.yaml');
+  const open = new URL(server.url);
+  open.hash = '';
+  await page.goto(open.href);
+  await expect(page.locator('vsil-status')).toHaveAttribute('data-error', /\S/);
+  await expect(page.locator('.vsil > small[role=alert]')).toHaveCount(1);
+  await expect(page.locator('vsil-status [role=alert]')).toHaveText(/\S/);
+  const names = ['vsil-run-controls', 'vsil-time-controls', 'vsil-slider', 'vsil-value'];
+  for (const name of names) {
+    for (const part of await page.locator(name).all())
+      await expect(part).toHaveAttribute('data-error', /\S/);
+  }
+});
+
 test('the starter runs and stops, writes and shows variables, and reports a refused operation of its own', async ({
   page,
 }) => {

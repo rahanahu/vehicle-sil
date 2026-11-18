@@ -408,10 +408,10 @@ stop(); // 最後の購読を解除すると、サーバーに値を頼むのを
 
 - **ページの接続。** 部品は引数なしで `connect()` を呼びます。ページのスクリプトと部品は 1 つの接続（WebSocket 1 本）を共有し、自分のボタンの失敗も `<vsil-status>` に出ます。別の接続を使わせるには、部品の `client` プロパティに渡します（文書に入っていれば結び直します）。
 - **ファイルの組は 1 つ。** パッケージ、1 ファイルの束の写し、GUI サーバーの `/vsil/` のファイルのどれか 1 つを使い、混ぜません。部品は本体の入口をファイル名で import し、写しを持ちません。プロジェクトでは（パッケージ）、部品も自分のスクリプトも `@vehicle-sil/gui-client` を import します。写しでは、`vehicle-sil-gui-elements.mjs` を `vehicle-sil-gui-client.mjs` の隣に置き、ライブラリーは同じファイルから import します。サーバーからでは、部品を `/vsil/vehicle-sil-gui-elements.mjs`、ライブラリーを `/vsil/vehicle-sil-gui-client.mjs` から読みます（部品の import は、そのファイルになります）。ライブラリーの写しが 2 つあると（たとえばページの隣に置いたライブラリーの写しと、`/vsil/` の部品）、接続も 2 本になります。
-- **自分のマークアップと CSS。** 影の DOM はありません。部品は足した `<span class="vsil">` に描き、要素の中に置いた子は残します。CSS のために `data-*` を付けます: `data-link`、`data-run`、`data-pacing`（`<vsil-status>`）、`data-stale`、`data-can-write`、`data-on`（変数の部品）、`data-status`（`<vsil-scenario-result>` とその手順）、`<vsil-run-controls>` と `<vsil-time-controls>` の各ボタンと速さの選択の `data-reason` と `data-caution`（あれば理由のコード）。
+- **自分のマークアップと CSS。** 影の DOM はありません。部品は足した `<span class="vsil">` に描き、要素の中に置いた子は残します。CSS のために `data-*` を付けます: `data-link`、`data-run`、`data-pacing`（`<vsil-status>`）、`data-stale`、`data-can-write`、`data-on`（変数の部品）、`data-error`（つなげなかった部品すべて。エラーにコードがあればそのコード、なければ `error`。結び直して成功すると外れます）、`data-status`（`<vsil-scenario-result>` とその手順）、`<vsil-run-controls>` と `<vsil-time-controls>` の各ボタンと速さの選択の `data-reason` と `data-caution`（あれば理由のコード）。
 - **使えないボタン**は `disabled` にせず `aria-disabled="true"` にします（フォーカスを保ちます）。押しても何も起きず、理由は `aria-describedby` の先の要素に文として入ります（速さの選択も同じ）。何もすることがないと言うだけの理由（`not-running`、`offline`）もその要素に入りますが、要素は `hidden` です。読み上げは読み、画面には各ボタンの隣に繰り返しません（`<vsil-status>` が状態を出します）。変数がもうその値のときの `<vsil-write>` も同じです（"already false"）。書けない、または範囲のないスライダーは `disabled` で、理由はその隣に出ます。
 - **寿命。** 部品は文書に入ると購読し、外れると全部止めます。接続を待つ間に外れたら、何も描きません。`variable` などの属性が変わると結び直します。
-- **つなげなかった部品**（トークンがない、サーバーがいない）は、エラーの文を出し、ページを読み込み直すまでそのままです。
+- **つなげなかった部品**（トークンがない、サーバーがいない）は、ページの部品が同じ接続を使うので、まとめて失敗します。エラーの文はページで 1 回だけ出します。`<vsil-status>` があればそこに、なければ文書の順で最初の部品に出します（その部品が外れたら、ほかの部品が出します）。つなげなかった部品にはどれも `data-error` が付くので、CSS とスクリプトから失敗が分かります。部品が結び直して成功すると外れます。`client` で自分の接続を渡された部品と、描くときに失敗した部品（`variable` の属性がないなど）は、その部品が自分の文を出します。
 - **操作の失敗**（`ActionError`）はページに投げません。`status.problem` が `<vsil-status>` に出し、書き込みの失敗はその変数の隣に出ます。
 - **この 8 個から増やしません。** グラフ、表、配置は画面の仕事です。
 
