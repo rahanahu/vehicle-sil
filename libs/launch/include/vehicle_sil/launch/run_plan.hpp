@@ -72,7 +72,7 @@ struct RunPlan
 
     /// The configuration of `check` (a check that passed has one).
     [[nodiscard]] const SimulationConfig& config() const { return *check.config; }
-    /// run --scenario: the scenario the check read; null without one. Points into `check`.
+    /// run --scenario: the scenario the check read; null without one. Points into `scenario_check`.
     [[nodiscard]] const Scenario* scenario() const
     {
         return scenario_check && scenario_check->scenario ? &*scenario_check->scenario : nullptr;

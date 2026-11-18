@@ -418,8 +418,6 @@ std::string text_of(const CheckReport& report, const ScenarioCheck* scenario)
 
 } // namespace
 
-std::string format_text(const CheckReport& report) { return text_of(report, nullptr); }
-
 std::string format_text(const Checked& checked) { return text_of(checked, detail::scenario_of(checked)); }
 
 void detail::write_finding_members(vehicle_sil::json::JsonWriter& w, const std::string& file, const Finding& finding)
@@ -515,8 +513,6 @@ std::string json_of(const CheckReport& report, const ScenarioCheck* scenario)
 }
 
 } // namespace
-
-std::string format_json(const CheckReport& report) { return json_of(report, nullptr); }
 
 std::string format_json(const Checked& checked) { return json_of(checked, detail::scenario_of(checked)); }
 

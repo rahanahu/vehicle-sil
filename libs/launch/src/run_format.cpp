@@ -788,7 +788,7 @@ void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_v
 
 std::string format_internal_error_json(bool run, const std::string& message)
 {
-    CheckReport check;
+    Checked check;
     check.findings.push_back(Finding{Severity::Error, "internal", message, 0, "", ""});
     if (!run)
     {

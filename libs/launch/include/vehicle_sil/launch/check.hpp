@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 //
 // vehicle_sil_launch check: compares the configuration with what each ecu_main executable
-// reports about itself (--describe) and writes the result for people and as JSON. The rules
-// are pure functions (no process, no file); check_file() runs them on a file and the
-// executables. Internal; the rules and the output: docs/simulation-check.md.
+// reports about itself (--describe). The rules are pure functions (no process, no file); the
+// result is a CheckReport, which does not know the scenario. check_file() and the outputs, with the
+// scenario of --scenario: checked.hpp. Internal; the rules and the output: docs/simulation-check.md.
 #pragma once
 
 #include "vehicle_sil/launch/config.hpp"
@@ -348,15 +348,6 @@ struct CheckReport
 [[nodiscard]] control::MappedSchema seen_variables(const ParticipantConfig& participant, const ReportedEcu& ecu);
 
 void sort_findings(std::vector<Finding>& findings);
-
-/// The report for people: the participants and the networks as tables, then each error and
-/// warning as "<severity>: <file>:<line>: <message> [<code>]" (with the detail indented below), then a
-/// summary line. LF line ends; the same report gives the same text.
-[[nodiscard]] std::string format_text(const CheckReport& report);
-
-/// The report as JSON (format kCheckFormat): fixed keys in a fixed order, the layout of
-/// to_json(). docs/simulation-check.md has the keys.
-[[nodiscard]] std::string format_json(const CheckReport& report);
 
 /// How long one --describe may take unless the request says otherwise (RunHost::describe_timeout).
 inline constexpr std::chrono::milliseconds kDescribeTimeout{10000};

@@ -70,7 +70,7 @@ Public headers:
 |---|---|
 | `read_config()` | `launch/config.hpp` |
 | `check_file()`, `Checked` (the check of the file with the scenario of `--scenario`; `format_text()` and `format_json()` of it) | `launch/checked.hpp` |
-| The check of the configuration (`CheckReport`, the rules, `format_text()` and `format_json()` of a `CheckReport` without a scenario) | `launch/check.hpp` |
+| The check of the configuration (`CheckReport`, the rules) | `launch/check.hpp` |
 | `ScenarioCheck` (the scenario that `check --scenario` read) and `scenario_catalog()` (the participants of a checked configuration as a scenario can use them) | `launch/scenario_check.hpp` |
 | What the launcher asks the computer it runs on: `find_executable()` and `check_executable()` (a participant's executable), `find_tool()` and `bridge_tools()` (a bridge), `run_tool()` (one run of `--describe` or of a bridge's list), `read_config_file()`, `read_scenario_file()`, `files_beside()`, `environment_value()` | `launch/probe.hpp` |
 | `--connect`: `parse_connect()` and the grammar of a target (`read_connect_target()`, `backend_problem()`, `target_problem()`), `bridge_tool()` of a backend, `bridge_arguments()`, `connect_device_key()` (the device without the backend), `no_bridge_here()` (LIN; the Vector XL bridge elsewhere than on Windows), and `bridge_working_directory()`, the bridge's own directory, where the check, `connections` and `run` start it | `launch/connect.hpp` |

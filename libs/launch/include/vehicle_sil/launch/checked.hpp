@@ -21,16 +21,21 @@ struct RunRequest; // request.hpp
 /// The findings of the scenario are in CheckReport::findings (with Finding::file set), so that the
 /// counts, the exit code and the order stay one: `scenario` only says what was read. A run, a test
 /// and the outputs read it from here; the checks of the configuration take the CheckReport part.
+/// Copying it into a CheckReport drops the scenario: take a result of check_file() as a Checked.
 struct Checked : CheckReport
 {
     /// --scenario: the scenario file that was read and checked.
     std::optional<ScenarioCheck> scenario{};
 };
 
-/// format_text(const CheckReport&) with the scenario's line, its parameters and its lines.
+/// The report for people: the participants and the networks as tables, then each error and
+/// warning as "<severity>: <file>:<line>: <message> [<code>]" (with the detail indented below), then a
+/// summary line; with --scenario also the scenario's line, its parameters and its lines. LF line
+/// ends; the same report gives the same text.
 [[nodiscard]] std::string format_text(const Checked& checked);
 
-/// format_json(const CheckReport&) with the member "scenario".
+/// The report as JSON (format kCheckFormat): fixed keys in a fixed order, the layout of to_json();
+/// with --scenario also the member "scenario". docs/simulation-check.md has the keys.
 [[nodiscard]] std::string format_json(const Checked& checked);
 
 /// How a check is made, beside what is asked for (RunRequest): what its caller is, not what the

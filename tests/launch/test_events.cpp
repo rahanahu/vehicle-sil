@@ -310,12 +310,18 @@ TEST_CASE(the_check_and_the_result_are_their_json_on_one_line_and_nothing_follow
     Checked check;
     check.file = "x.yaml";
     check.findings.push_back(Finding{Severity::Error, "file", "the file does not exist: check the path", 0, "", ""});
+    check.scenario.emplace();
+    check.scenario->file = "drive.yaml";
     e.check(check);
     RunReport report;
     report.check = check;
     // The result is written when result() returns.
     CHECK(e.result(format_result_event(report)));
     CHECK(sink.lines().size() >= 2 && sink.lines().back().find("\"event\":\"result\"") != std::string::npos);
+    // The scenario of the check is in the event "check".
+    CHECK(std::any_of(sink.lines().begin(), sink.lines().end(), [](const std::string& line) {
+        return line.find("\"event\":\"check\"") != std::string::npos && line.find("\"scenario\":{\"file\":\"drive.yaml\"") != std::string::npos;
+    }));
     const std::size_t count = sink.lines().size();
     e.log("late", "after the result");
     e.phase(Phase::Ended);

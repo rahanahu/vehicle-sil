@@ -914,7 +914,7 @@ TEST_CASE(variables_that_are_not_offered_are_a_note_and_another_version_of_the_m
     s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 1};
     s.results[1].ecu->description.control = ControlOffer{"silkit", 3};
     // The check's JSON says what each executable offers.
-    CheckReport r;
+    Checked r;
     r.file = "sim.yaml";
     r.config = s.config;
     r.participants = s.results;
@@ -1027,7 +1027,7 @@ TEST_CASE(a_scenario_may_write_what_the_hub_takes_of_a_converted_variable)
     s.config.participants[0].variables = {pressure, level};
     s.config.participants[0].variable_lines = {20, 21};
     check_text(s.check(), "");
-    CheckReport report;
+    Checked report;
     report.file = "x.yaml";
     report.config = s.config;
     report.participants = s.results;
@@ -1106,7 +1106,7 @@ TEST_CASE(sorts_errors_before_warnings_each_by_line)
 namespace {
 
 /// A report with a described, a failed, a skipped and an unchecked participant.
-CheckReport mixed_report()
+Checked mixed_report()
 {
     Setup s = good_pair();
     s.network("Body", NetworkKind::Lin, 5);
@@ -1119,7 +1119,7 @@ CheckReport mixed_report()
     s.results[0].ecu->description.networks.push_back(NetworkDescription{"Body", NetworkUse::LinMaster, {}});
     // On Body as CAN: not on the LIN network Body (the tables count as the rules do).
     s.results[1].ecu->description.networks.push_back(NetworkDescription{"Body", NetworkUse::Raw, {}});
-    CheckReport r;
+    Checked r;
     r.file = "dir/simulation.yaml";
     r.config = s.config;
     r.participants = s.results;
@@ -1164,7 +1164,7 @@ TEST_CASE(the_text_report_shows_tables_then_the_findings)
 
 TEST_CASE(the_text_report_summary_line)
 {
-    CheckReport r = mixed_report();
+    Checked r = mixed_report();
     r.findings.erase(r.findings.begin(), r.findings.begin() + 2);
     const std::string passed = format_text(r);
     check_text(passed.substr(passed.rfind('\n', passed.size() - 2) + 1), "passed: 0 errors, 2 warnings, 1 note\n");
@@ -1180,7 +1180,7 @@ TEST_CASE(the_text_report_summary_line)
     r.findings.clear();
     const std::string clean = format_text(r);
     check_text(clean.substr(clean.rfind("\n\n") + 2), "passed: 0 errors, 0 warnings, 0 notes\n");
-    CheckReport unreadable;
+    Checked unreadable;
     unreadable.file = "x.yaml";
     unreadable.findings = {Finding{Severity::Error, "syntax", "syntax error: missing terminating ]", 2, "", "",
                                    "2:9: networks: [a\n            ^"}};
@@ -1193,7 +1193,7 @@ TEST_CASE(the_text_report_summary_line)
 
 TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
 {
-    CheckReport r = mixed_report();
+    Checked r = mixed_report();
     r.config->participants.resize(3);
     r.participants.resize(3);
     r.config->participants[1].command = {"dash board", "--x"};
@@ -1424,7 +1424,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
 
 TEST_CASE(the_json_report_has_the_time_lock_and_what_it_is_because_of)
 {
-    CheckReport r;
+    Checked r;
     r.file = "x.yaml";
     r.config = SimulationConfig{};
     r.time_lock = TimeLock{true, {"ETH", "CAN1"}, {"Gateway"}};
@@ -1445,7 +1445,7 @@ TEST_CASE(the_json_report_has_the_time_lock_and_what_it_is_because_of)
 
 TEST_CASE(the_json_report_of_a_file_that_cannot_be_read)
 {
-    CheckReport r;
+    Checked r;
     r.file = "x.yaml";
     r.findings = {Finding{Severity::Error, "file", "the file does not exist: check the path", 0, "", ""}};
     check_text(format_json(r), R"({
@@ -1483,7 +1483,7 @@ TEST_CASE(the_json_report_of_a_file_that_cannot_be_read)
 
 TEST_CASE(the_json_report_of_a_wrong_command_line)
 {
-    CheckReport r;
+    Checked r;
     r.usage = true;
     r.findings = {Finding{Severity::Error, "usage", "unknown option --bogus", 0, "", ""}};
     CHECK(!r.passed());
@@ -1651,7 +1651,7 @@ TEST_CASE(the_json_report_writes_null_for_what_is_not_there)
 {
     SimulationConfig config;
     config.participants.push_back(participant("", 4));
-    CheckReport r;
+    Checked r;
     r.file = "x.yaml";
     r.config = config;
     r.participants = {ParticipantResult{ParticipantStatus::Skipped, std::nullopt}};
@@ -1670,7 +1670,7 @@ TEST_CASE(the_reports_show_the_mac_address_of_an_ethernet_network)
                    ecu("Camera", 5ms,
                        {NetworkDescription{"Backbone", NetworkUse::Ethernet, {}, eth::MacAddress{{0x02, 0, 0, 0, 0xAB, 0x01}}}}))
         .described(participant("Display", 9), ecu("Display", 5ms, {NetworkDescription{"Backbone", NetworkUse::Ethernet, {}}}));
-    CheckReport r;
+    Checked r;
     r.file = "x.yaml";
     r.config = s.config;
     r.participants = s.results;
@@ -1687,7 +1687,7 @@ TEST_CASE(the_reports_show_the_mac_address_of_an_ethernet_network)
 
 TEST_CASE(the_json_report_shows_the_seen_variables_and_the_map_of_an_entry_that_has_one)
 {
-    CheckReport r = mixed_report();
+    Checked r = mixed_report();
     control::VariableInfo rpm;
     rpm.name = "rpm_x10";
     rpm.type = control::ValueType::Integer;
@@ -1845,7 +1845,7 @@ TEST_CASE(a_disabled_participant_is_a_note_and_the_rules_are_about_the_rest)
 TEST_CASE(the_reports_show_a_disabled_participant)
 {
     const Setup s = without_dashboard();
-    CheckReport r;
+    Checked r;
     r.file = "sim.yaml";
     r.config = s.config;
     r.participants = s.results;
@@ -1887,7 +1887,7 @@ TEST_CASE(the_reports_show_a_role_that_is_not_ecu)
                 ecu("Spy", 10ms, {NetworkDescription{"J1939_CAN", NetworkUse::Raw, {}}}));
     s.unchecked("Gateway", 15);
     s.config.participants.back().role = ParticipantRole::Bridge;
-    CheckReport r;
+    Checked r;
     r.file = "sim.yaml";
     r.config = s.config;
     r.participants = s.results;
@@ -1914,7 +1914,7 @@ TEST_CASE(check_file_neither_looks_for_nor_runs_a_disabled_executable)
     const vehicle_sil::launch::test::InDirectory there(dir); // the files by their names
     RunRequest plain;
     plain.host.config = "sim.yaml";
-    const CheckReport r = check_file(plain);
+    const Checked r = check_file(plain);
     CHECK(r.config.has_value());
     CHECK(r.participants.size() == 2 && r.participants[0].status == ParticipantStatus::Failed &&
           r.participants[1].status == ParticipantStatus::Disabled && r.participants[1].executable.empty());
@@ -1928,12 +1928,12 @@ TEST_CASE(check_file_neither_looks_for_nor_runs_a_disabled_executable)
     RunRequest swapped = plain;
     swapped.intent.disable = {"Engine"};
     swapped.intent.enable = {"Ghost"};
-    const CheckReport s = check_file(swapped);
+    const Checked s = check_file(swapped);
     CHECK(!s.usage);
     CHECK(s.participants[0].status == ParticipantStatus::Disabled && s.participants[1].status == ParticipantStatus::Failed);
     RunRequest wrong = plain;
     wrong.intent.disable = {"Gost"};
-    const CheckReport u = check_file(wrong);
+    const Checked u = check_file(wrong);
     CHECK(u.usage && !u.config && !u.passed());
     check_text(lines(u.findings), "E 0 usage: --disable Gost: the file has no participant with this name (did you mean "
                                   "'Ghost'?); its participants are Engine, Ghost\n");
@@ -1945,7 +1945,7 @@ TEST_CASE(check_file_neither_looks_for_nor_runs_a_disabled_executable)
     both.host.config = "none.yaml";
     both.intent.disable = {"Ghost"};
     both.intent.enable = {"Ghost"};
-    const CheckReport b = check_file(both);
+    const Checked b = check_file(both);
     CHECK(b.usage);
     check_text(lines(b.findings), "E 0 usage: --disable and --enable both name Ghost: give one of them\n");
 }
@@ -1963,7 +1963,7 @@ TEST_CASE(check_file_a_disabled_entry_with_errors_and_an_unreadable_enabled)
                            "  - name: Maybe\n    command: [missing/maybe]\n    enabled: no\n";
     RunRequest request;
     request.host.config = process::utf8_from_path(file);
-    const CheckReport r = check_file(request);
+    const Checked r = check_file(request);
     CHECK(r.participants.size() == 3 && r.participants[1].status == ParticipantStatus::Disabled &&
           r.participants[2].status == ParticipantStatus::Skipped);
     std::string codes;
@@ -2090,7 +2090,7 @@ TEST_CASE(a_renamed_network_is_under_the_simulations_name_in_every_rule)
     check_text(w.check(), "E 4 address-conflict: network 'B': P and Q both ask for the address 0x10 (16), and P and Q have "
                           "no NAME, so they do not take part in the address claim and keep sending from that address: give "
                           "each node its own address; " + kNoEntries + "\n");
-    CheckReport r;
+    Checked r;
     r.file = "sim.yaml";
     r.config = w.config;
     r.participants = w.results;
@@ -2263,7 +2263,7 @@ TEST_CASE(the_reports_show_both_names_of_a_renamed_network)
         .described(participant("Dashboard", 11), ecu("Dashboard", 10ms, {on_j1939("VehicleCAN", {node(0x28)})}))
         .unchecked("Door", 13);
     s.config.participants[2].network_names = {NetworkName{"Body", "DoorLIN", 15}};
-    CheckReport r;
+    Checked r;
     r.file = "sim.yaml";
     r.config = s.config;
     r.participants = s.results;
@@ -2910,7 +2910,7 @@ TEST_CASE(the_reports_show_both_addresses_of_a_changed_node)
         J1939NodeEntry{{"Other", change(0x77, 0x01)}, 17},
         J1939NodeEntry{{"Other", change(0x21, std::nullopt)}, 18},
     };
-    CheckReport r;
+    Checked r;
     r.file = "sim.yaml";
     r.config = s.config;
     r.participants = s.results;
@@ -2989,7 +2989,7 @@ TEST_CASE(a_configuration_without_j1939_nodes_checks_as_before)
     // The tables and the JSON of a configuration without j1939_nodes have nothing of it (null in
     // the JSON); the three rules of the addresses and NAMEs end with how to fix it (here: in the
     // ECUs' code).
-    const CheckReport r = mixed_report();
+    const Checked r = mixed_report();
     CHECK(format_text(r).find("<-") == std::string::npos);
     const std::string json = format_json(r);
     CHECK(json.find("\"j1939_nodes\": [") == std::string::npos && json.find("\"j1939_nodes\": null,\n") != std::string::npos);
@@ -3682,7 +3682,7 @@ TEST_CASE(a_shared_target_fails_the_check_with_strict_only)
     const Setup s = two_ethernets();
     FakeTools fake;
     const ConnectTools tools = fake.tools();
-    CheckReport r;
+    Checked r;
     r.config = s.config;
     r.findings = check_connections(s.config, s.results, {{"A", "eth0"}, {"B", "eth0"}}, &tools).findings;
     CHECK(r.passed());
@@ -3780,7 +3780,7 @@ TEST_CASE(a_role_bridge_participant_on_a_connected_network_is_a_loop)
 TEST_CASE(the_outputs_show_where_a_network_is_connected)
 {
     const Setup s = connect_setup();
-    CheckReport r;
+    Checked r;
     r.file = "simulation.yaml";
     r.config = s.config;
     r.participants = s.results;

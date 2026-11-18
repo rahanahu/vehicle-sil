@@ -70,7 +70,7 @@
 |---|---|
 | `read_config()` | `launch/config.hpp` |
 | `check_file()`、`Checked`（ファイルの照合と、`--scenario` のシナリオ。その `format_text()` と `format_json()`） | `launch/checked.hpp` |
-| 構成の照合（`CheckReport`、ルール、シナリオのない `CheckReport` の `format_text()` と `format_json()`） | `launch/check.hpp` |
+| 構成の照合（`CheckReport`、ルール） | `launch/check.hpp` |
 | `ScenarioCheck`（`check --scenario` が読んだシナリオ）と `scenario_catalog()`（照合した構成の participant を、シナリオが使える形にしたもの） | `launch/scenario_check.hpp` |
 | ランチャーが、動いているコンピューターに尋ねること: `find_executable()` と `check_executable()`（participant の実行ファイル）、`find_tool()` と `bridge_tools()`（ブリッジ）、`run_tool()`（`--describe` やブリッジの一覧の 1 回の実行）、`read_config_file()`、`read_scenario_file()`、`files_beside()`、`environment_value()` | `launch/probe.hpp` |
 | `--connect` の `parse_connect()` と先の文法（`read_connect_target()`、`backend_problem()`、`target_problem()`）、backend ごとの `bridge_tool()`、`bridge_arguments()`、backend を除いたデバイスの `connect_device_key()`、`no_bridge_here()`（LIN、Windows 以外の Vector XL のブリッジ）、照合と `connections` と `run` がブリッジを起動するディレクトリ（ブリッジ自身のもの）の `bridge_working_directory()` | `launch/connect.hpp` |
