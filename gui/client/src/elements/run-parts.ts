@@ -19,8 +19,8 @@ export class VsilStatusElement extends Part {
             ? s.link
             : s.run === 'none'
               ? 'ready'
-              : (s.run === 'ended' || s.run === 'crashed') && s.result
-                ? s.result.message
+              : (s.run === 'ended' || s.run === 'crashed') && s.result && !s.problem
+                ? s.result.message // with a problem, the problem has the sentence
                 : s.run;
         problem.textContent = s.problem ? reasonText(s.problem) : '';
         setData(this, 'link', s.link);
@@ -70,7 +70,11 @@ export class VsilRunControlsElement extends Part {
     );
     root.append(
       ...this.button(client, this.text('label-start', 'Start'), 'start', () =>
-        client.run.start({ ...pageIntent.get(), ...this.intent }),
+        // the file that the scenario part lists the scenarios of (null: the server's start-up file)
+        client.run.start(
+          { ...pageIntent.get(), ...this.intent },
+          client.status.get().file === null ? undefined : { file: client.status.get().file! },
+        ),
       ),
       ...this.button(client, this.text('label-stop', 'Stop'), 'stop', () => client.run.stop()),
       force,
@@ -102,16 +106,26 @@ export class VsilTimeControlsElement extends Part {
     const untilMs = h('input', { type: 'number', min: '0', value: '1000' });
     const speed = h('select');
     const speeds: string[] = [];
+    speed.add(new Option('-', '')); // no speed known yet
     const addSpeed = (text: string) => {
       speed.add(new Option(text === 'max' ? 'fastest' : `${text}×`, text));
       speeds.push(text);
     };
     for (const text of this.text('speeds', '0.5 1 5 max').split(/\s+/))
       if (speedValue(text) !== null) addSpeed(text);
+    // The select shows the speed that the clock says; after a refused change or an ignored choice it goes back to it.
+    const showSpeed = () => {
+      const { speed: now } = client.clock.get();
+      const text = now === null ? '' : String(now);
+      if (text !== '' && !speeds.includes(text)) addSpeed(text);
+      speed.value = text;
+    };
     speed.addEventListener('change', () => {
       const value = speedValue(speed.value);
-      if (value !== null) void quietly(() => client.time.setSpeed(value));
+      if (value === null || speed.getAttribute('aria-disabled') === 'true') showSpeed();
+      else void quietly(() => client.time.setSpeed(value)).then(showSpeed);
     });
+    const speedWhy = this.describe(client, 'speed', speed);
     root.append(
       ...this.button(client, this.text('label-pause', 'Pause'), 'pause', () => client.time.pause()),
       ...this.button(client, this.text('label-resume', 'Resume'), 'resume', () =>
@@ -126,16 +140,13 @@ export class VsilTimeControlsElement extends Part {
         client.time.runUntil(Number(untilMs.value)),
       ),
       h('label', {}, 'Speed ', speed),
+      speedWhy,
     );
     this.own(
-      watch([client.controls, client.clock], (controls, clock) => {
-        speed.disabled = !controls.speed.ok;
+      watch(client.controls, (controls) => {
         stepMs.max = String(controls.step.max_ms);
-        if (clock.speed === null || document.activeElement === speed) return;
-        const text = String(clock.speed);
-        if (!speeds.includes(text)) addSpeed(text);
-        speed.value = text;
       }),
     );
+    this.own(watch(client.clock, showSpeed));
   }
 }

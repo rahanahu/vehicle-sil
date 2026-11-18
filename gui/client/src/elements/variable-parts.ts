@@ -42,8 +42,9 @@ abstract class VariablePart extends Part {
       watch(variable, (v) => {
         setData(this, 'stale', String(v.stale));
         setData(this, 'canWrite', String(v.can_write));
-        show(v);
         if (this.writes) note.textContent = writeNote(v);
+        note.hidden = false;
+        show(v);
       }),
     );
   }
@@ -82,16 +83,23 @@ export class VsilSliderElement extends VariablePart {
       dragging = false;
       void quietly(() => variable.write(Number(input.value)));
     });
+    // A knob let go of where it was picked up gives no `change`: it follows the variable again.
+    for (const name of ['pointerup', 'pointercancel', 'keyup', 'blur'])
+      input.addEventListener(name, () => (dragging = false));
     root.append(input, ' ', output);
     return (v: VariableView) => {
-      input.disabled = !v.can_write;
+      const ranged = v.min !== null && v.max !== null;
+      input.disabled = !v.can_write || !ranged;
       if (!v.can_write) dragging = false; // a knob that cannot be released must not stay held
-      if (v.min !== null && v.max !== null) {
+      if (ranged) {
         input.min = String(v.min);
         input.max = String(v.max);
         input.step = v.step === null ? 'any' : String(v.step);
+      } else if (v.can_write && !v.problem) {
+        note.textContent = 'this variable has no range to set';
       }
-      if (!dragging && typeof v.value === 'number') input.value = String(v.value);
+      // while a write is on its way the knob stays where it was put (the view still has the value that was read)
+      if (!dragging && !v.writing && typeof v.value === 'number') input.value = String(v.value);
       output.textContent = v.value === null ? '-' : `${v.text}${v.unit ? ` ${v.unit}` : ''}`;
     };
   }
@@ -126,7 +134,14 @@ export class VsilWriteElement extends VariablePart {
         void quietly(() => variable.write(value));
     });
     root.append(button);
-    return (v: VariableView) =>
-      button.setAttribute('aria-disabled', String(!v.can_write || v.value === value));
+    return (v: VariableView) => {
+      const already = v.can_write && v.value === value;
+      button.setAttribute('aria-disabled', String(!v.can_write || already));
+      if (already && !v.problem) {
+        // said to a screen reader (aria-describedby), not shown: the page shows the value itself
+        note.textContent = `already ${String(value)}`;
+        note.hidden = true;
+      }
+    };
   }
 }

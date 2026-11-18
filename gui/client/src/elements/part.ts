@@ -32,7 +32,7 @@ export async function quietly(operation: () => Promise<void>): Promise<void> {
   }
 }
 
-/** Reasons that only say there is nothing to do yet: they stay in `data-reason` and are not written out. */
+/** Reasons that only say there is nothing to do yet: their sentence is in the description, hidden. */
 const QUIET = new Set(['not-running', 'offline']);
 
 /**
@@ -129,6 +129,29 @@ export abstract class Part extends HTMLElement {
   }
 
   /**
+   * Binds `element` to one control of `client.controls`: `aria-disabled` (the caller ignores input while it is true),
+   * `data-reason` and `data-caution` (the codes), and a sentence in an element that describes it (`aria-describedby`;
+   * returned, to be put next to `element`). A reason that only says there is nothing to do (`not-running`, `offline`)
+   * is in that element too, but hidden: a screen reader reads it, the page does not show it seven times.
+   */
+  protected describe(client: Front, control: OperationName, element: HTMLElement): HTMLElement {
+    const why = h('small', { id: `vsil-why-${++ids}`, class: 'vsil-why' });
+    element.setAttribute('aria-describedby', why.id);
+    this.own(
+      watch(client.controls, (controls) => {
+        const { ok, reason, caution } = controls[control];
+        element.setAttribute('aria-disabled', String(!ok));
+        setData(element, 'reason', reason?.code ?? null);
+        setData(element, 'caution', caution?.code ?? null);
+        const shown = reason ?? caution;
+        why.textContent = shown ? reasonText(shown) : '';
+        why.hidden = shown !== null && QUIET.has(shown.code);
+      }),
+    );
+    return why;
+  }
+
+  /**
    * A button bound to one control of `client.controls`. When it cannot be used it stays focusable (`aria-disabled`),
    * the reason is in an element that describes it (`aria-describedby`) and its code is in `data-reason`.
    */
@@ -138,21 +161,11 @@ export abstract class Part extends HTMLElement {
     control: OperationName,
     action: () => Promise<void>,
   ): HTMLElement[] {
-    const why = h('small', { id: `vsil-why-${++ids}`, class: 'vsil-why' });
-    const button = h('button', { type: 'button', 'aria-describedby': why.id }, label);
+    const button = h('button', { type: 'button' }, label);
+    const why = this.describe(client, control, button);
     button.addEventListener('click', () => {
       if (button.getAttribute('aria-disabled') !== 'true') void quietly(action);
     });
-    this.own(
-      watch(client.controls, (controls) => {
-        const { ok, reason, caution } = controls[control];
-        button.setAttribute('aria-disabled', String(!ok));
-        setData(button, 'reason', reason?.code ?? null);
-        setData(button, 'caution', caution?.code ?? null);
-        const shown = reason ?? caution;
-        why.textContent = shown && !QUIET.has(shown.code) ? reasonText(shown) : '';
-      }),
-    );
     return [button, why];
   }
 }

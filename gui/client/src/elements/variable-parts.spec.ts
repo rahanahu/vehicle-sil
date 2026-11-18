@@ -92,7 +92,10 @@ describe('<vsil-slider>', () => {
     const front = fakeFront();
     const part = await mount('vsil-slider', front, { variable: 'Engine.e.throttle' });
     const cell = front.variables.get('Engine.e.throttle')!.cell;
-    cell.set(viewOf({ can_write: false, why: { code: 'ended', message: 'The run has ended.' } }));
+    const range = { min: 0, max: 100 };
+    cell.set(
+      viewOf({ ...range, can_write: false, why: { code: 'ended', message: 'The run has ended.' } }),
+    );
     const input = part.querySelector('input')!;
     expect(input.disabled).toBe(true);
     expect(note(part)).toBe('The run has ended.');
@@ -100,14 +103,54 @@ describe('<vsil-slider>', () => {
       part.querySelector('.vsil-note'),
     );
     setReasonText(() => 'Beendet.');
-    cell.set(viewOf({ can_write: false, why: { code: 'ended', message: 'The run has ended!' } }));
+    cell.set(
+      viewOf({ ...range, can_write: false, why: { code: 'ended', message: 'The run has ended!' } }),
+    );
     expect(note(part)).toBe('Beendet.');
     setReasonText(null);
-    cell.set(viewOf({ problem: { code: 'no-answer', message: 'Nobody answered.' } }));
+    cell.set(viewOf({ ...range, problem: { code: 'no-answer', message: 'Nobody answered.' } }));
     expect(note(part)).toBe('Nobody answered.');
     expect(part.dataset['canWrite']).toBe('true');
-    cell.set(viewOf({ writing: true }));
+    cell.set(viewOf({ ...range, writing: true }));
     expect(note(part)).toBe('writing…');
+  });
+
+  it('keeps the knob where it was put while the write is on its way', async () => {
+    const front = fakeFront();
+    const part = await mount('vsil-slider', front, { variable: 'Engine.e.throttle' });
+    const variable = front.variables.get('Engine.e.throttle')!;
+    const range = { min: 0, max: 100, step: 1 };
+    variable.cell.set(viewOf({ value: 30, text: '30', ...range }));
+    const input = part.querySelector('input')!;
+    input.value = '60';
+    input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new Event('change'));
+    variable.cell.set(viewOf({ value: 30, text: '30', writing: true, ...range }));
+    expect(input.value).toBe('60');
+    variable.cell.set(viewOf({ value: 60, text: '60', ...range }));
+    expect(input.value).toBe('60');
+  });
+
+  it('follows the variable again when the knob is let go where it was picked up', async () => {
+    const front = fakeFront();
+    const part = await mount('vsil-slider', front, { variable: 'Engine.e.throttle' });
+    const cell = front.variables.get('Engine.e.throttle')!.cell;
+    const range = { min: 0, max: 100, step: 1 };
+    cell.set(viewOf({ value: 30, text: '30', ...range }));
+    const input = part.querySelector('input')!;
+    input.value = '60';
+    input.dispatchEvent(new Event('input'));
+    input.value = '30'; // back where it was: the browser gives no `change`
+    input.dispatchEvent(new Event('pointerup'));
+    cell.set(viewOf({ value: 50, text: '50', ...range }));
+    expect(input.value).toBe('50');
+  });
+
+  it('is not usable for a variable without a range, and says so', async () => {
+    const front = fakeFront();
+    const part = await mount('vsil-slider', front, { variable: 'Engine.e.flag' });
+    expect(part.querySelector('input')!.disabled).toBe(true);
+    expect(part.querySelector('.vsil-note')!.textContent).toContain('no range');
   });
 
   it('does not leave an unhandled rejection when the write fails', async () => {
@@ -146,6 +189,19 @@ describe('<vsil-write>', () => {
     );
     expect(button.getAttribute('aria-disabled')).toBe('true');
     expect(note(part)).toBe('Paused.');
+  });
+
+  it('describes why it cannot be pressed when the variable already has the value, hidden', async () => {
+    const front = fakeFront();
+    const part = await mount('vsil-write', front, { variable: 'E.e.connected', value: 'false' });
+    front.variables.get('E.e.connected')!.cell.set(viewOf({ value: false }));
+    const button = part.querySelector('button')!;
+    const why = document.getElementById(button.getAttribute('aria-describedby')!)!;
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(why.textContent).toBe('already false');
+    expect(why.hidden).toBe(true);
+    front.variables.get('E.e.connected')!.cell.set(viewOf({ value: true }));
+    expect(why.hidden).toBe(false);
   });
 
   it('reads numbers and texts from the value attribute and names itself without a label', async () => {

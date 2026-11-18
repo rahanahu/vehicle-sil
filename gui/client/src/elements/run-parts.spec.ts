@@ -27,7 +27,7 @@ const described = (b: HTMLElement) => document.getElementById(b.getAttribute('ar
 afterEach(() => {
   document.body.replaceChildren();
   setReasonText(null);
-  pageIntent.update({ scenario: '' });
+  pageIntent.update({ scenario: '', variant: '' });
 });
 
 describe('<vsil-status>', () => {
@@ -42,6 +42,7 @@ describe('<vsil-status>', () => {
     expect(part.textContent).toContain('120 ms (behind real time)');
     expect(part.querySelector('[role=alert]')?.textContent).toBe('It broke.');
     front.cells.status.patch({
+      problem: null,
       run: 'ended',
       result: { end: 'completed', scenario: null, ok: true, message: 'Finished.' },
     });
@@ -120,16 +121,36 @@ describe('the buttons', () => {
     const part = await mount('vsil-run-controls', front);
     pageIntent.update({ scenario: 'scenarios/a.yaml', variant: 'v1' });
     button(part, 'Start').click();
-    expect(front.spies.start).toHaveBeenLastCalledWith({
-      scenario: 'scenarios/a.yaml',
-      variant: 'v1',
-    });
+    expect(front.spies.start).toHaveBeenLastCalledWith(
+      { scenario: 'scenarios/a.yaml', variant: 'v1' },
+      { file: 'simulation.yaml' },
+    );
     part.intent = { scenario: 'scenarios/b.yaml' };
     button(part, 'Start').click();
-    expect(front.spies.start).toHaveBeenLastCalledWith({
-      scenario: 'scenarios/b.yaml',
-      variant: 'v1',
-    });
+    expect(front.spies.start).toHaveBeenLastCalledWith(
+      { scenario: 'scenarios/b.yaml', variant: 'v1' },
+      { file: 'simulation.yaml' },
+    );
+  });
+
+  it('starts the file that the status names, and no file when there is none', async () => {
+    front.cells.status.patch({ file: 'other/b.yaml' });
+    const part = await mount('vsil-run-controls', front);
+    button(part, 'Start').click();
+    expect(front.spies.start).toHaveBeenLastCalledWith({}, { file: 'other/b.yaml' });
+    front.cells.status.patch({ file: null });
+    button(part, 'Start').click();
+    expect(front.spies.start).toHaveBeenLastCalledWith({}, undefined);
+  });
+
+  it('puts a reason that only says there is nothing to do in the description, hidden', async () => {
+    front.cells.controls.patch({ stop: refused('not-running', 'No run is going.') });
+    const part = await mount('vsil-run-controls', front);
+    const why = described(button(part, 'Stop'));
+    expect(why.textContent).toBe('No run is going.');
+    expect(why.hidden).toBe(true);
+    front.cells.controls.patch({ stop: refused('busy', 'Another action is on its way.') });
+    expect(why.hidden).toBe(false);
   });
 
   it('does not leave an unhandled rejection when an operation fails', async () => {
@@ -161,7 +182,7 @@ describe('<vsil-time-controls>', () => {
     expect(front.spies.step).toHaveBeenCalledWith(25);
     expect(front.spies.runUntil).toHaveBeenCalledWith(900);
     const speed = part.querySelector('select')!;
-    expect([...speed.options].map((o) => o.value)).toEqual(['1', 'max']);
+    expect([...speed.options].map((o) => o.value)).toEqual(['', '1', 'max']);
     speed.value = 'max';
     speed.dispatchEvent(new Event('change'));
     expect(front.spies.setSpeed).toHaveBeenCalledWith('max');
@@ -176,6 +197,31 @@ describe('<vsil-time-controls>', () => {
     button(part, 'Pause').click();
     expect(front.spies.pause).not.toHaveBeenCalled();
     expect(described(button(part, 'Pause')).textContent).toBe('Already paused.');
+  });
+
+  it('describes the speed like a button, and goes back to the clock when it is refused', async () => {
+    const front = fakeFront();
+    front.cells.controls.patch({
+      speed: { ...refused('not-running', 'No run is going.'), min: 0.1, max: 100 },
+    });
+    const part = await mount('vsil-time-controls', front, { speeds: '1 max' });
+    const speed = part.querySelector('select')!;
+    expect(speed.getAttribute('aria-disabled')).toBe('true');
+    expect(speed.dataset['reason']).toBe('not-running');
+    expect(described(speed).textContent).toBe('No run is going.');
+    expect(speed.value).toBe(''); // no speed known yet
+    speed.value = '1';
+    speed.dispatchEvent(new Event('change'));
+    expect(front.spies.setSpeed).not.toHaveBeenCalled();
+    expect(speed.value).toBe('');
+    front.cells.controls.patch({ speed: { ...ok(), min: 0.1, max: 100 } });
+    front.cells.clock.patch({ speed: 'max' });
+    front.spies.setSpeed.mockRejectedValue(new Error('refused'));
+    speed.value = '1';
+    speed.dispatchEvent(new Event('change'));
+    await settle();
+    expect(front.spies.setSpeed).toHaveBeenCalledWith(1);
+    expect(speed.value).toBe('max');
   });
 
   it('has the labels of the buttons as attributes', async () => {

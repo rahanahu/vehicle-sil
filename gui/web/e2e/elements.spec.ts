@@ -2,7 +2,7 @@
 // the GUI server's --web with the two bundles next to it (npm run build:client), against the replaying launcher.
 // The parts must start, pause, step and stop a run, write a variable and show it, and the page's script and the parts
 // must share one connection (one WebSocket).
-import { expect, test } from '@playwright/test';
+import { Locator, expect, test } from '@playwright/test';
 import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +21,12 @@ const CONTROL_FEATURES =
   'scenario,timeline';
 const BUILD = join(REPOSITORY, 'build', 'gui-client');
 const BUNDLES = ['vehicle-sil-gui-client.mjs', 'vehicle-sil-gui-elements.mjs'];
+
+/** The sentence that describes a button (aria-describedby), hidden or not. */
+const described = (button: Locator) =>
+  button.evaluate(
+    (element) => document.getElementById(element.getAttribute('aria-describedby')!)?.textContent,
+  );
 
 let screen: string;
 const cleanups: (() => Promise<void>)[] = [];
@@ -94,9 +100,11 @@ test('a screen of parts runs and stops, writes a variable and says why a button 
   await scenario.selectOption({ index: 1 });
   await scenario.selectOption({ index: 0 }); // no scenario: the replaying launcher has no recording of a check with one
 
-  // Nothing runs: these cannot be used, and the part says why
+  // Nothing runs: these cannot be used. The reason is in the description (hidden: the status part shows the state)
   await expect(button('time', 'Pause')).toHaveAttribute('aria-disabled', 'true');
   await expect(button('run', 'Stop')).toHaveAttribute('aria-disabled', 'true');
+  expect(await described(button('run', 'Stop'))).toMatch(/\w+/);
+  await expect(page.getByTestId('time').locator('select')).toHaveAttribute('aria-disabled', 'true');
 
   await button('run', 'Start').click();
   await expect(status).toHaveAttribute('data-run', 'running', { timeout: RUN_TIMEOUT });
@@ -111,8 +119,13 @@ test('a screen of parts runs and stops, writes a variable and says why a button 
   await expect(button('time', 'Pause')).toHaveAttribute('aria-disabled', 'false');
   await expect(status.locator('.vsil-time')).toHaveText(/^\d+ ms/);
 
-  // A slider, a button and a value show the same variable
-  await expect(page.getByTestId('slider').locator('input')).toBeEnabled();
+  // Moving the slider writes the number, and the value part shows it
+  const slider = page.getByTestId('slider').locator('input');
+  await expect(slider).toBeEnabled();
+  await slider.fill('60');
+  await expect(page.getByTestId('demand').locator('output')).toHaveText(/^60 /);
+  await expect(slider).toHaveValue('60');
+  // A button writes the same variable
   await button('write', 'Demand 80').click();
   await expect(page.getByTestId('demand').locator('output')).toHaveText(/^80 /);
   await expect(page.getByTestId('slider').locator('input')).toHaveValue('80');
@@ -176,6 +189,7 @@ test('a run that starts paused, by the intent property of the start part: what c
     if (request.url().endsWith('/api/run')) runs.push(request.postDataJSON());
   });
   await page.goto(server.url.replace('#', '?paused#'));
+  await expect(page.locator('body')).toHaveAttribute('data-own', 'connected');
   const status = page.getByTestId('status');
   const button = (testid: string, name: string) =>
     page.getByTestId(testid).getByRole('button', { name, exact: true });
@@ -188,4 +202,19 @@ test('a run that starts paused, by the intent property of the start part: what c
   await expect(button('time', 'Step')).toHaveAttribute('aria-disabled', 'false');
   await button('run', 'Stop').click();
   await expect(status).not.toHaveAttribute('data-run', 'paused', { timeout: RUN_TIMEOUT });
+});
+
+test('the resume part button resumes a run that started paused', async ({ page }) => {
+  const server = await serve('simulation.yaml');
+  cleanups.push(() => server.stop());
+  await page.goto(server.url.replace('#', '?paused#'));
+  await expect(page.locator('body')).toHaveAttribute('data-own', 'connected');
+  const status = page.getByTestId('status');
+  const button = (testid: string, name: string) =>
+    page.getByTestId(testid).getByRole('button', { name, exact: true });
+  await button('run', 'Start').click();
+  await expect(status).toHaveAttribute('data-run', 'paused', { timeout: RUN_TIMEOUT });
+  await button('time', 'Resume').click();
+  // the run goes on to its end by itself
+  await expect(status).toHaveAttribute('data-run', 'ended', { timeout: RUN_TIMEOUT });
 });

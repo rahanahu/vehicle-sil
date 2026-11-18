@@ -44,7 +44,7 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 
 | エントリーポイント                                                                                               | 名前                               | 中身                                                                                                                                                                                              |
 | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/index.ts`                                                                                                   | `@vehicle-sil/gui-client`          | 公開 API（下の「公開 API」）。互換を保証するのはここだけ                                                                                                                                          |
+| `src/index.ts`                                                                                                   | `@vehicle-sil/gui-client`          | 公開 API（下の「公開 API」）。互換を保証するのはここと `./elements`                                                                                                                               |
 | `src/testing/index.ts`                                                                                           | `@vehicle-sil/gui-client/testing`  | テスト用のヘルパー（自分のコンポーネントのテストに使える）                                                                                                                                        |
 | `src/internal.ts`                                                                                                | `@vehicle-sil/gui-client/internal` | **互換の保証の外**。内部のクラスと関数で、アプリでは使わない                                                                                                                                      |
 | `src/elements/index.ts`（パッケージでは `dist/index.js` を import する `dist/elements.js`）                      | `@vehicle-sil/gui-client/elements` | 部品（custom element の `<vsil-status>` ほか 7 個）、`pageIntent`、`setReasonText`。import すると定義します（下の「部品（custom element）」）。DOM を要します。本体の入口はこれを import しません |
@@ -400,17 +400,18 @@ stop(); // 最後の購読を解除すると、サーバーに値を頼むのを
 
 - **ページの接続。** 部品は引数なしで `connect()` を呼びます。ページのスクリプトと部品は 1 つの接続（WebSocket 1 本）を共有し、自分のボタンの失敗も `<vsil-status>` に出ます。別の接続を使わせるには、部品の `client` プロパティに渡します（文書に入っていれば結び直します）。
 - **ファイルの組は 1 つ。** パッケージか 1 ファイルの束のどちらか一方を使い、両方は使いません。部品は本体の入口を import し、写しを持ちません。プロジェクトでは（パッケージ）、部品も自分のスクリプトも `@vehicle-sil/gui-client` を import します。1 ファイルの束では、`vehicle-sil-gui-elements.mjs` を `vehicle-sil-gui-client.mjs` の隣に置き、ライブラリーは同じファイルから import します。ライブラリーの写しが 2 つあると、接続も 2 本になります。
-- **自分のマークアップと CSS。** 影の DOM はありません。部品は足した `<span class="vsil">` に描き、要素の中に置いた子は残します。CSS のために `data-*` を付けます: `data-link`、`data-run`、`data-pacing`（`<vsil-status>`）、`data-stale`、`data-can-write`、`data-on`（変数の部品）、`data-status`（`<vsil-scenario-result>` とその手順）、各ボタンの `data-reason` と `data-caution`（あれば理由のコード）。
-- **使えないボタン**は `disabled` にせず `aria-disabled="true"` にします（フォーカスを保ちます）。押しても何も起きず、理由は `aria-describedby` の先の要素に出ます。書けないスライダーは `disabled` で、理由はその隣に出ます。
+- **自分のマークアップと CSS。** 影の DOM はありません。部品は足した `<span class="vsil">` に描き、要素の中に置いた子は残します。CSS のために `data-*` を付けます: `data-link`、`data-run`、`data-pacing`（`<vsil-status>`）、`data-stale`、`data-can-write`、`data-on`（変数の部品）、`data-status`（`<vsil-scenario-result>` とその手順）、`<vsil-run-controls>` と `<vsil-time-controls>` の各ボタンと速さの選択の `data-reason` と `data-caution`（あれば理由のコード）。
+- **使えないボタン**は `disabled` にせず `aria-disabled="true"` にします（フォーカスを保ちます）。押しても何も起きず、理由は `aria-describedby` の先の要素に文として入ります（速さの選択も同じ）。何もすることがないと言うだけの理由（`not-running`、`offline`）もその要素に入りますが、要素は `hidden` です。読み上げは読み、画面には各ボタンの隣に繰り返しません（`<vsil-status>` が状態を出します）。変数がもうその値のときの `<vsil-write>` も同じです（"already false"）。書けない、または範囲のないスライダーは `disabled` で、理由はその隣に出ます。
 - **寿命。** 部品は文書に入ると購読し、外れると全部止めます。接続を待つ間に外れたら、何も描きません。`variable` などの属性が変わると結び直します。
+- **つなげなかった部品**（トークンがない、サーバーがいない）は、エラーの文を出し、ページを読み込み直すまでそのままです。
 - **操作の失敗**（`ActionError`）はページに投げません。`status.problem` が `<vsil-status>` に出し、書き込みの失敗はその変数の隣に出ます。
 - **この 8 個から増やしません。** グラフ、表、配置は画面の仕事です。
 
 ### 文言と次の実行
 
-文言は英語です。ボタンの名前は属性で替えられます（表の `label-start` など、`<vsil-write>` は `label`）。理由の文（使えないボタン、`caution`、問題、変数が書けない理由）は理由の持ち主の英語の文で、`setReasonText(fn)` で替えます。`fn(reason)` が文を返せばそれを出し、`null` か `undefined` なら英語のままにします。`setReasonText(null)` で外します。部品をページに置く前に呼びます。部品の自前の語（`ready`、`writing…`、`(no scenario)`、`fastest`、`behind real time`）は替えられません。
+文言は英語です。ボタンの名前は属性で替えられます（表の `label-start` など、`<vsil-write>` は `label`）。理由の文（使えないボタン、`caution`、問題、変数が書けない理由）は理由の持ち主の英語の文で、`setReasonText(fn)` で替えます。`fn(reason)` が文を返せばそれを出し、`null` か `undefined` なら英語のままにします。`setReasonText(null)` で外します。部品をページに置く前に呼びます。部品の自前の語（`ready`、`writing…`、`(no scenario)`、`fastest`、`behind real time`、`Step (ms)`、`Until (ms)`、`Speed`、`-`、既定の `on` と `off`）は替えられません。
 
-選ぶ部品と開始のボタンは別の要素なので、次の実行に選んだものはモジュールが `pageIntent` に持ちます（`get()`、`subscribe(fn)`、`update(patch)`。`''` か `undefined` の欄は消えます）。`<vsil-scenario-select>` が `scenario` を書き、`<vsil-run-controls>` は `{ ...pageIntent.get(), ...intent }` で開始するので、`intent` プロパティが勝ちます。自分のコードで開始する画面は、意図を `client.run.start(intent)` に自分で渡します。
+選ぶ部品と開始のボタンは別の要素なので、次の実行に選んだものはモジュールが `pageIntent` に持ちます（`get()`、`subscribe(fn)`、`update(patch)`。`''` か `undefined` の欄は消えます）。`<vsil-scenario-select>` が `scenario` を書き、`<vsil-run-controls>` は `{ ...pageIntent.get(), ...intent }` で開始するので、`intent` プロパティが勝ちます。開始するファイルは `status.file` のもので、`<vsil-scenario-select>` がシナリオを並べるファイルと同じです（実行をまだ始めていなければ、サーバーの起動時のファイル）。自分のコードで開始する画面は、意図を `client.run.start(intent)` に自分で渡します。
 
 ```ts
 import '@vehicle-sil/gui-client/elements'; // defines the parts
@@ -709,12 +710,12 @@ throttle.close();
 
 ツール（TypeScript、ESLint、Prettier、Vitest、esbuild）は `gui/web` の `node_modules` のものを使います。`gui/web` で次を実行します（`scripts/verify-web.py` も実行します）。
 
-| コマンド               | 内容                                                                                                                      |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `npm run test:client`  | 型の検査（`tsc -p ../client`）と単体テスト（Vitest。Node の上で、Angular なしに動く。部品の試験だけ jsdom の DOM を使う） |
-| `npm run build:client` | 1 つの ESM のファイルにまとめる（esbuild。Angular のビルドのツールが持っているもの）                                      |
-| `npm run lint`         | `gui/web` と、この `eslint.config.js`                                                                                     |
-| `npm run format:check` | `gui/web` と、このディレクトリの書式（`gui/.prettierrc`）                                                                 |
+| コマンド               | 内容                                                                                                                                    |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run test:client`  | 型の検査（`tsc -p ../client`）と単体テスト（Vitest。Node の上で、Angular なしに動く。部品の試験だけ jsdom の DOM を使う）               |
+| `npm run build:client` | 1 つの ESM のファイルにまとめ、部品はそれを import する 2 つ目のファイルにまとめる（esbuild。Angular のビルドのツールが持っているもの） |
+| `npm run lint`         | `gui/web` と、この `eslint.config.js`                                                                                                   |
+| `npm run format:check` | `gui/web` と、このディレクトリの書式（`gui/.prettierrc`）                                                                               |
 
 単体テストは、サーバーの通知を作らずに `gui/protocol/examples/` の例を流します（`testing/protocol-examples.ts`）。
 
