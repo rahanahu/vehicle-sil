@@ -83,7 +83,7 @@ void RunNotes::note_time(SimulationController& controller, TimeNote note)
     const TimeState s = controller.time_state();
     const auto wall = std::chrono::steady_clock::now();
     const std::int64_t now = sim_ms(controller, s);
-    const bool paused = noted_paused(s, note);
+    const bool paused = noted_standing(s, note);
     const std::int64_t ms =
         note == TimeNote::Start
             ? 0
@@ -107,9 +107,12 @@ void RunNotes::note_time(SimulationController& controller, TimeNote note)
         const double seconds = std::chrono::duration<double>(samples_.back().first - samples_.front().first).count();
         actual = std::round(static_cast<double>(samples_.back().second - samples_.front().second) / 1000.0 / seconds * 1000.0) / 1000.0;
     }
-    // Standing still at another time (a step has ended) is news as well.
-    const bool changed = note == TimeNote::Start || paused != last_paused_ || s.speed != last_speed_ ||
-                         (paused && ms != last_time_ms_);
+    last_paused_ = paused;
+    last_speed_ = s.speed;
+    // Standing still at another time than the last one written (a step has ended, a pause has taken
+    // effect) is written at once: the time it stands at is exact. That it stands still or goes on,
+    // and the speed, are the state's to say (publish() below).
+    const bool changed = note == TimeNote::Start || (paused && ms != last_time_ms_);
     // A simulation that does not move although its real time has come (a stall) is news too,
     // while it lasts: the time stays, the lateness grows.
     const std::int64_t late = ceil_ms(s.current_lateness);
@@ -140,8 +143,6 @@ void RunNotes::note_time(SimulationController& controller, TimeNote note)
     }
     TimeEvent e;
     e.sim_ms = ms;
-    e.speed = s.speed;
-    e.paused = paused;
     e.actual_speed = actual;
     e.late_steps = s.late_steps;
     e.max_late_ms = ceil_ms(s.max_lateness);
@@ -152,8 +153,6 @@ void RunNotes::note_time(SimulationController& controller, TimeNote note)
     last_late_steps_ = s.late_steps;
     last_time_ms_ = ms;
     last_time_wall_ = wall;
-    last_paused_ = paused;
-    last_speed_ = s.speed;
 }
 
 } // namespace vehicle_sil::launch::detail

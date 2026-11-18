@@ -53,10 +53,16 @@ struct TimeFacts
     /// The run waits in the hold before its first step.
     bool holding = false;
     /// The simulation stands still: attached, the controller's time gate does (or is at the time
-    /// it is to stand still at, as the time event's `paused`), or the run holds; before that,
+    /// it is to stand still at), or the run holds; before that,
     /// whether it will stand still at 0 when it starts (--start-paused, a pause); false once
     /// detached.
     bool standing = false;
+    /// The virtual time (ms) at which it stands still: while attached and the gate stands still
+    /// (the time of the step it stands before), or the run holds (0). Empty while `standing` is
+    /// false, and while it is true before the simulation has come to a stand (before the
+    /// controller exists; between a pause at a time that has passed and the next step, where the
+    /// gate stops).
+    std::optional<std::int64_t> standing_at_ms{};
     /// The speed set: of the controller's gate while attached, the last one known after that;
     /// before, the last speed command's. The outer empty: not known yet (no speed command, and
     /// the run has not read its configuration's speed into the controller). The inner empty: max.

@@ -112,17 +112,12 @@ export interface LauncherView {
 }
 
 /**
- * Virtual time and how it advances (the last time event, or time of the summary). Fields an older launcher does not
- * write are null. TimeControl (time.ts) derives from this what the time controls need (whether they can be used now
- * and so on).
+ * Virtual time and how it keeps up (the last time event, or time of the summary). Fields that are not written are
+ * null. Whether the run is paused, and the speed set, are in the launcher's state (SessionView.launcherState).
  */
 export interface TimeView {
   simMs: number;
-  /** The current speed (a number or 'max'; null if not written). */
-  speed: Speed;
-  /** Whether it is paused (null if not written). */
-  paused: boolean | null;
-  /** Actual speed over roughly the last second (null while paused and when starting to move). */
+  /** Actual speed over roughly the last second (null when starting to move, and in an event written while paused). */
   actualSpeed: number | null;
   /** Number of late time steps. */
   lateSteps: number | null;
@@ -143,6 +138,8 @@ export interface CommandView {
   message: string | null;
   /** For an accepted step, the virtual time it actually advances (ms). */
   ms: number | null;
+  /** For an accepted step or run_until, the virtual time at which the simulation pauses after it (ms). */
+  atMs: number | null;
   /** seq of that event (-1 if unknown). Tells a new answer from the same answer arriving again in a summary. */
   seq: number;
 }
@@ -150,8 +147,6 @@ export interface CommandView {
 export function timeView(time: TimeReport): TimeView {
   return {
     simMs: time.sim_ms,
-    speed: time.speed,
-    paused: time.paused,
     actualSpeed: time.actual_speed,
     lateSteps: time.late_steps,
     maxLateMs: time.max_late_ms,
@@ -166,6 +161,7 @@ function commandView(command: CommandReport, seq: number): CommandView {
     accepted: command.accepted,
     message: command.message,
     ms: command.ms,
+    atMs: command.at_ms,
     seq,
   };
 }
@@ -230,7 +226,7 @@ export interface SessionView {
    * Participants the user chose on the screen to start themselves (manual: true in the configuration file is in check).
    */
   manual: readonly string[];
-  /** Speed given at the start (null means as in the configuration file). The current speed is time.speed. */
+  /** Speed given at the start (null means as in the configuration file). The current speed is `speed` of launcherState. */
   speed: Speed;
   /** Whether the run started paused. */
   startPaused: boolean;
@@ -301,6 +297,15 @@ export type RunOutcome =
   | 'ended'
   /** The launcher exited without a result. */
   | 'crashed';
+
+/**
+ * Whether the run waits before its first step (the step at time 0) for a resume or a step: the launcher's state says
+ * so (`holding`; a run started paused whose launcher has a Control Server). Meanwhile the launcher writes no time
+ * events, and a variable written is applied in the step at time 0.
+ */
+export function isHolding(session: SessionView | null): boolean {
+  return !!session && session.launcher.running && session.launcherState?.holding === true;
+}
 
 export function runOutcome(session: SessionView): RunOutcome {
   if (session.launcher.running) {

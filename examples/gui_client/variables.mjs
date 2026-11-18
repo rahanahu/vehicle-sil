@@ -114,6 +114,11 @@ async function finish(code, message) {
   process.exit(code);
 }
 
+/** Whether the launcher of the run accepts that time command now (`allowed` of its state event). */
+function accepts(session, command) {
+  return session?.launcherState?.allowed[command]?.ok === true;
+}
+
 /** Waits until a readable value meets the condition. */
 function until(readable, condition) {
   return new Promise((resolve) => {
@@ -192,7 +197,7 @@ async function main() {
   });
 
   // Write before the start: advancing only after every peer has received it (queued) applies it in the step at time 0
-  await until(client.time.state, (t) => t.canStep);
+  await until(client.session.session, (s) => accepts(s, 'step'));
   const written = client.variables.write({
     [write.peer]: { [write.name]: write.value },
   });
@@ -241,7 +246,7 @@ async function main() {
   watch.close();
 
   // Run to the end
-  await until(client.time.state, (t) => t.canResume);
+  await until(client.session.session, (s) => accepts(s, 'resume'));
   client.time.resume();
   const ended = await until(
     client.session.session,

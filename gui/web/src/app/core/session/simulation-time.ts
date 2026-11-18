@@ -1,5 +1,5 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { ActionError, CommandView, TimeView } from '@vehicle-sil/gui-client';
+import { ActionError, CommandView, TimeView, isHolding } from '@vehicle-sil/gui-client';
 import { ANSWER_TIMEOUT, GUI_FRONT, readableSignal } from './gui-client';
 import { ServerConnection } from './server-connection';
 import { ServerInfo } from './server-info';
@@ -11,7 +11,8 @@ export { ANSWER_TIMEOUT } from './gui-client';
  * signal で出し、時刻の命令（一時停止、再開、ステップ送り、速さの変更）を GUI サーバーへ送る。アプリ全体で 1 つ。
  *
  * - 中身はクライアントのライブラリ（`@vehicle-sil/gui-client`）。操作の可否と理由は正面の口の `controls`、命令は
- *   正面の口の `time`（Promise）で、ここは自分で可否を推測しない。見せるための状態（仮想時間、遅れ）は `front.low.time`。
+ *   正面の口の `time`（Promise）で、ここは自分で可否を推測しない。見せるための状態（仮想時間、遅れ）は `front.low.time`、
+ *   一時停止と速さはランチャーの `state`（セッションの写しの `launcherState`）。
  * - 画面の部品はここの signal を読むだけにする（どの部品からも同じ状態が見える）。
  */
 @Injectable({ providedIn: 'root' })
@@ -23,23 +24,30 @@ export class SimulationTime {
   private readonly info = inject(ServerInfo);
   private readonly control = this.front.low.time;
   private readonly state = readableSignal(this.control.state);
+  private readonly session = readableSignal(this.front.low.session.session);
+  /** ランチャーの `state`（実行中のランチャーのものだけ。終わった実行の最後の state は使わない）。 */
+  private readonly launcherState = computed(() => {
+    const session = this.session();
+    return session?.launcher.running ? session.launcherState : null;
+  });
 
   /** 各操作を押せるか、押せない理由、範囲（ステップ送りの上限、速さの範囲）。正面の口が言う。 */
   readonly controls = readableSignal(this.front.controls);
   private readonly status = readableSignal(this.front.status);
+  private readonly clock = readableSignal(this.front.clock);
 
   /** ランチャーが時刻の命令（pause、resume、step、speed）を持つか。持たなければ操作を出さない。 */
   readonly supported = computed(() => this.state().supported);
   /** いまのセッションの時刻（time の事象が来るまでは null）。 */
   readonly time = computed<TimeView | null>(() => this.state().time);
-  /** 仮想時間（ミリ秒）。 */
-  readonly simMs = computed(() => this.time()?.simMs ?? null);
-  /** いまの速さ（数か 'max'。ランチャーが書かなければ null）。 */
-  readonly speed = computed(() => this.time()?.speed ?? null);
-  /** 一時停止しているか（わからなければ null）。 */
-  readonly paused = computed(() => this.time()?.paused ?? null);
-  /** 直近 1 秒ほどの実際の速さ。 */
-  readonly actualSpeed = computed(() => this.time()?.actualSpeed ?? null);
+  /** 仮想時間（ミリ秒）。正面の口の `clock`（一時停止中は、ランチャーの `state` が言う止まった時刻も見る）。 */
+  readonly simMs = computed(() => this.clock().sim_ms);
+  /** いまの速さ（数か 'max'。ランチャーの `state` がまだなければ null）。 */
+  readonly speed = computed(() => this.launcherState()?.speed ?? null);
+  /** 一時停止しているか（ランチャーの `state` がまだなければ null）。 */
+  readonly paused = computed(() => this.launcherState()?.paused ?? null);
+  /** 直近 1 秒ほどの実際の速さ。正面の口の `clock`（一時停止中は null。最後の time の値は止まる前のもの）。 */
+  readonly actualSpeed = computed(() => this.clock().actual_speed);
   /** 速さを合わせている（数の速さ）。最速では遅れを数えないので、遅れの欄は出さない。 */
   readonly paced = computed(() => this.state().paced);
   /** 遅れの数（ランチャーが書かないときは null）。 */
@@ -50,9 +58,9 @@ export class SimulationTime {
   readonly lastCommand = computed<CommandView | null>(() => this.state().lastCommand);
   /**
    * 最初のステップの前で、再開かステップ送りを待っているか（止めて始めた実行で、ランチャーが ECU の変数との接続を
-   * 持つとき）。この間は time がまだないが、再開とステップ送りを押せる。
+   * 持つとき）。この間は time がまだないが、再開とステップ送りを押せる。ランチャーの `state` の `holding`。
    */
-  readonly beforeStart = computed(() => this.state().beforeStart);
+  readonly beforeStart = computed(() => isHolding(this.session()));
   /** 送って、まだ答えを見ていない命令がある（正面の口の `busy`）。 */
   readonly waiting = computed(() => {
     const c = this.controls();

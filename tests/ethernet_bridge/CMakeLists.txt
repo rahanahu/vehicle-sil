@@ -33,12 +33,13 @@ target_link_libraries(vehicle_sil_ethernet_bridge_on_fake
 vehicle_sil_target_defaults(vehicle_sil_ethernet_bridge_on_fake)
 vehicle_sil_copy_runtime_dlls(vehicle_sil_ethernet_bridge_on_fake)
 
-# The production bridge executable with its own factory of the links of the operating system, and
-# the fake pcap library (tests/eth_link/fake_pcap) in place of the installed one: only where the
-# library is loaded from differs (fake_pcap_library.cpp).
+# The production bridge executable with the fake pcap library (tests/eth_link/fake_pcap) in place of
+# the installed one (fake_pcap_library.cpp), and a factory of links in which every backend but tap
+# is the pcap link (fake_pcap_link_factory.cpp), so that a launcher that always gives --backend
+# reaches the fake library.
 add_executable(vehicle_sil_ethernet_bridge_on_fake_pcap
   ${_bridge_dir}/app/main.cpp
-  ${_bridge_dir}/app/os_link_factory.cpp
+  fake_pcap_link_factory.cpp
   fake_pcap_library.cpp
 )
 target_include_directories(vehicle_sil_ethernet_bridge_on_fake_pcap PRIVATE ${_bridge_dir}/app)
@@ -118,10 +119,10 @@ if(NOT _bridge_netns_python)
   return()
 endif()
 # launch: vehicle_sil_launch run --connect starts the bridge itself, beside the ECU of the
-# integration tests.
-foreach(_scenario tap packet pcap launch)
+# integration tests (launch: ETH_EXT=<interface> with the default backend, launch_tap: tap:<device>).
+foreach(_scenario tap packet pcap launch launch_tap)
   set(_bridge_netns_more)
-  if(_scenario STREQUAL "launch")
+  if(_scenario MATCHES "^launch")
     set(_bridge_netns_more --launch $<TARGET_FILE:vehicle_sil_launch> --ecu $<TARGET_FILE:vehicle_sil_ethernet_bridge_it_ecu>)
   endif()
   add_test(NAME ethernet_bridge.netns.${_scenario}

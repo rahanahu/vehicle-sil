@@ -70,8 +70,8 @@
 | `read_config()` | `launch/config.hpp` |
 | `check_file()` | `launch/check.hpp` |
 | ランチャーが、動いているコンピューターに尋ねること: `find_executable()` と `check_executable()`（participant の実行ファイル）、`find_tool()` と `bridge_tools()`（ブリッジ）、`run_tool()`（`--describe` やブリッジの一覧の 1 回の実行）、`read_config_file()`、`read_scenario_file()`、`files_beside()`、`environment_value()` | `launch/probe.hpp` |
-| `--connect` の `parse_connect()`、`target_problem()`、`bridge_arguments()`、`no_bridge_here()`（LIN、Windows 以外の CAN）、照合と `connections` と `run` がブリッジを起動するディレクトリ（ブリッジ自身のもの）の `bridge_working_directory()` | `launch/connect.hpp` |
-| `vehicle_sil_launch connections` の `list_connections()`、`connections_of()`（各ブリッジに 1 回だけ聞く）、`interpret_list()`（ブリッジの一覧か、ランチャーが作る一覧: `tool-*`）、`quoted_for_shells()`、出力 | `launch/connections.hpp` |
+| `--connect` の `parse_connect()`、backend の表（`connect_backends()`）と先の文法（`read_connect_target()`、`backend_problem()`、`target_problem()`）、backend ごとの `bridge_tool()`、`bridge_arguments()`、backend を除いたデバイスの `connect_device_key()`、`no_bridge_here()`（LIN、Windows 以外の Vector XL のブリッジ）、照合と `connections` と `run` がブリッジを起動するディレクトリ（ブリッジ自身のもの）の `bridge_working_directory()` | `launch/connect.hpp` |
+| `vehicle_sil_launch connections` の `list_connections()`、`connections_of()`（backend ごとに各ブリッジに 1 回だけ聞く。`prefix_targets()` が `--connect` の受ける値にする）、`interpret_list()`（ブリッジの一覧か、ランチャーが作る一覧: `tool-*`）、`quoted_for_shells()`、出力 | `launch/connections.hpp` |
 | `run_file()` | `launch/run.hpp` |
 | 実行が見たこと。部分に分けた値: `RunOutcome` の `setup`、`start`、`end`（シミュレーションがどう、なぜ終わったか）、`control`（制御の agent が捨てたもの）、`scenario`（シナリオとタイムラインのファイル）、`close`（ランチャーの接続の閉じ方）と、`timing`、`participants`、`outside`、`time_changed`、`time_lock`、`real_time_peers`、`traffic`。`assess_run()` が判定し、`format_run_text()`、`format_run_json()` が書く | `launch/run.hpp` |
 | 実行の前に決まることを値にしたもの: `RunPlan`（通った check に `--connect` のブリッジを末尾に足したもの、`members`: participant ごとの `RunMember`。実行が `--connect` のために足したブリッジかどうかと、つなぐ先を持つ、ファイルのディレクトリ、コントローラーの刻みと開始時の速さ、最初の刻みの前で保留するか、期限、ログとタイムラインの書き先）、`plan_run()`（純粋: check と `RunOptions` から）、`planned_outcome()`（実行が最初に持つ `RunOutcome`）。`run_file()` は `RunOptions` を、この計画、観察者（`src/run_context.hpp` の `detail::RunObservers`: `write_line`、`events`、`interrupt_name`、`before_start`）、実行が借りるもの（操作盤）に分けます。実行の部品は 3 つを `detail::RunContext` から読みます。プロセスなしの試験は `tests/launch/test_run_plan.cpp` | `launch/run_plan.hpp`、`src/run_plan.cpp` |
@@ -389,7 +389,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 - 時刻のコマンド、停止、書き込みを受けるかどうかと、断るときの文: `libs/launch/src/control_rules.cpp` の行（`TimeCommands::apply()`、`RunControls::allowed()`、Control Server の `observe_only` が読む 1 か所。行のテストは `tests/launch/test_control_rules.cpp`）
 - `time_plan.cpp` の `detail::plan_time_step()`（controller のタイムステップの既定）、`detail::coarse_time_step()`、`RunTiming::actual_speed()`（宣言は `time_plan.hpp`。`check.cpp` は `run.hpp` なしで使います）
 - `time_plan.cpp` の `time_lock()`、`planned_speed()`、`time_lock_findings()`: シミュレーションの外につながる実行が実時間を保つかどうか（`--time-policy`）、始めるときの速さ、照合の指摘 `outside-*`。`check_file()` が結果を `CheckReport::time_lock` に置き、実行はそこから速さを読みます
-- `run_notes.cpp` の `RunNotes::note_time()`（`time` の `paused` の決め方は、`run_notes.hpp` の `detail::noted_paused()`）
+- `run_notes.cpp` の `RunNotes::note_time()`（`time` を書く時点。止まっていると数えるかは `run_notes.hpp` の `detail::noted_standing()`。`state` の `paused` は `run_controls.cpp` の `RunControls`）
 - イベント `state`: 中身と知らせる時は、`run_controls.cpp` の `RunControls::compose()` と `publish()`（`paused` と `speed` は `time_commands.cpp` の `facts_of()`、`pacing` は `run_pacing.hpp` の `detail::PacingWatch`）。最新の 1 つだけが書かれるのを待つことは、`events.cpp` の `EventStream::emit()`
 - `run_watch.cpp` の `RunWatch::note_timing()`
 - 時間のゲート: `libs/core/src/simulation_controller.cpp`

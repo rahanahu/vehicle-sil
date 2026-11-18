@@ -204,7 +204,7 @@ constexpr std::array<Rule, 10> kRules{{
      [](const Query& q) {
          return "the simulation has not been set up yet: " + q.name_text() +
                 (q.is(Operation::Step)
-                     ? std::string(" works once it stands still (a time event with paused true), with "
+                     ? std::string(" works once it stands still (a state event with paused true), with "
                                    "--start-paused from the start")
                      : std::string(" at a time works once the participants have been started"));
      }},

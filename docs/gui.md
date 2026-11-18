@@ -380,7 +380,7 @@ The launcher advances time; the GUI only passes commands and shows the results. 
 - A run started paused stops at virtual time 0 once all participants have joined, and waits for resume or step.
 - The speed of the previous run stays selected, but **Start paused** is not carried over from the previous run (so a run never starts paused without you noticing).
 - In a run that can read and write variables (the launcher has a Control Server), the run holds before the first step, that is, before the step at time 0 runs. This is a launcher rule; see "Write before the start (`--start-paused`)" in [control-api.md](control-api.md#write-before-the-start---start-paused). Variables written meanwhile are applied in the step at time 0.
-- While held before the first step, the launcher writes no `time` events, but it accepts resume and step (`beforeStart` in the library's `client.time.state`).
+- While held before the first step, the launcher writes no `time` events, but it accepts resume and step (`holding` in the launcher's `state` event; `isHolding(session)` in the library).
 - When started with `--no-variables`, and with a launcher without a Control Server, the run holds after the step at time 0.
 
 ### Pause, resume and step
@@ -768,25 +768,23 @@ The time state and commands live in one service for the whole app (built on the 
 |---|---|
 | `supported` | Whether the launcher has time commands |
 | `time` | The last `time` event (`null` if none yet) |
-| `simMs`, `speed`, `paused`, `actualSpeed` | The fields of `time` (`null` for fields that older launchers do not write) |
+| `simMs`, `actualSpeed` | Virtual time and the actual speed: `sim_ms` and `actual_speed` of `clock` of the library's `connect()` (while paused: the time the launcher's `state` says it is paused at, and `null`) |
+| `speed`, `paused` | The speed set and whether the run is paused: `speed` and `paused` of the launcher's last `state` event (`null` before the first one, and when the launcher is not running) |
 | `paced` | Whether the speed is numeric (whether lateness is counted) |
 | `lateness`, `behind` | The lateness figures, and whether the run fell behind real time (a step was later than the tolerance) |
-| `lastCommand` | The last `command` event (`name`, `accepted`, `message`, `ms`) |
-| `controllable` | Whether time commands mean anything now |
-| `beforeStart` | Whether the run is held before the first step, waiting for resume or step |
-| `canPause`, `canResume`, `canStep` | Whether the control may be used now |
-| `stepping` | Whether a step is in progress (the launcher counts it as paused) |
-| `sending` | A command that was sent and whose answer (`command` event) has not been seen yet |
-| `error`, `errorFromServer` | Why the last command failed, and whether that text came from the server |
+| `lastCommand` | The last `command` event (`name`, `accepted`, `message`, `ms`, `atMs`) |
+| `beforeStart` | Whether the run is held before the first step, waiting for resume or step (`holding` of the launcher's `state`) |
+| `controls` | For each operation, whether it may be used now, why not, and its range (`controls` of the library's `connect()`) |
+| `waiting` | Whether a command was sent and its answer has not been seen yet |
+| `error`, `errorFromServer` | Why the last command failed, and whether that text came from the server or the launcher |
 
-- The fields of `time` are `simMs`, `speed`, `paused`, `actualSpeed`, `lateSteps`, `maxLateMs`, `slippedMs` and `lateMs`.
-- `controllable` is true when the launcher supports time commands, the phase is running, a `time` event has arrived, there is no result yet, and no stop has been requested (the same conditions as the server's). It is also true during `beforeStart`.
-- `beforeStart` is true in a run started paused when the launcher has the API for reading and writing variables. Then `time` is still `null`, and `canResume` and `canStep` are true.
-- `canPause`, `canResume` and `canStep` are true when `controllable` is true and no answer to an earlier command is pending. Which of them is true depends on whether the run is paused or a step is in progress.
-- `sending` clears when the answer arrives, the launcher exits, the run changes, the server rejects the command, or the summary after a reconnection holds the answer. If no answer comes within 5 seconds (`ANSWER_TIMEOUT_MS`), it stops waiting.
-- `error` is the server's text, not localized, when the server rejected the command, and the screen's own text when no answer came.
+- The fields of `time` are `simMs`, `actualSpeed`, `lateSteps`, `maxLateMs`, `slippedMs` and `lateMs`.
+- The screen does not work out whether a control may be used: `controls` puts together what the launcher says it accepts (`allowed` of its `state` event), what the GUI server says, and the connection.
+- `beforeStart` is true in a run started paused when the launcher has the API for reading and writing variables. Then `time` is still `null`, and `controls.resume` and `controls.step` are `ok`.
+- `waiting` clears when the answer arrives, the launcher exits, the run changes, or the server rejects the command. If no answer comes within 5 seconds (`ANSWER_TIMEOUT_MS`), the command fails with the code `no-answer`.
+- `error` is the server's or the launcher's text, not localized, when the command was refused, and the screen's own text when no answer came.
 
-The commands are `pause()`, `resume()`, `step(ms)` and `setSpeed(value)` (all go through `send(command)`). While an answer to an earlier command is pending, and when there is no run, they do not send and return `{sent: false, reason: 'waiting' | 'no-session'}` (`{sent: true}` when sent). Check whether a control may be used with `canPause` and the others before sending.
+The commands are `pause()`, `resume()`, `step(ms)` and `setSpeed(value)`. Each returns a Promise that settles when the command is done (a step: when the run is paused again at its time); a failure appears in `error` and does not reject the Promise. Check `controls` before sending.
 
 To add a control to the status bar, place an element with the attribute `runStatusActions` inside `<app-run-status>` (it appears after **Start** and **Stop** and before **Stop without waiting**; **Start** and **Stop** do not move).
 
@@ -1271,7 +1269,7 @@ The library does not enforce these rules for you. The sample screens follow them
 **Whether a variable can be written**: if you build your widgets with `client.variables.bind`, `block` of `state` checks these rules. A screen that calls `write` directly checks them itself.
 
 - A variable whose `writable` is false (`output`) cannot be written.
-- A `parameter` can be written only before the first step (`beforeStart` of `client.time.state`).
+- A `parameter` can be written only before the first step (`holding` of the launcher's `state`; `isHolding(session)` in the library).
 - A run that is running a scenario (the session copy has `scenario`, and the launcher is running) cannot be written.
 - A participant not connected to the Control Server (`peers[].connected` of `client.variables.state` is false) cannot be written either.
 
@@ -1294,7 +1292,6 @@ The library does not enforce these rules for you. The sample screens follow them
 | Variable values | The last value at the time the GUI server read it, not a record of every value (in a fast simulation, the values in between do not arrive). |
 | Values that remain after the end | The last values read. If the launcher closes the Control Server early, they may be slightly older than the values at the end. |
 | A GUI server installed outside the repository | The optional dependency `vehicle-sil-gui[variables]` (grpcio, protobuf) alone is not enough for variables. |
-| Older launchers (no `paused` in the `time` event) | They report virtual time only at the start (0) and on reaching `stop_at_ms`, so the screen does not show the 0 while the run runs. |
 | Windows | Only starting and checking are verified (`scripts/package.py verify`). |
 
 - **gRPC stubs**: reading and writing variables assumes the `vehicle-sil-gui` of the prebuilt tools (which bundles the stubs), or a GUI server run inside the repository (`uv run vehicle-sil-gui` after `uv sync`). The reason: the gRPC stubs are generated from the repository's `proto/` with `grpcio-tools` (or, failing that, the ones that `python -m vehicle_sil_control.generate` made are used).

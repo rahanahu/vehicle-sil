@@ -1606,7 +1606,7 @@ TEST_CASE(the_participants_reach_a_registry_on_every_address_at_the_loopback_add
 
 TEST_CASE(the_time_event_at_the_start_says_paused_only_if_it_stands_still_at_0)
 {
-    using launch::detail::noted_paused;
+    using launch::detail::noted_standing;
     using launch::detail::TimeNote;
     using namespace std::chrono_literals;
     const SimTime zero{};
@@ -1620,26 +1620,26 @@ TEST_CASE(the_time_event_at_the_start_says_paused_only_if_it_stands_still_at_0)
     // The event at the start is the one of time 0. A step from the hold before the first step,
     // as fast as possible, may stand still at its end before the launcher looks: that is not
     // standing still at 0, and the next look says where it stands.
-    CHECK(!noted_paused(state(zero + 100ms, true, std::nullopt), TimeNote::Start));
-    CHECK(noted_paused(state(zero + 100ms, true, std::nullopt), TimeNote::Poll));
-    CHECK(!noted_paused(state(zero + 100ms, false, zero + 100ms), TimeNote::Start));
-    CHECK(!noted_paused(state(zero + 10ms, false, zero), TimeNote::Start));
+    CHECK(!noted_standing(state(zero + 100ms, true, std::nullopt), TimeNote::Start));
+    CHECK(noted_standing(state(zero + 100ms, true, std::nullopt), TimeNote::Poll));
+    CHECK(!noted_standing(state(zero + 100ms, false, zero + 100ms), TimeNote::Start));
+    CHECK(!noted_standing(state(zero + 10ms, false, zero), TimeNote::Start));
     // Standing still at 0 (--start-paused), or about to (the pause at 0 that the gate has not
     // taken yet).
-    CHECK(noted_paused(state(zero, true, std::nullopt), TimeNote::Start));
-    CHECK(noted_paused(state(zero, false, zero), TimeNote::Start));
+    CHECK(noted_standing(state(zero, true, std::nullopt), TimeNote::Start));
+    CHECK(noted_standing(state(zero, false, zero), TimeNote::Start));
     // On its way to a later time, or just running.
-    CHECK(!noted_paused(state(zero, false, zero + 100ms), TimeNote::Start));
-    CHECK(!noted_paused(state(zero, false, std::nullopt), TimeNote::Start));
-    CHECK(!noted_paused(state(zero + 50ms, false, zero + 100ms), TimeNote::Poll));
+    CHECK(!noted_standing(state(zero, false, zero + 100ms), TimeNote::Start));
+    CHECK(!noted_standing(state(zero, false, std::nullopt), TimeNote::Start));
+    CHECK(!noted_standing(state(zero + 50ms, false, zero + 100ms), TimeNote::Poll));
     // At the target, standing still with the next step; not once the simulation is over.
-    CHECK(noted_paused(state(zero + 100ms, false, zero + 100ms), TimeNote::Poll));
-    CHECK(!noted_paused(state(zero + 100ms, false, zero + 100ms), TimeNote::Last));
+    CHECK(noted_standing(state(zero + 100ms, false, zero + 100ms), TimeNote::Poll));
+    CHECK(!noted_standing(state(zero + 100ms, false, zero + 100ms), TimeNote::Last));
     // An ended simulation stands still nowhere, whatever its gate says (one aborted while it stood
     // still: the gate keeps paused until the abort has gone round, at 0 or later).
-    CHECK(!noted_paused(state(zero + 100ms, true, std::nullopt), TimeNote::Last));
-    CHECK(!noted_paused(state(zero, true, std::nullopt), TimeNote::Last));
-    CHECK(!noted_paused(state(zero, true, zero), TimeNote::Last));
+    CHECK(!noted_standing(state(zero + 100ms, true, std::nullopt), TimeNote::Last));
+    CHECK(!noted_standing(state(zero, true, std::nullopt), TimeNote::Last));
+    CHECK(!noted_standing(state(zero, true, zero), TimeNote::Last));
 }
 
 TEST_CASE(a_simulation_that_stands_still_is_told_of_at_10_s_60_s_and_10_min)

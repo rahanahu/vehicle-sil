@@ -104,7 +104,7 @@ In the browser, call `takeToken(window)`. It reads `#token=` from the URL, remov
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | Type     | `ClientSession` (`session`, `ready`, `allowed`, `lastEventAt`, `notices`, `rejected`, `incompatible`, `onMessages`, `report`, `dismissNotice`) |
 | Type     | `Notice`, `SessionView`, `ParticipantView`, `LauncherView`, `LogLine`, `LogSource`, `TimeView`, `CommandView`, `RunOutcome`                    |
-| Function | `runOutcome`, `phaseIndex`                                                                                                                     |
+| Function | `runOutcome`, `phaseIndex`, `isHolding`                                                                                                        |
 
 `ClientSession.allowed` is what the GUI server accepts now (`start`, `stop` and `force`, each with `ok`, a `reason` code and a `message`; the larger `rev` wins; `null` until the server says). `SessionView.launcherState` is the launcher's last `state` event (where the run stands and what it accepts; the larger `rev` wins; `null` until one arrives).
 
@@ -324,14 +324,14 @@ Data fields use the wire's names (`force_stop`, `sim_ms`); functions use JavaScr
 
 Each entry is `{ ok, reason, caution }`: `reason` is `{ code, message }` when `ok` is false, `caution` is the same shape for an operation that is accepted with something to know first. The codes stay the same (a new code may be added; the meaning of one does not change); the sentence is English, written by the owner of the rule.
 
-| Entry                                           | Comes from                                                                                                                                                                                                                                                                         |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `start`                                         | The GUI server's `allowed.start` (`starting`, `already-running`, `launcher-unusable`, `shutting-down`), with its sentence                                                                                                                                                          |
-| `stop`, `force_stop`                            | The GUI server's `allowed.stop` and `allowed.force`. `stop` is `ok` for the last known run (or a start on its way), also offline, and while the server says the launcher still runs after its result. `force_stop` is `ok` only after a first stop (`not-stopping` before)         |
-| `pause`, `resume`, `step`, `speed`, `run_until` | The launcher's `state.allowed` (reason, sentence and `caution` as the launcher wrote them; the ranges of `step` and `speed`). No run in the copy: `not-running`; a launcher without `state`: `unsupported`                                                                         |
-| `pause`, `resume` (what would change nothing)   | `pause` is not `ok` while the run is paused (`paused`), `resume` is not `ok` while it is not (`not-paused`): the launcher accepts both, but a button has nothing to do. When the launcher's `state` and the last `time` event disagree (a step has just ended), neither is claimed |
-| `run_until`                                     | `unsupported` until the launcher has the feature `stdin-run-until`                                                                                                                                                                                                                 |
-| All of them                                     | The connection: `rejected`, `incompatible`, `offline` or `connecting` turn them off (`stop` and `force_stop` stay as above); `busy` while the same operation of this page has not been answered                                                                                    |
+| Entry                                           | Comes from                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `start`                                         | The GUI server's `allowed.start` (`starting`, `already-running`, `launcher-unusable`, `shutting-down`), with its sentence                                                                                                                                                                                                                   |
+| `stop`, `force_stop`                            | The GUI server's `allowed.stop` and `allowed.force`. `stop` is `ok` for the last known run (or a start on its way), also offline, and while the server says the launcher still runs after its result. `force_stop` is `ok` only after a first stop (`not-stopping` before)                                                                  |
+| `pause`, `resume`, `step`, `speed`, `run_until` | The launcher's `state.allowed` (reason, sentence and `caution` as the launcher wrote them; the ranges of `step` and `speed`). No run in the copy: `not-running`; a launcher without `state`: `unsupported`                                                                                                                                  |
+| `pause`, `resume` (what would change nothing)   | `pause` is not `ok` while the run is paused (`paused`), `resume` is not `ok` while it is not (`not-paused`): the launcher accepts both, but a button has nothing to do. While a step or a run_until is on its way (accepted, and not yet seen to arrive: virtual time at its `at_ms` and the launcher's `state` paused), neither is claimed |
+| `run_until`                                     | `unsupported` until the launcher has the feature `stdin-run-until`                                                                                                                                                                                                                                                                          |
+| All of them                                     | The connection: `rejected`, `incompatible`, `offline` or `connecting` turn them off (`stop` and `force_stop` stay as above); `busy` while the same operation of this page has not been answered                                                                                                                                             |
 
 ### Operations
 
@@ -555,7 +555,7 @@ The `kind` of a `WriteError`:
 
 ### Write before the first step
 
-A run started paused (`start_paused`) waits before the first step if the launcher can read and write variables. Meanwhile `beforeStart` in `client.time.state` is true, and you can resume and step (written values are applied in the step at time 0).
+A run started paused (`start_paused`) waits before the first step if the launcher can read and write variables. Meanwhile `isHolding(session)` is true (`holding` in the launcher's `state`, `launcherState` of the session copy), and you can resume and step (written values are applied in the step at time 0).
 
 ## Build widgets (`bind`)
 
@@ -620,18 +620,18 @@ The `status` of `unavailable` is one of: not running, this run has no variables,
 
 `null` if the variable can be written. If several reasons apply, `block` is the one highest in the table.
 
-| `block`             | Meaning                                                                                                                |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `read-only`         | A read-only variable (`role` is `output`)                                                                              |
-| `disconnected`      | The connection between the client and the server is down                                                               |
-| `ended`             | The run ended                                                                                                          |
-| `not-ready`         | The variable feature is not available (not running, connecting, cannot connect)                                        |
-| `missing`           | The current run does not have the variable                                                                             |
-| `peer-disconnected` | The ECU is not connected to the Control Server                                                                         |
-| `parameter`         | A `parameter` can be written only before the first step of a run started paused (`beforeStart` in `client.time.state`) |
-| `scenario`          | A scenario is running (view only)                                                                                      |
-| `no-range`          | `needsRange` is set, but the variable has no range (`min` and `max`)                                                   |
-| `no-value`          | `needsValue` is set, and there is no value yet (neither read nor sent)                                                 |
+| `block`             | Meaning                                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read-only`         | A read-only variable (`role` is `output`)                                                                                                   |
+| `disconnected`      | The connection between the client and the server is down                                                                                    |
+| `ended`             | The run ended                                                                                                                               |
+| `not-ready`         | The variable feature is not available (not running, connecting, cannot connect)                                                             |
+| `missing`           | The current run does not have the variable                                                                                                  |
+| `peer-disconnected` | The ECU is not connected to the Control Server                                                                                              |
+| `parameter`         | A `parameter` can be written only before the first step of a run started paused (`isHolding(session)`: `holding` in the launcher's `state`) |
+| `scenario`          | A scenario is running (view only)                                                                                                           |
+| `no-range`          | `needsRange` is set, but the variable has no range (`min` and `max`)                                                                        |
+| `no-value`          | `needsValue` is set, and there is no value yet (neither read nor sent)                                                                      |
 
 ### Write status (`writeStatus`, `pending`)
 

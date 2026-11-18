@@ -110,7 +110,7 @@ export interface WriteBlockInput {
   info: VariableInfo | undefined;
   status: VariablesStatus;
   connected: boolean;
-  /** Whether a run started paused is waiting before the first step (beforeStart of client.time.state). */
+  /** Whether a run started paused is waiting before the first step (isHolding() of the session: `holding` of the launcher's state). */
   beforeStart: boolean;
   /** Whether that ECU is connected to the Control Server. */
   peerConnected: boolean;

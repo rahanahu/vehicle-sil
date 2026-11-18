@@ -1,5 +1,6 @@
 import { GuiClient, createClient } from './client';
 import { BATCH_MS } from './connection';
+import { isHolding } from './session-state';
 import { FakeHttp, FakeRequest } from './testing/fake-http';
 import { FakeWebSockets } from './testing/fake-web-socket';
 import { BoundVariable, DROPPED_MESSAGE, VariableBinding } from './variable-binding';
@@ -47,6 +48,21 @@ const variables = (state = 'ready', connected = true, more: object = {}) => ({
   operations: [],
   ...more,
 });
+
+/** The launcher's state of a run that waits before its first step (as the summary carries it). */
+const holdingState = {
+  seq: 5,
+  rev: 5,
+  phase: 'waiting',
+  paused: true,
+  holding: true,
+  speed: 'max',
+  pacing: 'not-paced',
+  stop: { requests: 0, by: null },
+  scenario: false,
+  allowed: {},
+  outside: [],
+};
 
 const hello = (state = 'ready', id = 1, session: object = {}) => ({
   type: 'hello',
@@ -276,8 +292,10 @@ describe('client.variables.bind', () => {
     const mode = client.variables.bind(ref('engine.mode'));
     await deliver(hello());
     expect(mode.state.get().block).toBe('parameter');
-    await deliver(hello('ready', 2, { start_paused: true, phase: 'waiting' }));
-    expect(client.time.state.get().beforeStart).toBe(true);
+    await deliver(
+      hello('ready', 2, { start_paused: true, phase: 'waiting', launcher_state: holdingState }),
+    );
+    expect(isHolding(client.session.session.get())).toBe(true);
     expect(mode.state.get().block).toBeNull();
     mode.write('on');
     expect(requests().map((r) => r.request.body)).toEqual([

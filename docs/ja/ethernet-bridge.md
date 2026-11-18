@@ -220,6 +220,7 @@ sudo setcap -r build/<preset>/bridges/ethernet/vehicle_sil_ethernet_bridge
 ```
 
 - 手順 2 をしないと、実行は `connect-failed` で失敗し、ブリッジの行が、実行する `setcap` のコマンドを書きます。
+- ここでランチャーがブリッジに渡す backend は、Linux の既定の `packet` です。自分で作った TAP デバイス（[最初の接続](#最初の接続)）をつなぐなら、先に backend を書きます（`--connect ETH=tap:vsil0`）。Windows の既定は `npcap` です（simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。
 - NIC の先の本物の機器も同じようにつなぎます。`vsil0` の代わりに `--connect ETH=<NIC の名前>` を渡します。機器と一緒に自動で試験するなら、シナリオを `--speed 1 --strict` で実行します（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。
 - テスト `ethernet_bridge.netns.launch` は、同じことをネットワークの名前空間の中でします。そこでは `sudo` も `setcap` も要りません（「[`ethernet_bridge.netns.*`](#ethernet_bridgenetns)」）。
 

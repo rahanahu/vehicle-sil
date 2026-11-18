@@ -26,7 +26,7 @@
 namespace vehicle_sil::launch {
 
 /// The version of the events (hello's "vehicle_sil_events").
-inline constexpr int kEventsFormat = 1;
+inline constexpr int kEventsFormat = 2;
 /// The version of `version --json` (its "vehicle_sil_launch").
 inline constexpr int kVersionFormat = 1;
 /// What this launcher can do, by name, for a reader that asks "is it there" instead of comparing
@@ -101,13 +101,11 @@ private:
     bool skipping_ = false; ///< in a line that was too long, until its end
 };
 
-/// The event "time".
+/// The event "time": the virtual time and how it keeps up. Whether the simulation stands still and
+/// the speed set are in the event "state" (RunState), not here.
 struct TimeEvent
 {
     std::int64_t sim_ms = 0;
-    /// The speed set now; empty: as fast as possible ("max").
-    std::optional<double> speed{};
-    bool paused = false;
     /// Virtual time / wall-clock time over about the last second while it ran; empty (null) if
     /// that cannot be told (too short, or it stood still).
     std::optional<double> actual_speed{};

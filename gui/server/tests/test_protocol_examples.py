@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import (CONFIGS, CONTROL_FEATURES, REPLAY, REPOSITORY, Client, gui_server, is_ended, is_synced, manual_pages,
+from conftest import (CONFIGS, CONTROL_FEATURES, REPLAY, REPOSITORY, Client, gui_server, is_ended, is_state, is_synced, manual_pages,
                       run_async)
 
 DIRECTORY = Path(__file__).resolve().parents[2] / "protocol" / "examples"
@@ -143,7 +143,7 @@ class Normalizer:
                 out["last_t_ms"] = out["last_seq"] * 10
             # How fast it went in real time (a time event, the result's timing)
             if "actual_speed" in out:
-                out["actual_speed"] = None if out.get("paused") is True else 1.5
+                out["actual_speed"] = None if out["actual_speed"] is None else 1.5
             if isinstance(out.get("wall_ms"), int):
                 out["wall_ms"] = 1000
             if isinstance(out.get("paused_ms"), int) and out["paused_ms"] > 0:
@@ -545,20 +545,20 @@ def test_ws_time_examples(tmp_path: Path) -> None:
             await sock.until(is_synced)
             await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"], "speed": "max",
                                      "start_paused": True})
-            await sock.until(is_time(paused=True))
+            await sock.until_stands(0)
             req = {"command": "step", "ms": 25}
             status, body = await c.post("api/time", req)
             check_example("time", http("A time command: passed on to the launcher at once (what it did comes as its "
                                        "command and time events).", "POST", "api/time", req, status, body), gui)
-            await sock.until(is_time(sim_ms=30, paused=True))
+            await sock.until_stands(30)
             await c.post("api/time", {"command": "speed", "value": 1})
-            await sock.until(is_time(speed=1))
+            await sock.until_stands(speed=1)
             await c.post("api/time", {"command": "resume"})
-            await sock.until(is_time(paused=False))
+            await sock.until(is_state(paused=False))
             await c.post("api/time", {"command": "step", "ms": 100})
             await sock.until(lambda m: m.get("event", {}).get("event") == "command")
             await c.post("api/time", {"command": "pause"})
-            await sock.until(is_time(paused=True))
+            await sock.until_stands()
             await c.post("api/stop", {})
             await sock.until(is_ended)
             await sock.close()

@@ -230,8 +230,10 @@ def test_the_recorded_writes_pass_the_launchers_check_and_play_back(tmp_path: Pa
                 whose step at that time has not run yet applies a write there, before the next step command)."""
                 await c.post("api/time", {"command": "step", "ms": 100})
                 wanted = (lambda m: m["type"] == "operation" and m["seq"] == operation and m["done"],
-                          lambda m: m["type"] == "event" and m["event"]["event"] == "time" and m["event"]["paused"]
-                          and m["event"]["sim_ms"] == stands_at)
+                          lambda m: m["type"] == "event" and m["event"]["event"] == "time"
+                          and m["event"]["sim_ms"] == stands_at,
+                          # (the state of the standstill: each wait ends after the one of its own step)
+                          lambda m: m["type"] == "event" and m["event"]["event"] == "state" and m["event"]["paused"])
                 while not all(any(w(m) for m in ws.received[first:]) for w in wanted):
                     await ws.until(lambda m: True)
             await step_and_wait(before, body["operation"], 100)

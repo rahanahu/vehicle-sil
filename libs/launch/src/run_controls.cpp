@@ -84,6 +84,7 @@ RunState RunControls::compose(const TimeFacts& facts) const
     RunState out;
     out.phase = phase_.load();
     out.paused = facts.standing;
+    out.paused_at_ms = facts.standing ? facts.standing_at_ms : std::nullopt;
     out.holding = facts.holding;
     out.speed = facts.speed;
     // Something to keep up with: the simulation runs and goes, at a speed that is a number. What

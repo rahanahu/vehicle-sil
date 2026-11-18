@@ -3010,12 +3010,12 @@ struct FakeTools
     std::vector<std::string> missing;   ///< tools that are not found
     std::optional<DescribeRun> answer;  ///< instead of the right description
     std::vector<std::string> runs;      ///< "<tool path> <arguments>"
-    bool can_bridge = true;             ///< ConnectTools::can_bridge (as on Windows)
+    Os os = Os::Windows;                ///< ConnectTools::os
     ConnectTools tools()
     {
         ConnectTools t;
         t.launcher_dir = "/opt/vsil/bin";
-        t.can_bridge = can_bridge;
+        t.os = os;
         t.find = [this](std::string_view name) -> std::optional<std::filesystem::path> {
             if (std::find(missing.begin(), missing.end(), name) != missing.end())
             {
@@ -3038,7 +3038,7 @@ struct FakeTools
                 return *answer;
             }
             const std::string network = arguments.at(1);
-            const bool can = tool.filename() == "vehicle_sil_vector_xl_bridge";
+            const bool can = tool.filename() != "vehicle_sil_ethernet_bridge";
             run.exit_code = 0;
             run.standard_output = bridge_description(arguments.back(), network, can ? "can" : "ethernet");
             return run;
@@ -3085,14 +3085,57 @@ TEST_CASE(check_connections_finds_the_bridges_and_asks_them_describe)
     // In the file's order, whatever the order of the requests.
     check_text(outside_text(check),
                "ETH vehicle_sil_ethernet_bridge [/tools/vehicle_sil_ethernet_bridge] vEthernet (A) bridge.ETH: --network "
-               "ETH --interface vEthernet (A) --src-mac 02:00:00:00:00:01\n"
+               "ETH --backend npcap --interface vEthernet (A) --src-mac 02:00:00:00:00:01\n"
                "CAN1 vehicle_sil_vector_xl_bridge [/tools/vehicle_sil_vector_xl_bridge] physical:2 bridge.CAN1: --network "
                "CAN1 --xl-target physical --xl-channel 2\n");
     check_text(fake.runs.at(0) + "\n" + fake.runs.at(1) + "\n",
-               "/tools/vehicle_sil_ethernet_bridge --network ETH --interface vEthernet (A) --src-mac 02:00:00:00:00:01 "
+               "/tools/vehicle_sil_ethernet_bridge --network ETH --backend npcap --interface vEthernet (A) --src-mac 02:00:00:00:00:01 "
                "--describe --name bridge.ETH\n"
                "/tools/vehicle_sil_vector_xl_bridge --network CAN1 --xl-target physical --xl-channel 2 --describe --name "
                "bridge.CAN1\n");
+}
+
+TEST_CASE(check_connections_takes_the_backend_of_a_target_and_refuses_one_the_os_does_not_have)
+{
+    const Setup s = connect_setup();
+    FakeTools fake;
+    fake.os = Os::Linux;
+    const ConnectTools tools = fake.tools();
+    // Linux: tap is named in the target; a CAN target that is not an XL channel is a SocketCAN interface.
+    const ConnectCheck linux_ = check_connections(s.config, s.results, {{"ETH", "tap:vsil0"}, {"CAN1", "can0"}}, &tools);
+    check_text(lines(linux_.findings), "");
+    check_text(outside_text(linux_),
+               "ETH vehicle_sil_ethernet_bridge [/tools/vehicle_sil_ethernet_bridge] tap:vsil0 bridge.ETH: --network ETH "
+               "--backend tap --interface vsil0 --src-mac 02:00:00:00:00:01\n"
+               "CAN1 vehicle_sil_socketcan_bridge [/tools/vehicle_sil_socketcan_bridge] can0 bridge.CAN1: --network CAN1 "
+               "--interface can0\n");
+    // virtual:<n> stays the Vector XL bridge's, also on Linux, where it is what is missing.
+    const ConnectCheck xl = check_connections(s.config, s.results, {{"CAN1", "virtual:1"}}, &tools);
+    check_text(lines(xl.findings), "");
+    check_text(outside_text(xl), "CAN1 vehicle_sil_vector_xl_bridge [/tools/vehicle_sil_vector_xl_bridge] virtual:1 bridge.CAN1: "
+                                 "--network CAN1 --xl-target virtual --xl-channel 1\n");
+    fake.missing = {"vehicle_sil_socketcan_bridge"};
+    check_text(connect_lines(s, {{"CAN1", "can0"}}, fake),
+               "E 5 connect-tool-missing: network 'CAN1': --connect needs vehicle_sil_socketcan_bridge, which is neither "
+               "next to vehicle_sil_launch (/opt/vsil/bin) nor on PATH: build it on Linux (docs/socketcan-bridge.md) and put "
+               "it next to vehicle_sil_launch, or its directory on PATH\n");
+    // A backend that this OS does not have: connect-backend, and nothing is looked for.
+    check_text(connect_lines(s, {{"ETH", "npcap:vEthernet (A)"}}, fake),
+               "E 3 connect-backend: network 'ETH': --connect ETH=npcap:vEthernet (A): the backend 'npcap' is not for Linux: "
+               "the ethernet backends here are packet, tap (give the target without the prefix to take the default, packet); "
+               "vehicle_sil_launch connections <file> lists the targets of each\n");
+    FakeTools windows;
+    check_text(connect_lines(s, {{"ETH", "tap:vsil0"}, {"CAN1", "socketcan:can0"}}, windows),
+               "E 3 connect-backend: network 'ETH': --connect ETH=tap:vsil0: the backend 'tap' is not for Windows: the "
+               "ethernet backends here are npcap (give the target without the prefix to take the default, npcap); "
+               "vehicle_sil_launch connections <file> lists the targets of each\n"
+               "E 5 connect-backend: network 'CAN1': --connect CAN1=socketcan:can0: the backend 'socketcan' is not for "
+               "Windows: the can backends here are xl (give the target without the prefix to take the default, xl); "
+               "vehicle_sil_launch connections <file> lists the targets of each\n");
+    CHECK(windows.runs.empty());
+    // Nothing after the prefix.
+    CHECK(connect_lines(s, {{"ETH", "tap:"}}, fake)
+              .rfind("E 3 connect-target: network 'ETH': --connect ETH=tap:: the target has nothing after 'tap:'", 0) == 0);
 }
 
 TEST_CASE(check_connections_without_a_target_connects_nothing)
@@ -3121,7 +3164,7 @@ TEST_CASE(check_connections_names_what_is_wrong_with_a_request)
                "E 0 connect-network: --connect names the network 'A', which the file does not have: the network 'A=B' has "
                "'=' in its name, and --connect takes the network's name up to the first '=': rename the network (a name "
                "without '=')\n"
-               "E 5 connect-target: network 'CAN1': --connect CAN1=usb:1: a CAN target is virtual:<n> or physical:<n>, "
+               "E 5 connect-target: network 'CAN1': --connect CAN1=usb:1: a Vector XL target is virtual:<n> or physical:<n>, "
                "with the channel number <n> from 1: give a channel as virtual:<n> or physical:<n> (vehicle_sil_launch "
                "connections <file> lists those of this computer), or none for SIL Kit only\n"
                "E 16 connect-name-taken: participant 'bridge.CAN1' has the name that --connect CAN1 gives the bridge of "
@@ -3182,7 +3225,7 @@ TEST_CASE(check_connections_needs_a_filter_for_every_participant_on_an_ethernet_
         const ConnectCheck check = check_connections(tested.config, tested.results, {{"ETH", "eth0"}}, &tools);
         check_text(lines(check.findings), "");
         check_text(outside_text(check), "ETH vehicle_sil_ethernet_bridge [/tools/vehicle_sil_ethernet_bridge] eth0 "
-                                        "bridge.ETH: --network ETH --interface eth0 --src-mac 02:00:00:00:00:01\n");
+                                        "bridge.ETH: --network ETH --backend npcap --interface eth0 --src-mac 02:00:00:00:00:01\n");
     }
     tested.results[0].ecu->description.networks.clear();
     check_text(connect_lines(tested, {{"ETH", "eth0"}}, fake),
@@ -3211,7 +3254,7 @@ TEST_CASE(check_connections_needs_a_filter_for_every_participant_on_an_ethernet_
     const ConnectCheck check = check_connections(typed.config, typed.results, {{"ETH", "eth0"}}, &tools);
     check_text(lines(check.findings), "");
     check_text(outside_text(check), "ETH vehicle_sil_ethernet_bridge [/tools/vehicle_sil_ethernet_bridge] eth0 bridge.ETH: "
-                                    "--network ETH --interface eth0 --ethertype 0x88b5\n");
+                                    "--network ETH --backend npcap --interface eth0 --ethertype 0x88b5\n");
 }
 
 TEST_CASE(check_connections_says_when_a_bridge_is_missing_or_fails)
@@ -3224,14 +3267,14 @@ TEST_CASE(check_connections_says_when_a_bridge_is_missing_or_fails)
                "next to vehicle_sil_launch (/opt/vsil/bin) nor on PATH: build it with the Vector XL Driver Library "
                "(docs/bridges.md) and put it next to vehicle_sil_launch, or its directory on PATH\n");
     // Not on Windows: there is nothing to build; found anyway (a build for tests), it is used.
-    fake.can_bridge = false;
+    fake.os = Os::Linux;
     check_text(connect_lines(s, {{"CAN1", "virtual:1"}}, fake),
                "E 5 connect-tool-missing: network 'CAN1': --connect needs vehicle_sil_vector_xl_bridge, and the Vector XL "
                "bridge is for Windows: on this computer the network runs on SIL Kit only: leave --connect CAN1 out (or "
                "give CAN1=none)\n");
     fake.missing.clear();
     check_text(connect_lines(s, {{"CAN1", "virtual:1"}}, fake), "");
-    fake.can_bridge = true;
+    fake.os = Os::Windows;
     DescribeRun refused;
     refused.command_text = "vehicle_sil_vector_xl_bridge --network CAN1 ...";
     refused.exit_code = 2;
@@ -3505,9 +3548,10 @@ Setup two_cans()
     return s;
 }
 
-std::string shared_lines(const Setup& s, const std::vector<ConnectRequest>& requests)
+std::string shared_lines(const Setup& s, const std::vector<ConnectRequest>& requests, Os os = Os::Windows)
 {
     FakeTools fake;
+    fake.os = os;
     const ConnectTools tools = fake.tools();
     std::string out;
     for (const Finding& f : check_connections(s.config, s.results, requests, &tools).findings)
@@ -3539,6 +3583,19 @@ TEST_CASE(connect_target_shared_warns_when_two_networks_use_one_device)
     CHECK(shared_lines(c, {{"C1", "physical:1"}, {"C2", "physical:1"}}).rfind("W connect-target-shared: ", 0) == 0);
     CHECK(shared_lines(c, {{"C1", "virtual:1"}, {"C2", "virtual:2"}}).find("Vector Virtual CAN channels") != std::string::npos);
     check_text(shared_lines(c, {{"C1", "virtual:1"}, {"C2", "physical:1"}}), "");
+}
+
+TEST_CASE(connect_target_shared_compares_the_name_without_the_backend)
+{
+    // One interface through packet and tap is one device; SocketCAN interfaces are told apart by name.
+    const Setup s = two_ethernets();
+    CHECK(shared_lines(s, {{"A", "eth0"}, {"B", "tap:eth0"}}, Os::Linux).rfind("W connect-target-shared: ", 0) == 0);
+    CHECK(shared_lines(s, {{"A", "packet:eth0"}, {"B", "tap:eth0"}}, Os::Linux).rfind("W connect-target-shared: ", 0) == 0);
+    check_text(shared_lines(s, {{"A", "packet:eth0"}, {"B", "tap:eth1"}}, Os::Linux), "");
+    const Setup c = two_cans();
+    CHECK(shared_lines(c, {{"C1", "can0"}, {"C2", "socketcan:can0"}}, Os::Linux).rfind("W connect-target-shared: ", 0) == 0);
+    check_text(shared_lines(c, {{"C1", "can0"}, {"C2", "can1"}}, Os::Linux), "");
+    check_text(shared_lines(c, {{"C1", "can0"}, {"C2", "virtual:1"}}, Os::Linux), "");
 }
 
 TEST_CASE(connect_shared_loop_is_an_error_for_can_and_ethernet)
@@ -3778,6 +3835,6 @@ TEST_CASE(check_connections_gives_no_command_for_a_network_with_an_error)
     CHECK(lines(check.findings).rfind("E 5 connect-target: ", 0) == 0);
     check_text(outside_text(check),
                "ETH vehicle_sil_ethernet_bridge [/tools/vehicle_sil_ethernet_bridge] eth0 bridge.ETH: --network ETH "
-               "--interface eth0 --src-mac 02:00:00:00:00:01\n"
+               "--backend npcap --interface eth0 --src-mac 02:00:00:00:00:01\n"
                "CAN1 vehicle_sil_vector_xl_bridge [/tools/vehicle_sil_vector_xl_bridge] usb:1 bridge.CAN1: (no command)\n");
 }
