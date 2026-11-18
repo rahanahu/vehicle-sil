@@ -360,7 +360,7 @@ failed: 1 error, 0 warnings, 0 notes
 
 <!-- first ECU: vehicle_sil_launch check simulation.yaml --disable Dashboard, the warning -->
 ```text
-warning: simulation.yaml:9: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it [single-participant]
+warning: simulation.yaml:9: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes) [single-participant]
 ```
 
 指摘のコードの一覧は、[simulation-check.md](../simulation-check.md) にあります。

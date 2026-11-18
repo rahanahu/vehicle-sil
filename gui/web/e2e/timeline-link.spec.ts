@@ -5,7 +5,7 @@
 // and of the page in Japanese.
 import { Page, expect, test } from '@playwright/test';
 import { CONFIGS, REPLAY_LAUNCHER, GuiServer, launchGuiServer } from './support/gui-server';
-import { RUN_TIMEOUT } from './support/run-page';
+import { RUN_TIMEOUT, inSync } from './support/run-page';
 
 const shots = process.env['VEHICLE_SIL_GUI_SHOTS'];
 const FAILS = 'scenarios/fails.yaml';
@@ -28,22 +28,27 @@ test.afterAll(async () => {
   await server?.stop();
 });
 
-/** Chooses simulation.yaml with the failing scenario on the run page (in Japanese) and starts it. */
-async function runFailingScenario(page: Page): Promise<void> {
+/**
+ * Chooses simulation.yaml with the failing scenario on the run page (in Japanese), starts it and returns the run's
+ * session. The server keeps the previous test's run: the page draws its result card and chooses its file and scenario
+ * when it is in sync, so the choices wait for that (an open list moves away with the card), and the wait is for the
+ * check shown on the page, which the page may have sent itself.
+ */
+async function runFailingScenario(page: Page): Promise<number> {
   await page.goto(`${base}#token=${server.token}`);
+  await inSync(page);
   await page.getByRole('combobox', { name: '構成ファイル' }).click();
   await page.getByRole('option', { name: 'simulation.yaml', exact: true }).click();
-  const checked = page.waitForResponse(
-    (r) => r.url().endsWith('/api/check') && r.request().postDataJSON().scenario === FAILS,
-  );
   await page.getByRole('combobox', { name: 'シナリオ' }).click();
   await page.getByRole('option', { name: 'fails.yaml', exact: true }).click();
-  await checked;
+  await expect(page.getByTestId('check-scenario')).toContainText(FAILS);
   const start = page.getByTestId('start');
   await expect(start).toHaveAttribute('data-armed', 'true');
   const response = page.waitForResponse((r) => r.url().endsWith('/api/run'));
   await start.click();
-  expect((await response).status()).toBe(200);
+  const answer = await response;
+  expect(answer.status()).toBe(200);
+  return ((await answer.json()) as { session: { id: number } }).session.id;
 }
 
 test('timeline: a failed scenario run links its timeline, which opens in the GUI language', async ({
@@ -110,11 +115,15 @@ test('timeline: a failed scenario run links its timeline, which opens in the GUI
 test('timeline: the Scenario card shows the timeline on the screen itself, with the element', async ({
   page,
 }) => {
-  await runFailingScenario(page);
+  const session = await runFailingScenario(page);
   const card = page.getByTestId('scenario-card');
-  await expect(card.getByTestId('scenario-outcome')).toHaveText(/シナリオは失敗しました/, {
-    timeout: RUN_TIMEOUT,
-  });
+  // The card shows the previous test's run until this run's answer is drawn: wait for this run's link
+  await expect(card.getByTestId('scenario-timeline')).toHaveAttribute(
+    'href',
+    new RegExp(`%2Fapi%2Ftimeline%2F${session}&`),
+    { timeout: RUN_TIMEOUT },
+  );
+  await expect(card.getByTestId('scenario-outcome')).toHaveText(/シナリオは失敗しました/);
   // The link stays; the toggle beside it puts the element <vehicle-sil-timeline> into the card
   await expect(card.getByTestId('scenario-timeline')).toBeVisible();
   const toggle = card.getByTestId('timeline-toggle');
