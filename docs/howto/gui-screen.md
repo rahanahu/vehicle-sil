@@ -91,7 +91,7 @@ When you are done, stop the GUI server with Ctrl+C. From another terminal, `kill
 |---|---|---|
 | `there is no index.html in it`, and the exit code is 2 | The directory you passed has no `index.html`. | Pass a directory that contains `index.html`. |
 | `it has package.json, so it is the project and not its build`, and the exit code is 2 | You passed the project directory, not its build output. | Pass the build output directory (such as `dist/`). |
-| Every part shows `connect() without options works in a page that the GUI server served and that was opened from the URL it printed (it ends with #token=...). In Node, pass { base_url, token }` | You opened a URL without `#token=` (each part says it, so the sentence appears once per part). | Open the URL that the terminal printed, including everything after `#token=`. |
+| One sentence, `connect() without options works in a page that the GUI server served and that was opened from the URL it printed (it ends with #token=...). In Node, pass { base_url, token }` | You opened a URL without `#token=` (the sentence appears once on the page: in `<vsil-status>`, or in the first part when the page has none; every part carries `data-error`). | Open the URL that the terminal printed, including everything after `#token=`. |
 
 ## Step 2: Find the name of the variable to show
 

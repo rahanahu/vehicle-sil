@@ -5,6 +5,43 @@ import { reasonText } from './reasons';
 
 let ids = 0;
 
+/** Parts whose bind failed on the page's connection and that are still in a document: one of them tells it. */
+const failed = new Map<Part, (speaking: boolean) => void>();
+let reconciling = false;
+
+/** The part that shows the sentence of a failed connection in `document`: the first `<vsil-status>`, else the first part. */
+function speaker(document: Document): Part | null {
+  let chosen: Part | null = null;
+  const rank = (part: Part) => (part.localName === 'vsil-status' ? 0 : 1);
+  for (const part of failed.keys()) {
+    if (part.ownerDocument !== document) continue;
+    if (
+      chosen === null ||
+      rank(part) < rank(chosen) ||
+      (rank(part) === rank(chosen) &&
+        !!(part.compareDocumentPosition(chosen) & Node.DOCUMENT_POSITION_FOLLOWING))
+    ) {
+      chosen = part;
+    }
+  }
+  return chosen;
+}
+
+/** Decides again, after the parts that fail together have all failed, which failed part shows the sentence. */
+function reconcile(): void {
+  if (reconciling) return;
+  reconciling = true;
+  queueMicrotask(() => {
+    reconciling = false;
+    const speakers = new Set<Part>();
+    for (const part of failed.keys()) {
+      const chosen = speaker(part.ownerDocument);
+      if (chosen) speakers.add(chosen);
+    }
+    for (const [part, speak] of failed) speak(speakers.has(part));
+  });
+}
+
 /** Creates an element with text and attributes. */
 export function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -49,6 +86,7 @@ export abstract class Part extends HTMLElement {
   #client: Front | null = null;
   #bindings = 0;
   #root: HTMLElement | null = null;
+  #sentence: string | null = null;
 
   /** Another connection than the page's (`connect()`). Setting it while the part is in the document binds it again. */
   get client(): Front | null {
@@ -105,7 +143,37 @@ export abstract class Part extends HTMLElement {
     if (before !== after && this.isConnected) void this.#bind();
   }
 
+  /** Shows the sentence of the failed connection (`speaking`) or not; the mark `data-error` stays either way. */
+  #speak = (speaking: boolean): void => {
+    if (this.#sentence === null) return;
+    const shown = this.#root?.querySelector(':scope > [role=alert]') ?? null;
+    if (speaking && !shown) {
+      this.#root ??= this.appendChild(h('span', { class: 'vsil' }));
+      this.#root.append(h('small', { role: 'alert' }, this.#sentence));
+    } else if (!speaking && shown) {
+      this.#root?.remove();
+      this.#root = null;
+    }
+  };
+
+  #fail(error: unknown, shared: boolean): void {
+    const message = error instanceof Error ? error.message : String(error);
+    const code: unknown = Reflect.get(Object(error), 'code');
+    setData(this, 'error', typeof code === 'string' && code !== '' ? code : 'error');
+    if (shared) {
+      this.#sentence = message;
+      failed.set(this, this.#speak);
+      reconcile();
+      return;
+    }
+    this.#root ??= this.appendChild(h('span', { class: 'vsil' }));
+    this.#root.append(h('small', { role: 'alert' }, message));
+  }
+
   #clear(): void {
+    this.#sentence = null;
+    setData(this, 'error', null);
+    if (failed.delete(this)) reconcile();
     for (const stop of this.#stops.splice(0)) stop();
     this.#root?.remove();
     this.#root = null;
@@ -115,16 +183,20 @@ export abstract class Part extends HTMLElement {
     this.#clear();
     const binding = ++this.#bindings;
     const alive = () => binding === this.#bindings && this.isConnected;
+    let shared = false;
     try {
-      const client = this.#client ?? (await connect());
+      let client = this.#client;
+      if (!client) {
+        shared = true;
+        client = await connect();
+        shared = false;
+      }
       if (!alive()) return;
       this.#root = this.appendChild(h('span', { class: 'vsil' }));
       await this.draw(client, this.#root, alive);
     } catch (error) {
       if (!alive()) return;
-      const message = error instanceof Error ? error.message : String(error);
-      this.#root ??= this.appendChild(h('span', { class: 'vsil' }));
-      this.#root.append(h('small', { role: 'alert' }, message));
+      this.#fail(error, shared);
     }
   }
 
