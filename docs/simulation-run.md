@@ -385,7 +385,7 @@ When the simulation ran and a bridge sent frames to the bus but none came from a
 network 'ETH_EXT': nothing came from a device on the real bus (vEthernet (A)) before the run ended: bridge.ETH_EXT sent 152 frames there and got none from a device (frames that this computer sent do not count). If a device is meant to answer, check that it is on, its cable, and that --connect names the adapter it is on; a short run can end before a device answers
 ```
 
-For an automatic test with a device on the bus, run one scenario at speed 1 with `--strict`. `test` does not take `--connect`: it is made for runs that go as fast as possible, one after the other, and a real bus does not wait for the virtual time.
+For an automatic test with a device on the bus, run one scenario at speed 1 with `--strict`. `test` does not take `--connect`: it is made for runs that go as fast as possible, one after the other, and a real bus does not wait for the virtual time. A run that is connected outside gets input that differs every time, so its result is not promised to be the same (see the start of [scenarios](scenario.md)).
 
 ```sh
 vehicle_sil_launch run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>
@@ -1595,7 +1595,7 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 | `findings[]` | The check and run findings whose `code` starts with `scenario-` (the same form as in `run --json`). The finding `control-link-late-values`, which says that ECU values arrived later than guaranteed, appears with its `severity` and `code` only, the other keys `null` (in a run with this finding, the record can differ from run to run). Other findings, such as the real-time speed finding `behind-real-time`, are left out |
 | `limits` | The limits on the number of points, and the dropped points (see "Limits" below) |
 
-A reader ignores keys it does not know. For a value it does not know (`source` and `encoding` of a series, `mode` of `watch`, `op` of a condition, `kind` and `status` of a step, `kind` and `base_source` of a line, `type` of `shape`), it leaves that part undrawn and shows the name and `text`. Keys and values can be added without raising the format version.
+A reader ignores keys it does not know. For a value it does not know (`source` and `encoding` of a series, `mode` of `watch`, `op` of a condition, `kind` of a step, `kind` and `base_source` of a line, `type` of `shape`), it leaves that part undrawn and shows the name and `text`. Keys and values can be added without raising the format version. A step's `status` is not one of them: see [Values that carry the result](scenario.md#values-that-carry-the-result).
 
 Every key in this section is in every file. A key that does not apply has the value `null`. The one exception is `expect_skipped` of a step, which, as in `run --json`, is there only when the step has it.
 
