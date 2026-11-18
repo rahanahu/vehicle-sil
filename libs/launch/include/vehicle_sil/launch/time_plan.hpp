@@ -134,10 +134,11 @@ struct RunTiming
 };
 
 namespace detail {
-/// What connects a run outside, for a message: "--connect connects CAN1 to a real bus",
+/// What connects a run outside, for a message: "--connect connects CAN1 to a real bus" (with a
+/// request file that has the connect: "connect in bench.json connects CAN1 to a real bus"),
 /// "participant 'Gateway' is a bridge (role: bridge) to something outside the simulation", or
 /// both. "" if `lock` names nothing.
-[[nodiscard]] std::string connected_outside(const TimeLock& lock);
+[[nodiscard]] std::string connected_outside(const TimeLock& lock, const RequestOrigin& origin = {});
 /// How to run on SIL Kit only, for a message: "without --connect", "with --disable Gateway
 /// --disable Tap", or both ("without --connect and with --disable Gateway": it takes both).
 [[nodiscard]] std::string not_connected(const TimeLock& lock);

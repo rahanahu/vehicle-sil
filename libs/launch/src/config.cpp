@@ -2339,9 +2339,15 @@ std::vector<Finding> apply_overrides(SimulationConfig& config, const EnabledOver
                                               [&name](const NetworkConfig& n) { return name == "bridge." + n.name; });
             network != config.networks.end())
         {
-            errors.push_back(usage(key + ": " + name + " is the bridge that --connect starts for the network " + network->name +
-                                   ", not a participant of the file: to run " + network->name +
-                                   " on SIL Kit only, give --connect " + network->name + "=none or leave --connect out"));
+            // The bridge comes from a network of the request file's connect, or from --connect.
+            const std::vector<std::string>& connected = overrides.origin.connected;
+            const bool connectInFile = std::find(connected.begin(), connected.end(), network->name) != connected.end();
+            errors.push_back(usage(key + ": " + name + " is the bridge that " +
+                                   (connectInFile ? "connect in " + overrides.origin.file : std::string("--connect")) +
+                                   " starts for the network " + network->name + ", not a participant of the file: to run " +
+                                   network->name + " on SIL Kit only, " +
+                                   (connectInFile ? "take " + network->name + " out of connect in " + overrides.origin.file
+                                                  : "give --connect " + network->name + "=none or leave --connect out")));
             return;
         }
         const std::string guess = detail::closest(name, names);

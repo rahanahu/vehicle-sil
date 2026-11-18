@@ -355,8 +355,8 @@ TEST_CASE(a_rule_about_a_value_of_the_request_file_names_the_key_and_the_file)
 
 TEST_CASE(the_way_out_of_the_time_lock_names_the_request_file_for_the_networks_it_connects)
 {
-    const std::string freely = "pass --time-policy free if what is connected there can take messages that do not come in real "
-                               "time (the bridge still carries frames both ways)";
+    const std::string freely = "set time_policy free in bench.json if what is connected there can take messages that do not come "
+                               "in real time (the bridge still carries frames both ways)";
     const std::optional<std::optional<double>> two(2.0);
     RequestOrigin origin;
     origin.file = "bench.json";
@@ -364,31 +364,39 @@ TEST_CASE(the_way_out_of_the_time_lock_names_the_request_file_for_the_networks_i
     origin.connected = {"CAN", "ETH"};
     // Every connected network is the file's: the user typed no --connect to leave out.
     check_text(lines(time_lock_findings(TimeLock{true, {"CAN", "ETH"}, {}}, two, 1.0, true, origin)),
-               "E outside-real-time: --connect connects CAN and ETH to a real bus, which does not wait for the virtual "
+               "E outside-real-time: connect in bench.json connects CAN and ETH to a real bus, which does not wait for the virtual "
                "time, so the run goes at speed 1: speed 2 in bench.json is refused. Take speed out of bench.json, or pass "
                "--speed 1; to go at another speed, take CAN and ETH out of connect in bench.json, or pass --connect CAN=none "
                "--connect ETH=none, or " + freely + "\n"
-               "E outside-real-time: --connect connects CAN and ETH to a real bus, which does not stand still: "
+               "E outside-real-time: connect in bench.json connects CAN and ETH to a real bus, which does not stand still: "
                "--start-paused is refused. To stop the simulation and look at it, take CAN and ETH out of connect in "
                "bench.json, or pass --connect CAN=none --connect ETH=none, or " + freely + "\n");
     // The note about the file's speed of the configuration says the same.
     origin.fields = {"connect"};
     origin.connected = {"CAN"};
     check_text(lines(time_lock_findings(TimeLock{true, {"CAN"}, {}}, {}, 2.0, false, origin)),
-               "N outside-speed-set: --connect connects CAN to a real bus, which does not wait for the virtual time: the "
+               "N outside-speed-set: connect in bench.json connects CAN to a real bus, which does not wait for the virtual time: the "
                "run goes at speed 1 (real time), not at the speed 2 of the file. To go at another speed, take CAN out of "
                "connect in bench.json, or pass --connect CAN=none, or " + freely + "\n");
     // One network of the file, one of the command line, and a bridge of the configuration.
     check_text(lines(time_lock_findings(TimeLock{true, {"ETH", "CAN"}, {"Gateway"}}, {}, 2.0, false, origin)),
-               "N outside-speed-set: --connect connects ETH and CAN to a real bus, and participant 'Gateway' is a bridge "
+               "N outside-speed-set: connect in bench.json and --connect connect ETH and CAN to a real bus, and participant 'Gateway' is a bridge "
                "(role: bridge) to something outside the simulation, which does not wait for the virtual time: the run goes "
                "at speed 1 (real time), not at the speed 2 of the file. To go at another speed, take CAN out of connect in "
                "bench.json, or pass --connect CAN=none, and leave the other --connect out, and run with --disable Gateway, "
                "or " + freely + "\n");
     // A network of the file that an argument replaced is the command line's: its words.
     origin.connected = {};
-    CHECK(lines(time_lock_findings(TimeLock{true, {"CAN"}, {}}, {}, 2.0, false, origin)) ==
-          lines(time_lock_findings(TimeLock{true, {"CAN"}, {}}, {}, 2.0, false, RequestOrigin{})));
+    check_text(lines(time_lock_findings(TimeLock{true, {"CAN"}, {}}, {}, 2.0, false, origin)),
+               "N outside-speed-set: --connect connects CAN to a real bus, which does not wait for the virtual time: the "
+               "run goes at speed 1 (real time), not at the speed 2 of the file. To go at another speed, run without "
+               "--connect, or " + freely + "\n");
+    // No request file at all: the options.
+    check_text(lines(time_lock_findings(TimeLock{true, {"CAN"}, {}}, {}, 2.0, false, RequestOrigin{})),
+               "N outside-speed-set: --connect connects CAN to a real bus, which does not wait for the virtual time: the "
+               "run goes at speed 1 (real time), not at the speed 2 of the file. To go at another speed, run without "
+               "--connect, or pass --time-policy free if what is connected there can take messages that do not come in real "
+               "time (the bridge still carries frames both ways)\n");
 }
 
 TEST_CASE(a_participant_of_the_request_file_that_the_configuration_lacks_is_an_error_that_names_the_file)
@@ -416,8 +424,8 @@ TEST_CASE(a_participant_of_the_request_file_that_the_configuration_lacks_is_an_e
 
 TEST_CASE(the_findings_about_the_time_name_the_request_file_for_what_it_gave)
 {
-    const std::string freely = "pass --time-policy free if what is connected there can take messages that do not come in real "
-                               "time (the bridge still carries frames both ways)";
+    const std::string freely = "set time_policy free in bench.json if what is connected there can take messages that do not come "
+                               "in real time (the bridge still carries frames both ways)";
     const TimeLock locked{true, {"ETH"}, {}};
     RequestOrigin origin;
     origin.file = "bench.json";
@@ -458,10 +466,21 @@ TEST_CASE(the_findings_about_the_time_name_the_request_file_for_what_it_gave)
                "and with time_policy free in bench.json the simulation runs at the speed 2 of the file: what is connected "
                "there gets the messages at the wrong times, and the bridge still carries frames both ways. To run in real "
                "time, leave time_policy free in bench.json out\n");
-    // A file that gave none of them: the words of the command line.
+    // A file that gave none of them: the words of the command line, except the way to the free policy,
+    // which a user of the request file gives in the file.
     origin.fields = {"variant"};
-    CHECK(lines(time_lock_findings(locked, five, 1.0, true, origin)) == lines(time_lock_findings(locked, five, 1.0, true, RequestOrigin{})));
-    CHECK(lines(time_lock_findings(free, five, 1.0, true, origin)) == lines(time_lock_findings(free, five, 1.0, true, RequestOrigin{})));
+    const auto words = [&](const TimeLock& lock, const RequestOrigin& from) {
+        std::string text = lines(time_lock_findings(lock, five, 1.0, true, from));
+        const std::string file = "set time_policy free in bench.json";
+        for (std::size_t at = text.find(file); at != std::string::npos; at = text.find(file, at))
+        {
+            text.replace(at, file.size(), "pass --time-policy free");
+        }
+        return text;
+    };
+    CHECK(words(locked, origin) == words(locked, RequestOrigin{}));
+    CHECK(words(free, origin) == words(free, RequestOrigin{}));
+    CHECK(lines(time_lock_findings(locked, five, 1.0, true, origin)).find("set time_policy free in bench.json") != std::string::npos);
 }
 
 namespace {
