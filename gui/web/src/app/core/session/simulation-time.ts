@@ -1,6 +1,12 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
-import { ActionError, CommandView, TimeView, isHolding } from '@vehicle-sil/gui-client';
-import { ANSWER_TIMEOUT, GUI_FRONT, readableSignal } from './gui-client';
+import { Injectable, computed, inject } from '@angular/core';
+import {
+  ActionError,
+  CommandView,
+  OperationName,
+  TimeView,
+  isHolding,
+} from '@vehicle-sil/gui-client';
+import { ANSWER_TIMEOUT, GUI_FRONT, lastOperation, readableSignal } from './gui-client';
 import { ServerConnection } from './server-connection';
 import { ServerInfo } from './server-info';
 
@@ -12,13 +18,15 @@ export { ANSWER_TIMEOUT } from './gui-client';
  *
  * - 中身はクライアントのライブラリ（`@vehicle-sil/gui-client`）。操作の可否と理由は正面の口の `controls`、命令は
  *   正面の口の `time`（Promise）で、ここは自分で可否を推測しない。仮想時間と速さは正面の口の `clock`、一時停止は
- *   ランチャーの `state`（セッションの写しの `launcherState`）、遅れの数と最後の命令は `front.low.time`。
+ *   ランチャーの `state`（セッションの写しの `launcherState`）、遅れの数と最後の命令は `front.low.time`、命令の
+ *   失敗は正面の口の `status.problem`。
  * - 画面の部品はここの signal を読むだけにする（どの部品からも同じ状態が見える）。
  */
 @Injectable({ providedIn: 'root' })
 export class SimulationTime {
   private readonly front = inject(GUI_FRONT);
-  private readonly answerTimeoutMs = inject(ANSWER_TIMEOUT);
+  /** 時刻の命令の答えを待つ時間（ミリ秒。これを過ぎると `no-answer` で失敗する）。 */
+  readonly answerTimeoutMs = inject(ANSWER_TIMEOUT);
   // 接続と api/app の読み込みを始めさせる（状態はセッションの写しとランチャーの features から作る）
   private readonly server = inject(ServerConnection);
   private readonly info = inject(ServerInfo);
@@ -69,29 +77,14 @@ export class SimulationTime {
     return [c.pause, c.resume, c.step, c.speed].some((x) => x.reason?.code === 'busy');
   });
 
-  private readonly failure = signal<{ error: ActionError; command: string; run: string } | null>(
-    null,
-  );
+  private readonly last = lastOperation(this.status, ['pause', 'resume', 'step', 'speed']);
   /**
-   * 最後の命令がうまくいかなかった理由: 理由の表にあれば画面の文、答えが来なかったなら画面の文、それ以外は
-   * サーバーかランチャーの英語の文。実行の状態が変わったら出さない。
+   * 最後の操作がこのアプリの時刻の命令なら、それと正面の口の `status.problem`（いつ消えるかは正面の口が決める: 次の
+   * 操作か、`status.run` が変わったとき）。それ以外は null。
    */
-  readonly error = computed(() => {
-    const failure = this.failure();
-    if (!failure || failure.run !== this.status().run) return null;
-    const { error, command } = failure;
-    if (error.code === 'no-answer') {
-      return $localize`ランチャーが命令（${command}:command:）に ${this.answerTimeoutMs / 1000}:seconds: 秒たっても答えません。入力を読んでいないかもしれません。もう一度送れます。`;
-    }
-    return error.message;
-  });
-  /** error がサーバーかランチャーの文（英語）か。 */
-  readonly errorFromServer = computed(() => {
-    const failure = this.failure();
-    return !!failure && failure.run === this.status().run && failure.error.code !== 'no-answer';
-  });
+  readonly failure = this.last.failure;
 
-  /** 一時停止を送る。失敗は error に出る（この Promise は断られても失敗しない）。 */
+  /** 一時停止を送る。失敗は `status.problem` に出る（この Promise は断られても失敗しない）。 */
   pause(): Promise<void> {
     return this.send('pause', () => this.front.time.pause());
   }
@@ -110,15 +103,13 @@ export class SimulationTime {
     return this.send('speed', () => this.front.time.setSpeed(value));
   }
 
-  private async send(command: string, operation: () => Promise<void>): Promise<void> {
-    this.failure.set(null);
+  private async send(op: OperationName, operation: () => Promise<void>): Promise<void> {
+    this.last.sending(op);
     try {
       await operation();
     } catch (error) {
+      // 失敗は正面の口が `status.problem` に置く
       if (!(error instanceof ActionError)) throw error;
-      // 停止のために途中で終わったステップ送りは、誤りではない
-      if (error.code === 'interrupted' || error.code === 'not-running') return;
-      this.failure.set({ error, command, run: this.status().run });
     }
   }
 }

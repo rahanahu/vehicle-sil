@@ -11,8 +11,9 @@ import { ANSWER_TIMEOUT, SimulationTime } from './simulation-time';
 /** 試験の中の、ランチャーの答えを待つ時間（本番より短く）。 */
 const ANSWER_MS = 1000;
 
-// 包みの試験: HttpClient（トークンつき）で送ること、状態が signal に写ること、知らせを画面の言葉にすること。
-// いつ押せるか、いつ待つのをやめるか、は gui/client の試験（time.spec.ts）。
+// 包みの試験: HttpClient（トークンつき）で送ること、状態が signal に写ること、失敗が最後の命令と組になること。
+// いつ押せるか、いつ待つのをやめるか、失敗をいつ消すか、は gui/client の試験（time.spec.ts、front.spec.ts）。
+// 失敗の文は labels.spec.ts。
 describe('SimulationTime', () => {
   let fake: FakeWebSockets;
   let http: HttpTestingController;
@@ -93,21 +94,20 @@ describe('SimulationTime', () => {
     // 答えを待つ間に同じ命令を送っても、2 つ目は送らない
     await time.step(25);
     http.expectNone('api/time');
-    expect(time.error()).toContain('answered');
+    expect(time.failure()).toMatchObject({ op: 'step', problem: { code: 'busy' } });
     vi.advanceTimersByTime(ANSWER_MS);
     await sent;
   });
 
-  it('says in the words of the screen that the launcher did not answer', async () => {
+  it('pairs the last command with the problem when the launcher did not answer', async () => {
     const time = openPaused();
     const sent = time.step(10);
     http.expectOne('api/time').flush({ session_id: 1, command: { command: 'step', ms: 10 } });
     await vi.advanceTimersByTimeAsync(ANSWER_MS);
     await sent;
     expect(time.waiting()).toBe(false);
-    expect(time.error()).toContain('答えません');
-    expect(time.error()).toContain('step');
-    expect(time.errorFromServer()).toBe(false);
+    expect(time.failure()).toMatchObject({ op: 'step', problem: { code: 'no-answer' } });
+    expect(time.answerTimeoutMs).toBe(ANSWER_MS);
   });
 
   it('shows the words of the server when it refused a command', async () => {
@@ -120,8 +120,10 @@ describe('SimulationTime', () => {
         { status: 409, statusText: 'Conflict' },
       );
     await sent;
-    expect(time.error()).toBe('the simulation is not paused');
-    expect(time.errorFromServer()).toBe(true);
+    expect(time.failure()).toEqual({
+      op: 'resume',
+      problem: { code: 'not-paused', message: 'the simulation is not paused' },
+    });
   });
 
   it('offers no command to a launcher without time commands', () => {
