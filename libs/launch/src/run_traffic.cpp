@@ -151,7 +151,7 @@ TrafficPlan traffic_plan(const SimulationConfig& config, const CheckReport& chec
         TrafficPlan::Participant who;
         who.name = p.name;
         who.in_run = p.enabled;
-        if (i < members.size() && members[i].outside)
+        if (members[i].outside)
         {
             // A bridge of --connect: it carries the frames of the others and has no counters of
             // its own; known, so that it is not taken for one that may be on any network.

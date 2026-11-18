@@ -103,8 +103,8 @@ struct ParticipantRun
     bool manual = false;
     /// manual: it joined the simulation (the controller saw its lifecycle).
     bool manual_joined = false;
-    /// The bridge that run started for --connect: the network it connects (ParticipantConfig::
-    /// for_network); "" for a participant of the file. If it ends before the simulation is over,
+    /// The bridge that run started for --connect: the network it connects (the network of
+    /// RunMember::outside); "" for a participant of the file. If it ends before the simulation is over,
     /// the run fails (connect-failed before the start, connect-lost after it).
     std::string for_network{};
     /// for_network: its last line that says why it failed (one that starts with "error:" or "FAIL"
