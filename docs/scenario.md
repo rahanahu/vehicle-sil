@@ -12,17 +12,27 @@ This is the reference for the scenario file format and for the rules that apply 
 | The ECU step in which a write is applied | [Writes](#writes) |
 | Waveform types and keys | [Waveforms (`wave`)](#waveforms-wave) |
 | `expect` beside `ramp` and `wave` | [Checking values during a ramp or wave](#checking-values-during-a-ramp-or-wave) |
+| Using one scenario for several variants, requests or configurations | [Reusing a scenario](#reusing-a-scenario) |
 | Parameters, variants and skipped steps | [Variants and parameters](#variants-and-parameters) |
 | How the result is decided, and the finding codes of a run | [Results](#results) |
 | The finding codes of the check | [Check (`check --scenario`, start of `run --scenario`)](#check-check---scenario-start-of-run---scenario) |
 | Human-readable output and JSON keys | [Output](#output) |
+| Which values decide the result, and how to read an unknown one | [Values that carry the result](#values-that-carry-the-result) |
 | Using a scenario with `--control` | [Watching variables during a run (`--control`)](#watching-variables-during-a-run---control) |
 | Options you cannot combine, and what scenarios cannot do | [Incompatible options and limitations](#incompatible-options-and-limitations) |
 | Which features a launcher has | [Launcher feature names (`features`)](#launcher-feature-names-features) |
 
 A scenario is a file that sets ECU variables in a fixed sequence of steps and checks the results. `vehicle_sil_launch run <config> --scenario <scenario>` starts the simulation, runs the scenario to its end, stops, and reports the result in its exit code. A scenario is an automated test in itself.
 
-With the same configuration file and the same scenario, the result is always the same: which steps passed or failed, at which virtual time and with which values. It does not depend on the speed of the computer, on whether the run is as fast as possible or at real-time speed (`speed`), or on how much work the ECUs do. Every decision uses virtual time only; there are no real-time waits or timeouts.
+With the same build, the same configuration file and the same scenario, the result is the same: which steps passed or failed, at which virtual time and with which values. A decision uses only virtual time and the values the ECUs send; there are no real-time waits or timeouts. So the result does not depend on the speed of the computer, on `speed`, on how much work the ECUs do, or on moving time during the run (pause, step, speed, `run_until`; see [Watching variables during a run (`--control`)](#watching-variables-during-a-run---control)).
+
+This holds when:
+
+- every participant runs in virtual time (`--describe` reports a time step for each ECU), and nothing connects the run outside the simulation (no `--connect`, no enabled `role: bridge` participant). `check --json` (and the `check` of `run --json`) names what connects a run outside in `time_lock.because`. A run that is connected outside runs in real time and gets input that differs every time, so its result is not promised to be the same;
+- the ECUs themselves do not depend on real time or random numbers, and send their values within their steps (otherwise the run gets the warning `control-link-late-values`). What a participant outside the time synchronization does (an ECU without a time step, a `describe: false` participant, or one that is not in the configuration) can change the result. Of these, the launcher knows only the ECUs without a time step (the note `unsynchronized-time-changed`);
+- the build is the same: the integer rounding of `sine`, `chirp` and `lag` can differ by 1 between operating systems and compilers (see [How values are computed](#how-values-are-computed)).
+
+The controller's time step (`time_step_ms`), an `incomplete` run and a run that ended at `stop_at_ms` have their own exceptions: see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline).
 
 A scenario can use the variables that an ECU built with `ecu_main` declares, and `ecu.connected`, which every ECU has (see "Exposing variables (`--registry-uri`)" in [ecu-executable.md](ecu-executable.md#exposing-variables---registry-uri)). `participants[].variables` in the output of `vehicle_sil_launch check --json` lists their names. Scenarios do not use gRPC, so they also work in a build without the Control Server.
 
@@ -116,7 +126,13 @@ steps:
 
 ## File format
 
-A scenario is written in YAML (or in JSON, if the file starts with `{`). Keep it in a file of its own, separate from the configuration file. The format may still change.
+A scenario is written in YAML (or in JSON, if the file starts with `{`). Keep it in a file of its own, separate from the configuration file.
+
+How the format grows:
+
+- New words (keys, steps, conditions) are added without raising the version (`vehicle_sil_scenario: 1`). `vehicle_sil_launch version --json` shows them in `features` (see [Launcher feature names (`features`)](#launcher-feature-names-features)).
+- The file is closed: a key that the launcher does not know is an error (`unknown-key`). An older launcher refuses a new word; it does not skip it silently.
+- The version goes up when a word changes its meaning, is removed, or gets another default value. A file of an older version is refused with `format-version`.
 
 ### Top-level keys
 
@@ -571,6 +587,24 @@ If a variable of the `expect` is absent in the configuration file (`absent: true
 | Counts | In the result lines of the check and the run (`1 expect not checked`), in `unchecked_expects` in JSON, and in the table of `vehicle_sil_launch test` (`1 expect was not checked`). |
 | Reason | In the human-readable output, `line <line> expect not checked: <reason>` below the table. In JSON, `expect_skipped` of the step. |
 
+## Reusing a scenario
+
+| You want to | Write | See |
+|---|---|---|
+| Run the same scenario on every variant | `variants` in the configuration file, and `vehicle_sil_launch test` | [Variants and parameters](#variants-and-parameters), "Running several scenarios (`vehicle_sil_launch test`)" in [simulation-run.md](simulation-run.md#running-several-scenarios-vehicle_sil_launch-test) |
+| Change a value per variant | `params` and `${name}` | [Parameters (`params`, `${name}`)](#parameters-params-name) |
+| Skip the steps that use a variable a variant does not have | `absent: true` in the variable's entry, or `enabled: false` on the participant of a variant | [Skipping steps that use an absent variable](#skipping-steps-that-use-an-absent-variable) |
+| Run the scenario on some variants only | `only` | [Limiting a scenario to variants (`only`)](#limiting-a-scenario-to-variants-only) |
+| Use another variable name or unit per implementation | `variables` in the configuration file | "Matching variable names and values (`variables`)" in [simulation-config.md](simulation-config.md#matching-variable-names-and-values-variables) |
+| Use another network name per implementation | `network_names` in the configuration file (the scenario names no network) | "Matching network names (`network_names`)" in [simulation-config.md](simulation-config.md#matching-network-names-network_names) |
+| Share the scenario and the choices (variant, parameters, participants, speed) as a file | A request file: `--request` of `check` and `run` (`test` does not take it). The file does not name the configuration file; a relative scenario path is read from the directory of the configuration file | "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request); [examples/ecu_main/requests/throttle_step.json](../examples/ecu_main/requests/throttle_step.json) |
+| Run the same scenario on another configuration file | Give that file in the arguments. A participant that it lacks is the error `scenario-variable` | [Check (`check --scenario`, start of `run --scenario`)](#check-check---scenario-start-of-run---scenario) |
+
+What a scenario cannot do now (copy the text instead):
+
+- Include steps that are shared by several scenarios.
+- Take the name of a participant as a parameter.
+
 ## Variants and parameters
 
 When the configuration file has variants (`variants`), 3 mechanisms let one scenario serve every variant:
@@ -873,6 +907,25 @@ How the check judges a `dither`:
 ## Output
 
 With `--timeline <file>`, `run --scenario` also writes the values that the scenario wrote and saw to a JSON file, in virtual-time order: the interval each step watched, the values at a failure, and the value series (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)).
+
+### Values that carry the result
+
+A reader of the JSON or of a timeline file decides pass or fail from these values. New values can be added to them, so read an unknown value on the safe side.
+
+| Where | Values |
+|---|---|
+| `run --json`: `result` and `end` | The whole run. It passed if `ok` is true (`ok` is true only when the exit code is 0; see [How a run ended (`end`, `ok`, `message`)](simulation-run.md#how-a-run-ended-end-ok-message)). `result` and `end` already have values that are neither a pass nor an error (`stopped`, `incomplete`, `interrupted`) |
+| `scenario.status` of `run --json` | `passed`, `failed`, `incomplete`, `not_run` |
+| `status` of a step (`run --json`, `scenario_step` of `run --events`, the timeline file) | `passed`, `failed`, `unfinished`, `not_run`, `skipped` |
+| `test --json`: `result`, `runs[].result` | The whole `test` and each run |
+| `check --json`: `result`, `participants[].status`, `severity` of a finding | See [simulation-check.md](simulation-check.md#json---json) |
+
+How to read them:
+
+- For the result of a whole run (`result` and `end` of `run --json`), decide by `ok`, or by the exit code if there is no `ok`. An unknown `result` or `end` is then no problem, because `ok` stays right.
+- For the values that have no `ok`, do not count an unknown value as a pass. Treat an unknown `severity` as an error, as the check does.
+- A new value that counts as a pass, or that is neither a pass nor a failure (like `skipped` of `test`), is added only with a new format version, except to `result` and `end`, where `ok` stays right.
+- Values that only describe (the `kind` of a step, the `op` of a condition, the `mode` of `watch`, the `source` of a series, the `kind` of a line) are shown by name and `text` when unknown, and not drawn.
 
 ### Human-readable output
 
