@@ -514,12 +514,13 @@ class GuiServer:
         """The scenario of a check or run request as the listing has it (root-relative; None: none)."""
         return resolve_scenario(self.root, config, body.get("scenario"))
 
-    async def _intent(self, config: ConfigFile, body: dict, scenario: str | None,
-                      always: bool) -> tuple[dict, list[str], list[str]]:
+    async def _intent(self, config: ConfigFile, body: dict,
+                      scenario: str | None) -> tuple[dict, list[str], list[str]]:
         """The request file's keys of a check or run request: (intent, disable, manual). The shapes are checked
         here; what the values mean for the file (is there such a variant, can these be used together) is the
         launcher's to say. disable and manual are names of the file's participants (of its variant, from its last
-        check, or a new one; always: even when the request names none)."""
+        check, or a new one): the names are asked for only when the request names some, so that a request without
+        them runs one check, its own."""
         variant = check_variant(body.get("variant"))
         params = check_params(body.get("params"))
         enable = check_enable(body.get("enable"))
@@ -531,7 +532,7 @@ class GuiServer:
         connect = check_connect(body.get("connect"))
         time_policy = check_time_policy(body.get("time_policy"))
         wanted, wanted_manual = body.get("disable"), body.get("manual")
-        known = await self.participant_names(config.relative, variant) if always or wanted or wanted_manual else []
+        known = await self.participant_names(config.relative, variant) if wanted or wanted_manual else []
         disable, manual = check_disable(wanted, known), check_manual(wanted_manual, known)
         intent = {"variant": variant, "params": params or None,
                   "scenario": relative_to_config(config, scenario) if scenario is not None else None,
@@ -584,7 +585,7 @@ class GuiServer:
             config = self.root.resolve(body.get("file"))
             await self._usable()
             scenario = self._scenario(config, body)
-            intent, disable, manual = await self._intent(config, body, scenario, always=False)
+            intent, disable, manual = await self._intent(config, body, scenario)
             code, result = await self._in_check_queue(lambda: self._check_and_guard(config.relative, intent))
         except (PathRejected, InvalidRequest, Refused) as e:
             return self._refusal(e)
@@ -649,7 +650,7 @@ class GuiServer:
         await self._usable()
         scenario = self._scenario(config, body)
         checked_stamp = self._stamp(config.relative)  # before the names and the check read the file
-        intent, disable, manual = await self._intent(config, body, scenario, always=True)
+        intent, disable, manual = await self._intent(config, body, scenario)
         speed, start_paused = intent.get("speed"), intent.get("start_paused", False)
         # The check of what this run is made of (the same request file as the run's): a run that the check refuses
         # is not started, and the answer carries the findings (the same as `api/check`'s).

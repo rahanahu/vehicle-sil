@@ -209,6 +209,33 @@ def test_a_variant_goes_to_the_check_and_the_run(gui: Gui) -> None:
     run_async(main, gui)
 
 
+def test_a_start_checks_the_file_once_and_asks_for_the_names_only_for_disable_or_manual(tmp_path: Path) -> None:
+    """The participant names are asked for (a check without the request) only when the request names participants
+    and the names of the file as it is now are not known; the run's own check is the one check otherwise."""
+    root = tmp_path / "root"
+    shutil.copytree(CONFIGS, root)
+    calls = tmp_path / "calls.jsonl"
+
+    def checks() -> int:
+        lines = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+        return sum(1 for line in lines if json.loads(line)[:1] == ["check"])
+
+    async def main(c: Client) -> None:
+        got = await run_to_end(c, {"file": "simulation.yaml"})
+        assert got[-1]["session"]["result"]["result"] == "passed"
+        assert checks() == 1  # the run's check: no names asked for
+        got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"]})
+        assert got[-1]["session"]["result"]["result"] == "passed"
+        assert checks() == 2  # the names come from the last check of the same file
+        stat = (root / "simulation.yaml").stat()
+        os.utime(root / "simulation.yaml", ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+        got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"]})
+        assert got[-1]["session"]["result"]["result"] == "passed"
+        assert checks() == 4  # the file changed since: the names are asked for again, then the run's check
+    with gui_server(tmp_path, root=root, env={"REPLAY_CALLS": str(calls)}) as gui:
+        run_async(main, gui)
+
+
 @pytest.mark.skipif(not POSIX, reason="file modes")
 def test_the_intent_goes_to_the_launcher_in_a_request_file_that_is_removed_afterwards(tmp_path: Path) -> None:
     """What the browser chose is written to a file of this server's (readable by this user only) and given as

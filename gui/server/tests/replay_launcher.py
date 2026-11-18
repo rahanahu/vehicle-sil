@@ -99,9 +99,10 @@ older launcher; default: the recorded ones without control-server, a launcher bu
 so that only the tests that ask for it need gRPC), REPLAY_CHECK_DELAY_MS (how long check and connections take),
 REPLAY_AVAILABILITY=1 (the stand-in's peers report the availability of two variables: fake_control.availability),
 REPLAY_CONTROL (what goes wrong with the control server: wrong-token, unreachable, bad-address, closes: it ends after the third
-time event), REPLAY_RECORDINGS (another directory of recordings, with fake_control.py next to it). Standard library
-only, except fake_control (grpcio) for --control. A --control-credentials file that others can read ends it with
-code 3 (the real launcher's rule for the token file).
+time event), REPLAY_RECORDINGS (another directory of recordings, with fake_control.py next to it), REPLAY_CALLS (a file
+to which every start adds its arguments as they were given, one JSON array per line: a test counts the checks).
+Standard library only, except fake_control (grpcio) for --control. A --control-credentials file that others can
+read ends it with code 3 (the real launcher's rule for the token file).
 """
 
 from __future__ import annotations
@@ -1031,6 +1032,10 @@ class Recorded(Player):
 
 
 def main(argv: list[str]) -> int:
+    calls = os.environ.get("REPLAY_CALLS")
+    if calls:
+        with open(calls, "a", encoding="utf-8") as f:
+            f.write(json.dumps(argv) + "\n")
     argv = expand_request(argv)
     chosen = choose(argv)
     if isinstance(chosen, str):
