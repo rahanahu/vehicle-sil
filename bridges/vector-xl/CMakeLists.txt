@@ -28,7 +28,7 @@ add_library(vehicle_sil::vector_xl_bridge_core ALIAS vehicle_sil_vector_xl_bridg
 set_target_properties(vehicle_sil_vector_xl_bridge_core PROPERTIES EXPORT_NAME vector_xl_bridge_core)
 target_include_directories(vehicle_sil_vector_xl_bridge_core PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(vehicle_sil_vector_xl_bridge_core
-  PUBLIC SilKit::SilKit vehicle_sil::can vehicle_sil::can_silkit PRIVATE vehicle_sil::json)
+  PUBLIC SilKit::SilKit vehicle_sil::can vehicle_sil::can_silkit vehicle_sil::bridge_runtime PRIVATE vehicle_sil::json)
 vehicle_sil_target_defaults(vehicle_sil_vector_xl_bridge_core)
 
 # An object library, so that each library that adds an implementation of xl_backend.hpp holds

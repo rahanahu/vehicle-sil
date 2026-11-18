@@ -9,6 +9,7 @@
 //               connection lost) or the XL channel stopped working (e.g. device removed),
 //             3 setup failed (XL driver, channel selection, SIL Kit), 4 bad command line.
 #include "vehicle_sil/bridge_runtime/describe.hpp"
+#include "vehicle_sil/bridge_runtime/device_mark.hpp"
 #include "vehicle_sil/bridge_runtime/link_line.hpp"
 #include "vehicle_sil/bridge_runtime/nothing_came_hint.hpp"
 #include "vehicle_sil/bridge_runtime/registry_failure.hpp"
@@ -53,9 +54,10 @@ constexpr auto kSilKitShutdownTimeout = std::chrono::milliseconds(2000);
 class XlBridgeHooks final : public bridge_runtime::BridgeHooks
 {
 public:
-    /// `channel`: what the start line names ("XL 'Virtual Channel 1'").
-    XlBridgeHooks(CanBridge& bridge, const std::string& channel) :
+    /// `channel`: what the start line names ("XL 'Virtual Channel 1'"). `share`: the mark on the channel.
+    XlBridgeHooks(CanBridge& bridge, const std::string& channel, bridge_runtime::DeviceShareWatch& share) :
       bridge_(bridge),
+      share_(share),
       reported_(bridge.health()),
       nothing_came_([channel] { return nothing_came_warning(channel, bridge_runtime::kNothingCameAfter); })
     {
@@ -71,9 +73,18 @@ public:
         {
             warnings.push_back(std::move(*hint));
         }
+        for (auto& warning : share_.take_warnings())
+        {
+            warnings.push_back(std::move(warning));
+        }
         return warnings;
     }
-    std::optional<std::string> link_line() override { return bridge_runtime::format_link_line("bus", link_line_value(bridge_.health().bus_state)); }
+    std::optional<std::string> link_line() override
+    {
+        // Once a second: a bridge that started later on the same bus is found here.
+        share_.count();
+        return bridge_runtime::format_link_line("bus", link_line_value(bridge_.health().bus_state)) + share_.link_keys();
+    }
     std::string statistics_line() override { return format_statistics(bridge_.statistics()); }
     std::optional<std::string> health_line() override
     {
@@ -96,6 +107,7 @@ public:
 
 private:
     CanBridge& bridge_;
+    bridge_runtime::DeviceShareWatch& share_;
     CanBridgeHealth reported_;
     bool problems_before_ = false;
     bridge_runtime::NothingCameHint nothing_came_;
@@ -165,7 +177,11 @@ int run(const BridgeOptions& options)
         try
         {
             const std::vector<XlChannelInfo> channels = driver->channels();
-            list = options.json ? channels_json(channels) : format_channel_list(channels);
+            // The marks of the bridges that use a channel, looked at without placing one.
+            const ChannelInUse inUse = [&driver](const XlChannelInfo& channel) {
+                return bridge_runtime::look_for_marks(bridge_runtime::kCanDevice, driver->device_identity(channel));
+            };
+            list = options.json ? channels_json(channels, inUse) : format_channel_list(channels, inUse);
         }
         catch (const std::exception& e)
         {
@@ -185,6 +201,12 @@ int run(const BridgeOptions& options)
     const XlChannelInfo channel = select_channel(channels, options.target, options.channel);
     log(kTag, "XL channel: %s %u = \"%s\" (hwType=%u, serial=%u)", std::string(to_string(options.target)).c_str(),
         options.channel, channel.name.c_str(), channel.hw_type, channel.serial_number);
+    const std::string xlChannel = "XL '" + channel.name + "'";
+    // The mark on the bus behind the channel, before the port opens it; the first count is in the
+    // first link line.
+    bridge_runtime::DeviceShareWatch share(
+        bridge_runtime::DeviceMark::place(bridge_runtime::kCanDevice, driver->device_identity(channel)),
+        channel.is_virtual ? xlChannel + " (Vector Virtual CAN, whose channels are all one bus)" : xlChannel);
 
     std::unique_ptr<ParticipantRuntime> runtime;
     std::unique_ptr<XlCanPort> port;
@@ -220,8 +242,10 @@ int run(const BridgeOptions& options)
         bridge = std::make_unique<CanBridge>(controller, *port);
         runtime->add_communication_ready_handler([b = bridge.get()] { b->start_controller(); });
         bridge->start();
-        // The first link line, before the lifecycle starts (a program that waits for Running has read it).
-        firstLinkLine = bridge_runtime::format_link_line("bus", link_line_value(bridge->health().bus_state));
+        // The first link line, before the lifecycle starts (a program that waits for Running has read it),
+        // with a count as of now: connecting to the registry may have taken a while since the mark.
+        share.count();
+        firstLinkLine = bridge_runtime::format_link_line("bus", link_line_value(bridge->health().bus_state)) + share.link_keys();
         log(kTag, "%s", firstLinkLine.c_str());
         runtime->start(options.start_timeout);
     }
@@ -253,12 +277,11 @@ int run(const BridgeOptions& options)
     }
     bridge_runtime::RunBridgeOptions runOptions;
     runOptions.tag = kTag;
-    const std::string xlChannel = "XL '" + channel.name + "'";
     runOptions.ready_line = "bridging SIL Kit network '" + options.network + "' (participant '" + options.participant
                             + "', " + options.registry_uri + ") <-> " + xlChannel + "; Ctrl+C to stop";
     runOptions.statistics_interval = options.statistics_interval;
     runOptions.link_line_printed = firstLinkLine;
-    XlBridgeHooks hooks(*bridge, xlChannel);
+    XlBridgeHooks hooks(*bridge, xlChannel, share);
     return bridge_runtime::run_bridge(*runtime, hooks, runOptions);
 }
 

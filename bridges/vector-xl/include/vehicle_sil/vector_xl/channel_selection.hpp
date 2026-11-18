@@ -4,7 +4,10 @@
 // driver specific code fills XlChannelInfo from XLdriverConfig.
 #pragma once
 
+#include "vehicle_sil/bridge_runtime/device_mark.hpp"
+
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -62,15 +65,25 @@ public:
 /// available channels if there is no such channel.
 [[nodiscard]] XlChannelInfo select_channel(const std::vector<XlChannelInfo>& channels, XlTarget target, unsigned number);
 
-/// Human readable channel table, as printed by --list-channels.
-[[nodiscard]] std::string format_channel_list(const std::vector<XlChannelInfo>& channels);
+/// The device behind a channel, for the mark the bridge puts on it (bridge_runtime::DeviceMark):
+/// "xl-<hw_type>-<hw_index>-<serial>-<hw_channel>" for a channel of hardware, "xl-virtual" for
+/// every channel of Vector Virtual CAN (they are one bus).
+[[nodiscard]] std::string device_identity(const XlChannelInfo& channel);
+
+/// The marks of vehicle-sil bridges on the device behind a channel
+/// (bridge_runtime::look_for_marks()). An empty function: none anywhere.
+using ChannelInUse = std::function<bridge_runtime::DevicePeers(const XlChannelInfo&)>;
+
+/// Human readable channel table, as printed by --list-channels; a channel in use ends its line
+/// with bridge_runtime::in_use_text().
+[[nodiscard]] std::string format_channel_list(const std::vector<XlChannelInfo>& channels, const ChannelInUse& in_use = {});
 
 /// --list-channels --json, for programs (vehicle_sil_launch, the GUI): the channels of
 /// selectable_channels(), virtual then physical, each with "value" "<target>:<number>"
 /// ("virtual:1", the --xl-target and --xl-channel to give) and "label" its name. The form is the
-/// one of the Ethernet bridge's --list-interfaces --json ("vehicle_sil_targets": 1). Ends with a
-/// newline.
-[[nodiscard]] std::string channels_json(const std::vector<XlChannelInfo>& channels);
+/// one of the Ethernet bridge's --list-interfaces --json ("vehicle_sil_targets": 1), with
+/// "in_use", "in_use_by" and "in_use_count". Ends with a newline.
+[[nodiscard]] std::string channels_json(const std::vector<XlChannelInfo>& channels, const ChannelInUse& in_use = {});
 
 /// --list-channels --json when the list could not be made: no targets, and "error" with `code`
 /// ("driver-missing": the XL driver cannot be opened; "failed": anything else) and `message`.

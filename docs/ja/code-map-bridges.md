@@ -61,6 +61,8 @@ E2E で確認すること:
 
 機器から何も来ないときのヒントの決まり（`NothingCameHint`）は、テストが時刻を与えて確認します。
 
+デバイスの使用中の印（`bridge_runtime.device_mark_*`）は、名前、ハッシュ、`/proc/net/unix` の読み取り、文を値を与えて確かめ、Linux と Windows では試験のプロセスの本物の印を確かめます（試験ごとに別のデバイスで）。
+
 1 つのテストは、プロセス内のレジストリ（空いているポート）で本物の participant を使います。registry に接続できないときの文（`registry_failure_message()`）は、SIL Kit が実際に投げる文でも確認します。
 
 `describe_json()`（ブリッジが `--describe` で書くもの）は、`libs/ecu` の `to_json()` とバイトごとに比べ、`vehicle_sil_launch` の読み手（`read_description()`）で読みます。ブリッジは `libs/ecu` をリンクせずに、ecu_main の実行ファイルの形を保ちます。
@@ -86,8 +88,9 @@ E2E で確認すること:
 | `registry_failure_message()` | `bridge_runtime/registry_failure.hpp` |
 | `describe_json()`、`BridgeDescription`（ブリッジの `--describe`） | `bridge_runtime/describe.hpp` |
 | `NothingCameHint`、`kNothingCameAfter`（機器から何も来ないとブリッジが言う時点） | `bridge_runtime/nothing_came_hint.hpp` |
+| `DeviceMark`、`look_for_marks()`、`DeviceShareWatch`（ブリッジのデバイスの使用中の印と、ブリッジが数えるほかのブリッジ。[bridges.md](bridges.md#別のブリッジが使っているデバイス)） | `bridge_runtime/device_mark.hpp`（OS ごとの部分は `src/device_mark_os.cpp`） |
 
-- スレッド: ブリッジの数は atomic で、受信のスレッド（外部リンクのもの、SIL Kit のもの）が足します。読むのは `run_bridge()` のスレッドだけで、統計の行（`BridgeHooks::statistics_line()`）とヒント（`take_warnings()`）のためです。そのため `NothingCameHint` は鍵を持ちません。
+- スレッド: ブリッジの数は atomic で、受信のスレッド（外部リンクのもの、SIL Kit のもの）が足します。読むのは `run_bridge()` のスレッドだけで、統計の行（`BridgeHooks::statistics_line()`）とヒント（`take_warnings()`）のためです。そのため `NothingCameHint` は鍵を持ちません。`DeviceShareWatch` も持ちません。実行ファイルがメインのスレッドで印を置いて 1 回数え、その後は `run_bridge()`（同じスレッド）が `link_line()` の中で数えます。
 - テスト: `tests/bridge_runtime`、ブリッジの実行ファイルの E2E（`tests/vector_xl` の `integration.*`）
 - `ctest -R`: `^bridge_runtime\.`、`^vector_xl\.integration\.`
 
@@ -109,7 +112,7 @@ E2E で確認すること:
 | `--list-interfaces` の文と JSON（`pcap_interfaces_json()` など） | `ethernet_bridge/interface_list.hpp` |
 | 実行ファイル | `bridges/ethernet/app/main.cpp` |
 | 外部リンクを作る所 | `app/link_factory.hpp`、`app/os_link_factory.cpp` |
-| pcap のライブラリの場所、`--backend` の既定 | `app/pcap_library.hpp` |
+| pcap のライブラリの場所、`--backend` の既定、デバイスの使用中の印の正体 | `app/pcap_library.hpp` |
 
 `libs/eth_link/src/pcap` の中身:
 
@@ -130,6 +133,7 @@ E2E で確認すること:
 | 偽の外部リンクの実行ファイル | `tests/ethernet_bridge` の `fake_link_factory.cpp` |
 | 偽の pcap のライブラリを読む実行ファイル | `tests/ethernet_bridge` の `fake_pcap_library.cpp` |
 | 名前空間のテスト | `tests/ethernet_bridge` の `bridge_netns.py` |
+| 偽のデバイスのプロセスごとの使用中の印（`VEHICLE_SIL_FAKE_DEVICE_SCOPE`） | `tests/ethernet_bridge` の `fake_device_scope.hpp`。偽の XL ドライバーは `tests/vector_xl/fake_xl` の `mark_identity()` |
 | 設定ファイルからブリッジを起こす試験（`pcap-launcher`）の ECU | `tests/ethernet_bridge` の `eth_bridge_it_ecu.cpp` |
 
 ## 依存の向き
@@ -150,6 +154,7 @@ flowchart TD
     vector_xl_bridge_core --> SilKit["SilKit::SilKit"]
     vector_xl_bridge_core --> can
     vector_xl_bridge_core --> can_silkit
+    vector_xl_bridge_core --> bridge_runtime
     vehicle_sil_vector_xl_logic --> vector_xl_bridge_core
     vector_xl --> vector_xl_bridge_core
     vector_xl -.-> vehicle_sil_vector_xl_logic
@@ -170,6 +175,7 @@ flowchart TD
 flowchart TD
     ethernet_bridge_core --> SilKit["SilKit::SilKit"]
     ethernet_bridge_core --> eth_link
+    ethernet_bridge_core --> bridge_runtime
     eth_link --> Threads["Threads::Threads"]
     vehicle_sil_eth_link_fake --> eth_link
     vehicle_sil_ethernet_bridge -.-> ethernet_bridge_core

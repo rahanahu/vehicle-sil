@@ -160,6 +160,12 @@ public:
     /// What the link is, for the bridge's start line: kind, name, real or virtual
     /// (e.g. "tap 'vsil0' (TAP device in this computer)").
     [[nodiscard]] virtual std::string describe() const = 0;
+    /// The device the link opens, as the OS names it: the interface's name (tap, packet, libpcap),
+    /// the pcap name of Npcap ("\Device\NPF_{...}"). The bridge marks the device under it so
+    /// that other bridges on the same device find it, through whichever link they open it. Valid
+    /// after start(); before, the name the link was given. A link that wraps another passes the
+    /// wrapped link's answer on.
+    [[nodiscard]] virtual std::string device_identity() const = 0;
     [[nodiscard]] virtual std::string last_error() const = 0;
     /// Whether the link receives frames to every address (true) or only those to the adapter's
     /// own address and to group addresses (false), as start() set it up. nullopt: the link has no

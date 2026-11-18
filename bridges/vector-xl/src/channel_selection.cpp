@@ -62,7 +62,26 @@ XlChannelInfo select_channel(const std::vector<XlChannelInfo>& channels, XlTarge
     throw ChannelSelectionError(message);
 }
 
-std::string format_channel_list(const std::vector<XlChannelInfo>& channels)
+std::string device_identity(const XlChannelInfo& channel)
+{
+    if (channel.is_virtual)
+    {
+        return "xl-virtual";
+    }
+    return "xl-" + std::to_string(channel.hw_type) + "-" + std::to_string(channel.hw_index) + "-" +
+           std::to_string(channel.serial_number) + "-" + std::to_string(channel.hw_channel);
+}
+
+namespace {
+
+bridge_runtime::DevicePeers peers_of(const ChannelInUse& in_use, const XlChannelInfo& channel)
+{
+    return in_use ? in_use(channel) : bridge_runtime::DevicePeers{};
+}
+
+} // namespace
+
+std::string format_channel_list(const std::vector<XlChannelInfo>& channels, const ChannelInUse& in_use)
 {
     std::string text;
     char line[256];
@@ -77,10 +96,20 @@ std::string format_channel_list(const std::vector<XlChannelInfo>& channels)
         for (const auto& candidate : candidates)
         {
             const auto& info = candidate.info;
-            std::snprintf(line, sizeof(line), "  --xl-channel %u  %-32s hwType=%u hwIndex=%u hwChannel=%u serial=%u %s\n",
+            std::snprintf(line, sizeof(line), "  --xl-channel %u  %-32s hwType=%u hwIndex=%u hwChannel=%u serial=%u %s",
                           candidate.number, info.name.c_str(), info.hw_type, info.hw_index, info.hw_channel,
                           info.serial_number, info.transceiver_name.c_str());
             text += line;
+            if (const std::string inUse = bridge_runtime::in_use_text(peers_of(in_use, info)); !inUse.empty())
+            {
+                // Without the space that the format leaves where the channel has no transceiver name.
+                while (!text.empty() && text.back() == ' ')
+                {
+                    text.pop_back();
+                }
+                text += "; " + inUse;
+            }
+            text += "\n";
         }
     }
     return text;
@@ -108,7 +137,7 @@ std::string end_targets(json::JsonWriter& w)
 
 } // namespace
 
-std::string channels_json(const std::vector<XlChannelInfo>& channels)
+std::string channels_json(const std::vector<XlChannelInfo>& channels, const ChannelInUse& in_use)
 {
     json::JsonWriter w;
     begin_targets(w);
@@ -119,15 +148,26 @@ std::string channels_json(const std::vector<XlChannelInfo>& channels)
         {
             const auto& info = candidate.info;
             const std::string number = std::to_string(candidate.number);
+            const bridge_runtime::DevicePeers peers = peers_of(in_use, info);
+            const std::string inUse = bridge_runtime::in_use_text(peers);
             w.begin_object();
             w.string("value", name + ":" + number);
             w.string("label", info.name);
             w.string("detail", name + " " + number + "; hwType=" + std::to_string(info.hw_type) +
                                    " hwIndex=" + std::to_string(info.hw_index) + " hwChannel=" + std::to_string(info.hw_channel) +
                                    " serial=" + std::to_string(info.serial_number) +
-                                   (info.transceiver_name.empty() ? "" : " " + info.transceiver_name));
+                                   (info.transceiver_name.empty() ? "" : " " + info.transceiver_name) +
+                                   (inUse.empty() ? "" : "; " + inUse));
             w.boolean("usable", true);
             w.null("reason");
+            w.boolean("in_use", peers.count > 0);
+            w.begin_array("in_use_by");
+            for (const auto pid : peers.pids)
+            {
+                w.integer("", pid);
+            }
+            w.end_array();
+            w.integer("in_use_count", static_cast<std::int64_t>(peers.count));
             w.begin_object("can");
             w.string("target", name);
             w.integer("number", candidate.number);

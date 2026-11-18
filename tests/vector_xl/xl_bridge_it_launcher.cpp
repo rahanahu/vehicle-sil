@@ -31,6 +31,12 @@
 //                             frame sent out has xl_to_silkit=0, and the link line ("link bus=...")
 //                             comes before the start line, once per value. Only the lines while running are
 //                             checked, so that the bridge can be ended as on Windows.
+//   device-shared             bridges on Virtual CAN, whose channels are one bus: with the default
+//                             scope of the fake driver two bridges do not find each other; with one
+//                             scope (VEHICLE_SIL_FAKE_DEVICE_SCOPE) a bridge on virtual:2 and one on
+//                             virtual:1 find each other (at the start and while running), the first
+//                             warns, the list says both virtual channels are in use, and once the
+//                             first ends the second's shared is 0 again.
 //   stop-request              registry + bridge: once the bridge says "Ctrl+C to stop", the
 //                             launcher asks it to stop (POSIX SIGTERM, Windows Ctrl+Break to its
 //                             process group). The bridge stops in order: one statistics line,
@@ -66,6 +72,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -325,6 +333,122 @@ private:
     std::unique_ptr<vehicle_sil::process::Process> process_;
 };
 
+/// Waits until `bridge` has printed `part` after position `from` of its output: where it begins, or
+/// nullopt once the bridge has ended or `deadline` has passed.
+std::optional<std::size_t> wait_for_text(StoppableBridge& bridge, const std::string& part, std::chrono::steady_clock::time_point deadline,
+                                         std::size_t from = 0)
+{
+    for (;;)
+    {
+        const std::string text = bridge.lines();
+        if (const auto at = text.find(part, from); at != std::string::npos)
+        {
+            return at;
+        }
+        if (bridge.process().poll() || std::chrono::steady_clock::now() >= deadline)
+        {
+            return std::nullopt;
+        }
+        std::this_thread::sleep_for(10ms);
+    }
+}
+
+/// " peers=<pid>" where the device marks name their processes (Linux), else nothing.
+std::string peers_key(long pid)
+{
+#ifdef __linux__
+    return " peers=" + std::to_string(pid);
+#else
+    (void)pid;
+    return {};
+#endif
+}
+
+long this_process_id()
+{
+#ifdef _WIN32
+    return static_cast<long>(GetCurrentProcessId());
+#else
+    return static_cast<long>(::getpid());
+#endif
+}
+
+/// Bridges on the channels of Virtual CAN, which are one bus. With the default scope of the fake
+/// driver (this process's tests run at the same time as others on virtual:1), two bridges do not
+/// find each other. With one scope, a bridge on virtual:2 finds the one on virtual:1 at its start,
+/// the first finds the second while it runs and warns, both run on, --list-channels --json says
+/// both virtual channels are in use by 2 bridges and the physical ones by none, and once the first
+/// ends the second's shared is 0 again.
+int run_device_shared(const Options& options)
+{
+    RegistryProcess registry(options.registry, options.workDir);
+    log("registry listening on " + registry.uri());
+    const auto deadline = std::chrono::steady_clock::now() + options.timeout;
+    const auto args = [&registry](const std::string& participant, const std::string& channel) {
+        return std::vector<std::string>{"--registry-uri", registry.uri(), "--participant", participant, "--network",
+                                        "XL_IT_CAN",      "--xl-target",  "virtual",      "--xl-channel",  channel};
+    };
+    bool ok = true;
+    {
+        StoppableBridge a(options.bridge, args("DefaultScopeA", "1"));
+        ok = expect(wait_for_text(a, "Ctrl+C to stop", deadline).has_value(), "the first bridge started") && ok;
+        StoppableBridge b(options.bridge, args("DefaultScopeB", "1"));
+        ok = expect(wait_for_text(b, "Ctrl+C to stop", deadline).has_value(), "the second bridge started") && ok;
+        const std::string first = a.lines();
+        const std::string second = b.lines();
+        ok = expect(first.find(" marked=1 shared=0\n") != std::string::npos && second.find(" marked=1 shared=0\n") != std::string::npos &&
+                        (first + second).find(" shared=1") == std::string::npos && (first + second).find("is also used") == std::string::npos,
+                    "with the default scope the two bridges on virtual:1 do not find each other") && ok;
+        log("default scope, first bridge:\n" + first + "second bridge:\n" + second);
+        a.process().kill_tree();
+        b.process().kill_tree();
+    }
+
+    const ScopedEnv scope("VEHICLE_SIL_FAKE_DEVICE_SCOPE", "device-shared-" + std::to_string(this_process_id()));
+    StoppableBridge first(options.bridge, args("FirstBridge", "1"));
+    ok = expect(wait_for_text(first, "Ctrl+C to stop", deadline).has_value(), "the first bridge started") && ok;
+    ok = expect(first.lines().find("[bridge] link bus=") != std::string::npos && first.lines().find(" marked=1 shared=0\n") != std::string::npos,
+                "the first bridge's first link line: marked=1 shared=0") && ok;
+    StoppableBridge second(options.bridge, args("SecondBridge", "2"));
+    ok = expect(wait_for_text(second, "Ctrl+C to stop", deadline).has_value(), "the second bridge started") && ok;
+    ok = expect(second.lines().find(" marked=1 shared=1" + peers_key(first.process().id()) + "\n") != std::string::npos,
+                "the bridge on virtual:2 finds the one on virtual:1 at its start: shared=1" + peers_key(first.process().id())) && ok;
+    ok = expect(wait_for_text(first, " marked=1 shared=1" + peers_key(second.process().id()) + "\n", deadline).has_value(),
+                "the first bridge finds the second while it runs: shared=1" + peers_key(second.process().id())) && ok;
+#ifdef __linux__
+    const std::string who = " (process " + std::to_string(second.process().id()) + ")";
+#else
+    const std::string who;
+#endif
+    ok = expect(wait_for_text(first, "warning: XL 'Virtual Channel 1' (Vector Virtual CAN, whose channels are all one bus) is also used by "
+                                     "another vehicle-sil bridge" + who + ": ", deadline)
+                    .has_value(),
+                "the first bridge warns") && ok;
+
+    vehicle_sil::process::CaptureOptions capture;
+    capture.timeout = options.timeout;
+    auto listed = vehicle_sil::process::run_captured(options.bridge, {"--list-channels", "--json"}, capture);
+    std::erase(listed.standard_output, '\r');
+    const std::string& json = listed.standard_output;
+    log("list:\n" + json);
+    ok = expect(listed.exit_code == 0 && count(json, "      \"in_use\": true,\n") == 2 && count(json, "      \"in_use_count\": 2,\n") == 2 &&
+                    json.find("      \"in_use\": false,\n", json.find("\"value\": \"physical:1\"")) != std::string::npos,
+                "--list-channels --json: both virtual channels in use by 2 bridges, the physical ones by none") && ok;
+
+    ok = expect(!first.process().poll() && !second.process().poll(), "both bridges run on") && ok;
+    first.process().kill_tree();
+    const auto shared = second.lines().find(" marked=1 shared=1");
+    ok = expect(shared != std::string::npos && wait_for_text(second, " marked=1 shared=0\n", deadline, shared).has_value(),
+                "once the first bridge has ended, the second's shared is 0 again") && ok;
+    second.process().kill_tree();
+    log("first bridge:\n" + first.all_lines() + "second bridge:\n" + second.all_lines());
+    if (!ok)
+    {
+        dump_log(registry.log_file());
+    }
+    return ok ? 0 : 1;
+}
+
 /// The statistics lines the bridge printed while it ran (before "stopping"), without the tag.
 std::vector<std::string> running_statistics(const std::string& raw)
 {
@@ -562,6 +686,10 @@ int main(int argc, char** argv)
         else if (options.scenario == "stop-request")
         {
             result = run_stop_request(options);
+        }
+        else if (options.scenario == "device-shared")
+        {
+            result = run_device_shared(options);
         }
         else if (options.scenario == "no-answers")
         {

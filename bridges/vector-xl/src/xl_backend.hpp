@@ -102,6 +102,10 @@ struct ReceivedEvent
 void close_driver() noexcept;
 /// Every channel the driver knows, in driver order.
 [[nodiscard]] Status read_channels(std::vector<XlChannelInfo>& out);
+/// The identity under which the bridge marks a device, given the one the logic made
+/// (vector_xl::device_identity()). The library's implementation returns it as it is; the fake adds
+/// a scope (XlDriver::device_identity()).
+[[nodiscard]] std::string mark_identity(std::string identity);
 
 // ---- Port ---------------------------------------------------------------------------------
 

@@ -13,6 +13,7 @@
 #include "pcap_library.hpp"
 
 #include "vehicle_sil/bridge_runtime/describe.hpp"
+#include "vehicle_sil/bridge_runtime/device_mark.hpp"
 #include "vehicle_sil/bridge_runtime/link_line.hpp"
 #include "vehicle_sil/bridge_runtime/nothing_came_hint.hpp"
 #include "vehicle_sil/bridge_runtime/registry_failure.hpp"
@@ -58,13 +59,14 @@ class EthernetBridgeHooks final : public bridge_runtime::BridgeHooks
 {
 public:
     /// `hint`: null when the link has no promiscuous mode (tap). `nothing_came`: null when the
-    /// link stays in this computer (tap).
+    /// link stays in this computer (tap). `share`: the mark on the interface.
     EthernetBridgeHooks(EthernetBridge& bridge, PromiscuousHint* hint, std::unique_ptr<bridge_runtime::NothingCameHint> nothing_came,
-                        std::string interface_name) :
+                        std::string interface_name, bridge_runtime::DeviceShareWatch& share) :
       bridge_(bridge),
       hint_(hint),
       nothing_came_(std::move(nothing_came)),
       interface_name_(std::move(interface_name)),
+      share_(share),
       reported_(bridge.health())
     {
     }
@@ -88,9 +90,18 @@ public:
                 warnings.push_back(std::move(*hint));
             }
         }
+        for (auto& warning : share_.take_warnings())
+        {
+            warnings.push_back(std::move(warning));
+        }
         return warnings;
     }
-    std::optional<std::string> link_line() override { return bridge_runtime::format_link_line("link", link_line_value(bridge_.health().link_state)); }
+    std::optional<std::string> link_line() override
+    {
+        // Once a second: a bridge that started later on the same interface is found here.
+        share_.count();
+        return bridge_runtime::format_link_line("link", link_line_value(bridge_.health().link_state)) + share_.link_keys();
+    }
     std::string statistics_line() override { return format_statistics(bridge_.statistics()); }
     std::optional<std::string> health_line() override
     {
@@ -116,6 +127,7 @@ private:
     PromiscuousHint* hint_;
     const std::unique_ptr<bridge_runtime::NothingCameHint> nothing_came_;
     const std::string interface_name_;
+    bridge_runtime::DeviceShareWatch& share_;
     EthernetBridgeHealth reported_;
     bool problems_before_ = false;
 };
@@ -203,9 +215,14 @@ int run(const BridgeOptions& options)
     // The controller is activated where SIL Kit wants it, in the CommunicationReady handler.
     runtime.add_communication_ready_handler([&bridge] { bridge.start_controller(); });
     bridge.start();
+    // The mark on the interface, once it is open: only then does the link know the device's own
+    // name (Npcap's pcap name for a connection name). The first count is in the first link line.
+    bridge_runtime::DeviceShareWatch share(
+        bridge_runtime::DeviceMark::place(bridge_runtime::kEthernetDevice, device_mark_identity(external.device_identity())),
+        "interface '" + options.interface_name + "'");
     // The first link line, before the lifecycle starts (a program that waits for Running has read it).
     const std::string firstLinkLine =
-        bridge_runtime::format_link_line("link", link_line_value(bridge.health().link_state));
+        bridge_runtime::format_link_line("link", link_line_value(bridge.health().link_state)) + share.link_keys();
     log(kTag, "%s", firstLinkLine.c_str());
     try
     {
@@ -235,7 +252,7 @@ int run(const BridgeOptions& options)
                                             bridge_runtime::kNothingCameAfter);
             });
     }
-    EthernetBridgeHooks hooks(bridge, hint.get(), std::move(nothingCame), options.interface_name);
+    EthernetBridgeHooks hooks(bridge, hint.get(), std::move(nothingCame), options.interface_name, share);
     return bridge_runtime::run_bridge(runtime, hooks, runOptions);
 }
 

@@ -24,6 +24,11 @@
 //                      it to stop (POSIX SIGTERM, Windows Ctrl+Break to its process group). The
 //                      bridge stops in order: one statistics line, "stopped", exit code 0. Skipped
 //                      on Windows without a console the processes share.
+//   device-shared      two bridges on fake0: with the default scope of the fake devices they do
+//                      not find each other; with one scope (VEHICLE_SIL_FAKE_DEVICE_SCOPE) the
+//                      second finds the first at its start, the first finds the second while it
+//                      runs and warns, both run on, --list-interfaces --json says fake0 is in use
+//                      by 2 bridges, and once the first ends the second's shared is 0 again.
 //   backend-not-here   the real executable (--real-bridge): a backend that cannot be used on this
 //                      operating system ends with exit 3 and says what to use instead, before
 //                      SIL Kit is touched; --list-interfaces lists the interfaces. The pcap
@@ -98,6 +103,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -596,6 +603,127 @@ int run_pcap_nothing(const Options& options)
     return ok ? 0 : 1;
 }
 
+/// Waits until `bridge` has printed `part` after position `from` of its output: where it begins, or
+/// nullopt once the bridge has ended or `deadline` has passed.
+std::optional<std::size_t> wait_for_text(StoppableBridge& bridge, const std::string& part, std::chrono::steady_clock::time_point deadline,
+                                         std::size_t from = 0)
+{
+    for (;;)
+    {
+        const std::string text = bridge.lines();
+        if (const auto at = text.find(part, from); at != std::string::npos)
+        {
+            return at;
+        }
+        if (bridge.process().poll() || std::chrono::steady_clock::now() >= deadline)
+        {
+            return std::nullopt;
+        }
+        std::this_thread::sleep_for(10ms);
+    }
+}
+
+long this_process_id()
+{
+#ifdef _WIN32
+    return static_cast<long>(GetCurrentProcessId());
+#else
+    return static_cast<long>(::getpid());
+#endif
+}
+
+/// " peers=<pid>" where the device marks name their processes (Linux), else nothing.
+std::string peers_key(long pid)
+{
+#ifdef __linux__
+    return " peers=" + std::to_string(pid);
+#else
+    (void)pid;
+    return {};
+#endif
+}
+
+/// Two bridges on fake0. With the default scope of the fake devices (this process's tests run at
+/// the same time as others on fake0), they do not find each other. With one scope for both, the
+/// second finds the first at its start, the first finds the second while it runs and warns, the
+/// list says that two bridges use fake0, both run on, and once the first ends the second's shared
+/// is 0 again.
+int run_device_shared(const Options& options)
+{
+    RegistryProcess registry(options.registry, options.workDir);
+    log("registry listening on " + registry.uri());
+    const auto deadline = std::chrono::steady_clock::now() + options.timeout;
+    const auto args = [&registry](const std::string& participant) {
+        std::vector<std::string> a = bridge_args(registry.uri(), "fake0");
+        a[3] = participant;
+        return a;
+    };
+    bool ok = true;
+    {
+        StoppableBridge a(options.bridge, args("DefaultScopeA"));
+        ok = expect(wait_for_text(a, "Ctrl+C to stop", deadline).has_value(), "the first bridge started") && ok;
+        StoppableBridge b(options.bridge, args("DefaultScopeB"));
+        ok = expect(wait_for_text(b, "Ctrl+C to stop", deadline).has_value(), "the second bridge started") && ok;
+        const std::string first = a.lines();
+        const std::string second = b.lines();
+        ok = expect(first.find(" marked=1 shared=0\n") != std::string::npos && second.find(" marked=1 shared=0\n") != std::string::npos &&
+                        (first + second).find(" shared=1") == std::string::npos && (first + second).find("is also used") == std::string::npos,
+                    "with the default scope the two bridges on fake0 do not find each other") && ok;
+        log("default scope, first bridge:\n" + first + "second bridge:\n" + second);
+        a.process().kill_tree();
+        b.process().kill_tree();
+    }
+
+    set_environment("VEHICLE_SIL_FAKE_DEVICE_SCOPE", "device-shared-" + std::to_string(this_process_id()));
+    StoppableBridge first(options.bridge, args("FirstBridge"));
+    ok = expect(wait_for_text(first, "Ctrl+C to stop", deadline).has_value(), "the first bridge started") && ok;
+    ok = expect(first.lines().find("[eth-bridge] link link=unknown device=") != std::string::npos &&
+                    first.lines().find(" marked=1 shared=0\n") != std::string::npos,
+                "the first bridge's first link line: link=unknown (a fake link does not tell) marked=1 shared=0") && ok;
+    StoppableBridge second(options.bridge, args("SecondBridge"));
+    ok = expect(wait_for_text(second, "Ctrl+C to stop", deadline).has_value(), "the second bridge started") && ok;
+    ok = expect(second.lines().find(" marked=1 shared=1" + peers_key(first.process().id()) + "\n") != std::string::npos,
+                "the second bridge's first link line: shared=1" + peers_key(first.process().id())) && ok;
+    // The first finds the second while it runs (it looks once a second).
+    ok = expect(wait_for_text(first, " marked=1 shared=1" + peers_key(second.process().id()) + "\n", deadline).has_value(),
+                "the first bridge finds the second: shared=1" + peers_key(second.process().id())) && ok;
+#ifdef __linux__
+    const std::string who = " (process " + std::to_string(second.process().id()) + ")";
+#else
+    const std::string who;
+#endif
+    ok = expect(wait_for_text(first, "warning: interface 'fake0' is also used by another vehicle-sil bridge" + who + ": ", deadline)
+                    .has_value(),
+                "the first bridge warns") && ok;
+
+    // The list: fake0 in use by both, fake-fault by none.
+    vehicle_sil::process::CaptureOptions capture;
+    capture.timeout = options.timeout;
+    auto listed = vehicle_sil::process::run_captured(options.bridge, {"--list-interfaces", "--json"}, capture);
+    std::erase(listed.standard_output, '\r');
+    const std::string& json = listed.standard_output;
+    const auto inUse = json.find("      \"in_use\": true,\n");
+    ok = expect(listed.exit_code == 0 && inUse != std::string::npos && json.find("      \"in_use_count\": 2,\n", inUse) != std::string::npos &&
+                    json.find("      \"in_use\": false,\n", inUse) != std::string::npos &&
+                    json.find("in use by 2 vehicle-sil bridges") != std::string::npos,
+                "--list-interfaces --json: fake0 in use by 2 bridges, fake-fault by none") && ok;
+    log("list:\n" + json);
+
+    ok = expect(!first.process().poll() && !second.process().poll(), "both bridges run on") && ok;
+    first.process().kill_tree();
+    const auto shared = second.lines().find(" marked=1 shared=1");
+    ok = expect(shared != std::string::npos && wait_for_text(second, " marked=1 shared=0\n", deadline, shared).has_value(),
+                "once the first bridge has ended, the second's shared is 0 again") && ok;
+    second.process().kill_tree();
+    set_environment("VEHICLE_SIL_FAKE_DEVICE_SCOPE", "");
+    log("first bridge:\n" + first.all_lines() + "second bridge:\n" + second.all_lines());
+    if (!ok)
+    {
+        dump_log(registry.log_file());
+    }
+    return ok ? 0 : 1;
+}
+
 /// Starts `executable` with `args`, waits until it has printed its start line and, if `until` is
 /// not empty, a line with `until`, then ends it. What it printed.
 std::string run_until_ready(const Options& options, const fs::path& executable, const std::vector<std::string>& args,
@@ -773,6 +901,10 @@ int main(int argc, char** argv)
         if (options.scenario == "echo-roundtrip")
         {
             result = run_echo(options, options.bridge, "packet", "fake 'fake0' (virtual)");
+        }
+        else if (options.scenario == "device-shared")
+        {
+            result = run_device_shared(options);
         }
         else if (options.scenario == "list-interfaces")
         {
