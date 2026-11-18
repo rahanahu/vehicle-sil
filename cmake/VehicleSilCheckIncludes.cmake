@@ -12,7 +12,11 @@
 # to the forbidden header; to fix it, move what the file needs out of that header, or take the file
 # off the list if it is meant to depend on it. The check reads the text: an include inside #if 0 or
 # a comment counts, which errs on the safe side.
-# Usage: cmake -DROOT=<directory> -DFILES=<file>[,<file>...] -P VehicleSilCheckIncludes.cmake
+# FORBIDDEN_PREFIXES (optional, comma separated): more headers that the listed files must not
+# reach, each as the start of the path they are included by (vehicle_sil/launch/scenario matches
+# scenario.hpp, scenario_run.hpp and scenario_check.hpp): a layer that must not know them.
+# Usage: cmake -DROOT=<directory> -DFILES=<file>[,<file>...] [-DFORBIDDEN_PREFIXES=<prefix>[,<prefix>...]]
+#        -P VehicleSilCheckIncludes.cmake
 cmake_minimum_required(VERSION 3.21)
 if(NOT DEFINED ROOT OR NOT DEFINED FILES)
   message(FATAL_ERROR "VehicleSilCheckIncludes.cmake: ROOT and FILES are required")
@@ -28,6 +32,11 @@ file(GLOB include_roots LIST_DIRECTORIES true
 set(forbidden_exact vehicle_sil/core/participant_runtime.hpp vehicle_sil/process/child_process.hpp
                     vehicle_sil/process/process.hpp vehicle_sil/launch/run.hpp vehicle_sil/launch/probe.hpp
                     vehicle_sil/core/participant_configuration.hpp)
+if(DEFINED FORBIDDEN_PREFIXES)
+  string(REPLACE "," ";" FORBIDDEN_PREFIXES "${FORBIDDEN_PREFIXES}")
+else()
+  set(FORBIDDEN_PREFIXES "")
+endif()
 set(bad "")
 set(checked 0)
 foreach(listed IN LISTS FILES)
@@ -59,6 +68,18 @@ foreach(listed IN LISTS FILES)
       if(lower MATCHES "^silkit/" OR lower MATCHES "_silkit/" OR path IN_LIST forbidden_exact
          OR base STREQUAL "events.hpp" OR base STREQUAL "time_commands.hpp"
          OR base STREQUAL "stop_requests.hpp" OR base MATCHES "^run_[^/]*\\.hpp$")
+        list(APPEND bad "${chain} ${path}")
+        continue()
+      endif()
+      set(prefixed FALSE)
+      foreach(prefix IN LISTS FORBIDDEN_PREFIXES)
+        string(LENGTH "${prefix}" prefix_length)
+        string(SUBSTRING "${path}" 0 ${prefix_length} start)
+        if(start STREQUAL prefix)
+          set(prefixed TRUE)
+        endif()
+      endforeach()
+      if(prefixed)
         list(APPEND bad "${chain} ${path}")
         continue()
       endif()

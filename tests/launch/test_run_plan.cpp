@@ -6,6 +6,7 @@
 
 #include "test_harness.hpp"
 
+#include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/run_plan.hpp"
 
 #include <chrono>
@@ -22,9 +23,9 @@ using namespace vehicle_sil::launch;
 using Speed = std::optional<double>;
 
 /// A check that passed, of ECUs that described themselves with these steps (microseconds).
-CheckReport checked(const std::vector<std::int64_t>& steps_us)
+Checked checked(const std::vector<std::int64_t>& steps_us)
 {
-    CheckReport check;
+    Checked check;
     check.file = "sim.yaml";
     check.config.emplace();
     for (std::size_t i = 0; i < steps_us.size(); ++i)
@@ -43,7 +44,7 @@ CheckReport checked(const std::vector<std::int64_t>& steps_us)
     return check;
 }
 
-CheckReport with_scenario(CheckReport check)
+Checked with_scenario(Checked check)
 {
     check.scenario.emplace();
     check.scenario->file = "drive.yaml";
@@ -58,7 +59,7 @@ struct Timed
     friend bool operator==(const Timed&, const Timed&) = default;
 };
 
-Timed timed(const CheckReport& check, const RunRequest& request)
+Timed timed(const Checked& check, const RunRequest& request)
 {
     const RunPlan plan = plan_run(check, "dir", request);
     return Timed{plan.timing.time_step_ms, plan.timing.speed};
@@ -76,7 +77,7 @@ RunRequest at_speed(std::optional<Speed> speed)
 TEST_CASE(the_plan_has_the_speed_the_run_starts_at_and_the_step_that_goes_with_it)
 {
     const Speed max{};
-    CheckReport check = checked({1000, 10000});
+    Checked check = checked({1000, 10000});
     // Nothing asked, nothing written: as fast as possible, in steps of 10 ms.
     CHECK(timed(check, RunRequest{}) == (Timed{10, max}));
     // --speed: the ECUs' steps decide the step.
@@ -94,7 +95,7 @@ TEST_CASE(the_plan_has_the_speed_the_run_starts_at_and_the_step_that_goes_with_i
 
 TEST_CASE(with_a_scenario_the_planned_step_is_the_same_at_every_speed)
 {
-    const CheckReport check = with_scenario(checked({1000, 10000}));
+    const Checked check = with_scenario(checked({1000, 10000}));
     const Speed max{};
     // The speed stays what was asked for; the step is that of a run with a speed.
     CHECK(timed(check, at_speed(max)) == (Timed{1, max}));
@@ -103,13 +104,13 @@ TEST_CASE(with_a_scenario_the_planned_step_is_the_same_at_every_speed)
     // Without the scenario, the step of a run as fast as possible is the coarse one.
     CHECK(timed(checked({1000, 10000}), at_speed(max)) == (Timed{10, max}));
     const RunPlan plan = plan_run(check, "dir", RunRequest{});
-    CHECK(plan.scenario() == &*plan.check.scenario->scenario);
+    CHECK(plan.scenario() == &*plan.scenario_check->scenario);
     CHECK(plan_run(checked({1000}), "dir", RunRequest{}).scenario() == nullptr);
 }
 
 TEST_CASE(the_plan_holds_before_the_start_only_for_a_paused_start_with_a_control_server)
 {
-    const CheckReport check = checked({10000});
+    const Checked check = checked({10000});
     RunRequest request;
     CHECK(!plan_run(check, "dir", request).holds_before_start);
     request.intent.start_paused = true;
@@ -121,7 +122,7 @@ TEST_CASE(the_plan_holds_before_the_start_only_for_a_paused_start_with_a_control
 
 TEST_CASE(the_bridges_are_the_last_participants_of_the_plan_and_do_not_count_for_the_step)
 {
-    CheckReport check = checked({5000});
+    Checked check = checked({5000});
     check.config->networks.emplace_back();
     check.config->networks.back().name = "CAN1";
     const RunRequest options = at_speed(Speed(1.0));
@@ -165,7 +166,7 @@ TEST_CASE(a_bridge_of_the_file_counts_for_the_step_as_any_participant_with_a_ste
 {
     // role: bridge in the file, not a bridge that --connect adds (the plan does not mark it): the
     // step divides its step too, 5 ms and 2 ms meet every 1 ms. Left out, the step would be 5 ms.
-    CheckReport check = checked({5000, 2000});
+    Checked check = checked({5000, 2000});
     check.config->participants[1].role = ParticipantRole::Bridge;
     const RunPlan plan = plan_run(check, "dir", at_speed(Speed(1.0)));
     CHECK(plan.members.size() == 2 && !plan.members[1].outside);
@@ -174,7 +175,7 @@ TEST_CASE(a_bridge_of_the_file_counts_for_the_step_as_any_participant_with_a_ste
 
 TEST_CASE(a_check_without_a_configuration_has_no_plan)
 {
-    CheckReport check;
+    Checked check;
     check.file = "sim.yaml";
     bool thrown = false;
     try
@@ -192,7 +193,7 @@ TEST_CASE(a_check_without_a_configuration_has_no_plan)
 TEST_CASE(the_plan_takes_the_limits_and_the_files_as_given_and_the_outcome_begins_with_them)
 {
     using namespace std::chrono_literals;
-    CheckReport check = with_scenario(checked({10000}));
+    Checked check = with_scenario(checked({10000}));
     check.config->stop_at_ms = 500;
     check.config->start_timeout_ms = 1234;
     check.config->stop_timeout_ms = 2345;

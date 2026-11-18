@@ -220,7 +220,7 @@
 | `format_test_json()` | `kTestFormat` |
 | `TestReport::remarks()` | `test` 全体の指摘 `test-nothing-run`、`test-runs-left`、`test-speed-set` |
 | `TestReport::result()` | 結果と終了コード |
-| `ScenarioCheck::not_for_variant` | `only` に合わない組を `skipped` にする |
+| `ScenarioCheck::not_for_variant`（`launch/scenario_check.hpp`） | `only` に合わない組を `skipped` にする |
 | `CheckOptions::params_for_many` | `--param` の検査を緩める |
 | `CheckOptions::file_only` | 設定ファイルだけ読む |
 | `tools/launch/main.cpp` の `test()` と `spread_scenarios()` | 引数 |

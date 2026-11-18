@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: MIT
 //
 // vehicle_sil_launch check: compares the configuration with what each ecu_main executable
-// reports about itself (--describe) and writes the result for people and as JSON. The rules
-// are pure functions (no process, no file); check_file() runs them on a file and the
-// executables. Internal; the rules and the output: docs/simulation-check.md.
+// reports about itself (--describe). The rules are pure functions (no process, no file); the
+// result is a CheckReport, which does not know the scenario. check_file() and the outputs, with the
+// scenario of --scenario: checked.hpp. Internal; the rules and the output: docs/simulation-check.md.
 #pragma once
 
 #include "vehicle_sil/launch/config.hpp"
 #include "vehicle_sil/launch/connect.hpp"
-#include "vehicle_sil/launch/scenario.hpp"
 #include "vehicle_sil/launch/time_plan.hpp"
 
 #include <chrono>
@@ -308,25 +307,6 @@ struct ConfigConnect
 [[nodiscard]] ConfigConnect connect_for_config(const SimulationConfig& config, std::span<const ConnectRequest> connect,
                                                const RequestOrigin& origin);
 
-/// The scenario that was checked with the configuration (--scenario).
-struct ScenarioCheck
-{
-    std::string file; ///< as the user named it
-    /// Its "name" and the number of its steps, as far as it could be read.
-    std::string name{};
-    std::size_t steps = 0;
-    /// Set if the configuration could be read and the scenario has no error: it can run.
-    std::optional<Scenario> scenario{};
-    /// ScenarioRead::params, only, skipped and unchecked_expects.
-    std::vector<ParamValue> params{};
-    std::optional<std::vector<std::string>> only{};
-    std::size_t skipped = 0;
-    std::size_t unchecked_expects = 0;
-    /// ScenarioRead::not_for_variant: its "only" does not list the chosen variant (one of the
-    /// errors says so). vehicle_sil_launch test skips such a scenario instead of failing.
-    bool not_for_variant = false;
-};
-
 /// The result of checking one file.
 struct CheckReport
 {
@@ -338,8 +318,6 @@ struct CheckReport
     std::vector<std::string> variants{};
     std::vector<ParticipantResult> participants{}; ///< in the order of config->participants
     std::vector<Finding> findings{};               ///< in the order of sort_findings()
-    /// --scenario: the scenario file; its findings are in `findings`, with Finding::file set.
-    std::optional<ScenarioCheck> scenario{};
     /// --connect: the networks connected to a real bus (check_connections()); empty without it.
     std::vector<NetworkOutside> outside{};
     /// Whether a run keeps real time because it is connected outside the simulation (time_lock()
@@ -371,59 +349,7 @@ struct CheckReport
 
 void sort_findings(std::vector<Finding>& findings);
 
-/// The catalog of a checked configuration, for read_scenario() (CheckReport::config must be set):
-/// each participant as a scenario can use it, from its entry and what its executable described.
-[[nodiscard]] ScenarioCatalog scenario_catalog(const CheckReport& check);
-
-/// The report for people: the participants and the networks as tables, then each error and
-/// warning as "<severity>: <file>:<line>: <message> [<code>]" (with the detail indented below), then a
-/// summary line. LF line ends; the same report gives the same text.
-[[nodiscard]] std::string format_text(const CheckReport& report);
-
-/// The report as JSON (format kCheckFormat): fixed keys in a fixed order, the layout of
-/// to_json(). docs/simulation-check.md has the keys.
-[[nodiscard]] std::string format_json(const CheckReport& report);
-
 /// How long one --describe may take unless the request says otherwise (RunHost::describe_timeout).
 inline constexpr std::chrono::milliseconds kDescribeTimeout{10000};
-
-struct RunRequest; // request.hpp
-
-/// How a check is made, beside what is asked for (RunRequest): what its caller is, not what the
-/// user wants.
-struct CheckOptions
-{
-    /// The request's parameters are for many scenarios (ScenarioContext::params_for_many): one
-    /// that its scenario does not have is no error.
-    bool params_for_many = false;
-    /// Only read the file: no executable is looked for or run, and no scenario is read. The
-    /// report has the file's findings, its variants and the overrides' usage errors.
-    bool file_only = false;
-    /// test: without the time lock every run goes as fast as possible, whatever the file's speed
-    /// (which then does not count for time_lock_findings()); RunIntent::speed is that default
-    /// then, not a speed the user asked for, and the check does not judge it.
-    bool fastest_by_default = false;
-};
-
-/// Checks the file of `request` (RunHost::config, shown as given): reads it, checks the
-/// executables, runs each --describe in turn (not in parallel), compares. A disabled participant's
-/// executable is neither looked for nor run. With RunIntent::scenario, the scenario file is read
-/// and checked against the participants' descriptions as well (if the configuration could be
-/// read). Never throws for a problem of a file or of an executable: they are findings. The
-/// scenario of a request file (RunRequest::origin has "scenario") is read from the directory of the
-/// configuration file, and shown as the path from the working directory; any other from the
-/// working directory, as it is named.
-///
-/// Of `request` it reads the file, the intent (the speed and --start-paused for
-/// time_lock_findings(): the speed unless `options.fastest_by_default`), the --describe limit and
-/// where the tools are; what only a run has (the logs, the timeline, the time limit, the control
-/// server, the commands of standard input) it does not read.
-///
-/// `on_time_lock`, if given, is called once with CheckReport::time_lock as soon as the
-/// configuration has been read (with --variant, --disable and --enable applied), before any
-/// executable is looked for or run; not at all if the configuration could not be read. A run
-/// gives its controls the lock there (run_file()), so that they know it before anything starts.
-[[nodiscard]] CheckReport check_file(const RunRequest& request, const CheckOptions& options = {},
-                                     const std::function<void(const TimeLock& lock)>& on_time_lock = {});
 
 } // namespace vehicle_sil::launch

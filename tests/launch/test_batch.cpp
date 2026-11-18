@@ -277,12 +277,12 @@ TEST_CASE(a_run_gives_its_check_the_speed_and_start_paused_of_its_request)
     CHECK(checked(request).time_lock.locked);
     check_text(codes_of(checked(request), "outside-"), "outside-speed-set N\n");
     request.intent.speed = 2.0;
-    const CheckReport fast = checked(request);
+    const Checked fast = checked(request);
     check_text(codes_of(fast, "outside-"), "outside-real-time E\n");
     CHECK(format_text(fast).find("--speed 2 is refused") != std::string::npos);
     request.intent.speed.reset();
     request.intent.start_paused = true;
-    const CheckReport paused = checked(request);
+    const Checked paused = checked(request);
     check_text(codes_of(paused, "outside-"), "outside-real-time E\noutside-speed-set N\n"); // errors first
     request.intent.speed = 1.0;
     check_text(codes_of(checked(request), "outside-"), "outside-real-time E\n");
@@ -297,7 +297,7 @@ TEST_CASE(a_run_gives_its_check_the_speed_and_start_paused_of_its_request)
     check_text(codes_of(checked(request), "outside-"), "outside-real-time E\n");
     CheckOptions test_options;
     test_options.fastest_by_default = true;
-    const CheckReport test = checked(request, test_options);
+    const Checked test = checked(request, test_options);
     check_text(codes_of(test, "outside-"), "outside-speed-set N\n");
     // --time-policy free: the notes for the same requests.
     request = RunRequest{};

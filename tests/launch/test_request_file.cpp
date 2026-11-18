@@ -7,6 +7,7 @@
 
 #include "launch_test_util.hpp"
 
+#include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/process/paths.hpp"
 
@@ -553,13 +554,13 @@ TEST_CASE(a_network_of_the_request_files_connect_that_the_configuration_lacks_is
     const RequestFile bench = *read_request_file(with("\"connect\": {\"CAN1\": \"physical:1\"}"), "bench.json").file;
     for (const CheckOptions& options : {CheckOptions{}, fileOnly})
     {
-        const CheckReport fromFile = check_file(with_request_file(given, bench, false), options);
+        const Checked fromFile = check_file(with_request_file(given, bench, false), options);
         check_text(codes(fromFile, "connect-"), "connect-network-unused ");
         CHECK(!fromFile.time_lock.locked && fromFile.time_lock.connected.empty() && fromFile.outside.empty());
         CHECK(!options.file_only || (fromFile.errors() == 0 && fromFile.passed()));
         RunRequest typed = given;
         typed.intent.connect.push_back({"CAN1", "physical:1"});
-        const CheckReport fromArguments = check_file(typed, options);
+        const Checked fromArguments = check_file(typed, options);
         check_text(codes(fromArguments, "connect-"), "connect-network ");
         CHECK(!fromArguments.passed() && fromArguments.time_lock.locked);
     }
@@ -577,7 +578,7 @@ TEST_CASE(the_scenario_of_a_request_file_is_read_from_the_directory_of_the_confi
     RunRequest given;
     given.host.config = "../project/sim.yaml";
     const RequestFile bench = *read_request_file(with("\"scenario\": \"scenarios/drive.yaml\""), "bench.json").file;
-    const CheckReport fromFile = check_file(with_request_file(given, bench, false));
+    const Checked fromFile = check_file(with_request_file(given, bench, false));
     CHECK(fromFile.scenario.has_value() && codes(fromFile, "file").empty());
     if (fromFile.scenario)
     {
@@ -588,18 +589,18 @@ TEST_CASE(the_scenario_of_a_request_file_is_read_from_the_directory_of_the_confi
     // The same name as an argument is from the working directory: not found here.
     RunRequest typed = given;
     typed.intent.scenario = "scenarios/drive.yaml";
-    const CheckReport fromArguments = check_file(typed);
+    const Checked fromArguments = check_file(typed);
     CHECK(fromArguments.scenario.has_value() && fromArguments.scenario->file == "scenarios/drive.yaml" &&
           codes(fromArguments, "file") == "file ");
     // An argument over the file's: the argument's base.
     typed.intent.scenario = "../project/scenarios/drive.yaml";
-    const CheckReport both = check_file(with_request_file(typed, bench, false));
+    const Checked both = check_file(with_request_file(typed, bench, false));
     CHECK(both.scenario.has_value() && both.scenario->file == "../project/scenarios/drive.yaml" && codes(both, "file").empty());
     // An absolute path in the file stays.
     const std::string absolute = vehicle_sil::process::utf8_from_path(dir / "project" / "scenarios" / "drive.yaml");
     RequestFile fixed = bench;
     fixed.intent.scenario = absolute;
-    const CheckReport direct = check_file(with_request_file(given, fixed, false));
+    const Checked direct = check_file(with_request_file(given, fixed, false));
     CHECK(direct.scenario.has_value() && direct.scenario->file == absolute && codes(direct, "file").empty());
 }
 
@@ -618,7 +619,7 @@ TEST_CASE(a_parameter_of_the_request_file_that_its_own_scenario_lacks_is_a_usage
                     .file;
     };
     // The file's own scenario: a mistake in its params is a usage error naming the file.
-    const CheckReport wrong = check_file(with_request_file(given, file("{\"leve\": 2}"), false));
+    const Checked wrong = check_file(with_request_file(given, file("{\"leve\": 2}"), false));
     CHECK(wrong.usage && wrong.findings.size() == 1);
     if (wrong.findings.size() == 1)
     {
@@ -628,12 +629,12 @@ TEST_CASE(a_parameter_of_the_request_file_that_its_own_scenario_lacks_is_a_usage
     }
     CHECK(wrong.exit_code() == 4);
     // A name that the scenario has is fine.
-    const CheckReport right = check_file(with_request_file(given, file("{\"level\": 2}"), false));
+    const Checked right = check_file(with_request_file(given, file("{\"level\": 2}"), false));
     CHECK(!right.usage && right.scenario.has_value() && codes(right, "request-params") == "");
     // --scenario replaces the file's: no error, one note naming what was not used.
     RunRequest other = given;
     other.intent.scenario = "scenarios/drive.yaml";
-    const CheckReport replaced = check_file(with_request_file(other, file("{\"leve\": 2, \"mode\": 1}"), false));
+    const Checked replaced = check_file(with_request_file(other, file("{\"leve\": 2, \"mode\": 1}"), false));
     CHECK(!replaced.usage && replaced.scenario.has_value());
     check_text(codes(replaced, "request-params"), "request-params-unused ");
     for (const Finding& f : replaced.findings)
@@ -648,17 +649,17 @@ TEST_CASE(a_parameter_of_the_request_file_that_its_own_scenario_lacks_is_a_usage
     }
     // A file without a scenario, the scenario from the arguments: the same note.
     const RequestFile bare = *read_request_file(with("\"params\": {\"leve\": 2}"), "bench.json").file;
-    const CheckReport fromArguments = check_file(with_request_file(other, bare, false));
+    const Checked fromArguments = check_file(with_request_file(other, bare, false));
     CHECK(!fromArguments.usage);
     check_text(codes(fromArguments, "request-params"), "request-params-unused ");
     // No scenario at all: the note says so.
-    const CheckReport none = check_file(with_request_file(given, bare, false));
+    const Checked none = check_file(with_request_file(given, bare, false));
     CHECK(!none.usage);
     check_text(codes(none, "request-params"), "request-params-unused ");
     // A parameter typed on the command line stays a usage error, as before, with its own words.
     RunRequest typed = other;
     typed.intent.params.push_back(argument("leve", "2"));
-    const CheckReport fromOption = check_file(typed);
+    const Checked fromOption = check_file(typed);
     CHECK(fromOption.usage && fromOption.findings.size() == 1);
     if (fromOption.findings.size() == 1)
     {

@@ -43,6 +43,7 @@ add_library(vehicle_sil_launch_lib STATIC
   src/run_traffic.cpp
   src/run_watch.cpp
   src/scenario.cpp
+  src/scenario_check.cpp
   src/scenario_csv.cpp
   src/scenario_failure.cpp
   src/scenario_inputs.cpp

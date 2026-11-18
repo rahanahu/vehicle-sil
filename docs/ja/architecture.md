@@ -231,6 +231,7 @@ flowchart LR
 - 純粋な側は、値から指摘を作り、計算機を調べません。SIL Kit、`process`、`participant_runtime`、`participant_configuration`、`launch/run.hpp`、`launch/probe.hpp`、`events`、`stop_requests`、`time_commands`、`run_*.hpp` を、直接にも、include するヘッダーを通しても含みません。
 - ランチャーが計算機について調べること（ファイルシステム、環境、起動したプロセスの出力）は `probe` に置きます。`check_file()`、`list_connections()`、`run_tests()` が `probe` を呼び、調べた結果を値か関数として純粋な側に渡します。実行の側（シミュレーションの実行）は両方に依存します。
 - この向きは試験 `launch.pure_files_include_no_runtime`（`cmake/VehicleSilCheckIncludes.cmake`）で守ります。純粋な側に新しいファイルを足したら、`tests/launch/CMakeLists.txt` の `_launch_pure_files` に足します。
+- 構成の照合（`launch/check.hpp` の `CheckReport`）はシナリオを知りません。シナリオが構成に依存し、逆はありません。`check --scenario` が読んだものは `ScenarioCheck`（`launch/scenario_check.hpp`）で、`check_file()` は `CheckReport` にシナリオを足した `Checked`（`launch/checked.hpp`）で返します。CheckReport に写すとシナリオが落ちるので、受けるときは `Checked` で受けます。試験 `launch.config_files_do_not_reach_the_scenario` が守ります。構成の側に新しいファイルを足したら、`tests/launch/CMakeLists.txt` の `_launch_config_files` に足します。
 - 例外が 1 つ残っています。`connect.cpp` の `bridge_working_directory()` が、相対のディレクトリを絶対にします。
 - 純粋な側に、計算機を調べる処理を足さないでください。`probe` に置き、結果を渡します。各部分のファイルは [code-map-launcher.md](code-map-launcher.md) にあります。
 

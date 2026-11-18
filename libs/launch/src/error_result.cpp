@@ -54,7 +54,7 @@ std::string format_usage_json(CommandKind command, const std::string &file,
   case CommandKind::Check:
     break;
   }
-  CheckReport check;
+  Checked check;
   check.file = file;
   check.usage = true;
   check.variants = variants;
