@@ -4,6 +4,7 @@
   scripts/check-commits.py                 the staged files (before a commit)
   scripts/check-commits.py --message FILE  one commit message (usable as a commit-msg hook)
   scripts/check-commits.py --range A..B    every commit in a range (for CI)
+  scripts/check-commits.py --changed A..B  only the files that differ between A and B, no message (for CI: a pull request)
 
 Each problem is one line, "<commit or staged>: <code>: <text>". Exit codes: 0 no problem, 1 a problem,
 2 usage error. Requires Python 3.11+ (standard library only); runs on Linux and in MSYS2 on Windows.
@@ -96,6 +97,16 @@ def check_message(file: str) -> tuple[list[str], str]:
     return [f"message: {code}: {text}" for code, text in message_problems(clean_message(text))], "message"
 
 
+def check_changed(spec: str) -> tuple[list[str], str]:
+    """The files that a range changes, as one difference (a file added and removed within it is not seen)."""
+    files = [f for f in git("diff", "--name-only", "--no-renames", "--diff-filter=d", "-z", spec, "--").split("\0") if f]
+    out = []
+    for path in files:
+        for code, text in path_problems(path, "remove it from the change"):
+            out.append(f"{spec}: {code}: {text}")
+    return out, f"{len(files)} changed file{'s' if len(files) != 1 else ''}"
+
+
 def check_range(spec: str) -> tuple[list[str], str]:
     count = int(git("rev-list", "--count", spec, "--").strip() or 0)
     if not count:
@@ -131,18 +142,23 @@ def main() -> int:
         "  scripts/check-commits.py --message .git/COMMIT_EDITMSG\n"
         "  scripts/check-commits.py --range origin/main..HEAD\n"
         "  scripts/check-commits.py --range HEAD         # the whole history\n"
+        "  scripts/check-commits.py --changed origin/main...HEAD   # the files of a branch, no messages\n"
         "exit codes: 0 no problem, 1 a problem found, 2 usage error",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--message", metavar="FILE", help="check the commit message in FILE ('#' lines are ignored)")
     group.add_argument("--range", metavar="RANGE", help="check every commit in RANGE (anything git rev-list takes)")
+    group.add_argument("--changed", metavar="RANGE",
+                       help="check only the files that differ between the two ends of RANGE (A..B), not the messages")
     args = parser.parse_args()
 
     if args.message:
         problems, what = check_message(args.message)
     elif args.range:
         problems, what = check_range(args.range)
+    elif args.changed:
+        problems, what = check_changed(args.changed)
     else:
         problems, what = check_staged()
     for line in problems:
