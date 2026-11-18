@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 //
-// vehicle_sil::control::wire against the bytes of version 2, revision 0, written out by hand
-// (wire_v2_golden.hpp): the encoder writes exactly them, and they decode to the structures they
-// were written from. The base for whoever adds a field: a later revision still reads these bytes.
+// vehicle_sil::control::wire against the bytes of version 2, written out by hand
+// (wire_v2_golden.hpp): those of revision 0 decode to the structures they were written from, and
+// the encoder writes them but for the revision byte (a hello of revision 1 has a byte more per
+// variable); those of revision 1 the encoder writes exactly, and they decode as written. The base
+// for whoever adds a field: a later revision still reads all of these bytes.
 #include "test_harness.hpp"
 #include "wire_v2_golden.hpp"
 
@@ -10,6 +12,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -49,16 +52,25 @@ void check_bytes(std::span<const std::uint8_t> actual, std::span<const std::uint
     }
     const std::size_t from = i < 8 ? 0 : i - 8;
     throw unit::Failure(std::string(__FILE__) + ":" + std::to_string(line) + ": " + what + ": the encoder wrote " +
-                        std::to_string(actual.size()) + " bytes, revision 0 has " + std::to_string(expected.size()) +
+                        std::to_string(actual.size()) + " bytes, the pinned bytes are " + std::to_string(expected.size()) +
                         "; they differ from byte " + std::to_string(i) + " (from byte " + std::to_string(from) +
-                        ": wrote " + hex(actual, from, 16) + "| revision 0 " + hex(expected, from, 16) +
-                        "). A change of these bytes is a change of the format: ECUs built with revision 0 of "
+                        ": wrote " + hex(actual, from, 16) + "| pinned " + hex(expected, from, 16) +
+                        "). A change of these bytes is a change of the format: ECUs built with an earlier revision of "
                         "version 2 would no longer understand this encoder, nor it them. Add the field at the end "
                         "of its element or of the message, read and write it only for a peer of the new revision, "
                         "and count wire::kRevision up (wire.hpp)");
 }
 
 #define CHECK_BYTES(actual, expected) check_bytes((actual), (expected), #expected, __LINE__)
+
+/// Bytes of revision 0 that revision 1 added nothing to, as this encoder writes them: with its
+/// revision in the header.
+wire::Bytes as_written(std::span<const std::uint8_t> revision_0)
+{
+    wire::Bytes out(revision_0.begin(), revision_0.end());
+    out.at(7) = wire::kRevision;
+    return out;
+}
 
 bool same(const std::vector<CommandResult>& a, const std::vector<CommandResult>& b)
 {
@@ -78,22 +90,24 @@ bool same(const std::vector<CommandResult>& a, const std::vector<CommandResult>&
 }
 
 std::vector<wire::Bytes> step_messages(SimTime time, bool final, const std::vector<CommandResult>& results,
-                                       const std::vector<Event>& events, const Snapshot* sample, std::size_t max_bytes)
+                                       const std::vector<Event>& events, const Snapshot* sample, std::size_t max_bytes,
+                                       const wire::AvailabilityView* availability = nullptr)
 {
     std::vector<wire::Bytes> out;
     wire::Bytes scratch;
-    wire::encode_step(golden::kSession, time, final, results, events, sample, max_bytes, scratch,
+    wire::encode_step(golden::kSession, time, final, results, events, sample, availability, max_bytes, scratch,
                       [&](const wire::Bytes& message) { out.push_back(message); });
     return out;
 }
 
-/// Decoded without an error, as version 2 revision 0.
-void check_read(const wire::Error& error, int line)
+/// Decoded without an error, as version 2 of `revision`.
+void check_read(const wire::Error& error, int line, std::uint8_t revision = 0)
 {
-    if (error || error.version != 2 || error.revision != 0)
+    if (error || error.version != 2 || error.revision != revision)
     {
-        throw unit::Failure(std::string(__FILE__) + ":" + std::to_string(line) + ": not read as version 2 revision 0: version " +
-                            std::to_string(error.version) + ", revision " + std::to_string(error.revision) + ", " + error.text);
+        throw unit::Failure(std::string(__FILE__) + ":" + std::to_string(line) + ": not read as version 2 revision " +
+                            std::to_string(revision) + ": version " + std::to_string(error.version) + ", revision " +
+                            std::to_string(error.revision) + ", " + error.text);
     }
 }
 
@@ -101,16 +115,16 @@ void check_read(const wire::Error& error, int line)
 
 TEST_CASE(wire_v2_revision_0_hello_has_its_bytes)
 {
-    // What this file pins is revision 0. A later revision pins its own bytes beside these.
+    // Revision 1 added a byte to each variable (pinned in wire_v2_revision_1_hello_has_its_bytes):
+    // these bytes are read, and none of their variables reports its availability.
     CHECK_EQ(wire::kVersion, std::uint16_t{2});
-    wire::Bytes bytes;
-    std::string why;
-    CHECK(wire::encode_hello(golden::hello(), bytes, why));
-    CHECK_BYTES(bytes, golden::kHello);
-
     wire::Hello decoded;
     check_read(wire::decode_hello(golden::kHello, decoded), __LINE__);
     CHECK(decoded == golden::hello());
+    for (const auto& variable : decoded.schema)
+    {
+        CHECK(!variable.availability.has_value());
+    }
 }
 
 TEST_CASE(wire_v2_revision_0_command_has_its_bytes)
@@ -121,7 +135,7 @@ TEST_CASE(wire_v2_revision_0_command_has_its_bytes)
     {
         wire::Bytes bytes;
         CHECK(wire::encode_command(message, bytes));
-        CHECK_BYTES(bytes, expected);
+        CHECK_BYTES(bytes, as_written(expected));
         wire::CommandMessage decoded;
         check_read(wire::decode_command(expected, decoded), __LINE__);
         CHECK_EQ(decoded.session, golden::kSession);
@@ -150,7 +164,7 @@ TEST_CASE(wire_v2_revision_0_submitted_has_its_bytes)
     {
         wire::Bytes bytes;
         wire::encode_submitted(message, bytes);
-        CHECK_BYTES(bytes, expected);
+        CHECK_BYTES(bytes, as_written(expected));
         wire::SubmittedMessage decoded;
         check_read(wire::decode_submitted(expected, decoded), __LINE__);
         CHECK_EQ(decoded.session, golden::kSession);
@@ -169,7 +183,7 @@ TEST_CASE(wire_v2_revision_0_step_has_its_bytes)
     const auto messages =
         step_messages(golden::step_time(), false, golden::step_results(), golden::step_events(), &sample, golden::kStepMaxBytes);
     CHECK_EQ(messages.size(), std::size_t{1});
-    CHECK_BYTES(messages[0], golden::kStep);
+    CHECK_BYTES(messages[0], as_written(golden::kStep));
 
     wire::StepMessage decoded;
     check_read(wire::decode_step(golden::kStep, decoded), __LINE__);
@@ -189,6 +203,7 @@ TEST_CASE(wire_v2_revision_0_step_has_its_bytes)
     CHECK_EQ(decoded.values.total, std::uint32_t{3});
     CHECK_EQ(decoded.values.first, std::uint32_t{0});
     CHECK(decoded.values.values == sample.values);
+    CHECK(!decoded.has_availability);
 }
 
 TEST_CASE(wire_v2_revision_0_split_step_has_its_bytes)
@@ -206,8 +221,8 @@ TEST_CASE(wire_v2_revision_0_split_step_has_its_bytes)
         }
     }
     CHECK_EQ(first.size(), std::size_t{2046});
-    CHECK_BYTES(messages[0], first);
-    CHECK_BYTES(messages[1], golden::kSplitSecond);
+    CHECK_BYTES(messages[0], as_written(first));
+    CHECK_BYTES(messages[1], as_written(golden::kSplitSecond));
 
     wire::StepMessage decoded;
     check_read(wire::decode_step(golden::kSplitSecond, decoded), __LINE__);
@@ -220,7 +235,7 @@ TEST_CASE(wire_v2_revision_0_last_word_has_its_bytes)
 {
     const auto messages = step_messages(golden::final_time(), true, golden::final_results(), {}, nullptr, golden::kStepMaxBytes);
     CHECK_EQ(messages.size(), std::size_t{1});
-    CHECK_BYTES(messages[0], golden::kFinalStep);
+    CHECK_BYTES(messages[0], as_written(golden::kFinalStep));
 
     wire::StepMessage decoded;
     check_read(wire::decode_step(golden::kFinalStep, decoded), __LINE__);
@@ -244,12 +259,58 @@ TEST_CASE(wire_v2_revision_0_probe_ready_and_last_word_received_have_their_bytes
     {
         wire::Bytes bytes;
         wire::encode_session(kind, golden::kSession, bytes);
-        CHECK_BYTES(bytes, expected);
+        CHECK_BYTES(bytes, as_written(expected));
         const auto to = wire::addressed(expected);
         CHECK(to.has_value());
         CHECK(to->kind == kind);
         CHECK_EQ(to->session, golden::kSession);
         CHECK_EQ(to->revision, std::uint8_t{0});
-        CHECK_EQ(to->revision, std::uint8_t{0});
     }
+}
+
+TEST_CASE(wire_v2_revision_1_hello_has_its_bytes)
+{
+    CHECK_EQ(wire::kRevision, std::uint8_t{1});
+    wire::Bytes bytes;
+    std::string why;
+    CHECK(wire::encode_hello(golden::hello_revision_1(), bytes, why));
+    CHECK_BYTES(bytes, golden::kHelloRevision1);
+
+    wire::Hello decoded;
+    check_read(wire::decode_hello(golden::kHelloRevision1, decoded), __LINE__, 1);
+    CHECK(decoded == golden::hello_revision_1());
+    CHECK(decoded.schema.at(0).availability == std::optional(Availability::Unknown));
+    CHECK(decoded.schema.at(1).availability == std::optional(Availability::Inactive));
+    CHECK(decoded.schema.at(2).availability == std::optional(Availability::Active));
+    CHECK(!decoded.schema.at(3).availability.has_value());
+}
+
+TEST_CASE(wire_v2_revision_1_step_has_its_bytes)
+{
+    const Snapshot sample = golden::step_sample_revision_1();
+    const auto states = golden::step_availability();
+    const wire::AvailabilityView availability{golden::kAvailabilityVersion, states};
+    const auto messages = step_messages(golden::step_time(), false, {}, {}, &sample, golden::kStepMaxBytes, &availability);
+    CHECK_EQ(messages.size(), std::size_t{1});
+    CHECK_BYTES(messages[0], golden::kStepRevision1);
+
+    wire::StepMessage decoded;
+    check_read(wire::decode_step(golden::kStepRevision1, decoded), __LINE__, 1);
+    CHECK(decoded.has_values);
+    CHECK(decoded.values.values == sample.values);
+    CHECK(decoded.has_availability);
+    CHECK_EQ(decoded.availability.version, golden::kAvailabilityVersion);
+    CHECK_EQ(decoded.availability.total, std::uint32_t{4});
+    CHECK_EQ(decoded.availability.first, std::uint32_t{0});
+    CHECK(decoded.availability.states == states);
+
+    // The availability alone is said too (a step without values, results and events).
+    const auto alone = step_messages(golden::step_time(), false, {}, {}, nullptr, golden::kStepMaxBytes, &availability);
+    CHECK_EQ(alone.size(), std::size_t{1});
+    CHECK_BYTES(alone[0], golden::kStepAvailabilityOnly);
+    check_read(wire::decode_step(golden::kStepAvailabilityOnly, decoded), __LINE__, 1);
+    CHECK(!decoded.has_values);
+    CHECK(!decoded.final);
+    CHECK(decoded.has_availability);
+    CHECK(decoded.availability.states == states);
 }

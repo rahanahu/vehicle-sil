@@ -1062,6 +1062,19 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
                     ", so vehicle_sil_launch run cannot read or write them: " + detail::control_version_fix(offer->wire_version),
                 p.name, "");
         }
+        else if (offer->wire_revision < static_cast<int>(control::wire::kRevision))
+        {
+            // Both sides skip what the other's revision added, so the variables work; only what
+            // the newer revisions added is missing (revision 1: the availability).
+            rules.add(Severity::Note, "control-link-revision", p.line,
+                prefix + "it offers its variables as silkit messages of revision " + std::to_string(offer->wire_revision) +
+                    ", older than revision " + std::to_string(control::wire::kRevision) +
+                    " of this vehicle_sil_launch: its variables are read and written as usual, but none of them can "
+                    "report its availability, so every one of them looks Active: if it should report one, build "
+                    "the executable with this vehicle-sil and declare those variables with "
+                    "VariableOptions::availability",
+                p.name, "");
+        }
     }
     // The variable map: every mapping must fit what the executable describes (the run applies the
     // same rules to what its agent announces).

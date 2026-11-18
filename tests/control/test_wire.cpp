@@ -116,7 +116,7 @@ std::vector<wire::StepMessage> step_messages(std::uint64_t session, SimTime time
     std::vector<wire::StepMessage> out;
     wire::Bytes scratch;
     wire::encode_step(
-        session, time, final, results, events, sample, max_bytes, scratch,
+        session, time, final, results, events, sample, nullptr, max_bytes, scratch,
         [&](const wire::Bytes& message) {
             CHECK(message.size() <= max_bytes);
             if (largest != nullptr)
@@ -402,10 +402,10 @@ TEST_CASE(wire_step_message_round_trips)
 
     wire::Bytes scratch;
     CHECK(throws<std::invalid_argument>([&] {
-        wire::encode_step(1, at(0ms), false, {}, {}, nullptr, wire::kMinMessageBytes - 1, scratch, [](const wire::Bytes&) {});
+        wire::encode_step(1, at(0ms), false, {}, {}, nullptr, nullptr, wire::kMinMessageBytes - 1, scratch, [](const wire::Bytes&) {});
     }));
     CHECK(throws<std::invalid_argument>([&] {
-        wire::encode_step(1, at(0ms), false, {}, {}, nullptr, wire::kMaxMessageBytes + 1, scratch, [](const wire::Bytes&) {});
+        wire::encode_step(1, at(0ms), false, {}, {}, nullptr, nullptr, wire::kMaxMessageBytes + 1, scratch, [](const wire::Bytes&) {});
     }));
 }
 
@@ -487,7 +487,7 @@ TEST_CASE(wire_truncated_messages_are_refused_at_every_length)
     wire::Bytes scratch;
     wire::encode_step(
         1, at(1ms), true, std::vector<CommandResult>{{1, CommandStatus::Applied, at(1ms), false, "r", 1U}},
-        std::vector<Event>{{at(1ms), EventLevel::Info, "event"}}, &sample, wire::kMaxMessageBytes, scratch,
+        std::vector<Event>{{at(1ms), EventLevel::Info, "event"}}, &sample, nullptr, wire::kMaxMessageBytes, scratch,
         [&](const wire::Bytes& m) { messages.push_back(m); });
     CHECK_EQ(messages.size(), std::size_t{4});
 
@@ -540,7 +540,7 @@ TEST_CASE(wire_corrupted_lengths_and_enumerators_are_refused)
     CHECK(wire::encode_command(sample_command(), messages.back()));
     wire::encode_step(
         1, at(1ms), false, std::vector<CommandResult>{{1, CommandStatus::Applied, at(1ms), false, "r", 1U}},
-        std::vector<Event>{{at(1ms), EventLevel::Info, "event"}}, &sample, wire::kMaxMessageBytes, scratch,
+        std::vector<Event>{{at(1ms), EventLevel::Info, "event"}}, &sample, nullptr, wire::kMaxMessageBytes, scratch,
         [&](const wire::Bytes& m) { messages.push_back(m); });
     std::size_t refused = 0;
     std::size_t tried = 0;
@@ -597,7 +597,7 @@ TEST_CASE(wire_corrupted_lengths_and_enumerators_are_refused)
     wire::StepMessage step;
     wire::Bytes part;
     const Snapshot two{at(0ms), 1, {Value{true}, Value{false}}};
-    wire::encode_step(1, at(0ms), false, {}, {}, &two, wire::kMaxMessageBytes, scratch, [&](const wire::Bytes& b) { part = b; });
+    wire::encode_step(1, at(0ms), false, {}, {}, &two, nullptr, wire::kMaxMessageBytes, scratch, [&](const wire::Bytes& b) { part = b; });
     const std::size_t total_at = 8 + 8 + 8 + 1 + 2 + 2 + 8 + 8;
     part[total_at] = 1; // total 1, with 2 values in the part
     CHECK(wire::decode_step(part, step).code == wire::ErrorCode::Malformed);
@@ -631,7 +631,7 @@ TEST_CASE(wire_random_bytes_never_crash_a_decoder)
             bytes[6] = static_cast<std::uint8_t>(1 + rng() % 4);
             if (rng() % 2 == 0)
             {
-                bytes[7] = 1; // from a newer revision: the decoder skips what it does not know
+                bytes[7] = wire::kRevision + 1; // from a newer revision: the decoder skips what it does not know
             }
             for (int i = 0; i < 3; ++i)
             {
@@ -805,10 +805,11 @@ TEST_CASE(wire_a_decoder_given_the_same_object_again_starts_clean)
     wire::Bytes scratch;
     wire::Bytes full;
     wire::encode_step(1, at(1ms), false, std::vector<CommandResult>{{1, CommandStatus::Applied, at(1ms), true, "reason"}},
-                      std::vector<Event>{{at(1ms), EventLevel::Info, "event"}}, &sample, wire::kMaxMessageBytes, scratch,
+                      std::vector<Event>{{at(1ms), EventLevel::Info, "event"}}, &sample, nullptr, wire::kMaxMessageBytes, scratch,
                       [&](const wire::Bytes& m) { full = m; });
     wire::Bytes last;
-    wire::encode_step(2, at(2ms), true, {}, {}, nullptr, wire::kMaxMessageBytes, scratch, [&](const wire::Bytes& m) { last = m; });
+    wire::encode_step(2, at(2ms), true, {}, {}, nullptr, nullptr, wire::kMaxMessageBytes, scratch,
+                      [&](const wire::Bytes& m) { last = m; });
     CHECK(!wire::decode_step(full, step));
     CHECK(step.has_values);
     CHECK(!wire::decode_step(last, step));

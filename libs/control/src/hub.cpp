@@ -38,6 +38,7 @@ void Subscription::put_peer(const PeerInfo& info, bool removed)
         if (removed)
         {
             values_.erase(info.participant);
+            availability_.erase(info.participant);
         }
     }
     cv_.notify_all();
@@ -107,17 +108,41 @@ void Subscription::drop_values(const std::string& peer)
     values_.erase(peer);
 }
 
+void Subscription::put_availability(const std::string& peer, std::optional<AvailabilityUpdate> update)
+{
+    {
+        const std::lock_guard lock(mutex_);
+        if (closed_)
+        {
+            return;
+        }
+        if (!update)
+        {
+            availability_.erase(peer);
+            return;
+        }
+        availability_.insert_or_assign(peer, std::move(*update));
+    }
+    cv_.notify_all();
+}
+
 std::vector<Update> Subscription::poll(std::size_t max, std::chrono::milliseconds timeout)
 {
     std::unique_lock lock(mutex_);
     cv_.wait_for(lock, timeout, [&] {
-        return closed_ || !peers_.empty() || !operations_.empty() || !events_.empty() || !values_.empty();
+        return closed_ || !peers_.empty() || !availability_.empty() || !operations_.empty() || !events_.empty() || !values_.empty();
     });
     const auto room = [&](const std::vector<Update>& out) { return max == 0 || out.size() < max; };
     std::vector<Update> out;
     while (!peers_.empty() && room(out))
     {
         auto node = peers_.extract(peers_.begin());
+        out.emplace_back(std::move(node.mapped()));
+    }
+    // Behind the peers: the PeerUpdate of a new incarnation is read before its states.
+    while (!availability_.empty() && room(out))
+    {
+        auto node = availability_.extract(availability_.begin());
         out.emplace_back(std::move(node.mapped()));
     }
     while (!operations_.empty() && room(out))
@@ -155,6 +180,7 @@ void Subscription::close()
         change_index_.clear();
         events_.clear();
         values_.clear();
+        availability_.clear();
     }
     cv_.notify_all();
 }
@@ -224,6 +250,19 @@ void Hub::for_subscribers(const std::string& peer, const std::function<void(Subs
 void Hub::announce_peer(const PeerEntry& entry)
 {
     for_subscribers(entry.info.participant, [&](Subscription& s) { s.put_peer(entry.info); });
+}
+
+void Hub::announce_availability(const PeerEntry& entry)
+{
+    for_subscribers(entry.info.participant, [&](Subscription& s) {
+        if (s.options_.availability)
+        {
+            s.put_availability(entry.info.participant,
+                               entry.reports_availability
+                                   ? std::optional(AvailabilityUpdate{entry.info.participant, entry.info.incarnation, entry.availability})
+                                   : std::nullopt);
+        }
+    });
 }
 
 void Hub::target_changed(Operation& op)
@@ -407,6 +446,7 @@ ConnectionId Hub::agent_connected(PeerHello hello, std::shared_ptr<AgentLink> li
     connections_[id] = Connection{hello.participant, hello.incarnation};
     auto [it, inserted] = peers_.try_emplace(hello.participant);
     auto& entry = it->second;
+    const bool new_incarnation = inserted || entry.info.incarnation != hello.incarnation;
     if (!inserted && entry.info.incarnation != hello.incarnation)
     {
         drop_outbox(entry, "the peer restarted before the command was sent");
@@ -481,6 +521,20 @@ ConnectionId Hub::agent_connected(PeerHello hello, std::shared_ptr<AgentLink> li
     entry.connection = id;
     entry.max_pending = hello.max_pending;
     announce_peer(entry);
+    if (new_incarnation || entry.availability.size() != entry.info.schema.size())
+    {
+        // Another process: its variables have the states their declarations give, whatever the
+        // one before said, and what a subscription still holds of that one is replaced.
+        entry.availability.resize(entry.info.schema.size());
+        entry.reports_availability = false;
+        for (std::size_t i = 0; i < entry.info.schema.size(); ++i)
+        {
+            entry.availability[i] = entry.info.schema[i].availability.value_or(Availability::Active);
+            entry.reports_availability = entry.reports_availability || entry.info.schema[i].availability.has_value();
+        }
+        entry.availability_version = 0;
+        announce_availability(entry);
+    }
     lock.unlock();
     if (old_link)
     {
@@ -715,6 +769,33 @@ void Hub::agent_values(ConnectionId id, Snapshot snapshot)
             s.put_values(entry.info.participant, entry.info.incarnation, entry.latest);
         }
     });
+}
+
+void Hub::agent_availability(ConnectionId id, std::uint64_t version, std::vector<Availability> states)
+{
+    const std::lock_guard lock(mutex_);
+    const auto* c = connection(id);
+    if (c == nullptr)
+    {
+        return;
+    }
+    auto it = peers_.find(c->participant);
+    if (it == peers_.end() || it->second.connection != id)
+    {
+        return;
+    }
+    auto& entry = it->second;
+    if (!entry.reports_availability || states.size() != entry.info.schema.size() || version < entry.availability_version)
+    {
+        return; // not for this schema, or older than what is known
+    }
+    entry.availability_version = version;
+    if (states == entry.availability)
+    {
+        return; // said again (the agent repeats it for a hub that came late): nothing new
+    }
+    entry.availability = std::move(states);
+    announce_availability(entry);
 }
 
 void Hub::set_values_tap(ValuesTap tap)
@@ -1095,6 +1176,10 @@ std::shared_ptr<Subscription> Hub::subscribe(SubscriptionOptions options)
             if (sub->options_.values && entry.latest)
             {
                 sub->put_values(name, entry.info.incarnation, entry.latest);
+            }
+            if (sub->options_.availability && entry.reports_availability)
+            {
+                sub->put_availability(name, AvailabilityUpdate{name, entry.info.incarnation, entry.availability});
             }
         }
     }

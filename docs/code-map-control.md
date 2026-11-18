@@ -293,6 +293,8 @@ Rules:
 - A change that a reader must not skip (a field moved or removed, a new enumerator sent to a reader that does not know it) needs a new version. Raise `kVersion`: ECUs and launchers of different versions then cannot read and write variables together (the check says `control-link-version`).
 - `result_bytes()` and `event_bytes()` must return exactly what `write_result()` and `write_event()` write. `encode_step()` splits by them, so a value that is too small makes a message larger than its limit.
 - `kLeast` is the smallest size of each element. The decoder checks a count against it before it reads anything. Update it when an element gets a field.
+- `--describe` announces `kRevision` as `control.wire_revision`, and the check notes an ECU of an older revision (`control-link-revision` in `libs/launch/src/check_rules.cpp`). When you raise `kRevision`, say in that note what the older revision is missing.
+- The availability (revision 1) is the last part of a step message, behind the values, and is read by its flag (`kStepAvailability`), never by the bytes left. `AgentTransport` reads `Agent::availability()` in its step sink: the states have no other way to the transport thread, and need none.
 - If you only add a kind that the other side can safely ignore, raise neither the version nor the revision. Unknown kinds are discarded (`Kind::LastWordReceived`, the reply to the last word, is an example).
 - Never change the eight bytes of the header, the participant name right after the header of a hello, or the session right after the header of every other message, in any version. This lets a peer with a different version read the name, and lets an ECU see whom a message is for.
 
@@ -306,6 +308,7 @@ Tests:
 - `^control\.wire_v2_`: version 2 (its messages are also written out by hand in `tests/control/test_wire_v2.cpp`), that an older or newer version is not read, what the decoder skips from a newer revision and refuses from its own, element sizes, and that a step message is filled exactly to its limit.
 - `^control\.wire_building_`: building the step messages of a step allocates nothing once the buffer has grown (a binary of its own, `tests/control/test_wire_allocation.cpp`).
 - `^control\.wire_v2_revision_0_`: the bytes of version 2, revision 0, written out by hand in `tests/control/wire_v2_golden.hpp`. When you add a field, add the bytes of the new revision beside them and leave these as they are.
+- `^control\.wire_v2_revision_1_`: the bytes that revision 1 added (the availability), in the same file.
 - `control_silkit.a_hello_of_another_version_is_reported_and_makes_no_peer`, `control_silkit.an_agent_does_not_answer_what_is_written_to_it_in_another_version`: an older and a newer version, on each side.
 
 ### The SIL Kit transport and the start window
@@ -333,7 +336,7 @@ The launcher output described in simulation-run.md:
 - The `control_link` event
 - `participants[].control_link` of the result
 - `participants[].control` of the check JSON
-- The findings `control-link-no-hello`, `control-link-version`, `control-link-late-values`, `control-link-dropped`, `control-link-not-offered`, `before-start`
+- The findings `control-link-no-hello`, `control-link-version`, `control-link-revision`, `control-link-late-values`, `control-link-dropped`, `control-link-not-offered`, `before-start`
 
 The code that handles `control` of `--describe`:
 
@@ -346,6 +349,7 @@ Rules:
 - The destructor of `AgentTransport` waits for the Hub's reply (`AgentTransportOptions::last_word_wait`).
 - A change that lengthens or removes this wait changes how late the ECU ends and the final result of the run (Cancelled or Unknown).
 - Values and results are sent from the step thread right after the values are read. Handing them to another thread breaks the order guarantee (`HubTransportStats::late_messages` counts such cases).
+- The availability is sent again each second of step time (`kAvailabilityResend` in `agent_transport.cpp`) for a Hub that connected late (`control_silkit.the_availability_is_said_again_each_second_of_step_time`, `control_silkit.a_hub_that_comes_late_gets_the_availability_the_ecu_has_now`).
 - Do not add anything that waits, or heavy processing, to the receive handlers on the Hub side. The whole simulation would wait for it.
 
 Tests:

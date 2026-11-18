@@ -65,13 +65,15 @@ struct FakePeer
     std::shared_ptr<Link> link = std::make_shared<Link>();
     ConnectionId connection = 0;
 
-    FakePeer(std::string n, std::string inc, Hub& h, std::size_t max_pending = 256) :
+    /// With `reports`, "level" (Unknown at first) and "speed" (Inactive) report their availability.
+    FakePeer(std::string n, std::string inc, Hub& h, std::size_t max_pending = 256, bool reports = false) :
       name(std::move(n)), incarnation(std::move(inc)), hub(h)
     {
         agent = std::make_unique<Agent>(AgentOptions{.max_pending = max_pending, .sample_period = SimDuration::zero()});
-        agent->input("level", &level, {.unit = "%", .min = 0.0, .max = 100.0});
+        const auto starts = [&](Availability state) { return reports ? std::optional(state) : std::nullopt; };
+        agent->input("level", &level, {.unit = "%", .min = 0.0, .max = 100.0, .availability = starts(Availability::Unknown)});
         agent->input("lamp", &lamp);
-        agent->output("speed", &speed);
+        agent->output("speed", &speed, {.availability = starts(Availability::Inactive)});
     }
 
     PeerHello hello() const { return PeerHello{name, incarnation, agent->schema(), 4}; }
@@ -110,6 +112,13 @@ struct FakePeer
         {
             this->report();
         }
+    }
+
+    /// What the transport sends of the agent's availability (after the schema is complete).
+    void report_availability()
+    {
+        const auto states = agent->availability();
+        hub.agent_availability(connection, agent->availability_version(), std::vector<Availability>(states.begin(), states.end()));
     }
 
     void report()
@@ -1140,4 +1149,147 @@ TEST_CASE(control_hub_positions_of_writes_do_not_depend_on_the_variable_map)
     CHECK(peer.target(seq).reason == "throttle (the executable's level): out of range");
     // The executable's name is not a name to write under the map: the hub's check stops there.
     CHECK(counts(peer.target(peer.write({"lamp", "level"}))) == "Invalid applied 0 failed 1");
+}
+
+namespace {
+
+/// The AvailabilityUpdates among `updates`, in order.
+std::vector<AvailabilityUpdate> availability_of(const std::vector<Update>& updates)
+{
+    std::vector<AvailabilityUpdate> out;
+    for (const auto& u : updates)
+    {
+        if (const auto* a = std::get_if<AvailabilityUpdate>(&u))
+        {
+            out.push_back(*a);
+        }
+    }
+    return out;
+}
+
+using States = std::vector<Availability>;
+
+} // namespace
+
+TEST_CASE(control_hub_passes_the_availability_on_and_decides_nothing_by_it)
+{
+    Hub hub;
+    FakePeer engine("Engine", "e1", hub, 256, true), body("Body", "b1", hub);
+    auto plain = hub.subscribe();
+    auto sub = hub.subscribe(SubscriptionOptions{.availability = true});
+    engine.connect();
+    body.connect();
+    // The peers first, then the availability of the one that reports, as declared.
+    auto updates = sub->poll(0, 0ms);
+    CHECK_EQ(updates.size(), std::size_t{3});
+    CHECK(std::holds_alternative<PeerUpdate>(updates.at(0)));
+    CHECK(std::holds_alternative<PeerUpdate>(updates.at(1)));
+    auto got = availability_of(updates);
+    CHECK_EQ(got.size(), std::size_t{1});
+    CHECK(got.at(0).peer == "Engine");
+    CHECK(got.at(0).incarnation == "e1");
+    CHECK(got.at(0).states == (States{Availability::Unknown, Availability::Active, Availability::Inactive}));
+
+    // A write to an Inactive variable is routed and applied as any other.
+    engine.step(at(0ms));
+    engine.agent->set_availability("level", Availability::Inactive);
+    engine.report_availability();
+    const auto seq = hub.write(req({{"Engine", "level", 40.0}}));
+    engine.step(at(10ms));
+    CHECK(status_of(hub, seq, "Engine") == TargetStatus::Applied);
+    CHECK_EQ(engine.level, 40.0);
+    got = availability_of(sub->poll(0, 0ms));
+    CHECK_EQ(got.size(), std::size_t{1});
+    CHECK(got.at(0).states == (States{Availability::Inactive, Availability::Active, Availability::Inactive}));
+
+    // A subscriber that does not read keeps the latest per peer, and drops nothing.
+    for (int i = 0; i < 100; ++i)
+    {
+        engine.agent->set_availability("level", i % 2 == 0 ? Availability::Active : Availability::Inactive);
+        engine.agent->set_availability("speed", Availability::Active);
+        engine.report_availability();
+    }
+    got = availability_of(sub->poll(0, 0ms));
+    CHECK_EQ(got.size(), std::size_t{1});
+    CHECK(got.at(0).states == (States{Availability::Inactive, Availability::Active, Availability::Active}));
+    CHECK_EQ(sub->dropped(), std::uint64_t{0});
+
+    // Ignored: an older version, the same states again, a list of another size, another connection.
+    const std::uint64_t now = engine.agent->availability_version();
+    const States other{Availability::Unknown, Availability::Unknown, Availability::Unknown};
+    hub.agent_availability(engine.connection, now - 1, other);
+    hub.agent_availability(engine.connection, now, got.at(0).states);
+    hub.agent_availability(engine.connection, now + 1, States{Availability::Unknown});
+    hub.agent_availability(engine.connection + 100, now + 1, other);
+    hub.agent_availability(body.connection, 1, other); // nothing of Body reports
+    CHECK(availability_of(sub->poll(0, 0ms)).empty());
+    // A new subscription begins with what the hub has now.
+    got = availability_of(hub.subscribe(SubscriptionOptions{.availability = true})->poll(0, 0ms));
+    CHECK_EQ(got.size(), std::size_t{1});
+    CHECK(got.at(0).states == (States{Availability::Inactive, Availability::Active, Availability::Active}));
+
+    // Not asked for: none.
+    CHECK(availability_of(plain->poll(0, 0ms)).empty());
+}
+
+TEST_CASE(control_hub_a_new_incarnation_starts_from_the_declared_availability)
+{
+    Hub hub;
+    FakePeer engine("Engine", "e1", hub, 256, true);
+    engine.connect();
+    engine.step(at(0ms));
+    engine.agent->set_availability("level", Availability::Active);
+    engine.agent->set_availability("speed", Availability::Active);
+    engine.report_availability();
+    auto sub = hub.subscribe(SubscriptionOptions{.availability = true});
+    // The same process again keeps its states.
+    engine.connect();
+    auto got = availability_of(sub->poll(0, 0ms));
+    CHECK_EQ(got.size(), std::size_t{1});
+    CHECK(got.at(0).states == (States{Availability::Active, Availability::Active, Availability::Active}));
+    engine.agent->set_availability("level", Availability::Inactive);
+    engine.report_availability(); // unread when the peer restarts
+
+    // Another process: what the subscription held of the one before is replaced by the declared
+    // states of the new one, and what the old connection says is ignored.
+    FakePeer restarted("Engine", "e2", hub, 256, true);
+    restarted.connect();
+    engine.report_availability();
+    got = availability_of(sub->poll(0, 0ms));
+    CHECK_EQ(got.size(), std::size_t{1});
+    CHECK(got.at(0).incarnation == "e2");
+    CHECK(got.at(0).states == (States{Availability::Unknown, Availability::Active, Availability::Inactive}));
+    // The new process counts its versions from 0 again.
+    restarted.step(at(0ms));
+    restarted.agent->set_availability("speed", Availability::Active);
+    restarted.report_availability();
+    got = availability_of(sub->poll(0, 0ms));
+    CHECK_EQ(got.size(), std::size_t{1});
+    CHECK(got.at(0).states == (States{Availability::Unknown, Availability::Active, Availability::Active}));
+    // A forgotten peer takes its availability with it.
+    restarted.agent->set_availability("speed", Availability::Inactive);
+    restarted.report_availability();
+    hub.agent_disconnected(restarted.connection);
+    hub.forget_peer("Engine");
+    CHECK(availability_of(sub->poll(0, 0ms)).empty());
+}
+
+TEST_CASE(control_hub_availability_follows_the_variable_map_by_position)
+{
+    Hub hub;
+    hub.set_variable_map("Engine", VariableMap{VariableMapping{.name = "throttle", .from = "level"},
+                                               VariableMapping{.name = "aa.speed", .from = "speed"}});
+    FakePeer engine("Engine", "e1", hub, 256, true);
+    engine.connect();
+    auto sub = hub.subscribe(SubscriptionOptions{.availability = true});
+    const auto updates = sub->poll(0, 0ms);
+    const auto got = availability_of(updates);
+    CHECK_EQ(got.size(), std::size_t{1});
+    const PeerInfo& seen = std::get<PeerUpdate>(updates.at(0)).peer;
+    CHECK_EQ(seen.schema.size(), got.at(0).states.size());
+    CHECK(seen.schema.at(0).name == "throttle");
+    CHECK(seen.schema.at(0).availability == std::optional(Availability::Unknown));
+    CHECK(got.at(0).states.at(0) == Availability::Unknown);
+    CHECK(seen.schema.at(2).name == "aa.speed");
+    CHECK(got.at(0).states.at(2) == Availability::Inactive);
 }

@@ -24,6 +24,9 @@ namespace {
 namespace pubsub = SilKit::Services::PubSub;
 namespace wire = control::wire;
 
+/// How long the availability of the variables stays unsent at most, in the time of the steps.
+constexpr SimDuration kAvailabilityResend = std::chrono::seconds(1);
+
 /// A number that no other transport of the simulation has, in practice: 64 bits from the system's
 /// random source, mixed with the clocks and this thread (a random source that repeats itself
 /// still gives two processes different numbers).
@@ -73,6 +76,15 @@ struct AgentTransport::State
     std::vector<control::Event> events;
     wire::Bytes step_bytes;
     std::function<void(const wire::Bytes&)> emit;
+    // The availability of the variables (control::Agent::availability()), sent from the steps
+    // when it changed, and again for a hub that has not got it. Guarded by step_mutex but for
+    // `availability_asked`.
+    bool reports_availability = false;            ///< a variable of the schema reports (fixed)
+    std::uint64_t availability_sent = 0;          ///< the version last sent (0: what the hello says)
+    std::optional<SimTime> availability_sent_at;  ///< the step it was last sent in (before that: the first step)
+    /// Set by the receive handler when it answers a probe: the hub that asked may have connected
+    /// after the last change, so the next step sends the states again.
+    std::atomic<bool> availability_asked{false};
 
     // The receive handler against the destructor.
     std::mutex command_mutex;
@@ -90,13 +102,13 @@ struct AgentTransport::State
     std::atomic<std::uint64_t> n_messages{0}, n_bytes{0}, n_commands{0}, n_ignored{0}, n_undecodable{0};
 
     /// With step_mutex held: what the agent has produced since the last call, published now.
-    void publish(SimTime now, const control::Snapshot* sample, bool final)
+    void publish(SimTime now, const control::Snapshot* sample, const wire::AvailabilityView* availability, bool final)
     {
         results.clear();
         events.clear();
         agent->drain_results(results);
         agent->drain_events(events);
-        wire::encode_step(session, now, final, results, events, sample, max_bytes, step_bytes, emit);
+        wire::encode_step(session, now, final, results, events, sample, availability, max_bytes, step_bytes, emit);
     }
 
     /// The step thread, at the end of a step.
@@ -108,7 +120,30 @@ struct AgentTransport::State
             return;
         }
         last_step = now;
-        publish(now, sample, false);
+        // The availability goes out when it changed, in the first step after a probe was
+        // answered, and one second of step time after it last went out. The last is for a hub
+        // whose subscription to the steps came up after its probe was answered (the two topics
+        // connect one by one), and for a message that got lost; it counts the step's time, which
+        // every agent has (virtual time or real time), not the wall clock.
+        const control::wire::AvailabilityView* availability = nullptr;
+        control::wire::AvailabilityView view;
+        if (reports_availability)
+        {
+            if (!availability_sent_at)
+            {
+                availability_sent_at = now;
+            }
+            view.version = agent->availability_version();
+            const bool asked = availability_asked.exchange(false, std::memory_order_acq_rel);
+            if (asked || view.version != availability_sent || now - *availability_sent_at >= kAvailabilityResend)
+            {
+                view.states = agent->availability();
+                availability = &view;
+                availability_sent = view.version;
+                availability_sent_at = now;
+            }
+        }
+        publish(now, sample, availability, false);
     }
 
     /// SIL Kit's thread, outside the steps.
@@ -151,6 +186,7 @@ struct AgentTransport::State
             // The hub's commands arrive here: say so (each time it asks).
             wire::encode_session(wire::Kind::Ready, session, submitted_bytes);
             submitted->Publish(detail::span_of(submitted_bytes));
+            availability_asked.store(true, std::memory_order_release);
             return;
         }
         if (wire::decode_command(bytes, command))
@@ -209,6 +245,10 @@ AgentTransport::AgentTransport(control::Agent& agent, ParticipantRuntime& runtim
     hello.sample_period = agent.options().sample_period;
     hello.max_pending = agent.options().max_pending;
     hello.schema = agent.schema();
+    for (const auto& variable : hello.schema)
+    {
+        state->reports_availability = state->reports_availability || variable.availability.has_value();
+    }
     wire::Bytes hello_bytes;
     std::string why;
     if (!wire::encode_hello(hello, hello_bytes, why))
@@ -276,7 +316,7 @@ AgentTransport::~AgentTransport()
         try
         {
             // The last word: what was not sent yet (after Peer::stop(), the cancelled writes).
-            state_->publish(state_->last_step, nullptr, true);
+            state_->publish(state_->last_step, nullptr, nullptr, true); // no availability: not the step thread
         }
         catch (const std::exception&)
         {

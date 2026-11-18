@@ -207,6 +207,7 @@ std::string to_json(const EcuDescription& description)
         w.begin_object("control");
         w.string("transport", description.control->transport);
         w.integer("wire_version", description.control->wire_version);
+        w.integer("wire_revision", description.control->wire_revision);
         w.end_object();
     }
     else

@@ -206,6 +206,11 @@ struct ControlOffer
     std::string transport;
     /// The version of the messages it speaks (control::wire::kVersion of its build).
     int wire_version = 0;
+    /// The revision of that version it writes (control::wire::kRevision of its build): a reader
+    /// of an older revision skips what the newer one added, so both still work together, without
+    /// what was added (for revision 1, the availability of the variables). 0 when the executable
+    /// does not say it (one built before the key existed).
+    int wire_revision = 0;
 
     friend bool operator==(const ControlOffer&, const ControlOffer&) = default;
 };

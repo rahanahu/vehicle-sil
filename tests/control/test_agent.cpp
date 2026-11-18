@@ -17,6 +17,8 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -1096,4 +1098,128 @@ TEST_CASE(control_agent_submit_says_which_write_it_refused)
     r = busy.write("engine.trim", std::int64_t{2});
     CHECK(r.status == SubmitStatus::Busy);
     CHECK(!r.failed_write);
+}
+
+TEST_CASE(control_agent_availability_is_declared_and_set_from_the_steps)
+{
+    Model m;
+    Agent agent;
+    agent.input("a", &m.coolant, {.availability = Availability::Unknown});
+    agent.input("b", &m.mass);
+    agent.output("c", [&] { return m.speed; }, {.availability = Availability::Inactive});
+    CHECK(agent.schema()[0].availability == std::optional(Availability::Unknown));
+    CHECK(!agent.schema()[1].availability);
+    CHECK(agent.schema()[2].availability == std::optional(Availability::Inactive));
+    CHECK(throws<std::invalid_argument>(
+        [&] { agent.input("d", &m.trim, {.availability = static_cast<Availability>(3)}); }));
+    // Before the schema is complete there is no state yet: the declaration gives the first one.
+    CHECK(agent.availability().empty());
+    CHECK(vehicle_sil::unit::throws_with<std::logic_error>([&] { agent.set_availability("a", Availability::Active); },
+                                                           "VariableOptions::availability"));
+
+    agent.complete_schema();
+    const std::vector<Availability> declared{Availability::Unknown, Availability::Active, Availability::Inactive};
+    CHECK(std::vector<Availability>(agent.availability().begin(), agent.availability().end()) == declared);
+    CHECK_EQ(agent.availability_version(), std::uint64_t{0});
+    // On the set-up thread before the first step, and in the steps.
+    agent.set_availability("a", Availability::Active);
+    CHECK_EQ(agent.availability_version(), std::uint64_t{1});
+    agent.on_step_begin(at(0ms));
+    agent.set_availability("c", Availability::Active);
+    agent.on_step_end(at(0ms));
+    CHECK(agent.availability()[2] == Availability::Active);
+    CHECK_EQ(agent.availability_version(), std::uint64_t{2});
+    // The same state again changes nothing.
+    for (int i = 1; i < 5; ++i)
+    {
+        agent.on_step_begin(at(1ms * i));
+        agent.set_availability("a", Availability::Active);
+        agent.set_availability("c", Availability::Active);
+        agent.on_step_end(at(1ms * i));
+    }
+    CHECK_EQ(agent.availability_version(), std::uint64_t{2});
+
+    CHECK(vehicle_sil::unit::throws_with<std::invalid_argument>([&] { agent.set_availability("x", Availability::Active); },
+                                                                "has no variable 'x'"));
+    CHECK(vehicle_sil::unit::throws_with<std::invalid_argument>([&] { agent.set_availability("b", Availability::Inactive); },
+                                                                "'b' does not report its availability"));
+    CHECK(throws<std::invalid_argument>([&] { agent.set_availability("a", static_cast<Availability>(3)); }));
+    CHECK_EQ(agent.availability_version(), std::uint64_t{2});
+}
+
+TEST_CASE(control_agent_inactive_input_is_written_as_any_other)
+{
+    // The availability is information for whoever looks: a write to an Inactive input is checked
+    // and applied as before, and its setter runs in that step.
+    Model m;
+    Agent agent;
+    int step = 0;
+    std::vector<std::pair<int, double>> set;
+    agent.input(
+        "level", [&] { return m.coolant; },
+        [&](double v) {
+            m.coolant = v;
+            set.emplace_back(step, v);
+        },
+        {.availability = Availability::Unknown});
+    agent.complete_schema();
+    agent.set_availability("level", Availability::Inactive);
+    CHECK(agent.submit(Command{1, {{"level", Value{4.5}}}, at(2ms), LatePolicy::Reject}).status == SubmitStatus::Queued);
+    std::vector<CommandResult> results;
+    for (int i = 0; i < 4; ++i)
+    {
+        step = i;
+        agent.on_step_begin(at(1ms * i));
+        agent.on_step_end(at(1ms * i));
+        agent.drain_results(results);
+    }
+    CHECK_EQ(results.size(), std::size_t{1});
+    CHECK(results.at(0).status == CommandStatus::Applied);
+    CHECK(results.at(0).applied_at == std::optional(at(2ms)));
+    CHECK_EQ(set.size(), std::size_t{1});
+    CHECK(set.at(0) == std::pair(2, 4.5));
+    CHECK(agent.availability()[0] == Availability::Inactive);
+}
+
+TEST_CASE(control_agent_availability_does_not_touch_the_samples)
+{
+    // The same model with and without set_availability() in every step: the same samples (time,
+    // sequence, values), and the sink is called in the same steps.
+    const auto run = [](bool report) {
+        Model m;
+        Agent agent(AgentOptions{.sample_period = 3ms});
+        agent.input("a", &m.coolant, {.availability = Availability::Unknown});
+        agent.output("b", [&] { return m.speed; }, {.availability = Availability::Unknown});
+        std::vector<std::tuple<SimTime, std::uint64_t, std::vector<Value>>> samples;
+        std::vector<SimTime> calls;
+        agent.set_step_sink([&](SimTime now, const Snapshot* sample) {
+            calls.push_back(now);
+            if (sample != nullptr)
+            {
+                samples.emplace_back(sample->time, sample->sequence, sample->values);
+            }
+        });
+        CHECK(agent.submit(Command{1, {{"a", Value{2.5}}}, at(4ms), LatePolicy::Reject}).status == SubmitStatus::Queued);
+        for (int i = 0; i < 12; ++i)
+        {
+            agent.on_step_begin(at(1ms * i));
+            m.speed += 1.0;
+            if (report)
+            {
+                agent.set_availability("a", i % 2 == 0 ? Availability::Active : Availability::Inactive);
+                agent.set_availability("b", Availability::Active);
+            }
+            agent.on_step_end(at(1ms * i));
+        }
+        if (report)
+        {
+            CHECK_EQ(agent.availability_version(), std::uint64_t{13}); // "a" 12 times, "b" once
+        }
+        return std::pair(samples, calls);
+    };
+    const auto with = run(true);
+    const auto without = run(false);
+    CHECK_EQ(with.first.size(), std::size_t{4});
+    CHECK(with.first == without.first);
+    CHECK(with.second == without.second);
 }

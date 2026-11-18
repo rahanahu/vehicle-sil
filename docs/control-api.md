@@ -303,6 +303,7 @@ The types are bool, integer, real and enum. Values are read and written on the E
 | `step` | The value increment. |
 | `description` | A description. |
 | `parameter` | If true, the variable is a Parameter: it can be written only before the first simulation step. |
+| `availability` | If set, the variable reports whether it is in use, and this is its first state (usually `Availability::Unknown`). See "Availability of a variable" below. |
 
 | Declaration rule | Details |
 |---|---|
@@ -346,6 +347,34 @@ Either is empty (gRPC: not set, Python: `None`) when it is not known: while the 
 | A GUI widget (`client.variables.bind`) | Fewer, when writes come in quick succession (see [gui.md](gui.md)). |
 
 If values arrive before the server has received a widget's previous write, the widget merges them into the last one.
+
+### Availability of a variable
+
+An ECU whose application decides at run time which of its inputs and outputs it uses (for example from a configuration it reads in its first steps) can say so for each variable. A screen can then show an unused variable greyed out. The availability is information only: writes, reads, samples and scenarios do not look at it. A write to an `Inactive` variable is checked and applied as any other.
+
+| State (`vehicle_sil::control::Availability`) | Meaning |
+|---|---|
+| `Unknown` | The application has not decided yet. |
+| `Active` | In use. Every variable that does not report its availability counts as `Active`. |
+| `Inactive` | Not in use in the present set-up of the ECU. |
+
+| Rule | Details |
+|---|---|
+| Which variables report | Those declared with `VariableOptions::availability`, which gives the first state. Which variables report is fixed with the declarations; it does not change while the simulation runs. |
+| Changing the state | `ecu.set_availability(name, state)` from a step of the ECU (`on_step()`, `every()`, `at()`, a handler). The same state again does nothing. |
+| Errors | A name the ECU did not declare, a variable declared without `availability`, and the variables vehicle-sil gives every ECU (`ecu.connected`, the monitoring outputs): `std::invalid_argument`. During the set-up (before the run): `std::logic_error`; give the first state in the declaration instead. |
+| Where the state goes | To the Control Server, when it changes, and again once a second of simulation time (so a server that connects later gets it too). A subscription to the Hub receives it only if it asks (`SubscriptionOptions::availability`). The gRPC service and the GUI do not pass it on. |
+| An ECU built with an older vehicle-sil | Reports nothing: all its variables count as `Active`. The check notes it (`control-link-revision`). |
+
+```cpp
+ecu.input("io.relay", &relay_, {.availability = vehicle_sil::control::Availability::Unknown});
+ecu.every(10ms, [this, &ecu](vehicle_sil::SimTime) {
+    if (config_read_) {
+        ecu.set_availability("io.relay", relay_fitted_ ? vehicle_sil::control::Availability::Active
+                                                       : vehicle_sil::control::Availability::Inactive);
+    }
+});
+```
 
 ### How the connection is made
 

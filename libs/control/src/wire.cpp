@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/control/wire.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -34,8 +35,9 @@ struct Least
     std::size_t event;
 };
 // Each begins with its size (4). A variable: name (4 + 1), type, causality, unit (4), flags,
-// description (4), items (4). A write: name (4), a bool (2). A result: seq (8), status, flags,
-// applied_writes (4), reason (4). An event: time (8), level, text (4).
+// description (4), items (4), and from revision 1 on its availability (1, not counted here). A
+// write: name (4), a bool (2). A result: seq (8), status, flags, applied_writes (4), reason (4).
+// An event: time (8), level, text (4).
 constexpr Least kLeast{4 + 4 + 1 + 1 + 1 + 4 + 1 + 4 + 4, 4 + 4 + 2, 4 + 8 + 1 + 1 + 4 + 4, 4 + 8 + 1 + 4};
 
 /// The revision in the header; a message of another version has none that this side knows.
@@ -46,6 +48,9 @@ std::uint8_t revision_of(std::uint16_t version, std::span<const std::uint8_t> by
 
 constexpr std::uint8_t kStepFinal = 1;
 constexpr std::uint8_t kStepValues = 2;
+constexpr std::uint8_t kStepAvailability = 4; ///< revision 1
+/// The revision that added the availability (a variable's last byte, kStepAvailability).
+constexpr std::uint8_t kAvailabilityRevision = 1;
 
 class Writer
 {
@@ -143,6 +148,8 @@ public:
     /// The bytes left of the element, or of the message outside one.
     [[nodiscard]] std::size_t left() const noexcept { return end_ - at_; }
     [[nodiscard]] Error take_error() { return std::move(error_); }
+    /// The revision of the writer (after header()).
+    [[nodiscard]] std::uint8_t revision() const noexcept { return error_.revision; }
 
     void fail(ErrorCode code, std::string text)
     {
@@ -442,6 +449,8 @@ void write_variable(Writer& w, const VariableInfo& v)
         w.text(item.name);
         w.i64(item.value);
     }
+    // Revision 1: 0 for a variable that does not report, else 1 + the state it starts with.
+    w.u8(v.availability ? static_cast<std::uint8_t>(1 + static_cast<std::uint8_t>(*v.availability)) : std::uint8_t{0});
     w.end_element(element);
 }
 
@@ -475,6 +484,13 @@ VariableInfo read_variable(Reader& r)
         item.name = r.text();
         item.value = r.i64();
         v.items.push_back(std::move(item));
+    }
+    if (r.revision() >= kAvailabilityRevision)
+    {
+        if (const std::uint8_t reports = r.enumerator(4, "availability of a variable"); reports != 0)
+        {
+            v.availability = static_cast<Availability>(reports - 1);
+        }
     }
     r.end_element("a variable");
     return v;
@@ -657,7 +673,8 @@ Error decode_hello(std::span<const std::uint8_t> bytes, Hello& out)
     out.step = SimDuration{r.i64()};
     out.sample_period = SimDuration{r.i64()};
     out.max_pending = r.u32();
-    const std::uint32_t variables = r.count(kLeast.variable, "variables");
+    const std::uint32_t variables =
+        r.count(kLeast.variable + (r.revision() >= kAvailabilityRevision ? 1 : 0), "variables");
     if (r.ok() && variables > kMaxVariables)
     {
         r.fail(ErrorCode::TooLarge, std::to_string(variables) + " variables; the limit is " + std::to_string(kMaxVariables));
@@ -825,10 +842,12 @@ std::optional<Addressed> addressed(std::span<const std::uint8_t> bytes)
 }
 
 // A step message: session u64, time i64, flags u8, results u16, events u16, the results, the
-// events, and with kStepValues: time i64, sequence u64, total u32, first u32, count u32, values.
+// events, with kStepValues: time i64, sequence u64, total u32, first u32, count u32, values, and
+// with kStepAvailability (revision 1): version u64, total u32, first u32, count u32, one byte per
+// state.
 void encode_step(std::uint64_t session, SimTime time, bool final, std::span<const CommandResult> results,
-                 std::span<const Event> events, const Snapshot* sample, std::size_t max_bytes, Bytes& scratch,
-                 const std::function<void(const Bytes& message)>& emit)
+                 std::span<const Event> events, const Snapshot* sample, const AvailabilityView* availability,
+                 std::size_t max_bytes, Bytes& scratch, const std::function<void(const Bytes& message)>& emit)
 {
     if (max_bytes < kMinMessageBytes || max_bytes > kMaxMessageBytes)
     {
@@ -837,12 +856,16 @@ void encode_step(std::uint64_t session, SimTime time, bool final, std::span<cons
     }
     constexpr std::size_t kFlagsAt = kHeaderBytes + 16;
     constexpr std::size_t kValuesHead = 8 + 8 + 4 + 4 + 4;
+    constexpr std::size_t kAvailabilityHead = 8 + 4 + 4 + 4;
     Writer w(scratch);
     std::size_t next_result = 0;
     std::size_t next_event = 0;
     std::size_t next_value = 0;
     const std::size_t values = sample != nullptr ? sample->values.size() : 0;
     bool sample_left = sample != nullptr;
+    std::size_t next_state = 0;
+    const std::size_t states = availability != nullptr ? availability->states.size() : 0;
+    bool availability_left = availability != nullptr;
     while (true)
     {
         scratch.clear();
@@ -891,7 +914,24 @@ void encode_step(std::uint64_t session, SimTime time, bool final, std::span<cons
             w.patch_u32(count_at, n);
             sample_left = next_value < values;
         }
-        const bool last = next_result == results.size() && next_event == events.size() && !sample_left;
+        // The availability begins only when the sample is out, and a part needs room for its head
+        // and one state (or is the whole of an empty list).
+        if (availability_left && !sample_left && next_result == results.size() && next_event == events.size()
+            && scratch.size() + kAvailabilityHead + (states == 0 ? 0 : 1) <= max_bytes)
+        {
+            flags |= kStepAvailability;
+            w.u64(availability->version);
+            w.u32(static_cast<std::uint32_t>(states));
+            w.u32(static_cast<std::uint32_t>(next_state));
+            const auto n = static_cast<std::uint32_t>(std::min(states - next_state, max_bytes - scratch.size() - 4));
+            w.u32(n);
+            for (std::uint32_t i = 0; i < n; ++i)
+            {
+                w.u8(static_cast<std::uint8_t>(availability->states[next_state++]));
+            }
+            availability_left = next_state < states;
+        }
+        const bool last = next_result == results.size() && next_event == events.size() && !sample_left && !availability_left;
         if (last && final)
         {
             flags |= kStepFinal;
@@ -899,7 +939,7 @@ void encode_step(std::uint64_t session, SimTime time, bool final, std::span<cons
         scratch[kFlagsAt] = flags;
         w.patch_u16(kFlagsAt + 1, n_results);
         w.patch_u16(kFlagsAt + 3, n_events);
-        if (n_results > 0 || n_events > 0 || (flags & (kStepValues | kStepFinal)) != 0)
+        if (n_results > 0 || n_events > 0 || (flags & (kStepValues | kStepAvailability | kStepFinal)) != 0)
         {
             emit(scratch);
         }
@@ -916,6 +956,8 @@ Error decode_step(std::span<const std::uint8_t> bytes, StepMessage& out)
     out.events.clear();
     out.has_values = false;
     out.values.values.clear();
+    out.has_availability = false;
+    out.availability.states.clear();
     Reader r(bytes);
     if (!r.header(Kind::Step, kMaxMessageBytes))
     {
@@ -923,7 +965,11 @@ Error decode_step(std::span<const std::uint8_t> bytes, StepMessage& out)
     }
     out.session = r.u64();
     out.time = time_of(r.i64());
-    const std::uint8_t flags = r.flags(kStepFinal | kStepValues, "a step message");
+    // A flag is known from the revision that added it on: a writer of revision 0 has no
+    // kStepAvailability, and the bit from it is refused like any unknown one.
+    const std::uint8_t flags = r.flags(
+        static_cast<std::uint8_t>(kStepFinal | kStepValues | (r.revision() >= kAvailabilityRevision ? kStepAvailability : 0)),
+        "a step message");
     out.final = (flags & kStepFinal) != 0;
     const std::uint16_t results = r.u16();
     const std::uint16_t events = r.u16();
@@ -980,6 +1026,24 @@ Error decode_step(std::span<const std::uint8_t> bytes, StepMessage& out)
             part.values.push_back(r.value());
         }
         out.has_values = true;
+    }
+    // By its flag, never by the bytes that are left: a newer writer may have put more behind it.
+    if (r.ok() && (flags & kStepAvailability) != 0)
+    {
+        AvailabilityPart& part = out.availability;
+        part.version = r.u64();
+        part.total = r.u32();
+        part.first = r.u32();
+        const std::uint32_t count = r.count(1, "availability states");
+        if (r.ok() && (part.first > part.total || count > part.total - part.first))
+        {
+            r.fail(ErrorCode::Malformed, "a part of the availability beyond its end");
+        }
+        for (std::uint32_t i = 0; i < count && r.ok(); ++i)
+        {
+            part.states.push_back(static_cast<Availability>(r.enumerator(3, "availability")));
+        }
+        out.has_availability = true;
     }
     r.end();
     return r.take_error();

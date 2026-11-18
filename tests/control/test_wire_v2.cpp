@@ -139,18 +139,27 @@ wire::Hello small_hello()
     return hello;
 }
 
-/// small_hello() in version 2.
+/// small_hello() in version 2 (from revision 1 on, each variable ends with its availability: 0,
+/// it does not report).
 Raw raw_hello(std::uint8_t revision, Added added)
 {
     Raw raw(wire::Kind::Hello, revision);
     raw.text("Engine").u64(0x1122334455667788ULL).u8(1).u64(1'000'000).u64(10'000'000).u32(8).u32(2);
+    const auto availability = [&](Raw& r) {
+        if (revision >= 1)
+        {
+            r.u8(0);
+        }
+    };
     raw.element([&](Raw& r) {
         r.text("speed").u8(2).u8(1).text("rpm").u8(static_cast<std::uint8_t>(1 | 2 | (added.flags ? kUnknownFlag : 0)));
         r.f64(0.0).f64(8000.0).text("the speed").u32(0);
+        availability(r);
         more(r, added.to_elements);
     });
     raw.element([&](Raw& r) {
         r.text("gear").u8(3).u8(0).text("").u8(0).text("").u32(2).text("P").u64(0).text("D").u64(3);
+        availability(r);
         more(r, added.to_elements);
     });
     more(raw, added.to_message);
@@ -268,11 +277,12 @@ bool same(const Command& a, const Command& b)
 
 /// The step messages of one step, as they were written.
 std::vector<wire::Bytes> step_bytes(std::uint64_t session, SimTime time, bool final, const std::vector<CommandResult>& results,
-                                    const std::vector<Event>& events, const Snapshot* sample, std::size_t max_bytes)
+                                    const std::vector<Event>& events, const Snapshot* sample, std::size_t max_bytes,
+                                    const wire::AvailabilityView* availability = nullptr)
 {
     std::vector<wire::Bytes> out;
     wire::Bytes scratch;
-    wire::encode_step(session, time, final, results, events, sample, max_bytes, scratch,
+    wire::encode_step(session, time, final, results, events, sample, availability, max_bytes, scratch,
                       [&](const wire::Bytes& message) { out.push_back(message); });
     return out;
 }
@@ -686,7 +696,8 @@ TEST_CASE(wire_v2_the_smallest_elements_are_counted_right)
     wire::Bytes bytes;
     std::string why;
     CHECK(wire::encode_hello(hello, bytes, why));
-    CHECK_EQ(bytes.size(), 8 + 5 + 8 + 1 + 8 + 8 + 4 + 4 + 100 * (size + 5 + 1 + 1 + 4 + 1 + 4 + 4));
+    // A variable: name, type, causality, unit, has, description, items, availability (revision 1).
+    CHECK_EQ(bytes.size(), 8 + 5 + 8 + 1 + 8 + 8 + 4 + 4 + 100 * (size + 5 + 1 + 1 + 4 + 1 + 4 + 4 + 1));
     wire::Hello decoded_hello;
     CHECK(!wire::decode_hello(bytes, decoded_hello));
     CHECK(decoded_hello == hello);
@@ -737,4 +748,122 @@ TEST_CASE(wire_v2_the_smallest_elements_are_counted_right)
     error = wire::decode_hello(bytes, decoded_hello);
     CHECK(error.code == wire::ErrorCode::Truncated);
     CHECK(error.text.find("variables announced") != std::string::npos);
+}
+
+TEST_CASE(wire_v2_availability_from_an_older_and_from_a_newer_revision)
+{
+    // Revision 0 has no availability: its variables do not report (a hub takes them as Active),
+    // and its step messages have no flag 4 (from it, the bit is refused like any unknown one).
+    wire::Hello hello;
+    CHECK(!wire::decode_hello(raw_hello(0, {}).bytes, hello));
+    CHECK_EQ(hello.schema.size(), std::size_t{2});
+    CHECK(!hello.schema[0].availability.has_value());
+    CHECK(!hello.schema[1].availability.has_value());
+    wire::StepMessage step;
+    Raw old_flag(wire::Kind::Step, 0);
+    old_flag.u64(11).u64(0).u8(4).u16(0).u16(0).u64(1).u32(1).u32(0).u32(1).u8(2);
+    CHECK(wire::decode_step(old_flag.bytes, step).code == wire::ErrorCode::Malformed);
+
+    // A newer revision: the availability is read, and what it added behind it (in the variable,
+    // behind the part, and an unknown flag) is skipped.
+    const std::uint8_t newer = wire::kRevision + 1;
+    Raw newer_hello(wire::Kind::Hello, newer);
+    newer_hello.text("Engine").u64(1).u8(0).u64(1'000'000).u64(10'000'000).u32(8).u32(1);
+    newer_hello.element([](Raw& r) { r.text("on").u8(0).u8(0).text("").u8(0).text("").u32(0).u8(3).u32(0xDEADBEEF); });
+    CHECK(!wire::decode_hello(newer_hello.bytes, hello));
+    CHECK(hello.schema.at(0).availability == std::optional(Availability::Inactive));
+    Raw newer_step(wire::Kind::Step, newer);
+    newer_step.u64(11).u64(0).u8(static_cast<std::uint8_t>(4 | kUnknownFlag)).u16(0).u16(0);
+    newer_step.u64(9).u32(3).u32(1).u32(2).u8(0).u8(2); // version 9, states 1 and 2 of 3
+    newer_step.u8(0xAA).u32(0xDEADBEEF);                 // what the newer revision added
+    CHECK(!wire::decode_step(newer_step.bytes, step));
+    CHECK(step.has_availability);
+    CHECK(!step.has_values);
+    CHECK_EQ(step.availability.version, std::uint64_t{9});
+    CHECK_EQ(step.availability.total, std::uint32_t{3});
+    CHECK_EQ(step.availability.first, std::uint32_t{1});
+    CHECK(step.availability.states == (std::vector<Availability>{Availability::Unknown, Availability::Inactive}));
+
+    // What must not be skipped is refused: a state this build does not know, a part that reaches
+    // beyond its list, a first byte of a variable beyond 3.
+    for (const std::uint8_t revision : {wire::kRevision, newer})
+    {
+        Raw unknown_state(wire::Kind::Step, revision);
+        unknown_state.u64(11).u64(0).u8(4).u16(0).u16(0).u64(1).u32(1).u32(0).u32(1).u8(3);
+        CHECK(wire::decode_step(unknown_state.bytes, step).code == wire::ErrorCode::Malformed);
+        Raw beyond(wire::Kind::Step, revision);
+        beyond.u64(11).u64(0).u8(4).u16(0).u16(0).u64(1).u32(2).u32(1).u32(2).u8(1).u8(1);
+        CHECK(wire::decode_step(beyond.bytes, step).code == wire::ErrorCode::Malformed);
+        Raw bad_variable(wire::Kind::Hello, revision);
+        bad_variable.text("Engine").u64(1).u8(0).u64(1'000'000).u64(10'000'000).u32(8).u32(1);
+        bad_variable.element([](Raw& r) { r.text("on").u8(0).u8(0).text("").u8(0).text("").u32(0).u8(4); });
+        CHECK(wire::decode_hello(bad_variable.bytes, hello).code == wire::ErrorCode::Malformed);
+    }
+    // From this revision, a variable without its last byte is short.
+    Raw short_variable(wire::Kind::Hello, wire::kRevision);
+    short_variable.text("Engine").u64(1).u8(0).u64(1'000'000).u64(10'000'000).u32(8).u32(1);
+    short_variable.element([](Raw& r) { r.text("on").u8(0).u8(0).text("").u8(0).text("").u32(0); });
+    CHECK(wire::decode_hello(short_variable.bytes, hello));
+}
+
+TEST_CASE(wire_v2_availability_is_split_like_the_values)
+{
+    // Behind the values, in as many parts as it takes; a message has at most one part of each,
+    // and the parts of the list share its version.
+    Snapshot sample{at(1ms), 2, {}};
+    for (int i = 0; i < 300; ++i)
+    {
+        sample.values.emplace_back(std::int64_t{i});
+    }
+    std::vector<Availability> states;
+    for (int i = 0; i < 5000; ++i)
+    {
+        states.push_back(static_cast<Availability>(i % 3));
+    }
+    const wire::AvailabilityView availability{42, states};
+    for (const Snapshot* with : {static_cast<const Snapshot*>(nullptr), static_cast<const Snapshot*>(&sample)})
+    {
+        const auto messages = step_bytes(1, at(1ms), true, {}, {}, with, wire::kMinMessageBytes, &availability);
+        CHECK(messages.size() >= 3);
+        std::vector<Value> values;
+        std::vector<Availability> read;
+        bool values_done = with == nullptr;
+        for (std::size_t i = 0; i < messages.size(); ++i)
+        {
+            CHECK(messages[i].size() <= wire::kMinMessageBytes);
+            wire::StepMessage step;
+            CHECK(!wire::decode_step(messages[i], step));
+            CHECK_EQ(step.final, i + 1 == messages.size());
+            if (step.has_values)
+            {
+                CHECK_EQ(step.values.first, static_cast<std::uint32_t>(values.size()));
+                values.insert(values.end(), step.values.values.begin(), step.values.values.end());
+                values_done = values.size() == sample.values.size();
+            }
+            if (step.has_availability)
+            {
+                CHECK(values_done); // the values first
+                CHECK_EQ(step.availability.version, std::uint64_t{42});
+                CHECK_EQ(step.availability.total, std::uint32_t{5000});
+                CHECK_EQ(step.availability.first, static_cast<std::uint32_t>(read.size()));
+                read.insert(read.end(), step.availability.states.begin(), step.availability.states.end());
+            }
+        }
+        CHECK(read == states);
+        if (with != nullptr)
+        {
+            CHECK(values == sample.values);
+        }
+    }
+    // An empty list is one part of nothing.
+    const wire::AvailabilityView none{3, {}};
+    const auto empty = step_bytes(1, at(1ms), false, {}, {}, nullptr, wire::kMaxMessageBytes, &none);
+    CHECK_EQ(empty.size(), std::size_t{1});
+    wire::StepMessage step;
+    CHECK(!wire::decode_step(empty.at(0), step));
+    CHECK(step.has_availability);
+    CHECK_EQ(step.availability.total, std::uint32_t{0});
+    CHECK(step.availability.states.empty());
+    // Nothing to say: no message.
+    CHECK(step_bytes(1, at(1ms), false, {}, {}, nullptr, wire::kMaxMessageBytes).empty());
 }

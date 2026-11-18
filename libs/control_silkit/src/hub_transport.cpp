@@ -70,6 +70,10 @@ struct HubTransport::State
         // The receive handlers only (one thread): a sample that arrives in parts.
         control::Snapshot partial;
         bool assembling = false;
+        // The same for the availability of its variables, which arrives in parts too.
+        std::vector<control::Availability> partial_states;
+        std::uint64_t partial_states_version = 0;
+        bool assembling_states = false;
         std::uint32_t unanswered = 0; ///< step messages since the hello without an answer to the probe
 
         bool send(const control::Command& command) override;
@@ -380,6 +384,10 @@ struct HubTransport::State
         {
             take_values(*link, step.values);
         }
+        if (step.has_availability)
+        {
+            take_availability(*link, step.availability);
+        }
         if (step.final)
         {
             end(link, "the participant's control agent has ended");
@@ -424,6 +432,39 @@ struct HubTransport::State
             link.assembling = false;
             hub->agent_values(link.connection, std::move(link.partial));
             link.partial = {};
+        }
+    }
+
+    /// A part of the availability of the agent's variables: the parts of one list come one after
+    /// the other, the first first, and share a version (as the parts of a sample their sequence).
+    /// The hub ignores a list older than the one it has.
+    void take_availability(Link& link, wire::AvailabilityPart& part)
+    {
+        if (part.total != link.info.variables)
+        {
+            n_unknown.fetch_add(1, std::memory_order_relaxed);
+            link.assembling_states = false;
+            return;
+        }
+        if (part.first == 0)
+        {
+            link.partial_states_version = part.version;
+            link.partial_states.clear();
+            link.partial_states.reserve(part.total);
+            link.assembling_states = true;
+        }
+        else if (!link.assembling_states || part.version != link.partial_states_version || part.first != link.partial_states.size())
+        {
+            n_unknown.fetch_add(1, std::memory_order_relaxed);
+            link.assembling_states = false;
+            return;
+        }
+        link.partial_states.insert(link.partial_states.end(), part.states.begin(), part.states.end());
+        if (link.partial_states.size() == part.total)
+        {
+            link.assembling_states = false;
+            hub->agent_availability(link.connection, link.partial_states_version, std::move(link.partial_states));
+            link.partial_states = {};
         }
     }
 

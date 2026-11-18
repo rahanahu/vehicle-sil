@@ -112,6 +112,9 @@ struct EcuOptions
     /// AgentTransportOptions::last_word_wait. A test that checks what the hub has right after the
     /// ECU ended gives it plenty: with a hub that answers, the wait ends with the answer.
     std::chrono::milliseconds last_word_wait = AgentTransportOptions{}.last_word_wait;
+    /// "cmd" reports its availability (Unknown at first), and the application makes it Inactive
+    /// in this step (counted from 1) and every one after it.
+    std::optional<std::int64_t> inactive_from_step{};
 };
 
 /// An ECU with the inputs `cmd` and `timed`, the parameter `gain` and the output `steps` (the
@@ -127,6 +130,7 @@ struct TestEcu
     std::int64_t steps = 0;
     std::vector<std::int64_t> extra;
     std::atomic<std::int64_t> gain_at_step0{std::numeric_limits<std::int64_t>::min()};
+    std::atomic<bool> made_inactive{false}; ///< with EcuOptions::inactive_from_step: after that step
     std::mutex mutex;
     std::vector<std::pair<SimTime, std::int64_t>> timed_seen; ///< guarded by mutex: (step, `timed` as the application saw it)
     std::unique_ptr<Peer> peer;
@@ -157,7 +161,12 @@ struct TestEcu
         AgentOptions agent;
         agent.sample_period = options.sample_period;
         peer->set_agent_options(agent);
-        peer->input("cmd", &cmd);
+        VariableOptions reports;
+        if (options.inactive_from_step)
+        {
+            reports.availability = Availability::Unknown;
+        }
+        peer->input("cmd", &cmd, reports);
         peer->input("timed", &timed);
         VariableOptions parameter;
         parameter.parameter = true;
@@ -175,6 +184,11 @@ struct TestEcu
                 throw std::runtime_error("the test ECU fails here");
             }
             ++steps;
+            if (options.inactive_from_step && steps >= *options.inactive_from_step)
+            {
+                peer->set_availability("cmd", Availability::Inactive); // the same state again changes nothing
+                made_inactive.store(true);
+            }
             if (now == SimTime{})
             {
                 gain_at_step0.store(gain);
@@ -1519,7 +1533,7 @@ std::vector<wire::Bytes> parts_of(std::uint64_t session, const Snapshot& sample)
 {
     std::vector<wire::Bytes> out;
     wire::Bytes scratch;
-    wire::encode_step(session, sample.time, false, {}, {}, &sample, wire::kMinMessageBytes, scratch,
+    wire::encode_step(session, sample.time, false, {}, {}, &sample, nullptr, wire::kMinMessageBytes, scratch,
                       [&](const wire::Bytes& m) { out.push_back(m); });
     return out;
 }
@@ -1843,7 +1857,7 @@ TEST_CASE(a_last_word_is_answered_also_for_a_session_that_has_ended_or_was_never
     const auto last_word = [](std::uint64_t session) {
         wire::Bytes scratch;
         wire::Bytes out;
-        wire::encode_step(session, at(0ms), true, {}, {}, nullptr, wire::kMaxMessageBytes, scratch,
+        wire::encode_step(session, at(0ms), true, {}, {}, nullptr, nullptr, wire::kMaxMessageBytes, scratch,
                           [&](const wire::Bytes& m) { out = m; });
         return out;
     };
@@ -1991,4 +2005,126 @@ TEST_CASE(the_write_a_refusal_is_about_travels_as_a_number_and_the_reason_is_not
     CHECK(said.applied_writes == std::optional<std::uint32_t>{0});
     CHECK(!refuse(std::nullopt).failed_write.has_value());
     CHECK_EQ(side.transport->stats().undecodable, std::uint64_t{0});
+}
+
+namespace {
+
+/// A participant that only listens to the step messages and notes the parts of the availability
+/// of `name`'s session (it never asks whether the agent receives commands).
+struct AvailabilityListener
+{
+    struct Part
+    {
+        SimTime time;
+        std::uint64_t version = 0;
+        std::vector<Availability> states;
+    };
+    std::mutex mutex;
+    std::optional<std::uint64_t> session; ///< guarded by mutex: from the hello
+    std::vector<Part> parts;              ///< guarded by mutex
+    std::unique_ptr<SilKit::IParticipant> participant;
+
+    AvailabilityListener(const std::string& uri, const std::string& name)
+    {
+        participant = vehicle_sil::create_participant(
+            SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(uri)), "Listener",
+            uri, 30s);
+        participant->CreateDataSubscriber(topics::kHelloTopic, topics::spec(topics::kHelloTopic),
+                                          [this, name](pubsub::IDataSubscriber*, const pubsub::DataMessageEvent& event) {
+                                              wire::Hello hello;
+                                              if (!wire::decode_hello({event.data.data(), event.data.size()}, hello) &&
+                                                  hello.participant == name)
+                                              {
+                                                  const std::lock_guard lock(mutex);
+                                                  session = hello.session;
+                                              }
+                                          });
+        participant->CreateDataSubscriber(topics::kStepTopic, topics::spec(topics::kStepTopic),
+                                          [this](pubsub::IDataSubscriber*, const pubsub::DataMessageEvent& event) {
+                                              wire::StepMessage step;
+                                              if (wire::decode_step({event.data.data(), event.data.size()}, step) ||
+                                                  !step.has_availability)
+                                              {
+                                                  return;
+                                              }
+                                              const std::lock_guard lock(mutex);
+                                              if (session == step.session)
+                                              {
+                                                  parts.push_back({step.time, step.availability.version, step.availability.states});
+                                              }
+                                          });
+    }
+    ~AvailabilityListener() { participant.reset(); } // first: its handlers use the members
+
+    [[nodiscard]] std::vector<Part> so_far()
+    {
+        const std::lock_guard lock(mutex);
+        return parts;
+    }
+};
+
+} // namespace
+
+// The agent says the availability of its variables again each second of its steps' time, also
+// when nothing changed and nobody asked: a hub whose subscription to the steps came up late gets
+// it all the same. (A real-time peer: the step time is all it counts, as for virtual time.)
+TEST_CASE(the_availability_is_said_again_each_second_of_step_time)
+{
+    const InProcessRegistry registry;
+    TestEcu real("Real", registry.uri, EcuOptions{.virtual_time = false, .inactive_from_step = 3});
+    real.peer->start(30s);
+    CHECK(eventually([&] { return real.made_inactive.load(); }, 30s));
+    AvailabilityListener listener(registry.uri, "Real");
+    CHECK(eventually([&] { return listener.so_far().size() >= 2; }, 30s));
+    const auto parts = listener.so_far();
+    for (const auto& part : parts)
+    {
+        // "cmd" is the first variable after ecu.connected; the others do not report.
+        CHECK_EQ(part.version, std::uint64_t{1});
+        CHECK_EQ(part.states.size(), real.peer->agent().schema().size());
+        CHECK(part.states.at(1) == Availability::Inactive);
+        CHECK(part.states.at(0) == Availability::Active);
+    }
+    // Not more often than once a second of step time, when nothing changes.
+    for (std::size_t i = 1; i < parts.size(); ++i)
+    {
+        CHECK(parts[i].time - parts[i - 1].time >= 1s);
+    }
+    real.end();
+}
+
+// A hub that comes after the ECU changed the availability of a variable gets the state it has now.
+TEST_CASE(a_hub_that_comes_late_gets_the_availability_the_ecu_has_now)
+{
+    const InProcessRegistry registry;
+    auto real = std::make_unique<TestEcu>("Real", registry.uri, EcuOptions{.virtual_time = false, .inactive_from_step = 3});
+    real->peer->start(30s);
+    CHECK(eventually([&] { return real->made_inactive.load(); }, 30s));
+
+    HubSide side(registry.uri, {"A"}, 10ms, false);
+    auto sub = side.hub.subscribe(SubscriptionOptions{.events = false, .operations = false, .availability = true});
+    TestEcu a("A", registry.uri);
+    start_together(*side.controller, {a.peer.get()});
+    std::optional<AvailabilityUpdate> last;
+    CHECK(eventually(
+        [&] {
+            for (const auto& u : sub->poll(0, 0ms))
+            {
+                if (const auto* got = std::get_if<AvailabilityUpdate>(&u); got != nullptr && got->peer == "Real")
+                {
+                    last = *got;
+                }
+            }
+            return last && last->states.size() > 1 && last->states.at(1) == Availability::Inactive;
+        },
+        30s));
+    // "A" reports nothing, and a write to the Inactive variable takes effect.
+    CHECK(last->incarnation == side.hub.peers().at(0).incarnation || last->incarnation == side.hub.peers().at(1).incarnation);
+    side.wait_ready({"Real"});
+    const std::uint64_t seq = side.hub.write(OperationRequest{{{"Real", "cmd", Value{std::int64_t{5}}}}});
+    check_status(settled(side.hub.wait_done(seq, scaled_timeout(30s)), seq, "a write to an Inactive variable"), "Real",
+                 TargetStatus::Applied);
+    side.controller->stop("done");
+    real->end();
+    a.end();
 }

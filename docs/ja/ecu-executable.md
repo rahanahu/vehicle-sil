@@ -164,6 +164,7 @@ ECU は、`--registry-uri` で参加するとき、何も書かなくても、�
 | 依存するライブラリ | gRPC も Protocol Buffers も必要ありません（ECU の実行ファイルは、どちらにも依存しません）。 |
 | 送信する時点 | 値と書き込みの結果は、ステップの中で、値を読んだ直後に送信します。 |
 | 送信する頻度 | Agent の `sample_period`（既定 10 ms。`Ecu::set_agent_options()`）で、間引きはしません。 |
+| 変数の利用状態 | `VariableOptions::availability` を付けて宣言した変数について、アプリケーションが変えたとき（`Ecu::set_availability()`）と、シミュレーション時間の 1 秒ごとに送信します（[control-api.md](control-api.md) の「変数の利用状態」）。 |
 | `--describe` の `control` | 公開することを `control` に出力します（`Ecu::describe()` 自体は出力せず、`ecu_main` が追加します）。 |
 | ランチャーが待つ ECU | `vehicle_sil_launch run` は、`control` で公開すると出力した ECU だけを待ちます。 |
 | `--no-control` | 公開しなくなり、`--describe` の `control` も `null` になります。 |
@@ -497,6 +498,7 @@ engine_ecu --registry-uri silkit://localhost:8500 --name Engine2 --j1939-node J1
 | `control` | この実行ファイルが `--registry-uri` のときに変数をシミュレーションに公開するなら、その方法。公開しない（`--no-control`）なら `null` |
 | `control.transport` | トランスポート。今は `"silkit"`（SIL Kit の publish/subscribe）だけ |
 | `control.wire_version` | メッセージの形式のバージョン（整数） |
+| `control.wire_revision` | 実行ファイルが書く、その形式の改訂番号（整数）。同じバージョンで改訂の違うランチャーも、変数をふつうに読み書きします。古い実行ファイルからは後の改訂で足したもの（改訂 1: 変数の利用状態）が届かないので、check が注記します（`control-link-revision`） |
 | `features` | この実行ファイルが、起動する側から受け取れる引数や動きの名前の配列（文字列）。`"map-network"` は `--map-network` を、`"j1939-node"` は `--j1939-node` を受け取ります。`ecu_main` の実行ファイルは、どの引数で呼んでも同じ一覧を出します |
 
 キーのない JSON の読み方は次のとおりです。
@@ -505,9 +507,12 @@ engine_ecu --registry-uri silkit://localhost:8500 --name Engine2 --j1939-node J1
 |---|---|
 | `networks[].mac` | 前のバージョンの ECU の JSON です。`null` として読みます。 |
 | `control` | このキーができる前の vehicle-sil でビルドした実行ファイルです。`null` と同じに扱います。 |
+| `control.wire_revision` | このキーができる前の vehicle-sil でビルドした実行ファイルです。0 として読みます。 |
 | `features` | 前のバージョンの ECU の JSON です。空の配列として読みます。 |
 
 `variables[].builtin` は、画面などが、アプリの変数と分けて表示するのに使います。`control.wire_version` が `vehicle_sil_launch` のバージョンと違えば、変数を読み書きできません。
+
+変数は ECU が宣言する候補で、利用状態は含みません。宣言が NVM の内容などの起動時の設定で変わるなら、ECU を組み立てる中で読みます。`--describe` はステップを走らせないので、ステップの中で決まるものは候補に入りません。
 
 例: `vehicle_sil_engine_ecu --describe` の出力です（CTest の `ecu_main.describe` が、実行ファイルの出力とこのブロックをバイト単位で照合します）。
 
@@ -573,7 +578,8 @@ engine_ecu --registry-uri silkit://localhost:8500 --name Engine2 --j1939-node J1
   ],
   "control": {
     "transport": "silkit",
-    "wire_version": 2
+    "wire_version": 2,
+    "wire_revision": 1
   },
   "features": [
     "map-network",

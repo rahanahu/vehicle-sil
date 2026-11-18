@@ -164,6 +164,7 @@ When the ECU joins with `--registry-uri`, it exposes its variables to the simula
 | Dependencies | Neither gRPC nor Protocol Buffers is needed (ECU executables depend on neither). |
 | When it sends | Values and the results of writes are sent within the step, right after the values are read. |
 | How often it sends | At the Agent's `sample_period` (default 10 ms; `Ecu::set_agent_options()`), without thinning out. |
+| Availability of variables | For variables declared with `VariableOptions::availability`: sent when the application changes it (`Ecu::set_availability()`), and again once a second of simulation time (see "Availability of a variable" in [control-api.md](control-api.md#availability-of-a-variable)). |
 | `control` in `--describe` | Reports in `control` that the ECU exposes its variables (`Ecu::describe()` itself does not report it; `ecu_main` adds it). |
 | ECUs the launcher waits for | `vehicle_sil_launch run` waits only for ECUs that report in `control` that they expose their variables. |
 | `--no-control` | The ECU no longer exposes its variables, and `control` in `--describe` becomes `null`. |
@@ -497,6 +498,7 @@ A reader rejects an unknown version and ignores unknown keys. An unknown value o
 | `control` | How this executable exposes its variables to the simulation under `--registry-uri`. `null` if it does not (`--no-control`) |
 | `control.transport` | The transport. Currently only `"silkit"` (SIL Kit publish/subscribe) |
 | `control.wire_version` | The message format version (an integer) |
+| `control.wire_revision` | The revision of that format the executable writes (an integer). A launcher of another revision of the same version reads and writes the variables as usual; the check notes an older executable (`control-link-revision`), because what later revisions added does not arrive from it (revision 1: the availability of the variables) |
 | `features` | Array of the names (strings) of the arguments and behaviors that this executable accepts from the program that starts it. `"map-network"`: it accepts `--map-network`. `"j1939-node"`: it accepts `--j1939-node`. An `ecu_main` executable writes the same list whatever its arguments |
 
 How to read JSON in which a key is missing:
@@ -505,9 +507,12 @@ How to read JSON in which a key is missing:
 |---|---|
 | `networks[].mac` | The JSON of an ECU from an earlier version. Read it as `null`. |
 | `control` | An executable built with a vehicle-sil from before this key existed. Treat it as `null`. |
+| `control.wire_revision` | An executable built with a vehicle-sil from before this key existed. Read it as 0. |
 | `features` | The JSON of an ECU from an earlier version. Read it as an empty array. |
 
 Screens and other tools use `variables[].builtin` to show these variables separately from the application's variables. If `control.wire_version` differs from that of `vehicle_sil_launch`, the variables cannot be read or written.
+
+The variables are the candidates the ECU declares, and say nothing of their availability. If the declarations depend on start-up settings such as the contents of an NVM, read them while the ECU is being set up: `--describe` runs no step, so what is decided in the steps is not among the candidates.
 
 Example: the output of `vehicle_sil_engine_ecu --describe`. The CTest test `ecu_main.describe` compares the output of the executable with this block, byte for byte.
 
@@ -573,7 +578,8 @@ Example: the output of `vehicle_sil_engine_ecu --describe`. The CTest test `ecu_
   ],
   "control": {
     "transport": "silkit",
-    "wire_version": 2
+    "wire_version": 2,
+    "wire_revision": 1
   },
   "features": [
     "map-network",

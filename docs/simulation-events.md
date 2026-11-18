@@ -739,7 +739,7 @@ Each name indicates that the following are present:
 | Name in `features` | Includes |
 |---|---|
 | `speed` | `speed`, `time_step_ms` and `late_tolerance_ms` in the configuration file, `run --speed`, `timing` in the result, the findings `behind-real-time` and `coarse-time-step`, and `actual_speed`, `late_steps`, `max_late_ms`, `slipped_ms` and `late_ms` in the `time` event |
-| `control-links` | The event `control_link`, `participants[].control_link` in the result, `participants[].control` in the check JSON, the findings `control-link-no-hello`, `control-link-version`, `control-link-late-values`, `control-link-dropped` and `control-link-not-offered` |
+| `control-links` | The event `control_link`, `participants[].control_link` in the result, `participants[].control` in the check JSON, the findings `control-link-no-hello`, `control-link-version`, `control-link-revision`, `control-link-late-values`, `control-link-dropped` and `control-link-not-offered` |
 | `manual-participants` | `manual` in the configuration file, `--manual`, `participants[].manual` in the check and result JSON, the finding `participant-manual`, and the `state` `manual` of the event `participant` |
 | `scenario` | `scenario` in the result and check JSON, the event `scenario_step`, the findings `scenario-*`, and a finding's `file` being the scenario file |
 | `scenario-wave` | `undersampled` of that step, the findings `scenario-wave-*`, and `"wave"` as the `kind` of a step in the result and in events |

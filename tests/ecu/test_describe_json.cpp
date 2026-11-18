@@ -118,7 +118,7 @@ TEST_CASE(full_description)
     d.variables.push_back(count);
     d.features = {"map-network", "a \"later\" one"};
 
-    d.control = vehicle_sil::ControlOffer{"silkit", 1};
+    d.control = vehicle_sil::ControlOffer{"silkit", 1, 1};
     check_text(to_json(d),
                R"({
   "vehicle_sil_ecu": 1,
@@ -265,7 +265,8 @@ TEST_CASE(full_description)
   ],
   "control": {
     "transport": "silkit",
-    "wire_version": 1
+    "wire_version": 1,
+    "wire_revision": 1
   },
   "features": [
     "map-network",
@@ -273,6 +274,13 @@ TEST_CASE(full_description)
   ]
 }
 )");
+
+    // Whether a variable reports its availability, and how it starts, is not written: the
+    // description has the candidates, not what the steps decide.
+    vehicle_sil::EcuDescription reporting = d;
+    reporting.variables.at(0).availability = control::Availability::Unknown;
+    reporting.variables.at(1).availability = control::Availability::Inactive;
+    CHECK(to_json(reporting) == to_json(d));
 }
 
 TEST_CASE(numbers_read_back_to_the_same_double)

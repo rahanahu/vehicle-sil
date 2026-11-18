@@ -115,7 +115,18 @@ public:
 | Output | Read-only |
 | Parameter | Writable only before the first step |
 
-The metadata consists of the name (`.` separates levels), the unit, the minimum and the maximum (both inclusive; NaN is not allowed), the value increment (`step`; a hint for editing, not enforced), the description and the enum items. `schema()` returns the variables in the order they were registered.
+The metadata consists of the name (`.` separates levels), the unit, the minimum and the maximum (both inclusive; NaN is not allowed), the value increment (`step`; a hint for editing, not enforced), the description, the enum items, and whether the variable reports its availability (with its first state). `schema()` returns the variables in the order they were registered.
+
+#### Availability
+
+A variable declared with `VariableOptions::availability` reports whether it is in use (`Availability`: `Unknown`, `Active`, `Inactive`). The ECU's application owns the state and changes it with `set_availability()`; nothing else decides it, and nothing in vehicle-sil decides by it: the Agent and the Hub check and apply writes, read values and take samples as for any other variable.
+
+- `availability()` has one state per variable, in schema order (a variable that does not report: `Active`). It is allocated and filled from the declarations when the schema is fixed. That is before the first step when a transport completes the schema (control_silkit::AgentTransport does); otherwise the first step fixes the schema and allocates it once there. Later steps never allocate for it.
+- `availability_version()` goes up by one each time `set_availability()` changes a state (0: the declared states). The same state again changes nothing.
+- `set_availability()` and both readers belong to the step thread (or the setup thread after the schema is fixed and before the first step). No other thread reads the states: the transport reads them in its step sink. Before the schema is fixed, `set_availability()` throws `std::logic_error` (the declaration gives the first state).
+- Which variables report is fixed with the schema. The states are not part of a sample, and `--describe` does not write them.
+- The time of a state is the start of the step whose message carries it, decided as for the values of a sample: read the states of a variable as a sequence that is constant between changes (its state at T is the last change at or before T). The sequence begins with the declared state of the hello, which holds from the start until the first step message that carries states.
+- Every change is sent in the step that made it (several changes in one step: the state at the end of that step), from within that step, so it falls under the same completeness promise as the samples (HubTransport). Only receivers fold changes together: a subscription keeps the latest state of each peer. A resend repeats the same states with the same version, so it adds no change.
 
 #### When the schema is fixed
 
@@ -186,7 +197,7 @@ If you register a function, the Agent calls it at the end of every step (right a
 
 | Thread | Functions it calls |
 |---|---|
-| The step thread (one) | `on_step_begin`, `on_step_end`, `log`, `finish` |
+| The step thread (one) | `on_step_begin`, `on_step_end`, `log`, `set_availability`, `availability`, `availability_version`, `finish` |
 | The transport side | `submit`, `drain_results`, `drain_events`, `latest`, `stats` (thread-safe with each other; can be called from several threads) |
 
 - The step thread never waits for the transport side.
@@ -257,7 +268,7 @@ The Hub is the part of the Control Server that does not depend on how it communi
 ### Calls from the transport
 
 - For each connection, the transport calls `agent_connected(hello, link)` and receives a `ConnectionId`.
-- From then on, it passes what it receives from the Agent (`agent_submitted`, `agent_result`, `agent_values`, `agent_events`, `agent_status`) and the disconnection (`agent_disconnected`) with that ID.
+- From then on, it passes what it receives from the Agent (`agent_submitted`, `agent_result`, `agent_values`, `agent_availability`, `agent_events`, `agent_status`) and the disconnection (`agent_disconnected`) with that ID.
 - The `hello` is built after the Agent is attached to the `Peer` with `attach()` (so that the monitoring outputs are in the schema).
 - `agent_status` receives `Peer::failed()` and `error()` (step failures do not arrive through the monitoring outputs).
 - The SIL Kit transport does not call `agent_status` (it remains in the Hub's API). The `status` of a peer that clients see is therefore always empty, and the simulation monitoring (`SimulationMonitor`) reports participant failures.
@@ -352,7 +363,8 @@ With the state, each peer's result says which of its writes took effect and whic
 - For peers, values and operations, it keeps only the latest state per peer and per operation (a change before it is read replaces the previous one).
 - Events and operations are bounded (`capacity`). On overflow, the oldest events and the operations that changed longest ago are dropped and counted.
 - Values carry the incarnation of their schema.
-- `poll()` returns peers, then operations (in number order), then events (in order of reception), then values.
+- With `SubscriptionOptions::availability` (off by default), it also receives `AvailabilityUpdate`: the states of all variables of a peer with a variable that reports, in the order of its schema (the seen schema of a variable map has the same order). It keeps the latest per peer, and a change before it is read replaces the previous one without counting as dropped. A new incarnation starts from the declared states of its schema, and replaces what the subscription still holds of the old one. The Hub ignores states from a connection that is not the current one, of an older `version` than it has, and of another length than the schema.
+- `poll()` returns peers, then the availability, then operations (in number order), then events (in order of reception), then values.
 - `close()` wakes a waiting `poll()` and ends it.
 
 ### Reading the latest values together (`latest_of()`)
@@ -441,6 +453,7 @@ Every message starts with the format version, `kVersion` (2). Both sides write `
   - The decoder skips what it does not know (the rest of an element, the rest of a message, flag bits) only when the writer's revision is newer than its own. From a writer of the same or an older revision, every size must be exactly what the decoder reads, and extra bytes are an error.
   - A value that must not be skipped (an unknown enumerator) is an error from any revision. A writer must not send one to an older side. The other side's revision arrives in the header, but nothing reads it yet: whoever raises `kRevision` and adds such a value makes the transport keep that revision and check it before sending.
 - A result says how many writes of a command were applied (`CommandResult::applied_writes`), and a refusal says which write it is about (`SubmitResult::failed_write`); either can be empty (not said).
+- Revision 1 added the availability of the variables. A variable of the hello ends with one byte: 0 if it does not report, else 1 plus its first state. A step message can carry, behind the values and announced by its own flag (4), one part of the availability: `version` (u64), `total`, `first` and `count` (u32 each), and one byte per state. Like the values, the list is split over several messages when it does not fit; the parts of one list share its `version`. A reader decides by the flag, never by the bytes left. A side of revision 0 skips both, so every variable looks `Active` to it, and from it nothing arrives, which revision 1 reads as "no variable reports". The check compares the revision of an ECU (`control.wire_revision` of `--describe`) with its own and notes an older one (`control-link-revision`).
 - Adding a kind that the other side can safely ignore changes neither the version nor the revision: an unknown kind is counted as an unreadable message and dropped (the answer to the last word was added this way).
 
 - The decoder never throws and never reads outside the bytes it is given.
@@ -489,6 +502,7 @@ A hello is always a single message, because a subscriber that joins later receiv
 - An Agent has only one `AgentTransport`.
 - Nothing is sent from other threads.
 - A step that produced nothing sends nothing.
+- If a variable reports its availability, the step thread sends the states of all variables when `availability_version()` changed since it last sent them, in the first step after it answered a probe, and when one second of step time has passed since it last sent them. The last is for a Hub whose subscription to the step messages came up after the probe was answered, and for a lost message. It counts the time of the steps (virtual or real), not the wall clock. An Agent without such a variable sends no states.
 - The destructor waits at most `AgentTransportOptions::last_word_wait` (default 500 ms).
 - Destroy it after stopping the ECU and before destroying the ECU (it holds a `control::TransportLease`).
 - Do not destroy it from inside a SIL Kit handler (that is the thread that receives the answer, so the destructor would wait the full limit).

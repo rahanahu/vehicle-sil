@@ -11,6 +11,7 @@
 #include "test_harness.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
+#include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
@@ -161,7 +162,8 @@ struct Probe
 /// Kit (unless --no-control) and takes --map-network and --j1939-node.
 vehicle_sil::EcuDescription offered(vehicle_sil::EcuDescription description)
 {
-    description.control = vehicle_sil::ControlOffer{"silkit", 2};
+    description.control = vehicle_sil::ControlOffer{"silkit", vehicle_sil::control::wire::kVersion,
+                                                     vehicle_sil::control::wire::kRevision};
     description.features = {"map-network", "j1939-node"};
     return description;
 }
@@ -1085,7 +1087,7 @@ TEST_CASE(ecu_main_offers_its_variables_to_the_simulation_unless_no_control)
             "--describe --no-control", described);
     const Result offering = call({"--describe"});
     require(offering.code == 0 &&
-                contains(offering.out, "  \"control\": {\n    \"transport\": \"silkit\",\n    \"wire_version\": 2\n  },\n"),
+                contains(offering.out, "  \"control\": {\n    \"transport\": \"silkit\",\n    \"wire_version\": 2,\n    \"wire_revision\": 1\n  },\n"),
             "--describe says that the variables are offered", offering);
     const Result local = call({"--local", "--run-for-ms", "20", "--no-control"});
     require(local.code == 0, "--local --no-control", local);
