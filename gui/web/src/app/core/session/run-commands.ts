@@ -1,11 +1,11 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { ActionError, Intent, RunRequest } from '@vehicle-sil/gui-client';
+import { ActionError, CheckResult, Intent } from '@vehicle-sil/gui-client';
 import { GUI_FRONT, readableSignal } from './gui-client';
 
 /**
- * 実行の操作（開始、順に止める、待たずに止める）の、Angular の包み。アプリ全体で 1 つ。操作の可否と理由は正面の口の
- * `controls`、操作は正面の口の `run`（Promise）で、ここは自分で可否を推測しない。応答の要約は、ライブラリが
- * セッションの写しに当てる。
+ * 実行の照合と操作（開始、順に止める、待たずに止める）の、Angular の包み。アプリ全体で 1 つ。操作の可否と理由は
+ * 正面の口の `controls`、照合と操作は正面の口の `check` と `run`（Promise）で、ここは自分で可否を推測せず、意図を
+ * 組み直さない。応答の要約は、ライブラリがセッションの写しに当てる。
  */
 @Injectable({ providedIn: 'root' })
 export class RunCommands {
@@ -31,17 +31,17 @@ export class RunCommands {
     return failure && failure.run === this.status().run ? failure.error.message : null;
   });
 
-  /** 実行を始める。断られたら error に出る。 */
-  start(request: RunRequest): void {
-    const intent: Intent = {
-      disable: request.disable,
-      ...(request.start_paused ? { start_paused: true } : {}),
-      ...(request.manual ? { manual: request.manual } : {}),
-      ...(request.scenario !== undefined ? { scenario: request.scenario } : {}),
-      ...(request.speed !== undefined ? { speed: request.speed } : {}),
-      ...(request.connect !== undefined ? { connect: request.connect } : {}),
-    };
-    this.send(() => this.front.run.start(intent, { file: request.file }));
+  /**
+   * `file` を `intent` で照合する（正面の口の `check`: 1 つずつ送り、同じ意図の照合は分け合う。`signal` が中断した
+   * 照合は、待っている間なら送らない）。失敗は呼んだ側のもの（error には出さない）。
+   */
+  check(intent: Intent, file: string, signal?: AbortSignal): Promise<CheckResult> {
+    return this.front.check(intent, { file, ...(signal ? { signal } : {}) });
+  }
+
+  /** `file` の実行を `intent` で始める。断られたら error に出る。 */
+  start(intent: Intent, file: string): void {
+    this.send(() => this.front.run.start(intent, { file }));
   }
 
   /** 順に止める（participant の終わりを待つ）。 */

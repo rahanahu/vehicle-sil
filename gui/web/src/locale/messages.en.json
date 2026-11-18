@@ -918,10 +918,6 @@
       "source": " まだ実行していません。始めると、participant の状態とログがここに出ます。 ",
       "target": " Nothing has run yet. When you start a run, participant status and the log appear here. "
     },
-    "6710731690961911262": {
-      "source": "ランチャーがこの画面に対応していません。",
-      "target": "The launcher does not support this GUI."
-    },
     "4802514740729461545": {
       "source": "構成ファイルを選んでください。",
       "target": "Choose a configuration file."

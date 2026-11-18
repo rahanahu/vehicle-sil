@@ -1,8 +1,6 @@
 import { Injectable, computed, inject, resource } from '@angular/core';
 import {
   AppInfo,
-  CheckRequest,
-  CheckResult,
   ConfigList,
   DashboardResponse,
   Recording,
@@ -12,7 +10,7 @@ import { AuthToken } from '../auth/auth-token';
 import { GUI_CLIENT, readableSignal } from './gui-client';
 
 /**
- * サーバーとランチャーの情報（GET api/app）と、1 回で終わる要求（構成ファイルの一覧、照合）の、Angular の包み。
+ * サーバーとランチャーの情報（GET api/app）と、1 回で終わる要求（構成ファイルの一覧、シナリオ、ダッシュボード）の、Angular の包み。
  * アプリ全体で 1 つ。ランチャーの `features`（何ができるか）を、画面のどの部品からも同じ signal で読む。古い
  * ランチャーが持たない機能の操作は、ここを見て出さない。中身はクライアントのライブラリ（`@vehicle-sil/gui-client`）。
  */
@@ -71,10 +69,5 @@ export class ServerInfo {
   /** GET api/recording: いまの（最後の）実行で反映された書き込みを、シナリオの YAML にしたもの。 */
   recording(): Promise<Recording | null> {
     return this.client.recording();
-  }
-
-  /** POST api/check: 構成ファイルを照合する。 */
-  check(request: CheckRequest): Promise<CheckResult> {
-    return this.client.check(request);
   }
 }

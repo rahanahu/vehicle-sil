@@ -258,9 +258,10 @@ describe('<vsil-connect>', () => {
     expect(lines(part, 'vsil-findings')).toEqual([]);
   });
 
-  it('checks a choice that the page made itself, and the parts of a page share one check', async () => {
+  it('checks a choice that the page made itself, and the parts of a page check the same intent', async () => {
     const front = fakeFront();
-    // A check takes a while (the launcher describes every participant): the second part asks while it goes
+    // A check takes a while (the launcher describes every participant): the second part asks while it goes. The
+    // parts ask for the same intent and file, which `check()` sends once (front.spec)
     const answer = deferred<CheckResult>();
     front.spies.check.mockReturnValue(answer.promise);
     pageIntent.update({ connect: { CAN1: 'can0', CAN2: 'can0' } });
@@ -268,7 +269,8 @@ describe('<vsil-connect>', () => {
     const second = await mount('vsil-connect', front, { network: 'CAN2' });
     expect(first.querySelector('select')!.value).toBe('can0');
     await settleCheck();
-    expect(front.spies.check).toHaveBeenCalledTimes(1);
+    expect(front.spies.check).toHaveBeenCalledTimes(2);
+    expect(front.spies.check.mock.calls[0]).toEqual(front.spies.check.mock.calls[1]);
     expect(front.spies.connections).not.toHaveBeenCalled();
     answer.resolve(
       checked([

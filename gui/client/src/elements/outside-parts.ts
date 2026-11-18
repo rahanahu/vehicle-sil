@@ -36,27 +36,7 @@ const CHECK_DELAY_MS = 200;
 /** Keys that pass the select by, or close it: they do not open the choice. */
 const PASSING_KEYS = new Set(['Tab', 'Shift', 'Escape', 'Control', 'Alt', 'Meta']);
 
-/** The check on its way for each connection: the parts that check the same intent of the same file share it. */
-const checking = new WeakMap<Front, { key: string; promise: Promise<CheckResult> }>();
-
 const keyOf = (intent: Intent, file: string | undefined) => JSON.stringify([file ?? null, intent]);
-
-function sharedCheck(
-  client: Front,
-  intent: Intent,
-  file: string | undefined,
-): Promise<CheckResult> {
-  const key = keyOf(intent, file);
-  const going = checking.get(client);
-  if (going?.key === key) return going.promise;
-  const entry = { key, promise: client.check(intent, { file }) };
-  checking.set(client, entry);
-  const done = () => {
-    if (checking.get(client) === entry) checking.delete(client);
-  };
-  entry.promise.then(done, done);
-  return entry.promise;
-}
 
 /**
  * The lines of a check that are about connecting `network`: its own `connect-*` and `outside-*` findings; the
@@ -232,7 +212,8 @@ export class VsilConnectElement extends Part {
       const intent = pageIntent.get();
       const asked = ++checks;
       checked = keyOf(intent, file());
-      sharedCheck(client, intent, file()).then(
+      // The parts and the screen of a page that check the same intent share one check (`check()` does)
+      client.check(intent, { file: file() }).then(
         (result) => {
           if (!alive() || asked !== checks) return;
           relisted = false;

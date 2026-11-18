@@ -188,6 +188,11 @@ describe('RunPage', () => {
     (fixture.nativeElement as HTMLElement)
       .querySelector<HTMLInputElement>('[data-testid="start-paused"] input')
       ?.click();
+    TestBed.tick();
+    // 止めて始めるも照合の意図にある: 照合し直してから始める
+    const paused = await checkRequest();
+    expect(paused.request.body).toMatchObject({ start_paused: true });
+    paused.flush(response('check-passed'));
     await fixture.whenStable();
     await sleep(10);
     await fixture.whenStable();
@@ -315,6 +320,111 @@ describe('RunPage', () => {
     } finally {
       pageIntent.update({ connect: undefined });
     }
+  });
+
+  it('writes its choices into the page intent, so that a part checks the same intent in one check', async () => {
+    const fixture = await openWithFiles();
+    (await checkRequest()).flush(response('check-passed'));
+    await fixture.whenStable();
+    expect(pageIntent.get()).toEqual({ disable: [], manual: [] });
+    // 部品のネットワークに先を選んだ: 部品（約 200 ms 後）と画面（CHECK_DELAY_MS 後）が同じ意図を照合する
+    pageIntent.update({ connect: { J1939_CAN: 'can0' } });
+    TestBed.tick();
+    toggle(fixture, 'Dashboard');
+    expect(pageIntent.get()).toEqual({
+      connect: { J1939_CAN: 'can0' },
+      disable: ['Dashboard'],
+      manual: [],
+    });
+    const part = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="connect-J1939_CAN"] vsil-connect',
+    );
+    expect(part?.getAttribute('data-chosen')).toBe('can0');
+    await sleep(CHECK_DELAY_MS + 20);
+    answerScenarios();
+    const once = http.expectOne('api/check');
+    expect(once.request.body).toEqual({
+      file: 'bad-lines.yaml',
+      disable: ['Dashboard'],
+      manual: [],
+      connect: { J1939_CAN: 'can0' },
+    });
+    once.flush(response('check-disabled'));
+    await fixture.whenStable();
+    expect(text(fixture, 'check-participant-Dashboard')).toContain('外した');
+    http.expectNone('api/check');
+
+    // ページを離れたら、画面が書いた欄は消える（外につなぐ先は部品が消す）
+    fixture.destroy();
+    pageIntent.update({ connect: undefined });
+    expect(pageIntent.get()).toEqual({});
+  });
+
+  it('checks the speed and the paused start with the rest, and does not start on what the check refuses', async () => {
+    const fixture = await openWithFiles();
+    (await checkRequest()).flush(response('check-passed'));
+    await fixture.whenStable();
+    const element = fixture.nativeElement as HTMLElement;
+    pageIntent.update({ connect: { ETH_EXT: 'fake0' } });
+    try {
+      [...element.querySelectorAll<HTMLButtonElement>('app-speed-picker mat-button-toggle button')]
+        .find((b) => b.textContent?.includes('倍率'))
+        ?.click();
+      TestBed.tick();
+      const factor = element.querySelector<HTMLInputElement>('[data-testid="speed-factor"]')!;
+      // 打っている途中: 読めない値は意図に入らない（照合は最後に読めた速さのまま、1 回だけ）
+      for (const text of ['2', '2x']) {
+        factor.value = text;
+        factor.dispatchEvent(new Event('input'));
+        TestBed.tick();
+      }
+      element.querySelector<HTMLInputElement>('[data-testid="start-paused"] input')?.click();
+      TestBed.tick();
+      const checked = await checkRequest();
+      expect(checked.request.body).toEqual({
+        file: 'bad-lines.yaml',
+        disable: [],
+        manual: [],
+        speed: 2,
+        start_paused: true,
+        connect: { ETH_EXT: 'fake0' },
+      });
+      expect(pageIntent.get()).toMatchObject({ speed: 2, start_paused: true });
+      // 実時間を保つ実行は、その速さと止めて始めるを照合で断る: 始める前に所見が出て、開始は止まる
+      const refused = structuredClone(response('check-failed')) as {
+        check: { findings: { code: string; message: string }[] };
+      };
+      refused.check.findings[0]!.code = 'outside-real-time';
+      refused.check.findings[0]!.message = 'the run keeps real time: leave the speed out.';
+      checked.flush(refused);
+      await fixture.whenStable();
+      expect(text(fixture, 'check-card')).toContain('outside-real-time');
+      expect(disabled(button(fixture, 'start'))).toBe(true);
+      // 倍率を直すまでは、速度の誤りが開始を止める
+      expect(text(fixture, 'blocked')).toContain('速度の倍率が範囲の外です。');
+    } finally {
+      pageIntent.update({ connect: undefined });
+    }
+  });
+
+  it('does not send a participant both left out and started by hand', async () => {
+    const fixture = await openWithFiles();
+    (await checkRequest()).flush(response('check-passed'));
+    await fixture.whenStable();
+    (fixture.nativeElement as HTMLElement)
+      .querySelector<HTMLButtonElement>('[data-testid="manual-Engine"] button[role="switch"]')
+      ?.click();
+    TestBed.tick();
+    (await checkRequest()).flush(response('check-passed'));
+    await fixture.whenStable();
+    // 外すと「自分で起動する」も外れる（check-panel）。ランチャーは両方に入った名前を照合で断る
+    toggle(fixture, 'Engine');
+    const again = await checkRequest();
+    expect(again.request.body).toEqual({
+      file: 'bad-lines.yaml',
+      disable: ['Engine'],
+      manual: [],
+    });
   });
 
   it('shows in the result why a run connected outside failed, in the launcher words', async () => {

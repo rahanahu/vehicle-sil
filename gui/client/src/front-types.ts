@@ -298,9 +298,12 @@ export interface Front {
   /**
    * Checks what `intent` would start, without starting it (`POST api/check`), and returns the launcher's check result
    * (`findings`; `time_lock` and `networks[].outside` are in `raw`). Rejects with an ActionError (`target-not-listed`,
-   * `check-busy`, `unknown-field`, ...); a failure is not put into `status.problem`.
+   * `check-busy`, `unknown-field`, ...); a failure is not put into `status.problem`. It sends one check at a time (the
+   * next after the answer to the one before), and a check of the same intent and file as one that waits or is on its
+   * way shares it. A check that waits is not sent when `signal` has aborted for every caller of it (it rejects with the
+   * signal's reason).
    */
-  check(intent?: Intent, options?: { file?: string }): Promise<CheckResult>;
+  check(intent?: Intent, options?: { file?: string; signal?: AbortSignal }): Promise<CheckResult>;
   /** A variable by `"Peer.variable"` (cut at the first dot) or `{peer, name}` (for a peer whose name has a dot). */
   variable(ref: string | VariableRef): FrontVariable;
   /** Disconnects and fails what is waiting. A connection that `connect()` shares is made again by the next `connect()`. */
