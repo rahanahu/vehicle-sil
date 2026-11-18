@@ -12,17 +12,27 @@
 | 書き込みが反映されるステップ | [書き込み](#書き込み) |
 | 波形の種類とキー | [波形で動かす（`wave`）](#波形で動かすwave) |
 | `ramp` と `wave` の横の `expect` | [動かしている間ずっと確認する](#動かしている間ずっと確認する) |
+| 1 つのシナリオを複数の機種、要求、設定ファイルで使う | [シナリオを使い回す](#シナリオを使い回す) |
 | パラメーター、機種、手順のスキップ | [機種とパラメーター](#機種とパラメーター) |
 | 合否の決まり方、実行したときの指摘のコード | [結果](#結果) |
 | 照合の指摘のコード | [照合（`check --scenario`、`run --scenario` の最初）](#照合check---scenariorun---scenario-の最初) |
 | 人向けの出力、JSON のキー | [出力](#出力) |
+| 合否を決める値と、知らない値の読み方 | [結果を決める値](#結果を決める値) |
 | `--control` と一緒に使う | [実行中に変数を見る（`--control`）](#実行中に変数を見る--control) |
 | 使えない引数、できないこと | [一緒に使えない引数と制限](#一緒に使えない引数と制限) |
 | ランチャーがどの機能を持つか | [ランチャーの機能の名前（`features`）](#ランチャーの機能の名前features) |
 
 シナリオは、決まった手順で ECU の変数に値を設定し、結果を確認するファイルです。`vehicle_sil_launch run <設定ファイル> --scenario <シナリオ>` は、シミュレーションを起動し、シナリオを最後まで進めて止め、終了コードで合否を返します。そのまま自動テストになります。
 
-同じ設定ファイルと同じシナリオなら、結果（どの手順が、どの仮想時間に、どの値で成功したか、失敗したか）はいつも同じです。PC の速度、最速か等速か（`speed`）、ECU の処理の重さでは変わりません。判定には仮想時間だけを使い、実時間の待ちやタイムアウトは使いません。
+同じビルド、同じ設定ファイル、同じシナリオなら、結果（どの手順が、どの仮想時間に、どの値で成功したか、失敗したか）は同じです。判定に使うのは、仮想時間と、ECU が送る値だけです。実時間の待ちやタイムアウトは使いません。そのため、PC の速度、`speed`、ECU の処理の重さでは変わりません。実行中に時間を動かしても（一時停止、ステップ実行、速さの変更、`run_until`。[実行中に変数を見る（`--control`）](#実行中に変数を見る--control)）変わりません。
+
+これが成り立つのは、次のときです。
+
+- 参加するものがすべて仮想時間で動き（`--describe` が、どの ECU にもタイムステップを報告する）、シミュレーションの外につながるものがありません（`--connect` も、有効な `role: bridge` の participant もない）。外につなぐものは、`check --json`（と `run --json` の `check`）の `time_lock.because` に出ます。外につながった実行は実時間で動き、入力が毎回違うので、結果が同じになることは約束しません。
+- ECU 自身が、実時間や乱数に頼らず、値を自分のステップの中で送ります（そうでなければ、実行は警告 `control-link-late-values` を出します）。時刻の同期の外にあるものの動き（タイムステップのない ECU、`describe: false` の participant、設定ファイルにない participant）は、結果を変えることがあります。このうちランチャーが知っているのは、タイムステップのない ECU だけです（注記 `unsynchronized-time-changed`）。
+- ビルドが同じです。`sine`、`chirp`、`lag` の整数への丸めは、OS やコンパイラーによって 1 ずれることがあります（[値の決まり方](#値の決まり方)）。
+
+controller のタイムステップ（`time_step_ms`）、`incomplete` の実行、`stop_at_ms` で終わった実行には、それぞれ例外があります。[simulation-run.md](simulation-run.md#シナリオの実行を時間の軸で記録する--timeline) の「シナリオの実行を時間の軸で記録する（`--timeline`）」を見てください。
 
 シナリオが使う変数は、`ecu_main` で作った ECU が宣言したものと、どの ECU にもある `ecu.connected` です（[ecu-executable.md](ecu-executable.md) の「変数を公開する」）。名前は `vehicle_sil_launch check --json` の `participants[].variables` でわかります。gRPC は使いません（Control Server のないビルドでも動きます）。
 
@@ -116,7 +126,13 @@ steps:
 
 ## ファイルの形式
 
-YAML です（`{` で始まれば JSON）。設定ファイルとは別のファイルにします。形式はまだ変わることがあります。
+YAML です（`{` で始まれば JSON）。設定ファイルとは別のファイルにします。
+
+形式の広げ方は次のとおりです。
+
+- 新しい言葉（キー、手順、条件）は、バージョン（`vehicle_sil_scenario: 1`）を上げずに足します。足した言葉は、`vehicle_sil_launch version --json` の `features` に出ます（[ランチャーの機能の名前（`features`）](#ランチャーの機能の名前features)）。
+- ファイルは閉じています。ランチャーが知らないキーはエラー（`unknown-key`）です。古いランチャーは、新しい言葉を黙って読み飛ばさずに断ります。
+- 言葉の意味が変わるとき、言葉がなくなるとき、既定値が変わるときは、バージョンを上げます。古いバージョンのファイルは `format-version` で断ります。
 
 ### 最上位のキー
 
@@ -571,6 +587,24 @@ U は、E が ECU のステップの上なら E、間なら次のステップで
 | 数 | 照合と実行の合否の行（`1 expect not checked`）、JSON の `unchecked_expects`、`vehicle_sil_launch test` の表（`1 expect was not checked`）です。 |
 | 理由 | 人向けの出力は表の下の `line <行> expect not checked: <理由>`、JSON は手順の `expect_skipped` です。 |
 
+## シナリオを使い回す
+
+| したいこと | 書くもの | 見る所 |
+|---|---|---|
+| 同じシナリオを、すべての機種で実行する | 設定ファイルの `variants` と、`vehicle_sil_launch test` | [機種とパラメーター](#機種とパラメーター)、[simulation-run.md](simulation-run.md#シナリオをまとめて実行するvehicle_sil_launch-test) の「シナリオをまとめて実行する（`vehicle_sil_launch test`）」 |
+| 機種ごとに値を変える | `params` と `${name}` | [パラメーター（`params`、`${name}`）](#パラメーターparamsname) |
+| 機種にない変数を使う手順をスキップする | 変数の項目の `absent: true`、または機種の participant の `enabled: false` | [ない変数を使う手順のスキップ](#ない変数を使う手順のスキップ) |
+| 一部の機種だけでシナリオを実行する | `only` | [機種を限定する（`only`）](#機種を限定するonly) |
+| 実装ごとに変数の名前や単位を変える | 設定ファイルの `variables` | [simulation-config.md](simulation-config.md#変数の名前と値を合わせるvariables) の「変数の名前と値を合わせる（`variables`）」 |
+| 実装ごとにネットワークの名前を変える | 設定ファイルの `network_names`（シナリオにネットワークの名前は書かない） | [simulation-config.md](simulation-config.md#ネットワークの名前を合わせるnetwork_names) の「ネットワークの名前を合わせる（`network_names`）」 |
+| シナリオと選択（機種、パラメーター、participant、速さ）を 1 つのファイルで共有する | 要求ファイル: `check` と `run` の `--request`（`test` は受けません）。ファイルに設定ファイルの名前は書きません。シナリオの相対パスは、設定ファイルのあるディレクトリから読みます | [simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」、[examples/ecu_main/requests/throttle_step.json](../../examples/ecu_main/requests/throttle_step.json) |
+| 同じシナリオを、別の設定ファイルで実行する | その設定ファイルを引数に渡します。ない participant があれば、エラー `scenario-variable` です | [照合（`check --scenario`、`run --scenario` の最初）](#照合check---scenariorun---scenario-の最初) |
+
+今のシナリオにできないこと（文面を写してください）:
+
+- 複数のシナリオで共有する手順を取り込むこと。
+- participant の名前をパラメーターにすること。
+
 ## 機種とパラメーター
 
 設定ファイルに機種（`variants`）があるとき、同じシナリオをどの機種にも使えるように、次の 3 つがあります。
@@ -873,6 +907,25 @@ failed: 5 errors, 0 warnings, 0 notes
 ## 出力
 
 `run --scenario` に `--timeline <file>` を付けると、シナリオが書いた値と見た値を、仮想時刻の順に JSON のファイルにも書きます（手順の見張りの区間、失敗の値、値の列。[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。
+
+### 結果を決める値
+
+JSON や timeline ファイルを読む側は、次の値で合否を決めます。値は増えることがあるので、知らない値は安全な側に読みます。
+
+| 所 | 値 |
+|---|---|
+| `run --json` の `result` と `end` | 実行の全体です。`ok` が真なら成功です（`ok` が真になるのは終了コードが 0 のときだけです。[実行の終わり方（`end`、`ok`、`message`）](simulation-run.md#実行の終わり方endokmessage)）。`result` と `end` には、成功でもエラーでもない値（`stopped`、`incomplete`、`interrupted`）がすでにあります |
+| `run --json` の `scenario.status` | `passed`、`failed`、`incomplete`、`not_run` |
+| 手順の `status`（`run --json`、`run --events` の `scenario_step`、timeline ファイル） | `passed`、`failed`、`unfinished`、`not_run`、`skipped` |
+| `test --json` の `result` と `runs[].result` | `test` の全体と、それぞれの実行 |
+| `check --json` の `result`、`participants[].status`、指摘の `severity` | [simulation-check.md](simulation-check.md#json--json) |
+
+読み方は次のとおりです。
+
+- 実行の全体（`run --json` の `result` と `end`）は、`ok` で決めます。`ok` がなければ終了コードで決めます。こうすれば、知らない `result` や `end` が出ても困りません。`ok` は正しいままです。
+- `ok` のない値では、知らない値を成功と数えません。知らない `severity` は、照合と同じくエラーとして扱います。
+- 成功と数える値と、成功でも失敗でもない値（`test` の `skipped` のようなもの）は、`result` と `end`（`ok` が正しいままです）を除き、形式のバージョンを上げるときだけ足します。
+- 説明するだけの値（手順の `kind`、条件の `op`、`watch` の `mode`、系列の `source`、線の `kind`）は、知らなければ名前と `text` を出し、描きません。
 
 ### 人向けの出力
 

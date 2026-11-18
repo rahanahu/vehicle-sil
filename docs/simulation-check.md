@@ -337,7 +337,7 @@ failed: 3 errors, 1 warning, 0 notes
 
 The output is one JSON object. It follows the same rules as the `--describe` JSON: a fixed key order, every key written even without a value, an indent of 2 spaces, and LF line endings even on Windows. A missing value is `null` (never an empty string), and a missing array is an empty array.
 
-The first key, `vehicle_sil_check`, is the format version. The version goes up when the meaning of a key or a `code` changes, or when one is removed. Keys, and values of `code`, `severity`, `result` and `participants[].status`, may be added without a new version. A reader handles what it does not know as follows:
+The first key, `vehicle_sil_check`, is the format version. The version goes up when the meaning of a key or a `code` changes, or when one is removed. Keys, and values of `code`, `severity`, `result` and `participants[].status`, may be added without a new version, because a reader reads an unknown one on the safe side, as the table below says (see also [Values that carry the result](scenario.md#values-that-carry-the-result)). A reader handles what it does not know as follows:
 
 | Unknown item | What the reader does |
 |---|---|
