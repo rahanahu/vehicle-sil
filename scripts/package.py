@@ -450,7 +450,7 @@ vehicle-sil version (the ECU project template: GIT_TAG v{version}).
 | `client/vehicle-sil-gui-client-{version}.tgz` | the same library as an npm package with its types: `npm install <this file>`, then `import ... from '@vehicle-sil/gui-client'` |
 | `client/vehicle-sil-timeline.js`, `.d.ts` | the element `<vehicle-sil-timeline>`, which draws a scenario run's timeline on a screen of your own: `<script src>` it, or import it (the npm package has it as `@vehicle-sil/gui-client/timeline`); the GUI server serves it as `timeline/vehicle-sil-timeline.js` |
 | `gui_starter/` | a screen of your own to start from (parts in HTML and a short script; it loads the library and the parts from the GUI server's `vsil/`, so it has no copy of them): `vehicle-sil-gui --web gui_starter simulation.yaml` |
-| `schema/` | the JSON Schemas of the configuration (`simulation.schema.json`), of a scenario (`scenario.schema.json`) and of `<configuration>.dashboard.yaml` (`dashboard.schema.json`), and of the file that `vehicle_sil_launch run --scenario --timeline` writes (`timeline.schema.json`, for tools that read it): an editor with a YAML language server completes and checks a file whose first line is `# yaml-language-server: $schema=<path of the schema>`. `get_tools.py` of the project template copies them to the project's `schema/` |
+| `schema/` | the JSON Schemas of the configuration (`simulation.schema.json`), of a scenario (`scenario.schema.json`), of a request file of `vehicle_sil_launch run --request` (`run-request.schema.json`) and of `<configuration>.dashboard.yaml` (`dashboard.schema.json`), and of the file that `vehicle_sil_launch run --scenario --timeline` writes (`timeline.schema.json`, for tools that read it): an editor with a YAML language server completes and checks a file whose first line is `# yaml-language-server: $schema=<path of the schema>`. `get_tools.py` of the project template copies them to the project's `schema/` |
 | `LICENSE`, `THIRD_PARTY_NOTICES.md`, `licenses/` | the license of vehicle-sil and the notices and license texts of what these tools contain |
 
 Put `bin` on PATH, then, next to your simulation.yaml:
@@ -621,6 +621,7 @@ def tools_command(args: argparse.Namespace) -> int:
         shutil.copy2(ROOT / "gui" / "protocol" / "dashboard.schema.json", stage / "schema")
         shutil.copy2(ROOT / "schema" / "simulation.schema.json", stage / "schema")
         shutil.copy2(ROOT / "schema" / "scenario.schema.json", stage / "schema")
+        shutil.copy2(ROOT / "schema" / "run-request.schema.json", stage / "schema")
         shutil.copy2(ROOT / "schema" / "timeline.schema.json", stage / "schema")
         shutil.copy2(ROOT / "LICENSE", stage)
         shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", stage)
@@ -983,7 +984,8 @@ def verify_command(args: argparse.Namespace) -> int:
                      *(f"client/{name}" for name in TIMELINE_ELEMENT),
                      "gui_starter/index.html", "gui_starter/main.js",
                      "schema/dashboard.schema.json", "schema/simulation.schema.json",
-                     "schema/scenario.schema.json", "schema/timeline.schema.json"] + (
+                     "schema/scenario.schema.json", "schema/run-request.schema.json",
+                     "schema/timeline.schema.json"] + (
                 ["bin/vehicle-sil-gui.cmd"] if WINDOWS else [f"bin/{SOCKETCAN_BRIDGE}"]):
             if not (tools / path).is_file():
                 raise StepFailed(f"the archive has no {top}/{path}")

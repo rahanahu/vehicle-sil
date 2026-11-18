@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "vehicle-sil request file (vehicle_sil_launch run --request, check --request), format 1",
+  "description": "What to run, written down: the variant, the scenario and its parameters, the participants left out or started by hand, where the networks are connected outside the simulation, and the speed. One file serves a test bench or a kind of run, for every configuration used there. `vehicle_sil_launch run --request <this file> <configuration>` reads it; an argument of the command line wins over the file, field by field. This schema finds unknown keys and values of the wrong form while you write. It cannot see the configuration: whether the variant, the participants and the networks exist is what `vehicle_sil_launch check --request <this file> <configuration>` says. The configuration file, the log directory, the timeline, the time limit and the control server are not in this file: they are arguments. The manual is docs/simulation-run.md of vehicle-sil.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["vehicle_sil_run_request"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "The path or URL of this schema, for an editor. vehicle_sil_launch does not read it."
+    },
+    "vehicle_sil_run_request": {
+      "const": 1,
+      "description": "The format version. Always 1."
+    },
+    "variant": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "The variant of the configuration to check or run (--variant). null: as if the key was not written.",
+      "examples": ["left_hand"]
+    },
+    "params": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+        "description": "A parameter's name: letters, digits and _ (not a digit first)."
+      },
+      "additionalProperties": {
+        "type": ["string", "number", "boolean"],
+        "not": { "type": "string", "pattern": "\\$\\{" },
+        "description": "One value: a number, true or false, or a text. It cannot use another parameter (${...})."
+      },
+      "description": "Values of the scenario's parameters ${name}, over the scenario's, the configuration's and the variant's params. --param <name>=<value> replaces one by name. A parameter here that the scenario does not have is ignored (one file serves several scenarios).",
+      "examples": [{ "target_speed": 80 }]
+    },
+    "scenario": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "The scenario file to check and run (--scenario). A relative path is from the directory of the configuration file (unlike --scenario, which is from the working directory). null: as if the key was not written.",
+      "examples": ["scenarios/brake.yaml"]
+    },
+    "disable": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Participants to leave out (--disable). Added to those of the command line; --enable <name> or --manual <name> there wins for that name.",
+      "examples": [["Dashboard"]]
+    },
+    "enable": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Participants to take in (--enable). Added to those of the command line; --disable <name> there wins for that name.",
+      "examples": [["Logger"]]
+    },
+    "manual": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Participants that you start yourself (--manual). Added to those of the command line; --disable <name> there wins for that name.",
+      "examples": [["Engine"]]
+    },
+    "connect": {
+      "type": "object",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": {
+        "type": "string",
+        "description": "The target, as --connect <network>=<target> takes it (`vehicle_sil_launch connections <configuration>` lists those of this computer). \"none\": SIL Kit only, as if the network was not written."
+      },
+      "description": "Where each network is connected outside the simulation, by the network's name (--connect). --connect <network>=<target> replaces the target of that network, and --connect <network>=none takes it away for one run. A network that the configuration does not have is left out with the note connect-network-unused (one file serves several configurations).",
+      "examples": [{ "ETH_EXT": "enp3s0", "CAN1": "physical:1" }]
+    },
+    "time_policy": {
+      "enum": ["realtime", "free"],
+      "description": "The time of a run that is connected outside the simulation (--time-policy). realtime (the default): it goes at speed 1. free: the speed and the time can be changed; everyone who uses this file then runs without that guard, and the notes of such a run name this file."
+    },
+    "speed": {
+      "oneOf": [
+        { "type": "number", "minimum": 0.000001, "maximum": 1000000 },
+        { "const": "max" }
+      ],
+      "description": "Simulation seconds per wall-clock second (1: real time, 2: twice as fast), or \"max\": as fast as possible (--speed). Replaces speed in the configuration."
+    },
+    "start_paused": {
+      "type": "boolean",
+      "description": "true: stand still at 0 until a resume or step command (--start-paused; a run then needs --stdin-commands or --control). false is as if the key was not written: --start-paused still counts."
+    },
+    "strict": {
+      "type": "boolean",
+      "description": "true: fail on warnings too (--strict). false is as if the key was not written: --strict still counts."
+    }
+  }
+}

@@ -30,6 +30,10 @@ both, as schema.files_and_launcher):
     sample the schema fails: the schema never refuses a file that the launcher reads;
   - the timeline file of a run of the example (`run --scenario --timeline`) is valid for schema/timeline.schema.json.
 
+The request file (schema/run-request.schema.json; run --request, check --request) the same way: the schema's keys
+are described, in docs/simulation-run.md and the ones the launcher knows; the request files of examples/ and the
+JSON blocks of the documents are valid; the launcher reads the samples the schema accepts and refuses the others.
+
 Needs PyYAML and jsonschema (the `schema` dependency group of pyproject.toml).
 """
 
@@ -53,6 +57,7 @@ SCHEMA_DIR = ROOT / "schema"
 SIMULATION = json.loads((SCHEMA_DIR / "simulation.schema.json").read_text(encoding="utf-8"))
 SCENARIO = json.loads((SCHEMA_DIR / "scenario.schema.json").read_text(encoding="utf-8"))
 TIMELINE = json.loads((SCHEMA_DIR / "timeline.schema.json").read_text(encoding="utf-8"))
+RUN_REQUEST = json.loads((SCHEMA_DIR / "run-request.schema.json").read_text(encoding="utf-8"))
 TIMELINE_REFERENCES = ROOT / "tests" / "launch" / "timeline"
 TIMELINE_PAGE_FIXTURES = ROOT / "gui" / "timeline" / "tests" / "fixtures"
 MODELINE = re.compile(r"^# yaml-language-server: \$schema=(\S+)$")
@@ -65,6 +70,7 @@ needs_launcher = unittest.skipUnless(
 TEMPLATE_COPIES = {
     "template/schema/simulation.schema.json": "schema/simulation.schema.json",
     "template/schema/scenario.schema.json": "schema/scenario.schema.json",
+    "template/schema/run-request.schema.json": "schema/run-request.schema.json",
     "template/schema/dashboard.schema.json": "gui/protocol/dashboard.schema.json",
 }
 # The schema of each kind of file, by the key that says the format version.
@@ -770,7 +776,7 @@ class SchemaFiles(unittest.TestCase):
     maxDiff = None
 
     def test_the_schemas_are_json_schemas(self):
-        for schema in (SIMULATION, SCENARIO, TIMELINE):
+        for schema in (SIMULATION, SCENARIO, TIMELINE, RUN_REQUEST):
             jsonschema.Draft7Validator.check_schema(schema)
             self.assertEqual(schema["$schema"], "http://json-schema.org/draft-07/schema#")
 
@@ -933,6 +939,201 @@ class SchemaFiles(unittest.TestCase):
                             f"{relative}: the first line must be '# yaml-language-server: $schema={wanted}' (editors "
                             "complete and check the file with it); it is " + repr(first))
         self.assertGreater(seen, 6)
+
+
+# (what it shows, the JSON text, "valid" | "invalid")
+R = '"vehicle_sil_run_request": 1'
+REQUEST_SAMPLES = [
+    ("the least", "{" + R + "}", "valid"),
+    ("every key", "{" + R + ', "$schema": "../schema/run-request.schema.json", "variant": "left_hand", '
+     '"params": {"target_speed": "80", "gear": 3, "lamp": true}, "scenario": "scenarios/brake.yaml", "disable": ["B"], '
+     '"enable": ["C"], "manual": ["A"], "connect": {"ETH_EXT": "enp3s0", "CAN1": "physical:1", "LIN1": "none"}, '
+     '"time_policy": "free", "speed": 2.5, "start_paused": false, "strict": true}', "valid"),
+    ("a paused start (not with a scenario: that is a rule of the request, not of the file)",
+     "{" + R + ', "start_paused": true}', "valid"),
+    ("speed max, and null for what is not chosen", "{" + R + ', "speed": "max", "variant": null, "scenario": null}', "valid"),
+    ("empty lists and mappings", "{" + R + ', "params": {}, "disable": [], "enable": [], "manual": [], "connect": {}}', "valid"),
+    ("no version", '{"strict": true}', "invalid"),
+    ("another version", '{"vehicle_sil_run_request": 2}', "invalid"),
+    ("the version as a text", '{"vehicle_sil_run_request": "1"}', "invalid"),
+    ("an unknown key", "{" + R + ', "conect": {}}', "invalid"),
+    ("what the caller decides: the configuration file", "{" + R + ', "file": "simulation.yaml"}', "invalid"),
+    ("what the caller decides: the timeline", "{" + R + ', "timeline": "t.json"}', "invalid"),
+    ("variant as a number", "{" + R + ', "variant": 5}', "invalid"),
+    ("an empty variant", "{" + R + ', "variant": ""}', "invalid"),
+    ("scenario as a list", "{" + R + ', "scenario": ["a.yaml"]}', "invalid"),
+    ("an empty scenario", "{" + R + ', "scenario": ""}', "invalid"),
+    ("params as a list", "{" + R + ', "params": [1]}', "invalid"),
+    ("a parameter with a list", "{" + R + ', "params": {"x": [1]}}', "invalid"),
+    ("a parameter's name with a dash", "{" + R + ', "params": {"idle-rpm": 1}}', "invalid"),
+    ("a parameter that uses another", "{" + R + ', "params": {"x": "${y}"}}', "invalid"),
+    ("disable as a text", "{" + R + ', "disable": "B"}', "invalid"),
+    ("enable with a number", "{" + R + ', "enable": [1]}', "invalid"),
+    ("manual with an empty name", "{" + R + ', "manual": [""]}', "invalid"),
+    ("connect as a list", "{" + R + ', "connect": ["CAN1=physical:1"]}', "invalid"),
+    ("a target as a number", "{" + R + ', "connect": {"CAN1": 1}}', "invalid"),
+    ("a target that is null", "{" + R + ', "connect": {"CAN1": null}}', "invalid"),
+    ("a network without a name", "{" + R + ', "connect": {"": "eth0"}}', "invalid"),
+    ("another time policy", "{" + R + ', "time_policy": "warn"}', "invalid"),
+    ("a speed as a text", "{" + R + ', "speed": "2"}', "invalid"),
+    ("speed 0", "{" + R + ', "speed": 0}', "invalid"),
+    ("a speed above the range", "{" + R + ', "speed": 2000000}', "invalid"),
+    ("speed null", "{" + R + ', "speed": null}', "invalid"),
+    ("start_paused as a text", "{" + R + ', "start_paused": "true"}', "invalid"),
+    ("strict as a number", "{" + R + ', "strict": 1}', "invalid"),
+]
+
+
+def request_files() -> list[Path]:
+    """The request files that people read as examples: the JSON files of examples/ and template/ with the key."""
+    out = []
+    for top in ("examples", "template"):
+        for path in sorted((ROOT / top).rglob("*.json")):
+            if {"build", "tools", "node_modules"} & set(path.relative_to(ROOT).parts):
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if isinstance(data, dict) and "vehicle_sil_run_request" in data:
+                out.append(path)
+    return out
+
+
+def json_blocks(path: Path) -> list[tuple[int, str]]:
+    """The ```json blocks of a document: (line of the fence, the text)."""
+    lines = path.read_text(encoding="utf-8").split("\n")
+    out = []
+    i = 0
+    while i < len(lines):
+        if lines[i].strip() == "```json":
+            end = next(j for j in range(i + 1, len(lines)) if lines[j].strip() == "```")
+            out.append((i + 1, "\n".join(lines[i + 1:end])))
+            i = end
+        i += 1
+    return out
+
+
+class RunRequestSchema(unittest.TestCase):
+    maxDiff = None
+
+    def test_it_refuses_unknown_keys_and_describes_its_keys(self):
+        self.assertIs(RUN_REQUEST.get("additionalProperties"), False)
+        self.assertEqual(RUN_REQUEST["required"], ["vehicle_sil_run_request"])
+        for key, value in RUN_REQUEST["properties"].items():
+            self.assertTrue(value.get("description"), f"run-request.schema.json: {key} has no description (the text an "
+                                                      "editor shows for the key)")
+
+    def test_the_samples_are_valid_or_not_as_they_say(self):
+        for what, text, verdict in REQUEST_SAMPLES:
+            said = problems(RUN_REQUEST, json.loads(text))
+            if verdict == "invalid":
+                self.assertNotEqual(said, [], f"{what}: the schema should refuse\n{text}")
+            else:
+                self.assertEqual(said, [], f"{what}: the schema should accept\n{text}")
+
+    def test_the_examples_are_valid_and_name_the_schema(self):
+        files = request_files()
+        self.assertGreater(len(files), 0, "examples/ has no request file any more (a JSON file with "
+                                          "vehicle_sil_run_request)")
+        for path in files:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            where = path.relative_to(ROOT).as_posix()
+            self.assertEqual(problems(RUN_REQUEST, data), [],
+                             f"{where} is not valid for schema/run-request.schema.json: if the launcher reads the "
+                             "file, the schema is too strict; correct the schema")
+            self.assertIn("$schema", data, f"{where}: name the schema in \"$schema\", so that an editor checks the file")
+            target = (path.parent / data["$schema"]).resolve()
+            in_template = where.startswith("template/")
+            expected = (ROOT / "template" / "schema" if in_template else SCHEMA_DIR) / "run-request.schema.json"
+            self.assertEqual(target, expected.resolve(), f"{where}: \"$schema\" must lead to {expected.relative_to(ROOT)}")
+
+    def test_the_json_of_the_documents_is_valid(self):
+        seen = 0
+        for path in documents():
+            for line, text in json_blocks(path):
+                try:
+                    data = json.loads(text)
+                except json.JSONDecodeError:
+                    continue  # a sketch, or the output of a command
+                if not isinstance(data, dict) or "vehicle_sil_run_request" not in data:
+                    continue
+                seen += 1
+                self.assertEqual(problems(RUN_REQUEST, data), [],
+                                 f"{path.relative_to(ROOT).as_posix()}:{line}: the JSON block is not valid for "
+                                 "schema/run-request.schema.json: correct the block, or the schema if the launcher "
+                                 "reads it")
+        self.assertGreater(seen, 1, "the documents show no request file any more (docs/simulation-run.md and its "
+                                    "Japanese page)")
+
+    def test_every_key_is_in_its_document(self):
+        run_pages = pages("simulation-run.md")
+        self.assertEqual(len(run_pages), 2, "docs/simulation-run.md or its Japanese page is missing")
+        for path in run_pages:
+            spans = set(re.findall(r"`([^`\n]+)`", path.read_text(encoding="utf-8")))
+            for key in RUN_REQUEST["properties"]:
+                self.assertIn(key, spans, f"{path.relative_to(ROOT).as_posix()} has no `{key}` (the table of the keys of "
+                                          "the request file)")
+
+
+@needs_launcher
+class RunRequestSchemaAndLauncher(unittest.TestCase):
+    maxDiff = None
+
+    @classmethod
+    def setUpClass(cls):
+        if not Path(LAUNCH).is_file():
+            raise AssertionError(f"VEHICLE_SIL_LAUNCH_EXE is {LAUNCH!r}, which is not a file: build vehicle_sil_launch")
+        cls.temporary = tempfile.TemporaryDirectory(prefix="vehicle-sil-request-")
+        cls.directory = Path(cls.temporary.name)
+        cls.count = 0
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temporary.cleanup()
+
+    def refusal(self, text: str) -> list[str]:
+        """What `check --request` says is wrong with the request file of `text` (the configuration is not reached)."""
+        type(self).count += 1
+        path = self.directory / f"request{self.count}.json"
+        path.write_text(text, encoding="utf-8", newline="\n")
+        report = check("--request", str(path), str(self.directory / "no-configuration.yaml"))
+        said = [f["message"] for f in report["findings"] if f["message"].startswith(str(path))]
+        self.assertEqual(bool(said), report["result"] == "usage",
+                         f"a request file with a mistake is a usage error that names the file, and nothing else is: {report}")
+        return said
+
+    def test_the_keys_are_the_launchers(self):
+        said = self.refusal("{" + R + ', "zz_probe": 1}')
+        match = re.search(r"the keys here \((.*)\)$|\(the keys here: (.*)\)$", said[0]) if len(said) == 1 else None
+        self.assertTrue(match, f"expected one error about zz_probe that lists the keys, got {said}")
+        launcher_keys = listed(match.group(1) or match.group(2)) | {"$schema"}  # an editor's key, which the launcher skips
+        schema_keys = set(RUN_REQUEST["properties"])
+        self.assertEqual(schema_keys, launcher_keys,
+                         "schema/run-request.schema.json and the launcher know different keys (only in the schema: "
+                         f"{sorted(schema_keys - launcher_keys)}; only in the launcher: "
+                         f"{sorted(launcher_keys - schema_keys)}): add or remove them in the schema, with a description")
+
+    def test_the_launcher_reads_what_the_schema_accepts_and_refuses_what_it_refuses(self):
+        for what, text, verdict in REQUEST_SAMPLES:
+            said = self.refusal(text)
+            if verdict == "valid":
+                self.assertEqual(said, [], f"request sample '{what}': the schema accepts it, the launcher does not; "
+                                           f"correct the sample or the schema\n{text}")
+            else:
+                self.assertNotEqual(said, [], f"request sample '{what}': the launcher reads it without an error; the "
+                                              f"schema refuses a file that is right: loosen the schema\n{text}")
+
+    @unittest.skipUnless(EXAMPLE_DIR, "VEHICLE_SIL_EXAMPLE_DIR is not set")
+    def test_the_request_files_of_the_example_pass_the_check(self):
+        example = ROOT / "examples" / "ecu_main"
+        files = [p for p in request_files() if example in p.parents]
+        self.assertGreater(len(files), 0, "examples/ecu_main has no request file any more")
+        for path in files:
+            report = check("--request", str(path), str(Path(EXAMPLE_DIR) / "simulation.yaml"))
+            self.assertEqual(report["result"], "passed",
+                             f"vehicle_sil_launch check --request {path.relative_to(ROOT).as_posix()} with the built "
+                             f"example: {report['findings']}")
 
 
 class TimelineSchema(unittest.TestCase):

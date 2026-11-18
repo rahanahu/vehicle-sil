@@ -1,0 +1,7 @@
+{
+  "$schema": "../../../schema/run-request.schema.json",
+  "vehicle_sil_run_request": 1,
+  "scenario": "scenarios/throttle_step.yaml",
+  "speed": "max",
+  "strict": true
+}

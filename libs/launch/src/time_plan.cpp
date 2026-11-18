@@ -121,7 +121,8 @@ constexpr const char* kFreeCarries = "the bridge still carries frames both ways"
 } // namespace
 
 std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optional<std::optional<double>>& asked,
-                                        const std::optional<double>& otherwise, bool start_paused)
+                                        const std::optional<double>& otherwise, bool start_paused,
+                                        const RequestOrigin& origin)
 {
     std::vector<Finding> out;
     if (lock.connected.empty() && lock.bridges.empty())
@@ -133,15 +134,21 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
                                std::string(kFreeCarries) + ")";
     const std::optional<double> unlocked = asked ? *asked : otherwise;
     const bool realTime = unlocked == std::optional<double>(1.0);
+    // As the user wrote them: an option, or a key of the request file.
+    const std::string speed = origin.named("speed", "--speed", "speed");
+    const std::string paused = origin.named("start_paused", "--start-paused", "start_paused");
+    const std::string policy = origin.named("time_policy", "--time-policy free", "time_policy free");
     if (lock.locked)
     {
         if (asked && !realTime)
         {
             out.push_back(Finding{Severity::Error, "outside-real-time",
-                                  what + ", which does not wait for the virtual time, so the run goes at speed 1: --speed " +
-                                      speed_text(*asked) +
-                                      " is refused. Leave --speed out; to go at another speed, run " + not_connected(lock) +
-                                      ", or " + freely,
+                                  what + ", which does not wait for the virtual time, so the run goes at speed 1: " +
+                                      origin.named("speed", "--speed " + speed_text(*asked), "speed " + speed_text(*asked)) +
+                                      " is refused. " +
+                                      (origin.has("speed") ? "Take speed out of " + origin.file + ", or pass --speed 1"
+                                                           : std::string("Leave --speed out")) +
+                                      "; to go at another speed, run " + not_connected(lock) + ", or " + freely,
                                   0, "", ""});
         }
         if (!asked && !realTime)
@@ -156,8 +163,8 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
         if (start_paused)
         {
             out.push_back(Finding{Severity::Error, "outside-real-time",
-                                  what + ", which does not stand still: --start-paused is refused. To stop the simulation "
-                                         "and look at it, run " +
+                                  what + ", which does not stand still: " + paused +
+                                      " is refused. To stop the simulation and look at it, run " +
                                       not_connected(lock) + ", or " + freely,
                                   0, "", ""});
         }
@@ -168,8 +175,9 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
         std::string runs;
         if (asked)
         {
-            runs = unlocked ? "--speed " + speed_text(unlocked) + " runs the simulation at that speed"
-                            : std::string("--speed max runs the simulation as fast as possible");
+            runs = unlocked ? origin.named("speed", "--speed " + speed_text(unlocked), "speed " + speed_text(unlocked)) +
+                                  " runs the simulation at that speed"
+                            : origin.named("speed", "--speed max", "speed max") + " runs the simulation as fast as possible";
         }
         else
         {
@@ -177,19 +185,18 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
                             : std::string("the simulation runs as fast as possible");
         }
         out.push_back(Finding{Severity::Note, "outside-not-real-time",
-                              what + ", which does not wait for the virtual time, and with --time-policy free " + runs +
+                              what + ", which does not wait for the virtual time, and with " + policy + " " + runs +
                                   ": what is connected there gets the messages at the wrong times, and " + kFreeCarries +
-                                  ". To run in real time, leave --time-policy free" + (asked ? " and --speed" : "") + " out",
+                                  ". To run in real time, leave " + policy + (asked ? " and " + speed : "") + " out",
                               0, "", ""});
     }
     if (start_paused)
     {
         out.push_back(Finding{Severity::Note, "outside-not-real-time",
-                              what + ", which does not stand still, and with --time-policy free --start-paused makes the "
-                                     "simulation wait before its first step: " +
-                                  kFreeCarries +
+                              what + ", which does not stand still, and with " + policy + " " + paused +
+                                  " makes the simulation wait before its first step: " + kFreeCarries +
                                   ", so frames from outside pile up while the simulation stands still. To run in "
-                                  "real time, leave --time-policy free and --start-paused out",
+                                  "real time, leave " + policy + " and " + paused + " out",
                               0, "", ""});
     }
     return out;

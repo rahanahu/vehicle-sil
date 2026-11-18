@@ -585,6 +585,72 @@ The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell
 | 3 | The file cannot be read. |
 | 4 | Usage error. |
 
+## Request files (`--request`)
+
+A request file says what to run: the variant, the scenario and its parameters, the participants to leave out or to start by hand, where the networks are connected outside, and the speed. `check` and `run` read it with `--request <file>`. Put into it what stays the same on one computer or for one kind of run (for example, the adapters of a test bench), and keep the configuration file the same for everyone.
+
+```json
+{
+  "vehicle_sil_run_request": 1,
+  "connect": { "ETH_EXT": "enp3s0", "CAN1": "physical:1" }
+}
+```
+
+```sh
+vehicle_sil_launch run simulation.yaml                                           # SIL Kit only
+vehicle_sil_launch check --request bench.json simulation.yaml                    # what the next line would run
+vehicle_sil_launch run --request bench.json simulation.yaml                      # connected as bench.json says
+vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml  # this run: CAN1 on SIL Kit only
+```
+
+- The launcher reads only the file that `--request` names. It never looks for one: not next to the configuration file, not in the working directory or the home directory, and not through an environment variable.
+- `check --request` judges the same request as `run --request`, the speed and `start_paused` included. Check first, then run.
+- `test` does not take `--request` (usage error).
+- The file is JSON. A mistake in it (an unknown key, a key written twice, a value of the wrong type, another version) is a usage error (exit code 4) that names the file and the line; nothing is checked or started.
+- The JSON Schema is [schema/run-request.schema.json](../schema/run-request.schema.json). An editor completes and checks a file that names it in `"$schema"`.
+- What the caller of the launcher decides is not in the file: the configuration file, `--log-dir`, `--timeline`, `--timeout-ms`, `--control`, `--events`, `--stdin-commands` and `--json` are arguments only.
+- `examples/ecu_main/requests/throttle_step.json` is a request file of the example: `vehicle_sil_launch run --request requests/throttle_step.json simulation.yaml`.
+
+### Keys of a request file
+
+| Key | Value | The same as |
+|---|---|---|
+| `vehicle_sil_run_request` | `1` (required) | |
+| `$schema` | The path or URL of the schema, for an editor. The launcher skips it. | |
+| `variant` | A text, or `null` (not set) | `--variant` |
+| `params` | A mapping of parameter names to values (a number, `true` or `false`, or a text) | `--param` |
+| `scenario` | The path of the scenario file, or `null` (not set). A relative path is from the directory of the configuration file. | `--scenario` |
+| `disable` | A list of participant names | `--disable` |
+| `enable` | A list of participant names | `--enable` |
+| `manual` | A list of participant names | `--manual` |
+| `connect` | A mapping of network names to targets. A target is written as `--connect` takes it; `"none"` is the same as not writing the network. | `--connect` |
+| `time_policy` | `"realtime"` or `"free"` | `--time-policy` |
+| `speed` | A number from 0.000001 to 1000000, or `"max"` | `--speed` |
+| `start_paused` | `true` or `false` | `--start-paused` |
+| `strict` | `true` or `false` | `--strict` |
+
+### Arguments together with a request file
+
+An argument wins over the file, field by field.
+
+| Key | With an argument for the same thing |
+|---|---|
+| `variant`, `scenario`, `speed`, `time_policy` | The argument replaces the file's value. |
+| `start_paused`, `strict` | On if the file or the argument says so. No argument switches them off. |
+| `connect` | By network: `--connect <network>=<target>` replaces the file's target of that network, and `--connect <network>=none` takes it away for this run. The other networks of the file stay. |
+| `params` | By name: `--param <name>=<value>` replaces the file's value of that parameter. The others stay; their `from` in the check JSON is `request_file`. |
+| `disable`, `enable`, `manual` | The names of the file and of the arguments add up. Where they disagree about a name (the file's `disable` and `--enable`, the file's `enable` or `manual` and `--disable`, the file's `disable` and `--manual`), the argument wins. |
+
+Where a request file differs from the arguments:
+
+| Case | Arguments | Request file |
+|---|---|---|
+| A relative scenario path | From the working directory | From the directory of the configuration file |
+| A network to connect that the configuration file does not have | The error `connect-network` | The note `connect-network-unused`; the network is left out (one file serves several configuration files) |
+| A parameter that the scenario does not have | Usage error | Ignored (one file serves several scenarios) |
+
+A message about a value from the file names the key and the file, not an option: `speed 5 in bench.json is refused`. With `"time_policy": "free"` in the file, the notes `outside-not-real-time` name the file too, because the file lifts the time lock for everyone who uses it (see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)).
+
 ## Stopping a run
 
 When the simulation ends (also after an abort and on Ctrl+C), `run` ends the participants in this order:

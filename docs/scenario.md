@@ -914,7 +914,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `unchecked_expects` | Only if any | The number of `expect`s beside steps that will not be checked |
 | `inputs`, `lines` | Always (empty arrays in a scenario without a `dither`; `null` if the scenario could not be read) | See the next table. The `scenario` of `run --json` has the same keys |
 
-`value` in `params` is the effective value (`true` or `false`, a number or a string). `from` is one of `scenario`, `configuration`, `variant` and `command_line`.
+`value` in `params` is the effective value (`true` or `false`, a number or a string). `from` is one of `scenario`, `configuration`, `variant`, `command_line` and `request_file` (`params` of the file of `--request`).
 
 Keys about the `dither`s:
 

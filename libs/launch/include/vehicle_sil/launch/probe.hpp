@@ -37,6 +37,10 @@ namespace vehicle_sil::launch {
 /// message of the scenario's finding "file").
 [[nodiscard]] std::string read_scenario_file(const std::filesystem::path& path, std::string& text);
 
+/// Reads the request file `path` (--request) into `text`: "" if it was read, else what is wrong
+/// with it (it does not exist, is a directory or too large, ...). The same limit as a
+/// configuration file's.
+[[nodiscard]] std::string read_request_file_text(const std::filesystem::path& path, std::string& text);
 /// The value of the environment variable `name` of vehicle_sil_launch itself; empty: not set.
 [[nodiscard]] std::optional<std::string> environment_value(std::string_view name);
 

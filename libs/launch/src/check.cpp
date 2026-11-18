@@ -52,6 +52,29 @@ void drop_unusable_commands(CheckReport& report)
 
 } // namespace
 
+ConfigConnect connect_for_config(const SimulationConfig& config, std::span<const ConnectRequest> connect,
+                                 const RequestOrigin& origin)
+{
+    ConfigConnect out;
+    for (const ConnectRequest& request : connect)
+    {
+        const bool fromFile =
+            std::find(origin.connected.begin(), origin.connected.end(), request.network) != origin.connected.end();
+        const bool known = std::any_of(config.networks.begin(), config.networks.end(),
+                                       [&](const NetworkConfig& n) { return n.name == request.network; });
+        if (fromFile && !known)
+        {
+            out.notes.push_back(Finding{Severity::Note, "connect-network-unused",
+                                        "the network " + request.network + " of connect in " + origin.file +
+                                            " is not in this configuration: it is left out",
+                                        0, "", request.network});
+            continue;
+        }
+        out.connect.push_back(request);
+    }
+    return out;
+}
+
 ScenarioCatalog scenario_catalog(const CheckReport& check)
 {
     ScenarioCatalog out;
@@ -158,10 +181,11 @@ namespace {
 /// --scenario: reads the scenario file and checks it against the participants of `report`.
 /// @returns the usage errors that only the scenario can tell (ScenarioRead::usage_errors); then
 /// `report` has no scenario.
-[[nodiscard]] std::vector<Finding> check_scenario_file(CheckReport& report, const RunIntent& intent, bool params_for_many)
+[[nodiscard]] std::vector<Finding> check_scenario_file(CheckReport& report, const RunIntent& intent, const std::string& named,
+                                                       bool params_for_many)
 {
     ScenarioCheck check;
-    check.file = intent.scenario.value_or("");
+    check.file = named;
     const auto add = [&](Finding finding) {
         finding.file = check.file;
         report.findings.push_back(std::move(finding));
@@ -220,6 +244,8 @@ CheckReport check_file(const RunRequest& request, const CheckOptions& options,
     // The speed the run was asked for; a test's is its default, which is not judged.
     const std::optional<std::optional<double>> run_speed =
         options.fastest_by_default ? std::optional<std::optional<double>>{} : intent.speed;
+    // What of the request's connect counts for this file: known once it is read.
+    std::vector<ConnectRequest> connect;
     CheckReport report;
     report.file = host.config;
     report.strict = intent.strict;
@@ -254,23 +280,27 @@ CheckReport check_file(const RunRequest& request, const CheckOptions& options,
     report.config = std::move(read.config);
     if (report.config)
     {
+        ConfigConnect counted = connect_for_config(*report.config, intent.connect, request.origin);
+        connect = std::move(counted.connect);
+        report.findings.insert(report.findings.end(), counted.notes.begin(), counted.notes.end());
         // The file and the request decide it: before any executable is asked.
-        report.time_lock = time_lock(*report.config, intent.connect, intent.time_policy);
+        report.time_lock = time_lock(*report.config, connect, intent.time_policy);
         const std::vector<Finding> time =
             time_lock_findings(report.time_lock, run_speed,
-                               options.fastest_by_default ? std::optional<double>{} : report.config->speed, intent.start_paused);
+                               options.fastest_by_default ? std::optional<double>{} : report.config->speed, intent.start_paused,
+                               request.origin);
         report.findings.insert(report.findings.end(), time.begin(), time.end());
         if (on_time_lock)
         {
             on_time_lock(report.time_lock);
         }
     }
-    if (report.config && options.file_only && !intent.connect.empty())
+    if (report.config && options.file_only && !connect.empty())
     {
         // Only the form and the names: no tool is looked for.
-        ConnectCheck connect = check_connections(*report.config, {}, intent.connect, nullptr);
-        report.findings.insert(report.findings.end(), connect.findings.begin(), connect.findings.end());
-        report.outside = std::move(connect.outside);
+        ConnectCheck checked = check_connections(*report.config, {}, connect, nullptr);
+        report.findings.insert(report.findings.end(), checked.findings.begin(), checked.findings.end());
+        report.outside = std::move(checked.outside);
         drop_unusable_commands(report);
     }
     if (!report.config || options.file_only)
@@ -344,12 +374,12 @@ CheckReport check_file(const RunRequest& request, const CheckOptions& options,
         }
         report.participants.push_back(std::move(result));
     }
-    if (!intent.connect.empty())
+    if (!connect.empty())
     {
         const ConnectTools tools = bridge_tools(host.tool_directory, host.describe_timeout);
-        ConnectCheck connect = check_connections(*report.config, report.participants, intent.connect, &tools);
-        report.findings.insert(report.findings.end(), connect.findings.begin(), connect.findings.end());
-        report.outside = std::move(connect.outside);
+        ConnectCheck checked = check_connections(*report.config, report.participants, connect, &tools);
+        report.findings.insert(report.findings.end(), checked.findings.begin(), checked.findings.end());
+        report.outside = std::move(checked.outside);
     }
     const std::vector<std::string> outside = outside_names(report.outside);
     auto compared = check_participants(*report.config, report.participants, version(), outside);
@@ -369,7 +399,13 @@ CheckReport check_file(const RunRequest& request, const CheckOptions& options,
     }
     if (intent.scenario && !intent.scenario->empty())
     {
-        if (auto wrong = check_scenario_file(report, intent, options.params_for_many); !wrong.empty())
+        // A request file's scenario is beside the configuration, as the file's own paths are.
+        std::string named = *intent.scenario;
+        if (request.origin.has("scenario") && process::path_from_utf8(named).is_relative() && !path.parent_path().empty())
+        {
+            named = process::shown_path(path.parent_path() / process::path_from_utf8(named));
+        }
+        if (auto wrong = check_scenario_file(report, intent, named, options.params_for_many); !wrong.empty())
         {
             // As for the other usage errors: the findings alone, and no configuration.
             CheckReport usage;

@@ -584,6 +584,7 @@ A target is `none` or `[<backend>:]<selector>`. The backend says which way the n
 `vehicle_sil_launch connections <file>` lists the targets of each network on this computer, as `--connect` lines to copy (see "[Where a network can be connected](simulation-run.md#where-a-network-can-be-connected-vehicle_sil_launch-connections)" in simulation-run.md).
 
 - `none` as the target: SIL Kit only, the same as no `--connect` for that network (for a script that says so outright). Give an interface named `none` with its backend: `packet:none`.
+- To keep the targets of one computer in a file instead of typing them, write them in a request file (`"connect"`) and pass `--request <file>`; `--connect` then replaces or removes the target of one network (see "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request)).
 - Give each network once. The network's name ends at the first `=`, so a network whose name has `=` cannot be connected (rename it).
 - Quote the whole argument when the target has spaces: `--connect "ETH_EXT=vEthernet (A)"`.
 - The launcher looks for the bridge next to `vehicle_sil_launch`, then in the absolute directories of `PATH`. It never looks in the working directory or in the directory of the configuration file. It looks only for the bridges of the networks given with `--connect`, so a check without `--connect` writes the same on every computer. It starts a bridge (its `--describe`, its list for `connections`, its run) in the bridge's own directory, never in the directory of the configuration file, so that a DLL put into a folder received from someone is not loaded. The participants of the file start in the directory of the configuration file, as before.
@@ -902,7 +903,7 @@ For the syntax and the errors, see "Variants and parameters" in [scenario.md](sc
 ```text
 vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
-                         [--time-policy realtime|free] [--disable <name>]...
+                         [--time-policy realtime|free] [--request <file>] [--disable <name>]...
                          [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
@@ -910,7 +911,7 @@ vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-com
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
-                       [--time-policy realtime|free] [--disable <name>]...
+                       [--time-policy realtime|free] [--request <file>] [--disable <name>]...
                        [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
@@ -952,6 +953,7 @@ The usage above shows which commands accept each option. The Condition column of
 | `--describe-timeout-ms <ms>` | | How long to wait for the `--describe` of one executable (an integer of 1 or more; default 10000). |
 | `--connect <network>=<target>` | `check` and `run` | Connects the network to a real bus at `<target>` through its bridge; `none`: SIL Kit only (can be repeated, each network once; see [Connecting a network outside](#connecting-a-network-outside-external---connect)). |
 | `--time-policy realtime\|free` | | The time of a run that is connected outside the simulation: `realtime` (the default) keeps it at speed 1, `free` leaves the speed and the time to you (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)). |
+| `--request <file>` | `check` and `run` | Reads what to run from a request file (JSON); an argument wins over the file, field by field (see "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request)). |
 | `--network <name>` | `connections` only | Lists the network `<name>` only. |
 | `--disable <name>` | | Disables participant `<name>` (same as `enabled: false`; can be repeated). |
 | `--enable <name>` | | Enables participant `<name>` again (same as `enabled: true`; can be repeated). |
@@ -987,6 +989,8 @@ Notes on individual options:
 | `--timeout-ms` | When it runs out, the run is aborted with an error. |
 | `--manual` | `run` does not start the participant; it prints the command and waits. |
 | `--connect` | `run` starts the bridge `bridge.<network>` before the other participants (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md). `test` ends with a usage error for it: it runs each scenario as fast as possible. |
+| `--request` | Only the file that is named is read; the launcher looks for none. |
+| `--request` | `scenario` in the file is from the directory of the configuration file, not from the working directory. |
 | `--time-policy` | `test` runs each scenario at speed 1 when the file has an enabled `role: bridge` participant; `--time-policy free` runs them as fast as possible all the same. |
 
 On Windows, the arguments are read as UTF-8 from the wide-character command line, so paths with non-ASCII characters work.

@@ -132,6 +132,30 @@ std::string read_config_file(const std::filesystem::path& path, std::string& tex
     return {};
 }
 
+std::string read_request_file_text(const std::filesystem::path& path, std::string& text)
+{
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec))
+    {
+        return "the file does not exist: check the path";
+    }
+    if (!std::filesystem::is_regular_file(path, ec))
+    {
+        return "this is not a regular file: name the request file";
+    }
+    if (std::filesystem::file_size(path, ec) > kMaxConfigBytes)
+    {
+        return "the file is larger than " + std::to_string(kMaxConfigBytes >> 20) + " MiB, too large for a request file";
+    }
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+    {
+        return "cannot open the file: check its permissions";
+    }
+    text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    return {};
+}
+
 std::string read_scenario_file(const std::filesystem::path& path, std::string& text)
 {
     std::error_code ec;

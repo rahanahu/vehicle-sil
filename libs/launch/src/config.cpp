@@ -2761,6 +2761,7 @@ const char* param_source_name(ParamSource source)
     case ParamSource::Configuration: return "configuration";
     case ParamSource::Variant: return "variant";
     case ParamSource::CommandLine: return "command_line";
+    case ParamSource::RequestFile: return "request_file";
     }
     return "configuration";
 }
@@ -2773,6 +2774,7 @@ const char* param_source_text(ParamSource source)
     case ParamSource::Configuration: return "the configuration's params";
     case ParamSource::Variant: return "the variant's params";
     case ParamSource::CommandLine: return "--param";
+    case ParamSource::RequestFile: return "the request file's params";
     }
     return "the configuration's params";
 }

@@ -11,6 +11,7 @@
 #include "vehicle_sil/ecu/executable.hpp"
 #include "vehicle_sil/ecu/j1939_node_argument.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -267,11 +268,39 @@ enum class ParamSource
     Configuration, ///< the configuration's "params"
     Variant,       ///< the chosen variant's "params"
     CommandLine,   ///< --param <name>=<value>
+    RequestFile,   ///< the "params" of the request file (--request); --param replaces it by name
 };
-/// "scenario", "configuration", "variant", "command_line" (the outputs' "from").
+/// "scenario", "configuration", "variant", "command_line", "request_file" (the outputs' "from").
 [[nodiscard]] const char* param_source_name(ParamSource source);
-/// For a message: "the scenario's params", "the configuration's params", "the variant's params", "--param".
+/// For a message: "the scenario's params", "the configuration's params", "the variant's params", "--param",
+/// "the request file's params".
 [[nodiscard]] const char* param_source_text(ParamSource source);
+
+/// Which values of a request came from a request file (--request) and not from the command line: a
+/// message about one of them names the key and the file, not an option the user did not write.
+struct RequestOrigin
+{
+    /// The request file as the user named it; empty: there is none.
+    std::string file{};
+    /// The keys of the file whose value the request has ("speed", "start_paused", "time_policy",
+    /// "scenario", ...): not one that an argument replaced.
+    std::vector<std::string> fields{};
+    /// The networks whose target the request has from the file's "connect".
+    std::vector<std::string> connected{};
+
+    [[nodiscard]] bool has(std::string_view field) const
+    {
+        return std::find(fields.begin(), fields.end(), field) != fields.end();
+    }
+    /// How a message names `field`: `argument` ("--speed 5") if the command line gave it, `key`
+    /// and the file ("speed 5 in bench.json") if the request file did.
+    [[nodiscard]] std::string named(std::string_view field, std::string_view argument, std::string_view key) const
+    {
+        return has(field) ? std::string(key) + " in " + file : std::string(argument);
+    }
+
+    friend bool operator==(const RequestOrigin&, const RequestOrigin&) = default;
+};
 
 /// A parameter of the scenarios: a name ("idle_rpm": letters, digits and '_', not a digit first)
 /// and the value a scenario's "${idle_rpm}" stands for, as it was written.

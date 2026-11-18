@@ -668,7 +668,8 @@ The time operations (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) and `Sto
     "connect-counts",
     "state",
     "time-policy",
-    "stdin-run-until"
+    "stdin-run-until",
+    "request"
   ]
 }
 ```
@@ -729,6 +730,7 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 | `state` | The event `state`: where the run stands and what it accepts now (see [The `state` event](#the-state-event)) |
 | `time-policy` | `--time-policy` of `check`, `run` and `test`: a run that is connected outside the simulation keeps real time unless `free` is chosen (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)) |
 | `stdin-run-until` | `run_until` on stdin (see [Stdin commands](#stdin-commands-run---stdin-commands)) |
+| `request` | `--request <file>` of `check` and `run`: what to run, from a request file (see "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 
@@ -753,6 +755,7 @@ Each name indicates that the following are present:
 | `connect-counts` | The event `outside`, the counts in `outside[].to_outside` and `from_outside` of the result (`null` before this feature), the counts at the end of the `outside:` lines of the human-readable result, the finding `connect-nothing-received`, and `--stats-every-ms 1000` in the command of a bridge that `run` starts |
 | `state` | The event `state`, `reason` and `id` in the event `command`, and `id` in the stdin commands |
 | `time-policy` | `--time-policy`, `time_lock` in the check JSON, the findings `outside-real-time`, `outside-speed-set`, `outside-not-real-time`, `outside-time-changed` and `unsynchronized-time-changed`, the reason `outside-real-time` of a refused command and of `allowed`, and the caution `outside-not-real-time` (before this feature: the warnings `connect-not-real-time`, `connect-start-paused` and `connect-time-changed`, and a run with `--connect` went at the file's speed and accepted every time command) |
+| `request` | `--request`, the finding `connect-network-unused`, and `request_file` as the `from` of a parameter in the check and result JSON |
 | `control-server` | The event `control_server`, `"control_server"` as the `source` of `command` and its `at_ms`, `--control-credentials`, `--control-tls-cert`, `--control-tls-key`, `--control-audit-log`, `"control server stop"` as `interrupted_by`, and pausing before the step at time 0 with `--start-paused` |
 
 In a build with `scenario-control`, clients can only read, wait and stop while a scenario runs. Calls that write and calls that move time are rejected with `FAILED_PRECONDITION` (reason `scenario-running`) (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).
