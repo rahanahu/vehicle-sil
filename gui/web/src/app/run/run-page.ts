@@ -30,6 +30,7 @@ import { ServerInfo } from '../core/session/server-info';
 import { SimulationTime } from '../core/session/simulation-time';
 import { CheckPanel } from './check-panel';
 import { FindingsList } from './findings-list';
+import { cutShort, resultTone } from './labels';
 import { STDERR_CODE, launcherStderr } from './launcher-stderr';
 import { LogView } from './log-view';
 import { OutsideChoice, OutsideRows, connectChoice, connectText } from './outside-connect';
@@ -547,15 +548,20 @@ export class RunPage {
   );
 
   /** ランチャーが結果を出さずに終わった（participant の最後の状態は古いかもしれない）。 */
-  protected readonly launcherGone = computed(() => this.run.outcome() === 'crashed');
+  protected readonly launcherGone = computed(() => this.run.status().run === 'crashed');
 
-  /** participant の終わりが、利用者が止めたことによるものか（色を弱める）。 */
+  /**
+   * participant の終わりが、利用者や外から止めたことによるものか（色を弱める）: 止めるよう頼んだ（セッションの写し。
+   * 正面の口は、実行が終わった後は言わない）か、結果の色が中立。
+   */
   protected readonly interrupted = computed(() => {
     const session = this.session();
+    const result = this.run.status().result;
     return (
       !!session &&
       (session.stopRequests > 0 ||
-        ['stopped', 'incomplete', 'interrupted'].includes(session.result?.result ?? ''))
+        (result !== null &&
+          resultTone(result, cutShort(result, session.result?.result)) === 'neutral'))
     );
   });
 
