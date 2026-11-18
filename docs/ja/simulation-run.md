@@ -7,6 +7,7 @@
 | 調べること | 節 |
 |---|---|
 | `run` が何をどの順にするか | [実行の流れ](#実行の流れ) |
+| 実行の選択（機種、シナリオ、participant、接続、速さ）をファイルにまとめる | [要求ファイル](#要求ファイル--request) |
 | どんなときに中断するか、タイムアウトの数え方 | [中断する条件とタイムアウト](#中断する条件とタイムアウト) |
 | ECU の変数を読み書きできるか（`control_link`） | [ECU の変数との接続](#ecu-の変数との接続control_link) |
 | `speed` と、実時間からの遅れの数え方 | [速度を指定して動かす](#速度を指定して動かすspeed) |
@@ -589,6 +590,8 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 
 要求ファイルには、何を走らせるかを書きます。機種、シナリオとそのパラメーター、外す participant と手で起動する participant、ネットワークを外のどこにつなぐか、速さです。`check` と `run` が `--request <file>` で読みます。1 台の PC や 1 種類の実行でいつも同じものを書き（例: 試験台のアダプター）、設定ファイルは全員で同じものを使います。
 
+例として、ネットワーク `ETH_EXT` と `CAN1` を持つ試験台の設定ファイルの場合です（例の設定ファイルのように、どちらも持たない設定ファイルでは、`check` が 2 つとも使われないと注意し、何もつなぎません）。
+
 ```json
 {
   "vehicle_sil_run_request": 1,
@@ -603,8 +606,9 @@ vehicle_sil_launch run --request bench.json simulation.yaml                     
 vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml  # this run: CAN1 on SIL Kit only
 ```
 
+- 欄ごとに、引数がファイルより優先されます（[引数と要求ファイルを一緒に使う](#引数と要求ファイルを一緒に使う)）。
 - ランチャーが読むのは、`--request` で指定したファイルだけです。設定ファイルの隣、作業ディレクトリ、ホームディレクトリ、環境変数から探すことはありません。
-- `check --request` は、`run --request` と同じ要求を照合します（時間のロックに関わる速さと `start_paused` も含みます）。先に照合してから実行します。`run` だけが見る規則が 1 つあります。`start_paused` には `--stdin-commands` か `--control` が要る、という規則です（どちらも `run` だけの引数のため）。
+- `check --request` は、`run --request` と同じ要求を照合します（[時間のロック](#外につながる実行の時間--time-policy)に関わる速さと `start_paused` も含みます）。先に照合してから実行します。`run` だけが見る規則が 1 つあります。`start_paused` には `--stdin-commands` か `--control` が要る、という規則です（どちらも `run` だけの引数のため）。
 - `test` は `--request` を受けません（使い方の誤り）。
 - ファイルは JSON で書きます。ランチャーはそれより緩い書き方を読めることがありますが、約束しません。スキーマと、このファイルを読むほかのツールは、JSON だけを受けます。
 - ファイルの間違い（知らないキー、2 回書いたキー、型の違う値、`null`、別の版）は、ファイル名と行を示す使い方の誤り（終了コード 4）で、照合も起動もしません。指定しないキーは書きません。
@@ -627,7 +631,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `connect` | ネットワークの名前から、つなぐ先への対応。先は `--connect` と同じ書き方で、`"none"` はそのネットワークを書かないのと同じです。 | `--connect` |
 | `time_policy` | `"realtime"` か `"free"` | `--time-policy` |
 | `speed` | 0.000001 から 1000000 の数か `"max"` | `--speed` |
-| `start_paused` | `true` か `false` | `--start-paused` |
+| `start_paused` | `true` か `false`。`run` では、続ける手段として `--stdin-commands` か `--control` も要ります。 | `--start-paused` |
 | `strict` | `true` か `false` | `--strict` |
 
 ### 引数と要求ファイルを一緒に使う

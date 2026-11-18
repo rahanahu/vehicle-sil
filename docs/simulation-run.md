@@ -7,6 +7,7 @@ This reference describes what `vehicle_sil_launch run <file>` does and in which 
 | To find | See |
 |---|---|
 | What `run` does and in which order | [How a run proceeds](#how-a-run-proceeds) |
+| Keeping the choices of a run (variant, scenario, participants, connections, speed) in a file | [Request files](#request-files---request) |
 | When a run aborts, and how timeouts are measured | [Abort conditions and timeouts](#abort-conditions-and-timeouts) |
 | Whether ECU variables can be read and written (`control_link`) | [Connection to ECU variables](#connection-to-ecu-variables-control_link) |
 | `speed`, and how lateness behind real time is measured | [Running at a set speed](#running-at-a-set-speed-speed) |
@@ -589,6 +590,8 @@ The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell
 
 A request file says what to run: the variant, the scenario and its parameters, the participants to leave out or to start by hand, where the networks are connected outside, and the speed. `check` and `run` read it with `--request <file>`. Put into it what stays the same on one computer or for one kind of run (for example, the adapters of a test bench), and keep the configuration file the same for everyone.
 
+For example, a test bench whose configuration file has the networks `ETH_EXT` and `CAN1` (with a configuration file that has neither, such as the example's, `check` notes both as unused and connects nothing):
+
 ```json
 {
   "vehicle_sil_run_request": 1,
@@ -603,8 +606,9 @@ vehicle_sil_launch run --request bench.json simulation.yaml                     
 vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml  # this run: CAN1 on SIL Kit only
 ```
 
+- An argument wins over the file, field by field (see [Arguments together with a request file](#arguments-together-with-a-request-file)).
 - The launcher reads only the file that `--request` names. It never looks for one: not next to the configuration file, not in the working directory or the home directory, and not through an environment variable.
-- `check --request` judges the same request as `run --request`, the speed and `start_paused` for the time lock included. Check first, then run. One rule is left to `run`: that `start_paused` needs `--stdin-commands` or `--control`, which are arguments of `run` only.
+- `check --request` judges the same request as `run --request`, the speed and `start_paused` for the [time lock](#time-of-a-run-that-is-connected-outside---time-policy) included. Check first, then run. One rule is left to `run`: that `start_paused` needs `--stdin-commands` or `--control`, which are arguments of `run` only.
 - `test` does not take `--request` (usage error).
 - Write the file as JSON. The launcher may read a looser form, but that is no promise: the schema and the other tools that read the file take JSON only.
 - A mistake in the file (an unknown key, a key written twice, a value of the wrong type, `null`, another version) is a usage error (exit code 4) that names the file and the line; nothing is checked or started. Leave a key out to not set it.
@@ -627,7 +631,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `connect` | A mapping of network names to targets. A target is written as `--connect` takes it; `"none"` is the same as not writing the network. | `--connect` |
 | `time_policy` | `"realtime"` or `"free"` | `--time-policy` |
 | `speed` | A number from 0.000001 to 1000000, or `"max"` | `--speed` |
-| `start_paused` | `true` or `false` | `--start-paused` |
+| `start_paused` | `true` or `false`. `run` also needs `--stdin-commands` or `--control`, a way to go on. | `--start-paused` |
 | `strict` | `true` or `false` | `--strict` |
 
 ### Arguments together with a request file
