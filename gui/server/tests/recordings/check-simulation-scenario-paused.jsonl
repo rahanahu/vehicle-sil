@@ -17,7 +17,7 @@
 {"err": "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]..."}
 {"err": "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]"}
 {"err": "                               [--disable <name>]... [--enable <name>]... <file> --scenarios <directory or files>..."}
-{"err": "       vehicle_sil_launch connections [--json] [--network <name>] [--] <file>"}
+{"err": "       vehicle_sil_launch connections [--json] [--network <name>] [--request <file>] [--] <file>"}
 {"err": "       vehicle_sil_launch version [--json]"}
 {"err": "  check <file>                compare the simulation configuration <file> (YAML or JSON) with what each"}
 {"err": "                              ecu_main executable in it reports (--describe); list the participants,"}
@@ -33,7 +33,9 @@
 {"err": "                              leaves the rest out"}
 {"err": "  connections <file>          where each network of <file> can be connected on this computer: asks the bridge"}
 {"err": "                              of each can and ethernet network for its list and writes the targets as"}
-{"err": "                              --connect lines to copy (connects to nothing)"}
+{"err": "                              --connect lines to copy (connects to nothing). With --request <request file>: only"}
+{"err": "                              the networks that the request file connects, and whether each target is there"}
+{"err": "                              and usable here (exit code 1 if one is not)"}
 {"err": "  version                     the version of vehicle_sil_launch (--json: also its formats and features)"}
 {"err": "  --json                      write the result as JSON"}
 {"err": "  --events                    run: write what happens as events on stdout, one JSON object per line, the"}
@@ -60,7 +62,7 @@
 {"err": "                              run: then run it: write the ECUs' variables and compare their values at"}
 {"err": "                              virtual times, stop the simulation when the scenario is over, and fail if a"}
 {"err": "                              step failed (docs/scenario.md; not with --start-paused; with --control the"}
-{"err": "                              clients read and stop, and cannot write or move the time)"}
+{"err": "                              clients read, move the time and stop, and cannot write)"}
 {"err": "  --variant <name>            the variant of <file> to check or run (its variants: the common part with the"}
 {"err": "                              variant's commands, variable maps, params and enabled laid over it); a file"}
 {"err": "                              that defines variants needs it: none is the default. test: only this variant"}
@@ -97,12 +99,13 @@
 {"err": "                              change as in any run; the bridge still carries frames both ways, so what is"}
 {"err": "                              connected there sees the simulation pause or run ahead. No effect on other"}
 {"err": "                              runs"}
-{"err": "  --request <file>            check, run: what to run, from the request file <file> (JSON: variant, params,"}
-{"err": "                              scenario, disable, enable, manual, connect, time_policy, speed, start_paused,"}
-{"err": "                              strict; schema/run-request.schema.json). An argument wins over the file, field"}
-{"err": "                              by field: --connect and --param by name, --connect <network>=none takes the"}
-{"err": "                              file's target away; the lists add up. scenario in <file> is from the directory"}
-{"err": "                              of the configuration file. Only this file is read: none is looked for"}
+{"err": "  --request <file>            check, run, connections: what to run, from the request file <file> (JSON:"}
+{"err": "                              variant, params, scenario, disable, enable, manual, connect, time_policy, speed,"}
+{"err": "                              start_paused, strict; schema/run-request.schema.json). An argument wins over the"}
+{"err": "                              file, field by field: --connect and --param by name, --connect <network>=none"}
+{"err": "                              takes the file's target away; the lists add up. scenario in <file> is from the"}
+{"err": "                              directory of the configuration file. Only this file is read: none is looked for."}
+{"err": "                              connections reads only its connect"}
 {"err": "  --network <name>            connections: only the network <name>"}
 {"err": "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable"}
 {"err": "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable"}
@@ -113,9 +116,10 @@
 {"err": "  --version                   as version"}
 {"err": "  --                          what follows is the file, also if it starts with '-'"}
 {"err": "exit codes: 0 passed (run: also stopped by a command), 1 errors (with --strict: or warnings; run: also a failed"}
-{"err": "            simulation; test: a run failed or was left out; connections: a list could not be made), 3 the file"}
-{"err": "            cannot be read (run: or the registry cannot be set up), 4 usage, 5 run: a scenario was stopped by a"}
-{"err": "            command before its end, 130 run or test was interrupted (a signal, or its input or output closed)"}
+{"err": "            simulation; test: a run failed or was left out; connections: a list could not be made, or a"}
+{"err": "            target of --request cannot be used), 3 the file cannot be read (run: or the registry cannot be set"}
+{"err": "            up), 4 usage, 5 run: a scenario was stopped by a command before its end, 130 run or test was"}
+{"err": "            interrupted (a signal, or its input or output closed)"}
 {"err": "the file format: docs/simulation-config.md; check: docs/simulation-check.md; run: docs/simulation-run.md;"}
 {"err": "events and commands: docs/simulation-events.md; scenarios: docs/scenario.md"}
 {"exit": 4}

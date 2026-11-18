@@ -66,12 +66,6 @@ struct Query
     const Command* arguments; ///< nullptr: no argument is looked at
 
     [[nodiscard]] bool is(Operation o) const { return operation == o; }
-    /// One of the operations that move the time.
-    [[nodiscard]] bool moves_time() const
-    {
-        return is(Operation::Pause) || is(Operation::Resume) || is(Operation::Step) || is(Operation::RunUntil) ||
-               is(Operation::Speed);
-    }
     /// The time of a pause at a time or of a run_until, if the arguments are looked at and have one.
     [[nodiscard]] const std::int64_t* at_ms() const
     {
@@ -100,8 +94,7 @@ struct Rule
 // refuses is taken. By entry, operation and situation (the last four also by the arguments):
 //
 //   row                      entry           operation                          when
-//   scenario-running         control server  pause resume step run_until speed  a scenario plays
-//                                            write
+//   scenario-running         control server  write                              a scenario plays
 //   not-running              standard input  all but stop                       detached
 //                            control server  all but write                      detached
 //   not-a-time-command       both            unknown                            always
@@ -116,29 +109,29 @@ struct Rule
 //   not-set-up               both            step, pause at a time, run_until   setting up
 //   not-paused               both            step                               not paused
 //
-// The two entries differ in two places, and both are how the launcher has always answered:
-//   - While a scenario plays, a control server's clients neither write nor move the time; the
-//     commands of standard input are taken. (The control server refuses those calls itself, before
-//     they come here: always_refused(). The row is first because that refusal is.)
-//   - A stop from standard input is taken whenever it comes (it is a stop request, and the run
-//     takes one until the process ends); a control server's is refused once the simulation is over.
-// A write goes to the hub, not through the time commands: whether the run is over does not
+// The time commands get the same answer from both entries, but for a stop: one from standard
+// input is taken whenever it comes (it is a stop request, and the run takes one until the process
+// ends); a control server's is refused once the simulation is over.
+// A write is a control server's alone (standard input has none: there the name is no time
+// command). It goes to the hub, not through the time commands: whether the run is over does not
 // matter to it here.
 //
-// The time lock and a scenario: the lock's row refuses whatever the scenario's row leaves (the
-// commands of standard input while a scenario plays). A control server's clients are refused by
-// the scenario's row, which stays first: the server refuses those calls itself, with that one
-// reason, before they come here (always_refused()), and the table must answer as it does.
+// A scenario: while it plays, nothing from outside writes a variable (a write that is not in the
+// scenario's file would change its result). The control server refuses those calls itself, before
+// they reach the hub (always_refused()). The time commands are taken from both entries: the
+// scenario's writes and checks are by the virtual time alone, so where the time stands still and
+// how fast it goes changes neither its result nor its timeline (with every participant in the
+// time synchronization). The time lock refuses them in a run with a scenario as in any other.
 constexpr std::array<Rule, 10> kRules{{
     {reason::kScenarioRunning,
      [](const Query& q) {
-         return q.entry == Entry::ControlServer && q.situation.scenario && (q.moves_time() || q.is(Operation::Write));
+         return q.entry == Entry::ControlServer && q.situation.scenario && q.is(Operation::Write);
      },
      [](const Query&) {
          return std::string(
-             "this run plays a scenario, and until it ends only the scenario writes variables and moves the time, "
-             "so that the same scenario always gives the same result; a client can read values and the time, and "
-             "stop the run");
+             "this run plays a scenario, and until it ends only the scenario writes variables, so that the same "
+             "scenario always gives the same result; a client can read values, pause, step and change the speed "
+             "(the result stays the same), and stop the run");
      }},
     {reason::kNotRunning,
      [](const Query& q) {
@@ -256,7 +249,7 @@ Allowed allowed(const ControlSituation& situation, Entry entry, Operation operat
     return out;
 }
 
-std::optional<Decision> always_refused(bool scenario, Entry entry)
+std::optional<Decision> always_refused(bool scenario, Entry entry, Operation operation)
 {
     std::optional<Decision> first;
     for (const ControlStage stage : {ControlStage::SettingUp, ControlStage::Attached, ControlStage::Detached})
@@ -266,19 +259,15 @@ std::optional<Decision> always_refused(bool scenario, Entry entry)
             // No lock, the lock, and the time left to the user (never both of the last two).
             for (const int outside : {0, 1, 2})
             {
-                for (const Operation o : {Operation::Pause, Operation::Resume, Operation::Step, Operation::RunUntil,
-                                          Operation::Speed, Operation::Write})
+                Decision d = decide(ControlSituation{stage, paused, scenario, outside == 1, outside == 2}, entry,
+                                    operation, operation_name(operation), nullptr);
+                if (d.ok || (first && first->reason != d.reason))
                 {
-                    Decision d = decide(ControlSituation{stage, paused, scenario, outside == 1, outside == 2}, entry, o,
-                                        operation_name(o), nullptr);
-                    if (d.ok || (first && first->reason != d.reason))
-                    {
-                        return std::nullopt;
-                    }
-                    if (!first)
-                    {
-                        first = std::move(d);
-                    }
+                    return std::nullopt;
+                }
+                if (!first)
+                {
+                    first = std::move(d);
                 }
             }
         }

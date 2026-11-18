@@ -4,8 +4,8 @@
 // speed, stop, a write of a variable) the run takes now, by where it came in (standard input, a
 // control server) and by where the run stands; one table and one function that reads it (decide()).
 // TimeCommands decides each command with it (time_commands.hpp), allowed() answers the same
-// question without doing anything, and a control server that only shows the run is made from it
-// (always_refused()). Pure: no clock, no lock, no SIL Kit. Internal.
+// question without doing anything, and a control server that refuses its clients' writes for the
+// whole run is made from it (always_refused()). Pure: no clock, no lock, no SIL Kit. Internal.
 #pragma once
 
 #include "vehicle_sil/launch/command.hpp"
@@ -157,9 +157,9 @@ struct Allowed
 /// decide() without arguments, by the operation's own name, and the range of its argument.
 [[nodiscard]] Allowed allowed(const ControlSituation& situation, Entry entry, Operation operation);
 
-/// Whether `entry` is refused everything but a stop for the whole run (every stage, paused or not,
-/// whatever the time lock is), all for one reason: that refusal, else empty. A control server
-/// asks it once, before the run, to refuse those calls itself in one place (it only shows the run).
-[[nodiscard]] std::optional<Decision> always_refused(bool scenario, Entry entry);
+/// Whether `operation` from `entry` is refused for the whole run (every stage, paused or not,
+/// whatever the time lock is), always for one reason: that refusal, else empty. A control server
+/// asks it for the write once, before the run, to refuse those calls itself in one place.
+[[nodiscard]] std::optional<Decision> always_refused(bool scenario, Entry entry, Operation operation);
 
 } // namespace vehicle_sil::launch

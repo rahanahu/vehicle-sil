@@ -1037,16 +1037,16 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 
 ## 実行中に変数を見る（`--control`）
 
-`--scenario` と `--control` を一緒に付けると、シナリオの実行中も Control Server が起動します（[control-api.md](control-api.md) の「ランチャーに接続する」。Control Server を持つビルドだけ）。クライアントができるのは、読むこと、待つこと、止めることだけです。
+`--scenario` と `--control` を一緒に付けると、シナリオの実行中も Control Server が起動します（[control-api.md](control-api.md) の「ランチャーに接続する」。Control Server を持つビルドだけ）。クライアントは、読む、待つ、時刻を動かす、止めることができます。変数は書けません。
 
 | クライアントの呼び出し | シナリオの実行中 |
 |---|---|
 | 読む、待つ: `Ping`、`ListPeers`、`GetValues`、`GetSnapshot`、`Watch`、`GetTime`、`WaitPaused`、`GetOperation`、`WaitOperation` | いつもどおりです。 |
 | 変数を書く、Peer を消す: `Write`、`ForgetPeer` | 拒否します。 |
-| 時刻を動かす: `Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed` | 拒否します。 |
+| 時刻を動かす: `Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed` | 受け付けます。標準入力の同じコマンドと同じ扱いです（feature `scenario-time`）。シナリオの結果は変わりません（下で説明します）。 |
 | 止める: `Stop` | 受け付けます。停止の要求の 1 つで、シナリオは `incomplete` になります（`interrupted_by` は `"control server stop"`。結果は `"incomplete"`、終了コード 5）。 |
 
-拒否した呼び出しは、次のとおりです。
+拒否した書き込みは、次のとおりです。
 
 | 項目 | 内容 |
 |---|---|
@@ -1054,9 +1054,16 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | 理由 | trailing metadata の `vehicle-sil-reason` が `scenario-running`（Python では `ControlError.reason`） |
 | メッセージ | 何を拒否したか、なぜか、何ができるかを示します。 |
 | ロール（[control-api.md](control-api.md) の「認証」） | ロールによらず拒否します。 |
-| 記録 | Hub にも時間ゲートにも渡らず、イベント `command` にもなりません（監査ログの行は残ります）。 |
+| 記録 | Hub に渡らず、イベント `command` にもなりません（監査ログの行は残ります）。 |
 
-クライアントがいても、いなくても、シナリオの結果は同じです。読む呼び出しと購読は、シミュレーションの進行を待たせません。ただし、同じロックを短く取り合うので、読むクライアントが多いと、実時間では少し遅くなることがあります。等速の実行の `timing` はその分だけ変わることがありますが、シナリオの結果は変わりません。購読は、読まないクライアントの分を上限つきで保持し、あふれた分を捨てて数えます（値は Peer ごとに最新の 1 つ）。
+一時停止、ステップ実行、速度の変更は、だれが（クライアントでも標準入力でも）いつ行っても、シナリオの結果を変えません。
+
+- シナリオは、仮想時間だけで書き込み、判定します。一時停止、ステップ実行、`run_until`、速度の変更が変えるのは、仮想時間がどこで止まり、どの速さで進むかで、ある仮想時刻に何が起きるかではありません。結果のステップ（状態、時刻、メッセージ）とタイムラインのファイル（`--timeline`）は、だれも触らなかった実行と 1 バイトも違いません。CTest の `launch_run.scenario_time_commands_same` がこれを確かめます。
+- これは、すべての参加者が時刻同期に入っている実行での話です。シミュレーションの外につながる実行は、代わりに `--time-policy` に従います（[simulation-run.md](simulation-run.md) の「外につながる実行の時間」）。既定では、これらの呼び出しを理由 `outside-real-time` で拒否します。
+- `--timeout-ms` は実時間を数えるので、シミュレーションが止まっている時間も数えます。一時停止のまま `--timeout-ms` が切れたシナリオは、`failed` でなく `incomplete` です。実行そのものは、所見 `timeout` で失敗します（終了コード 1）。
+- 時刻の呼び出しを拒否する理由は、どの実行でも同じものです（たとえば、進んでいるときの `Step` は `not-paused`。[simulation-events.md](simulation-events.md) の「理由のコード」）。
+
+読むだけのクライアントがいても、いなくても、シナリオの結果は同じです。読む呼び出しと購読は、シミュレーションの進行を待たせません。ただし、同じロックを短く取り合うので、読むクライアントが多いと、実時間では少し遅くなることがあります。等速の実行の `timing` はその分だけ変わることがありますが、シナリオの結果は変わりません。購読は、読まないクライアントの分を上限つきで保持し、あふれた分を捨てて数えます（値は Peer ごとに最新の 1 つ）。
 
 クライアントからは、次のように見えます。
 
@@ -1064,14 +1071,14 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 |---|---|
 | シナリオの書き込み | 操作として見えます（`Watch` の操作、`client` は `scenario`）。 |
 | シナリオが controller のステップを保留している間 | 一時停止ではありません（`GetTime` の `paused` は偽、`GetSnapshot` の `consistent` も偽）。 |
-| 標準入力の `pause` で止めている間 | `paused` が真で、`consistent` もシナリオのない実行と同じです。 |
+| 一時停止の間（クライアントの `Pause` でも、標準入力の `pause` でも） | `paused` が真で、`consistent` もシナリオのない実行と同じです。 |
 
-標準入力のコマンド（`--stdin-commands`）は、Control Server があっても変わりません（`stop`、一時停止、再開、ステップ実行、`run_until`、速度）。
+標準入力のコマンド（`--stdin-commands`）は、Control Server があっても変わりません（`stop`、一時停止、再開、ステップ実行、`run_until`、速度）。クライアントと標準入力は同じ時刻を動かすので、片方の一時停止をもう片方が解けます。
 
 ## 一緒に使えない引数と制限
 
 - `--scenario` は `--start-paused` と一緒に使えません（引数のエラー。`--control` があっても同じです）。シナリオは、時刻 0 の書き込みを最初のステップの前に済ませて、自分で進みます。
-- `--stdin-commands` は使えます（`stop`、一時停止、再開、ステップ実行、`run_until`、速度）。止めて進めても、シナリオの結果は変わりません。
+- `--stdin-commands` は使えます（`stop`、一時停止、再開、ステップ実行、`run_until`、速度）。止めて進めても、シナリオの結果は変わりません（上の「実行中に変数を見る」）。
 - シナリオが使えるのは、設定ファイルにあって無効にしていない、`ecu_main` で作った、仮想時間で動く ECU の変数だけです。
 - フレームを直接待つ条件、式、機種ごとの切り替え、変数の対応表は、シナリオにはありません。
 
@@ -1087,6 +1094,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `scenario-points-file` | CSV ファイルの `points` | `points` の形のエラーです。 |
 | `timeline` | `run --scenario --timeline <file>` | `--timeline` は引数のエラーです。 |
 | `scenario-control` | `--scenario` と `--control` を一緒に使う | 一緒に使えません（Control Server を持つビルドだけにあります）。 |
+| `scenario-time` | シナリオの実行中に、Control Server のクライアントが時刻を動かす（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`） | これらの呼び出しを理由 `scenario-running` で拒否します（標準入力のコマンドは使えます。Control Server を持つビルドだけにあります）。 |
 
 `features` の名前の全部は、[simulation-events.md](simulation-events.md) にあります。
 

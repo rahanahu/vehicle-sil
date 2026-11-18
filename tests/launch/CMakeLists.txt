@@ -192,6 +192,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     launch_run_networks.cpp
     launch_run_processes.cpp
     launch_run_scenario.cpp
+    launch_run_scenario_time.cpp
     launch_run_support.cpp
     launch_run_time.cpp
     launch_run_timeline.cpp
@@ -265,7 +266,9 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       scenario_each_write
       scenario_expect_beside
       scenario_failures
+      scenario_paused_timeout
       scenario_same
+      scenario_time_commands_same
       scenario_wave
       run_until_stdin
       state_on_arrival

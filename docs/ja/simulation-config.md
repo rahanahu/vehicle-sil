@@ -971,7 +971,7 @@ vehicle_sil_launch version [--json]
 | `--scenario` | `check` では照合だけ、`run` では照合してから実行します。 |
 | `--scenario` | シナリオが終わるとシミュレーションを止め、手順が失敗していれば、実行は失敗です。 |
 | `--scenario` | `--start-paused` と一緒には使えません。 |
-| `--scenario` | `--control` と一緒なら、クライアントは読むだけです（[scenario.md](scenario.md) の「実行中に変数を見る」）。 |
+| `--scenario` | `--control` と一緒なら、クライアントは読むことと時刻を動かすことができ、書けません（[scenario.md](scenario.md) の「実行中に変数を見る」）。 |
 | `--variant` | 機種を書いた設定ファイルには、必ず必要です。 |
 | `--variant` | 機種のない設定ファイルには付けられません。 |
 | `--variant` | `test` では、実行する機種を絞ります（繰り返せる。なければ全部の機種）。 |

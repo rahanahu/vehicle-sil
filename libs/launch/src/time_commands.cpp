@@ -468,10 +468,10 @@ Allowed TimeCommands::allowed(Operation operation, Entry entry)
     return launch::allowed(situation_of(s), entry, operation);
 }
 
-std::optional<Decision> TimeCommands::always_refused(Entry entry) const
+std::optional<Decision> TimeCommands::always_refused(Entry entry, Operation operation) const
 {
     // Fixed since the constructor: no lock.
-    return launch::always_refused(state_->scenario, entry);
+    return launch::always_refused(state_->scenario, entry, operation);
 }
 
 void TimeCommands::set_time_lock(const TimeLock& lock)

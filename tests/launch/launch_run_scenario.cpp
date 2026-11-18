@@ -854,10 +854,13 @@ void scenario_failures(const Options& o)
         const Captured version = launch(o, {"version", "--json"}, dir);
         require(contains(version.standard_output, "\"scenario\""), "version --json lists the feature scenario");
         // With --control: a build with the control server serves it during the scenario (its
-        // clients only read; tests/control_server/test_launcher.py), and says so in its features.
+        // clients read and move the time, and do not write; tests/control_server/test_launcher.py),
+        // and says so in its features.
         const bool server = contains(version.standard_output, "\"control-server\"");
-        require(server == contains(version.standard_output, "\"scenario-control\""),
-                "version --json lists scenario-control exactly with control-server: " + version.standard_output);
+        require(server == contains(version.standard_output, "\"scenario-control\"") &&
+                    server == contains(version.standard_output, "\"scenario-time\""),
+                "version --json lists scenario-control and scenario-time exactly with control-server: " +
+                    version.standard_output);
         run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--control", "0"}, dir);
         if (server)
         {

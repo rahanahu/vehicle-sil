@@ -169,9 +169,9 @@ public:
     /// Calls `f` once with the facts as they are now, under this object's mutex (the rules for
     /// `f`: as OnChange). Reads the controller's time gate while attached.
     void look(const std::function<void(const TimeFacts& facts)>& f);
-    /// launch::always_refused() for this run: whether `entry` is refused everything but a stop for
-    /// the whole run. The same answer whenever it is asked.
-    [[nodiscard]] std::optional<Decision> always_refused(Entry entry) const;
+    /// launch::always_refused() for this run: whether `operation` from `entry` is refused for the
+    /// whole run. The same answer whenever it is asked.
+    [[nodiscard]] std::optional<Decision> always_refused(Entry entry, Operation operation) const;
     /// Whether this run is connected outside the simulation, and whether that keeps it to real time
     /// (ControlSituation::time_locked for `lock.locked`; time_free for a lock that names something
     /// and is not locked). For the run: once, right after it has read the configuration and

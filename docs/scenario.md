@@ -1037,16 +1037,16 @@ For a step that is skipped, `scenario_step` (`status` `skipped`, `at_ms` null) i
 
 ## Watching variables during a run (`--control`)
 
-With both `--scenario` and `--control`, the Control Server also runs during a scenario (see "Connect to the launcher" in [control-api.md](control-api.md#connect-to-the-launcher); only in builds with the Control Server). A client can only read, wait and stop.
+With both `--scenario` and `--control`, the Control Server also runs during a scenario (see "Connect to the launcher" in [control-api.md](control-api.md#connect-to-the-launcher); only in builds with the Control Server). A client can read, wait, move time and stop. It cannot write variables.
 
 | Client call | During a scenario |
 |---|---|
 | Read and wait: `Ping`, `ListPeers`, `GetValues`, `GetSnapshot`, `Watch`, `GetTime`, `WaitPaused`, `GetOperation`, `WaitOperation` | Work as usual. |
 | Write variables, forget peers: `Write`, `ForgetPeer` | Rejected. |
-| Move time: `Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed` | Rejected. |
+| Move time: `Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed` | Accepted, as the same commands from stdin are (feature `scenario-time`). They do not change the result of the scenario (see below). |
 | Stop: `Stop` | Accepted. It is one of the stop requests, and the scenario becomes `incomplete` (`interrupted_by` is `"control server stop"`; the result is `"incomplete"`, exit code 5). |
 
-A rejected call:
+A rejected write:
 
 | Topic | Details |
 |---|---|
@@ -1054,9 +1054,16 @@ A rejected call:
 | Reason | `vehicle-sil-reason` in the trailing metadata is `scenario-running` (`ControlError.reason` in Python) |
 | Message | Says what was rejected, why, and what the client can do instead. |
 | Role (see "Authentication" in [control-api.md](control-api.md#authentication)) | The call is rejected whatever the role. |
-| Record | The call reaches neither the Hub nor the time gate and does not become a `command` event. The audit log still gets a line. |
+| Record | The call does not reach the Hub and does not become a `command` event. The audit log still gets a line. |
 
-The result of the scenario is the same with or without clients. Read calls and subscriptions do not hold up the simulation. They do contend briefly for the same lock, so many reading clients can slow the run slightly in real time. The `timing` of a run at real-time speed can change by that much, but the result of the scenario does not. Subscriptions keep a bounded backlog for a client that does not read; what overflows is dropped and counted (for values, the latest one per peer is kept).
+Pausing, stepping and changing the speed do not change the result of the scenario, whoever does it (a client or stdin) and whenever:
+
+- The scenario writes and checks by virtual time alone. A pause, a step, a `run_until` or another speed changes where virtual time stands still and how fast it goes, not what happens at a virtual time. The steps of the result (status, times, messages) and the timeline file (`--timeline`) are the same, byte for byte, as in a run that nobody touched. The CTest test `launch_run.scenario_time_commands_same` checks this.
+- This holds for a run in which every participant is in the time synchronization. A run that is connected outside the simulation follows `--time-policy` instead (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)): by default these calls are rejected with the reason `outside-real-time`.
+- `--timeout-ms` counts real time, so it also counts the time the simulation stands still. A scenario that is left paused until `--timeout-ms` runs out is `incomplete`, not `failed`; the run itself fails with the finding `timeout` (exit code 1).
+- The values a time call can be rejected with are those of any run (for example `not-paused` for a `Step` while the simulation runs; see "Reason codes" in [simulation-events.md](simulation-events.md#reason-codes)).
+
+The result of the scenario is also the same with or without clients that read. Read calls and subscriptions do not hold up the simulation. They do contend briefly for the same lock, so many reading clients can slow the run slightly in real time. The `timing` of a run at real-time speed can change by that much, but the result of the scenario does not. Subscriptions keep a bounded backlog for a client that does not read; what overflows is dropped and counted (for values, the latest one per peer is kept).
 
 What a client sees:
 
@@ -1064,14 +1071,14 @@ What a client sees:
 |---|---|
 | Writes of the scenario | Operations (operations in `Watch`, with `client` `scenario`). |
 | While the scenario holds a controller step | Not a pause (`paused` of `GetTime` is false, and so is `consistent` of `GetSnapshot`). |
-| While paused with `pause` from stdin | `paused` is true, and `consistent` behaves as in a run without a scenario. |
+| While paused (by a client's `Pause` or by `pause` from stdin) | `paused` is true, and `consistent` behaves as in a run without a scenario. |
 
-The stdin commands (`--stdin-commands`: `stop`, pause, resume, step, `run_until`, speed) work the same with a Control Server.
+The stdin commands (`--stdin-commands`: `stop`, pause, resume, step, `run_until`, speed) work the same with a Control Server. A client and stdin move the same time: either can end a pause of the other.
 
 ## Incompatible options and limitations
 
 - `--scenario` cannot be combined with `--start-paused` (a usage error, also with `--control`). A scenario completes its writes for time 0 before the first simulation step, and then advances on its own.
-- `--stdin-commands` can be used (`stop`, pause, resume, step, `run_until`, speed). Pausing and stepping do not change the result of the scenario.
+- `--stdin-commands` can be used (`stop`, pause, resume, step, `run_until`, speed). Pausing and stepping do not change the result of the scenario (see "Watching variables during a run (`--control`)" above).
 - A scenario can use only variables of ECUs that are in the configuration file, are not disabled, are built with `ecu_main` and run in virtual time.
 - Scenarios have no conditions that wait for frames directly, no expressions, no per-variant branching and no variable maps.
 
@@ -1087,6 +1094,7 @@ When you use another version of `vehicle_sil_launch`, check `features` in the ou
 | `scenario-points-file` | `points` from a CSV file | An error in the shape of `points`. |
 | `timeline` | `run --scenario --timeline <file>` | `--timeline` is a usage error. |
 | `scenario-control` | `--scenario` together with `--control` | The two cannot be combined. Only builds with the Control Server have this name. |
+| `scenario-time` | Control Server clients can move time during a scenario (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) | These calls are rejected with the reason `scenario-running` (stdin commands work). Only builds with the Control Server have this name. |
 
 [simulation-events.md](simulation-events.md) lists every `features` name.
 

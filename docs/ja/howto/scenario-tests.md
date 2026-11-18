@@ -737,7 +737,7 @@ line  step                                                             result  a
 | 短いパルスが、`within_ms` でも `hold_for_ms` でも見えない | サンプルとサンプルの間に変化して戻った値は、条件に現れません。 | ECU の `sample_period` を小さくします（[control-api.md](../control-api.md) の「ECU の変数」の `set_agent_options()`）。 |
 | 待つ手順の次の `after_ms` が、表の `at` から数えた時刻とずれる | 待つ手順が終わる時刻は、条件が成り立ったサンプルの時刻（`at`）の少し後です。 | 時刻に余裕を持たせます。決め方は、[scenario.md](../scenario.md) の「時刻」にあります。 |
 | `--scenario cannot be used with --start-paused`（終了コード 4） | シナリオは、時刻 0 の値を自分で書き込んで実行します。 | `--start-paused` を外します。 |
-| `--control` で接続したクライアントが、シナリオの実行中に値を書き込めない | シナリオの実行中、クライアントができるのは、読むこと、待つこと、止めることだけです。 | 値を変えながら確認するときは、[信号を外から操作する](operate-signals.md) の方法を使います。 |
+| `--control` で接続したクライアントが、シナリオの実行中に値を書き込めない | シナリオの実行中、クライアントは書き込めません。シナリオのファイルにない書き込みは、結果を変えるからです。読む、待つ、一時停止する、ステップで進める、止めることはできます（一時停止とステップ実行は、結果を変えません）。 | 値を変えながら確認するときは、[信号を外から操作する](operate-signals.md) の方法を使います。 |
 | ある participant の変数を、シナリオで使えない | 無効にした participant、`describe: false` の participant、実時間で動く participant の変数は使えません。 | [scenario.md](../scenario.md) の「一緒に使えない引数と制限」を確認します。 |
 
 サンプルのルールは、[scenario.md](../scenario.md) の「値の見え方」にあります。

@@ -433,14 +433,16 @@ control_grpc::ServerOptions read_control_options(const ControlHost& asked)
 /// their time commands, and a client's Stop is a stop request of theirs. Not started.
 std::unique_ptr<ControlEndpoint> make_server(control_grpc::ServerOptions options, RunControls& controls)
 {
-    // A run that plays a scenario: what a client writes, and when it lets the time go on, is not
-    // in the scenario's file: with it, the same scenario would not give the same result any more.
-    // Reading changes nothing (the hub's subscriptions are bounded and never make the simulation
-    // wait), and a stop is the run's to take as always. The rule is the controls'; the refusal is
-    // the server's, in one place before the call.
-    if (auto only = controls.always_refused(Entry::ControlServer))
+    // A run that plays a scenario: what a client writes is not in the scenario's file: with it,
+    // the same scenario would not give the same result any more. Reading changes nothing (the
+    // hub's subscriptions are bounded and never make the simulation wait), the time operations
+    // change where the time stands still and how fast it goes, not what happens at a time (they
+    // go to the time commands, as in any run), and a stop is the run's to take as always. The
+    // rule is the controls'; the refusal is the server's, in one place before the call.
+    if (auto only = controls.always_refused(Entry::ControlServer, Operation::Write))
     {
-        options.observe_only = control_grpc::ObserveOnly{std::move(only->reason), std::move(only->message)};
+        options.observe_only = control_grpc::ObserveOnly{std::move(only->reason), std::move(only->message),
+                                                         control_grpc::ObserveOnly::Refuses::Writes};
     }
     // The stop's event (and its refusal once the run is over) comes from the time commands.
     auto time = std::make_unique<LaunchTimeControl>(

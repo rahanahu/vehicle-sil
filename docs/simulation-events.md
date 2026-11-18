@@ -213,7 +213,7 @@ How late the run is, and how fast it actually goes, are `late_ms`, `slipped_ms` 
 
 `ok` answers "would the run accept it", not "would it change anything": `pause` is `ok` while the simulation is paused (the command is accepted and does nothing). `step` can be `ok` while `paused` is `false`: right after a `pause` was accepted and until the simulation has paused, and while a step is being done.
 
-`pause`, `resume`, `step`, `run_until`, `speed` and `stop` are answered as for a stdin command. `write` (writing a variable) exists only for Control Server clients, so it is answered as for a client. In a run without a Control Server (no `--control`) nothing can send a write, so `write` has `ok` `false` with the reason `no-control-server` for the whole run. During a scenario the two entries differ: clients cannot move time (`scenario-running`), stdin commands can, and those six show the answer for stdin.
+`pause`, `resume`, `step`, `run_until`, `speed` and `stop` are answered as for a stdin command. `write` (writing a variable) exists only for Control Server clients, so it is answered as for a client. In a run without a Control Server (no `--control`) nothing can send a write, so `write` has `ok` `false` with the reason `no-control-server` for the whole run. A client's time call gets the same answer as the stdin command, also during a scenario; only `write` is refused for the scenario (`scenario-running`).
 
 In a run that is connected outside the simulation and keeps real time (`--time-policy realtime`, the default), `pause`, `step` and `run_until` have `ok` `false` with the reason `outside-real-time`, and `speed` has `min` and `max` 1 (only a speed of 1 is accepted). With `--time-policy free` they have `ok` `true` and the `caution` `outside-not-real-time`. What connects the run outside is `time_lock.because` of the `check` event.
 
@@ -267,7 +267,7 @@ The `reason` of a `command` event that was not accepted, and of `allowed` in `st
 | `not-set-up` | The launcher has not set up the simulation yet (`step`, `run_until`, `pause` with a time). Also: more than 256 commands arrived before the launcher had read the configuration file (see [When time commands are accepted](#when-time-commands-are-accepted)) |
 | `not-paused` | `step` while the simulation is not paused |
 | `not-running` | The simulation has ended, or did not start |
-| `scenario-running` | The run plays a scenario: a client can neither write variables nor move time |
+| `scenario-running` | The run plays a scenario: a client cannot write variables (it can move time, as stdin can) |
 | `no-control-server` | Only in `allowed` of `state`: the run has no Control Server (`--control`), and only a Control Server client can send the operation (`write`) |
 | `outside-real-time` | The run is connected outside the simulation (`--connect`, or an enabled `role: bridge` participant) and keeps real time (`--time-policy realtime`, the default): `pause`, `step`, `run_until` and a `speed` other than 1 are refused. `resume`, a `speed` of 1 and `stop` are accepted. To move time, start the run with `--time-policy free` (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)) |
 | `out-of-range` | An argument is out of range (a client's speed, step or time) |
@@ -626,6 +626,8 @@ The time operations (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) and `Sto
 | `pause` with a time | Cannot be sent. | Can be sent. |
 | A stop after the simulation has ended | `stop` is accepted and does nothing. | `Stop` is rejected. |
 
+A run with a scenario (`--scenario`) accepts the time commands from both. They do not change the result of the scenario (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).
+
 ## Version and features (`vehicle_sil_launch version`)
 
 `vehicle_sil_launch version` (or `--version`) writes one line, `vehicle_sil_launch <version>`. `version --json` writes the versions of the formats and the list of features. Neither reads a file, and the exit code is 0.
@@ -733,6 +735,7 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 | `request` | `--request <file>` of `check` and `run`: what to run, from a request file (see "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
+| `scenario-time` | Control Server clients can move time while a scenario runs (only in builds with the Control Server) |
 
 Each name indicates that the following are present:
 
@@ -758,9 +761,9 @@ Each name indicates that the following are present:
 | `request` | `--request`, the findings `connect-network-unused` and `request-params-unused`, and `request_file` as the `from` of a parameter in the check and result JSON |
 | `control-server` | The event `control_server`, `"control_server"` as the `source` of `command` and its `at_ms`, `--control-credentials`, `--control-tls-cert`, `--control-tls-key`, `--control-audit-log`, `"control server stop"` as `interrupted_by`, and pausing before the step at time 0 with `--start-paused` |
 
-In a build with `scenario-control`, clients can only read, wait and stop while a scenario runs. Calls that write and calls that move time are rejected with `FAILED_PRECONDITION` (reason `scenario-running`) (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).
+In a build with `scenario-control`, clients cannot write while a scenario runs: calls that write are rejected with `FAILED_PRECONDITION` (reason `scenario-running`). In a build with `scenario-time`, calls that move time (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) are accepted during a scenario, as the same commands from stdin are, and do not change the result of the scenario; a build with `scenario-control` alone rejects them with the same reason (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).
 
-The example above is the output of a build without the Control Server. A build with it adds `"control-server"` and `"scenario-control"` at the end of `features`. The CTest test `launch_cli.docs` also checks this example (byte for byte, except the `vehicle_sil` version and these 2 names).
+The example above is the output of a build without the Control Server. A build with it adds `"control-server"`, `"scenario-control"` and `"scenario-time"` at the end of `features`. The CTest test `launch_cli.docs` also checks this example (byte for byte, except the `vehicle_sil` version and these 3 names).
 
 ## See also
 

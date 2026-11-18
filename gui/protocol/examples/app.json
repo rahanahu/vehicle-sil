@@ -53,7 +53,8 @@
           "time-policy",
           "stdin-run-until",
           "request",
-          "scenario-control"
+          "scenario-control",
+          "scenario-time"
         ]
       }
     },

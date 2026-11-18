@@ -62,8 +62,9 @@ std::vector<Finding> validate_request(const RunRequest& request, RequestCommand 
     }
     if (intent.scenario && intent.start_paused)
     {
-        // Also with a control server: its clients cannot move the time during a scenario, so they
-        // could not end the hold.
+        // Also with a control server, whose clients could end the hold: the scenario makes its
+        // writes for 0 in the start window and then runs by itself, and a hold before the first
+        // step is not part of that.
         out.push_back(usage(scenario + " cannot be used with " + paused +
                             ": the scenario writes its values for 0 before "
                             "the first step and runs by itself; pause and step it with --stdin-commands if needed"));
