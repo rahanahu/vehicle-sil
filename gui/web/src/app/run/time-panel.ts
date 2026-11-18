@@ -6,15 +6,19 @@ import { Speed } from '@vehicle-sil/gui-client';
 import { MeasurePipe } from '../core/format/measure-pipe';
 import { numberText } from '../core/format/number-text';
 import { SimulationTime } from '../core/session/simulation-time';
-import { latenessText, reasonText, speedLabel } from './labels';
+import { controlLine, latenessText, reasonLine, speedLabel } from './labels';
 import { SpeedPicker } from './speed-picker';
+
+/** 一時停止と再開の理由のうち、時刻のカードに出さない code（ほかの所が言う）。 */
+const SAID_ELSEWHERE = new Set(['paused', 'not-paused', 'not-running', 'busy']);
 
 /** ステップ送りの量の最初の値（ミリ秒）。 */
 export const DEFAULT_STEP_MS = 100;
 
 /**
  * 実行中の時刻: 仮想時間、速さ、実際の速さ、一時停止しているか、遅れの数と、ステップ送り、速さの変更。
- * 一時停止と再開は状態の帯にある（TimeButtons）。状態はすべて SimulationTime の signal から読む。
+ * 一時停止と再開は状態の帯にある（TimeButtons）。状態はすべて SimulationTime の signal から読む。操作の可否、理由、
+ * 注意、範囲は正面の口の `controls` を写す（この画面は規則を持たない）。
  */
 @Component({
   selector: 'app-time-panel',
@@ -80,6 +84,14 @@ export const DEFAULT_STEP_MS = 100;
     </p>
 
     @if (time.supported()) {
+      <!-- 一時停止と再開（ボタンは状態の帯）の、見える説明。押しても何も変わらないことと、実行がないことは言わない -->
+      @if (pauseLines().length > 0) {
+        <p class="hint" data-testid="pause-hint">
+          @for (line of pauseLines(); track line.text) {
+            <span [attr.lang]="line.english ? 'en' : null">{{ line.text }}</span>&ngsp;
+          }
+        </p>
+      }
       <!-- Enter は form の暗黙の送信で送る: 日本語入力の変換を確定する Enter では、ブラウザーは送らない -->
       <form class="row" (submit)="sendStep($event)">
         <mat-form-field class="ms" subscriptSizing="dynamic">
@@ -104,7 +116,7 @@ export const DEFAULT_STEP_MS = 100;
           data-testid="step"
           [disabled]="!canStep()"
           disabledInteractive
-          [attr.aria-describedby]="controls().step.ok ? null : 'time-step-why'"
+          [attr.aria-describedby]="stepWhy() ? 'time-step-why' : null"
           i18n
         >
           ステップ送り
@@ -120,7 +132,12 @@ export const DEFAULT_STEP_MS = 100;
       >
         {{ shownStepError() }}
       </p>
-      <p class="hint" id="time-step-why" data-testid="step-hint">{{ stepHint() }}</p>
+      <p class="hint" id="time-step-why" data-testid="step-hint">
+        @if (stepWhy(); as why) {
+          <span [attr.lang]="why.english ? 'en' : null">{{ why.text }}</span>&ngsp;
+        }
+        {{ stepMoved() }}
+      </p>
 
       <div class="row">
         <app-speed-picker
@@ -128,6 +145,7 @@ export const DEFAULT_STEP_MS = 100;
           [label]="speedLabelText"
           [min]="controls().speed.min"
           [max]="controls().speed.max"
+          [fastest]="controls().speed.fastest"
           [locked]="speedLocked()"
           [(speed)]="newSpeed"
           [(invalid)]="newSpeedInvalid"
@@ -138,12 +156,18 @@ export const DEFAULT_STEP_MS = 100;
           data-testid="set-speed"
           [disabled]="!canSetSpeed()"
           disabledInteractive
+          [attr.aria-describedby]="speedWhy() ? 'time-speed-why' : null"
           (click)="setSpeed()"
           i18n
         >
           速度を変える
         </button>
       </div>
+      @if (speedWhy(); as why) {
+        <p class="hint" id="time-speed-why" data-testid="speed-hint">
+          <span [attr.lang]="why.english ? 'en' : null">{{ why.text }}</span>
+        </p>
+      }
     }
 
     <p class="error" role="alert" data-testid="time-refused" [class.shown]="refusal() !== null">
@@ -242,11 +266,12 @@ export class TimePanel {
   private readonly stepMs = computed(() => {
     const text = numberText(this.stepText());
     const ms = Number(text);
-    return /^\d+$/.test(text) && ms >= 1 && ms <= this.controls().step.max_ms ? ms : null;
+    const { min_ms, max_ms } = this.controls().step;
+    return /^\d+$/.test(text) && ms >= min_ms && ms <= max_ms ? ms : null;
   });
   protected readonly stepError = computed(() =>
     this.stepMs() === null
-      ? $localize`ステップ送りの量は 1 から ${this.controls().step.max_ms}:max: までの整数（ミリ秒）にしてください。`
+      ? $localize`ステップ送りの量は ${this.controls().step.min_ms}:min: から ${this.controls().step.max_ms}:max: までの整数（ミリ秒）にしてください。`
       : null,
   );
   /** 量の誤りを出してよいか: 欄を離れたか送った後。打ち直すと消す。 */
@@ -256,17 +281,29 @@ export class TimePanel {
   );
   /** ステップ送りを押せるか: 正面の口が許し、量の欄が整数として読める。 */
   protected readonly canStep = computed(() => this.controls().step.ok && this.stepMs() !== null);
-  /** ステップ送りの説明: 押せない理由か、前のステップ送りで実際に進む量。 */
-  protected readonly stepHint = computed(() => {
+  /** ステップ送りの説明: 押せない理由か、押せるなら注意（正面の口の `controls.step`）。 */
+  protected readonly stepWhy = computed(() => controlLine('step', this.controls().step));
+  /** 前のステップ送りで実際に進む量（ランチャーが受け付けたとき）。 */
+  protected readonly stepMoved = computed(() => {
     const last = this.time.lastCommand();
-    const moved =
-      last?.name === 'step' && last.accepted && last.ms !== null
-        ? $localize`前のステップ送りで進む量: ${last.ms}:ms: ms（ランチャーが刻みの倍数に切り上げます）。`
-        : null;
-    const reason = this.controls().step.reason;
-    if (!reason) return moved ?? '';
-    const text = reasonText('step', reason);
-    return moved ? `${text} ${moved}` : text;
+    return last?.name === 'step' && last.accepted && last.ms !== null
+      ? $localize`前のステップ送りで進む量: ${last.ms}:ms: ms（ランチャーが刻みの倍数に切り上げます）。`
+      : '';
+  });
+  /**
+   * 一時停止と再開の、カードに出す説明（同じ文は 1 回）。押しても何も変わらない（`paused`、`not-paused`: 状態の欄が
+   * 言う）、実行がない（`not-running`）、答えを待っている（`busy`: 帯のボタンの説明が言う）は出さない。
+   */
+  protected readonly pauseLines = computed(() => {
+    const shown: { text: string; english: boolean }[] = [];
+    for (const op of ['pause', 'resume'] as const) {
+      const control = this.controls()[op];
+      const reason = control.reason ?? control.caution;
+      if (!reason || SAID_ELSEWHERE.has(reason.code)) continue;
+      const line = reasonLine(op, reason);
+      if (!shown.some((s) => s.text === line.text)) shown.push(line);
+    }
+    return shown;
   });
 
   /** 変える先の速度。いまの速度から始め、いまの速度が変わったら、それに戻す。 */
@@ -275,6 +312,8 @@ export class TimePanel {
   protected readonly canSetSpeed = computed(
     () => this.controls().speed.ok && !this.newSpeedInvalid() && this.newSpeed() !== null,
   );
+  /** 「速度を変える」の説明: 押せない理由か、押せるなら注意（正面の口の `controls.speed`）。 */
+  protected readonly speedWhy = computed(() => controlLine('speed', this.controls().speed));
   /** 速度の欄を触れなくする: 実行が速度を受け付けない間（応答を待っている間は触れる）。 */
   protected readonly speedLocked = computed(() => {
     const speed = this.controls().speed;

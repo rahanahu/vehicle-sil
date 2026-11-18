@@ -70,6 +70,7 @@
     [session]="session()"
     [outcome]="run.outcome()"
     [controls]="run.controls()"
+    [clock]="time.clock()"
     [ready]="run.ready()"
     [starting]="run.starting()"
     [stopping]="run.stopping()"
@@ -197,9 +198,11 @@
               </p>
             }
           }
-          @if (!running()) {
-            <app-outside-choice [check]="shownCheck()" [file]="selected()" />
-          }
+          <!--
+            走行中も部品を残して隠すだけ（外すと部品が選択を消す）。実行の後も同じ先が選ばれたままで、開始のボタンの下に
+            つなぐ先が出る。照合は選んだファイルの最後のもの（走行中も替わらない）
+          -->
+          <app-outside-choice [check]="selectedCheck()" [file]="selected()" [hidden]="running()" />
           @if (speedSupported()) {
             <app-speed-picker
               class="speed"

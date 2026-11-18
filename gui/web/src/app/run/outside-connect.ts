@@ -67,7 +67,8 @@ export function connectChoice(): Signal<Readonly<Record<string, string>>> {
 /**
  * 次の実行で外につなぐネットワークを選ぶ（ネットワークごとに `<vsil-connect>`）。照合の結果の `networks[]` のうち、
  * 種類が can か ethernet のもの。最初は「つながない」で、先の一覧は、利用者が選択を開いたときに部品が取る。
- * 選んだ先は `pageIntent` に入り、画面が `connectChoice()` で読む。前の選択は保存しない。
+ * 選んだ先は `pageIntent` に入り、画面が `connectChoice()` で読む。選択は部品がページにある間だけ残る: 走行中は
+ * `hidden` で隠し（外さない）、構成ファイルを替えると部品ごと替わって消える。保存はしない（読み込み直すと「つながない」）。
  */
 @Component({
   selector: 'app-outside-choice',
@@ -99,7 +100,8 @@ export function connectChoice(): Signal<Readonly<Record<string, string>>> {
       min-inline-size: 0;
       margin-block-start: var(--app-space-2);
     }
-    :host:empty {
+    :host:empty,
+    :host([hidden]) {
       display: none;
     }
     h3 {

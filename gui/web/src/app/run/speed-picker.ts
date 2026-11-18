@@ -31,6 +31,7 @@ function fits(choice: SpeedChoice, speed: Speed): boolean {
     <span class="label" [id]="id + '-label'">{{ label() }}</span>
     <mat-button-toggle-group
       [attr.aria-labelledby]="id + '-label'"
+      [attr.aria-describedby]="limitsText() ? id + '-limits' : null"
       [value]="choice()"
       [disabled]="locked()"
       (change)="choose($event.value)"
@@ -38,10 +39,18 @@ function fits(choice: SpeedChoice, speed: Speed): boolean {
       @if (withFile()) {
         <mat-button-toggle value="file" i18n>構成のとおり</mat-button-toggle>
       }
-      <mat-button-toggle value="max" i18n>最速</mat-button-toggle>
-      <mat-button-toggle value="real" i18n>等速</mat-button-toggle>
-      <mat-button-toggle value="factor" i18n>倍率</mat-button-toggle>
+      @for (option of options(); track option.value) {
+        <mat-button-toggle
+          [value]="option.value"
+          [disabled]="!option.offered"
+          disabledInteractive
+          >{{ option.label }}</mat-button-toggle
+        >
+      }
     </mat-button-toggle-group>
+    @if (limitsText(); as text) {
+      <p class="hint" [id]="id + '-limits'" data-testid="speed-limits">{{ text }}</p>
+    }
     @if (choice() === 'factor') {
       <mat-form-field class="factor" subscriptSizing="dynamic">
         <mat-label i18n>倍率</mat-label>
@@ -92,6 +101,11 @@ function fits(choice: SpeedChoice, speed: Speed): boolean {
     .factor {
       inline-size: 8em;
     }
+    .hint {
+      flex-basis: 100%;
+      margin: 0;
+      color: var(--mat-sys-on-surface-variant);
+    }
     .error {
       flex-basis: 100%;
       margin: 0;
@@ -112,6 +126,8 @@ export class SpeedPicker {
   /** 倍率の範囲（サーバーが api/app で言う）。 */
   readonly min = input(0.000001);
   readonly max = input(1000000);
+  /** 最速を選べるか（実行中は正面の口の `controls.speed.fastest`）。 */
+  readonly fastest = input(true);
   /** 「構成のとおり」を選べるか（始める前だけ。実行中の速さの変更では出さない）。 */
   readonly withFile = input(true);
   /** 欄の名前。 */
@@ -136,6 +152,32 @@ export class SpeedPicker {
       if (previous && Number(numberText(previous.value)) === speed) return previous.value;
       return typeof speed === 'number' && speed !== 1 ? String(speed) : (previous?.value ?? '2');
     },
+  });
+
+  /**
+   * 構成のとおり以外の選択肢と、選べるか（範囲と最速を選べるかから）。選べないものは押せなくし（フォーカスは受ける）、
+   * 選べる速さの文を出す（選択肢の並びの説明。ボタンの切り替えは 1 つずつの説明を持てない）。
+   */
+  protected readonly options = computed(() => {
+    const [min, max] = [this.min(), this.max()];
+    return [
+      { value: 'max', label: $localize`最速`, offered: this.fastest() },
+      { value: 'real', label: $localize`等速`, offered: min <= 1 && 1 <= max },
+      // 範囲が 1 だけなら、倍率で表せるものは等速と同じ
+      { value: 'factor', label: $localize`倍率`, offered: !(min === 1 && max === 1) },
+    ] satisfies { value: SpeedChoice; label: string; offered: boolean }[];
+  });
+  /** 選べない選択肢があるときの、選べる速さの文。 */
+  protected readonly limitsText = computed(() => {
+    if (this.options().every((o) => o.offered)) return null;
+    const [min, max] = [this.min(), this.max()];
+    if (min === max) {
+      return min === 1
+        ? $localize`この実行で選べる速さは等速だけです。`
+        : $localize`この実行で選べる速さは ${min}:speed: 倍だけです。`;
+    }
+    const range = $localize`この実行で選べる速さは ${min}:min: 倍から ${max}:max: 倍までです。`;
+    return this.fastest() ? range : `${range} ${$localize`最速は選べません。`}`;
   });
 
   protected readonly error = computed(() => {

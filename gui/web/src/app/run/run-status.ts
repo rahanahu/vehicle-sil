@@ -16,6 +16,7 @@ import {
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog, MatDialogRef } from '@angular/material/dialog';
 import {
+  FrontClock,
   FrontControls,
   PHASES,
   RunOutcome,
@@ -75,6 +76,8 @@ export class RunStatus {
   readonly outcome = input.required<RunOutcome | null>();
   /** 開始、停止、待たずに止めるを押せるか、押せない理由（正面の口の `controls`）。 */
   readonly controls = input.required<FrontControls>();
+  /** 仮想時刻と速さ（正面の口の `clock`。時刻のカードと同じ値）。 */
+  readonly clock = input.required<FrontClock>();
   /** サーバーと揃っている（つながっていて、再送を受け終えた）。揃っていないときの、帯の一言に使う。 */
   readonly ready = input.required<boolean>();
   /** 開始を送って、応答を待っている。 */
@@ -170,15 +173,14 @@ export class RunStatus {
     const ms = this.elapsedMs();
     return ms === null ? null : ms / 1000;
   });
-  /** 仮想時刻。 */
+  /** 仮想時刻（正面の口の `clock`。セッションがなければ出さない）。 */
   protected readonly simSeconds = computed(() => {
-    const simMs = this.session()?.simMs ?? null;
+    const simMs = this.session() ? this.clock().sim_ms : null;
     return simMs === null ? null : simMs / 1000;
   });
-  /** いまの速度（ランチャーの `state` から。実行中だけ）。 */
+  /** いまの速度（正面の口の `clock`。実行中だけ）。 */
   protected readonly speedText = computed(() => {
-    const session = this.session();
-    const speed = session?.launcher.running ? (session.launcherState?.speed ?? null) : null;
+    const speed = this.running() ? this.clock().speed : null;
     return speed === null ? null : speedLabel(speed);
   });
   /** 一時停止している（実行中で、止めるよう頼んでいないとき）。 */

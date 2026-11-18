@@ -363,8 +363,9 @@ export class RunPage {
   });
 
   /**
-   * 次の実行で外につなぐ先（部品 <vsil-connect> が選ぶ。最初は空 = つながない）。言語を変えて読み込み直したときも
-   * 持ち越さない（黙って実機につないで始めない）。
+   * 次の実行で外につなぐ先（部品 <vsil-connect> が選ぶ。最初は空 = つながない）。同じページの間は実行の後も残り
+   * （「もう一度実行」も同じ先につなぐ。開始のボタンの下の 1 行がそう言う）、構成ファイルを替えると消える。言語を
+   * 変えて読み込み直したときは持ち越さない（黙って実機につないで始めない）。
    */
   private readonly connect = connectChoice();
   /** 送る、外につなぐ先（なければ null で、送らない）。 */
@@ -372,7 +373,10 @@ export class RunPage {
     Object.keys(this.connect()).length > 0 ? { ...this.connect() } : null,
   );
   private readonly list = new Intl.ListFormat(this.locale, { type: 'conjunction' });
-  /** 始めると外につなぐ先の 1 行（開始のボタンの下に出す。実行中と、つながないときは null）。 */
+  /**
+   * 始めると外につなぐ先の 1 行（開始のボタンの下に出す。実行中（つないだ先は <vsil-outside> のカードが言う）と、
+   * つながないときは null）。
+   */
   protected readonly connectSummary = computed(() =>
     this.running() ? null : connectText(this.connect(), this.list),
   );
@@ -424,7 +428,7 @@ export class RunPage {
    * 選んだファイルの最後の照合の結果。照合し直している間も前の結果を残す（切り替えたスイッチが消えて、フォーカスを失わないように）。
    * ファイルを変えたら残さない。
    */
-  private readonly lastCheck = linkedSignal<
+  protected readonly selectedCheck = linkedSignal<
     { file: string | null; value: CheckResult | undefined },
     CheckResult | null
   >({
@@ -440,7 +444,7 @@ export class RunPage {
   protected readonly shownCheck = computed<CheckResult | null>(() => {
     const session = this.session();
     if (this.running() && session) return session.check;
-    return this.lastCheck();
+    return this.selectedCheck();
   });
 
   /** 始められない理由（なければ空）。 */

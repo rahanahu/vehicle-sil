@@ -2,6 +2,7 @@
 import {
   CheckOutcome,
   CheckStatus,
+  Control,
   ControlLink,
   ParticipantState,
   OperationName,
@@ -177,6 +178,34 @@ export const WAITING_TEXT = $localize`送った命令へのランチャーの答
  * 接続）の理由の code から引き、op（どの操作の理由か）で言い分ける。表にない code は、理由の英語の文をそのまま出す。
  */
 export function reasonText(op: OperationName, reason: { code: string; message: string }): string {
+  return screenText(op, reason) ?? reason.message;
+}
+
+/**
+ * reasonText と同じ文と、それが英語の文（表にない code で、持ち主の文をそのまま出す）か。英語の文は `lang="en"`
+ * を付けて出す。
+ */
+export function reasonLine(
+  op: OperationName,
+  reason: { code: string; message: string },
+): { text: string; english: boolean } {
+  const text = screenText(op, reason);
+  return text === null ? { text: reason.message, english: true } : { text, english: false };
+}
+
+/**
+ * 1 つの操作の説明の文: 押せない理由、押せるなら注意（`caution`）。どちらもなければ null（正面の口の部品と同じ選び方）。
+ */
+export function controlLine(
+  op: OperationName,
+  control: Control,
+): { text: string; english: boolean } | null {
+  const reason = control.reason ?? control.caution;
+  return reason ? reasonLine(op, reason) : null;
+}
+
+/** 理由の code の、画面の言葉（表になければ null）。 */
+function screenText(op: OperationName, reason: { code: string; message: string }): string | null {
   const time = op !== 'start' && op !== 'stop' && op !== 'force_stop';
   switch (reason.code) {
     case 'already-running':
@@ -207,7 +236,7 @@ export function reasonText(op: OperationName, reason: { code: string; message: s
     case 'paused':
       return $localize`すでに一時停止しています。`;
     default:
-      return reason.message;
+      return null;
   }
 }
 

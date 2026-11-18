@@ -233,7 +233,7 @@ describe('<vsil-time-controls>', () => {
   it('describes the speed like a button, and goes back to the clock when it is refused', async () => {
     const front = fakeFront();
     front.cells.controls.patch({
-      speed: { ...refused('not-running', 'No run is going.'), min: 0.1, max: 100 },
+      speed: { ...refused('not-running', 'No run is going.'), min: 0.1, max: 100, fastest: true },
     });
     const part = await mount('vsil-time-controls', front, { speeds: '1 max' });
     const speed = part.querySelector('select')!;
@@ -245,7 +245,7 @@ describe('<vsil-time-controls>', () => {
     speed.dispatchEvent(new Event('change'));
     expect(front.spies.setSpeed).not.toHaveBeenCalled();
     expect(speed.value).toBe('');
-    front.cells.controls.patch({ speed: { ...ok(), min: 0.1, max: 100 } });
+    front.cells.controls.patch({ speed: { ...ok(), min: 0.1, max: 100, fastest: true } });
     front.cells.clock.patch({ speed: 'max' });
     front.spies.setSpeed.mockRejectedValue(new Error('refused'));
     speed.value = '1';
@@ -253,6 +253,34 @@ describe('<vsil-time-controls>', () => {
     await settle();
     expect(front.spies.setSpeed).toHaveBeenCalledWith(1);
     expect(speed.value).toBe('max');
+  });
+
+  it('does not let a speed be chosen that the run does not take, nor offer the fastest when it does not take it', async () => {
+    const front = fakeFront();
+    const part = await mount('vsil-time-controls', front, { speeds: '0.5 1 5 max' });
+    const speed = part.querySelector('select')!;
+    const option = (value: string) => [...speed.options].find((o) => o.value === value)!;
+    expect([...speed.options].filter((o) => o.disabled)).toEqual([]);
+    // A run connected outside that keeps real time: only the speed 1
+    front.cells.controls.patch({ speed: { ...ok(), min: 1, max: 1, fastest: false } });
+    expect(['0.5', '1', '5', 'max'].map((v) => option(v).disabled)).toEqual([
+      true,
+      false,
+      true,
+      true,
+    ]);
+    expect(option('max').hidden).toBe(true);
+    front.cells.clock.patch({ speed: 1 });
+    speed.value = '5';
+    speed.dispatchEvent(new Event('change'));
+    expect(front.spies.setSpeed).not.toHaveBeenCalled();
+    expect(speed.value).toBe('1');
+    // A speed that the clock reports and the list did not have is marked as well
+    front.cells.controls.patch({ speed: { ...ok(), min: 0.1, max: 2, fastest: true } });
+    front.cells.clock.patch({ speed: 3 });
+    expect(option('3').disabled).toBe(true);
+    expect(option('max').hidden).toBe(false);
+    expect(option('max').disabled).toBe(false);
   });
 
   it('has the labels of the buttons as attributes', async () => {
