@@ -439,6 +439,9 @@ def tap(world: World) -> None:
     started = bridge.wait_for("Ctrl+C to stop")
     check(f"(participant 'EthernetBridge', {REGISTRY_URI}) <-> tap 'vsil0' (TAP device in this computer): EtherType 0x88b5 only, "
           "both ways; MAC guard on; Ctrl+C to stop" in started, "the start line names the TAP device:\n" + started)
+    # The device is up and the bridge has just attached to it: the first link line says up, not down
+    # for the moment the kernel needs to show the carrier in the interface flags.
+    bridge.wait_for_link_values(["up"], 5)
     world.start_peer("EthernetBridge")
 
     requests = [frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 46, 1), frame(BROADCAST, DEVICE_MAC, EXPERIMENTAL, 100, 2),

@@ -53,13 +53,17 @@ private:
     int fd_ = -1;
 };
 
-/// The interface's flags (IFF_UP, IFF_RUNNING, ...) and link type (ARPHRD_*), or nullopt if there
-/// is no interface `name`.
+/// The interface's flags (IFF_UP, IFF_RUNNING, ...), link type (ARPHRD_*) and carrier (nullopt:
+/// the driver does not tell), or nullopt if there is no interface `name`.
 struct InterfaceState
 {
     unsigned flags = 0;
     unsigned link_type = 0;
+    std::optional<bool> carrier;
 };
+/// Up if the interface is up (IFF_UP) and its carrier is on; with no carrier reading, IFF_RUNNING
+/// stands for it.
+[[nodiscard]] LinkState link_state(unsigned flags, std::optional<bool> carrier) noexcept;
 [[nodiscard]] std::optional<InterfaceState> interface_state(const std::string& name);
 /// The names of this computer's interfaces.
 [[nodiscard]] std::vector<std::string> interface_names();

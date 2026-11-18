@@ -43,11 +43,16 @@ if(WIN32)
   endforeach()
 endif()
 
+set(_eth_link_linux_tests)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(_eth_link_linux_tests test_linux_link_state.cpp)
+endif()
 vehicle_sil_add_harness_tests(vehicle_sil_eth_link_tests
   PREFIX eth_link LABELS unit eth_link TIMEOUT 60
   SOURCES
     test_fake_link.cpp
     test_frame_filter.cpp
+    ${_eth_link_linux_tests}
     test_mac_address.cpp
     test_mac_side_table.cpp
     test_os_link_errors.cpp
