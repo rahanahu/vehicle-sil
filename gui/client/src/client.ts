@@ -16,6 +16,7 @@ import {
   readDashboardResponse,
   readRecording,
   readScenarioList,
+  readSessionAllowed,
   readSessionResponse,
 } from './protocol';
 import { ClientRun, RunControl } from './run';
@@ -158,6 +159,18 @@ export function defaultOrigin(baseUrl: string, runtime: object = globalThis): st
 
 /** Creates a client for the GUI server. Creating it does not connect (call connect()). */
 export function createClient(options: ClientOptions): GuiClient {
+  return buildClient(options).client;
+}
+
+/** What the front (front.ts) needs besides the client: the transport and the error sink. */
+export interface ClientParts {
+  client: GuiClient;
+  http: HttpTransport;
+  onError: ErrorSink;
+}
+
+/** createClient, and the parts the front door is built from. */
+export function buildClient(options: ClientOptions): ClientParts {
   const token = typeof options.token === 'function' ? options.token : () => options.token as string;
   const onError = options.onError ?? reportToConsole;
   const origin = options.origin ?? defaultOrigin(options.baseUrl);
@@ -225,7 +238,7 @@ export function createClient(options: ClientOptions): GuiClient {
     );
 
   // Expose only the read side and the safe operations (not the methods of the internal parts)
-  return {
+  const client: GuiClient = {
     connection: {
       state: connection.state,
       failures: connection.failures,
@@ -237,6 +250,7 @@ export function createClient(options: ClientOptions): GuiClient {
     session: {
       session: session.session,
       ready: session.ready,
+      allowed: session.allowed,
       lastEventAt: session.lastEventAt,
       notices: session.notices,
       rejected: session.rejected,
@@ -314,6 +328,7 @@ export function createClient(options: ClientOptions): GuiClient {
           try {
             const summary = readSessionResponse(outcome.body);
             session.adopt(summary);
+            session.adoptAllowed(readSessionAllowed(outcome.body));
             // The variable list and state are not part of the summary parser (SessionSummary)
             variables.adoptSummary((outcome.body as { session?: unknown } | null)?.session);
             resolve(summary);
@@ -323,4 +338,5 @@ export function createClient(options: ClientOptions): GuiClient {
         }),
       ),
   };
+  return { client, http, onError };
 }

@@ -66,6 +66,8 @@ export interface ServerProblem {
   message: string;
   /** For launcher-stderr, the number of lines dropped at this point (`detail.skipped`). Other notices lack it. */
   skipped?: number;
+  /** For `check-failed`, the findings of the check that refused the start (`detail.findings`; unreadable ones left out). */
+  findings?: Finding[];
 }
 
 /** Reads a server notice (`{code, message, detail}`). The `error` in an HTTP error has the same shape. */
@@ -81,6 +83,20 @@ export const readServerProblem: Reader<ServerProblem> = (value, path) => {
     const skipped = detail.skipped;
     if (typeof skipped === 'number' && Number.isSafeInteger(skipped) && skipped >= 0) {
       problem.skipped = skipped;
+    }
+  }
+  if (typeof detail === 'object' && detail !== null && 'findings' in detail) {
+    const list = detail.findings;
+    if (Array.isArray(list)) {
+      const findings: Finding[] = [];
+      list.forEach((item, i) => {
+        try {
+          findings.push(readFinding(item, `${path}.detail.findings[${i}]`));
+        } catch {
+          // A finding that cannot be read is left out (the message already says what failed)
+        }
+      });
+      problem.findings = findings;
     }
   }
   return problem;

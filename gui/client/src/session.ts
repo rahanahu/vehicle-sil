@@ -4,6 +4,7 @@ import {
   LauncherEvent,
   PROTOCOL_VERSION,
   ProtocolError,
+  ServerAllowed,
   ServerMessage,
   SessionSummary,
   readServerMessage,
@@ -50,6 +51,11 @@ export interface ClientSession {
    * own ready.
    */
   readonly ready: Readable<boolean>;
+  /**
+   * What the server accepts now (start, stop, force and why not). null until it says (hello), and from a server that
+   * does not say. What the launcher accepts is `launcherState` of the session.
+   */
+  readonly allowed: Readable<ServerAllowed | null>;
   /** When an event was last applied (Date.now()). The starting point for advancing elapsed time with the clock. */
   readonly lastEventAt: Readable<number>;
   /**
@@ -99,6 +105,7 @@ export interface ClientSession {
 export class SessionFeed implements ClientSession {
   private readonly current: Writable<SessionView | null>;
   private readonly synced: Writable<boolean>;
+  private readonly allowedValue: Writable<ServerAllowed | null>;
   private readonly receivedAt: Writable<number>;
   private readonly noticeList: Writable<readonly Notice[]>;
   private readonly rejectedValue: Writable<boolean>;
@@ -109,6 +116,7 @@ export class SessionFeed implements ClientSession {
 
   readonly session: Readable<SessionView | null>;
   readonly ready: Readable<boolean>;
+  readonly allowed: Readable<ServerAllowed | null>;
   readonly lastEventAt: Readable<number>;
   readonly notices: Readable<readonly Notice[]>;
   readonly rejected: Readable<boolean>;
@@ -120,6 +128,8 @@ export class SessionFeed implements ClientSession {
   ) {
     this.current = new Writable<SessionView | null>(null, Object.is, onError);
     this.synced = new Writable<boolean>(false, Object.is, onError);
+    this.allowedValue = new Writable<ServerAllowed | null>(null, Object.is, onError);
+    this.allowed = this.allowedValue.readonly();
     this.receivedAt = new Writable<number>(0, Object.is, onError);
     this.noticeList = new Writable<readonly Notice[]>([], Object.is, onError);
     this.rejectedValue = new Writable<boolean>(false, Object.is, onError);
@@ -177,11 +187,22 @@ export class SessionFeed implements ClientSession {
     // run
     if (session && summary.id < session.id) return;
     const live = this.connection.state.get() === 'open';
+    this.adoptAllowed(summary.allowed ?? null);
     this.current.set(
       session?.id === summary.id
         ? applySummary(session, summary, false, live)
         : sessionFromSummary(summary),
     );
+  }
+
+  /**
+   * Takes what the server accepts (an HTTP answer or a notification): the one with the larger `rev` wins (rev 0 is a
+   * server that does not number it: the newest arrival wins). Used inside the library.
+   */
+  adoptAllowed(allowed: ServerAllowed | null): void {
+    if (!allowed) return;
+    const current = this.allowedValue.get();
+    if (!current || allowed.rev === 0 || allowed.rev >= current.rev) this.allowedValue.set(allowed);
   }
 
   report(message: string, count = 1): void {
@@ -254,6 +275,13 @@ export class SessionFeed implements ClientSession {
     let events: LauncherEvent[] = [];
     let applied = false;
     let synced = this.synced.get();
+    let allowedNow = this.allowedValue.get();
+    const takeAllowed = (incoming: ServerAllowed | null | undefined, replace = false) => {
+      if (!incoming) return;
+      if (replace || !allowedNow || incoming.rev === 0 || incoming.rev >= allowedNow.rev) {
+        allowedNow = incoming;
+      }
+    };
     // The resent events between hello and synced may overlap what arrived before the reconnect (not counted)
     let replaying = !synced;
     const flush = () => {
@@ -272,6 +300,8 @@ export class SessionFeed implements ClientSession {
           synced = false;
           replaying = true;
           const { session: summary, replay } = message;
+          // hello is authoritative (a server that restarted may number from the start again)
+          takeAllowed(message.allowed ?? summary?.allowed ?? null, true);
           const resumed = summary && session?.id === summary.id && replay?.from_seq != null;
           session = !summary
             ? null
@@ -288,7 +318,11 @@ export class SessionFeed implements ClientSession {
           synced = true;
           replaying = false;
           break;
+        case 'allowed':
+          takeAllowed(message.allowed);
+          break;
         case 'session':
+          takeAllowed(message.session.allowed);
           // The summary is authoritative: it arrives in the same order as events, so replace the state with the
           // server's state at that point (keep the log)
           session =
@@ -322,6 +356,7 @@ export class SessionFeed implements ClientSession {
     flush();
     const stale =
       (session?.staleEvents ?? 0) - (before?.id === session?.id ? (before?.staleEvents ?? 0) : 0);
+    this.allowedValue.set(allowedNow);
     this.current.set(session);
     this.synced.set(synced);
     if (applied) this.receivedAt.set(Date.now());

@@ -34,7 +34,7 @@ flowchart LR
 |---|---|---|
 | GUI サーバー | `gui/server`（コマンドは `vehicle-sil-gui`） | ランチャーを起動し、API を提供し、画面の静的なファイルを配信します。 |
 | サーバーの API | [gui/protocol](../../gui/protocol/README.ja.md) | HTTP と WebSocket の形、バージョンと互換性のルール、認証を定めていて、どの言語からでも使えます。 |
-| クライアントのライブラリ | [gui/client](../../gui/client/README.ja.md)（`@vehicle-sil/gui-client`） | 接続、実行と時間の操作、ECU の変数を扱う TypeScript のライブラリで、フレームワークに依存しません。 |
+| クライアントのライブラリ | [gui/client](../../gui/client/README.ja.md)（`@vehicle-sil/gui-client`） | 接続、実行と時間の操作、ECU の変数を扱う TypeScript のライブラリで、フレームワークに依存しません。`connect()` が返す正面の口は、画面が見せるもの（`status`、`clock`、`controls`）、Promise で返す操作、変数 1 つを持ちます。 |
 | サンプルの画面 | `gui/web`（Angular） | 上の 3 つだけで作ったリファレンス実装で、`--web` を指定しなければ GUI サーバーはこれを配信します。 |
 
 ライブラリと GUI サーバーの間は HTTP と WebSocket（[gui/protocol](../../gui/protocol/README.ja.md) が仕様）、GUI サーバーとランチャーの間は、ランチャーの標準入出力と Control Server（gRPC）です。
@@ -1241,9 +1241,11 @@ declare module 'react' {
 |---|---|
 | `run.mjs` | ライブラリを使わず、標準の `fetch` と `WebSocket` だけで書いたものです。 |
 | `run-with-library.mjs` | ライブラリを 1 つにまとめたファイルを使うものです。 |
+| `front.mjs` | ライブラリの正面の口（`connect()`、`status`）で実行を開始し、結果を待ちます。 |
 | `variables.mjs` | ライブラリで ECU の変数を読み書きします。 |
 
 - `run.mjs` と `run-with-library.mjs` は、照合して実行を開始し、イベントを読み、終了を待って、結果で終了コードを返します。
+- `front.mjs` は、`client.run.start()` で実行を開始し、`client.status` の変化を 1 行ずつ表示し、`result.ok` で終了コードを返します（開始が断られたら、`ActionError` のコードと所見を表示します）。見せるものと各操作の終わり方は、[gui/client/README.ja.md](../../gui/client/README.ja.md#正面の口connect) の「正面の口（`connect()`）」にあります。
 - `variables.mjs` は、止めた状態で始め、最初のステップの前に 1 つ書き込み、進めて止め、止まっている時刻の値を確認します（期待どおりなら終了コード 0）。
 - URL は環境変数で渡します（引数に書くと、トークンがほかの利用者のプロセスの一覧に見えるため）。
 

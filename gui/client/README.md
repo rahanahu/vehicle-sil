@@ -12,6 +12,7 @@ The library handles the connection (token, reconnection), the session copy (a co
 | Which names are public                                             | [Entry points](#entry-points), [Public API](#public-api) |
 | The code to connect and start a run                                | [Basic usage](#basic-usage)                              |
 | Reading and writing variable values                                | [ECU variables](#ecu-variables)                          |
+| What a screen shows and which buttons work: `connect()`            | [The front door (`connect()`)](#the-front-door-connect)  |
 | Building sliders and lamps (the values of `condition` and `block`) | [Build widgets (`bind`)](#build-widgets-bind)            |
 | What happens after `connect()` and `close()`                       | [Lifecycle](#lifecycle)                                  |
 | Developing the library                                             | [Coding rules](#coding-rules), [Tests](#tests)           |
@@ -65,6 +66,14 @@ The names that `src/index.ts` exports, by group. Parentheses list the members of
 | Type     | `GuiClient` (`connection`, `session`, `run`, `time`, `variables`, `app`, `limits`, `connect()`, `close()`, `loadApp()`, `configs()`, `check()`, `fetchSession()`, `dashboard(file)`, `scenarios(file)`, `recording()`) |
 | Constant | `DEFAULT_LIMITS`                                                                                                                                                                                                       |
 
+### Front door
+
+| Kind     | Name                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Function | `connect(options?)`, `watch(source, fn)`, `until(source, test, options?)`                                                                                                                                                                                                                                                                                                                                                                |
+| Class    | `ActionError` (`code`, `message`, `outcome`, `findings`)                                                                                                                                                                                                                                                                                                                                                                                 |
+| Type     | `ConnectOptions` (`base_url`, `token`, `origin`, `http`, `socket`, `answer_timeout_ms`, `on_error`), `Front` (`low`, `status`, `clock`, `controls`, `scenario`, `run`, `time`, `variable()`, `close()`), `FrontStatus`, `FrontResult`, `FrontClock`, `FrontControls`, `Control`, `Reason`, `FrontScenario`, `FrontRun`, `FrontTime`, `FrontVariable`, `VariableView`, `Intent`, `Link`, `RunState`, `EndKind`, `Pacing`, `OperationName` |
+
 ### Token
 
 | Kind     | Name                |
@@ -85,11 +94,13 @@ In the browser, call `takeToken(window)`. It reads `#token=` from the URL, remov
 
 ### Session copy
 
-| Kind     | Name                                                                                                                                |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Type     | `ClientSession` (`session`, `ready`, `lastEventAt`, `notices`, `rejected`, `incompatible`, `onMessages`, `report`, `dismissNotice`) |
-| Type     | `Notice`, `SessionView`, `ParticipantView`, `LauncherView`, `LogLine`, `LogSource`, `TimeView`, `CommandView`, `RunOutcome`         |
-| Function | `runOutcome`, `phaseIndex`                                                                                                          |
+| Kind     | Name                                                                                                                                           |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Type     | `ClientSession` (`session`, `ready`, `allowed`, `lastEventAt`, `notices`, `rejected`, `incompatible`, `onMessages`, `report`, `dismissNotice`) |
+| Type     | `Notice`, `SessionView`, `ParticipantView`, `LauncherView`, `LogLine`, `LogSource`, `TimeView`, `CommandView`, `RunOutcome`                    |
+| Function | `runOutcome`, `phaseIndex`                                                                                                                     |
+
+`ClientSession.allowed` is what the GUI server accepts now (`start`, `stop` and `force`, each with `ok`, a `reason` code and a `message`; the larger `rev` wins; `null` until the server says). `SessionView.launcherState` is the launcher's last `state` event (where the run stands and what it accepts; the larger `rev` wins; `null` until one arrives).
 
 ### Run control
 
@@ -245,6 +256,106 @@ The library parses each part separately.
 - To replace the HTTP implementation, pass `http` (`HttpTransport`); to replace the WebSocket, pass `socket` (`SocketFactory`).
 
 For the rules the library does not enforce for you (request fields that match the launcher's `features`, whether a variable is writable, whether a value is stale), see "Rules for building a screen" in [docs/gui.md](../../docs/gui.md#rules-for-building-a-screen).
+
+## The front door (`connect()`)
+
+`connect()` returns the front door of the library: what a screen shows (`status`, `clock`, `controls`, `scenario`), the operations as Promises (`run`, `time`) and one variable at a time (`variable()`). It is built on the client described above and changes nothing in it: `front.low` is the same `GuiClient` (events, logs, findings, participants), and `createClient` still works as before. Use the front door for what a screen needs to decide ("which state is this", "may this button be pressed now, and if not, why"); use `low` for the rest.
+
+```ts
+import { ActionError, connect, until, watch } from '@vehicle-sil/gui-client';
+
+// A page that the GUI server served, opened from the URL it printed: no options. The first call connects; the next calls
+// (another part of the page) get the same connection. In Node, or for a second connection, pass the server's URL and the token.
+const client = await connect();
+// const client = await connect({ base_url: 'http://127.0.0.1:8765/', token });
+
+const stop = watch([client.status, client.controls], (status, controls) => {
+  startButton.disabled = !controls.start.ok;
+  startButton.title = controls.start.reason?.message ?? '';
+  banner.textContent = status.problem?.message ?? '';
+});
+
+try {
+  await client.time.step(100); // resolves when time has arrived and the run is paused again
+} catch (error) {
+  if (error instanceof ActionError) console.log(error.code, error.message, error.outcome);
+}
+```
+
+| Name                                                | What it is                                                                                                                                                                                                                                                                  |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`                                            | The one state to show: `link`, `run`, `file`, `result` and `problem` (below). Discrete values only                                                                                                                                                                          |
+| `clock`                                             | `sim_ms`, `speed`, `actual_speed` and `pacing` (`not-paced`, `on-time` or `late`). It changes often, so it is apart from `status`                                                                                                                                           |
+| `controls`                                          | Whether each operation can be used now: `start`, `stop`, `force_stop`, `pause`, `resume`, `step` (with `min_ms` and `max_ms`), `run_until`, and `speed` (with `min` and `max`)                                                                                              |
+| `scenario`                                          | The scenario of the current (or last) run: `file`, `name`, `status`, `steps`, `timeline_url`; `null` for a run without one                                                                                                                                                  |
+| `run`                                               | `start(intent?, { file }?)`, `stop()` and `forceStop()`                                                                                                                                                                                                                     |
+| `time`                                              | `pause()`, `resume()`, `step(ms)`, `setSpeed(value)` and `runUntil(ms)`                                                                                                                                                                                                     |
+| `variable(ref)`                                     | One variable, by `"ECU.variable"` (cut at the first dot) or `{ peer, name }` (for an ECU whose name has a dot)                                                                                                                                                              |
+| `low`, `close()`                                    | The `GuiClient` of the same connection; `close()` disconnects (a shared connection is made again by the next `connect()`)                                                                                                                                                   |
+| `watch(source, fn)`, `until(source, test, options)` | `watch` calls `fn` now and on every change (several sources: `watch([a, b], (a, b) => ...)`) and returns the function that stops it. `until` resolves with the first value that satisfies `test`; it rejects with an `ActionError` (`timeout` or `aborted`, both `unknown`) |
+
+Data fields use the wire's names (`force_stop`, `sim_ms`); functions use JavaScript's (`forceStop`, `runUntil`). Every state is a `Readable`; `get()` returns the same object while nothing changed, and `get` and `subscribe` work without `this` (they can be passed to `useSyncExternalStore` as they are).
+
+### `status`
+
+| Field     | Values                                                                                                                                                                                                                                         |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `link`    | `connecting`, `online`, `offline`, `rejected` (the token was refused) or `incompatible` (another protocol version). `online` means the copy matches the server                                                                                 |
+| `run`     | `none`, `starting` (a start is on its way, from this page or another), `waiting` (the launcher waits for the participants to join), `running`, `paused`, `stopping`, `ended` (there is a result) or `crashed` (the launcher ended without one) |
+| `file`    | The configuration file of the run (the last one if none is running); the server's start-up file before the first run                                                                                                                           |
+| `result`  | While `run` is `ended` or `crashed`: `end` (`completed`, `stopped`, `interrupted`, `failed`, `setup_failed` or `crashed`), `scenario`, `ok` and `message` (one English sentence). A stop by the operator is `ok`                               |
+| `problem` | The one problem to tell the user now (`{ code, message }`), or `null`                                                                                                                                                                          |
+
+`problem` is chosen in this order: the connection first (the token refused, another protocol version, offline); otherwise the newest of the launcher's crash, the failure of the last operation and a failed run (`result.ok` is false). A crash and a failed run go when the next run begins. The failure of an operation goes at the next operation or when `status.run` changes. A stop by the operator is not a problem. The failure of a variable write is in the variable's own `problem`, not here. The server's notices (`low.session.session` `problems`) and `notices` stay in `low`.
+
+`result.ok` and `result.message` are made from the name of the result by the library until the launcher writes them into the result; then the library passes them on.
+
+### `controls`
+
+Each entry is `{ ok, reason, caution }`: `reason` is `{ code, message }` when `ok` is false, `caution` is the same shape for an operation that is accepted with something to know first. The codes stay the same (a new code may be added; the meaning of one does not change); the sentence is English, written by the owner of the rule.
+
+| Entry                                           | Comes from                                                                                                                                                                                                 |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `start`                                         | The GUI server's `allowed.start` (`starting`, `already-running`, `launcher-unusable`, `shutting-down`), with its sentence                                                                                  |
+| `stop`, `force_stop`                            | The GUI server's `allowed.stop` and `allowed.force`. `stop` is `ok` for the last known run (or a start on its way), also offline. `force_stop` is `ok` only after a first stop (`not-stopping` before)     |
+| `pause`, `resume`, `step`, `speed`, `run_until` | The launcher's `state.allowed` (reason, sentence and `caution` as the launcher wrote them; the ranges of `step` and `speed`). No run in the copy: `not-running`; a launcher without `state`: `unsupported` |
+| `pause`, `resume` (what would change nothing)   | `pause` is not `ok` while the run is paused (`paused`), `resume` is not `ok` while it is not (`not-paused`): the launcher accepts both, but a button has nothing to do                                     |
+| `run_until`                                     | `unsupported` until the launcher has the feature `stdin-run-until`                                                                                                                                         |
+| All of them                                     | The connection: `rejected`, `incompatible`, `offline` or `connecting` turn them off (`stop` and `force_stop` stay as above); `busy` while the same operation of this page has not been answered            |
+
+### Operations
+
+`run.start(intent, { file })` takes the part of the intent the GUI server takes now: `disable`, `manual`, `scenario`, `variant`, `params`, `speed` and `start_paused` (any other field is refused with `unknown-field`); `file` defaults to the server's start-up file. Every operation is a Promise. It rejects with an `ActionError`: `code`, a sentence (`message`), `findings` (for `check-failed`) and `outcome`: `refused` (the owner said no; nothing happened) or `unknown` (it may have been done: look at `status` and `clock` before you send it again).
+
+| Operation                          | Resolves when                                                                                                                                                                                                                                                                                                                                       | Rejects with                                                                                                                                                                                                                                                                              |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run.start`                        | The server took the request. Whether the run began is `status.run` (wait with `until(client.status, s => s.run !== 'starting')`, then read `run`)                                                                                                                                                                                                   | The refusal (`check-failed` with the `findings`, `already-running`, ...). No answer in time: `no-answer` (`unknown`: it may have started)                                                                                                                                                 |
+| `run.stop`, `run.forceStop`        | The server took the request. Sent whatever the state of the connection (HTTP may reach the server when the WebSocket is down); asking again while one is on its way is the same request                                                                                                                                                             | The same                                                                                                                                                                                                                                                                                  |
+| `time.pause`, `resume`, `setSpeed` | The launcher answered. `pause` while paused and `resume` while running send nothing and resolve, only when the connection is `online` and a run takes the operation                                                                                                                                                                                 | The launcher's `reason` and sentence (`refused`); no answer within 5 seconds: `no-answer` (`unknown`); the run ended before the answer: `not-running` (`unknown`)                                                                                                                         |
+| `time.step`, `time.runUntil`       | Time has arrived and the run is paused again, so `clock` can be read after `await`. `runUntil(t)` arrives at `t` (a `t` the paused run has already passed resolves at once and time does not move); `step(ms)` at the `at_ms` the launcher writes in the answer (older launcher: the time it was accepted plus the `ms` it rounded to, an estimate) | As above; and `interrupted` (`unknown`) when a resume or a pause of another sender (another page or stdin) comes before it arrives (a pause or resume of this page, or a stop, rejects it the same way but is not shown in `status.problem`). Another step sent meanwhile does not end it |
+
+The client refuses before sending only what it owns: the connection (`rejected`, `incompatible`), the same operation still waiting for its answer (`busy`; this includes `start()`) and the shape of an argument (`invalid-argument`). Anything else is sent even if `controls` says no, and the owner's answer comes back (the copy may be old). The 5 seconds are the front door's own (they do not apply to the wait for arrival, which ends when the run ends or another command interrupts it).
+
+A time command carries a request number (`id`) that the page chose, and the answer is the launcher's `command` event with the same `id`; an answer to another page's or stdin's command with the same name is not taken for it. This needs a launcher that writes `state`: for an older one the GUI server refuses the command (`unsupported`).
+
+### One variable
+
+```ts
+const throttle = client.variable('Engine.engine.throttle');
+const stop = throttle.subscribe((view) => {
+  slider.value = String(view.value ?? 0);
+  slider.disabled = !view.can_write;
+  slider.title = view.why?.message ?? view.note ?? '';
+});
+await throttle.write(40); // resolves when it was applied in an ECU step
+stop(); // the last unsubscribe stops asking the server for values
+```
+
+The view has `value`, `text` (an enum shows the item's name), `unit`, `min`, `max`, `step`, `sim_ms`, `stale`, `note` (a sentence when the value is not a live one), `can_write` (the variable's own conditions and what the launcher accepts: `state.allowed.write`), `why` (a `{ code, message }` for what cannot be written: the variable's own reason first, then the launcher's), `writing`, `problem` (why the last write of this page did not go through), and the values of `client.low.variables.bind` (`condition`, `block`, `write_status`).
+
+- The first subscription asks the server for the value, and the last unsubscribe stops it. There is no `close()`.
+- `write(value)` needs no subscription (it sends that one write). It rejects with an `ActionError`; `no-answer` is `unknown`, and a write whose answer did not come is not sent again.
+- The binding (`client.low.variables.bind`) holds back and merges writes while one is on its way (for sliders); `write()` of the front door sends each call.
 
 ## ECU variables
 
@@ -557,4 +668,5 @@ The unit tests feed the examples in `gui/protocol/examples/` instead of building
 | ---------------------- | ---------------------------------------------------------- |
 | `run.mjs`              | Calls the server API without the library                   |
 | `run-with-library.mjs` | Uses the bundled library file from plain JavaScript (Node) |
+| `front.mjs`            | Uses the front door (`connect()`, `status`) from Node      |
 | `variables.mjs`        | Also uses the library, to read and write ECU variables     |
