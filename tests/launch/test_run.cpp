@@ -2664,7 +2664,7 @@ TEST_CASE(what_a_bridge_saw_of_the_real_bus_is_a_warning_for_each_kind)
     CHECK(drop.find("outside-frames-dropped: network 'ETH' -> eth0: the bridge dropped frames (ext_queue_full=1, ext_tx_failures=3):") !=
           std::string::npos);
     CHECK(drop.find("oversize") == std::string::npos && drop.find("--tx-timeout-ms") == std::string::npos);
-    dropped.counts = {{"xl_tx_dropped", 2}};
+    dropped.counts = {{"ext_tx_dropped", 2}};
     CHECK(lines(assess_run(seen(dropped, "vehicle_sil_vector_xl_bridge"))).find("--tx-timeout-ms") != std::string::npos);
     // Counts of 0 and the keys that are no losses: nothing.
     dropped.counts = {{"ext_queue_full", 0}, {"oversize", 8}, {"malformed", 1}, {"ext_checksum_incomplete", 5}, {"filtered_to_ext", 2}};

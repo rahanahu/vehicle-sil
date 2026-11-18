@@ -368,10 +368,10 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 | ネットワーク | `to_outside` | `from_outside` |
 |---|---|---|
 | Ethernet | `silkit_to_ext` | `ext_from_devices`: 送り元がこの PC でないフレーム。ブリッジの絞り込みの前に数える |
-| CAN | `silkit_to_xl` | `xl_to_silkit` |
+| CAN | `silkit_to_ext` | `ext_from_devices`: バスのほかのノードから来たフレーム |
 
 - 数は結果（`outside[]`。人向けの結果の `outside:` の行、例えば `outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT): 152 frames out, 3 from devices`）と、`--events` なら実行中の `outside` イベントに出ます（[simulation-events.md](simulation-events.md#つないだネットワークの数outside) の「つないだネットワークの数（`outside`）」）。`--events` があってもなくても同じ数です。
-- ブリッジが動いている間に `run` が読んだ統計の行は、ブリッジの行（`[bridge.<network>] ...`）にも `log` イベントにも出しません。ブリッジが終わったら、`run` は最後に読んだ 1 行を、ブリッジの行として 1 回だけ出します。全部の数が載ったブリッジの報告です（例えば、絞り込みで ECU に渡さなかったフレーム `filtered_from_ext`、止めるときに捨てたフレーム `xl_tx_unsent`）。ブリッジが止まるときに書いた行か、それを書かずに終わらされたなら、動いている間の最後の行です。ブリッジの `--log-dir` のファイルには全部の行があります。`run` が読めない行（例えば、これらのキーのない別の版のブリッジの行）は、ふつうの行として出します。
+- ブリッジが動いている間に `run` が読んだ統計の行は、ブリッジの行（`[bridge.<network>] ...`）にも `log` イベントにも出しません。ブリッジが終わったら、`run` は最後に読んだ 1 行を、ブリッジの行として 1 回だけ出します。全部の数が載ったブリッジの報告です（例えば、絞り込みで ECU に渡さなかったフレーム `filtered_from_ext`、止めるときに捨てたフレーム `ext_tx_unsent`）。ブリッジが止まるときに書いた行か、それを書かずに終わらされたなら、動いている間の最後の行です。ブリッジの `--log-dir` のファイルには全部の行があります。`run` が読めない行（例えば、これらのキーのない別の版のブリッジの行）は、ふつうの行として出します。
 - 数は最後に読めた行のものです。最後の行を書かずに終わらされたブリッジ（ランチャーが止まるよう頼めなかった Windows）は、動いている間の最後の行の数になります。1 行も読めなければ、どちらも `null` です。
 
 シミュレーションが動き、ブリッジがバスへフレームを送ったのに、実行が終わるまでにそこの機器から 1 つも来なかったら、実行は注意 `connect-nothing-received` で終わります。機器が答えないのは不具合とは限らないので、注意です（`--strict` でも失敗にしません）。実行を失敗させたブリッジ（`connect-failed`、`connect-lost`）と、数が `null` のときは出しません。Ethernet では、この PC がそのアダプターに出すフレーム（例えば、Hyper-V の `vEthernet` のアダプターに OS が出す IPv6 と ARP のフレーム）は数えないので、ケーブルが抜けていればこの注意が出ます。ブリッジも、動いている間に、最初に送ってから 10 秒たって機器から何も来なければ警告します（[ethernet-bridge.md](ethernet-bridge.md#機器から何も来ないときのヒント) の「機器から何も来ないときのヒント」）。
@@ -407,7 +407,7 @@ outside: ETH_EXT -> enp3s0: link up at 15.10 s
 
 | 所見 | 元 |
 |---|---|
-| `outside-frames-dropped` | 次の数のどれかが 0 でない。`ext_overruns`、`ext_queue_full`、`ext_tx_failures`、`silkit_tx_failures`（Ethernet）、`overruns`、`xl_queue_full`、`xl_tx_failures`、`xl_tx_dropped`、`xl_tx_unsent`、`silkit_rejected`、`xl_rejected`、`silkit_tx_failures`（CAN）。文は 0 でない数のそれぞれを挙げます。 |
+| `outside-frames-dropped` | 次の数のどれかが 0 でない。`ext_queue_full`、`ext_tx_failures`、`silkit_tx_failures`（どちらのブリッジも）、`ext_overruns`（Ethernet）、`overruns`、`ext_tx_dropped`、`ext_tx_unsent`、`silkit_rejected`、`ext_rejected`（CAN）。文は 0 でない数のそれぞれを挙げます。 |
 | `outside-loop-suspected` | `loop_suspected` が 0 でない。Ethernet のブリッジが両側にある送信元 MAC アドレスを見つけ、それ以後、そのフレームを捨てている。 |
 | `outside-bus-errors` | CAN のブリッジが `bus=passive`（error passive）を報告した。文に合計の時間と `error_frames` を書きます。 |
 
@@ -1056,8 +1056,8 @@ passed: 0 errors, 1 warning, 1 note
 | `network` | ネットワーク |
 | `target` | つないだ先（`--connect` に渡したとおり） |
 | `participant` | `participants[]` でのブリッジの名前（`bridge.<network>`） |
-| `to_outside` | ブリッジがバスへ送ったフレームの数（Ethernet は `silkit_to_ext`、CAN は `silkit_to_xl`）。ブリッジの統計の行を 1 つも読めなければ `null` |
-| `from_outside` | バスの機器から来たフレームの数（Ethernet は `ext_from_devices`、CAN は `xl_to_silkit`）。`null` は `to_outside` と同じ（[外のバスとやりとりしたフレームの数](#外のバスとやりとりしたフレームの数)） |
+| `to_outside` | ブリッジがバスへ送ったフレームの数（どちらも `silkit_to_ext`）。ブリッジの統計の行を 1 つも読めなければ `null` |
+| `from_outside` | バスの機器から来たフレームの数（どちらも `ext_from_devices`）。`null` は `to_outside` と同じ（[外のバスとやりとりしたフレームの数](#外のバスとやりとりしたフレームの数)） |
 | `counts` | ブリッジの最後の統計の行の `key=N` のすべて。キーはブリッジのまま（オブジェクト。行を 1 つも読めなければ `{}`） |
 
 `participants[].control_link` のキー（[ECU の変数との接続](#ecu-の変数との接続control_link)）:

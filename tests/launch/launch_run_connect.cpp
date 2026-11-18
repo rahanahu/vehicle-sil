@@ -332,7 +332,7 @@ void connect_roundtrip(const Options& base)
             "ETH_EXT: the bridge wrote its statistics while it ran:\n" + read_text(dir / "logs" / "bridge.ETH_EXT.log"));
     require(to >= 1 && from >= 1,
             "ETH_EXT: frames out and answers in: " + std::to_string(to) + ", " + std::to_string(from));
-    expect_counts(lines, dir / "logs", "CAN", "silkit_to_xl", "xl_to_silkit", to, from);
+    expect_counts(lines, dir / "logs", "CAN", "silkit_to_ext", "ext_from_devices", to, from);
     require(to >= 1 && from >= 1, "CAN: frames out and echoes in: " + std::to_string(to) + ", " + std::to_string(from));
     // The result: the bridges last, with the network each connects, and where.
     const std::string& result = lines.back();
@@ -473,7 +473,7 @@ void connect_nothing_received(const Options& base)
                      "network 'ETH_EXT': nothing came from a device on the real bus (fake1) before the run ended: bridge.ETH_EXT sent " +
                          std::to_string(to) + (to == 1 ? " frame" : " frames") + " there and got none from a device"),
             "the note about ETH_EXT:\n" + out_of(lines));
-    expect_counts(lines, dir / "logs", "CAN", "silkit_to_xl", "xl_to_silkit", to, from);
+    expect_counts(lines, dir / "logs", "CAN", "silkit_to_ext", "ext_from_devices", to, from);
     require(to >= 1 && from == 0, "CAN: frames out, none in: " + std::to_string(to) + ", " + std::to_string(from));
     const std::vector<std::string> notes = events_with(lines, {"\"event\":\"finding\"", "\"code\":\"connect-nothing-received\""});
     require(notes.size() == 2 && contains(notes[0] + notes[1], "network 'CAN': nothing came from a device on the real bus (virtual:1) before the run ended") &&

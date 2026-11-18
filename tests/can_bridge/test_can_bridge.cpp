@@ -325,21 +325,21 @@ TEST_CASE(bridge_health_change_line)
     using Level = ExternalBusState::Level;
     CanBridgeHealth before;
     before.bus_state = {Level::ErrorActive, 0, 0};
-    CHECK(!format_health_change(before, before));
+    CHECK(!format_health_change(before, before, "XL bus"));
 
     // Forwarded and own-transmission counts are not problems.
     CanBridgeHealth now = before;
     now.statistics.silkit_to_external = 10;
     now.statistics.external_to_silkit = 10;
     now.statistics.own_transmissions_dropped = 10;
-    CHECK(!format_health_change(before, now));
+    CHECK(!format_health_change(before, now, "XL bus"));
 
     now.statistics.external_error_frames = 3650;
     now.statistics.external_transmit_failures = 2;
     now.bus_state = {Level::ErrorPassive, 128, 0};
-    CHECK(format_health_change(before, now) ==
+    CHECK(format_health_change(before, now, "XL bus") ==
           std::optional<std::string>("XL bus: error passive (tx errors 128, rx errors 0); since the last report: "
-                                     "error_frames +3650, xl_tx_failures +2"));
+                                     "error_frames +3650, ext_tx_failures +2"));
 
     CHECK(problems_grew(before.statistics, now.statistics));
     CHECK(!problems_grew(now.statistics, now.statistics));
@@ -347,22 +347,22 @@ TEST_CASE(bridge_health_change_line)
     // A state change alone is reported, without counters that did not grow.
     CanBridgeHealth recovered = now;
     recovered.bus_state = {Level::ErrorActive, 5, 0};
-    CHECK(format_health_change(now, recovered) == std::optional<std::string>("XL bus: error active (tx errors 5, rx errors 0)"));
-    CHECK(!format_health_change(recovered, recovered));
+    CHECK(format_health_change(now, recovered, "XL bus") == std::optional<std::string>("XL bus: error active (tx errors 5, rx errors 0)"));
+    CHECK(!format_health_change(recovered, recovered, "XL bus"));
 
     // The problems stopped while the state stays: reported once, after a sample that had grown.
-    CHECK(format_health_change(now, now, true) ==
+    CHECK(format_health_change(now, now, "XL bus", true) ==
           std::optional<std::string>("XL bus: error passive (tx errors 128, rx errors 0); no new problems since the last report"));
-    CHECK(!format_health_change(now, now, false));
+    CHECK(!format_health_change(now, now, "XL bus", false));
 
     // The first answer of a healthy bus is not news; any other first answer is.
     CanBridgeHealth unknown;
     CanBridgeHealth healthy;
     healthy.bus_state = {Level::ErrorActive, 0, 0};
-    CHECK(!format_health_change(unknown, healthy));
+    CHECK(!format_health_change(unknown, healthy, "XL bus"));
     CanBridgeHealth passive;
     passive.bus_state = {Level::ErrorPassive, 0, 128};
-    CHECK(format_health_change(unknown, passive) == std::optional<std::string>("XL bus: error passive (tx errors 0, rx errors 128)"));
+    CHECK(format_health_change(unknown, passive, "XL bus") == std::optional<std::string>("XL bus: error passive (tx errors 0, rx errors 128)"));
 
     // Every problem counter is named; an unknown state has no counters.
     CanBridgeHealth grown;
@@ -371,9 +371,9 @@ TEST_CASE(bridge_health_change_line)
     grown.statistics.external_rejected = 1;
     grown.statistics.external_queue_full = 1;
     grown.statistics.silkit_transmit_failures = 1;
-    CHECK(format_health_change(unknown, grown) ==
+    CHECK(format_health_change(unknown, grown, "XL bus") ==
           std::optional<std::string>("XL bus: state unknown; since the last report: overruns +1, silkit_rejected +1, "
-                                     "xl_rejected +1, xl_queue_full +1, silkit_tx_failures +1"));
+                                     "ext_rejected +1, ext_queue_full +1, silkit_tx_failures +1"));
 }
 
 TEST_CASE(bridge_counts_dropped_and_unsent_transmissions)
@@ -402,8 +402,8 @@ TEST_CASE(bridge_counts_dropped_and_unsent_transmissions)
     CanBridgeHealth before;
     CanBridgeHealth now;
     now.statistics.external_transmit_dropped = 7;
-    CHECK(format_health_change(before, now) ==
-          std::optional<std::string>("XL bus: state unknown; since the last report: xl_tx_dropped +7"));
+    CHECK(format_health_change(before, now, "XL bus") ==
+          std::optional<std::string>("XL bus: state unknown; since the last report: ext_tx_dropped +7"));
 }
 
 TEST_CASE(bridge_reports_transmit_problems)
@@ -471,6 +471,6 @@ TEST_CASE(bridge_statistics_line_names_every_counter)
     s.external_transmit_dropped = 11;
     s.external_transmit_unsent = 12;
     CHECK(vehicle_sil::can_bridge::format_statistics(s) ==
-          "stats silkit_to_xl=1 xl_to_silkit=2 own_tx_dropped=3 error_frames=4 overruns=5 silkit_rejected=6 "
-          "xl_rejected=7 xl_queue_full=8 xl_tx_failures=9 silkit_tx_failures=10 xl_tx_dropped=11 xl_tx_unsent=12");
+          "stats silkit_to_ext=1 ext_to_silkit=2 ext_from_devices=2 own_tx_dropped=3 error_frames=4 overruns=5 silkit_rejected=6 "
+          "ext_rejected=7 ext_queue_full=8 ext_tx_failures=9 silkit_tx_failures=10 ext_tx_dropped=11 ext_tx_unsent=12");
 }
