@@ -29,8 +29,12 @@ namespace vehicle_sil::launch::detail {
 /// (process::Process calls on_line()).
 ///
 /// Lock: `mutex_` guards the order of the lines (one line at a time, a participant's line with
-/// its log file) and the log files. It is taken last but for the event stream's own mutex and
-/// RunOptions::write_line: no other lock of the run is taken while it is held. hold() gives it to
+/// its log file) and the log files. It is taken last but for the event stream's own mutex,
+/// RunOptions::write_line and, to tell the state of the bridges, TimeCommands' mutex (through
+/// RunControls::set_outside(), then the event stream's, as TimeCommands' mutex always does): the
+/// order is `mutex_`, then TimeCommands'. The reverse never happens: what runs under TimeCommands'
+/// mutex (the command and state observers, `accepted`, on_detach) writes events and never calls
+/// this object. No other lock of the run is taken while `mutex_` is held. hold() gives it to
 /// the caller, who then must not call say(), on_line() or anything that takes another lock of the
 /// run. event() does not take it (EventStream keeps itself).
 ///
@@ -135,6 +139,10 @@ private:
     [[nodiscard]] const NetworkOutside* outside_of(std::size_t index) const;
     /// The event "outside" of the bridge `index` (run --events). Under the lock. Only for a bridge.
     void write_outside(std::size_t index, const OutsideCounts& counts) const;
+    /// Tells RunControls the state of the bridges at `now` (RunState::outside), if it differs from
+    /// what was told last. Under the lock, which also keeps two threads from telling an older state
+    /// after a newer one. Only for a run with a bridge of --connect.
+    void tell_outside(std::chrono::steady_clock::time_point now);
     /// "outside: ETH_EXT -> enp3s0: link down at 12.40 s" for a change of the link line of the bridge `index`. Under the lock. Only for a bridge.
     void say_link_change(std::size_t index, const std::string& what, std::chrono::steady_clock::time_point now);
     /// "outside: CAN -> can0: also used by another vehicle-sil bridge (process 4321) at 3.10 s". Under the lock.
@@ -147,6 +155,8 @@ private:
     std::vector<OutsideNote> outside_; ///< per participant (only a bridge's is used); guarded by mutex_
     /// Per participant: the bridge's link line and counts added up (only a bridge's is used); guarded by mutex_
     std::vector<OutsideState> states_;
+    /// What tell_outside() told last; guarded by mutex_
+    std::vector<RunState::Outside> told_outside_;
     /// When this was made: the run's start in the lines that say when the link changed.
     std::chrono::steady_clock::time_point began_ = std::chrono::steady_clock::now();
     /// Per participant: the last statistics line read (a bridge's), until take_counts() shows it; guarded by mutex_

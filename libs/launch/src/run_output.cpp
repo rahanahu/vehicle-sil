@@ -178,7 +178,8 @@ void RunOutput::on_line(std::size_t index, std::string_view line)
         // counts; the last such line is shown once at the end (take_counts()).
         if (const auto all = read_outside_stats(outside->tool, line))
         {
-            states_[index].on_counts(*all);
+            states_[index].on_counts(*all, std::chrono::steady_clock::now());
+            tell_outside(std::chrono::steady_clock::now());
         }
         if (const auto counts = read_outside_counts(outside->tool, line))
         {
@@ -215,11 +216,37 @@ void RunOutput::on_line(std::size_t index, std::string_view line)
                     change(before_link, states_[index].link_text(), "link");
                     change(before_bus, states_[index].bus_text(), "bus");
                 }
+                tell_outside(now);
             }
             return;
         }
     }
     show(index, line);
+}
+
+void RunOutput::tell_outside(std::chrono::steady_clock::time_point now)
+{
+    std::vector<RunState::Outside> all;
+    for (std::size_t i = 0; i < states_.size(); ++i)
+    {
+        const NetworkOutside* outside = outside_of(i);
+        if (outside == nullptr)
+        {
+            continue;
+        }
+        RunState::Outside one = states_[i].facts(now);
+        one.network = outside->network;
+        one.target = outside->target;
+        one.participant = outside->participant;
+        all.push_back(std::move(one));
+    }
+    if (all == told_outside_)
+    {
+        return;
+    }
+    told_outside_ = all;
+    // Under `mutex_`, then TimeCommands' mutex: the order of the locks (see the class).
+    ctx_.controls.set_outside(std::move(all));
 }
 
 void RunOutput::say_link_change(std::size_t index, const std::string& what, std::chrono::steady_clock::time_point now)
@@ -263,6 +290,8 @@ void RunOutput::outside_due(std::chrono::steady_clock::time_point now)
             write_outside(i, *counts);
         }
     }
+    // The 5 s and 10 s of the condition run out here.
+    tell_outside(now);
 }
 
 std::optional<std::pair<std::size_t, std::string>> RunOutput::outside_lost(std::chrono::steady_clock::time_point now)
@@ -306,6 +335,7 @@ std::optional<std::size_t> RunOutput::outside_shared(std::chrono::steady_clock::
             stop = i;
         }
     }
+    tell_outside(now);
     return stop;
 }
 
