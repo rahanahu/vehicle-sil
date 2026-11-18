@@ -482,7 +482,8 @@ def needs(case: Case) -> set[str]:
     if "--control" in case.argv:
         out.add("control-server")
         if "--scenario" in case.argv:
-            out.add("scenario-control")
+            # Both: the recordings say what such a launcher writes (its write refusal names what a client can do).
+            out.update(("scenario-control", "scenario-time"))
     return out
 
 

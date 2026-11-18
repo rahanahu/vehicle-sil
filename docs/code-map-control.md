@@ -220,35 +220,39 @@ Tests:
 
 ### The Control Server during a scenario
 
-While a scenario runs, the Control Server is read-only.
+While a scenario runs, the Control Server refuses writes. Its clients read, move time and stop.
 
 Where to change:
 
-- `ServerOptions::observe_only`
+- `ServerOptions::observe_only` and its scope (`ObserveOnly::Refuses`: every change, or the writes alone)
+- The rule that the launcher asks: the row `scenario-running` and `always_refused()` in `libs/launch/src/control_rules.cpp`
 - `Effect` in `libs/control_grpc/src/auth.hpp`, and `rpc_rules()` in `auth.cpp`
 - The code that rejects calls: `guarded()` in `control_service.cpp`
 - The code that sets it up: `libs/launch/src/control_server.cpp`
 
 Documentation to update:
 
-- "[Watching variables during a run (`--control`)](scenario.md#watching-variables-during-a-run---control)" in [scenario.md](scenario.md) (the table of rejected calls, the reason `scenario-running`)
+- "[Watching variables during a run (`--control`)](scenario.md#watching-variables-during-a-run---control)" in [scenario.md](scenario.md) (the table of calls, the reason `scenario-running`, the promise that time calls do not change the result)
 - "[Connect to the launcher](control-api.md#connect-to-the-launcher)" in [control-api.md](control-api.md), and `ControlError.reason`
 - [simulation-config.md](simulation-config.md): the table of arguments
-- [simulation-events.md](simulation-events.md): `scenario-control` of `features` (`kScenarioControlFeature`)
+- [simulation-events.md](simulation-events.md): `scenario-control` and `scenario-time` of `features` (`kScenarioControlFeature`, `kScenarioTimeFeature`)
 - "[The launcher's Control Server (`vehicle_sil_launch run --control`)](internals/control.md#the-launchers-control-server-vehicle_sil_launch-run---control)" in [internals/control.md](internals/control.md)
 
-Like `control-server`, `scenario-control` is printed only by builds that have it. When you add an RPC, write its kind in its row of the `rpc_rules()` table (an RPC that changes state is `Effect::Change`).
+Like `control-server`, `scenario-control` and `scenario-time` are printed only by builds that have them. When you add an RPC, write its kind in its row of the `rpc_rules()` table: an RPC that changes what the participants get is `Effect::Write`, one that only moves time is `Effect::Time`.
 
 Rules:
 
 - Calls are rejected in one place, before the body of the RPC.
+- A call that can change the result of a scenario (what a participant gets, or at which virtual time) is `Effect::Write`, and is refused during a scenario. A time call must not change what happens at a virtual time.
 - Do not add a path by which a client call operates the run's tap (`RunSamples`), the writes or the guard.
 - Do not add anything that waits to the Hub's subscriptions or tap.
 
 Tests:
 
-- `control_server.control_server_observe_only_*`, `control_server.control_server_that_only_observes_*` (the tests also contain a table per call)
-- `control_server.launcher`: the scenario's result is the same whether or not a client reads. The run ends even with a client that does not read.
+- `control_server.control_server_observe_only_*`, `control_server.control_server_that_only_observes_*`, `control_server.control_server_that_refuses_writes_alone_*` (the tests also contain a table per call)
+- `control_server.launcher`: the scenario's result is the same whether or not a client reads, and whether or not a client moves time; a write is refused. The run ends even with a client that does not read.
+- `launch_run.scenario_time_commands_same`: the scenario's result, its `scenario_step` events and its timeline file are the same, byte for byte, with and without time commands (from stdin). `launch_run.scenario_paused_timeout`: a scenario left paused until `--timeout-ms` is incomplete.
+- `launch.control_rules_*`: the rows (a scenario changes no answer to a time command; both entries get the same answer)
 - `control.control_hub_readers_that_never_read_*`
 
 ### Reading time and values together

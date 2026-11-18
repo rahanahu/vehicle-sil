@@ -289,6 +289,8 @@ Pause, single-step and change the speed during a run with stdin commands and wit
 | Only `--stdin-commands` | After it has executed the step at time 0. |
 | `--control` | Before the step at time 0. |
 
+In a run with a scenario (`--scenario`), these commands and calls are accepted too, and they do not change the result of the scenario: it writes and checks by virtual time alone (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)). `--start-paused` cannot be combined with `--scenario`.
+
 With `--connect`, the devices on the real bus do not stop or change speed with the simulation: `--start-paused` and a `--speed` other than 1 are refused unless you pass `--time-policy free`, and so are the commands that pause, step or change the speed while the run lasts (see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)).
 
 ## Connecting a bus outside (`--connect`)
@@ -356,9 +358,9 @@ The commands during the run (stdin, a Control Server client, the GUI) follow the
 | `resume`, `speed` 1 | Accepted (they change nothing). | Accepted. |
 | `stop` | Accepted. | Accepted. |
 
-- Without a scenario the answer is the same from every entry: the `command` event has `accepted: false` and `reason: "outside-real-time"`, a Control Server client gets `FAILED_PRECONDITION` with that reason (see "In a run that is connected outside" in [control-api.md](control-api.md#in-a-run-that-is-connected-outside)), and without `--events` a refused stdin line is a line on stderr. The message says what to do: start the run again with `--time-policy free`, or without the connection.
+- The answer is the same from every entry, with a scenario or without: the `command` event has `accepted: false` and `reason: "outside-real-time"`, a Control Server client gets `FAILED_PRECONDITION` with that reason (see "In a run that is connected outside" in [control-api.md](control-api.md#in-a-run-that-is-connected-outside)), and without `--events` a refused stdin line is a line on stderr. The message says what to do: start the run again with `--time-policy free`, or without the connection.
 - The `state` event says it before you send anything: with `realtime`, `allowed.pause`, `allowed.step` and `allowed.run_until` have `ok: false` with that reason, and `allowed.speed` has `min` and `max` 1. With `free` they have `ok: true` and a `caution` with the code `outside-not-real-time` (see "The `state` event" in [simulation-events.md](simulation-events.md#the-state-event)).
-- In a run with a scenario (`--scenario`), the stdin commands follow this table. A Control Server client can only read and call `Stop` until the scenario ends, and the run ends with the scenario: its time calls are rejected with the reason `scenario-running`, not `outside-real-time`, whatever `--time-policy` is (see "While a scenario runs" in [control-api.md](control-api.md#while-a-scenario-runs)).
+- A run with a scenario (`--scenario`) follows this table too, for stdin commands and for Control Server clients alike. Only a client's write is rejected for the scenario (reason `scenario-running`; see "While a scenario runs" in [control-api.md](control-api.md#while-a-scenario-runs)).
 - A command that arrives before the launcher has read the configuration file waits, and is answered once the file is read: nothing gets past the rule by being early (see "When time commands are accepted" in [simulation-events.md](simulation-events.md#when-time-commands-are-accepted)).
 - `outside-time-changed` is written once, when the run ends: it names the first accepted command that paused or stepped the simulation or set a speed other than 1, where it came from and the virtual time it came at (the `command` events show every command). `resume`, a speed of 1 and `--start-paused` itself do not count.
 

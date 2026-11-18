@@ -828,7 +828,7 @@ class Player:
             self.control.server = None
         if trouble == "bad-address":
             self.control_address = "control.example:8510"
-        if "--scenario" in self.argv:  # the feature scenario-control: a client only watches a scenario's run
+        if "--scenario" in self.argv:  # the feature scenario-control: a client does not write during a scenario
             self.control.refuse_writes = "a scenario runs: variables cannot be written by a control client"
         self.control.set_time(0, "--start-paused" in self.argv, running=False)
 

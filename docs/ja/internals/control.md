@@ -841,11 +841,12 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 
 ### 見るだけのサーバー（`observe_only`）
 
-- シナリオの実行（`run --scenario`）では、ランチャーが `ServerOptions::observe_only` を付けます。ランチャーは自分で決めず、run の操作盤の規則に「Control Server は、run の間ずっと、停止のほかをすべて断られるか」を尋ね（`libs/launch/src/control_rules.cpp` の `always_refused()`）、理由と文をそこから取ります。
-- 呼び出しの表（`libs/control_grpc/src/auth.cpp` の `rpc_rules()`）の各行に、シミュレーションに何をするか（読む、変える、止める）があります。
-- `observe_only` のサーバーは、「変える」呼び出しを、権限の確認の直後、本体に入る前の 1 か所で拒否します（`FAILED_PRECONDITION`、trailing metadata `vehicle-sil-reason`）。
-- 拒否した呼び出しは、Hub にも `TimeControl` にも届きません。
-- 実時間も保つシナリオの実行では、クライアントの時刻の呼び出しは、時間のロックの規則が見る前に、ここでシナリオの理由で拒否します。標準入力のコマンドは、時間のロックが断ります（`outside-real-time`）。
+- シナリオの実行（`run --scenario`）では、ランチャーが `ServerOptions::observe_only` を「書き込みだけ」の範囲（`ObserveOnly::Refuses::Writes`）で付けます。ランチャーは自分で決めず、run の操作盤の規則に「Control Server の書き込みは、run の間ずっと断られるか」を尋ね（`libs/launch/src/control_rules.cpp` の `always_refused()`）、理由と文をそこから取ります。
+- 呼び出しの表（`libs/control_grpc/src/auth.cpp` の `rpc_rules()`）の各行に、シミュレーションに何をするか（`Effect`: 読む、書く、時刻、終える）があります。
+- `observe_only` のサーバーは、権限の確認の直後、本体に入る前の 1 か所で呼び出しを拒否します（`FAILED_PRECONDITION`、trailing metadata `vehicle-sil-reason`）。どれを拒否するかは範囲で決まります。`Refuses::Changes`（ライブラリの既定）は書く呼び出しと時刻の呼び出しを、`Refuses::Writes` は書く呼び出し（`Write`、`ForgetPeer`）だけを拒否します。
+- 拒否した呼び出しは、Hub に届きません。
+- シナリオの実行の時刻の呼び出しは、ほかの実行と同じく `TimeControl` に届き、操作盤の規則が答えます。答えは標準入力のコマンドと同じで、時間のロック（`outside-real-time`）も同じです。
+- 時刻の呼び出しがシナリオにとって安全な理由: シナリオのガードと一時停止は、時間ゲートの別々の止めで、どちらかが止めているステップは進みません。シナリオは仮想時間だけで書き込み、判定します（あるステップへの書き込みは、ガードがそのステップを止めている間に渡し、判定はそれより前のサンプルで行います）。そのため、すべての参加者が時刻同期に入っている実行では、時刻がどこで止まり、どの速さで進むかは、結果もタイムラインも変えません。CTest の `launch_run.scenario_time_commands_same` がこれを確かめます（バイト単位で）。
 - 読む呼び出しがアクセスするのは、Hub（スレッド安全。購読は上限つきで、トランスポートのスレッドを待たせない）と `TimeCommands::inspect()` だけで、シナリオの tap、書き込み、ガードとは何も共有しません。
 
 ### 起動と終了の時期

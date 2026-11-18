@@ -2,7 +2,7 @@
 //
 // The rules of a run's controls (launch::decide(), control_rules.hpp): every row of the table with
 // its code and its message, the order of the rows, where the two entries differ, the answer
-// without arguments (allowed()) and the server that only shows the run (always_refused()). Then
+// without arguments (allowed()) and what is refused for the whole run (always_refused()). Then
 // the same rules where they are used: what TimeCommands::allowed() says and what apply() does
 // agree, in every state of the time commands. Last, the time lock in the time commands: the
 // commands that come before it wait and are decided with it, in their order.
@@ -91,8 +91,15 @@ void check_refused(const Decision& d, const char* reason, const std::string& mes
 }
 
 const std::string kScenarioMessage =
-    "this run plays a scenario, and until it ends only the scenario writes variables and moves the time, so that the "
-    "same scenario always gives the same result; a client can read values and the time, and stop the run";
+    "this run plays a scenario, and until it ends only the scenario writes variables, so that the same scenario always "
+    "gives the same result; a client can read values, pause, step and change the speed (the result stays the same), and "
+    "stop the run";
+
+/// The same answer: taken or not, the reason and the message.
+bool same(const Decision& a, const Decision& b)
+{
+    return a.ok == b.ok && a.reason == b.reason && a.message == b.message;
+}
 
 } // namespace
 
@@ -171,36 +178,74 @@ TEST_CASE(control_rules_take_what_no_row_refuses)
     }
 }
 
-TEST_CASE(control_rules_row_scenario_running_refuses_a_control_server_what_changes_the_run)
+TEST_CASE(control_rules_row_scenario_running_refuses_a_control_server_the_write_alone)
 {
     for (const ControlStage stage : kStages)
     {
         for (const bool paused : {false, true})
         {
             const ControlSituation s = situation(stage, paused, true);
-            for (const Operation o : kTimeOperations)
-            {
-                const Command c = command(o);
-                check_refused(decide_command(s, Entry::ControlServer, c), "scenario-running", kScenarioMessage);
-                check_refused(decide(s, Entry::ControlServer, o, operation_name(o), nullptr), "scenario-running",
-                              kScenarioMessage);
-            }
             check_refused(decide(s, Entry::ControlServer, Operation::Write, "write", nullptr), "scenario-running",
                           kScenarioMessage);
+            // No time command is refused for the scenario, from either entry: with their
+            // arguments and without (allowed()).
+            for (const Entry entry : kEntries)
+            {
+                for (const Operation o : kTimeOperations)
+                {
+                    const Command c = command(o);
+                    CHECK(decide_command(s, entry, c).reason != "scenario-running");
+                    CHECK(decide(s, entry, o, operation_name(o), nullptr).reason != "scenario-running");
+                }
+            }
         }
     }
-    // Not its stop (the run can always be stopped), and nothing of standard input.
-    const ControlSituation s = situation(ControlStage::Attached, true, true);
-    const Command stop = command(Operation::Stop);
-    CHECK(decide_command(s, Entry::ControlServer, stop).ok);
-    for (const Operation o : {Operation::Pause, Operation::Resume, Operation::Step, Operation::Speed, Operation::Stop})
-    {
-        const Command c = command(o);
-        CHECK(decide_command(s, Entry::Stdin, c).ok);
-    }
     // Without a scenario the row refuses nothing.
+    CHECK(decide(situation(ControlStage::Attached), Entry::ControlServer, Operation::Write, "write", nullptr).ok);
+}
+
+TEST_CASE(control_rules_a_scenario_changes_no_answer_to_a_time_command)
+{
+    // Every time command and the stop, in every situation: the answer with a scenario is the
+    // answer without one, and but for the stop it is the same from standard input and from a
+    // control server. (So a scenario's run is paused, stepped and set to a speed as any other, by
+    // whoever asks.)
+    for (const ControlStage stage : kStages)
+    {
+        for (const bool paused : {false, true})
+        {
+            for (const int outside : {0, 1, 2}) // no lock, the lock, the time left to the user
+            {
+                const ControlSituation with = situation(stage, paused, true, outside == 1, outside == 2);
+                const ControlSituation without = situation(stage, paused, false, outside == 1, outside == 2);
+                for (const Operation o : {Operation::Pause, Operation::Resume, Operation::Step, Operation::RunUntil,
+                                          Operation::Speed, Operation::Stop})
+                {
+                    Command c = command(o);
+                    const Decision by_stdin = decide_command(with, Entry::Stdin, c);
+                    const Decision by_server = decide_command(with, Entry::ControlServer, c);
+                    CHECK(same(by_stdin, decide_command(without, Entry::Stdin, c)));
+                    CHECK(same(by_server, decide_command(without, Entry::ControlServer, c)));
+                    CHECK(allowed(with, Entry::ControlServer, o) == allowed(without, Entry::ControlServer, o));
+                    if (o != Operation::Stop)
+                    {
+                        CHECK(same(by_stdin, by_server));
+                        CHECK(allowed(with, Entry::Stdin, o) == allowed(with, Entry::ControlServer, o));
+                    }
+                    // A pause and a run_until at a time, a speed of max.
+                    c.at_ms = 40;
+                    c.speed.reset();
+                    CHECK(same(decide_command(with, Entry::Stdin, c), decide_command(without, Entry::Stdin, c)));
+                    CHECK(same(decide_command(with, Entry::ControlServer, c), decide_command(without, Entry::ControlServer, c)));
+                }
+            }
+        }
+    }
+    // Attached and going, a control server's client pauses a scenario's run; paused, it steps it.
     const Command pause = command(Operation::Pause);
-    CHECK(decide_command(situation(ControlStage::Attached), Entry::ControlServer, pause).ok);
+    CHECK(decide_command(situation(ControlStage::Attached, false, true), Entry::ControlServer, pause).ok);
+    const Command step = command(Operation::Step);
+    CHECK(decide_command(situation(ControlStage::Attached, true, true), Entry::ControlServer, step).ok);
 }
 
 TEST_CASE(control_rules_row_not_running_refuses_everything_once_detached_but_a_stop_of_stdin)
@@ -290,16 +335,18 @@ TEST_CASE(control_rules_row_outside_real_time_refuses_what_moves_the_time_away_f
                      nullptr)
                   .ok);
         // Before the rows that tell how to get the operation (there is no way while locked), and
-        // before the ranges; after the end of the run and after a control server's scenario.
+        // before the ranges; after the end of the run.
         Command step = command(Operation::Step);
         CHECK(decide_command(situation(ControlStage::SettingUp, false, false, true), entry, step).reason == "outside-real-time");
         step.ms = 0;
         CHECK(decide_command(situation(ControlStage::Attached, true, false, true), entry, step).reason == "outside-real-time");
         CHECK(decide_command(situation(ControlStage::Detached, true, false, true), entry, step).reason == "not-running");
     }
+    // The lock holds in a run with a scenario as in any other, for both entries: the scenario does
+    // not answer first.
     const Command pause = command(Operation::Pause);
     CHECK(decide_command(situation(ControlStage::Attached, false, true, true), Entry::ControlServer, pause).reason ==
-          "scenario-running");
+          "outside-real-time");
     CHECK(decide_command(situation(ControlStage::Attached, false, true, true), Entry::Stdin, pause).reason ==
           "outside-real-time");
     // Unlocked, the row refuses nothing: the same commands are taken. So in a run that is
@@ -490,38 +537,54 @@ TEST_CASE(control_rules_allowed_answers_without_arguments_and_gives_the_ranges)
     check_text(allowed(paused, Entry::Stdin, Operation::Write).reason, "not-a-time-command");
     const ControlSituation playing = situation(ControlStage::Attached, false, true);
     check_text(allowed(playing, Entry::ControlServer, Operation::Write).reason, "scenario-running");
-    check_text(allowed(playing, Entry::ControlServer, Operation::Pause).message, kScenarioMessage);
+    check_text(allowed(playing, Entry::ControlServer, Operation::Write).message, kScenarioMessage);
+    CHECK(allowed(playing, Entry::ControlServer, Operation::Pause).ok);
     CHECK(allowed(playing, Entry::Stdin, Operation::Pause).ok);
     CHECK(allowed(playing, Entry::ControlServer, Operation::Stop).ok);
     CHECK(allowed(situation(ControlStage::Detached), Entry::Stdin, Operation::Stop).ok);
     check_text(allowed(situation(ControlStage::Detached), Entry::ControlServer, Operation::Stop).reason, "not-running");
 }
 
-TEST_CASE(control_rules_always_refused_is_a_control_server_while_a_scenario_plays)
+TEST_CASE(control_rules_always_refused_is_the_write_of_a_control_server_while_a_scenario_plays)
 {
-    const std::optional<Decision> only = always_refused(true, Entry::ControlServer);
+    const std::optional<Decision> only = always_refused(true, Entry::ControlServer, Operation::Write);
     CHECK(only.has_value());
     check_refused(*only, "scenario-running", kScenarioMessage);
-    // Without a scenario a control server changes the run; standard input always may.
-    CHECK(!always_refused(false, Entry::ControlServer));
-    CHECK(!always_refused(true, Entry::Stdin));
-    CHECK(!always_refused(false, Entry::Stdin));
+    // Without a scenario a control server's client writes.
+    CHECK(!always_refused(false, Entry::ControlServer, Operation::Write));
+    // No time command and no stop is refused for the whole run, with a scenario or without, from
+    // either entry.
+    for (const bool scenario : {false, true})
+    {
+        for (const Entry entry : kEntries)
+        {
+            for (const Operation o : {Operation::Pause, Operation::Resume, Operation::Step, Operation::RunUntil,
+                                      Operation::Speed, Operation::Stop})
+            {
+                CHECK(!always_refused(scenario, entry, o));
+            }
+        }
+        // Standard input has no write: its refusal is not one reason for the whole run (the name
+        // is no time command, and once the run is over that is what is said).
+        CHECK(!always_refused(scenario, Entry::Stdin, Operation::Write));
+    }
 
     // The same from the controls of a run, whenever it is asked.
     StopRequests stops;
     RunControls playing(stops, false, RunControls::Observers{}, true);
-    const std::optional<Decision> before = playing.always_refused(Entry::ControlServer);
+    const std::optional<Decision> before = playing.always_refused(Entry::ControlServer, Operation::Write);
     CHECK(before.has_value());
     check_refused(*before, "scenario-running", kScenarioMessage);
-    CHECK(!playing.always_refused(Entry::Stdin));
+    CHECK(!playing.always_refused(Entry::ControlServer, Operation::Pause));
     playing.time().detach();
-    const std::optional<Decision> after = playing.always_refused(Entry::ControlServer);
+    const std::optional<Decision> after = playing.always_refused(Entry::ControlServer, Operation::Write);
     CHECK(after.has_value());
     check_text(after->reason, "scenario-running");
+    CHECK(!playing.always_refused(Entry::ControlServer, Operation::Pause)); // refused now, not for the whole run
     RunControls free(stops);
-    CHECK(!free.always_refused(Entry::ControlServer));
-    free.time().detach(); // everything is refused now, but not for the whole run
-    CHECK(!free.always_refused(Entry::ControlServer));
+    CHECK(!free.always_refused(Entry::ControlServer, Operation::Write));
+    free.time().detach();
+    CHECK(!free.always_refused(Entry::ControlServer, Operation::Write));
 }
 
 TEST_CASE(control_rules_allowed_and_apply_agree_in_every_state_of_the_time_commands)
@@ -621,12 +684,11 @@ TEST_CASE(control_rules_allowed_and_apply_agree_in_every_state_of_the_time_comma
                         check_text(done.reason, asked.reason, "the refusal's code");
                         // The lock is the answer for what moves the time away from real time, from
                         // either entry, with or without a scenario, unless the row before it has
-                        // refused already (a control server's scenario, the end of the run).
+                        // refused already (the end of the run).
                         if (lock->locked && (o == Operation::Pause || o == Operation::Step || o == Operation::RunUntil))
                         {
                             CHECK(!done.accepted);
-                            const bool before = (scenario && entry == Entry::ControlServer) || state == State::After;
-                            CHECK_EQ(done.reason == "outside-real-time", !before);
+                            CHECK_EQ(done.reason == "outside-real-time", state != State::After);
                             ++locked_out;
                         }
                         ++(done.accepted ? taken : refused);

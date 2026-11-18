@@ -180,9 +180,12 @@ public:
     /// (TimeCommands::allowed()). Any thread, but not from what runs under TimeCommands' mutex
     /// (see above: it takes that mutex).
     [[nodiscard]] Allowed allowed(Operation operation, Entry entry) { return time_.allowed(operation, entry); }
-    /// Whether `entry` is refused everything but a stop for the whole run, and why
-    /// (TimeCommands::always_refused()): a control server then only shows the run.
-    [[nodiscard]] std::optional<Decision> always_refused(Entry entry) const { return time_.always_refused(entry); }
+    /// Whether `operation` from `entry` is refused for the whole run, and why
+    /// (TimeCommands::always_refused()): a control server then refuses its clients' writes itself.
+    [[nodiscard]] std::optional<Decision> always_refused(Entry entry, Operation operation) const
+    {
+        return time_.always_refused(entry, operation);
+    }
     /// Whether this run is connected outside the simulation and keeps to real time
     /// (TimeCommands::set_time_lock()): once, right after the configuration has been read. Until
     /// then the time commands wait undecided; this decides them, each with its command event.

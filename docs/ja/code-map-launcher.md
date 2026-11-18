@@ -81,7 +81,7 @@
 | `StopRequests`。`run_file()` や `test_file()` を呼ぶ側が持って貸す、停止の要求（run が読む回数と、最初の要求の出どころ）、`StopKind`（operator、signal、supervisor）、ライブラリが知る 4 つの出どころ（`stop_source::kStopCommand` など）とその名前、`stop_kind()`。シグナルとコンソールのイベントの名前は CLI に残る | `launch/stop_requests.hpp` |
 | `RunControls`。1 回の run の操作盤で、run が呼ぶ側から借りるか、自分で作ります: 停止の要求（借りたもの）、`TimeCommands`、覚えて観察者に知らせる段階。`Phase`、`phase_name()`。`RunState`（イベント `state` が書く run の状態）。`RunControls::publish()` が、その 3 つから組み立て、変わったときに観察者に知らせます | `launch/run_controls.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |
-| 操作盤の規則: `decide()`（run がいまその操作を受けるか。入口と run の状態で決まります。行の表は `src/control_rules.cpp`）、`allowed()`（引数なしの同じ答えと、引数の範囲）、`always_refused()`（Control Server が run を見せるだけになるか）、理由のコード `reason::*`。純粋 | `launch/control_rules.hpp` |
+| 操作盤の規則: `decide()`（run がいまその操作を受けるか。入口と run の状態で決まります。行の表は `src/control_rules.cpp`）、`allowed()`（引数なしの同じ答えと、引数の範囲）、`always_refused()`（ある操作が run の間ずっと断られるか。シナリオの実行中の Control Server の書き込み）、理由のコード `reason::*`。純粋 | `launch/control_rules.hpp` |
 | `RunTraffic`（結果の `traffic`） | `launch/traffic.hpp` |
 | `EventStream`、`parse_command()` | `launch/events.hpp` |
 | `Command`（読んだコマンドと、`TimeCommands` が決めた結果） | `launch/command.hpp` |

@@ -847,17 +847,20 @@ void scenario_failures(const Options& o)
         expect_code(run, 4, "--scenario with --start-paused");
         require(contains(run.standard_error, "error: --scenario cannot be used with --start-paused: the scenario writes its values "
                                              "for 0 before the first step and runs by itself; pause and step it with "
-                                             "--stdin-commands if needed\n"),
+                                             "--stdin-commands or from a Control Server client (--control) if needed\n"),
                 run.standard_error);
         run = launch(o, {"run", "sim.yaml", "--scenario"}, dir);
         expect_code(run, 4, "--scenario without a file");
         const Captured version = launch(o, {"version", "--json"}, dir);
         require(contains(version.standard_output, "\"scenario\""), "version --json lists the feature scenario");
         // With --control: a build with the control server serves it during the scenario (its
-        // clients only read; tests/control_server/test_launcher.py), and says so in its features.
+        // clients read and move the time, and do not write; tests/control_server/test_launcher.py),
+        // and says so in its features.
         const bool server = contains(version.standard_output, "\"control-server\"");
-        require(server == contains(version.standard_output, "\"scenario-control\""),
-                "version --json lists scenario-control exactly with control-server: " + version.standard_output);
+        require(server == contains(version.standard_output, "\"scenario-control\"") &&
+                    server == contains(version.standard_output, "\"scenario-time\""),
+                "version --json lists scenario-control and scenario-time exactly with control-server: " +
+                    version.standard_output);
         run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--control", "0"}, dir);
         if (server)
         {

@@ -553,7 +553,7 @@ class LauncherTest(unittest.TestCase):
                     c.sim.resume()
                 self.assertEqual(launch.wait()["result"], "passed")
 
-    # --- a scenario and the control server: the clients only look ---
+    # --- a scenario and the control server: the clients read and move the time, and do not write ---
 
     def test_a_scenario_gives_the_same_result_with_readers_and_without(self):
         sim, play = config("scenario_same", 5000), scenario("same", THROTTLE_STEP)
@@ -641,20 +641,59 @@ class LauncherTest(unittest.TestCase):
                 self.assertGreater(seen["moving"], 0)
                 self.assertTrue(seen["throttle"] - {20.0}, seen["throttle"])
 
-    def test_during_a_scenario_a_client_reads_and_stops_and_changes_nothing(self):
+    def test_a_scenario_gives_the_same_result_when_a_client_moves_the_time(self):
+        sim, play = config("scenario_time", 5000), scenario("time", THROTTLE_STEP)
+        out = self.run_launcher("run", "--json", "--scenario", str(play), str(sim))
+        self.assertEqual(out.returncode, 0, out.stdout)
+        alone = json.loads(out.stdout)["scenario"]
+        self.assertEqual(alone["status"], "passed")
+
+        # The five time operations from a client: the scenario's steps have the same times, values and outcome
+        # as in the run that nobody touched. No call has to come within a time a slow computer could miss: the
+        # first pause comes before the simulation runs (it stands still at 0), a step and a run_until move it
+        # on from where it stands, and the pause at a time is sent while it goes so slowly that the scenario
+        # is seconds from its end.
+        with self.launch("scenario_time", stop_at_ms=5000, arguments=["--scenario", str(play), "--speed", "0.5"]) as launch:
+            with Control(launch.address) as c:
+                c.sim.pause()
+                self.assertEqual(c.sim.wait_paused(60).now, 0)
+                self.assertTrue(c.snapshot().consistent)
+                c.sim.step(ms(20))
+                wait_until(self, "the step", lambda: c.sim.time().paused and c.sim.time().now >= ms(20))
+                target = c.sim.time().now + ms(137)
+                c.sim.run_until(target)
+                wait_until(self, "the run_until", lambda: c.sim.time().paused and c.sim.time().now >= target)
+                c.sim.set_speed(0.02)
+                c.sim.resume()
+                c.sim.pause(c.sim.time().now + ms(40))
+                later = c.sim.wait_paused(60).now
+                self.assertGreater(later, target)
+                c.sim.set_speed(None)
+                c.sim.resume()
+            result = launch.wait()
+        self.assertEqual(launch.returncode, 0)
+        self.assertEqual((result["result"], result["scenario"]["status"]), ("passed", "passed"), result["findings"])
+        self.assertEqual(result["scenario"], alone)
+        self.assertEqual([(name, source, accepted) for name, source, accepted, _, _ in commands_of(launch)], [
+            ("pause", "control_server", True),
+            ("step", "control_server", True),
+            ("run_until", "control_server", True),
+            ("speed", "control_server", True),
+            ("resume", "control_server", True),
+            ("pause", "control_server", True),
+            ("speed", "control_server", True),
+            ("resume", "control_server", True),
+        ])
+
+    def test_during_a_scenario_a_client_moves_the_time_and_does_not_write(self):
         play = scenario("long", LONG)
-        with self.launch("scenario_only_look", stop_at_ms=3_600_000, arguments=["--scenario", str(play), "--speed", "1"]) as launch:
+        with self.launch("scenario_no_write", stop_at_ms=3_600_000, arguments=["--scenario", str(play), "--speed", "1"]) as launch:
             with Control(launch.address) as c:
                 launch.wait_for_event("phase", phase="running")
                 wait_until(self, "the engine's values", lambda: c.values("Engine") is not None and c.sim.time().now > ms(50))
                 refusals = {
                     "write": lambda: c.write({"Engine": {"engine.throttle": 10.0}}),
                     "forget a peer": lambda: c.forget_peer("Engine"),
-                    "pause": lambda: c.sim.pause(),
-                    "resume": lambda: c.sim.resume(),
-                    "step": lambda: c.sim.step(ms(10)),
-                    "run until": lambda: c.sim.run_until(ms(100_000)),
-                    "set the speed": lambda: c.sim.set_speed(2.0),
                 }
                 for what, call in refusals.items():
                     with self.assertRaises(ControlError) as refused:
@@ -662,32 +701,47 @@ class LauncherTest(unittest.TestCase):
                     e = refused.exception
                     self.assertEqual((e.code, e.reason), (grpc.StatusCode.FAILED_PRECONDITION, "scenario-running"), what)
                     self.assertIn(f"cannot {what}: this run plays a scenario, and until it ends only the "
-                                  "scenario writes variables and moves the time", str(e))
-                    self.assertIn("a client can read values and the time, and stop the run", str(e))
+                                  "scenario writes variables, so that the same scenario always gives the same result", str(e))
+                    self.assertIn("a client can read values, pause, step and change the speed (the result stays the "
+                                  "same), and stop the run", str(e))
                 # Nothing of it got through: the throttle is the scenario's, the time goes on.
                 self.assertEqual(c.values("Engine").values["engine.throttle"], 50.0)
                 t = c.sim.time()
                 self.assertEqual((t.paused, t.running, t.ended), (False, True, False))
                 self.assertFalse(c.snapshot().consistent)  # it runs (the scenario's hold of a step is no pause)
-                # The commands on standard input are the run's own, as without a control server: a
-                # pause there is one the clients see, and cannot end.
-                launch.send({"command": "pause"})
+                # The time is the client's to move, as it is standard input's: each of the two ends
+                # a pause of the other.
+                c.sim.pause()
                 now = c.sim.wait_paused().now
                 snap = c.snapshot()
                 self.assertEqual((snap.consistent, snap.time.now, snap.time.paused), (True, now, True))
-                with self.assertRaises(ControlError) as refused:
-                    c.sim.resume()
-                self.assertEqual(refused.exception.reason, "scenario-running")
-                self.assertTrue(c.sim.time().paused)
                 launch.send({"command": "resume"})
                 wait_until(self, "the time goes on", lambda: c.sim.time().now > now)
+                launch.send({"command": "pause"})
+                now = c.sim.wait_paused().now
+                c.sim.step(ms(30))
+                wait_until(self, "the step", lambda: c.sim.time().paused and c.sim.time().now >= now + ms(30))
+                c.sim.set_speed(2.0)
+                c.sim.resume()
+                wait_until(self, "the time goes on again", lambda: c.sim.time().now > now + ms(30))
+                # Still no write, paused or not.
+                c.sim.pause()
+                c.sim.wait_paused()
+                with self.assertRaises(ControlError) as refused:
+                    c.write({"Engine": {"engine.throttle": 10.0}})
+                self.assertEqual(refused.exception.reason, "scenario-running")
                 # A stop is taken: the run is the one that was stopped, the scenario did not finish.
                 c.sim.stop("enough")
             result = launch.wait()
-        self.assertEqual(commands_of(launch), [
-            ("pause", "stdin", True, None, None),
-            ("resume", "stdin", True, None, None),
-            ("stop", "control_server", True, None, None),
+        self.assertEqual([(name, source, accepted) for name, source, accepted, _, _ in commands_of(launch)], [
+            ("pause", "control_server", True),
+            ("resume", "stdin", True),
+            ("pause", "stdin", True),
+            ("step", "control_server", True),
+            ("speed", "control_server", True),
+            ("resume", "control_server", True),
+            ("pause", "control_server", True),
+            ("stop", "control_server", True),
         ])
         self.assertEqual((result["result"], result["end"], result["ok"], result["interrupted_by"]),
                          ("incomplete", "stopped", False, "control server stop"))
@@ -785,9 +839,9 @@ class LauncherTest(unittest.TestCase):
         self.assertIn("participant 'Gateway' is a bridge (role: bridge) to something outside the simulation", notes[0]["message"])
         self.assertIn("the time command 'pause' from control_server at ", notes[0]["message"])
 
-    def test_version_lists_scenario_control(self):
+    def test_version_lists_scenario_control_and_scenario_time(self):
         out = self.run_launcher("version", "--json")
-        self.assertEqual(json.loads(out.stdout)["features"][-2:], ["control-server", "scenario-control"])
+        self.assertEqual(json.loads(out.stdout)["features"][-3:], ["control-server", "scenario-control", "scenario-time"])
 
     def run_launcher(self, *arguments):
         return subprocess.run([LAUNCH, *arguments], capture_output=True, text=True, timeout=120)

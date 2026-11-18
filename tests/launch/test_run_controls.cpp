@@ -480,7 +480,9 @@ TEST_CASE(the_state_of_a_run_with_a_scenario_refuses_what_only_a_control_server_
     CHECK(s.allowed.pause.ok && s.allowed.resume.ok && s.allowed.speed.ok && s.allowed.stop.ok);
     CHECK(!s.allowed.write.ok && s.allowed.write.reason == "scenario-running");
     CHECK(s.allowed.run_until == t.controls.allowed(Operation::RunUntil, Entry::Stdin));
-    CHECK(t.controls.allowed(Operation::RunUntil, Entry::ControlServer).reason == "scenario-running");
+    // A control server's clients get the same answers to the time commands (a write is refused them).
+    CHECK(s.allowed.run_until == t.controls.allowed(Operation::RunUntil, Entry::ControlServer));
+    CHECK(s.allowed.pause == t.controls.allowed(Operation::Pause, Entry::ControlServer));
     // The same answers as the rules give those entries.
     CHECK(s.allowed.write == t.controls.allowed(Operation::Write, Entry::ControlServer));
     CHECK(s.allowed.pause == t.controls.allowed(Operation::Pause, Entry::Stdin));
