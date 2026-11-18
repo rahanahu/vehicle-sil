@@ -189,7 +189,7 @@ network    kind  participants
 J1939_CAN  can   Engine
 
 error: simulation.yaml:12: participant 'Dashboard': the executable uses the network 'VehicleCAN' (j1939), which is not in networks. Another network of kind can in this simulation is 'J1939_CAN' (line 6, used by Engine): if 'VehicleCAN' is meant to be that bus, say so in this file: add network_names: { J1939_CAN: VehicleCAN } to the participant 'Dashboard' (<simulation's name>: <executable's name>; the executable stays as it is); if 'VehicleCAN' is a bus of its own, add it to networks with kind: can [unknown-network]
-warning: simulation.yaml:6: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it [single-participant]
+warning: simulation.yaml:6: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes) [single-participant]
 
 failed: 1 error, 1 warning, 0 notes
 ```
@@ -255,8 +255,8 @@ network     kind  participants
 J1939_CAN   can   Engine
 VehicleCAN  can   Dashboard
 
-warning: simulation.two-buses.yaml:7: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; the network 'VehicleCAN' (line 9, only Dashboard) of kind can also has one ECU: if it is meant to be the same bus, keep one of the two names: remove 'J1939_CAN' from networks and add network_names: { VehicleCAN: J1939_CAN } to the participant 'Engine' [single-participant]
-warning: simulation.two-buses.yaml:9: network 'VehicleCAN': only Dashboard is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; the network 'J1939_CAN' (line 7, only Engine) of kind can also has one ECU: if it is meant to be the same bus, keep one of the two names: remove 'VehicleCAN' from networks and add network_names: { J1939_CAN: VehicleCAN } to the participant 'Dashboard' [single-participant]
+warning: simulation.two-buses.yaml:7: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes); the network 'VehicleCAN' (line 9, only Dashboard) of kind can also has one ECU: if it is meant to be the same bus, keep one of the two names: remove 'J1939_CAN' from networks and add network_names: { VehicleCAN: J1939_CAN } to the participant 'Engine' [single-participant]
+warning: simulation.two-buses.yaml:9: network 'VehicleCAN': only Dashboard is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes); the network 'J1939_CAN' (line 7, only Engine) of kind can also has one ECU: if it is meant to be the same bus, keep one of the two names: remove 'VehicleCAN' from networks and add network_names: { J1939_CAN: VehicleCAN } to the participant 'Dashboard' [single-participant]
 
 passed: 0 errors, 2 warnings, 0 notes
 ```
@@ -560,7 +560,7 @@ Dashboard    -      disabled
 network    kind  participants
 J1939_CAN  can   Engine
 
-warning: simulation.fixed.yaml:7: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it [single-participant]
+warning: simulation.fixed.yaml:7: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes) [single-participant]
 note: simulation.fixed.yaml:13: participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it [participant-disabled]
 
 passed: 0 errors, 1 warning, 1 note
