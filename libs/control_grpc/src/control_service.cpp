@@ -310,6 +310,7 @@ public:
             o.values = request->values();
             o.events = request->events();
             o.operations = request->operations();
+            o.availability = request->availability();
             o.capacity = std::min<std::size_t>(request->capacity() == 0 ? options_.default_watch_capacity : request->capacity(),
                                                options_.max_watch_capacity);
             const bool watch_time = request->time() && monitor_ != nullptr;
@@ -408,6 +409,8 @@ public:
                 for (auto& update : sub->poll(initial ? 0 : 64, initial ? std::chrono::milliseconds(0) : std::chrono::milliseconds(100)))
                 {
                     bool sent = true;
+                    // One branch below per kind of hub update: a new kind must get one.
+                    static_assert(std::variant_size_v<Update> == 5, "a new kind of control::Update needs a branch here");
                     if (const auto* p = std::get_if<PeerUpdate>(&update))
                     {
                         if (p->removed)
@@ -437,9 +440,13 @@ public:
                             pe->set_incarnation(e->incarnation);
                             detail::to_proto(e->event, *pe->mutable_event());
                         }
-                        else
+                        else if (const auto* a = std::get_if<AvailabilityUpdate>(&update))
                         {
-                            detail::to_proto(std::get<OperationUpdate>(update).operation, *out.mutable_operation());
+                            detail::to_proto(*a, *out.mutable_availability());
+                        }
+                        else if (const auto* op = std::get_if<OperationUpdate>(&update))
+                        {
+                            detail::to_proto(op->operation, *out.mutable_operation());
                         }
                         sent = write(out);
                     }
@@ -522,7 +529,8 @@ public:
         try
         {
             f(*options_.time);
-            // The watches see the change at once, not only at the monitor's next read.
+            // The watches get the change in their next round (at most about 100 ms, while they wait
+            // for hub updates), not only after the monitor's next read.
             monitor_->poll();
             detail::time_to_proto(options_.time->state(), *reply);
         }

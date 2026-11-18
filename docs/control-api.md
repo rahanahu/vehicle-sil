@@ -363,7 +363,7 @@ An ECU whose application decides at run time which of its inputs and outputs it 
 | Which variables report | Those declared with `VariableOptions::availability`, which gives the first state. Which variables report is fixed with the declarations; it does not change while the simulation runs. |
 | Changing the state | `ecu.set_availability(name, state)` from a step of the ECU (`on_step()`, `every()`, `at()`, a handler). The same state again does nothing. |
 | Errors | A name the ECU did not declare, a variable declared without `availability`, and the variables vehicle-sil gives every ECU (`ecu.connected`, the monitoring outputs): `std::invalid_argument`. During the set-up (before the run): `std::logic_error`; give the first state in the declaration instead. |
-| Where the state goes | To the Control Server, when it changes, and again once a second of simulation time (so a server that connects later gets it too). A subscription to the Hub receives it only if it asks (`SubscriptionOptions::availability`). The gRPC service and the GUI do not pass it on. |
+| Where the state goes | To the Control Server, when it changes, and again once a second of simulation time (so a server that connects later gets it too). A subscription to the Hub receives it only if it asks (`SubscriptionOptions::availability`). The gRPC service passes it on as below; the GUI does not yet. |
 | An ECU built with an older vehicle-sil | Reports nothing: all its variables count as `Active`. The check notes it (`control-link-revision`). |
 
 ```cpp
@@ -375,6 +375,8 @@ ecu.every(10ms, [this, &ecu](vehicle_sil::SimTime) {
     }
 });
 ```
+
+Over gRPC, `VariableInfo.availability` in `ListPeers` and in the `PeerInfo` of `Watch` declares it: `AVAILABILITY_UNSPECIFIED` for a variable that does not report, else the state it starts with. `Watch` with `availability = true` sends a `PeerAvailability` (the `availability` kind of `Update`) for each peer that has a variable that reports. It holds the state of every variable in the order of `schema`, and `AVAILABILITY_ACTIVE` for a variable that does not report. It comes after the `PeerInfo`, with the initial updates (before `initial_done`) and then when a state changes. A new incarnation starts again from the declared states; a `PeerInfo` sent again for the same incarnation (a reconnect, a change of its SIL Kit state) does not reset them, so keep the states until another incarnation comes, and drop a `PeerAvailability` of an incarnation that is not the peer's current one. A watch keeps only the latest state of each peer, so it can skip a change in between. `peers` narrows it as for the other kinds, and a watch that does not ask never receives it. The availability is information only: `Write`, `GetValues`, `GetSnapshot` and the values of `Watch` do not change with it. The Python client does not ask for it.
 
 ### How the connection is made
 
@@ -557,6 +559,8 @@ A subscription to the simulation state returns `SimulationState`.
 - While the server cannot read the state, `peers()` also reports it with a `ControlWarning` on every call, including the second and later calls from the same place. Your warning filters decide whether the warning is shown, raised or ignored; the library does not change the filters.
 
 ### Read time and values together (`snapshot()`)
+
+The time of a peer's values (`Snapshot.time_ns`, `Values.time` of the Python client) is the start of the ECU step at whose end they were read, as in [the scenario's "Values that conditions see"](scenario.md#values-that-conditions-see).
 
 ```python
 c.sim.step(ms(100)); c.sim.wait_paused()
