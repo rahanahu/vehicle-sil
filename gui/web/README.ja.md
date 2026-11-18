@@ -188,6 +188,7 @@ e2e のテストは、GUI サーバーを自分で起動し、終わったら止
 | `run.spec.ts`                                    | 実行の画面                                                      |
 | `before-start.spec.ts`                           | 最初のステップの前                                              |
 | `manual.spec.ts`                                 | 自分で起動する participant                                      |
+| `connect.spec.ts`                                | ネットワークを外につなぐ                                        |
 | `scenario.spec.ts`                               | シナリオ                                                        |
 | `starter.spec.ts`                                | 画面のテンプレート `examples/gui_starter` を `--web` で配信する |
 | `i18n.spec.ts`                                   | 英語の画面と言語の切り替え                                      |

@@ -2,6 +2,7 @@ import {
   Component,
   DOCUMENT,
   DestroyRef,
+  LOCALE_ID,
   computed,
   inject,
   linkedSignal,
@@ -31,6 +32,7 @@ import { CheckPanel } from './check-panel';
 import { FindingsList } from './findings-list';
 import { STDERR_CODE, launcherStderr } from './launcher-stderr';
 import { LogView } from './log-view';
+import { OutsideChoice, OutsideRows, connectChoice, connectText } from './outside-connect';
 import { ParticipantStatus } from './participant-status';
 import { RecordingPanel } from './recording-panel';
 import { ResultPanel } from './result-panel';
@@ -132,6 +134,8 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
     CheckPanel,
     FindingsList,
     LogView,
+    OutsideChoice,
+    OutsideRows,
     ParticipantStatus,
     RecordingPanel,
     ResultPanel,
@@ -153,6 +157,7 @@ export class RunPage {
   /** 時刻（仮想時間、一時停止、速さ）と、その操作。 */
   protected readonly time = inject(SimulationTime);
   private readonly language = inject(LanguageChoice);
+  private readonly locale = inject(LOCALE_ID);
   /** 言語を変える前の選択（なければ null）。 */
   private readonly carried = readRunChoices(this.language.take('run'));
 
@@ -357,6 +362,21 @@ export class RunPage {
     return this.scenarios.value().scenarios.some((s) => s.path === choice) ? choice : null;
   });
 
+  /**
+   * 次の実行で外につなぐ先（部品 <vsil-connect> が選ぶ。最初は空 = つながない）。言語を変えて読み込み直したときも
+   * 持ち越さない（黙って実機につないで始めない）。
+   */
+  private readonly connect = connectChoice();
+  /** 送る、外につなぐ先（なければ null で、送らない）。 */
+  private readonly connectToSend = computed(() =>
+    Object.keys(this.connect()).length > 0 ? { ...this.connect() } : null,
+  );
+  private readonly list = new Intl.ListFormat(this.locale, { type: 'conjunction' });
+  /** 始めると外につなぐ先の 1 行（開始のボタンの下に出す。実行中と、つながないときは null）。 */
+  protected readonly connectSummary = computed(() =>
+    this.running() ? null : connectText(this.connect(), this.list),
+  );
+
   /** 照合し直すよう頼んだ回数（同じ組み合わせでも照合し直すため）。 */
   private readonly rechecks = signal(0);
   /** 送った照合の要求の終わり。次の照合は、前の照合の応答を待ってから送る（サーバーで重ならない）。 */
@@ -375,6 +395,7 @@ export class RunPage {
         disable: [...this.disabled()].sort(),
         manual: this.manualToSend(),
         scenario: this.chosenScenario(),
+        connect: this.connectToSend(),
         again: this.rechecks(),
       };
     },
@@ -385,6 +406,7 @@ export class RunPage {
         disable: params.disable,
         ...(params.manual !== null ? { manual: params.manual } : {}),
         ...(params.scenario !== null ? { scenario: params.scenario } : {}),
+        ...(params.connect !== null ? { connect: params.connect } : {}),
       };
       const request = this.checkChain.then(() => {
         // 待っている間に組み合わせが変わったら送らない
@@ -583,6 +605,7 @@ export class RunPage {
     const scenario = this.chosenScenario();
     const manual = this.manualToSend();
     const speed = this.speedSupported() ? this.speed() : null;
+    const connect = this.connectToSend();
     this.run.start({
       file,
       disable: [...this.disabled()].sort(),
@@ -593,6 +616,7 @@ export class RunPage {
         ? { start_paused: true }
         : {}),
       ...(scenario !== null ? { scenario } : {}),
+      ...(connect !== null ? { connect } : {}),
     });
   }
 

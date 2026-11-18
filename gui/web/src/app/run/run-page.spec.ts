@@ -3,6 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { authInterceptor } from '../core/auth/auth-interceptor';
 import { BATCH_MS } from '@vehicle-sil/gui-client';
+import { pageIntent } from '@vehicle-sil/gui-client/elements';
 import { FakeWebSockets, protocolExamples } from '@vehicle-sil/gui-client/testing';
 import { SOCKET_FACTORY } from '../core/session/gui-client';
 import { CHECK_DELAY_MS, RunPage, readRunChoices } from './run-page';
@@ -276,6 +277,76 @@ describe('RunPage', () => {
     expect(button(fixture, 'start').textContent).toContain('もう一度実行');
     expect(text(fixture, 'outcome')).toContain('失敗');
     expect(text(fixture, 'first-error')).toContain('participant-failed');
+  });
+
+  it('checks and starts with the networks the parts chose to connect outside, and says so by the start button', async () => {
+    const fixture = await openWithFiles();
+    (await checkRequest()).flush(response('check-passed'));
+    await fixture.whenStable();
+    // 照合の can のネットワークに選択がある。最初は「つながない」
+    const part = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="connect-J1939_CAN"] vsil-connect',
+    );
+    expect(part?.getAttribute('data-chosen')).toBe('none');
+    expect(text(fixture, 'connect-summary')).toBe('');
+
+    // 部品が書くのと同じ形（別のネットワークなので、部品は自分では照合しない）
+    pageIntent.update({ connect: { ETH_EXT: 'fake0' } });
+    try {
+      const again = await checkRequest();
+      expect(again.request.body).toEqual({
+        file: 'bad-lines.yaml',
+        disable: [],
+        manual: [],
+        connect: { ETH_EXT: 'fake0' },
+      });
+      again.flush(response('check-passed'));
+      await fixture.whenStable();
+      expect(text(fixture, 'connect-summary')).toContain('ETH_EXT → fake0');
+      await sleep(10);
+      await fixture.whenStable();
+      button(fixture, 'start').click();
+      expect(http.expectOne('api/run').request.body).toEqual({
+        file: 'bad-lines.yaml',
+        disable: [],
+        manual: [],
+        connect: { ETH_EXT: 'fake0' },
+      });
+    } finally {
+      pageIntent.update({ connect: undefined });
+    }
+  });
+
+  it('shows in the result why a run connected outside failed, in the launcher words', async () => {
+    const fixture = await openWithFiles();
+    (await checkRequest()).flush(response('check-passed'));
+    const lost = {
+      code: 'connect-lost',
+      message: 'the bridge of ETH_EXT ended while the simulation was running',
+    };
+    // 参加者の失敗を、外につないだブリッジの失敗に置き換えた実行（事象と要約の結果の両方）
+    const failed = 'participant-failed';
+    const messages = server('ws-participant-crash')
+      .slice(2)
+      .map(
+        (message) =>
+          JSON.parse(
+            JSON.stringify(message).replace(
+              /"code":"participant-failed"(.*?)"message":"[^"]*"/g,
+              `"code":"${lost.code}"$1"message":"${lost.message}"`,
+            ),
+          ) as unknown,
+      );
+    expect(JSON.stringify(messages)).not.toContain(failed);
+    for (const message of messages) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    await sleep(CHECK_DELAY_MS + 20);
+    for (const request of http.match('api/check')) request.flush(response('check-passed'));
+    answerScenarios();
+    await fixture.whenStable();
+    expect(text(fixture, 'result-card')).toContain('connect-lost');
+    expect(text(fixture, 'result-card')).toContain(lost.message);
   });
 });
 

@@ -188,6 +188,7 @@ The code in this directory uses only the wrapper's public API (the same way you 
 | `run.spec.ts`                                    | The Run screen                                                      |
 | `before-start.spec.ts`                           | Before the first step                                               |
 | `manual.spec.ts`                                 | Participants you start yourself                                     |
+| `connect.spec.ts`                                | Connecting a network outside                                        |
 | `scenario.spec.ts`                               | Scenarios                                                           |
 | `starter.spec.ts`                                | Serving the screen template `examples/gui_starter` with `--web`     |
 | `i18n.spec.ts`                                   | The English screens and switching languages                         |

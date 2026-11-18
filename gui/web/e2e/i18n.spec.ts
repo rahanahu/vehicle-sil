@@ -75,6 +75,18 @@ test('the run screen is in English: words, the status band, findings as they are
   expect(text).not.toMatch(/[぀-ヿ一-鿿]/);
 });
 
+test('the choice of connecting a network outside is in English, and the part keeps its words', async ({
+  page,
+}) => {
+  await choose(page, 'connect.yaml', 'en');
+  const card = page.getByTestId('config-card');
+  await expect(card.getByRole('heading', { name: 'Connect outside' })).toBeVisible();
+  await expect(page.getByTestId('connect-ETH_EXT').locator('option[value="none"]')).toHaveText(
+    'SIL Kit only (not connected)',
+  );
+  expect(await card.innerText()).not.toMatch(/[぀-ヿ一-鿿]/);
+});
+
 test('the dialog to stop without waiting is in English', async ({ page }) => {
   await choose(page, 'ignore-stop.yaml', 'en');
   await start(page);
