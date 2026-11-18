@@ -38,6 +38,7 @@ void timeline(const Options& o)
     const std::string file = read_text(dir / "out" / "first.json");
     require(!contains(file, "\r"), "the timeline has LF line ends on every system");
     require(contains(file, "{\n  \"vehicle_sil_timeline\": 1,\n") && contains(file, "  \"stage\": \"run\",\n  \"file\": \"sim.yaml\",\n") &&
+                contains(file, "  \"variant\": null,\n  \"params\": [],\n  \"time_step_ms\": 10,\n") &&
                 contains(file, "    \"file\": \"s.yaml\",\n    \"name\": \"square wave\",\n    \"status\": \"passed\",\n"),
             "the head of the timeline:\n" + file);
     // What the scenario wrote (the wave: one point a line, the end value last) and saw.

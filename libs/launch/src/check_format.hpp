@@ -58,8 +58,6 @@ void write_finding_members(vehicle_sil::json::JsonWriter& w, const std::string& 
 /// run --scenario, for people: one line with the result, then a table of the steps (line, what,
 /// result, the virtual time that decided it).
 [[nodiscard]] std::string scenario_text(const ScenarioRun& scenario);
-/// One step as a line of the run's output: "line 4: set ...: ok at 100 ms".
-[[nodiscard]] std::string scenario_step_text(const ScenarioStepRun& step);
 /// The result's "scenario" object, as the member `key` of the object `w` is in. `timeline`: the
 /// timeline file of the run (run --timeline), its last member "timeline"; "": no such member.
 void write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const ScenarioRun& scenario,

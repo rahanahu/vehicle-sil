@@ -25,7 +25,8 @@
 //   run_outside.cpp      read_outside_counts(), OutsideNote, OutsideState   run --connect: the counts in a
 //                        bridge's statistics lines, its link line, and when the event "outside" goes out
 //   timeline.cpp         TimelineRecord   run --timeline: what the scenario's engine notes
-//   timeline_format.cpp  format_timeline_json()   the file made of it (Runner::open_timeline(), write_timeline())
+//   timeline_format.cpp  format_timeline_json()   the file made of it (run_file(); the Runner opens the file
+//                        and writes the text: open_timeline(), write_timeline())
 //
 // The threads of a run, and what each may touch:
 // - The main thread (run_file()'s caller): everything, and alone the RunOutcome, RunParticipants,
@@ -162,8 +163,11 @@
 #include "run_start.hpp"
 #include "run_watch.hpp"
 
+// run_file() only (the Runner and the parts of a run know neither): the events as they are
+// written, and the timeline's text.
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/timeline_format.hpp"
+
 #include "vehicle_sil/process/paths.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
@@ -275,10 +279,11 @@ class Runner
 
 public:
     /// `plan`: plan_run() of the check that passed. `observers`: the caller's functions, copied.
-    /// `controls`: RunLent::controls, or the run's own; they outlive the Runner.
-    Runner(RunPlan plan, RunObservers observers, RunControls& controls) :
+    /// `events`: what the run tells while it lasts (the object of RunObservers::events, or null);
+    /// it outlives the Runner. `controls`: RunLent::controls, or the run's own; they outlive the Runner.
+    Runner(RunPlan plan, RunObservers observers, RunEvents* events, RunControls& controls) :
       plan_(std::move(plan)), observers_(std::move(observers)),
-      ctx_{plan_.config(), plan_.check, plan_, observers_, plan_.scenario(), controls, controls.time()},
+      ctx_{plan_.config(), plan_.check, plan_, observers_, events, plan_.scenario(), controls, controls.time()},
       outcome_(planned_outcome(plan_)), out_(ctx_), control_(ctx_, out_),
       samples_(participant_names(ctx_.config), detail::traffic_plan(ctx_.config, ctx_.check, ctx_.plan.members)), notes_(ctx_, participants_),
       scenario_(ctx_, out_, control_, samples_), start_(ctx_, out_, control_, notes_, scenario_, participants_, outcome_),
@@ -360,7 +365,7 @@ public:
             try
             {
                 const ControlServerInfo& at = *server.listening;
-                out_.event([&at](EventStream& e) { e.control_server(at.address, at.tls, at.credentials); });
+                out_.event([&at](RunEvents& e) { e.control_server(at.address, at.tls, at.credentials); });
                 out_.say("control server at " + at.address);
             }
             catch (const std::exception& e)
@@ -391,7 +396,7 @@ public:
                                                                       detail::host_addresses(true, true)));
             }
             outcome_.setup.registry_uri = uri;
-            out_.event([&uri](EventStream& e) { e.registry(uri); });
+            out_.event([&uri](RunEvents& e) { e.registry(uri); });
             out_.say("registry at " + uri);
             if (!is_loopback_registry_uri(listen))
             {
@@ -511,28 +516,22 @@ public:
     /// what is written as an event is in the result as it was written.
     void publish_findings(bool final) { notes_.publish_findings(outcome_, final); }
 
-    /// run --timeline: writes the timeline file of the run that is over, with `findings` (the
-    /// check's and the run's), and says where it is. Nothing if the file was not opened (no
+    /// The plan of this run, as the Runner keeps it (with the bridges of --connect).
+    [[nodiscard]] const RunPlan& plan() const { return plan_; }
+
+    /// run --timeline: the timeline file was opened (prepare()) and has not been written yet.
+    [[nodiscard]] bool timeline_open() const { return timeline_file_.is_open(); }
+
+    /// run --timeline: writes `text` (the timeline of the run that is over, as the caller made
+    /// it) to the timeline file, and says where it is. Nothing if the file was not opened (no
     /// --timeline, or the run ended before it got there). If it cannot be written: why (also in
     /// the outcome: OutcomeScenario::timeline_error), else "".
-    std::string write_timeline(const Checked& check, std::vector<Finding> findings)
+    std::string write_timeline(const std::string& text)
     {
         if (!timeline_file_.is_open())
         {
             return {};
         }
-        const ScenarioCatalog catalog = scenario_catalog(check);
-        TimelineInput input;
-        input.file = check.file;
-        input.variant = ctx_.config.variant;
-        input.params = check.scenario->params;
-        input.time_step_ms = ctx_.plan.timing.time_step_ms;
-        input.scenario = ctx_.scenario;
-        input.run = &*outcome_.scenario.result;
-        input.catalog = &catalog;
-        input.record = outcome_.scenario.timeline_record.get();
-        input.findings = std::move(findings);
-        const std::string text = format_timeline_json(input);
         timeline_file_.write(text.data(), static_cast<std::streamsize>(text.size()));
         timeline_file_.close();
         if (timeline_file_.fail())
@@ -757,7 +756,10 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
     // (OutcomeClose::not_closed_ms): that thread uses nothing of the Runner.
     // What the run is given, in three kinds: the plan (a value, settled here), the observers (the
     // caller's functions) and what it borrows (the controls; the control server stays here).
-    Runner runner(plan_run(report.check, base, request, limits, server_of_run != nullptr), observers, controls);
+    // The run tells through the interface it knows (RunEvents), which the stream of the events
+    // implements; the stream's own members (check(), phase(), state()) are called here only.
+    Runner runner(plan_run(report.check, base, request, limits, server_of_run != nullptr), observers, observers.events,
+                  controls);
     // The control server between the Runner's two stages: after the run's files are open, before
     // the registry listens. The Runner does not know the server; it is told what became of it.
     ControlServerStart server;
@@ -784,11 +786,25 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
     }
     report.run = runner.run(server);
     report.findings = assess_run(*report.run);
+    if (runner.timeline_open())
     {
-        // run --timeline: the file has the scenario's findings of the check and of the run.
-        std::vector<Finding> findings = report.check.findings;
-        findings.insert(findings.end(), report.findings.begin(), report.findings.end());
-        if (const std::string error = runner.write_timeline(report.check, std::move(findings)); !error.empty())
+        // run --timeline: the file is made here, of the plan and of what the run left (the
+        // scenario's result and the record its engine filled); the Runner only writes the text
+        // to the file it opened before anything started. The file has the scenario's findings
+        // of the check and of the run.
+        const ScenarioCatalog catalog = scenario_catalog(report.check);
+        TimelineInput input;
+        input.file = report.check.file;
+        input.variant = runner.plan().config().variant;
+        input.params = report.check.scenario->params;
+        input.time_step_ms = runner.plan().timing.time_step_ms;
+        input.scenario = runner.plan().scenario();
+        input.run = &*report.run->scenario.result;
+        input.catalog = &catalog;
+        input.record = report.run->scenario.timeline_record.get();
+        input.findings = report.check.findings;
+        input.findings.insert(input.findings.end(), report.findings.begin(), report.findings.end());
+        if (const std::string error = runner.write_timeline(format_timeline_json(input)); !error.empty())
         {
             report.run->scenario.timeline_error = error;
             report.findings = assess_run(*report.run);

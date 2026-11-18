@@ -700,6 +700,12 @@ void scenario_failures(const Options& o)
                                   "(100 ms after 0 ms): Body.level eq 6, but it was 5 (its sample of 100 ms) [scenario-timeout]\n") &&
                     contains(out, "\nfailed: 1 error, 0 warnings, 0 notes\n"),
                 "the failure in the text:\n" + out);
+        // The failed step's line while the run lasts: the result, the time and why.
+        const std::string err = lf(run.standard_error);
+        require(contains(err, "\n[vehicle_sil_launch] scenario: line 4: wait_until Body.ticks ge 10; Body.level eq 6 (timeout 100 ms): "
+                              "FAILED at 100 ms (timed out at 100 ms (100 ms after 0 ms): Body.level eq 6, but it was 5 (its sample of "
+                              "100 ms))\n"),
+                "the failed step's line on stderr:\n" + err);
         const Captured json = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, dir);
         expect_code(json, 1, "a wait that times out, --json");
         const std::string j = lf(json.standard_output);

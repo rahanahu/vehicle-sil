@@ -7,8 +7,6 @@
 #include "check_words.hpp"
 #include "run_context.hpp"
 
-#include "vehicle_sil/launch/events.hpp"
-
 #include <chrono>
 #include <cstddef>
 #include <fstream>
@@ -36,7 +34,7 @@ namespace vehicle_sil::launch::detail {
 /// mutex (the command and state observers, `accepted`, on_detach) writes events and never calls
 /// this object. No other lock of the run is taken while `mutex_` is held. hold() gives it to
 /// the caller, who then must not call say(), on_line() or anything that takes another lock of the
-/// run. event() does not take it (EventStream keeps itself).
+/// run. event() does not take it (the RunEvents keep themselves).
 ///
 /// The bridges of --connect: their statistics lines that read_outside_counts() reads are the
 /// launcher's to read while the bridge runs: they go to the log file, and their counts to the event
@@ -77,9 +75,9 @@ public:
     template <class Emit>
     void event(Emit emit) const
     {
-        if (ctx_.observers.events != nullptr)
+        if (ctx_.events != nullptr)
         {
-            emit(*ctx_.observers.events);
+            emit(*ctx_.events);
         }
     }
 

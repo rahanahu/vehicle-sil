@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/launch/scenario_run.hpp"
 
+#include "check_words.hpp"
 #include "scenario_failure.hpp"
 #include "scenario_line.hpp"
 
@@ -84,6 +85,28 @@ const char* step_status_name(StepStatus status)
     case StepStatus::Skipped: return "skipped";
     }
     return "not_run";
+}
+
+const char* step_result_text(StepStatus status)
+{
+    switch (status)
+    {
+    case StepStatus::NotRun: return "not run";
+    case StepStatus::Running: return "running";
+    case StepStatus::Passed: return "ok";
+    case StepStatus::Failed: return "FAILED";
+    case StepStatus::Unfinished: return "unfinished";
+    case StepStatus::Skipped: return "skipped";
+    }
+    return "not run";
+}
+
+std::string scenario_step_text(const ScenarioStepRun& step)
+{
+    // The time as the result's table of the steps says it (run_format.cpp: millis_text()).
+    return "line " + std::to_string(step.line) + ": " + step.text + ": " + step_result_text(step.status) +
+           (step.at ? " at " + detail::millis_text(to_ns(*step.at)) + " ms" : std::string{}) +
+           (step.status == StepStatus::Failed || step.status == StepStatus::Skipped ? " (" + step.message + ")" : std::string{});
 }
 
 std::size_t ScenarioRun::skipped() const
