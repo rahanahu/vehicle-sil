@@ -444,7 +444,7 @@ failed: 3 errors, 1 warning, 0 notes
 | `from`、`address`、`identity_number`、`function_instance`、`ecu_instance` | 書いた値（数。書いていなければ `null`） |
 | `node` | 行が当たったノード: `coded_address`（実行ファイルのコードのアドレス。`reported` の `address` と同じ）、行を当てた後の `address`、`j1939_name`、`arbitrary_address_capable`（`reported` のノードと同じ形）。どのノードにも当たらない行、何も変えない行、照合していない participant では `null` |
 
-**`control`**: キーは `transport`（今は `"silkit"`）と `wire_version`（メッセージの形式のバージョン）です。`control` を出力していない（`--no-control`、古い実行ファイル）、照合していない、失敗した、無効にした participant では `null` です。
+**`control`**: キーは `transport`（今は `"silkit"`）、`wire_version`（メッセージの形式のバージョン）、`wire_revision`（その形式の改訂。`--describe` が言わない実行ファイルでは 0）です。`control` を出力していない（`--no-control`、古い実行ファイル）、照合していない、失敗した、無効にした participant では `null` です。
 
 `networks[]` と `findings[]` の要素のキーは次のとおりです。
 
@@ -573,7 +573,8 @@ participants:
       "j1939_nodes": null,
       "control": {
         "transport": "silkit",
-        "wire_version": 2
+        "wire_version": 2,
+        "wire_revision": 1
       }
     }
   ],

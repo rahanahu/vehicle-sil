@@ -758,6 +758,7 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
                 w.begin_object("control");
                 w.string("transport", offer->transport);
                 w.integer("wire_version", offer->wire_version);
+                w.integer("wire_revision", offer->wire_revision);
                 w.end_object();
             }
             else
