@@ -394,6 +394,14 @@ VN5620 の XL ドライバは、チャネルを有効にしたままでは、バ
 - 自分の送信のレシートを捨てるのは、同じスタックのノードへの配送をスタックが行うためです。
 - 送信は、`transmit()` の同期の結果をそのまま返します（`Ok` は `Accepted`、`QueueFull` と `Dropped` は `QueueFull`）。その後バスに出たかは通知しません。
 - 実機での確認はしていません（「[検証の範囲](#検証の範囲)」）。
+- 使うには `vehicle_sil::can_external` をリンクします。CAN ブリッジはこのターゲットをリンクしません。アダプターは `ExternalCanPort` を実装するどの口（`SocketCanPort` も）でも動きますが、試験は偽の口だけです。
+
+ブリッジの代わりに使う前に知っておく限界です。
+
+- ランチャーの実行の外で動きます。時間のロックも、`outside[]` への記載も、障害の 3 分類（一時的・品質の低下・致命的）もありません。
+- 使用中の印を置かないので、同じチャネル・インターフェースのブリッジと互いに気づきません。
+- `Peer` は SIL Kit の participant なので、registry が要ります。
+- `Fault` とバスの状態を捨てます（上の説明）。載せたスタックは、断線や抜去に気づきません。
 
 ## ビルド
 
@@ -422,7 +430,7 @@ XL Driver Library が見つかれば、`vxlapi64.dll` を実行ファイルの�
 | `vehicle_sil::can_bridge::ExternalCanPort` | 外部 CAN のインターフェース。本番の実装は `XlCanPort`、テストではフェイク |
 | `vehicle_sil::vector_xl::XlDriver` | `xlOpenDriver` / `xlCloseDriver` を RAII で管理し、`xlGetDriverConfig` からチャネルを列挙する |
 | `vehicle_sil::vector_xl::XlCanPort` | XL のチャネル 1 つを開き（`xlOpenPort`）、送信（`xlCanTransmit`）と受信スレッド（`xlReceive` と通知イベント）を担う |
-| `vehicle_sil::can_bridge::ExternalPortAdapter` | `ExternalCanPort` を CAN の共通基盤のポート（`RealTime`）にする。プロトコルスタックを XL のチャネルに直接載せるときに使う。プラットフォームに依存しない |
+| `vehicle_sil::can_bridge::ExternalPortAdapter`（ターゲット `vehicle_sil::can_external`） | `ExternalCanPort` を CAN の共通基盤のポート（`RealTime`）にする。プロトコルスタックを XL のチャネルに直接載せるときに使う。プラットフォームに依存しない。CAN ブリッジはリンクしない |
 
 ソースの場所とテストは、[code-map-bridges.md](code-map-bridges.md#vector-xl-can-bridge) の「Vector XL CAN Bridge」にあります。
 

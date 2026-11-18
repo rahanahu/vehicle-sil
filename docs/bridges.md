@@ -394,6 +394,14 @@ The launcher does not wait for a bridge with `required: false` in the configurat
 - Receipts of its own transmissions are dropped because the stack itself delivers to the nodes of the same stack.
 - Transmitting returns the synchronous result of `transmit()` (`Ok` becomes `Accepted`; `QueueFull` and `Dropped` become `QueueFull`). Whether the frame later went out on the bus is not reported.
 - Not verified on real hardware (see "[Test coverage](#test-coverage)").
+- Link `vehicle_sil::can_external` for it. The CAN bridges do not link that target. The adapter works with any `ExternalCanPort` (`SocketCanPort` too), but the tests use only a fake port.
+
+Limits to know before you use it instead of the bridge:
+
+- It runs outside the launcher's run. There is no time lock, no `outside[]` entry, and none of the 3 classes of faults (transient, degraded, fatal).
+- It places no in-use mark, so it and a bridge on the same channel or interface do not notice each other.
+- `Peer` is a SIL Kit participant, so a registry must be running.
+- It drops `Fault` and the bus state (see above). A stack on it does not notice a cable that is cut or pulled out.
 
 ## Build
 
@@ -422,7 +430,7 @@ A frame passes from the SIL Kit CAN network to the XL Driver through `ICanContro
 | `vehicle_sil::can_bridge::ExternalCanPort` | Interface to external CAN. `XlCanPort` in production, a fake in tests |
 | `vehicle_sil::vector_xl::XlDriver` | Manages `xlOpenDriver` / `xlCloseDriver` with RAII and lists the channels from `xlGetDriverConfig` |
 | `vehicle_sil::vector_xl::XlCanPort` | Opens one XL channel (`xlOpenPort`) and handles transmitting (`xlCanTransmit`) and the receive thread (`xlReceive` and the notification event) |
-| `vehicle_sil::can_bridge::ExternalPortAdapter` | Turns an `ExternalCanPort` into a port of the common CAN foundation (`RealTime`). Used to place a protocol stack directly on an XL channel. Platform-independent |
+| `vehicle_sil::can_bridge::ExternalPortAdapter` (target `vehicle_sil::can_external`) | Turns an `ExternalCanPort` into a port of the common CAN foundation (`RealTime`). Used to place a protocol stack directly on an XL channel. Platform-independent. The CAN bridges do not link it |
 
 For the source locations and tests, see "Vector XL CAN Bridge" in [code-map-bridges.md](code-map-bridges.md#vector-xl-can-bridge).
 
