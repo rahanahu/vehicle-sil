@@ -562,6 +562,7 @@ void speed_change(const Options& o);
 void step_width(const Options& o);
 void pause_step(const Options& o);
 void run_until_stdin(const Options& o);
+void state_on_arrival(const Options& o);
 void paused_failures(const Options& o);
 void time_usage(const Options& o);
 

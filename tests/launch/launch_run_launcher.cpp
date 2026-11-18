@@ -99,6 +99,7 @@ int main(int argc, char** argv)
             {"path", path},
             {"pause_step", pause_step},
             {"run_until_stdin", run_until_stdin},
+            {"state_on_arrival", state_on_arrival},
             {"paused_failures", paused_failures},
             {"quitter", quitter},
             {"realtime", realtime},

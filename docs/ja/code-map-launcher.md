@@ -412,7 +412,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 
 - `core.time_gate_model_*`、`core.virtual_time_gate_*`、`core.*deadline_waiter*`
 - `^launch\.`
-- `launch_run.realtime`、`on_time`、`late`、`stall`、`speed_change`、`step_width`、`pause_step`、`paused_failures`、`time_usage`、`connect_time_changed`
+- `launch_run.realtime`、`on_time`、`late`、`stall`、`speed_change`、`step_width`、`pause_step`、`run_until_stdin`、`state_on_arrival`、`paused_failures`、`time_usage`、`connect_time_changed`
 
 ### 自分で起動する participant
 

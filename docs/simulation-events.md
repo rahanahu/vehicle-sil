@@ -205,9 +205,11 @@ When `state` is written:
 |---|---|
 | The phase changes | A `state` with the new phase is written; normally after the `phase` event. |
 | A command changes the state (a pause, a speed, a stop from stdin or a client) | A `state` with the change is written after the `command` event of that command. A command that changes nothing writes no `state`. |
-| The simulation pauses or continues, the pacing changes, a signal asks to stop | When the launcher next looks (every 20 ms while the simulation runs). |
+| The simulation pauses or continues, the pacing changes, a signal asks to stop | When the launcher next looks (every 20 ms while the simulation runs). A look that finds the simulation paused or continuing writes the `time` event first and this `state` right after it. |
 
 Several threads of the launcher write `state`, so do not rely on the exact place of a `state` among the other events. Next to a `phase` event, the `command` event of a stdin `stop`, or a `time` event, one `state` that was made just before that event can follow it and does not show it yet, and the `state` with a new phase can come just before its `phase` event. A `state` that shows the change is always written, and the last `state` is correct: use the latest `state`, not the first one after an event.
+
+A `step` or a `run_until` ends with the simulation paused at the `at_ms` of its `command` event. Reaching that time writes nothing by itself: the launcher's next look writes the `time` event with that `sim_ms`, then the `state` with `paused` `true`. To send a command once the simulation is there, wait for that `time` event and until the latest `state` has `paused` `true`. A command sent as soon as the `time` event comes can be decided before that `state` is written; the next `state` then shows what the command did.
 
 A stop request by a signal (Ctrl+C) that arrives before the simulation runs appears in the next `state` (the one of the next phase).
 
