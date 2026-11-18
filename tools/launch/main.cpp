@@ -40,6 +40,7 @@
 #include "vehicle_sil/launch/test.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
+#include "control_arguments.hpp"
 #include "control_server.hpp"
 #include "vehicle_sil/control/hub.hpp"
 #endif
@@ -1160,7 +1161,7 @@ int run(const cli::Args& args, launch::EventStream* events)
         hooks.controls = shared().controls;
         // Its event (and its refusal once the run is over) comes from the time commands.
         hooks.stop = [] { g_stops.request(kControlStop); };
-        server = launch_cli::make_control_server(a, std::move(hooks));
+        server = launch_cli::make_control_server(launch_cli::read_control_options(a), std::move(hooks));
         options.control_endpoint = server.get();
     }
 #endif
