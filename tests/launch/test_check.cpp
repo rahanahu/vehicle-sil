@@ -877,8 +877,9 @@ TEST_CASE(variables_that_are_not_offered_are_a_note_and_another_version_of_the_m
     s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 0};
     check_text(s.check(), "N 6 control-link-revision: participant 'Engine': it offers its variables as silkit messages of "
                           "revision 0, older than revision 1 of this vehicle_sil_launch: its variables are read and written "
-                          "as usual, but they report no availability, so every one of them looks Active: build the "
-                          "executable with this vehicle-sil to have its availability reported\n");
+                          "as usual, but none of them can report its availability, so every one of them looks Active: if "
+                          "it should report one, build the executable with this vehicle-sil and declare those variables "
+                          "with VariableOptions::availability\n");
     s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 2};
     check_text(s.check(), "");
     s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 1};

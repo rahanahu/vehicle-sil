@@ -1069,9 +1069,10 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
             rules.add(Severity::Note, "control-link-revision", p.line,
                 prefix + "it offers its variables as silkit messages of revision " + std::to_string(offer->wire_revision) +
                     ", older than revision " + std::to_string(control::wire::kRevision) +
-                    " of this vehicle_sil_launch: its variables are read and written as usual, but they report no "
-                    "availability, so every one of them looks Active: build the executable with this vehicle-sil to "
-                    "have its availability reported",
+                    " of this vehicle_sil_launch: its variables are read and written as usual, but none of them can "
+                    "report its availability, so every one of them looks Active: if it should report one, build "
+                    "the executable with this vehicle-sil and declare those variables with "
+                    "VariableOptions::availability",
                 p.name, "");
         }
     }

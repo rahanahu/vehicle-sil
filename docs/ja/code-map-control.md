@@ -336,7 +336,7 @@ simulation-run.md に書いてあるランチャーの出力:
 - イベント `control_link`
 - 結果の `participants[].control_link`
 - 照合の JSON の `participants[].control`
-- 指摘 `control-link-no-hello`、`control-link-version`、`control-link-late-values`、`control-link-dropped`、`control-link-not-offered`、`before-start`
+- 指摘 `control-link-no-hello`、`control-link-version`、`control-link-revision`、`control-link-late-values`、`control-link-dropped`、`control-link-not-offered`、`before-start`
 
 `--describe` の `control` を扱うコード:
 

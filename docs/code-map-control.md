@@ -336,7 +336,7 @@ The launcher output described in simulation-run.md:
 - The `control_link` event
 - `participants[].control_link` of the result
 - `participants[].control` of the check JSON
-- The findings `control-link-no-hello`, `control-link-version`, `control-link-late-values`, `control-link-dropped`, `control-link-not-offered`, `before-start`
+- The findings `control-link-no-hello`, `control-link-version`, `control-link-revision`, `control-link-late-values`, `control-link-dropped`, `control-link-not-offered`, `before-start`
 
 The code that handles `control` of `--describe`:
 

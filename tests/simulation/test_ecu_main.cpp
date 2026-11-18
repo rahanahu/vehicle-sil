@@ -11,6 +11,7 @@
 #include "test_harness.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
+#include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
@@ -161,7 +162,8 @@ struct Probe
 /// Kit (unless --no-control) and takes --map-network and --j1939-node.
 vehicle_sil::EcuDescription offered(vehicle_sil::EcuDescription description)
 {
-    description.control = vehicle_sil::ControlOffer{"silkit", 2};
+    description.control = vehicle_sil::ControlOffer{"silkit", vehicle_sil::control::wire::kVersion,
+                                                     vehicle_sil::control::wire::kRevision};
     description.features = {"map-network", "j1939-node"};
     return description;
 }

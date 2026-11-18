@@ -110,8 +110,9 @@ void Agent::complete_schema()
 
 void Agent::close_schema()
 {
-    // Here and not in a step: the step thread allocates nothing for the availability. The store
-    // below publishes the vector to the threads that look at completed_ first.
+    // Once, when the schema is fixed: before the first step if a transport completed it, else in
+    // the first step (the only allocation a step makes for the availability). The store below
+    // publishes the vector to the threads that look at completed_ first.
     availability_.resize(infos_.size());
     for (std::size_t i = 0; i < infos_.size(); ++i)
     {

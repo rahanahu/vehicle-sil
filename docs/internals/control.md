@@ -121,7 +121,7 @@ The metadata consists of the name (`.` separates levels), the unit, the minimum 
 
 A variable declared with `VariableOptions::availability` reports whether it is in use (`Availability`: `Unknown`, `Active`, `Inactive`). The ECU's application owns the state and changes it with `set_availability()`; nothing else decides it, and nothing in vehicle-sil decides by it: the Agent and the Hub check and apply writes, read values and take samples as for any other variable.
 
-- `availability()` has one state per variable, in schema order (a variable that does not report: `Active`). It is allocated and filled from the declarations when the schema is fixed, and the step thread never allocates for it.
+- `availability()` has one state per variable, in schema order (a variable that does not report: `Active`). It is allocated and filled from the declarations when the schema is fixed. That is before the first step when a transport completes the schema (control_silkit::AgentTransport does); otherwise the first step fixes the schema and allocates it once there. Later steps never allocate for it.
 - `availability_version()` goes up by one each time `set_availability()` changes a state (0: the declared states). The same state again changes nothing.
 - `set_availability()` and both readers belong to the step thread (or the setup thread after the schema is fixed and before the first step). No other thread reads the states: the transport reads them in its step sink. Before the schema is fixed, `set_availability()` throws `std::logic_error` (the declaration gives the first state).
 - Which variables report is fixed with the schema. The states are not part of a sample, and `--describe` does not write them.

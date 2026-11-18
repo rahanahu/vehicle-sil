@@ -739,7 +739,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `features` の名前 | 含むもの |
 |---|---|
 | `speed` | 設定ファイルの `speed`、`time_step_ms`、`late_tolerance_ms`、`run --speed`、結果の `timing`、指摘 `behind-real-time`、指摘 `coarse-time-step`、`time` のイベントの `actual_speed`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` |
-| `control-links` | イベント `control_link`、結果の `participants[].control_link`、照合の JSON の `participants[].control`、指摘 `control-link-no-hello`、`control-link-version`、`control-link-late-values`、`control-link-dropped`、`control-link-not-offered` |
+| `control-links` | イベント `control_link`、結果の `participants[].control_link`、照合の JSON の `participants[].control`、指摘 `control-link-no-hello`、`control-link-version`、`control-link-revision`、`control-link-late-values`、`control-link-dropped`、`control-link-not-offered` |
 | `manual-participants` | 設定ファイルの `manual`、`--manual`、照合と結果の JSON の `participants[].manual`、指摘 `participant-manual`、イベント `participant` の `state` の `manual` |
 | `scenario` | 結果と照合の JSON の `scenario`、イベント `scenario_step`、指摘 `scenario-*`、指摘の `file` がシナリオのファイルになること |
 | `scenario-wave` | その手順の `undersampled`、指摘 `scenario-wave-*`、結果とイベントの手順の `kind` の `"wave"` |
