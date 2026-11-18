@@ -1,5 +1,5 @@
-/* Light and dark, as the browser is set: the browser's own colours, fields and scrollbars follow it, and so
-   does the element <vehicle-sil-timeline> (its theme is auto). light-dark() gives a colour for each. */
+/* The parts have no look of their own: they set data-* attributes and aria-disabled, and this file styles them.
+   Light and dark, as the browser is set (light-dark() gives a colour for each). */
 :root {
   color-scheme: light dark;
 }
@@ -14,22 +14,32 @@ section {
   border-top: 1px solid #8884;
   margin-top: 1rem;
 }
-label,
 button {
   margin-right: 0.5rem;
 }
-#error {
+
+/* A button that cannot be used now (the reason is in its tooltip and in the part's description) */
+[aria-disabled='true'] {
+  opacity: 0.5;
+}
+/* A value that may be out of date */
+[data-stale='true'] {
+  opacity: 0.5;
+}
+/* A problem: the sentence of <vsil-status> and of your own button */
+[role='alert'] {
   color: light-dark(#b00020, #ff8a80);
 }
-#lamp {
+/* A lamp: <vsil-value variable="..." on="..." off="..."> of a bool variable sets data-on */
+vsil-value[data-on] {
   display: inline-block;
-  min-width: 2.5rem;
+  min-width: 3rem;
   padding: 0 0.5rem;
   border: 1px solid #8888;
   border-radius: 1rem;
   text-align: center;
 }
-#lamp[data-on='true'] {
+vsil-value[data-on='true'] {
   background: #f5c400;
   color: #000;
 }

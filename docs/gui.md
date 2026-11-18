@@ -194,20 +194,22 @@ There are 3 ways to add your own code to the GUI. They differ in what stays of t
 | Way | When to use it | What you write | What your code gets | The sample screens | Where to start |
 |---|---|---|---|---|---|
 | Custom panel | You add a part for your ECU to the sample screens, for example when several teams each bring parts for their own ECUs. | An ES module that defines a custom element, in `panels/` next to the configuration file and listed in the dashboard file. | The properties `client` (a connected `GuiClient`), `options` and `variables` of its dashboard item. | They stay, and the panel appears on the Variables screen. | "[Custom panels](#custom-panels)" |
-| Your own screen (`--web`) | You replace the whole screen with one of your own. | Static files built on the client library, in any framework. | The whole page, opened from the GUI server's origin with the token in its URL. | They are replaced: the Run screen, time control and the Variables screen are gone unless your screen has them. | The guide [Build your own screen for the browser GUI](howto/gui-screen.md) |
+| Your own screen (`--web`) | You replace the whole screen with one of your own. | Static files: HTML with the parts of the client library, a script if you need one, in any framework. | The whole page, opened from the GUI server's origin with the token in its URL. | They are replaced: the Run screen, time control and the Variables screen are gone unless your screen has them. | The guide [Build your own screen for the browser GUI](howto/gui-screen.md) |
 | A tool without a screen | You drive tests or record from a program. | A program that uses the client library or the server API. | The URL that the server printed, with the token (pass it in an environment variable). | They stay, and the tool uses the same GUI server alongside them. | "[Use from tools without a screen](#use-from-tools-without-a-screen)" |
 
 - `--web` takes one directory, and the GUI server then serves it instead of the sample screens. A second GUI server starts a launcher of its own, so it cannot show the run of the first one.
 - Panels are a feature of the sample screens: your own screen served with `--web` does not get them automatically.
 - Your own screen opens from the same origin as the GUI server, so the server's security checks (token, `Host`, `Origin`, CSP) apply to it unchanged.
 
-For your own screen, where to start depends on how you build:
+For your own screen, take as many of these 3 steps as you need. Each step keeps what the one before wrote:
 
-| How you build | What you use | Where to start |
-|---|---|---|
-| Plain JavaScript, no build step | The library bundled into one file (`vehicle-sil-gui-client.mjs`) | Copy the screen template (`gui_starter`); see the guide above. |
-| TypeScript and any framework (React, Vue, Svelte and others) | The library package (`.tgz`) | "Build with TypeScript and a framework" in [examples/gui_starter/README.md](../examples/gui_starter/README.md#build-with-typescript-and-a-framework) |
-| Angular | The package above, and the widgets and wrappers of the sample screens | "[Copy the sample widgets](#copy-the-sample-widgets)" |
+| Step | You write | What you get | Where to start |
+|---|---|---|---|
+| 1. Parts only | HTML and CSS: elements such as `<vsil-run-controls>`, `<vsil-slider variable="Engine.engine.throttle">` and `<vsil-value>` | Start and stop, time control, status, values, sliders, buttons that write, the scenario of the next run and its result. No script and no build | The guide [Build your own screen for the browser GUI](howto/gui-screen.md) |
+| 2. A script of your own | A script that calls `connect()`, `watch`, `client.variable()` and the operations (Promises) | What the parts do not have: a display or a button of your own, a rule, the timeline. It uses the connection of the parts, so a refusal shows in `<vsil-status>` as well | `main.js` of the screen template, and "The front door (`connect()`)" in [gui/client/README.md](../gui/client/README.md#the-front-door-connect) |
+| 3. TypeScript and a framework | A project with a build, and the library package (`.tgz`) | The same parts and library in the templates of React, Vue, Svelte, Angular and others (the parts are custom elements) | "Step 3: TypeScript and a framework" in [examples/gui_starter/README.md](../examples/gui_starter/README.md#step-3-typescript-and-a-framework) |
+
+The parts and the library come from the GUI server (`/vsil/`) in steps 1 and 2, so there is nothing to copy; step 3 uses the package. The sample screens' own widgets (the Angular app in `gui/web`) are not offered for reuse: use the parts.
 
 For the files that are served, CSP, the token, development servers and the rules that the library does not enforce for you, see "[Reference for your own screen](#reference-for-your-own-screen)".
 
@@ -520,7 +522,7 @@ The GUI reads and writes the variables that ECUs declare (see "ECU variables" in
 
 ## The sample screens
 
-An Angular app in `gui/web`. It is built only on the client library and its Angular wrapper (`gui/web/src/app/core/session/`, a thin layer that only turns the library's `Readable` into signals). When started without `--web`, the GUI server serves it. You can use it as it is, or copy its widgets into an Angular screen of your own (see "[Copy the sample widgets](#copy-the-sample-widgets)"). For the rules for developing the screens, see [gui/web/README.md](../gui/web/README.md).
+An Angular app in `gui/web`. It is built only on the client library and its Angular wrapper (`gui/web/src/app/core/session/`, a thin layer that only turns the library's `Readable` into signals). When started without `--web`, the GUI server serves it. You can use it as it is. For the rules for developing the screens, see [gui/web/README.md](../gui/web/README.md).
 
 "The Variables screen and widgets", "Dashboard files" and "Custom panels" are features of the sample screens. Your own screen does not get them automatically.
 
@@ -788,41 +790,6 @@ The commands are `pause()`, `resume()`, `step(ms)` and `setSpeed(value)` (all go
 
 To add a control to the status bar, place an element with the attribute `runStatusActions` inside `<app-run-status>` (it appears after **Start** and **Stop** and before **Stop without waiting**; **Start** and **Stop** do not move).
 
-### Copy the sample widgets
-
-To build your own screen in Angular, you can copy the sample widgets (switch, slider, chart and others) and the wrappers they depend on into your project. The widgets and wrappers do not depend on the screens (`run/`, `variables/`) or the app shell (`app.ts`, routing, navigation) (`gui/web/eslint.config.js` restricts the direction of imports).
-
-| What to copy | Contents |
-|---|---|
-| `gui/web/src/app/widgets/` | The widgets, their building blocks, the dashboard, and the host for custom panels |
-| `gui/web/src/app/core/session/` | The wrappers that turn the library's `Readable` into signals, and the place that creates the client (`gui-client.ts`) |
-| `gui/web/src/app/core/auth/` | The token (`AuthToken`, built on `takeToken`) and the interceptor that adds the token to API requests |
-| `gui/web/src/app/core/format/measure-pipe.ts` | Formatting of numbers with units |
-
-- The building blocks in `widgets/` are `variable-binding.ts` (turns the library's `client.variables.bind` into signals) and `variable-frame.ts`; the dashboard is the data and the component that draws it (`dashboard-spec.ts`, `dashboard-view.ts`); the host for custom panels is `panel-host.ts`.
-- The wrappers in `core/session/` are `ServerConnection`, `ServerInfo`, `SimulationTime`, `RunCommands` and `EcuVariables`.
-- Do not copy `*.spec.ts` (the test helpers `@vehicle-sil/gui-client/testing` are not in the package).
-- No test copies them into an empty Angular project and builds it.
-
-Dependencies:
-
-| Dependency | Details |
-|---|---|
-| `@vehicle-sil/gui-client` | The package in "[Get the library](#get-the-library)" |
-| Angular | `@angular/core`, `@angular/common`, `@angular/common/http` (the same version as the sample; they use signals and the new control flow, and run without zone.js) |
-| RxJS | Used only inside the HTTP and connection wrappers. |
-| Angular Material | `button`, `form-field`, `input`, `select`, `slider`, `slide-toggle` and their theme (Material 3 `mat.theme`; the widgets read the CSS variables `--mat-sys-*`) |
-| CSS variables for spacing | `--app-space-1` to `--app-space-4` (`:root` in `gui/web/src/styles.css`; put them in the global styles of your project) |
-| `@angular/localize` | The widgets' text is Japanese marked with `$localize` and template `i18n` markers. |
-
-If you do not translate, adding `@angular/localize/init` to the polyfills is enough, and the text shows in Japanese. To add translations, follow how the sample loads them in `src/locale/` and `core/i18n/`.
-
-Setup needed in your project:
-
-- `provideHttpClient(withInterceptors([authInterceptor]))` (adds the token to API requests), and `provideAppInitializer(() => void inject(AuthToken))`, which reads the token before routing rewrites the URL (the same as the sample's `app.config.ts`).
-- `GUI_CLIENT` (`gui-client.ts`) creates one client from the page's `document.baseURI` and `AuthToken` (put `<base href="/">` in `index.html`, as the sample does). To use a client created elsewhere, replace `GUI_CLIENT` with `useValue`.
-- Lay out widgets with `<app-dashboard-view [spec]="spec" />`. `spec` is `autoDashboard(...)`, built from the variable list, or a `DashboardSpec` you write (see "[Dashboard data](#dashboard-data)"). To place widgets one by one, use the individual components (`<app-slider-widget [ref]="..." />` and others; see the `WIDGETS` table).
-
 ### Dashboard files
 
 A feature of the sample screens (your own screen does not get it automatically; it can read the file's contents with `client.dashboard(file)` and use them).
@@ -922,7 +889,8 @@ The rules that apply to your own screen served with `--web`. For the steps to bu
 | What a screen cannot use (inline scripts, CDNs and others) | "[CSP restrictions](#csp-restrictions)" |
 | Handling the token | "[Receiving the token](#receiving-the-token)" |
 | Working with a development server such as Vite | "[Use a development server](#use-a-development-server)" |
-| Building sliders and lamps | "[Build a variable widget](#build-a-variable-widget)" |
+| The parts (the elements to put in HTML), and what they promise | "Parts (custom elements)" in [gui/client/README.md](../gui/client/README.md#parts-custom-elements) |
+| Building a widget the parts do not have | "[Build a variable widget](#build-a-variable-widget)" |
 | Reading a key of the launcher's results that the library's types do not name | "[Read the launcher's results](#read-the-launchers-results)" |
 | Rules that the library does not enforce for you | "[Rules for building a screen](#rules-for-building-a-screen)" |
 | Using the API without a screen | "[Use from tools without a screen](#use-from-tools-without-a-screen)" |
@@ -931,12 +899,12 @@ The rules that apply to your own screen served with `--web`. For the steps to bu
 
 | Form | Location in the prebuilt tools | Command to build it in the repository (run in `gui/web`) |
 |---|---|---|
-| Bundled file (`vehicle-sil-gui-client.mjs`) | `client/` and `gui_starter/` | `npm run build:client` (creates `build/gui-client/vehicle-sil-gui-client.mjs`) |
+| Bundled file (`vehicle-sil-gui-client.mjs`) | `client/` | `npm run build:client` (creates `build/gui-client/vehicle-sil-gui-client.mjs`) |
 | The parts (`vehicle-sil-gui-elements.mjs`, which imports the file above) | `client/` | `npm run build:client` (creates `build/gui-client/vehicle-sil-gui-elements.mjs`) |
 | npm package (`vehicle-sil-gui-client-<version>.tgz`) | `client/` (the releases page has the same file) | `npm run pack:client` (creates `build/gui-client/vehicle-sil-gui-client-<version>.tgz`) |
 
-- **Bundled file**: put it in your screen's directory and import it with a relative path (it loads in the browser and in Node 22 or later).
 - **From the GUI server**: the server serves the bundled file and the parts as `/vsil/vehicle-sil-gui-client.mjs` and `/vsil/vehicle-sil-gui-elements.mjs`, so a screen without a build needs no copy of them (`<script type="module" src="/vsil/vehicle-sil-gui-elements.mjs">`, `import { connect } from '/vsil/vehicle-sil-gui-client.mjs'`). Load both from `/vsil/` or both from copies, never one of each: the parts import the client library by its file name, and a second copy of it makes a second connection. See "[Files served under `vsil/`](#files-served-under-vsil)".
+- **Bundled file**: for a tool that runs outside a page (Node 22 or later), or a screen that is not served by the GUI server. Put it (and the parts, which import it by the name `./vehicle-sil-gui-client.mjs`) in one directory and import it with a relative path.
 - **Package**: run `npm install <that .tgz>` in your project, then import it as `@vehicle-sil/gui-client` (`npm install <its URL>` also works). It is not published to the npm registry.
   - It contains the bundled ESM (`dist/index.js`), the types (`types/`), a `package.json` with `exports`, the README and the LICENSE, and has no dependencies. Its version is the same as the GUI server's.
   - Its types use the browser types (`DOM` in `lib`: `WebSocket` and others).
@@ -1094,7 +1062,7 @@ The meanings of `condition.kind` are below. For the meanings of the values of `b
 - Of the values that come before the server has received the previous write, only the last is kept and sent afterward.
 - A write that got no answer is never resent automatically.
 - On a screen with many widgets, create them with `{ visible: false }` and call `setVisible()`, so that only the visible widgets receive values.
-- The working models are the slider and the lamp of the screen template (`gui_starter/main.js`). The widgets of the sample screens (Angular) also use this API, turned into signals (see "[Add a widget](#add-a-widget)").
+- The parts `<vsil-slider>`, `<vsil-value>` and `<vsil-write>` cover the common widgets, and are built on this API (`gui/client/src/elements/variable-parts.ts` is the working model). Use `bind` for one the parts do not have (a switch, a number field, a choice). The widgets of the sample screens (Angular) also use it, turned into signals (see "[Add a widget](#add-a-widget)").
 
 ### Putting a timeline on your own screen
 
@@ -1234,11 +1202,12 @@ declare module 'react' {
 
 ### Screen template (`gui_starter`)
 
-[examples/gui_starter](../examples/gui_starter/) is the smallest screen without a build step, using only the library (plain HTML, ES modules and the bundled library file). In the prebuilt tools, it is in `gui_starter/`.
+[examples/gui_starter](../examples/gui_starter/) is a screen of parts that you copy and change: HTML with the parts (status, run and time controls, a slider, values, a lamp, buttons that write, the scenario of the next run and its result, and the timeline element), a short script of your own and a stylesheet. It has no build step and no copy of the library (it loads the parts and the library from `vsil/`). In the prebuilt tools, it is in `gui_starter/`.
 
-- It connects, checks a configuration file, starts and stops a run, lets you pick one variable to watch and write, and has a slider and a lamp built with `client.variables.bind`, and the timeline of the last scenario run with `<vehicle-sil-timeline>`.
+- It is written for the example ECUs of `examples/ecu_main`. To use your own, change the `variable` attributes (the guide shows how).
+- `main.js` is step 2 of "[Build your own screen](#build-your-own-screen)": a display of your own made with `watch`, a button of your own that handles the failure of its operation, and the timeline of the last scenario run.
 - Its README explains how to use it.
-- `scripts/verify-gui.py` serves this template with `--web` and runs it in a browser, against the replay launcher and a fake Control Server.
+- `scripts/verify-web.py` serves this template with `--web` and runs it in a browser, against the replay launcher and a fake Control Server (the end-to-end test `starter.spec.ts`).
 
 ### Use from tools without a screen
 

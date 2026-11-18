@@ -202,20 +202,22 @@ GUI に自分のコードを足す道は 3 つあります。サンプルの画�
 | 道 | 使うとき | 書くもの | 自分のコードが受け取るもの | サンプルの画面 | 出発点 |
 |---|---|---|---|---|---|
 | カスタムパネル | サンプルの画面に、自分の ECU の部品を足すとき。複数のチームが、それぞれの ECU の部品を持ち寄るときにも合います。 | カスタム要素を定義する ES モジュール。構成ファイルの横の `panels/` に置き、ダッシュボードのファイルに書きます。 | プロパティの `client`（つながった `GuiClient`）と、ダッシュボードの項目の `options` と `variables`。 | 残ります。パネルは「変数」の画面に出ます。 | 「[カスタムパネル](#カスタムパネル)」 |
-| 自分の画面（`--web`） | 画面の全体を、自分の画面に置き換えるとき。 | クライアントのライブラリの上に作った静的なファイル（フレームワークは自由）。 | ページの全体。GUI サーバーの origin から、URL にトークンを付けて開かれます。 | 置き換わります。実行の画面、時間の操作、「変数」の画面は、自分の画面に作らなければなくなります。 | ガイド [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) |
+| 自分の画面（`--web`） | 画面の全体を、自分の画面に置き換えるとき。 | 静的なファイル。クライアントのライブラリの部品を並べた HTML と、要るならスクリプト（フレームワークは自由）。 | ページの全体。GUI サーバーの origin から、URL にトークンを付けて開かれます。 | 置き換わります。実行の画面、時間の操作、「変数」の画面は、自分の画面に作らなければなくなります。 | ガイド [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) |
 | 画面のないツール | テストの駆動や記録を、プログラムからするとき。 | クライアントのライブラリか、サーバーの API を使うプログラム。 | サーバーが表示した、トークン付きの URL（環境変数で渡します）。 | 残ります。ツールは、画面と同じ GUI サーバーを並んで使います。 | 「[画面のないツールから使う](#画面のないツールから使う)」 |
 
 - `--web` に渡すのは 1 つのディレクトリで、GUI サーバーはサンプルの画面の代わりにそれを配信します。2 つ目の GUI サーバーは自分のランチャーを起動するので、1 つ目の実行を見せることはできません。
 - パネルはサンプルの画面の機能です。`--web` で配信する自分の画面には、自動では付きません。
 - 自分の画面は GUI サーバーと同じ origin から開くので、サーバーのセキュリティの検査（トークン、`Host`、`Origin`、CSP）がそのまま適用されます。
 
-自分の画面の出発点は、作り方ごとに次のとおりです。
+自分の画面は、次の 3 つのステップのうち、必要なところまで進めば足ります。前のステップで書いたものは、次のステップでもそのまま使えます。
 
-| 作り方 | 使うもの | 出発点 |
-|---|---|---|
-| ビルドなしの素の JavaScript | ライブラリを 1 つにまとめたファイル（`vehicle-sil-gui-client.mjs`） | 画面のテンプレート（`gui_starter`）をコピーします（上のガイド）。 |
-| TypeScript と好きなフレームワーク（React、Vue、Svelte など） | ライブラリのパッケージ（`.tgz`） | [examples/gui_starter/README.md](../../examples/gui_starter/README.ja.md) の「TypeScript とフレームワークで作る」 |
-| Angular | 上のパッケージと、サンプルの画面のコンポーネントとラッパー | 「[サンプルのコンポーネントをコピーして使う](#サンプルのコンポーネントをコピーして使う)」 |
+| ステップ | 書くもの | 手に入るもの | 出発点 |
+|---|---|---|---|
+| 1. 部品だけ | HTML と CSS。`<vsil-run-controls>`、`<vsil-slider variable="Engine.engine.throttle">`、`<vsil-value>` のような要素 | 開始と停止、時間の操作、状態、値、スライダー、書き込むボタン、次の実行のシナリオとその結果。スクリプトもビルドも要りません | ガイド [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) |
+| 2. 自分のスクリプト | `connect()`、`watch`、`client.variable()` と、操作（Promise）を呼ぶスクリプト | 部品にないもの。自分の表示やボタン、ルール、時間の軸。部品と同じ接続を使うので、断られたことは `<vsil-status>` にも出ます | 画面のテンプレートの `main.js` と、[gui/client/README.md](../../gui/client/README.ja.md#正面の口connect) の「正面の口（`connect()`）」 |
+| 3. TypeScript とフレームワーク | ビルドのあるプロジェクトと、ライブラリのパッケージ（`.tgz`） | React、Vue、Svelte、Angular などのテンプレートの中の、同じ部品とライブラリ（部品は custom element です） | [examples/gui_starter/README.md](../../examples/gui_starter/README.ja.md#ステップ-3-typescript-とフレームワーク) の「ステップ 3: TypeScript とフレームワーク」 |
+
+ステップ 1 と 2 では、部品とライブラリを GUI サーバー（`/vsil/`）から読むので、コピーするものはありません。ステップ 3 はパッケージを使います。サンプルの画面（`gui/web` の Angular のアプリ）のコンポーネントを再利用することは、想定していません。部品を使ってください。
 
 配信されるファイル、CSP、トークン、開発サーバー、ライブラリが代行しないルールは、「[自分の画面のリファレンス](#自分の画面のリファレンス)」にあります。
 
@@ -528,7 +530,7 @@ ECU が宣言した変数（[control-api.md](control-api.md) の「ECU の変数
 
 ## サンプルの画面
 
-`gui/web` の Angular のアプリです。クライアントのライブラリと、その Angular のラッパー（`gui/web/src/app/core/session/`。ライブラリの `Readable` を signal にするだけの薄い層）だけで作っていて、`--web` を指定せずに起動すると、GUI サーバーがこれを配信します。そのまま使うことも、コンポーネントをコピーして自分の Angular の画面で使うこともできます（「[サンプルのコンポーネントをコピーして使う](#サンプルのコンポーネントをコピーして使う)」）。画面の開発のルールは [gui/web/README.md](../../gui/web/README.ja.md) にあります。
+`gui/web` の Angular のアプリです。クライアントのライブラリと、その Angular のラッパー（`gui/web/src/app/core/session/`。ライブラリの `Readable` を signal にするだけの薄い層）だけで作っていて、`--web` を指定せずに起動すると、GUI サーバーがこれを配信します。そのまま使えます。画面の開発のルールは [gui/web/README.md](../../gui/web/README.ja.md) にあります。
 
 「変数の画面とコンポーネント」「ダッシュボードのファイル」「カスタムパネル」は、サンプルの画面の機能です。自分の画面には自動では付きません。
 
@@ -796,41 +798,6 @@ const spec: DashboardSpec = {
 
 状態の帯に操作を追加するときは、`<app-run-status>` の中に `runStatusActions` の属性を付けた要素を置きます（「開始」と「停止」の後、「待たずに止める」の前に並びます。「開始」と「停止」の位置は動きません）。
 
-### サンプルのコンポーネントをコピーして使う
-
-Angular で自分の画面を作るときは、サンプルのコンポーネント（スイッチ、スライダー、グラフなど）と、それが依存するラッパーを、自分のプロジェクトへコピーして使えます。コンポーネントとラッパーは、画面（`run/`、`variables/`）とアプリのシェル（`app.ts`、ルーティング、ナビゲーション）に依存しません（`gui/web/eslint.config.js` が import の向きを制限します）。
-
-| コピーするもの | 内容 |
-|---|---|
-| `gui/web/src/app/widgets/` | コンポーネントと、その土台、ダッシュボード、カスタムパネルの置き場所 |
-| `gui/web/src/app/core/session/` | ライブラリの `Readable` を signal にするラッパーと、クライアントを作るところ（`gui-client.ts`） |
-| `gui/web/src/app/core/auth/` | トークン（`AuthToken`。中身は `takeToken`）と、API にトークンを付ける interceptor |
-| `gui/web/src/app/core/format/measure-pipe.ts` | 数と単位の書式 |
-
-- `widgets/` の土台は `variable-binding.ts`（ライブラリの `client.variables.bind` を signal に変換する）と `variable-frame.ts`、ダッシュボードはデータと描くコンポーネント（`dashboard-spec.ts`、`dashboard-view.ts`）、カスタムパネルの置き場所は `panel-host.ts` です。
-- `core/session/` のラッパーは `ServerConnection`、`ServerInfo`、`SimulationTime`、`RunCommands`、`EcuVariables` です。
-- `*.spec.ts` はコピーしません（テスト用のヘルパー `@vehicle-sil/gui-client/testing` は、パッケージに入っていません）。
-- 空の Angular のプロジェクトへ実際にコピーしてビルドすることは、テストでは確認していません。
-
-依存しているもの:
-
-| 依存 | 内容 |
-|---|---|
-| `@vehicle-sil/gui-client` | 「[ライブラリを入手する](#ライブラリを入手する)」のパッケージ |
-| Angular | `@angular/core`、`@angular/common`、`@angular/common/http`（サンプルと同じバージョン。signal と新しい制御構文を使い、zone.js なしで動きます） |
-| RxJS | HTTP と接続のラッパーの中だけで使います。 |
-| Angular Material | `button`、`form-field`、`input`、`select`、`slider`、`slide-toggle` と、そのテーマ（Material 3 の `mat.theme`。コンポーネントは CSS の変数 `--mat-sys-*` を読みます） |
-| 間隔の CSS の変数 | `--app-space-1` から `--app-space-4`（`gui/web/src/styles.css` の `:root`。コピー先の全体のスタイルに置きます） |
-| `@angular/localize` | コンポーネントの文は、`$localize` とテンプレートの `i18n` の印が付いた日本語です。 |
-
-翻訳しないなら、`@angular/localize/init` を polyfills に入れるだけで、日本語のまま表示されます。翻訳を入れるときは、サンプルの `src/locale/` と `core/i18n/` の読み込み方を参考にします。
-
-コピー先で必要な設定:
-
-- `provideHttpClient(withInterceptors([authInterceptor]))`（API にトークンを付ける）と、ルーティングが URL を書き換える前にトークンを読む `provideAppInitializer(() => void inject(AuthToken))`（サンプルの `app.config.ts` と同じ）。
-- クライアントは `GUI_CLIENT`（`gui-client.ts`）が、ページの `document.baseURI` と `AuthToken` から 1 つ作ります（`index.html` に `<base href="/">` を置きます。サンプルと同じ）。ほかの所で作ったクライアントを使うときは、`GUI_CLIENT` を `useValue` で差し替えます。
-- コンポーネントは `<app-dashboard-view [spec]="spec" />` で並べます。`spec` は、変数の一覧から作る `autoDashboard(...)` か、自分で書く `DashboardSpec`（「[ダッシュボードのデータ](#ダッシュボードのデータ)」）です。1 つずつ置くときは、個々のコンポーネント（`<app-slider-widget [ref]="..." />` など。`WIDGETS` の表）を使います。
-
 ### ダッシュボードのファイル
 
 サンプルの画面の機能です（自分の画面には自動では付きません。ファイルの中身は `client.dashboard(file)` で読めるので、自分の画面で使うこともできます）。
@@ -930,7 +897,8 @@ sections:
 | 画面で使えないもの（インラインのスクリプト、CDN など） | 「[CSP による制限](#csp-による制限)」 |
 | トークンの扱い | 「[トークンの受け取り](#トークンの受け取り)」 |
 | Vite などの開発サーバーとの併用 | 「[開発サーバーを使う](#開発サーバーを使う)」 |
-| スライダーやランプの作り方 | 「[変数のコンポーネントを作る](#変数のコンポーネントを作る)」 |
+| 部品（HTML に並べる要素）と、部品が守ること | [gui/client/README.md](../../gui/client/README.ja.md#部品custom-element) の「部品（custom element）」 |
+| 部品にないコンポーネントの作り方 | 「[変数のコンポーネントを作る](#変数のコンポーネントを作る)」 |
 | ライブラリの型にない、ランチャーの結果のキーを読む | 「[ランチャーの結果を読む](#ランチャーの結果を読む)」 |
 | ライブラリが代行しないルール | 「[画面を作るときのルール](#画面を作るときのルール)」 |
 | 画面なしで API を使う方法 | 「[画面のないツールから使う](#画面のないツールから使う)」 |
@@ -939,12 +907,12 @@ sections:
 
 | 形 | ビルド済みのツールでの場所 | リポジトリで作るコマンド（`gui/web` で実行） |
 |---|---|---|
-| 1 つにまとめたファイル（`vehicle-sil-gui-client.mjs`） | `client/` と `gui_starter/` | `npm run build:client`（`build/gui-client/vehicle-sil-gui-client.mjs` ができます） |
+| 1 つにまとめたファイル（`vehicle-sil-gui-client.mjs`） | `client/` | `npm run build:client`（`build/gui-client/vehicle-sil-gui-client.mjs` ができます） |
 | 部品（`vehicle-sil-gui-elements.mjs`。上のファイルを import します） | `client/` | `npm run build:client`（`build/gui-client/vehicle-sil-gui-elements.mjs` ができます） |
 | npm のパッケージ（`vehicle-sil-gui-client-<version>.tgz`） | `client/`（リリースのページにも同じファイルがあります） | `npm run pack:client`（`build/gui-client/vehicle-sil-gui-client-<version>.tgz` ができます） |
 
-- **1 つにまとめたファイル**: 画面のディレクトリに置いて、相対パスで import します（ブラウザでも Node 22 以上でも読み込めます）。
 - **GUI サーバーから**: サーバーは、1 つにまとめたファイルと部品を `/vsil/vehicle-sil-gui-client.mjs` と `/vsil/vehicle-sil-gui-elements.mjs` で配ります。ビルドなしの画面は、写さずに使えます（`<script type="module" src="/vsil/vehicle-sil-gui-elements.mjs">`、`import { connect } from '/vsil/vehicle-sil-gui-client.mjs'`）。2 つとも `/vsil/` から読むか、2 つとも写しを読むかのどちらかにして、片方ずつは使いません。部品は client ライブラリをファイル名で import するので、写しが 2 つあると接続が 2 本になります。「[`vsil/` で配るファイル](#vsil-で配るファイル)」を見てください。
+- **1 つにまとめたファイル**: 画面の外で動かすツール（Node 22 以上）や、GUI サーバーが配信しない画面のためのものです。部品（これを `./vehicle-sil-gui-client.mjs` という名前で import します）と同じディレクトリに置いて、相対パスで import します。
 - **パッケージ**: 自分のプロジェクトで `npm install <that .tgz>` をすると、`@vehicle-sil/gui-client` として import できます（`npm install <its URL>` でもインストールできます）。npm のレジストリには公開していません。
   - 中身は、1 つにまとめた ESM（`dist/index.js`）、型（`types/`）、`exports` を書いた `package.json`、README、LICENSE で、依存はありません。バージョンは GUI サーバーと同じです。
   - 型は、ブラウザの型（`lib` の `DOM`。`WebSocket` など）を使います。
@@ -1102,7 +1070,7 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 - サーバーが前の書き込みを受け取るまでの次の値は、最後の 1 つだけを覚えて後から送ります。
 - 応答がなかった書き込みを、自動で送り直すことはしません。
 - コンポーネントが多い画面では、`{ visible: false }` で作って `setVisible()` を呼ぶと、見えているコンポーネントだけが値を受信します。
-- 動く見本は、画面のテンプレートのスライダーとランプ（`gui_starter/main.js`）です。サンプルの画面のコンポーネント（Angular）も、この API を signal に変換して使っています（「[コンポーネントを追加する](#コンポーネントを追加する)」）。
+- 部品 `<vsil-slider>`、`<vsil-value>`、`<vsil-write>` が、よく使うコンポーネントをまかない、この API の上に作ってあります（動く見本は `gui/client/src/elements/variable-parts.ts`）。部品にないもの（スイッチ、数値の欄、選択肢）には `bind` を使います。サンプルの画面のコンポーネント（Angular）も、この API を signal に変換して使っています（「[コンポーネントを追加する](#コンポーネントを追加する)」）。
 
 ### 自分の画面に時間の軸を置く
 
@@ -1242,11 +1210,12 @@ declare module 'react' {
 
 ### 画面のテンプレート（`gui_starter`）
 
-[examples/gui_starter](../../examples/gui_starter/) は、ライブラリだけを使った、ビルドなしの最小の画面です（素の HTML、ES モジュール、ライブラリを 1 つにまとめたファイル）。ビルド済みのツールでは、`gui_starter/` にあります。
+[examples/gui_starter](../../examples/gui_starter/) は、コピーして変えて使う、部品でできた画面です。HTML に並べた部品（状態、実行と時間の操作、スライダー、値、ランプ、書き込むボタン、次の実行のシナリオとその結果、時間の軸の要素）と、短い自分のスクリプトと、スタイルシートが入っています。ビルドは要らず、ライブラリのコピーも持ちません（部品とライブラリを `vsil/` から読みます）。ビルド済みのツールでは、`gui_starter/` にあります。
 
-- 接続する、設定ファイルを照合する、実行を開始して止める、変数を 1 つ選んで見て書き込む、`client.variables.bind` で作ったスライダーとランプ、`<vehicle-sil-timeline>` で出す最後のシナリオの実行の時間の軸、までがあります。
+- `examples/ecu_main` の例の ECU に合わせて書いてあります。自分の ECU に使うには、`variable` 属性を書き換えます（やり方はガイドにあります）。
+- `main.js` は、「[自分の画面を作る](#自分の画面を作る)」のステップ 2 です。`watch` で作った自分の表示、操作の失敗を扱う自分のボタン、最後のシナリオの実行の時間の軸があります。
 - 使い方は、その README にあります。
-- `scripts/verify-gui.py` が、記録を再生するランチャーと偽の Control Server を相手に、`--web` で配信したこのテンプレートをブラウザで動かして確認します。
+- `scripts/verify-web.py` が、記録を再生するランチャーと偽の Control Server を相手に、`--web` で配信したこのテンプレートをブラウザで動かして確認します（e2e の `starter.spec.ts`）。
 
 ### 画面のないツールから使う
 

@@ -13,6 +13,7 @@ The library handles the connection (token, reconnection), the session copy (a co
 | The code to connect and start a run                                | [Basic usage](#basic-usage)                              |
 | Reading and writing variable values                                | [ECU variables](#ecu-variables)                          |
 | What a screen shows and which buttons work: `connect()`            | [The front door (`connect()`)](#the-front-door-connect)  |
+| The elements to put in HTML, with no script                        | [Parts (custom elements)](#parts-custom-elements)        |
 | Building sliders and lamps (the values of `condition` and `block`) | [Build widgets (`bind`)](#build-widgets-bind)            |
 | What happens after `connect()` and `close()`                       | [Lifecycle](#lifecycle)                                  |
 | Developing the library                                             | [Coding rules](#coding-rules), [Tests](#tests)           |
@@ -21,11 +22,12 @@ The library handles the connection (token, reconnection), the session copy (a co
 
 The library is TypeScript source with no dependencies. It is not published to the npm registry.
 
-| Use                                             | How to get it                                                                                            | Import                                                        |
-| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Plain JavaScript, no build step                 | Put `vehicle-sil-gui-client.mjs`, the library bundled into one ESM file, in the screen's directory       | `import { createClient } from './vehicle-sil-gui-client.mjs'` |
-| TypeScript and any framework                    | Get the package `vehicle-sil-gui-client-<version>.tgz` and run `npm install <that .tgz>` in your project | `import { createClient } from '@vehicle-sil/gui-client'`      |
-| A TypeScript app in this repository (`gui/web`) | Point the entry point names to `src/` with `paths` in `tsconfig.json`                                    | `import { createClient } from '@vehicle-sil/gui-client'`      |
+| Use                                             | How to get it                                                                                            | Import                                                       |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| A page that the GUI server serves (`--web`)     | Nothing to copy: the server serves the files (below)                                                     | `import { connect } from '/vsil/vehicle-sil-gui-client.mjs'` |
+| Plain JavaScript, outside such a page           | Put `vehicle-sil-gui-client.mjs`, the library bundled into one ESM file, next to your script             | `import { connect } from './vehicle-sil-gui-client.mjs'`     |
+| TypeScript and any framework                    | Get the package `vehicle-sil-gui-client-<version>.tgz` and run `npm install <that .tgz>` in your project | `import { connect } from '@vehicle-sil/gui-client'`          |
+| A TypeScript app in this repository (`gui/web`) | Point the entry point names to `src/` with `paths` in `tsconfig.json`                                    | `import { createClient } from '@vehicle-sil/gui-client'`     |
 
 Where to find the 3 files:
 
@@ -191,6 +193,8 @@ Types for the shapes that `gui/protocol` defines, and the parsers to use when yo
 | `SessionView.scenario` of the session copy                 | `ScenarioView`                                                                                                                                                                                                                  |
 
 ## Basic usage
+
+This is the lower door of the library, `createClient`, which the front door is built on (it is `client.low` there). A screen starts with `connect()` and the parts ("The front door (`connect()`)" and "Parts (custom elements)" below) and uses this door for what they do not cover: events, logs, findings, participants and `bind`.
 
 ```ts
 import { createClient, takeToken } from '@vehicle-sil/gui-client';
