@@ -76,6 +76,12 @@ Write the title in the [Conventional Commits](https://www.conventionalcommits.or
 
 Do not rewrite existing commit history. Ignore settings alone do not untrack a tracked file, so do not delete, move or untrack tracked files without permission.
 
+## Agent skills
+
+Skills for AI agents live in `.agents/skills/<name>/SKILL.md`, a layout that several agents read (Codex, Gemini CLI and others). An agent that does not read that directory can open the `SKILL.md` file directly. Claude Code reads `.claude/skills/`; link it to the same directory (`ln -s ../../.agents/skills/<name> .claude/skills/<name>`) instead of keeping a copy.
+
+- `agent-prompt-design`: a checklist for writing instructions, briefs and handoffs that another agent will act on.
+
 ## Before you change code
 
 These steps are a trial. They are advice: no CI check enforces them, and their effect on the quality of the work is not established. If a step gets in the way, say so in your report instead of working around it.
