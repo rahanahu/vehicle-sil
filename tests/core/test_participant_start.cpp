@@ -434,6 +434,113 @@ TEST_CASE(participant_start_reports_a_failure_that_a_handler_reported_before_sta
     CHECK(state == std::optional(orch::ParticipantState::Error));
 }
 
+TEST_CASE(participant_start_does_not_lose_a_handler_failure_when_the_run_ends_before_start_is_back_from_the_lifecycle)
+{
+    // The same place as above, for a coordinated participant with virtual time whose run is short:
+    // the simulation is stopped in its first step. The probe holds start() behind StartLifecycle()
+    // until others have seen the participant in Error or in Shutdown. A failure that is only kept
+    // for start() to report would come too late here: the handler returns, the participant goes on
+    // to Running, the step stops the run, and SIL Kit drops an error reported after Shutdown. The
+    // failure of the CommunicationReady handler must reach SIL Kit while the handler runs,
+    // whichever way the handler was given.
+    for (const std::string way : {"added", "set", "set, asynchronous"})
+    {
+        InProcessRegistry registry;
+        unit::StateLog seen(registry.uri, "Body");
+        std::atomic<std::thread::id> bodyStart{};
+        std::atomic<bool> heldUntilTheEnd{false};
+        const ProbeInPlace probe([&](StartProbePoint point) {
+            if (point == StartProbePoint::AfterStartLifecycle && std::this_thread::get_id() == bodyStart.load())
+            {
+                heldUntilTheEnd = unit::eventually(
+                    [&] { return seen.reached(orch::ParticipantState::Error) || seen.reached(orch::ParticipantState::Shutdown); },
+                    unit::scaled_timeout(20s));
+            }
+        });
+        ParticipantRuntimeOptions options{"Body", registry.uri};
+        options.lifecycle_mode = LifecycleMode::Coordinated;
+        options.virtual_time = VirtualTimeOptions{1ms, std::nullopt};
+        ParticipantRuntime body(options);
+        if (way == "added")
+        {
+            body.add_communication_ready_handler([&body] { body.report_failure("the controller did not start"); });
+        }
+        else if (way == "set")
+        {
+            body.set_communication_ready_handler([&body] { body.report_failure("the controller did not start"); });
+        }
+        else
+        {
+            body.set_communication_ready_handler_async([&body] {
+                body.report_failure("the controller did not start");
+                body.complete_communication_ready();
+            });
+        }
+        body.set_step_handler([&body](SimTime, SimDuration) { body.request_stop("test: the run is over"); });
+        ParticipantRuntime boss(ParticipantRuntimeOptions{"Boss", registry.uri});
+        auto* const controller = SilKit::Experimental::Participant::CreateSystemController(&boss.participant());
+        controller->SetWorkflowConfiguration(orch::WorkflowConfiguration{{"Body"}});
+
+        std::string startError;
+        std::thread start([&] {
+            bodyStart = std::this_thread::get_id();
+            try
+            {
+                body.start(unit::scaled_timeout(30s));
+            }
+            catch (const std::exception& e)
+            {
+                startError = e.what();
+            }
+        });
+        start.join();
+        const bool sawError =
+            unit::eventually([&] { return seen.reached(orch::ParticipantState::Error); }, unit::scaled_timeout(2s));
+        const std::string reason = seen.reason_of(orch::ParticipantState::Error);
+        body.stop("test");
+
+        if (!heldUntilTheEnd || !sawError || reason.find("the controller did not start") == std::string::npos)
+        {
+            throw vehicle_sil::unit::Failure(
+                "the failure reported in the CommunicationReady handler (" + way + ") was lost: others " +
+                (sawError ? "saw the participant in Error for the reason \"" + reason + "\"" : "never saw the participant in Error") +
+                " (the states they saw: " + seen.text() + "; start() " +
+                (startError.empty() ? "returned" : "threw \"" + startError + "\"") +
+                (heldUntilTheEnd ? ")" : "; they saw neither Error nor Shutdown while start() was held)"));
+        }
+    }
+}
+
+TEST_CASE(participant_start_reports_a_failure_that_came_before_it_noted_that_the_lifecycle_takes_errors)
+{
+    // The other way into the same place: a failure reported by a thread that is not in a
+    // CommunicationReady handler, before start() has noted that SIL Kit takes an error. It is kept,
+    // and start() reports it.
+    InProcessRegistry registry;
+    ParticipantRuntime* started = nullptr;
+    const ProbeInPlace probe([&started](StartProbePoint point) {
+        if (point == StartProbePoint::AfterStartLifecycle)
+        {
+            started->report_failure("reported before start() was back");
+        }
+    });
+    ParticipantRuntime runtime(ParticipantRuntimeOptions{"Starter", registry.uri});
+    started = &runtime;
+
+    try
+    {
+        runtime.start(unit::scaled_timeout(30s));
+    }
+    catch (const std::exception&) // NOLINT(bugprone-empty-catch)
+    {
+        // start() may say that the participant failed; what counts is the state.
+    }
+    const auto state = runtime.wait_until_finished(unit::scaled_timeout(10s));
+    runtime.stop("test");
+
+    CHECK(state == std::optional(orch::ParticipantState::Error));
+}
+
 TEST_CASE(participant_start_takes_a_run_whose_first_step_failed_between_its_two_looks_for_a_start)
 {
     // Only an Error before the participant began to run is a start that failed. Here start() has

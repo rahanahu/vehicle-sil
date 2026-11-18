@@ -297,6 +297,7 @@ void ParticipantRuntime::set_communication_ready_handler(std::function<void()> h
         throw std::logic_error("ParticipantRuntime::set_communication_ready_handler() must be called before start()");
     }
     lifecycle_->SetCommunicationReadyHandler([this, handler = std::move(handler)] {
+        take_reported_errors();
         const std::lock_guard gate(communication_ready_gate_);
         if (communication_ready_disabled_)
         {
@@ -321,6 +322,7 @@ void ParticipantRuntime::add_communication_ready_handler(std::function<void()> h
     if (!communication_ready_registered_)
     {
         lifecycle_->SetCommunicationReadyHandler([this] {
+            take_reported_errors();
             const std::lock_guard gate(communication_ready_gate_);
             if (!communication_ready_disabled_)
             {
@@ -365,6 +367,7 @@ void ParticipantRuntime::set_communication_ready_handler_async(std::function<voi
     communication_ready_ = std::move(handler);
     communication_ready_registered_ = true;
     lifecycle_->SetCommunicationReadyHandlerAsync([this] {
+        take_reported_errors();
         const std::lock_guard gate(communication_ready_gate_);
         const bool disabled = communication_ready_disabled_;
         if (!disabled)
@@ -437,22 +440,11 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
     // returns.
     lifecycle_started_.store(true, std::memory_order_release);
     lifecycle_done_ = lifecycle_->StartLifecycle().share();
-    {
-        // Only now does SIL Kit take a reported error (report_failure()). Not held across
-        // StartLifecycle(): that registers status handlers under SIL Kit's handler lock, which
-        // the SIL Kit thread holds while it calls on_status(), which takes this lock.
-        start_probe(detail::StartProbePoint::AfterStartLifecycle);
-        const std::lock_guard lock(control_mutex_);
-        error_reportable_ = true;
-        if (early_failure_)
-        {
-            // A handler on the SIL Kit thread (CommunicationReady of an autonomous participant)
-            // failed before this thread came back from StartLifecycle(): report it now.
-            lifecycle_->ReportError(std::move(*early_failure_));
-            early_failure_.reset();
-            failed_ = true;
-        }
-    }
+    // Only now does SIL Kit take a reported error (report_failure()). control_mutex_ is not held
+    // across StartLifecycle(): that registers status handlers under SIL Kit's handler lock, which
+    // the SIL Kit thread holds while it calls on_status(), which takes control_mutex_.
+    start_probe(detail::StartProbePoint::AfterStartLifecycle);
+    take_reported_errors();
 
     const auto deadline = timeout == kNoStartLimit ? std::chrono::steady_clock::time_point::max()
                                                    : std::chrono::steady_clock::now() + timeout;
@@ -819,6 +811,28 @@ bool ParticipantRuntime::has_failed() const
     return failed_;
 }
 
+void ParticipantRuntime::take_reported_errors() noexcept
+{
+    try
+    {
+        const std::lock_guard lock(control_mutex_);
+        error_reportable_ = true;
+        if (early_failure_)
+        {
+            // Something failed while start() was in StartLifecycle(): report it now. As in
+            // report_failure(), ReportError() only queues a call.
+            std::string text = std::move(*early_failure_);
+            early_failure_.reset();
+            failed_ = true;
+            lifecycle_->ReportError(std::move(text));
+        }
+    }
+    catch (const std::exception&)
+    {
+        // As in report_failure().
+    }
+}
+
 void ParticipantRuntime::report_failure(std::string_view reason) noexcept
 {
     try
@@ -831,8 +845,7 @@ void ParticipantRuntime::report_failure(std::string_view reason) noexcept
         if (!error_reportable_)
         {
             // SIL Kit ignores an error before StartLifecycle(); so does the stop logic. One that
-            // comes while start() is in StartLifecycle() (from a handler SIL Kit already calls)
-            // is kept, and start() reports it.
+            // comes while start() is in StartLifecycle() is kept for take_reported_errors().
             if (lifecycle_started_.load(std::memory_order_acquire) && !early_failure_)
             {
                 early_failure_ = std::move(text);

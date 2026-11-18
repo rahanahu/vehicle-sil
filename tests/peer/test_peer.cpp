@@ -69,6 +69,28 @@ PeerOptions coordinated(std::string name, const std::string& uri, SimDuration st
     return o;
 }
 
+/// Starts `body`, whose start fails, and waits until others have seen it in Error. If they do not,
+/// the failure says what they saw and what the start and the participant said.
+void start_and_wait_for_the_error(SimulationController& controller, Peer& body, const vehicle_sil::unit::StateLog& log)
+{
+    std::string start = "returned";
+    try
+    {
+        start_together(controller, {&body}, 30s);
+    }
+    catch (const std::exception& e)
+    {
+        // The start fails with the participant; what is checked is how the failure is reported.
+        start = std::string("threw \"") + e.what() + "\"";
+    }
+    if (!vehicle_sil::unit::eventually([&] { return log.reached(orch::ParticipantState::Error); }, 20s))
+    {
+        throw vehicle_sil::unit::Failure(
+            "others did not see the participant in Error; the states they saw: " + log.text() + "; start_together() " + start +
+            "; the participant's own state: " + orch::to_string(body.runtime().state()));
+    }
+}
+
 /// What a receiver saw before 500 ms, as text.
 struct Seen
 {
@@ -797,15 +819,7 @@ TEST_CASE(peer_reports_a_lin_controller_that_cannot_be_initialised_and_names_the
     auto& master =
         body.lin_master("BODY_LIN", {{kCommandId, 2, lin::LinChecksumModel::Enhanced, 20ms, lin::LinPublisher::Master}});
     master.init();
-    try
-    {
-        start_together(controller, {&body}, 30s);
-    }
-    catch (const std::exception&) // NOLINT(bugprone-empty-catch)
-    {
-        // The start fails with the participant; what is checked is how the failure is reported.
-    }
-    CHECK(vehicle_sil::unit::eventually([&] { return log.reached(orch::ParticipantState::Error); }, 20s));
+    start_and_wait_for_the_error(controller, body, log);
     const std::string reason = log.reason_of(orch::ParticipantState::Error);
     if (reason.find("vehicle_sil::Peer: initialising the LIN controller of the network \"BODY_LIN\" failed: ") ==
         std::string::npos)
@@ -1144,15 +1158,7 @@ TEST_CASE(peer_names_both_names_of_a_renamed_network_when_its_controller_fails)
     auto& master =
         body.lin_master("BODY_LIN", {{kCommandId, 2, lin::LinChecksumModel::Enhanced, 20ms, lin::LinPublisher::Master}});
     master.init();
-    try
-    {
-        start_together(controller, {&body}, 30s);
-    }
-    catch (const std::exception&) // NOLINT(bugprone-empty-catch)
-    {
-        // The start fails with the participant; what is checked is how the failure is reported.
-    }
-    CHECK(vehicle_sil::unit::eventually([&] { return log.reached(orch::ParticipantState::Error); }, 20s));
+    start_and_wait_for_the_error(controller, body, log);
     const std::string reason = log.reason_of(orch::ParticipantState::Error);
     if (reason.find("vehicle_sil::Peer: initialising the LIN controller of the network \"BODY_LIN\" (\"BodyLIN\" in the "
                     "simulation) failed: ") == std::string::npos)
