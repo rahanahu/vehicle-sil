@@ -10,9 +10,9 @@
 // the arguments over it. Values and pure functions: no state, no thread, no file, no process.
 #pragma once
 
-#include "vehicle_sil/launch/config.hpp"
-#include "vehicle_sil/launch/connect.hpp"
-#include "vehicle_sil/launch/time_plan.hpp"
+#include "vehicle_sil/config/config.hpp"
+#include "vehicle_sil/config/connect.hpp"
+#include "vehicle_sil/config/time_plan.hpp"
 
 #include <chrono>
 #include <filesystem>

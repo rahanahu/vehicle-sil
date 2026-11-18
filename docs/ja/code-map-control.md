@@ -143,7 +143,7 @@ flowchart TD
 
 | 内容 | 場所 |
 |---|---|
-| 読むコード | `libs/launch/src/config.cpp` の `read_variables()` |
+| 読むコード | `libs/config/src/config.cpp` の `read_variables()` |
 | ルールと変換 | `libs/control/src/variable_map.cpp` の `MappedSchema` |
 | 変換を適用する所 | `control::Hub`（`set_variable_map()`） |
 | Hub に渡す所 | `libs/launch/src/run_control.cpp` の `RunControl::shared_hub()` |
@@ -291,13 +291,13 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 守ること:
 
-- どちらの側も `kVersion` で書き、`kVersion` だけを読みます。別のバージョンの hello は報告し（participant 名は読みます）、Peer にしません。ほかのメッセージは、別のバージョンなら捨てます。`vehicle_sil_launch` は、`--describe` が出力したバージョンを `kVersion` と比べ（`libs/launch/src/check_rules.cpp`、`run_control.cpp`）、どちらをビルドし直すかを `libs/launch/src/check_words.hpp` の `control_version_fix()` で言います。
+- どちらの側も `kVersion` で書き、`kVersion` だけを読みます。別のバージョンの hello は報告し（participant 名は読みます）、Peer にしません。ほかのメッセージは、別のバージョンなら捨てます。`vehicle_sil_launch` は、`--describe` が出力したバージョンを `kVersion` と比べ（`libs/config/src/check_rules.cpp`、`run_control.cpp`）、どちらをビルドし直すかを `libs/launch/src/check_words.hpp` の `control_version_fix()` で言います。
 - コマンドのどの書き込みが反映されたかと、断った理由がどの書き込みについてかは、数で運びます（`CommandResult::applied_writes`、`SubmitResult::failed_write` と、同じ 2 つの名前を持つ Hub の `TargetResult`）。そのために `reason` を読まないでください（[internals/control.md](internals/control.md) の「Control Server の中核」）。
 - 項目を追加するときは、その要素（変数、書き込み、結果、イベント）の末尾に追加します。メッセージ全体の項目なら、メッセージの末尾に追加します。`control/wire.hpp` の `kRevision` を 1 上げ、その項目は、その改訂番号以降の相手からだけ読みます。古いビルドの復号は、その項目を読み飛ばします。
 - 読み飛ばしてはいけない変更（項目の移動や削除、相手が知らない列挙の値を送ること）には、新しいバージョンが必要です。`kVersion` を上げます。バージョンの違う ECU とランチャーは、変数を一緒に読み書きできなくなります（照合が `control-link-version` を出します）。
 - `result_bytes()` と `event_bytes()` は、`write_result()` と `write_event()` が書くバイト数とちょうど同じ値を返すようにします。`encode_step()` はこの値で分割するので、小さすぎるとメッセージが上限を超えます。
 - `kLeast` は、要素の最小の大きさです。復号は、何かを読む前に、個数をこの値と照らします。要素に項目を追加したら、ここも直します。
-- `--describe` は `kRevision` を `control.wire_revision` として出し、check は古い改訂の ECU を注記します（`libs/launch/src/check_rules.cpp` の `control-link-revision`）。`kRevision` を上げたら、古い改訂に何が欠けるかを、その注記に書きます。
+- `--describe` は `kRevision` を `control.wire_revision` として出し、check は古い改訂の ECU を注記します（`libs/config/src/check_rules.cpp` の `control-link-revision`）。`kRevision` を上げたら、古い改訂に何が欠けるかを、その注記に書きます。
 - 利用状態（改訂 1）は、ステップのメッセージの最後の部分で、値の後ろにあります。フラグ（`kStepAvailability`）で読み、残りのバイト数からは読みません。`AgentTransport` は、ステップのシンクの中で `Agent::availability()` を読みます。状態をトランスポートのスレッドへ渡す道はほかになく、要りません。
 - 相手が知らなくても困らない種類を追加するだけなら、バージョンも改訂番号も上げません。知らない種類は捨てられます（最後の通知への返事 `Kind::LastWordReceived` がその例です）。
 - ヘッダーの 8 バイト、hello のヘッダーの直後の participant 名、ほかのメッセージのヘッダーの直後の session は、どのバージョンでも変えません。バージョンの違う相手の名前を読むためと、ECU がメッセージの宛先を見るためです。
@@ -346,7 +346,7 @@ simulation-run.md に書いてあるランチャーの出力:
 
 - 出力するコード: `libs/ecu/src/describe.cpp`
 - 追加するコード: `ecu_main`
-- 読むコード: `libs/launch/src/describe_read.cpp`
+- 読むコード: `libs/config/src/describe_read.cpp`
 
 守ること:
 

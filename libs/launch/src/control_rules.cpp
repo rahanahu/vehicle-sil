@@ -3,7 +3,7 @@
 // The table of the rules of a run's controls (control_rules.hpp) and decide(), which reads it.
 #include "vehicle_sil/launch/control_rules.hpp"
 
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/config.hpp"
 
 #include <array>
 #include <cstdint>

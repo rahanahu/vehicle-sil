@@ -5,13 +5,13 @@
 // report are in run_report.cpp.
 #include "vehicle_sil/launch/run_outcome.hpp"
 
-#include "check_words.hpp"
+#include "vehicle_sil/config/detail/check_words.hpp"
 #include "run_words.hpp"
-#include "seen_ecu.hpp"
+#include "vehicle_sil/config/detail/seen_ecu.hpp"
 
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
-#include "vehicle_sil/launch/connect.hpp"
+#include "vehicle_sil/config/connect.hpp"
 #include "vehicle_sil/launch/run_detail.hpp"
 
 #include <algorithm>

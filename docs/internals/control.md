@@ -414,7 +414,7 @@ The rules (types, ranges, conflicts) live in one place, `MappedSchema::make()`, 
 
 - The members of `VariableMapping`
 - `MappedSchema::make()` and the conversion
-- The configuration file reader (`kVariableMapKeys` and `read_variable()` in `libs/launch/src/config.cpp`)
+- The configuration file reader (`kVariableMapKeys` and `read_variable()` in `libs/config/src/config.cpp`)
 - `variable_map` in `check --json` (`check_format.cpp`)
 
 ### Retained operations

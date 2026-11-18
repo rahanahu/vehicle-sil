@@ -7,9 +7,9 @@
 // clock, no thread, no lock. RunOutput calls them under its mutex.
 #include "vehicle_sil/launch/run_detail.hpp"
 
-#include "check_words.hpp"
+#include "vehicle_sil/config/detail/check_words.hpp"
 
-#include "vehicle_sil/launch/connect.hpp"
+#include "vehicle_sil/config/connect.hpp"
 
 #include <algorithm>
 #include <charconv>

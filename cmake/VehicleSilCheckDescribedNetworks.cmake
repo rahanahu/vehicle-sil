@@ -48,7 +48,7 @@ if(bad)
   list(JOIN bad "\n  " text)
   list(JOIN FILES ", " allowed)
   message(FATAL_ERROR "Sources that read the networks of an ECU's description themselves:\n  ${text}\n"
-                      "Read them through seen_networks() (vehicle_sil/launch/check.hpp), which gives each network "
+                      "Read them through seen_networks() (vehicle_sil/config/check.hpp), which gives each network "
                       "under its name in the simulation (the participant's network_names and j1939_nodes applied) "
                       "and keeps the executable's name and the nodes' values in its code beside it. Only ${allowed} may read the member itself. For a new rule or "
                       "output, add a case with a renamed network to tests/launch/test_check.cpp.")

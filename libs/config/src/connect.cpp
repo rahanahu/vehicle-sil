@@ -3,9 +3,9 @@
 // --connect: the request, the form of a target, the bridge of each kind of network, its
 // arguments, and where the launcher looks for it (connect.hpp). The check of the requests against
 // a configuration is in check_connect.cpp.
-#include "vehicle_sil/launch/connect.hpp"
+#include "vehicle_sil/config/connect.hpp"
 
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/process/paths.hpp"
 
 #include <algorithm>

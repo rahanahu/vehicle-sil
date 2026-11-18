@@ -5,7 +5,7 @@
 // Internal; the format: docs/simulation-events.md.
 #pragma once
 
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/command.hpp"
 #include "vehicle_sil/launch/run_controls.hpp"

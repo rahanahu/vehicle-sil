@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Tests of the JSON Schemas of the simulation configuration and of a scenario (schema/): that they say what the
-launcher's readers say (libs/launch/src/config.cpp, scenario.cpp), no more.
+launcher's readers say (libs/config/src/config.cpp, libs/launch/src/scenario.cpp), no more.
 
     python tests/schema/test_schemas.py      (exit code 0 when every test passes)
 

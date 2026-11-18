@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/launch/command_input.hpp"
 
-#include "yaml_tree.hpp"
+#include "vehicle_sil/config/detail/yaml_tree.hpp"
 
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/config.hpp"
 #include "vehicle_sil/launch/control_rules.hpp"
 
 #include <charconv>

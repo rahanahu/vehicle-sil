@@ -256,7 +256,7 @@ flowchart TD
 
 合わせて直すコード:
 
-- JSON を読む側の `read_description()`（`libs/launch/src/describe_read.cpp`）
+- JSON を読む側の `read_description()`（`libs/config/src/describe_read.cpp`）
 - 形式のバージョン `kEcuDescriptionFormat`（`ecu/describe.hpp`）
 
 ### ネットワークの名前の対応
@@ -341,7 +341,7 @@ flowchart TD
 
 手順 2 で `switch` が求める所:
 
-- `libs/launch/src/check_rules.cpp` の種類ごとのルール（`check_network()`）
+- `libs/config/src/check_rules.cpp` の種類ごとのルール（`check_network()`）
 - `tests/simulation/test_network_kinds.cpp` の `put_on()`（Ecu の呼び出し）
 
 手順 3 で追加する所:
@@ -359,7 +359,7 @@ flowchart TD
 - [simulation-config.md](simulation-config.md): 設定の表の `networks[].kind`
 - [ecu-executable.md](ecu-executable.md) の「JSON の形式」の `networks` の説明と、`networks[].use` の表
 - [simulation-check.md](simulation-check.md): `code` の表（種類ごとのルールを追加したとき）
-- `libs/launch/include/vehicle_sil/launch/check.hpp`: `check_participants()` の説明（どのルールがどの種類に適用されるか）
+- `libs/config/include/vehicle_sil/config/check.hpp`: `check_participants()` の説明（どのルールがどの種類に適用されるか）
 
 設定ファイルと `--describe` を読むコードと、エラーの文言の一覧は表から作るので、直す必要はありません。
 

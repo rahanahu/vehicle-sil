@@ -6,7 +6,7 @@
 // Internal.
 #pragma once
 
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
 
 #include <cstddef>

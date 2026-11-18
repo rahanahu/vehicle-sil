@@ -8,7 +8,7 @@
 
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/ecu/executable.hpp"
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/config.hpp"
 #include "vehicle_sil/launch/run.hpp"
 
 #include <algorithm>

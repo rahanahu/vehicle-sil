@@ -8,7 +8,7 @@
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/launch/command.hpp"
 #include "vehicle_sil/launch/control_rules.hpp"
-#include "vehicle_sil/launch/time_plan.hpp"
+#include "vehicle_sil/config/time_plan.hpp"
 
 #include <chrono>
 #include <cstddef>

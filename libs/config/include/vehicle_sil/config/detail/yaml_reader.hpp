@@ -6,10 +6,10 @@
 // reader derives from it too, so that these messages and their lines stay the same. Internal.
 #pragma once
 
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/config.hpp"
 
-#include "check_words.hpp"
-#include "yaml_tree.hpp"
+#include "vehicle_sil/config/detail/check_words.hpp"
+#include "vehicle_sil/config/detail/yaml_tree.hpp"
 
 #include <algorithm>
 #include <cctype>

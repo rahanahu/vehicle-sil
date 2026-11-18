@@ -27,7 +27,7 @@ namespace vehicle_sil::control {
 ///   numbers stay the executable's;
 /// - `absent`: the executable has no such variable (said on purpose; nothing is converted).
 /// To add a form: a member here, its rules in MappedSchema::make(), and the reader of the
-/// configuration (libs/launch/src/config.cpp).
+/// configuration (libs/config/src/config.cpp).
 struct VariableMapping
 {
     std::string name; ///< the name the clients see (the common name)

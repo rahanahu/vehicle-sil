@@ -6,9 +6,9 @@
 // scenario of --scenario: checked.hpp. Internal; the rules and the output: docs/simulation-check.md.
 #pragma once
 
-#include "vehicle_sil/launch/config.hpp"
-#include "vehicle_sil/launch/connect.hpp"
-#include "vehicle_sil/launch/time_plan.hpp"
+#include "vehicle_sil/config/config.hpp"
+#include "vehicle_sil/config/connect.hpp"
+#include "vehicle_sil/config/time_plan.hpp"
 
 #include <chrono>
 #include <cstdint>

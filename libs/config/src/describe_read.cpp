@@ -2,11 +2,11 @@
 //
 // Reading the JSON of --describe (read_description()): the reverse of to_json() of
 // vehicle_sil/ecu/describe.hpp. Every error names the key.
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 
-#include "check_words.hpp"
+#include "vehicle_sil/config/detail/check_words.hpp"
 #include "vehicle_sil/ecu/describe_json.hpp"
-#include "yaml_tree.hpp"
+#include "vehicle_sil/config/detail/yaml_tree.hpp"
 
 #include <array>
 #include <charconv>

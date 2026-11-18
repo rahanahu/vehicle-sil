@@ -5,7 +5,7 @@
 // unknown key and a key written twice are said in the same words. See request.hpp.
 #include "vehicle_sil/launch/request.hpp"
 
-#include "yaml_reader.hpp"
+#include "vehicle_sil/config/detail/yaml_reader.hpp"
 
 #include <algorithm>
 #include <map>

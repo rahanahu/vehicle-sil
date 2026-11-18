@@ -21,6 +21,7 @@
 | `launch.*` | 設定ファイルの読み込みと照合のルール、人向けと JSON の出力（プロセスを起動しない） |
 | `launch_cli.*` | `vehicle_sil_launch check` を実行ファイルとして動かす |
 | `launch_run.*` | `vehicle_sil_launch run` を実行ファイルとして動かす |
+| `config.*` | `libs/config` の境界（ヘッダーとソースが何を include してよいか） |
 | `process.*` | 子プロセスのテスト |
 
 `launch.*` は、各ルールの通る例と失敗する例を、文言と行番号まで照合します。
@@ -62,24 +63,51 @@
 - テスト: `tests/process`
 - `ctest -R`: `^process\.`
 
+### `libs/config`
+
+構成ファイルとその照合（純粋: プロセスも SIL Kit も使いません。`launch.*` が試験し、`config.*` が境界を守ります）。`config/detail/` のヘッダーは、ランチャーの部品と試験が読むためのものです。
+
+公開ヘッダー:
+
+| 名前 | 場所 |
+|---|---|
+| `read_config()` | `config/config.hpp` |
+| 構成の照合（`CheckReport`、ルール） | `config/check.hpp` |
+| `--connect` の `parse_connect()` と先の文法（`read_connect_target()`、`backend_problem()`、`target_problem()`）、backend ごとの `bridge_tool()`、`bridge_arguments()`、backend を除いたデバイスの `connect_device_key()`、`no_bridge_here()`（LIN、Windows 以外の Vector XL のブリッジ）、照合と `connections` と `run` がブリッジを起動するディレクトリ（ブリッジ自身のもの）の `bridge_working_directory()` | `config/connect.hpp` |
+| 時間の固定と、run が始める速さ（`TimeLock`、`time_lock()`、`planned_speed()`、`time_lock_findings()`） | `config/time_plan.hpp` |
+
+実装:
+
+| 内容 | 場所 |
+|---|---|
+| `CheckReport` の数、`sort_findings()`、`connect_for_config()` | `src/check_report.cpp` |
+| `--describe` の JSON を読む | `src/describe_read.cpp` |
+| シミュレーションから見た ECU（`SeenEcu`）: 実行ファイルの自己申告に、participant の項目を当てたもの。照合、`run`、シナリオは、自己申告（名前、ステップ、ネットワーク、変数、制御の口、features）をこれからだけ読む | `config/detail/seen_ecu.hpp`、`src/seen_ecu.cpp`（`seen_variables()` も） |
+| 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で、J1939 のノードを `j1939_nodes` を当てた値で渡す（`seen_networks()`） | `src/check_networks.cpp` |
+| 照合のルール（ネットワークは種類ごとの関数） | `src/check_rules.cpp` |
+| `--connect` の照合（`check_connections()`: 要求、見つけたブリッジとその `--describe`）。シミュレーション全体が要るルール（ブリッジをネットワークの participant に数える、`connect-loop`）は `check_rules.cpp` | `src/check_connect.cpp` |
+| `--connect` の形とブリッジの引数。`find_tool()`（ランチャーの隣、次に `PATH`）と、それが `find_executable()` と共有する `PATH` の探索（`detail::find_on_path()`）は `src/probe.cpp` | `src/connect.cpp` |
+| 設定ファイルとシナリオの読み取りの共通の部分 | `config/detail/yaml_reader.hpp` |
+| 時間の固定と計画した速さ、`detail::plan_time_step()`（コントローラーの既定のステップ）、`detail::coarse_time_step()`、`RunTiming::actual_speed()` | `src/time_plan.cpp` |
+
+- 試験: `tests/launch`（ルールと読み取り）、`tests/config`（境界）
+- `ctest -R`: `^launch\.`（ルール）、`^config\.`（境界）
+
 ### `libs/launch`、`tools/launch`
 
 公開ヘッダー:
 
 | 名前 | 場所 |
 |---|---|
-| `read_config()` | `launch/config.hpp` |
 | `check_file()`、`Checked`（ファイルの照合と、`--scenario` のシナリオ。その `format_text()` と `format_json()`） | `launch/checked.hpp` |
-| 構成の照合（`CheckReport`、ルール） | `launch/check.hpp` |
 | `ScenarioCheck`（`check --scenario` が読んだシナリオ）と `scenario_catalog()`（照合した構成の participant を、シナリオが使える形にしたもの） | `launch/scenario_check.hpp` |
 | ランチャーが、動いているコンピューターに尋ねること: `find_executable()` と `executable_status()`（participant の実行ファイル）、`find_tool()` と `bridge_tools()`（ブリッジ）、`run_tool()`（`--describe` やブリッジの一覧の 1 回の実行）、`read_config_file()`、`read_scenario_file()`、`files_beside()`、`environment_value()` | `launch/probe.hpp` |
-| `--connect` の `parse_connect()` と先の文法（`read_connect_target()`、`backend_problem()`、`target_problem()`）、backend ごとの `bridge_tool()`、`bridge_arguments()`、backend を除いたデバイスの `connect_device_key()`、`no_bridge_here()`（LIN、Windows 以外の Vector XL のブリッジ）、照合と `connections` と `run` がブリッジを起動するディレクトリ（ブリッジ自身のもの）の `bridge_working_directory()` | `launch/connect.hpp` |
 | `vehicle_sil_launch connections` の `list_connections()`、`connections_of()`（backend ごとに各ブリッジに 1 回だけ聞く。`prefix_targets()` が `--connect` の受ける値にする）、`interpret_list()`（ブリッジの一覧か、ランチャーが作る一覧: `tool-*`）、`check_requested()`（`--request`: 要求ファイルの先が一覧にあるか。backend と名前で比べる。ファイルを読み構成に合わせて切るのは、要求ファイルの行の関数）、`quoted_for_shells()`、出力 | `launch/connections.hpp` |
 | `run_file()`、その結果（`RunReport`。書くのは `format_run_text()` と `format_run_json()`）、実行が借りるもの（`RunLent`）、実行から見た Control Server（`ControlEndpoint`） | `launch/run.hpp` |
 | 実行が見たこと。部分に分けた値: `RunOutcome` の `setup`、`start`、`end`（シミュレーションがどう、なぜ終わったか）、`control`（制御の agent が捨てたもの）、`scenario`（シナリオとタイムラインのファイル）、`close`（ランチャーの接続の閉じ方）と、`timing`、`participants`、`outside`、`time_changed`、`time_lock`、`real_time_peers`、`traffic`。`assess_run()` が判定し、`end_reason()` が終わった理由を言う | `launch/run_outcome.hpp` |
 | 実行の前に決まることを値にしたもの: `RunPlan`（通った check に `--connect` のブリッジを末尾に足したもの、`members`: participant ごとの `RunMember`。実行が `--connect` のために足したブリッジかどうかと、つなぐ先を持つ、ファイルのディレクトリ、コントローラーの刻みと開始時の速さ、最初の刻みの前で保留するか、期限、ログとタイムラインの書き先）、`plan_run()`（純粋: check、要求、`RunLimits` から。`RunLimits` も同じヘッダー）、`planned_outcome()`（実行が最初に持つ `RunOutcome`）。`run_file()` は、要求（`RunRequest`）、観察者（`launch/run_events.hpp` の `RunObservers`: `write_line`、`interrupt_name`、`before_start`）、実行が借りるもの（`RunLent`: 操作盤か停止の要求、Control Server、イベントの流れ）、試験だけが短くする待ち時間（`RunLimits`）を受けます。要求と待ち時間からこの計画を作り、要求は持ち続けないので、実行のどのスレッドも要求を読みません。実行の部品は、計画、観察者、操作盤を `detail::RunContext` から読みます。プロセスなしの試験は `tests/launch/test_run_plan.cpp` | `launch/run_plan.hpp`、`src/run_plan.cpp` |
 | check、run、test が何を頼まれたかを、値にしたもの: `RunRequest`。2 つの部分に分かれる。`RunIntent`（利用者のもの: variant、パラメーター、利用者が書いたとおりのシナリオ、`--disable`、`--enable`、`--manual`、`--connect`、`--time-policy`、速さ、`--start-paused`、`--strict`）と `RunHost`（呼ぶ側のもの: 利用者が書いたとおりのファイル、道具とログの場所、`--describe` と実行の期限、利用者が書いたとおりのタイムラインのファイル、求められた Control Server（アドレスとファイルの名前）、標準入力の命令を求めているか）。`validate_request()`（純粋）が、一緒には使えない欄の規則（`--param` と `--timeline` にはシナリオが要る、`--start-paused` をシナリオと使う、続ける手段なしに使う）を、code が `usage` の指摘として持つ。`check_file()`、`run_file()`、`test_file()`（`TestOptions::request`）がこれを受け、名前からパスを作る。`CheckOptions` に残るのは、頼まれたことではないものだけ（`file_only`、`params_for_many`、`fastest_by_default`）。`tools/launch/main.cpp` の `read_request()` と `run()` が、誤りを報告する順に引数を読み、3 か所で `validate_request()` を呼んで最初の指摘を断る（`--request` があるときは、全部の引数を読んだ後に 1 度）。プロセスなしの試験は `tests/launch/test_request.cpp`（規則と、check と計画が欄ごとに読むもの） | `launch/request.hpp`、`src/request.cpp` |
-| `--request` の要求ファイル（意図を JSON にしたもの）: `read_request_file()` が文を読む（純粋。この形式の読み手は 1 つで、`YamlReader` から作ってあるので、知らないキーと 2 回書いたキーの文がほかのファイルと同じになる）。`with_request_file()` が欄ごとに引数を重ね、`connect` は `merge_connect()` が重ねる。`RunRequest::origin`（`launch/config.hpp` の `RequestOrigin`: ファイルの名前と、値がファイルから来たキーとネットワーク）を見て、`validate_request()` と `time_lock_findings()` の文がファイル名を書く。`connect_for_config()`（`launch/check.hpp`。実体は `check_report.cpp`）が、設定ファイルにないファイルのネットワークを外す（`connect-network-unused`）。`check_file()` は、ファイルのシナリオを設定ファイルのディレクトリから読む。ファイルを読むのは `probe.cpp`（`read_request_file_text()`）で、`tools/launch/main.cpp` は名前を渡すだけ（`read_request_argument()`）。プロセスなしの試験は `tests/launch/test_request_file.cpp`、ランチャーを使う試験は `launch_cli.request`、`launch_cli.connect`、`launch_run.connect_request` | `launch/request.hpp`、`src/request_read.cpp`、`src/request.cpp` |
+| `--request` の要求ファイル（意図を JSON にしたもの）: `read_request_file()` が文を読む（純粋。この形式の読み手は 1 つで、`YamlReader` から作ってあるので、知らないキーと 2 回書いたキーの文がほかのファイルと同じになる）。`with_request_file()` が欄ごとに引数を重ね、`connect` は `merge_connect()` が重ねる。`RunRequest::origin`（`config/config.hpp` の `RequestOrigin`: ファイルの名前と、値がファイルから来たキーとネットワーク）を見て、`validate_request()` と `time_lock_findings()` の文がファイル名を書く。`connect_for_config()`（`config/check.hpp`。実体は `check_report.cpp`）が、設定ファイルにないファイルのネットワークを外す（`connect-network-unused`）。`check_file()` は、ファイルのシナリオを設定ファイルのディレクトリから読む。ファイルを読むのは `probe.cpp`（`read_request_file_text()`）で、`tools/launch/main.cpp` は名前を渡すだけ（`read_request_argument()`）。プロセスなしの試験は `tests/launch/test_request_file.cpp`、ランチャーを使う試験は `launch_cli.request`、`launch_cli.connect`、`launch_run.connect_request` | `launch/request.hpp`、`src/request_read.cpp`、`src/request.cpp` |
 | `StopRequests`。`run_file()` や `test_file()` を呼ぶ側が持って貸す、停止の要求（run が読む回数と、最初の要求の出どころ）、`StopKind`（operator、signal、supervisor）、ライブラリが知る 4 つの出どころ（`stop_source::kStopCommand` など）とその名前、`stop_kind()`。シグナルとコンソールのイベントの名前は CLI に残る | `launch/stop_requests.hpp` |
 | `RunControls`。1 回の run の操作盤で、run が呼ぶ側から借りるか、自分で作ります: 停止の要求（借りたもの）、`TimeCommands`、覚えて観察者に知らせる段階。`Phase`、`phase_name()`。`RunState`（イベント `state` が書く run の状態）。`RunControls::publish()` が、その 3 つから組み立て、変わったときに観察者に知らせます | `launch/run_controls.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |
@@ -100,22 +128,14 @@
 | 内容 | 場所 |
 |---|---|
 | 照合の全体の流れ（`check_file()`） | `src/check.cpp` |
-| `CheckReport` の数、`sort_findings()`、`connect_for_config()` | `src/check_report.cpp` |
 | `scenario_catalog()` | `src/scenario_check.cpp` |
 | コンピューターを調べる: ファイルシステム（実行ファイルやブリッジの場所、設定ファイル、シナリオ、点のファイル）、環境変数（`PATH`、`VEHICLE_SIL_LISTEN_ON_NETWORK`）、出力を読むために動かすプロセス。ルールは調べた結果を値（`config.cpp` の `executable_finding()` はファイルの状態を受け取る）か関数（`ConnectTools`、`ScenarioContext::read_file`）で受け取る。例外が 1 つ残る: `connect.cpp` の `bridge_working_directory()` は相対のディレクトリを絶対にする | `src/probe.cpp` |
-| `--describe` の JSON を読む | `src/describe_read.cpp` |
-| シミュレーションから見た ECU（`SeenEcu`）: 実行ファイルの自己申告に、participant の項目を当てたもの。照合、`run`、シナリオは、自己申告（名前、ステップ、ネットワーク、変数、制御の口、features）をこれからだけ読む | `src/seen_ecu.hpp`、`src/seen_ecu.cpp`（`seen_variables()` も） |
-| 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で、J1939 のノードを `j1939_nodes` を当てた値で渡す（`seen_networks()`） | `src/check_networks.cpp` |
 | check の JSON に、実行ファイルが申告したとおりのネットワークを書く（`write_reported_networks()`） | `src/reported_networks.cpp` |
-| 照合のルール（ネットワークは種類ごとの関数） | `src/check_rules.cpp` |
-| `--connect` の照合（`check_connections()`: 要求、見つけたブリッジとその `--describe`）。シミュレーション全体が要るルール（ブリッジをネットワークの participant に数える、`connect-loop`）は `check_rules.cpp` | `src/check_connect.cpp` |
-| `--connect` の形とブリッジの引数。`find_tool()`（ランチャーの隣、次に `PATH`）と、それが `find_executable()` と共有する `PATH` の探索（`detail::find_on_path()`）は `src/probe.cpp` | `src/connect.cpp` |
 | `connections`: ブリッジの一覧を読み（`TargetReader`）、キーをすべてそのまま渡す（`write_node()`）こと、ランチャーが作る一覧、文と JSON。ブリッジは、`--describe` と同じく `src/probe.cpp` の `run_tool()`（`bridge_tools()`）で起こします | `src/connections.cpp` |
 | 照合の出力 | `src/check_format.cpp` |
 | 間違ったコマンドラインや内部の誤りの結果（JSON、結果のイベント） | `src/error_result.cpp` |
 | `run --connect`: ブリッジを、ファイルの participant の後に、その実行だけの participant として足す（`detail::with_bridges()`）。そのブリッジの印は、構成の欄ではなく、計画の `RunMember::outside`（`RunPlan::members`。`plan_run()` が作る）。ファイルに role を `bridge` と書いた participant には付かない。先に起こして待つ所（`RunStart::wait_for_bridges()`）と、終わったら実行を止める所（`look_at_children()`、`RunWatch::watch()` の `detail::stops_run()`。`gone_before_start()` は計画の印を読む）は `run.cpp`、`run_participants.cpp`、`run_start.cpp`、`run_watch.cpp`。指摘 `connect-failed` と `connect-lost` は `run_assess.cpp`。`connect-time-changed` は、時間を変えた最初の命令を `TimeCommands::apply()` が鍵の下で覚え（命令のスレッド）、`RunWatch::settle()` が `detach()` の後に読み（主スレッド）、`run_assess.cpp` で判断する。最後の行は `RunOutput::on_line()`（読み手のスレッドが出力の鍵の下で書く） | `src/run_connect.cpp` |
 | `run --connect`: ブリッジの数。`detail::read_outside_counts()` がブリッジの統計の行を読む（キーは `ethernet_bridge::format_statistics()` と `can_bridge::format_statistics()` のもの。`launch.read_outside_counts_reads_the_lines_the_bridges_print` が両側を守る）。`detail::OutsideNote` が `outside` イベントを出す時を決める（時刻は引数）。`RunOutput::on_line()`（読み手のスレッド）が、出力の鍵の下で行を読み、数を覚え、イベントを書き、行は出さない（最後に読んだ 1 行だけを `take_counts()` が 1 回出す）。主スレッドは `RunWatch::watch()` の見回りごとに控えの数を書き（`outside_due()`）、`RunParticipants::note_last_lines()` が出力を読み終えた後に最後の数を結果に取る（`take_counts()`。結果のイベントより前）。`detail::OutsideState` が、ブリッジのリンクの行（`read_outside_link_line()`）と統計の行の数のすべて（`read_outside_stats()`）から、リンクやバスが落ちていた区間と error passive の時間を足し上げる（時刻は引数）。`RunOutput` が同じ鍵の下でブリッジごとに 1 つ持ち、リンクの変化を言い、`outside_lost()` が、リンクやバスが `RunLimits::outside_lost_after` 落ちたことを `RunWatch` に知らせる（ブリッジが終わったときと同じに実行を止める。`connect-lost`）。`take_link()` が合計と数を `RunOutside::link` に入れる。リンクの行の共有のキー（`device`、`marked`、`shared`、`peers`）も同じ `OutsideState` にあり、`detail::foreign_sharing()`（純粋）が、ブリッジの `shared` から自分の実行のブリッジを引く（`RunParticipants::own_bridges()` がそのプロセス ID と生きているかを渡す）。`RunOutput::outside_shared()` が見つけたものを鍵の下で持ち、`--strict` では止めるブリッジを挙げる。`RunStart::wait_for_bridges()` が何かを起こす前に 1 度、`RunWatch` が見るたびに（`kOutsideSharedAfter`）これを呼ぶ。所見 `outside-device-shared` は `run_assess.cpp` で作る。フレームを失った数のキーの表は 1 つだけ（`run_detail.hpp` の `kOutsideDroppedKeys`）。注意 `connect-nothing-received` とバスの警告 `outside-*` は `run_assess.cpp` | `src/run_outside.cpp` |
-| 設定ファイルとシナリオの読み取りの共通の部分 | `src/yaml_reader.hpp` |
 | `run_file()`: 照合、実行が自分で作る操作盤と Control Server、`Runner` の 2 つの段、タイムラインのファイル | `src/run_file.cpp` |
 | 準備から participant の終わりまでの、1 回の実行の順（`Runner`） | `src/runner.hpp`、`src/run.cpp` |
 | `run` を分担するクラス | `src/run_*.cpp`、`src/time_commands.cpp` |
@@ -184,7 +204,7 @@
 | `schema/timeline.schema.json` | `run --timeline` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。ツールのアーカイブの `schema/` に入れ、テンプレートの `template/schema/` には置かない |
 | `gui/protocol/dashboard.schema.json` | ダッシュボード |
 
-設定ファイルとシナリオのスキーマは、エディターの補完と検査のためのもので、ランチャーは読みません。ランチャーが読むコードは `libs/launch/src/config.cpp` と、シナリオの読み手（`scenario_reader.hpp` と、そこに挙げたファイル）です。
+設定ファイルとシナリオのスキーマは、エディターの補完と検査のためのもので、ランチャーは読みません。ランチャーが読むコードは `libs/config/src/config.cpp` と、シナリオの読み手（`scenario_reader.hpp` と、そこに挙げたファイル）です。
 
 | コピーの場所 | 内容 |
 |---|---|
@@ -253,7 +273,7 @@
 
 変える場所:
 
-- `libs/launch/src/check_rules.cpp`
+- `libs/config/src/check_rules.cpp`
 - 設定ファイルを読むコードは `config.cpp`
 
 合わせて直すドキュメント:
@@ -290,7 +310,7 @@
 
 変える場所:
 
-- 設定ファイルかシナリオのキー、値の形、ネットワークの種類、手順の種類（`libs/launch/src/config.cpp` と、シナリオの読み手（`scenario_reader.hpp` と、そこに挙げたファイル）の、ファイルを読むコード）
+- 設定ファイルかシナリオのキー、値の形、ネットワークの種類、手順の種類（`libs/config/src/config.cpp` と、シナリオの読み手（`scenario_reader.hpp` と、そこに挙げたファイル）の、ファイルを読むコード）
 
 合わせて直すコードとファイル:
 
@@ -328,13 +348,13 @@
 
 変える場所:
 
-- 読むコードと、設定ファイルだけで分かるエラー: `libs/launch/src/config.cpp` の `read_network_names()` と `check_network_names()`
+- 読むコードと、設定ファイルだけで分かるエラー: `libs/config/src/config.cpp` の `read_network_names()` と `check_network_names()`
 - 機種の行の重ね方: `lay_network_names()`、引数にするコード: `map_network_arguments()`
 - 照合のルールと出力が見るネットワークの名前
 
 守ること:
 
-- 照合のルール、表、JSON の `networks` は、自己申告のネットワークを `seen_networks()`（`libs/launch/src/check_networks.cpp`。対応を当てるただ 1 つの関数。`SeenEcu::seen_networks()`（`libs/launch/src/seen_ecu.hpp`）が呼ぶ）からだけ読みます。`description.networks` を自分で読むルールは、名前を替えたネットワークを実行ファイルの名前で見てしまいます。`launch.described_networks_are_read_in_one_place`（`cmake/VehicleSilCheckDescribedNetworks.cmake`）が、`libs/launch` と `tools/launch` の `.networks`、`->networks`、`::networks` の行を読んで確認します。設定の `config.networks` だけは数えないので、ほかの構造体のメンバーに `networks` という名前を付けると落ちます。別の名前にします。ルールや出力を追加したら、名前を替えたネットワークの場合を `tests/launch/test_check.cpp` に追加します。
+- 照合のルール、表、JSON の `networks` は、自己申告のネットワークを `seen_networks()`（`libs/config/src/check_networks.cpp`。対応を当てるただ 1 つの関数。`SeenEcu::seen_networks()`（`libs/config/include/vehicle_sil/config/detail/seen_ecu.hpp`）が呼ぶ）からだけ読みます。`description.networks` を自分で読むルールは、名前を替えたネットワークを実行ファイルの名前で見てしまいます。`launch.described_networks_are_read_in_one_place`（`cmake/VehicleSilCheckDescribedNetworks.cmake`）が、`libs/launch` と `tools/launch` の `.networks`、`->networks`、`::networks` の行を読んで確認します。設定の `config.networks` だけは数えないので、ほかの構造体のメンバーに `networks` という名前を付けると落ちます。別の名前にします。ルールや出力を追加したら、名前を替えたネットワークの場合を `tests/launch/test_check.cpp` に追加します。
 - `run` の引数は `detail::participant_arguments()`（`libs/launch/src/run_participants.cpp`）の 1 か所で作ります。起動、`manual` のコマンド、イベント `participant` が同じ列を使います（`--map-network` は最後。`describe: false` ではプレースホルダーを置き換えた後）。
 
 合わせて直すドキュメント:
@@ -358,11 +378,11 @@
 
 変える場所:
 
-- 読むコードと、設定ファイルだけで分かるエラー: `libs/launch/src/config.cpp` の `read_j1939_nodes()` と `check_j1939_nodes()`
+- 読むコードと、設定ファイルだけで分かるエラー: `libs/config/src/config.cpp` の `read_j1939_nodes()` と `check_j1939_nodes()`
 - 機種の行の重ね方: `lay_j1939_nodes()`、引数にするコード: `j1939_node_arguments()`（行の文字列は `ecu_executable::format_j1939_node_argument()`。`ecu_main` が読み戻します）
-- 自己申告のノードに行を当てるコード: `libs/launch/src/check_networks.cpp` の `seen_networks()`（`j1939::apply_node_overrides()` を使う）
-- 行についての指摘と、`address-conflict`、`address-shared`、`name-conflict` の直し方: `libs/launch/src/check_rules.cpp` の `check_j1939_node_entries()` と `conflict_fix()`
-- 設定ごとに要る `features` の語: `vehicle_sil/launch/config.hpp` の `kJ1939NodeSettingFeatures`（後で足す設定は、自分の語を持ちます）
+- 自己申告のノードに行を当てるコード: `libs/config/src/check_networks.cpp` の `seen_networks()`（`j1939::apply_node_overrides()` を使う）
+- 行についての指摘と、`address-conflict`、`address-shared`、`name-conflict` の直し方: `libs/config/src/check_rules.cpp` の `check_j1939_node_entries()` と `conflict_fix()`
+- 設定ごとに要る `features` の語: `vehicle_sil/config/config.hpp` の `kJ1939NodeSettingFeatures`（後で足す設定は、自分の語を持ちます）
 
 守ること:
 
@@ -463,7 +483,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 
 変える場所:
 
-- 読むコード: `libs/launch/src/config.cpp`
+- 読むコード: `libs/config/src/config.cpp`
 - 起動の代わりにコマンドを書くコード: `libs/launch/src/run_participants.cpp` の `RunParticipants::show_manual()` と `detail::shell_command_line()`
 - 開始の待ち: `run_start.cpp` の `RunStart::wait_for_start()`
 - 終わり: `RunParticipants::end_manual()`
@@ -529,7 +549,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 
 変える場所:
 
-- `kMaxMillis`、`kMinSpeed`、`kMaxSpeed`（`libs/launch/include/vehicle_sil/launch/config.hpp`）
+- `kMaxMillis`、`kMinSpeed`、`kMaxSpeed`（`libs/config/include/vehicle_sil/config/config.hpp`）
 
 合わせて直すコード:
 

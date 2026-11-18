@@ -5,7 +5,7 @@
 // event "outside" goes out (the time given by the test).
 #include "launch_test_util.hpp"
 
-#include "check_words.hpp"
+#include "vehicle_sil/config/detail/check_words.hpp"
 
 #include "vehicle_sil/ethernet_bridge/ethernet_bridge.hpp"
 #include "vehicle_sil/launch/run_detail.hpp"

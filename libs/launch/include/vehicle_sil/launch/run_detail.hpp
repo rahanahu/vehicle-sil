@@ -5,8 +5,8 @@
 // lines and log names of the participants. Internal.
 #pragma once
 
-#include "vehicle_sil/launch/check.hpp"
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/check.hpp"
+#include "vehicle_sil/config/config.hpp"
 #include "vehicle_sil/launch/run_controls.hpp"
 #include "vehicle_sil/launch/run_outcome.hpp"
 #include "vehicle_sil/launch/run_plan.hpp"

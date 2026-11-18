@@ -5,7 +5,7 @@
 // --connect lines, and the outputs for people and as JSON.
 #include "launch_test_util.hpp"
 
-#include "vehicle_sil/launch/connect.hpp"
+#include "vehicle_sil/config/connect.hpp"
 #include "vehicle_sil/launch/connections.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 

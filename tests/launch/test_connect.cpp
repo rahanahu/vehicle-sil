@@ -5,8 +5,8 @@
 // working directory are changed in the test and put back).
 #include "launch_test_util.hpp"
 
-#include "vehicle_sil/launch/check.hpp"
-#include "vehicle_sil/launch/connect.hpp"
+#include "vehicle_sil/config/check.hpp"
+#include "vehicle_sil/config/connect.hpp"
 #include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 

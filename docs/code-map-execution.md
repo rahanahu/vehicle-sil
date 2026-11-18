@@ -256,7 +256,7 @@ Documentation to update:
 
 Code to update:
 
-- `read_description()`, which reads the JSON (`libs/launch/src/describe_read.cpp`)
+- `read_description()`, which reads the JSON (`libs/config/src/describe_read.cpp`)
 - The format version `kEcuDescriptionFormat` (`ecu/describe.hpp`)
 
 ### Network name mapping
@@ -341,7 +341,7 @@ If you forget something in step 1, the build fails: a `switch` without `default`
 
 Places in step 2 where a `switch` requires it:
 
-- The rules per kind in `libs/launch/src/check_rules.cpp` (`check_network()`)
+- The rules per kind in `libs/config/src/check_rules.cpp` (`check_network()`)
 - `put_on()` in `tests/simulation/test_network_kinds.cpp` (the Ecu calls)
 
 Places to add to in step 3:
@@ -359,7 +359,7 @@ Places to update by hand in step 4:
 - [simulation-config.md](simulation-config.md): `networks[].kind` in the configuration table
 - The description of `networks` and the `networks[].use` table in "[JSON format](ecu-executable.md#json-format)" in [ecu-executable.md](ecu-executable.md)
 - [simulation-check.md](simulation-check.md): the `code` table (when you add a rule for a kind)
-- `libs/launch/include/vehicle_sil/launch/check.hpp`: the description of `check_participants()` (which rule applies to which kind)
+- `libs/config/include/vehicle_sil/config/check.hpp`: the description of `check_participants()` (which rule applies to which kind)
 
 The code that reads configuration files and `--describe`, and the lists in error messages, are built from the table and need no change.
 

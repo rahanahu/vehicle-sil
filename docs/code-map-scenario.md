@@ -41,7 +41,7 @@ For configuration or schema changes, see [configuration file or scenario keys](c
 
 `variants` and `params` of the configuration file, `--variant`, `--param`, and `params`, `${name}` and `only` of scenarios. This also covers skipping steps that use a variable with `absent: true` or a variable of a participant that the variant disabled.
 
-Where to change (configuration file side, `libs/launch/src/config.cpp`):
+Where to change (configuration file side, `libs/config/src/config.cpp`):
 
 - `read_variants()`
 - `kVariantKeys`, `kVariantParticipantKeys` (the lists of keys that a variant can change)
@@ -49,7 +49,7 @@ Where to change (configuration file side, `libs/launch/src/config.cpp`):
 
 Where to change (scenario side and around it):
 
-- How `params` is read: `read_params()` in `yaml_reader.hpp`
+- How `params` is read: `read_params()` in `libs/config/include/vehicle_sil/config/detail/yaml_reader.hpp`
 - `take_params()`, `resolve_params()`, `read_only()` and `skip()` in `scenario.cpp`
 - The code that passes them on: `ScenarioContext` in `check.cpp`
 - The code that skips: `issue_step()` in `scenario_run.cpp` (`StepStatus::Skipped`)

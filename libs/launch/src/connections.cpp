@@ -7,13 +7,13 @@
 #include "exit_codes.hpp"
 
 #include "vehicle_sil/json/json_writer.hpp"
-#include "vehicle_sil/launch/connect.hpp"
+#include "vehicle_sil/config/connect.hpp"
 #include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/process/paths.hpp"
 
 #include "check_format.hpp"
-#include "check_words.hpp"
-#include "yaml_tree.hpp"
+#include "vehicle_sil/config/detail/check_words.hpp"
+#include "vehicle_sil/config/detail/yaml_tree.hpp"
 
 #include <algorithm>
 #include <charconv>

@@ -5,11 +5,11 @@
 // whole simulation (the bridge as a user of its network, loops with a role: bridge participant)
 // are in check_participants() (check_rules.cpp).
 #include "vehicle_sil/ecu/describe.hpp"
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 
 
-#include "check_words.hpp"
-#include "seen_ecu.hpp"
+#include "vehicle_sil/config/detail/check_words.hpp"
+#include "vehicle_sil/config/detail/seen_ecu.hpp"
 
 #include <algorithm>
 #include <sstream>

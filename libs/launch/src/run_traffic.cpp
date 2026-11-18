@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "run_traffic.hpp"
 
-#include "seen_ecu.hpp"
+#include "vehicle_sil/config/detail/seen_ecu.hpp"
 
 #include "vehicle_sil/ecu/monitor_names.hpp"
 

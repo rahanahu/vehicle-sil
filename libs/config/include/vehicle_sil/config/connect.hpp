@@ -7,7 +7,7 @@
 // docs/simulation-check.md.
 #pragma once
 
-#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/config/config.hpp"
 
 #include <filesystem>
 #include <optional>

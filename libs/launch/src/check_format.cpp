@@ -2,12 +2,12 @@
 //
 // The check's output: for people (format_text()) and as JSON (format_json()), and the pieces of
 // them that the run's output and the events reuse (check_format.hpp). Pure functions.
-#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/checked.hpp"
 
 #include "check_format.hpp"
-#include "check_words.hpp"
-#include "seen_ecu.hpp"
+#include "vehicle_sil/config/detail/check_words.hpp"
+#include "vehicle_sil/config/detail/seen_ecu.hpp"
 #include "vehicle_sil/ecu/describe_json.hpp"
 #include "vehicle_sil/json/json_writer.hpp"
 #include "vehicle_sil/process/paths.hpp"

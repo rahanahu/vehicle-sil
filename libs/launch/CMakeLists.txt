@@ -1,7 +1,6 @@
-# vehicle_sil_launch (library) - the simulation configuration file of vehicle_sil_launch, the
-# check of the ecu_main executables against it (what they report with --describe) and the run of
-# the whole simulation: reading, the rules (pure functions), the run (registry, controller, child
-# processes) and the output for people and as JSON. Internal; not part of the
+# vehicle_sil_launch (library) - the run of the whole simulation of vehicle_sil_launch (registry,
+# controller, child processes), the scenario and the output for people and as JSON. The
+# configuration file and its check are vehicle_sil::config (libs/config). Internal; not part of the
 # library API. The file format: docs/simulation-config.md; the rules: docs/simulation-check.md.
 if(NOT TARGET rapidyaml)
   message(STATUS "vehicle-sil: SIL Kit's rapidyaml target is not available (SIL Kit not built from source); vehicle_sil_launch is skipped")
@@ -10,17 +9,10 @@ endif()
 
 add_library(vehicle_sil_launch_lib STATIC
   src/check.cpp
-  src/check_connect.cpp
   src/check_format.cpp
-  src/check_networks.cpp
-  src/check_report.cpp
-  src/check_rules.cpp
   src/command_input.cpp
-  src/config.cpp
-  src/connect.cpp
   src/connections.cpp
   src/control_rules.cpp
-  src/describe_read.cpp
   src/error_result.cpp
   src/events.cpp
   src/host_addresses.cpp
@@ -56,15 +48,15 @@ add_library(vehicle_sil_launch_lib STATIC
   src/scenario_shapes.cpp
   src/scenario_values.cpp
   src/scenario_waves.cpp
-  src/seen_ecu.cpp
   src/test.cpp
   src/timeline.cpp
   src/timeline_format.cpp
   src/time_commands.cpp
-  src/time_plan.cpp
 )
 add_library(vehicle_sil::launch ALIAS vehicle_sil_launch_lib)
 target_include_directories(vehicle_sil_launch_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+# The configuration and its check (vehicle_sil/config/...), which the public headers include.
+target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::config)
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::ecu vehicle_sil::process)
 # The simulation time (time_commands.hpp: TimeCommands::wait_paused()); no SIL Kit.
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::sim_base)
