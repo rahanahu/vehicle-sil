@@ -328,7 +328,7 @@ For a screen that receives slowly, the server does the following, in order:
 2. Collapses `time` and `state` events into the last one of each, and drops `heartbeat` without counting.
 3. Only if it still cannot catch up: `resync`.
 
-`values` is built from the latest values when it is sent (the queue has room for one per watch; values are not stored while they cannot be sent). `variables` and `operation` are never dropped.
+`values` is built from the latest values when it is sent (the queue has room for one per watch; values are not stored while they cannot be sent). `variables`, `operation` and `availability` are never dropped. An ECU that switches the availability of its variables in every step sends at most one `availability` notification per short time (about 20 a second), so a screen that cannot read even those reaches `resync`.
 
 ### The `code` of `error` messages
 

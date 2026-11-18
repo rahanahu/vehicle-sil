@@ -24,7 +24,7 @@ Watch; and GetValues and GetTime), with the contract of the real one where the G
 - a call needs the role its credential has: reading the role viewer, writing operator (as the real server);
 - the variables named in `availability` report whether they are in use: PeerInfo declares the state they start
   with, and a Watch that asks for it gets each such peer's PeerAvailability with the first updates and when it
-  changes (set_availability; the first step sets the second state of each). Every peer's incarnation is "1".
+  changes (the first step sets the second state of each). Every peer's incarnation is "1".
 
 Each peer has the variables of variables() below: ecu.connected (a bool input, true at first, which
 changes nothing else here), <name>.demand (a real input, 0 to 100),
@@ -277,13 +277,6 @@ class FakeControl:
                     elif v["name"].endswith(".warning"):
                         values[i] = demand > 50
                 self.samples[name] = (start_ms * NS_PER_MS, self.steps, list(values), self.version)
-            self.changed.notify_all()
-
-    def set_availability(self, peer: str, states: dict[str, str]) -> None:
-        """Sets the availability of variables of the peer (each one that `availability` named for it)."""
-        with self.changed:
-            self.version += 1
-            self._set_states(peer, states)
             self.changed.notify_all()
 
     def _set_states(self, peer: str, states: dict[str, str]) -> None:

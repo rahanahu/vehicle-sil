@@ -216,6 +216,10 @@ class Variables:
         self._schema_timer: asyncio.TimerHandle | None = None
         self._availability_timer: asyncio.TimerHandle | None = None
         self._availability_changed: set[str] = set()  # peers whose availability is not told yet
+        # The latest availability the source told of each peer, with its incarnation, also of an incarnation that
+        # is not the peer's here now (a peer not taken yet, or a list that arrived late): when the peer comes to that
+        # incarnation, it starts from these states instead of the declared ones, which the source does not tell again.
+        self._told_availability: dict[str, tuple[str, list[str]]] = {}
         self._reconciling: asyncio.Task | None = None
         self._last_read: asyncio.Task | None = None
         self._lost: str | None = None  # why the connection was last lost
@@ -336,6 +340,7 @@ class Variables:
         for name in removed:
             self.peers.pop(name, None)
             self._too_large.discard(name)
+            self._told_availability.pop(name, None)
             if self._since_lost is not None:
                 self._since_lost.discard(name)
         for info in peers:
@@ -348,7 +353,9 @@ class Variables:
                 peer = self.peers[info.name] = _Peer(info.name)
             if peer.incarnation != info.incarnation:  # another process under the name: its values are not these
                 peer.sample, peer.decoded, peer.read = None, None, None
-                peer.states = None  # nor its availability: it starts from what it declares
+                # nor its availability: it starts from what it declares, or from what the source told of it already
+                told = self._told_availability.get(info.name)
+                peer.states = list(told[1]) if told is not None and told[0] == info.incarnation else None
                 peer.version += 1
                 self._too_large.discard(peer.name)
             peer.incarnation, peer.connected = info.incarnation, info.connected
@@ -413,12 +420,16 @@ class Variables:
         """The availability of every variable of a peer now (source.Sink). Dropped when it is of another
         incarnation than the peer's now (of the process before it, or of one not told yet), when it does not fit
         the schema, and for a peer none of whose variables report."""
+        if self._closed:
+            return
+        states = [s if s in AVAILABILITY else "active" for s in states]
+        self._told_availability[name] = (incarnation, states)
         peer = self.peers.get(name)
-        if self._closed or peer is None or incarnation != peer.incarnation or len(states) != len(peer.declared) \
+        if peer is None or incarnation != peer.incarnation or len(states) != len(peer.declared) \
                 or all(d is None for d in peer.declared):
             return
         before = peer.availability()
-        peer.states = [s if s in AVAILABILITY else "active" for s in states]
+        peer.states = list(states)
         if peer.availability() == before:  # sent again, unchanged
             return
         self._show_availability(peer)

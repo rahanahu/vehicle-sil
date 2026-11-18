@@ -143,8 +143,8 @@ def test_a_peer_told_again_keeps_its_availability() -> None:
 def test_the_availability_belongs_to_one_incarnation() -> None:
     async def main(loop: Clock) -> None:
         v, _, sent = make()
-        # Of another incarnation than the peer's now (the process before, or one not told yet): dropped.
-        v.on_availability("Engine", "b", DECIDED)
+        # Of another incarnation than the peer's now (the process before, or one not told yet): not shown.
+        v.on_availability("Engine", "c", DECIDED)
         await tick(loop, 1)
         assert shown(v)["io.fog"] == "unknown" and told(sent) == []
         v.on_availability("Engine", "a", DECIDED)
@@ -175,6 +175,33 @@ def test_the_availability_belongs_to_one_incarnation() -> None:
         await tick(loop, 1)
         assert set(shown(v).values()) == {"active"}
         assert [m["type"] for m in sent[before + 1:]] == ["variables"]
+    run(main)
+
+
+def test_the_states_told_before_the_peer_comes_to_their_incarnation_are_kept() -> None:
+    async def main(loop: Clock) -> None:
+        v, _, sent = make()
+        # The source told the states of incarnation "b" while this side still had "a" (the Watch's peer update of "b"
+        # came later, or a list read before it came back after it): when the peer comes to "b", it starts from them,
+        # not from the declared states (the source does not tell unchanged states again).
+        v.on_availability("Engine", "b", DECIDED)
+        await tick(loop, 1)
+        assert shown(v)["io.fog"] == "unknown" and told(sent) == []
+        v.on_peers([PeerInfo("Engine", "b", True, ENGINE)], [])
+        await tick(loop, 1)
+        assert shown(v) == {"ecu.connected": "active", "io.lamp": "active", "io.fog": "inactive", "io.out": "inactive",
+                            "rpm": "active"}
+        # A late list takes the peer back to "a" (its states then are the declared ones: nothing was told of "a"),
+        # and the next peer update brings "b" again with the states told of it.
+        v.on_peers([PeerInfo("Engine", "a", True, ENGINE)], [])
+        assert shown(v)["io.fog"] == "unknown"
+        v.on_peers([PeerInfo("Engine", "b", True, ENGINE)], [])
+        assert shown(v)["io.fog"] == "inactive"
+        # A peer that leaves the list forgets what was told of it.
+        v.on_peers([], ["Engine"])
+        v.on_peers([PeerInfo("Engine", "b", True, ENGINE)], [])
+        assert shown(v)["io.fog"] == "unknown"
+
     run(main)
 
 

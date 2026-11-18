@@ -328,7 +328,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 2. `time` と `state` は、それぞれ最後の 1 つにまとめ、`heartbeat` は数えずに落とす。
 3. それでも追いつかないときだけ `resync`。
 
-`values` は、送るときに、そのときの最後の値で作ります（待ち行列には watch ごとに 1 つ分の場所だけがあり、送れない間の値はためません）。`variables` と `operation` は落としません。
+`values` は、送るときに、そのときの最後の値で作ります（待ち行列には watch ごとに 1 つ分の場所だけがあり、送れない間の値はためません）。`variables`、`operation`、`availability` は落としません。変数の利用状態を毎ステップ切り替える ECU でも、`availability` の通知は短い時間に 1 通（1 秒に 20 通ほど）までなので、それも読めない画面は `resync` になります。
 
 ### `error` の `code`
 
