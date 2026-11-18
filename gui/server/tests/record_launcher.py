@@ -686,20 +686,31 @@ def main(argv: list[str]) -> int:
     return 1 if failed else 0
 
 
+def state_paused(events: list[dict], value: bool) -> bool:
+    """The latest state event says paused `value`. The launcher writes the state that says so right after the time
+    event (the same look of the simulation); a command sent between the two is decided first, and the recording then
+    has its events in another order than a reader that waits for the state would get."""
+    states = [e for e in events if e.get("event") == "state"]
+    return bool(states) and states[-1].get("paused") is value
+
+
 def paused(sim_ms: int | None = None, **fields) -> Callable[[list[dict]], bool]:
-    """A time event that stands still (at sim_ms, or anywhere), and has these fields."""
+    """A time event that stands still (at sim_ms, or anywhere) and has these fields, and the latest state says
+    paused too."""
     def seen(events: list[dict]) -> bool:
-        return any(e.get("event") == "time" and e.get("paused") is True and
-                   (sim_ms is None or e.get("sim_ms") == sim_ms) and all(e.get(k) == v for k, v in fields.items())
-                   for e in events)
+        return state_paused(events, True) and any(
+            e.get("event") == "time" and e.get("paused") is True and
+            (sim_ms is None or e.get("sim_ms") == sim_ms) and all(e.get(k) == v for k, v in fields.items())
+            for e in events)
     return seen
 
 
 def last_time(**fields) -> Callable[[list[dict]], bool]:
-    """The last time event has these fields."""
+    """The last time event has these fields; if `paused` is one of them, the latest state says the same."""
     def seen(events: list[dict]) -> bool:
         times = [e for e in events if e.get("event") == "time"]
-        return bool(times) and all(times[-1].get(k) == v for k, v in fields.items())
+        return (bool(times) and all(times[-1].get(k) == v for k, v in fields.items()) and
+                ("paused" not in fields or state_paused(events, fields["paused"])))
     return seen
 
 
