@@ -1388,6 +1388,76 @@ describe('the front door', () => {
       expect(rig.front.status.get().problem).toBeNull();
     });
 
+    it('sends one check at a time, shares a check of the same intent, and drops a waiting check that every caller aborted', async () => {
+      const rig = await open();
+      const file = { file: 'connect.yaml' };
+      const passed = (await httpExamples()).find((e) => e.name === 'check-connect')!.response;
+      const first = rig.front.check({ disable: ['A'], manual: ['M'] }, file);
+      // The same intent and file, also with the fields in another order: the check on its way
+      const same = rig.front.check({ manual: ['M'], disable: ['A'] }, file);
+      expect(same).toBe(first);
+      const going = rig.http.expectOne('api/check');
+      // Another intent waits for the answer to the one on its way
+      const aborts = new AbortController();
+      const dropped = rig.front
+        .check({ disable: ['B'] }, { ...file, signal: aborts.signal })
+        .catch((e: unknown) => e);
+      const kept = new AbortController();
+      const next = rig.front.check({ disable: ['C'] }, { ...file, signal: kept.signal });
+      const shared = rig.front.check({ disable: ['C'] }, file);
+      expect(shared).toBe(next);
+      kept.abort(); // another caller still wants it
+      rig.http.expectNone('api/check');
+      aborts.abort(new Error('changed'));
+      going.flush(passed);
+      await first;
+      expect(await dropped).toMatchObject({ message: 'changed' });
+      // The aborted check is not sent: the one after it is
+      const sent = await vi.waitFor(() => rig.http.expectOne('api/check'));
+      expect(sent.request.body).toEqual({ file: 'connect.yaml', disable: ['C'] });
+      sent.flush(passed);
+      await next;
+      // An answered check is not shared: the same intent again is a new check
+      void rig.front.check({ disable: ['A'] }, file);
+      rig.http.expectOne('api/check').flush(passed);
+      // A signal that has aborted already sends nothing
+      const late = new AbortController();
+      late.abort(new Error('late'));
+      await expect(rig.front.check({}, { ...file, signal: late.signal })).rejects.toThrow('late');
+      rig.http.expectNone('api/check');
+    });
+
+    it('sends the next check after a refused one, checks again afresh when asked, and sends no waiting check after close', async () => {
+      const rig = await open();
+      const file = { file: 'connect.yaml' };
+      const passed = (await httpExamples()).find((e) => e.name === 'check-connect')!.response;
+      const busy = rig.front.check({ disable: ['A'] }, file).catch((e: unknown) => e);
+      const going = rig.http.expectOne('api/check');
+      // Asked again by the user: not the answer on its way (it may have read the file before it was fixed)
+      const fresh = rig.front.check({ disable: ['A'] }, { ...file, fresh: true });
+      // ... but a check that waits is shared
+      expect(rig.front.check({ disable: ['A'] }, { ...file, fresh: true })).toBe(fresh);
+      rig.http.expectNone('api/check');
+      going.flush(
+        { error: { code: 'check-busy', message: 'checks are waiting.', detail: null } },
+        { status: 503, statusText: 'Service Unavailable' },
+      );
+      expect(await busy).toMatchObject({ code: 'check-busy' });
+      // A refused check does not hold up the next one
+      const again = await vi.waitFor(() => rig.http.expectOne('api/check'));
+      expect(again.request.body).toEqual({ file: 'connect.yaml', disable: ['A'] });
+      again.flush(passed);
+      await fresh;
+      // Closed while one is on its way: the one that waits is not sent
+      void rig.front.check({ disable: ['B'] }, file).catch(() => undefined);
+      rig.http.expectOne('api/check');
+      const waiting = rig.front.check({ disable: ['C'] }, file).catch((e: unknown) => e);
+      rig.front.close();
+      expect(await waiting).toMatchObject({ code: 'closed', outcome: 'refused' });
+      await expect(rig.front.check({}, file)).rejects.toMatchObject({ code: 'closed' });
+      rig.http.expectNone('api/check');
+    });
+
     it('refuses to check an intent with a field it does not know, without sending', async () => {
       const rig = await open();
       const misspelt = { conect: { ETH_EXT: 'fake0' } } as unknown as Parameters<

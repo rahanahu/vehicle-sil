@@ -36,27 +36,7 @@ const CHECK_DELAY_MS = 200;
 /** Keys that pass the select by, or close it: they do not open the choice. */
 const PASSING_KEYS = new Set(['Tab', 'Shift', 'Escape', 'Control', 'Alt', 'Meta']);
 
-/** The check on its way for each connection: the parts that check the same intent of the same file share it. */
-const checking = new WeakMap<Front, { key: string; promise: Promise<CheckResult> }>();
-
 const keyOf = (intent: Intent, file: string | undefined) => JSON.stringify([file ?? null, intent]);
-
-function sharedCheck(
-  client: Front,
-  intent: Intent,
-  file: string | undefined,
-): Promise<CheckResult> {
-  const key = keyOf(intent, file);
-  const going = checking.get(client);
-  if (going?.key === key) return going.promise;
-  const entry = { key, promise: client.check(intent, { file }) };
-  checking.set(client, entry);
-  const done = () => {
-    if (checking.get(client) === entry) checking.delete(client);
-  };
-  entry.promise.then(done, done);
-  return entry.promise;
-}
 
 /**
  * The lines of a check that are about connecting `network`: its own `connect-*` and `outside-*` findings; the
@@ -228,13 +208,24 @@ export class VsilConnectElement extends Part {
     let checks = 0;
     let checked: string | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    /** The last check asked for: aborted when the intent changes, the choice goes back to none or the part leaves. */
+    let asking: AbortController | null = null;
+    const stopAsking = () => {
+      asking?.abort();
+      asking = null;
+    };
     const check = () => {
       const intent = pageIntent.get();
       const asked = ++checks;
       checked = keyOf(intent, file());
-      sharedCheck(client, intent, file()).then(
+      stopAsking();
+      asking = new AbortController();
+      const { signal } = asking;
+      // The parts and the screen of a page that check the same intent share one check (`check()` does). A check that
+      // still waits when this one is aborted is not sent (unless the screen still wants it)
+      client.check(intent, { file: file(), signal }).then(
         (result) => {
-          if (!alive() || asked !== checks) return;
+          if (!alive() || asked !== checks || signal.aborted) return;
           relisted = false;
           findings.replaceChildren(
             ...findingsFor(result, intent, network).map(({ text, finding }) => {
@@ -246,7 +237,8 @@ export class VsilConnectElement extends Part {
           );
         },
         (error: unknown) => {
-          if (!alive() || asked !== checks) return;
+          // An abort is not a failure: the part has asked, or will ask, about the intent that replaced it
+          if (!alive() || asked !== checks || signal.aborted) return;
           checked = null; // the same intent is checked again at its next change
           say(findings, [messageOf(error)]);
           // The server's last list does not have the choice (the file changed, or no list was made). After the user
@@ -266,11 +258,13 @@ export class VsilConnectElement extends Part {
       clearTimeout(timer);
       if (chosen() === 'none') {
         checks++; // an answer on its way is no longer about this choice
+        stopAsking();
         checked = null;
         findings.replaceChildren();
         return;
       }
       if (keyOf(pageIntent.get(), file()) === checked) return;
+      stopAsking(); // the check of the intent before is not wanted any more
       timer = setTimeout(check, CHECK_DELAY_MS);
     };
 
@@ -292,6 +286,7 @@ export class VsilConnectElement extends Part {
     this.own(pageIntent.subscribe(changed));
     this.own(() => {
       clearTimeout(timer);
+      stopAsking();
       checks++;
       setData(this, 'network', null);
       setData(this, 'chosen', null);

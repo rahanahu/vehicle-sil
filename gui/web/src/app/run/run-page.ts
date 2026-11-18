@@ -4,6 +4,7 @@ import {
   DestroyRef,
   LOCALE_ID,
   computed,
+  effect,
   inject,
   linkedSignal,
   resource,
@@ -20,9 +21,11 @@ import {
   FEATURE_SCENARIO,
   FEATURE_SPEED,
   FEATURE_START_PAUSED,
+  Intent,
   Speed,
   errorMessage,
 } from '@vehicle-sil/gui-client';
+import { pageIntent } from '@vehicle-sil/gui-client/elements';
 import { AuthToken } from '../core/auth/auth-token';
 import { shortPath } from '../core/format/short-path';
 import { LanguageChoice } from '../core/i18n/language-choice';
@@ -101,6 +104,9 @@ export function readRunChoices(value: unknown): RunChoices | null {
   return v as unknown as RunChoices;
 }
 
+/** 2 つの意図が同じか（JSON で比べる。画面が作る意図は、欄がいつも同じ順）。 */
+const sameIntent = (a: Intent, b: Intent) => JSON.stringify(a) === JSON.stringify(b);
+
 /** 中断できる待ち。中断されたら、その理由で失敗する（待ち終えたら、中断の受け口を外す）。 */
 function wait(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -123,6 +129,8 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
  * - 実行の状態はサーバーにあり、アプリ全体の接続（ServerConnection）が映す。この画面は RunSession を通して読む。
  * - 上の状態の帯に、操作と結果をいつも出す。詳しいカードはその下（実行した後は、結果、状態、ログを先に）。
  * - 選んだファイル、外す participant、速度は、この画面だけの signal。実行中は、実行しているセッションのものを出す。
+ * - 選択から次の実行の意図（`intent`）を 1 か所で作り、照合も開始もそれを正面の口に渡す。画面の欄は `pageIntent`
+ *   にも書く（部品 <vsil-connect> の照合が同じ意図になり、同じ照合を分け合う）。
  */
 @Component({
   selector: 'app-run-page',
@@ -272,11 +280,12 @@ export class RunPage {
     computation: ({ names }) => new Set(names),
     equal: (a, b) => a.size === b.size && [...a].every((name) => b.has(name)),
   });
-  /** 送る「自分で起動する」: ランチャーが持てるときだけ。外したものは送らない。 */
+  /**
+   * 送る「自分で起動する」: ランチャーが持てるときだけ。外したものと重ならないのは、照合の欄（check-panel）が外すときに
+   * 消すから（重なれば、ランチャーが照合で断る）。
+   */
   private readonly manualToSend = computed(() =>
-    this.manualSupported()
-      ? [...this.manual()].filter((name) => !this.disabled().has(name)).sort()
-      : null,
+    this.manualSupported() ? [...this.manual()].sort() : null,
   );
 
   /** ランチャーが速度を変えられるか（できないときは欄を出さず、速度を送らない）。 */
@@ -382,44 +391,58 @@ export class RunPage {
     this.running() ? null : connectText(this.connect(), this.list),
   );
 
+  /**
+   * 次の実行の意図: 画面の選択（外す participant、自分で起動する participant、シナリオ、速度、止めて始める）と、部品が
+   * 選んだ外につなぐ先。照合も開始も、これを正面の口に渡す（照合は外につないだ実行の時刻の決まり
+   * （`outside-real-time` など）に速度と止めて始めるを使うので、合わない選択は始める前に所見で出る）。
+   * - 速度の倍率の欄が読めない・範囲の外の間は、速度は最後に読めた値のまま（打っている途中の値は入らない。開始は
+   *   blockedBy が止める）。
+   * - シナリオを選んだら止めて始めない（ランチャーは 2 つを一緒には受けない。チェックボックスも押せなくしてある）。
+   */
+  private readonly intent = computed<Intent>(
+    () => {
+      const manual = this.manualToSend();
+      const scenario = this.chosenScenario();
+      const speed = this.speedSupported() ? this.speed() : null;
+      const paused = scenario === null && this.startPausedSupported() && this.startPaused();
+      const connect = this.connectToSend();
+      return {
+        disable: [...this.disabled()].sort(),
+        ...(manual !== null ? { manual } : {}),
+        ...(scenario !== null ? { scenario } : {}),
+        ...(speed !== null ? { speed } : {}),
+        ...(paused ? { start_paused: true } : {}),
+        ...(connect !== null ? { connect } : {}),
+      };
+    },
+    { equal: sameIntent },
+  );
+
   /** 照合し直すよう頼んだ回数（同じ組み合わせでも照合し直すため）。 */
   private readonly rechecks = signal(0);
-  /** 送った照合の要求の終わり。次の照合は、前の照合の応答を待ってから送る（サーバーで重ならない）。 */
-  private checkChain: Promise<unknown> = Promise.resolve();
+  /** 最後に送った照合の rechecks（それより後に頼んだ「照合し直す」は、新しく送る）。 */
+  private checkedAgain = 0;
 
   /**
-   * 選んだファイルと外す participant で照合する。切り替えたら CHECK_DELAY_MS 待ってから 1 回、前の照合の応答を
-   * 待ってから送る。途中で組み合わせが変わったら、古い応答は捨てる。ランチャーが動いている間は照合しない。
+   * 選んだファイルを次の実行の意図で照合する。切り替えたら（速度を打ったら）CHECK_DELAY_MS 待ってから 1 回。正面の口が、
+   * 前の照合の応答を待ってから送り、同じ意図の照合（部品 <vsil-connect> のもの）を分け合う。待っている間に意図が
+   * 変わったら送らず（`signal`）、古い応答は捨てる。「照合し直す」の照合は、送っている最中の照合を分け合わない
+   * （`fresh`。直したファイルを読む）。ランチャーが動いている間は照合しない。
    */
   protected readonly check = resource({
     params: () => {
       const file = this.selected();
       if (!this.auth.token() || file === null || this.running()) return undefined;
-      return {
-        file,
-        disable: [...this.disabled()].sort(),
-        manual: this.manualToSend(),
-        scenario: this.chosenScenario(),
-        connect: this.connectToSend(),
-        again: this.rechecks(),
-      };
+      return { file, intent: this.intent(), again: this.rechecks() };
     },
     loader: async ({ params, abortSignal }) => {
       await wait(CHECK_DELAY_MS, abortSignal);
-      const body = {
-        file: params.file,
-        disable: params.disable,
-        ...(params.manual !== null ? { manual: params.manual } : {}),
-        ...(params.scenario !== null ? { scenario: params.scenario } : {}),
-        ...(params.connect !== null ? { connect: params.connect } : {}),
-      };
-      const request = this.checkChain.then(() => {
-        // 待っている間に組み合わせが変わったら送らない
-        abortSignal.throwIfAborted();
-        return this.info.check(body);
+      const fresh = params.again !== this.checkedAgain;
+      this.checkedAgain = params.again;
+      const result = await this.run.check(params.intent, params.file, {
+        signal: abortSignal,
+        fresh,
       });
-      this.checkChain = request.catch(() => undefined);
-      const result = await request;
       abortSignal.throwIfAborted();
       return result;
     },
@@ -448,11 +471,8 @@ export class RunPage {
     return this.selectedCheck();
   });
 
-  /** 始められない理由（なければ空）。 */
+  /** 始められない理由（なければ空）。ランチャーやサーバーが断る理由は、帯が正面の口の `controls.start` から出す。 */
   protected readonly blockedBy = computed<string[]>(() => {
-    if (this.app.hasValue() && !this.app.value().launcher.usable) {
-      return [$localize`ランチャーがこの画面に対応していません。`];
-    }
     if (this.selected() === null) return [$localize`構成ファイルを選んでください。`];
     if (this.speedSupported() && this.speedInvalid()) {
       return [$localize`速度の倍率が範囲の外です。`];
@@ -598,6 +618,28 @@ export class RunPage {
       }),
       inject(DestroyRef),
     );
+    // 画面の欄を pageIntent に書く（外につなぐ先は部品が書く）。走行中は書かない（部品は隠れていて、照合もしない）。
+    // ページを離れたら消す（ほかのページや次の読み込みに残さない）。構成ファイルを替えたら、欄はそのファイルの選択に
+    // 戻り、それを書く
+    const own = computed(
+      () => {
+        const { disable, manual, scenario, speed, start_paused } = this.intent();
+        return { disable, manual, scenario, speed, start_paused };
+      },
+      { equal: sameIntent },
+    );
+    effect(() => {
+      if (!this.running()) pageIntent.update(own());
+    });
+    inject(DestroyRef).onDestroy(() =>
+      pageIntent.update({
+        disable: undefined,
+        manual: undefined,
+        scenario: undefined,
+        speed: undefined,
+        start_paused: undefined,
+      }),
+    );
   }
 
   /** 持ち越した選択。持ち越したときと同じセッションの間だけ使う。 */
@@ -612,22 +654,7 @@ export class RunPage {
   protected start(): void {
     const file = this.selected();
     if (file === null) return;
-    const scenario = this.chosenScenario();
-    const manual = this.manualToSend();
-    const speed = this.speedSupported() ? this.speed() : null;
-    const connect = this.connectToSend();
-    this.run.start({
-      file,
-      disable: [...this.disabled()].sort(),
-      ...(manual !== null ? { manual } : {}),
-      ...(speed !== null ? { speed } : {}),
-      // シナリオは時刻 0 から自分で進むので、止めた状態では始めない（ランチャーの決まり）
-      ...(scenario === null && this.startPausedSupported() && this.startPaused()
-        ? { start_paused: true }
-        : {}),
-      ...(scenario !== null ? { scenario } : {}),
-      ...(connect !== null ? { connect } : {}),
-    });
+    this.run.start(this.intent(), file);
   }
 
   protected selectScenario(scenario: string | null): void {
