@@ -13,7 +13,7 @@
 
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/launch/probe.hpp"
-#include "vehicle_sil/launch/scenario.hpp"
+#include "vehicle_sil/scenario/scenario.hpp"
 #include "vehicle_sil/process/paths.hpp"
 
 #include <algorithm>

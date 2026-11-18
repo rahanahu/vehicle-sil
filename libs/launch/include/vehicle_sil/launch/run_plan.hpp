@@ -10,8 +10,8 @@
 #include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/config/config.hpp"
 #include "vehicle_sil/launch/run_outcome.hpp"
-#include "vehicle_sil/launch/scenario.hpp"
-#include "vehicle_sil/launch/scenario_check.hpp"
+#include "vehicle_sil/scenario/scenario.hpp"
+#include "vehicle_sil/scenario/scenario_check.hpp"
 #include "vehicle_sil/config/time_plan.hpp"
 
 #include <chrono>

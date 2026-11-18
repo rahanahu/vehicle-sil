@@ -22,6 +22,7 @@
 | `launch_cli.*` | `vehicle_sil_launch check` を実行ファイルとして動かす |
 | `launch_run.*` | `vehicle_sil_launch run` を実行ファイルとして動かす |
 | `config.*` | `libs/config` の境界（ヘッダーとソースが何を include してよいか） |
+| `scenario.*` | `libs/scenario` の境界（ヘッダーとソースが何を include してよいか） |
 | `process.*` | 子プロセスのテスト |
 
 `launch.*` は、各ルールの通る例と失敗する例を、文言と行番号まで照合します。
@@ -93,6 +94,24 @@
 - 試験: `tests/launch`（ルールと読み取り）、`tests/config`（境界）
 - `ctest -R`: `^launch\.`（ルール）、`^config\.`（境界）
 
+### `libs/scenario`
+
+シナリオ（純粋: プロセスも SIL Kit も使いません。`launch.*` が試験し、`scenario.*` が境界を守ります）。`scenario/detail/` のヘッダーは、ライブラリの部品、`probe.cpp`（`scenario_csv.hpp`）、試験が読むためのものです。
+
+公開ヘッダー:
+
+| 名前 | 場所 |
+|---|---|
+| `ScenarioCheck`（`check --scenario` が読んだシナリオ）と `scenario_catalog()`（照合した構成の participant を、シナリオが使える形にしたもの） | `scenario/scenario_check.hpp` |
+| シナリオの `read_scenario()`、時間の関数のインターフェース `Waveform` | `scenario/scenario.hpp` |
+| `ScenarioEngine` | `scenario/scenario_run.hpp` |
+| `run --timeline` の記録 `TimelineRecord` | `scenario/timeline.hpp` |
+
+読み手、エンジン、タイムラインのファイルは [code-map-scenario.md](code-map-scenario.md) に並べています。`scenario_catalog()` は `src/scenario_check.cpp` です。
+
+- 試験: `tests/launch`（読み手とエンジン）、`tests/scenario`（境界）
+- `ctest -R`: `^launch\.`（読み手とエンジン）、`^scenario\.`（境界）
+
 ### `libs/launch`、`tools/launch`
 
 公開ヘッダー:
@@ -100,7 +119,6 @@
 | 名前 | 場所 |
 |---|---|
 | `check_file()`、`Checked`（ファイルの照合と、`--scenario` のシナリオ。その `format_text()` と `format_json()`） | `launch/checked.hpp` |
-| `ScenarioCheck`（`check --scenario` が読んだシナリオ）と `scenario_catalog()`（照合した構成の participant を、シナリオが使える形にしたもの） | `launch/scenario_check.hpp` |
 | ランチャーが、動いているコンピューターに尋ねること: `find_executable()` と `executable_status()`（participant の実行ファイル）、`find_tool()` と `bridge_tools()`（ブリッジ）、`run_tool()`（`--describe` やブリッジの一覧の 1 回の実行）、`read_config_file()`、`read_scenario_file()`、`files_beside()`、`environment_value()` | `launch/probe.hpp` |
 | `vehicle_sil_launch connections` の `list_connections()`、`connections_of()`（backend ごとに各ブリッジに 1 回だけ聞く。`prefix_targets()` が `--connect` の受ける値にする）、`interpret_list()`（ブリッジの一覧か、ランチャーが作る一覧: `tool-*`）、`check_requested()`（`--request`: 要求ファイルの先が一覧にあるか。backend と名前で比べる。ファイルを読み構成に合わせて切るのは、要求ファイルの行の関数）、`quoted_for_shells()`、出力 | `launch/connections.hpp` |
 | `run_file()`、その結果（`RunReport`。書くのは `format_run_text()` と `format_run_json()`）、実行が借りるもの（`RunLent`）、実行から見た Control Server（`ControlEndpoint`） | `launch/run.hpp` |
@@ -118,9 +136,6 @@
 | `EventStream`（`run --events` のイベントを書き、`RunEvents` を実装します） | `launch/events.hpp` |
 | `parse_command()` と `CommandInput`（`--stdin-commands` のコマンドを読む） | `launch/command_input.hpp` |
 | `Command`（読んだコマンドと、`TimeCommands` が決めた結果） | `launch/command.hpp` |
-| シナリオの `read_scenario()`、時間の関数のインターフェース `Waveform` | `launch/scenario.hpp` |
-| `ScenarioEngine` | `launch/scenario_run.hpp` |
-| `run --timeline` の記録 `TimelineRecord` | `launch/timeline.hpp` |
 | 記録とシナリオの結果から `run --timeline` のファイルを作る `format_timeline_json()` | `launch/timeline_format.hpp` |
 
 実装:
@@ -128,7 +143,6 @@
 | 内容 | 場所 |
 |---|---|
 | 照合の全体の流れ（`check_file()`） | `src/check.cpp` |
-| `scenario_catalog()` | `src/scenario_check.cpp` |
 | コンピューターを調べる: ファイルシステム（実行ファイルやブリッジの場所、設定ファイル、シナリオ、点のファイル）、環境変数（`PATH`、`VEHICLE_SIL_LISTEN_ON_NETWORK`）、出力を読むために動かすプロセス。ルールは調べた結果を値（`config.cpp` の `executable_finding()` はファイルの状態を受け取る）か関数（`ConnectTools`、`ScenarioContext::read_file`）で受け取る。例外が 1 つ残る: `connect.cpp` の `bridge_working_directory()` は相対のディレクトリを絶対にする | `src/probe.cpp` |
 | check の JSON に、実行ファイルが申告したとおりのネットワークを書く（`write_reported_networks()`） | `src/reported_networks.cpp` |
 | `connections`: ブリッジの一覧を読み（`TargetReader`）、キーをすべてそのまま渡す（`write_node()`）こと、ランチャーが作る一覧、文と JSON。ブリッジは、`--describe` と同じく `src/probe.cpp` の `run_tool()`（`bridge_tools()`）で起こします | `src/connections.cpp` |
@@ -204,7 +218,7 @@
 | `schema/timeline.schema.json` | `run --timeline` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。ツールのアーカイブの `schema/` に入れ、テンプレートの `template/schema/` には置かない |
 | `gui/protocol/dashboard.schema.json` | ダッシュボード |
 
-設定ファイルとシナリオのスキーマは、エディターの補完と検査のためのもので、ランチャーは読みません。ランチャーが読むコードは `libs/config/src/config.cpp` と、シナリオの読み手（`scenario_reader.hpp` と、そこに挙げたファイル）です。
+設定ファイルとシナリオのスキーマは、エディターの補完と検査のためのもので、ランチャーは読みません。ランチャーが読むコードは `libs/config/src/config.cpp` と、シナリオの読み手（`libs/scenario/src/scenario_reader.hpp` と、そこに挙げたファイル）です。
 
 | コピーの場所 | 内容 |
 |---|---|
@@ -310,13 +324,13 @@
 
 変える場所:
 
-- 設定ファイルかシナリオのキー、値の形、ネットワークの種類、手順の種類（`libs/config/src/config.cpp` と、シナリオの読み手（`scenario_reader.hpp` と、そこに挙げたファイル）の、ファイルを読むコード）
+- 設定ファイルかシナリオのキー、値の形、ネットワークの種類、手順の種類（`libs/config/src/config.cpp` と、シナリオの読み手（`libs/scenario/src/scenario_reader.hpp` と、そこに挙げたファイル）の、ファイルを読むコード）
 
 合わせて直すコードとファイル:
 
 - `schema/simulation.schema.json`、`schema/scenario.schema.json`: キーには `description` を付けます。エディターが、そのキーの説明として表示する文です。
 - テンプレートのコピー: `cp schema/*.schema.json template/schema/`（ダッシュボードは `gui/protocol/dashboard.schema.json` から）
-- 知らないキーのエラーの文が使う一覧（`config.cpp` と `scenario_reader.hpp` の先頭の `k...Keys`）
+- 知らないキーのエラーの文が使う一覧（`config.cpp` と `libs/scenario/src/scenario_reader.hpp` の先頭の `k...Keys`）
 - `tests/schema/test_schemas.py` の見本（`CONFIG_SAMPLES`、`SCENARIO_SAMPLES`）
 - 要求ファイルのキーなら: `schema/run-request.schema.json` とそのコピー、`request_read.cpp` の `kKeys`、`REQUEST_SAMPLES`、`docs/simulation-run.md` のキーの表、`with_request_file()` での引数の重ね方
 

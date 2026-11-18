@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include "scenario_line.hpp"
+#include "vehicle_sil/scenario/detail/scenario_line.hpp"
 
 #include <cmath>
 #include <cstdint>

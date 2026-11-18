@@ -958,7 +958,7 @@ flowchart LR
 
 ## Scenarios (`vehicle_sil_launch run --scenario`)
 
-A scenario ([scenario.md](../scenario.md)) runs inside the launcher and uses the Hub and the time gate directly. It does not use gRPC. The reference for the guarantees is the comment of `ScenarioEngine` in `libs/launch/include/vehicle_sil/launch/scenario_run.hpp`.
+A scenario ([scenario.md](../scenario.md)) runs inside the launcher and uses the Hub and the time gate directly. It does not use gRPC. The reference for the guarantees is the comment of `ScenarioEngine` in `libs/scenario/include/vehicle_sil/scenario/scenario_run.hpp`.
 
 The data flow. Each arrow is labeled with what it passes:
 

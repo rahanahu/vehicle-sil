@@ -5,7 +5,7 @@
 // refused command the ECU applied all the same) and in the record (TimelineFailure: the failed
 // conditions and writes of the timeline). The engine that runs the scenario and decides its
 // steps is in scenario_run.cpp.
-#include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/scenario/scenario_run.hpp"
 
 #include "scenario_failure.hpp"
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include "vehicle_sil/launch/scenario.hpp"
+#include "vehicle_sil/scenario/scenario.hpp"
 
 #include "scenario_reader.hpp"
 #include "vehicle_sil/config/detail/yaml_reader.hpp"

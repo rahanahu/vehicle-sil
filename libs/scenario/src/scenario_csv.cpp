@@ -2,10 +2,10 @@
 //
 // The points file of a wave: read_csv() splits its text. (files_beside() in probe.cpp reads the
 // file next to the scenario file.)
-#include "scenario_csv.hpp"
+#include "vehicle_sil/scenario/detail/scenario_csv.hpp"
 
 #include "vehicle_sil/ecu/describe.hpp"
-#include "vehicle_sil/launch/scenario.hpp"
+#include "vehicle_sil/scenario/scenario.hpp"
 
 #include <algorithm>
 #include <utility>

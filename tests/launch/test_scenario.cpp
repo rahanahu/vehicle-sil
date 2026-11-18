@@ -10,9 +10,9 @@
 #include "test_harness.hpp"
 
 #include "vehicle_sil/launch/probe.hpp"
-#include "vehicle_sil/launch/scenario.hpp"
-#include "vehicle_sil/launch/scenario_run.hpp"
-#include "vehicle_sil/launch/timeline.hpp"
+#include "vehicle_sil/scenario/scenario.hpp"
+#include "vehicle_sil/scenario/scenario_run.hpp"
+#include "vehicle_sil/scenario/timeline.hpp"
 #include "vehicle_sil/launch/timeline_format.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 

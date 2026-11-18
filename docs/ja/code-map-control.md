@@ -160,7 +160,7 @@ flowchart TD
 守ること:
 
 - 変換は Hub の中だけで行います（読み取りの API や通信の層に追加しません）。
-- 書ける値かどうかの判定は、`MappedSchema::to_actual()` の 1 か所です。シナリオの照合は、`in_range()` で同じ判定を使います（`libs/launch/src/scenario_values.cpp`）。
+- 書ける値かどうかの判定は、`MappedSchema::to_actual()` の 1 か所です。シナリオの照合は、`in_range()` で同じ判定を使います（`libs/scenario/src/scenario_values.cpp`）。
 - 一致しなかった対応の名前には、書かせません（`not_writable()`）。
 - 値は、Hub が保持する前に変換します（読み書きの経路による不整合を作りません）。
 - 書き込みは、`write()` の検査と同じ所で変換します。
