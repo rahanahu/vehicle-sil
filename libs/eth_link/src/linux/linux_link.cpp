@@ -4,7 +4,9 @@
 #include "../os_link_errors.hpp"
 
 #include <ifaddrs.h>
+#include <linux/ethtool.h>
 #include <linux/if_packet.h>
+#include <linux/sockios.h>
 #include <net/if.h>
 #include <net/if_arp.h>
 #include <poll.h>
@@ -42,12 +44,36 @@ Fd control_socket() noexcept
     return Fd();
 }
 
-LinkState state_of(unsigned flags) noexcept
+/// Whether the driver says the carrier is on (ETHTOOL_GLINK, which needs no privilege and reads
+/// the carrier itself), or nullopt if it does not answer (a driver without ethtool support).
+std::optional<bool> carrier_of(int control, const char* name, std::size_t name_bytes) noexcept
 {
-    return (flags & IFF_UP) != 0 && (flags & IFF_RUNNING) != 0 ? LinkState::Up : LinkState::Down;
+    ethtool_value value{};
+    value.cmd = ETHTOOL_GLINK;
+    ifreq request{};
+    std::memcpy(request.ifr_name, name, name_bytes);
+    request.ifr_data = reinterpret_cast<char*>(&value);
+    if (::ioctl(control, SIOCETHTOOL, &request) != 0)
+    {
+        return std::nullopt;
+    }
+    return value.data != 0;
 }
 
 } // namespace
+
+LinkState link_state(unsigned flags, std::optional<bool> carrier) noexcept
+{
+    if ((flags & IFF_UP) == 0)
+    {
+        return LinkState::Down;
+    }
+    // IFF_RUNNING (the operational state) follows the carrier only after the kernel's delayed
+    // link watch, up to about a second behind a TAP device that was just opened; the carrier is
+    // read as it is.
+    const bool on = carrier.value_or((flags & IFF_RUNNING) != 0);
+    return on ? LinkState::Up : LinkState::Down;
+}
 
 void Fd::reset(int fd) noexcept
 {
@@ -83,6 +109,7 @@ std::optional<InterfaceState> interface_state(const std::string& name)
     {
         state.link_type = hardware.ifr_hwaddr.sa_family;
     }
+    state.carrier = carrier_of(control.get(), name.data(), name.size());
     return state;
 }
 
@@ -294,7 +321,7 @@ bool LinuxLink::watch(int fd)
         fault("interface '" + name_ + "' is gone (removed or renamed while the bridge ran)");
         return false;
     }
-    if (const auto now = state_of(state->flags); now != reported_state_)
+    if (const auto now = link_state(state->flags, state->carrier); now != reported_state_)
     {
         reported_state_ = now;
         LinkEvent event;
