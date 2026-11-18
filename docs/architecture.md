@@ -233,6 +233,20 @@ flowchart LR
 - One exception is left: `bridge_working_directory()` in `connect.cpp` makes a relative directory absolute.
 - Do not add code that looks at the computer to the pure side. Put it in `probe` and pass the result in. The files of each part are listed in [code-map-launcher.md](code-map-launcher.md).
 
+### How a run is planned, observed and closed
+
+The details of each part are in [code-map-launcher.md](code-map-launcher.md); this section keeps the shape and the promises.
+
+- A run has two stages. `Runner::prepare()` checks for an interruption, opens the logs and the timeline, and returns the Hub of the run (or nothing, if the run cannot go on). Between the stages `run_file()` starts the Control Server (`ControlEndpoint::start()`, only when the run has one) on that Hub, so that it listens before the registry does. `Runner::run()` goes from the registry to the end.
+- The run makes the Hub and the SIL Kit parts (registry, controller, transport) and closes them as one connection, in the reverse order of making: the transport, the controller, then the registry. The Control Server only borrows the Hub (it holds a `std::shared_ptr` and does not own the SIL Kit parts). A closing thread that was left at its limit therefore reaches only the connection, and the `Runner` can be destroyed as after any other run.
+- What `run_file()` gives to a run is of three kinds:
+  - `RunPlan`: values, made by the pure `plan_run()` from the check that passed and `RunOptions`. The run does not write to it.
+  - `detail::RunObservers`: the caller's functions that the run calls back (lines, events, the name of an interruption, `before_start`).
+  - `RunControls`: what the run borrows (the stop requests, the time commands) or makes for itself.
+- The bridges that `--connect` adds are marked in the plan (`RunMember::outside`, one `RunMember` for each participant). `ParticipantConfig` keeps only what the file says. The step plan is made from the configuration of the file, before the bridges are added.
+- What a run saw is a `RunOutcome` in parts: `setup`, `start`, `end`, `control`, `scenario` and `close`, then `timing`, `participants` and the rest. Its shape is not the shape of the JSON output: `format_run_json()` writes the JSON, and `assess_run()` judges the outcome. The exit code comes from one table (`libs/launch/src/exit_codes.hpp`, used by `RunReport::exit_code()`).
+- The code of the Control Server is in `libs/launch` (`launch/control_server.hpp`, built only with `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`). Reading the arguments of `--control` is in `tools/launch` (`control_arguments.cpp`); the library takes the result as `control_grpc::ServerOptions`.
+
 ## Internals
 
 When you change vehicle-sil, or look up behavior and limitations, read only the document that covers it.

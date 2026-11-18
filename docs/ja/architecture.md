@@ -233,6 +233,20 @@ flowchart LR
 - 例外が 1 つ残っています。`connect.cpp` の `bridge_working_directory()` が、相対のディレクトリを絶対にします。
 - 純粋な側に、計算機を調べる処理を足さないでください。`probe` に置き、結果を渡します。各部分のファイルは [code-map-launcher.md](code-map-launcher.md) にあります。
 
+### 実行を計画し、観察し、閉じる形
+
+各部分の詳細は [code-map-launcher.md](code-map-launcher.md) にあります。この節は形と守る約束だけを書きます。
+
+- 実行は 2 段です。`Runner::prepare()` は中断を確かめ、ログとタイムラインを開き、実行の Hub を返します（続けられないときは何も返しません）。2 段の間に `run_file()` が、その Hub の上で Control Server を始めます（`ControlEndpoint::start()`。実行が持つときだけ）。registry より先に待ち受けるためです。`Runner::run()` は registry から終わりまでを行います。
+- Hub と SIL Kit の部品（registry、controller、transport）は実行が作り、1 つの接続として、作った順の逆（transport、controller、registry）に閉じます。Control Server は Hub を借りるだけです（`std::shared_ptr` を持ち、SIL Kit の部品は持ちません）。そのため、期限で放置された閉じるスレッドが触るのは接続だけで、`Runner` はほかの実行と同じように破棄できます。
+- `run_file()` が実行に渡すものは 3 種類です。
+  - `RunPlan`: 値です。通った照合と `RunOptions` から、純粋な `plan_run()` が作ります。実行はこれに書きません。
+  - `detail::RunObservers`: 実行が呼び返す、呼び出し側の関数です（行、イベント、中断の名前、`before_start`）。
+  - `RunControls`: 実行が借りるもの（停止の要求、時刻の命令）と、実行が自分で作るものです。
+- `--connect` が足すブリッジの印は計画にあります（`RunMember::outside`。参加者ごとに `RunMember` が 1 つ）。`ParticipantConfig` はファイルが書いたことだけを持ちます。刻みの計画は、ブリッジを足す前の、ファイルの構成で作ります。
+- 実行が見たものは、部分に分かれた `RunOutcome` です（`setup`、`start`、`end`、`control`、`scenario`、`close`、続いて `timing`、`participants` ほか）。JSON の出力の形とは別です。JSON は `format_run_json()` が書き、結果の判定は `assess_run()` が行います。終了コードは 1 つの表（`libs/launch/src/exit_codes.hpp`。`RunReport::exit_code()` が使う）から決まります。
+- Control Server の受け口は `libs/launch`（`launch/control_server.hpp`。`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけビルド）にあります。`--control` の引数の読み取りは `tools/launch`（`control_arguments.cpp`）にあり、ライブラリは結果を `control_grpc::ServerOptions` で受け取ります。
+
 ## 内部の仕組み
 
 vehicle-sil を変更するときや、仕様と制限を確認するときに、該当するドキュメントだけを読みます。
