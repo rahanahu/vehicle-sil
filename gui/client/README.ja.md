@@ -103,10 +103,10 @@ GUI サーバーは、2 つの `.mjs` のファイルも、トークンなしで
 | 種類 | 名前                                                                                                                                            |
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | 型   | `ClientSession`（`session`、`ready`、`allowed`、`lastEventAt`、`notices`、`rejected`、`incompatible`、`onMessages`、`report`、`dismissNotice`） |
-| 型   | `Notice`、`SessionView`、`ParticipantView`、`LauncherView`、`LogLine`、`LogSource`、`TimeView`、`CommandView`、`RunOutcome`                     |
-| 関数 | `runOutcome`、`phaseIndex`、`isHolding`                                                                                                         |
+| 型   | `Notice`、`SessionView`、`ParticipantView`、`LauncherView`、`LogLine`、`LogSource`、`TimeView`、`CommandView`、`RunOutcome`、`LauncherAnswer`   |
+| 関数 | `runOutcome`、`phaseIndex`、`isHolding`、`launcherAnswer`                                                                                       |
 
-`ClientSession.allowed` は、GUI サーバーがいま受けるものです（`start`、`stop`、`force`。それぞれ `ok`、理由のコード `reason`、文 `message`。`rev` の大きい方が勝ちます。サーバーが言うまでは `null`）。`SessionView.launcherState` は、ランチャーの最後の `state` イベントです（実行の状態と、いま受けるもの。`rev` の大きい方が勝ちます。届くまでは `null`）。
+`ClientSession.allowed` は、GUI サーバーがいま受けるものです（`start`、`stop`、`force`。それぞれ `ok`、理由のコード `reason`、文 `message`。`rev` の大きい方が勝ちます。サーバーが言うまでは `null`）。`SessionView.launcherState` は、ランチャーの最後の `state` イベントです（実行の状態と、いま受けるもの。`rev` の大きい方が勝ちます。届くまでは `null`）。`launcherAnswer(launcherState, name)` は、1 つの操作（`write`、`pause` など）について、それが言うことを読みます: `reason`（受けるなら `null`）と `caution`。まだ言っていないランチャー（`state` がまだない、その操作の項目がない）は、受けないものとします（`unsupported`）。正面の口の `controls` と `variables.bind` は、これでランチャーを読みます。
 
 ### 実行の操作
 
@@ -136,16 +136,16 @@ GUI サーバーは、2 つの `.mjs` のファイルも、トークンなしで
 
 ### 変数とコンポーネントの接続（`bind`）
 
-| 種類     | 名前                                                                                                                  |
-| -------- | --------------------------------------------------------------------------------------------------------------------- |
-| メソッド | `client.variables.bind(ref, options)`                                                                                 |
-| 型       | `BindOptions`（`periodMs`、`history`、`needsRange`、`needsValue`、`visible`）                                         |
-| 型       | `VariableBinding`（`ref`、`state`、`history()`、`write(value)`、`reject(message)`、`setVisible(visible)`、`close()`） |
-| 型       | `BoundVariable`（`ref`、`info`、`reading`、`condition`、`block`、`writeStatus`、`pending`）                           |
-| 型       | `ValueCondition`、`WriteBlock`、`WriteStatus`、`WriteValue`                                                           |
-| 関数     | `isWriteError`、`hasRange`                                                                                            |
-| 関数     | `valueCondition`（`ConditionInput`）、`writeBlock`（`WriteBlockInput`）                                               |
-| 定数     | `DROPPED_MESSAGE`                                                                                                     |
+| 種類     | 名前                                                                                                                      |
+| -------- | ------------------------------------------------------------------------------------------------------------------------- |
+| メソッド | `client.variables.bind(ref, options)`                                                                                     |
+| 型       | `BindOptions`（`periodMs`、`history`、`needsRange`、`needsValue`、`visible`）                                             |
+| 型       | `VariableBinding`（`ref`、`state`、`history()`、`write(value)`、`reject(message)`、`setVisible(visible)`、`close()`）     |
+| 型       | `BoundVariable`（`ref`、`info`、`reading`、`condition`、`block`、`launcherReason`（`Reason`）、`writeStatus`、`pending`） |
+| 型       | `ValueCondition`、`WriteBlock`、`WriteStatus`、`WriteValue`                                                               |
+| 関数     | `isWriteError`、`hasRange`                                                                                                |
+| 関数     | `valueCondition`（`ConditionInput`）、`writeBlock`（`WriteBlockInput`）                                                   |
+| 定数     | `DROPPED_MESSAGE`                                                                                                         |
 
 `valueCondition`、`writeBlock`、`hasRange` は、`bind` が組み立てに使っている純粋な関数です。
 
@@ -621,14 +621,15 @@ throttle.close();
 
 ### `state` のフィールド（`BoundVariable`）
 
-| フィールド    | 中身                                                                            |
-| ------------- | ------------------------------------------------------------------------------- |
-| `info`        | 変数の定義（いまの実行になければ `undefined`）                                  |
-| `reading`     | 最後の値（`VariableReading`。まだないとき、`visible` が偽のときは `undefined`） |
-| `condition`   | 値の状態（下の「値の状態（`condition`）」）                                     |
-| `block`       | いま書けない理由（下の「書けない理由（`block`）」）                             |
-| `writeStatus` | 最後の書き込みの状態（下の「書き込みの状態（`writeStatus`、`pending`）」）      |
-| `pending`     | 送っていて、結果がまだの値（なければ `null`）                                   |
+| フィールド       | 中身                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `info`           | 変数の定義（いまの実行になければ `undefined`）                                                                            |
+| `reading`        | 最後の値（`VariableReading`。まだないとき、`visible` が偽のときは `undefined`）                                           |
+| `condition`      | 値の状態（下の「値の状態（`condition`）」）                                                                               |
+| `block`          | いま書けない理由（下の「書けない理由（`block`）」）                                                                       |
+| `launcherReason` | `block` が `launcher` のとき、ランチャーの理由（`code` と英語の `message`。`launcherAnswer` が読んだまま）。ほかは `null` |
+| `writeStatus`    | 最後の書き込みの状態（下の「書き込みの状態（`writeStatus`、`pending`）」）                                                |
+| `pending`        | 送っていて、結果がまだの値（なければ `null`）                                                                             |
 
 - `subscribe` は変わったときだけ呼ばれます（最初の状態は `state.get()`）。
 - `get()` は、いつもいまの状態から作ります。そのため、ほかの `Readable`（`client.variables.state` など）の通知の途中で `get()` を呼ぶと、その場で、この `state` の購読者に新しい状態を通知することがあります。
@@ -660,18 +661,20 @@ throttle.close();
 
 書けるなら `null` です。複数に当てはまるときは、表で上にあるものになります。
 
-| `block`             | 意味                                                                                                                      |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `read-only`         | 読むだけの変数（`role` が `output`）                                                                                      |
-| `disconnected`      | クライアントとサーバーの接続が切断されている                                                                              |
-| `ended`             | 実行が終わった                                                                                                            |
-| `not-ready`         | 変数の機能が使えない（実行していない、接続している途中、接続できない）                                                    |
-| `missing`           | いまの実行にない変数                                                                                                      |
-| `peer-disconnected` | その ECU が Control Server と接続していない                                                                               |
-| `parameter`         | `parameter` は、止めて始めた実行の最初のステップの前（`isHolding(session)`: ランチャーの `state` の `holding`）だけ書ける |
-| `scenario`          | シナリオの実行中（見るだけ）                                                                                              |
-| `no-range`          | `needsRange` を付けたのに、変数に範囲（`min` と `max`）がない                                                             |
-| `no-value`          | `needsValue` を付けていて、値（読んだ値か送った値）がまだない                                                             |
+変数と実行の事実が先、次にランチャーの答え（`launcher`）、次に client の予測（`parameter`）、最後に部品の要るものです。ランチャーから来るのは `launcher` だけで、ほかの値は client 自身のものです。ランチャーが何を受けるかについて、client は自分の規則を持ちません。シナリオの実行中でもランチャーが書き込みを受けるなら、`bind` は書かせます。ランチャーの答えは、正面の口の `controls` と同じく `launcherAnswer(launcherState, 'write')` で読みます。
+
+| `block`             | 意味                                                                                                                                                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `read-only`         | 読むだけの変数（`role` が `output`）                                                                                                                                                                                                                   |
+| `disconnected`      | クライアントとサーバーの接続が切断されている                                                                                                                                                                                                           |
+| `ended`             | 実行が終わった                                                                                                                                                                                                                                         |
+| `not-ready`         | 変数の機能が使えない（実行していない、接続している途中、接続できない）                                                                                                                                                                                 |
+| `missing`           | いまの実行にない変数                                                                                                                                                                                                                                   |
+| `peer-disconnected` | その ECU が Control Server と接続していない                                                                                                                                                                                                            |
+| `launcher`          | ランチャーがいまは書き込みを受けない（その `state` の `allowed.write`。`launcherReason` に code と文がある。たとえば、シナリオの実行中は `scenario-running`）か、受けるとまだ言っていない（`allowed.write` のある `state` が届くまでは `unsupported`） |
+| `parameter`         | `parameter` は、止めて始めた実行の最初のステップの前（`isHolding(session)`: ランチャーの `state` の `holding`）だけ書ける。ECU の規則の client による予測（ランチャーは変数ごとには言わない）                                                          |
+| `no-range`          | `needsRange` を付けたのに、変数に範囲（`min` と `max`）がない                                                                                                                                                                                          |
+| `no-value`          | `needsValue` を付けていて、値（読んだ値か送った値）がまだない                                                                                                                                                                                          |
 
 ### 書き込みの状態（`writeStatus`、`pending`）
 

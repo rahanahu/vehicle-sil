@@ -39,8 +39,8 @@ import { bindVariable } from './variable-binding';
           はバスから外れています（CAN、LIN、イーサネットに送らず、受けません。ステップは動き続けます）。</ng-container
         >
       }
-      @if (why(); as text) {
-        {{ text }}
+      @if (why().text) {
+        <span [attr.lang]="why().english ? 'en' : null">{{ why().text }}</span>
       }
     </p>
     <p class="state error" role="alert" data-testid="bus-error">
@@ -94,10 +94,9 @@ export class BusConnection {
     return shown !== false;
   });
   protected readonly toggleLabel = computed(() => busToggleLabel(this.ref().peer));
-  protected readonly why = computed(() => {
-    const block = this.variable.block();
-    return block === null || block === 'read-only' ? '' : blockText(block);
-  });
+  protected readonly why = computed(() =>
+    blockText(this.variable.block(), this.variable.launcherReason()),
+  );
   protected readonly error = computed(() => {
     const status = this.variable.writeStatus();
     return isWriteError(status) ? writeText(status).text : null;
