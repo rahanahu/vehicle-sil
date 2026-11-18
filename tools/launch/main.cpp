@@ -41,8 +41,8 @@
 #include "vehicle_sil/process/child_process.hpp"
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
 #include "control_arguments.hpp"
-#include "control_server.hpp"
 #include "vehicle_sil/control/hub.hpp"
+#include "vehicle_sil/launch/control_server.hpp"
 #endif
 
 #include <algorithm>
@@ -1232,11 +1232,11 @@ int run(const cli::Args& args, launch::EventStream* events)
         a.tls_cert = args.str("control-tls-cert", "");
         a.tls_key = args.str("control-tls-key", "");
         a.audit_log = args.str("control-audit-log", "");
-        launch_cli::ControlHooks hooks;
+        launch::ControlHooks hooks;
         hooks.controls = shared().controls;
         // Its event (and its refusal once the run is over) comes from the time commands.
         hooks.stop = [] { g_stops.request(kControlStop); };
-        server = launch_cli::make_control_server(launch_cli::read_control_options(a), std::move(hooks));
+        server = launch::make_control_server(launch_cli::read_control_options(a), std::move(hooks));
         options.control_endpoint = server.get();
     }
 #endif

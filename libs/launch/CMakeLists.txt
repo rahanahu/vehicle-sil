@@ -76,4 +76,11 @@ target_link_libraries(vehicle_sil_launch_lib PRIVATE rapidyaml)
 if(WIN32)
   target_link_libraries(vehicle_sil_launch_lib PRIVATE iphlpapi ws2_32)
 endif()
+# The Control Server of run --control (control_server.hpp): gRPC on the run's hub. Only with
+# VEHICLE_SIL_BUILD_CONTROL_SERVER; the header includes control_grpc's, so a user links
+# vehicle_sil::control_grpc too.
+if(TARGET vehicle_sil::control_grpc)
+  target_sources(vehicle_sil_launch_lib PRIVATE src/control_server.cpp)
+  target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::control_grpc)
+endif()
 vehicle_sil_target_defaults(vehicle_sil_launch_lib)

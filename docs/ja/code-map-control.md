@@ -192,7 +192,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 変える場所:
 
-- `tools/launch/control_arguments.cpp`（`--control` の引数の読み取りと検査。usage の誤り）と `tools/launch/control_server.cpp`（検査済みの `ServerOptions` から作るサーバー）
+- `tools/launch/control_arguments.cpp`（`--control` の引数の読み取りと検査。usage の誤り）と `libs/launch/src/control_server.cpp`（検査済みの `ServerOptions` から作るサーバー）
 - `launch::ControlEndpoint` と `RunOptions::control_endpoint`（`launch/run.hpp`）。`libs/launch/src/run.cpp` の `run_file()` が、`Runner::prepare()` と `Runner::run()` の間で Server を起動します
 - `TimeCommands` の `hold_before_start()`、`inspect()`、`wait_paused()`
 - `ServerOptions::external_hub`
@@ -227,7 +227,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 - `ServerOptions::observe_only`
 - `libs/control_grpc/src/auth.hpp` の `Effect` と、`auth.cpp` の `rpc_rules()`
 - 拒否するコード: `control_service.cpp` の `guarded()`
-- 設定するコード: `tools/launch/control_server.cpp`
+- 設定するコード: `libs/launch/src/control_server.cpp`
 
 合わせて直すドキュメント:
 
