@@ -17,6 +17,7 @@ add_library(vehicle_sil_runner STATIC
   src/run_control.cpp
   src/run_controls.cpp
   src/run_notes.cpp
+  src/run_outcome.cpp
   src/run_output.cpp
   src/run_outside.cpp
   src/run_participants.cpp
@@ -33,9 +34,12 @@ target_include_directories(vehicle_sil_runner PUBLIC $<BUILD_INTERFACE:${CMAKE_C
 # The public headers include the scenario's, the configuration's and the check's (RunPlan holds a
 # CheckReport and a ScenarioCheck).
 target_link_libraries(vehicle_sil_runner PUBLIC vehicle_sil::scenario vehicle_sil::config)
-# The public headers include control's (hub.hpp) and the process headers (process.hpp), and the
-# simulation time (sim_time.hpp, time_commands.hpp); no SIL Kit.
+# The public headers include control's (hub.hpp), the process headers (process.hpp) and the
+# simulation time (sim_time.hpp); no SIL Kit.
 target_link_libraries(vehicle_sil_runner PUBLIC vehicle_sil::control vehicle_sil::process vehicle_sil::sim_base)
+# The description of an ECU (monitor_names.hpp, describe.hpp): config carries it too, but the runner
+# includes it itself.
+target_link_libraries(vehicle_sil_runner PRIVATE vehicle_sil::ecu)
 # The registry and the controller of the run, and the hub's end of the ECUs' control agents on the
 # controller's participant. Only the .cpp files and the private headers (src/) include them; the
 # public headers keep them behind RunnerImpl (runner/detail/runner.hpp).

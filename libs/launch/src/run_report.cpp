@@ -27,55 +27,6 @@ std::size_t RunReport::errors() const { return check.errors() + count(findings, 
 std::size_t RunReport::warnings() const { return check.warnings() + count(findings, Severity::Warning); }
 std::size_t RunReport::notes() const { return check.notes() + count(findings, Severity::Note); }
 
-EndReason end_reason(const RunOutcome& outcome)
-{
-    if (!outcome.setup.error.empty())
-    {
-        return EndReason::SetupFailed;
-    }
-    if (!outcome.end.interrupted_by.empty())
-    {
-        // What asked first decides, whatever came after it (a Ctrl+C after a stop command is
-        // still the operator's stop).
-        return outcome.end.interrupted_kind == StopKind::Operator ? EndReason::Stopped : EndReason::Interrupted;
-    }
-    const bool ended = outcome.end.simulation == SimulationEnd::ReachedStopAt || outcome.end.simulation == SimulationEnd::Ended;
-    return ended ? EndReason::Completed : EndReason::Failed;
-}
-
-std::vector<std::string> ended_by_force(const RunOutcome& outcome)
-{
-    std::vector<std::string> names;
-    if (end_reason(outcome) != EndReason::Stopped)
-    {
-        return names;
-    }
-    const bool ran = outcome.end.simulation != SimulationEnd::NotStarted;
-    for (const ParticipantRun& p : outcome.participants)
-    {
-        // Not one that the launcher could not ask to stop, and not one it waited for in full (the
-        // finding did-not-end says that).
-        if (p.ending == Ending::Killed && !p.stop_request_failed && !(p.stopped_after_end && ran))
-        {
-            names.push_back(p.name);
-        }
-    }
-    return names;
-}
-
-const char* end_reason_name(EndReason reason) noexcept
-{
-    switch (reason)
-    {
-    case EndReason::Completed: return "completed";
-    case EndReason::Stopped: return "stopped";
-    case EndReason::Interrupted: return "interrupted";
-    case EndReason::Failed: return "failed";
-    case EndReason::SetupFailed: return "setup_failed";
-    }
-    return "failed";
-}
-
 // The order of the results, strongest first: usage, what cannot be read or set up, an interrupt,
 // a failure, a scenario that a stop cut short, a stop, a pass. The exit codes are in exit_codes.hpp.
 RunResult RunReport::result() const

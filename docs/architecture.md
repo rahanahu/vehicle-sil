@@ -224,15 +224,17 @@ flowchart LR
     pure["Pure side<br>libs/config (config, check rules, connect rules, time plan),<br>libs/scenario (scenario, timeline records),<br>check format"]
     assemble["check_file(), list_connections(), run_tests()"]
     probe["Computer side<br>launch/probe.hpp, src/probe.cpp"]
-    run["Run side<br>libs/runner (run, time_commands, run_*), events"]
+    run["Run side<br>libs/runner (run, time_commands, run_*)"]
+    run_file["run_file(), events<br>(launch)"]
     assemble --> pure
     assemble --> probe
     run --> pure
-    run --> probe
+    run_file --> run
+    run_file --> pure
 ```
 
 - The pure side turns values into findings and does not look at the computer. It includes none of SIL Kit, `process`, `participant_runtime`, `participant_configuration`, `launch/run.hpp`, `launch/probe.hpp`, `events`, `stop_requests`, `runner.hpp`, `runner_impl.hpp`, `time_commands` or `run_*.hpp`, neither directly nor through the headers it includes.
-- What the launcher finds out from the computer (the file system, the environment, the output of the processes it runs) goes into `probe`. `check_file()`, `list_connections()` and `run_tests()` call `probe` and pass what it found to the pure side as values or as functions. The run side (running the simulation) depends on both.
+- What the launcher finds out from the computer (the file system, the environment, the output of the processes it runs) goes into `probe`. `check_file()`, `list_connections()` and `run_tests()` call `probe` and pass what it found to the pure side as values or as functions. The run side (`libs/runner`, running the simulation) depends on the pure side and does not use `probe` (it takes the check that passed).
 - The test `launch.pure_files_include_no_runtime` (`cmake/VehicleSilCheckIncludes.cmake`) guards this. Add a new file of the pure side to `_launch_pure_files` in `tests/launch/CMakeLists.txt`.
 - The configuration and its check are the library `vehicle_sil::config` (`libs/config`). It links neither `core` nor `control_silkit`, includes nothing of `vehicle_sil/launch/`, nor `process.hpp` or `child_process.hpp` of `process`. The link does not show all of that (a header of `core` that needs no SIL Kit compiles, and `process` is linked for `paths.hpp`), so two tests read the directory: `config.no_silkit_boundary` (`cmake/VehicleSilCheckNoSilKit.cmake`) and `config.includes_no_runtime` (`cmake/VehicleSilCheckIncludes.cmake` with `DIR` and `FORBIDDEN_PREFIXES`). A new file in `libs/config` needs no entry.
 - The scenario is the library `vehicle_sil::scenario` (`libs/scenario`). It links `config`, `control` and `sim_base`, and neither `core` nor `control_silkit`. It is guarded the same way (`scenario.no_silkit_boundary`, `scenario.includes_no_runtime`: no header under `vehicle_sil/launch/`, no `child_process.hpp` or `process.hpp`), and `config.includes_no_runtime` also keeps `libs/config` from including `vehicle_sil/scenario/`.

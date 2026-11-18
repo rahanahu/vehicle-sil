@@ -224,15 +224,17 @@ flowchart LR
     pure["純粋な側<br>libs/config（config、照合の規則、connect の規則、time plan）、<br>libs/scenario（scenario、timeline の記録）、<br>check の書式"]
     assemble["check_file()、list_connections()、run_tests()"]
     probe["計算機を調べる側<br>launch/probe.hpp、src/probe.cpp"]
-    run["実行の側<br>libs/runner（run、time_commands、run_*）、events"]
+    run["実行の側<br>libs/runner（run、time_commands、run_*）"]
+    run_file["run_file()、events（launch）"]
     assemble --> pure
     assemble --> probe
     run --> pure
-    run --> probe
+    run_file --> run
+    run_file --> pure
 ```
 
 - 純粋な側は、値から指摘を作り、計算機を調べません。SIL Kit、`process`、`participant_runtime`、`participant_configuration`、`launch/run.hpp`、`launch/probe.hpp`、`events`、`stop_requests`、`runner.hpp`、`runner_impl.hpp`、`time_commands`、`run_*.hpp` を、直接にも、include するヘッダーを通しても含みません。
-- ランチャーが計算機について調べること（ファイルシステム、環境、起動したプロセスの出力）は `probe` に置きます。`check_file()`、`list_connections()`、`run_tests()` が `probe` を呼び、調べた結果を値か関数として純粋な側に渡します。実行の側（シミュレーションの実行）は両方に依存します。
+- ランチャーが計算機について調べること（ファイルシステム、環境、起動したプロセスの出力）は `probe` に置きます。`check_file()`、`list_connections()`、`run_tests()` が `probe` を呼び、調べた結果を値か関数として純粋な側に渡します。実行の側（`libs/runner`、シミュレーションの実行）は純粋な側に依存し、`probe` は使いません（照合の結果を受け取ります）。
 - この向きは試験 `launch.pure_files_include_no_runtime`（`cmake/VehicleSilCheckIncludes.cmake`）で守ります。純粋な側に新しいファイルを足したら、`tests/launch/CMakeLists.txt` の `_launch_pure_files` に足します。
 - 構成とその照合は、ライブラリ `vehicle_sil::config`（`libs/config`）です。`core` も `control_silkit` もリンクせず、`vehicle_sil/launch/` のヘッダーも、`process` の `process.hpp` と `child_process.hpp` も含みません。リンクだけでは守りきれない（SIL Kit の要らない `core` のヘッダーはコンパイルでき、`process` は `paths.hpp` のためにリンクしています）ので、2 つの試験がディレクトリを読みます。`config.no_silkit_boundary`（`cmake/VehicleSilCheckNoSilKit.cmake`）と `config.includes_no_runtime`（`cmake/VehicleSilCheckIncludes.cmake` の `DIR` と `FORBIDDEN_PREFIXES`）です。`libs/config` に足すファイルは、一覧に足す必要がありません。
 - シナリオは、ライブラリ `vehicle_sil::scenario`（`libs/scenario`）です。`config`、`control`、`sim_base` をリンクし、`core` も `control_silkit` もリンクしません。同じ形で守ります（`scenario.no_silkit_boundary`、`scenario.includes_no_runtime`: `vehicle_sil/launch/` 以下のヘッダー、`child_process.hpp`、`process.hpp` を含まない）。`config.includes_no_runtime` は、`libs/config` が `vehicle_sil/scenario/` を含まないことも守ります。

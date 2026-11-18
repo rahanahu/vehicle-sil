@@ -28,10 +28,13 @@ add_library(vehicle_sil::launch ALIAS vehicle_sil_launch_lib)
 target_include_directories(vehicle_sil_launch_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 # The run (vehicle_sil/runner/...: the plan, the controls, the events, the outcome), the configuration
 # and its check (vehicle_sil/config/...) and the scenario (vehicle_sil/scenario/...), which the public
-# headers include. The runner brings control, process and the simulation time with it.
+# headers include. The runner brings control and the simulation time with it.
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::runner vehicle_sil::scenario vehicle_sil::config)
-# The child processes (child_process.hpp, paths.hpp) of the probe, the test and the output.
-target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::process)
+# The process headers: events.hpp, a public header, includes process.hpp (child_process.hpp and paths.hpp
+# are used by the probe, the test and the output).
+target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::process)
+# The description of an ECU (describe.hpp, describe_json.hpp) that the outputs repeat.
+target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::ecu)
 # The JSON writer that the launcher shares with --describe (vehicle_sil/json/json_writer.hpp).
 target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::json)
 # The YAML/JSON parser that SIL Kit builds from its ThirdParty directory (rapidyaml, MIT); the

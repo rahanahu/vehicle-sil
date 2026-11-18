@@ -112,15 +112,31 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 
 ```mermaid
 flowchart TD
-    launch --> ecu
+    launch --> runner
+    launch --> scenario
+    launch --> config
     launch --> process
-    launch --> sim_base
-    launch --> control
-    launch -.-> core
-    launch -.-> control_silkit
+    launch -.->|"only with the Control Server"| core
     launch -.-> rapidyaml
-    launch -.-> signal
     launch -.-> json
+    runner --> scenario
+    runner --> config
+    runner --> control
+    runner --> process
+    runner --> sim_base
+    runner -.-> core
+    runner -.-> control_silkit
+    scenario --> config
+    scenario --> control
+    scenario --> sim_base
+    scenario -.-> signal
+    scenario -.-> rapidyaml
+    config --> ecu
+    config --> control
+    config --> sim_base
+    config --> process
+    config -.-> json
+    config -.-> rapidyaml
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -291,7 +307,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 守ること:
 
-- どちらの側も `kVersion` で書き、`kVersion` だけを読みます。別のバージョンの hello は報告し（participant 名は読みます）、Peer にしません。ほかのメッセージは、別のバージョンなら捨てます。`vehicle_sil_launch` は、`--describe` が出力したバージョンを `kVersion` と比べ（`libs/config/src/check_rules.cpp`、`run_control.cpp`）、どちらをビルドし直すかを `libs/launch/src/check_words.hpp` の `control_version_fix()` で言います。
+- どちらの側も `kVersion` で書き、`kVersion` だけを読みます。別のバージョンの hello は報告し（participant 名は読みます）、Peer にしません。ほかのメッセージは、別のバージョンなら捨てます。`vehicle_sil_launch` は、`--describe` が出力したバージョンを `kVersion` と比べ（`libs/config/src/check_rules.cpp`、`run_control.cpp`）、どちらをビルドし直すかを `libs/config/include/vehicle_sil/config/detail/check_words.hpp` の `control_version_fix()` で言います。
 - コマンドのどの書き込みが反映されたかと、断った理由がどの書き込みについてかは、数で運びます（`CommandResult::applied_writes`、`SubmitResult::failed_write` と、同じ 2 つの名前を持つ Hub の `TargetResult`）。そのために `reason` を読まないでください（[internals/control.md](internals/control.md) の「Control Server の中核」）。
 - 項目を追加するときは、その要素（変数、書き込み、結果、イベント）の末尾に追加します。メッセージ全体の項目なら、メッセージの末尾に追加します。`control/wire.hpp` の `kRevision` を 1 上げ、その項目は、その改訂番号以降の相手からだけ読みます。古いビルドの復号は、その項目を読み飛ばします。
 - 読み飛ばしてはいけない変更（項目の移動や削除、相手が知らない列挙の値を送ること）には、新しいバージョンが必要です。`kVersion` を上げます。バージョンの違う ECU とランチャーは、変数を一緒に読み書きできなくなります（照合が `control-link-version` を出します）。

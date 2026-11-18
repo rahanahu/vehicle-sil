@@ -133,6 +133,7 @@ flowchart TD
     subgraph with_silkit["With SIL Kit"]
         bindings["core, can_silkit, eth_silkit, lin_silkit, can_netsim, control_silkit"]
         run["peer, simulation"]
+        runner["runner"]
         launch["launch"]
         grpc["control_grpc, control_proto"]
         tools["executables, vector_xl bridge, bridge_runtime"]
@@ -148,6 +149,12 @@ flowchart TD
     run --> bindings
     run --> protocols
     run --> control
+    runner --> app
+    runner --> process
+    runner --> protocols
+    runner --> bindings
+    runner --> control
+    launch --> runner
     launch --> app
     launch --> process
     launch --> protocols

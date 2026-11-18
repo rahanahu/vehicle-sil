@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
 // vehicle_sil_launch run: the order of a run from its setup to the end of the participants
-// (Runner::run(), detail/runner.hpp, which forwards to its RunnerImpl: runner.hpp). run_file() drives
+// (Runner::run(), detail/runner.hpp, which forwards to its RunnerImpl: runner_impl.hpp). run_file() drives
 // a Runner (run_file.cpp). The parts of a run are in the files beside this one:
 //
 //   run_plan.*           RunPlan, plan_run(), planned_outcome()   what is settled before the run: a value

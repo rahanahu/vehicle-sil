@@ -27,3 +27,13 @@ set_tests_properties(runner.public_headers_need_no_silkit runner.includes_no_lau
 set_tests_properties(runner.include_check_rejects_a_forbidden_include PROPERTIES
                      PASS_REGULAR_EXPRESSION "uses_launch\\.cpp: vehicle_sil/launch/anything\\.hpp"
                      FAIL_REGULAR_EXPRESSION "clean\\.hpp:")
+
+# vehicle_sil::runner alone is enough to link what its public headers declare: no definition of them
+# is in the launcher's library, which depends on it (an include check does not see that). The
+# program is built, not run; the test builds it again, so that a missing definition fails here.
+add_executable(vehicle_sil_runner_link_only link_only_runner.cpp)
+target_link_libraries(vehicle_sil_runner_link_only PRIVATE vehicle_sil::runner)
+vehicle_sil_target_defaults(vehicle_sil_runner_link_only)
+add_test(NAME runner.links_without_the_launcher
+         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target vehicle_sil_runner_link_only)
+set_tests_properties(runner.links_without_the_launcher PROPERTIES LABELS "unit;runner" TIMEOUT 600)

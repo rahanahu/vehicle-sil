@@ -3,7 +3,7 @@
 // One run from its setup to the end of its participants (Runner), as run_file() drives it: its two
 // stages and what its caller reads of it. Internal: in detail/ only because run_file() is on the
 // other side of the run's boundary. The parts of the run, its threads and what it has of SIL Kit
-// are behind a pointer (RunnerImpl, defined in the launcher's sources, runner.hpp beside run.cpp),
+// are behind a pointer (RunnerImpl, src/runner_impl.hpp of the runner, beside run.cpp),
 // so that this header reaches no SIL Kit header, no header of the controller (core's
 // simulation_controller.hpp) and none of the run's private headers. The parts and the threads:
 // the comment at the top of run.cpp.
