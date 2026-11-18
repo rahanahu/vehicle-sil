@@ -471,9 +471,10 @@ const char* const kSim = "vehicle_sil_simulation: 1\nnetworks:\n  - name: ETH1\n
 const char* const kDrive = "vehicle_sil_scenario: 1\nsteps:\n  - at_ms: 0\n    set: { A.level: 1 }\n";
 
 /// sim.yaml and its scenario in <scratch>/request_file/project, and another directory to stand in.
-std::filesystem::path project()
+// A directory of its own for each test: ctest runs the tests of this file at the same time.
+std::filesystem::path project(std::string_view test)
 {
-    const std::filesystem::path dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "request_file";
+    const std::filesystem::path dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "request_file" / test;
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir / "project" / "scenarios");
     std::filesystem::create_directories(dir / "elsewhere");
@@ -525,7 +526,7 @@ TEST_CASE(a_network_of_the_request_files_connect_that_the_configuration_lacks_is
 
     // In a check: the note, no error, and the network does not lock the time; the same request
     // on the command line is the error connect-network.
-    const std::filesystem::path dir = project();
+    const std::filesystem::path dir = project("unused_network");
     const vehicle_sil::launch::test::InDirectory there(dir / "project");
     const CheckOptions fileOnly{.params_for_many = false, .file_only = true, .fastest_by_default = false};
     RunRequest given;
@@ -551,7 +552,7 @@ TEST_CASE(a_network_of_the_request_files_connect_that_the_configuration_lacks_is
 
 TEST_CASE(the_scenario_of_a_request_file_is_read_from_the_directory_of_the_configuration_file)
 {
-    const std::filesystem::path dir = project();
+    const std::filesystem::path dir = project("scenario_base");
     // Standing somewhere else: the configuration is named from here, the scenario from the configuration.
     const vehicle_sil::launch::test::InDirectory there(dir / "elsewhere");
     RunRequest given;
@@ -587,7 +588,7 @@ TEST_CASE(a_parameter_of_the_request_file_that_the_scenario_lacks_is_no_error)
 {
     // One request file serves several scenarios; a parameter typed on the command line is a
     // usage error if the scenario has none of that name.
-    const std::filesystem::path dir = project();
+    const std::filesystem::path dir = project("params_without_scenario");
     const vehicle_sil::launch::test::InDirectory there(dir / "project");
     RunRequest given;
     given.host.config = "sim.yaml";
