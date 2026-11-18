@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
 // A command of a run (stop, pause, resume, step, run_until, speed) as it was read from standard
-// input or came from a control server (Command). Read by parse_command() (events.hpp), decided and
+// input or came from a control server (Command). Read by parse_command() (command_input.hpp), decided and
 // done by TimeCommands (time_commands.hpp), written as the event "command" (events.hpp). Internal;
 // the commands: docs/simulation-events.md.
 #pragma once

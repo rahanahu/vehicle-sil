@@ -28,7 +28,6 @@ class Hub;
 namespace vehicle_sil::launch {
 
 class EventStream;
-struct Command;
 
 /// The version of the JSON that format_run_json() writes (its "vehicle_sil_run" key).
 inline constexpr int kRunFormat = 2;
@@ -147,7 +146,7 @@ struct RunLent
     /// observers that write the command and phase events (the run writes neither by itself then).
     /// Null: the run makes its own for this run, on `stops`; no one outside reaches its time
     /// commands, and the run writes its phases to `events`. With `events` the controls
-    /// must have both observers, `stops` must be null or the controls' own, and the controls must
+    /// must have the three observers (on_phase, on_command, on_state), `stops` must be null or the controls' own, and the controls must
     /// be made with the request's RunIntent::start_paused and whether it has a scenario
     /// (RunControls::start_paused(), scenario()): run_file() throws std::invalid_argument otherwise.
     RunControls* controls = nullptr;
@@ -164,9 +163,10 @@ struct RunLent
     /// run --events: what happens, as events (events.hpp) instead of RunObservers::write_line():
     /// the phases, the check, the participants, the lines, the run's findings, the virtual time.
     /// run_file() writes every event but hello and the result (the caller writes them). No call
-    /// waits for the reader of the events. May be null. run_file() calls the stream itself (the
-    /// check, the phases, the state); the parts of the run are given it as the interface they know
-    /// (RunEvents, run_events.hpp).
+    /// waits for the reader of the events. May be null. run_file() writes the check and the
+    /// disabled participants itself, and the phases and the state when it makes its own controls
+    /// (with lent controls, the caller's observers write them); the parts of the run are given the
+    /// stream as the interface they know (RunEvents, run_events.hpp).
     EventStream* events = nullptr;
 };
 

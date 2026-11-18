@@ -22,6 +22,8 @@
 
 namespace vehicle_sil::launch {
 
+struct RunRequest; // request.hpp
+
 /// How long a bridge of --connect may report the link or the bus down before the launcher stops the
 /// run (RunLimits::outside_lost_after).
 inline constexpr std::chrono::milliseconds kOutsideLostAfter{30000};

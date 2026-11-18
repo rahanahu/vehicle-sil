@@ -79,8 +79,7 @@ inline constexpr std::string_view kScenarioTimeFeature = "scenario-time";
 /// The name of a participant's state in the event "participant": "disabled", "not_started", ...
 /// The members a state brings besides: not_started "message"; started "pid", "command", "log";
 /// manual "command", "working_directory", "command_line", "environment"; failed "reason",
-/// "message"; ended
-/// "exit_code", "signal".
+/// "message"; ended "exit_code", "signal".
 [[nodiscard]] const char* participant_state_name(ParticipantState state);
 
 /// What one call of EventStream's `write` did.

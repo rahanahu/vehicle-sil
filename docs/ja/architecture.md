@@ -246,7 +246,7 @@ flowchart LR
   - `RunObservers`: 実行が呼び返す、呼び出し側の関数です（行、中断の名前、`before_start`）。
   - `RunControls`: 実行が借りるもの（停止の要求、時刻の命令）と、実行が自分で作るものです。
 
-  イベントの流れ（`RunLent::events`）は `run_file()` のものです。照合、段階、状態は `run_file()` が自分で書き、実行には実行の知っているインターフェース（`RunEvents`）だけを渡します。
+  イベントの流れ（`RunLent::events`）は `run_file()` のものです。照合は `run_file()` が自分で書きます。段階と状態は、自前の操作盤のときは `run_file()` が書き、貸した操作盤では呼び手の観察者が書きます。実行には、実行の知っているインターフェース（`RunEvents`）だけを渡します。
 - 照合・実行・テストが何を頼まれるかは、1 つの値 `RunRequest`（`launch/request.hpp`）です。2 つの部分から成ります。利用者の選択（`RunIntent`）と、呼び出し側の指定（`RunHost`。ツールとログの場所、上限、Control Server や標準入力のコマンドを求めるか）です。`check_file()`、`run_file()`、`test_file()` がこれを受け取ります。コマンドラインと要求ファイルは、これを埋める 2 つの方法です。`validate_request()`（純粋）が、一緒には成り立たない欄のルールを置く唯一の場所です。`tools/launch` は引数を欄に写すだけなので、そこでの `cli::UsageError` は引数の形の誤りを意味し、意味のルールには使いません。
 - `--request <file>` は、意図を JSON のファイルから読みます（`schema/run-request.schema.json`）。形式の読み手は 1 つ（`read_request_file()`）で、引数は欄ごとにファイルに勝ちます。値がファイルから来たときは、メッセージがファイルの名前を挙げます。
 - `--connect` が足すブリッジの印は計画にあります（`RunMember::outside`。参加者ごとに `RunMember` が 1 つ）。`ParticipantConfig` はファイルが書いたことだけを持ちます。刻みの計画は、ブリッジを足す前の、ファイルの構成で作ります。
