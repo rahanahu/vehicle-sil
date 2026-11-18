@@ -301,34 +301,38 @@ TEST_CASE(a_plan_takes_every_field_of_the_request_that_the_run_reads)
 {
     Checked check;
     check.config.emplace();
-    const RunPlan none = plan_run(check, "dir", RunRequest{});
+    // The request reaches the plan through run_choices(), as in run_file().
+    const auto plan = [&check](const RunRequest& r, bool control_server = false) {
+        return plan_run(check, nullptr, "dir", run_choices(r), {}, control_server);
+    };
+    const RunPlan none = plan(RunRequest{});
     CHECK(!none.timing.speed && !none.holds_before_start && none.log_dir.empty() && none.timeline.empty() &&
           none.timeline_shown.empty() && !none.timeout && !none.strict);
 
     RunRequest r;
     r.intent.speed = std::optional<double>(2.0);
-    CHECK(plan_run(check, "dir", r).timing.speed == std::optional<double>(2.0));
+    CHECK(plan(r).timing.speed == std::optional<double>(2.0));
     r = {};
     check.config->speed = 3.0;
-    CHECK(plan_run(check, "dir", r).timing.speed == std::optional<double>(3.0)); // the file's
+    CHECK(plan(r).timing.speed == std::optional<double>(3.0)); // the file's
     r.intent.speed = std::optional<double>{}; // max: replaces the file's speed
-    CHECK(!plan_run(check, "dir", r).timing.speed);
+    CHECK(!plan(r).timing.speed);
     check.config->speed.reset();
     r = {};
     r.intent.start_paused = true;
-    CHECK(plan_run(check, "dir", r, {}, true).holds_before_start && !plan_run(check, "dir", r).holds_before_start);
+    CHECK(plan(r, true).holds_before_start && !plan(r).holds_before_start);
     r = {};
     r.host.log_dir = "logs";
-    CHECK(plan_run(check, "dir", r).log_dir == "logs");
+    CHECK(plan(r).log_dir == "logs");
     r = {};
     r.host.timeline = "out/t.json";
-    CHECK(plan_run(check, "dir", r).timeline == "out/t.json" && plan_run(check, "dir", r).timeline_shown == "out/t.json");
+    CHECK(plan(r).timeline == "out/t.json" && plan(r).timeline_shown == "out/t.json");
     r = {};
     r.host.timeout = 900ms;
-    CHECK(plan_run(check, "dir", r).timeout == std::optional(900ms));
+    CHECK(plan(r).timeout == std::optional(900ms));
     r = {};
     r.intent.strict = true;
-    CHECK(plan_run(check, "dir", r).strict);
+    CHECK(plan(r).strict);
 }
 
 TEST_CASE(the_check_of_a_run_is_the_check_of_its_request)

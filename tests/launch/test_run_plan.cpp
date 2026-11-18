@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: MIT
 //
 // The plan of a run (launch::plan_run()) and the outcome a run begins with
-// (launch::planned_outcome()): values made from a check and the request and the limits. No process, no
-// thread.
+// (launch::planned_outcome()): values made from a check, what the caller chose (RunChoices) and the
+// limits. No process, no thread.
 
 #include "test_harness.hpp"
 
 #include "vehicle_sil/launch/checked.hpp"
-#include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/launch/run_plan.hpp"
 
 #include <chrono>
@@ -60,17 +59,17 @@ struct Timed
     friend bool operator==(const Timed&, const Timed&) = default;
 };
 
-Timed timed(const Checked& check, const RunRequest& request)
+Timed timed(const Checked& check, const RunChoices& choices)
 {
-    const RunPlan plan = plan_run(check, "dir", request);
+    const RunPlan plan = plan_run(check, detail::scenario_of(check), "dir", choices);
     return Timed{plan.timing.time_step_ms, plan.timing.speed};
 }
 
-RunRequest at_speed(std::optional<Speed> speed)
+RunChoices at_speed(std::optional<Speed> speed)
 {
-    RunRequest request;
-    request.intent.speed = speed;
-    return request;
+    RunChoices choices;
+    choices.speed = speed;
+    return choices;
 }
 
 } // namespace
@@ -80,12 +79,12 @@ TEST_CASE(the_plan_has_the_speed_the_run_starts_at_and_the_step_that_goes_with_i
     const Speed max{};
     Checked check = checked({1000, 10000});
     // Nothing asked, nothing written: as fast as possible, in steps of 10 ms.
-    CHECK(timed(check, RunRequest{}) == (Timed{10, max}));
+    CHECK(timed(check, RunChoices{}) == (Timed{10, max}));
     // --speed: the ECUs' steps decide the step.
     CHECK(timed(check, at_speed(Speed(1.0))) == (Timed{1, 1.0}));
     // The file's speed, and --speed in its place (also "max").
     check.config->speed = 0.5;
-    CHECK(timed(check, RunRequest{}) == (Timed{1, 0.5}));
+    CHECK(timed(check, RunChoices{}) == (Timed{1, 0.5}));
     CHECK(timed(check, at_speed(Speed(2.0))) == (Timed{1, 2.0}));
     CHECK(timed(check, at_speed(max)) == (Timed{10, max}));
     // With the time lock: 1, whatever was asked for.
@@ -104,21 +103,21 @@ TEST_CASE(with_a_scenario_the_planned_step_is_the_same_at_every_speed)
     CHECK(timed(check, at_speed(Speed(8.0))) == (Timed{1, 8.0}));
     // Without the scenario, the step of a run as fast as possible is the coarse one.
     CHECK(timed(checked({1000, 10000}), at_speed(max)) == (Timed{10, max}));
-    const RunPlan plan = plan_run(check, "dir", RunRequest{});
+    const RunPlan plan = plan_run(check, detail::scenario_of(check), "dir", RunChoices{});
     CHECK(plan.scenario() == &*plan.scenario_check->scenario);
-    CHECK(plan_run(checked({1000}), "dir", RunRequest{}).scenario() == nullptr);
+    CHECK(plan_run(checked({1000}), nullptr, "dir", RunChoices{}).scenario() == nullptr);
 }
 
 TEST_CASE(the_plan_holds_before_the_start_only_for_a_paused_start_with_a_control_server)
 {
     const Checked check = checked({10000});
-    RunRequest request;
-    CHECK(!plan_run(check, "dir", request).holds_before_start);
-    request.intent.start_paused = true;
-    CHECK(!plan_run(check, "dir", request).holds_before_start);
-    CHECK(plan_run(check, "dir", request, {}, true).holds_before_start);
-    request.intent.start_paused = false;
-    CHECK(!plan_run(check, "dir", request, {}, true).holds_before_start);
+    RunChoices choices;
+    CHECK(!plan_run(check, detail::scenario_of(check), "dir", choices).holds_before_start);
+    choices.start_paused = true;
+    CHECK(!plan_run(check, detail::scenario_of(check), "dir", choices).holds_before_start);
+    CHECK(plan_run(check, detail::scenario_of(check), "dir", choices, {}, true).holds_before_start);
+    choices.start_paused = false;
+    CHECK(!plan_run(check, detail::scenario_of(check), "dir", choices, {}, true).holds_before_start);
 }
 
 TEST_CASE(the_bridges_are_the_last_participants_of_the_plan_and_do_not_count_for_the_step)
@@ -126,11 +125,11 @@ TEST_CASE(the_bridges_are_the_last_participants_of_the_plan_and_do_not_count_for
     Checked check = checked({5000});
     check.config->networks.emplace_back();
     check.config->networks.back().name = "CAN1";
-    const RunRequest options = at_speed(Speed(1.0));
+    const RunChoices options = at_speed(Speed(1.0));
     const Timed without = timed(check, options);
     CHECK(without == (Timed{5, 1.0}));
     check.outside = {NetworkOutside{"CAN1", "vehicle_sil_vector_xl_bridge", "/t/xl", "virtual:1", "bridge.CAN1", std::nullopt}};
-    const RunPlan plan = plan_run(check, "dir", options);
+    const RunPlan plan = plan_run(check, detail::scenario_of(check), "dir", options);
     // A bridge has no description, and still the step is that of the ECUs.
     CHECK((Timed{plan.timing.time_step_ms, plan.timing.speed}) == without);
     CHECK(plan.config().participants.size() == 2 && plan.check.participants.size() == 2);
@@ -169,7 +168,7 @@ TEST_CASE(a_bridge_of_the_file_counts_for_the_step_as_any_participant_with_a_ste
     // step divides its step too, 5 ms and 2 ms meet every 1 ms. Left out, the step would be 5 ms.
     Checked check = checked({5000, 2000});
     check.config->participants[1].role = ParticipantRole::Bridge;
-    const RunPlan plan = plan_run(check, "dir", at_speed(Speed(1.0)));
+    const RunPlan plan = plan_run(check, detail::scenario_of(check), "dir", at_speed(Speed(1.0)));
     CHECK(plan.members.size() == 2 && !plan.members[1].outside);
     CHECK((Timed{plan.timing.time_step_ms, plan.timing.speed}) == (Timed{1, 1.0}));
 }
@@ -181,7 +180,7 @@ TEST_CASE(a_check_without_a_configuration_has_no_plan)
     bool thrown = false;
     try
     {
-        static_cast<void>(plan_run(check, "dir", RunRequest{}));
+        static_cast<void>(plan_run(check, detail::scenario_of(check), "dir", RunChoices{}));
     }
     catch (const std::invalid_argument& e)
     {
@@ -199,28 +198,28 @@ TEST_CASE(the_plan_takes_the_limits_and_the_files_as_given_and_the_outcome_begin
     check.config->start_timeout_ms = 1234;
     check.config->stop_timeout_ms = 2345;
     check.config->late_tolerance_ms = 77;
-    RunRequest request;
+    RunChoices choices;
     RunLimits limits;
     {
         // What the caller did not set: the defaults of RunLimits.
-        const RunPlan plan = plan_run(check, "dir", request);
+        const RunPlan plan = plan_run(check, detail::scenario_of(check), "dir", choices);
         CHECK(plan.poll == limits.poll && plan.outside_lost_after == kOutsideLostAfter && !plan.timeout &&
               plan.control_hello_timeout == limits.control_hello_timeout && !plan.strict && plan.log_dir.empty() &&
               plan.timeline.empty() && plan.timeline_shown.empty() && !plan.timing.coarse_step_checked);
         CHECK(!planned_outcome(plan).end.timeout_ms);
     }
-    request.intent.strict = true;
-    request.host.log_dir = "logs";
-    request.host.timeline = "out/timeline.json";
+    choices.strict = true;
+    choices.log_dir = "logs";
+    choices.timeline = "out/timeline.json";
     limits.poll = 7ms;
     limits.outside_lost_after = 8ms;
-    request.host.timeout = 9000ms;
+    choices.timeout = 9000ms;
     limits.control_hello_timeout = 10ms;
     Finding coarse;
     coarse.severity = Severity::Warning;
     coarse.code = "coarse-time-step";
     check.findings.push_back(coarse);
-    const RunPlan plan = plan_run(check, "base", request, limits);
+    const RunPlan plan = plan_run(check, detail::scenario_of(check), "base", choices, limits);
     CHECK(plan.base == "base" && plan.strict && plan.log_dir == "logs" && plan.timeline == "out/timeline.json" &&
           plan.timeline_shown == "out/timeline.json");
     CHECK(plan.poll == 7ms && plan.outside_lost_after == 8ms && plan.timeout == std::optional(9000ms) &&
@@ -235,5 +234,5 @@ TEST_CASE(the_plan_takes_the_limits_and_the_files_as_given_and_the_outcome_begin
     CHECK(outcome.scenario.result.has_value() && outcome.scenario.result->file == "drive.yaml");
     CHECK(outcome.end.simulation == SimulationEnd::NotStarted && outcome.setup.error.empty() && outcome.setup.registry_uri.empty());
     // Without a scenario: none in the outcome.
-    CHECK(!planned_outcome(plan_run(checked({10000}), "dir", request, limits)).scenario.result);
+    CHECK(!planned_outcome(plan_run(checked({10000}), nullptr, "dir", choices, limits)).scenario.result);
 }

@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: MIT
 //
 // What is settled about a run before it begins (RunPlan), made from the check that passed, what
-// the caller asked for and the run's waits (RunLimits) by plan_run(), and the outcome a run begins
-// with (planned_outcome()).
+// the caller chose for the run (RunChoices) and the run's waits (RunLimits) by plan_run(), and the
+// outcome a run begins with (planned_outcome()).
 // Values and pure functions: no state, no thread, no lock, nothing that the run calls back.
 #pragma once
 
 #include "vehicle_sil/config/check.hpp"
-#include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/config/config.hpp"
 #include "vehicle_sil/launch/run_outcome.hpp"
 #include "vehicle_sil/scenario/scenario.hpp"
@@ -21,8 +20,6 @@
 #include <vector>
 
 namespace vehicle_sil::launch {
-
-struct RunRequest; // request.hpp
 
 /// How long a bridge of --connect may report the link or the bus down before the launcher stops the
 /// run (RunLimits::outside_lost_after).
@@ -50,6 +47,26 @@ struct RunLimits
     std::chrono::milliseconds control_hello_timeout{5000};
 };
 
+/// What the caller chose for one run, as plan_run() takes it: the request's fields that the plan
+/// reads (RunIntent and RunHost of request.hpp, which the launcher copies here: run_choices()).
+/// The plan, and so the Runner, reads nothing else of the request.
+struct RunChoices
+{
+    /// RunIntent::speed: replaces the file's speed (the inner empty: as fast as possible); the
+    /// outer empty: the file's speed counts.
+    std::optional<std::optional<double>> speed{};
+    /// RunIntent::start_paused: with a control server, the run holds before the first step.
+    bool start_paused = false;
+    /// RunIntent::strict (--strict): a bridge that shares its device stops the run.
+    bool strict = false;
+    /// RunHost::log_dir: a file of each participant's output in this directory; empty: none.
+    std::filesystem::path log_dir{};
+    /// RunHost::timeline: the file of the scenario's timeline as the user gave it (UTF-8); empty: none.
+    std::string timeline{};
+    /// RunHost::timeout: the longest the simulation may run (wall clock); empty: no limit.
+    std::optional<std::chrono::milliseconds> timeout{};
+};
+
 /// What the plan knows of one participant of the run beside its entry in the configuration: what
 /// the run itself adds to the file. The configuration (ParticipantConfig) is what the file says.
 struct RunMember
@@ -71,7 +88,7 @@ struct RunPlan
     /// (detail::with_bridges()): the participants of the run, in the order the run keeps
     /// everywhere (config->participants[i], participants[i], RunOutcome::participants[i]).
     CheckReport check;
-    /// run --scenario: the scenario that the check read, as Checked::scenario had it; empty
+    /// run --scenario: a copy of the scenario that the check read (plan_run()'s `scenario`); empty
     /// without one. scenario() is the scenario itself.
     std::optional<ScenarioCheck> scenario_check;
     /// One for each participant of `check`, in the same order (members[i] is of
@@ -85,15 +102,15 @@ struct RunPlan
     /// possible) and the late tolerance; the numbers a run measures are 0. The run reads its
     /// settings here; the speed at its end and what it measured are in RunOutcome::timing.
     RunTiming timing;
-    /// --strict (RunIntent::strict): a bridge that shares its device stops the run.
+    /// --strict (RunChoices::strict): a bridge that shares its device stops the run.
     bool strict = false;
     /// run --start-paused with a control server: the run holds before the first step.
     bool holds_before_start = false;
-    /// RunHost::log_dir and timeline: the path of the timeline's file, and its name as given.
+    /// RunChoices::log_dir and timeline: the path of the timeline's file, and its name as given.
     std::filesystem::path log_dir;
     std::filesystem::path timeline;
     std::string timeline_shown;
-    /// RunLimits::poll, outside_lost_after and control_hello_timeout and RunHost::timeout, as given.
+    /// RunLimits::poll, outside_lost_after and control_hello_timeout and RunChoices::timeout, as given.
     std::chrono::milliseconds poll{};
     std::chrono::milliseconds outside_lost_after{};
     std::optional<std::chrono::milliseconds> timeout;
@@ -108,20 +125,21 @@ struct RunPlan
     }
 };
 
-/// The plan of the run that `request` asks for. `check`: the check of the file, which passed (as
-/// check_file() returned it: the bridges of --connect are added here; its scenario goes to
-/// RunPlan::scenario_check); `base`: the directory of
-/// the file; `control_server`: the run has one (RunHost::control, or a lent RunLent::control_endpoint). Throws
-/// std::invalid_argument for a check without a configuration (CheckReport::config is empty: the
-/// file could not be read, so there is nothing to run).
-/// The plan has copies of what it reads of `request` and `limits`: neither is kept.
-/// - The speed is planned_speed(): 1 with the time lock, else RunIntent::speed, else the file's.
+/// The plan of a run of the check `check` with what the caller chose (`choices`). `check`: the
+/// check of the file, which passed (as check_file() returned it: the bridges of --connect are added
+/// here); `scenario`: run --scenario, the scenario the check read (copied to
+/// RunPlan::scenario_check), or null; `base`: the directory of the file; `control_server`: the run
+/// has one (RunHost::control, or a lent RunLent::control_endpoint). Throws std::invalid_argument for
+/// a check without a configuration (CheckReport::config is empty: the file could not be read, so
+/// there is nothing to run).
+/// The plan has copies of what it reads of `scenario`, `choices` and `limits`: none is kept.
+/// - The speed is planned_speed(): 1 with the time lock, else RunChoices::speed, else the file's.
 /// - With a scenario the step does not follow the speed: the same steps at every speed.
 /// - The bridges are participants at the end of the plan's check, marked in RunPlan::members, and
 ///   do not count for the step: the step is planned from the participants of the file. One whose
 ///   role in the file is bridge is a participant of the file, and counts as any other.
-[[nodiscard]] RunPlan plan_run(const Checked& check, std::filesystem::path base, const RunRequest& request,
-                               const RunLimits& limits = {}, bool control_server = false);
+[[nodiscard]] RunPlan plan_run(const CheckReport& check, const ScenarioCheck* scenario, std::filesystem::path base,
+                               const RunChoices& choices, const RunLimits& limits = {}, bool control_server = false);
 
 /// The outcome a run of `plan` begins with: what the plan already says of the result (the limits,
 /// the timing, the participants in the plan's order, the scenario as not run, the networks

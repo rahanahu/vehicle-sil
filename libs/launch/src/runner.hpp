@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 //
-// One run from its setup to the end of its participants (Runner), as run_file() drives it: the
-// parts of the run and the order of its phases. The parts and the threads: the comment at the top
-// of run.cpp. Internal.
+// The body of a Runner (RunnerImpl): the parts of one run and the order of its phases. Runner
+// (vehicle_sil/launch/detail/runner.hpp) is what run_file() sees; it holds a RunnerImpl and
+// forwards to it, so that what this header includes (SIL Kit, the controller, the run's private
+// headers) stays on this side. The parts and the threads: the comment at the top of run.cpp.
+// Internal.
 #pragma once
 
 #include "run_connection.hpp"
@@ -16,6 +18,7 @@
 #include "run_start.hpp"
 #include "run_watch.hpp"
 
+#include "vehicle_sil/launch/detail/runner.hpp"
 #include "vehicle_sil/launch/run_controls.hpp"
 #include "vehicle_sil/launch/run_events.hpp"
 #include "vehicle_sil/launch/run_outcome.hpp"
@@ -39,57 +42,18 @@ namespace vehicle_sil::launch::detail {
 using RunConnection = ConnectionOf<control::Hub, SilKit::Vendor::Vector::ISilKitRegistry, SimulationController,
                                    control_silkit::HubTransport>;
 
-/// What run_file() did between the two stages of a Runner (prepare(), then run()): whether it
-/// started a control server (RunHost::control), and how that went. As made: none.
-struct ControlServerStart
-{
-    std::optional<ControlServerInfo> listening; ///< the server listens there
-    std::optional<std::string> error;           ///< it could not be started: why (what its start threw)
-};
-
-/// One run: its parts, and the order of its phases in two stages. prepare() opens the run's files;
-/// run() does everything from the registry to the end. Between them the caller starts what serves
-/// the run's hub from outside (a control server), so that it listens before the registry does.
-/// The hub is made with the Runner (by its RunControl) and lives as long as it (and as whoever else holds it). The registry, the
-/// controller and the hub's transport live in run() only, in a RunConnection; the parts are given
-/// the controller in the calls that need it. A Runner can be destroyed whenever run() has
-/// returned, also while the closing thread of its run is still closing (it was left at its limit).
-class Runner
+/// The body of a Runner: its parts, and the order of the run's phases. Each member function of
+/// the same name as one of Runner does what Runner's says (detail/runner.hpp). Made by Runner
+/// only, and destroyed with it.
+class RunnerImpl
 {
 public:
-    /// `plan`: plan_run() of the check that passed. `observers`: the caller's functions, copied.
-    /// `events`: what the run tells while it lasts (the object of RunLent::events, or null);
-    /// it outlives the Runner. `controls`: RunLent::controls, or the run's own; they outlive the Runner.
-    Runner(RunPlan plan, RunObservers observers, RunEvents* events, RunControls& controls);
-
-    /// The first stage: the phase "starting", then the run's files (the participants' logs, the
-    /// timeline). Returns the run's hub (never null, for whoever serves it; the holder keeps the
-    /// hub only, see RunConnection) if the run goes on; null if it does not (it was interrupted
-    /// before it began, or a file cannot be opened: the outcome says so). Nothing of SIL Kit
-    /// exists yet, and no other thread of the run. run() must follow, whatever this returned.
+    RunnerImpl(RunPlan plan, RunObservers observers, RunEvents* events, RunControls& controls);
     [[nodiscard]] std::shared_ptr<control::Hub> prepare();
-
-    /// The second stage, once, after prepare(): the registry, the participants, the simulation and
-    /// its end; all of the outcome. After a prepare() that returned null it starts nothing and
-    /// only ends the time commands. `server`: what the caller did in between; the run says where
-    /// the server listens, or starts nothing if it could not be started.
     RunOutcome run(const ControlServerStart& server);
-
-    /// run --events: the run's findings that have not been written yet. Before the participants
-    /// have ended (`final` false) only those that their end cannot change (settled_findings()):
-    /// what is written as an event is in the result as it was written.
     void publish_findings(bool final) { notes_.publish_findings(outcome_, final); }
-
-    /// The plan of this run, as the Runner keeps it (with the bridges of --connect).
     [[nodiscard]] const RunPlan& plan() const { return plan_; }
-
-    /// run --timeline: the timeline file was opened (prepare()) and has not been written yet.
     [[nodiscard]] bool timeline_open() const { return timeline_file_.is_open(); }
-
-    /// run --timeline: writes `text` (the timeline of the run that is over, as the caller made
-    /// it) to the timeline file, and says where it is. Nothing if the file was not opened (no
-    /// --timeline, or the run ended before it got there). If it cannot be written: why (also in
-    /// the outcome: OutcomeScenario::timeline_error), else "".
     std::string write_timeline(const std::string& text);
 
 private:

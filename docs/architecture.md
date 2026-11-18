@@ -245,8 +245,9 @@ The details of each part are in [code-map-launcher.md](code-map-launcher.md); th
 
 - A run has two stages. `Runner::prepare()` checks for an interruption, opens the logs and the timeline, and returns the Hub of the run (or nothing, if the run cannot go on). Between the stages `run_file()` starts the Control Server (`ControlEndpoint::start()`, only when the run has one) on that Hub, so that it listens before the registry does. `Runner::run()` goes from the registry to the end.
 - The run makes the Hub and the SIL Kit parts (registry, controller, transport) and closes them as one connection, in the reverse order of making: the transport, the controller, then the registry. The Control Server only borrows the Hub (it holds a `std::shared_ptr` and does not own the SIL Kit parts). A closing thread that was left at its limit therefore reaches only the connection, and the `Runner` can be destroyed as after any other run.
+- `run_file()` sees the `Runner` through `launch/detail/runner.hpp`, which reaches no SIL Kit header, no header of the controller (`core/simulation_controller.hpp`) and none of the run's private headers: the parts of the run are behind a pointer (`RunnerImpl`, `src/runner.hpp`).
 - What `run_file()` gives to a run is of three kinds:
-  - `RunPlan`: values, made by the pure `plan_run()` from the check that passed, the request (`RunRequest`) and `RunLimits`. The run does not write to it.
+  - `RunPlan`: values, made by the pure `plan_run()` from the check that passed, its scenario, what was chosen for the run (`RunChoices`, which `run_choices()` copies from the request) and `RunLimits`. `plan_run()` does not know the request (`RunRequest`) or `check_file()`'s result type (`Checked`). The run does not write to the plan.
   - `RunObservers`: the caller's functions that the run calls back (lines, the name of an interruption, `before_start`).
   - `RunControls`: what the run borrows (the stop requests, the time commands) or makes for itself.
 

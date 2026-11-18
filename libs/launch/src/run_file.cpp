@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 //
 // vehicle_sil_launch run as a use case: run_file() checks the file, makes the run's controls and
-// its control server when the caller lends none, drives a Runner (runner.hpp) through its two
+// its control server when the caller lends none, drives a Runner (detail/runner.hpp) through its two
 // stages, and makes the timeline file of what the run left. What a run is given, the threads
 // and the control server's lifetime: the comment at the top of run.cpp.
 #include "vehicle_sil/launch/run.hpp"
 
 #include "run_control_server.hpp"
-#include "runner.hpp"
 
+#include "vehicle_sil/launch/detail/runner.hpp"
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/timeline_format.hpp"
 
@@ -57,6 +57,18 @@ struct OwnControls
 };
 
 } // namespace
+
+RunChoices run_choices(const RunRequest& request)
+{
+    RunChoices choices;
+    choices.speed = request.intent.speed;
+    choices.start_paused = request.intent.start_paused;
+    choices.strict = request.intent.strict;
+    choices.log_dir = request.host.log_dir;
+    choices.timeline = request.host.timeline;
+    choices.timeout = request.host.timeout;
+    return choices;
+}
 
 RunReport run_file(const RunRequest& request, const RunObservers& observers, const RunLent& lent, const RunLimits& limits,
                    const CheckOptions& check_options)
@@ -195,8 +207,9 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
     // control server stay here).
     // The run tells through the interface it knows (RunEvents), which the stream of the events
     // implements; the stream's own members (check(), phase(), state()) are called here only.
-    Runner runner(plan_run(report.check, base, request, limits, server_of_run != nullptr), observers, lent.events,
-                  controls);
+    Runner runner(plan_run(report.check, detail::scenario_of(report.check), base, run_choices(request), limits,
+                           server_of_run != nullptr),
+                  observers, lent.events, controls);
     // The control server between the Runner's two stages: after the run's files are open, before
     // the registry listens. The Runner does not know the server; it is told what became of it.
     ControlServerStart server;
