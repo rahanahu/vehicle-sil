@@ -157,3 +157,28 @@ TEST_CASE(control_convert_names_both_reasons_when_the_simulation_cannot_be_read)
     to_proto(&s, out);
     CHECK(out.error() == "cannot read the time: the controller stopped");
 }
+
+TEST_CASE(control_convert_availability_maps_each_state_and_declaration)
+{
+    CHECK(to_proto(Availability::Unknown) == v1::AVAILABILITY_UNKNOWN);
+    CHECK(to_proto(Availability::Active) == v1::AVAILABILITY_ACTIVE);
+    CHECK(to_proto(Availability::Inactive) == v1::AVAILABILITY_INACTIVE);
+
+    AvailabilityUpdate update{"Engine", "e1", {Availability::Inactive, Availability::Active, Availability::Unknown}};
+    v1::PeerAvailability wire;
+    to_proto(update, wire);
+    CHECK(wire.peer() == "Engine" && wire.incarnation() == "e1" && wire.states_size() == 3);
+    CHECK(wire.states(0) == v1::AVAILABILITY_INACTIVE);
+    CHECK(wire.states(1) == v1::AVAILABILITY_ACTIVE);
+    CHECK(wire.states(2) == v1::AVAILABILITY_UNKNOWN);
+
+    // A variable that does not report has no declaration on the wire.
+    VariableInfo info;
+    info.name = "x";
+    v1::VariableInfo declared;
+    to_proto(info, declared);
+    CHECK(declared.availability() == v1::AVAILABILITY_UNSPECIFIED);
+    info.availability = Availability::Unknown;
+    to_proto(info, declared);
+    CHECK(declared.availability() == v1::AVAILABILITY_UNKNOWN);
+}

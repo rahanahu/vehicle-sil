@@ -8,6 +8,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_control_server_tests
   SOURCES
     test_authorization.cpp
     test_authorization_rules.cpp
+    test_availability.cpp
     test_control_server.cpp
     test_convert.cpp
     test_grpc_ping.cpp

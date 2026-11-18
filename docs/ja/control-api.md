@@ -363,7 +363,7 @@ GUI のコンポーネントは、サーバーが前の書き込みを受け取�
 | 報告する変数 | `VariableOptions::availability` を付けて宣言した変数です。この値が最初の状態です。どの変数が報告するかは宣言で決まり、実行中は変わりません。 |
 | 状態を変える | ECU のステップ（`on_step()`、`every()`、`at()`、ハンドラー）から `ecu.set_availability(name, state)` を呼びます。同じ状態をもう一度渡しても何も起きません。 |
 | エラー | ECU が宣言していない名前、`availability` なしで宣言した変数、vehicle-sil がどの ECU にも足す変数（`ecu.connected`、監視の出力）は `std::invalid_argument` です。組み立ての間（実行の前）は `std::logic_error` です。最初の状態は宣言で渡してください。 |
-| 状態の行き先 | 変わったときと、シミュレーション時間の 1 秒ごとに、Control Server へ送ります（後からつながったサーバーにも届きます）。Hub の購読は、頼んだとき（`SubscriptionOptions::availability`）だけ受け取ります。gRPC のサービスと GUI は渡しません。 |
+| 状態の行き先 | 変わったときと、シミュレーション時間の 1 秒ごとに、Control Server へ送ります（後からつながったサーバーにも届きます）。Hub の購読は、頼んだとき（`SubscriptionOptions::availability`）だけ受け取ります。gRPC のサービスは下のように渡し、GUI はまだ渡しません。 |
 | 古い vehicle-sil で作った ECU | 何も報告しません。変数はすべて `Active` とみなします。check が注記します（`control-link-revision`）。 |
 
 ```cpp
@@ -375,6 +375,8 @@ ecu.every(10ms, [this, &ecu](vehicle_sil::SimTime) {
     }
 });
 ```
+
+gRPC では、`ListPeers` と `Watch` の `PeerInfo` の `VariableInfo.availability` が宣言です。報告しない変数は `AVAILABILITY_UNSPECIFIED`、報告する変数は最初の状態です。`Watch` に `availability = true` を付けると、報告する変数のある参加者ごとに `PeerAvailability`（`Update` の `availability`）を送ります。`schema` の順で全変数の状態を持ち、報告しない変数は `AVAILABILITY_ACTIVE` です。`PeerInfo` の後に、最初の更新（`initial_done` の前）として、その後は状態が変わったときに届きます。新しい incarnation は宣言の状態から始まります。購読は参加者ごとに最新だけを持つので、途中の変化を落とすことがあります。`peers` で絞れ、頼まない購読には届きません。利用状態は情報だけで、`Write`、`GetValues`、`GetSnapshot`、`Watch` の値は変わりません。Python の client は頼みません。
 
 ### 接続のしかた
 

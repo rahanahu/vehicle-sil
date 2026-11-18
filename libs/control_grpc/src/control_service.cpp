@@ -308,6 +308,7 @@ public:
             o.values = request->values();
             o.events = request->events();
             o.operations = request->operations();
+            o.availability = request->availability();
             o.capacity = std::min<std::size_t>(request->capacity() == 0 ? options_.default_watch_capacity : request->capacity(),
                                                options_.max_watch_capacity);
             const bool watch_time = request->time() && monitor_ != nullptr;
@@ -435,9 +436,13 @@ public:
                             pe->set_incarnation(e->incarnation);
                             detail::to_proto(e->event, *pe->mutable_event());
                         }
-                        else
+                        else if (const auto* a = std::get_if<AvailabilityUpdate>(&update))
                         {
-                            detail::to_proto(std::get<OperationUpdate>(update).operation, *out.mutable_operation());
+                            detail::to_proto(*a, *out.mutable_availability());
+                        }
+                        else if (const auto* op = std::get_if<OperationUpdate>(&update))
+                        {
+                            detail::to_proto(op->operation, *out.mutable_operation());
                         }
                         sent = write(out);
                     }
