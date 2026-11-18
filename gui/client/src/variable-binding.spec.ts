@@ -3,7 +3,7 @@ import { BATCH_MS } from './connection';
 import { isHolding } from './session-state';
 import { FakeHttp, FakeRequest } from './testing/fake-http';
 import { FakeWebSockets } from './testing/fake-web-socket';
-import { httpExamples } from './testing/protocol-examples';
+import { httpExamples, recordedLauncherEvents } from './testing/protocol-examples';
 import { BoundVariable, DROPPED_MESSAGE, VariableBinding } from './variable-binding';
 import { VariableRef } from './variables';
 
@@ -61,9 +61,19 @@ const holdingState = {
   pacing: 'not-paced',
   stop: { requests: 0, by: null },
   scenario: false,
-  allowed: {},
+  allowed: { write: { ok: true, reason: null, message: null, caution: null } },
   outside: [],
 };
+
+/** The launcher's state of a running run that takes writes. */
+const runningState = { ...holdingState, phase: 'running', paused: false, holding: false };
+
+/** A `state` event of the launcher (rev and seq from `seq`). */
+const launcherEvent = (seq: number, state: object, session = 1) => ({
+  type: 'event',
+  session,
+  event: { ...state, event: 'state', seq: 100 + seq, rev: 100 + seq, t_ms: seq },
+});
 
 const hello = (state = 'ready', id = 1, session: object = {}) => ({
   type: 'hello',
@@ -76,6 +86,7 @@ const hello = (state = 'ready', id = 1, session: object = {}) => ({
     launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
     stop: 'none',
     variables: variables(state),
+    launcher_state: runningState,
     ...session,
   },
   replay: null,
@@ -486,6 +497,8 @@ describe('client.variables.bind', () => {
     );
     expect(client.session.session.get()?.scenario).not.toBeNull();
     expect(enabled.state.get()).toMatchObject({ block: null, launcherReason: null });
+    enabled.write(true);
+    expect(requests()).toHaveLength(1);
     // The variable's own reason comes before the launcher's
     const speed = client.variables.bind(ref('engine.speed'));
     await deliver(
@@ -505,6 +518,74 @@ describe('client.variables.bind', () => {
     );
     expect(speed.state.get()).toMatchObject({ block: 'read-only', launcherReason: null });
     speed.close();
+    enabled.close();
+  });
+
+  it('does not write until the launcher has said that it takes writes', async () => {
+    const enabled = client.variables.bind(ref('engine.enabled'));
+    await deliver(hello('ready', 1, { launcher_state: null }));
+    expect(enabled.state.get()).toMatchObject({
+      block: 'launcher',
+      launcherReason: {
+        code: 'unsupported',
+        message: 'this launcher does not say what it accepts',
+      },
+    });
+    enabled.write(true);
+    expect(requests()).toEqual([]);
+    await deliver(launcherEvent(1, runningState));
+    expect(enabled.state.get().block).toBeNull();
+    enabled.write(true);
+    expect(requests()).toHaveLength(1);
+    enabled.close();
+  });
+
+  it("has the launcher's answer before the variables can be ready (a recorded scenario run)", async () => {
+    // The launcher's events of a recorded run, in their order, as the GUI server passes them on. The variables can be
+    // ready only once the GUI server has connected to the Control Server, which it does after the `control_server`
+    // event: by then a `state` has said what the launcher takes.
+    const events = await recordedLauncherEvents('control-scenario-slow');
+    const until = events.findIndex((e) => e.event === 'control_server');
+    expect(until).toBeGreaterThan(0);
+    expect(events.slice(0, until).some((e) => e.event === 'state')).toBe(true);
+
+    const enabled = client.variables.bind(ref('engine.enabled'));
+    await deliver(hello('connecting', 1, { launcher_state: null }));
+    for (const [i, out] of events.slice(0, until + 1).entries()) {
+      await deliver({ type: 'event', session: 1, event: { ...out, seq: i + 1, t_ms: i } });
+    }
+    await deliver(changed('ready'));
+    expect(enabled.state.get()).toMatchObject({
+      block: 'launcher',
+      launcherReason: { code: 'scenario-running' },
+    });
+    enabled.close();
+  });
+
+  it('does not send a value kept back once the launcher stops taking writes', async () => {
+    const enabled = client.variables.bind(ref('engine.enabled'));
+    await deliver(hello());
+    enabled.write(true);
+    enabled.write(false); // kept back while the first write is on its way
+    const [request] = requests();
+    await deliver(
+      launcherEvent(9, {
+        ...runningState,
+        allowed: {
+          write: {
+            ok: false,
+            reason: 'scenario-running',
+            message: 'a scenario plays',
+            caution: null,
+          },
+        },
+      }),
+    );
+    request.flush({ session_id: 1, operation: 4 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requests()).toEqual([]);
+    expect(enabled.state.get().writeStatus).toEqual({ kind: 'dropped', message: DROPPED_MESSAGE });
+    expect(DROPPED_MESSAGE).toContain('the launcher does not take writes now');
     enabled.close();
   });
 

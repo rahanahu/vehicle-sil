@@ -79,17 +79,19 @@ export function sameCondition(a: ValueCondition, b: ValueCondition): boolean {
 }
 
 /**
- * Why the variable cannot be written now (null if it can).
+ * Why the variable cannot be written now (null if it can). In this order: the facts of the variable and the run first,
+ * then the launcher's answer, then the client's prediction (parameter), then what the widget needs.
  * - read-only: a read-only variable (role output).
  * - disconnected: the connection between the client and the GUI server is down.
  * - not-ready: the variable API is unavailable (not running, connecting, cannot connect).
  * - ended: the run has ended.
  * - missing: the variable is not in the current run.
  * - peer-disconnected: that ECU is not connected to the Control Server.
+ * - launcher: the launcher does not take a write now (`allowed.write` of its `state`, for example `scenario-running`
+ *   while a scenario plays), or has not said yet that it does (no `state` yet: `unsupported`). Its reason, code and
+ *   sentence, is BoundVariable.launcherReason (launcherAnswer of session-state.ts).
  * - parameter: a parameter can only be written before the first step (the client's prediction of the ECU's rule: the
  *   launcher does not say it for each variable).
- * - launcher: the launcher does not take a write now (`allowed.write` of its `state`, for example `scenario-running`
- *   while a scenario plays). Its reason, code and sentence as the launcher wrote them, is BoundVariable.launcherReason.
  * - no-range: a widget that needs a range (slider) is bound to a variable without one (min and max)
  *   (BindOptions.needsRange).
  * - no-value: there is no value yet, so a widget that moves from the value (slider) cannot move
@@ -102,8 +104,8 @@ export type WriteBlock =
   | 'ended'
   | 'missing'
   | 'peer-disconnected'
-  | 'parameter'
   | 'launcher'
+  | 'parameter'
   | 'no-range'
   | 'no-value';
 
@@ -116,11 +118,13 @@ export interface WriteBlockInput {
   beforeStart: boolean;
   /** Whether that ECU is connected to the Control Server. */
   peerConnected: boolean;
+  /** Whether the launcher does not take a write now, or has not said that it does (launcherAnswer(state, 'write')). */
+  launcherRefuses: boolean;
 }
 
 /**
  * Decides why the variable cannot be written now (null if it can). Only the reasons that do not depend on the widget:
- * client.variables.bind adds launcher, no-range and no-value.
+ * client.variables.bind adds no-range and no-value.
  */
 export function writeBlock(input: WriteBlockInput): WriteBlock | null {
   const { info, status } = input;
@@ -130,6 +134,7 @@ export function writeBlock(input: WriteBlockInput): WriteBlock | null {
   if (status !== 'ready') return 'not-ready';
   if (info === undefined) return 'missing';
   if (!input.peerConnected) return 'peer-disconnected';
+  if (input.launcherRefuses) return 'launcher';
   if (info.role === 'parameter' && !input.beforeStart) return 'parameter';
   return null;
 }

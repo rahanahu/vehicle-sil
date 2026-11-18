@@ -1474,9 +1474,9 @@
       "source": "シナリオの実行中は書けません（見るだけです）",
       "target": "Cannot write while a scenario runs (view only)"
     },
-    "8847019285534239338": {
-      "source": "ランチャーがいまは書き込みを受け付けません:",
-      "target": "The launcher does not take a write now:"
+    "6522580056644969795": {
+      "source": "ランチャーがいまは書き込みを受け付けません",
+      "target": "The launcher does not take a write now"
     },
     "8973894855810621678": {
       "source": "送っています",

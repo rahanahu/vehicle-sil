@@ -87,12 +87,7 @@ export type {
 
 // Binding one variable to one widget (client.variables.bind): value state, whether it can be written, write status
 export { DROPPED_MESSAGE } from './variable-binding';
-export type {
-  BindOptions,
-  BoundVariable,
-  LauncherReason,
-  VariableBinding,
-} from './variable-binding';
+export type { BindOptions, BoundVariable, VariableBinding } from './variable-binding';
 export { hasRange, isWriteError, valueCondition, writeBlock } from './variable-state';
 export type {
   ConditionInput,
@@ -113,9 +108,10 @@ export { DEFAULT_TIMEOUT_MS, HttpError, errorMessage, fetchTransport } from './h
 export type { FetchTransportOptions, HttpOutcome, HttpRequest, HttpTransport } from './http';
 
 // Shape of the session copy
-export { isHolding, phaseIndex, runOutcome } from './session-state';
+export { isHolding, launcherAnswer, phaseIndex, runOutcome } from './session-state';
 export type {
   CommandView,
+  LauncherAnswer,
   LauncherView,
   LogLine,
   LogSource,

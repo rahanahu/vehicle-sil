@@ -23,6 +23,55 @@ import {
   TimeReport,
 } from './protocol';
 
+/**
+ * A reason: a code that stays the same (an entry of the owner's reason codes, or one the client names) and one English
+ * sentence.
+ */
+export interface Reason {
+  code: string;
+  message: string;
+}
+
+/** What the launcher says of one operation: why it does not accept it now (null if it does), and its warning. */
+export interface LauncherAnswer {
+  reason: Reason | null;
+  caution: Reason | null;
+}
+
+/**
+ * What the launcher's last `state` says of one operation (`allowed.<name>`, such as `write` or `pause`), as it wrote
+ * it. A launcher that has not said yet (no `state`, or no entry for the operation) does not accept it (`unsupported`).
+ * The one place the client reads `allowed` of the launcher: `controls` of the front door and `client.variables.bind`
+ * both use it.
+ */
+export function launcherAnswer(state: StateReport | null, name: string): LauncherAnswer {
+  if (!state) {
+    return {
+      reason: { code: 'unsupported', message: 'this launcher does not say what it accepts' },
+      caution: null,
+    };
+  }
+  const item = Object.hasOwn(state.allowed, name) ? state.allowed[name] : undefined;
+  if (!item) {
+    return {
+      reason: {
+        code: 'unsupported',
+        message: `this launcher does not say whether it accepts ${name}`,
+      },
+      caution: null,
+    };
+  }
+  const caution = item.caution ? { code: item.caution.code, message: item.caution.message } : null;
+  if (item.ok) return { reason: null, caution };
+  return {
+    reason: {
+      code: item.reason ?? 'refused',
+      message: item.message ?? 'the launcher does not accept it now',
+    },
+    caution,
+  };
+}
+
 /** Log lines kept per source (participant or launcher). The same number the server keeps. */
 export const MAX_LOG_LINES_PER_SOURCE = 2000;
 /** Log lines kept in total. Beyond this, the oldest lines of the source holding the most are dropped. */

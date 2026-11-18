@@ -11,7 +11,7 @@ import {
 import {
   BoundVariable,
   HistoryPoint,
-  LauncherReason,
+  Reason,
   ValueCondition,
   VariableAvailability,
   VariableInfo,
@@ -66,7 +66,7 @@ export interface VariableBinding {
   /** いま書けない理由（書けるなら null）。 */
   readonly block: Signal<WriteBlock | null>;
   /** block が launcher のとき、ランチャーの理由（`state.allowed.write` の code と英語の文）。ほかは null。 */
-  readonly launcherReason: Signal<LauncherReason | null>;
+  readonly launcherReason: Signal<Reason | null>;
   /** この変数への最後の書き込みの様子（いまの実行の）。 */
   readonly writeStatus: Signal<WriteStatus>;
   /**

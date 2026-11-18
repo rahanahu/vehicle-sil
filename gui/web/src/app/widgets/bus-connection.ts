@@ -40,10 +40,7 @@ import { bindVariable } from './variable-binding';
         >
       }
       @if (why().text) {
-        {{ why().text }}
-        @if (why().english; as english) {
-          <span lang="en">{{ english }}</span>
-        }
+        <span [attr.lang]="why().english ? 'en' : null">{{ why().text }}</span>
       }
     </p>
     <p class="state error" role="alert" data-testid="bus-error">

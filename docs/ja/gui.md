@@ -1064,7 +1064,7 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 |---|---|---|
 | `info`、`reading` | 変数の定義と、最後の値（いつの値かつき） | なし |
 | `condition` | 値の状態 | `condition.kind`: `unavailable`、`missing`、`waiting`、`live`、`paused`、`stale`、`ended` |
-| `block` | いま書き込めない理由（書き込めるなら `null`） | `read-only`、`disconnected`、`ended`、`not-ready`、`missing`、`peer-disconnected`、`parameter`、`launcher`（ランチャーの理由は `launcherReason`）、`no-range`、`no-value` |
+| `block` | いま書き込めない理由（書き込めるなら `null`） | `read-only`、`disconnected`、`ended`、`not-ready`、`missing`、`peer-disconnected`、`launcher`（ランチャーが書き込みを受けない、または受けるとまだ言っていない。理由は `launcherReason`）、`parameter`、`no-range`、`no-value` |
 | `writeStatus`、`pending` | 最後の書き込みの状態と、送って結果を待っている値 | `writeStatus.kind`: `idle`、`sending`、`queued`、`applied` など |
 
 `condition.kind` の意味は次のとおりです。`block` と `writeStatus` の値の意味と細かいルールは、[gui/client/README.md](../../gui/client/README.ja.md) の「コンポーネントを作る（`bind`）」にあります。
@@ -1286,7 +1286,7 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 
 - `writable` が偽の変数（`output`）には書き込めません。
 - `parameter` は最初のステップの前（ランチャーの `state` の `holding`。ライブラリでは `isHolding(session)`）だけです。これは ECU の規則のライブラリによる予測です（ランチャーは変数ごとには言いません）。
-- ランチャーがいま受けない書き込みはできません: ランチャーの `state`（セッションのコピーの `launcherState`）の `allowed.write` が `ok` でないとき（たとえば、シナリオの実行中の `scenario-running`）。理由はそこから取ります（`block` は `launcher`、code と文は `launcherReason`）。ランチャーの規則が変わっても画面が従うように、セッションのコピーの `scenario` から決めません。
+- ランチャーがいま受けない書き込みはできません: ランチャーの `state`（セッションのコピーの `launcherState`）の `allowed.write` が `ok` でないとき（たとえば、シナリオの実行中の `scenario-running`）。`allowed.write` のある `state` が届くまでは、ランチャーは受けるとまだ言っていません（`unsupported`）。`launcherAnswer(launcherState, 'write')` で読みます（`block` は `launcher`、code と文は `launcherReason`）。ランチャーの規則が変わっても画面が従うように、セッションのコピーの `scenario` から決めません。これは `parameter` の予測より先です。
 - Control Server と接続していない participant（`client.variables.state` の `peers[].connected` が偽）にも書き込めません。
 
 **値が古いか**: `bind` の `state` の `condition` が `stale` と理由で通知します。`watch` を直接使う画面は、自分で確認します。

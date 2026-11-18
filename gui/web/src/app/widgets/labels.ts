@@ -1,6 +1,6 @@
 // 部品の言葉。状態の名前（機械が読む値）から、画面の言葉を作る。
 import {
-  LauncherReason,
+  Reason,
   ValueCondition,
   VariableInfo,
   VariablesStatus,
@@ -94,31 +94,30 @@ const LAUNCHER_REASONS: Record<string, string> = {
   'scenario-running': $localize`シナリオの実行中は書けません（見るだけです）`,
 };
 
-/** 文と、その後ろに添える英語の文（ランチャーの文。なければ null）。 */
-export interface ReasonText {
+/** 理由の文と、それが英語の文（持ち主の文をそのまま出す。`lang="en"` を付ける）か。実行の画面の reasonLine と同じ形。 */
+export interface ReasonLine {
   text: string;
-  english: string | null;
+  english: boolean;
 }
 
 /**
  * 書けない理由の文。`launcher`（ランチャーが断る）は、ランチャーの理由（`launcherReason`）を写す。
  * 読むだけの変数は、役割の欄が言うので空にする。
  */
-export function blockText(block: WriteBlock | null, launcher: LauncherReason | null): ReasonText {
-  if (block === null || block === 'read-only') return { text: '', english: null };
-  if (block !== 'launcher') return { text: BLOCKS[block], english: null };
+export function blockText(block: WriteBlock | null, launcher: Reason | null): ReasonLine {
+  if (block === null || block === 'read-only') return { text: '', english: false };
+  if (block !== 'launcher') return { text: BLOCKS[block], english: false };
   return launcherWriteText(launcher);
 }
 
-/** ランチャーが書き込みを断る理由の文（画面の言葉のない code は、ランチャーの英語の文を添える）。 */
-export function launcherWriteText(launcher: LauncherReason | null): ReasonText {
-  if (launcher && Object.hasOwn(LAUNCHER_REASONS, launcher.code)) {
-    return { text: LAUNCHER_REASONS[launcher.code], english: null };
+/** ランチャーが書き込みを断る理由の文。表にない code は、ランチャーの英語の文をそのまま出す（実行の画面と同じ）。 */
+export function launcherWriteText(launcher: Reason | null): ReasonLine {
+  if (!launcher)
+    return { text: $localize`ランチャーがいまは書き込みを受け付けません`, english: false };
+  if (Object.hasOwn(LAUNCHER_REASONS, launcher.code)) {
+    return { text: LAUNCHER_REASONS[launcher.code], english: false };
   }
-  return {
-    text: $localize`ランチャーがいまは書き込みを受け付けません:`,
-    english: launcher?.message ?? null,
-  };
+  return { text: launcher.message, english: true };
 }
 
 /** 書き込みの様子の文（idle は空）。english: 文の後ろに添える英語の文（サーバーとライブラリの文）。 */

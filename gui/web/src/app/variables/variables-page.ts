@@ -17,7 +17,7 @@ import { EcuVariables } from '../core/session/ecu-variables';
 import { ServerConnection } from '../core/session/server-connection';
 import { ServerInfo } from '../core/session/server-info';
 import { SimulationTime } from '../core/session/simulation-time';
-import { DashboardResponse, errorMessage } from '@vehicle-sil/gui-client';
+import { DashboardResponse, errorMessage, launcherAnswer } from '@vehicle-sil/gui-client';
 import {
   BuiltinLookup,
   autoDashboard,
@@ -420,7 +420,8 @@ export class VariablesPage {
         tone: 'warn',
       };
     }
-    const write = session?.launcherState?.allowed['write'];
+    // 書けるかどうかはランチャーが言う。client が読んだまま（launcherAnswer。部品の bind と同じ値）を写す
+    const write = launcherAnswer(session?.launcherState ?? null, 'write').reason;
     switch (status) {
       case 'ready':
         // ready のまま理由があるのは、値の読み取りが失敗し続けているとき（出ている値は最後に読めたもの）
@@ -431,12 +432,11 @@ export class VariablesPage {
             tone: 'warn',
           };
         }
-        // 書けるかどうかはランチャーが言う（`state.allowed.write`）。断っているなら、その理由を写す
-        if (write && !write.ok) {
-          return {
-            ...launcherWriteText({ code: write.reason ?? '', message: write.message ?? '' }),
-            tone: 'info',
-          };
+        if (write) {
+          const line = launcherWriteText(write);
+          return line.english
+            ? { text: '', english: line.text, tone: 'info' }
+            : { text: line.text, english: null, tone: 'info' };
         }
         if (this.time.beforeStart()) {
           return {

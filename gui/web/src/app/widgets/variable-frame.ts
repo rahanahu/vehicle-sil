@@ -64,10 +64,7 @@ import { VariableBinding } from './variable-binding';
           }
         </p>
         <p class="why" [id]="variable().id + '-why'" data-testid="widget-why">
-          {{ why().text }}
-          @if (why().english; as english) {
-            <span lang="en">{{ english }}</span>
-          }
+          <span [attr.lang]="why().english ? 'en' : null">{{ why().text }}</span>
           @if (variable().availability() === 'inactive') {
             <!-- 操作に Tab で入ったとき、理由の文と一緒に読まれる（見た目には出さない） -->
             <span class="sr" i18n>この ECU はいま使っていません</span>
