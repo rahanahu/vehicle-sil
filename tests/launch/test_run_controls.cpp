@@ -770,3 +770,29 @@ TEST_CASE(a_test_refuses_controls_because_every_run_needs_its_own)
       refusal([&] { static_cast<void>(vehicle_sil::launch::test_file("none.yaml", "none.yaml", options)); });
     CHECK(text.find("TestOptions::run.controls") != std::string::npos);
 }
+
+TEST_CASE(run_controls_tell_the_state_of_the_bridges_once_for_each_change)
+{
+    StopRequests stops;
+    std::vector<RunState> told;
+    RunControls::Observers observers;
+    observers.on_state = [&](const RunState& state) { told.push_back(state); };
+    RunControls controls(stops, false, std::move(observers));
+    CHECK(controls.state().outside.empty());
+    RunState::Outside bridge;
+    bridge.network = "CAN";
+    bridge.target = "can0";
+    bridge.participant = "bridge.CAN";
+    controls.set_outside({bridge});
+    CHECK_EQ(told.size(), std::size_t{1});
+    CHECK(told.back().outside.size() == 1 && told.back().outside.front() == bridge && told.back().outside.front().condition == "ok");
+    // The same again tells nothing; a change does, and state() has it.
+    controls.set_outside({bridge});
+    controls.publish();
+    CHECK_EQ(told.size(), std::size_t{1});
+    bridge.condition = "interrupted";
+    bridge.reasons = {"bus-off"};
+    controls.set_outside({bridge});
+    CHECK_EQ(told.size(), std::size_t{2});
+    CHECK(told.back().rev == 2 && controls.state().outside.front().reasons == std::vector<std::string>({"bus-off"}));
+}

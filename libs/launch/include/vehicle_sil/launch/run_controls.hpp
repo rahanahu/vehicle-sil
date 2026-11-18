@@ -13,6 +13,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace vehicle_sil::launch {
 
@@ -71,6 +72,30 @@ struct RunState
         Allowed pause, resume, step, speed, run_until, stop, write;
         [[nodiscard]] bool operator==(const Operations&) const = default;
     } allowed{};
+    /// What each bridge of --connect stands at (docs/simulation-events.md, "outside" of the state):
+    /// facts that change in steps, in the order of the bridges in the plan. Empty without --connect.
+    /// Set by RunControls::set_outside(); a number that keeps growing is not here (the event "outside").
+    struct Outside
+    {
+        std::string network{};
+        std::string target{};      ///< as --connect gave it
+        std::string participant{}; ///< the bridge's name (bridge.<network>)
+        /// "up", "down" or "unknown" as the bridge's link line says; empty: it has not said.
+        std::string link{};
+        /// "active", "passive", "bus-off" or "unknown"; empty: the bridge has no bus state (Ethernet) or has not said.
+        std::string bus{};
+        /// The bridge sent frames to the bus and nothing came from a device there for
+        /// kOutsideNothingReceivedAfter (detail::sent_without_answer(): the note connect-nothing-received).
+        bool nothing_received = false;
+        /// "ok", "interrupted" (the link is down or the bus is off) or "degraded" (the rest);
+        /// interrupted wins when both hold.
+        std::string condition = "ok";
+        /// Why it is not "ok", in the fixed order: link-down, bus-off, bus-errors, frames-dropped,
+        /// loop-suspected, device-shared. Empty when ok.
+        std::vector<std::string> reasons{};
+        [[nodiscard]] bool operator==(const Outside&) const = default;
+    };
+    std::vector<Outside> outside{};
 
     [[nodiscard]] bool operator==(const RunState&) const = default;
 };
@@ -100,6 +125,9 @@ struct RunState
 /// mutex (in its OnChange and in the `f` of its look()), and `on_state` is called there, so the
 /// states are told one at a time, each after the command event of the command that made it. The
 /// order of the locks stays: TimeCommands' mutex, then the event stream's or the time gate's.
+/// set_outside() takes TimeCommands' mutex too, and its caller (RunOutput) holds its own mutex then:
+/// RunOutput's mutex, then TimeCommands' (see run.cpp, "The locks"). Nothing under TimeCommands'
+/// mutex calls RunOutput, so the reverse order never happens.
 /// set_phase() calls `on_phase` with no lock, then publish(). `on_command` is called under
 /// TimeCommands' mutex (TimeCommands::OnCommand).
 ///
@@ -183,6 +211,11 @@ public:
     /// The run's alone: whether it keeps up with its speed, as its watch saw it last. publish()
     /// tells it.
     void set_pacing(Pacing pacing) noexcept { pacing_.store(pacing); }
+    /// The state of the bridges of --connect, as RunOutput has it now (RunState::outside): kept for
+    /// state(), and publish() tells it if it differs from the last. Takes TimeCommands' mutex, so
+    /// the caller may hold RunOutput's mutex but nothing that is taken under TimeCommands' mutex
+    /// (not from what runs under it, see above). Any thread.
+    void set_outside(std::vector<RunState::Outside> outside);
     /// Puts the state together and, if it differs from the one told last (but for `rev`), counts
     /// `rev` up and tells Observers::on_state. Any thread (not from what runs under TimeCommands'
     /// mutex, not from a signal handler). Cheap when nothing changed.
@@ -209,6 +242,8 @@ private:
     const bool has_command_observer_;
     /// The state told last (rev 0: none). Under TimeCommands' mutex.
     RunState told_{};
+    /// set_outside(). Under TimeCommands' mutex.
+    std::vector<RunState::Outside> outside_{};
 };
 
 } // namespace vehicle_sil::launch

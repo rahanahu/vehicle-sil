@@ -168,7 +168,20 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `stop` | 停止の要求: `requests` は 0、1（順に止めている）、2（参加者を待たない）。`by` は最初に求めたもの（結果の `interrupted_by` の値。なければ `null`） |
 | `scenario` | シナリオを再生する実行か（`--scenario`） |
 | `allowed` | 操作ごとに、いま受け付けるか（下の表） |
-| `outside` | 実物のバスにつないだネットワーク（`--connect`）の状態のための場所です。いまは空の配列です |
+| `outside` | 実物のバスにつないだネットワーク（`--connect`）ごとに 1 つの要素です（ブリッジの順）。`--connect` がなければ空の配列です（下記） |
+
+`outside[]`（[simulation-run.md](simulation-run.md#リンクとバスの状態) の「リンクとバスの状態」）:
+
+| キー | 値 |
+|---|---|
+| `network`、`target`、`participant` | ネットワーク、`--connect` が渡したもの、そのブリッジの名前（`bridge.<network>`） |
+| `link` | ブリッジの link の行が言う `"up"`、`"down"`、`"unknown"`。まだ言っていなければ `null` |
+| `bus` | `"active"`、`"passive"`、`"bus-off"`、`"unknown"`。バスの状態を持たないブリッジ（Ethernet）や、まだ言っていないときは `null` |
+| `nothing_received` | ブリッジがバスへフレームを送り、最初のフレームから 10 秒、そこの機器から何も来ていないとき `true`（注記 `connect-nothing-received` と同じ条件） |
+| `condition` | `"ok"`、`"interrupted"`（リンクが落ちているか、バスが bus-off。実行は続く）、`"degraded"`（下のそれ以外）。両方なら `"interrupted"` |
+| `reasons` | `condition` が `ok` でない理由（`ok` なら空）。順は `link-down`、`bus-off`、`bus-errors`（バスが error passive）、`frames-dropped`（落としたフレームの数が直近 5 秒に増えた）、`loop-suspected`（止めたループの数が直近 5 秒に増えた）、`device-shared`（この実行のものでないブリッジが同じデバイスを使っている間） |
+
+5 秒の保持は、`state` のちらつきを防ぎます。終わったブリッジはここに出ません（`participant` と、誤り `connect-lost` を見てください）。数そのものは `outside` イベントにあります。
 
 `state` にあるのは、段階的に変わる値だけです。仮想時刻と、増え続ける数は `time` にあります（つないだネットワークの数は `outside`）。
 

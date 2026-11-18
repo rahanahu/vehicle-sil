@@ -261,7 +261,7 @@ std::vector<Finding> nothing_received_findings(const RunOutcome& outcome)
     }
     for (const RunOutside& o : outcome.outside)
     {
-        if (!o.to_outside || !o.from_outside || *o.to_outside == 0 || *o.from_outside != 0)
+        if (!detail::sent_without_answer(o.to_outside, o.from_outside))
         {
             continue;
         }

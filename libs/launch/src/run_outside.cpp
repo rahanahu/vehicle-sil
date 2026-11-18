@@ -87,8 +87,8 @@ std::optional<OutsideCounts> read_outside_counts(std::string_view tool, std::str
 {
     // The keys of each bridge: the frames it sent to the bus, and those that came from a device there.
     // Both bridges use the same names.
-    const std::string toKey = "silkit_to_ext";
-    const std::string fromKey = "ext_from_devices";
+    const std::string toKey(kOutsideToKey);
+    const std::string fromKey(kOutsideFromKey);
     const auto all = read_outside_stats(tool, line);
     if (!all)
     {
@@ -337,6 +337,64 @@ bool OutsideState::on_link(const OutsideLinkLine& line, std::chrono::steady_cloc
         }
     }
     return changed;
+}
+
+void OutsideState::on_counts(std::map<std::string, std::uint64_t> counts, std::chrono::steady_clock::time_point now)
+{
+    counts_ = std::move(counts);
+    std::uint64_t dropped = 0;
+    for (const std::string_view key : kOutsideDroppedKeys)
+    {
+        if (const auto at = counts_.find(std::string(key)); at != counts_.end())
+        {
+            dropped += at->second;
+        }
+    }
+    if (dropped > dropped_)
+    {
+        dropped_at_ = now;
+    }
+    dropped_ = dropped;
+    if (const auto at = counts_.find(std::string(kOutsideLoopKey)); at != counts_.end())
+    {
+        if (at->second > loops_)
+        {
+            loops_at_ = now;
+        }
+        loops_ = at->second;
+    }
+    const auto to = counts_.find(std::string(kOutsideToKey));
+    if (!sent_since_ && to != counts_.end() && to->second != 0)
+    {
+        sent_since_ = now;
+    }
+}
+
+RunState::Outside OutsideState::facts(std::chrono::steady_clock::time_point now) const
+{
+    RunState::Outside out;
+    out.link = link_text();
+    out.bus = bus_text();
+    const auto count_of = [this](std::string_view key) -> std::optional<std::uint64_t> {
+        const auto at = counts_.find(std::string(key));
+        return at == counts_.end() ? std::nullopt : std::optional<std::uint64_t>(at->second);
+    };
+    out.nothing_received = sent_since_ && now - *sent_since_ >= kOutsideNothingReceivedAfter &&
+                           sent_without_answer(count_of(kOutsideToKey), count_of(kOutsideFromKey));
+    const auto recent = [now](const std::optional<std::chrono::steady_clock::time_point>& at) {
+        return at && now - *at < kOutsideDegradedHold;
+    };
+    const bool link_down = link_ == OutsideLinkValue::Down;
+    const bool bus_off = bus_ == OutsideBusValue::BusOff;
+    // The fixed order of the reasons.
+    if (link_down) out.reasons.emplace_back("link-down");
+    if (bus_off) out.reasons.emplace_back("bus-off");
+    if (bus_ == OutsideBusValue::Passive) out.reasons.emplace_back("bus-errors");
+    if (recent(dropped_at_)) out.reasons.emplace_back("frames-dropped");
+    if (recent(loops_at_)) out.reasons.emplace_back("loop-suspected");
+    if (foreign_.since) out.reasons.emplace_back("device-shared");
+    out.condition = out.reasons.empty() ? "ok" : (link_down || bus_off) ? "interrupted" : "degraded";
+    return out;
 }
 
 std::string OutsideState::link_text() const
