@@ -17,6 +17,9 @@ namespace vehicle_sil::launch {
 
 struct RunRequest; // request.hpp
 
+/// The version of the JSON that format_json() writes (its "vehicle_sil_check" key).
+inline constexpr int kCheckFormat = 1;
+
 /// What check_file() returns: the check of the configuration, with the scenario of --scenario.
 /// The findings of the scenario are in CheckReport::findings (with Finding::file set), so that the
 /// counts, the exit code and the order stay one: `scenario` only says what was read. A run, a test
@@ -27,6 +30,15 @@ struct Checked : CheckReport
     /// --scenario: the scenario file that was read and checked.
     std::optional<ScenarioCheck> scenario{};
 };
+
+namespace detail {
+/// The scenario of a check, or null without --scenario: what the outputs' pieces take
+/// (check_format.hpp).
+[[nodiscard]] inline const ScenarioCheck* scenario_of(const Checked& checked)
+{
+    return checked.scenario ? &*checked.scenario : nullptr;
+}
+} // namespace detail
 
 /// The report for people: the participants and the networks as tables, then each error and
 /// warning as "<severity>: <file>:<line>: <message> [<code>]" (with the detail indented below), then a

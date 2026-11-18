@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
 // This computer's addresses that other computers may reach, and the line run writes about them
-// (run.hpp, detail::host_addresses() and detail::other_computers_line()).
-#include "vehicle_sil/launch/run.hpp"
+// (run_detail.hpp, detail::host_addresses() and detail::other_computers_line()).
+#include "vehicle_sil/launch/run_detail.hpp"
 
 #include "vehicle_sil/core/registry_uri.hpp"
 

@@ -23,9 +23,6 @@
 
 namespace vehicle_sil::launch {
 
-/// The version of the JSON that format_json() writes (its "vehicle_sil_check" key).
-inline constexpr int kCheckFormat = 1;
-
 /// What an executable reported with --describe (docs/ecu-executable.md).
 struct ReportedEcu
 {
@@ -348,8 +345,5 @@ struct CheckReport
 [[nodiscard]] control::MappedSchema seen_variables(const ParticipantConfig& participant, const ReportedEcu& ecu);
 
 void sort_findings(std::vector<Finding>& findings);
-
-/// How long one --describe may take unless the request says otherwise (RunHost::describe_timeout).
-inline constexpr std::chrono::milliseconds kDescribeTimeout{10000};
 
 } // namespace vehicle_sil::launch

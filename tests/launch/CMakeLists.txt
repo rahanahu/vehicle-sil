@@ -46,7 +46,7 @@ target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_S
 # through a pointer to the member), and pass the networks of the file.
 add_test(NAME launch.described_networks_are_read_in_one_place
          COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DDIR=libs/launch,tools/launch
-                 -DFILES=libs/launch/src/check_networks.cpp,libs/launch/src/describe_read.cpp
+                 -DFILES=libs/launch/src/check_networks.cpp,libs/launch/src/describe_read.cpp,libs/launch/src/reported_networks.cpp
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckDescribedNetworks.cmake)
 add_test(NAME launch.described_networks_check_rejects_a_direct_read
          COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/network_fixtures/direct -DDIR=launch
@@ -86,7 +86,9 @@ set(_launch_pure_files
     libs/launch/src/control_rules.cpp libs/launch/include/vehicle_sil/launch/control_rules.hpp
     libs/launch/src/request.cpp libs/launch/include/vehicle_sil/launch/request.hpp
     libs/launch/src/request_read.cpp libs/launch/include/vehicle_sil/launch/scenario_check.hpp
-    libs/launch/include/vehicle_sil/launch/checked.hpp libs/launch/src/scenario_check.cpp)
+    libs/launch/include/vehicle_sil/launch/checked.hpp libs/launch/src/scenario_check.cpp
+    libs/launch/src/check_report.cpp libs/launch/src/reported_networks.cpp
+    libs/launch/src/command_input.cpp libs/launch/include/vehicle_sil/launch/command_input.hpp)
 list(JOIN _launch_pure_files "," _launch_pure_files_arg)
 add_test(NAME launch.pure_files_include_no_runtime
          COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DFILES=${_launch_pure_files_arg}
@@ -94,15 +96,16 @@ add_test(NAME launch.pure_files_include_no_runtime
 # The configuration's check and the files that read the configuration do not reach the scenario
 # (vehicle_sil/launch/scenario*.hpp): the scenario depends on the configuration, not the other way
 # round. check.hpp is one of them; the scenario's result of a check is scenario_check.hpp.
-# check.cpp, check_format.* and check_networks.cpp are not listed: each holds the configuration's
-# side and the use case (the scenario of --scenario) together, until they are split.
+# check.cpp (check_file(), the use case) and the outputs (check_format.*, reported_networks.cpp),
+# which take the scenario of --scenario too, are not listed.
 set(_launch_config_files
     libs/launch/include/vehicle_sil/launch/check.hpp libs/launch/include/vehicle_sil/launch/config.hpp
     libs/launch/include/vehicle_sil/launch/connect.hpp libs/launch/include/vehicle_sil/launch/time_plan.hpp
     libs/launch/include/vehicle_sil/launch/connections.hpp libs/launch/include/vehicle_sil/launch/request.hpp
     libs/launch/src/request.cpp libs/launch/src/request_read.cpp libs/launch/src/check_rules.cpp libs/launch/src/config.cpp libs/launch/src/connect.cpp
     libs/launch/src/check_connect.cpp libs/launch/src/describe_read.cpp libs/launch/src/seen_ecu.cpp
-    libs/launch/src/seen_ecu.hpp libs/launch/src/time_plan.cpp libs/launch/src/check_words.hpp)
+    libs/launch/src/seen_ecu.hpp libs/launch/src/time_plan.cpp libs/launch/src/check_words.hpp
+    libs/launch/src/check_report.cpp libs/launch/src/check_networks.cpp)
 list(JOIN _launch_config_files "," _launch_config_files_arg)
 add_test(NAME launch.config_files_do_not_reach_the_scenario
          COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DFILES=${_launch_config_files_arg}
@@ -119,7 +122,7 @@ add_test(NAME launch.config_files_check_rejects_a_scenario_include
                  -DFILES=launch/src/config.cpp -DFORBIDDEN_PREFIXES=vehicle_sil/launch/scenario
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
 set_tests_properties(launch.config_files_check_rejects_a_scenario_include PROPERTIES LABELS "unit;launch" TIMEOUT 60
-                     PASS_REGULAR_EXPRESSION "config\\.cpp: vehicle_sil/launch/scenario_x\\.hpp")
+                     PASS_REGULAR_EXPRESSION "config\\.cpp: vehicle_sil/launch/scenario_x\\.hpp.*config\\.cpp: scenario_y\\.hpp")
 set_tests_properties(launch.pure_files_check_rejects_a_forbidden_include PROPERTIES
                      PASS_REGULAR_EXPRESSION "pure\\.cpp: helper\\.hpp -> silkit/SilKit\\.hpp"
                      FAIL_REGULAR_EXPRESSION "clean\\.hpp:")

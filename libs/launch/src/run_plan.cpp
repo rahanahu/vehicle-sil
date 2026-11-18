@@ -3,6 +3,8 @@
 // plan_run(), planned_outcome(): what is settled about a run before it begins. Pure.
 #include "vehicle_sil/launch/run_plan.hpp"
 
+#include "vehicle_sil/launch/request.hpp"
+#include "vehicle_sil/launch/run_detail.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
 #include "vehicle_sil/process/paths.hpp"
 

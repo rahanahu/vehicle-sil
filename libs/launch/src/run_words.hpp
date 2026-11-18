@@ -4,7 +4,7 @@
 // milliseconds is in check_words.hpp). Pure functions. Internal.
 #pragma once
 
-#include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/run_outcome.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 
 #include "check_words.hpp"

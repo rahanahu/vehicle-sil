@@ -65,9 +65,6 @@ struct ScenarioStepRun
     /// (ScenarioStep::expect_skipped), or "". Known before the run, whatever its status.
     std::string expect_skipped{};
 };
-/// One step in words, as a line of the run's output says it when the step is decided:
-/// "line 4: set ...: ok at 100 ms", with the step's message for one that failed or was skipped.
-[[nodiscard]] std::string scenario_step_text(const ScenarioStepRun& step);
 
 enum class ScenarioStatus
 {

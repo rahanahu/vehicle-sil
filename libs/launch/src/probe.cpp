@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
 // What the launcher finds out from the computer (probe.hpp): the file system, the environment and
-// the processes it runs for their output. Nothing here makes a finding of its own, except through
-// a rule that it gives what it found (check_executable()).
+// the processes it runs for their output. Nothing here makes a finding: the rules judge what it
+// found.
 #include "vehicle_sil/launch/probe.hpp"
 
 #include "vehicle_sil/process/child_process.hpp"
@@ -293,10 +293,10 @@ FoundExecutable find_executable(std::string_view executable, const std::filesyst
     return found;
 }
 
-std::optional<Finding> check_executable(const ParticipantConfig& participant, const std::filesystem::path& path)
+std::filesystem::file_status executable_status(const std::filesystem::path& path)
 {
     std::error_code ec;
-    return executable_finding(participant, path, std::filesystem::status(path, ec));
+    return std::filesystem::status(path, ec);
 }
 
 std::optional<std::filesystem::path> find_tool(std::string_view name, const std::filesystem::path& launcher_dir)
