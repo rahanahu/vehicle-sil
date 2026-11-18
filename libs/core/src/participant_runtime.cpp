@@ -214,6 +214,17 @@ ParticipantRuntime::ParticipantRuntime(ParticipantRuntimeOptions options) :
         const auto mode = options_.lifecycle_mode == LifecycleMode::Coordinated ? orch::OperationMode::Coordinated
                                                                                  : orch::OperationMode::Autonomous;
         lifecycle_ = participant_->CreateLifecycleService({mode});
+        // Always: also a participant that is given no handler has SIL Kit take its errors from
+        // here on (open_error_reporting()). set_communication_ready_handler() and
+        // set_communication_ready_handler_async() replace this one.
+        lifecycle_->SetCommunicationReadyHandler([this] {
+            open_error_reporting();
+            const std::lock_guard gate(communication_ready_gate_);
+            if (!communication_ready_disabled_)
+            {
+                run_added_communication_ready();
+            }
+        });
 
         if (options_.virtual_time)
         {
@@ -297,7 +308,7 @@ void ParticipantRuntime::set_communication_ready_handler(std::function<void()> h
         throw std::logic_error("ParticipantRuntime::set_communication_ready_handler() must be called before start()");
     }
     lifecycle_->SetCommunicationReadyHandler([this, handler = std::move(handler)] {
-        take_reported_errors();
+        open_error_reporting();
         const std::lock_guard gate(communication_ready_gate_);
         if (communication_ready_disabled_)
         {
@@ -309,7 +320,6 @@ void ParticipantRuntime::set_communication_ready_handler(std::function<void()> h
             handler();
         }
     });
-    communication_ready_registered_ = true;
 }
 
 void ParticipantRuntime::add_communication_ready_handler(std::function<void()> handler)
@@ -318,19 +328,8 @@ void ParticipantRuntime::add_communication_ready_handler(std::function<void()> h
     {
         throw std::logic_error("ParticipantRuntime::add_communication_ready_handler() must be called before start()");
     }
+    // Run by the handler that SIL Kit has (the constructor's, or the one that was set).
     added_communication_ready_.push_back(std::move(handler));
-    if (!communication_ready_registered_)
-    {
-        lifecycle_->SetCommunicationReadyHandler([this] {
-            take_reported_errors();
-            const std::lock_guard gate(communication_ready_gate_);
-            if (!communication_ready_disabled_)
-            {
-                run_added_communication_ready();
-            }
-        });
-        communication_ready_registered_ = true;
-    }
 }
 
 void ParticipantRuntime::run_added_communication_ready()
@@ -365,9 +364,8 @@ void ParticipantRuntime::set_communication_ready_handler_async(std::function<voi
         throw std::logic_error("ParticipantRuntime::set_communication_ready_handler_async() must be called before start()");
     }
     communication_ready_ = std::move(handler);
-    communication_ready_registered_ = true;
     lifecycle_->SetCommunicationReadyHandlerAsync([this] {
-        take_reported_errors();
+        open_error_reporting();
         const std::lock_guard gate(communication_ready_gate_);
         const bool disabled = communication_ready_disabled_;
         if (!disabled)
@@ -440,11 +438,13 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
     // returns.
     lifecycle_started_.store(true, std::memory_order_release);
     lifecycle_done_ = lifecycle_->StartLifecycle().share();
-    // Only now does SIL Kit take a reported error (report_failure()). control_mutex_ is not held
-    // across StartLifecycle(): that registers status handlers under SIL Kit's handler lock, which
-    // the SIL Kit thread holds while it calls on_status(), which takes control_mutex_.
+    // SIL Kit takes a reported error from StartLifecycle() on. report_failure() gives it one from
+    // here or from the head of the CommunicationReady handler on, whichever comes first.
+    // control_mutex_ is not held across StartLifecycle(): that registers status handlers under SIL
+    // Kit's handler lock, which the SIL Kit thread holds while it calls on_status(), which takes
+    // control_mutex_.
     start_probe(detail::StartProbePoint::AfterStartLifecycle);
-    take_reported_errors();
+    open_error_reporting();
 
     const auto deadline = timeout == kNoStartLimit ? std::chrono::steady_clock::time_point::max()
                                                    : std::chrono::steady_clock::now() + timeout;
@@ -811,21 +811,20 @@ bool ParticipantRuntime::has_failed() const
     return failed_;
 }
 
-void ParticipantRuntime::take_reported_errors() noexcept
+void ParticipantRuntime::open_error_reporting() noexcept
 {
     try
     {
         const std::lock_guard lock(control_mutex_);
         error_reportable_ = true;
-        if (early_failure_)
+        if (early_failure_ && !failed_)
         {
             // Something failed while start() was in StartLifecycle(): report it now. As in
-            // report_failure(), ReportError() only queues a call.
-            std::string text = std::move(*early_failure_);
-            early_failure_.reset();
+            // report_failure(): ReportError() only queues a call, and the flag is set after it.
+            lifecycle_->ReportError(*early_failure_);
             failed_ = true;
-            lifecycle_->ReportError(std::move(text));
         }
+        early_failure_.reset(); // reported, or a failed step was reported before it (only the first is)
     }
     catch (const std::exception&)
     {
@@ -845,7 +844,7 @@ void ParticipantRuntime::report_failure(std::string_view reason) noexcept
         if (!error_reportable_)
         {
             // SIL Kit ignores an error before StartLifecycle(); so does the stop logic. One that
-            // comes while start() is in StartLifecycle() is kept for take_reported_errors().
+            // comes while start() is in StartLifecycle() is kept for open_error_reporting().
             if (lifecycle_started_.load(std::memory_order_acquire) && !early_failure_)
             {
                 early_failure_ = std::move(text);
