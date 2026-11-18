@@ -6,6 +6,7 @@
 
 #include "launch_test_util.hpp"
 
+#include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/launch/run.hpp"
 #include "vehicle_sil/launch/run_plan.hpp"
@@ -210,7 +211,7 @@ TEST_CASE(a_check_reads_every_field_of_the_request_that_is_the_checks)
     const std::filesystem::path dir = request_files("check-fields");
     const vehicle_sil::launch::test::InDirectory there(dir);
     const CheckOptions file_only{.params_for_many = false, .file_only = true, .fastest_by_default = false};
-    const CheckReport none = check_file(of_file("sim.yaml"));
+    const Checked none = check_file(of_file("sim.yaml"));
     CHECK(none.file == "sim.yaml" && none.config.has_value());
     if (!none.config)
     {
@@ -238,12 +239,12 @@ TEST_CASE(a_check_reads_every_field_of_the_request_that_is_the_checks)
     CHECK(check_file(r).strict);
     r = of_file("sim.yaml");
     r.intent.scenario = "drive.yaml";
-    const CheckReport driven = check_file(r);
+    const Checked driven = check_file(r);
     CHECK(driven.scenario.has_value() && driven.scenario->file == "drive.yaml" && codes(driven, "file").empty());
     CHECK(driven.scenario && driven.scenario->params.size() == 1 && driven.scenario->params[0].text == "0");
     // A parameter is read with a scenario only (validate_request() asks for both).
     r.intent.params.push_back(param("x", "1"));
-    const CheckReport set = check_file(r);
+    const Checked set = check_file(r);
     CHECK(set.scenario && set.scenario->params.size() == 1 && set.scenario->params[0].text == "1" &&
           set.scenario->params[0].source == ParamSource::CommandLine);
     r = of_file("sim.yaml");
@@ -258,7 +259,7 @@ TEST_CASE(a_check_reads_every_field_of_the_request_that_is_the_checks)
     r = of_file("sim.yaml");
     r.intent.connect.push_back({"ETH1", "eth-none0"});
     r.host.tool_directory = dir / "tools";
-    const CheckReport asked = check_file(r);
+    const Checked asked = check_file(r);
     CHECK(codes(asked, "connect-tool-missing").empty());
     CHECK(asked.outside.size() == 1 && asked.outside.at(0).tool_path.parent_path() == dir / "tools");
     // The speed and --start-paused of the run that the request asks for, for the time lock; a
@@ -298,7 +299,7 @@ TEST_CASE(the_describe_limit_of_the_request_is_what_a_test_reports_and_defaults_
 
 TEST_CASE(a_plan_takes_every_field_of_the_request_that_the_run_reads)
 {
-    CheckReport check;
+    Checked check;
     check.config.emplace();
     const RunPlan none = plan_run(check, "dir", RunRequest{});
     CHECK(!none.timing.speed && !none.holds_before_start && none.log_dir.empty() && none.timeline.empty() &&

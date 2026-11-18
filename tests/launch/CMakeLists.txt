@@ -85,17 +85,33 @@ set(_launch_pure_files
     libs/launch/src/timeline_format.cpp
     libs/launch/src/control_rules.cpp libs/launch/include/vehicle_sil/launch/control_rules.hpp
     libs/launch/src/request.cpp libs/launch/include/vehicle_sil/launch/request.hpp
-    libs/launch/src/request_read.cpp)
+    libs/launch/src/request_read.cpp libs/launch/include/vehicle_sil/launch/scenario_check.hpp
+    libs/launch/include/vehicle_sil/launch/checked.hpp libs/launch/src/scenario_check.cpp)
 list(JOIN _launch_pure_files "," _launch_pure_files_arg)
 add_test(NAME launch.pure_files_include_no_runtime
          COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DFILES=${_launch_pure_files_arg}
+                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
+# The configuration's check and the files that read the configuration do not reach the scenario
+# (vehicle_sil/launch/scenario*.hpp): the scenario depends on the configuration, not the other way
+# round. check.hpp is one of them; the scenario's result of a check is scenario_check.hpp.
+set(_launch_config_files
+    libs/launch/include/vehicle_sil/launch/check.hpp libs/launch/include/vehicle_sil/launch/config.hpp
+    libs/launch/include/vehicle_sil/launch/connect.hpp libs/launch/include/vehicle_sil/launch/time_plan.hpp
+    libs/launch/include/vehicle_sil/launch/connections.hpp libs/launch/include/vehicle_sil/launch/request.hpp
+    libs/launch/src/request.cpp libs/launch/src/request_read.cpp libs/launch/src/check_rules.cpp libs/launch/src/config.cpp libs/launch/src/connect.cpp
+    libs/launch/src/check_connect.cpp libs/launch/src/describe_read.cpp libs/launch/src/seen_ecu.cpp
+    libs/launch/src/seen_ecu.hpp libs/launch/src/time_plan.cpp libs/launch/src/check_words.hpp)
+list(JOIN _launch_config_files "," _launch_config_files_arg)
+add_test(NAME launch.config_files_do_not_reach_the_scenario
+         COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DFILES=${_launch_config_files_arg}
+                 -DFORBIDDEN_PREFIXES=vehicle_sil/launch/scenario
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
 add_test(NAME launch.pure_files_check_rejects_a_forbidden_include
          COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/include_fixtures/direct
                  -DFILES=launch/src/pure.cpp,launch/src/clean.hpp
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
 set_tests_properties(launch.pure_files_include_no_runtime launch.pure_files_check_rejects_a_forbidden_include
-                     PROPERTIES LABELS "unit;launch" TIMEOUT 60)
+                     launch.config_files_do_not_reach_the_scenario PROPERTIES LABELS "unit;launch" TIMEOUT 60)
 set_tests_properties(launch.pure_files_check_rejects_a_forbidden_include PROPERTIES
                      PASS_REGULAR_EXPRESSION "pure\\.cpp: helper\\.hpp -> silkit/SilKit\\.hpp"
                      FAIL_REGULAR_EXPRESSION "clean\\.hpp:")

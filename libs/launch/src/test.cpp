@@ -548,7 +548,7 @@ TestReport test_file(const TestOptions& options)
     CheckOptions only;
     only.file_only = true;
     only.fastest_by_default = options.fastest_by_default;
-    const CheckReport file = check_file(read, only);
+    const Checked file = check_file(read, only);
     const bool hasVariants = !file.variants.empty();
     if (file.usage && !hasVariants)
     {
@@ -564,7 +564,7 @@ TestReport test_file(const TestOptions& options)
     for (const std::string& variant : options.variants)
     {
         read.intent.variant = variant;
-        if (CheckReport chosen = check_file(read, only); chosen.usage)
+        if (Checked chosen = check_file(read, only); chosen.usage)
         {
             return refuse(std::move(chosen.findings));
         }
@@ -581,7 +581,7 @@ TestReport test_file(const TestOptions& options)
     }
     // The configuration of each variant that runs (the file's own if it defines none), after
     // --disable and --enable. One that cannot be read is left out here: its runs say why.
-    std::vector<CheckReport> chosen;
+    std::vector<Checked> chosen;
     for (const std::string& variant : report.variants)
     {
         read.intent.variant = variant;

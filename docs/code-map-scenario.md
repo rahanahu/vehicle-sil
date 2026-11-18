@@ -220,7 +220,7 @@ Where to change (`libs/launch/include/vehicle_sil/launch/test.hpp` and `src/test
 | `format_test_json()` | `kTestFormat` |
 | `TestReport::remarks()` | The findings for `test` as a whole: `test-nothing-run`, `test-runs-left` and `test-speed-set` |
 | `TestReport::result()` | Result and exit code |
-| `ScenarioCheck::not_for_variant` | Marks a run that does not match `only` as `skipped` |
+| `ScenarioCheck::not_for_variant` (`launch/scenario_check.hpp`) | Marks a run that does not match `only` as `skipped` |
 | `CheckOptions::params_for_many` | Relaxes the check of `--param` |
 | `CheckOptions::file_only` | Reads only the configuration file |
 | `test()` and `spread_scenarios()` in `tools/launch/main.cpp` | Arguments |

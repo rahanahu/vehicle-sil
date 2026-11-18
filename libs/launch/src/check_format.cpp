@@ -3,6 +3,7 @@
 // The check's output: for people (format_text()) and as JSON (format_json()), and the pieces of
 // them that the run's output and the events reuse (check_format.hpp). Pure functions.
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/checked.hpp"
 
 #include "check_format.hpp"
 #include "check_words.hpp"
@@ -158,7 +159,7 @@ const char* status_name(ParticipantStatus status)
 
 } // namespace
 
-std::string detail::check_text_body(const CheckReport& report)
+std::string detail::check_text_body(const CheckReport& report, const ScenarioCheck* scenario)
 {
     std::string out;
     if (report.config)
@@ -233,25 +234,25 @@ std::string detail::check_text_body(const CheckReport& report)
             out += table(rows) + "\n";
         }
     }
-    if (report.scenario && report.config)
+    if (scenario != nullptr && report.config)
     {
-        out += "scenario " + report.scenario->file + (report.scenario->name.empty() ? "" : " (" + report.scenario->name + ")") +
-               ": " + count_text(report.scenario->steps, "step", "steps") +
-               scenario_counts_text(*report.scenario) + "\n";
-        if (!report.scenario->params.empty())
+        out += "scenario " + scenario->file + (scenario->name.empty() ? "" : " (" + scenario->name + ")") +
+               ": " + count_text(scenario->steps, "step", "steps") +
+               scenario_counts_text(*scenario) + "\n";
+        if (!scenario->params.empty())
         {
             std::string params;
-            for (const ParamValue& param : report.scenario->params)
+            for (const ParamValue& param : scenario->params)
             {
                 params += (params.empty() ? "" : ", ") + param.name + " = " + param.text + " (" + param_source_text(param.source) + ")";
             }
             out += "parameters: " + params + "\n";
         }
         out += "\n";
-        if (report.scenario->scenario && report.scenario->scenario->has_dither)
+        if (scenario->scenario && scenario->scenario->has_dither)
         {
             // Only for a scenario with a dither: another one's output is as it was.
-            out += detail::scenario_lines_text(report.scenario->scenario->lines) + "\n";
+            out += detail::scenario_lines_text(scenario->scenario->lines) + "\n";
         }
     }
     out += detail::findings_text(report.file, report.findings);
@@ -392,9 +393,11 @@ std::string detail::table_text(const std::vector<std::vector<std::string>>& rows
 
 const char* detail::severity_text(Severity severity) { return severity_name(severity); }
 
-std::string format_text(const CheckReport& report)
+namespace {
+
+std::string text_of(const CheckReport& report, const ScenarioCheck* scenario)
 {
-    std::string out = detail::check_text_body(report);
+    std::string out = detail::check_text_body(report, scenario);
     const std::string counts = count_text(report.errors(), "error", "errors") + ", " +
                                count_text(report.warnings(), "warning", "warnings") + ", " +
                                count_text(report.notes(), "note", "notes");
@@ -412,6 +415,12 @@ std::string format_text(const CheckReport& report)
     }
     return out;
 }
+
+} // namespace
+
+std::string format_text(const CheckReport& report) { return text_of(report, nullptr); }
+
+std::string format_text(const Checked& checked) { return text_of(checked, detail::scenario_of(checked)); }
 
 void detail::write_finding_members(vehicle_sil::json::JsonWriter& w, const std::string& file, const Finding& finding)
 {
@@ -494,16 +503,25 @@ void detail::write_findings_json(vehicle_sil::json::JsonWriter& w, const std::st
     w.end_array();
 }
 
-std::string format_json(const CheckReport& report)
+namespace {
+
+std::string json_of(const CheckReport& report, const ScenarioCheck* scenario)
 {
     vehicle_sil::json::JsonWriter w;
-    detail::write_check_json(w, {}, report);
+    detail::write_check_json(w, {}, report, scenario);
     std::string out = w.take();
     out += '\n';
     return out;
 }
 
-void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view member, const CheckReport& report)
+} // namespace
+
+std::string format_json(const CheckReport& report) { return json_of(report, nullptr); }
+
+std::string format_json(const Checked& checked) { return json_of(checked, detail::scenario_of(checked)); }
+
+void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view member, const CheckReport& report,
+                              const ScenarioCheck* scenario)
 {
     const auto optional_text = [&w](std::string_view key, const std::string& value) {
         if (value.empty())
@@ -825,39 +843,39 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
         w.null("time_lock");
     }
     detail::write_findings_json(w, report.file, report.findings);
-    if (report.scenario)
+    if (scenario != nullptr)
     {
         // Only with --scenario: a result without one is as it was before scenarios.
         w.begin_object("scenario");
-        w.string("file", report.scenario->file);
-        optional_text("name", report.scenario->name);
-        w.integer("steps", static_cast<std::int64_t>(report.scenario->steps));
+        w.string("file", scenario->file);
+        optional_text("name", scenario->name);
+        w.integer("steps", static_cast<std::int64_t>(scenario->steps));
         // Each only if the scenario has it.
-        if (report.scenario->only)
+        if (scenario->only)
         {
             w.begin_array("only");
-            for (const std::string& name : *report.scenario->only)
+            for (const std::string& name : *scenario->only)
             {
                 w.string({}, name);
             }
             w.end_array();
         }
-        if (!report.scenario->params.empty())
+        if (!scenario->params.empty())
         {
-            write_params_json(w, "params", report.scenario->params);
+            write_params_json(w, "params", scenario->params);
         }
-        if (report.scenario->skipped > 0)
+        if (scenario->skipped > 0)
         {
-            w.integer("skipped_steps", static_cast<std::int64_t>(report.scenario->skipped));
+            w.integer("skipped_steps", static_cast<std::int64_t>(scenario->skipped));
         }
-        if (report.scenario->unchecked_expects > 0)
+        if (scenario->unchecked_expects > 0)
         {
-            w.integer("unchecked_expects", static_cast<std::int64_t>(report.scenario->unchecked_expects));
+            w.integer("unchecked_expects", static_cast<std::int64_t>(scenario->unchecked_expects));
         }
-        if (report.scenario->scenario)
+        if (scenario->scenario)
         {
             // Empty for a scenario without a dither (Scenario::has_dither).
-            detail::write_scenario_lines_json(w, scenario_inputs_text(*report.scenario->scenario), report.scenario->scenario->lines);
+            detail::write_scenario_lines_json(w, scenario_inputs_text(*scenario->scenario), scenario->scenario->lines);
         }
         else
         {

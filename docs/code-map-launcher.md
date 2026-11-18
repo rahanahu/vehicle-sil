@@ -69,7 +69,9 @@ Public headers:
 | Name | Location |
 |---|---|
 | `read_config()` | `launch/config.hpp` |
-| `check_file()` | `launch/check.hpp` |
+| `check_file()`, `Checked` (the check of the file with the scenario of `--scenario`; `format_text()` and `format_json()` of it) | `launch/checked.hpp` |
+| The check of the configuration (`CheckReport`, the rules, `format_text()` and `format_json()` of a `CheckReport` without a scenario) | `launch/check.hpp` |
+| `ScenarioCheck` (the scenario that `check --scenario` read) and `scenario_catalog()` (the participants of a checked configuration as a scenario can use them) | `launch/scenario_check.hpp` |
 | What the launcher asks the computer it runs on: `find_executable()` and `check_executable()` (a participant's executable), `find_tool()` and `bridge_tools()` (a bridge), `run_tool()` (one run of `--describe` or of a bridge's list), `read_config_file()`, `read_scenario_file()`, `files_beside()`, `environment_value()` | `launch/probe.hpp` |
 | `--connect`: `parse_connect()` and the grammar of a target (`read_connect_target()`, `backend_problem()`, `target_problem()`), `bridge_tool()` of a backend, `bridge_arguments()`, `connect_device_key()` (the device without the backend), `no_bridge_here()` (LIN; the Vector XL bridge elsewhere than on Windows), and `bridge_working_directory()`, the bridge's own directory, where the check, `connections` and `run` start it | `launch/connect.hpp` |
 | `vehicle_sil_launch connections`: `list_connections()`, `connections_of()` (each bridge asked once for each backend; `prefix_targets()` gives a value that `--connect` takes), `interpret_list()` (the bridge's list, or the one the launcher makes: `tool-*`), `check_requested()` (`--request`: whether the request file's targets are in the lists, by backend and name; the file is read and cut to the configuration by the functions of the request-file row), `quoted_for_shells()`, the outputs | `launch/connections.hpp` |
@@ -95,6 +97,7 @@ Implementation:
 | What | Location |
 |---|---|
 | The overall flow of the check | `src/check.cpp` |
+| `scenario_catalog()` | `src/scenario_check.cpp` |
 | Looking at the computer: the file system (where an executable or a bridge is, the configuration, scenario and points files), the environment (`PATH`, `VEHICLE_SIL_LISTEN_ON_NETWORK`) and the processes run for their output. The rules get what was found as values (`executable_finding()` in `config.cpp` gets the file's status) or as functions (`ConnectTools`, `ScenarioContext::read_file`); one exception left: `bridge_working_directory()` in `connect.cpp` makes a relative directory absolute | `src/probe.cpp` |
 | Reading the `--describe` JSON | `src/describe_read.cpp` |
 | An ECU as the simulation sees it (`SeenEcu`): what its executable described, with the participant's entry applied. The check, `run` and the scenario read a description only through it (its name, step, networks, variables, control offer, features) | `src/seen_ecu.hpp`, `src/seen_ecu.cpp` (with `seen_variables()`) |

@@ -6,6 +6,7 @@
 
 #include "vehicle_sil/json/json_writer.hpp"
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
 #include "vehicle_sil/launch/traffic.hpp"
 
@@ -16,8 +17,14 @@
 
 namespace vehicle_sil::launch::detail {
 
-/// format_text() without its last line: the tables and the findings.
-[[nodiscard]] std::string check_text_body(const CheckReport& report);
+/// The scenario of a check, or null without --scenario.
+[[nodiscard]] inline const ScenarioCheck* scenario_of(const Checked& checked)
+{
+    return checked.scenario ? &*checked.scenario : nullptr;
+}
+/// format_text() without its last line: the tables and the findings. `scenario`: the line of the
+/// scenario of --scenario, its parameters and its lines; null for none.
+[[nodiscard]] std::string check_text_body(const CheckReport& report, const ScenarioCheck* scenario);
 /// Each finding as "<severity>: <file>[:<line>]: <message> [<code>]" (the detail indented below;
 /// the code last, as GCC puts its [-W...] option, so that "error:" stays at the start), then an
 /// empty line; "" for none.
@@ -27,8 +34,10 @@ namespace vehicle_sil::launch::detail {
 /// Columns of the width of their longest cell, two spaces apart.
 [[nodiscard]] std::string table_text(const std::vector<std::vector<std::string>>& rows);
 [[nodiscard]] const char* severity_text(Severity severity);
-/// format_json()'s object, as the member `key` of the object `w` is in ("" at the top).
-void write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const CheckReport& report);
+/// format_json()'s object, as the member `key` of the object `w` is in ("" at the top). `scenario`:
+/// the member "scenario"; null for none.
+void write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const CheckReport& report,
+                      const ScenarioCheck* scenario);
 /// The array "networks" of a participant's "reported": what its executable described, under the
 /// executable's names (check_networks.cpp).
 void write_reported_networks(vehicle_sil::json::JsonWriter& w, const EcuDescription& ecu);

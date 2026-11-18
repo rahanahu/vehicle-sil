@@ -692,9 +692,9 @@ void EventStream::phase(Phase phase)
     emit("phase", object([&](Writer& w) { w.string("phase", phase_name(phase)); }));
 }
 
-void EventStream::check(const CheckReport& report)
+void EventStream::check(const Checked& report)
 {
-    emit("check", object([&](Writer& w) { detail::write_check_json(w, "check", report); }));
+    emit("check", object([&](Writer& w) { detail::write_check_json(w, "check", report, detail::scenario_of(report)); }));
 }
 
 void EventStream::registry(const std::string& uri)

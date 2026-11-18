@@ -8,6 +8,8 @@
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/checked.hpp"
+#include "vehicle_sil/launch/scenario_check.hpp"
 #include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/process/paths.hpp"
 #include "vehicle_sil/launch/scenario.hpp"

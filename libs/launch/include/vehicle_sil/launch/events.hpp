@@ -6,6 +6,7 @@
 #pragma once
 
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/command.hpp"
 #include "vehicle_sil/launch/run_controls.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
@@ -242,7 +243,7 @@ public:
     void hello(long pid, const std::string& file, const std::vector<std::string>& arguments);
     void phase(Phase phase);
     /// The check's result, as `check --json` writes it.
-    void check(const CheckReport& report);
+    void check(const Checked& report);
     void registry(const std::string& uri);
     /// "control_server": the run's control server listens at `address` (gRPC, the actual port),
     /// with TLS or not, with credentials (every call needs a token) or not.

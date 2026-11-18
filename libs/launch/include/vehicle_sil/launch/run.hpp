@@ -9,6 +9,7 @@
 
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/run_controls.hpp"
 #include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
@@ -427,7 +428,7 @@ enum class RunResult
 /// The result of `vehicle_sil_launch run`.
 struct RunReport
 {
-    CheckReport check{};
+    Checked check{};
     /// Empty if nothing was started because of the check (or the command line).
     std::optional<RunOutcome> run{};
     /// assess_run() of `run`.

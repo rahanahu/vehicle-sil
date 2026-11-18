@@ -34,6 +34,7 @@
 #include "vehicle_sil/cli/console.hpp"
 #include "vehicle_sil/cli/utf8.hpp"
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/connections.hpp"
 #include "vehicle_sil/launch/error_result.hpp"
 #include "vehicle_sil/launch/events.hpp"
@@ -1109,7 +1110,7 @@ int check(const cli::Args& args)
     const launch::RunRequest request =
         whole_request(read_request(args, launch::RequestCommand::Check, asked), launch::RequestCommand::Check, asked);
     const std::string& file = request.host.config;
-    const launch::CheckReport report = launch::check_file(request);
+    const launch::Checked report = launch::check_file(request);
     if (report.usage)
     {
         return usage_error(report.findings, args.flag("json"), launch::CommandKind::Check, file, nullptr, report.variants);

@@ -515,7 +515,7 @@ public:
     /// check's and the run's), and says where it is. Nothing if the file was not opened (no
     /// --timeline, or the run ended before it got there). If it cannot be written: why (also in
     /// the outcome: OutcomeScenario::timeline_error), else "".
-    std::string write_timeline(const CheckReport& check, std::vector<Finding> findings)
+    std::string write_timeline(const Checked& check, std::vector<Finding> findings)
     {
         if (!timeline_file_.is_open())
         {

@@ -154,7 +154,7 @@ std::string format_run_text(const RunReport& report)
     {
         return format_text(report.check);
     }
-    std::string out = detail::check_text_body(report.check);
+    std::string out = detail::check_text_body(report.check, detail::scenario_of(report.check));
     const std::string counts = detail::count_summary(report.errors(), report.warnings(), report.notes());
     if (!report.run)
     {
@@ -699,7 +699,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
         w.null("traffic");
     }
     detail::write_findings_json(w, report.check.file, report.findings);
-    detail::write_check_json(w, "check", report.check);
+    detail::write_check_json(w, "check", report.check, detail::scenario_of(report.check));
     if (report.run && report.run->scenario.result)
     {
         // Only with --scenario: a result without one is as it was before scenarios.

@@ -6,9 +6,11 @@
 #pragma once
 
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/config.hpp"
 #include "vehicle_sil/launch/run.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
+#include "vehicle_sil/launch/scenario_check.hpp"
 #include "vehicle_sil/launch/time_plan.hpp"
 
 #include <chrono>
@@ -40,6 +42,9 @@ struct RunPlan
     /// (detail::with_bridges()): the participants of the run, in the order the run keeps
     /// everywhere (config->participants[i], participants[i], RunOutcome::participants[i]).
     CheckReport check;
+    /// run --scenario: the scenario that the check read, as Checked::scenario had it; empty
+    /// without one. scenario() is the scenario itself.
+    std::optional<ScenarioCheck> scenario_check;
     /// One for each participant of `check`, in the same order (members[i] is of
     /// config().participants[i]): which of them are bridges of --connect, and what each connects.
     /// What changes while a bridge runs (its link, its counts) is kept per participant by the
@@ -70,12 +75,13 @@ struct RunPlan
     /// run --scenario: the scenario the check read; null without one. Points into `check`.
     [[nodiscard]] const Scenario* scenario() const
     {
-        return check.scenario && check.scenario->scenario ? &*check.scenario->scenario : nullptr;
+        return scenario_check && scenario_check->scenario ? &*scenario_check->scenario : nullptr;
     }
 };
 
 /// The plan of the run that `request` asks for. `check`: the check of the file, which passed (as
-/// check_file() returned it: the bridges of --connect are added here); `base`: the directory of
+/// check_file() returned it: the bridges of --connect are added here; its scenario goes to
+/// RunPlan::scenario_check); `base`: the directory of
 /// the file; `control_server`: the run has one (RunHost::control, or a lent RunLent::control_endpoint). Throws
 /// std::invalid_argument for a check without a configuration (CheckReport::config is empty: the
 /// file could not be read, so there is nothing to run).
@@ -85,7 +91,7 @@ struct RunPlan
 /// - The bridges are participants at the end of the plan's check, marked in RunPlan::members, and
 ///   do not count for the step: the step is planned from the participants of the file. One whose
 ///   role in the file is bridge is a participant of the file, and counts as any other.
-[[nodiscard]] RunPlan plan_run(const CheckReport& check, std::filesystem::path base, const RunRequest& request,
+[[nodiscard]] RunPlan plan_run(const Checked& check, std::filesystem::path base, const RunRequest& request,
                                const RunLimits& limits = {}, bool control_server = false);
 
 /// The outcome a run of `plan` begins with: what the plan already says of the result (the limits,

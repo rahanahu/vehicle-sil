@@ -1,0 +1,73 @@
+// SPDX-License-Identifier: MIT
+//
+// check_file(): the check of one file as a use case. What it returns is the configuration's check
+// (CheckReport, check.hpp) and, with --scenario, the scenario that was read with it
+// (scenario_check.hpp). The outputs of both together are format_text() and format_json() of
+// Checked; docs/simulation-check.md. Internal.
+#pragma once
+
+#include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/scenario_check.hpp"
+
+#include <functional>
+#include <optional>
+#include <string>
+
+namespace vehicle_sil::launch {
+
+struct RunRequest; // request.hpp
+
+/// What check_file() returns: the check of the configuration, with the scenario of --scenario.
+/// The findings of the scenario are in CheckReport::findings (with Finding::file set), so that the
+/// counts, the exit code and the order stay one: `scenario` only says what was read. A run, a test
+/// and the outputs read it from here; the checks of the configuration take the CheckReport part.
+struct Checked : CheckReport
+{
+    /// --scenario: the scenario file that was read and checked.
+    std::optional<ScenarioCheck> scenario{};
+};
+
+/// format_text(const CheckReport&) with the scenario's line, its parameters and its lines.
+[[nodiscard]] std::string format_text(const Checked& checked);
+
+/// format_json(const CheckReport&) with the member "scenario".
+[[nodiscard]] std::string format_json(const Checked& checked);
+
+/// How a check is made, beside what is asked for (RunRequest): what its caller is, not what the
+/// user wants.
+struct CheckOptions
+{
+    /// The request's parameters are for many scenarios (ScenarioContext::params_for_many): one
+    /// that its scenario does not have is no error.
+    bool params_for_many = false;
+    /// Only read the file: no executable is looked for or run, and no scenario is read. The
+    /// report has the file's findings, its variants and the overrides' usage errors.
+    bool file_only = false;
+    /// test: without the time lock every run goes as fast as possible, whatever the file's speed
+    /// (which then does not count for time_lock_findings()); RunIntent::speed is that default
+    /// then, not a speed the user asked for, and the check does not judge it.
+    bool fastest_by_default = false;
+};
+
+/// Checks the file of `request` (RunHost::config, shown as given): reads it, checks the
+/// executables, runs each --describe in turn (not in parallel), compares. A disabled participant's
+/// executable is neither looked for nor run. With RunIntent::scenario, the scenario file is read
+/// and checked against the participants' descriptions as well (if the configuration could be
+/// read). Never throws for a problem of a file or of an executable: they are findings. The
+/// scenario of a request file (RunRequest::origin has "scenario") is read from the directory of the
+/// configuration file, and shown as the path from the working directory; any other from the
+/// working directory, as it is named.
+///
+/// Of `request` it reads the file, the intent (the speed and --start-paused for
+/// time_lock_findings(): the speed unless `options.fastest_by_default`), the --describe limit and
+/// where the tools are; what only a run has (the logs, the timeline, the time limit, the control
+/// server, the commands of standard input) it does not read.
+///
+/// `on_time_lock`, if given, is called once with Checked::time_lock as soon as the
+/// configuration has been read (with --variant, --disable and --enable applied), before any
+/// executable is looked for or run; not at all if the configuration could not be read. A run
+/// gives its controls the lock there (run_file()), so that they know it before anything starts.
+[[nodiscard]] Checked check_file(const RunRequest& request, const CheckOptions& options = {},
+                                   const std::function<void(const TimeLock& lock)>& on_time_lock = {});
+
+} // namespace vehicle_sil::launch

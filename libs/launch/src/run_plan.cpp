@@ -12,7 +12,7 @@
 
 namespace vehicle_sil::launch {
 
-RunPlan plan_run(const CheckReport& check, std::filesystem::path base, const RunRequest& request, const RunLimits& limits,
+RunPlan plan_run(const Checked& check, std::filesystem::path base, const RunRequest& request, const RunLimits& limits,
                  bool control_server)
 {
     if (!check.config)
@@ -22,6 +22,7 @@ RunPlan plan_run(const CheckReport& check, std::filesystem::path base, const Run
     }
     RunPlan plan;
     plan.check = detail::with_bridges(check);
+    plan.scenario_check = check.scenario;
     // with_bridges() adds one participant for each network outside, in their order, after those of
     // the file.
     plan.members.resize(check.config->participants.size());
@@ -66,7 +67,7 @@ RunOutcome planned_outcome(const RunPlan& plan)
     if (const Scenario* scenario = plan.scenario(); scenario != nullptr)
     {
         outcome.scenario.result = scenario_not_run(*scenario);
-        outcome.scenario.result->file = check.scenario->file;
+        outcome.scenario.result->file = plan.scenario_check->file;
     }
     outcome.timing = plan.timing;
     if (plan.timeout)

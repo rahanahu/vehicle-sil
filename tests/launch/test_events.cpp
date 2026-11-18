@@ -307,7 +307,7 @@ TEST_CASE(the_check_and_the_result_are_their_json_on_one_line_and_nothing_follow
     EventStreamOptions options = Sink::quiet();
     options.heartbeat = 10ms; // nor a heartbeat
     EventStream& e = sink.start(options);
-    CheckReport check;
+    Checked check;
     check.file = "x.yaml";
     check.findings.push_back(Finding{Severity::Error, "file", "the file does not exist: check the path", 0, "", ""});
     e.check(check);

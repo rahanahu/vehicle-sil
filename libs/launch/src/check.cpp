@@ -8,6 +8,7 @@
 #include "exit_codes.hpp"
 
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/launch/time_plan.hpp"
@@ -77,73 +78,6 @@ ConfigConnect connect_for_config(const SimulationConfig& config, std::span<const
     return out;
 }
 
-ScenarioCatalog scenario_catalog(const CheckReport& check)
-{
-    ScenarioCatalog out;
-    if (!check.config)
-    {
-        return out;
-    }
-    for (std::size_t i = 0; i < check.config->participants.size(); ++i)
-    {
-        const ParticipantConfig& p = check.config->participants[i];
-        CatalogParticipant c;
-        c.name = p.name;
-        const ParticipantResult* result = i < check.participants.size() ? &check.participants[i] : nullptr;
-        if (!p.enabled && p.left_out_by_variant && !check.config->variant.empty())
-        {
-            c.not_in_variant = true;
-        }
-        else if (!p.enabled)
-        {
-            c.unusable = "is left out of this run (enabled: false, or --disable): take it in (--enable " + p.name +
-                         "), or run a scenario that does not use it";
-        }
-        else if (!p.describe)
-        {
-            c.unusable = "has describe: false, so the launcher does not know its variables: a scenario can use the variables "
-                         "of ecu_main executables only";
-        }
-        else if (result == nullptr || result->status != ParticipantStatus::Described || !result->ecu)
-        {
-            c.unusable = "could not be described (the errors of the configuration say why), so its variables are not known";
-        }
-        else
-        {
-            const SeenEcu d(p, *result->ecu);
-            // As the run's hub shows them.
-            auto seen = std::make_shared<const control::MappedSchema>(d.variables());
-            c.variables = seen->schema();
-            for (const control::VariableMapping& mapping : p.variables)
-            {
-                if (mapping.absent)
-                {
-                    c.absent.push_back(mapping.name);
-                }
-            }
-            if (!p.variables.empty())
-            {
-                c.map = std::move(seen);
-            }
-            if (!d.step())
-            {
-                c.unusable = "runs in real time (it has no step): a scenario needs the virtual time of its steps";
-            }
-            else if (d.has_variables() && !d.control())
-            {
-                c.unusable = "does not offer its variables to the simulation (--no-control, or an executable of an earlier "
-                             "vehicle-sil): build it with this vehicle-sil and run it without --no-control";
-            }
-            else
-            {
-                c.step = *d.step();
-            }
-        }
-        out.push_back(std::move(c));
-    }
-    return out;
-}
-
 std::size_t CheckReport::errors() const
 {
     return static_cast<std::size_t>(
@@ -200,7 +134,7 @@ namespace {
 /// --scenario: reads the scenario file and checks it against the participants of `report`.
 /// @returns the usage errors that only the scenario can tell (ScenarioRead::usage_errors); then
 /// `report` has no scenario.
-[[nodiscard]] std::vector<Finding> check_scenario_file(CheckReport& report, const RunIntent& intent, const std::string& named,
+[[nodiscard]] std::vector<Finding> check_scenario_file(Checked& report, const RunIntent& intent, const std::string& named,
                                                        bool params_for_many,
                                                        const RequestOrigin& origin)
 {
@@ -259,7 +193,7 @@ namespace {
 
 } // namespace
 
-CheckReport check_file(const RunRequest& request, const CheckOptions& options,
+Checked check_file(const RunRequest& request, const CheckOptions& options,
                        const std::function<void(const TimeLock& lock)>& on_time_lock)
 {
     const RunIntent& intent = request.intent;
@@ -276,7 +210,7 @@ CheckReport check_file(const RunRequest& request, const CheckOptions& options,
         options.fastest_by_default ? std::optional<std::optional<double>>{} : intent.speed;
     // What of the request's connect counts for this file: known once it is read.
     std::vector<ConnectRequest> connect;
-    CheckReport report;
+    Checked report;
     report.file = host.config;
     report.strict = intent.strict;
     // Known without the file.
@@ -438,7 +372,7 @@ CheckReport check_file(const RunRequest& request, const CheckOptions& options,
         if (auto wrong = check_scenario_file(report, intent, named, options.params_for_many, request.origin); !wrong.empty())
         {
             // As for the other usage errors: the findings alone, and no configuration.
-            CheckReport usage;
+            Checked usage;
             usage.file = std::move(report.file);
             usage.strict = report.strict;
             usage.variants = std::move(report.variants);
