@@ -415,6 +415,8 @@ outside: ETH_EXT -> enp3s0: link up at 15.10 s
 
 ほかの数（`own_tx_dropped`、`filtered_to_ext`、`filtered_from_ext`、`mac_unguarded`、`oversize`、`malformed`、`ext_checksum_incomplete`）はブリッジの失った分ではないので、所見にしません。結果には、ブリッジの書いたとおりに入ります。文は、何が起きたか、結果を信じてよいか、何を確かめるかを書きます。例: `network 'ETH_EXT' -> enp3s0: the link was down once, for 2.70 s in all. The run went on, but frames sent meanwhile did not reach the devices, ...`。この所見は、それまでに読んだものから、終わりに作ります。
 
+`--events` では、実行の間、各 `state` イベントの `outside[]` が、ブリッジごとに同じことを伝えます（`condition` は `ok`、`interrupted`、`degraded`、`reasons` を伴います。[`state` イベント](simulation-events.md#state-のイベント)）。リンクやバスが落ちている、またはバスが bus-off の間は `interrupted`、error passive、落としたフレームや止めたループ（数が増えてから 5 秒）、実行の外のブリッジが同じデバイスを使っている間は `degraded` です。
+
 ### 別の実行も使っているデバイス
 
 ブリッジは、開いたデバイスに印を置き、同じデバイスにいるほかの vehicle-sil のブリッジの数を報告します（`shared`。Linux では `peers` にそのプロセス ID。「[別のブリッジが使っているデバイス](bridge-contract.md#別のブリッジが使っているデバイス)」）。1 つのデバイスに 2 つの実行、あるいは前の実行の残りのブリッジがいると、フレームが混ざります。この実行の機器にもう一方向けのフレームが届き、もう一方にはこの実行のフレームが届きます。`run` は、自分の実行のブリッジを数から引くので、この実行の外のブリッジだけが数に入ります。見つけたら、実行の始まりからの時間と、Linux ではプロセス ID を付けて、1 度だけ知らせます。

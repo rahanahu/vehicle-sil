@@ -59,6 +59,11 @@
 // - TimeCommands' mutex, then the event stream's, the controller's time gate's, or what
 //   RunOptions' callbacks take (on_detach, the `accepted` of a stop).
 // - RunOutput's mutex, then the event stream's (and RunOptions::write_line).
+// - RunOutput's mutex, then TimeCommands' (RunOutput::tell_outside() calls RunControls::set_outside(),
+//   which tells the state of the bridges). The reverse is never taken: what runs under TimeCommands'
+//   mutex (OnCommand, OnChange, the state's observer, `accepted`, on_detach) writes events and
+//   does not call RunOutput (checked: the only callers of say(), hold(), on_line(), outside_*()
+//   are the run's own threads, none of them from such a callback).
 // - The hub's mutex, then RunSamples' mutex (the tap).
 // - StartLimit's mutex, StartShared::found_mutex, RunSamples' mutex, RunScenario's error mutex:
 //   nothing under them.

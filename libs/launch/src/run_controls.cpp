@@ -100,6 +100,7 @@ RunState RunControls::compose(const TimeFacts& facts) const
         out.stopped_by = stop_name_ ? stop_name_() : std::string("interrupt");
     }
     out.scenario = facts.situation.scenario;
+    out.outside = outside_;
     const auto ask = [&facts](Operation o, Entry e) { return launch::allowed(facts.situation, e, o); };
     out.allowed.pause = ask(Operation::Pause, Entry::Stdin);
     out.allowed.resume = ask(Operation::Resume, Entry::Stdin);
@@ -127,6 +128,14 @@ void RunControls::tell(const TimeFacts& facts)
     {
         on_state_(told_);
     }
+}
+
+void RunControls::set_outside(std::vector<RunState::Outside> outside)
+{
+    time_.look([this, &outside](const TimeFacts& facts) {
+        outside_ = std::move(outside);
+        tell(facts);
+    });
 }
 
 void RunControls::publish()

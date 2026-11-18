@@ -602,6 +602,37 @@ TEST_CASE(a_state_event_has_the_state_and_what_is_allowed_with_the_ranges)
           std::string::npos);
 }
 
+TEST_CASE(a_state_event_has_an_element_for_each_bridge_with_its_condition_and_reasons)
+{
+    Sink sink;
+    EventStream& e = sink.start();
+    RunState s = state_of(1);
+    RunState::Outside eth;
+    eth.network = "ETH_EXT";
+    eth.target = "enp3s0";
+    eth.participant = "bridge.ETH_EXT";
+    eth.link = "up";
+    eth.nothing_received = true;
+    eth.condition = "degraded";
+    eth.reasons = {"frames-dropped", "device-shared"};
+    RunState::Outside can;
+    can.network = "CAN";
+    can.target = "can0";
+    can.participant = "bridge.CAN";
+    can.link = "down";
+    can.bus = "bus-off";
+    can.condition = "interrupted";
+    can.reasons = {"link-down", "bus-off"};
+    s.outside = {eth, can};
+    CHECK(s != state_of(1));
+    e.state(s);
+    CHECK(e.wait_written(10s));
+    const std::vector<std::string> lines = sink.lines();
+    CHECK_EQ(lines.size(), std::size_t{1});
+    CHECK(lines.at(0).find(R"("outside":[{"network":"ETH_EXT","target":"enp3s0","participant":"bridge.ETH_EXT","link":"up","bus":null,"nothing_received":true,"condition":"degraded","reasons":["frames-dropped","device-shared"]},{"network":"CAN","target":"can0","participant":"bridge.CAN","link":"down","bus":"bus-off","nothing_received":false,"condition":"interrupted","reasons":["link-down","bus-off"]}]})") !=
+          std::string::npos);
+}
+
 TEST_CASE(only_the_latest_state_waits_and_states_never_close_the_stream)
 {
     Sink sink;

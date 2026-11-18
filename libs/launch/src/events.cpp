@@ -979,8 +979,26 @@ void EventStream::state(const RunState& state)
              write_allowed(w, "stop", state.allowed.stop);
              write_allowed(w, "write", state.allowed.write);
              w.end_object();
-             // What the run is connected to outside: nothing fills it yet.
+             // What the run is connected to outside: one element for each bridge of --connect.
              w.begin_array("outside");
+             for (const RunState::Outside& o : state.outside)
+             {
+                 w.begin_object({});
+                 w.string("network", o.network);
+                 w.string("target", o.target);
+                 w.string("participant", o.participant);
+                 optional_text(w, "link", o.link);
+                 optional_text(w, "bus", o.bus);
+                 w.boolean("nothing_received", o.nothing_received);
+                 w.string("condition", o.condition);
+                 w.begin_array("reasons");
+                 for (const std::string& reason : o.reasons)
+                 {
+                     w.string({}, reason);
+                 }
+                 w.end_array();
+                 w.end_object();
+             }
              w.end_array();
          }),
          Kind::State);

@@ -19,8 +19,8 @@ Commands:
               stage      bin/ (the launcher, the Ethernet bridge vehicle_sil_ethernet_bridge, on Linux the SocketCAN
                          bridge vehicle_sil_socketcan_bridge, the libraries they need, vehicle-sil-gui), python/ (vehicle_sil_gui with the
                          built screen, the timeline page of gui/timeline and the client library with the parts, vehicle_sil_control with the stubs), client/ (the bundled client library, the parts and
-                         its npm package), gui_starter/ (examples/gui_starter with the bundled library: a screen of
-                         your own, served with vehicle-sil-gui --web),
+                         its npm package), gui_starter/ (examples/gui_starter: a screen of your own made of
+                         parts, served with vehicle-sil-gui --web; the server serves the library and the parts to it under vsil/),
                          schema/, LICENSE, THIRD_PARTY_NOTICES.md, licenses/ (the license texts of what is inside),
                          README.md, VERSION. Windows: every DLL the executables load that is not Windows' own, found
                          with objdump, and the MSYS2 license files of their packages
@@ -44,7 +44,7 @@ Commands:
             vehicle-sil-gui (its Python packages: uv run, which may download them; on Windows both the .cmd and the
             sh entry) and asks it: the launcher usable, the variables available, the built screen, the timeline
             page (timeline/) and the client files (vsil/), both without the token, a check of simulation.yaml; then starts it with --web gui_starter (the archive's starter screen) and gets its page
-            and its client library, and api/app with the token. Keeps the directory when a step fails (--keep:
+            and, from vsil/, the client library and the parts it loads, and api/app with the token. Keeps the directory when a step fails (--keep:
             always).
   template  build/dist/vehicle-sil-template-<version>.zip: template/ with the SHA-256 of both tools archives there
             filled into get_tools.py, and build/dist/SHA256SUMS of the archives and of the client library's npm
@@ -449,7 +449,7 @@ vehicle-sil version (the ECU project template: GIT_TAG v{version}).
 | `client/vehicle-sil-gui-elements.mjs` | the parts (`<vsil-run-controls>` and the others) as one ES module; it imports `./vehicle-sil-gui-client.mjs`, so keep the two files together (the GUI server serves both under `vsil/`) |
 | `client/vehicle-sil-gui-client-{version}.tgz` | the same library as an npm package with its types: `npm install <this file>`, then `import ... from '@vehicle-sil/gui-client'` |
 | `client/vehicle-sil-timeline.js`, `.d.ts` | the element `<vehicle-sil-timeline>`, which draws a scenario run's timeline on a screen of your own: `<script src>` it, or import it (the npm package has it as `@vehicle-sil/gui-client/timeline`); the GUI server serves it as `timeline/vehicle-sil-timeline.js` |
-| `gui_starter/` | a screen of your own to start from (plain HTML and JavaScript, the library next to it): `vehicle-sil-gui --web gui_starter simulation.yaml` |
+| `gui_starter/` | a screen of your own to start from (parts in HTML and a short script; it loads the library and the parts from the GUI server's `vsil/`, so it has no copy of them): `vehicle-sil-gui --web gui_starter simulation.yaml` |
 | `schema/` | the JSON Schemas of the configuration (`simulation.schema.json`), of a scenario (`scenario.schema.json`) and of `<configuration>.dashboard.yaml` (`dashboard.schema.json`), and of the file that `vehicle_sil_launch run --scenario --timeline` writes (`timeline.schema.json`, for tools that read it): an editor with a YAML language server completes and checks a file whose first line is `# yaml-language-server: $schema=<path of the schema>`. `get_tools.py` of the project template copies them to the project's `schema/` |
 | `LICENSE`, `THIRD_PARTY_NOTICES.md`, `licenses/` | the license of vehicle-sil and the notices and license texts of what these tools contain |
 
@@ -617,7 +617,6 @@ def tools_command(args: argparse.Namespace) -> int:
             shutil.copy2(ROOT / "gui" / "timeline" / name, stage / "client" / name)
         shutil.copytree(ROOT / "examples" / "gui_starter", stage / "gui_starter",
                         ignore=shutil.ignore_patterns(".*"))
-        shutil.copy2(client, stage / "gui_starter" / "vehicle-sil-gui-client.mjs")
         (stage / "schema").mkdir()
         shutil.copy2(ROOT / "gui" / "protocol" / "dashboard.schema.json", stage / "schema")
         shutil.copy2(ROOT / "schema" / "simulation.schema.json", stage / "schema")
@@ -982,7 +981,7 @@ def verify_command(args: argparse.Namespace) -> int:
                      "python/vehicle_sil_control/_generated/vehicle_sil/control/v1/control_pb2.py",
                      *(f"client/{name}" for name in CLIENT_BUNDLES), f"client/{client_package_path(version).name}",
                      *(f"client/{name}" for name in TIMELINE_ELEMENT),
-                     "gui_starter/index.html", "gui_starter/vehicle-sil-gui-client.mjs",
+                     "gui_starter/index.html", "gui_starter/main.js",
                      "schema/dashboard.schema.json", "schema/simulation.schema.json",
                      "schema/scenario.schema.json", "schema/timeline.schema.json"] + (
                 ["bin/vehicle-sil-gui.cmd"] if WINDOWS else [f"bin/{SOCKETCAN_BRIDGE}"]):
@@ -1119,13 +1118,16 @@ def verify_gui(s: Step, tools: Path, project: Path, entry: list[str], web: Path 
             page = get("", token=False).decode("utf-8", "replace")
             if 'src="main.js"' not in page:
                 raise StepFailed(f"vehicle-sil-gui --web {web} does not serve the starter's index.html: {page[:300]!r}")
-            library = get("vehicle-sil-gui-client.mjs", token=False)
-            if b"createClient" not in library or b"takeToken" not in library:
-                raise StepFailed(f"vehicle-sil-gui --web {web} does not serve the client library next to the page")
+            if "/vsil/vehicle-sil-gui-elements.mjs" not in page:
+                raise StepFailed(f"vehicle-sil-gui --web {web}: the starter's index.html does not load the parts from /vsil/")
+            library = get("vsil/vehicle-sil-gui-client.mjs", token=False)
+            elements = get("vsil/vehicle-sil-gui-elements.mjs", token=False)
+            if b"createClient" not in library or b"takeToken" not in library or b"vsil-run-controls" not in elements:
+                raise StepFailed(f"vehicle-sil-gui --web {web} does not serve the client library and the parts under vsil/")
             app = json.loads(get("api/app"))
             if not app.get("launcher", {}).get("usable"):
                 raise StepFailed(f"vehicle-sil-gui --web {web}: api/app says the launcher is not usable: {app}")
-            s.notes.append(f"{Path(entry[-1]).name} --web gui_starter: page and library served, api/app answered")
+            s.notes.append(f"{Path(entry[-1]).name} --web gui_starter: page, library and parts served, api/app answered")
             return
         app = json.loads(get("api/app"))
         s.write(json.dumps(app, indent=1)[:3000])

@@ -164,7 +164,20 @@ Unlike every other event, `state` is not history. Only the latest one matters: w
 | `stop` | The stop requests: `requests` is 0, 1 (stopping in order) or 2 (not waiting for the participants); `by` is who asked first (the values of `interrupted_by` in the result; `null` if nobody) |
 | `scenario` | Whether the run plays a scenario (`--scenario`) |
 | `allowed` | For each operation, whether the run accepts it now (see below) |
-| `outside` | Reserved for the state of the networks connected to a real bus (`--connect`); an empty array for now |
+| `outside` | One element for each network connected to a real bus (`--connect`), in the order of the bridges; an empty array without `--connect` (see below) |
+
+`outside[]` (see "The state of the link and the bus" in [simulation-run.md](simulation-run.md#the-state-of-the-link-and-the-bus)):
+
+| Key | Value |
+|---|---|
+| `network`, `target`, `participant` | The network, what `--connect` gave for it, and the name of its bridge (`bridge.<network>`) |
+| `link` | `"up"`, `"down"` or `"unknown"` as the bridge's link line says; `null` before it has said |
+| `bus` | `"active"`, `"passive"`, `"bus-off"` or `"unknown"`; `null` for a bridge that has no bus state (Ethernet), or before it has said |
+| `nothing_received` | `true` when the bridge sent frames to the bus and none came from a device there for 10 s since the first frame (the condition of the note `connect-nothing-received`) |
+| `condition` | `"ok"`, `"interrupted"` (the link is down or the bus is off; the run goes on) or `"degraded"` (the rest below). When both hold: `"interrupted"` |
+| `reasons` | Why the condition is not `ok` (empty when it is), in this order: `link-down`, `bus-off`, `bus-errors` (the bus is error passive), `frames-dropped` (a count of lost frames grew within the last 5 s), `loop-suspected` (the count of stopped loops grew within the last 5 s), `device-shared` (a bridge that is not this run's uses the device; for as long as it does) |
+
+The 5 s hold keeps a `state` from flickering. A bridge that has ended is not shown here (see `participant`, and the error `connect-lost`). The counts themselves are in `outside` events.
 
 `state` has only values that change in steps. Virtual time and the numbers that keep growing are in `time` (and, for a connected network, in `outside`).
 

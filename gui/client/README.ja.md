@@ -13,6 +13,7 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 | 接続して実行を始めるまでのコード                            | [基本の使い方](#基本の使い方)                                    |
 | 変数の値を読む、書き込む                                    | [ECU の変数](#ecu-の変数)                                        |
 | 画面が見せるものと、押せるボタン: `connect()`               | [正面の口（`connect()`）](#正面の口connect)                      |
+| HTML に並べる要素（スクリプトなし）                         | [部品（custom element）](#部品custom-element)                    |
 | スライダーやランプを作る（`condition`、`block` の値の一覧） | [コンポーネントを作る（`bind`）](#コンポーネントを作るbind)      |
 | `connect()` と `close()` の後に何が起きるか                 | [ライフサイクル](#ライフサイクル)                                |
 | ライブラリを開発する                                        | [コーディングのルール](#コーディングのルール)、[テスト](#テスト) |
@@ -21,11 +22,12 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 
 ライブラリは TypeScript のソースで、依存はありません。npm のレジストリには公開していません。
 
-| 使い方                                                | 入手                                                                                                              | import の書き方                                               |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| ビルドなしの素の JavaScript                           | 1 つの ESM のファイルにまとめた `vehicle-sil-gui-client.mjs` を、画面のディレクトリに置く                         | `import { createClient } from './vehicle-sil-gui-client.mjs'` |
-| TypeScript と好きなフレームワーク                     | パッケージ `vehicle-sil-gui-client-<version>.tgz` を入手し、自分のプロジェクトで `npm install <that .tgz>` をする | `import { createClient } from '@vehicle-sil/gui-client'`      |
-| このリポジトリの中の TypeScript のアプリ（`gui/web`） | `tsconfig.json` の `paths` で、エントリーポイントの名前を `src/` に向ける                                         | `import { createClient } from '@vehicle-sil/gui-client'`      |
+| 使い方                                                | 入手                                                                                                              | import の書き方                                              |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| GUI サーバーが配信する画面（`--web`）                 | コピーするものはありません。サーバーがファイルを配信します（下）                                                  | `import { connect } from '/vsil/vehicle-sil-gui-client.mjs'` |
+| 上の画面の外の素の JavaScript                         | 1 つの ESM のファイルにまとめた `vehicle-sil-gui-client.mjs` を、スクリプトの隣に置く                             | `import { connect } from './vehicle-sil-gui-client.mjs'`     |
+| TypeScript と好きなフレームワーク                     | パッケージ `vehicle-sil-gui-client-<version>.tgz` を入手し、自分のプロジェクトで `npm install <that .tgz>` をする | `import { connect } from '@vehicle-sil/gui-client'`          |
+| このリポジトリの中の TypeScript のアプリ（`gui/web`） | `tsconfig.json` の `paths` で、エントリーポイントの名前を `src/` に向ける                                         | `import { createClient } from '@vehicle-sil/gui-client'`     |
 
 3 つのファイルは、次の場所にあります。
 
@@ -191,6 +193,8 @@ GUI サーバーは、2 つの `.mjs` のファイルも、トークンなしで
 | セッションのコピーの `SessionView.scenario`                | `ScenarioView`                                                                                                                                                                                                                  |
 
 ## 基本の使い方
+
+ここで使うのは、ライブラリの低い口の `createClient` です。正面の口はこの上に作ってあり、`client.low` がこれです。画面は `connect()` と部品から始め（下の「正面の口（`connect()`）」と「部品（custom element）」）、それらにないもの（事象、ログ、指摘、参加者、`bind`）にこの口を使います。
 
 ```ts
 import { createClient, takeToken } from '@vehicle-sil/gui-client';
@@ -369,16 +373,16 @@ stop(); // 最後の購読を解除すると、サーバーに値を頼むのを
 
 `@vehicle-sil/gui-client/elements` は、`connect()` が返すものを描く custom element を 8 個定義します。スクリプトなしの HTML だけで画面を書けます。素のコントロールを light DOM に置き、見た目は付けません。スタイルは自分の CSS で付けます。素の HTML でも、Angular、React、Vue、Svelte のテンプレートでも使えます。import すると定義します（定義済みの名前は飛ばします）。
 
-| 要素                     | 出すもの、すること                                                                       | 属性とプロパティ                                                                                                       |
-| ------------------------ | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `<vsil-status>`          | 接続、実行の状態、仮想時刻（実時間に遅れていれば印）、知らせる問題 1 件                  | なし                                                                                                                   |
-| `<vsil-run-controls>`    | 開始（ページの選択つき）、停止、1 回目の停止の後の「待たずに停止」                       | プロパティ `intent`、`label-start`、`label-stop`、`label-force-stop`                                                   |
-| `<vsil-time-controls>`   | 一時停止、再開、ステップ、指定時刻まで、速さ                                             | `speeds`（既定 `0.5 1 5 max`）、`step-ms`（既定 `10`）、`label-pause`、`label-resume`、`label-step`、`label-run-until` |
-| `<vsil-value>`           | 値と単位、生きた値でないときの 1 文。bool は `on` と `off` の文                          | `variable`、`on`、`off`、`no-unit`                                                                                     |
-| `<vsil-slider>`          | 変数の範囲の数。つまみを離したときに書く                                                 | `variable`                                                                                                             |
-| `<vsil-write>`           | 1 つの値を書くボタン（変数がもうその値なら押せない）                                     | `variable`、`value`（JSON: `false`、`3`。それ以外は文字列）、`label`                                                   |
-| `<vsil-scenario-select>` | 次の実行のシナリオ。走らせる構成ファイルの隣にあるものから選ぶ（最初の選択肢は「なし」） | なし                                                                                                                   |
-| `<vsil-scenario-result>` | 実行のシナリオの結果と手順                                                               | なし                                                                                                                   |
+| 要素                     | 出すもの、すること                                                                       | 属性とプロパティ                                                                                                                                                                           |
+| ------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<vsil-status>`          | 接続、実行の状態、仮想時刻（実時間に遅れていれば印）、知らせる問題 1 件                  | なし                                                                                                                                                                                       |
+| `<vsil-run-controls>`    | 開始（ページの選択つき）、停止、1 回目の停止の後の「待たずに停止」                       | プロパティ `intent`（次の実行を始めるときの内容）、`label-start`、`label-stop`、`label-force-stop`（ボタンの文字）                                                                         |
+| `<vsil-time-controls>`   | 一時停止、再開、ステップ、指定時刻まで、速さ                                             | `speeds`（選べる速さ。空白で区切る。既定 `0.5 1 5 max`）、`step-ms`（1 ステップの大きさ（ms）。既定 `10`）、`label-pause`、`label-resume`、`label-step`、`label-run-until`（ボタンの文字） |
+| `<vsil-value>`           | 値と単位、生きた値でないときの 1 文。bool は `on` と `off` の文                          | `variable`、`on`、`off`（bool の true と false に出す文字）、`no-unit`（単位を出さない）                                                                                                   |
+| `<vsil-slider>`          | 変数の範囲の数。つまみを離したときに書く                                                 | `variable`                                                                                                                                                                                 |
+| `<vsil-write>`           | 1 つの値を書くボタン（変数がもうその値なら押せない）                                     | `variable`、`value`（書く値。`false` や `3` のような JSON、それ以外は文字列）、`label`（ボタンの文字）                                                                                     |
+| `<vsil-scenario-select>` | 次の実行のシナリオ。走らせる構成ファイルの隣にあるものから選ぶ（最初の選択肢は「なし」） | なし                                                                                                                                                                                       |
+| `<vsil-scenario-result>` | 実行のシナリオの結果と手順                                                               | なし                                                                                                                                                                                       |
 
 変数は、`client.variable()` と同じ `ECU.variable`（最初の点で切る）で書きます。
 

@@ -7,62 +7,54 @@
     <meta name="color-scheme" content="light dark" />
     <title>My vehicle-sil screen</title>
     <link rel="stylesheet" href="style.css" />
-    <!-- The script lives in a file because the CSP blocks inline scripts -->
+    <!-- The parts and the library: the GUI server serves them under /vsil/ (there is nothing to copy) -->
+    <script type="module" src="/vsil/vehicle-sil-gui-elements.mjs"></script>
+    <!-- Your own script. It lives in a file because the CSP blocks inline scripts -->
     <script type="module" src="main.js"></script>
     <!-- The element <vehicle-sil-timeline>, which the GUI server serves for every screen -->
     <script src="/timeline/vehicle-sil-timeline.js"></script>
   </head>
   <body>
     <h1>My vehicle-sil screen</h1>
-    <p id="connection" data-testid="connection">connecting…</p>
+    <vsil-status></vsil-status>
 
     <section>
       <h2>Run</h2>
-      <label>Configuration <select id="config" data-testid="config"></select></label>
-      <button type="button" id="check" data-testid="check">Check</button>
-      <button type="button" id="start" data-testid="start">Start</button>
-      <button type="button" id="stop" data-testid="stop">Stop</button>
-      <p>Check: <output id="check-result" data-testid="check-result">-</output></p>
-      <p>Phase: <output id="phase" data-testid="phase">-</output></p>
-      <p>Result: <output id="result" data-testid="result">-</output></p>
-      <p id="error" data-testid="error" role="alert"></p>
+      <vsil-run-controls></vsil-run-controls>
+      <vsil-time-controls speeds="1 5 max"></vsil-time-controls>
     </section>
 
     <section>
-      <h2>Variable</h2>
-      <p>Variables: <output id="variables" data-testid="variables">-</output></p>
-      <label>Variable <select id="variable" data-testid="variable"></select></label>
-      <p>Value: <output id="value" data-testid="value">-</output></p>
-      <label>New value <input id="new-value" data-testid="new-value" size="8" /></label>
-      <button type="button" id="write" data-testid="write">Write</button>
-      <p>Write: <output id="write-result" data-testid="write-result">-</output></p>
-    </section>
-
-    <section>
-      <h2>Slider and lamp</h2>
+      <h2>Variables</h2>
+      <!-- To use your own ECU: change the variable attributes to "<participant>.<variable>" -->
+      <p><label>Throttle <vsil-slider variable="Engine.engine.throttle"></vsil-slider></label></p>
+      <p>Engine speed: <vsil-value variable="Engine.engine.speed"></vsil-value></p>
+      <p>Engine lost: <vsil-value variable="Dashboard.dashboard.engine_lost" on="LOST" off="ok"></vsil-value></p>
       <p>
-        <label>
-          <span id="slider-name" data-testid="slider-name">-</span>
-          <input type="range" id="slider" data-testid="slider" disabled />
-        </label>
-        <output id="slider-value" data-testid="slider-value">-</output>
-      </p>
-      <p>
-        Write: <output id="slider-write" data-testid="slider-write">-</output>
-        <span id="slider-why" data-testid="slider-why"></span>
-      </p>
-      <p>
-        <span id="lamp-name" data-testid="lamp-name">-</span>:
-        <output id="lamp" data-testid="lamp" data-on="false">-</output>
-        <span id="lamp-condition" data-testid="lamp-condition"></span>
+        <vsil-write variable="Engine.ecu.connected" value="false" label="Cut engine from the bus"></vsil-write>
+        <vsil-write variable="Engine.ecu.connected" value="true" label="Connect engine to the bus"></vsil-write>
       </p>
     </section>
 
     <section>
-      <h2>Timeline</h2>
-      <p id="timeline-none" data-testid="timeline-none">No scenario run with a timeline yet.</p>
-      <vehicle-sil-timeline id="timeline" data-testid="timeline" lang="en" compact hide="help tables" hidden></vehicle-sil-timeline>
-      <p>Cursor: <output id="timeline-cursor" data-testid="timeline-cursor">-</output></p>
+      <h2>Your own script (main.js)</h2>
+      <p>
+        <label for="rpm">Engine speed</label>
+        <meter id="rpm" min="0" max="6000" value="0"></meter>
+        <output id="rpm-text">-</output>
+        <small id="rpm-note"></small>
+      </p>
+      <p>
+        <button type="button" id="floor">Throttle to 100 %</button>
+        <span id="floor-error" role="alert"></span>
+      </p>
+    </section>
+
+    <section>
+      <h2>Scenario</h2>
+      <p><label>Scenario of the next run <vsil-scenario-select></vsil-scenario-select></label></p>
+      <vsil-scenario-result></vsil-scenario-result>
+      <vehicle-sil-timeline lang="en" compact hide="help tables" hidden></vehicle-sil-timeline>
     </section>
   </body>
 </html>

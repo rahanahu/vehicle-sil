@@ -1,32 +1,30 @@
-# Template for your own screen (gui_starter)
+# Starter for your own screen (gui_starter)
 
 [日本語](README.ja.md)
 
-A minimal screen of your own for the GUI server (`vehicle-sil-gui`) to serve. It uses only the client library ([gui/client](../../gui/client/README.md)) and is written in plain HTML and ES modules, with no build step. Copy it and rewrite it into your own screen. The guide [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md) walks you through turning it into a screen that shows one variable.
+A screen of your own for the GUI server (`vehicle-sil-gui`) to serve, made of parts: you place elements such as `<vsil-slider variable="Engine.engine.throttle">` in an HTML file and they work, with no script and no build step. Copy it and change the variable names to your ECU's. The guide [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md) walks you through that.
 
 | File | Contents |
 |---|---|
-| `index.html` | The screen. It loads its script from a file (CSP blocks inline scripts). |
-| `main.js` | The script that uses the library: token, connection, check, start and stop, watching and writing a variable, and `bind`, which connects a widget to a variable. |
-| `style.css` | The styles. |
-| `vehicle-sil-gui-client.mjs` | The library bundled into one file. |
+| `index.html` | The screen: the parts, and a few lines of markup for the script. |
+| `main.js` | A small script of your own for what the parts do not have: a display, a button and the timeline. |
+| `style.css` | The look. The parts have none of their own; this file styles the `data-*` attributes and `aria-disabled` that they set. |
 
-The screen shows the connection state, checks the configuration file, starts and stops a run, lets you pick one variable to watch and write, and has a slider and a lamp.
+The parts and the library are not in this directory: the page loads them from the GUI server (`/vsil/vehicle-sil-gui-elements.mjs` and `/vsil/vehicle-sil-gui-client.mjs`).
 
 ## Run it
 
-Start the GUI server and pass this directory with `--web`. The library file (`vehicle-sil-gui-client.mjs`) must sit next to `index.html`. There are 2 ways to get it there:
+Pass this directory to the GUI server with `--web`.
 
-| Use | Library file | Command to start |
-|---|---|---|
-| Prebuilt tools | Already in `<tools>/gui_starter/`. | `vehicle-sil-gui --web <tools>/gui_starter simulation.yaml` |
-| Repository | Not tracked in Git: build it and copy it with the commands below. | Line 3 of the commands below |
+| Use | Command |
+|---|---|
+| Prebuilt tools | `vehicle-sil-gui --web <tools>/gui_starter simulation.yaml` |
+| Repository | Build the library files once, then start the server (the commands below). |
 
 In the repository, run this from the root:
 
 ```sh
-(cd gui/web && npm ci && npm run build:client)    # build/gui-client/vehicle-sil-gui-client.mjs
-cp build/gui-client/vehicle-sil-gui-client.mjs examples/gui_starter/
+(cd gui/web && npm ci && npm run build:client)    # build/gui-client/: the files that the server serves under /vsil/
 uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch \
   --web examples/gui_starter build/<preset>/examples/ecu_main/simulation.yaml
 ```
@@ -37,50 +35,66 @@ The browser opens the URL that the server printed (with `#token=`) and shows thi
 
 | Action | What happens |
 |---|---|
-| Click **Check** | The screen checks the configuration file and shows the result. |
-| Click **Start** | The run starts. |
-| Select a variable under **Variable** | The screen shows the value of that variable. |
-| Enter a value in **New value** and click **Write** | The value is written to the variable. |
+| Open the screen | The status line at the top says `ready`. The variables say they are not available now (no run). |
+| Click **Start** | The status line says `running` and the virtual time (`running 2820 ms`). The slider and the values come alive. |
+| Move the **Throttle** slider | The value is written when you release the knob. **Engine speed** changes. |
+| Click **Throttle to 100 %** (your own button) | The slider moves to 100 and the meter under "Your own script" follows. Before a run, the button shows why it was refused. |
+| Click **Pause**, **Step**, then **Resume** | The status line says `paused` and the time; **Step** moves it by 10 ms (the field next to it); **Resume** goes on. |
+| Click **Stop** | The status line says `the run was stopped`. The slider is disabled, and the values say they are the last ones of a run that has ended. |
+| Pick a scenario under **Scenario** and click **Start** | The run ends by itself. The result says `passed` (or `failed`) with each step, and the timeline of the run appears. |
 
-Variables appear in the list when the launcher has a Control Server. In the example ECUs, writing a number to `Engine.engine.throttle` changes `Engine.engine.speed`.
-
-## The slider and the lamp
-
-The **Slider and lamp** section of the screen shows how to build a widget.
-
-| Widget | Variable it uses |
-|---|---|
-| Slider | The first writable number variable that has a range |
-| Lamp | A bool variable (a read-only one if there is one) |
-
-Both only draw the `state` that `client.variables.bind(ref, options)` returns. The library decides the rest:
-
-| What `state` holds | Examples |
-|---|---|
-| Value condition | No value yet, stale, the value of an ended run |
-| Why a write is blocked | No run, the ECU is disconnected |
-| Write status | Sent, accepted, applied, the reason it failed |
-
-If you keep moving the slider before the server has received the previous write, the library keeps only the last value and sends that. You can build your own widgets (switch, number input, choice) the same way (see "Build widgets (`bind`)" in [gui/client/README.md](../../gui/client/README.md#build-widgets-bind)).
-
-## The timeline
-
-The **Timeline** section shows the timeline of the last scenario run that recorded one, with the element `<vehicle-sil-timeline>`. `index.html` loads the element from the GUI server (`<script src="/timeline/vehicle-sil-timeline.js">`), and `main.js` gives it the run's file (`src`) and the token. The element's attributes, properties and events are in "Putting a timeline on your own screen" in [docs/gui.md](../../docs/gui.md#putting-a-timeline-on-your-own-screen).
+Variables appear when the launcher has a Control Server. In the example ECUs, the throttle drives `Engine.engine.speed`.
 
 ## Make it your own screen
 
-Copy the template to another directory and build your screen there.
+Copy the starter to another directory and build your screen there.
 
-| Use | Command to copy | Argument to start with |
+| Use | Command to copy |
+|---|---|
+| Prebuilt tools | `cp -r <tools>/gui_starter my-screen` |
+| Repository | `cp -r examples/gui_starter my-screen` |
+
+Then start the server with `--web my-screen`. It takes the directory that contains `index.html`; for the serving rules (which files are served, CSP, token), see "Reference for your own screen" in [docs/gui.md](../../docs/gui.md#reference-for-your-own-screen).
+
+There are 3 layers, and you use only as many as you need:
+
+| Layer | You write | Read |
 |---|---|---|
-| Prebuilt tools | `cp -r <tools>/gui_starter my-screen` | `--web my-screen` |
-| Repository | `cp -r examples/gui_starter my-screen` | `--web my-screen` |
+| Parts only | HTML: the elements of `index.html` with your variable names, and CSS. | The table below |
+| A script of your own | `main.js`: what the parts do not have (a display, a button, a rule). It uses the same connection as the parts. | "[The front door](../../gui/client/README.md#the-front-door-connect)" in `gui/client/README.md` |
+| A project with a framework | A project with a build. The parts are custom elements, so any template can contain them. | The end of this page |
 
-`--web` takes the location of the built screen (the directory that contains `index.html`). For the serving rules (which files are served, CSP, token), see "Reference for your own screen" in [docs/gui.md](../../docs/gui.md#reference-for-your-own-screen).
+### Parts only
 
-## Build with TypeScript and a framework
+| Element | What it does | Attributes |
+|---|---|---|
+| `<vsil-status>` | The connection, the run, the virtual time and the one problem | none |
+| `<vsil-run-controls>` | Start, Stop and Stop without waiting. It starts the file of the last run (at first, the file that the server was started with). | `label-*` |
+| `<vsil-time-controls>` | Pause, Resume, Step, Run until and the speed | `speeds`, `step-ms` |
+| `<vsil-value>` | A value with its unit; a bool shows as `on` and `off` text (a lamp, with CSS) | `variable`, `on`, `off` |
+| `<vsil-slider>` | A number in the variable's range, written when the knob is released | `variable` |
+| `<vsil-write>` | A button that writes one value | `variable`, `value`, `label` |
+| `<vsil-scenario-select>`, `<vsil-scenario-result>` | The scenario of the next run, and its steps and result | none |
 
-The library also comes as a typed npm package (`.tgz`). Run `npm install <that .tgz>` in your project, then import it as `@vehicle-sil/gui-client`. It has no dependencies.
+A variable is written `<participant>.<variable>`, cut at the first dot (`Engine.engine.throttle` is the participant `Engine` and the variable `engine.throttle`). To find the names of your ECUs, see "Step 2: Find the name of the variable to show" in the guide. If a name is wrong, the part says that the variable is not in this run. The complete list of the parts and what they promise (the connection, the markup and the `data-*` attributes to style) is "Parts" in [gui/client/README.md](../../gui/client/README.md#parts-custom-elements).
+
+### A script of your own
+
+`main.js` shows the 3 things that a script is for. `connect()` without options returns the connection that the parts already use, so the page has one WebSocket. A refused start, stop or time operation shows in `<vsil-status>`; a refused write of a variable shows next to the part that shows that variable, and in the `ActionError` that your script receives.
+
+| In `main.js` | What it shows |
+|---|---|
+| `watch(client.variable('Engine.engine.speed'), fn)` | A value drawn your own way (a meter). `fn` runs now and on every change. |
+| `await client.variable('Engine.engine.throttle').write(100)` | An operation of your own: a Promise that rejects with an `ActionError` (a sentence in `message`, and `outcome`: `refused` or `unknown`). |
+| `watch(client.scenario, fn)` | The timeline: when a scenario run has one, `<vehicle-sil-timeline>` gets its `src`. |
+
+The timeline element is loaded from the GUI server (`<script src="/timeline/vehicle-sil-timeline.js">`). It sends the token that the page already has. Its attributes, properties and events are in "Putting a timeline on your own screen" in [docs/gui.md](../../docs/gui.md#putting-a-timeline-on-your-own-screen).
+
+What the starter leaves out, because the sample screens do it: choosing the configuration file, **Check**, and a field to choose any variable and type a value. To choose the file, list the files with `client.low.configs()` and start with your own button: `client.run.start(intent, { file })` (`<vsil-run-controls>` starts the file of the last run). `client.low` is the lower library of the same connection (`check`, `variables.bind` and more); see "[Build widgets (`bind`)](../../gui/client/README.md#build-widgets-bind)" for widgets of your own.
+
+### A project with a framework
+
+The library comes as a typed npm package (`.tgz`) with the parts. Run `npm install <that .tgz>` in your project, then import it as `@vehicle-sil/gui-client`. It has no dependencies.
 
 | Source | Location |
 |---|---|
@@ -89,31 +103,16 @@ The library also comes as a typed npm package (`.tgz`). Run `npm install <that .
 | Repository | Run `npm run pack:client` in `gui/web`. It creates `build/gui-client/vehicle-sil-gui-client-<version>.tgz`. |
 
 ```ts
-import { WriteError, createClient, takeToken } from '@vehicle-sil/gui-client';
+import '@vehicle-sil/gui-client/elements'; // defines the parts: write <vsil-slider ...> in your templates
+import { ActionError, connect, watch } from '@vehicle-sil/gui-client';
 
-const token = takeToken(window); // reads #token= from the URL and removes it (before routing rewrites the URL)
-if (token === null) throw new Error('open the URL that vehicle-sil-gui printed');
-// build the API URL from the server root (so that api/app does not become /settings/api/app on a screen path /settings/foo)
-const client = createClient({ baseUrl: new URL('/', location.href).href, token });
-await client.loadApp();
-client.connect();
-client.session.session.subscribe((session) => console.log(session?.phase, session?.result?.result));
-
-const ref = { peer: 'Engine', name: 'engine.speed' };
-const watch = client.variables.watch([ref], { periodMs: 100 });
-watch.values.subscribe(() => console.log(watch.value(ref)?.value));
+const client = await connect(); // the connection that the parts use
+watch([client.variable('Engine.engine.speed')], (view) => console.log(view.text, view.unit));
 try {
-  await client.variables.write({ Engine: { 'engine.throttle': 50 } });
+  await client.variable('Engine.engine.throttle').write(60);
 } catch (error) {
-  if (error instanceof WriteError) console.log(error.kind, error.message);
+  if (error instanceof ActionError) console.log(error.code, error.message, error.outcome);
 }
-
-// one widget and one variable: the value condition, why a write is blocked and the write status come in one state
-const throttle = client.variables.bind({ peer: 'Engine', name: 'engine.throttle' }, { needsRange: true });
-throttle.state.subscribe(({ reading, pending, block, writeStatus }) =>
-  console.log(pending ?? reading?.value, block, writeStatus.kind),
-);
-throttle.write(60);
 ```
 
 - `npm run pack:client` type-checks this example against the types of the package it built, with both `nodenext` and `bundler` module resolution.

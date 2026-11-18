@@ -781,6 +781,24 @@ struct OutsideLinkLine
 inline constexpr std::array<std::string_view, 9> kOutsideDroppedKeys{
     "ext_overruns", "ext_queue_full", "ext_tx_failures", "silkit_tx_failures", "overruns",
     "ext_tx_dropped", "ext_tx_unsent", "silkit_rejected", "ext_rejected"};
+/// The keys of the two counts that read_outside_counts() reads (both bridges): the frames sent to the
+/// bus, and those that came from a device there.
+inline constexpr std::string_view kOutsideToKey = "silkit_to_ext";
+inline constexpr std::string_view kOutsideFromKey = "ext_from_devices";
+/// The bridge sent frames to the bus and none came from a device there: the condition of the note
+/// connect-nothing-received (at the end of the run) and of `nothing_received` of the state (while it
+/// runs, once kOutsideNothingReceivedAfter has passed since the first frame was sent). The one place
+/// that says it; empty counts (none could be read) are not it.
+[[nodiscard]] inline bool sent_without_answer(std::optional<std::uint64_t> to_outside, std::optional<std::uint64_t> from_outside)
+{
+    return to_outside && from_outside && *to_outside != 0 && *from_outside == 0;
+}
+/// How long after the first frame to the bus nothing from a device makes `nothing_received` true.
+inline constexpr std::chrono::milliseconds kOutsideNothingReceivedAfter{10000};
+/// How long a count of lost frames or of stopped loops that grew keeps the condition "degraded"
+/// (reasons frames-dropped, loop-suspected), and a bus that went passive is not meant: that one
+/// lasts as long as the bus is passive.
+inline constexpr std::chrono::milliseconds kOutsideDegradedHold{5000};
 /// The count of frames the bridge stopped as a loop (Ethernet).
 inline constexpr std::string_view kOutsideLoopKey = "loop_suspected";
 /// The count of error frames the CAN controller saw.
@@ -837,8 +855,16 @@ class OutsideState
 public:
     /// A link line read at `now`. true: link or bus changed (what people are told).
     bool on_link(const OutsideLinkLine& line, std::chrono::steady_clock::time_point now);
-    /// The counts of a statistics line (the last ones are kept).
-    void on_counts(std::map<std::string, std::uint64_t> counts) { counts_ = std::move(counts); }
+    /// The counts of a statistics line read at `now` (the last ones are kept). A sum of lost frames
+    /// (kOutsideDroppedKeys) or a count of loops (kOutsideLoopKey) that is larger than before is
+    /// noted with `now`, for the condition.
+    void on_counts(std::map<std::string, std::uint64_t> counts, std::chrono::steady_clock::time_point now);
+    /// What the bridge stands at `now`, for RunState::outside (the names are the caller's): the link,
+    /// the bus, `nothing_received`, and the condition with its reasons (docs/simulation-events.md).
+    /// interrupted: the link is down or the bus is off. degraded: the bus is passive, frames were
+    /// lost or loops stopped within kOutsideDegradedHold, or a bridge outside this run shares the
+    /// device (on_foreign()). Both: interrupted, with the reasons of both.
+    [[nodiscard]] RunState::Outside facts(std::chrono::steady_clock::time_point now) const;
     /// The link as it is now: "up", "down", "unknown", or empty before any line.
     [[nodiscard]] std::string link_text() const;
     /// The bus as it is now, as link_text().
@@ -879,6 +905,11 @@ private:
     std::map<std::string, std::uint64_t> counts_;
     OutsideSharing sharing_;
     Span foreign_;
+    std::uint64_t dropped_ = 0; ///< the sum of the lost-frame counts of the last statistics line
+    std::optional<std::chrono::steady_clock::time_point> dropped_at_{};
+    std::uint64_t loops_ = 0;
+    std::optional<std::chrono::steady_clock::time_point> loops_at_{};
+    std::optional<std::chrono::steady_clock::time_point> sent_since_{}; ///< when frames to the bus were first counted
     std::uint32_t foreign_most_ = 0;
     std::vector<long> foreign_pids_;
     std::optional<std::chrono::milliseconds> foreign_first_{};
