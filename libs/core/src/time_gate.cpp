@@ -208,6 +208,14 @@ void TimeGate::pause(Wall::time_point wall)
     {
         pause_now_or_next(wall);
     }
+    // What was to run on to a later time ends here, whether a step is held, none is, or the
+    // simulation stands still already (a pause_at() ahead): whoever counts from the target next
+    // (a step) must not count from a time this pause has given up. A target that is not ahead
+    // stays: it says "stands still at the next step" already.
+    if (state_.pause_target && *state_.pause_target > state_.now)
+    {
+        state_.pause_target.reset();
+    }
 }
 
 void TimeGate::pause_at(SimTime t, Wall::time_point wall)

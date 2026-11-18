@@ -331,6 +331,85 @@ TEST_CASE(time_gate_model_a_pause_asked_for_during_a_stall_keeps_the_lateness)
     check(e.gate.state(w(600)), {.paced = 11, .late = 1, .max_late_ms = 290, .slipped_ms = 290, .running_ms = 400});
 }
 
+TEST_CASE(time_gate_model_a_pause_ends_the_run_until_in_progress_whether_a_step_is_held_or_not)
+{
+    // As fast as possible no step is held: pause() during the step at 50 ms, while a run_until
+    // to 1000 ms is in progress. The target is gone at once, not only when the next step begins.
+    Example fast(std::nullopt, 10ms);
+    fast.gate.run_until(at(1000ms), w(0));
+    fast.run_steps(6);
+    fast.gate.pause(w(6));
+    CHECK(!fast.gate.paused());
+    CHECK(!fast.gate.state(w(6)).pause_target);
+    // A step now counts from the step in progress (50 ms), and the simulation stands still there.
+    fast.gate.step(10ms, w(6));
+    CHECK(fast.gate.state(w(6)).pause_target == std::optional<SimTime>(at(60ms)));
+    CHECK(fast.gate.begin_step(at(60ms), 10ms, w(7)));
+    CHECK(fast.gate.paused());
+    CHECK(!fast.gate.state(w(7)).pause_target);
+
+    // Without the step: it stands still at the next step, and nothing is left to run on to.
+    Example alone(std::nullopt, 10ms);
+    alone.gate.run_until(at(1000ms), w(0));
+    alone.run_steps(6);
+    alone.gate.pause(w(6));
+    CHECK(alone.gate.begin_step(at(60ms), 10ms, w(7)));
+    CHECK(alone.gate.paused());
+    CHECK(!alone.gate.state(w(7)).pause_target);
+
+    // Paced, the step at 50 ms is held when the pause comes: it stands still there, and the same
+    // step ends at the same time.
+    Example paced(1.0, 10ms);
+    paced.gate.run_until(at(1000ms), w(0));
+    paced.run_steps(5);
+    CHECK(paced.gate.begin_step(at(50ms), 10ms, w(50)));
+    paced.gate.pause(w(55));
+    CHECK(paced.gate.paused());
+    CHECK(!paced.gate.state(w(55)).pause_target);
+    paced.gate.step(10ms, w(56));
+    CHECK(paced.gate.state(w(56)).pause_target == std::optional<SimTime>(at(60ms)));
+
+    // A pause_at() for a time that has passed, at a held step: it stands still there, and the
+    // time it was given is not left as a target.
+    Example passed(1.0, 10ms);
+    passed.run_steps(5);
+    CHECK(passed.gate.begin_step(at(50ms), 10ms, w(50)));
+    passed.gate.pause_at(at(20ms), w(55));
+    CHECK(passed.gate.paused());
+    CHECK(!passed.gate.state(w(55)).pause_target);
+}
+
+TEST_CASE(time_gate_model_a_pause_while_it_stands_still_ends_a_pause_at_that_is_ahead)
+{
+    // Stands still at 50 ms; pause_at(1000 ms) leaves it standing with a target ahead. A pause()
+    // gives that target up as it does while the simulation runs, and a step counts from 50 ms.
+    Example e(std::nullopt, 10ms);
+    e.run_steps(5);
+    e.gate.pause(w(5));
+    CHECK(e.gate.begin_step(at(50ms), 10ms, w(6)));
+    CHECK(e.gate.paused());
+    e.gate.pause_at(at(1000ms), w(7));
+    CHECK(e.gate.paused());
+    CHECK(e.gate.state(w(7)).pause_target == std::optional<SimTime>(at(1000ms)));
+    e.gate.pause(w(8));
+    CHECK(e.gate.paused());
+    CHECK(!e.gate.state(w(8)).pause_target);
+    e.gate.step(10ms, w(9));
+    CHECK(!e.gate.paused());
+    CHECK(e.gate.state(w(9)).pause_target == std::optional<SimTime>(at(60ms)));
+}
+
+TEST_CASE(time_gate_model_a_pause_keeps_a_target_that_is_not_ahead)
+{
+    // Started paused, before the first step: the target at 0 is where it stands still already
+    // ("paused" for whoever reads the state), and a pause() leaves it.
+    Example e(std::nullopt, 10ms, 10ms, true);
+    e.gate.pause(w(0));
+    CHECK(e.gate.state(w(0)).pause_target == std::optional<SimTime>(at(0ms)));
+    CHECK(e.gate.begin_step(at(0ms), 10ms, w(1)));
+    CHECK(e.gate.paused());
+}
+
 TEST_CASE(time_gate_model_a_change_of_speed_keeps_the_lateness_of_a_stall)
 {
     // The participants are stuck in their steps at 100 ms (let go at 110 ms). At 300 ms the speed
