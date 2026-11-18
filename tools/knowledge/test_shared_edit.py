@@ -235,7 +235,37 @@ class Replace(Base):
 
 
 class Targets(Base):
-    def test_t10_only_the_five_shared_files_are_written(self):
+    def test_t10_flaky_list_is_a_shared_file(self):
+        flaky = self.root / "plans/FLAKY.md"
+        flaky.write_text("# flaky\n- a\n", encoding="utf-8")
+        self.edit("- a\n", "- a\n- b\n", name="plans/FLAKY.md")
+        self.assertEqual(flaky.read_text(encoding="utf-8"), "# flaky\n- a\n- b\n")
+
+    def test_t10_a_stream_file_is_refused_and_the_message_says_who_edits_it(self):
+        stream = self.root / "plans/streams/x.md"
+        stream.parent.mkdir(parents=True, exist_ok=True)
+        stream.write_text("x\n")
+        with self.assertRaises(shared_edit.EditError) as cm:
+            self.edit("x", "y", name="plans/streams/x.md")
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("its coordinator edits it directly", cm.exception.message)
+        self.assertEqual(stream.read_text(), "x\n")
+
+    def test_t10_a_long_state_row_that_the_change_wrote_is_noted_and_the_change_is_kept(self):
+        self.state.write_text("| a | short | x |\n| b | short | y |\n", encoding="utf-8")
+        long_row = "| a | " + "ね" * 210 + " | x |"
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = shared_edit.main(["plans/STATE.md", "--old", "| a | short | x |", "--new", long_row], root=self.root)
+        self.assertEqual(code, 0)
+        self.assertIn(long_row, self.state.read_text(encoding="utf-8"))
+        self.assertIn("shared-edit: note plans/STATE.md line 1 has", out.getvalue())
+        out = io.StringIO()  # a short change elsewhere does not repeat the note about row a
+        with contextlib.redirect_stdout(out):
+            shared_edit.main(["plans/STATE.md", "--old", "| b | short | y |", "--new", "| b | new | y |"], root=self.root)
+        self.assertNotIn("note", out.getvalue())
+
+    def test_t10_only_the_shared_files_are_written(self):
         other = self.root / "plans/OTHER.md"
         other.write_text("x\n")
         (self.root / "README.md").write_text("x\n")

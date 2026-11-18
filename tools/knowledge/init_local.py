@@ -5,7 +5,7 @@
   python3 tools/knowledge/init_local.py --apply    create it
 
 It makes the directories of .local/, excludes /.local/ and /CLAUDE.local.md in .git/info/exclude,
-and copies the templates in tools/knowledge/templates/ to the five shared files and to
+and copies the templates in tools/knowledge/templates/ to the six shared files and to
 CLAUDE.local.md, but only for a file that does not exist. A file that exists is kept as it is, so
 the command is safe in a clone that already has a .local/. It prints what the user still has to do
 by hand (the placeholders in the copies, the Copilot and Claude settings).
@@ -28,6 +28,7 @@ FILES = {  # template -> path relative to .local, or "../" for the repository ro
     "CONSTRAINTS.md": "CONSTRAINTS.md",
     "STATE.md": "plans/STATE.md",
     "RULES.md": "plans/RULES.md",
+    "FLAKY.md": "plans/FLAKY.md",
     "ACTIVE.md": "decisions/ACTIVE.md",
     "pending.md": "changelog/pending.md",
     "CLAUDE.local.md": "../CLAUDE.local.md",

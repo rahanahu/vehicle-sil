@@ -3,10 +3,13 @@
 
   shared_edit.py FILE (--old TEXT | --old-file PATH) (--new TEXT | --new-file PATH) [--timeout SECONDS]
 
-FILE is one of the five shared files, written relative to .local, relative to the repository
-root (.local/...) or as an absolute path:
-  CONSTRAINTS.md  plans/STATE.md  plans/RULES.md  decisions/ACTIVE.md  changelog/pending.md
-The file must already exist. The tool changes nothing else and never creates the file.
+FILE is one of the six shared files (several coordinators write them), written relative to
+.local, relative to the repository root (.local/...) or as an absolute path:
+  CONSTRAINTS.md  plans/STATE.md  plans/RULES.md  plans/FLAKY.md  decisions/ACTIVE.md
+  changelog/pending.md
+The file must already exist. The tool changes nothing else and never creates the file. A stream
+file (plans/streams/) is not a shared file: its coordinator edits it directly, and anyone else
+tells the coordinator.
 
 What it does, in this order: take an exclusive lock on .local/.shared-edit.lock (one lock for all
 shared files; the lock file is never deleted, and the OS drops the lock when the process ends),
@@ -22,9 +25,13 @@ Outcomes (summary on stdout for success, on stderr for failure):
           its current text), ambiguous (--old is there more than once: add the neighbouring lines),
           lock-timeout (another writer holds the lock: run it again; tell the user if it fails
           twice; never fall back to writing the file directly), io-error.
-  exit 2  wrong usage (not one of the five files, a symbolic link, empty --old, a --timeout that is
+  exit 2  wrong usage (not one of the six files, a symbolic link, empty --old, a --timeout that is
           negative, NaN or infinite, an --old-file/--new-file inside vendor/ (it is
           refused before it is opened), ...).
+
+A table row of plans/STATE.md that the change leaves longer than 200 characters is named in a
+note after "ok" (the change is made): a row is one line of current state; the history belongs in
+the stream file.
 
 --new '' deletes the text. To add a line, take the neighbouring line as --old and put it back in
 --new together with the new line. Compare and write are done on bytes (no newline or encoding
@@ -54,10 +61,12 @@ SHARED_FILES = (
     "CONSTRAINTS.md",
     "plans/STATE.md",
     "plans/RULES.md",
+    "plans/FLAKY.md",
     "decisions/ACTIVE.md",
     "changelog/pending.md",
 )
 LOCK_NAME = ".shared-edit.lock"
+STATE_ROW_LIMIT = 200  # characters of a table row of plans/STATE.md
 DEFAULT_TIMEOUT = 10.0
 POLL_SECONDS = 0.02
 
@@ -98,8 +107,10 @@ def resolve_target(root: Path, name: str) -> str:
         rel = os.path.relpath(os.path.abspath(candidate), os.path.abspath(root))
         if rel in SHARED_FILES:
             return rel
+    hint = " A stream file has one owner: its coordinator edits it directly; others tell the coordinator." \
+        if "streams" in Path(name).parts else ""
     raise EditError(2, "usage", f"{name} is not a shared file. The tool writes only: {', '.join(SHARED_FILES)} "
-                    "(relative to .local).")
+                    f"(relative to .local).{hint}")
 
 
 def _acquire(lock_path: Path, timeout: float) -> int:
@@ -229,7 +240,27 @@ def main(argv: list[str] | None = None, root: Path | None = None) -> int:
         print(f"shared-edit: FAIL {e.kind}: {e.message}", file=sys.stderr)
         return e.code
     print(f"shared-edit: ok {rel} ({before} -> {after} bytes)")
+    for note in long_state_rows(root, rel, new):
+        print(note)
     return 0
+
+
+def long_state_rows(root: Path, rel: str, new: bytes) -> list[str]:
+    """Notes for the rows of plans/STATE.md that this change wrote and that are now too long."""
+    if rel != "plans/STATE.md" or not new.strip():
+        return []
+    try:
+        lines = (root / rel).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    written = [x.strip() for x in new.decode("utf-8", "replace").splitlines() if x.strip()]
+    notes = []
+    for i, line in enumerate(lines, 1):
+        if line.startswith("|") and len(line) > STATE_ROW_LIMIT and any(w in line for w in written):
+            notes.append(f"shared-edit: note plans/STATE.md line {i} has {len(line)} characters (over "
+                         f"{STATE_ROW_LIMIT}). A row is one line of current state: rewrite it, and keep "
+                         "the history in the stream file.")
+    return notes
 
 
 if __name__ == "__main__":
