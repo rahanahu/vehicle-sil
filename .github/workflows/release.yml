@@ -206,11 +206,12 @@ jobs:
             then "success" else (map(.status + "/" + (.conclusion // "")) | join(", ")) end')
           if [ "$state" != success ]; then
             case "$state" in
-              # Merges that followed each other: only the newest one's run of main is kept (ci.yml, concurrency).
+              # ci.yml never cancels a run of main itself; a person (or an older run, from before every merge got
+              # its own) did.
               *cancelled*)
-                echo "::error::ci.yml's run on $GITHUB_SHA was cancelled while it waited ($state), because a newer" \
-                     "merge followed. Run it again (Actions > ci > the cancelled run of this commit > Re-run all" \
-                     "jobs, or gh run rerun <id>), wait for it to pass, then re-run this job" ;;
+                echo "::error::ci.yml's run on $GITHUB_SHA was cancelled ($state). Run it again (Actions > ci >" \
+                     "the cancelled run of this commit > Re-run all jobs, or gh run rerun <id>), wait for it to" \
+                     "pass, then re-run this job" ;;
               *)
                 echo "::error::ci.yml has not passed on $GITHUB_SHA ($state): push the commit to main and wait for" \
                      "ci.yml to pass (or fix it), then re-run this job" ;;
