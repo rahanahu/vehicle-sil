@@ -5,6 +5,7 @@
 // JSON. No process is started.
 #include "launch_test_util.hpp"
 
+#include "vehicle_sil/launch/error_result.hpp"
 #include "vehicle_sil/launch/run.hpp"
 
 #include "check_words.hpp"
@@ -2108,6 +2109,25 @@ TEST_CASE(an_unexpected_failure_is_written_in_the_form_of_the_command)
     const std::string check = format_internal_error_json(false, "boom");
     CHECK(check.rfind("{\n  \"vehicle_sil_check\": 1,\n", 0) == 0);
     CHECK(check.find("\"code\": \"internal\"") != std::string::npos);
+}
+
+TEST_CASE(a_wrong_command_line_and_an_internal_error_are_written_in_the_form_of_each_command)
+{
+    const std::vector<Finding> errors{Finding{Severity::Error, "usage", "bad", 0, "", ""}};
+    const std::vector<std::string> variants{"left_hand"};
+    const std::string check = format_usage_json(CommandKind::Check, "a.yaml", errors, variants);
+    CHECK(check.rfind("{\n  \"vehicle_sil_check\": 1,\n", 0) == 0);
+    CHECK(check.find("\"result\": \"usage\"") != std::string::npos && check.find("left_hand") != std::string::npos);
+    CHECK(format_usage_json(CommandKind::Run, "a.yaml", errors, variants).rfind("{\n  \"vehicle_sil_run\": 2,\n", 0) == 0);
+    CHECK(format_usage_json(CommandKind::Test, "a.yaml", errors).find("\"usage\"") != std::string::npos);
+    CHECK(format_usage_json(CommandKind::Connections, "a.yaml", errors).find("\"usage\"") != std::string::npos);
+    const RunReport event = usage_run_report("a.yaml", errors, variants);
+    CHECK(event.usage && event.check.usage && event.exit_code() == 4);
+    CHECK(internal_error_run_report("boom").findings.at(0).code == "internal");
+    for (const CommandKind command : {CommandKind::Check, CommandKind::Run, CommandKind::Test, CommandKind::Connections})
+    {
+        CHECK(format_internal_error_json(command, "a.yaml", "boom").find("\"code\": \"internal\"") != std::string::npos);
+    }
 }
 
 TEST_CASE(a_disabled_participant_is_shown_as_not_started_and_is_no_finding)
