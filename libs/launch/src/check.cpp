@@ -56,7 +56,7 @@ void drop_unusable_commands(CheckReport& report)
 
 } // namespace
 
-int CheckReport::exit_code() const { return exit_code_of(*this); }
+int check_exit_code(const CheckReport& report) { return exit_code_of(report); }
 
 namespace {
 

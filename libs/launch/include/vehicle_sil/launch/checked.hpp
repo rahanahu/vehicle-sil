@@ -50,6 +50,10 @@ namespace detail {
 /// with --scenario also the member "scenario". docs/simulation-check.md has the keys.
 [[nodiscard]] std::string format_json(const Checked& checked);
 
+/// The process exit code of `check` (the table of the exit codes is in one place, exit_codes.hpp):
+/// 4 the command line was wrong, 3 the file was not read, 1 it did not pass, 0 it passed.
+[[nodiscard]] int check_exit_code(const CheckReport& report);
+
 /// How a check is made, beside what is asked for (RunRequest): what its caller is, not what the
 /// user wants.
 struct CheckOptions
