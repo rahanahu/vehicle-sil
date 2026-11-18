@@ -68,7 +68,10 @@
 // the main thread; the hold's begin and end on the window's thread, where TimeCommands' mutex is
 // taken already).
 //
-// A control server (RunOptions::serve_control) has threads of its own. Of the run they touch the
+// A control server (RunOptions::control_endpoint) is not the Runner's: run_file() starts it on the
+// main thread between the Runner's two stages (prepare(), then run()), on the hub that prepare()
+// gives it, and tells run() how that went (ControlServerStart); the Runner never calls the server.
+// The server has threads of its own. Of the run they touch the
 // hub (thread safe; its subscriptions are bounded and never make the simulation wait; the server
 // holds the hub itself, so it may use it after the run) and the TimeCommands. With a scenario the
 // server only shows the run: its clients' calls that would write a variable or move the time are
@@ -198,8 +201,18 @@ using detail::RunStart;
 using detail::RunWatch;
 using detail::uri_for_participants;
 
-/// One run: its parts, and the order of its phases (run()). The hub is made with the Runner (by
-/// its RunControl) and lives as long as it (and as whoever else holds it). The registry, the
+/// What run_file() did between the two stages of a Runner (prepare(), then run()): whether it
+/// started a control server (RunOptions::control_endpoint), and how that went. As made: none.
+struct ControlServerStart
+{
+    std::optional<ControlServerInfo> listening; ///< the server listens there
+    std::optional<std::string> error;           ///< it could not be started: why (what its start threw)
+};
+
+/// One run: its parts, and the order of its phases in two stages. prepare() opens the run's files;
+/// run() does everything from the registry to the end. Between them the caller starts what serves
+/// the run's hub from outside (a control server), so that it listens before the registry does.
+/// The hub is made with the Runner (by its RunControl) and lives as long as it (and as whoever else holds it). The registry, the
 /// controller and the hub's transport live in run() only, in a RunConnection; the parts are given
 /// the controller in the calls that need it. A Runner can be destroyed whenever run() has
 /// returned, also while the closing thread of its run is still closing (it was left at its limit).
@@ -273,15 +286,41 @@ public:
         }
     }
 
-    RunOutcome run()
+    /// The first stage: the phase "starting", then the run's files (the participants' logs, the
+    /// timeline). Returns the run's hub (never null, for whoever serves it; the holder keeps the
+    /// hub only, see RunConnection) if the run goes on; null if it does not (it was interrupted
+    /// before it began, or a file cannot be opened: the outcome says so). Nothing of SIL Kit
+    /// exists yet, and no other thread of the run. run() must follow, whatever this returned.
+    [[nodiscard]] std::shared_ptr<control::Hub> prepare()
+    {
+        if (ctx_.interrupts() > 0)
+        {
+            outcome_.interrupted_by = ctx_.interrupt_name();
+            return nullptr;
+        }
+        ctx_.controls.set_phase(Phase::Starting);
+        if (!out_.open_logs(outcome_) || !open_timeline())
+        {
+            return nullptr;
+        }
+        prepared_ = true;
+        return control_.shared_hub();
+    }
+
+    /// The second stage, once, after prepare(): the registry, the participants, the simulation and
+    /// its end; all of the outcome. After a prepare() that returned null it starts nothing and
+    /// only ends the time commands. `server`: what the caller did in between; the run says where
+    /// the server listens, or starts nothing if it could not be started.
+    RunOutcome run(const ControlServerStart& server)
     {
         // The registry, the controller and the hub's transport of this run (the hub's end of the
         // ECUs' control agents, on the controller's participant), with the hub. Before the guards
         // below, so that it goes after them: if run() leaves before close_connection(), the three
         // go here, on this thread, in the connection's order (transport, controller, registry).
         // run() is its only holder until it gives it to close_connection(). Its hub is the run's
-        // one hub (RunControl's, which gets the variable maps here): the transport below is made
-        // on the connection's hub, so what the closing thread reaches is what the connection keeps.
+        // one hub (RunControl's, which got the variable maps in prepare() or gets them here): the
+        // transport below is made on the connection's hub, so what the closing thread reaches is
+        // what the connection keeps.
         auto connection = std::make_shared<RunConnection>(control_.shared_hub());
         // Whatever happens, the time commands end with the run (they are refused from then on),
         // and before the controller they are given to goes: the thread that reads the commands
@@ -303,27 +342,29 @@ public:
             Runner& runner;
             ~EndScenario() { runner.scenario_.end(); }
         } const endScenario{*this};
-        if (ctx_.interrupts() > 0)
-        {
-            outcome_.interrupted_by = ctx_.interrupt_name();
-            return outcome_;
-        }
-        ctx_.controls.set_phase(Phase::Starting);
-        if (!out_.open_logs(outcome_) || !open_timeline())
+        if (!prepared_)
         {
             return outcome_;
         }
-        if (ctx_.options.serve_control)
+        const auto no_server = [this](const std::string& why) {
+            outcome_.setup_error = "the control server cannot be started: " + one_line(why);
+        };
+        if (server.error)
+        {
+            no_server(*server.error);
+            return outcome_;
+        }
+        if (server.listening)
         {
             try
             {
-                const ControlServerInfo server = ctx_.options.serve_control(control_.shared_hub());
-                out_.event([&server](EventStream& e) { e.control_server(server.address, server.tls, server.credentials); });
-                out_.say("control server at " + server.address);
+                const ControlServerInfo& at = *server.listening;
+                out_.event([&at](EventStream& e) { e.control_server(at.address, at.tls, at.credentials); });
+                out_.say("control server at " + at.address);
             }
             catch (const std::exception& e)
             {
-                outcome_.setup_error = "the control server cannot be started: " + one_line(e.what());
+                no_server(e.what());
                 return outcome_;
             }
         }
@@ -582,6 +623,7 @@ private:
     RunScenario scenario_;
     RunStart start_;
     RunWatch watch_;
+    bool prepared_ = false;     ///< prepare() got through: run() goes on
     int interrupts_at_end_ = 0; ///< ctx_.interrupts() when the simulation had ended
     std::ofstream timeline_file_; ///< run --timeline: open from open_timeline() to write_timeline(); the main thread's
     static constexpr std::chrono::milliseconds kCloseMargin{5000};
@@ -660,7 +702,31 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
     // Destroyed when run_file() returns, also if the run's closing thread was left at its limit
     // (RunOutcome::connection_not_closed_ms): that thread uses nothing of the Runner.
     Runner runner(detail::with_bridges(report.check), base, options, controls, std::move(own));
-    report.run = runner.run();
+    // The control server between the Runner's two stages: after the run's files are open, before
+    // the registry listens. The Runner does not know the server; it is told what became of it.
+    ControlServerStart server;
+    try
+    {
+        if (const std::shared_ptr<control::Hub> hub = runner.prepare(); hub && options.control_endpoint != nullptr)
+        {
+            try
+            {
+                server.listening = options.control_endpoint->start(hub);
+            }
+            catch (const std::exception& e)
+            {
+                server.error = e.what();
+            }
+        }
+    }
+    catch (...)
+    {
+        // What leaves here does not reach run(), whose guard ends the time commands: they end
+        // with the run also then (they are refused from now on), as for every other way out.
+        controls.time().detach();
+        throw;
+    }
+    report.run = runner.run(server);
     report.findings = assess_run(*report.run);
     {
         // run --timeline: the file has the scenario's findings of the check and of the run.

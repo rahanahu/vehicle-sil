@@ -29,7 +29,7 @@ namespace vehicle_sil::launch::detail {
 ///
 /// The hub is shared (not a member by value) because others hold it too, each for itself: the
 /// Runner, whose parts use it until they are destroyed (the scenario's port, the samples' tap),
-/// and whoever was given it by RunOptions::serve_control or before_start (a control server). A
+/// and whoever was given it by RunOptions::control_endpoint or before_start (a control server). A
 /// holder of the hub holds the hub only: it never keeps the SIL Kit objects.
 ///
 /// Threads: no lock. One thread at a time: the main thread until the hand-over, then the closing

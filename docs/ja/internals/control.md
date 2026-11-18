@@ -836,8 +836,10 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 
 ### 起動と終了の時期
 
-- 照合が通った後、registry より前に、`run_file()` が `RunOptions::serve_control` を呼びます（main のスレッド）。
-- Hub は実行が作り、`std::shared_ptr` で `serve_control` に渡します。Server がそれを持ち続けるので、Hub は実行と Server の両方が手放すまで生きています。
+- ランチャーは実行の前に Server を作り、そのポインターを実行に渡します（`RunOptions::control_endpoint`。型は `launch::ControlEndpoint`）。
+- `run_file()` は 1 回の実行を 2 つの段（`Runner::prepare()`、次に `Runner::run()`）で進め、その間に main のスレッドで Server を起動します。照合が通り、実行のファイル（ログ、タイムライン）を開いた後で、registry より前です。実行そのものは Server を呼びません。`run_file()` が Server の待ち受け先を実行に伝え、実行がイベント `control_server` とその行を書きます。
+- Hub は実行が作り、`run_file()` が `std::shared_ptr` で `ControlEndpoint::start()` に渡します。Server がそれを持ち続けるので、Hub は実行と Server の両方が手放すまで生きています。
+- 始まる前に中断された実行と、ファイルを開けなかった実行は、Server を起動しません。
 - Server を起動できなければ、何も起動しません（`setup`）。
 - 閉じるのは、`run_file()` が戻った後、結果を書く前です（main のスレッド。`ControlServer::shutdown()`）。
 

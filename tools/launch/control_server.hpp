@@ -37,23 +37,14 @@ struct ControlHooks
     std::function<void()> stop{};
 };
 
-/// The server while the run lasts: made before the run (reads and checks the files), started by
-/// the run (RunOptions::serve_control), ended after it.
-class LauncherControlServer
-{
-public:
-    virtual ~LauncherControlServer() = default;
-    /// For RunOptions::serve_control: starts listening on `hub`, the run's (never null), and keeps
-    /// it until the server is destroyed (std::runtime_error if it cannot listen).
-    virtual launch::ControlServerInfo start(std::shared_ptr<control::Hub> hub) = 0;
-    /// Ends every call (the waits and watches return); idempotent. Also the destructor.
-    virtual void end() = 0;
-};
-
+/// The server while the run lasts (launch::ControlEndpoint, for RunOptions::control_endpoint):
+/// made here before the run (reads and checks the files), started by run_file(), ended after it.
+/// It keeps the run's hub from its start until it is destroyed (std::runtime_error from start() if
+/// it cannot listen); its destructor ends it too.
 /// Reads and checks the arguments: cli::UsageError for a file that cannot be read, credentials
 /// that are wrong, TLS with only one of its files, an address that is not the loopback without TLS
 /// and credentials.
-[[nodiscard]] std::unique_ptr<LauncherControlServer> make_control_server(const ControlArguments& arguments,
-                                                                         ControlHooks hooks);
+[[nodiscard]] std::unique_ptr<launch::ControlEndpoint> make_control_server(const ControlArguments& arguments,
+                                                                           ControlHooks hooks);
 
 } // namespace vehicle_sil::launch_cli

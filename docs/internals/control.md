@@ -836,8 +836,10 @@ The time lock (see "Time of a run that is connected outside (`--time-policy`)" i
 
 ### When it starts and stops
 
-- After the check passes and before the registry starts, `run_file()` calls `RunOptions::serve_control` (on the main thread).
-- The run makes the Hub and passes it to `serve_control` as a `std::shared_ptr`. The Server keeps it, so the Hub lives until both the run and the Server have let go of it.
+- The launcher makes the Server before the run and gives the run a pointer to it (`RunOptions::control_endpoint`, a `launch::ControlEndpoint`).
+- `run_file()` runs a run in two stages (`Runner::prepare()`, then `Runner::run()`) and starts the Server between them, on the main thread: after the check has passed and the run's files (the logs, the timeline) are open, and before the registry starts. The run itself never calls the Server; `run_file()` tells it where the Server listens, and the run writes the event `control_server` and its line.
+- The run makes the Hub and `run_file()` passes it to `ControlEndpoint::start()` as a `std::shared_ptr`. The Server keeps it, so the Hub lives until both the run and the Server have let go of it.
+- A run that was interrupted before it began, or whose files cannot be opened, does not start the Server.
 - If the Server cannot start, nothing is started (`setup`).
 - The Server is closed after `run_file()` returns and before the result is written (on the main thread; `ControlServer::shutdown()`).
 
