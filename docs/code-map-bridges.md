@@ -1,16 +1,20 @@
-# Vector XL and Ethernet bridges
+# Vector XL, SocketCAN and Ethernet bridges
 
 [日本語](ja/code-map-bridges.md)
 
 This is the map for changes in this area. Start at [code-map.md](code-map.md); common test rules are in [code-map-testing.md](code-map-testing.md).
 
-Related specifications and change areas: [bridges.md](bridges.md) / [ethernet-bridge.md](ethernet-bridge.md) / [CAN, Ethernet and LIN buses](code-map-buses.md) / [Launcher, process, configuration and run](code-map-launcher.md)
+Related specifications and change areas: [bridges.md](bridges.md) / [socketcan-bridge.md](socketcan-bridge.md) / [ethernet-bridge.md](ethernet-bridge.md) / [CAN, Ethernet and LIN buses](code-map-buses.md) / [Launcher, process, configuration and run](code-map-launcher.md)
 
 ## Test labels
 
 ### `can_bridge`
 
 Tests of the part of a CAN bridge that does not depend on its external side (`CanBridge`, `ExternalPortAdapter`), against a fake SIL Kit controller and a fake external port. They run on every platform.
+
+### `socketcan_bridge`
+
+Tests of the SocketCAN bridge (Linux only). The unit tests run the production code against a fake `CanDevice` (the socket layer): the arguments, the netlink answers and the checks of an interface, the lists, the error frames, and `SocketCanPort` with frames, receipts, error frames, bus-off, `ENOBUFS`, `ENETDOWN`, `ENODEV` and the transmit timeout. `socketcan_bridge.netns.*` (`integration` label) runs the real executable on `vcan0` in a network namespace, with the peer of `tests/vector_xl`; it is skipped (77) where the namespace or `vcan0` cannot be made, and `VEHICLE_SIL_REQUIRE_SOCKETCAN=1` makes that a failure.
 
 ### `vector_xl`
 
@@ -92,6 +96,20 @@ One test uses a real participant with an in-process registry (on a free port). T
 
 - Tests: `tests/vector_xl` (the fake XL driver is in `tests/vector_xl/fake_xl`)
 - `ctest -R`: `^vector_xl\.`
+
+### `bridges/socketcan`
+
+| Name | Location |
+|---|---|
+| `SocketCanPort` (the `ExternalCanPort`; the link state, the transmit timeout) | `socketcan/socketcan_port.hpp` |
+| `CanDevice` (the socket layer: `LinuxCanDevice` calls the kernel, the tests give a fake), `RawFrame` | `socketcan/can_device.hpp` (`LinuxCanDevice` in `src/linux_can_device.cpp`) |
+| The CAN interfaces from netlink, `check_interface()`, the list text and JSON | `socketcan/can_interfaces.hpp` (netlink I/O in `src/netlink.cpp`) |
+| `interpret_error_frame()` | `socketcan/error_frame.hpp` |
+| The arguments | `socketcan/bridge_options.hpp` |
+
+- Threads: `SocketCanPort` has one thread that reads the socket and looks at the interface; `transmit()` comes from any thread and takes the device lock shared, `stop()` takes it exclusively before it closes the socket. A send that finds the interface gone or down only asks the thread to look (`watch_requested_`, `requested_fault_`): events come from the thread alone, except those of the first look at the interface, which `start()` makes before the thread runs.
+- Tests: `tests/socketcan_bridge` (`fake_can_device.hpp` there is the fake socket layer; the netns tests use the peer of `tests/vector_xl`)
+- `ctest -R`: `^socketcan_bridge\.`
 
 ### `bridges/common`
 
@@ -184,6 +202,22 @@ flowchart TD
     bridge_runtime -.-> core
     bridge_runtime -.-> json
     bridge_runtime -.-> vehicle_sil_cli
+```
+
+### SocketCAN Bridge
+
+Built on Linux only. `LinuxCanDevice` is compiled into the executable alone: the tests link `socketcan_bridge_core` with a fake `CanDevice`.
+
+```mermaid
+flowchart TD
+    socketcan_bridge_core --> SilKit["SilKit::SilKit"]
+    socketcan_bridge_core --> can_bridge_core
+    socketcan_bridge_core --> bridge_runtime
+    socketcan_bridge_core -.-> json
+    vehicle_sil_socketcan_bridge -.-> socketcan_bridge_core
+    vehicle_sil_socketcan_bridge -.-> bridge_runtime
+    vehicle_sil_socketcan_bridge -.-> core
+    vehicle_sil_socketcan_bridge -.-> vehicle_sil_cli
 ```
 
 ### Ethernet Bridge

@@ -6,14 +6,32 @@
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/config.hpp"
 #include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/run_plan.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
 
 #include <algorithm>
+#include <functional>
+#include <memory>
 #include <string>
+#include <string_view>
 
 namespace vehicle_sil::launch::detail {
 
+/// What a run tells while it lasts, and the one thing it lets its caller do: the caller's
+/// functions, which the run calls back (RunOptions has the same members, and says of each which
+/// thread calls it and what it may do). A run keeps its own copy; none of them is in the RunPlan.
+struct RunObservers
+{
+    std::function<void(std::string_view line)> write_line{}; ///< RunOptions::write_line
+    EventStream* events = nullptr;                           ///< RunOptions::events
+    std::function<std::string()> interrupt_name{};           ///< RunOptions::interrupt_name
+    /// RunOptions::before_start
+    std::function<void(const std::shared_ptr<control::Hub>& hub)> before_start{};
+};
+
 /// What a run is given, fixed before it begins: the parts of the run (run_*.hpp) keep a reference.
+/// Three things: the plan (a value: what was settled before the run), the observers (what the run
+/// calls back) and the controls (borrowed: they may outlive the run).
 ///
 /// Threads and locks: any thread of the run reads it, and nothing here is written while the run
 /// lasts, so there is no lock. What it points to that does change keeps itself: the stop
@@ -21,10 +39,13 @@ namespace vehicle_sil::launch::detail {
 /// phase of the controls is the main thread's to set.
 struct RunContext
 {
+    /// The plan's configuration and check (RunPlan::config(), RunPlan::check), named here because
+    /// every part reads them.
     const SimulationConfig& config;
     const CheckReport& check;
-    const RunOptions& options;
-    /// run --scenario: the scenario the check read; null without one.
+    const RunPlan& plan;
+    const RunObservers& observers;
+    /// run --scenario: the scenario the check read (RunPlan::scenario()); null without one.
     const Scenario* scenario;
     /// The run's controls: RunOptions::controls, or the run's own (on RunOptions::stops).
     RunControls& controls;
@@ -35,10 +56,10 @@ struct RunContext
     [[nodiscard]] int interrupts() const { return controls.stops().count(); }
     [[nodiscard]] std::string interrupt_name() const
     {
-        return options.interrupt_name ? options.interrupt_name() : std::string("interrupt");
+        return observers.interrupt_name ? observers.interrupt_name() : std::string("interrupt");
     }
     /// run --start-paused with a control server: the run holds before the first step.
-    [[nodiscard]] bool holds() const { return options.start_paused && options.control_endpoint != nullptr; }
+    [[nodiscard]] bool holds() const { return plan.holds_before_start; }
 };
 
 inline std::string one_line(std::string text)

@@ -22,7 +22,7 @@ RunNotes::RunNotes(const RunContext& ctx, const RunParticipants& participants) :
 
 void RunNotes::publish_findings(const RunOutcome& outcome, bool final)
 {
-    if (ctx_.options.events == nullptr)
+    if (ctx_.observers.events == nullptr)
     {
         return;
     }
@@ -30,7 +30,7 @@ void RunNotes::publish_findings(const RunOutcome& outcome, bool final)
     {
         if (std::find(published_.begin(), published_.end(), f) == published_.end())
         {
-            ctx_.options.events->finding(ctx_.check.file, f);
+            ctx_.observers.events->finding(ctx_.check.file, f);
             published_.push_back(f);
         }
     }
@@ -38,7 +38,7 @@ void RunNotes::publish_findings(const RunOutcome& outcome, bool final)
 
 void RunNotes::note_failed(const RunOutcome& outcome, const std::string& name, std::string_view reason)
 {
-    if (ctx_.options.events == nullptr)
+    if (ctx_.observers.events == nullptr)
     {
         return;
     }
@@ -50,12 +50,12 @@ void RunNotes::note_failed(const RunOutcome& outcome, const std::string& name, s
             message = f.message;
         }
     }
-    ctx_.options.events->participant_failed(name, reason, message);
+    ctx_.observers.events->participant_failed(name, reason, message);
 }
 
 void RunNotes::note_joined(SimulationController& controller, const RunOutcome& outcome)
 {
-    if (ctx_.options.events == nullptr)
+    if (ctx_.observers.events == nullptr)
     {
         return;
     }
@@ -69,14 +69,14 @@ void RunNotes::note_joined(SimulationController& controller, const RunOutcome& o
         if (controller.runtime().peer_status(run.name).state)
         {
             joined_[i] = true;
-            ctx_.options.events->participant(run.name, ParticipantState::Joined);
+            ctx_.observers.events->participant(run.name, ParticipantState::Joined);
         }
     }
 }
 
-void RunNotes::note_time(SimulationController& controller, TimeNote note, const RunOutcome& outcome)
+void RunNotes::note_time(SimulationController& controller, TimeNote note)
 {
-    if (ctx_.options.events == nullptr)
+    if (ctx_.observers.events == nullptr)
     {
         return;
     }
@@ -116,7 +116,7 @@ void RunNotes::note_time(SimulationController& controller, TimeNote note, const 
     // The state after the time event of the same look (history first); not at the end, where the
     // time commands' detach tells it.
     ctx_.controls.set_pacing(
-        pacing_.look(wall, !paused && s.speed.has_value(), late > outcome.timing.late_tolerance_ms, s.late_steps));
+        pacing_.look(wall, !paused && s.speed.has_value(), late > ctx_.plan.timing.late_tolerance_ms, s.late_steps));
     struct Publish
     {
         RunControls* controls;
@@ -128,12 +128,12 @@ void RunNotes::note_time(SimulationController& controller, TimeNote note, const 
             }
         }
     } const publish{note == TimeNote::Last ? nullptr : &ctx_.controls};
-    const bool stalled = late > outcome.timing.late_tolerance_ms && late != last_late_ms_;
+    const bool stalled = late > ctx_.plan.timing.late_tolerance_ms && late != last_late_ms_;
     // Only that it moved, or is late: not while other events wait for a slow reader (they
     // would pile up).
     const bool moved = (ms > last_time_ms_ || stalled || s.late_steps != last_late_steps_) &&
                        (note == TimeNote::Last ||
-                        (wall - last_time_wall_ >= kTimeInterval && ctx_.options.events->waiting_events() == 0));
+                        (wall - last_time_wall_ >= kTimeInterval && ctx_.observers.events->waiting_events() == 0));
     if (!changed && !moved)
     {
         return;
@@ -147,7 +147,7 @@ void RunNotes::note_time(SimulationController& controller, TimeNote note, const 
     e.max_late_ms = ceil_ms(s.max_lateness);
     e.slipped_ms = ceil_ms(s.slipped);
     e.late_ms = late;
-    ctx_.options.events->time(e);
+    ctx_.observers.events->time(e);
     last_late_ms_ = late;
     last_late_steps_ = s.late_steps;
     last_time_ms_ = ms;

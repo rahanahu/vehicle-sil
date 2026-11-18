@@ -454,7 +454,7 @@ SIL Kit の `SendMsg` は、送信を I/O スレッドのタスクとして積�
 
 **守り方**: `libs/`、`tools/`、`bridges/`、`tests/` で、文字列から SIL Kit の構成を作る所（`ParticipantConfigurationFromString(`）が上の関数を通っていることを、テスト `core.silkit_configuration_defaults`（`cmake/VehicleSilCheckSilKitConfiguration.cmake`）が確認します。
 
-**安全網**: `vehicle_sil_launch run` は、自分の SIL Kit のオブジェクト（変数のエンドポイント、controller、registry）を専用のスレッドで破棄し、期限まで待ちます。戻らなければ、指摘 `connection-not-closed` を追加して結果を書き、静的なオブジェクトの破棄をせずにプロセスを終えます（`RunOutcome::connection_not_closed_ms`、[simulation-run.md](simulation-run.md) の「止め方」）。上の「見たこと」の場面では、結果は書けましたが、プロセスは残りました。
+**安全網**: `vehicle_sil_launch run` は、自分の SIL Kit のオブジェクト（変数のエンドポイント、controller、registry）を専用のスレッドで破棄し、期限まで待ちます。戻らなければ、指摘 `connection-not-closed` を追加して結果を書き、静的なオブジェクトの破棄をせずにプロセスを終えます（`OutcomeClose::not_closed_ms`、[simulation-run.md](simulation-run.md) の「止め方」）。上の「見たこと」の場面では、結果は書けましたが、プロセスは残りました。
 
 **上流への報告**: 未報告です。
 

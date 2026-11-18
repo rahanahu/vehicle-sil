@@ -20,7 +20,7 @@ Start with the page for the area you change. Follow its specifications and read 
 | Launcher, process, configuration and run | [code-map-launcher.md](code-map-launcher.md) |
 | Scenarios, timelines and batch runs | [code-map-scenario.md](code-map-scenario.md) |
 | Control API, gRPC and launcher Control Server | [code-map-control.md](code-map-control.md) |
-| Vector XL and Ethernet bridges | [code-map-bridges.md](code-map-bridges.md) |
+| Vector XL, SocketCAN and Ethernet bridges | [code-map-bridges.md](code-map-bridges.md) |
 | Browser GUI, protocol, client and screen examples | [code-map-gui.md](code-map-gui.md) |
 | Build, packaging, dependencies and adding libraries | [code-map-build.md](code-map-build.md) |
 

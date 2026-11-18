@@ -108,17 +108,17 @@ void RunOutput::write_outside(std::size_t index, const OutsideCounts& counts) co
 
 void RunOutput::write(const std::string& line) const
 {
-    if (ctx_.options.write_line)
+    if (ctx_.observers.write_line)
     {
-        ctx_.options.write_line(line);
+        ctx_.observers.write_line(line);
     }
 }
 
 void RunOutput::say_held(const std::string& text) const
 {
-    if (ctx_.options.events != nullptr)
+    if (ctx_.observers.events != nullptr)
     {
-        ctx_.options.events->log(std::string(kLauncherName), text);
+        ctx_.observers.events->log(std::string(kLauncherName), text);
     }
     else
     {
@@ -128,12 +128,12 @@ void RunOutput::say_held(const std::string& text) const
 
 bool RunOutput::open_logs(RunOutcome& outcome)
 {
-    if (ctx_.options.log_dir.empty())
+    if (ctx_.plan.log_dir.empty())
     {
         return true;
     }
     std::error_code ec;
-    std::filesystem::create_directories(ctx_.options.log_dir, ec);
+    std::filesystem::create_directories(ctx_.plan.log_dir, ec);
     // Compared without case: on Windows and macOS "Engine.log" and "engine.log" are one file.
     std::set<std::string> used;
     const auto lower = [](std::string text) {
@@ -152,12 +152,12 @@ bool RunOutput::open_logs(RunOutcome& outcome)
         {
             name = log_name(ctx_.config.participants[i].name) + "-" + std::to_string(n);
         }
-        const auto file = ctx_.options.log_dir / process::path_from_utf8(name + ".log");
+        const auto file = ctx_.plan.log_dir / process::path_from_utf8(name + ".log");
         outcome.participants[i].log = process::shown_path(file);
         logs_[i] = std::make_unique<std::ofstream>(file, std::ios::binary | std::ios::trunc);
         if (!*logs_[i])
         {
-            outcome.setup_error = "cannot write the log " + process::shown_path(file) +
+            outcome.setup.error = "cannot write the log " + process::shown_path(file) +
                                    ": check that --log-dir names a directory you can write to";
             return false;
         }
@@ -241,9 +241,9 @@ void RunOutput::say_outside_shared(std::size_t index, const OutsideForeign& fore
 
 void RunOutput::show(std::size_t index, std::string_view line) const
 {
-    if (ctx_.options.events != nullptr)
+    if (ctx_.observers.events != nullptr)
     {
-        ctx_.options.events->log(ctx_.config.participants[index].name, printable(line));
+        ctx_.observers.events->log(ctx_.config.participants[index].name, printable(line));
     }
     else
     {
@@ -274,7 +274,7 @@ std::optional<std::pair<std::size_t, std::string>> RunOutput::outside_lost(std::
     const std::lock_guard lock(mutex_);
     for (std::size_t i = 0; i < states_.size(); ++i)
     {
-        if (std::string why = states_[i].lost(now, ctx_.options.outside_lost_after); !why.empty())
+        if (std::string why = states_[i].lost(now, ctx_.plan.outside_lost_after); !why.empty())
         {
             return std::make_pair(i, std::move(why));
         }

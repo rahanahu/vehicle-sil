@@ -91,7 +91,7 @@ void RunWatch::note_timing(SimulationController& controller)
 RunWatch::Watched RunWatch::watch(SimulationController& controller)
 {
     WatchOptions watch;
-    watch.poll = ctx_.options.poll;
+    watch.poll = ctx_.plan.poll;
     // A scenario that is over stops the simulation in order, as an interrupt does (which
     // comes first if both are there).
     // A required participant that has failed comes before the scenario, whichever is seen
@@ -125,7 +125,7 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         const bool running = controller.runtime().state() == orch::ParticipantState::Running;
         // The events of what changed (here: the one look per poll the watch gives).
         notes_.note_joined(controller, outcome_);
-        notes_.note_time(controller, TimeNote::Poll, outcome_);
+        notes_.note_time(controller, TimeNote::Poll);
         out_.outside_due(std::chrono::steady_clock::now());
         const TimeState time = controller.time_state();
         if (!running)
@@ -159,16 +159,16 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
                     o.link.lost = lost->second;
                 }
             }
-            outcome_.failed_participant = run.name;
+            outcome_.end.failed_participant = run.name;
             processFailed = true;
             return true;
         }
         // A device that a bridge outside this run uses too: told, and with --strict the run is
         // stopped once it has lasted (the first line of a --strict run has been looked at before the start).
         if (const auto shared = out_.outside_shared(std::chrono::steady_clock::now(), participants_.own_bridges(),
-                                                    ctx_.options.check.strict ? std::optional(kOutsideSharedAfter) : std::nullopt))
+                                                    ctx_.plan.strict ? std::optional(kOutsideSharedAfter) : std::nullopt))
         {
-            outcome_.failed_participant = outcome_.participants[*shared].name;
+            outcome_.end.failed_participant = outcome_.participants[*shared].name;
             processFailed = true;
             return true;
         }
@@ -185,37 +185,37 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
             // ends with 0, and the network is not connected any more all the same.
             if (!known[i] && ((run.required && failed_exit(run)) || (stops_run(run) && run.exit)))
             {
-                outcome_.failed_participant = run.name;
+                outcome_.end.failed_participant = run.name;
                 processFailed = true;
                 return true;
             }
         }
         return false;
     };
-    if (ctx_.options.timeout)
+    if (ctx_.plan.timeout)
     {
         // From the start, or from the hold before the first step (it counts as standing still).
         const std::int64_t held = start_.hold_began_ns();
         if (const std::int64_t heldMs = start_.hold_ms(); heldMs >= 0)
         {
-            outcome_.held_before_start_ms = heldMs;
+            outcome_.start.held_before_start_ms = heldMs;
         }
         // With a participant started by hand: from when the launcher began to wait.
         watch.deadline = start_.manual_wait_began().value_or(
                              held >= 0 ? std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(held))
                                        : std::chrono::steady_clock::now()) +
-                         *ctx_.options.timeout;
-        outcome_.timed_out_while_holding = start_.hold_timed_out();
+                         *ctx_.plan.timeout;
+        outcome_.end.timed_out_while_holding = start_.hold_timed_out();
     }
     watch.before_abort = [this](const WatchResult& why) {
         if (why.end == WatchEnd::TimedOut)
         {
-            out_.say("the simulation did not end within --timeout-ms (" + std::to_string(ctx_.options.timeout->count()) +
+            out_.say("the simulation did not end within --timeout-ms (" + std::to_string(ctx_.plan.timeout->count()) +
                 " ms): aborting it");
         }
         else
         {
-            const std::string who = why.failure ? why.failure->participant : outcome_.failed_participant;
+            const std::string who = why.failure ? why.failure->participant : outcome_.end.failed_participant;
             notes_.note_failed(outcome_, who, why.failure ? "left_simulation" : "process_ended");
             out_.say("participant '" + who + "' failed" + (why.failure ? ": it " + why.failure->reason : std::string{}) +
                 "; aborting the simulation");
@@ -246,7 +246,7 @@ int RunWatch::settle(SimulationController& controller, const Watched& over)
     // The run's end is known: what the participants' steps before it said of the networks. The
     // hub's tap goes with it.
     outcome_.traffic = samples_.finish(outcome_.timing.sim_ms);
-    notes_.note_time(controller, TimeNote::Last, outcome_);
+    notes_.note_time(controller, TimeNote::Last);
     // No time command from here on: the simulation is over.
     ctx_.commands.detach();
     // The commands' threads (standard input, a control server) noted it; none is accepted any more.
@@ -258,45 +258,45 @@ int RunWatch::settle(SimulationController& controller, const Watched& over)
     case WatchEnd::Ended:
         if (watched.state == orch::ParticipantState::Shutdown)
         {
-            outcome_.simulation = ctx_.config.stop_at_ms && controller.wall_time_to_stop_at() ? SimulationEnd::ReachedStopAt
+            outcome_.end.simulation = ctx_.config.stop_at_ms && controller.wall_time_to_stop_at() ? SimulationEnd::ReachedStopAt
                                                                                            : SimulationEnd::Ended;
         }
         else
         {
-            outcome_.simulation = SimulationEnd::Ended;
-            outcome_.controller_state = watched.state ? orch::to_string(*watched.state) : std::string("unknown");
+            outcome_.end.simulation = SimulationEnd::Ended;
+            outcome_.end.controller_state = watched.state ? orch::to_string(*watched.state) : std::string("unknown");
         }
         out_.say("the simulation ended");
         break;
     case WatchEnd::TimedOut:
-        outcome_.simulation = SimulationEnd::Aborted;
-        outcome_.timed_out = true;
+        outcome_.end.simulation = SimulationEnd::Aborted;
+        outcome_.end.timed_out = true;
         out_.say("the simulation was aborted: it did not end within --timeout-ms");
         break;
     case WatchEnd::Failed:
-        outcome_.simulation = SimulationEnd::Aborted;
-        if (watched.failure && outcome_.failed_participant.empty())
+        outcome_.end.simulation = SimulationEnd::Aborted;
+        if (watched.failure && outcome_.end.failed_participant.empty())
         {
-            outcome_.failed_participant = watched.failure->participant;
-            outcome_.failure_reason = watched.failure->reason;
+            outcome_.end.failed_participant = watched.failure->participant;
+            outcome_.end.failure_reason = watched.failure->reason;
         }
-        out_.say("the simulation was aborted: participant '" + outcome_.failed_participant + "' failed");
+        out_.say("the simulation was aborted: participant '" + outcome_.end.failed_participant + "' failed");
         break;
     case WatchEnd::Interrupted:
         if (forScenario)
         {
-            outcome_.simulation = SimulationEnd::Ended;
-            outcome_.stopped_by_scenario = true;
+            outcome_.end.simulation = SimulationEnd::Ended;
+            outcome_.end.stopped_by_scenario = true;
             if (watched.state != orch::ParticipantState::Shutdown)
             {
-                outcome_.controller_state = watched.state ? orch::to_string(*watched.state) : std::string("unknown");
+                outcome_.end.controller_state = watched.state ? orch::to_string(*watched.state) : std::string("unknown");
             }
             out_.say("the scenario is over: the simulation was stopped");
             break;
         }
-        outcome_.simulation = SimulationEnd::Interrupted;
-        outcome_.interrupted_by = ctx_.interrupt_name();
-        out_.say("interrupted (" + outcome_.interrupted_by + "): the simulation was stopped");
+        outcome_.end.simulation = SimulationEnd::Interrupted;
+        outcome_.end.interrupted_by = ctx_.interrupt_name();
+        out_.say("interrupted (" + outcome_.end.interrupted_by + "): the simulation was stopped");
         break;
     }
     return interrupts_at_end;

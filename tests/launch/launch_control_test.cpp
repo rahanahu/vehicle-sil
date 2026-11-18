@@ -134,7 +134,7 @@ void one_run(const fs::path& ecu, const fs::path& dir, int round)
 
     require(report.result() == launch::RunResult::Passed, "the run did not pass" + shown);
     require(report.findings.empty(), "the run has findings" + shown);
-    require(report.run.has_value() && report.run->simulation == launch::SimulationEnd::ReachedStopAt, "the run did not reach stop_at_ms" + shown);
+    require(report.run.has_value() && report.run->end.simulation == launch::SimulationEnd::ReachedStopAt, "the run did not reach stop_at_ms" + shown);
     for (const auto& p : report.run->participants)
     {
         require(p.control == launch::ControlLink::Connected, p.name + " is not connected" + shown);
@@ -193,7 +193,7 @@ void failing_start(const fs::path& ecu, const fs::path& dir)
     // Without stop_at_ms the simulation would run for ever: it was ended for the failure.
     require(std::chrono::steady_clock::now() - begin < 60s, "the run took too long" + shown);
     require(report.result() == launch::RunResult::Failed, "the run did not fail" + shown);
-    require(report.run.has_value() && report.run->simulation == launch::SimulationEnd::Aborted, "the simulation was not aborted" + shown);
+    require(report.run.has_value() && report.run->end.simulation == launch::SimulationEnd::Aborted, "the simulation was not aborted" + shown);
     require(report.findings.size() == 1 && report.findings[0].code == "before-start" &&
                 report.findings[0].message.find("the scenario could not be set up") != std::string::npos,
             "the finding says what failed" + shown);
@@ -223,7 +223,7 @@ void failing_start_with_a_stop(const fs::path& ecu, const fs::path& dir)
     options.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };
     const launch::RunReport report = launch::run_file(dir / "sim.yaml", "sim.yaml", options);
     const std::string shown = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
-    require(report.run.has_value() && !report.run->interrupted_while_ending &&
+    require(report.run.has_value() && !report.run->end.interrupted_while_ending &&
                 lines.find("no more waiting for the participants to end") == std::string::npos,
             "the stop before the end of the run did not cut short the wait for the participants" + shown);
 }
@@ -561,10 +561,10 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
         launch::RunControls controls(stops, false);
         const HoldRun run = hold_run(ecu, helper, dir, true, false, controls, std::nullopt, [] {});
         require(!run.held, "no hold without --start-paused" + shown(run));
-        require(run.report.run && run.report.run->simulation == launch::SimulationEnd::NotStarted &&
-                    run.report.run->start_error.find("did not all get to their first step within") != std::string::npos &&
-                    run.report.run->start_error.find("Stuck (") != std::string::npos &&
-                    run.report.run->start_error.find("after the run stopped standing still") == std::string::npos,
+        require(run.report.run && run.report.run->end.simulation == launch::SimulationEnd::NotStarted &&
+                    run.report.run->start.error.find("did not all get to their first step within") != std::string::npos &&
+                    run.report.run->start.error.find("Stuck (") != std::string::npos &&
+                    run.report.run->start.error.find("after the run stopped standing still") == std::string::npos,
                 "the start ended at its limit and named who was not ready" + shown(run));
         require(run.took < 60s, "the run took too long" + shown(run));
         // The run is over once the start has failed: a stop while it ends the participants is
@@ -585,12 +585,12 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
             require(commands.apply(resume_command(), "stdin").accepted, "the resume was refused");
         });
         require(run.held, "the run held before the first step" + shown(run));
-        require(run.report.run && run.report.run->simulation == launch::SimulationEnd::NotStarted &&
-                    run.report.run->start_error.find("within 2000 ms after the run stopped standing still before it") !=
+        require(run.report.run && run.report.run->end.simulation == launch::SimulationEnd::NotStarted &&
+                    run.report.run->start.error.find("within 2000 ms after the run stopped standing still before it") !=
                         std::string::npos &&
-                    run.report.run->start_error.find("Stuck (") != std::string::npos,
+                    run.report.run->start.error.find("Stuck (") != std::string::npos,
                 "the start ended start_timeout_ms after the resume" + shown(run));
-        require(run.report.run->start_error.find("31536") == std::string::npos, "no year in the message" + shown(run));
+        require(run.report.run->start.error.find("31536") == std::string::npos, "no year in the message" + shown(run));
     }
 }
 
@@ -616,7 +616,7 @@ void the_ecus_wait_as_long_as_the_run_stands_still(const fs::path& ecu, const fs
     require(run.held, "the run held before the first step" + shown(run));
     require(run.took >= without_hold, "the run stood still longer than the limit" + shown(run));
     require(run.report.result() == launch::RunResult::Passed && run.report.run &&
-                run.report.run->simulation == launch::SimulationEnd::ReachedStopAt,
+                run.report.run->end.simulation == launch::SimulationEnd::ReachedStopAt,
             "the run went on after the hold and passed" + shown(run));
 }
 
@@ -628,7 +628,7 @@ void timeout_counts_the_hold(const fs::path& ecu, const fs::path& helper, const 
     launch::RunControls controls(stops, true);
     const HoldRun run = hold_run(ecu, helper, dir, false, true, controls, 1500ms, [] {});
     require(run.held, "the run held" + shown(run));
-    require(run.report.run && run.report.run->timed_out && run.report.run->timed_out_while_holding &&
+    require(run.report.run && run.report.run->end.timed_out && run.report.run->end.timed_out_while_holding &&
                 run.report.result() == launch::RunResult::Failed,
             "the run timed out" + shown(run));
     bool said = false;
@@ -651,7 +651,7 @@ void an_interrupt_ends_the_hold(const fs::path& ecu, const fs::path& helper, con
     });
     require(run.held, "the run held" + shown(run));
     require(run.report.result() == launch::RunResult::Interrupted && run.report.run &&
-                run.report.run->simulation == launch::SimulationEnd::Interrupted,
+                run.report.run->end.simulation == launch::SimulationEnd::Interrupted,
             "the run was interrupted after the start" + shown(run));
 }
 
@@ -666,7 +666,7 @@ void a_resume_before_the_window_means_no_hold(const fs::path& ecu, const fs::pat
     require(early.pending && !early.accepted, "the resume before the run was decided without the run's time lock");
     const HoldRun run = hold_run(ecu, helper, dir, false, true, controls, std::nullopt, [] {});
     require(!run.held && run.report.result() == launch::RunResult::Passed && run.report.run &&
-                run.report.run->simulation == launch::SimulationEnd::ReachedStopAt,
+                run.report.run->end.simulation == launch::SimulationEnd::ReachedStopAt,
             "no hold, and the run ran to its end" + shown(run));
 }
 
@@ -752,14 +752,14 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
         options.control_endpoint = &endpoint;
         const launch::RunReport report = run(options, lines);
         require(endpoint.starts == 1, "the server was started once" + lines);
-        require(report.run && report.run->setup_error == "the control server cannot be started: no port to listen on",
+        require(report.run && report.run->setup.error == "the control server cannot be started: no port to listen on",
                 "the outcome says why" + lines);
         require(report.findings.size() == 1 && report.findings[0].code == "setup" &&
                     report.findings[0].message ==
                         "cannot set up the simulation: the control server cannot be started: no port to listen on",
                 "the finding says why" + lines);
         require(lines.find(registry_line) == std::string::npos && lines.find("control server at") == std::string::npos &&
-                    report.run->registry_uri.empty(),
+                    report.run->setup.registry_uri.empty(),
                 "no registry, and no line about a server" + lines);
     }
     {
@@ -785,7 +785,7 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
         options.control_endpoint = &endpoint;
         const launch::RunReport report = run(options, lines);
         require(endpoint.starts == 0, "the server of a run whose logs cannot be opened was not started" + lines);
-        require(report.run && !report.run->setup_error.empty() && report.run->registry_uri.empty(),
+        require(report.run && !report.run->setup.error.empty() && report.run->setup.registry_uri.empty(),
                 "the run was not set up" + lines);
     }
 }

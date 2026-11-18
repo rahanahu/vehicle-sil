@@ -165,42 +165,42 @@ std::string format_run_text(const RunReport& report)
     }
     const RunOutcome& run = *report.run;
     std::string state;
-    switch (run.simulation)
+    switch (run.end.simulation)
     {
     case SimulationEnd::NotStarted:
-        state = !run.setup_error.empty()      ? "the simulation could not be set up"
-                : !run.interrupted_by.empty() ? "interrupted (" + run.interrupted_by + ") before the simulation started"
+        state = !run.setup.error.empty()      ? "the simulation could not be set up"
+                : !run.end.interrupted_by.empty() ? "interrupted (" + run.end.interrupted_by + ") before the simulation started"
                                               : "the simulation did not start";
         break;
     case SimulationEnd::ReachedStopAt:
-        state = "the simulation ran to stop_at_ms (" + std::to_string(run.stop_at_ms.value_or(0)) + " ms) and ended";
+        state = "the simulation ran to stop_at_ms (" + std::to_string(run.end.stop_at_ms.value_or(0)) + " ms) and ended";
         break;
     case SimulationEnd::Ended:
-        state = !run.controller_state.empty() ? "the simulation ended in state " + run.controller_state
-                : run.stopped_by_scenario     ? "the simulation ran until the scenario was over (" +
+        state = !run.end.controller_state.empty() ? "the simulation ended in state " + run.end.controller_state
+                : run.end.stopped_by_scenario     ? "the simulation ran until the scenario was over (" +
                                                     std::to_string(run.timing.sim_ms) + " ms) and ended"
                                               : "the simulation ran until a participant ended it";
         break;
     case SimulationEnd::Aborted:
-        state = run.timed_out ? "the simulation was aborted: it did not end within --timeout-ms (" +
-                                    std::to_string(run.timeout_ms.value_or(0)) + " ms)"
-                : run.failed_participant.empty() ? "the simulation was aborted"
-                                                 : "the simulation was aborted: participant '" + run.failed_participant + "' failed";
+        state = run.end.timed_out ? "the simulation was aborted: it did not end within --timeout-ms (" +
+                                    std::to_string(run.end.timeout_ms.value_or(0)) + " ms)"
+                : run.end.failed_participant.empty() ? "the simulation was aborted"
+                                                 : "the simulation was aborted: participant '" + run.end.failed_participant + "' failed";
         break;
     case SimulationEnd::Interrupted:
-        state = "interrupted (" + run.interrupted_by + "): the simulation was stopped";
+        state = "interrupted (" + run.end.interrupted_by + "): the simulation was stopped";
         break;
     }
     out += "run: " + state + "\n";
-    if (const std::string time = run.simulation != SimulationEnd::NotStarted ? detail::timing_text(run.timing) : std::string{};
+    if (const std::string time = run.end.simulation != SimulationEnd::NotStarted ? detail::timing_text(run.timing) : std::string{};
         !time.empty())
     {
         out += time + "\n";
     }
     out += "\n";
-    if (run.scenario)
+    if (run.scenario.result)
     {
-        out += detail::scenario_text(*run.scenario) + "\n";
+        out += detail::scenario_text(*run.scenario.result) + "\n";
     }
     // --connect: the networks connected to a real bus, each through its bridge (the last rows below).
     for (const RunOutside& o : run.outside)
@@ -236,7 +236,7 @@ std::string format_run_text(const RunReport& report)
     case RunResult::Passed: out += "passed: " + counts + "\n"; break;
     case RunResult::Interrupted: out += "interrupted: " + counts + "\n"; break;
     default:
-        out += "failed: " + counts + (report.errors() == 0 && run.setup_error.empty() ? " (--strict)" : "") + "\n";
+        out += "failed: " + counts + (report.errors() == 0 && run.setup.error.empty() ? " (--strict)" : "") + "\n";
         break;
     }
     return out;
@@ -445,23 +445,23 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
     w.integer("notes", static_cast<std::int64_t>(report.notes()));
     if (report.run)
     {
-        w.string("simulation", simulation_name(report.run->simulation));
+        w.string("simulation", simulation_name(report.run->end.simulation));
     }
     else
     {
         w.null("simulation");
     }
-    if (report.run && !report.run->interrupted_by.empty())
+    if (report.run && !report.run->end.interrupted_by.empty())
     {
-        w.string("interrupted_by", report.run->interrupted_by);
+        w.string("interrupted_by", report.run->end.interrupted_by);
     }
     else
     {
         w.null("interrupted_by");
     }
-    if (report.run && !report.run->registry_uri.empty())
+    if (report.run && !report.run->setup.registry_uri.empty())
     {
-        w.string("registry_uri", report.run->registry_uri);
+        w.string("registry_uri", report.run->setup.registry_uri);
     }
     else
     {
@@ -686,10 +686,10 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
     }
     detail::write_findings_json(w, report.check.file, report.findings);
     detail::write_check_json(w, "check", report.check);
-    if (report.run && report.run->scenario)
+    if (report.run && report.run->scenario.result)
     {
         // Only with --scenario: a result without one is as it was before scenarios.
-        detail::write_scenario_json(w, "scenario", *report.run->scenario, report.run->timeline);
+        detail::write_scenario_json(w, "scenario", *report.run->scenario.result, report.run->scenario.timeline);
     }
     w.end_object();
 }

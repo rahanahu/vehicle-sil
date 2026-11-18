@@ -37,15 +37,15 @@ RunResult RunReport::result() const
     {
         return RunResult::CheckFailed;
     }
-    if (!run->interrupted_by.empty())
+    if (!run->end.interrupted_by.empty())
     {
         return RunResult::Interrupted;
     }
-    if (!run->setup_error.empty())
+    if (!run->setup.error.empty())
     {
         return RunResult::SetupFailed;
     }
-    const bool ended = run->simulation == SimulationEnd::ReachedStopAt || run->simulation == SimulationEnd::Ended;
+    const bool ended = run->end.simulation == SimulationEnd::ReachedStopAt || run->end.simulation == SimulationEnd::Ended;
     if (!ended || errors() > 0 || (strict && warnings() > 0))
     {
         return RunResult::Failed;
