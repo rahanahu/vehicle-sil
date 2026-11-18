@@ -195,7 +195,7 @@
           "line": 6,
           "participant": null,
           "network": "J1939_CAN",
-          "message": "network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one (participants with describe: false are not counted): add the other participants of this network, or remove it",
+          "message": "network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one (participants with describe: false are not counted): add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)",
           "detail": null
         },
         {
