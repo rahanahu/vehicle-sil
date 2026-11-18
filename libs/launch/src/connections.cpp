@@ -631,14 +631,15 @@ std::optional<Finding> unknown_network(const SimulationConfig& config, std::stri
 }
 
 std::vector<NetworkConnections> connections_of(const SimulationConfig& config, const std::optional<std::string>& network,
-                                               const ConnectTools& tools)
+                                               const ConnectTools& tools, const std::vector<std::string>* only)
 {
     // Each bridge once for each backend: where it is, and its list.
     std::map<std::string, std::pair<std::filesystem::path, TargetList>, std::less<>> asked;
     std::vector<NetworkConnections> out;
     for (const NetworkConfig& n : config.networks)
     {
-        if (network && n.name != *network)
+        if ((network && n.name != *network) ||
+            (only && std::find(only->begin(), only->end(), n.name) == only->end()))
         {
             continue;
         }
@@ -685,6 +686,121 @@ std::vector<NetworkConnections> connections_of(const SimulationConfig& config, c
     return out;
 }
 
+namespace {
+
+RequestedTarget requested_bad(const ConnectRequest& request, std::string code, std::string reason)
+{
+    return RequestedTarget{request.network, request.target, false, std::move(code), std::move(reason)};
+}
+
+/// The part of a target that names the device, for comparing two targets of one backend.
+std::string device_name(NetworkKind kind, std::string_view selector, Os os)
+{
+    std::string out(selector);
+    if (kind == NetworkKind::Ethernet && os == Os::Windows)
+    {
+        for (char& c : out)
+        {
+            c = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+        }
+    }
+    return out;
+}
+
+RequestedTarget check_one(const std::vector<NetworkConnections>& entries, const ConnectRequest& request, Os os)
+{
+    const std::string what = request.network + "=" + request.target;
+    const NetworkConnections& first = entries.front();
+    if (!first.kind)
+    {
+        return requested_bad(request, "list-failed",
+                             "the kind of " + request.network +
+                                 " in the configuration file has an error, so nothing was listed for it: fix the file "
+                                 "(vehicle_sil_launch check says what is wrong)");
+    }
+    const NetworkKind kind = *first.kind;
+    if (const std::optional<std::string> none = no_bridge_here(kind, {}, os); none && listed_backends(kind, os).empty())
+    {
+        return requested_bad(request, "target-bad",
+                             "no target can be connected for " + request.network + " (" + *none +
+                                 "): take it out of the request file, or give none");
+    }
+    if (const std::optional<std::string> problem = target_problem(kind, request.target, os))
+    {
+        return requested_bad(request, "target-bad", *problem + ": fix the target of " + request.network + " in the request file");
+    }
+    const ConnectTarget wanted = read_connect_target(kind, request.target, os);
+    const NetworkConnections* entry = nullptr;
+    std::string listed;
+    for (const NetworkConnections& one : entries)
+    {
+        if (one.backend == wanted.backend && one.list)
+        {
+            entry = &one;
+        }
+        if (!one.backend.empty())
+        {
+            listed += (listed.empty() ? "" : ", ") + one.backend;
+        }
+    }
+    if (entry == nullptr)
+    {
+        return requested_bad(request, "target-not-listed",
+                             std::string(wanted.backend) + " is not a backend that is listed for " + request.network +
+                                 " on this computer (listed: " + listed + "): choose a target of one of them from the list, or fix the request file");
+    }
+    const TargetList& list = *entry->list;
+    if (!list.error_code.empty())
+    {
+        return requested_bad(request, "list-failed",
+                             entry->tool + " could not list its targets (" + list.error_code + "): " + list.error_message +
+                                 ": fix that first, then ask again");
+    }
+    const std::string name = device_name(kind, wanted.selector, os);
+    for (const ListedTarget& target : list.targets)
+    {
+        const ConnectTarget read = read_connect_target(kind, target.value, os);
+        if (read.backend != wanted.backend || device_name(kind, read.selector, os) != name)
+        {
+            continue;
+        }
+        if (target.usable)
+        {
+            return RequestedTarget{request.network, request.target, true, {}, {}};
+        }
+        return requested_bad(request, "target-unusable",
+                             request.target + " is listed for " + request.network + " but cannot be used (" +
+                                 (target.reason.empty() ? std::string("the bridge cannot use it") : target.reason) +
+                                 "): choose a usable target from the list, or fix the request file");
+    }
+    return requested_bad(request, "target-not-listed",
+                         request.target + " is not in the list of " + entry->tool + " (" + entry->backend + ") for " +
+                             request.network + ": choose a target from the list, or fix the request file");
+}
+
+} // namespace
+
+std::vector<RequestedTarget> check_requested(const std::vector<NetworkConnections>& listed,
+                                             std::span<const ConnectRequest> requests, Os os)
+{
+    std::vector<RequestedTarget> out;
+    for (const ConnectRequest& request : requests)
+    {
+        if (request.target == kNoTarget)
+        {
+            continue;
+        }
+        std::vector<NetworkConnections> entries;
+        std::copy_if(listed.begin(), listed.end(), std::back_inserter(entries),
+                     [&](const NetworkConnections& n) { return n.name == request.network; });
+        if (!entries.empty())
+        {
+            out.push_back(check_one(entries, request, os));
+        }
+    }
+    return out;
+}
+
 ConnectionsReport list_connections(const std::filesystem::path& path, const std::string& shown_as,
                                    const ConnectionsOptions& options)
 {
@@ -714,7 +830,43 @@ ConnectionsReport list_connections(const std::filesystem::path& path, const std:
         }
     }
     const ConnectTools tools = bridge_tools(options.tool_directory, options.list_timeout);
-    report.per_network = connections_of(*read.config, options.network, tools);
+    std::vector<ConnectRequest> requested;
+    std::vector<std::string> only;
+    if (options.request)
+    {
+        // Only the file's own "connect" counts (no --connect here), cut to this configuration.
+        std::vector<std::string> from_file;
+        const std::vector<ConnectRequest> merged = merge_connect({}, options.request->intent.connect, &from_file);
+        RequestOrigin origin;
+        origin.file = options.request->shown;
+        origin.connected = std::move(from_file);
+        ConfigConnect counted = connect_for_config(*read.config, merged, origin);
+        requested = std::move(counted.connect);
+        for (Finding& note : counted.notes)
+        {
+            report.findings.push_back(std::move(note));
+        }
+        // The bridges of the networks the file connects only: no other bridge is started.
+        for (const ConnectRequest& r : requested)
+        {
+            only.push_back(r.network);
+        }
+        if (options.network)
+        {
+            const bool asked = std::find(only.begin(), only.end(), *options.network) != only.end();
+            only = {*options.network};
+            if (!asked)
+            {
+                requested.clear(); // a network the file does not connect: its list, nothing to check
+            }
+        }
+    }
+    report.per_network = connections_of(*read.config, options.network, tools, options.request ? &only : nullptr);
+    if (options.request)
+    {
+        std::erase_if(requested, [&](const ConnectRequest& r) { return options.network && r.network != *options.network; });
+        report.request = ConnectionsRequest{options.request->shown, check_requested(report.per_network, requested)};
+    }
     // The file's errors, as check reports them: a network with an error may be missing above.
     for (Finding& finding : read.findings)
     {
@@ -737,6 +889,12 @@ bool ConnectionsReport::incomplete() const
            std::any_of(findings.begin(), findings.end(), [](const Finding& f) { return f.severity == Severity::Error; });
 }
 
+bool ConnectionsReport::request_unusable() const
+{
+    return request && std::any_of(request->connect.begin(), request->connect.end(),
+                                  [](const RequestedTarget& t) { return !t.usable; });
+}
+
 int ConnectionsReport::exit_code() const
 {
     if (usage)
@@ -747,7 +905,7 @@ int ConnectionsReport::exit_code() const
     {
         return 3;
     }
-    return incomplete() ? 1 : 0;
+    return incomplete() || request_unusable() ? 1 : 0;
 }
 
 std::optional<std::string> quoted_for_shells(std::string_view word)
@@ -794,25 +952,60 @@ std::string quoted_for_sh(std::string_view word)
     return out + "'";
 }
 
+namespace {
+
+/// The line under a network's heading that says whether the request file's target can be used.
+std::string requested_line(const ConnectionsRequest& request, const RequestedTarget& target)
+{
+    const std::string argument = target.network + "=" + target.target;
+    const std::string connect = "--connect " + quoted_for_shells(argument).value_or(quoted_for_sh(argument));
+    std::string out = "  requested in " + shown(request.file) + ": " + connect + "  ";
+    out += target.usable ? "usable\n" : "not usable: " + shown(target.reason) + " [" + target.code + "]\n";
+    return out;
+}
+
+} // namespace
+
 std::string format_connections_text(const ConnectionsReport& report)
 {
     if (!report.readable || report.usage)
     {
         return detail::findings_text(report.file, report.findings) + (report.usage ? "" : "cannot read " + report.file + "\n");
     }
-    std::string out = report.file + (report.per_network.empty() ? std::string(": the file has no networks, so there is nothing to connect\n")
-                                                             : std::string(": where each network can be connected on this computer\n"));
+    std::string out =
+        report.file + (report.per_network.empty()
+                           ? std::string(report.request ? ": the request file connects no network of the file, so there is nothing to list\n"
+                                                        : ": the file has no networks, so there is nothing to connect\n")
+                           : std::string(": where each network can be connected on this computer\n"));
+    std::vector<std::string> told;
+    // The request's line goes once, under the first heading of its network.
+    const auto request_line = [&](const std::string& name) {
+        std::string line;
+        if (report.request && std::find(told.begin(), told.end(), name) == told.end())
+        {
+            told.push_back(name);
+            for (const RequestedTarget& target : report.request->connect)
+            {
+                if (target.network == name)
+                {
+                    line += requested_line(*report.request, target);
+                }
+            }
+        }
+        return line;
+    };
     for (const NetworkConnections& network : report.per_network)
     {
         if (!network.kind)
         {
             out += network.name + ": its kind in the file has an error, so nothing is listed: vehicle_sil_launch check " +
-                   report.file + " says what is wrong\n";
+                   report.file + " says what is wrong\n" + request_line(network.name);
             continue;
         }
         if (!network.list)
         {
-            out += network.name + " (" + to_string(*network.kind) + "): SIL Kit only (" + network.no_bridge + ")\n";
+            out += network.name + " (" + to_string(*network.kind) + "): SIL Kit only (" + network.no_bridge + ")\n" +
+                   request_line(network.name);
             continue;
         }
         const TargetList& list = *network.list;
@@ -822,13 +1015,17 @@ std::string format_connections_text(const ConnectionsReport& report)
             about += ", " + *list.backend + (list.source ? ": " + *list.source : std::string{});
         }
         out += network.name + " (" + to_string(*network.kind) + "; " + shown(about) + "):\n";
+        out += request_line(network.name);
         out += list_text(network);
     }
     if (!report.findings.empty())
     {
-        // The file's errors: what check says of it too.
-        out += "\n" + detail::findings_text(report.file, report.findings) +
-               "the file has errors: the list above has the networks that could be read\n";
+        // The file's errors: what check says of it too (and the notes about the request file).
+        out += "\n" + detail::findings_text(report.file, report.findings);
+        if (std::any_of(report.findings.begin(), report.findings.end(), [](const Finding& f) { return f.severity == Severity::Error; }))
+        {
+            out += "the file has errors: the list above has the networks that could be read\n";
+        }
     }
     return out;
 }
@@ -852,8 +1049,26 @@ std::string format_connections_json(const ConnectionsReport& report)
     optional_text("file", report.file);
     w.string("result", report.usage         ? "usage"
                        : !report.readable   ? "unreadable"
-                       : report.incomplete() ? "failed"
+                       : report.incomplete() || report.request_unusable() ? "failed"
                                              : "listed");
+    if (report.request)
+    {
+        w.begin_object("request");
+        w.string("file", report.request->file);
+        w.begin_array("connect");
+        for (const RequestedTarget& target : report.request->connect)
+        {
+            w.begin_object();
+            w.string("network", target.network);
+            w.string("target", target.target);
+            w.boolean("usable", target.usable);
+            optional_text("code", target.code);
+            optional_text("reason", target.reason);
+            w.end_object();
+        }
+        w.end_array();
+        w.end_object();
+    }
     w.begin_array("networks");
     for (const NetworkConnections& network : report.per_network)
     {

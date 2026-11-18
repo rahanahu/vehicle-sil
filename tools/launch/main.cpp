@@ -99,7 +99,7 @@ constexpr const char* kUsage =
     "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...\n"
     "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]\n"
     "                               [--disable <name>]... [--enable <name>]... <file> --scenarios <directory or files>...\n"
-    "       vehicle_sil_launch connections [--json] [--network <name>] [--] <file>\n"
+    "       vehicle_sil_launch connections [--json] [--network <name>] [--request <file>] [--] <file>\n"
     "       vehicle_sil_launch version [--json]\n"
     "  check <file>                compare the simulation configuration <file> (YAML or JSON) with what each\n"
     "                              ecu_main executable in it reports (--describe); list the participants,\n"
@@ -115,7 +115,9 @@ constexpr const char* kUsage =
     "                              leaves the rest out\n"
     "  connections <file>          where each network of <file> can be connected on this computer: asks the bridge\n"
     "                              of each can and ethernet network for its list and writes the targets as\n"
-    "                              --connect lines to copy (connects to nothing)\n"
+    "                              --connect lines to copy (connects to nothing). With --request <request file>: only\n"
+    "                              the networks that the request file connects, and whether each target is there\n"
+    "                              and usable here (exit code 1 if one is not)\n"
     "  version                     the version of vehicle_sil_launch (--json: also its formats and features)\n"
     "  --json                      write the result as JSON\n"
     "  --events                    run: write what happens as events on stdout, one JSON object per line, the\n"
@@ -179,12 +181,13 @@ constexpr const char* kUsage =
     "                              change as in any run; the bridge still carries frames both ways, so what is\n"
     "                              connected there sees the simulation pause or run ahead. No effect on other\n"
     "                              runs\n"
-    "  --request <file>            check, run: what to run, from the request file <file> (JSON: variant, params,\n"
-    "                              scenario, disable, enable, manual, connect, time_policy, speed, start_paused,\n"
-    "                              strict; schema/run-request.schema.json). An argument wins over the file, field\n"
-    "                              by field: --connect and --param by name, --connect <network>=none takes the\n"
-    "                              file's target away; the lists add up. scenario in <file> is from the directory\n"
-    "                              of the configuration file. Only this file is read: none is looked for\n"
+    "  --request <file>            check, run, connections: what to run, from the request file <file> (JSON:\n"
+    "                              variant, params, scenario, disable, enable, manual, connect, time_policy, speed,\n"
+    "                              start_paused, strict; schema/run-request.schema.json). An argument wins over the\n"
+    "                              file, field by field: --connect and --param by name, --connect <network>=none\n"
+    "                              takes the file's target away; the lists add up. scenario in <file> is from the\n"
+    "                              directory of the configuration file. Only this file is read: none is looked for.\n"
+    "                              connections reads only its connect\n"
     "  --network <name>            connections: only the network <name>\n"
     "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable\n"
     "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable\n"
@@ -195,9 +198,10 @@ constexpr const char* kUsage =
     "  --version                   as version\n"
     "  --                          what follows is the file, also if it starts with '-'\n"
     "exit codes: 0 passed (run: also stopped by a command), 1 errors (with --strict: or warnings; run: also a failed\n"
-    "            simulation; test: a run failed or was left out; connections: a list could not be made), 3 the file\n"
-    "            cannot be read (run: or the registry cannot be set up), 4 usage, 5 run: a scenario was stopped by a\n"
-    "            command before its end, 130 run or test was interrupted (a signal, or its input or output closed)\n"
+    "            simulation; test: a run failed or was left out; connections: a list could not be made, or a\n"
+    "            target of --request cannot be used), 3 the file cannot be read (run: or the registry cannot be set\n"
+    "            up), 4 usage, 5 run: a scenario was stopped by a command before its end, 130 run or test was\n"
+    "            interrupted (a signal, or its input or output closed)\n"
     "the file format: docs/simulation-config.md; check: docs/simulation-check.md; run: docs/simulation-run.md;\n"
     "events and commands: docs/simulation-events.md; scenarios: docs/scenario.md\n";
 
@@ -1174,6 +1178,7 @@ int connections(const cli::Args& args)
         }
     }
     options.tool_directory = process::current_executable().parent_path();
+    options.request = read_request_argument(args).file;
     const std::string& file = positionals[1];
     const launch::ConnectionsReport report = launch::list_connections(process::path_from_utf8(file), file, options);
     if (report.usage)
@@ -1605,7 +1610,7 @@ int main(int argc, char** argv)
     {
         // test takes --variant more than once, and has options of its own.
         const cli::Args args =
-            isConnections ? cli::Args(arguments, {"network", "variant"}, {"json"})
+            isConnections ? cli::Args(arguments, {"network", "variant", "request"}, {"json"})
             : isTest ? cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline",

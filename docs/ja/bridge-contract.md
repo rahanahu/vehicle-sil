@@ -93,7 +93,7 @@ flowchart LR
 
 ## デバイスの一覧
 
-`--list-interfaces`（Ethernet）と `--list-channels`（CAN）は、ブリッジが開けるデバイスを出して終わります。`--json` がなければ、文は人が読むためのもので、形が変わることがあります。`--json` を付けると、プログラムのために、1 つの JSON のオブジェクトを UTF-8 で標準出力に書き、最後に改行を付けます。`vehicle_sil_launch connections` がこの一覧を読みます（simulation-run.md の「[つなげる先の一覧](simulation-run.md#つなげる先の一覧vehicle_sil_launch-connections)」）。
+`--list-interfaces`（Ethernet）と `--list-channels`（CAN）は、ブリッジが開けるデバイスを出して終わります。`--json` がなければ、文は人が読むためのもので、形が変わることがあります。`--json` を付けると、プログラムのために、1 つの JSON のオブジェクトを UTF-8 で標準出力に書き、最後に改行を付けます。`vehicle_sil_launch connections` がこの一覧を読みます（simulation-run.md の「[つなげる先の一覧](simulation-run.md#つなげる先の一覧vehicle_sil_launch-connections)」）。`--request <file>` を付けると、要求ファイルの先がこの一覧にあり、使えるかも答えます。
 
 ```json
 {

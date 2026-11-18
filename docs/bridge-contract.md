@@ -93,7 +93,7 @@ A bridge started by `--connect` must say its version: the launcher compares `veh
 
 ## Lists of devices
 
-`--list-interfaces` (Ethernet) and `--list-channels` (CAN) print the devices the bridge can open and exit. Without `--json` the text is for people and its layout may change. With `--json`, programs get one JSON object on stdout, in UTF-8, followed by a line break. `vehicle_sil_launch connections` reads these lists (see "[Where a network can be connected](simulation-run.md#where-a-network-can-be-connected-vehicle_sil_launch-connections)" in simulation-run.md).
+`--list-interfaces` (Ethernet) and `--list-channels` (CAN) print the devices the bridge can open and exit. Without `--json` the text is for people and its layout may change. With `--json`, programs get one JSON object on stdout, in UTF-8, followed by a line break. `vehicle_sil_launch connections` reads these lists (see "[Where a network can be connected](simulation-run.md#where-a-network-can-be-connected-vehicle_sil_launch-connections)" in simulation-run.md). With `--request <file>` it also says whether the targets of a request file are in these lists and can be used.
 
 ```json
 {

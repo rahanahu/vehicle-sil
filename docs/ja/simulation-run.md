@@ -441,13 +441,14 @@ outside: CAN1 -> can0: also used by another vehicle-sil bridge (process 4321) at
 ### つなげる先の一覧（`vehicle_sil_launch connections`）
 
 ```text
-vehicle_sil_launch connections [--json] [--network <name>] [--] <file>
+vehicle_sil_launch connections [--json] [--network <name>] [--request <file>] [--] <file>
 ```
 
 `connections` は、ファイルの `can` と `ethernet` のネットワークごとに、この PC でどこにつなげるかを出します。ネットワークのブリッジに一覧を聞き（`vehicle_sil_ethernet_bridge --list-interfaces --backend <backend> --json`、`vehicle_sil_socketcan_bridge --list-channels --json`、`vehicle_sil_vector_xl_bridge --list-channels --json`）、ブリッジは `--connect` と同じように探します（`vehicle_sil_launch` の隣、次に `PATH` の絶対パスのディレクトリ）。どこにもつなぎません。SIL Kit も participant も起動せず、ブリッジはアダプターもチャンネルも開きません。ネットワークは、この OS で一覧にできる backend ごとに出します（Linux の Ethernet は `packet` と `tap`、CAN は `socketcan`。Windows は `npcap` と `xl`）。同じ種類のネットワークが 2 つあっても、backend ごとにブリッジに聞くのは 1 回です。既定の backend の先は接頭辞なし、ほかの backend の先は接頭辞つきで書くので、`--connect` の行はそのまま写せます。
 
 - `--network <name>` は、そのネットワークだけを出します。ファイルにない名前は使い方の誤りです。
 - ファイルは機種なしで読みます。どの機種もファイルのネットワークを持つからです。`--variant` は使い方の誤りです。
+- `--request <file>` は、台の[要求ファイル](#要求ファイル--request)が、この PC で使えるかを、走らせる前に確かめます。`connect` が先（`none` 以外）を書いたネットワークごとに、その先があり、使えるかを答えます。出すのはそのネットワークだけなので、ほかのブリッジは起動しません（要求が使わないネットワークで Npcap の確認も出ません）。`--network` はそのネットワークだけを出し、要求がつながないネットワークなら、照らすものはありません。`connections` がファイルから読むのは `connect` だけです。ほかのキーは形を読むだけで使いません。`--connect` は受けません（重ねる相手はファイルだけです）。ファイルの `connect` にあって設定ファイルにないネットワークは、`check --request` と同じく、注意 `connect-network-unused` で外します。読めない要求ファイルは使い方の誤り（終了コード 4）で、文は `check --request` と同じです。
 - ファイルの誤りでは、一覧は止まりません。読めたネットワークを出し、その後に、`check` と同じファイルの誤りを出します（終了コード 1）。
 - ランチャーは、各ブリッジを、`--connect` と同じく、ブリッジ自身のディレクトリで起動します（simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。
 
@@ -473,6 +474,8 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 | `note: ...` | ブリッジが足すこと（ネットワークのアダプターを出さない Npcap）か、sh 向けにだけ引用した先（下）です。 |
 | `cannot list: <message> [<code>]` | 一覧を作れませんでした（下の code）。 |
 | `nothing listed: ...` | ブリッジがこの PC で何も出しません。 |
+| `requested in <file>: --connect <network>=<target>  usable` | `--request` があるとき: 要求ファイルの先が一覧にあり、使えます。backend と名前で比べるので、`packet:enp3s0` と `enp3s0` は同じ先です。 |
+| `requested in <file>: ...  not usable: <reason> [<code>]` | `--request` があるとき: その先はこの PC で使えません。理由に直し方（一覧の中から選ぶか、要求ファイルを直す）を書きます。code は下です。 |
 | `<network> (<kind>): SIL Kit only (<why>)` | そのネットワークのブリッジがありません。LIN のブリッジはありません。 |
 | `<network>: its kind in the file has an error` | 何が誤りかは `check` が言います。 |
 
@@ -560,7 +563,8 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 | `vehicle_sil_connections` | この形の版です（1）。 |
 | `vehicle_sil` | vehicle-sil の版です。 |
 | `file` | 渡されたとおりのファイルです。 |
-| `result` | `listed`: この PC にあるブリッジは、すべて一覧を作れました（ないブリッジ `tool-missing` は答えの一部です）。`failed`: あるブリッジが一覧を作れなかったか、ファイルに誤りがあります（ネットワークの種類の誤りも）。`unreadable`: ファイルを読めません。`usage`: コマンドラインの誤りです。 |
+| `result` | `listed`: この PC にあるブリッジは、すべて一覧を作れました（ないブリッジ `tool-missing` は答えの一部です）。`failed`: あるブリッジが一覧を作れなかったか、ファイルに誤りがある（ネットワークの種類の誤りも）か、要求ファイルの先が使えません。`unreadable`: ファイルを読めません。`usage`: コマンドラインの誤りです。 |
+| `request` | `--request` があるときだけ。`file`: 渡されたとおりの要求ファイル。`connect[]`: ファイルが先（`none` 以外）を書き、一覧にしたネットワークごとに 1 つ。`network`、書かれたとおりの `target`、`usable`（真偽値）、使えない先には `code` と `reason`（使える先は `null`）。 |
 | `networks[]` | ファイルの順のネットワークです。`--network` があれば、その 1 つです。この PC で一覧にする backend ごとに 1 つずつ、続けて並びます（Linux の Ethernet は `packet` と `tap`）。 |
 | `networks[].name` | ネットワークの名前です。 |
 | `networks[].kind` | `can`、`ethernet`、`lin`。ファイルの種類に誤りがあれば `null` です。 |
@@ -579,16 +583,25 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 | `tool-timeout` | ブリッジが 30 秒の間に終わりませんでした。 |
 | `tool-bad-output` | ブリッジが、ランチャーの読める一覧を書きませんでした（ほかの vehicle-sil のブリッジ）。64 段より深い入れ子も。文は、ブリッジの標準エラーの、理由を書いた行を引きます。 |
 
+要求ファイルの先が使えないときの `code`（`request.connect[].code`）です。
+
+| `code` | いつ |
+|---|---|
+| `target-not-listed` | その先の backend の一覧にない、またはその backend の一覧をこの PC では作りません。一覧の中から選びます。 |
+| `target-unusable` | 一覧にありますが `usable: false` です。理由は一覧のものです。 |
+| `list-failed` | そのネットワークの一覧を作れませんでした（理由に、その error code を書きます）。またはファイルでのネットワークの種類に誤りがあります。 |
+| `target-bad` | この OS の、この種類のネットワークで `--connect` が受ける先ではありません（この OS にない backend を含む）。またはネットワークにブリッジがありません（LIN）。 |
+
 | 終了コード | 場合 |
 |---|---|
 | 0 | この PC にあるブリッジは、すべて一覧を作れました。ないブリッジ（`tool-missing`）と、この PC にブリッジのないネットワーク（LIN、Windows 以外の CAN）は、答えの一部です。 |
-| 1 | あるブリッジが一覧を作れなかった（`tool-cannot-start`、`tool-timeout`、`tool-bad-output`、ブリッジ自身の誤り）か、ファイルに誤りがあります。 |
+| 1 | あるブリッジが一覧を作れなかった（`tool-cannot-start`、`tool-timeout`、`tool-bad-output`、ブリッジ自身の誤り）か、ファイルに誤りがあるか、`--request` で要求ファイルの先が使えません。 |
 | 3 | ファイルを読めません。 |
-| 4 | 使い方の誤りです。 |
+| 4 | 使い方の誤りです。読めない要求ファイルも。 |
 
 ## 要求ファイル（`--request`）
 
-要求ファイルには、何を走らせるかを書きます。機種、シナリオとそのパラメーター、外す participant と手で起動する participant、ネットワークを外のどこにつなぐか、速さです。`check` と `run` が `--request <file>` で読みます。1 台の PC や 1 種類の実行でいつも同じものを書き（例: 試験台のアダプター）、設定ファイルは全員で同じものを使います。
+要求ファイルには、何を走らせるかを書きます。機種、シナリオとそのパラメーター、外す participant と手で起動する participant、ネットワークを外のどこにつなぐか、速さです。`check` と `run` が `--request <file>` で読みます。`connections --request <file>` は、走らせる前に、その先がこの PC にあり使えるかを答えます（[つなげる先の一覧](#つなげる先の一覧vehicle_sil_launch-connections)）。1 台の PC や 1 種類の実行でいつも同じものを書き（例: 試験台のアダプター）、設定ファイルは全員で同じものを使います。
 
 例として、ネットワーク `ETH_EXT` と `CAN1` を持つ試験台の設定ファイルの場合です（例の設定ファイルのように、どちらも持たない設定ファイルでは、`check` が 2 つとも使われないと注意し、何もつなぎません）。
 
