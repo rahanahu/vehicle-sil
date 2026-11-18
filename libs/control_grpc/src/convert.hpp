@@ -79,6 +79,32 @@ inline bool builtin_variable(std::string_view name) noexcept
     return name.starts_with("ecu.") || name.starts_with("peer.") || name.starts_with("j1939.");
 }
 
+/// The one place that maps control::Availability to the wire enum (UNSPECIFIED is never sent
+/// for a state).
+inline v1::Availability to_proto(Availability in) noexcept
+{
+    switch (in)
+    {
+    case Availability::Unknown:
+        return v1::AVAILABILITY_UNKNOWN;
+    case Availability::Active:
+        return v1::AVAILABILITY_ACTIVE;
+    case Availability::Inactive:
+        return v1::AVAILABILITY_INACTIVE;
+    }
+    return v1::AVAILABILITY_UNSPECIFIED;
+}
+
+inline void to_proto(const AvailabilityUpdate& in, v1::PeerAvailability& out)
+{
+    out.set_peer(in.peer);
+    out.set_incarnation(in.incarnation);
+    for (const auto state : in.states)
+    {
+        out.add_states(to_proto(state));
+    }
+}
+
 inline void to_proto(const VariableInfo& in, v1::VariableInfo& out)
 {
     out.set_name(in.name);
@@ -99,6 +125,10 @@ inline void to_proto(const VariableInfo& in, v1::VariableInfo& out)
         out.set_step(*in.step);
     }
     out.set_description(in.description);
+    if (in.availability)
+    {
+        out.set_availability(to_proto(*in.availability));
+    }
     for (const auto& item : in.items)
     {
         auto* e = out.add_items();

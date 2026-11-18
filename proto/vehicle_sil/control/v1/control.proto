@@ -39,6 +39,16 @@ message EnumItem {
   sint64 value = 2;
 }
 
+// Whether a variable is in use right now, as the ECU's application reports it. It is information
+// for whoever looks at the variable: Write, GetValues, GetSnapshot and the values of Watch do
+// not change with it.
+enum Availability {
+  AVAILABILITY_UNSPECIFIED = 0;
+  AVAILABILITY_UNKNOWN = 1;  // the application has not decided yet
+  AVAILABILITY_ACTIVE = 2;   // in use (also every variable that does not report)
+  AVAILABILITY_INACTIVE = 3; // not in use in the present set-up of the ECU
+}
+
 message VariableInfo {
   string name = 1;
   ValueType type = 2;
@@ -59,9 +69,17 @@ message VariableInfo {
   // values). Everything else here, the values read and the values written are as mapped. Empty:
   // not mapped.
   string source = 11;
+  // Whether the variable reports if it is in use, and the state it starts with. UNSPECIFIED: it
+  // does not report (it is always ACTIVE). Else the state a new incarnation starts with, until
+  // the ECU's application changes it (see PeerAvailability). Only a new incarnation starts from
+  // it again: a PeerInfo sent again for the same incarnation (it reconnected, its SIL Kit state
+  // changed) does not reset the state.
+  Availability availability = 12;
 }
 
 message Snapshot {
+  // The start of the ECU step at whose end the values were read (as the conditions of a scenario
+  // see them: docs/scenario.md, "Values that conditions see").
   sint64 time_ns = 1;
   uint64 sequence = 2;
   repeated Value values = 3; // in schema order
@@ -230,6 +248,9 @@ message WatchRequest {
   uint32 capacity = 5; // 0: the server's default; capped by the server's maximum
   bool time = 6;       // also the time state when it changes
   bool simulation = 7; // also the simulation state (participants, failure, end) when it changes
+  // Also the availability of the variables of the peers that have a variable that reports it
+  // (VariableInfo.availability): the state now with the initial updates, then when it changes.
+  bool availability = 8;
 }
 
 message Update {
@@ -240,12 +261,15 @@ message Update {
     PeerEvent event = 4;
     Operation operation = 5;
     TimeState time = 7;
-    bool initial_done = 8; // the current peers and values (and time and simulation) have been sent
+    bool initial_done = 8; // the current peers and values (and time, simulation and availability) have been sent
     SimulationState simulation = 9;
+    PeerAvailability availability = 10; // only when the request asked for it
   }
-  // Updates dropped for this watch so far: changes of peers, values, events and operations, and
-  // states of the simulation the server could not hold while the client was slow (failures and
-  // the end are never lost: they stay in every later state).
+  // Updates dropped for this watch so far: events and changes of operations, and states of the
+  // simulation, that the server could not hold while the client was slow (failures and the end are
+  // never lost: they stay in every later state). Peers, values and availability are not counted:
+  // a watch keeps the latest of each peer, and a newer one replaces it without a count, so the
+  // samples in between a slow client did not read are missing although this stays 0.
   uint64 dropped = 6;
 }
 
@@ -253,6 +277,19 @@ message PeerValues {
   string peer = 1;
   string incarnation = 2;
   Snapshot snapshot = 3;
+}
+
+// The availability of all variables of a peer now, in the order of the schema of its incarnation
+// (a variable that does not report is ACTIVE). A new incarnation starts with the states its
+// schema declares (VariableInfo.availability); its PeerInfo comes first. Watch holds only the
+// latest per peer, so it can skip a change in between: there is no way to get every change.
+// A client keeps the states of a peer's incarnation until a PeerInfo of another incarnation
+// comes (a PeerInfo of the same incarnation sent again does not reset them), and drops a
+// PeerAvailability whose incarnation is not the peer's current one.
+message PeerAvailability {
+  string peer = 1;
+  string incarnation = 2;
+  repeated Availability states = 3;
 }
 
 message PeerEvent {

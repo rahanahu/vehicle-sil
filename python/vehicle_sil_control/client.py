@@ -158,7 +158,7 @@ class SimulationState:
 class Values:
     peer: str
     incarnation: str
-    time: int  # ns
+    time: int  # ns: the start of the ECU step at whose end the values were read
     sequence: int
     values: Dict[str, Number]
 

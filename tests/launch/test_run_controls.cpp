@@ -28,6 +28,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -127,7 +128,7 @@ TEST_CASE(run_controls_keep_the_phase_before_they_tell_it)
         told.push_back(phase);
         CHECK(made->phase() == phase); // phase() has it when the observer hears of it
     };
-    RunControls controls(stops, false, std::move(observers));
+    RunControls controls(stops, false, std::move(observers), false);
     made = &controls;
     CHECK(controls.phase() == Phase::Checking);
     CHECK(told.empty());
@@ -158,7 +159,7 @@ TEST_CASE(run_controls_hand_the_time_commands_their_observer_and_the_start_pause
     observers.on_command = [&seen](const Command& c, std::string_view source) {
         seen.push_back(std::string(source) + " " + c.name.value_or("") + (c.accepted ? " accepted" : " refused"));
     };
-    RunControls paused(stops, true, std::move(observers));
+    RunControls paused(stops, true, std::move(observers), false);
     paused.set_time_lock({});
     CHECK(&paused.time() == &paused.time());
     CHECK(paused.time().apply(command("pause"), "stdin").accepted);
@@ -219,7 +220,7 @@ TEST_CASE(a_run_with_the_callers_controls_sets_their_phase_and_leaves_the_phase_
     observers.on_phase = [&told](Phase phase) { told.push_back(phase); };
     observers.on_command = [](const Command&, std::string_view) {};
     observers.on_state = [](const RunState&) {};
-    RunControls controls(stops, false, std::move(observers));
+    RunControls controls(stops, false, std::move(observers), false);
     Written written;
     RunObservers watching;
     watching.events = written.stream.get();
@@ -284,20 +285,69 @@ TEST_CASE(a_run_refuses_controls_with_events_when_the_controls_have_no_observer_
     CHECK(run(none).find("on_phase") != std::string::npos);
     RunControls::Observers only_phase;
     only_phase.on_phase = [](Phase) {};
-    RunControls phase_only(stops, false, std::move(only_phase));
+    RunControls phase_only(stops, false, std::move(only_phase), false);
     CHECK(run(phase_only).find("on_command") != std::string::npos);
     RunControls::Observers only_command;
     only_command.on_command = [](const Command&, std::string_view) {};
-    RunControls command_only(stops, false, std::move(only_command));
+    RunControls command_only(stops, false, std::move(only_command), false);
     CHECK(run(command_only).find("on_phase") != std::string::npos);
     RunControls::Observers no_state;
     no_state.on_phase = [](Phase) {};
     no_state.on_command = [](const Command&, std::string_view) {};
-    RunControls without_state(stops, false, std::move(no_state));
+    RunControls without_state(stops, false, std::move(no_state), false);
     CHECK(run(without_state).find("on_state") != std::string::npos);
     // Without `events` there is nothing to leave to the observers.
     watching.events = nullptr;
     CHECK(run(none).empty());
+}
+
+// Whoever gives the controls observers says whether the run plays a scenario: no default stands in
+// for it (one of false let a control server's clients write while a scenario plays).
+static_assert(!std::is_constructible_v<RunControls, StopRequests&, bool, RunControls::Observers>);
+
+TEST_CASE(a_run_refuses_controls_made_for_another_request)
+{
+    StopRequests stops;
+    RunRequest scenario = request_of("no-such-directory/sim.yaml");
+    scenario.intent.scenario = "drive.scenario.yaml";
+    RunRequest paused = request_of("no-such-directory/sim.yaml");
+    paused.intent.start_paused = true;
+    const RunRequest plain_request = request_of("no-such-directory/sim.yaml");
+    const auto run = [](const RunRequest& asked, RunControls& controls) {
+        RunLent lent;
+        lent.controls = &controls;
+        return refusal([&] { static_cast<void>(vehicle_sil::launch::run_file(asked, {}, lent)); });
+    };
+    // A run that plays a scenario, on controls made for one without: their rules would let a
+    // control server's clients write while it plays.
+    RunControls plain(stops);
+    const std::string text = run(scenario, plain);
+    CHECK(text.find("made with start_paused false and scenario false") != std::string::npos);
+    CHECK(text.find("the request has start_paused false and scenario true") != std::string::npos);
+    CHECK(text.find("RunIntent::scenario.has_value()") != std::string::npos);
+    CHECK(run(paused, plain).find("the request has start_paused true and scenario false") != std::string::npos);
+    CHECK(run(plain_request, plain).empty());
+    RunControls playing(stops, false, RunControls::Observers{}, true);
+    CHECK(playing.scenario() && !playing.start_paused());
+    CHECK(run(scenario, playing).empty());
+    CHECK(run(plain_request, playing).find("made with start_paused false and scenario true") != std::string::npos);
+    RunControls held(stops, true);
+    CHECK(held.start_paused() && !held.scenario());
+    CHECK(run(paused, held).empty());
+    CHECK(!run(plain_request, held).empty());
+}
+
+TEST_CASE(a_run_that_makes_its_own_controls_says_whether_it_plays_a_scenario)
+{
+    Written written;
+    RunRequest asked = request_of("no-such-directory/sim.yaml");
+    asked.intent.scenario = "drive.scenario.yaml";
+    RunObservers watching;
+    watching.events = written.stream.get();
+    static_cast<void>(vehicle_sil::launch::run_file(asked, watching));
+    CHECK(written.has("\"event\":\"state\""));
+    CHECK(written.has("\"scenario\":true"));
+    CHECK(!written.has("\"scenario\":false"));
 }
 
 namespace {
@@ -553,7 +603,7 @@ TEST_CASE(a_run_until_of_stdin_is_refused_by_the_time_lock_and_the_state_says_so
         observers.on_command = [&answers](const Command& c, std::string_view source) {
             answers.push_back(*c.name + " " + std::string(source) + " " + (c.accepted ? "accepted" : c.reason));
         };
-        RunControls controls(stops, false, std::move(observers));
+        RunControls controls(stops, false, std::move(observers), false);
         controls.set_control_server(control_server);
         Command until = command("run_until");
         until.at_ms = 5000;
@@ -626,7 +676,7 @@ TEST_CASE(the_state_event_follows_the_command_event_of_the_command_that_made_it)
     observers.on_command = [events](const Command& c, std::string_view source) { events->command(c, source); };
     observers.on_phase = [events](Phase phase) { events->phase(phase); };
     observers.on_state = [events](const RunState& s) { events->state(s); };
-    RunControls controls(stops, false, std::move(observers));
+    RunControls controls(stops, false, std::move(observers), false);
     controls.set_time_lock({});
     // Each state is written before the next is made (one that waits would be replaced).
     controls.set_phase(Phase::Starting);
@@ -726,7 +776,7 @@ TEST_CASE(a_run_decides_the_time_commands_that_came_before_it_with_its_time_lock
     /// run_file() of `file` on controls that got a pause, a speed of 5 and a resume before it.
     const auto run = [&fast](const std::filesystem::path& file, RunRequest asked, Answers& answers) {
         StopRequests stops;
-        RunControls controls(stops, false, answers.observers());
+        RunControls controls(stops, false, answers.observers(), false);
         CHECK(controls.time().apply(command("pause"), "stdin").pending);
         CHECK(controls.time().apply(fast, "stdin").pending);
         CHECK(controls.time().apply(command("resume"), "stdin").pending);
@@ -804,7 +854,7 @@ TEST_CASE(run_controls_tell_the_state_of_the_bridges_once_for_each_change)
     std::vector<RunState> told;
     RunControls::Observers observers;
     observers.on_state = [&](const RunState& state) { told.push_back(state); };
-    RunControls controls(stops, false, std::move(observers));
+    RunControls controls(stops, false, std::move(observers), false);
     CHECK(controls.state().outside.empty());
     RunState::Outside bridge;
     bridge.network = "CAN";

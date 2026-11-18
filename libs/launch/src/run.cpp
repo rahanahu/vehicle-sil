@@ -225,8 +225,8 @@ struct OwnControls
         return out;
     }
 
-    OwnControls(StopRequests* stops, bool start_paused, const RunObservers& given) :
-      controls(stops != nullptr ? *stops : none, start_paused, observers(given.events))
+    OwnControls(StopRequests* stops, const RunIntent& intent, const RunObservers& given) :
+      controls(stops != nullptr ? *stops : none, intent.start_paused, observers(given.events), intent.scenario.has_value())
     {
         if (given.interrupt_name)
         {
@@ -663,6 +663,18 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
               "Observers::on_command to call EventStream::command() and Observers::on_state to call "
               "EventStream::state(), or leave `events` null.");
         }
+        const bool scenario = request.intent.scenario.has_value();
+        if (lent.controls->start_paused() != request.intent.start_paused || lent.controls->scenario() != scenario)
+        {
+            const auto yes_no = [](bool b) { return std::string(b ? "true" : "false"); };
+            throw std::invalid_argument(
+              "RunLent::controls were made with start_paused " + yes_no(lent.controls->start_paused()) + " and scenario " +
+              yes_no(lent.controls->scenario()) + ", but the request has start_paused " +
+              yes_no(request.intent.start_paused) + " and scenario " + yes_no(scenario) +
+              " (RunIntent): the controls' rules would answer for another run (while a scenario plays, a control "
+              "server's client must not write variables); make the RunControls with RunIntent::start_paused and "
+              "RunIntent::scenario.has_value(), or leave `controls` null.");
+        }
     }
     const auto event = [&observers](auto emit) {
         if (observers.events != nullptr)
@@ -673,7 +685,7 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
     // The controls of this run: the caller's, or its own. Declared before the Runner, which
     // borrows them: they outlive it.
     const std::unique_ptr<OwnControls> own =
-        lent.controls == nullptr ? std::make_unique<OwnControls>(lent.stops, request.intent.start_paused, observers) : nullptr;
+        lent.controls == nullptr ? std::make_unique<OwnControls>(lent.stops, request.intent, observers) : nullptr;
     RunControls& controls = own ? own->controls : *lent.controls;
     RunReport report;
     report.strict = request.intent.strict;

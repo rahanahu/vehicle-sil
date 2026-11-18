@@ -1025,7 +1025,7 @@ TEST_CASE(time_commands_from_several_threads_never_pass_the_time_lock_that_comes
             ++states;
             last_takes_a_pause = state.allowed.pause.ok;
         };
-        RunControls controls(stops, false, std::move(observers));
+        RunControls controls(stops, false, std::move(observers), false);
         TimeCommands& commands = controls.time();
         std::atomic<int> go{0};
         std::atomic<int> slipped{0};

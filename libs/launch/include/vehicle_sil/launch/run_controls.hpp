@@ -158,12 +158,17 @@ public:
 
     /// `stops`: the stop requests, the caller's; they must outlive this object. `start_paused`:
     /// run --start-paused (TimeCommands). Without `observers`: none. `scenario`: the run plays a
-    /// scenario (the rules: ControlSituation::scenario).
-    RunControls(StopRequests& stops, bool start_paused, Observers observers, bool scenario = false);
+    /// scenario (the rules: ControlSituation::scenario). Both are the run's (RunIntent::start_paused,
+    /// RunIntent::scenario): run_file() refuses controls lent for a run whose request says otherwise.
+    RunControls(StopRequests& stops, bool start_paused, Observers observers, bool scenario);
+    /// Controls without observers, for a run that plays no scenario.
     explicit RunControls(StopRequests& stops, bool start_paused = false);
     RunControls(const RunControls&) = delete;
     RunControls& operator=(const RunControls&) = delete;
 
+    /// What this object was made with: run --start-paused, and whether the run plays a scenario.
+    [[nodiscard]] bool start_paused() const noexcept { return start_paused_; }
+    [[nodiscard]] bool scenario() const noexcept { return scenario_; }
     /// The stop requests this object was made with.
     [[nodiscard]] StopRequests& stops() noexcept { return stops_; }
     [[nodiscard]] const StopRequests& stops() const noexcept { return stops_; }
@@ -245,6 +250,8 @@ private:
     const std::function<void(const RunState& state)> on_state_;
     std::function<std::string()> stop_name_{};
     bool control_server_ = false;
+    const bool start_paused_;
+    const bool scenario_;
     const bool has_command_observer_;
     /// The state told last (rev 0: none). Under TimeCommands' mutex.
     RunState told_{};
