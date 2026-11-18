@@ -132,6 +132,8 @@ struct RunPlan
 /// has one (RunHost::control, or a lent RunLent::control_endpoint). Throws std::invalid_argument for
 /// a check without a configuration (CheckReport::config is empty: the file could not be read, so
 /// there is nothing to run).
+/// `scenario`: the check's scenario, null for a run without one; from a Checked, pass
+/// detail::scenario_of() (a Checked passed as the CheckReport alone loses it).
 /// The plan has copies of what it reads of `scenario`, `choices` and `limits`: none is kept.
 /// - The speed is planned_speed(): 1 with the time lock, else RunChoices::speed, else the file's.
 /// - With a scenario the step does not follow the speed: the same steps at every speed.

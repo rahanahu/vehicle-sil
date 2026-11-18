@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
 // vehicle_sil_launch run: the wait for the end of what the run has of SIL Kit, with a limit
-// (Runner::close_connection()). No dependencies: tested as written.
+// (RunnerImpl::close_connection()). No dependencies: tested as written.
 #pragma once
 
 #include <chrono>

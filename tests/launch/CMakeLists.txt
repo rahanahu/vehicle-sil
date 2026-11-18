@@ -420,3 +420,11 @@ if(TARGET vehicle_sil_launch_test_ecu)
     set_tests_properties(launch_control.${part} PROPERTIES LABELS "integration;launch;control" TIMEOUT 300)
   endforeach()
 endif()
+
+# The public face of the Runner (launch/detail/runner.hpp) keeps SIL Kit, the controller and the
+# run's private headers behind a pointer: no header of that directory reaches SIL Kit or core's
+# runtime (the launcher links core, so the link cannot show it).
+add_test(NAME launch.detail_headers_need_no_silkit
+         COMMAND ${CMAKE_COMMAND} -DDIR=${PROJECT_SOURCE_DIR}/libs/launch/include/vehicle_sil/launch/detail
+                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckNoSilKit.cmake)
+set_tests_properties(launch.detail_headers_need_no_silkit PROPERTIES LABELS "unit;launch" TIMEOUT 60)

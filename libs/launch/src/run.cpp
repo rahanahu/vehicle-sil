@@ -50,7 +50,7 @@
 //   main thread writes the counts held back while it watches the simulation (outside_due()), and
 //   takes the last ones, with their event, into the result after the end (take_counts()), before
 //   the result's event).
-// - The closing thread (Runner::close_connection(), at the end of run()): destroys the hub's
+// - The closing thread (RunnerImpl::close_connection(), at the end of run()): destroys the hub's
 //   transport, the controller and the registry (the RunConnection, which it holds from then on),
 //   and touches nothing else of the run. The main thread waits for it with a limit. What a closing
 //   thread that was left at the limit may still reach is listed below.
