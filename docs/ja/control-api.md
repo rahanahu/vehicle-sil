@@ -376,7 +376,7 @@ ecu.every(10ms, [this, &ecu](vehicle_sil::SimTime) {
 });
 ```
 
-gRPC では、`ListPeers` と `Watch` の `PeerInfo` の `VariableInfo.availability` が宣言です。報告しない変数は `AVAILABILITY_UNSPECIFIED`、報告する変数は最初の状態です。`Watch` に `availability = true` を付けると、報告する変数のある参加者ごとに `PeerAvailability`（`Update` の `availability`）を送ります。`schema` の順で全変数の状態を持ち、報告しない変数は `AVAILABILITY_ACTIVE` です。`PeerInfo` の後に、最初の更新（`initial_done` の前）として、その後は状態が変わったときに届きます。新しい incarnation は宣言の状態から始まります。購読は参加者ごとに最新だけを持つので、途中の変化を落とすことがあります。`peers` で絞れ、頼まない購読には届きません。利用状態は情報だけで、`Write`、`GetValues`、`GetSnapshot`、`Watch` の値は変わりません。Python の client は頼みません。
+gRPC では、`ListPeers` と `Watch` の `PeerInfo` の `VariableInfo.availability` が宣言です。報告しない変数は `AVAILABILITY_UNSPECIFIED`、報告する変数は最初の状態です。`Watch` に `availability = true` を付けると、報告する変数のある参加者ごとに `PeerAvailability`（`Update` の `availability`）を送ります。`schema` の順で全変数の状態を持ち、報告しない変数は `AVAILABILITY_ACTIVE` です。`PeerInfo` の後に、最初の更新（`initial_done` の前）として、その後は状態が変わったときに届きます。新しい incarnation は宣言の状態から始まります。同じ incarnation の `PeerInfo` がまた届いても（つなぎ直し、SIL Kit の状態の変化）状態は戻らないので、別の incarnation が来るまで状態を持ち続け、今の incarnation と違う `PeerAvailability` は捨てます。購読は参加者ごとに最新だけを持つので、途中の変化を落とすことがあります。`peers` で絞れ、頼まない購読には届きません。利用状態は情報だけで、`Write`、`GetValues`、`GetSnapshot`、`Watch` の値は変わりません。Python の client は頼みません。
 
 ### 接続のしかた
 

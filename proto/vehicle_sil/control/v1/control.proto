@@ -71,7 +71,9 @@ message VariableInfo {
   string source = 11;
   // Whether the variable reports if it is in use, and the state it starts with. UNSPECIFIED: it
   // does not report (it is always ACTIVE). Else the state a new incarnation starts with, until
-  // the ECU's application changes it (see PeerAvailability).
+  // the ECU's application changes it (see PeerAvailability). Only a new incarnation starts from
+  // it again: a PeerInfo sent again for the same incarnation (it reconnected, its SIL Kit state
+  // changed) does not reset the state.
   Availability availability = 12;
 }
 
@@ -257,13 +259,14 @@ message Update {
     PeerEvent event = 4;
     Operation operation = 5;
     TimeState time = 7;
-    bool initial_done = 8; // the current peers and values (and time and simulation) have been sent
+    bool initial_done = 8; // the current peers and values (and time, simulation and availability) have been sent
     SimulationState simulation = 9;
     PeerAvailability availability = 10; // only when the request asked for it
   }
   // Updates dropped for this watch so far: changes of peers, values, events and operations, and
   // states of the simulation the server could not hold while the client was slow (failures and
-  // the end are never lost: they stay in every later state).
+  // the end are never lost: they stay in every later state). The availability is not counted: a
+  // watch keeps the latest state of each peer, and a newer one replaces it.
   uint64 dropped = 6;
 }
 
@@ -277,6 +280,9 @@ message PeerValues {
 // (a variable that does not report is ACTIVE). A new incarnation starts with the states its
 // schema declares (VariableInfo.availability); its PeerInfo comes first. Watch holds only the
 // latest per peer, so it can skip a change in between: there is no way to get every change.
+// A client keeps the states of a peer's incarnation until a PeerInfo of another incarnation
+// comes (a PeerInfo of the same incarnation sent again does not reset them), and drops a
+// PeerAvailability whose incarnation is not the peer's current one.
 message PeerAvailability {
   string peer = 1;
   string incarnation = 2;

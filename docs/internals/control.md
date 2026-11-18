@@ -741,6 +741,7 @@ For the time and simulation state, the snapshots that the monitor reports go int
 - The peers are the same list as in `ListPeers` (including required participants without an Agent). A peer whose SIL Kit state changed is sent again.
 - If the peer of an Agent is forgotten but it is a required participant, it is sent as a peer without an Agent (`removed_peer` is sent only when it leaves the list).
 - `capacity` is at most `max_watch_capacity` (default 65536).
+- With `availability`, the Hub's subscription also gives each peer's latest `AvailabilityUpdate`, after its peers in the initial updates and then as the states change. It keeps one per peer and does not count them in `dropped`. The loop takes every kind of Hub update explicitly (a `static_assert` on the number of kinds makes a new kind a build error until it has a branch).
 
 ### Connections
 

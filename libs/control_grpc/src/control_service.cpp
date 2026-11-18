@@ -407,6 +407,8 @@ public:
                 for (auto& update : sub->poll(initial ? 0 : 64, initial ? std::chrono::milliseconds(0) : std::chrono::milliseconds(100)))
                 {
                     bool sent = true;
+                    // One branch below per kind of hub update: a new kind must get one.
+                    static_assert(std::variant_size_v<Update> == 5, "a new kind of control::Update needs a branch here");
                     if (const auto* p = std::get_if<PeerUpdate>(&update))
                     {
                         if (p->removed)

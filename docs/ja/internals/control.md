@@ -741,6 +741,7 @@ gRPC の状態コードで返します。
 - Peer は `ListPeers` と同じ一覧（Agent のない必須の participant を含む）で、SIL Kit の状態が変わった Peer は送り直します。
 - Agent の Peer が忘れられても、必須の participant なら、Agent のない Peer として送信します（`removed_peer` は一覧から消えたときだけ）。
 - `capacity` は `max_watch_capacity`（既定 65536）までです。
+- `availability` を頼むと、Hub の購読が参加者ごとの最新の `AvailabilityUpdate` も渡します。最初の更新では参加者の後に、その後は状態が変わったときです。参加者ごとに 1 つを持ち、`dropped` に数えません。購読の更新は種類ごとに分岐します（種類の数の `static_assert` で、新しい種類は分岐を足すまでビルドが通りません）。
 
 ### 接続
 

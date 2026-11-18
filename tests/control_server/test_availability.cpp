@@ -162,7 +162,7 @@ TEST_CASE(control_server_declares_the_availability_in_the_schema)
         }
         else
         {
-            CHECK(v.availability() == v1::AVAILABILITY_UNSPECIFIED); // "lamp" and the built-in ones do not report
+            CHECK(v.availability() == v1::AVAILABILITY_UNSPECIFIED); // "lamp" does not report
         }
     }
 
@@ -223,9 +223,9 @@ TEST_CASE(control_server_watch_passes_the_availability_on_only_when_asked)
         CHECK(a.incarnation() == (a.peer() == "Engine" ? "e1" : "b1"));
         // The schema's order: level, lamp, speed.
         CHECK_EQ(a.states_size(), 3);
-        CHECK(a.states(a.states_size() - 3) == v1::AVAILABILITY_UNKNOWN);  // level
-        CHECK(a.states(a.states_size() - 2) == v1::AVAILABILITY_ACTIVE);   // lamp: does not report
-        CHECK(a.states(a.states_size() - 1) == v1::AVAILABILITY_INACTIVE); // speed
+        CHECK(a.states(0) == v1::AVAILABILITY_UNKNOWN);  // level
+        CHECK(a.states(1) == v1::AVAILABILITY_ACTIVE);   // lamp: does not report
+        CHECK(a.states(2) == v1::AVAILABILITY_INACTIVE); // speed
     }
     // peers: the ones asked for only.
     const auto filtered = only_body.availability();
@@ -237,10 +237,10 @@ TEST_CASE(control_server_watch_passes_the_availability_on_only_when_asked)
     CHECK(eventually([&] { return asking.availability().size() == 3; }));
     const auto changed = asking.availability().back();
     CHECK(changed.peer() == "Engine");
-    CHECK(changed.states(changed.states_size() - 3) == v1::AVAILABILITY_ACTIVE);
+    CHECK(changed.states(0) == v1::AVAILABILITY_ACTIVE);
     body.set("level", Availability::Inactive);
     CHECK(eventually([&] { return only_body.availability().size() == 2; }));
-    CHECK(only_body.availability().back().states(changed.states_size() - 3) == v1::AVAILABILITY_INACTIVE);
+    CHECK(only_body.availability().back().states(0) == v1::AVAILABILITY_INACTIVE);
     CHECK(eventually([&] { return asking.availability().size() == 4; }));
 
     // Without the request nothing came: only what the Watch always sends.
@@ -265,5 +265,5 @@ TEST_CASE(control_server_a_new_incarnation_starts_from_its_declaration)
     CHECK(eventually([&] { return asking.availability().size() == 3; }));
     const auto latest = asking.availability().back();
     CHECK(latest.incarnation() == "e2");
-    CHECK(latest.states(latest.states_size() - 3) == v1::AVAILABILITY_UNKNOWN);
+    CHECK(latest.states(0) == v1::AVAILABILITY_UNKNOWN);
 }
