@@ -156,6 +156,8 @@ void judge(TestRun& run, RunReport report)
         run.result = TestRunResult::Interrupted;
         run.reason = report.run && !report.run->end.interrupted_by.empty() ? "by " + report.run->end.interrupted_by : "";
         break;
+    // RunResult::Stopped and RunResult::Incomplete do not happen here (a test takes no stop
+    // command); if one did, it fails like the rest instead of passing silently.
     default:
         run.result = TestRunResult::Failed;
         run.reason = failure_reason(report);

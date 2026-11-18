@@ -179,7 +179,7 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --con
 [vehicle_sil_launch] standing still before the first step until a resume, step or run_until command (--start-paused with a control server)
 ```
 
-端末が 1 つのとき（スクリプトや CI）は、端末 1 のコマンドの末尾に `> launch.log 2>&1 &` を付けてバックグラウンドで起動し、`launch.log` に上の 2 行が出てから、同じ端末で端末 2 のコマンドを実行します。途中でやめるときは、CLI の `stop` か `kill <PID>`（SIGTERM）で、シミュレーションと ECU が止まります（結果は `interrupted`、終了コード 130）。
+端末が 1 つのとき（スクリプトや CI）は、端末 1 のコマンドの末尾に `> launch.log 2>&1 &` を付けてバックグラウンドで起動し、`launch.log` に上の 2 行が出てから、同じ端末で端末 2 のコマンドを実行します。途中でやめるときは、CLI の `stop` か `kill <PID>`（SIGTERM）で、シミュレーションと ECU が止まります（`stop` では結果は `stopped`、終了コード 0。`kill` では結果は `interrupted`、終了コード 130）。
 
 端末 2 で、`export PYTHONPATH="$PWD/python"` を実行してから、次のコマンドを順に実行します。CLI は、指定しなければ `127.0.0.1:8510` に接続します。
 
@@ -554,7 +554,7 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --std
 | `{"command":"resume"}` | 再開します。 |
 | `{"command":"step","ms":500}` | 一時停止している間だけ使えて、500 ms 進めて、また一時停止します。 |
 | `{"command":"speed","value":1}` | 速度を変えます（`"max"` で最速）。 |
-| `{"command":"stop"}` | シミュレーションを停止します（結果は `interrupted`、終了コード 130）。 |
+| `{"command":"stop"}` | シミュレーションを停止します（結果は `stopped`、終了コード 0）。 |
 
 - 標準入力を閉じる（端末では Ctrl+D）と、`stop` と同じです。
 - JSON として読めない行は無視され、理由が標準エラーに 1 行表示されます。

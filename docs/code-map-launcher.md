@@ -202,6 +202,7 @@ This test needs a Python with PyYAML and jsonschema (`uv sync`; on Windows, `min
 Where to change:
 
 - The output of `vehicle_sil_launch check` and `run` (`libs/launch/src`)
+- The result of a run: why it ended (`end_reason()`), the result (`RunReport::result()`) and the sentence for people (`RunReport::message()`) in `libs/launch/src/run_report.cpp`; the exit code and `ok` of each result in the one table of `libs/launch/src/exit_codes.hpp`
 - `examples/ecu_main/simulation.yaml`
 
 Documentation to update:

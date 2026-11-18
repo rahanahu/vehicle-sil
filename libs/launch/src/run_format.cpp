@@ -105,6 +105,8 @@ const char* result_name(RunResult result)
     switch (result)
     {
     case RunResult::Passed: return "passed";
+    case RunResult::Stopped: return "stopped";
+    case RunResult::Incomplete: return "incomplete";
     case RunResult::Failed: return "failed";
     case RunResult::Interrupted: return "interrupted";
     case RunResult::CheckFailed: return "check_failed";
@@ -169,7 +171,7 @@ std::string format_run_text(const RunReport& report)
     {
     case SimulationEnd::NotStarted:
         state = !run.setup.error.empty()      ? "the simulation could not be set up"
-                : !run.end.interrupted_by.empty() ? "interrupted (" + run.end.interrupted_by + ") before the simulation started"
+                : !run.end.interrupted_by.empty() ? run.end.stop_text() + " before the simulation started"
                                               : "the simulation did not start";
         break;
     case SimulationEnd::ReachedStopAt:
@@ -188,7 +190,7 @@ std::string format_run_text(const RunReport& report)
                                                  : "the simulation was aborted: participant '" + run.end.failed_participant + "' failed";
         break;
     case SimulationEnd::Interrupted:
-        state = "interrupted (" + run.end.interrupted_by + "): the simulation was stopped";
+        state = run.end.stop_text() + ": the simulation was stopped";
         break;
     }
     out += "run: " + state + "\n";
@@ -234,6 +236,8 @@ std::string format_run_text(const RunReport& report)
     switch (result)
     {
     case RunResult::Passed: out += "passed: " + counts + "\n"; break;
+    case RunResult::Stopped: out += "stopped: " + counts + "\n"; break;
+    case RunResult::Incomplete: out += "incomplete: " + counts + "\n"; break;
     case RunResult::Interrupted: out += "interrupted: " + counts + "\n"; break;
     default:
         out += "failed: " + counts + (report.errors() == 0 && run.setup.error.empty() ? " (--strict)" : "") + "\n";
@@ -439,6 +443,16 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
         w.string("file", report.check.file);
     }
     w.string("result", result_name(report.result()));
+    if (report.run)
+    {
+        w.string("end", end_reason_name(end_reason(*report.run)));
+    }
+    else
+    {
+        w.null("end");
+    }
+    w.boolean("ok", report.ok());
+    w.string("message", report.message());
     w.boolean("strict", report.strict);
     w.integer("errors", static_cast<std::int64_t>(report.errors()));
     w.integer("warnings", static_cast<std::int64_t>(report.warnings()));

@@ -279,7 +279,7 @@ void manual_stop(const Options& o)
         live.wait_for({"\"name\":\"Hand\"", "\"state\":\"joined\""});
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish();
-        require(status && status->code == 130, "the run stopped before the start ends with 130");
+        require(status && status->code == 0, "the run stopped before the start ends with 0, not " + code_text(status));
         const auto ended = byHand.wait(30s);
         require(ended && ended->code == 3, "Hand, which waited for the start, ends as a start that failed (3)");
         require(contains(lines.back(), "{\"name\":\"Late\",\"required\":true,\"enabled\":true,\"manual\":true,\"for_network\":null,\"ended\":\"not_started\","),
@@ -313,11 +313,17 @@ void manual_frozen(const Options& o)
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish_unchecked(60s);
         lateByHand.thaw();
-        require(status && status->code == 130,
-                "a stop ends a run that waits for a frozen participant (130), not " +
+        // Before the start, the stop ends the run without errors (0). Once the simulation runs, frozen
+        // Late keeps it from shutting down, and the participants that wait in their step for Late may
+        // not end when asked: the stopped run then reports those errors (1, result failed).
+        const bool cleanly = status && status->code == 0;
+        require(cleanly || (running && status && status->code == 1),
+                "a stop ends a run that waits for a frozen participant (0, or 1 with errors once it ran), not " +
                     (status ? std::to_string(status->code) : std::string("still running")) + ":\n" + out_of(lines));
         check_events(lines);
-        require(contains(lines.back(), "\"result\":\"interrupted\"") && contains(lines.back(), "\"interrupted_by\":\"stop command\""),
+        require(contains(lines.back(), cleanly ? "\"result\":\"stopped\"" : "\"result\":\"failed\"") &&
+                    contains(lines.back(), "\"end\":\"stopped\"") &&
+                    contains(lines.back(), "\"interrupted_by\":\"stop command\""),
                 "the run was stopped by the command:\n" + lines.back());
         require(!contains(lines.back(), "connection-not-closed"),
                 "the launcher closed its SIL Kit connection, with Late frozen:\n" + lines.back());
@@ -330,7 +336,8 @@ void manual_frozen(const Options& o)
     }
     {
         // Frozen once the simulation runs (a debugger's pause in a step): a stop command ends the
-        // run all the same, with Late still frozen, and the launcher closes its connection to it
+        // run all the same, with Late still frozen (Auto, which waits for Late's step, has to be
+        // ended: an error, so the stopped run failed), and the launcher closes its connection to it
         // (on Windows a TCP connection: closing a local-domain socket to a process that stands
         // still may never return there, docs/dependencies.md).
         const fs::path dir = hand_dir(o, "frozen_running", hand_config(o, "stop_timeout_ms: 3000\n", late_participant(o)),
@@ -348,11 +355,12 @@ void manual_frozen(const Options& o)
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish_unchecked(60s);
         lateByHand.thaw();
-        require(status && status->code == 130,
-                "a stop ends a run with a participant frozen while the simulation runs (130), not " +
+        require(status && status->code == 1,
+                "a stop ends a run with a participant frozen while the simulation runs (1: Auto did not end), not " +
                     (status ? std::to_string(status->code) : std::string("still running")) + ":\n" + out_of(lines));
         check_events(lines);
-        require(contains(lines.back(), "\"result\":\"interrupted\"") && contains(lines.back(), "\"interrupted_by\":\"stop command\""),
+        require(contains(lines.back(), "\"result\":\"failed\",\"end\":\"stopped\",\"ok\":false,") &&
+                    contains(lines.back(), "\"code\":\"did-not-end\"") && contains(lines.back(), "\"interrupted_by\":\"stop command\""),
                 "the run was stopped by the command:\n" + lines.back());
         require(!contains(lines.back(), "connection-not-closed"),
                 "the launcher closed its SIL Kit connection, with Late frozen:\n" + lines.back());

@@ -268,7 +268,7 @@ public:
     {
         if (ctx_.interrupts() > 0)
         {
-            outcome_.end.interrupted_by = ctx_.interrupt_name();
+            ctx_.note_interrupt(outcome_.end);
             return nullptr;
         }
         ctx_.controls.set_phase(Phase::Starting);

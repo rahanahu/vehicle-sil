@@ -476,8 +476,19 @@ const readRunParticipant = (value: unknown, path: string, u?: Unreadable): RunPa
 
 /** Name of the run result (`result.result` of the `result` event). */
 export type RunResultName = Open<
-  'passed' | 'failed' | 'interrupted' | 'check_failed' | 'unreadable' | 'setup_failed' | 'usage'
+  | 'passed'
+  | 'stopped'
+  | 'incomplete'
+  | 'failed'
+  | 'interrupted'
+  | 'check_failed'
+  | 'unreadable'
+  | 'setup_failed'
+  | 'usage'
 >;
+
+/** Why the run ended (`result.end` of the `result` event). */
+export type RunEnd = Open<'completed' | 'stopped' | 'interrupted' | 'failed' | 'setup_failed'>;
 
 /**
  * The result's timing: how time advanced (the numbers are defined in "Running at a set speed (`speed`)" in
@@ -650,10 +661,16 @@ const readRunTraffic = (value: unknown, path: string, u?: Unreadable): RunTraffi
   });
 };
 
-/** Result of `vehicle_sil_launch run --json` (format version 1). */
+/** Result of `vehicle_sil_launch run --json` (format version 2). */
 export interface RunResult extends FromLauncher {
   file: string | null;
   result: RunResultName;
+  /** Why the run ended. null if nothing was started (the check failed, the file or the command line was wrong). */
+  end: RunEnd | null;
+  /** Whether the result is a success (the launcher's exit code is 0). false if it cannot be read. */
+  ok: boolean;
+  /** One English sentence that says what the result is. '' if it cannot be read (or the server shrank the result). */
+  message: string;
   errors: number;
   warnings: number;
   notes: number;
@@ -680,10 +697,13 @@ export interface RunResult extends FromLauncher {
  */
 export const readRunResult = (value: unknown, path: string, u?: Unreadable): RunResult => {
   const f = object(value, path);
-  version(f, path, 'vehicle_sil_run', 1, u);
+  version(f, path, 'vehicle_sil_run', 2, u);
   return withRaw(f, {
     file: field(f, path, 'file', soft(nullable(string), null, u)),
     result: field(f, path, 'result', lenient(string, '', u)),
+    end: field(f, path, 'end', soft(nullable(string), null, u)),
+    ok: field(f, path, 'ok', lenient(boolean, false, u)),
+    message: field(f, path, 'message', lenient(string, '', u)),
     errors: field(f, path, 'errors', lenient(integer, 0, u)),
     warnings: field(f, path, 'warnings', lenient(integer, 0, u)),
     notes: field(f, path, 'notes', lenient(integer, 0, u)),

@@ -664,11 +664,21 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     }
     if (!outcome.end.interrupted_by.empty())
     {
-        add(Severity::Note, "interrupted",
-            "interrupted (" + outcome.end.interrupted_by + "): the launcher " +
+        // An operator's stop is "stopped"; a signal, or a supervisor that went away, "interrupted".
+        add(Severity::Note, outcome.end.interrupted_kind == StopKind::Operator ? "stopped" : "interrupted",
+            outcome.end.stop_text() + ": the launcher " +
                 (outcome.end.interrupted_while_ending ? std::string("stopped the participants instead of waiting for them to end")
                  : ran                            ? std::string("stopped the simulation and the participants")
                                                   : std::string("stopped the participants before the simulation started")),
+            nullptr);
+    }
+    if (const std::vector<std::string> forced = ended_by_force(outcome); !forced.empty())
+    {
+        add(Severity::Note, "ended-by-force",
+            "the launcher did not wait for " + detail::and_list(forced) + " to end, because it was asked to stop again (or while it "
+            "waited for the participants to end): it ended " + (forced.size() == 1 ? "it" : "them") +
+                " by force, with the processes started. This is no error of a run that was stopped that way; whether " +
+                (forced.size() == 1 ? "it ends" : "they end") + " when asked to is not known from this run (stop once and wait to see)",
             nullptr);
     }
     if (const RunTiming& t = outcome.timing; t.late_steps > 0)
@@ -710,8 +720,8 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     if (outcome.scenario.result)
     {
         const ScenarioRun& scenario = *outcome.scenario.result;
-        const auto add_scenario = [&](std::string code, std::string message, std::size_t line) {
-            out.push_back(Finding{Severity::Error, std::move(code), std::move(message), line, "", "", "", scenario.file});
+        const auto add_scenario = [&](std::string code, std::string message, std::size_t line, Severity severity = Severity::Error) {
+            out.push_back(Finding{severity, std::move(code), std::move(message), line, "", "", "", scenario.file});
         };
         for (const ScenarioStepRun& step : scenario.steps)
         {
@@ -727,6 +737,10 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
             });
             const auto passed = static_cast<std::size_t>(std::count_if(
                 scenario.steps.begin(), scenario.steps.end(), [](const ScenarioStepRun& step) { return step.status == StepStatus::Passed; }));
+            const EndReason end = end_reason(outcome);
+            // The stop ended the simulation (one that came while the participants were ending did not).
+            const bool cutShort = (end == EndReason::Stopped || end == EndReason::Interrupted) &&
+                                  !outcome.end.interrupted_while_ending && outcome.scenario.error.empty();
             add_scenario("scenario-incomplete",
                          "the scenario did not get to its end: the simulation ended at " + std::to_string(outcome.timing.sim_ms) +
                              " ms when " + std::to_string(passed) + " of " + std::to_string(scenario.steps.size()) +
@@ -734,11 +748,16 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                              (reached != scenario.steps.rend() && reached->status == StepStatus::Unfinished
                                   ? " and the step at line " + std::to_string(reached->line) + " (" + reached->text + ") was not decided yet"
                                   : std::string{}) +
-                             (outcome.scenario.error.empty()
-                                  ? "; the other findings and the lines above say why the simulation ended"
-                                  : "; the launcher's scenario thread failed (" + outcome.scenario.error +
-                                        "): this is an error of vehicle_sil_launch"),
-                         reached != scenario.steps.rend() ? reached->line : 0);
+                             (!outcome.scenario.error.empty()
+                                  ? "; the launcher's scenario thread failed (" + outcome.scenario.error +
+                                        "): this is an error of vehicle_sil_launch"
+                              : cutShort
+                                  ? "; the run was " + outcome.end.stop_text() + " before the scenario's end"
+                                  : std::string("; the other findings and the lines above say why the simulation ended")),
+                         reached != scenario.steps.rend() ? reached->line : 0,
+                         // Cut short by a stop or an interrupt: that is why, and it is not an error
+                         // of the run (the result says that the scenario has no verdict).
+                         cutShort ? Severity::Note : Severity::Error);
         }
     }
     if (!outcome.scenario.timeline.empty() && outcome.scenario.timeline_record && outcome.scenario.timeline_record->dropped() > 0)
@@ -786,6 +805,11 @@ std::vector<Finding> detail::settled_findings(const RunOutcome& outcome)
             f.code == "outside-link-down" || f.code == "outside-bus-off" || f.code == "outside-bus-errors" ||
             f.code == "outside-frames-dropped" || f.code == "outside-loop-suspected" || f.code == "outside-device-shared" ||
             f.code == "connect-target-shared")
+        {
+            continue;
+        }
+        // Whom the launcher ended by force is known once the participants have ended.
+        if (f.code == "ended-by-force")
         {
             continue;
         }

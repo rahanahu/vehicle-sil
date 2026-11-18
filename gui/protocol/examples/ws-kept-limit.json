@@ -31,8 +31,8 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 40043,
-        "last_t_ms": 400430,
+        "last_seq": 40042,
+        "last_t_ms": 400420,
         "time": {
           "event": "time",
           "seq": 40029,
@@ -393,7 +393,7 @@
         "findings_omitted": 39000,
         "last_command": null,
         "launcher_state": {
-          "seq": 40042,
+          "seq": 40041,
           "rev": 8,
           "phase": "ended",
           "paused": false,
@@ -475,10 +475,13 @@
           }
         },
         "result": {
-          "vehicle_sil_run": 1,
+          "vehicle_sil_run": 2,
           "vehicle_sil": "0.1.0",
           "file": "large-result.yaml",
           "result": "passed",
+          "end": "completed",
+          "ok": true,
+          "message": "The run reached its end without errors",
           "strict": false,
           "errors": 0,
           "warnings": 0,
@@ -551,7 +554,7 @@
     {
       "type": "synced",
       "session": 1,
-      "last_seq": 40043
+      "last_seq": 40042
     }
   ]
 }

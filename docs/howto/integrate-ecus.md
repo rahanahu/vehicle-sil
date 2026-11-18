@@ -584,6 +584,7 @@ For the rules, see "Disabling a participant (`enabled`, `--disable`, `--enable`)
 | Write `stop_at_ms` | The simulation stops at that virtual time. | 0 if there is no `error` finding |
 | Ctrl+C | `vehicle_sil_launch` stops the simulation, ends the ECUs, then prints the result. | 130 |
 | Ctrl+C a second time | `vehicle_sil_launch` kills the ECUs without waiting. | 130 |
+| The `stop` command (`--stdin-commands`, the Control API, the GUI) | The same as the first Ctrl+C. | 0 if there is no `error` finding |
 | `--timeout-ms <ms>` | If the run has not ended `<ms>` of wall-clock time after the start, `vehicle_sil_launch` aborts it and reports an `error`. | 1 |
 
 To stop the run from a program, start `run` with `--stdin-commands` and write `{"command":"stop"}` to stdin, or close stdin (see "Stdin commands (`run --stdin-commands`)" in [simulation-events.md](../simulation-events.md#stdin-commands-run---stdin-commands)).
@@ -596,7 +597,7 @@ From CI scripts or your own tools, use the exit code and the machine-readable ou
 
 | Goal | Command | Output |
 |---|---|---|
-| Know only whether it passed or failed | The exit code of `check` or `run` | 0 is pass, 1 is fail and 130 is interrupted. |
+| Know only whether it passed or failed | The exit code of `check` or `run` | 0 is pass (or stopped by a command), 1 is fail and 130 is interrupted. |
 | Read the findings in a program | `vehicle_sil_launch check --json simulation.yaml` | Writes the result to stdout as one JSON document. |
 | Follow the progress of a run | `vehicle_sil_launch run --events --stdin-commands simulation.yaml` | Writes what happens, in order, as one JSON object per line. |
 | Find out which features are available | `vehicle_sil_launch version --json` | `features` lists the feature names. |

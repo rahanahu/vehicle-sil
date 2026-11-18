@@ -179,6 +179,7 @@ export type {
   RunParticipant,
   RunRequest,
   RunResult,
+  RunEnd,
   RunResultName,
   RunTiming,
   RunTraffic,

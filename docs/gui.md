@@ -69,7 +69,7 @@ Run the commands in the template project's directory (the one that contains `sim
 | 2 | Start the simulation | The state **Running** and the ECU log |
 | 3 | Watch and write variables | Sliders and charts on the Variables screen |
 | 4 | Pause time and advance one step at a time | Virtual time stopping, and how far a step advances it |
-| 5 | Stop the run and exit | The result **Interrupted** |
+| 5 | Stop the run and exit | The result **Stopped** |
 | 6 | Run a scenario | A table with the result of each scenario step |
 
 "Step 1" to "Step 6" are the parts of this guide; anywhere else on this page, a "step" is a simulation step. The screen uses the same terms as this page, and text in bold is exactly what the screen shows.
@@ -160,7 +160,7 @@ Click **Stop** to stop the simulation, then press Ctrl+C in the terminal to exit
 
 #### Verify the stop
 
-The **Result** card shows **■ Interrupted** and **How it ended: Stopped**. A run that you stop is not a failure; its result is **Interrupted**. After Ctrl+C, `vehicle-sil-gui` exits with exit code 0. If you press Ctrl+C during a run, the GUI server stops the simulation first, then exits (see "[Stopping and exiting](#stopping-and-exiting)").
+The **Result** card shows **■ Stopped** and **How it ended: Stopped**. A run that you stop is not a failure; its result is **Stopped**. After Ctrl+C, `vehicle-sil-gui` exits with exit code 0. If you press Ctrl+C during a run, the GUI server stops the simulation first, then exits (see "[Stopping and exiting](#stopping-and-exiting)").
 
 ### Step 6: Run a scenario
 
@@ -551,7 +551,7 @@ The server API and the client library can read and write ECU variables in the sa
 
 - **Findings**: the screen has no rules per code. It shows each finding's code and text as they are, ordered by severity (error, warning, note; an unknown severity counts as an error) (findings that the launcher adds later appear as they are too).
 - **Participant failure**: when the launcher reports a participant as failed (`failed`), the screen shows the failure at once, even before the process ends.
-- **Interrupted**: a run that you stopped shows as **Interrupted**, not in the failure color.
+- **Stopped**: a run that you stopped shows as **Stopped**, not in the failure color (**Stopped before the scenario's end** if a scenario was running: it has no verdict). A run that a signal ended, or whose launcher lost the GUI server, shows as **Interrupted**.
 - **Connection to the Control Server**: the state is one of: connected, no hello received, different format version, variables declared but the API not exposed, none. States that cannot read or write show ⚠ and text, not only color.
 - **When the launcher falls silent**: if the launcher stops writing even its heartbeat every second (for 5 seconds by default; `--silent-after`), the status bar says it may be stuck.
 - **Dropped log lines**: log lines that the launcher could not write because its reader was slow (`log_dropped`) appear at their position as the number of lines dropped.

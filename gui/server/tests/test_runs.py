@@ -124,7 +124,7 @@ def test_a_participant_that_the_user_starts(tmp_path: Path) -> None:
         dashboard = next(p for p in end["participants"] if p["name"] == "Dashboard")
         assert dashboard["state"] == "manual" and "--name Dashboard" in dashboard["command_line"]
         assert dashboard["working_directory"] and "pid" not in dashboard
-        assert end["result"]["result"] == "interrupted" and end["result"]["simulation"] == "not_started"
+        assert end["result"]["result"] == "stopped" and end["result"]["simulation"] == "not_started"
         assert [p["manual"] for p in end["result"]["participants"]] == [False, True, False]
     with gui_server(tmp_path) as gui:
         run_async(main, gui)
@@ -244,7 +244,8 @@ def test_one_run_at_a_time_and_stop(tmp_path: Path) -> None:
             assert status == 200 and body["session"]["stop"] == "requested"
             got = await sock.until(is_ended)
             end = got[-1]["session"]
-            assert end["launcher"]["exit_code"] == 130 and end["result"]["result"] == "interrupted"
+            assert end["launcher"]["exit_code"] == 0 and end["result"]["result"] == "stopped"
+            assert (end["result"]["end"], end["result"]["ok"]) == ("stopped", True) and end["result"]["message"]
             assert all(not alive(pid) for pid in started_pids(sock.received))
             status, _ = await c.post("api/run", {"file": "simulation.yaml"})  # the next run may start
             assert status == 200
@@ -537,7 +538,7 @@ def test_pause_step_resume_and_speed(tmp_path: Path) -> None:
             await c.post("api/stop")
             got = await sock.until(is_ended)
             end = got[-1]["session"]
-            assert end["result"]["result"] == "interrupted" and end["launcher_state"]["paused"] is False
+            assert end["result"]["result"] == "stopped" and end["launcher_state"]["paused"] is False
             timing = end["result"]["timing"]
             assert timing["speed"] == 2 and timing["time_step_ms"] == 10 and timing["paused_ms"] > 0
             status, body = await c.post("api/time", {"command": "resume"})
@@ -743,8 +744,8 @@ def test_lateness_reaches_the_screen_and_the_summary(tmp_path: Path) -> None:
         got = await sock.until(is_ended)
         end = got[-1]["session"]
         # The real launcher's order: warnings before notes
-        assert [f["code"] for f in end["result"]["findings"]] == ["behind-real-time", "interrupted"]
-        assert [e["code"] for e in events(got, "finding")] == ["behind-real-time", "interrupted"]
+        assert [f["code"] for f in end["result"]["findings"]] == ["behind-real-time", "stopped"]
+        assert [e["code"] for e in events(got, "finding")] == ["behind-real-time", "stopped"]
         timing = end["result"]["timing"]
         assert (timing["late_steps"], timing["max_late_ms"], timing["slipped_ms"], timing["speed"]) == (1, 200, 200, 1)
     with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
@@ -765,7 +766,7 @@ def test_lateness_within_the_tolerance_is_not_a_late_step(tmp_path: Path) -> Non
         await c.post("api/stop")
         got = await sock.until(is_ended)
         end = got[-1]["session"]
-        assert [f["code"] for f in end["result"]["findings"]] == ["interrupted"]
+        assert [f["code"] for f in end["result"]["findings"]] == ["stopped"]
         assert end["result"]["timing"]["late_steps"] == 0
     with gui_server(tmp_path, env={"REPLAY_TICK_MS": "20"}) as gui:
         run_async(main, gui)

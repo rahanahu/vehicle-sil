@@ -348,9 +348,9 @@ void RunParticipants::end_children(bool ran, int interrupts_at_end)
         waitedInFull = waited == Waited::TimedOut;
         if (waited == Waited::Interrupted && outcome_.end.interrupted_by.empty())
         {
-            outcome_.end.interrupted_by = ctx_.interrupt_name();
+            ctx_.note_interrupt(outcome_.end);
             outcome_.end.interrupted_while_ending = true;
-            out_.say("interrupted (" + outcome_.end.interrupted_by + "): no more waiting for the participants to end");
+            out_.say(outcome_.end.stop_text() + ": no more waiting for the participants to end");
         }
     }
     std::vector<std::size_t> asked;

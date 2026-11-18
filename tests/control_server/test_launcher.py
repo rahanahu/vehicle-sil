@@ -221,8 +221,9 @@ class LauncherTest(unittest.TestCase):
             ("pause", "control_server", True, None, None),
             ("stop", "control_server", True, None, None),
         ])
-        self.assertEqual((result["result"], result["interrupted_by"]), ("interrupted", "control server stop"))
-        self.assertEqual(launch.returncode, 130)
+        self.assertEqual((result["result"], result["interrupted_by"]), ("stopped", "control server stop"))
+        self.assertEqual(launch.returncode, 0)
+        self.assertEqual((result["end"], result["ok"]), ("stopped", True))
         names = [e["event"] for e in launch.events]
         self.assertLess(names.index("control_server"), names.index("registry"))
         server = next(e for e in launch.events if e["event"] == "control_server")
@@ -468,7 +469,7 @@ class LauncherTest(unittest.TestCase):
                 self.assertEqual(c.sim.wait_paused(60).now, 0)
                 launch.stop()
                 result = launch.wait(120)
-        self.assertEqual((result["result"], result["interrupted_by"]), ("interrupted", "stop command"))
+        self.assertEqual((result["result"], result["interrupted_by"]), ("stopped", "stop command"))
 
     def credentials(self, text, name="credentials.txt"):
         SCRATCH.mkdir(parents=True, exist_ok=True)
@@ -689,10 +690,11 @@ class LauncherTest(unittest.TestCase):
             ("resume", "stdin", True, None, None),
             ("stop", "control_server", True, None, None),
         ])
-        self.assertEqual((result["result"], result["interrupted_by"]), ("interrupted", "control server stop"))
-        self.assertEqual(launch.returncode, 130)
+        self.assertEqual((result["result"], result["end"], result["ok"], result["interrupted_by"]),
+                         ("incomplete", "stopped", False, "control server stop"))
+        self.assertEqual(launch.returncode, 5)
         self.assertEqual(result["scenario"]["status"], "incomplete")
-        self.assertIn(("error", "scenario-incomplete", None), findings_of(result))
+        self.assertIn(("note", "scenario-incomplete", None), findings_of(result))
         self.assertEqual([s["status"] for s in result["scenario"]["steps"]], ["passed", "not_run"])
 
     def test_a_run_that_is_connected_outside_refuses_what_moves_its_time_away_from_real_time(self):
@@ -780,7 +782,7 @@ class LauncherTest(unittest.TestCase):
                 c.sim.resume()
                 c.sim.stop("enough")
             result = launch.wait()
-        self.assertEqual(launch.returncode, 130)
+        self.assertEqual(launch.returncode, 0)
         notes = [f for f in result["findings"] if f["code"] == "outside-time-changed"]
         self.assertEqual([f["severity"] for f in notes], ["note"])
         self.assertIn("participant 'Gateway' is a bridge (role: bridge) to something outside the simulation", notes[0]["message"])

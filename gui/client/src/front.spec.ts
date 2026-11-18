@@ -482,8 +482,11 @@ describe('the front door', () => {
           seq: 50,
           t_ms: 50,
           result: {
-            vehicle_sil_run: 1,
+            vehicle_sil_run: 2,
             result: 'passed',
+            end: 'completed',
+            ok: true,
+            message: 'The run reached its end without errors',
             interrupted_by: null,
             errors: 0,
             warnings: 0,
@@ -497,7 +500,7 @@ describe('the front door', () => {
       expect(rig.front.controls.get().stop.ok).toBe(true);
     });
 
-    it('shows the sentences of a result by its name, and a stop by the operator is not a failure', async () => {
+    it('passes on what the launcher says of the result, and a stop by the operator is not a failure', async () => {
       const rig = await running();
       await rig.deliver(
         event({
@@ -505,8 +508,11 @@ describe('the front door', () => {
           seq: 50,
           t_ms: 50,
           result: {
-            vehicle_sil_run: 1,
-            result: 'interrupted',
+            vehicle_sil_run: 2,
+            result: 'stopped',
+            end: 'stopped',
+            ok: true,
+            message: 'The run was stopped by a stop request without errors',
             interrupted_by: 'control server stop',
             errors: 0,
             warnings: 0,
@@ -519,16 +525,87 @@ describe('the front door', () => {
           type: 'session',
           session: summary({
             state: 'ended',
-            launcher: { pid: 1, running: false, exit_code: 130, signal: null, silent_s: null },
+            launcher: { pid: 1, running: false, exit_code: 0, signal: null, silent_s: null },
             allowed: serverAllowed(4, startOk, notRunning),
           }),
         },
       );
       const status = rig.front.status.get();
       expect(status.run).toBe('ended');
-      expect(status.result).toMatchObject({ end: 'stopped', ok: true, scenario: null });
+      expect(status.result).toEqual({
+        end: 'stopped',
+        ok: true,
+        scenario: null,
+        message: 'The run was stopped by a stop request without errors',
+      });
       expect(status.problem).toBeNull();
       expect(rig.front.controls.get().start.ok).toBe(true);
+    });
+
+    it('shows a scenario that a stop cut short as the problem, in the words of the launcher', async () => {
+      const rig = await running();
+      const message =
+        'The run was stopped by a stop request before the scenario reached its end, so the scenario has no verdict';
+      await rig.deliver(
+        event({
+          event: 'result',
+          seq: 50,
+          t_ms: 50,
+          result: {
+            vehicle_sil_run: 2,
+            result: 'incomplete',
+            end: 'stopped',
+            ok: false,
+            message,
+            interrupted_by: 'stop command',
+            errors: 0,
+            warnings: 0,
+            notes: 2,
+            participants: [],
+            findings: [],
+            scenario: {
+              file: 's.yaml',
+              name: null,
+              status: 'incomplete',
+              over_at_ms: null,
+              steps: [],
+            },
+          },
+        }),
+      );
+      const status = rig.front.status.get();
+      expect(status.result).toEqual({ end: 'stopped', ok: false, scenario: 'incomplete', message });
+      expect(status.problem).toEqual({ code: 'run-failed', message });
+    });
+
+    it('has no end for a result of a run in which nothing was started', async () => {
+      const rig = await running();
+      await rig.deliver(
+        event({
+          event: 'result',
+          seq: 50,
+          t_ms: 50,
+          result: {
+            vehicle_sil_run: 2,
+            result: 'check_failed',
+            end: null,
+            ok: false,
+            message: 'Nothing was started, because the check failed: no such file',
+            interrupted_by: null,
+            errors: 1,
+            warnings: 0,
+            notes: 0,
+            participants: [],
+            findings: [],
+          },
+        }),
+      );
+      const status = rig.front.status.get();
+      expect(status.run).toBe('ended');
+      expect(status.result).toMatchObject({ end: null, ok: false });
+      expect(status.problem?.message).toBe(
+        'Nothing was started, because the check failed: no such file',
+      );
     });
 
     it('shows a failed run as the problem, and the launcher dying without a result as crashed', async () => {
@@ -539,8 +616,11 @@ describe('the front door', () => {
           seq: 50,
           t_ms: 50,
           result: {
-            vehicle_sil_run: 1,
+            vehicle_sil_run: 2,
             result: 'failed',
+            end: 'failed',
+            ok: false,
+            message: 'The run failed: Engine failed',
             interrupted_by: null,
             errors: 1,
             warnings: 0,
@@ -559,7 +639,7 @@ describe('the front door', () => {
       );
       expect(rig.front.status.get().problem).toEqual({
         code: 'run-failed',
-        message: 'the run failed: Engine failed',
+        message: 'The run failed: Engine failed',
       });
       const crashed = await running();
       await crashed.deliver({

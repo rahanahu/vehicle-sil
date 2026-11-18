@@ -1360,7 +1360,7 @@
         "event": "time",
         "seq": 34,
         "t_ms": 340,
-        "sim_ms": 120,
+        "sim_ms": 130,
         "actual_speed": null,
         "late_steps": 0,
         "max_late_ms": 0,
@@ -1469,21 +1469,6 @@
       }
     },
     {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 38,
-        "t_ms": 380,
-        "sim_ms": 130,
-        "actual_speed": null,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
-      }
-    },
-    {
       "type": "session",
       "session": {
         "id": 1,
@@ -1506,12 +1491,12 @@
         },
         "stop": "requested",
         "phase": "running",
-        "last_seq": 38,
-        "last_t_ms": 380,
+        "last_seq": 37,
+        "last_t_ms": 370,
         "time": {
           "event": "time",
-          "seq": 38,
-          "t_ms": 380,
+          "seq": 34,
+          "t_ms": 340,
           "sim_ms": 130,
           "actual_speed": null,
           "late_steps": 0,
@@ -1943,8 +1928,8 @@
       "session": 1,
       "event": {
         "event": "command",
-        "seq": 39,
-        "t_ms": 390,
+        "seq": 38,
+        "t_ms": 380,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -1958,8 +1943,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 40,
-        "t_ms": 400,
+        "seq": 39,
+        "t_ms": 390,
         "rev": 11,
         "phase": "running",
         "paused": true,
@@ -2027,11 +2012,81 @@
       "type": "event",
       "session": 1,
       "event": {
+        "event": "state",
+        "seq": 40,
+        "t_ms": 400,
+        "rev": 12,
+        "phase": "running",
+        "paused": false,
+        "paused_at_ms": null,
+        "holding": false,
+        "speed": 1,
+        "pacing": "not-paced",
+        "stop": {
+          "requests": 1,
+          "by": "stop command"
+        },
+        "scenario": false,
+        "allowed": {
+          "pause": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): pause works from the start of the run until the simulation ends",
+            "caution": null
+          },
+          "resume": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): resume works from the start of the run until the simulation ends",
+            "caution": null
+          },
+          "step": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): step works from the start of the run until the simulation ends",
+            "caution": null,
+            "min_ms": 1,
+            "max_ms": 1000000000000
+          },
+          "speed": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): speed works from the start of the run until the simulation ends",
+            "caution": null,
+            "min": 1e-06,
+            "max": 1000000.0
+          },
+          "run_until": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
+            "caution": null
+          },
+          "stop": {
+            "ok": true,
+            "reason": null,
+            "message": null,
+            "caution": null
+          },
+          "write": {
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "caution": null
+          }
+        },
+        "outside": []
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
         "event": "log",
         "seq": 41,
         "t_ms": 410,
         "source": "vehicle_sil_launch",
-        "line": "interrupted (stop command): the simulation was stopped"
+        "line": "stopped by a stop request: the simulation was stopped"
       }
     },
     {
@@ -2059,12 +2114,12 @@
         "seq": 43,
         "t_ms": 430,
         "severity": "note",
-        "code": "interrupted",
+        "code": "stopped",
         "file": "forever.yaml",
         "line": null,
         "participant": null,
         "network": null,
-        "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+        "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
         "detail": null
       }
     },
@@ -2284,10 +2339,13 @@
         "seq": 52,
         "t_ms": 520,
         "result": {
-          "vehicle_sil_run": 1,
+          "vehicle_sil_run": 2,
           "vehicle_sil": "0.1.0",
           "file": "forever.yaml",
-          "result": "interrupted",
+          "result": "stopped",
+          "end": "stopped",
+          "ok": true,
+          "message": "The run was stopped by a stop request without errors",
           "strict": false,
           "errors": 0,
           "warnings": 1,
@@ -2416,12 +2474,12 @@
             },
             {
               "severity": "note",
-              "code": "interrupted",
+              "code": "stopped",
               "file": "forever.yaml",
               "line": null,
               "participant": null,
               "network": null,
-              "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+              "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
               "detail": null
             }
           ],
@@ -2707,7 +2765,7 @@
         "launcher": {
           "pid": 10001,
           "running": false,
-          "exit_code": 130,
+          "exit_code": 0,
           "signal": null,
           "silent_s": null
         },
@@ -2717,8 +2775,8 @@
         "last_t_ms": 520,
         "time": {
           "event": "time",
-          "seq": 38,
-          "t_ms": 380,
+          "seq": 34,
+          "t_ms": 340,
           "sim_ms": 130,
           "actual_speed": null,
           "late_steps": 0,
@@ -3053,18 +3111,18 @@
           },
           {
             "severity": "note",
-            "code": "interrupted",
+            "code": "stopped",
             "file": "forever.yaml",
             "line": null,
             "participant": null,
             "network": null,
-            "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+            "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
             "detail": null
           }
         ],
         "findings_omitted": 0,
         "last_command": {
-          "seq": 39,
+          "seq": 38,
           "command": "stop",
           "source": "stdin",
           "accepted": true,
@@ -3155,10 +3213,13 @@
           }
         },
         "result": {
-          "vehicle_sil_run": 1,
+          "vehicle_sil_run": 2,
           "vehicle_sil": "0.1.0",
           "file": "forever.yaml",
-          "result": "interrupted",
+          "result": "stopped",
+          "end": "stopped",
+          "ok": true,
+          "message": "The run was stopped by a stop request without errors",
           "strict": false,
           "errors": 0,
           "warnings": 1,
@@ -3287,12 +3348,12 @@
             },
             {
               "severity": "note",
-              "code": "interrupted",
+              "code": "stopped",
               "file": "forever.yaml",
               "line": null,
               "participant": null,
               "network": null,
-              "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+              "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
               "detail": null
             }
           ],

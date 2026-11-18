@@ -216,7 +216,7 @@ with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launc
 | 項目 | `Stop` の動作 |
 |---|---|
 | 1 回目と 2 回目 | 1 回目は順に止め、2 回目は待たずに participant を終わらせます。 |
-| 結果の `interrupted_by` | `"control server stop"` です。 |
+| 結果 | `interrupted_by` は `"control server stop"`、`end` は `"stopped"` です。終了コードは 0、シナリオが終わる前に止めたときは 5 です（エラーがあれば 1）。 |
 | 理由の文 | 監査ログの行にだけ残ります。 |
 | シミュレーションが終わった後（始まらなかったときも） | 時間のコマンドと同じく拒否し（`accepted: false`、`FAILED_PRECONDITION`）、結果は変わりません。 |
 | イベントの順 | 時間のコマンドと同じ順に並びます。 |

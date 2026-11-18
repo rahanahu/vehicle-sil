@@ -179,7 +179,7 @@ When these 2 lines appear, you can connect. Lines about starting the registry an
 [vehicle_sil_launch] standing still before the first step until a resume, step or run_until command (--start-paused with a control server)
 ```
 
-With only one terminal (in a script or in CI), add `> launch.log 2>&1 &` to the end of the terminal 1 command to start it in the background. When the 2 lines above appear in `launch.log`, run the terminal 2 commands in the same terminal. To stop partway, use the CLI command `stop` or `kill <PID>` (SIGTERM). The simulation and the ECUs stop (result `interrupted`, exit code 130).
+With only one terminal (in a script or in CI), add `> launch.log 2>&1 &` to the end of the terminal 1 command to start it in the background. When the 2 lines above appear in `launch.log`, run the terminal 2 commands in the same terminal. To stop partway, use the CLI command `stop` or `kill <PID>` (SIGTERM). The simulation and the ECUs stop (`stop`: result `stopped`, exit code 0; `kill`: result `interrupted`, exit code 130).
 
 In terminal 2, run `export PYTHONPATH="$PWD/python"`, then run the commands below in order. Unless you give another address, the CLI connects to `127.0.0.1:8510`.
 
@@ -554,7 +554,7 @@ You can type these 5 lines:
 | `{"command":"resume"}` | Resumes. |
 | `{"command":"step","ms":500}` | Advances 500 ms and pauses again. Works only while the simulation is paused. |
 | `{"command":"speed","value":1}` | Changes the speed (`"max"` for as fast as possible). |
-| `{"command":"stop"}` | Stops the simulation (result `interrupted`, exit code 130). |
+| `{"command":"stop"}` | Stops the simulation (result `stopped`, exit code 0). |
 
 - Closing stdin (Ctrl+D in a terminal) is the same as `stop`.
 - A line that is not valid JSON is ignored, and the reason is printed on one line of stderr.

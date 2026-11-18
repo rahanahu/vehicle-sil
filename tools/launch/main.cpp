@@ -190,9 +190,10 @@ constexpr const char* kUsage =
     "  --help, -h                  this text\n"
     "  --version                   as version\n"
     "  --                          what follows is the file, also if it starts with '-'\n"
-    "exit codes: 0 passed, 1 errors (with --strict: or warnings; run: also a failed simulation; test: a run failed\n"
-    "            or was left out; connections: a list could not be made), 3 the file cannot be read (run: or the\n"
-    "            registry cannot be set up), 4 usage, 130 run or test was interrupted (or stopped)\n"
+    "exit codes: 0 passed (run: also stopped by a command), 1 errors (with --strict: or warnings; run: also a failed\n"
+    "            simulation; test: a run failed or was left out; connections: a list could not be made), 3 the file\n"
+    "            cannot be read (run: or the registry cannot be set up), 4 usage, 5 run: a scenario was stopped by a\n"
+    "            command before its end, 130 run or test was interrupted (a signal, or its input or output closed)\n"
     "the file format: docs/simulation-config.md; check: docs/simulation-check.md; run: docs/simulation-run.md;\n"
     "events and commands: docs/simulation-events.md; scenarios: docs/scenario.md\n";
 
