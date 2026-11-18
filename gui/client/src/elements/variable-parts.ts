@@ -1,0 +1,132 @@
+// The parts of one variable: show it, set it with a slider, write one value with a button.
+import { watch } from '../index';
+import type { Front, FrontVariable, VariableView } from '../index';
+import { Part, h, quietly, setData } from './part';
+import { reasonText } from './reasons';
+
+let noteIds = 0;
+
+/** The line under a variable part: why it cannot be written, or why the last write failed. */
+const writeNote = (v: VariableView): string => {
+  if (v.problem) return reasonText(v.problem);
+  if (!v.can_write && v.why) return reasonText(v.why);
+  return v.writing ? 'writing…' : '';
+};
+
+/** A part that shows or sets the variable of its `variable` attribute (`"ECU.variable"`). */
+abstract class VariablePart extends Part {
+  static override observedAttributes = ['variable'];
+
+  /** Whether the part writes (so that it says why it cannot). */
+  protected readonly writes: boolean = false;
+
+  /** Builds the controls once; returns what to do with each new view. */
+  protected abstract build(
+    variable: FrontVariable,
+    root: HTMLElement,
+    note: HTMLElement,
+  ): (view: VariableView) => void;
+
+  protected draw(client: Front, root: HTMLElement): void {
+    const name = this.getAttribute('variable');
+    if (!name) {
+      throw new Error(
+        `<${this.localName}> needs the attribute variable="ECU.variable" (the ECU's name, a dot and the variable's name)`,
+      );
+    }
+    const variable = client.variable(name);
+    const note = h('small', { id: `vsil-note-${++noteIds}`, class: 'vsil-note' });
+    const show = this.build(variable, root, note);
+    root.append(' ', note);
+    this.own(
+      watch(variable, (v) => {
+        setData(this, 'stale', String(v.stale));
+        setData(this, 'canWrite', String(v.can_write));
+        show(v);
+        if (this.writes) note.textContent = writeNote(v);
+      }),
+    );
+  }
+}
+
+/** `<vsil-value variable="ECU.variable" [on="LOST" off="ok"] [no-unit]>`: the value and its unit; a bool shows as the `on` and `off` text. */
+export class VsilValueElement extends VariablePart {
+  static override observedAttributes = ['variable', 'on', 'off', 'no-unit'];
+
+  protected build(_variable: FrontVariable, root: HTMLElement, note: HTMLElement) {
+    const output = root.appendChild(h('output'));
+    return (v: VariableView) => {
+      if (typeof v.value === 'boolean') {
+        setData(this, 'on', String(v.value));
+        output.textContent = v.value ? this.text('on', 'on') : this.text('off', 'off');
+      } else {
+        setData(this, 'on', null);
+        const unit = this.hasAttribute('no-unit') || !v.unit ? '' : ` ${v.unit}`;
+        output.textContent = v.value === null ? '-' : `${v.text}${unit}`;
+      }
+      note.textContent = v.note ?? '';
+    };
+  }
+}
+
+/** `<vsil-slider variable="ECU.variable">`: a number in the variable's range; it is written when the knob is released. */
+export class VsilSliderElement extends VariablePart {
+  protected override readonly writes = true;
+
+  protected build(variable: FrontVariable, root: HTMLElement, note: HTMLElement) {
+    const input = h('input', { type: 'range', 'aria-describedby': note.id });
+    const output = h('output');
+    let dragging = false;
+    input.addEventListener('input', () => (dragging = true));
+    input.addEventListener('change', () => {
+      dragging = false;
+      void quietly(() => variable.write(Number(input.value)));
+    });
+    root.append(input, ' ', output);
+    return (v: VariableView) => {
+      input.disabled = !v.can_write;
+      if (!v.can_write) dragging = false; // a knob that cannot be released must not stay held
+      if (v.min !== null && v.max !== null) {
+        input.min = String(v.min);
+        input.max = String(v.max);
+        input.step = v.step === null ? 'any' : String(v.step);
+      }
+      if (!dragging && typeof v.value === 'number') input.value = String(v.value);
+      output.textContent = v.value === null ? '-' : `${v.text}${v.unit ? ` ${v.unit}` : ''}`;
+    };
+  }
+}
+
+/** The value of a `value` attribute: JSON (a number, true, false), else the text as it is. */
+const target = (text: string | null): number | boolean | string => {
+  if (text === null) return true;
+  try {
+    const value: unknown = JSON.parse(text);
+    if (typeof value === 'number' || typeof value === 'boolean') return value;
+  } catch {
+    // not JSON: it is a text
+  }
+  return text;
+};
+
+/** `<vsil-write variable="ECU.variable" value="false" label="Cut">`: writes one value when pressed (not when it already is that value). */
+export class VsilWriteElement extends VariablePart {
+  static override observedAttributes = ['variable', 'value', 'label'];
+  protected override readonly writes = true;
+
+  protected build(variable: FrontVariable, root: HTMLElement, note: HTMLElement) {
+    const value = target(this.getAttribute('value'));
+    const button = h(
+      'button',
+      { type: 'button', 'aria-describedby': note.id },
+      this.text('label', `${this.getAttribute('variable')} = ${String(value)}`),
+    );
+    button.addEventListener('click', () => {
+      if (button.getAttribute('aria-disabled') !== 'true')
+        void quietly(() => variable.write(value));
+    });
+    root.append(button);
+    return (v: VariableView) =>
+      button.setAttribute('aria-disabled', String(!v.can_write || v.value === value));
+  }
+}

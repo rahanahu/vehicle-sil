@@ -3,11 +3,11 @@
 //
 //   node ../client/pack.mjs [--out <dir>] [--version <x.y.z>]
 //
-// Contents: dist/index.js (one ESM bundle), types/ (.d.ts), timeline/ (the element <vehicle-sil-timeline> of
+// Contents: dist/index.js (one ESM bundle), dist/elements.js (the parts, importing ./index.js), types/ (.d.ts), timeline/ (the element <vehicle-sil-timeline> of
 // gui/timeline as a script, the same as an ES module for @vehicle-sil/gui-client/timeline, and its .d.ts),
 // package.json (exports), README.md, README.ja.md,
 // LICENSE. Checked after it is made: Node imports the installed package, and the TypeScript example of
-// examples/gui_starter/README.md (and of README.ja.md) and a use of the element type-check with the module
+// examples/gui_starter/README.md (and of README.ja.md), the example of the parts section of README.md and a use of the element type-check with the module
 // resolutions nodenext and bundler.
 // Exit codes: 0 made, 1 failed, 2 usage error.
 import { execFileSync } from 'node:child_process';
@@ -23,6 +23,7 @@ import {
 import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildElements } from './build-elements.mjs';
 
 const CLIENT = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY = resolve(CLIENT, '../..');
@@ -47,6 +48,19 @@ timeline.addEventListener('cursorchange', (e) => console.log(e.detail.cursor));
 timeline.addEventListener('stepselect', (e) => console.log(e.detail.step));
 timeline.addEventListener('viewchange', (e) => console.log(e.detail.from, e.detail.to));
 document.body.append(timeline);
+`;
+/** What a screen writes to use the parts, type-checked against the package. */
+const ELEMENTS_EXAMPLE = `
+import '@vehicle-sil/gui-client/elements';
+import { pageIntent, setReasonText } from '@vehicle-sil/gui-client/elements';
+import type { VsilRunControlsElement } from '@vehicle-sil/gui-client/elements';
+setReasonText((reason) => (reason.code === 'busy' ? 'Wait a moment.' : null));
+pageIntent.update({ scenario: 'scenarios/a.yaml' });
+const controls: VsilRunControlsElement | null = document.querySelector('vsil-run-controls');
+if (controls) controls.intent = { speed: 'max' };
+const write = document.createElement('vsil-write');
+write.setAttribute('variable', 'Engine.ecu.connected');
+document.body.append(write);
 `;
 const fromWeb = createRequire(join(WEB, 'package.json'));
 
@@ -142,6 +156,16 @@ function readmeExamples() {
   return examples;
 }
 
+/** The \`\`\`ts example of the parts' section of README.md, so that the README keeps to what the package types allow. */
+function elementsReadme() {
+  const text = readFileSync(join(CLIENT, 'README.md'), 'utf8');
+  const section = /^## Parts \(custom elements\)$/m.exec(text);
+  if (!section) fail('gui/client/README.md has no "## Parts (custom elements)" section');
+  const match = /```ts\n([\s\S]*?)```/.exec(text.slice(section.index));
+  if (!match) fail('the parts section of gui/client/README.md has no ```ts example to check');
+  return [match[1]];
+}
+
 /** Installs the package as a user would (node_modules/@vehicle-sil/gui-client) and uses it. */
 function check(packageDir, checkDir, tsc) {
   rmSync(checkDir, { recursive: true, force: true });
@@ -165,7 +189,7 @@ function check(packageDir, checkDir, tsc) {
       config,
       JSON.stringify({ compilerOptions: { ...base, ...settings }, files: ['main.ts'] }),
     );
-    for (const example of [...examples, TIMELINE_EXAMPLE]) {
+    for (const example of [...examples, TIMELINE_EXAMPLE, ELEMENTS_EXAMPLE, ...elementsReadme()]) {
       writeFileSync(join(checkDir, 'main.ts'), `export {};\n${example}`);
       node(tsc, ['-p', config], checkDir);
     }
@@ -176,7 +200,15 @@ function check(packageDir, checkDir, tsc) {
     "if (typeof m[name] !== 'function') throw new Error('not exported: ' + name);" +
     // Without a DOM the element's file defines only its functions that need none.
     `await import('${NAME}/timeline');` +
-    "if (typeof globalThis.VehicleSilTimeline?.readTimeline !== 'function') throw new Error('timeline: no VehicleSilTimeline');";
+    "if (typeof globalThis.VehicleSilTimeline?.readTimeline !== 'function') throw new Error('timeline: no VehicleSilTimeline');" +
+    // The parts need a DOM, so Node does not load them: the main entry must not pull them in, and the parts must not
+    // carry a copy of the main entry (two copies would make two connections).
+    "const fs = await import('node:fs');" +
+    `const dist = ${JSON.stringify(join('node_modules', ...NAME.split('/'), 'dist'))};` +
+    "if (fs.readFileSync(dist + '/index.js', 'utf8').includes('vsil-status')) throw new Error('the main entry contains the parts');" +
+    "const parts = fs.readFileSync(dist + '/elements.js', 'utf8');" +
+    "if (!/from\\s*[\"']\\.\\/index\\.js[\"']/.test(parts)) throw new Error('the parts do not import the main entry');" +
+    "if (parts.includes('class ActionError')) throw new Error('the parts carry a copy of the main entry');";
   try {
     execFileSync(process.execPath, ['--input-type=module', '-e', probe], {
       cwd: checkDir,
@@ -187,7 +219,7 @@ function check(packageDir, checkDir, tsc) {
   }
 }
 
-function main() {
+async function main() {
   const args = options(process.argv.slice(2));
   const version = args.version ?? serverVersion();
   const packageDir = join(args.out, 'package');
@@ -204,6 +236,8 @@ function main() {
     outfile: join(packageDir, 'dist', 'index.js'),
     logLevel: 'error',
   });
+  // The parts import the main entry (dist/index.js) instead of copying it: the page's connection is that one's state.
+  await buildElements(join(packageDir, 'dist', 'elements.js'), './index.js');
   const tsc = fromWeb.resolve('typescript/bin/tsc');
   const types = join(packageDir, 'types');
   node(tsc, ['-p', join(CLIENT, 'tsconfig.package.json'), '--declarationDir', types], CLIENT);
@@ -226,14 +260,19 @@ function main() {
     type: 'module',
     exports: {
       '.': { types: './types/index.d.ts', default: './dist/index.js' },
+      './elements': { types: './types/elements/index.d.ts', default: './dist/elements.js' },
       './timeline': {
         types: './timeline/vehicle-sil-timeline.d.ts',
         default: './timeline/vehicle-sil-timeline.mjs',
       },
     },
     types: './types/index.d.ts',
-    // Importing the timeline defines the element: a bundler must keep that import.
-    sideEffects: ['./timeline/vehicle-sil-timeline.js', './timeline/vehicle-sil-timeline.mjs'],
+    // Importing the timeline or the parts defines elements: a bundler must keep that import.
+    sideEffects: [
+      './dist/elements.js',
+      './timeline/vehicle-sil-timeline.js',
+      './timeline/vehicle-sil-timeline.mjs',
+    ],
     files: ['dist', 'types', 'timeline', 'README.ja.md'],
     engines: { node: '>=22' },
   };
@@ -269,7 +308,9 @@ function main() {
     'README.ja.md',
     'LICENSE',
     'dist/index.js',
+    'dist/elements.js',
     'types/index.d.ts',
+    'types/elements/index.d.ts',
     'timeline/vehicle-sil-timeline.js',
     'timeline/vehicle-sil-timeline.mjs',
     'timeline/vehicle-sil-timeline.d.ts',
@@ -284,4 +325,4 @@ function main() {
   );
 }
 
-main();
+await main();

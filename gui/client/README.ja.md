@@ -27,26 +27,28 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 | TypeScript と好きなフレームワーク                     | パッケージ `vehicle-sil-gui-client-<version>.tgz` を入手し、自分のプロジェクトで `npm install <that .tgz>` をする | `import { createClient } from '@vehicle-sil/gui-client'`      |
 | このリポジトリの中の TypeScript のアプリ（`gui/web`） | `tsconfig.json` の `paths` で、エントリーポイントの名前を `src/` に向ける                                         | `import { createClient } from '@vehicle-sil/gui-client'`      |
 
-2 つのファイルは、次の場所にあります。
+3 つのファイルは、次の場所にあります。
 
 | ファイル                               | ビルド済みのツール                                    | リポジトリでビルドする（`gui/web` で実行）                                              |
 | -------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `vehicle-sil-gui-client.mjs`           | `<tools>/client/vehicle-sil-gui-client.mjs`           | `npm run build:client` が `build/gui-client/vehicle-sil-gui-client.mjs` を作る          |
+| `vehicle-sil-gui-elements.mjs`         | （アーカイブには入っていません）                      | `npm run build:client` が `build/gui-client/vehicle-sil-gui-elements.mjs` を作る        |
 | `vehicle-sil-gui-client-<version>.tgz` | `<tools>/client/vehicle-sil-gui-client-<version>.tgz` | `npm run pack:client` が `build/gui-client/vehicle-sil-gui-client-<version>.tgz` を作る |
 
 同じ `.tgz` は、リリースのページにもあります。`build/` はリポジトリの直下のもので、Git では追跡しません。
 
 - **1 つにまとめたファイル**: ブラウザでも Node（22 以上）でも読めます。`scripts/verify-gui.py` が、このファイルを Node から使う例を、記録を再生するランチャーを相手に動かして確認します。
-- **パッケージ**: 中身は、1 つにまとめた ESM、`.d.ts`、`exports`、README、LICENSE です（作り方は `pack.mjs`）。バージョンは GUI サーバーと同じです。型はブラウザの型（`lib` の `DOM`）を使います。エントリーポイントは `.` と `./timeline` です（`testing` と `internal` は入りません）。
+- **パッケージ**: 中身は、1 つにまとめた ESM、`.d.ts`、`exports`、README、LICENSE です（作り方は `pack.mjs`）。バージョンは GUI サーバーと同じです。型はブラウザの型（`lib` の `DOM`）を使います。エントリーポイントは `.`、`./elements`、`./timeline` です（`testing` と `internal` は入りません）。
 
 ## エントリーポイント
 
-| エントリーポイント                                                                                               | 名前                               | 中身                                                                                                                                                                    |
-| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/index.ts`                                                                                                   | `@vehicle-sil/gui-client`          | 公開 API（下の「公開 API」）。互換を保証するのはここだけ                                                                                                                |
-| `src/testing/index.ts`                                                                                           | `@vehicle-sil/gui-client/testing`  | テスト用のヘルパー（自分のコンポーネントのテストに使える）                                                                                                              |
-| `src/internal.ts`                                                                                                | `@vehicle-sil/gui-client/internal` | **互換の保証の外**。内部のクラスと関数で、アプリでは使わない                                                                                                            |
-| `../timeline/vehicle-sil-timeline.js`（パッケージでは `export {}` を足した `timeline/vehicle-sil-timeline.mjs`） | `@vehicle-sil/gui-client/timeline` | 要素 `<vehicle-sil-timeline>` と型。import すると要素を定義します（[docs/ja/gui.md](../../docs/ja/gui.md#自分の画面に時間の軸を置く) の「自分の画面に時間の軸を置く」） |
+| エントリーポイント                                                                                               | 名前                               | 中身                                                                                                                                                                                              |
+| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/index.ts`                                                                                                   | `@vehicle-sil/gui-client`          | 公開 API（下の「公開 API」）。互換を保証するのはここだけ                                                                                                                                          |
+| `src/testing/index.ts`                                                                                           | `@vehicle-sil/gui-client/testing`  | テスト用のヘルパー（自分のコンポーネントのテストに使える）                                                                                                                                        |
+| `src/internal.ts`                                                                                                | `@vehicle-sil/gui-client/internal` | **互換の保証の外**。内部のクラスと関数で、アプリでは使わない                                                                                                                                      |
+| `src/elements/index.ts`（パッケージでは `dist/index.js` を import する `dist/elements.js`）                      | `@vehicle-sil/gui-client/elements` | 部品（custom element の `<vsil-status>` ほか 7 個）、`pageIntent`、`setReasonText`。import すると定義します（下の「部品（custom element）」）。DOM を要します。本体の入口はこれを import しません |
+| `../timeline/vehicle-sil-timeline.js`（パッケージでは `export {}` を足した `timeline/vehicle-sil-timeline.mjs`） | `@vehicle-sil/gui-client/timeline` | 要素 `<vehicle-sil-timeline>` と型。import すると要素を定義します（[docs/ja/gui.md](../../docs/ja/gui.md#自分の画面に時間の軸を置く) の「自分の画面に時間の軸を置く」）                           |
 
 - `testing` にあるのは、偽の WebSocket（`FakeWebSockets`）、偽の HTTP（`FakeHttp`）、`gui/protocol/examples/` の読み込み、要約から `SessionView` を作る `sessionViewFrom` です。
 - `internal` にあるのは、内部のクラス、要約を反映する関数、読み取りの関数です。テストのために公開していて、予告なく変わり、消えます。
@@ -359,6 +361,69 @@ stop(); // 最後の購読を解除すると、サーバーに値を頼むのを
 - `write(value)` は購読がなくても書けます（その 1 回だけ送ります）。`ActionError` で拒否します。`no-answer` は `unknown` で、答えの来なかった書き込みは送り直しません。
 - バインド（`client.low.variables.bind`）は、書き込みが向かっている間、次の値を保留してまとめます（スライダーのため）。正面の口の `write()` は、呼ぶたびに送ります。
 
+## 部品（custom element）
+
+`@vehicle-sil/gui-client/elements` は、`connect()` が返すものを描く custom element を 8 個定義します。スクリプトなしの HTML だけで画面を書けます。素のコントロールを light DOM に置き、見た目は付けません。スタイルは自分の CSS で付けます。素の HTML でも、Angular、React、Vue、Svelte のテンプレートでも使えます。import すると定義します（定義済みの名前は飛ばします）。
+
+| 要素                     | 出すもの、すること                                                                       | 属性とプロパティ                                                                                                       |
+| ------------------------ | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `<vsil-status>`          | 接続、実行の状態、仮想時刻（実時間に遅れていれば印）、知らせる問題 1 件                  | なし                                                                                                                   |
+| `<vsil-run-controls>`    | 開始（ページの選択つき）、停止、1 回目の停止の後の「待たずに停止」                       | プロパティ `intent`、`label-start`、`label-stop`、`label-force-stop`                                                   |
+| `<vsil-time-controls>`   | 一時停止、再開、ステップ、指定時刻まで、速さ                                             | `speeds`（既定 `0.5 1 5 max`）、`step-ms`（既定 `10`）、`label-pause`、`label-resume`、`label-step`、`label-run-until` |
+| `<vsil-value>`           | 値と単位、生きた値でないときの 1 文。bool は `on` と `off` の文                          | `variable`、`on`、`off`、`no-unit`                                                                                     |
+| `<vsil-slider>`          | 変数の範囲の数。つまみを離したときに書く                                                 | `variable`                                                                                                             |
+| `<vsil-write>`           | 1 つの値を書くボタン（変数がもうその値なら押せない）                                     | `variable`、`value`（JSON: `false`、`3`。それ以外は文字列）、`label`                                                   |
+| `<vsil-scenario-select>` | 次の実行のシナリオ。走らせる構成ファイルの隣にあるものから選ぶ（最初の選択肢は「なし」） | なし                                                                                                                   |
+| `<vsil-scenario-result>` | 実行のシナリオの結果と手順                                                               | なし                                                                                                                   |
+
+変数は、`client.variable()` と同じ `ECU.variable`（最初の点で切る）で書きます。
+
+```html
+<script type="module" src="./vehicle-sil-gui-elements.mjs"></script>
+<vsil-status></vsil-status> <vsil-run-controls></vsil-run-controls>
+<label>Throttle <vsil-slider variable="Engine.engine.throttle"></vsil-slider></label>
+<vsil-write
+  variable="Engine.ecu.connected"
+  value="false"
+  label="Cut engine from the bus"
+></vsil-write>
+<p>
+  Engine lost:
+  <vsil-value variable="Dashboard.dashboard.engine_lost" on="LOST" off="ok"></vsil-value>
+</p>
+<vsil-time-controls speeds="0.5 1 5 max"></vsil-time-controls>
+<label>Scenario of the next run <vsil-scenario-select></vsil-scenario-select></label>
+<vsil-scenario-result></vsil-scenario-result>
+```
+
+### 部品が守ること
+
+- **ページの接続。** 部品は引数なしで `connect()` を呼びます。ページのスクリプトと部品は 1 つの接続（WebSocket 1 本）を共有し、自分のボタンの失敗も `<vsil-status>` に出ます。別の接続を使わせるには、部品の `client` プロパティに渡します（文書に入っていれば結び直します）。
+- **ファイルの組は 1 つ。** パッケージか 1 ファイルの束のどちらか一方を使い、両方は使いません。部品は本体の入口を import し、写しを持ちません。プロジェクトでは（パッケージ）、部品も自分のスクリプトも `@vehicle-sil/gui-client` を import します。1 ファイルの束では、`vehicle-sil-gui-elements.mjs` を `vehicle-sil-gui-client.mjs` の隣に置き、ライブラリーは同じファイルから import します。ライブラリーの写しが 2 つあると、接続も 2 本になります。
+- **自分のマークアップと CSS。** 影の DOM はありません。部品は足した `<span class="vsil">` に描き、要素の中に置いた子は残します。CSS のために `data-*` を付けます: `data-link`、`data-run`、`data-pacing`（`<vsil-status>`）、`data-stale`、`data-can-write`、`data-on`（変数の部品）、`data-status`（`<vsil-scenario-result>` とその手順）、各ボタンの `data-reason` と `data-caution`（あれば理由のコード）。
+- **使えないボタン**は `disabled` にせず `aria-disabled="true"` にします（フォーカスを保ちます）。押しても何も起きず、理由は `aria-describedby` の先の要素に出ます。書けないスライダーは `disabled` で、理由はその隣に出ます。
+- **寿命。** 部品は文書に入ると購読し、外れると全部止めます。接続を待つ間に外れたら、何も描きません。`variable` などの属性が変わると結び直します。
+- **操作の失敗**（`ActionError`）はページに投げません。`status.problem` が `<vsil-status>` に出し、書き込みの失敗はその変数の隣に出ます。
+- **この 8 個から増やしません。** グラフ、表、配置は画面の仕事です。
+
+### 文言と次の実行
+
+文言は英語です。ボタンの名前は属性で替えられます（表の `label-start` など、`<vsil-write>` は `label`）。理由の文（使えないボタン、`caution`、問題、変数が書けない理由）は理由の持ち主の英語の文で、`setReasonText(fn)` で替えます。`fn(reason)` が文を返せばそれを出し、`null` か `undefined` なら英語のままにします。`setReasonText(null)` で外します。部品をページに置く前に呼びます。部品の自前の語（`ready`、`writing…`、`(no scenario)`、`fastest`、`behind real time`）は替えられません。
+
+選ぶ部品と開始のボタンは別の要素なので、次の実行に選んだものはモジュールが `pageIntent` に持ちます（`get()`、`subscribe(fn)`、`update(patch)`。`''` か `undefined` の欄は消えます）。`<vsil-scenario-select>` が `scenario` を書き、`<vsil-run-controls>` は `{ ...pageIntent.get(), ...intent }` で開始するので、`intent` プロパティが勝ちます。自分のコードで開始する画面は、意図を `client.run.start(intent)` に自分で渡します。
+
+```ts
+import '@vehicle-sil/gui-client/elements'; // defines the parts
+import { pageIntent, setReasonText } from '@vehicle-sil/gui-client/elements';
+
+setReasonText((reason) => (reason.code === 'running' ? 'A run is going.' : null));
+pageIntent.update({ variant: 'winter' }); // what the next start uses, with the scenario that was chosen
+const controls = document.querySelector('vsil-run-controls'); // typed: the parts are in HTMLElementTagNameMap
+if (controls) controls.intent = { speed: 'max' };
+```
+
+部品は DOM を要するので、Node は読みません（本体の入口は部品を import しません）。
+
 ## ECU の変数
 
 ```ts
@@ -644,12 +709,12 @@ throttle.close();
 
 ツール（TypeScript、ESLint、Prettier、Vitest、esbuild）は `gui/web` の `node_modules` のものを使います。`gui/web` で次を実行します（`scripts/verify-web.py` も実行します）。
 
-| コマンド               | 内容                                                                                           |
-| ---------------------- | ---------------------------------------------------------------------------------------------- |
-| `npm run test:client`  | 型の検査（`tsc -p ../client`）と単体テスト（Vitest。Node の上で、Angular も DOM もなしに動く） |
-| `npm run build:client` | 1 つの ESM のファイルにまとめる（esbuild。Angular のビルドのツールが持っているもの）           |
-| `npm run lint`         | `gui/web` と、この `eslint.config.js`                                                          |
-| `npm run format:check` | `gui/web` と、このディレクトリの書式（`gui/.prettierrc`）                                      |
+| コマンド               | 内容                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `npm run test:client`  | 型の検査（`tsc -p ../client`）と単体テスト（Vitest。Node の上で、Angular なしに動く。部品の試験だけ jsdom の DOM を使う） |
+| `npm run build:client` | 1 つの ESM のファイルにまとめる（esbuild。Angular のビルドのツールが持っているもの）                                      |
+| `npm run lint`         | `gui/web` と、この `eslint.config.js`                                                                                     |
+| `npm run format:check` | `gui/web` と、このディレクトリの書式（`gui/.prettierrc`）                                                                 |
 
 単体テストは、サーバーの通知を作らずに `gui/protocol/examples/` の例を流します（`testing/protocol-examples.ts`）。
 

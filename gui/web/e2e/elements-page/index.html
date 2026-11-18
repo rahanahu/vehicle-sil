@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Screen of parts</title>
+    <!-- The parts, and a script of the page that uses the same connection (the CSP blocks inline scripts) -->
+    <script type="module" src="vehicle-sil-gui-elements.mjs"></script>
+    <script type="module" src="own.js"></script>
+  </head>
+  <body>
+    <vsil-status data-testid="status"></vsil-status>
+    <vsil-run-controls data-testid="run"></vsil-run-controls>
+    <vsil-time-controls data-testid="time" speeds="1 max"></vsil-time-controls>
+    <label
+      >Demand <vsil-slider data-testid="slider" variable="Engine.engine.demand"></vsil-slider
+    ></label>
+    <vsil-write
+      data-testid="write"
+      variable="Engine.engine.demand"
+      value="80"
+      label="Demand 80"
+    ></vsil-write>
+    <p>Demand: <vsil-value data-testid="demand" variable="Engine.engine.demand"></vsil-value></p>
+    <p>
+      Warning:
+      <vsil-value
+        data-testid="warning"
+        variable="Engine.engine.warning"
+        on="WARNING"
+        off="ok"
+      ></vsil-value>
+    </p>
+    <label>Scenario <vsil-scenario-select data-testid="scenario"></vsil-scenario-select></label>
+    <vsil-scenario-result data-testid="scenario-result"></vsil-scenario-result>
+    <button type="button" id="pause" data-testid="own-pause">Pause (own button)</button>
+  </body>
+</html>

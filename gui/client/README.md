@@ -27,17 +27,18 @@ The library is TypeScript source with no dependencies. It is not published to th
 | TypeScript and any framework                    | Get the package `vehicle-sil-gui-client-<version>.tgz` and run `npm install <that .tgz>` in your project | `import { createClient } from '@vehicle-sil/gui-client'`      |
 | A TypeScript app in this repository (`gui/web`) | Point the entry point names to `src/` with `paths` in `tsconfig.json`                                    | `import { createClient } from '@vehicle-sil/gui-client'`      |
 
-Where to find the 2 files:
+Where to find the 3 files:
 
 | File                                   | Prebuilt tools                                        | Build in the repository (run in `gui/web`)                                            |
 | -------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `vehicle-sil-gui-client.mjs`           | `<tools>/client/vehicle-sil-gui-client.mjs`           | `npm run build:client` creates `build/gui-client/vehicle-sil-gui-client.mjs`          |
+| `vehicle-sil-gui-elements.mjs`         | (not in the archive)                                  | `npm run build:client` creates `build/gui-client/vehicle-sil-gui-elements.mjs`        |
 | `vehicle-sil-gui-client-<version>.tgz` | `<tools>/client/vehicle-sil-gui-client-<version>.tgz` | `npm run pack:client` creates `build/gui-client/vehicle-sil-gui-client-<version>.tgz` |
 
 The releases page has the same `.tgz`. `build/` is the one at the top of the repository and is not tracked in Git.
 
 - **Bundled file**: loads in the browser and in Node (22 or later). `scripts/verify-gui.py` runs an example that uses this file from Node against the replay launcher.
-- **Package**: contains the bundled ESM, `.d.ts` files, `exports`, the README and the LICENSE (`pack.mjs` builds it). Its version is the same as the GUI server's. Its types use the browser types (`DOM` in `lib`). Its entry points are `.` and `./timeline` (`testing` and `internal` are not included).
+- **Package**: contains the bundled ESM, `.d.ts` files, `exports`, the README and the LICENSE (`pack.mjs` builds it). Its version is the same as the GUI server's. Its types use the browser types (`DOM` in `lib`). Its entry points are `.`, `./elements` and `./timeline` (`testing` and `internal` are not included).
 
 ## Entry points
 
@@ -46,6 +47,7 @@ The releases page has the same `.tgz`. `build/` is the one at the top of the rep
 | `src/index.ts`                                                                                                  | `@vehicle-sil/gui-client`          | The public API ("Public API" below). Only this entry point is kept compatible                                                                                                                              |
 | `src/testing/index.ts`                                                                                          | `@vehicle-sil/gui-client/testing`  | Test helpers (usable in tests of your own widgets)                                                                                                                                                         |
 | `src/internal.ts`                                                                                               | `@vehicle-sil/gui-client/internal` | **No compatibility guarantee.** Internal classes and functions; do not use them in apps                                                                                                                    |
+| `src/elements/index.ts` (in the package as `dist/elements.js`, which imports `dist/index.js`)                   | `@vehicle-sil/gui-client/elements` | The parts (custom elements `<vsil-status>` and 7 more), `pageIntent` and `setReasonText`: importing it defines them ("Parts (custom elements)" below). It needs a DOM; the main entry does not import it   |
 | `../timeline/vehicle-sil-timeline.js` (in the package as `timeline/vehicle-sil-timeline.mjs`, with `export {}`) | `@vehicle-sil/gui-client/timeline` | The element `<vehicle-sil-timeline>`, with its types: importing it defines the element ("Putting a timeline on your own screen" in [docs/gui.md](../../docs/gui.md#putting-a-timeline-on-your-own-screen)) |
 
 - `testing` contains a fake WebSocket (`FakeWebSockets`), a fake HTTP (`FakeHttp`), loaders for `gui/protocol/examples/`, and `sessionViewFrom`, which builds a `SessionView` from a summary.
@@ -357,6 +359,69 @@ The view has `value`, `text` (an enum shows the item's name), `unit`, `min`, `ma
 - `write(value)` needs no subscription (it sends that one write). It rejects with an `ActionError`; `no-answer` is `unknown`, and a write whose answer did not come is not sent again.
 - The binding (`client.low.variables.bind`) holds back and merges writes while one is on its way (for sliders); `write()` of the front door sends each call.
 
+## Parts (custom elements)
+
+`@vehicle-sil/gui-client/elements` defines 8 custom elements that draw what `connect()` returns, so that a screen can be written as HTML without a script. They use native controls in the light DOM and have no styles of their own: your CSS styles them, and they work in plain HTML and in the templates of Angular, React, Vue and Svelte. Importing the module defines them (a name that is defined already is skipped).
+
+| Element                  | What it shows or does                                                                                     | Attributes and properties                                                                                                  |
+| ------------------------ | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `<vsil-status>`          | The connection, the run, the virtual time (marked when it falls behind real time) and the one problem     | none                                                                                                                       |
+| `<vsil-run-controls>`    | Start (with the page's selection), Stop and, after a first stop, Stop without waiting                     | property `intent`; `label-start`, `label-stop`, `label-force-stop`                                                         |
+| `<vsil-time-controls>`   | Pause, Resume, Step, Run until and the speed                                                              | `speeds` (default `0.5 1 5 max`), `step-ms` (default `10`); `label-pause`, `label-resume`, `label-step`, `label-run-until` |
+| `<vsil-value>`           | The value and its unit, and a sentence when it is not live. A bool shows as the `on` and `off` text       | `variable`, `on`, `off`, `no-unit`                                                                                         |
+| `<vsil-slider>`          | A number in the variable's range; it is written when the knob is released                                 | `variable`                                                                                                                 |
+| `<vsil-write>`           | A button that writes one value (not usable when the variable already has it)                              | `variable`, `value` (JSON: `false`, `3`; otherwise text), `label`                                                          |
+| `<vsil-scenario-select>` | The scenario of the next run, among those next to the run's configuration file (the first choice is none) | none                                                                                                                       |
+| `<vsil-scenario-result>` | The status and the steps of the run's scenario                                                            | none                                                                                                                       |
+
+A variable is written `ECU.variable` (cut at the first dot), as for `client.variable()`.
+
+```html
+<script type="module" src="./vehicle-sil-gui-elements.mjs"></script>
+<vsil-status></vsil-status> <vsil-run-controls></vsil-run-controls>
+<label>Throttle <vsil-slider variable="Engine.engine.throttle"></vsil-slider></label>
+<vsil-write
+  variable="Engine.ecu.connected"
+  value="false"
+  label="Cut engine from the bus"
+></vsil-write>
+<p>
+  Engine lost:
+  <vsil-value variable="Dashboard.dashboard.engine_lost" on="LOST" off="ok"></vsil-value>
+</p>
+<vsil-time-controls speeds="0.5 1 5 max"></vsil-time-controls>
+<label>Scenario of the next run <vsil-scenario-select></vsil-scenario-select></label>
+<vsil-scenario-result></vsil-scenario-result>
+```
+
+### What the parts promise
+
+- **The page's connection.** A part calls `connect()` without options, so the page's own script and all the parts share one connection (one WebSocket), and a refusal of your own button shows in `<vsil-status>`. To give a part another connection, set its `client` property (a part that is in the document binds again).
+- **One set of files.** Use the package, or the single files, not both. The parts import the main entry; they do not carry a copy of it. In a project (the package) the parts and your script both import `@vehicle-sil/gui-client`. With the single files, put `vehicle-sil-gui-elements.mjs` next to `vehicle-sil-gui-client.mjs` and import the client from that same file. A second copy of the library makes a second connection.
+- **Your markup and your CSS.** There is no shadow DOM. A part draws into one `<span class="vsil">` that it adds, and the children you put in the element stay. It sets `data-*` attributes for CSS: `data-link`, `data-run`, `data-pacing` (`<vsil-status>`), `data-stale`, `data-can-write` and `data-on` (the variable parts), `data-status` (`<vsil-scenario-result>` and its steps), and on each button `data-reason` and `data-caution` (the code, when there is one).
+- **A button that cannot be used** is not `disabled`: it has `aria-disabled="true"` (so it keeps the focus), pressing it does nothing, and the reason is in an element that `aria-describedby` points to. A slider that cannot be written is `disabled`, and the reason is next to it.
+- **Life.** A part subscribes when it enters the document and stops everything when it leaves. When it leaves while it waits for the connection, it draws nothing. When `variable` or another attribute changes, it binds again.
+- **A failed action** (an `ActionError`) is not thrown at the page: `status.problem` shows it in `<vsil-status>`, and a failed write shows next to its variable.
+- **No more than these 8.** Graphs, tables and the layout are the screen's work.
+
+### Words and the next run
+
+The words are English. Attributes rename the buttons (`label-start` and the others in the table, and `label` of `<vsil-write>`). The sentences of reasons (a button that cannot be used, `caution`, the problem, why a variable cannot be written) come from the owner of the reason, in English; `setReasonText(fn)` replaces them: `fn(reason)` returns the sentence, or `null` or `undefined` to keep the English one, and `setReasonText(null)` removes it. Call it before the parts are in the page. The other words of the parts (`ready`, `writing…`, `(no scenario)`, `fastest`, `behind real time`) cannot be changed.
+
+The choosing parts and the start button are separate elements, so the module keeps what the page selected for the next run in `pageIntent` (`get()`, `subscribe(fn)` and `update(patch)`; a field set to `''` or `undefined` is removed). `<vsil-scenario-select>` writes `scenario`; `<vsil-run-controls>` starts with `{ ...pageIntent.get(), ...intent }`, so its `intent` property wins. A screen that starts a run with its own code passes the intent to `client.run.start(intent)` itself.
+
+```ts
+import '@vehicle-sil/gui-client/elements'; // defines the parts
+import { pageIntent, setReasonText } from '@vehicle-sil/gui-client/elements';
+
+setReasonText((reason) => (reason.code === 'running' ? 'A run is going.' : null));
+pageIntent.update({ variant: 'winter' }); // what the next start uses, with the scenario that was chosen
+const controls = document.querySelector('vsil-run-controls'); // typed: the parts are in HTMLElementTagNameMap
+if (controls) controls.intent = { speed: 'max' };
+```
+
+The parts need a DOM, so Node does not load them (the main entry does not import them).
+
 ## ECU variables
 
 ```ts
@@ -642,12 +707,12 @@ If you create it with `{ history: 600 }`, `history()` returns the points, oldest
 
 The tools (TypeScript, ESLint, Prettier, Vitest, esbuild) are the ones in `node_modules` of `gui/web`. Run these in `gui/web` (`scripts/verify-web.py` runs them too):
 
-| Command                | What it does                                                                                    |
-| ---------------------- | ----------------------------------------------------------------------------------------------- |
-| `npm run test:client`  | Type check (`tsc -p ../client`) and unit tests (Vitest; runs on Node, without Angular or a DOM) |
-| `npm run build:client` | Bundles into one ESM file (esbuild, the copy that comes with the Angular build tools)           |
-| `npm run lint`         | `gui/web`, and this directory with its `eslint.config.js`                                       |
-| `npm run format:check` | Formatting of `gui/web` and this directory (`gui/.prettierrc`)                                  |
+| Command                | What it does                                                                                                                        |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run test:client`  | Type check (`tsc -p ../client`) and unit tests (Vitest; runs on Node, without Angular; only the tests of the parts use a jsdom DOM) |
+| `npm run build:client` | Bundles into one ESM file (esbuild, the copy that comes with the Angular build tools)                                               |
+| `npm run lint`         | `gui/web`, and this directory with its `eslint.config.js`                                                                           |
+| `npm run format:check` | Formatting of `gui/web` and this directory (`gui/.prettierrc`)                                                                      |
 
 The unit tests feed the examples in `gui/protocol/examples/` instead of building server notifications by hand (`testing/protocol-examples.ts`).
 
