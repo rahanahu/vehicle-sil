@@ -26,12 +26,12 @@
       },
       "stop": "requested",
       "phase": "running",
-      "last_seq": 27,
-      "last_t_ms": 270,
+      "last_seq": 29,
+      "last_t_ms": 290,
       "time": {
         "event": "time",
-        "seq": 26,
-        "t_ms": 260,
+        "seq": 27,
+        "t_ms": 270,
         "sim_ms": 0,
         "actual_speed": null,
         "late_steps": 0,
@@ -362,7 +362,7 @@
       "findings_omitted": 0,
       "last_command": null,
       "launcher_state": {
-        "seq": 24,
+        "seq": 25,
         "rev": 5,
         "phase": "running",
         "paused": false,
@@ -391,7 +391,7 @@
           "step": {
             "ok": false,
             "reason": "not-paused",
-            "message": "step works while the simulation is paused: send {\"command\":\"pause\"} first (or run with --start-paused)",
+            "message": "step works while the simulation is paused: pause it first",
             "caution": null,
             "min_ms": 1,
             "max_ms": 1000000000000
@@ -419,7 +419,7 @@
           "write": {
             "ok": false,
             "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "message": "this run has no control server, and only a control server's client can write a variable",
             "caution": null
           }
         },
@@ -430,7 +430,7 @@
         "start": {
           "ok": false,
           "reason": "already-running",
-          "message": "a simulation is running: stop it (POST api/stop) and wait for it to end before starting another"
+          "message": "a simulation is running: stop it and wait for it to end before starting another"
         },
         "stop": {
           "ok": false,
@@ -450,7 +450,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 2,
+          "kept": 4,
           "dropped": 0
         }
       },
@@ -459,7 +459,7 @@
       "scenario": null,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, time-policy, stdin-run-until, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,

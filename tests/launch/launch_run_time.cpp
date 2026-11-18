@@ -742,8 +742,7 @@ void pause_step(const Options& o)
     };
     require(at({"\"ms\":50,\"at_ms\":50,\"id\":null}"}) < at({"\"sim_ms\":50,"}), "the step comes before the time it reaches:\n" + all);
     require(!events_with(lines, {"\"command\":\"step\"", "\"accepted\":false,\"message\":\"step works while the simulation is "
-                                                         "paused: send {\\\"command\\\":\\\"pause\\\"} first (or run with "
-                                                         "--start-paused)\",\"reason\":\"not-paused\",\"id\":8}"})
+                                                         "paused: pause it first\",\"reason\":\"not-paused\",\"id\":8}"})
                  .empty(),
             "a step while it runs is refused:\n" + all);
     // The states: each "rev" higher than the one before; the state a command made comes after

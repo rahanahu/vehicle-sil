@@ -133,7 +133,7 @@ def test_a_participant_that_the_user_starts(tmp_path: Path) -> None:
             for path in ("api/check", "api/run"):
                 status, body = await c.post(path, {"file": "simulation.yaml", "manual": ["Dashboard"]})
                 assert status == 400 and body["error"]["code"] == "unsupported", path
-                assert "manual-participants" in body["error"]["message"]
+                assert "participant" in body["error"]["message"]
         run_async(old, gui)
 
 
@@ -580,13 +580,13 @@ def test_a_launcher_without_time_commands(tmp_path: Path) -> None:
         assert "time-commands" not in app["launcher"]["version"]["features"]
         # The server does not pass an argument the launcher cannot take, nor a command it cannot read.
         status, body = await c.post("api/run", {"file": "forever.yaml", "start_paused": True})
-        assert status == 400 and body["error"]["code"] == "unsupported" and "start-paused" in body["error"]["message"]
+        assert status == 400 and body["error"]["code"] == "unsupported" and "start paused" in body["error"]["message"]
         sock = await c.ws()
         await sock.until(is_synced)
         await c.post("api/run", {"file": "forever.yaml"})
         await sock.until(is_time(sim_ms=0))
         status, body = await c.post("api/time", {"command": "pause"})
-        assert status == 400 and body["error"]["code"] == "unsupported" and "time-commands" in body["error"]["message"]
+        assert status == 400 and body["error"]["code"] == "unsupported" and "cannot pause" in body["error"]["message"]
         await c.post("api/stop")
         await sock.until(is_ended)
     with gui_server(tmp_path, env=OLD) as gui:
@@ -604,7 +604,7 @@ def test_a_launcher_without_state_does_not_get_an_id(tmp_path: Path) -> None:
         await c.post("api/run", {"file": "forever.yaml"})
         await sock.until(is_time(sim_ms=0))
         status, body = await c.post("api/time", {"command": "pause", "id": 3})
-        assert status == 400 and body["error"]["code"] == "unsupported" and "state" in body["error"]["message"], body
+        assert status == 400 and body["error"]["code"] == "unsupported" and "id" in body["error"]["message"], body
         status, body = await c.post("api/time", {"command": "pause", "id": -1})
         assert status == 400 and body["error"]["code"] == "invalid-field", body
         await c.post("api/stop")  # nothing was written for the two above

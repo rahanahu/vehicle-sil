@@ -280,7 +280,7 @@ The answer to this request only says that the server took it: the `session` in i
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| The value stays `-`, with a sentence that the variables are not available | No run has started, or the run has no Control Server. | Click **Start**. If the run has started, start the GUI server with a launcher that has a Control Server (the slider says `start a run with --control` or what to build). |
+| The value stays `-`, with a sentence that the variables are not available | No run has started, or the run has no Control Server. | Click **Start**. If the run has started, start the GUI server with a launcher that has a Control Server. |
 | The part says `this variable is not in the current run` | The participant name or the variable name is not in this run. | Check the names as in step 2. |
 | The screen shows nothing, and the browser console shows a CSP error | The page uses inline `<script>` or `onclick="..."`. | Put the script in a file, and register handlers with `addEventListener` or the `onclick` property. |
 | A file returns 404 | Its extension is not served, its name starts with `.`, or it is a symbolic link. | See the table in "Files served with `--web`" in [gui.md](../gui.md#files-served-with---web). |

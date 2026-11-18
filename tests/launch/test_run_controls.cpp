@@ -482,7 +482,7 @@ TEST_CASE(the_state_of_a_run_without_a_control_server_refuses_what_only_a_contro
             const RunState s = t.states.back();
             CHECK(!s.allowed.write.ok);
             CHECK(s.allowed.write.reason == "no-control-server");
-            CHECK(s.allowed.write.message.find("--control <address>") != std::string::npos);
+            CHECK(s.allowed.write.message.find("write a variable") != std::string::npos);
             CHECK(!s.allowed.write.range && !s.allowed.write.caution);
             CHECK(s.allowed.write.message.find("write a variable") != std::string::npos);
             const RunState& other = with.states.back();
@@ -551,7 +551,7 @@ TEST_CASE(a_run_until_of_stdin_is_refused_by_the_time_lock_and_the_state_says_so
         const Command late = controls.time().apply(until, "stdin");
         CHECK(!late.accepted && !late.pending && late.reason == "outside-real-time");
         CHECK(late.message.find("run_until is refused") != std::string::npos);
-        CHECK(late.message.find("--time-policy free") != std::string::npos);
+        CHECK(late.message.find("keeps to real time") != std::string::npos);
         CHECK_EQ(answers.size(), std::size_t{2});
     }
 }

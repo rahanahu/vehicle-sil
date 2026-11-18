@@ -661,10 +661,9 @@ class LauncherTest(unittest.TestCase):
                         call()
                     e = refused.exception
                     self.assertEqual((e.code, e.reason), (grpc.StatusCode.FAILED_PRECONDITION, "scenario-running"), what)
-                    self.assertIn(f"cannot {what}: this run plays a scenario (run --scenario), and until it ends only the "
+                    self.assertIn(f"cannot {what}: this run plays a scenario, and until it ends only the "
                                   "scenario writes variables and moves the time", str(e))
-                    self.assertIn("a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; "
-                                  "to write or to move the time from a client, run without --scenario", str(e))
+                    self.assertIn("a client can read values and the time, and stop the run", str(e))
                 # Nothing of it got through: the throttle is the scenario's, the time goes on.
                 self.assertEqual(c.values("Engine").values["engine.throttle"], 50.0)
                 t = c.sim.time()
@@ -719,9 +718,7 @@ class LauncherTest(unittest.TestCase):
                         call()
                     e = refused.exception
                     self.assertEqual((e.code, e.reason), (grpc.StatusCode.FAILED_PRECONDITION, "outside-real-time"), what)
-                    self.assertIn("this run is connected outside the simulation and keeps to real time (--time-policy "
-                                  "realtime, the default)", str(e), what)
-                    self.assertIn("start the run again with --time-policy free", str(e), what)
+                    self.assertIn("this run is connected outside the simulation and keeps to real time", str(e), what)
                 # What keeps it in real time is taken, and so is a write (the lock is about the time).
                 self.assertFalse(c.sim.resume().paused)
                 self.assertEqual(c.sim.set_speed(1.0).speed, 1.0)

@@ -122,14 +122,14 @@ class Launcher:
             self._set(None, [{"code": "launcher-version",
                               "message": f"{self.path} version --json did not write the version object "
                                          f"(exit code {code}{': ' + last[0] if last[0] else ''}): this "
-                                         f"{LAUNCHER_NAME} is older than this GUI; build a newer one"}])
+                                         f"{LAUNCHER_NAME} is older than this GUI"}])
             return
         self.version = version
         missing = [f for f in REQUIRED_FEATURES if f not in self.features]
         self._set(version, [{"code": "missing-feature",
                              "message": f"{self.path} has no '{f}' (its features: "
                                         f"{', '.join(self.features) or 'none'}): this {LAUNCHER_NAME} is older "
-                                        "than this GUI; build a newer one"} for f in missing])
+                                        "than this GUI"} for f in missing])
 
     def _set(self, version: dict | None, problems: list[dict]) -> None:
         self.version = version

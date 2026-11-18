@@ -172,7 +172,7 @@ def test_a_control_server_without_the_snapshot_is_not_used(fake) -> None:
         sink = Sink()
         source.start(sink)
         _, reason, fatal = await sink.until("lost")
-        assert fatal and reason == control.TOO_OLD and "build a newer launcher" in reason
+        assert fatal and reason == control.TOO_OLD and "cannot give the time and the values" in reason
         assert "synced" not in sink.kinds()  # never called ready
         await asyncio.sleep(0.5)
         assert server.calls.count("Watch") == 1  # and not connected to again

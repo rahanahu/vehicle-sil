@@ -317,7 +317,7 @@ Command TimeCommands::apply(const Command& command, std::string_view source, con
             out.reason = reason::kNotSetUp;
             out.message = "the run has not read its configuration yet and keeps " + std::to_string(kMaxWaitingCommands) +
                           " commands to answer once it has: " + command.name.value_or("") +
-                          " is refused; send it again after the run's check event (the configuration is read then)";
+                          " is refused; send it again once the configuration has been read";
             if (s.on_command)
             {
                 s.on_command(out, source);

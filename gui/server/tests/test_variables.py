@@ -39,7 +39,7 @@ async def start(c: Client, file: str = "forever.yaml", **body) -> tuple:
 def test_a_launcher_without_a_control_server_has_no_variables_and_says_why(gui) -> None:
     async def talk(c: Client) -> None:
         _, app = await c.get("api/app")
-        assert app["variables"]["available"] is False and "control-server" in app["variables"]["reason"]
+        assert app["variables"]["available"] is False and "without a control server" in app["variables"]["reason"]
         ws, session = await start(c)
         assert session["variables"]["state"] == "off" and session["variables"]["reason"] == app["variables"]["reason"]
         assert session["variables"]["peers"] == []
@@ -434,7 +434,7 @@ def test_a_run_that_stands_before_its_first_step_is_resumed_from_the_screen(tmp_
 def test_no_variables_when_the_server_is_told_so_or_cannot_load_the_stubs(tmp_path: Path, control_env) -> None:
     empty = tmp_path / "no-stubs"
     empty.mkdir()
-    for args, env, why in ((("--no-variables",), control_env, "--no-variables"),
+    for args, env, why in ((("--no-variables",), control_env, "without variables"),
                            ((), {**control_env, "VEHICLE_SIL_CONTROL_STUBS": str(empty)}, "has no ")):
         with gui_server(tmp_path, env=env, args=args) as gui:
             async def talk(c: Client) -> None:

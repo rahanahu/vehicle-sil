@@ -687,9 +687,8 @@ void connect_time_locked(const Options& base)
         require(answers(lines) == expected, "each command has its answer, in the order they were written:\n" + out_of(lines));
         const std::string pause = events_with(lines, {"\"event\":\"command\"", "\"id\":1}"}).front();
         require(contains(pause, "\"accepted\":false,") && contains(pause, "\"reason\":\"outside-real-time\"") &&
-                    contains(pause, "pause is refused, because what is connected does not wait") &&
-                    contains(pause, "start the run again with --time-policy free"),
-                "the refusal says why and what to do:\n" + pause);
+                    contains(pause, "pause is refused, because what is connected does not wait"),
+                "the refusal says why:\n" + pause);
         // Nothing of it reached the simulation: it never stood still and went at speed 1.
         require(events_with(lines, {"\"event\":\"state\"", "\"paused\":true"}).empty() &&
                     events_with(lines, {"\"event\":\"state\"", "\"speed\":5,"}).empty() &&
@@ -726,7 +725,7 @@ void connect_time_locked(const Options& base)
         require(status && status->code == 0, "exit code " + code_text(status) + "\n" + out_of(lines));
         const std::string err = lf(live.err());
         const std::string line = "vehicle_sil_launch: a line of the standard input was ignored: this run is connected outside "
-                                 "the simulation and keeps to real time (--time-policy realtime, the default): pause is refused";
+                                 "the simulation and keeps to real time: pause is refused";
         require(contains(err, line) && err.find(line) == err.rfind(line), "one line on stderr about the pause:\n" + err);
     }
     {

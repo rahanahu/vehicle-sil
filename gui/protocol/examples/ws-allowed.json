@@ -46,7 +46,7 @@
         "start": {
           "ok": false,
           "reason": "starting",
-          "message": "a run is starting: wait until it has started (the answer of POST api/run), then stop it before starting another"
+          "message": "a run is starting: wait until it has started, then stop it before starting another"
         },
         "stop": {
           "ok": true,
