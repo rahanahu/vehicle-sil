@@ -408,6 +408,8 @@ outside: ETH_EXT -> enp3s0: link up at 15.10 s
 | つながっているが、フレームが失われた | 続けます | 起きた種類ごとの警告（下）。1 フレームでも出します |
 | ブリッジが続けられない | シミュレーションを中断します | 誤り `connect-lost`（上） |
 
+Npcap はリンクの状態を取らないので、リンクが切れても `outside-link-down` にも `connect-lost` にもならず、送れないフレームが `frames-dropped` と、終わりの `outside-frames-dropped` に出ます。
+
 失われた種類は、統計の行の数とリンクの行から見分けます。キーの表はランチャーに 1 つだけあります（`detail::kOutsideDroppedKeys`）。
 
 | 所見 | 元 |

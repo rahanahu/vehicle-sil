@@ -173,7 +173,7 @@ TEST_CASE(device_mark_shared_warning_comes_when_more_bridges_share_the_device)
     // Only the processes that came.
     CHECK_SAME(detail::shared_warning("XL 'Virtual Channel 1'", {1, {4321}}, {3, {4321, 4400, 4500}}).value_or(""),
              std::string("XL 'Virtual Channel 1' is also used by 2 more vehicle-sil bridges (processes 4400, 4500): the frames of "
-                         "both mix there: if that is not meant, connect them to different devices, or stop a bridge left "
+                         "all of them mix there: if that is not meant, connect them to different devices, or stop a bridge left "
                          "over from an earlier run"));
     // Windows: no process ids.
     CHECK(detail::shared_warning("interface 'Ethernet'", {}, {1, {}}).value_or("").starts_with(

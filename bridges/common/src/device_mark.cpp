@@ -191,10 +191,12 @@ std::optional<std::string> shared_warning(std::string_view device_text, const De
     }
     const std::size_t grown = now.count > before.count ? now.count - before.count : 0;
     const std::size_t more = std::max<std::size_t>(grown, added.size());
+    // "both" is right for 2 bridges on the device; with more, all of them mix.
+    const char* const mixing = more == 1 ? "both" : "all of them";
     std::string text = std::string(device_text) + " is also used by " +
                        (more == 1 ? std::string("another vehicle-sil bridge") : std::to_string(more) + " more vehicle-sil bridges") +
-                       processes(added) +
-                       ": the frames of both mix there: if that is not meant, connect them to different devices, or "
+                       processes(added) + ": the frames of " + mixing +
+                       " mix there: if that is not meant, connect them to different devices, or "
                        "stop a bridge left over from an earlier run";
     return text;
 }
