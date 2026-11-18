@@ -95,7 +95,7 @@ template <typename S> TimeFacts facts_of(S& s)
     if (s.controller != nullptr)
     {
         const TimeState t = s.controller->time_state();
-        // As the time event's `paused` (noted_paused()): it stands still, or does with its next step.
+        // It stands still, or does with its next step (the same rule as noted_standing() of the time events).
         f.standing = s.holding || t.paused || (t.pause_target && *t.pause_target <= t.now);
         s.gate_speed = t.speed;
     }

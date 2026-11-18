@@ -14,7 +14,7 @@
 //   state_on_arrival a step and a run_until that the simulation reaches: the look that finds it standing
 //                still writes the time event and then the state that says paused, before the next command
 //   paused_failures while it stands still: a process that ends fails the run, --timeout-ms aborts it,
-//                an interrupt stops it (the last time event says paused false each time),
+//                an interrupt stops it (the last state says paused false each time),
 //                start_timeout_ms is not counted
 //   time_usage   --start-paused without --stdin-commands, a wrong --speed, the options for check, and
 //                wrong time keys in the file
@@ -159,8 +159,7 @@ void late(const Options& o)
     require(at("\"code\":\"behind-real-time\"") < at("\"phase\":\"stopping\""), "the warning comes before stopping");
     const auto times = events_with(lines, {"\"event\":\"time\""});
     require(times.size() >= 3 && std::stoll(value_of(times.back(), "late_steps")) >= 10 &&
-                std::stoll(value_of(times.back(), "max_late_ms")) >= 19 && std::stoll(value_of(times.back(), "slipped_ms")) >= 550 &&
-                contains(times.back(), "\"speed\":1,"),
+                std::stoll(value_of(times.back(), "max_late_ms")) >= 19 && std::stoll(value_of(times.back(), "slipped_ms")) >= 550,
             "the time events count the late steps:\n" + strict.standard_output);
     // Last (it writes sim.yaml anew): the tolerance is the file's. As late, but within 100 s: no step is
     // late, nothing slips (the lateness adds up instead), nothing is found.
@@ -301,12 +300,12 @@ void run_until_stdin(const Options& o)
     // line without a time is refused with the form of a step's.
     const fs::path dir = one_ecu(o, "", "pid");
     Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
-    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":0,", "\"paused\":true,"});
+    live.wait_standing(0);
     live.wait_for({"\"event\":\"state\"", "\"paused\":true,", "\"run_until\":{\"ok\":true,\"reason\":null,"});
     live.write("{\"command\":\"run_until\",\"at_ms\":95,\"id\":5}\n");
     live.wait_for({"\"command\":\"run_until\"", "\"source\":\"stdin\"", "\"accepted\":true,\"message\":null,\"reason\":null,"
                    "\"at_ms\":100,\"id\":5}"});
-    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":100,", "\"paused\":true,"});
+    live.wait_standing(100);
     std::this_thread::sleep_for(300ms);
     require(events_with(live.lines(), {"\"sim_ms\":110,"}).empty(), "it stands still at 100 ms");
     // A time that has passed while it stands still at 100: accepted, and nothing moves (the at_ms is
@@ -337,7 +336,7 @@ void state_on_arrival(const Options& o)
     const auto says_paused = [](const std::string& state) { return contains(state, "\"paused\":true,\"holding\":"); };
     // Waits for the time event that stands still at `ms`, then until the latest state says paused.
     const auto stands_at = [&](std::int64_t ms) {
-        live.wait_for({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(ms) + ",", "\"paused\":true,"});
+        live.wait_for({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(ms) + ","});
         const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(120s);
         while (true)
         {
@@ -380,7 +379,7 @@ void state_on_arrival(const Options& o)
     };
     const auto arrival = [&](const std::string& id, std::int64_t ms, const std::string& next) {
         const std::size_t sent = at({"\"event\":\"command\"", "\"accepted\":true,", "\"id\":" + id + "}"});
-        const std::size_t time = at({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(ms) + ",", "\"paused\":true,"}, sent);
+        const std::size_t time = at({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(ms) + ","}, sent);
         const std::size_t after = at({"\"event\":\"command\"", "\"id\":" + next + "}"}, sent);
         require(sent < time && time < after && after < lines.size(),
                 "command " + id + ", the time event that stands still at " + std::to_string(ms) + " ms, command " + next + ":\n" + all);
@@ -433,7 +432,7 @@ void speed_change(const Options& o)
     const fs::path dir = one_ecu(o, "stop_at_ms: 1000\nspeed: 1\nlate_tolerance_ms: 100000\n");
     Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
     // The third time event after the one at 0: 200 ms or more have passed (they are 100 ms apart).
-    live.wait_for_count({"\"event\":\"time\"", "\"speed\":1,"}, 4);
+    live.wait_for_count({"\"event\":\"time\""}, 4);
     const std::int64_t reached = std::stoll(value_of(events_with(live.lines(), {"\"event\":\"time\""})[3], "sim_ms"));
     live.write("{\"command\":\"speed\",\"value\":4}\n");
     const auto [status, lines] = live.finish();
@@ -600,15 +599,18 @@ void step_width(const Options& o)
     own_bridge(o);
 }
 
-/// A run that has ended stands still nowhere: its last "time" event says `paused` false, at `sim_ms`
-/// (where it ended), however it ended.
-void require_last_time_not_paused(const std::vector<std::string>& lines, std::int64_t sim_ms, const std::string& how)
+/// A run that has ended stands still nowhere, however it ended: its last "state" says `paused`
+/// false. Its last "time" event is at `sim_ms` (where it ended).
+void require_ended_not_paused(const std::vector<std::string>& lines, std::int64_t sim_ms, const std::string& how)
 {
     const auto times = events_with(lines, {"\"event\":\"time\""});
-    require(!times.empty() && contains(times.back(), "\"sim_ms\":" + std::to_string(sim_ms) + ",") &&
-                contains(times.back(), "\"paused\":false,"),
-            "the last time event of a run that " + how + " while it stood still says paused false at " +
-                std::to_string(sim_ms) + " ms" + (times.empty() ? ": there is none" : ":\n" + times.back()));
+    require(!times.empty() && contains(times.back(), "\"sim_ms\":" + std::to_string(sim_ms) + ","),
+            "the last time event of a run that " + how + " while it stood still is at " + std::to_string(sim_ms) + " ms" +
+                (times.empty() ? ": there is none" : ":\n" + times.back()));
+    const auto states = events_with(lines, {"\"event\":\"state\""});
+    require(!states.empty() && contains(states.back(), "\"phase\":\"ended\",\"paused\":false,"),
+            "the last state of a run that " + how + " while it stood still says ended and paused false" +
+                (states.empty() ? ": there is none" : ":\n" + states.back()));
 }
 
 void pause_step(const Options& o)
@@ -616,7 +618,7 @@ void pause_step(const Options& o)
     // No stop_at_ms: it runs until it is stopped. Started paused, stepped, resumed, paced, paused.
     const fs::path dir = one_ecu(o, "", "pid");
     Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
-    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":0,", "\"paused\":true,"});
+    live.wait_standing(0);
     // The state says the same, and that a step is taken now.
     live.wait_for({"\"event\":\"state\"", "\"phase\":\"running\",\"paused\":true,\"holding\":false,\"speed\":\"max\","
                                         "\"pacing\":\"not-paced\",\"stop\":{\"requests\":0,\"by\":null}",
@@ -625,21 +627,20 @@ void pause_step(const Options& o)
     live.write("{\"command\":\"step\",\"ms\":50}\n");
     // Its event says where it will stand ("at_ms"), before it is there.
     live.wait_for({"\"command\":\"step\"", "\"accepted\":true,\"message\":null,\"reason\":null,\"ms\":50,\"at_ms\":50,\"id\":null}"});
-    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":50,", "\"paused\":true,"});
+    live.wait_standing(50);
     std::this_thread::sleep_for(300ms);
     require(events_with(live.lines(), {"\"sim_ms\":60,"}).empty(), "it stands still at 50 ms");
     // With the sender's number, which comes back.
     live.write("{\"command\":\"step\",\"ms\":15,\"id\":7}\n");
     live.wait_for({"\"command\":\"step\"", "\"ms\":20,\"at_ms\":70,\"id\":7}"});
-    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":70,", "\"paused\":true,"});
+    live.wait_standing(70);
     // Two steps at once: the second counts from where the first ends, and says so when it is taken.
     live.write("{\"command\":\"step\",\"ms\":100,\"id\":11}\n{\"command\":\"step\",\"ms\":30,\"id\":12}\n");
     live.wait_for({"\"command\":\"step\"", "\"ms\":100,\"at_ms\":170,\"id\":11}"});
     live.wait_for({"\"command\":\"step\"", "\"ms\":30,\"at_ms\":200,\"id\":12}"});
-    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":200,", "\"paused\":true,"});
+    live.wait_standing(200);
     // Running: a step is refused; the speed changes.
     live.write("{\"command\":\"resume\"}\n");
-    live.wait_for({"\"event\":\"time\"", "\"paused\":false,"});
     // The state: it goes, and a step is refused with the reason the command would get.
     live.wait_for({"\"event\":\"state\"", "\"paused\":false,", "\"step\":{\"ok\":false,\"reason\":\"not-paused\","});
     // A pause and a step at once, while it runs as fast as it can: the step is taken whether the
@@ -648,7 +649,7 @@ void pause_step(const Options& o)
     const std::string stepped = live.wait_for({"\"command\":\"step\"", "\"accepted\":true,", "\"ms\":30,\"at_ms\":", "\"id\":21}"});
     const std::int64_t to = std::stoll(value_of(stepped, "at_ms"));
     require(to >= 230 && to % 10 == 0, "the step after a pause ends at a later step of the controller:\n" + stepped);
-    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(to) + ",", "\"paused\":true,"});
+    live.wait_standing(to);
     std::this_thread::sleep_for(300ms);
     for (const auto& time : events_with(live.lines(), {"\"event\":\"time\""}))
     {
@@ -656,19 +657,20 @@ void pause_step(const Options& o)
     }
     live.write("{\"command\":\"step\",\"ms\":10,\"id\":22}\n");
     live.wait_for({"\"command\":\"step\"", "\"ms\":10,\"at_ms\":" + std::to_string(to + 10) + ",\"id\":22}"});
-    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(to + 10) + ",", "\"paused\":true,"});
+    live.wait_standing(to + 10);
     live.write("{\"command\":\"resume\",\"id\":23}\n");
     live.wait_for({"\"command\":\"resume\"", "\"accepted\":true,", "\"id\":23}"});
     live.write("{\"command\":\"step\",\"ms\":10,\"id\":8}\n{\"command\":\"speed\",\"value\":1}\n");
     live.wait_for({"\"command\":\"step\"", "\"accepted\":false", "\"reason\":\"not-paused\",\"id\":8}"});
-    live.wait_for({"\"event\":\"time\"", "\"speed\":1,", "\"paused\":false,"});
     // The speed set, and whether the run keeps up with it (on time, unless this computer is busy).
     const std::string paced = live.wait_for({"\"event\":\"state\"", "\"paused\":false,\"holding\":false,\"speed\":1,\"pacing\":\""});
     require(contains(paced, "\"pacing\":\"on-time\"") || contains(paced, "\"pacing\":\"late\""),
             "a run that goes at a speed is on time or late:\n" + paced);
     live.write("{\"command\":\"pause\"}\n");
-    const std::string paused = live.wait_for({"\"event\":\"time\"", "\"speed\":1,", "\"paused\":true,"});
     live.wait_for({"\"event\":\"state\"", "\"paused\":true,\"holding\":false,\"speed\":1,\"pacing\":\"not-paced\","});
+    // Where it stands: the last time event, once the look that found it standing has written it.
+    std::this_thread::sleep_for(300ms);
+    const std::string paused = events_with(live.lines(), {"\"event\":\"time\""}).back();
     std::this_thread::sleep_for(300ms);
     live.write("{\"command\":\"stop\"}\n");
     // The stop request is in the state at once, by its name in the result.
@@ -677,7 +679,7 @@ void pause_step(const Options& o)
     const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
     require(status && status->code == 130, "stopped while paused: 130");
     require(gone, "no participant is left");
-    require_last_time_not_paused(lines, std::stoll(value_of(paused, "sim_ms")), "was stopped by a command");
+    require_ended_not_paused(lines, std::stoll(value_of(paused, "sim_ms")), "was stopped by a command");
     std::string all;
     for (const auto& line : lines)
     {
@@ -765,7 +767,7 @@ void paused_failures(const Options& o)
         require(failed.size() == 1 && (contains(failed[0], "\"reason\":\"process_ended\"") ||
                                        contains(failed[0], "\"reason\":\"left_simulation\"")),
                 "Engine is failed at once, with one event" + (failed.empty() ? std::string() : ":\n" + failed[0]));
-        require_last_time_not_paused(lines, 0, "was aborted for a failed participant");
+        require_ended_not_paused(lines, 0, "was aborted for a failed participant");
         require(gone, "no participant is left");
     }
     // --timeout-ms counts the time it stands still (wall-clock time).
@@ -776,7 +778,7 @@ void paused_failures(const Options& o)
         const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
         require(status && status->code == 1 && contains(lines.back(), "\"code\":\"timeout\""),
                 "a run that stands still past --timeout-ms is aborted:\n" + lines.back());
-        require_last_time_not_paused(lines, 0, "was aborted for --timeout-ms");
+        require_ended_not_paused(lines, 0, "was aborted for --timeout-ms");
         require(gone, "no participant is left");
     }
     // An interrupt while it stands still (Windows: Ctrl+Break, if there is a console to send it through).
@@ -784,7 +786,7 @@ void paused_failures(const Options& o)
     {
         const fs::path dir = one_ecu(o, "", "pid");
         Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
-        live.wait_for({"\"event\":\"time\"", "\"sim_ms\":0,", "\"paused\":true,"});
+        live.wait_standing(0);
 #ifdef _WIN32
         static_cast<void>(live.process().request_stop());
 #else
@@ -793,7 +795,7 @@ void paused_failures(const Options& o)
         const auto [status, lines] = live.finish();
         const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
         require(status && status->code == 130, "a run interrupted while it stands still: 130");
-        require_last_time_not_paused(lines, 0, "was interrupted");
+        require_ended_not_paused(lines, 0, "was interrupted");
         require(gone, "no participant is left");
     }
     // start_timeout_ms is for the start: standing still at 0 longer than it is fine.
@@ -803,7 +805,7 @@ void paused_failures(const Options& o)
         // The event comes once the simulation stands still: the launcher's count of that time has begun.
         // A little longer than the 2000 ms asked for below all the same (a sleep that returns a moment
         // early, a launcher that gave up waiting for the standstill before it wrote the event).
-        live.wait_for({"\"event\":\"time\"", "\"paused\":true,"});
+        live.wait_standing(0);
         std::this_thread::sleep_for(2200ms);
         live.write("{\"command\":\"resume\"}\n");
         const auto [status, lines] = live.finish();

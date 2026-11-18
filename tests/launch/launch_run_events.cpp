@@ -203,8 +203,11 @@ void events(const Options& o)
                      // the clock that spaced them: room for that.)
                      std::stoll(value_of(times[i], "t_ms")) - std::stoll(value_of(times[i - 1], "t_ms")) >= 90),
                 "the time moves on, at most every 100 ms:\n" + times[i - 1] + "\n" + times[i]);
-        require(contains(times[i], "\"speed\":\"max\",\"paused\":false,") && contains(times[i], "\"late_steps\":0,\"max_late_ms\":0,\"slipped_ms\":0,\"late_ms\":0}"),
+        require(contains(times[i], "\"late_steps\":0,\"max_late_ms\":0,\"slipped_ms\":0,\"late_ms\":0}"),
                 "as fast as possible, never late:\n" + times[i]);
+        // Whether it stands still and the speed set are the state's, not the time's.
+        require(!contains(times[i], "\"paused\":") && !contains(times[i], ",\"speed\":"),
+                "a time event has no paused and no speed:\n" + times[i]);
     }
     // The result is the JSON of --json.
     const Captured json = launch(o, {"run", "--json", "simulation.yaml"}, dir);
@@ -356,11 +359,10 @@ void stdin_stop(const Options& o)
         require(started.size() == 1 && value_of(started[0], "pid") == std::to_string(read_pid((dir / (name + ".pid")).string(), 0ms)),
                 name + "'s started event has its process ID");
     }
-    // Standing still at 0 from the start; the end (it stands still nowhere then).
+    // Standing still at 0 from the start to the end: the time never moved.
     const auto times = events_with(lines, {"\"event\":\"time\""});
-    require(times.size() == 2 && contains(times[0], "\"sim_ms\":0,\"speed\":\"max\",\"paused\":true,") &&
-                contains(times[1], "\"sim_ms\":0,\"speed\":\"max\",\"paused\":false,"),
-            "the time is written when it changes:\n" + (times.empty() ? std::string{} : times[0]));
+    require(times.size() == 1 && contains(times[0], "\"sim_ms\":0,\"actual_speed\":null,"),
+            "the time is written when it moves:\n" + (times.empty() ? std::string{} : times[0]));
     const auto beats = events_with(lines, {"\"event\":\"heartbeat\""});
     require(!beats.empty() && members_of(beats[0]).empty(), "a heartbeat has no members:\n" + beats[0]);
 }

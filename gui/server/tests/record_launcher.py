@@ -686,32 +686,27 @@ def main(argv: list[str]) -> int:
     return 1 if failed else 0
 
 
-def state_paused(events: list[dict], value: bool) -> bool:
-    """The latest state event says paused `value`. The launcher writes the state that says so right after the time
-    event (the same look of the simulation); a command sent between the two is decided first, and the recording then
-    has its events in another order than a reader that waits for the state would get."""
+def state_paused(events: list[dict], value: bool, **fields) -> bool:
+    """The latest state event says paused `value` (and has these fields). The launcher writes the state that says
+    so right after the time event that says where (the same look of the simulation); a command sent between the two
+    is decided first, and the recording then has its events in another order than a reader that waits for the state
+    would get."""
     states = [e for e in events if e.get("event") == "state"]
-    return bool(states) and states[-1].get("paused") is value
+    return bool(states) and states[-1].get("paused") is value and all(states[-1].get(k) == v for k, v in fields.items())
 
 
 def paused(sim_ms: int | None = None, **fields) -> Callable[[list[dict]], bool]:
-    """A time event that stands still (at sim_ms, or anywhere) and has these fields, and the latest state says
-    paused too."""
+    """The latest state says paused (and has these fields, such as speed), and, with sim_ms, a time event of that
+    time has come: the time event says where the simulation is, the state that it stands still."""
     def seen(events: list[dict]) -> bool:
-        return state_paused(events, True) and any(
-            e.get("event") == "time" and e.get("paused") is True and
-            (sim_ms is None or e.get("sim_ms") == sim_ms) and all(e.get(k) == v for k, v in fields.items())
-            for e in events)
+        return state_paused(events, True, **fields) and (
+            sim_ms is None or any(e.get("event") == "time" and e.get("sim_ms") == sim_ms for e in events))
     return seen
 
 
-def last_time(**fields) -> Callable[[list[dict]], bool]:
-    """The last time event has these fields; if `paused` is one of them, the latest state says the same."""
-    def seen(events: list[dict]) -> bool:
-        times = [e for e in events if e.get("event") == "time"]
-        return (bool(times) and all(times[-1].get(k) == v for k, v in fields.items()) and
-                ("paused" not in fields or state_paused(events, fields["paused"])))
-    return seen
+def going() -> Callable[[list[dict]], bool]:
+    """The latest state says that the simulation is not paused."""
+    return lambda events: state_paused(events, False)
 
 
 def log(text: str) -> Callable[[list[dict]], bool]:
@@ -835,8 +830,8 @@ def runs() -> list[Case]:
                  ("sleep", 0.3), stop, extra=("--start-paused",)),
         run_case("forever-paused-commands", "forever.yaml",
                  "started paused: step 25, resume, pause, speed 2, stop", ("until", paused(0)), ("send", step(25)),
-                 ("until", paused(30)), ("send", RESUME), ("until", last_time(paused=False)), ("send", PAUSE),
-                 ("until", lambda events: command("pause")(events) and last_time(paused=True)(events)),
+                 ("until", paused(30)), ("send", RESUME), ("until", going()), ("send", PAUSE),
+                 ("until", lambda events: command("pause")(events) and paused()(events)),
                  ("send", speed(2)), ("until", paused(speed=2)), stop, extra=("--start-paused",)),
     ]
     paused_at_start = ("--disable", "Logger", "--speed", "max", "--start-paused")
@@ -845,9 +840,9 @@ def runs() -> list[Case]:
             f"time-commands-speed-{value}", "forever.yaml",
             f"started paused: step 25, speed {value}, resume, step {small} (refused while it runs), pause, stop",
             ("until", paused(0)), ("send", step(25)), ("until", paused(30)), ("send", speed(value)),
-            ("until", paused(speed=value)), ("send", RESUME), ("until", last_time(paused=False)),
+            ("until", paused(speed=value)), ("send", RESUME), ("until", going()),
             ("send", step(small)), ("until", command("step", 2)), ("send", PAUSE),
-            ("until", lambda events: command("pause")(events) and last_time(paused=True)(events)), stop,
+            ("until", lambda events: command("pause")(events) and paused()(events)), stop,
             extra=paused_at_start))
     control = CREDENTIALS
     out += [
@@ -909,7 +904,7 @@ def runs() -> list[Case]:
                  "a scenario at speed 0.001 with the control server: the time commands of standard input still work "
                  "(pause, a step of 10 ms, speed 0.002, resume), then a stop",
                  ("until", event("scenario_step", index=2, status="running")), ("send", PAUSE),
-                 ("until", lambda events: command("pause")(events) and last_time(paused=True)(events)),
+                 ("until", lambda events: command("pause")(events) and paused()(events)),
                  ("send", step(10)), ("until", command("step")), ("send", speed(0.002)),
                  ("until", command("speed")), ("send", RESUME), ("until", command("resume")), stop,
                  extra=("--scenario", "scenarios/throttle.yaml", *control, "--speed", "0.001")),

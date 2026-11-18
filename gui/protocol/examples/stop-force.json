@@ -28,15 +28,13 @@
       },
       "stop": "forced",
       "phase": "stopping",
-      "last_seq": 137,
-      "last_t_ms": 1370,
+      "last_seq": 260,
+      "last_t_ms": 2600,
       "time": {
         "event": "time",
-        "seq": 126,
-        "t_ms": 1260,
-        "sim_ms": 46540,
-        "speed": "max",
-        "paused": false,
+        "seq": 249,
+        "t_ms": 2490,
+        "sim_ms": 108090,
         "actual_speed": 1.5,
         "late_steps": 0,
         "max_late_ms": 0,
@@ -381,7 +379,7 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 121,
+        "seq": 237,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -390,7 +388,7 @@
         "id": null
       },
       "launcher_state": {
-        "seq": 131,
+        "seq": 254,
         "rev": 8,
         "phase": "stopping",
         "paused": false,
@@ -477,7 +475,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 94,
+          "kept": 217,
           "dropped": 0
         }
       },

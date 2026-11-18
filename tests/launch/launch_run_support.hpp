@@ -311,6 +311,62 @@ public:
         return found;
     }
 
+    /// Waits until the latest "state" says paused (up to 120 s, scaled). For a pause of a simulation
+    /// that goes. After a step or a run_until use wait_standing(): the state before the command's
+    /// says paused too.
+    void wait_paused()
+    {
+        std::unique_lock lock(mutex_);
+        const auto paused = [&] {
+            for (std::size_t i = out_.size(); i-- > 0;)
+            {
+                if (contains(out_[i], "\"event\":\"state\""))
+                {
+                    return contains(out_[i], "\"paused\":true,");
+                }
+            }
+            return false;
+        };
+        const bool seen = changed_.wait_for(lock, scaled_timeout(120s), [&] { return paused() || process_->poll().has_value(); });
+        require(seen && paused(), "the latest state does not say paused:\n" + text_locked());
+    }
+
+    /// Waits until the simulation stands still at `ms`: a "time" event of that time has come, and
+    /// the latest "state" says paused. (The time event does not say whether it stands still; the
+    /// state does not say where.) Returns the time event.
+    std::string wait_standing(std::int64_t ms)
+    {
+        const std::string time = wait_for({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(ms) + ","});
+        wait_paused();
+        return time;
+    }
+
+    /// Waits for an event line with every one of `parts` that comes after one with every one of
+    /// `first` (up to 120 s, scaled); returns it.
+    std::string wait_for_after(const std::vector<std::string>& first, const std::vector<std::string>& parts)
+    {
+        std::unique_lock lock(mutex_);
+        const auto has = [&](std::size_t i, const std::vector<std::string>& all) {
+            return std::all_of(all.begin(), all.end(), [&](const std::string& p) { return contains(out_[i], p); });
+        };
+        std::string found;
+        std::size_t next = 0;
+        bool begun = false;
+        const bool seen = changed_.wait_for(lock, scaled_timeout(120s), [&] {
+            for (; next < out_.size() && found.empty(); ++next)
+            {
+                if (begun && has(next, parts))
+                {
+                    found = out_[next];
+                }
+                begun = begun || has(next, first);
+            }
+            return !found.empty() || process_->poll().has_value();
+        });
+        require(seen && !found.empty(), "no event with " + parts.front() + " after one with " + first.front() + " in:\n" + text_locked());
+        return found;
+    }
+
     /// Waits until `n` event lines contain every one of `parts` (up to 120 s, scaled).
     void wait_for_count(const std::vector<std::string>& parts, std::size_t n)
     {

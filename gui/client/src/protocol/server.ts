@@ -450,7 +450,7 @@ export interface SessionSummary {
    * is in the check result).
    */
   manual: string[];
-  /** Speed given at the start (null means as in the configuration file). The current speed is time.speed. */
+  /** Speed given at the start (null means as in the configuration file). The current speed is `speed` of launcher_state. */
   speed: Speed;
   /** Whether the run started paused. */
   start_paused: boolean;

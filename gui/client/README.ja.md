@@ -100,7 +100,7 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | 型   | `ClientSession`（`session`、`ready`、`allowed`、`lastEventAt`、`notices`、`rejected`、`incompatible`、`onMessages`、`report`、`dismissNotice`） |
 | 型   | `Notice`、`SessionView`、`ParticipantView`、`LauncherView`、`LogLine`、`LogSource`、`TimeView`、`CommandView`、`RunOutcome`                     |
-| 関数 | `runOutcome`、`phaseIndex`                                                                                                                      |
+| 関数 | `runOutcome`、`phaseIndex`、`isHolding`                                                                                                         |
 
 `ClientSession.allowed` は、GUI サーバーがいま受けるものです（`start`、`stop`、`force`。それぞれ `ok`、理由のコード `reason`、文 `message`。`rev` の大きい方が勝ちます。サーバーが言うまでは `null`）。`SessionView.launcherState` は、ランチャーの最後の `state` イベントです（実行の状態と、いま受けるもの。`rev` の大きい方が勝ちます。届くまでは `null`）。
 
@@ -318,14 +318,14 @@ try {
 
 各項目は `{ ok, reason, caution }` です。`ok` が偽のとき `reason` は `{ code, message }`、`caution` は、受けるが先に知っておくことがある操作に付く同じ形です。コードは変わりません（増えることはありますが、意味は変わりません）。文は英語で、規則の持ち主が書いたものです。
 
-| 項目                                            | 出どころ                                                                                                                                                                                                                                                                                         |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `start`                                         | GUI サーバーの `allowed.start`（`starting`、`already-running`、`launcher-unusable`、`shutting-down`）とその文                                                                                                                                                                                    |
-| `stop`、`force_stop`                            | GUI サーバーの `allowed.stop` と `allowed.force`。`stop` は、最後に知った実行（か、向かっている開始）があれば、切断中でも、結果の後もランチャーが動いているとサーバーが言う間も `ok`。`force_stop` は、1 回目の停止の後だけ `ok`（それまでは `not-stopping`）                                    |
-| `pause`、`resume`、`step`、`speed`、`run_until` | ランチャーの `state.allowed`（理由、文、`caution` はランチャーが書いたまま。`step` と `speed` の範囲も）。コピーに実行がなければ `not-running`、`state` を出さないランチャーなら `unsupported`                                                                                                   |
-| `pause`、`resume`（何も変わらないとき）         | 一時停止中は `pause` が `ok` でなく（`paused`）、止まっていなければ `resume` が `ok` でありません（`not-paused`）。ランチャーはどちらも受けますが、ボタンにはすることがありません。ランチャーの `state` と最後の `time` の事象が食い違うとき（ステップ送りが終わった直後）は、どちらも言いません |
-| `run_until`                                     | ランチャーが機能 `stdin-run-until` を持つまで `unsupported`                                                                                                                                                                                                                                      |
-| すべて                                          | 接続: `rejected`、`incompatible`、`offline`、`connecting` では不可になります（`stop` と `force_stop` は上のとおり）。このページの同じ操作が答えを待つ間は `busy`                                                                                                                                 |
+| 項目                                            | 出どころ                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `start`                                         | GUI サーバーの `allowed.start`（`starting`、`already-running`、`launcher-unusable`、`shutting-down`）とその文                                                                                                                                                                                                                                                                  |
+| `stop`、`force_stop`                            | GUI サーバーの `allowed.stop` と `allowed.force`。`stop` は、最後に知った実行（か、向かっている開始）があれば、切断中でも、結果の後もランチャーが動いているとサーバーが言う間も `ok`。`force_stop` は、1 回目の停止の後だけ `ok`（それまでは `not-stopping`）                                                                                                                  |
+| `pause`、`resume`、`step`、`speed`、`run_until` | ランチャーの `state.allowed`（理由、文、`caution` はランチャーが書いたまま。`step` と `speed` の範囲も）。コピーに実行がなければ `not-running`、`state` を出さないランチャーなら `unsupported`                                                                                                                                                                                 |
+| `pause`、`resume`（何も変わらないとき）         | 一時停止中は `pause` が `ok` でなく（`paused`）、止まっていなければ `resume` が `ok` でありません（`not-paused`）。ランチャーはどちらも受けますが、ボタンにはすることがありません。ステップ送りか run_until が向かっている間（受け付けられて、まだ着いたと見えていない間。着いたとは、仮想時刻がその `at_ms` で、ランチャーの `state` が一時停止のこと）は、どちらも言いません |
+| `run_until`                                     | ランチャーが機能 `stdin-run-until` を持つまで `unsupported`                                                                                                                                                                                                                                                                                                                    |
+| すべて                                          | 接続: `rejected`、`incompatible`、`offline`、`connecting` では不可になります（`stop` と `force_stop` は上のとおり）。このページの同じ操作が答えを待つ間は `busy`                                                                                                                                                                                                               |
 
 ### 操作
 
@@ -551,7 +551,7 @@ watch.close();
 
 ### 最初のステップの前に書く
 
-止めて始めた実行（`start_paused`）は、変数の読み書きができるランチャーでは、最初のステップの前で待ちます。その間は `client.time.state` の `beforeStart` が真で、再開とステップ実行を押せます（書いた値は時刻 0 のステップで反映されます）。
+止めて始めた実行（`start_paused`）は、変数の読み書きができるランチャーでは、最初のステップの前で待ちます。その間は `isHolding(session)` が真で（ランチャーの `state` の `holding`。セッションの写しの `launcherState`）、再開とステップ実行を押せます（書いた値は時刻 0 のステップで反映されます）。
 
 ## コンポーネントを作る（`bind`）
 
@@ -616,18 +616,18 @@ throttle.close();
 
 書けるなら `null` です。複数に当てはまるときは、表で上にあるものになります。
 
-| `block`             | 意味                                                                                                   |
-| ------------------- | ------------------------------------------------------------------------------------------------------ |
-| `read-only`         | 読むだけの変数（`role` が `output`）                                                                   |
-| `disconnected`      | クライアントとサーバーの接続が切断されている                                                           |
-| `ended`             | 実行が終わった                                                                                         |
-| `not-ready`         | 変数の機能が使えない（実行していない、接続している途中、接続できない）                                 |
-| `missing`           | いまの実行にない変数                                                                                   |
-| `peer-disconnected` | その ECU が Control Server と接続していない                                                            |
-| `parameter`         | `parameter` は、止めて始めた実行の最初のステップの前（`client.time.state` の `beforeStart`）だけ書ける |
-| `scenario`          | シナリオの実行中（見るだけ）                                                                           |
-| `no-range`          | `needsRange` を付けたのに、変数に範囲（`min` と `max`）がない                                          |
-| `no-value`          | `needsValue` を付けていて、値（読んだ値か送った値）がまだない                                          |
+| `block`             | 意味                                                                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `read-only`         | 読むだけの変数（`role` が `output`）                                                                                      |
+| `disconnected`      | クライアントとサーバーの接続が切断されている                                                                              |
+| `ended`             | 実行が終わった                                                                                                            |
+| `not-ready`         | 変数の機能が使えない（実行していない、接続している途中、接続できない）                                                    |
+| `missing`           | いまの実行にない変数                                                                                                      |
+| `peer-disconnected` | その ECU が Control Server と接続していない                                                                               |
+| `parameter`         | `parameter` は、止めて始めた実行の最初のステップの前（`isHolding(session)`: ランチャーの `state` の `holding`）だけ書ける |
+| `scenario`          | シナリオの実行中（見るだけ）                                                                                              |
+| `no-range`          | `needsRange` を付けたのに、変数に範囲（`min` と `max`）がない                                                             |
+| `no-value`          | `needsValue` を付けていて、値（読んだ値か送った値）がまだない                                                             |
 
 ### 書き込みの状態（`writeStatus`、`pending`）
 

@@ -76,7 +76,7 @@ export function runOf(s: Snapshot): RunState {
   if (outcome === 'stopping' || outcome === 'forcing') return 'stopping';
   const state = session.launcherState;
   const phase = state?.phase || session.phase;
-  const paused = state ? state.paused : (session.time?.paused ?? null);
+  const paused = state?.paused ?? null;
   switch (phase) {
     case null:
     case 'checking':
@@ -177,6 +177,20 @@ export function statusOf(s: Snapshot, initialFile: string | null): Omit<FrontSta
   };
 }
 
+/**
+ * Whether a step or a run_until that the launcher accepted has not been seen to arrive. It has arrived when virtual
+ * time is at the `at_ms` of its command event (the time event) and the latest state says paused; either alone does
+ * not say so (the state may be the one from before the command, and a time event does not say whether it stands
+ * still). Another command after it (a pause, a resume) ends the question: it is then the last command.
+ */
+export function onItsWay(session: SessionView | null): boolean {
+  const last = session?.lastCommand;
+  if (!session || !last || !last.accepted || last.atMs === null) return false;
+  if (last.name !== 'step' && last.name !== 'run_until') return false;
+  const sim = session.time?.simMs ?? session.simMs;
+  return !(sim !== null && sim >= last.atMs && session.launcherState?.paused === true);
+}
+
 // --- clock ----------------------------------------------------------------------------------------
 
 export function clockOf(s: Snapshot): FrontClock {
@@ -187,8 +201,9 @@ export function clockOf(s: Snapshot): FrontClock {
   const pacing = state?.pacing;
   return {
     sim_ms: time?.simMs ?? session?.simMs ?? null,
-    speed: state?.speed ?? time?.speed ?? null,
-    actual_speed: time?.actualSpeed ?? null,
+    speed: state?.speed ?? null,
+    // The last time event may be from before the pause: nothing moves while it stands still
+    actual_speed: state?.paused === true ? null : (time?.actualSpeed ?? null),
     pacing: !live
       ? NOT_PACED
       : pacing === 'late'
@@ -358,14 +373,10 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
 
   const withReason = (base: Control, code: string, message: string): Control =>
     base.ok ? control(false, reason(code, message), base.caution) : base;
-  // The launcher writes `paused` of its `state` when its loop turns, so after a step it can still say "not paused" while
-  // the time event already says paused: when the two disagree, neither pause nor resume claims to change nothing.
-  const timePaused = session?.time?.paused ?? null;
-  const paused = state
-    ? timePaused !== null && timePaused !== state.paused
-      ? null
-      : state.paused
-    : timePaused;
+  // While a step or a run_until is on its way, neither pause nor resume claims to change nothing: the launcher's state
+  // says "not paused" until its next look after the arrival, and the state from before the command may still be the
+  // latest. The launcher's own answer (`allowed`) stands meanwhile.
+  const paused = state && !onItsWay(session) ? state.paused : null;
 
   const pauseBase = timeControl('pause', 'pause');
   const pause =

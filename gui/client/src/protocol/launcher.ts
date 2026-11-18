@@ -826,17 +826,14 @@ export type LauncherEvent =
   | (EventBase & { event: 'result'; result: RunResult });
 
 /**
- * The time event (and time of the summary): the virtual time the controller sees, and how it advances. Older launchers
- * write only sim_ms, so the other fields are null when absent or unreadable (the screen does not show null values).
+ * The time event (and time of the summary): the virtual time the controller sees, and how it keeps up with real time.
+ * Whether the simulation is paused, and the speed set, are in the state event (StateReport). Fields that are absent
+ * or unreadable are null (the screen does not show null values).
  */
 export interface TimeReport {
   /** Virtual time (ms; never decreases). */
   sim_ms: number;
-  /** The current speed (a number or 'max'). null if not written. */
-  speed: Speed;
-  /** Whether it is paused (true once it reaches the time it was to stop at). null if not written. */
-  paused: boolean | null;
-  /** Actual speed over roughly the last second. null when it has run only briefly, or while paused. */
+  /** Actual speed over roughly the last second. null when it has run only briefly, or in an event written while paused. */
   actual_speed: number | null;
   /** Number of late time steps so far (the value if it ended now; 0 when running as fast as possible). */
   late_steps: number | null;
@@ -852,8 +849,6 @@ export function readTimeFields(f: Fields, path: string, u?: Unreadable): TimeRep
   const count = (key: string) => field(f, path, key, soft(nullable(number), null, u));
   return {
     sim_ms: field(f, path, 'sim_ms', number),
-    speed: field(f, path, 'speed', soft(readSpeed, null, u)),
-    paused: field(f, path, 'paused', soft(nullable(boolean), null, u)),
     actual_speed: count('actual_speed'),
     late_steps: count('late_steps'),
     max_late_ms: count('max_late_ms'),
@@ -962,6 +957,8 @@ export interface StateReport {
   phase: string;
   /** Whether the simulation stands still. null if not written. */
   paused: boolean | null;
+  /** Whether the run waits before the step at time 0 (a run started paused with a Control Server). null if not written. */
+  holding: boolean | null;
   /** The speed that was asked for. null before the launcher knows it. */
   speed: Speed;
   /** Whether the run keeps to its speed: not-paced, on-time or late. */
@@ -979,6 +976,7 @@ export function readStateFields(f: Fields, path: string, u?: Unreadable): StateR
     rev: field(f, path, 'rev', integer),
     phase: field(f, path, 'phase', lenient(string, '', u)),
     paused: field(f, path, 'paused', soft(nullable(boolean), null, u)),
+    holding: field(f, path, 'holding', soft(nullable(boolean), null, u)),
     speed: field(f, path, 'speed', soft(readSpeed, null, u)),
     pacing: field(f, path, 'pacing', soft(nullable(string), null, u)),
     stop: field(

@@ -442,8 +442,8 @@ export class FrontActions {
         continue;
       }
       const sim = session.time?.simMs ?? session.simMs;
-      const paused = state ? state.paused : session.time?.paused;
-      if (sim !== null && (w.exact || sim > w.from) && sim >= w.target && paused === true)
+      // Arrived: the time event says where it is, the state that it stands still (neither says both)
+      if (sim !== null && (w.exact || sim > w.from) && sim >= w.target && state?.paused === true)
         this.settle(w, null);
     }
   }

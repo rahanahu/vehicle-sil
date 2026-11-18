@@ -34,7 +34,7 @@ MAX_COUNT = 2 ** 53  # seq and t_ms: integers that JavaScript reads exactly
 # the summary when the event is larger than Limits.small_bytes, and named in `omitted_fields`).
 ESSENTIAL = {
     "participant": ("name", "state", "pid", "exit_code", "signal", "reason", "stop_requested", CONTROL_SUMMARY_FIELD),
-    "time": ("event", "seq", "t_ms", "sim_ms", "speed", "paused", "late_steps", "max_late_ms", "slipped_ms", "late_ms"),
+    "time": ("event", "seq", "t_ms", "sim_ms", "late_steps", "max_late_ms", "slipped_ms", "late_ms"),
     "registry": ("uri",),
     "command": ("seq", "command", "accepted", "ms", "reason", "id"),
 }

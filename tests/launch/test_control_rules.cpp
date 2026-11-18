@@ -381,7 +381,7 @@ TEST_CASE(control_rules_rows_not_set_up_and_not_paused_refuse_a_step_or_a_time_t
             const ControlSituation s = situation(ControlStage::SettingUp, paused);
             const Command step = command(Operation::Step);
             check_refused(decide_command(s, entry, step), "not-set-up",
-                          "the simulation has not been set up yet: step works once it stands still (a time event with "
+                          "the simulation has not been set up yet: step works once it stands still (a state event with "
                           "paused true), with --start-paused from the start");
             for (const Operation o : {Operation::Pause, Operation::RunUntil})
             {

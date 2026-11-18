@@ -507,11 +507,11 @@ def test_the_essential_fields_of_a_large_small_event_are_kept() -> None:
     out = s.feed_line(line("participant", 10, name="N" * 5000, state="started"))  # not even the name fits
     assert kinds(out) == ["event"] and len(s.summary()["participants"]) == 2
     # The time with its lateness, however large the event: a screen opened later still sees how late it is
-    s.feed_line(line("time", 11, sim_ms=300, speed=1, paused=False, actual_speed=0.9, late_steps=1, max_late_ms=200,
+    s.feed_line(line("time", 11, sim_ms=300, actual_speed=0.9, late_steps=1, max_late_ms=200,
                      slipped_ms=200, late_ms=0, detail="d" * 5000))
     time = s.summary()["time"]
-    assert {k: time[k] for k in ("sim_ms", "speed", "paused", "late_steps", "max_late_ms", "slipped_ms", "late_ms")} \
-        == {"sim_ms": 300, "speed": 1, "paused": False, "late_steps": 1, "max_late_ms": 200, "slipped_ms": 200,
+    assert {k: time[k] for k in ("sim_ms", "late_steps", "max_late_ms", "slipped_ms", "late_ms")} \
+        == {"sim_ms": 300, "late_steps": 1, "max_late_ms": 200, "slipped_ms": 200,
             "late_ms": 0}
     assert time["omitted_fields"] == ["detail"]
 

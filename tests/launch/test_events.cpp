@@ -253,7 +253,7 @@ TEST_CASE(each_event_is_one_line_with_event_seq_and_t_ms_first)
     e.participant_failed("Engine", "left_simulation", "");
     e.participant_failed("Crash", "process_ended", "participant 'Crash': ...");
     e.time(TimeEvent{.sim_ms = 1000});
-    e.time(TimeEvent{.sim_ms = 1010, .speed = 0.5, .paused = true, .actual_speed = 0.48, .late_steps = 3, .max_late_ms = 12,
+    e.time(TimeEvent{.sim_ms = 1010, .actual_speed = 0.48, .late_steps = 3, .max_late_ms = 12,
                      .slipped_ms = 30, .late_ms = 4});
     // A participant's line may hold anything: quotes, a backslash, a tab, a line end.
     e.log("Engine", "say \"hi\"\\\tthen\nmore");
@@ -283,8 +283,8 @@ TEST_CASE(each_event_is_one_line_with_event_seq_and_t_ms_first)
 {"event":"participant","seq":7,"t_ms":7,"name":"Engine","state":"joined"}
 {"event":"participant","seq":8,"t_ms":7,"name":"Engine","state":"failed","reason":"left_simulation"}
 {"event":"participant","seq":9,"t_ms":7,"name":"Crash","state":"failed","reason":"process_ended","message":"participant 'Crash': ..."}
-{"event":"time","seq":10,"t_ms":7,"sim_ms":1000,"speed":"max","paused":false,"actual_speed":null,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0}
-{"event":"time","seq":11,"t_ms":7,"sim_ms":1010,"speed":0.5,"paused":true,"actual_speed":0.48,"late_steps":3,"max_late_ms":12,"slipped_ms":30,"late_ms":4}
+{"event":"time","seq":10,"t_ms":7,"sim_ms":1000,"actual_speed":null,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0}
+{"event":"time","seq":11,"t_ms":7,"sim_ms":1010,"actual_speed":0.48,"late_steps":3,"max_late_ms":12,"slipped_ms":30,"late_ms":4}
 {"event":"log","seq":12,"t_ms":7,"source":"Engine","line":"say \"hi\"\\\tthen\nmore"}
 {"event":"outside","seq":13,"t_ms":7,"network":"ETH_EXT","to_outside":152,"from_outside":0}
 {"event":"participant","seq":14,"t_ms":7,"name":"Engine","state":"ended","exit_code":0,"signal":null}
@@ -461,7 +461,7 @@ log "source":"B","line":"2"}
 log "source":"A","line":"3"}
 log_dropped "count":4,"sources":{"A":3,"B":1}}
 participant "name":"A","state":"joined"}
-time "sim_ms":5,"speed":"max","paused":false,"actual_speed":null,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0}
+time "sim_ms":5,"actual_speed":null,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0}
 log "source":"B","line":"8"}
 phase "phase":"stopping"}
 log "source":"C","line":"9"}
@@ -940,7 +940,7 @@ TEST_CASE(a_command_may_carry_the_senders_number_which_comes_back_in_its_event)
     e.command(*parse_command("x"), "stdin");
     CHECK(e.wait_written(10s));
     check_text(shape(sink.lines()), R"(command "command":"pause","source":"stdin","accepted":true,"message":null,"reason":null,"id":41}
-command "command":"step","source":"stdin","accepted":false,"message":"the simulation has not been set up yet: step works once it stands still (a time event with paused true), with --start-paused from the start","reason":"not-set-up","id":42}
+command "command":"step","source":"stdin","accepted":false,"message":"the simulation has not been set up yet: step works once it stands still (a state event with paused true), with --start-paused from the start","reason":"not-set-up","id":42}
 command "command":"jump","source":"stdin","accepted":false,"message":"unknown command 'jump': the commands are stop, pause, resume, step, run_until and speed","reason":"unknown-command","id":43}
 command "command":null,"source":"stdin","accepted":false,"message":"the line is not a JSON object: write one JSON object per line, such as {\"command\":\"stop\"}","reason":"invalid-command","id":null}
 )");
@@ -1006,7 +1006,7 @@ TEST_CASE(time_commands_before_the_simulation_are_kept_and_after_it_refused)
     CHECK(commands.apply(command(R"({"command":"pause"})"), "stdin").accepted);
     const Command early = commands.apply(command(R"({"command":"step","ms":10})"), "stdin");
     CHECK(!early.accepted);
-    check_text(early.message, "the simulation has not been set up yet: step works once it stands still (a time event "
+    check_text(early.message, "the simulation has not been set up yet: step works once it stands still (a state event "
                               "with paused true), with --start-paused from the start");
     CHECK(commands.apply(command(R"({"command":"resume"})"), "stdin").accepted);
     commands.detach();
@@ -1018,7 +1018,7 @@ TEST_CASE(time_commands_before_the_simulation_are_kept_and_after_it_refused)
     check_text(shape(sink.lines()),
                R"(command "command":"speed","source":"stdin","accepted":true,"message":null,"reason":null,"id":null}
 command "command":"pause","source":"stdin","accepted":true,"message":null,"reason":null,"id":null}
-command "command":"step","source":"stdin","accepted":false,"message":"the simulation has not been set up yet: step works once it stands still (a time event with paused true), with --start-paused from the start","reason":"not-set-up","id":null}
+command "command":"step","source":"stdin","accepted":false,"message":"the simulation has not been set up yet: step works once it stands still (a state event with paused true), with --start-paused from the start","reason":"not-set-up","id":null}
 command "command":"resume","source":"stdin","accepted":true,"message":null,"reason":null,"id":null}
 command "command":"pause","source":"stdin","accepted":false,"message":"the simulation is not running (it is over, or it did not start): pause works from the start of the run until the simulation ends","reason":"not-running","id":null}
 )");

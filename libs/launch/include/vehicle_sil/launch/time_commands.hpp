@@ -53,7 +53,7 @@ struct TimeFacts
     /// The run waits in the hold before its first step.
     bool holding = false;
     /// The simulation stands still: attached, the controller's time gate does (or is at the time
-    /// it is to stand still at, as the time event's `paused`), or the run holds; before that,
+    /// it is to stand still at), or the run holds; before that,
     /// whether it will stand still at 0 when it starts (--start-paused, a pause); false once
     /// detached.
     bool standing = false;

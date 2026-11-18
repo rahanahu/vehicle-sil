@@ -31,16 +31,14 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 40043,
-        "last_t_ms": 400430,
+        "last_seq": 40042,
+        "last_t_ms": 400420,
         "time": {
           "event": "time",
           "seq": 40029,
           "t_ms": 400290,
           "sim_ms": 1000,
-          "speed": "max",
-          "paused": false,
-          "actual_speed": 1.5,
+          "actual_speed": null,
           "late_steps": 0,
           "max_late_ms": 0,
           "slipped_ms": 0,
@@ -395,7 +393,7 @@
         "findings_omitted": 39000,
         "last_command": null,
         "launcher_state": {
-          "seq": 40042,
+          "seq": 40041,
           "rev": 8,
           "phase": "ended",
           "paused": false,
@@ -552,7 +550,7 @@
     {
       "type": "synced",
       "session": 1,
-      "last_seq": 40043
+      "last_seq": 40042
     }
   ]
 }
