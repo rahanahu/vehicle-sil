@@ -2,9 +2,9 @@
 
 [English](../socketcan-bridge.md)
 
-`vehicle_sil_socketcan_bridge` は、SIL Kit の CAN ネットワークと、動かしている Linux コンピューターの SocketCAN インターフェース（CAN アダプターの `can0`、または仮想の `vcan0`）の間で、クラシック CAN のフレームを双方向に転送します。特権は要らず、インターフェースには何も設定しません。このドキュメントには、接続の手順、引数、インターフェースの一覧、出力する行、確認済みの範囲と未確認の範囲が書いてあります。Windows 用の Vector XL ブリッジ（[bridges.md](bridges.md)）と、同じ意味の引数、統計、プログラム向けの行は同じです。
+`vehicle_sil_socketcan_bridge` は、SIL Kit の CAN ネットワークと、動かしている Linux コンピューターの SocketCAN インターフェース（CAN アダプターの `can0`、または仮想の `vcan0`）の間で、クラシック CAN のフレームを双方向に転送します。特権は要らず、インターフェースには何も設定しません。このドキュメントには、このブリッジだけのこととして、接続の手順、引数、インターフェースの一覧、動作、確認済みの範囲と未確認の範囲が書いてあります。すべてのブリッジがランチャーと共有すること（ランチャーが渡す引数、`--describe`、終了コード、プログラム向けの行、デバイスの印）は、[bridge-contract.md](bridge-contract.md) にあります。Windows 用の Vector XL ブリッジ（[bridges.md](bridges.md)）と、同じ意味の引数は同じです。
 
-ランチャーは `--connect` からこのブリッジを起動します。Linux では `vehicle_sil_launch run --connect CAN=can0 simulation.yaml` で、CAN のネットワーク `CAN` をインターフェース `can0` につなぎます（backend `socketcan` は、先が `virtual:<n>` でも `physical:<n>` でもないときの Linux の既定です。simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。手で起動するか、構成ファイルに `describe: true` の参加者として書きます（[bridges.md](bridges.md#設定ファイルから起こす) の「設定ファイルから起こす」）。
+ランチャーは `--connect` からこのブリッジを起動します。Linux では `vehicle_sil_launch run --connect CAN=can0 simulation.yaml` で、CAN のネットワーク `CAN` をインターフェース `can0` につなぎます（backend `socketcan` は、先が `virtual:<n>` でも `physical:<n>` でもないときの Linux の既定です。simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。手で起動するか、構成ファイルに `describe: true` の参加者として書きます（[bridge-contract.md](bridge-contract.md#自作のブリッジを起こすrole-bridge) の「自作のブリッジを起こす」）。
 
 | 接続するもの | `--interface` | 必要なもの | 確認済み | 未確認 |
 |---|---|---|---|---|
@@ -47,11 +47,11 @@ vehicle_sil_socketcan_bridge --registry-uri silkit://127.0.0.1:8500 --interface 
 | `--describe` | ブリッジが何かを JSON で書いて終わる（インターフェースは開かない） |
 | `--list-channels [--json]` | CAN のインターフェースを一覧して終わる |
 
-終了コード: 0 は通常の停止、1 は動いている最中の失敗（SIL Kit が終わった、またはインターフェースがなくなった）、3 は準備の失敗、4 はコマンドラインの誤りです。統計、健康の行、停止は Vector XL ブリッジと同じです。bridges.md の「[統計](bridges.md#統計)」「[終了コード](bridges.md#終了コード)」「[監視の行](bridges.md#監視の行)」を見てください。数は同じ「統計」にあります（外側は `ext_*`、ブリッジ自身のフレームの受領は `own_tx_dropped`）。
+終了コード: 0 は通常の停止、1 は動いている最中の失敗（SIL Kit が終わった、またはインターフェースがなくなった）、3 は準備の失敗、4 はコマンドラインの誤りです（bridge-contract.md の「[終了コード](bridge-contract.md#終了コード)」）。統計の行のキーは Vector XL ブリッジと同じです（「[統計の行](bridge-contract.md#統計の行)」。外側は `ext_*`、ブリッジ自身のフレームの受領は `own_tx_dropped`）。監視の行と停止は Vector XL ブリッジと同じです（bridges.md の「[監視の行](bridges.md#監視の行)」）。
 
 ### インターフェースの一覧
 
-`--list-channels` は、リンクの種類が CAN のインターフェースを出します。`--json` は他の一覧と同じ形です（`"vehicle_sil_targets": 1`、インターフェース 1 つが 1 つの target、`value` はインターフェース名）。
+`--list-channels` は、リンクの種類が CAN のインターフェースを出します。`--json` は「[デバイスの一覧](bridge-contract.md#デバイスの一覧)」の形です（インターフェース 1 つが 1 つの target、`value` はインターフェース名）。
 
 ```
 CAN interfaces (--interface):
@@ -59,7 +59,7 @@ CAN interfaces (--interface):
   can0  CAN, up, 250000 bit/s, error-active; in use by a vehicle-sil bridge (process 4321)
 ```
 
-各 target に `can: {kind, up, bitrate, state, restart_ms}`（`kind` は `vcan` か `can`、`state` はコントローラーの状態で、vcan では `null`）と、「[別のブリッジが使っているデバイス](bridges.md#別のブリッジが使っているデバイス)」と同じ `in_use`、`in_use_by`、`in_use_count` があります。down のインターフェースも一覧に出て `usable` です（`detail` に down と出ます）。一覧は特権なしでカーネルから読みます（netlink）。
+各 target に `can: {kind, up, bitrate, state, restart_ms}`（`kind` は `vcan` か `can`、`state` はコントローラーの状態で、vcan では `null`）と、「[別のブリッジが使っているデバイス](bridge-contract.md#別のブリッジが使っているデバイス)」と同じ `in_use`、`in_use_by`、`in_use_count` があります。down のインターフェースも一覧に出て `usable` です（`detail` に down と出ます）。一覧は特権なしでカーネルから読みます（netlink）。
 
 ## 起動
 
@@ -89,7 +89,7 @@ CAN interfaces (--interface):
 [bridge] link bus=active link=up device=552dd508e2f03efe marked=1 shared=0
 ```
 
-`bus` は `active`、`passive`、`bus-off`、`unknown` で、「[リンクの行](bridges.md#リンクの行)」と同じです。vcan の値は `unknown` だけです。`link=down` はインターフェースが down（`IFF_UP` がない）ことで、down になったときと戻ったときに `warning:` の行も出します。ブリッジは 1 秒に 4 回インターフェースを見て、送信が `ENETDOWN` で断られたときはすぐ見ます。down のあいだも動き続け、up に戻れば送受信を再開します。そのあいだフレームは送れません（断られた数は `ext_tx_failures`）。down をどれだけ許すかはランチャーが決めます。
+`bus` は `active`、`passive`、`bus-off`、`unknown` で、「[リンクの行](bridge-contract.md#リンクの行)」と同じです。vcan の値は `unknown` だけです。`link=down` はインターフェースが down（`IFF_UP` がない）ことで、down になったときと戻ったときに `warning:` の行も出します。ブリッジは 1 秒に 4 回インターフェースを見て、送信が `ENETDOWN` で断られたときはすぐ見ます。down のあいだも動き続け、up に戻れば送受信を再開します。そのあいだフレームは送れません（断られた数は `ext_tx_failures`）。down をどれだけ許すかはランチャーが決めます。
 
 ## バスの状態と `restart-ms`
 
@@ -101,7 +101,7 @@ CAN interfaces (--interface):
 
 ## 別のブリッジが使っているデバイス
 
-ブリッジはインターフェースに「[別のブリッジが使っているデバイス](bridges.md#別のブリッジが使っているデバイス)」の印を置きます（正体はインターフェース名）。`vcan0` に 2 つ目のブリッジがあると、両方が警告して `shared=1` を出し、一覧は使用中と言います。1 つのインターフェースの 2 つのブリッジは互いのフレームを受けてネットワークが混ざります。ブリッジは止まりません。
+ブリッジはインターフェースに「[別のブリッジが使っているデバイス](bridge-contract.md#別のブリッジが使っているデバイス)」の印を置きます（正体はインターフェース名）。`vcan0` に 2 つ目のブリッジがあると、両方が警告して `shared=1` を出し、一覧は使用中と言います。1 つのインターフェースの 2 つのブリッジは互いのフレームを受けてネットワークが混ざります。ブリッジは止まりません。
 
 ## ビルド
 

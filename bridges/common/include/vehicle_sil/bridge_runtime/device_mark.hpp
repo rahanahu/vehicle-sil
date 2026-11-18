@@ -13,7 +13,7 @@
 //            opens the other numbers and closes them at once. The process ids are not known.
 //   Others   no mark (marked() is false).
 //
-// docs/bridges.md, "Device in use by another bridge", says what the marks find and what they miss.
+// docs/bridge-contract.md, "Device in use by another bridge", says what the marks find and what they miss.
 #pragma once
 
 #include <cstddef>

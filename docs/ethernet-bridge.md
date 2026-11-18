@@ -2,7 +2,7 @@
 
 [日本語](ja/ethernet-bridge.md)
 
-`vehicle_sil_ethernet_bridge` forwards Ethernet frames, unchanged, in both directions between a SIL Kit Ethernet network and an interface outside SIL Kit. It runs in real time and does not take part in time synchronization. This page covers the connection steps, arguments, exit codes, messages, the behavior of each backend, statistics, filtering and loop prevention, the library API and what is verified.
+`vehicle_sil_ethernet_bridge` forwards Ethernet frames, unchanged, in both directions between a SIL Kit Ethernet network and an interface outside SIL Kit. It runs in real time and does not take part in time synchronization. This page covers what is particular to this bridge: the connection steps, arguments, the behavior of each backend, filtering and loop prevention, the library API and what is verified. What all bridges share with the launcher (the arguments it passes, `--describe`, the exit codes, the lines a bridge prints and the mark on a device) is in [bridge-contract.md](bridge-contract.md).
 
 | Connects to | `--backend` | OS | What to install | Verified |
 |---|---|---|---|---|
@@ -156,15 +156,7 @@ participants:
 
 On Linux, write `--backend packet` (or `pcap`) and the name of the network interface. The network (`ETH_EXT`) must be in `networks` with `kind: ethernet`.
 
-| Command | Arguments that `vehicle_sil_launch` adds |
-|---|---|
-| `check` | `--describe --name EthBridge` |
-| `run` | `--name EthBridge --registry-uri <URI> --start-timeout-ms <ms>` |
-
-- With `--describe`, the bridge checks its arguments as for a run (an error is exit code 4, which `check` reports as `describe-failed` with the bridge's message; do not write `--participant` or `--name` in `command`, because the launcher adds `--name`), writes the JSON that an ecu_main executable writes for `--describe` (see "[JSON format](ecu-executable.md#json-format)" in [ecu-executable.md](ecu-executable.md)) and exits with code 0. It does not open the interface, load the pcap library or connect to SIL Kit, so `check` works on a computer without Npcap or libpcap. `--registry-uri` is not needed; if it is given, it is not used.
-- The JSON has the participant name, `"step_ns": null` (the bridge runs in real time), the network of `--network` with `"kind": "ethernet"`, `"use": "ethernet"` and `"mac": null`, no variables, `"control": null` and an empty `features` list.
-- `check` therefore knows which network the bridge carries. A network that is not in `networks` is reported as for an ECU (`unknown-network`). The bridge, which has no MAC address of its own, does not cause the note `ethernet-mac-unknown`.
-- Because the URI comes from the launcher, `registry_uri` may have port 0.
+- What the launcher adds, and what `--describe` writes, are in "[Starting a bridge of your own](bridge-contract.md#starting-a-bridge-of-your-own-role-bridge)" and "[`--describe`](bridge-contract.md#--describe)" in bridge-contract.md. This bridge does not open the interface, load the pcap library or connect to SIL Kit for `--describe`, so `check` works on a computer without Npcap or libpcap.
 - `required: false`: the simulation does not wait for the bridge, and when the run ends, the launcher asks the bridge to stop (see "[Startup order](bridges.md#startup-order)" in [bridges.md](bridges.md) for frames sent before the bridge joins).
 
 To have the launcher start the bridge without an entry in the file, give `--connect <network>=<target>` to `check` and `run` (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md). The adapter or channel differs from PC to PC, so it is given when you start, not written in the shared file. `run` then starts the bridge before the ECUs, waits until it runs, so that the first frames reach the bus too, and fails the run if the bridge ends (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md).
@@ -226,19 +218,7 @@ sudo setcap -r build/<preset>/bridges/ethernet/vehicle_sil_ethernet_bridge
 
 ## Exit codes
 
-| Exit code | Meaning | Output |
-|---|---|---|
-| 0 | Stopped by a stop request. Also 0 when `--list-interfaces`, `--describe` or `--help` finishes. | The statistics line and `stopped` |
-| 1 | Failure while running. | `FAIL: <reason>` |
-| 3 | Failure during setup (a backend not available on this OS, a pcap library that is not installed, the interface, SIL Kit). | `FAIL setup: <reason>` |
-| 4 | Argument error. | `error: <reason>` |
-
-The exit code is 1 in any of these cases:
-
-- The external interface stopped working (it disappeared, or reading failed).
-- The SIL Kit participant stopped or ended by itself, or did not reach Running.
-
-The participant states are handled as in the Vector XL CAN Bridge (see "Participant state while running" in [bridges.md](bridges.md#participant-state-while-running)). Both bridges share `run_bridge()`, which handles stopping, monitoring and the exit codes.
+The exit codes (0, 1, 3, 4) and the judgment of the participant state are those of all bridges (see "[Exit codes](bridge-contract.md#exit-codes)" in bridge-contract.md). For this bridge, exit code 3 is a backend that is not available on this OS, a pcap library that is not installed, an interface that cannot be opened, or SIL Kit during setup (`FAIL setup: <reason>`); exit code 1 includes an external interface that stopped working (it disappeared, or reading failed) (`FAIL: <reason>`).
 
 ## Behavior from start to stop
 
@@ -256,31 +236,7 @@ The bridge goes through these steps in order:
 - In step 2, `npcap` and `pcap` load their library. If it is not installed, the bridge says how to install it and exits with code 3.
 - For the messages of step 4, see the sections under "[Backends](#backends)".
 - Forwarding (step 4) starts before the lifecycle (step 5) because other participants start sending as soon as they see the bridge reach Running.
-
-### Argument errors
-
-`--help` prints the full usage.
-
-```
-error: --backend must be tap, packet, npcap or pcap, got: usb
-Run 'vehicle_sil_ethernet_bridge --help' for the options.
-```
-
-### Message when the registry is unreachable
-
-The text in parentheses comes from SIL Kit.
-
-```
-[eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://127.0.0.1:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). Start the registry first ('sil-kit-registry --listen-uri silkit://127.0.0.1:8500'), or give the address it listens at with --registry-uri.
-```
-
-If the address is not a loopback address of this computer (`localhost`, `127.x.y.z`, `::1`), the message does not tell you to start the registry; it tells you what to check on the computer with that address. The bridge does not determine whether that address belongs to another computer or to this one.
-
-```
-[eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://192.168.10.5:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). 192.168.10.5 is not the loopback address of this computer: check that the registry runs on the computer with that address (which may be this one), that it listens on an address reached from here ('sil-kit-registry --listen-uri silkit://0.0.0.0:8500' there listens on all of its addresses, not only on its loopback), and that its firewall lets port 8500 through.
-```
-
-`0.0.0.0` and `[::]` are addresses to listen on, so the message tells you to give the address of the computer the registry runs on. `registry_failure_message()` in `bridges/common` builds the message, the same as for the Vector XL CAN Bridge (see "Message when the registry is unreachable" in [bridges.md](bridges.md#message-when-the-registry-is-unreachable)).
+- An argument error (`error: <reason>` and a pointer to the usage, for example `error: --backend must be tap, packet, npcap or pcap, got: usb`) and a registry that cannot be reached have the same form in all bridges (see "[Lines the bridge prints](bridge-contract.md#lines-the-bridge-prints)" in bridge-contract.md).
 
 ### The startup line
 
@@ -405,7 +361,7 @@ interfaces of this computer (--backend packet and --backend pcap take the Ethern
   --interface vsil0   Ethernet, down
 ```
 
-An interface that vehicle-sil bridges use now ends its line with `; in use by a vehicle-sil bridge (process 4321)` (see "[Device in use by another bridge](bridges.md#device-in-use-by-another-bridge)" in bridges.md). For `npcap` (the default on Windows) and `pcap`, it prints the interfaces that the pcap library returns.
+An interface that vehicle-sil bridges use now ends its line with `; in use by a vehicle-sil bridge (process 4321)` (see "[Device in use by another bridge](bridge-contract.md#device-in-use-by-another-bridge)" in bridge-contract.md). For `npcap` (the default on Windows) and `pcap`, it prints the interfaces that the pcap library returns.
 
 ```
 interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); --backend npcap takes the Ethernet ones:
@@ -426,7 +382,7 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 
 #### The list as JSON (`--json`)
 
-`--list-interfaces --json` writes the same list as one JSON object to stdout, in UTF-8, followed by a line break. The text is for people and its layout may change; programs read `--json`. The Vector XL CAN Bridge writes its channels in the same form (see "[The channel list as JSON](bridges.md#the-channel-list-as-json---json)"). `vehicle_sil_launch connections` reads both lists for the networks of a configuration file (see "[Where a network can be connected](simulation-run.md#where-a-network-can-be-connected-vehicle_sil_launch-connections)" in simulation-run.md).
+`--list-interfaces --json` writes the same list in the form of "[Lists of devices](bridge-contract.md#lists-of-devices)" in bridge-contract.md; this section gives what differs and an example.
 
 ```json
 {
@@ -479,24 +435,14 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 }
 ```
 
-| Key | Content |
+| Key | Content for this bridge |
 |---|---|
-| `vehicle_sil_targets` | The version of this form (1). |
 | `tool` | `vehicle_sil_ethernet_bridge`. |
 | `backend` | The backend the list is for: `--backend`, or the default. |
 | `source` | `npcap`, `pcap`: the version the library reports. `packet`, `tap`: `null`. |
-| `targets` | One object per interface, in the order of the text. |
-| `targets[].value` | The name to give to `--interface`, exactly. |
-| `targets[].label` | The name to show; today the same as `value`. |
-| `targets[].detail` | What the line of the text says after the name, its parts separated by `; `. |
-| `targets[].usable` | `false` where the bridge cannot use the interface; `reason` then says why. |
-| `targets[].reason` | Why the interface cannot be used, or `null`. |
-| `targets[].in_use` | `true` where vehicle-sil bridges use the interface now (their device marks; see "[Device in use by another bridge](bridges.md#device-in-use-by-another-bridge)" in bridges.md). `detail` then ends with `in use by a vehicle-sil bridge (process 4321)`. `usable` does not change. |
-| `targets[].in_use_by` | The process IDs of those bridges, ascending. Empty on Windows, where the marks do not tell them. |
-| `targets[].in_use_count` | How many bridges use the interface (also on Windows). |
+| `targets[].detail` | `detail` also ends with `in use by a vehicle-sil bridge (process 4321)` for a device in use. |
 | `targets[].ethernet` | What the backend reports. `npcap`, `pcap`: `pcap_name`, `connection` and `description` (`null` where there is none), `up`, `connected` (`null` where the library does not say), `loopback`, `wireless`. `packet`, `tap`: `name`, `ethernet`, `link_type`, `up`. |
 | `notes` | The explanations of the text's last line, one sentence each (Npcap that offers no network adapter); otherwise empty. |
-| `error` | `null`, or the error when the list could not be made (below). |
 
 `value` is the connection name where the device has one and no other device in the list has the same connection name, compared without the case of ASCII letters as `--interface` does (see "[Names accepted by `--interface`](#names-accepted-by---interface)"). Otherwise it is the pcap name. With `packet` and `tap` it is the interface name.
 
@@ -510,7 +456,7 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 
 The pcap library does not say whether a device carries Ethernet before it is opened: apart from the loopback and `any`, a device that is not Ethernet is listed as usable, and the bridge refuses it at startup. With `tap`, the list shows the interfaces of this computer; the bridge can open only a TAP device among them.
 
-When the list cannot be made, the bridge still writes the JSON, with no targets and the error, and exits with code 3. The `FAIL setup: ...` line, which is on stdout without `--json`, goes to stderr, so that stdout holds the JSON alone.
+When the list cannot be made, the JSON has no targets and an error (see the contract for the exit code and where the `FAIL setup:` line goes).
 
 ```json
 {
@@ -533,8 +479,6 @@ When the list cannot be made, the bridge still writes the JSON, with no targets 
 | `permission-denied` | The OS refused the list to this user. |
 | `backend-unavailable` | The backend is not available on this OS (`--backend npcap` on Linux, for example). |
 | `failed` | Anything else. |
-
-`error.message` is the message of the `FAIL setup:` line.
 
 ### `tap`
 
@@ -649,7 +593,7 @@ The tests load a fake library, but the means to do so exists only in a separate 
 - If a connection name matches 2 adapters, the bridge reports an error and shows their pcap names.
 - Connection names are compared as UTF-8 strings (the arguments are read as UTF-8). As in Windows, the case of ASCII letters does not matter (`ethernet 2` chooses `Ethernet 2`); other letters must be the same. If 2 connection names differ only in case, a name in a third case gives an error with both names, and each of them written exactly chooses its own adapter.
 - pcap names are compared exactly, including case.
-- Both the list and the error messages are written in a form that is readable in a console whatever the code page, and as UTF-8 to files and pipes (see "Output encoding" in [bridges.md](bridges.md#output-encoding)). You do not need `chcp`.
+- Both the list and the error messages are written in a form that is readable in a console whatever the code page, and as UTF-8 to files and pipes (see "Output encoding" in [bridge-contract.md](bridge-contract.md#output-encoding)). You do not need `chcp`.
 - Text that Npcap returns (device descriptions, error texts) is read in the Windows ANSI code page and converted to UTF-8.
 - A connection name in Japanese is listed and matched (checked on English Windows). Files and pipes receive it as correct UTF-8, and a console receives the correct characters; the console font of English Windows draws them as boxes. How a console on Japanese Windows shows them is not verified.
 
@@ -764,36 +708,15 @@ The third is the message on an OS that is neither Linux nor Windows. There, `--l
 
 ## Statistics
 
-`format_statistics()` puts all the counts on one line: `stats`, then one ` <key>=<count>` for each key of the table below, in its order. The bridge prints the line when it stops, and with `--stats-every-ms <ms>` also while it runs: at the first interval, then at each interval where a count changed. The counts are totals since the start, each read on its own (one line need not show one instant). The keys and their order are fixed by this page for programs that read the line (a script of yours, for example), and the tests hold them. When `vehicle_sil_launch run --connect` starts the bridge, it passes `--stats-every-ms 1000` and reads the lines for its counts: the run's output does not show the lines while the bridge runs, and shows the last one once, when the bridge has ended (see "Counting the frames to and from the bus" in [simulation-run.md](simulation-run.md#counting-the-frames-to-and-from-the-bus)).
+The form of the line, the keys and their order are in "[Statistics line](bridge-contract.md#statistics-line)" in bridge-contract.md. What the keys count in this bridge, where it is more than the table says there:
 
-```
-stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_suspected=0 mac_unguarded=0 filtered_to_ext=0 filtered_from_ext=0 oversize=0 malformed=0 ext_overruns=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_checksum_incomplete=0
-```
-
-| Key | Counts | Problem |
-|---|---|---|
-| `silkit_to_ext` | Frames sent from SIL Kit to the outside | — |
-| `ext_to_silkit` | Frames passed from the outside to SIL Kit (where `SendFrame()` returned) | — |
-| `ext_from_devices` | Frames from the outside that this computer did not send, and whose source is not an address of the SIL Kit side. Counted before the filter | — |
-| `own_tx_dropped` | Frames the bridge sent that came back from the external link (only with an external link that echoes its own transmissions) | — |
-| `loop_suspected` | Frames whose source address is on both sides | Yes |
-| `mac_unguarded` | Frames that did not fit in the MAC table and were passed without the loop check | Yes |
-| `filtered_to_ext`, `filtered_from_ext` | Frames that the filter did not pass (per direction) | — |
-| `oversize` | Frames longer than the maximum length (both directions) | Yes |
-| `malformed` | Frames shorter than the Ethernet header (both directions) | Yes |
-| `ext_overruns` | Frames that the OS dropped before they were read | Yes |
-| `ext_queue_full` | Frames lost because the transmit queue of the external link was full | Yes |
-| `ext_tx_failures` | Other transmit failures on the external link (including exceptions thrown by `transmit()`) | Yes |
-| `silkit_tx_failures` | Frames for which `SendFrame()` threw an exception, or that SIL Kit confirmed it could not send (`ControllerInactive`, `LinkDown`, `Dropped`, `InvalidFrameFormat`) | Yes |
-| `ext_checksum_incomplete` | Frames passed from the outside to SIL Kit with an incomplete UDP or TCP checksum | Yes |
-
-- When a key marked Yes in the Problem column increases, a health line appears (`problems_grew()`). The forwarded counts, the filter counts and `own_tx_dropped` are not problems.
-- Frames in `silkit_tx_failures` that SIL Kit confirmed it could not send are also counted in `ext_to_silkit`, at the time they were passed on.
+- When a key that raises a health line increases, a health line appears (`problems_grew()`). The forwarded counts, the filter counts and `own_tx_dropped` are not problems.
+- `ext_to_silkit` counts where `SendFrame()` returned. Frames in `silkit_tx_failures` that SIL Kit confirmed it could not send (`ControllerInactive`, `LinkDown`, `Dropped`, `InvalidFrameFormat`) are also counted in `ext_to_silkit`, at the time they were passed on.
 - `ext_checksum_incomplete` counts frames sent by the OS of the same computer, with `packet` (see "[Talking to the network stack of the same computer](#talking-to-the-network-stack-of-the-same-computer)"). They are also counted in `ext_to_silkit`.
-- `ext_from_devices` tells whether anything outside answers. Not counted: frames this computer sent (from the MAC address of one of its adapters, and with `packet` every frame the kernel marks as sent here, as "[Hint when nothing comes from a device](#hint-when-nothing-comes-from-a-device)" says; where the bridge does not know the addresses, they count), frames from an address of the SIL Kit side (the `--src-mac` addresses, and with the MAC rules the sources of the frames the bridge sent out: the frames that `own_tx_dropped` and `loop_suspected` count), frames shorter than a header or longer than the maximum, and frames before the SIL Kit controller is activated. A frame from a device counts even where the filter keeps it out of SIL Kit (it is also in `filtered_from_ext`).
+- `ext_from_devices` tells whether anything outside answers. It counts frames from the outside that this computer did not send, and whose source is not an address of the SIL Kit side, before the filter. Not counted: frames this computer sent (from the MAC address of one of its adapters, and with `packet` every frame the kernel marks as sent here, as "[Hint when nothing comes from a device](#hint-when-nothing-comes-from-a-device)" says; where the bridge does not know the addresses, they count), frames from an address of the SIL Kit side (the `--src-mac` addresses, and with the MAC rules the sources of the frames the bridge sent out: the frames that `own_tx_dropped` and `loop_suspected` count), frames shorter than a header or longer than the maximum, and frames before the SIL Kit controller is activated. A frame from a device counts even where the filter keeps it out of SIL Kit (it is also in `filtered_from_ext`).
 - An answer from a program on this computer that uses the same adapter does not count: with `packet` whatever its source address, with `npcap` and `pcap` when it sends from the address of one of this computer's adapters (as such programs usually do).
 - With `tap`, the other end is this computer's network stack, so nothing that comes in is taken for this computer's own: `ext_from_devices` counts every frame that comes in and is not from the SIL Kit side, as `ext_to_silkit` and `filtered_from_ext` together do.
-- With `--no-mac-guard`, only the `--src-mac` addresses tell the SIL Kit side. A frame that the bridge sent out and that comes back from an external link that echoes its own transmissions then counts in `ext_from_devices`. None of the external links of vehicle-sil echo.
+- `own_tx_dropped` counts only with an external link that echoes its own transmissions; none of the external links of vehicle-sil echo. With `--no-mac-guard`, only the `--src-mac` addresses tell the SIL Kit side, so a frame that the bridge sent out and that comes back from such a link counts in `ext_from_devices`.
 
 ## Health lines
 
@@ -809,7 +732,7 @@ stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_s
 
 ## Link line
 
-For programs that read the output (the launcher, a script of yours), the bridge prints the state of its link on one line, apart from the health lines for people: `link link=<value>`, after the tag like the statistics line, followed by the keys of the device mark (`device`, `marked`, `shared` and, on Linux, `peers`): whether other vehicle-sil bridges use the same interface (see "[Device in use by another bridge](bridges.md#device-in-use-by-another-bridge)" in bridges.md).
+The form of the line is in "[Link line](bridge-contract.md#link-line)" in bridge-contract.md. This bridge prints `link link=<value>`:
 
 ```
 [eth-bridge] link link=up device=af3d43e7e4b8883a marked=1 shared=0
@@ -821,13 +744,8 @@ For programs that read the output (the launcher, a script of yours), the bridge 
 | `down` | The link is down |
 | `unknown` | The link has not reported yet, or cannot tell. `npcap` does not watch the link, so its value is always `unknown` |
 
-- The first line is printed once the interface is open, before the bridge starts the SIL Kit lifecycle (before the startup line, and so before the participant can be Running). A value that is not known then is `unknown`.
-- After that, the bridge looks once a second (like the health line) and prints a line only when the value or a key of the device mark has changed. The same line is never printed twice in a row.
-- No line comes when the bridge ends (`FAIL:`, stop): the state of the participant says it.
 - The bridge places its mark once the interface is open (only then does Npcap's link know the pcap name of a connection name). `packet` and `pcap` on the same interface are the same device.
-- `link_line_value()` gives the value, `bridge_runtime::format_link_line()` the line and `bridge_runtime::DeviceShareWatch` the keys of the device mark (`bridges/common`, shared with the Vector XL bridge).
-- A program that reads the line must skip keys and values it does not know: values and keys may be added.
-- `vehicle_sil_launch run --connect` does not show the line in the run's output, as with the statistics line.
+- `link_line_value()` gives the value.
 
 ## Filter (`FrameFilter`)
 

@@ -2,7 +2,7 @@
 
 [English](../bridges.md)
 
-`vehicle_sil_vector_xl_bridge` は、SIL Kit の CAN ネットワークと Vector XL の CAN チャネルの間で、クラシック CAN のフレームを双方向に転送します。このドキュメントには、接続の手順、引数、終了コード、統計、転送の仕様、ビルド、検証の範囲が書いてあります。
+`vehicle_sil_vector_xl_bridge` は、SIL Kit の CAN ネットワークと Vector XL の CAN チャネルの間で、クラシック CAN のフレームを双方向に転送します。このドキュメントには、このブリッジだけのこととして、接続の手順、引数、転送の仕様、ビルド、検証の範囲が書いてあります。すべてのブリッジがランチャーと共有すること（ランチャーが渡す引数、`--describe`、終了コード、ブリッジが出す行、デバイスの印）は、[bridge-contract.md](bridge-contract.md) にあります。
 
 | 接続するもの | `--xl-target` | 必要なもの | 確認済み | 未確認 |
 |---|---|---|---|---|
@@ -69,7 +69,7 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 | 症状 | 原因 | 直し方 |
 |---|---|---|
 | `error: ...` と表示され、終了コード 4 で終わる | 引数のエラーです。 | 「[引数](#引数)」を見て直します。 |
-| `FAIL setup: cannot connect to the SIL Kit registry ...` | registry に接続できません。 | メッセージが示すとおりにします（「[registry に接続できないときのメッセージ](#registry-に接続できないときのメッセージ)」）。 |
+| `FAIL setup: cannot connect to the SIL Kit registry ...` | registry に接続できません。 | メッセージが示すとおりにします（「[registry に接続できないときのメッセージ](bridge-contract.md#registry-に接続できないときのメッセージ)」）。 |
 | 使えるチャネルの一覧が表示され、終了コード 3 で終わる | `--xl-channel` の番号のチャネルがありません。 | `--list-channels` の番号を指定します。 |
 | `--bitrate` を付けると起動に失敗する | ほかのアプリケーションが init 権限を持っています。 | `--bitrate` を指定しなければ、チャネルの設定を変えずに接続します。 |
 
@@ -113,7 +113,7 @@ vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-chan
 
 ### チャネルの一覧の JSON（`--json`）
 
-`--list-channels --json` は、チャネルを 1 つの JSON のオブジェクトにして、UTF-8 で標準出力に書きます。最後に改行が付きます。文の一覧は人が読むためのもので、形が変わることがあります。プログラムは `--json` を読みます。形は Ethernet ブリッジの `--list-interfaces --json` と同じです（「[一覧の JSON](ethernet-bridge.md#一覧の-json--json)」）。ここには違う所だけを書きます。
+`--list-channels --json` は、チャネルを bridge-contract.md の「[デバイスの一覧](bridge-contract.md#デバイスの一覧)」の形で書きます。ここには違う所だけを書きます。
 
 ```json
 {
@@ -157,15 +157,15 @@ vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-chan
 | `targets[].label` | ドライバが返すチャネルの名前です。 |
 | `targets[].detail` | ターゲットと番号、続けて文の一覧の行の内容です。 |
 | `targets[].usable` | いつも `true` です。使用中のチャネルも同じです。 |
-| `targets[].in_use`、`in_use_by`、`in_use_count` | いま vehicle-sil のブリッジがチャネルのバスを使っているかで、Ethernet ブリッジの一覧と同じです（「[別のブリッジが使っているデバイス](#別のブリッジが使っているデバイス)」）。Vector Virtual CAN のチャネルは 1 つのバスなので、どれか 1 つにブリッジがあれば、全部が使用中になります。 |
+| `targets[].in_use`、`in_use_by`、`in_use_count` | 約束のページのとおりです。Vector Virtual CAN のチャネルは 1 つのバスなので、どれか 1 つにブリッジがあれば、全部が使用中になります。 |
 | `targets[].can` | `target`、`number`、`name`、`hw_type`、`hw_index`、`hw_channel`、`serial`、`transceiver`（ドライバが返さないときは `null`）です。 |
 | `notes` | 空です。 |
 
-一覧を作れないときも、ブリッジは JSON を書きます。`targets` は空で、エラーが入ります。終了コードは 3 です。`--json` がなければ標準出力に出る `FAIL setup: ...` の行は、標準エラーに出ます。標準出力には JSON だけが出ます。`error.code` は、XL ドライバを開けないときは `driver-missing`、ほかは `failed` です。`error.message` は、`FAIL setup:` の行の文です。
+一覧を作れないときの `error.code` は、XL ドライバを開けないときは `driver-missing`、ほかは `failed` です。
 
 ## 設定ファイルから起こす
 
-`vehicle_sil_launch` は、シミュレーションのほかの participant といっしょにブリッジを起こせます。設定ファイルには ECU と同じように（`describe: true`、既定）書き、`role: bridge` と `required: false` を付けます。
+`vehicle_sil_launch` は、シミュレーションのほかの participant といっしょにブリッジを起こせます。設定ファイルには ECU と同じように書き、`role: bridge` と `required: false` を付けます（ランチャーが `command` に足すものと `--describe` は、bridge-contract.md の「[自作のブリッジを起こす](bridge-contract.md#自作のブリッジを起こすrole-bridge)」にあります）。
 
 ```yaml
 participants:
@@ -175,143 +175,34 @@ participants:
     command: [vehicle_sil_vector_xl_bridge, --network, VehicleCAN, --xl-target, physical, --xl-channel, "1"]
 ```
 
-ネットワーク（`VehicleCAN`）は、`networks` に `kind: can` で書きます。`check` は `--describe --name XlBridge` を、`run` は `--name XlBridge --registry-uri <URI> --start-timeout-ms <ms>` を足します（そのため `registry_uri` のポートは 0 でもかまいません）。
+ネットワーク（`VehicleCAN`）は、`networks` に `kind: can` で書きます。
 
-- `--describe` のとき、ブリッジは引数を実行のときと同じに確かめ（誤りは終了コード 4。`check` がブリッジの文を添えて `describe-failed` として報告します。ランチャーが `--name` を足すので、`command` に `--participant` も `--name` も書きません）、ecu_main の実行ファイルが `--describe` で書くのと同じ JSON（[ecu-executable.md](ecu-executable.md#json-の形式) の「JSON の形式」）を書いて、XL Driver を開かず SIL Kit にもつながずに、終了コード 0 で終わります。`--registry-uri` は要りません（書いてあっても使いません）。
-- JSON には、participant の名前、`"step_ns": null`（ブリッジは実時間で動く）、`--network` のネットワーク（`"kind": "can"`、`"use": "raw"`）、空の変数、`"control": null`、空の `features` が入ります。そのため `check` は、ブリッジがどのネットワークを中継するかを知っています（[simulation-config.md](simulation-config.md) の「テスト用の participant とブリッジ（`role`）」）。
-- 実行ファイルは、`--describe` でも、`vxlapi64.dll` がないと起動しません。Windows が実行ファイルといっしょに読み込むためです（ビルドは、見つけたときに実行ファイルの隣にコピーします）。それがない PC では、`check` は、要る DLL がなくてブリッジが起動できなかったと `describe-failed` で報告します。その PC では `--disable XlBridge` でブリッジを外します。
+- `--describe` のとき、ブリッジは XL ドライバを開きませんが、実行ファイルは `vxlapi64.dll` がないと起動しません。Windows が実行ファイルといっしょに読み込むためです（ビルドは、見つけたときに実行ファイルの隣にコピーします）。それがない PC では、`check` は、要る DLL がなくてブリッジが起動できなかったと `describe-failed` で報告します。その PC では `--disable XlBridge` でブリッジを外します。
 - `required: false`: シミュレーションはブリッジを待たず（「[起動の順序](#起動の順序)」）、実行が終わるとランチャーがブリッジに止める要求を送ります。
 
 ファイルに書かずにランチャーにブリッジを起こさせるなら、`check` と `run` に `--connect <network>=<target>` を渡します（simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。アダプターやチャンネルは PC ごとに違うので、共有のファイルには書かず、起動するときに渡します。`run` は、ECU より先にブリッジを起こし、動き出すのを待つので、最初のフレームもバスに出ます。ブリッジが終わると実行を失敗にします（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。
 
 ## 終了コード
 
-| 終了コード | 意味 |
-|---|---|
-| 0 | 止める要求（Ctrl+C、Ctrl+Break、SIGTERM、コンソールのウィンドウを閉じたとき）による正常終了です。`--list-channels`、`--describe`、`--help` が終わったときも 0 です。 |
-| 1 | 実行中の失敗です。 |
-| 3 | 準備の失敗です（XL ドライバ、チャネル選択、SIL Kit）。 |
-| 4 | 引数のエラーです。 |
-
-終了コード 1 になるのは、次のどれかのときです。
-
-- SIL Kit の participant が、止まる途中か終わった状態になった（registry の停止や接続断）。
-- participant が、起動の途中のまま Running にならない。
-- XL のチャネルが使えなくなった（デバイスを外した）。
+終了コード（0、1、3、4）、participant の状態の判定、コンソールのウィンドウを閉じたときの扱いは、すべてのブリッジで同じです（bridge-contract.md の「[終了コード](bridge-contract.md#終了コード)」）。このブリッジでは、終了コード 3 は準備のときの XL ドライバ、チャネルの選択、SIL Kit の失敗で、終了コード 1 には XL のチャネルが使えなくなった（デバイスを外した）ことも入ります。
 
 ### 実行中の participant の状態
 
-| 状態 | 扱い | 出力 |
-|---|---|---|
-| 止まる途中か終わった状態（Stopping、Stopped、Error、ShuttingDown、Shutdown、Aborting） | 失敗にします（終了コード 1）。 | `FAIL: SIL Kit participant left Running (state <状態>)` |
-| 同じ状態に、Running になる前になった | 失敗にします（終了コード 1）。 | `FAIL: SIL Kit participant stopped before it reached Running (state <状態>)` |
-| 起動の途中の状態（ReadyToRun など）で、監視を始めてから 1 秒たった | 失敗にしません。 | `waiting for the SIL Kit participant to reach Running (state <状態>; at most 15000 ms)` を 1 回 |
-| 起動の途中の状態のまま、15 秒たった | 失敗にします（終了コード 1）。 | `FAIL: SIL Kit participant did not reach Running within 15000 ms (state <状態>); its SIL Kit log may say why` |
-| Paused | 失敗にしません。 | なし |
-
-ブリッジは、自分では一時停止しません。
-
-### コンソールのウィンドウを閉じたとき（Windows）
-
-Windows でコンソールのウィンドウを閉じたとき（ログオフ、シャットダウンも）は、`SetConsoleCtrlHandler` のハンドラーが停止を求め、ブリッジが止まり終わるまで（統計の出力を含む）最長 4 秒待ってから、ブリッジの終了コードでプロセスを終えます。Windows はハンドラーが戻るとプロセスを終わらせ、待つのも 5 秒ほどまでだからです。Windows の約 5 秒は変えられないので、統計は SIL Kit の participant を止める前に出力し、participant の停止を待つのは最長 2 秒にしています。それでも 4 秒を超えると、Windows がプロセスを終わらせ、終了コードは 0 になりません（統計は出力した後です）。
-
-### ブリッジの実行ファイルが共有する処理
-
-次の処理は、`bridges/common` の `run_bridge()`（`vehicle_sil::bridge_runtime`）にあり、ブリッジの実行ファイルが共有します。
-
-- 止める要求の受け方
-- 監視のループ
-- 止める順（止める直前に出た警告、統計の順に、SIL Kit の participant の停止より先に出力する）
-- 終了コード
-- コンソールを閉じたときの 4 秒
-- 動いている間の統計の行（`--stats-every-ms`。`BridgeHooks::statistics_line()`、`RunBridgeOptions::statistics_interval`）
-- 送り先のバスの機器から何も来ないと言う時点（`NothingCameHint`、`nothing_came_hint.hpp`）。最初に外部へ送信してから 10 秒で 1 回。機器からフレームが来ていれば言わない。そのフレームを、どちらのブリッジも `ext_from_devices` に数える（「[統計](#統計)」）
+participant の状態の判定と、そのときに出す文は、すべてのブリッジで同じです（bridge-contract.md の「[実行中の participant の状態](bridge-contract.md#実行中の-participant-の状態)」）。
 
 ## エラーメッセージ
 
-### 引数のエラー
-
-引数のエラーでは、エラーの 1 行と、使い方の見方の 1 行だけを標準エラーに出力して、終了コード 4 で終わります。使い方の全文は `--help` で表示します。
-
-```
-error: --xl-target must be 'virtual' or 'physical', got: cancase
-Run 'vehicle_sil_vector_xl_bridge --help' for the options.
-```
+引数のエラー、registry に接続できないときのメッセージ、出力の文字コードは、すべてのブリッジで同じです（bridge-contract.md の「[ブリッジが出す行](bridge-contract.md#ブリッジが出す行)」）。
 
 ### チャネルがないとき
 
 存在しない番号を `--xl-channel` に指定すると、使えるチャネルの一覧を出力して終了コード 3 で終わります。
 
-### registry に接続できないときのメッセージ
-
-registry に接続できないときは、接続しようとしたアドレスと次にすることを 1 行で出力して、終了コード 3 で終わります。メッセージは `bridges/common` の `registry_failure_message()` が作ります。
-
-```
-[bridge] FAIL setup: cannot connect to the SIL Kit registry at <uri> (<SIL Kit の文>). Start the registry first ('sil-kit-registry --listen-uri <uri>'), or give the address it listens at with --registry-uri.
-```
-
-`(<SIL Kit の文>).` より後ろの部分は、アドレスの書き方で決まります。ホストの大文字と小文字は区別しません。
-
-| `--registry-uri` のホスト | メッセージが示すこと |
-|---|---|
-| この PC のループバック（`localhost`、`127.x.y.z`、`::1`）と、読めないアドレス | 上の文のとおり、registry を先に起動するか、待ち受けているアドレスを指定します。 |
-| それ以外のホスト | registry のある PC で、registry が動いているか、ここから接続できるアドレスで待ち受けているか、ファイアウォールを確認します。 |
-| `0.0.0.0` と `::`（`[::]`） | 待ち受けるためのアドレスで接続先には書けないので、registry の動いている PC のアドレスを書きます。 |
-
-「それ以外のホスト」のときの文です。そのアドレスがどの PC のものか（別の PC か、この PC 自身の LAN のアドレスか）は調べないので、断定しない文にしてあります。
-
-```
-... <host> is not the loopback address of this computer: check that the registry runs on the computer with that address (which may be this one), that it listens on an address reached from here ('sil-kit-registry --listen-uri silkit://0.0.0.0:<port>' there listens on all of its addresses, not only on its loopback), and that its firewall lets port <port> through.
-```
-
-`0.0.0.0` と `::`（`[::]`）のときの文です。
-
-```
-... 0.0.0.0 stands for every address of a computer: a registry listens on it, a participant cannot connect to it. Give --registry-uri the address of the computer the registry runs on (silkit://127.0.0.1:<port> if it runs on this one).
-```
-
-アドレスにポートがなければ、例の `<port>` は 8500（ポートを書かずに起動した registry のポート）です。
-
-### 出力の文字コード
-
-ブリッジ（`vehicle_sil_vector_xl_bridge`、`vehicle_sil_ethernet_bridge`）と `vehicle_sil_can_bus_simulator` の標準出力と標準エラーの文は UTF-8 です。Windows では、出力先によって書き方を変えます（`tools/common` の `cli::write_text()`。`vehicle_sil_launch` も同じ書き方です）。
-
-| 出力先 | 書き方 |
-|---|---|
-| コンソール（コマンドプロンプト、PowerShell） | UTF-16 で書きます（`WriteConsoleW`）。 |
-| ファイルとパイプ | UTF-8 のバイト列を書きます。 |
-
-- コンソールでは、コードページ（日本語の Windows では 932）によらず、ASCII 以外の文字（`--participant` の名前、ネットワーク接続の名前）が読めます。コードページは変えないので、`chcp` は不要です。
-- MSYS2 のシェル（mintty）はパイプなので、UTF-8 のバイト列を受け取ります。読む側は UTF-8 として読みます。
-- Windows PowerShell 5.1 の `>` と `|` は、受け取ったバイト列を `[Console]::OutputEncoding`（既定はコンソールのコードページ）で読み直すので、ASCII 以外の文字が崩れます。その前に `[Console]::OutputEncoding = [Text.Encoding]::UTF8` とするか、コマンドプロンプトの `>` を使います。
-- SIL Kit 自身のログは、この書き方を通りません。
-
 ## 統計
 
-統計値は、終了時に 1 行で出力します。`stats` の後に、下の表のキーごとに ` <キー>=<数>` を、表の順に並べます。`--stats-every-ms <ms>` を指定すれば、動いている間にも出します（最初の間隔で 1 回、その後は数が変わった間隔ごと）。数は起動からの合計で、1 つずつ読むので、1 行の数が同じ瞬間のものとは限りません。キーとその順序は、行を読むプログラムのためにこのドキュメントが定め、テストが守ります。`vehicle_sil_launch run --connect` が起こしたブリッジには、ランチャーが `--stats-every-ms 1000` を渡し、数のためにこの行を読みます。実行の出力には、ブリッジが動いている間の行は出ず、ブリッジが終わったときに最後の 1 行が 1 回出ます（[simulation-run.md](simulation-run.md#外のバスとやりとりしたフレームの数) の「外のバスとやりとりしたフレームの数」）。
+行の形と各キーの意味は、bridge-contract.md の「[統計の行](bridge-contract.md#統計の行)」にあります。このブリッジは、その最初の例のキーを出します。`ext_tx_unsent` は、このブリッジでは、XL に渡したのに、バスに出ないまま失われたフレーム（止めるとき、チャネルを有効にし直したとき）です。
 
-```
-stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 error_frames=0 overruns=0 silkit_rejected=0 ext_rejected=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_tx_dropped=0 ext_tx_unsent=0
-```
-
-
-| キー | 数えるもの |
-|---|---|
-| `silkit_to_ext` | XL の送信キューに渡したフレーム |
-| `ext_to_silkit` | XL から受信して SIL Kit へ転送したフレーム |
-| `ext_from_devices` | XL から受信した、バスのほかのノードが送ったフレーム（自分の送信のレシートは数えない）。ランチャーが機器から来たフレームとして読むキーで、イーサネットのブリッジと同じ名前 |
-| `own_tx_dropped` | 自分の送信のレシート（レシートが有効なら、バスに出たフレームと同じ数） |
-| `error_frames` | XL のエラーフレーム |
-| `overruns` | XL の受信キューのあふれ |
-| `silkit_rejected` | SIL Kit から来た、転送しないフレーム（CAN FD、CAN XL、不正な ID や DLC） |
-| `ext_rejected` | XL から来た、転送しないフレーム（実際には、DLC が 15 を超えるフレーム） |
-| `ext_queue_full` | XL の送信キューが満杯で捨てたフレーム |
-| `ext_tx_failures` | XL への送信の、そのほかの失敗 |
-| `silkit_tx_failures` | `ICanController::SendFrame` が例外を投げたフレーム |
-| `ext_tx_dropped` | バスが詰まっているあいだ、`--tx-timeout-ms` によって捨てたフレーム |
-| `ext_tx_unsent` | XL に渡したのに、バスに出ないまま失われたフレーム（止めるとき、チャネルを有効にし直したとき） |
-
-`ext_to_silkit` と `ext_from_devices`（このブリッジでは同じ値）に数えるのは、バスのほかのノードからのフレームだけです。自分の送信のレシートは `own_tx_dropped` です。ブリッジがチャンネルへフレームを送信し、最初の送信から 10 秒たってもバスからフレームが 1 つも来ないとき（`ext_from_devices` が 0 のまま）、ブリッジはヒントを 1 回だけ警告します。
+`ext_to_silkit` と `ext_from_devices`（このブリッジでは同じ値）に数えるのは、バスのほかのノードからのフレームだけです。自分の送信のレシートは `own_tx_dropped` です（レシートが有効なら、バスに出たフレームと同じ数）。ブリッジがチャンネルへフレームを送信し、最初の送信から 10 秒たってもバスからフレームが 1 つも来ないとき（`ext_from_devices` が 0 のまま）、ブリッジはヒントを 1 回だけ警告します。
 
 ```
 nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the bridge first sent a frame there: if a device is meant to answer, check that it is on, its cable and termination, the bit rate, and that this is the channel it is on.
@@ -321,7 +212,7 @@ nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the b
 
 ## リンクの行
 
-出力を読むプログラム（ランチャーや自作のスクリプト）のために、ブリッジは外側のバスの状態を、人向けの監視の行とは別に 1 行で出します。形は `link bus=<値>` で、統計の行と同じようにタグの後ろに付き、その後にデバイスの使用中の印のキー（`device`、`marked`、`shared`、Linux では `peers`）が続きます（「[別のブリッジが使っているデバイス](#別のブリッジが使っているデバイス)」）。
+行の形は、bridge-contract.md の「[リンクの行](bridge-contract.md#リンクの行)」にあります。このブリッジは `link bus=<値>` を出します。
 
 ```
 [bridge] link bus=active device=552dd508e2f03efe marked=1 shared=0
@@ -329,59 +220,21 @@ nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the b
 
 | 値 | 意味 |
 |---|---|
-| `active` | error active、または error warning（エラーカウンターが警告の限度に達した。コントローラーはまだ error active） |
-| `passive` | error passive |
+| `active` | エラーアクティブ、またはエラーウォーニング（エラーカウンターが警告の値に達したが、コントローラーはエラーアクティブのまま） |
+| `passive` | エラーパッシブ |
 | `bus-off` | バスオフ |
-| `unknown` | エラー状態の問い合わせの最初の答えがまだ来ていない、または答えが来ない（`--no-bus-monitor`、答えないドライバー。「[エラー状態の問い合わせ](#エラー状態の問い合わせ)」） |
+| `unknown` | エラー状態の問い合わせの最初の答えがまだ来ていない、または答えが来ない（`--no-bus-monitor`、または答えないドライバ。「[エラー状態の問い合わせ](#エラー状態の問い合わせ)」） |
 
-- 最初の行は、XL のポートを開いた後、ブリッジが SIL Kit のライフサイクルを始める前に出ます（開始の行より前で、参加者が Running になりうる前）。最初の答えが来るまでは `unknown` で、答えは後から来ます。
-- その後は、監視の行と同じく 1 秒ごとに確かめ、値か使用中の印のキーが変わったときだけ行を出します。同じ行が続けて出ることはありません。
-- ブリッジが終わるとき（`FAIL:`、停止）には出ません。参加者の状態で分かります。
-- 値は `link_line_value()`、行は `bridge_runtime::format_link_line()`、使用中の印のキーは `bridge_runtime::DeviceShareWatch` が作ります（`bridges/common`。Ethernet のブリッジと共通）。
-- 行を読むプログラムは、知らないキーと値を読み飛ばしてください。キーと値は増えることがあります。
-- `vehicle_sil_launch run --connect` は、統計の行と同じく、この行を実行の出力に出しません。
+- 最初の行は、XL のポートを開いてから、ブリッジが SIL Kit のライフサイクルを始める前に出します。最初の答えが来るまでは `unknown` で、答えはあとから来ます。
+- `link_line_value()` が値を作ります。
 
 ## 別のブリッジが使っているデバイス
 
-同じデバイスを開いた 2 つのブリッジは、互いのフレームを受け取ります。2 つのネットワーク（または 2 つの実行）がそこで混ざります。どのブリッジも（このブリッジも Ethernet ブリッジも）、開いたデバイスに印を置き、ほかの vehicle-sil のブリッジの印を数えます。起動のときに 1 回、その後は動いている間 1 秒ごとに数えるので、先にいたブリッジも、後から来たブリッジを見つけます。印は誰も締め出しません。ほかのブリッジを見つけたブリッジは、警告を出して動き続けます。
+このブリッジは、bridge-contract.md の「[別のブリッジが使っているデバイス](bridge-contract.md#別のブリッジが使っているデバイス)」の印を置き、数えます。このブリッジのデバイスは、Vector のハードウェアの CAN チャネルで、XL ドライバが報告するハードウェアの種類、インデックス、シリアル番号、チャネルで区別します（`xl-<hwType>-<hwIndex>-<serial>-<hwChannel>`）。または Vector Virtual CAN で、全部のチャネルが 1 つのデバイスです（`xl-virtual`）。Vector の 1 つの機器の 2 つのチャネルは、2 つのデバイスです。このブリッジの警告は次のとおりです。
 
 ```
-[bridge] link bus=active device=552dd508e2f03efe marked=1 shared=1 peers=4321
 [bridge] warning: XL 'Virtual Channel 1' (Vector Virtual CAN, whose channels are all one bus) is also used by another vehicle-sil bridge (process 4321): the frames of both mix there: if that is not meant, connect them to different devices, or stop a bridge left over from an earlier run
 ```
-
-| リンクの行のキー | 意味 |
-|---|---|
-| `device` | デバイスを表すハッシュ（16 進 16 桁）です。backend が違っても、同じデバイスのブリッジでは同じです |
-| `marked` | `1`: ブリッジが印を置けました。`0`: 置けず、理由を警告で出しました。ほかのブリッジからは見えませんが、このブリッジはほかを見つけます |
-| `shared` | いまデバイスに印を置いている、ほかのブリッジの数です |
-| `peers` | それらのプロセス ID で、`,` で区切ります（Linux だけ。いなければキーごと出ません） |
-
-- 最初の数は、最初のリンクの行（SIL Kit のライフサイクルを始める前）にあります。警告は `shared` が増えるたびに、来たブリッジのプロセス ID を付けて出ます。リンクの行は、キーが変わるたびに出ます。ほかのブリッジが終わったときも出ます。
-- 一覧（`--list-channels --json`、`--list-interfaces --json`）は、印のあるデバイスに `in_use: true`、`in_use_by`（プロセス ID。Windows では空）、`in_use_count` を出し、`detail` と文の一覧の行に「in use by a vehicle-sil bridge (process 4321)」を足します。`usable` は `true` のままです。一覧は印を置きません。
-- デバイスは、バスにつながる口です。Ethernet のインターフェース、Vector のハードウェアの CAN チャネル（XL ドライバが返すハードウェアの種類、番号、シリアル番号、チャネル）、Vector Virtual CAN（全チャネルで 1 つのデバイス）です。1 台の Vector の機器の 2 つのチャネルは、2 つのデバイスです。
-
-| 印で見つかるもの | 印で見つからないもの |
-|---|---|
-| この PC の vehicle-sil のブリッジ: 別の実行、別の利用者、手で起こしたもの、同じ印を置く自作のブリッジ | デバイスを開く vehicle-sil の外のプログラム（Wireshark、candump、CANoe）。ブリッジがつなぐ外側そのものです |
-| | Linux で、別のネットワーク名前空間のブリッジ（見えるインターフェースが違います） |
-| | Windows で、印がセッションの名前空間（下の `Local\`）にあるときの、別のセッションのブリッジ |
-
-Linux の `peers` のプロセス ID は、印を置いたブリッジの PID 名前空間での番号です。PID 名前空間が別で、ネットワーク名前空間が同じコンテナーのブリッジは、コンテナーの中の番号で出ます。
-
-`vehicle_sil_launch run --connect` は、これらのキーを読みます。`shared` から自分の実行のブリッジを引き（Linux は `peers` のプロセス ID、Windows は数）、ブリッジの警告は、プロセス ID を付けたランチャー自身の 1 行にして、残りを所見 `outside-device-shared` にします。`--strict` では、デバイスが共有されている実行を始めず、共有が 3 秒続く実行は止めます（simulation-run.md の「[別の実行も使っているデバイス](simulation-run.md#別の実行も使っているデバイス)」）。同じキーを書く自作のブリッジも、同じに読まれます。
-
-印の置き方です（自作のブリッジ、設定ファイルの `role: bridge` も、同じ印を置けば、ほかのブリッジに見つかります）。
-
-| OS | 印 |
-|---|---|
-| Linux | 抽象名前空間の名前 `vehicle-sil/device/<kind>/<identity>/<pid>/<random>` に bind した Unix ソケット（close-on-exec）を、ブリッジが動いている間開いておきます（`<random>` は 16 進 16 桁。名前が使われていれば別の値でやり直します）。数えるときは、`/proc/net/unix` から、同じ `vehicle-sil/device/<kind>/<identity>/` で始まる名前を探します |
-| Windows | 名前つきの mutex `Global\vehicle-sil-device-<device>-<n>` を、所有せず、継承させずに、0 から 15 のうち最初に空いている `<n>` で作り、ブリッジが動いている間開いておきます。セキュリティ記述子は、誰でも `SYNCHRONIZE` で開けるようにします。この利用者がグローバルな名前を作れないときは、`Local\`（このセッション）に置きます。数えるときは、両方のほかの番号を開いて、すぐ閉じます |
-
-- `<kind>` は `ethernet` か `can` です。`<identity>` は、インターフェースの名前（Linux）、pcap の名前（Npcap）、Vector のハードウェアのチャネルなら `xl-<hwType>-<hwIndex>-<serial>-<hwChannel>`、Vector Virtual CAN なら `xl-virtual` です。ASCII の英字、数字、`._:@+-` 以外の文字があるとき、または名前が抽象名前空間の 107 バイトを超えるときは、`<identity>` の代わりに `device` のハッシュを使います。
-- `<device>` は `device` のキーで、`<kind>/<identity>` のハッシュ（FNV-1a、64 ビット）です。
-- C++ のブリッジは `bridge_runtime::DeviceMark` と `DeviceShareWatch`（`bridges/common`）を使います。
-- 試験用にビルドしたブリッジは、偽物のデバイスにプロセスごとの印を置きます。同時に走る試験が互いを見つけないためです。2 つのブリッジにデバイスを共有させたい試験は、両方に同じ `VEHICLE_SIL_FAKE_DEVICE_SCOPE` を渡します。
 
 ## 物理 CAN と仮想時間
 

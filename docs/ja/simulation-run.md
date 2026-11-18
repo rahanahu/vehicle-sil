@@ -365,7 +365,7 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 
 ### 外のバスとやりとりしたフレームの数
 
-`run` は、つないだネットワークごとに、ブリッジがバスへ送ったフレームと、バスの機器から来たフレームを数えます。数はブリッジの統計の行（`stats ...`。[ethernet-bridge.md](ethernet-bridge.md#統計) と [bridges.md](bridges.md#統計) の「統計」）から読みます。`--stats-every-ms 1000` で、ブリッジは動いている間もこの行を書きます（数が変わったときに 1 秒に 1 回と、止まるときに 1 回）。
+`run` は、つないだネットワークごとに、ブリッジがバスへ送ったフレームと、バスの機器から来たフレームを数えます。数はブリッジの統計の行（`stats ...`。[bridge-contract.md](bridge-contract.md#統計の行) の「統計の行」）から読みます。`--stats-every-ms 1000` で、ブリッジは動いている間もこの行を書きます（数が変わったときに 1 秒に 1 回と、止まるときに 1 回）。
 
 | ネットワーク | `to_outside` | `from_outside` |
 |---|---|---|
@@ -390,7 +390,7 @@ vehicle_sil_launch run --scenario <scenario> --speed 1 --strict --connect <netwo
 
 ### リンクとバスの状態
 
-走っている間、`run` はブリッジのほかの行も読みます。リンクの行（Ethernet のブリッジの `link link=up|down|unknown`、CAN のブリッジの `link bus=active|passive|bus-off|unknown`。[bridges.md](bridges.md#リンクの行) と [ethernet-bridge.md](ethernet-bridge.md#リンクの行) の「リンクの行」）と、統計の行の `key=N` のすべて（上で数える 2 つだけではありません）です。知らないキーと値は読み飛ばします。リンクの行も、ブリッジの行としては出しません。変わったときは、実行の始まりからの時間を付けたランチャーの 1 行にし、`--events` では `log` イベントにします。
+走っている間、`run` はブリッジのほかの行も読みます。リンクの行（Ethernet のブリッジの `link link=up|down|unknown`、CAN のブリッジの `link bus=active|passive|bus-off|unknown`。[bridge-contract.md](bridge-contract.md#リンクの行) の「リンクの行」）と、統計の行の `key=N` のすべて（上で数える 2 つだけではありません）です。知らないキーと値は読み飛ばします。リンクの行も、ブリッジの行としては出しません。変わったときは、実行の始まりからの時間を付けたランチャーの 1 行にし、`--events` では `log` イベントにします。
 
 ```text
 outside: ETH_EXT -> enp3s0: link down at 12.40 s
@@ -417,7 +417,7 @@ outside: ETH_EXT -> enp3s0: link up at 15.10 s
 
 ### 別の実行も使っているデバイス
 
-ブリッジは、開いたデバイスに印を置き、同じデバイスにいるほかの vehicle-sil のブリッジの数を報告します（`shared`。Linux では `peers` にそのプロセス ID。「[別のブリッジが使っているデバイス](bridges.md#別のブリッジが使っているデバイス)」）。1 つのデバイスに 2 つの実行、あるいは前の実行の残りのブリッジがいると、フレームが混ざります。この実行の機器にもう一方向けのフレームが届き、もう一方にはこの実行のフレームが届きます。`run` は、自分の実行のブリッジを数から引くので、この実行の外のブリッジだけが数に入ります。見つけたら、実行の始まりからの時間と、Linux ではプロセス ID を付けて、1 度だけ知らせます。
+ブリッジは、開いたデバイスに印を置き、同じデバイスにいるほかの vehicle-sil のブリッジの数を報告します（`shared`。Linux では `peers` にそのプロセス ID。「[別のブリッジが使っているデバイス](bridge-contract.md#別のブリッジが使っているデバイス)」）。1 つのデバイスに 2 つの実行、あるいは前の実行の残りのブリッジがいると、フレームが混ざります。この実行の機器にもう一方向けのフレームが届き、もう一方にはこの実行のフレームが届きます。`run` は、自分の実行のブリッジを数から引くので、この実行の外のブリッジだけが数に入ります。見つけたら、実行の始まりからの時間と、Linux ではプロセス ID を付けて、1 度だけ知らせます。
 
 ```text
 outside: CAN1 -> can0: also used by another vehicle-sil bridge (process 4321) at 3.10 s
@@ -564,7 +564,7 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 | `networks[].tool` | ブリッジの実行ファイルです。ブリッジがないもの（`lin`）と、種類の分からないものは `null` です。 |
 | `networks[].backend` | その項目の backend（`npcap`、`packet`、`tap`、`xl`、`socketcan`）です。`tool` が `null` のときは `null` です。 |
 | `networks[].tool_path` | ランチャーが見つけた場所です。見つからないとき、ブリッジがないときは `null` です。 |
-| `networks[].list` | ブリッジが書いたとおりの一覧で、キーはすべてそのまま渡します。形は「[一覧の JSON](ethernet-bridge.md#一覧の-json--json)」と「[チャネルの一覧の JSON](bridges.md#チャネルの一覧の-json--json)」です。一覧を出さないブリッジには、ランチャーが同じ形の一覧を作ります（下）。`tool` が `null` のものは `null` です。 |
+| `networks[].list` | ブリッジが書いたとおりの一覧で、キーはすべてそのまま渡します。形は「[デバイスの一覧](bridge-contract.md#デバイスの一覧)」です。一覧を出さないブリッジには、ランチャーが同じ形の一覧を作ります（下）。`tool` が `null` のものは `null` です。 |
 | `findings` | ファイルを読めない理由、使い方の誤り、ファイルの誤りです（`check --json` と同じ形）。ほかは空です。 |
 
 `usable: true` の先の `value` は、`--connect <network>=<value>` がそのまま受ける値です（プログラムは、シェルを通さずに 1 つの引数として渡します）。ブリッジが一覧にした名前の前に、`--connect` が要るときは `<backend>:` を付けます（この OS の既定でない backend、`none` や backend の語で始まる名前）。ランチャーは、ブリッジ自身の文の代わりにこの値を `value` に書きます。`--connect` が受けない先（上の `cannot be used` と `cannot be connected` の行）は、ランチャーが `usable: false` にして `reason` を入れるので、文と JSON は同じことを言います。ブリッジから一覧を受け取れないときは、ランチャーが、先なしで誤りを入れた一覧を作ります。ブリッジ自身の code（`library-missing`、`permission-denied`、`backend-unavailable`、`driver-missing`、`failed`）は、ブリッジの一覧に入って来ます。

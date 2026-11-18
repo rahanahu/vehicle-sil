@@ -744,7 +744,7 @@ struct OutsideCounts
 [[nodiscard]] std::optional<OutsideCounts> read_outside_counts(std::string_view tool, std::string_view line);
 
 /// Whether `line` is the link line of a bridge ("link key=value ...", after the tag the bridge puts
-/// first; see "Link line" in docs/bridges.md). Run does not show these lines: they are for the
+/// first; see "Link line" in docs/bridge-contract.md). Run does not show these lines: they are for the
 /// launcher to read, like the statistics lines.
 [[nodiscard]] bool is_link_line(std::string_view line);
 
@@ -763,7 +763,7 @@ struct OutsideLinkLine
     std::optional<OutsideLinkValue> link{};
     std::optional<OutsideBusValue> bus{};
     /// device=<hash>, marked=0|1, shared=<n> and peers=<pid>,<pid> (Linux): the other
-    /// vehicle-sil bridges on the same device (docs/bridges.md, "Device in use by another bridge").
+    /// vehicle-sil bridges on the same device (docs/bridge-contract.md, "Device in use by another bridge").
     /// `peers` is read with `shared` and is empty when the line has none.
     std::optional<std::string> device{};
     std::optional<bool> marked{};

@@ -514,7 +514,7 @@ passed: 0 errors, 0 warnings, 1 note
     command: [vehicle_sil_ethernet_bridge, --network, ETH_EXT, --backend, packet, --interface, eth1, --all-frames]
 ```
 
-引数は、[ethernet-bridge.md](ethernet-bridge.md#設定ファイルから起こす) と [bridges.md](bridges.md#設定ファイルから起こす) の「設定ファイルから起こす」にあります。
+ランチャーが引数に足すものと `--describe` が書くべきものは、bridge-contract.md の「[自作のブリッジを起こす](bridge-contract.md#自作のブリッジを起こすrole-bridge)」にあります。ブリッジごとの引数は、[ethernet-bridge.md](ethernet-bridge.md#設定ファイルから起こす) と [bridges.md](bridges.md#設定ファイルから起こす) の「設定ファイルから起こす」にあります。
 
 警告の理由は次のとおりです。ブリッジは、SIL Kit の側で送信されたものを実機のバスに送信します。そのため、J1939 のノードを持つテスト用の participant の送信、とくにアドレスの要求（Address Claimed）も実機に出て、同じアドレスの実機の ECU とアドレスを取り合います。直し方は、その participant をそのネットワークでは受信だけにする（J1939 のノードを作らない）か、その participant を使う実行ではブリッジを無効にする（`--disable <ブリッジ>`、機種の `enabled: false`）かです。生の CAN で送信する participant は、`--describe` の出力からはわからないので、警告しません。
 
