@@ -181,13 +181,16 @@ std::string format_device_keys(std::string_view device, bool marked, const Devic
 
 std::optional<std::string> shared_warning(std::string_view device_text, const DevicePeers& before, const DevicePeers& now)
 {
-    if (now.count <= before.count)
+    std::vector<std::uint32_t> added;
+    std::set_difference(now.pids.begin(), now.pids.end(), before.pids.begin(), before.pids.end(), std::back_inserter(added));
+    // A new process id means a new bridge even when the count stayed (one left, another came); without ids (Windows) only a
+    // larger count tells.
+    if (now.count <= before.count && added.empty())
     {
         return std::nullopt;
     }
-    const std::size_t more = now.count - before.count;
-    std::vector<std::uint32_t> added;
-    std::set_difference(now.pids.begin(), now.pids.end(), before.pids.begin(), before.pids.end(), std::back_inserter(added));
+    const std::size_t grown = now.count > before.count ? now.count - before.count : 0;
+    const std::size_t more = std::max<std::size_t>(grown, added.size());
     std::string text = std::string(device_text) + " is also used by " +
                        (more == 1 ? std::string("another vehicle-sil bridge") : std::to_string(more) + " more vehicle-sil bridges") +
                        processes(added) +

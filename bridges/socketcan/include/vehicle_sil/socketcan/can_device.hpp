@@ -24,8 +24,6 @@ struct RawFrame
     std::array<std::uint8_t, 8> data{};
     /// Received: the frame this socket sent itself (MSG_CONFIRM of recvmsg).
     bool confirm = false;
-    /// Received: a program of this computer sent it (MSG_DONTROUTE of recvmsg).
-    bool sent_here = false;
 };
 
 enum class WaitResult

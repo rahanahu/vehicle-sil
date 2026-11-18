@@ -146,6 +146,13 @@ std::optional<CanInterfaceInfo> interface_of(Bytes body)
                                 result.state = state_text(*state);
                             }
                         }
+                        else if (can.type == IFLA_CAN_BERR_COUNTER && can.payload.size() >= sizeof(can_berr_counter))
+                        {
+                            can_berr_counter counter{};
+                            std::memcpy(&counter, can.payload.data(), sizeof(counter));
+                            result.tx_errors = static_cast<std::uint8_t>(std::min<unsigned>(counter.txerr, 255));
+                            result.rx_errors = static_cast<std::uint8_t>(std::min<unsigned>(counter.rxerr, 255));
+                        }
                         else if (can.type == IFLA_CAN_RESTART_MS)
                         {
                             result.restart_ms = as_u32(can.payload);
@@ -159,7 +166,8 @@ std::optional<CanInterfaceInfo> interface_of(Bytes body)
     {
         return std::nullopt;
     }
-    result.kind = kind == "vcan" ? "vcan" : "can";
+    // An empty kind is an older driver that does not say; every other name (vcan, vxcan, ...) is kept.
+    result.kind = kind.empty() ? "can" : kind;
     return result;
 }
 

@@ -190,7 +190,9 @@ int run(const BridgeOptions& options)
     }
 
     // Declaration order is destruction order in reverse: the bridge goes first, then the SIL Kit
-    // participant (which owns the Ethernet controller), then the link (which closes the interface).
+    // participant (which owns the Ethernet controller), then the link (which closes the interface),
+    // and the mark last: it is placed once the interface is open and goes after the interface is closed.
+    std::optional<bridge_runtime::DeviceShareWatch> share;
     // Nothing is opened here: a backend that cannot be used on this computer fails before SIL Kit
     // is touched.
     const std::unique_ptr<eth_link::ExternalLink> link = make_external_link(options);
@@ -217,12 +219,12 @@ int run(const BridgeOptions& options)
     bridge.start();
     // The mark on the interface, once it is open: only then does the link know the device's own
     // name (Npcap's pcap name for a connection name). The first count is in the first link line.
-    bridge_runtime::DeviceShareWatch share(
+    share.emplace(
         bridge_runtime::DeviceMark::place(bridge_runtime::kEthernetDevice, device_mark_identity(external.device_identity())),
         "interface '" + options.interface_name + "'");
     // The first link line, before the lifecycle starts (a program that waits for Running has read it).
     const std::string firstLinkLine =
-        bridge_runtime::format_link_line("link", link_line_value(bridge.health().link_state)) + share.link_keys();
+        bridge_runtime::format_link_line("link", link_line_value(bridge.health().link_state)) + share->link_keys();
     log(kTag, "%s", firstLinkLine.c_str());
     try
     {
@@ -252,7 +254,7 @@ int run(const BridgeOptions& options)
                                             bridge_runtime::kNothingCameAfter);
             });
     }
-    EthernetBridgeHooks hooks(bridge, hint.get(), std::move(nothingCame), options.interface_name, share);
+    EthernetBridgeHooks hooks(bridge, hint.get(), std::move(nothingCame), options.interface_name, *share);
     return bridge_runtime::run_bridge(runtime, hooks, runOptions);
 }
 

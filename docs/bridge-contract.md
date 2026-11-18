@@ -340,7 +340,7 @@ Two bridges that open the same device receive each other's frames: two networks,
 | `shared` | How many other bridges have marked the device now |
 | `peers` | Their process IDs, separated by `,` (Linux only; left out where there are none) |
 
-- The first count is in the first link line (before the SIL Kit lifecycle starts). The warning comes whenever `shared` grows, with the process IDs of the bridges that came, and has the words ` is also used by another vehicle-sil bridge` (the launcher finds the warning by them); a link line comes whenever a key changes, also when another bridge ends.
+- The first count is in the first link line (before the SIL Kit lifecycle starts). The warning comes whenever a new bridge came (`shared` grows, or a process ID that was not there before appears, also when the count stayed because another bridge ended), with the process IDs of the bridges that came, and has the words ` is also used by another vehicle-sil bridge` (the launcher finds the warning by them); a link line comes whenever a key changes, also when another bridge ends.
 - The lists say `in_use: true`, `in_use_by` and `in_use_count` for a device with marks (see "[Lists of devices](#lists-of-devices)").
 - The device is the port to a bus: an Ethernet interface, a CAN interface, a CAN channel of Vector hardware, or Vector Virtual CAN (all its channels are one device). Two channels of one Vector device are two devices.
 

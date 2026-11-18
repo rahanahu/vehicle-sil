@@ -300,7 +300,8 @@ bool SocketCanPort::watch()
     }
     if (const auto level = bus_level_of(*info); level != ExternalBusState::Level::Unknown)
     {
-        report_bus_state(level, bus_state_.tx_errors, bus_state_.rx_errors);
+        // The counters of the kernel's answer where it has them; else the last ones (from an error frame).
+        report_bus_state(level, info->tx_errors.value_or(bus_state_.tx_errors), info->rx_errors.value_or(bus_state_.rx_errors));
     }
     return true;
 }

@@ -121,7 +121,6 @@ RawFrame frame(std::uint32_t id, std::initializer_list<std::uint8_t> bytes, bool
     raw.length = static_cast<std::uint8_t>(bytes.size());
     std::copy(bytes.begin(), bytes.end(), raw.data.begin());
     raw.confirm = confirm;
-    raw.sent_here = confirm;
     return raw;
 }
 
@@ -156,7 +155,6 @@ TEST_CASE(port_frames_from_devices_and_receipts_of_its_own)
     rig.device.push_frame(frame(0x124, {9}, /*confirm=*/true));
     // Another program of this computer: sent here, not by this socket. It is a frame from a device.
     auto local = frame(0x125, {7});
-    local.sent_here = true;
     rig.device.push_frame(local);
     CHECK(rig.wait_for(ExternalEventKind::Frame, 2));
     CHECK(rig.wait_for(ExternalEventKind::OwnTransmission));
@@ -262,6 +260,26 @@ TEST_CASE(port_reads_the_controller_state_of_an_adapter)
     info.state = "error-active";
     rig.device.set_interface(info);
     CHECK(eventually([&] { return rig.count(ExternalEventKind::BusState) >= 2; }, 5000ms, 2ms));
+}
+
+TEST_CASE(port_takes_the_error_counters_from_the_kernel_answer_when_only_the_state_changed)
+{
+    Rig rig;
+    CanInterfaceInfo info;
+    info.name = "can0";
+    info.index = 3;
+    info.up = true;
+    info.bitrate = 250000;
+    info.state = "error-passive";
+    info.tx_errors = 140;
+    info.rx_errors = 12;
+    rig.device.set_interface(info);
+    rig.start();
+    CHECK(rig.wait_for(ExternalEventKind::BusState));
+    const auto first = rig.first(ExternalEventKind::BusState);
+    CHECK(first->bus.level == ExternalBusState::Level::ErrorPassive);
+    CHECK(first->bus.tx_errors == 140);
+    CHECK(first->bus.rx_errors == 12);
 }
 
 TEST_CASE(port_vcan_has_no_bus_state)

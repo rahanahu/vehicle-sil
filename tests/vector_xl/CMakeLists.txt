@@ -6,7 +6,7 @@ set(_bridge_dir "${PROJECT_SOURCE_DIR}/bridges/vector-xl")
 
 # The production XL backend logic plus the fake backend and its test control API.
 add_library(vehicle_sil_vector_xl_on_fake STATIC fake_xl/fake_xl_driver.cpp)
-target_include_directories(vehicle_sil_vector_xl_on_fake PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/fake_xl ${_bridge_dir}/src)
+target_include_directories(vehicle_sil_vector_xl_on_fake PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/fake_xl ${_bridge_dir}/src PRIVATE ${PROJECT_SOURCE_DIR}/tests/ethernet_bridge)
 target_link_libraries(vehicle_sil_vector_xl_on_fake
   PUBLIC vehicle_sil::vector_xl_bridge_core
   PRIVATE vehicle_sil_vector_xl_logic)

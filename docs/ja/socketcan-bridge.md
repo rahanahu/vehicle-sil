@@ -59,7 +59,7 @@ CAN interfaces (--interface):
   can0  CAN, up, 250000 bit/s, error-active; in use by a vehicle-sil bridge (process 4321)
 ```
 
-各 target に `can: {kind, up, bitrate, state, restart_ms}`（`kind` は `vcan` か `can`、`state` はコントローラーの状態で、vcan では `null`）と、「[別のブリッジが使っているデバイス](bridge-contract.md#別のブリッジが使っているデバイス)」と同じ `in_use`、`in_use_by`、`in_use_count` があります。down のインターフェースも一覧に出て `usable` です（`detail` に down と出ます）。一覧は特権なしでカーネルから読みます（netlink）。
+各 target に `can: {kind, up, bitrate, state, restart_ms}`（`kind` はアダプターなら `can`、それ以外はカーネルの種類の名前（`vcan`、`vxcan` …）で、`can` 以外はすべて仮想として扱います。`state` はコントローラーの状態で、仮想では `null`）と、「[別のブリッジが使っているデバイス](bridge-contract.md#別のブリッジが使っているデバイス)」と同じ `in_use`、`in_use_by`、`in_use_count` があります。down のインターフェースも一覧に出て `usable` です（`detail` に down と出ます）。一覧は特権なしでカーネルから読みます（netlink）。
 
 ## 起動
 
