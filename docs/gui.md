@@ -1059,6 +1059,7 @@ The meanings of `condition.kind` are below. For the meanings of the values of `b
 - Writes are combined into one per variable and per run. However many places `bind` the same variable, nothing is sent twice, and every place sees the same state.
 - Of the values that come before the server has received the previous write, only the last is kept and sent afterward.
 - A write that got no answer is never resent automatically.
+- For a chart of a variable over time, create it with `{ history: 600 }`: `history()` returns the points (`sampleMs`, `value`), oldest first, and you draw them with the chart code of your choice. The library keeps the points; the limits are in "History" in [gui/client/README.md](../gui/client/README.md#history). No part draws a chart of live values; `<vsil-timeline>` shows the values of a run's scenario after the run.
 - On a screen with many widgets, create them with `{ visible: false }` and call `setVisible()`, so that only the visible widgets receive values.
 - The parts `<vsil-slider>`, `<vsil-value>` and `<vsil-write>` cover the common widgets, and are built on this API (`gui/client/src/elements/variable-parts.ts` is the working model). Use `bind` for one the parts do not have (a switch, a number field, a choice). The widgets of the sample screens (Angular) also use it, turned into signals (see "[Add a widget](#add-a-widget)").
 

@@ -418,13 +418,15 @@ A variable is written `ECU.variable` (cut at the first dot), as for `client.vari
 - **Life.** A part subscribes when it enters the document and stops everything when it leaves. When it leaves while it waits for the connection, it draws nothing. When `variable` or another attribute changes, it binds again.
 - **A part that could not connect** (no token, the server is not there) fails together with the other parts of the page, because they share one connection. The page shows the error sentence once: in `<vsil-status>`, or in the first part in document order when the page has no `<vsil-status>` (if that part leaves, another one shows it). Every such part gets `data-error`, so CSS and scripts see the failure; the mark goes when the part binds again and succeeds. A part that was given its own connection in `client`, or that fails while it draws (a missing `variable` attribute), shows its own sentence.
 - **A failed action** (an `ActionError`) is not thrown at the page: `status.problem` shows it in `<vsil-status>`, and a failed write shows next to its variable.
-- **No more than these 8.** Graphs, tables and the layout are the screen's work.
+- **No more than these 9.** Graphs, tables and the layout are the screen's work. For a graph of a variable over time, keep its history with `client.low.variables.bind(ref, { history: 600 })` and draw the points yourself ("[History](#history)" below).
 
 ### Words and the next run
 
 The words are English. Attributes rename the buttons (`label-start` and the others in the table, and `label` of `<vsil-write>`). The sentences of reasons (a button that cannot be used, `caution`, the problem, why a variable cannot be written) come from the owner of the reason, in English; `setReasonText(fn)` replaces them: `fn(reason)` returns the sentence, or `null` or `undefined` to keep the English one, and `setReasonText(null)` removes it. Call it before the parts are in the page. The other words of the parts (`ready`, `writing…`, `(no scenario)`, `fastest`, `behind real time`, `Step (ms)`, `Until (ms)`, `Speed`, `-`, the default `on` and `off`) cannot be changed.
 
 The choosing parts and the start button are separate elements, so the module keeps what the page selected for the next run in `pageIntent` (`get()`, `subscribe(fn)` and `update(patch)`; a field set to `''` or `undefined` is removed). `<vsil-scenario-select>` writes `scenario`; `<vsil-run-controls>` starts with `{ ...pageIntent.get(), ...intent }`, so its `intent` property wins, and it starts the file that `status.file` names, the same file whose scenarios `<vsil-scenario-select>` lists (the server's start-up file when no run has been started). A screen that starts a run with its own code passes the intent to `client.run.start(intent)` itself.
+
+Start the GUI server with a configuration file (`vehicle-sil-gui --web my-screen simulation.yaml`). Without one the server has no start-up file, and a screen made of parts alone cannot start a run: `<vsil-status>` shows the refusal (`no-file`). Only your own code can name the file then: `client.run.start(intent, { file })`.
 
 ```ts
 import '@vehicle-sil/gui-client/elements'; // defines the parts

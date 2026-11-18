@@ -420,13 +420,15 @@ stop(); // 最後の購読を解除すると、サーバーに値を頼むのを
 - **寿命。** 部品は文書に入ると購読し、外れると全部止めます。接続を待つ間に外れたら、何も描きません。`variable` などの属性が変わると結び直します。
 - **つなげなかった部品**（トークンがない、サーバーがいない）は、ページの部品が同じ接続を使うので、まとめて失敗します。エラーの文はページで 1 回だけ出します。`<vsil-status>` があればそこに、なければ文書の順で最初の部品に出します（その部品が外れたら、ほかの部品が出します）。つなげなかった部品にはどれも `data-error` が付くので、CSS とスクリプトから失敗が分かります。部品が結び直して成功すると外れます。`client` で自分の接続を渡された部品と、描くときに失敗した部品（`variable` の属性がないなど）は、その部品が自分の文を出します。
 - **操作の失敗**（`ActionError`）はページに投げません。`status.problem` が `<vsil-status>` に出し、書き込みの失敗はその変数の隣に出ます。
-- **この 8 個から増やしません。** グラフ、表、配置は画面の仕事です。
+- **この 9 個から増やしません。** グラフ、表、配置は画面の仕事です。変数の時系列のグラフは、`client.low.variables.bind(ref, { history: 600 })` で履歴を持ち、点を自分で描きます（下の「[履歴](#履歴)」）。
 
 ### 文言と次の実行
 
 文言は英語です。ボタンの名前は属性で替えられます（表の `label-start` など、`<vsil-write>` は `label`）。理由の文（使えないボタン、`caution`、問題、変数が書けない理由）は理由の持ち主の英語の文で、`setReasonText(fn)` で替えます。`fn(reason)` が文を返せばそれを出し、`null` か `undefined` なら英語のままにします。`setReasonText(null)` で外します。部品をページに置く前に呼びます。部品の自前の語（`ready`、`writing…`、`(no scenario)`、`fastest`、`behind real time`、`Step (ms)`、`Until (ms)`、`Speed`、`-`、既定の `on` と `off`）は替えられません。
 
 選ぶ部品と開始のボタンは別の要素なので、次の実行に選んだものはモジュールが `pageIntent` に持ちます（`get()`、`subscribe(fn)`、`update(patch)`。`''` か `undefined` の欄は消えます）。`<vsil-scenario-select>` が `scenario` を書き、`<vsil-run-controls>` は `{ ...pageIntent.get(), ...intent }` で開始するので、`intent` プロパティが勝ちます。開始するファイルは `status.file` のもので、`<vsil-scenario-select>` がシナリオを並べるファイルと同じです（実行をまだ始めていなければ、サーバーの起動時のファイル）。自分のコードで開始する画面は、意図を `client.run.start(intent)` に自分で渡します。
+
+GUI サーバーは、構成ファイルを付けて起動します（`vehicle-sil-gui --web my-screen simulation.yaml`）。付けないとサーバーに起動時のファイルがなく、部品だけの画面は実行を開始できません。断った理由（`no-file`）は `<vsil-status>` に出ます。そのときファイルを指定できるのは、自分のコードだけです: `client.run.start(intent, { file })`。
 
 ```ts
 import '@vehicle-sil/gui-client/elements'; // defines the parts
