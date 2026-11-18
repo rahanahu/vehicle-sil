@@ -65,7 +65,9 @@ RunOutcome planned_outcome(const RunPlan& plan)
     }
     for (const auto& p : config.participants)
     {
-        ParticipantRun run;
+        // Made in place: MinGW's GCC took the fields of a local that was then moved for uninitialized
+        // (-Wmaybe-uninitialized), although every one has its initializer.
+        ParticipantRun& run = outcome.participants.emplace_back();
         run.name = p.name;
         run.required = p.required;
         run.describe = p.describe;
@@ -73,7 +75,6 @@ RunOutcome planned_outcome(const RunPlan& plan)
         run.manual = p.manual;
         run.for_network = p.for_network;
         run.line = p.line;
-        outcome.participants.push_back(std::move(run));
     }
     for (const NetworkOutside& o : check.outside)
     {
