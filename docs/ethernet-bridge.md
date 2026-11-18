@@ -24,7 +24,7 @@ These steps connect the bridge to a TAP device inside the computer, on Linux. Wi
 
 | Step | What you do | What you see |
 |---|---|---|
-| 1 | Create a TAP device owned by your user and bring it up. | `--list-interfaces` shows `vsil0  Ethernet, up`. |
+| 1 | Create a TAP device owned by your user and bring it up. | `--list-interfaces` shows `vsil0  Ethernet, up, disconnected` (a TAP device has no carrier until a program opens it). |
 | 2 | Start the SIL Kit registry. | The registry listens on `silkit://127.0.0.1:8500`. |
 | 3 | Start the bridge in another terminal. | The line `bridging SIL Kit network ...` appears. |
 | 4 | Stop the bridge with Ctrl+C. | `stopping`, the statistics and `stopped` appear in that order, and the bridge exits with code 0. |
@@ -167,7 +167,7 @@ A veth pair stands in for the cable: the bridge opens one end (`vsil0`), and `tc
 
 | Step | What you do | What you see |
 |---|---|---|
-| 1 | Create a veth pair and bring both ends up. | `vehicle_sil_ethernet_bridge --list-interfaces` lists `vsil0` and `vsil1` as `Ethernet, up`. |
+| 1 | Create a veth pair and bring both ends up. | `vehicle_sil_ethernet_bridge --list-interfaces` lists `vsil0` and `vsil1` as `Ethernet, up, connected`. |
 | 2 | Give the bridge `CAP_NET_RAW` (see "[`packet`](#packet)"). | Nothing. |
 | 3 | In another terminal, watch the other end. | `tcpdump` waits. |
 | 4 | Run the example at speed 1 with `--connect ETH=vsil0`. | The line `outside: ETH -> vsil0 (bridge.ETH)`, `bridge.ETH` in the participant table with `stopped (SIGTERM), exit code 0`, and `passed: 0 errors, 0 warnings, 0 notes`. |
@@ -357,7 +357,7 @@ interface 'vsil0' is down: no frame passes until it is up. Bring it up with 'sud
 ```
 interfaces of this computer (--backend packet and --backend pcap take the Ethernet ones; --backend tap takes a TAP device):
   --interface lo      not Ethernet (link type 772), up
-  --interface enp3s0  Ethernet, up
+  --interface enp3s0  Ethernet, up, connected
   --interface vsil0   Ethernet, down
 ```
 

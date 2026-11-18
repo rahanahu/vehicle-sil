@@ -31,8 +31,13 @@ std::string format_interface_list(const std::vector<InterfaceInfo>& interfaces, 
 
 std::string interface_detail(const InterfaceInfo& entry)
 {
-    return (entry.ethernet ? std::string("Ethernet") : "not Ethernet (link type " + std::to_string(entry.link_type) + ")") +
-           (entry.up ? ", up" : ", down");
+    std::string text = entry.ethernet ? std::string("Ethernet") : "not Ethernet (link type " + std::to_string(entry.link_type) + ")";
+    text += entry.up ? ", up" : ", down";
+    if (entry.up && entry.carrier)
+    {
+        text += *entry.carrier ? ", connected" : ", disconnected";
+    }
+    return text;
 }
 
 } // namespace vehicle_sil::eth_link

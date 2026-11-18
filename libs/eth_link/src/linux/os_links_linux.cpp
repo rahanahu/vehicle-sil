@@ -28,6 +28,7 @@ std::vector<InterfaceInfo> list_interfaces()
         info.link_type = state->link_type;
         info.ethernet = state->link_type == ARPHRD_ETHER;
         info.up = (state->flags & IFF_UP) != 0;
+        info.carrier = state->carrier;
         interfaces.push_back(std::move(info));
     }
     return interfaces;

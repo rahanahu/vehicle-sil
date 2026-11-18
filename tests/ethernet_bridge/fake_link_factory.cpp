@@ -153,7 +153,7 @@ std::unique_ptr<eth_link::ExternalLink> make_external_link(const BridgeOptions& 
 
 std::string interface_list(const BridgeOptions& options)
 {
-    const std::vector<eth_link::InterfaceInfo> interfaces{{"fake0", true, 1, true}, {"fake-fault", true, 1, true}};
+    const std::vector<eth_link::InterfaceInfo> interfaces{{"fake0", true, 1, true, std::nullopt}, {"fake-fault", true, 1, true, std::nullopt}};
     std::vector<bridge_runtime::DevicePeers> inUse;
     for (const auto& entry : interfaces)
     {
