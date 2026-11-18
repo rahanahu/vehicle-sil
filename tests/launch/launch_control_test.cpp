@@ -800,7 +800,8 @@ void what_leaves_run_file_between_the_stages_ends_the_time_commands(const fs::pa
     fs::remove(dir / "Engine.behaviour");
     launch::StopRequests stops;
     launch::RunControls controls(stops, true);
-    require(controls.time().apply(resume_command(), "control_server").accepted, "a command before the run is taken");
+    require(controls.time().apply(resume_command(), "control_server").pending,
+            "a command before the run waits for the time lock");
     CountingEndpoint endpoint;
     endpoint.fail_with_no_exception_type = true;
     launch::RunOptions options;
