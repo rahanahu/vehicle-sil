@@ -26,6 +26,13 @@ bool Subscription::wants(const std::string& peer) const
     return options_.peers.empty() || std::find(options_.peers.begin(), options_.peers.end(), peer) != options_.peers.end();
 }
 
+bool Subscription::wants(const OperationResult& op) const
+{
+    const auto& excluded = options_.operation_clients_excluded;
+    return options_.operations && std::find(excluded.begin(), excluded.end(), op.request.client) == excluded.end()
+           && std::any_of(op.targets.begin(), op.targets.end(), [&](const TargetResult& t) { return wants(t.peer); });
+}
+
 void Subscription::put_peer(const PeerInfo& info, bool removed)
 {
     {
@@ -308,8 +315,7 @@ void Hub::target_changed(Operation& op)
             it = subscriptions_.erase(it);
             continue;
         }
-        if (sub->options_.operations
-            && std::any_of(op.targets.begin(), op.targets.end(), [&](const Target& t) { return sub->wants(t.result.peer); }))
+        if (sub->wants(result))
         {
             sub->put_operation(result);
         }

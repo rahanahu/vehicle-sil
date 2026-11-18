@@ -17,6 +17,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_control_server_tests
     test_security.cpp
     test_simulation_monitor.cpp
     test_snapshot.cpp
+    test_watch.cpp
   LINK vehicle_sil::control_proto vehicle_sil::control_grpc vehicle_sil::control_silkit vehicle_sil::peer)
 target_include_directories(vehicle_sil_control_server_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/control_grpc/src)
 target_compile_definitions(vehicle_sil_control_server_tests PRIVATE

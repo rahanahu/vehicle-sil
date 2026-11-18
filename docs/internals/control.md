@@ -363,6 +363,7 @@ With the state, each peer's result says which of its writes took effect and whic
 - For peers, values and operations, it keeps only the latest state per peer and per operation (a change before it is read replaces the previous one).
 - Events and operations are bounded (`capacity`). On overflow, the oldest events and the operations that changed longest ago are dropped and counted.
 - Values carry the incarnation of their schema.
+- `SubscriptionOptions::operation_clients_excluded` leaves out the operations whose `client` is in the list (the launcher's scenario writes as `scenario`). They are never put into the subscription, so they take no room and are not counted as dropped.
 - With `SubscriptionOptions::availability` (off by default), it also receives `AvailabilityUpdate`: the states of all variables of a peer with a variable that reports, in the order of its schema (the seen schema of a variable map has the same order). It keeps the latest per peer, and a change before it is read replaces the previous one without counting as dropped. A new incarnation starts from the declared states of its schema, and replaces what the subscription still holds of the old one. The Hub ignores states from a connection that is not the current one, of an older `version` than it has, and of another length than the schema.
 - `poll()` returns peers, then the availability, then operations (in number order), then events (in order of reception), then values.
 - `close()` wakes a waiting `poll()` and ends it.

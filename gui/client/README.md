@@ -572,7 +572,7 @@ The `kind` of a `WriteError`:
 - Resend only once you know that the write was not applied.
 - This matters most for writes that add to a value (writing twice gives a different result). Writing the same value twice gives the same result.
 
-**Reconnection**: if the connection drops while you wait for a result, the summary after reconnecting (`hello`, `fetchSession()`) tells how it went on. The summary holds every open operation the server keeps, and every operation whose number is `operations_from_seq` or higher.
+**Reconnection**: if the connection drops while you wait for a result, the summary after reconnecting (`hello`, `fetchSession()`) tells how it went on. The summary holds every open operation the server keeps, and every operation whose number is `operations_from_seq` or higher (of those the server receives: the operations of a scenario's own writes never come).
 
 | Your operation                                                     | What the library does                                                       |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------- |
@@ -589,7 +589,7 @@ The `kind` of a `WriteError`:
 - Use `onAccepted` to show "accepted, waiting to be applied", and to know when you may send the next write. Writes through `bind` use it: a next value that comes before the server has received the previous write is kept instead of sent, and only the last value is sent once the server has it.
 - `timeoutMs` (default `WRITE_TIMEOUT_MS`) counts from the HTTP response. `Infinity` sets no time limit (the write waits until the run changes or `close()` is called). Values above 2^31-1 ms (about 24.8 days) are capped there. Non-numbers and values of 0 or less mean the default.
 - A write is applied in the step at the given virtual time (`atMs`; if omitted, the next step), so it does not complete while the simulation is paused. To write while paused, wait for `queued` in `client.variables.operations` before you advance (`examples/gui_client/variables.mjs`).
-- `client.variables.operations` lists recent operations, including writes from other clients.
+- `client.variables.operations` lists recent operations, including writes from other clients, but not a scenario's own writes.
 
 ### Write before the first step
 

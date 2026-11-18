@@ -251,6 +251,10 @@ message WatchRequest {
   // Also the availability of the variables of the peers that have a variable that reports it
   // (VariableInfo.availability): the state now with the initial updates, then when it changes.
   bool availability = 8;
+  // Not the operations whose Operation.client is one of these (a scenario's own writes have the
+  // client "scenario"): they are not sent at all, so Update.dropped does not count them. Empty:
+  // every operation.
+  repeated string operation_clients_excluded = 9;
 }
 
 message Update {

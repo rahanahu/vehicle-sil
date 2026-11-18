@@ -310,6 +310,8 @@ public:
             o.values = request->values();
             o.events = request->events();
             o.operations = request->operations();
+            o.operation_clients_excluded.assign(request->operation_clients_excluded().begin(),
+                                                request->operation_clients_excluded().end());
             o.availability = request->availability();
             o.capacity = std::min<std::size_t>(request->capacity() == 0 ? options_.default_watch_capacity : request->capacity(),
                                                options_.max_watch_capacity);

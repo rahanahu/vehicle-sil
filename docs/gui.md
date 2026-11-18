@@ -511,7 +511,7 @@ The GUI reads and writes the variables that ECUs declare (see "ECU variables" in
   - While the run runs, `paused` is false. For the assumptions and limits, see "ECU variables" in [gui/protocol/README.md](../gui/protocol/README.md#ecu-variables).
   - With an older launcher that has no `GetSnapshot`, the variable feature is `failed` (with a reason).
 - **Checks on writes**: the server rejects a write whose `session` does not belong to the running run (`session-changed`; so a write sent while one run ends and the next starts is not written to the next run). A run that is running a scenario cannot be written either (`scenario-running`). The server checks type and range against the variable list before passing the write to the launcher.
-- **Results of writes**: results (operations) reach every screen as queued (`queued`), applied (`applied`, with the time of the step), too late (`late`), refused by the ECU (`rejected`, `invalid`) and so on. Results are never dropped. An operation with no result by the end of the run is completed as `unknown`.
+- **Results of writes**: results (operations) reach every screen as queued (`queued`), applied (`applied`, with the time of the step), too late (`late`), refused by the ECU (`rejected`, `invalid`) and so on. Results are never dropped. An operation with no result by the end of the run is completed as `unknown`. The results of a scenario's own writes do not come.
 
 | To find | See |
 |---|---|

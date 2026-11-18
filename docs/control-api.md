@@ -105,6 +105,8 @@ In a scenario run (`--scenario`), a client can read, wait, move time and stop. I
 
 `vehicle-sil-reason` in the trailing metadata (value `scenario-running`) identifies the rejection of a write. For the table of calls and the guarantees, see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control).
 
+The scenario writes as the client `scenario`: its operations have `client` `scenario` (`Operation.client` in `Watch`, `GetOperation` and `WaitOperation`). This name is fixed. A watch that does not need the scenario's own operations (there can be one in every step) names it in `WatchRequest.operation_clients_excluded`: the operations of the clients in that list are not sent at all, and `Update.dropped` does not count them. An empty list sends every operation. The initial updates of a watch have no operations. The GUI server's watch leaves out `scenario`. The Python client does not ask for it.
+
 ### In a run that is connected outside
 
 A run that is connected outside the simulation (`--connect`, or an enabled `role: bridge` participant) keeps real time unless it was started with `--time-policy free` (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).

@@ -105,6 +105,8 @@ vehicle_sil_launch run --events --stdin-commands --start-paused --control 0 simu
 
 書き込みの拒否は、trailing metadata の `vehicle-sil-reason`（値は `scenario-running`）で見分けます。呼び出しごとの表と保証は [scenario.md](scenario.md) の「実行中に変数を見る」にあります。
 
+シナリオは、クライアント `scenario` として書き込みます。その操作の `client` は `scenario` です（`Watch`、`GetOperation`、`WaitOperation` の `Operation.client`）。この名前は変わりません。シナリオ自身の操作（ステップごとに 1 件になりうる）が要らない watch は、`WatchRequest.operation_clients_excluded` にこの名前を入れます。この一覧のクライアントの操作は送られず、`Update.dropped` にも数えられません。空の一覧なら、操作は全部送られます。watch の初めの更新には、操作は入りません。GUI サーバーの watch は `scenario` を除きます。Python のクライアントは、これを求めません。
+
 ### 外につながる実行
 
 シミュレーションの外につながる実行（`--connect`、または有効な `role: bridge` の participant）は、`--time-policy free` で始めなければ、実時間を保ちます（[simulation-run.md](simulation-run.md) の「外につながる実行の時間」）。
