@@ -38,7 +38,7 @@ struct RunContext
     /// what it may do); none of them is in the RunPlan.
     const RunObservers& observers;
     /// What the run tells while it lasts (run --events), as the interface the run knows
-    /// (run_events.hpp): the object of RunObservers::events, which the parts of a run do not read.
+    /// (run_events.hpp): the object of RunLent::events, which the parts of a run do not read.
     /// Null: nothing is told this way, and the lines go to RunObservers::write_line.
     RunEvents* events;
     /// run --scenario: the scenario the check read (RunPlan::scenario()); null without one.

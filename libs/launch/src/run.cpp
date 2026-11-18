@@ -84,12 +84,13 @@
 //   and no thread writes it, so every thread of the run reads it without a lock. The request
 //   itself is not kept: no thread of the run reads it, so a run whose closing thread was left
 //   (OutcomeClose::not_closed_ms) holds nothing of it.
-// - The observers (RunObservers: write_line, events, interrupt_name, before_start): the caller's
+// - The observers (RunObservers: write_line, interrupt_name, before_start): the caller's
 //   functions, of which the Runner keeps a copy. The threads that call each, and the locks held
 //   then, are those of the lists above (RunOutput's mutex for write_line and the lines' events,
 //   TimeCommands' mutex for interrupt_name, the window's thread for before_start).
-// - What it borrows: the controls (RunControls, the caller's or run_file()'s own), which outlive
-//   the Runner. The Runner holds a reference and never destroys them.
+// - What it borrows: the controls (RunControls, the caller's or run_file()'s own), and what it
+//   tells through (RunEvents: the stream of RunLent::events, or none), which outlive the Runner.
+//   The Runner holds a reference to each and never destroys them.
 //
 // A control server (RunHost::control) is run_file()'s, not the Runner's. run_file() makes it
 // before the check, and before the phase "checking" is told, from what the request names

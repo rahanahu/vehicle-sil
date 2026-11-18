@@ -705,6 +705,8 @@ void start_reading_commands()
     }
     std::thread([] {
         launch::EventStream* events = shared().events;
+        // Never null: the reader starts from the phase observer of these controls, which are set
+        // before the run begins.
         launch::RunControls* controls = shared().controls;
         launch::CommandInput input([events, controls](const launch::Command& command) {
             // The time commands and a stop: the run's rules decide whether one is taken (a time
@@ -713,7 +715,7 @@ void start_reading_commands()
             // run or the reader of the events). What it answers goes to the controls' observer. An
             // accepted stop is one Ctrl+C, asked under the time commands' mutex, so the state that
             // follows the command's event says the request.
-            if ((command.is_time() || command.is_stop()) && controls != nullptr)
+            if (command.is_time() || command.is_stop())
             {
                 static_cast<void>(command.is_stop()
                                       ? controls->time().apply(command, "stdin", [] { g_stops.request(kStopCommand); })
@@ -724,18 +726,14 @@ void start_reading_commands()
                 }
                 return;
             }
-            // Without controls (not in a run): no time command is taken, a stop is still one Ctrl+C.
-            if (events != nullptr && !command.is_time())
+            // A line that was not accepted as a command: its event, or a line on stderr.
+            if (events != nullptr)
             {
                 events->command(command, "stdin");
             }
-            else if (events == nullptr && !command.accepted)
+            else
             {
                 note_stdin_ignored(command);
-            }
-            if (command.is_stop())
-            {
-                g_stops.request(kStopCommand);
             }
         });
         char buffer[4096];
@@ -1251,7 +1249,7 @@ int run(const cli::Args& args, launch::EventStream* events)
     watch_interrupts();
     if (events != nullptr)
     {
-        watching.events = events;
+        lent.events = events;
     }
     else
     {

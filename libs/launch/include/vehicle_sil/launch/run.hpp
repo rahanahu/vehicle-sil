@@ -143,10 +143,10 @@ struct RunLent
     /// The run's controls (run_controls.hpp), the caller's: the stop requests the run reads (as
     /// `stops` below says), the time commands it attaches its controller to (--stdin-commands, a
     /// control server) and the phase it sets. For this one run: controls that a run has used
-    /// take no time command any more. With RunObservers::events, the caller gives the controls the
+    /// take no time command any more. With `events`, the caller gives the controls the
     /// observers that write the command and phase events (the run writes neither by itself then).
     /// Null: the run makes its own for this run, on `stops`; no one outside reaches its time
-    /// commands, and the run writes its phases to RunObservers::events. With events the controls
+    /// commands, and the run writes its phases to `events`. With `events` the controls
     /// must have both observers, `stops` must be null or the controls' own, and the controls must
     /// be made with the request's RunIntent::start_paused and whether it has a scenario
     /// (RunControls::start_paused(), scenario()): run_file() throws std::invalid_argument otherwise.
@@ -161,6 +161,13 @@ struct RunLent
     /// server with it. run_file() starts it as it starts its own; it must stay usable while
     /// run_file() runs, and the caller ends it after run_file().
     ControlEndpoint* control_endpoint = nullptr;
+    /// run --events: what happens, as events (events.hpp) instead of RunObservers::write_line():
+    /// the phases, the check, the participants, the lines, the run's findings, the virtual time.
+    /// run_file() writes every event but hello and the result (the caller writes them). No call
+    /// waits for the reader of the events. May be null. run_file() calls the stream itself (the
+    /// check, the phases, the state); the parts of the run are given it as the interface they know
+    /// (RunEvents, run_events.hpp).
+    EventStream* events = nullptr;
 };
 
 

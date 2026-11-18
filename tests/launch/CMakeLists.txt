@@ -122,7 +122,7 @@ add_test(NAME launch.config_files_check_rejects_a_scenario_include
                  -DFILES=launch/src/config.cpp -DFORBIDDEN_PREFIXES=vehicle_sil/launch/scenario
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
 set_tests_properties(launch.config_files_check_rejects_a_scenario_include PROPERTIES LABELS "unit;launch" TIMEOUT 60
-                     PASS_REGULAR_EXPRESSION "config\\.cpp: vehicle_sil/launch/scenario_x\\.hpp")
+                     PASS_REGULAR_EXPRESSION "config\\.cpp: vehicle_sil/launch/scenario_x\\.hpp.*config\\.cpp: scenario_y\\.hpp")
 set_tests_properties(launch.pure_files_check_rejects_a_forbidden_include PROPERTIES
                      PASS_REGULAR_EXPRESSION "pure\\.cpp: helper\\.hpp -> silkit/SilKit\\.hpp"
                      FAIL_REGULAR_EXPRESSION "clean\\.hpp:")

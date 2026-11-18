@@ -6,7 +6,6 @@
 
 #include "vehicle_sil/json/json_writer.hpp"
 #include "vehicle_sil/launch/check.hpp"
-#include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
 #include "vehicle_sil/launch/traffic.hpp"
 
@@ -15,13 +14,12 @@
 #include <string_view>
 #include <vector>
 
+namespace vehicle_sil::launch {
+struct ScenarioCheck; // scenario_check.hpp
+} // namespace vehicle_sil::launch
+
 namespace vehicle_sil::launch::detail {
 
-/// The scenario of a check, or null without --scenario.
-[[nodiscard]] inline const ScenarioCheck* scenario_of(const Checked& checked)
-{
-    return checked.scenario ? &*checked.scenario : nullptr;
-}
 /// format_text() without its last line: the tables and the findings. `scenario`: the line of the
 /// scenario of --scenario, its parameters and its lines; null for none.
 [[nodiscard]] std::string check_text_body(const CheckReport& report, const ScenarioCheck* scenario);

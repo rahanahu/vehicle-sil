@@ -77,6 +77,10 @@ inline constexpr std::string_view kScenarioTimeFeature = "scenario-time";
 [[nodiscard]] std::string format_version_json(const std::vector<std::string_view>& more = {});
 
 /// The name of a participant's state in the event "participant": "disabled", "not_started", ...
+/// The members a state brings besides: not_started "message"; started "pid", "command", "log";
+/// manual "command", "working_directory", "command_line", "environment"; failed "reason",
+/// "message"; ended
+/// "exit_code", "signal".
 [[nodiscard]] const char* participant_state_name(ParticipantState state);
 
 /// What one call of EventStream's `write` did.
@@ -210,7 +214,7 @@ public:
     /// `environment` the variables to set for it (name, value; "environment" only if there are any).
     void participant_manual(const std::string& name, const std::vector<std::string>& command,
                             const std::string& working_directory, const std::string& command_line,
-                            const std::vector<std::pair<std::string, std::string>>& environment = {}) override;
+                            const std::vector<std::pair<std::string, std::string>>& environment) override;
     /// "control_link": where a started participant's control agent stands when the simulation
     /// has started: `state` is control_link_name(); "variables" with "connected" (how many its
     /// agent offers), "version" with "version_mismatch" (the version of the messages it speaks).

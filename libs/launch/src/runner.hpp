@@ -58,7 +58,7 @@ class Runner
 {
 public:
     /// `plan`: plan_run() of the check that passed. `observers`: the caller's functions, copied.
-    /// `events`: what the run tells while it lasts (the object of RunObservers::events, or null);
+    /// `events`: what the run tells while it lasts (the object of RunLent::events, or null);
     /// it outlives the Runner. `controls`: RunLent::controls, or the run's own; they outlive the Runner.
     Runner(RunPlan plan, RunObservers observers, RunEvents* events, RunControls& controls);
 

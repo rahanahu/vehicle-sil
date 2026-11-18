@@ -29,7 +29,7 @@ using detail::ControlServerStart;
 using detail::Runner;
 
 /// The controls of a run that was given none (RunLent::controls): made by run_file() for that
-/// run, on the caller's stop requests if there are any. Its phases go to RunObservers::events.
+/// run, on the caller's stop requests if there are any. Its phases go to RunLent::events.
 struct OwnControls
 {
     static RunControls::Observers observers(EventStream* events)
@@ -43,8 +43,8 @@ struct OwnControls
         return out;
     }
 
-    OwnControls(StopRequests* stops, const RunIntent& intent, const RunObservers& given) :
-      controls(stops != nullptr ? *stops : none, intent.start_paused, observers(given.events), intent.scenario.has_value())
+    OwnControls(StopRequests* stops, const RunIntent& intent, const RunObservers& given, EventStream* events) :
+      controls(stops != nullptr ? *stops : none, intent.start_paused, observers(events), intent.scenario.has_value())
     {
         if (given.interrupt_name)
         {
@@ -76,11 +76,11 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
               "RunLent: both `controls` and `stops` are set, and the run reads only the stop requests of `controls`; "
               "make the RunControls on the same StopRequests and leave `stops` null.");
         }
-        if (observers.events != nullptr && (!lent.controls->has_phase_observer() || !lent.controls->has_command_observer() ||
-                                            !lent.controls->has_state_observer()))
+        if (lent.events != nullptr && (!lent.controls->has_phase_observer() || !lent.controls->has_command_observer() ||
+                                       !lent.controls->has_state_observer()))
         {
             throw std::invalid_argument(
-              "RunLent::controls and RunObservers::events are both set, but the controls have no observer for the "
+              "RunLent::controls and RunLent::events are both set, but the controls have no observer for the "
               "events the run leaves to them; set RunControls::Observers::on_phase to call EventStream::phase(), "
               "Observers::on_command to call EventStream::command() and Observers::on_state to call "
               "EventStream::state(), or leave `events` null.");
@@ -89,25 +89,38 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
         if (lent.controls->start_paused() != request.intent.start_paused || lent.controls->scenario() != scenario)
         {
             const auto yes_no = [](bool b) { return std::string(b ? "true" : "false"); };
+            // What goes wrong, for each that differs.
+            std::string why;
+            if (lent.controls->scenario() != scenario)
+            {
+                why = "while a scenario plays, a control server's client must not write variables";
+            }
+            if (lent.controls->start_paused() != request.intent.start_paused)
+            {
+                why += std::string(why.empty() ? "" : "; ") +
+                       "only a run with --start-paused takes a step before anything has been paused";
+            }
+            // Without controls the run makes its own, unless a control server of its own needs the caller's.
+            const bool may_leave_null = !request.host.control || lent.control_endpoint != nullptr;
             throw std::invalid_argument(
               "RunLent::controls were made with start_paused " + yes_no(lent.controls->start_paused()) + " and scenario " +
               yes_no(lent.controls->scenario()) + ", but the request has start_paused " +
               yes_no(request.intent.start_paused) + " and scenario " + yes_no(scenario) +
-              " (RunIntent): the controls' rules would answer for another run (while a scenario plays, a control "
-              "server's client must not write variables); make the RunControls with RunIntent::start_paused and "
-              "RunIntent::scenario.has_value(), or leave `controls` null.");
+              " (RunIntent): the controls' rules would answer for another run (" + why +
+              "); make the RunControls with RunIntent::start_paused and RunIntent::scenario.has_value()" +
+              (may_leave_null ? ", or leave `controls` null." : "."));
         }
     }
-    const auto event = [&observers](auto emit) {
-        if (observers.events != nullptr)
+    const auto event = [&lent](auto emit) {
+        if (lent.events != nullptr)
         {
-            emit(*observers.events);
+            emit(*lent.events);
         }
     };
     // The controls of this run: the caller's, or its own. Declared before the Runner, which
     // borrows them: they outlive it.
     const std::unique_ptr<OwnControls> own =
-        lent.controls == nullptr ? std::make_unique<OwnControls>(lent.stops, request.intent, observers) : nullptr;
+        lent.controls == nullptr ? std::make_unique<OwnControls>(lent.stops, request.intent, observers, lent.events) : nullptr;
     RunControls& controls = own ? own->controls : *lent.controls;
     RunReport report;
     report.strict = request.intent.strict;
@@ -178,10 +191,11 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
     // Destroyed when run_file() returns, also if the run's closing thread was left at its limit
     // (OutcomeClose::not_closed_ms): that thread uses nothing of the Runner.
     // What the run is given, in three kinds: the plan (a value, settled here), the observers (the
-    // caller's functions) and what it borrows (the controls; the control server stays here).
+    // caller's functions) and what it borrows (the controls; the stream of the events and the
+    // control server stay here).
     // The run tells through the interface it knows (RunEvents), which the stream of the events
     // implements; the stream's own members (check(), phase(), state()) are called here only.
-    Runner runner(plan_run(report.check, base, request, limits, server_of_run != nullptr), observers, observers.events,
+    Runner runner(plan_run(report.check, base, request, limits, server_of_run != nullptr), observers, lent.events,
                   controls);
     // The control server between the Runner's two stages: after the run's files are open, before
     // the registry listens. The Runner does not know the server; it is told what became of it.

@@ -14,7 +14,10 @@
 # a comment counts, which errs on the safe side.
 # FORBIDDEN_PREFIXES (optional, comma separated): more headers that the listed files must not
 # reach, each as the start of the path they are included by (vehicle_sil/launch/scenario matches
-# scenario.hpp, scenario_run.hpp and scenario_check.hpp): a layer that must not know them.
+# scenario.hpp, scenario_run.hpp and scenario_check.hpp): a layer that must not know them. A
+# private header included as "..." without a directory matches by its name and the last part of
+# the prefix ("scenario_csv.hpp" matches vehicle_sil/launch/scenario): the private headers of a
+# layer are named as its public ones.
 # Usage: cmake -DROOT=<directory> -DFILES=<file>[,<file>...] [-DFORBIDDEN_PREFIXES=<prefix>[,<prefix>...]]
 #        -P VehicleSilCheckIncludes.cmake
 cmake_minimum_required(VERSION 3.21)
@@ -76,6 +79,13 @@ foreach(listed IN LISTS FILES)
         string(LENGTH "${prefix}" prefix_length)
         string(SUBSTRING "${path}" 0 ${prefix_length} start)
         if(start STREQUAL prefix)
+          set(prefixed TRUE)
+        endif()
+        # A private header beside the file: its name against the last part of the prefix.
+        get_filename_component(last "${prefix}" NAME)
+        string(LENGTH "${last}" last_length)
+        string(SUBSTRING "${base}" 0 ${last_length} base_start)
+        if(open STREQUAL "\"" AND path STREQUAL base AND base_start STREQUAL last)
           set(prefixed TRUE)
         endif()
       endforeach()

@@ -31,6 +31,15 @@ struct Checked : CheckReport
     std::optional<ScenarioCheck> scenario{};
 };
 
+namespace detail {
+/// The scenario of a check, or null without --scenario: what the outputs' pieces take
+/// (check_format.hpp).
+[[nodiscard]] inline const ScenarioCheck* scenario_of(const Checked& checked)
+{
+    return checked.scenario ? &*checked.scenario : nullptr;
+}
+} // namespace detail
+
 /// The report for people: the participants and the networks as tables, then each error and
 /// warning as "<severity>: <file>:<line>: <message> [<code>]" (with the detail indented below), then a
 /// summary line; with --scenario also the scenario's line, its parameters and its lines. LF line

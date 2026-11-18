@@ -27,8 +27,6 @@ class Hub;
 
 namespace vehicle_sil::launch {
 
-class EventStream;
-
 /// The event "time": the virtual time and how it keeps up. Whether the simulation stands still and
 /// the speed set are in the event "state" (RunState), not here.
 struct TimeEvent
@@ -46,21 +44,24 @@ struct TimeEvent
     std::int64_t late_ms = 0;
 };
 
-/// A participant's state in the event "participant".
+/// A participant's state as the run tells it. The parts of a run pass Joined, StopRequested and
+/// Killed to RunEvents::participant(), and each of NotStarted, Started, Manual, Failed and Ended to
+/// a call of its own; run_file() tells Disabled before the run begins. How each is written:
+/// participant_state_name() in events.hpp.
 enum class ParticipantState
 {
     Disabled,      ///< left out (enabled: false, --disable): not started
-    NotStarted,    ///< its process could not be started ("message" says why)
-    Started,       ///< its process runs ("pid", "command", "log")
-    Manual,        ///< someone starts it (manual): the launcher does not ("command", "working_directory", "command_line")
+    NotStarted,    ///< its process could not be started
+    Started,       ///< its process runs
+    Manual,        ///< someone starts it (manual): the launcher does not
     Joined,        ///< it joined the simulation (the controller saw its lifecycle)
-    Failed,        ///< the launcher decided that it failed, and ends the run ("reason", "message")
-    Ended,         ///< its process ended ("exit_code", "signal")
+    Failed,        ///< the launcher decided that it failed, and ends the run
+    Ended,         ///< its process ended
     StopRequested, ///< the launcher asked it to stop (SIGTERM, Ctrl+Break)
     Killed,        ///< the launcher ended it with the processes it started
 };
 
-/// What the parts of a run tell while it lasts (RunObservers::events, as the run sees it).
+/// What the parts of a run tell while it lasts (run_file(): RunLent::events, as the run sees it).
 ///
 /// Threads: every thread of the run calls it (run.cpp lists them: the main thread, the start
 /// window's, the scenario's, each participant's reader thread), some of them under RunOutput's
@@ -82,7 +83,7 @@ public:
     /// The run's control server listens at `address` (gRPC, the actual port), with TLS or not,
     /// with credentials (every call needs a token) or not.
     virtual void control_server(const std::string& address, bool tls, bool credentials) = 0;
-    /// Disabled, Joined, StopRequested, Killed.
+    /// Joined, StopRequested, Killed (run_file() also passes Disabled, through EventStream).
     virtual void participant(const std::string& name, ParticipantState state) = 0;
     virtual void participant_not_started(const std::string& name, const std::string& message) = 0;
     /// Failed. `reason`: "left_simulation" (it left the simulation while its process runs),
@@ -140,15 +141,9 @@ struct RunObservers
 {
     /// Writes one line (without its end) for the person watching: the participants' output as
     /// "[<name>] <line>", the launcher's own as "[vehicle_sil_launch] <text>". Called from several
-    /// threads, one call at a time. Not called when `events` is set.
+    /// threads, one call at a time. Not called when the run tells its events instead (RunEvents;
+    /// run_file(): RunLent::events).
     std::function<void(std::string_view line)> write_line{};
-    /// run --events: what happens, as events (events.hpp) instead of write_line(): the phases, the
-    /// check, the participants, the lines, the run's findings, the virtual time. run_file() writes
-    /// every event but hello and the result (the caller writes them). No call waits for the
-    /// reader of the events. May be null. Borrowed: it outlives run_file(). run_file() calls the
-    /// stream itself (the check, the phases, the state); the parts of the run are given it as
-    /// the interface they know (RunEvents, run_events.hpp) and do not read this member.
-    EventStream* events = nullptr;
     /// The name of the first interrupt ("SIGINT"), for the result and, without RunLent::controls,
     /// for the state events (RunControls::set_stop_name()). Called from any thread that changes the
     /// run's state (the run's own, a control server's, the hold's), under the time commands' mutex,
