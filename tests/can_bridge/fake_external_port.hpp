@@ -4,7 +4,7 @@
 #pragma once
 
 #include "can_test_util.hpp"
-#include "vehicle_sil/vector_xl/can_bridge.hpp"
+#include "vehicle_sil/can_bridge/can_bridge.hpp"
 
 #include <cstdint>
 #include <mutex>
@@ -13,22 +13,22 @@
 
 namespace vehicle_sil::unit {
 
-class FakeExternalPort final : public vector_xl::ExternalCanPort
+class FakeExternalPort final : public can_bridge::ExternalCanPort
 {
 public:
     // --- test controls
     bool fail_start = false;
-    vector_xl::TransmitResult result = vector_xl::TransmitResult::Ok;
+    can_bridge::TransmitResult result = can_bridge::TransmitResult::Ok;
     /// Behave like a driver with TX receipts on: report every transmitted frame back as
     /// OwnTransmission.
     bool report_own_transmissions = false;
 
-    void deliver(vector_xl::ExternalEventKind kind, const SilKit::Services::Can::CanFrame& frame = {})
+    void deliver(can_bridge::ExternalEventKind kind, const SilKit::Services::Can::CanFrame& frame = {})
     {
-        deliver_event(vector_xl::ExternalCanEvent{kind, frame, {}});
+        deliver_event(can_bridge::ExternalCanEvent{kind, frame, {}});
     }
 
-    void deliver_event(const vector_xl::ExternalCanEvent& event)
+    void deliver_event(const can_bridge::ExternalCanEvent& event)
     {
         EventHandler handler;
         {
@@ -77,11 +77,11 @@ public:
         ++stop_calls_;
     }
 
-    vector_xl::TransmitResult transmit(const SilKit::Services::Can::CanFrame& frame) override
+    can_bridge::TransmitResult transmit(const SilKit::Services::Can::CanFrame& frame) override
     {
         {
             const std::lock_guard lock(mutex_);
-            if (result != vector_xl::TransmitResult::Ok)
+            if (result != can_bridge::TransmitResult::Ok)
             {
                 return result;
             }
@@ -89,9 +89,9 @@ public:
         }
         if (report_own_transmissions)
         {
-            deliver(vector_xl::ExternalEventKind::OwnTransmission, frame);
+            deliver(can_bridge::ExternalEventKind::OwnTransmission, frame);
         }
-        return vector_xl::TransmitResult::Ok;
+        return can_bridge::TransmitResult::Ok;
     }
 
     std::string last_error() const override { return "fake external error"; }

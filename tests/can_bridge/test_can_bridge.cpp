@@ -6,7 +6,7 @@
 #include "fake_external_port.hpp"
 #include "frame_matrix.hpp"
 
-#include "vehicle_sil/vector_xl/can_bridge.hpp"
+#include "vehicle_sil/can_bridge/can_bridge.hpp"
 
 #include <chrono>
 #include <optional>
@@ -27,16 +27,16 @@ using vehicle_sil::unit::flag;
 using vehicle_sil::unit::make_frame;
 using vehicle_sil::unit::RecordedFrame;
 using vehicle_sil::unit::throws;
-using vehicle_sil::vector_xl::CanBridge;
-using vehicle_sil::vector_xl::CanBridgeHealth;
-using vehicle_sil::vector_xl::ExternalBusState;
-using vehicle_sil::vector_xl::ExternalCanEvent;
-using vehicle_sil::vector_xl::ExternalEventKind;
-using vehicle_sil::vector_xl::format_health_change;
-using vehicle_sil::vector_xl::link_line_value;
-using vehicle_sil::vector_xl::problems_grew;
-using vehicle_sil::vector_xl::TransmitResult;
-using vehicle_sil::vector_xl::validate_classic_frame;
+using vehicle_sil::can_bridge::CanBridge;
+using vehicle_sil::can_bridge::CanBridgeHealth;
+using vehicle_sil::can_bridge::ExternalBusState;
+using vehicle_sil::can_bridge::ExternalCanEvent;
+using vehicle_sil::can_bridge::ExternalEventKind;
+using vehicle_sil::can_bridge::format_health_change;
+using vehicle_sil::can_bridge::link_line_value;
+using vehicle_sil::can_bridge::problems_grew;
+using vehicle_sil::can_bridge::TransmitResult;
+using vehicle_sil::can_bridge::validate_classic_frame;
 
 } // namespace
 
@@ -447,7 +447,7 @@ TEST_CASE(bridge_forwards_nothing_after_stop)
 
 TEST_CASE(bridge_nothing_came_warning_names_the_channel)
 {
-    CHECK(vehicle_sil::vector_xl::nothing_came_warning("XL 'Virtual Channel 1'", std::chrono::seconds(10)) ==
+    CHECK(vehicle_sil::can_bridge::nothing_came_warning("XL 'Virtual Channel 1'", std::chrono::seconds(10)) ==
           "nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the bridge first sent a frame there: if a "
           "device is meant to answer, check that it is on, its cable and termination, the bit rate, and that this is the "
           "channel it is on.");
@@ -457,7 +457,7 @@ TEST_CASE(bridge_statistics_line_names_every_counter)
 {
     // The keys and their order are documented output that programs that read the line rely on
     // (docs/bridges.md, "Statistics"): a change here is a change of that agreement.
-    vehicle_sil::vector_xl::CanBridgeStatistics s;
+    vehicle_sil::can_bridge::CanBridgeStatistics s;
     s.silkit_to_external = 1;
     s.external_to_silkit = 2;
     s.own_transmissions_dropped = 3;
@@ -470,7 +470,7 @@ TEST_CASE(bridge_statistics_line_names_every_counter)
     s.silkit_transmit_failures = 10;
     s.external_transmit_dropped = 11;
     s.external_transmit_unsent = 12;
-    CHECK(vehicle_sil::vector_xl::format_statistics(s) ==
+    CHECK(vehicle_sil::can_bridge::format_statistics(s) ==
           "stats silkit_to_xl=1 xl_to_silkit=2 own_tx_dropped=3 error_frames=4 overruns=5 silkit_rejected=6 "
           "xl_rejected=7 xl_queue_full=8 xl_tx_failures=9 silkit_tx_failures=10 xl_tx_dropped=11 xl_tx_unsent=12");
 }

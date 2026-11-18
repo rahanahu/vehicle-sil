@@ -10,7 +10,7 @@
 #include "fake_xl_frames.hpp"
 
 #include "vehicle_sil/core/participant_runtime.hpp"
-#include "vehicle_sil/vector_xl/can_bridge.hpp"
+#include "vehicle_sil/can_bridge/can_bridge.hpp"
 #include "vehicle_sil/vector_xl/xl_driver.hpp"
 
 #include <silkit/services/can/all.hpp>
@@ -28,6 +28,7 @@ namespace can = SilKit::Services::Can;
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
 using namespace vehicle_sil::vector_xl;
+using namespace vehicle_sil::can_bridge;
 using vehicle_sil::test::frame_matrix;
 using vehicle_sil::test::MatrixFrame;
 using vehicle_sil::test::to_fake;

@@ -69,7 +69,8 @@ vehicle-sil/
 ├── proto/            Control API の定義（vehicle_sil/control/v1/control.proto）
 ├── python/vehicle_sil_control/ Control API の Python クライアントと CLI、`vehicle_sil_launch run --control` を子プロセスで動かす助け
 ├── bridges/common/  ブリッジの実行ファイルが共有する run_bridge()（止め方、監視のループ、止める順、終了コード。内部用）
-├── bridges/vector-xl/ Vector XL CAN Bridge（転送のコアは移植可能、XL バックエンドと実行ファイルは Windows 専用）
+├── bridges/can/     CAN ブリッジが共有する CanBridge と ExternalPortAdapter（移植可能、内部用）
+├── bridges/vector-xl/ Vector XL CAN Bridge（チャネルの選択と引数はどこでも、XL バックエンドと実行ファイルは Windows 専用）
 ├── bridges/ethernet/ イーサネットのブリッジ（SIL Kit の Ethernet と外部のインターフェースの間の転送、統計、引数の解釈、実行ファイル。どのプラットフォームでもビルドする）
 ├── tools/common/     実行ファイル共通のコマンドライン解析、終了コード、ログ出力（内部用、ヘッダーのみ）
 ├── tools/sim_controller/ 仮想時間のシミュレーションを開始・停止する system controller（vehicle_sil_sim_controller）
@@ -146,7 +147,7 @@ vehicle-sil/
 | `vehicle_sil::control_proto`（`VEHICLE_SIL_BUILD_CONTROL_SERVER` のとき） | — | `control.proto` から生成したコード（`control_grpc` の内部）です。 | — | — |
 | `vehicle_sil::control_grpc`（同上） | 利用者向け | Control API（gRPC）の Server（クライアント向け。ECU の Agent は SIL Kit の `vehicle_sil::control_silkit` で接続します）で、`vehicle_sil_launch run --control` が使います。 | `vehicle_sil::control_grpc::ControlServer`、`time_control_of()`、認証（TLS、トークン、役割） | [control-api.md](control-api.md) |
 | `vehicle_sil::bridge_runtime`（内部用） | — | ブリッジの実行ファイルが準備の後に呼ぶ `vehicle_sil::bridge_runtime::run_bridge()` で、プラットフォームに依存しません。 | 止める要求の受け方（シグナル、Windows のコンソールを閉じたとき）、監視のループ（participant の状態の判定、外の側の失敗、警告、監視の行）、止める順（統計を SIL Kit の participant の停止より先に出す）、終了コード、`BridgeHooks`（ブリッジごとの部分を渡す） | [bridges.md](bridges.md) |
-| `vehicle_sil::vector_xl_bridge_core` | — | CAN ブリッジのコアで、プラットフォームに依存しません。 | `vehicle_sil::vector_xl::CanBridge` など、`ExternalPortAdapter`（外部 CAN ポートを `vehicle_sil::can` の実時間のポートにする）、`ExternalCanPort` | — |
+| `vehicle_sil::can_bridge_core` | — | CAN ブリッジのうち、外部の側に依存しない部分で、プラットフォームに依存しません。 | `vehicle_sil::can_bridge::CanBridge` など、`ExternalPortAdapter`（外部 CAN ポートを `vehicle_sil::can` の実時間のポートにする）、`ExternalCanPort` | — |
 | `vehicle_sil::vector_xl`（Windows のみ） | — | Vector XL Driver のバックエンドで、Windows 専用で、XL Driver Library が必要です。 | `vehicle_sil::vector_xl::XlDriver`、`XlCanPort` | — |
 | `vehicle_sil_vector_xl_bridge`（Windows のみ、実行ファイル） | — | ブリッジの CLI です。 | — | — |
 | `vehicle_sil::eth_link` | — | イーサネットのブリッジの外の側で、SIL Kit に依存しません。 | `vehicle_sil::eth_link::ExternalLink`（外部のインターフェースの抽象）、`FrameFilter`（フィルター）、`MacSideTable`（ループを防ぐ）、`make_tap_link()` と `make_packet_link()`（OS のインターフェース。Linux だけ）、`make_pcap_link()`（pcap のライブラリ。Windows の Npcap、Linux の libpcap を実行時に読み込む） | [ethernet-bridge.md](ethernet-bridge.md) |

@@ -9,7 +9,7 @@
 
 #include "vehicle_sil/ethernet_bridge/ethernet_bridge.hpp"
 #include "vehicle_sil/launch/run.hpp"
-#include "vehicle_sil/vector_xl/can_bridge.hpp"
+#include "vehicle_sil/can_bridge/can_bridge.hpp"
 
 #include <chrono>
 #include <map>
@@ -94,11 +94,11 @@ TEST_CASE(read_outside_counts_reads_the_lines_the_bridges_print)
     eth.own_tx_dropped = 104;
     eth.filtered_from_ext = 105;
     CHECK(reads(kEth, "[eth-bridge] " + ethernet_bridge::format_statistics(eth), 101, 103));
-    vector_xl::CanBridgeStatistics can;
+    can_bridge::CanBridgeStatistics can;
     can.silkit_to_external = 201;
     can.external_to_silkit = 202;
     can.own_transmissions_dropped = 203;
-    CHECK(reads(kXl, "[bridge] " + vector_xl::format_statistics(can), 201, 202));
+    CHECK(reads(kXl, "[bridge] " + can_bridge::format_statistics(can), 201, 202));
 }
 
 TEST_CASE(outside_note_writes_changes_at_most_once_a_second_and_the_last_at_the_end)

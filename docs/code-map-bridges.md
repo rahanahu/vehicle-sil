@@ -8,13 +8,17 @@ Related specifications and change areas: [bridges.md](bridges.md) / [ethernet-br
 
 ## Test labels
 
+### `can_bridge`
+
+Tests of the part of a CAN bridge that does not depend on its external side (`CanBridge`, `ExternalPortAdapter`), against a fake SIL Kit controller and a fake external port. They run on every platform.
+
 ### `vector_xl`
 
-Tests of the CAN bridge. On every platform, they run the production code against a fake XL driver made for the tests.
+Tests of the Vector XL CAN bridge. On every platform, they run the production code against a fake XL driver made for the tests.
 
 | Kind of test | Details |
 |---|---|
-| Unit tests | CanBridge |
+| Unit tests | The arguments and the channel list |
 | XL backend tests | The XL backend |
 | In-process tests | Use the real SIL Kit |
 | E2E tests | Use the bridge executable |
@@ -69,13 +73,22 @@ One test uses a real participant with an in-process registry (on a free port). T
 
 ## Code and tests by directory
 
+### `bridges/can`
+
+| Name | Location |
+|---|---|
+| `CanBridge`, `ExternalCanPort`, `ExternalCanEvent`, the statistics and health lines | `can_bridge/can_bridge.hpp` |
+| `ExternalPortAdapter` | `can_bridge/external_port_adapter.hpp` |
+
+- Tests: `tests/can_bridge` (`fake_external_port.hpp` and `frame_matrix.hpp` there are also used by `tests/vector_xl`)
+- `ctest -R`: `^can_bridge\.`
+
 ### `bridges/vector-xl`
 
 | Name | Location |
 |---|---|
-| `CanBridge` | `vector_xl/can_bridge.hpp` |
-| `ExternalPortAdapter` | `vector_xl/external_port_adapter.hpp` |
 | `XlDriver`, `XlCanPort` | `vector_xl/xl_driver.hpp` |
+| Channel selection, the channel list, the arguments | `vector_xl/channel_selection.hpp`, `vector_xl/bridge_options.hpp` |
 
 - Tests: `tests/vector_xl` (the fake XL driver is in `tests/vector_xl/fake_xl`)
 - `ctest -R`: `^vector_xl\.`
@@ -144,6 +157,7 @@ See the [diagram legend and layers](code-map-core.md#dependency-direction) and [
 
 | Target | Built when |
 |---|---|
+| `can_bridge_core` (`bridges/can`) | On every platform |
 | `vector_xl`, `vehicle_sil_vector_xl_bridge` | Only on Windows, when the XL Driver Library is available |
 | `bridge_runtime` (`bridges/common`) | On every platform |
 
@@ -151,9 +165,12 @@ See the [diagram legend and layers](code-map-core.md#dependency-direction) and [
 
 ```mermaid
 flowchart TD
-    vector_xl_bridge_core --> SilKit["SilKit::SilKit"]
-    vector_xl_bridge_core --> can
-    vector_xl_bridge_core --> can_silkit
+    can_bridge_core --> SilKit["SilKit::SilKit"]
+    can_bridge_core --> can
+    can_bridge_core --> can_silkit
+    can_bridge_core --> bridge_runtime
+    vector_xl_bridge_core --> SilKit
+    vector_xl_bridge_core --> can_bridge_core
     vector_xl_bridge_core --> bridge_runtime
     vehicle_sil_vector_xl_logic --> vector_xl_bridge_core
     vector_xl --> vector_xl_bridge_core

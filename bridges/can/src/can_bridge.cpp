@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include "vehicle_sil/vector_xl/can_bridge.hpp"
+#include "vehicle_sil/can_bridge/can_bridge.hpp"
 
 #include <silkit/services/can/ICanController.hpp>
 
@@ -9,7 +9,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace vehicle_sil::vector_xl {
+namespace vehicle_sil::can_bridge {
 namespace {
 
 namespace can = SilKit::Services::Can;
@@ -452,4 +452,4 @@ void CanBridge::set_last_error(std::string_view message, std::string_view detail
     last_error_.assign(message).append(detail);
 }
 
-} // namespace vehicle_sil::vector_xl
+} // namespace vehicle_sil::can_bridge

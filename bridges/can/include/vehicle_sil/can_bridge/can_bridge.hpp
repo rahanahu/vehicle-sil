@@ -18,7 +18,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vehicle_sil::vector_xl {
+namespace vehicle_sil::can_bridge {
 
 /// What an external CAN port reports to the bridge.
 enum class ExternalEventKind
@@ -254,4 +254,4 @@ private:
     std::vector<std::string> warnings_;
 };
 
-} // namespace vehicle_sil::vector_xl
+} // namespace vehicle_sil::can_bridge

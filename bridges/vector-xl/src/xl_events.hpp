@@ -6,7 +6,7 @@
 
 #include "xl_backend.hpp"
 
-#include "vehicle_sil/vector_xl/can_bridge.hpp"
+#include "vehicle_sil/can_bridge/can_bridge.hpp"
 
 namespace vehicle_sil::vector_xl::detail {
 

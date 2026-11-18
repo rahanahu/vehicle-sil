@@ -4,7 +4,7 @@
 // (src/xl_backend_vector.cpp), so including this header does not require vxlapi.h.
 #pragma once
 
-#include "vehicle_sil/vector_xl/can_bridge.hpp"
+#include "vehicle_sil/can_bridge/can_bridge.hpp"
 #include "vehicle_sil/vector_xl/channel_selection.hpp"
 
 #include <chrono>
@@ -122,7 +122,7 @@ struct XlCanPortOptions
 ///
 /// Threading: all XL calls on the port are serialised by a mutex. Events are delivered on a
 /// receive thread owned by the port.
-class XlCanPort final : public ExternalCanPort
+class XlCanPort final : public can_bridge::ExternalCanPort
 {
 public:
     /// Opens the port (xlOpenPort), applies the bit rate if requested, enables TX receipts (with
@@ -136,10 +136,10 @@ public:
     XlCanPort& operator=(XlCanPort&&) = delete;
 
     /// Activates the channel (goes on bus) and starts the receive thread.
-    void start(EventHandler handler) override;
+    void start(can_bridge::ExternalCanPort::EventHandler handler) override;
     /// Stops the receive thread and deactivates the channel.
     void stop() noexcept override;
-    TransmitResult transmit(const SilKit::Services::Can::CanFrame& frame) override;
+    can_bridge::TransmitResult transmit(const SilKit::Services::Can::CanFrame& frame) override;
     [[nodiscard]] std::string last_error() const override;
 
     /// true if this application got init access (and could configure the bit rate).

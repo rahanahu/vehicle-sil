@@ -6,14 +6,14 @@
 #include "vehicle_sil/can/port.hpp"
 #include "vehicle_sil/can/real_time_clock.hpp"
 #include "vehicle_sil/can/real_time_receiver.hpp"
-#include "vehicle_sil/vector_xl/can_bridge.hpp"
+#include "vehicle_sil/can_bridge/can_bridge.hpp"
 
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
 
-namespace vehicle_sil::vector_xl {
+namespace vehicle_sil::can_bridge {
 
 struct ExternalPortAdapterOptions
 {
@@ -100,4 +100,4 @@ private:
     std::atomic<std::uint64_t> send_failed_{0};
 };
 
-} // namespace vehicle_sil::vector_xl
+} // namespace vehicle_sil::can_bridge
