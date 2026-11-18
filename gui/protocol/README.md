@@ -80,8 +80,8 @@ Every `api/` request has these conditions:
 |---|---|---|
 | `GET api/app` | Information on the server and the launcher, whether variables can be read and written, limits | `app.json` |
 | `GET api/configs` | The `.yaml` / `.yml` files under the root | `configs.json` |
-| `POST api/check` `{file, disable, manual, scenario, variant, params}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
-| `POST api/run` `{file, disable, manual, speed, start_paused, scenario, variant, params}` | `{session}` (the summary of the run it started), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `error-check-failed.json` |
+| `POST api/check` `{file, disable, enable, manual, scenario, variant, params, strict}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/run` `{file, disable, enable, manual, scenario, variant, params, strict, speed, start_paused}` | `{session}` (the summary of the run it started), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `error-check-failed.json` |
 | `POST api/stop` `{force}` | `{session}` (the current summary; `null` if there is no run) | `stop*.json` |
 | `POST api/time` `{command, ms, value, id}` | `{session_id, command}` (the command sent to the launcher, with its `id` if given) | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}` (the operation number; the result arrives as `operation` over WebSocket) | `write.json` |
@@ -102,32 +102,29 @@ Every `api/` request has these conditions:
 | What you send | Response |
 |---|---|
 | A participant name that is not in the check result of that file | 400 `unknown-participant` |
-| A name that starts with `-` | 400 `name-like-option` |
-| The same name in both `disable` and `manual` | 400 `invalid-field` |
-| `manual` when the launcher's `features` lack `manual-participants` | 400 `unsupported` |
+| The same name twice in one list | 400 `invalid-field` |
 
-- The launcher cannot take a name that starts with `-` as the value of an argument (the launcher's check also rejects such names). Rename the participant in the configuration file.
-- The launcher also rejects a request with the same name in both.
+- A name in both `disable` and `manual`, and a name in `enable` that the file does not have, are for the launcher to refuse: they show as findings of the check (`api/check`) or as 422 `check-failed` (`api/run`).
 
-A participant in `manual` is passed to the launcher with `--manual`; the launcher does not start it and waits for it to join (see "Starting a participant yourself (`manual`, `--manual`)" in [docs/simulation-config.md](../../docs/simulation-config.md#starting-a-participant-yourself-manual---manual)).
+A participant in `manual` is passed to the launcher in its request file; the launcher does not start it and waits for it to join (see "Starting a participant yourself (`manual`, `--manual`)" in [docs/simulation-config.md](../../docs/simulation-config.md#starting-a-participant-yourself-manual---manual)).
 
 - `manual: true` in the configuration file appears in `participants[].manual` of the check result.
-- Send `manual` only when `launcher.version.features` of `api/app` has `manual-participants`. Otherwise, omit the field.
 - The command to start the participant arrives in that participant's event (`state` is `manual`) as `command`, `working_directory` and `command_line`, and stays in `participants` of the summary (examples: `check-manual.json`, `ws-manual.json`).
 - If the registry is not on a loopback address, the environment variables to set when starting arrive in `environment` of the same event (`{"VEHICLE_SIL_LISTEN_ON_NETWORK": "1"}`) and stay in the summary too. The server passes them on without looking at them.
 
 ### `speed` and `start_paused`
 
-Send a value for `speed` (`null`, `"max"` or a number) and `start_paused` (boolean) only when `launcher.version.features` of `api/app` has `speed` and `start-paused`, respectively. Otherwise, omit the field or send `null` / `false` (any other value gives 400 `unsupported`).
+Send `speed` (`"max"` or a number) and `start_paused` (`true`) to choose them. Leave the field out to choose nothing: a `null` is refused (400 `invalid-field`), as for every field.
 
 - A numeric `speed` must be from `limits.speed_min` to `limits.speed_max` (the same as the launcher).
-- `null` keeps the `speed` of the configuration file (no `--speed` is passed to the launcher).
+- Without `speed`, the `speed` of the configuration file applies.
 
 ### Check and start (`api/check`, `api/run`)
 
 - **Start**: of several `api/run` requests sent at the same time, only one starts a run. The others get 409 `starting` while a run is starting, and 409 `already-running` while a run is running. A screen applies the summary in the response to its local state at once (the `session` that arrives later has the same contents).
-- **Start after a check**: `api/run` first checks what the run is made of (`file`, `disable`, `manual`, `scenario`, `variant`, `params`), in the same queue as `api/check`. If the check does not pass (`result` is not `passed`), no run is started and the response is 422 `check-failed`. Its `detail` is `{result, findings}`: `result` is the check's `result` (`failed`, `unreadable` or `usage`), and `findings` are the `findings` that `api/check` returns for the same request (the same objects). A check that passes with warnings or notes starts the run. Fix the findings, then send `api/run` again; the request is refused before anything is started, so there is nothing to stop. Example: `error-check-failed.json`.
-- **Variant and parameters**: `variant` (a string, or `null` for none) is the variant of the configuration file (`--variant`), and `params` (an object of parameter name to a string or a number) sets the scenario's parameters (`--param <name>=<value>`; only with a `scenario`). Both go to the check and to the run. A variant name that starts with `-` gives 400 `name-like-option`; a `params` that is not an object, has a name that is not letters, digits and `_` (not starting with a digit), has another kind of value, or has no `scenario` gives 400 `invalid-field`. Whether the file has the variant, and the scenario the parameter, is the launcher's check: it shows as a finding (`api/check`) or as 422 `check-failed` (`api/run`). The names that `disable` and `manual` may take are those of the check of that variant.
+- **Start after a check**: `api/run` first checks what the run is made of (everything but `speed` and `start_paused`), in the same queue as `api/check`. If the check does not pass (`result` is not `passed`), no run is started and the response is 422 `check-failed`. Its `detail` is `{result, findings}`: `result` is the check's `result` (`failed`, `unreadable` or `usage`), and `findings` are the `findings` that `api/check` returns for the same request (the same objects). A check that passes with warnings or notes starts the run. Fix the findings, then send `api/run` again; the request is refused before anything is started, so there is nothing to stop. Example: `error-check-failed.json`.
+- **The intent and the request file**: the body is `file` (this server's field: the configuration file, relative to the root) and the keys of the launcher's request file (`schema/run-request.schema.json`; "Request files (`--request`)" in [docs/simulation-run.md](../../docs/simulation-run.md#request-files---request)), with the same names and value forms: `variant` (a string), `params` (an object of parameter name to a string, a number or a boolean), `scenario`, `disable`, `enable` and `manual` (lists of participant names), `strict` (a boolean) and, for `api/run`, `speed` and `start_paused`. `vehicle_sil_run_request` may be sent as `1` (the JSON of a request file with `file` added is taken as it is). The server checks the form and the size of each value and the paths (`file`; `scenario` against the listing of `api/scenarios`), writes the intent into a request file of its own (readable by this user only; removed when the check or the run has ended) and gives the launcher `--request <that file>`. What the values mean for the file (is there that variant, can `disable` and `manual` be used together, does the scenario have those `params`) is the launcher's to say: it shows as a finding (`api/check`) or as 422 `check-failed` (`api/run`). The names that `disable` and `manual` may take are those of the check of that variant.
+- **A choice that is not made is a key that is left out.** A `null` is refused (400 `invalid-field`). `connect` and `time_policy` of the request file are not taken yet (400 `unsupported`). The keys of the launcher's side of a run (`control`, `timeline`, `log_dir` and others) are unknown fields (400 `invalid-field`): the server decides them. The `scenario` to send is the `path` that `api/scenarios` lists (relative to the root); the server writes it relative to the directory of the configuration file, which is where the request file reads it from. A launcher without the feature `request` cannot be used (`api/app` says so in `launcher.problems`).
 - **Check**: `api/check` requests sent at the same time are not rejected; they run one at a time. If too many requests are waiting, or the wait exceeds the check time limit (`limits.check_timeout_s` in `api/app`), the response is 503 `check-busy`. `api/run` also runs a check in the same queue.
 
 ### Stop (`api/stop`)
@@ -178,7 +175,6 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 400 | `outside-root` | Absolute path, `..`, symbolic link out of the root |
 | 400 | `not-a-configuration` | Not a regular `.yaml` / `.yml` file |
 | 400 | `unknown-participant` | A name in `disable` or `manual` is not in the check result |
-| 400 | `name-like-option` | A name in `disable` or `manual` starts with `-` (cannot be passed to the launcher) |
 | 400 | `scenario-not-listed` | `scenario` is not one of the scenarios that `api/scenarios` lists for that configuration file (no `scenarios`, a link, a file elsewhere) |
 | 400 | `unsupported` | Uses a feature the launcher does not have (which: below the table) |
 | 400 | `unknown-variable` | `api/write`: the participant or variable is not in the run's variable list (`detail` holds `{peer, name}`) |
@@ -213,9 +209,9 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 504 | `check-timeout` | The check did not finish within the time limit (it was stopped) |
 | 504 | `write-timeout` | `api/write`: the Control Server did not answer in time (`limits.write_timeout_s`). It may have received the write (do not resend) |
 
-- `api/check` takes `file`, `disable`, `manual`, `scenario`, `variant` and `params`; `api/run` takes those and `speed` and `start_paused`. Any other field (a misspelled one, or `speed` in `api/check`) gives 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
-- Fields covered by `invalid-field`: `speed`, `start_paused`, `force`, `disable`, `manual` (also the same name as in `disable`), `command`, `ms` and `value` of `api/time`, `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
-- Cases of `unsupported`: a value sent for `speed` / `start-paused` / `scenario` / `manual-participants` that the launcher does not have; `api/time` sent when the launcher lacks `time-commands`; `api/write` sent when the launcher lacks `control-server`.
+- `api/check` takes `file`, `vehicle_sil_run_request`, `scenario`, `variant`, `params`, `disable`, `enable`, `manual` and `strict`; `api/run` takes those and `speed` and `start_paused`. Any other field (a misspelled one, a key of the launcher's side, or `speed` in `api/check`) and any `null` give 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
+- Fields covered by `invalid-field`: `speed`, `start_paused`, `variant`, `params`, `enable`, `strict`, `force`, `disable`, `manual` (also the same name twice), `command`, `ms` and `value` of `api/time`, `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
+- Cases of `unsupported`: `connect` or `time_policy` sent to `api/check` or `api/run`; `api/time` sent when the launcher lacks `time-commands`; `api/write` sent when the launcher lacks `control-server`.
 
 The example files. The GUI server's tests check the other codes.
 
@@ -582,7 +578,7 @@ The per-participant `state`:
 
 ## Scenarios
 
-The API for using the launcher's `run --scenario` and `check --scenario` ([docs/scenario.md](../../docs/scenario.md)) from a screen. Available only when the launcher's `features` have `scenario`. Examples: `scenarios.json`, `check-scenario.json`, `ws-scenario.json`, `error-scenario-not-listed.json`, `error-scenario-running.json`.
+The API for using the launcher's `run --scenario` and `check --scenario` ([docs/scenario.md](../../docs/scenario.md)) from a screen. The launcher needs the feature `request` (as for every request of this server). Examples: `scenarios.json`, `check-scenario.json`, `ws-scenario.json`, `error-scenario-not-listed.json`, `error-scenario-running.json`.
 
 ### Scenario list (`api/scenarios`)
 
@@ -599,10 +595,10 @@ The API for using the launcher's `run --scenario` and `check --scenario` ([docs/
 
 ### `scenario` in check and run
 
-If `scenario` of `api/check` and `api/run` is omitted or `null`, there is no scenario.
+If `scenario` of `api/check` and `api/run` is omitted, there is no scenario (`null` gives 400 `invalid-field`).
 
 - The value must be one of the `path`s that `api/scenarios` returns for that configuration file (the server builds the list again to check). Anything else gives 400 `scenario-not-listed`.
-- The server passes it to the launcher with `--scenario`. The launcher runs in the root, so the path stays relative to the root (one that starts with `-` gets `./` in front).
+- The server writes it into the request file as `scenario`, relative to the directory of the configuration file (the launcher reads a relative `scenario` of a request file from there): `scenarios/throttle.yaml` for `simulation.yaml` and for `sub/simulation.yaml` alike.
 - `scenario` in the `api/check` response is the scenario that was passed.
 
 What you can do while a scenario runs:

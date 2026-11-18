@@ -42,7 +42,6 @@ describe('RunSession', () => {
       file: 'a.yaml',
       disable: ['B'],
       speed: 'max',
-      start_paused: false,
     });
     request.flush(examples.get('run')?.response as object);
     expect(run.starting()).toBe(false);

@@ -15,7 +15,7 @@ from vehicle_sil_gui.server import CSP
 from vehicle_sil_gui.timelines import KEPT, Timelines, api_path, find_page_dir, written_whole
 
 PASS, FAIL = "scenarios/throttle.yaml", "scenarios/fails.yaml"
-WITHOUT_TIMELINE = "events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,scenario"
+WITHOUT_TIMELINE = "events,stdin-commands,request,check-variables,speed,start-paused,time-commands,control-links,scenario"
 
 
 def is_hello_event(m: dict) -> bool:
@@ -125,13 +125,12 @@ def test_the_page_is_served_without_a_token_under_the_servers_checks(tmp_path: P
 # ---------------------------------------------------------------- without a server
 
 
-def test_run_command_gives_timeline_only_with_a_scenario(tmp_path: Path) -> None:
+def test_run_command_names_the_timeline_file_before_the_request(tmp_path: Path) -> None:
     launcher = Launcher(Path("/x/vehicle_sil_launch"))
-    file = tmp_path / "t.timeline.json"
-    argv = run_command(launcher, "a.yaml", [], None, False, scenario="s.yaml", timeline=file)
-    assert argv[argv.index("--scenario"):argv.index("--")] == ["--scenario", "s.yaml", "--timeline", str(file)]
-    assert "--timeline" not in run_command(launcher, "a.yaml", [], None, False, timeline=file)
-    assert "--timeline" not in run_command(launcher, "a.yaml", [], None, False, scenario="s.yaml")
+    file, request = tmp_path / "t.timeline.json", tmp_path / "r.json"
+    argv = run_command(launcher, "a.yaml", request, timeline=file)
+    assert argv[argv.index("--timeline"):] == ["--timeline", str(file), "--request", str(request), "--", "a.yaml"]
+    assert "--timeline" not in run_command(launcher, "a.yaml", request)
 
 
 def test_a_file_is_kept_only_when_the_result_says_it_was_written_whole() -> None:

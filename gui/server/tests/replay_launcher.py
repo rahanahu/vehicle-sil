@@ -9,7 +9,8 @@ It does not simulate anything. recordings/ holds what the real launcher wrote fo
 and error, its exit code, and where a command was written to its standard input. This program finds the
 recording of the command line it is given and writes the same lines in the same order.
 
-Which recording: the one whose command line is the same, where the configuration file and the scenario file are
+Which recording: the one whose command line is the same (a `--request <file>`, which is how the GUI server gives the
+launcher the run's intent, is first turned into the options that it stands for: expand_request), where the configuration file and the scenario file are
 compared by their text (SHA-256 of the text with LF line ends), not by their names, and the token file of
 --control-credentials and the file of --timeline are left out. Several may match (the same command line with other commands written to the
 launcher): see below; REPLAY_CASE=<case> plays only that one. When none matches, it writes what to do on standard
@@ -141,6 +142,42 @@ def text_sha256(path: str | None) -> str | None:
     except OSError:
         return None
     return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def expand_request(argv: list[str]) -> list[str]:
+    """The command line with `--request <file>` replaced by the options that the recordings were made with (the
+    recordings are of command lines made of options; the GUI server gives the real launcher the request file, which
+    stands for the same options): the file's keys as options in the order that the recordings have them, and its
+    scenario, which the file writes from the directory of the configuration file, as the path from the working
+    directory that --scenario takes."""
+    end = argv.index("--") if "--" in argv else len(argv)
+    if "--request" not in argv[:end] or argv.index("--request") + 1 >= end:
+        return argv
+    i = argv.index("--request")
+    request = json.loads(Path(argv[i + 1]).read_text(encoding="utf-8"))
+    before, after = argv[:i] + argv[i + 2:end], argv[end:]
+    options: list[str] = []
+    for key, option in (("disable", "--disable"), ("manual", "--manual"), ("enable", "--enable")):
+        for name in request.get(key, []):
+            options += [option, name]
+    if "variant" in request:
+        options += ["--variant", request["variant"]]
+    for name, value in request.get("params", {}).items():
+        options += ["--param", f"{name}={value if isinstance(value, str) else json.dumps(value)}"]
+    if "speed" in request:
+        speed = request["speed"]
+        options += ["--speed", speed if isinstance(speed, str) else (str(int(speed)) if float(speed).is_integer()
+                                                                       else repr(float(speed)))]
+    if request.get("start_paused"):
+        options += ["--start-paused"]
+    if request.get("strict"):
+        options += ["--strict"]
+    if "scenario" in request and len(after) > 1:
+        config_directory = os.path.dirname(after[1])
+        scenario = os.path.normpath(os.path.join(config_directory, request["scenario"])).replace(os.sep, "/")
+        at = min((before.index(o) for o in ("--timeline", "--control") if o in before), default=len(before))
+        before[at:at] = ["--scenario", scenario]
+    return before + options + after
 
 
 MARKED = {"--scenario": "<scenario>", "--control-credentials": "<credentials>", "--timeline": "<timeline>"}
@@ -986,6 +1023,7 @@ class Recorded(Player):
 
 
 def main(argv: list[str]) -> int:
+    argv = expand_request(argv)
     chosen = choose(argv)
     if isinstance(chosen, str):
         Player.report(chosen)

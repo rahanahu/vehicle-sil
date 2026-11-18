@@ -6,9 +6,9 @@ import asyncio
 import json
 import math
 import os
-import re
 import shutil
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,20 +16,19 @@ from . import process
 
 LAUNCHER_NAME = "vehicle_sil_launch"
 ENV_VARIABLE = "VEHICLE_SIL_LAUNCH"
-REQUIRED_FEATURES = ("events", "stdin-commands")
+# `request`: run --request and check --request read the run's intent from a file (schema/run-request.schema.json), which
+# is how this server gives the launcher everything that the browser chose.
+REQUIRED_FEATURES = ("events", "stdin-commands", "request")
 VERSION_TIMEOUT_S = 10
 # The words of vehicle_sil_launch that this server uses, in one place ("Running at a set speed (`speed`)" in docs/simulation-run.md,
-# and docs/simulation-events.md): the range of a speed (the same for --speed and the speed command), the most milliseconds
+# and docs/simulation-events.md): the range of a speed (the same for speed and the speed command), the most milliseconds
 # one step command may ask for, the time commands, and the features that say which of them a launcher has. The
 # launcher's tests (launch.the_gui_takes_the_launchers_limits) compare the numbers with its own.
-PARAM_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SPEED_MIN = 0.000001
 SPEED_MAX = 1000000.0
 STEP_MS_MAX = 10 ** 12
 TIME_COMMANDS = ("pause", "resume", "step", "run_until", "speed")
 MAX_ID = 2 ** 53  # the largest id of a time command (an integer that JavaScript reads exactly)
-FEATURE_SPEED = "speed"
-FEATURE_START_PAUSED = "start-paused"
 FEATURE_TIME_COMMANDS = "time-commands"
 FEATURE_STDIN_RUN_UNTIL = "stdin-run-until"
 # The launcher's `state` event (what it accepts now), and the "id" of a stdin command that its `command` event returns.
@@ -44,13 +43,8 @@ CONTROL_SUMMARY_FIELD = "control_link"
 # Scenarios (docs/scenario.md): run --scenario plays one and ends the run with its outcome; check --scenario checks it.
 # A launcher with scenario-control also has its control server during a scenario (read, time commands; it refuses
 # writes); without it, --scenario cannot be used with --control or --start-paused.
-FEATURE_SCENARIO = "scenario"
 FEATURE_SCENARIO_CONTROL = "scenario-control"
 SCENARIO_STEP_EVENT = "scenario_step"
-# Participants that the user starts ("Starting a participant yourself (`manual`, `--manual`)" in docs/simulation-config.md): run --manual <name>
-# leaves them for the user, writes the command to start them with (the participant event of state `manual`), and
-# waits for them to join.
-FEATURE_MANUAL = "manual-participants"
 # A scenario run's timeline ("Recording a scenario run on a timeline" in docs/simulation-run.md): run --scenario
 # --timeline <file> writes what the scenario wrote and saw to that file after the run.
 FEATURE_TIMELINE = "timeline"
@@ -167,54 +161,70 @@ class InvalidRequest(ValueError):
         self.code = code
 
 
-CHECK_FIELDS = ("file", "disable", "manual", "scenario", "variant", "params")
+# What the browser may send: `file` (the configuration file, which this server resolves) and the keys of the request
+# file (schema/run-request.schema.json), with the names and value forms of that file. The keys of the launcher's side
+# (control, timeline, log_dir, events, stdin) are not in the list: this server decides them.
+REQUEST_VERSION_KEY = "vehicle_sil_run_request"
+INTENT_FIELDS = ("scenario", "variant", "params", "disable", "enable", "manual", "strict")
+CHECK_FIELDS = ("file", REQUEST_VERSION_KEY, *INTENT_FIELDS)
 RUN_FIELDS = CHECK_FIELDS + ("speed", "start_paused")
+# Keys of the request file that this server does not pass on yet.
+UNSUPPORTED_FIELDS = {"connect": "where a network is connected outside the simulation",
+                      "time_policy": "the time policy of a run that is connected outside the simulation"}
 
 
 def check_fields(endpoint: str, body: dict, allowed: tuple[str, ...]) -> None:
-    """Refuses a body with a field the endpoint does not take: a field that is ignored (a misspelled or an
-    unsupported one) would leave the sender believing it had an effect."""
+    """Refuses a body with a field the endpoint does not take (a field that is ignored, misspelled or not
+    supported, would leave the sender believing it had an effect), a field that is null (the request file has no
+    null: a field that is not wanted is left out) and a request format that is not 1."""
+    for key, what in UNSUPPORTED_FIELDS.items():
+        if key in body:
+            raise InvalidRequest("unsupported", f"{endpoint} does not take {key!r} ({what}) yet: leave it out")
     unknown = sorted(k for k in body if k not in allowed)
     if unknown:
         raise InvalidRequest("invalid-field", f"{endpoint} takes no {', '.join(repr(k) for k in unknown)}: "
                                               f"the fields it takes are {', '.join(allowed)}")
+    nulls = sorted(k for k, v in body.items() if v is None and k != "file")
+    if nulls:
+        raise InvalidRequest("invalid-field", f"{endpoint} takes no null: leave out {', '.join(repr(k) for k in nulls)} "
+                                              "to choose nothing")
+    version = body.get(REQUEST_VERSION_KEY)
+    if REQUEST_VERSION_KEY in body and (isinstance(version, bool) or version != 1):
+        raise InvalidRequest("invalid-field", f"{REQUEST_VERSION_KEY} must be 1 (the format of the request file) or "
+                                              "left out")
 
 
 def check_variant(variant: object) -> str | None:
-    """The name to give --variant (None: none). Whether the file has it, the launcher's check says."""
+    """The variant of the request (None: none). Whether the file has it, the launcher's check says."""
     if variant is None:
         return None
     if not isinstance(variant, str) or not variant:
-        raise InvalidRequest("invalid-field", "variant must be null or the name of a variant of the file (a "
-                                              "non-empty string)")
-    if variant.startswith("-"):
-        raise InvalidRequest("name-like-option", f"variant {variant!r} starts with '-': vehicle_sil_launch would "
-                                                 "read it as an option, so it cannot be given to --variant")
+        raise InvalidRequest("invalid-field", "variant must be the name of a variant of the file (a non-empty "
+                                              "string), or left out")
     return variant
 
 
-def check_params(params: object, scenario: str | None) -> list[str]:
-    """The values to give --param, each as <name>=<value>: {name: value} of the scenario's parameters (a string or
-    a number). The launcher takes them only with a scenario."""
+def check_params(params: object) -> dict:
+    """The params of the request: {name: value} of the scenario's parameters (a string, a number or true/false).
+    Whether the scenario has them, and what a name or a value may be, the launcher says."""
     if params is None:
-        return []
+        return {}
     if not isinstance(params, dict):
         raise InvalidRequest("invalid-field", 'params must be an object of parameter name to value, e.g. '
-                                              '{"idle_rpm": "650"}')
-    if params and scenario is None:
-        raise InvalidRequest("invalid-field", "params sets parameters of a scenario: give scenario too, or leave "
-                                              "params out")
-    out = []
+                                              '{"idle_rpm": 650}')
     for name, value in params.items():
-        if not PARAM_NAME.fullmatch(name):
-            raise InvalidRequest("invalid-field", f"params has the name {name!r}: a parameter name is letters, "
-                                                  "digits and _, and does not start with a digit")
-        ok = isinstance(value, str) or (isinstance(value, (int, float)) and not isinstance(value, bool)
-                                        and math.isfinite(value))
+        ok = isinstance(value, (str, bool, int)) or (isinstance(value, float) and math.isfinite(value))
         if not ok:
-            raise InvalidRequest("invalid-field", f"params {name!r} must be a string or a number")
-        out.append(f"{name}={value if isinstance(value, str) else json.dumps(value)}")
-    return out
+            raise InvalidRequest("invalid-field", f"params {name!r} must be a string, a number or true or false")
+    return dict(params)
+
+
+def check_strict(strict: object) -> bool:
+    if strict is None:
+        return False
+    if not isinstance(strict, bool):
+        raise InvalidRequest("invalid-field", "strict must be true or false")
+    return strict
 
 
 def check_speed(speed: object) -> float | str | None:
@@ -222,48 +232,40 @@ def check_speed(speed: object) -> float | str | None:
         return speed
     # Compared before any conversion: an integer of 400 digits is out of range, not an overflow.
     if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not SPEED_MIN <= speed <= SPEED_MAX:
-        raise InvalidRequest("invalid-field", f"speed must be null, \"max\" or a number from {SPEED_MIN:f} to "
+        raise InvalidRequest("invalid-field", f"speed must be \"max\" or a number from {SPEED_MIN:f} to "
                                               f"{SPEED_MAX:.0f} (1 is real time)")
     return float(speed)
 
 
 def check_disable(disable: object, known: list[str]) -> list[str]:
-    """The names to give --disable: each must be a participant of the check result of the file."""
+    """The names of the request's disable: each must be a participant of the check result of the file."""
     return _check_names("disable", disable, known)
 
 
-def check_manual(manual: object, known: list[str], disable: list[str]) -> list[str]:
-    """The names to give --manual (the user starts them): participants of the check result of the file that are
-    not in disable (the launcher refuses a name given to both)."""
-    names = _check_names("manual", manual, known)
-    both = [n for n in names if n in disable]
-    if both:
-        raise InvalidRequest("invalid-field", f"disable and manual both name {', '.join(repr(n) for n in both)}: "
-                                              "give it in one of them (disable leaves it out, manual has you start it)")
-    return names
+def check_manual(manual: object, known: list[str]) -> list[str]:
+    """The names of the request's manual (the user starts them): participants of the check result of the file.
+    (A name that is also in disable is the launcher's to refuse.)"""
+    return _check_names("manual", manual, known)
 
 
-def _check_names(key: str, value: object, known: list[str]) -> list[str]:
+def check_enable(enable: object) -> list[str]:
+    """The names of the request's enable (taken in although the file disables them): which names the file has is
+    the launcher's to say."""
+    return _check_names("enable", enable, None)
+
+
+def _check_names(key: str, value: object, known: list[str] | None) -> list[str]:
     if value is None:
         return []
-    if not isinstance(value, list) or not all(isinstance(n, str) for n in value):
+    if not isinstance(value, list) or not all(isinstance(n, str) and n for n in value):
         raise InvalidRequest("invalid-field", f"{key} must be a list of participant names")
-    unknown = [n for n in value if n not in known]
+    unknown = [n for n in value if known is not None and n not in known]
     if unknown:
         raise InvalidRequest("unknown-participant",
                              f"no participant named {', '.join(repr(n) for n in unknown)} in this file: the "
-                             f"participants are {', '.join(known) or 'none'}")
+                             f"participants are {', '.join(known or []) or 'none'}")
     if len(set(value)) != len(value):
         raise InvalidRequest("invalid-field", f"{key} names a participant twice")
-    # vehicle_sil_launch takes a value that starts with '-' for an option (`--disable --x` is a usage error), and
-    # its check refuses such a name in the file too
-    dashed = [n for n in value if n.startswith("-")]
-    if dashed:
-        raise InvalidRequest("name-like-option",
-                             f"{key} names {', '.join(repr(n) for n in dashed)}, which starts with '-': "
-                             f"vehicle_sil_launch would read it as an option, so it cannot be given to --{key} (and "
-                             "the launcher's check refuses such a name in the file too): rename the participant in "
-                             "the configuration file")
     return list(value)
 
 
@@ -337,58 +339,45 @@ def command_line(command: dict) -> bytes:
     return (json.dumps(command, separators=(",", ":")) + "\n").encode()
 
 
-def check_command(launcher: Launcher, file: str, disable: list[str], scenario: str | None = None,
-                  manual: list[str] = (), variant: str | None = None, params: list[str] = ()) -> list[str]:
-    """scenario: a root-relative path from scenarios.resolve_scenario (the launcher runs in the root). disable,
-    manual: names that check_disable and check_manual accepted. variant, params: from check_variant and
-    check_params."""
-    argv = launcher.prefix + ["check", "--json"]
-    if scenario is not None:
-        argv += ["--scenario", scenario_argument(scenario)]
-    return argv + _intent_arguments(disable, manual, variant, params) + ["--", file]
+def request_text(intent: dict) -> str:
+    """The text of the request file for an intent that the check_* functions accepted (the keys of
+    schema/run-request.schema.json): the version first, then the intent's keys as given."""
+    return json.dumps({REQUEST_VERSION_KEY: 1, **intent}, ensure_ascii=False, indent=2) + "\n"
 
 
-def _intent_arguments(disable: list[str], manual: list[str], variant: str | None, params: list[str]) -> list[str]:
-    argv = _participant_arguments(disable, manual)
-    if variant is not None:
-        argv += ["--variant", variant]
-    for param in params:
-        argv += ["--param", param]
-    return argv
+def write_request_file(intent: dict) -> Path:
+    """A new request file for this run or check, readable by this user only (POSIX: mode 0600, made so; Windows:
+    the user's temporary directory, with the access rights of that directory). The caller removes it
+    (control.remove) when the launcher is done with it."""
+    try:
+        data = request_text(intent).encode("utf-8")
+    except UnicodeEncodeError:
+        raise InvalidRequest("invalid-field", "a text of the request is not valid Unicode (it has a lone surrogate "
+                                              "such as \\ud800): send the text as UTF-8") from None
+    fd, name = tempfile.mkstemp(prefix="vehicle-sil-gui-request-", suffix=".json")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+    except BaseException:
+        Path(name).unlink(missing_ok=True)
+        raise
+    return Path(name)
 
 
-def _participant_arguments(disable: list[str], manual: list[str]) -> list[str]:
-    argv = []
-    for name in disable:
-        argv += ["--disable", name]
-    for name in manual:
-        argv += ["--manual", name]
-    return argv
+def check_command(launcher: Launcher, file: str, request: Path) -> list[str]:
+    """request: the file that write_request_file made (everything that the browser chose is in it)."""
+    return launcher.prefix + ["check", "--json", "--request", str(request), "--", file]
 
 
-def scenario_argument(relative: str) -> str:
-    """A root-relative path as the value of --scenario: one that starts with '-' gets './' (not an option)."""
-    return f"./{relative}" if relative.startswith("-") else relative
-
-
-def run_command(launcher: Launcher, file: str, disable: list[str], speed: float | str | None,
-                start_paused: bool, control_credentials: Path | None = None, scenario: str | None = None,
-                manual: list[str] = (), timeline: Path | None = None, variant: str | None = None,
-                params: list[str] = ()) -> list[str]:
-    """control_credentials: start the launcher's control server (the ECUs' variables) on a free port of
-    127.0.0.1, with the credentials of that file (a token is never an argument: arguments are in the hello
-    event and in the list of processes). scenario, disable, manual: as check_command's. timeline: the file that
-    the launcher writes the scenario's timeline to (only with a scenario, and a launcher with FEATURE_TIMELINE)."""
+def run_command(launcher: Launcher, file: str, request: Path, control_credentials: Path | None = None,
+                timeline: Path | None = None) -> list[str]:
+    """request: as check_command's. control_credentials: start the launcher's control server (the ECUs' variables)
+    on a free port of 127.0.0.1, with the credentials of that file (a token is never an argument: arguments are in
+    the hello event and in the list of processes). timeline: the file that the launcher writes the scenario's
+    timeline to (only with a scenario in the request, and a launcher with FEATURE_TIMELINE)."""
     argv = launcher.prefix + ["run", "--events", "--stdin-commands"]
-    if scenario is not None:
-        argv += ["--scenario", scenario_argument(scenario)]
-        if timeline is not None:
-            argv += ["--timeline", str(timeline)]
+    if timeline is not None:
+        argv += ["--timeline", str(timeline)]
     if control_credentials is not None:
         argv += ["--control", "0", "--control-credentials", str(control_credentials)]
-    argv += _intent_arguments(disable, manual, variant, params)
-    if speed is not None:
-        argv += ["--speed", speed_argument(speed)]
-    if start_paused:
-        argv += ["--start-paused"]
-    return argv + ["--", file]
+    return argv + ["--request", str(request), "--", file]

@@ -38,8 +38,8 @@ async def run_to_end(c: Client, body: dict) -> list[dict]:
     return got
 
 
-SPEED = {"REPLAY_FEATURES": "events,stdin-commands,check-variables,speed"}
-OLD = {"REPLAY_FEATURES": "events,stdin-commands,check-variables"}
+SPEED = {"REPLAY_FEATURES": "events,stdin-commands,request,check-variables,speed"}
+OLD = {"REPLAY_FEATURES": "events,stdin-commands,request,check-variables"}
 
 
 def is_time(**fields) -> Callable[[dict], bool]:
@@ -106,7 +106,7 @@ def test_lines_the_launcher_could_not_write_are_counted(tmp_path: Path) -> None:
 
 def test_a_participant_that_the_user_starts(tmp_path: Path) -> None:
     """manual: given to the launcher as --manual; it is not started, its command is in the summary; stopped while
-    the run waits for it, the simulation does not start. A launcher without the feature: refused."""
+    the run waits for it, the simulation does not start."""
     async def main(c: Client) -> None:
         status, body = await c.post("api/check", {"file": "simulation.yaml", "manual": ["Dashboard"]})
         assert status == 200 and body["manual"] == ["Dashboard"]
@@ -128,13 +128,6 @@ def test_a_participant_that_the_user_starts(tmp_path: Path) -> None:
         assert [p["manual"] for p in end["result"]["participants"]] == [False, True, False]
     with gui_server(tmp_path) as gui:
         run_async(main, gui)
-    with gui_server(tmp_path, env=OLD) as gui:
-        async def old(c: Client) -> None:
-            for path in ("api/check", "api/run"):
-                status, body = await c.post(path, {"file": "simulation.yaml", "manual": ["Dashboard"]})
-                assert status == 400 and body["error"]["code"] == "unsupported", path
-                assert "participant" in body["error"]["message"]
-        run_async(old, gui)
 
 
 def test_the_environment_to_start_a_participant_with_reaches_the_screen(gui: Gui) -> None:
@@ -213,16 +206,56 @@ def test_a_variant_goes_to_the_check_and_the_run(gui: Gui) -> None:
     run_async(main, gui)
 
 
+@pytest.mark.skipif(not POSIX, reason="file modes")
+def test_the_intent_goes_to_the_launcher_in_a_request_file_that_is_removed_afterwards(tmp_path: Path) -> None:
+    """What the browser chose is written to a file of this server's (readable by this user only) and given as
+    --request; the scenario is written from the directory of the configuration file; the files are gone once the
+    check or the run is done."""
+    seen = tmp_path / "seen"
+    seen.mkdir()
+    launcher = tmp_path / "vehicle_sil_launch"
+    launcher.write_text(f"#!{sys.executable}\nimport json, os, runpy, stat, sys\n"
+                        f"a = sys.argv[1:]\nif '--request' in a:\n    p = a[a.index('--request') + 1]\n"
+                        f"    json.dump({{'argv': a, 'path': p, 'mode': stat.S_IMODE(os.stat(p).st_mode), "
+                        f"'text': open(p).read()}}, open('{seen}/' + str(len(os.listdir('{seen}'))) + '.json', 'w'))\n"
+                        f"runpy.run_path({str(REPLAY)!r}, run_name='__main__')\n")
+    launcher.chmod(0o755)
+
+    def made() -> list[dict]:
+        return [json.loads(f.read_text()) for f in sorted(seen.iterdir(), key=lambda f: int(f.stem))]
+
+    async def main(c: Client) -> None:
+        status, body = await c.post("api/check", {"file": "simulation.yaml", "scenario": "scenarios/throttle.yaml",
+                                                  "vehicle_sil_run_request": 1})
+        assert status == 200, body
+        check = made()[-1]
+        assert check["argv"][:2] == ["check", "--json"] and check["mode"] == 0o600
+        assert json.loads(check["text"]) == {"vehicle_sil_run_request": 1, "scenario": "scenarios/throttle.yaml"}
+        assert not os.path.exists(check["path"])
+        got = await run_to_end(c, {"file": "simulation.yaml", "speed": 2, "disable": ["Logger"]})
+        assert got[-1]["session"]["result"]["result"] == "passed"
+        run = made()[-1]
+        assert run["argv"][:3] == ["run", "--events", "--stdin-commands"] and run["argv"][-2:] == ["--", "simulation.yaml"]
+        assert not {"--disable", "--speed", "--scenario", "--variant"} & set(run["argv"])  # the intent is not in them
+        assert json.loads(run["text"]) == {"vehicle_sil_run_request": 1, "disable": ["Logger"], "speed": 2.0}
+        assert run["mode"] == 0o600 and not os.path.exists(run["path"])
+    with gui_server(tmp_path, launcher=launcher) as gui:
+        run_async(main, gui)
+
+
 def test_variant_and_params_of_the_wrong_shape_are_refused(gui: Gui) -> None:
     async def main(c: Client) -> None:
         scenario = "scenarios/throttle.yaml"
         for path in ("api/check", "api/run"):
             for body, code in (({"variant": ""}, "invalid-field"), ({"variant": 1}, "invalid-field"),
-                               ({"variant": "-x"}, "name-like-option"), ({"params": ["a"]}, "invalid-field"),
-                               ({"params": {"a": "1"}}, "invalid-field"),  # no scenario
-                               ({"params": {"1a": "1"}, "scenario": scenario}, "invalid-field"),
-                               ({"params": {"a": True}, "scenario": scenario}, "invalid-field"),
-                               ({"params": {"a": None}, "scenario": scenario}, "invalid-field")):
+                               ({"variant": None}, "invalid-field"), ({"scenario": None}, "invalid-field"),
+                               ({"params": ["a"]}, "invalid-field"), ({"params": None}, "invalid-field"),
+                               ({"params": {"a": [1]}, "scenario": scenario}, "invalid-field"),
+                               ({"params": {"a": None}, "scenario": scenario}, "invalid-field"),
+                               ({"enable": "A"}, "invalid-field"), ({"enable": [1]}, "invalid-field"),
+                               ({"strict": 1}, "invalid-field"), ({"strict": None}, "invalid-field"),
+                               ({"vehicle_sil_run_request": 2}, "invalid-field"),
+                               ({"connect": {"ETH": "x"}}, "unsupported"), ({"time_policy": "free"}, "unsupported")):
                 status, reply = await c.post(path, {"file": "simulation.yaml", **body})
                 assert (status, reply["error"]["code"]) == (400, code), (path, body, reply)
         status, body = await c.get("api/session")
@@ -578,9 +611,7 @@ def test_a_launcher_without_time_commands(tmp_path: Path) -> None:
     async def main(c: Client) -> None:
         status, app = await c.get("api/app")
         assert "time-commands" not in app["launcher"]["version"]["features"]
-        # The server does not pass an argument the launcher cannot take, nor a command it cannot read.
-        status, body = await c.post("api/run", {"file": "forever.yaml", "start_paused": True})
-        assert status == 400 and body["error"]["code"] == "unsupported" and "start paused" in body["error"]["message"]
+        # The server does not send a command that the launcher cannot read.
         sock = await c.ws()
         await sock.until(is_synced)
         await c.post("api/run", {"file": "forever.yaml"})
@@ -596,7 +627,7 @@ def test_a_launcher_without_time_commands(tmp_path: Path) -> None:
 def test_a_launcher_without_state_does_not_get_an_id(tmp_path: Path) -> None:
     """The launcher returns the id of a command only with the feature `state`: another is not sent one it would
     not read as an id."""
-    features = "events,stdin-commands,check-variables,speed,start-paused,time-commands"
+    features = "events,stdin-commands,request,check-variables,speed,start-paused,time-commands"
 
     async def main(c: Client) -> None:
         sock = await c.ws()
@@ -658,7 +689,7 @@ def test_the_probe_that_changes_the_launcher_is_pushed_to_the_other_screens(tmp_
                             f"runpy.run_path({str(REPLAY)!r}, run_name='__main__')\n")
         launcher.chmod(0o755)
 
-    write("events,stdin-commands,check-variables")
+    write("events,stdin-commands,request,check-variables")
     with gui_server(tmp_path, launcher=launcher) as gui:
         async def main(c: Client) -> None:
             other = await c.ws()
@@ -672,7 +703,7 @@ def test_the_probe_that_changes_the_launcher_is_pushed_to_the_other_screens(tmp_
             # a screen that reads api/session now makes no new number: the other screens already have it
             status, body = await c.get("api/session")
             assert body["allowed"]["rev"] == unusable["rev"]
-            write("events,stdin-commands,check-variables,speed")  # usable again
+            write("events,stdin-commands,request,check-variables,speed")  # usable again
             await c.get("api/app")
             got = await other.until(lambda m: m["type"] == "allowed" and m["allowed"]["start"]["ok"])
             assert got[-1]["allowed"]["rev"] > unusable["rev"]
@@ -809,14 +840,14 @@ def test_time_commands_follow_the_launcher_of_the_run(tmp_path: Path) -> None:
                             f"runpy.run_path({str(REPLAY)!r}, run_name='__main__')\n")
         launcher.chmod(0o755)
 
-    write("events,stdin-commands,check-variables")
+    write("events,stdin-commands,request,check-variables")
     with gui_server(tmp_path, launcher=launcher) as gui:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
             await c.post("api/run", {"file": "forever.yaml"})
             await sock.until(is_time(sim_ms=0))
-            write("events,stdin-commands,check-variables,speed,start-paused,time-commands")
+            write("events,stdin-commands,request,check-variables,speed,start-paused,time-commands")
             status, app = await c.get("api/app")
             assert "time-commands" in app["launcher"]["version"]["features"]
             status, body = await c.post("api/time", {"command": "pause"})

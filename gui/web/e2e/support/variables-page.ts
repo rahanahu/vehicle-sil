@@ -21,7 +21,7 @@ export async function startRun(
 ): Promise<void> {
   const response = await page.request.post(new URL('api/run', target.base).href, {
     headers: headers(target),
-    data: { file, disable: [], speed: null, start_paused: startPaused },
+    data: { file, disable: [], ...(startPaused ? { start_paused: true } : {}) },
   });
   expect(response.status(), await response.text()).toBe(200);
 }

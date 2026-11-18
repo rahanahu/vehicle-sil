@@ -56,7 +56,7 @@ describe('the readers accept every example of gui/protocol', () => {
         .map((example) => [example.name, Object.keys(example.request.body ?? {})]),
     );
     expect(bodies.get('check-passed')?.sort()).toEqual(['disable', 'file']);
-    expect(bodies.get('run')?.sort()).toEqual(['disable', 'file', 'speed', 'start_paused']);
+    expect(bodies.get('run')?.sort()).toEqual(['disable', 'file']);
     expect(bodies.get('stop-force')).toEqual(['force']);
     expect(bodies.get('time')?.sort()).toEqual(['command', 'ms']);
   });

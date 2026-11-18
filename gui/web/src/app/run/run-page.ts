@@ -582,13 +582,16 @@ export class RunPage {
     if (file === null) return;
     const scenario = this.chosenScenario();
     const manual = this.manualToSend();
+    const speed = this.speedSupported() ? this.speed() : null;
     this.run.start({
       file,
       disable: [...this.disabled()].sort(),
       ...(manual !== null ? { manual } : {}),
-      speed: this.speedSupported() ? this.speed() : null,
+      ...(speed !== null ? { speed } : {}),
       // シナリオは時刻 0 から自分で進むので、止めた状態では始めない（ランチャーの決まり）
-      start_paused: scenario === null && this.startPausedSupported() && this.startPaused(),
+      ...(scenario === null && this.startPausedSupported() && this.startPaused()
+        ? { start_paused: true }
+        : {}),
       ...(scenario !== null ? { scenario } : {}),
     });
   }

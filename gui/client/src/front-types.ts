@@ -123,15 +123,21 @@ export class ActionError extends Error {
   }
 }
 
-/** What a start asks for (the part of the intent that the GUI server takes now). */
+/**
+ * What a start asks for: the keys of the request file (`schema/run-request.schema.json`), with its names and value
+ * forms. A choice that is not made is left out of the object: there is no null. (`connect` and `time_policy` of the
+ * file are not here: the GUI server does not take them yet.)
+ */
 export interface Intent {
   disable?: string[];
+  enable?: string[];
   manual?: string[];
-  scenario?: string | null;
-  variant?: string | null;
-  params?: Record<string, string | number>;
+  scenario?: string;
+  variant?: string;
+  params?: Record<string, string | number | boolean>;
   speed?: number | 'max';
   start_paused?: boolean;
+  strict?: boolean;
 }
 
 /** Operations of the run. Each resolves when the server has taken the request; whether the run began is `status.run`. */

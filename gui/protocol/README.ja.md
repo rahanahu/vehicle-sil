@@ -80,8 +80,8 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 |---|---|---|
 | `GET api/app` | サーバーとランチャーの情報、変数を読み書きできるか、上限 | `app.json` |
 | `GET api/configs` | root の下の `.yaml` / `.yml` の一覧 | `configs.json` |
-| `POST api/check` `{file, disable, manual, scenario, variant, params}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
-| `POST api/run` `{file, disable, manual, speed, start_paused, scenario, variant, params}` | `{session}`（始めた実行の要約）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`error-check-failed.json` |
+| `POST api/check` `{file, disable, enable, manual, scenario, variant, params, strict}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/run` `{file, disable, enable, manual, scenario, variant, params, strict, speed, start_paused}` | `{session}`（始めた実行の要約）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`error-check-failed.json` |
 | `POST api/stop` `{force}` | `{session}`（今の要約。実行がなければ `null`） | `stop*.json` |
 | `POST api/time` `{command, ms, value, id}` | `{session_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
@@ -102,32 +102,29 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 書いたもの | レスポンス |
 |---|---|
 | そのファイルの照合の結果にない participant 名 | 400 `unknown-participant` |
-| `-` で始まる名前 | 400 `name-like-option` |
-| 同じ名前を `disable` と `manual` の両方に | 400 `invalid-field` |
-| ランチャーの `features` に `manual-participants` がないのに `manual` | 400 `unsupported` |
+| 1 つの配列に同じ名前を 2 度 | 400 `invalid-field` |
 
-- `-` で始まる名前は、ランチャーが引数の値として受け取れません（ランチャーの照合もそのような名前を拒否します）。設定ファイルで名前を変えます。
-- 同じ名前を両方に書いたリクエストは、ランチャーも拒否します。
+- 同じ名前を `disable` と `manual` の両方に書いたものと、ファイルにない名前の `enable` は、ランチャーが断ります。照合の所見（`api/check`）か 422 `check-failed`（`api/run`）に出ます。
 
-`manual` に書いた participant は、ランチャーに `--manual` で渡り、ランチャーは起動せずに参加を待ちます（[docs/simulation-config.md](../../docs/ja/simulation-config.md) の「participant を自分で起動する」）。
+`manual` に書いた participant は、ランチャーに要求ファイルで渡り、ランチャーは起動せずに参加を待ちます（[docs/simulation-config.md](../../docs/ja/simulation-config.md) の「participant を自分で起動する」）。
 
 - 設定ファイルの `manual: true` は、照合の結果の `participants[].manual` に出ます。
-- `manual` は、`api/app` の `launcher.version.features` に `manual-participants` があるときだけ送ります。ないときはフィールドを省きます。
 - 起動するコマンドは、その participant のイベント（`state` が `manual`）の `command`、`working_directory`、`command_line` で届き、要約の `participants` に残ります（例は `check-manual.json`、`ws-manual.json`）。
 - registry がループバックのアドレスでない設定では、起動するときに設定する環境変数が、同じイベントの `environment`（`{"VEHICLE_SIL_LISTEN_ON_NETWORK": "1"}`）で届き、同じく残ります。サーバーは中身を見ずに通します。
 
 ### `speed` と `start_paused`
 
-`speed`（`null`、`"max"`、数）と `start_paused`（真偽）は、`api/app` の `launcher.version.features` に `speed`、`start-paused` があるときだけ値を送ります。ないときはフィールドを省くか `null` / `false` を送ります（ほかの値は 400 `unsupported`）。
+`speed`（`"max"`、数）と `start_paused`（`true`）は、選ぶときだけ書きます。選ばないときはフィールドを省きます。`null` は、どのフィールドでも断ります（400 `invalid-field`）。
 
 - `speed` の数の範囲は `limits.speed_min` から `limits.speed_max` までです（ランチャーと同じ）。
-- `null` は設定ファイルの `speed` のままです（ランチャーに `--speed` を渡しません）。
+- `speed` を省くと、設定ファイルの `speed` です。
 
 ### 照合と開始（`api/check`、`api/run`）
 
 - **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけている間は 409 `starting`、動いている間は 409 `already-running` です。レスポンスの要約を、画面はその場で手元の状態に反映します（後から届く `session` も同じ内容です）。
-- **照合のあとの開始**: `api/run` は、まず実行を成す内容（`file`、`disable`、`manual`、`scenario`、`variant`、`params`）を、`api/check` と同じ順番で照合します。照合が通らなければ（`result` が `passed` でなければ）実行は始めず、422 `check-failed` を返します。`detail` は `{result, findings}` で、`result` は照合の `result`（`failed`、`unreadable`、`usage`）、`findings` は同じリクエストで `api/check` が返す `findings`（同じオブジェクト）です。警告や注記があるだけで通る照合は、実行を始めます。所見を直してから、もう一度 `api/run` を送ります。何も始める前に断るので、止めるものはありません。例: `error-check-failed.json`。
-- **variant と params**: `variant`（文字列、なしは `null`）は設定ファイルの variant（`--variant`）、`params`（パラメーター名から文字列か数への object）はシナリオのパラメーター（`--param <name>=<value>`。`scenario` があるときだけ）です。どちらも照合にも実行にも渡ります。`-` で始まる variant の名前は 400 `name-like-option`、object でない `params`、英数字と `_` でない名前（数字では始められない）、ほかの種類の値、`scenario` のない `params` は 400 `invalid-field` です。ファイルにその variant があるか、シナリオにそのパラメーターがあるかは、ランチャーの照合が決め、所見（`api/check`）か 422 `check-failed`（`api/run`）に出ます。`disable` と `manual` に使える名前は、その variant の照合の結果のものです。
+- **照合のあとの開始**: `api/run` は、まず実行を成す内容（`speed` と `start_paused` 以外のすべて）を、`api/check` と同じ順番で照合します。照合が通らなければ（`result` が `passed` でなければ）実行は始めず、422 `check-failed` を返します。`detail` は `{result, findings}` で、`result` は照合の `result`（`failed`、`unreadable`、`usage`）、`findings` は同じリクエストで `api/check` が返す `findings`（同じオブジェクト）です。警告や注記があるだけで通る照合は、実行を始めます。所見を直してから、もう一度 `api/run` を送ります。何も始める前に断るので、止めるものはありません。例: `error-check-failed.json`。
+- **意図と要求ファイル**: 本文は、`file`（このサーバーのフィールド。root からの相対の構成ファイル）と、ランチャーの要求ファイル（`schema/run-request.schema.json`。[docs/simulation-run.md](../../docs/ja/simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）のキーです。名前と値の形は同じです。`variant`（文字列）、`params`（パラメーター名から文字列、数、真偽への object）、`scenario`、`disable`、`enable`、`manual`（participant 名の配列）、`strict`（真偽）、`api/run` では `speed` と `start_paused` です。`vehicle_sil_run_request` は `1` なら送れます（要求ファイルの JSON に `file` を足したものを、そのまま渡せます）。サーバーは、各値の形と大きさ、パス（`file`、`api/scenarios` の一覧と照らす `scenario`）だけを調べ、意図を自分の要求ファイル（この利用者だけが読める。照合か実行が終わったら消す）に書いて、ランチャーに `--request <そのファイル>` を渡します。値がそのファイルで何を意味するか（その variant があるか、`disable` と `manual` を併せてよいか、シナリオにその `params` があるか）は、ランチャーが言います。所見（`api/check`）か 422 `check-failed`（`api/run`）に出ます。`disable` と `manual` に使える名前は、その variant の照合の結果のものです。
+- **選ばないことは、キーを書かないこと。** `null` は断ります（400 `invalid-field`）。要求ファイルの `connect` と `time_policy` は、まだ受けません（400 `unsupported`）。実行をする側のキー（`control`、`timeline`、`log_dir` など）は知らないフィールドです（400 `invalid-field`）。サーバーが決めます。送る `scenario` は、`api/scenarios` が返す `path`（root からの相対）です。サーバーは、要求ファイルが読む基準である構成ファイルのディレクトリからの相対に直して書きます。`request` の feature がないランチャーは使えません（`api/app` の `launcher.problems` に出ます）。
 - **照合**: 同時の `api/check` は拒否せず、順に 1 つずつ実行します。待っているリクエストが多すぎるか、待ちが照合の時間の上限（`api/app` の `limits.check_timeout_s`）を過ぎたら 503 `check-busy` です。`api/run` も同じ順番で照合します。
 
 ### 停止（`api/stop`）
@@ -178,7 +175,6 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 400 | `outside-root` | 絶対パス、`..`、root の外へのシンボリックリンク |
 | 400 | `not-a-configuration` | `.yaml` / `.yml` の通常のファイルでない |
 | 400 | `unknown-participant` | `disable` か `manual` の名前が照合の結果にない |
-| 400 | `name-like-option` | `disable` か `manual` の名前が `-` で始まる（ランチャーに渡せない） |
 | 400 | `scenario-not-listed` | `scenario` が、`api/scenarios` がその設定ファイルに挙げるシナリオでない（`scenarios` がない、リンク、ほかの場所のファイル） |
 | 400 | `unsupported` | ランチャーが持たない機能を使った（対象は表の下） |
 | 400 | `unknown-variable` | `api/write`: その participant か変数が、実行の変数の一覧にない（`detail` に `{peer, name}`） |
@@ -213,9 +209,9 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 504 | `check-timeout` | 照合が時間の上限までに終わらなかった（止めた） |
 | 504 | `write-timeout` | `api/write`: Control Server が時間内（`limits.write_timeout_s`）に応答しなかった。受け取られたかもしれない（送り直さない） |
 
-- `api/check` が受けるフィールドは `file`、`disable`、`manual`、`scenario`、`variant`、`params` で、`api/run` はそれらと `speed`、`start_paused` です。ほかのフィールド（打ち間違い、`api/check` の `speed`）は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
-- `invalid-field` の対象: `speed`、`start_paused`、`force`、`disable`、`manual`（`disable` と同じ名前も）、`api/time` の `command`、`ms`、`value`、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
-- `unsupported` の対象: ランチャーが `speed` / `start-paused` / `scenario` / `manual-participants` を持たないのに値を送った。`time-commands` を持たないのに `api/time` を送った。`control-server` を持たないのに `api/write` を送った。
+- `api/check` が受けるフィールドは `file`、`vehicle_sil_run_request`、`scenario`、`variant`、`params`、`disable`、`enable`、`manual`、`strict` で、`api/run` はそれらと `speed`、`start_paused` です。ほかのフィールド（打ち間違い、実行をする側のキー、`api/check` の `speed`）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
+- `invalid-field` の対象: `speed`、`start_paused`、`variant`、`params`、`enable`、`strict`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`value`、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
+- `unsupported` の対象: `api/check` か `api/run` に `connect` か `time_policy` を送った。`time-commands` を持たないのに `api/time` を送った。`control-server` を持たないのに `api/write` を送った。
 
 例のファイルは次のとおりです。ほかのコードは、GUI サーバーのテストの中で確認します。
 
@@ -582,7 +578,7 @@ participant ごとの `state` は次のとおりです。
 
 ## シナリオ
 
-ランチャーの `run --scenario` と `check --scenario`（[docs/scenario.md](../../docs/ja/scenario.md)）を、画面から使う API です。ランチャーの `features` に `scenario` があるときだけ使えます。例は `scenarios.json`、`check-scenario.json`、`ws-scenario.json`、`error-scenario-not-listed.json`、`error-scenario-running.json` です。
+ランチャーの `run --scenario` と `check --scenario`（[docs/scenario.md](../../docs/ja/scenario.md)）を、画面から使う API です。ランチャーに feature `request` が要ります（このサーバーのどのリクエストも同じです）。例は `scenarios.json`、`check-scenario.json`、`ws-scenario.json`、`error-scenario-not-listed.json`、`error-scenario-running.json` です。
 
 ### シナリオの一覧（`api/scenarios`）
 
@@ -602,7 +598,7 @@ participant ごとの `state` は次のとおりです。
 `api/check` と `api/run` の `scenario` は、省くか `null` なら、シナリオなしです。
 
 - 値は、その設定ファイルの `api/scenarios` の `path` のどれかだけです（サーバーが一覧を作り直して確認します）。ほかは 400 `scenario-not-listed` です。
-- サーバーは、それをランチャーに `--scenario` で渡します。ランチャーは root で動くので、root からの相対のままです（`-` で始まるものは `./` を付けます）。
+- サーバーは、それを要求ファイルの `scenario` に、構成ファイルのディレクトリからの相対で書きます（要求ファイルの相対の `scenario` は、ランチャーがそこから読みます）。`simulation.yaml` でも `sub/simulation.yaml` でも `scenarios/throttle.yaml` です。
 - `api/check` のレスポンスの `scenario` は、渡したシナリオです。
 
 シナリオを実行している間にできることは、次のとおりです。

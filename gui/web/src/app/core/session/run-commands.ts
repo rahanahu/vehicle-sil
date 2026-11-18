@@ -34,10 +34,10 @@ export class RunCommands {
   start(request: RunRequest): void {
     const intent: Intent = {
       disable: request.disable,
-      start_paused: request.start_paused,
+      ...(request.start_paused ? { start_paused: true } : {}),
       ...(request.manual ? { manual: request.manual } : {}),
       ...(request.scenario !== undefined ? { scenario: request.scenario } : {}),
-      ...(request.speed !== null && request.speed !== undefined ? { speed: request.speed } : {}),
+      ...(request.speed !== undefined ? { speed: request.speed } : {}),
     };
     this.send(() => this.front.run.start(intent, { file: request.file }));
   }

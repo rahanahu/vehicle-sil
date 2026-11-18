@@ -5,9 +5,7 @@
     "path": "api/run",
     "body": {
       "file": "check-error.yaml",
-      "disable": [],
-      "speed": null,
-      "start_paused": false
+      "disable": []
     }
   },
   "status": 422,

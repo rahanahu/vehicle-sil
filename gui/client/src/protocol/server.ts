@@ -219,26 +219,30 @@ export const readConfigList = (value: unknown): ConfigList => {
   };
 };
 
-/** Body of POST api/check. */
+/**
+ * Body of POST api/check: `file` (this server's field) and the keys of the request file that the launcher reads
+ * (`schema/run-request.schema.json`), with the same names and value forms. A key that is not wanted is left out: there
+ * is no null.
+ */
 export interface CheckRequest {
   /** Path relative to root. */
   file: string;
+  /** The format of the request file: 1, or left out. */
+  vehicle_sil_run_request?: 1;
   /** Names of the participants to leave out (only names in the check result). */
   disable: string[];
-  /**
-   * Names of the participants the user starts (only names in the check result that are not in disable). Send only when
-   * the launcher's `features` include `manual-participants`.
-   */
+  /** Names of the participants to take in although the configuration file disables them. */
+  enable?: string[];
+  /** Names of the participants the user starts (only names in the check result). */
   manual?: string[];
-  /**
-   * The scenario (`path` from `GET api/scenarios`; only one in the list for that configuration file). Omitted or null
-   * means none. Send only when the launcher's `features` include `scenario`.
-   */
-  scenario?: string | null;
-  /** The variant of the configuration file (`--variant`); omitted or null means none. */
-  variant?: string | null;
-  /** Values of the scenario's parameters (name to value; `--param`); only with a `scenario`. */
-  params?: Record<string, string | number>;
+  /** The scenario (`path` from `GET api/scenarios`; only one in the list for that configuration file). */
+  scenario?: string;
+  /** The variant of the configuration file. */
+  variant?: string;
+  /** Values of the scenario's parameters (name to value); used only when a scenario runs. */
+  params?: Record<string, string | number | boolean>;
+  /** true: fail on warnings too. */
+  strict?: boolean;
 }
 
 /** One entry of GET api/scenarios. */
@@ -328,8 +332,10 @@ export const readCheckResponse = (value: unknown): CheckResult =>
 
 /** Body of POST api/run. */
 export interface RunRequest extends CheckRequest {
-  speed: Speed;
-  start_paused: boolean;
+  /** Simulation seconds per wall-clock second, or `max`; left out: as the configuration file says. */
+  speed?: number | 'max';
+  /** true: stand still at 0 until a resume or step; left out: no. */
+  start_paused?: boolean;
 }
 
 /**

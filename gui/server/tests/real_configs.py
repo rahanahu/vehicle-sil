@@ -14,6 +14,7 @@ Standard library only; also used by the e2e of gui/web (e2e-real/).
   missing-executable.yaml  Dashboard's executable does not exist: the check fails (executable)
   wrong-step.yaml          Engine's step_ms is 20, its executable says 10: the check fails (step-mismatch)
   not-joined.yaml          a required participant that never joins (sleep): the run fails (not-joined)
+  variants.yaml            the same as simulation.yaml, with the variants small and big: a run must choose one
   broken.yaml              not YAML: the file cannot be read
   example.yaml             the same as forever.yaml, with the ecu_main example's dashboard file
                            (example.dashboard.yaml, from examples/ecu_main/simulation.dashboard.yaml) and its
@@ -66,6 +67,8 @@ def write(directory: Path, examples: Path) -> list[Path]:
     files = {
         "simulation.yaml": head + "stop_at_ms: 1000\n" + NETWORKS
                            + _participants(engine, dashboard),
+        "variants.yaml": head + "stop_at_ms: 1000\n" + NETWORKS + _participants(engine, dashboard)
+                         + "variants:\n  small: {}\n  big: {}\n",
         "forever.yaml": head + NETWORKS + _participants(engine, dashboard),
         "missing-executable.yaml": head + "stop_at_ms: 1000\n" + NETWORKS
                                    + _participants(engine, dashboard + "-missing"),

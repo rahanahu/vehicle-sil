@@ -11,6 +11,7 @@ and the launcher's reading of it (whoever can write in the root can write the sc
 from __future__ import annotations
 
 import os
+import posixpath
 import stat
 from pathlib import Path
 
@@ -73,6 +74,12 @@ def list_scenarios(root: ConfigRoot, config: ConfigFile) -> tuple[str, bool, lis
             continue
         files.append({"path": path, "name": name, "size": info.st_size})
     return relative, True, files, truncated
+
+
+def relative_to_config(config: ConfigFile, scenario: str) -> str:
+    """A scenario of the listing (root-relative) as the request file writes it: from the directory of the
+    configuration file, which is where the launcher reads a relative scenario of a request file from."""
+    return posixpath.relpath(scenario, config.relative.rpartition("/")[0] or ".")
 
 
 def resolve_scenario(root: ConfigRoot, config: ConfigFile, wanted: object) -> str | None:

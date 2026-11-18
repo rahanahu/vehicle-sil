@@ -141,7 +141,7 @@ def gui_server(tmp_path: Path, *, root: Path = CONFIGS, env: dict | None = None,
 REPOSITORY = TESTS.parents[2]
 # Without timeline: the recordings of scenario runs with the control server are made without --timeline (the
 # scenario runs with a timeline are recorded without the control server: run-scenario-*-timeline).
-CONTROL_FEATURES = ("events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,"
+CONTROL_FEATURES = ("events,stdin-commands,request,check-variables,speed,start-paused,time-commands,control-links,"
                     "scenario,manual-participants,scenario-wave,scenario-motion-expect,scenario-points-file,scenario-inputs,"
                     "network-names,run-traffic,j1939-nodes,connect,connections,connect-counts,control-server")
 
