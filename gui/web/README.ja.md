@@ -41,7 +41,7 @@ Windows でも同じコマンドで動かす想定です。Node.js は Windows �
 | `npm ci`                  | `package-lock.json` のとおりにインストールする                                                                                                          |
 | `npm start`               | 開発サーバー（http://127.0.0.1:4200）を起動する                                                                                                         |
 | `npm run build`           | 本番のビルド（出力は `dist/browser/`、ライセンスの表示は `dist/3rdpartylicenses.txt`）                                                                  |
-| `npm test`                | 単体テスト（Vitest、jsdom）を 1 回実行して終わる                                                                                                        |
+| `npm test`                | 単体テスト（Vitest、headless の Chromium）を 1 回実行して終わる                                                                                         |
 | `npm run test:client`     | クライアントのライブラリ（`../client`）の型の検査と単体テスト（Vitest。ライブラリは Node、部品はヘッドレスの Chromium。Angular なし）                   |
 | `npm run test:timeline`   | 時間の軸の要素（`../timeline/viewer.js`）の単体テスト（Node のテストランナー。DOM なし）。先に `../timeline/vehicle-sil-timeline.js` が最新かを確かめる |
 | `npm run bundle:timeline` | `messages.js`、`timeline.css`、`viewer.js` から `../timeline/vehicle-sil-timeline.js` を作る                                                            |
@@ -409,7 +409,8 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 
 **単体テスト**:
 
-- 単体テストは TestBed。`Layout` は signal を持つ偽物に差し替える（jsdom に `matchMedia` がない）。
+- 単体テストは TestBed で、本物のブラウザー（Vitest の Browser Mode、headless の Chromium）で動く。DOM が要るものは本物の DOM で確かめ、DOM の要らない試験は `../client` に置いて Node で動かす。ブラウザーがないときは `scripts/doctor.py` の案内で入れる。試験はファイルを読めない。`vitest-base.config.mts` が Node 側の命令を定義し、`vitest/browser` から呼ぶ。
+- `Layout` は signal を持つ偽物に差し替え、幅の区分を試験が決める（本物は画面の幅に従う）。
 - `resource` は `TestBed.tick()` でリクエストを出させ、`HttpTestingController` で `flush` してから `whenStable()`（レスポンスを返していないリクエストがあると `whenStable()` が終わらない）。
 - WebSocket は `FakeWebSockets`（`@vehicle-sil/gui-client/testing`）で差し替える（`{ provide: SOCKET_FACTORY, useValue: fake.factory }`）。HTTP は、ラッパーが `HttpClient` で送るので `HttpTestingController` で返す。時間は Vitest の偽の時計。
 - サーバーの通知は、作らずに `gui/protocol/examples/` の例を流す（`webSocketExamples`、`httpExamples`）。

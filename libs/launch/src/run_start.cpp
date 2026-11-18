@@ -55,7 +55,7 @@ void RunStartWindow::run(control_silkit::HubTransport& transport, SimulationCont
 {
     const auto cancelled = [this, &window] { return window.cancelled() || ctx_.interrupts() > 0; };
     // Not beyond the start's limit, and with room for the start to go on after it.
-    const auto deadline = std::min(std::chrono::steady_clock::now() + ctx_.options.control_hello_timeout,
+    const auto deadline = std::min(std::chrono::steady_clock::now() + ctx_.plan.control_hello_timeout,
                                    shared_.limit.at() - std::chrono::milliseconds(500));
     control_silkit::HelloReport report = transport.wait_for_hellos(control_.expected_agents(), deadline, cancelled);
     {
@@ -65,14 +65,14 @@ void RunStartWindow::run(control_silkit::HubTransport& transport, SimulationCont
         const std::lock_guard lock(shared_.found_mutex);
         shared_.control_start = ControlStart{std::move(report), transport.links()};
     }
-    if (ctx_.options.before_start && !cancelled())
+    if (ctx_.observers.before_start && !cancelled())
     {
         // The simulation starts whatever happens here: a failure is kept, and the run ends
         // the simulation for it once it has started (wait_for_start()).
         std::string error;
         try
         {
-            ctx_.options.before_start(control_.shared_hub());
+            ctx_.observers.before_start(control_.shared_hub());
         }
         catch (const std::exception& e)
         {
@@ -105,7 +105,7 @@ void RunStartWindow::run(control_silkit::HubTransport& transport, SimulationCont
         const auto give_up = [&] {
             // With a participant started by hand, --timeout-ms counts from the wait for the participants.
             const auto from = shared_.manual_wait_began().value_or(began);
-            if (ctx_.options.timeout && std::chrono::steady_clock::now() >= from + *ctx_.options.timeout)
+            if (ctx_.plan.timeout && std::chrono::steady_clock::now() >= from + *ctx_.plan.timeout)
             {
                 shared_.hold_timed_out.store(true);
                 return true;
@@ -163,7 +163,7 @@ std::string RunStart::start_given_up(SimulationController& controller)
     {
         return "interrupted (" + ctx_.interrupt_name() + ")";
     }
-    if (const auto from = shared_.manual_wait_began(); from && ctx_.options.timeout && std::chrono::steady_clock::now() >= *from + *ctx_.options.timeout)
+    if (const auto from = shared_.manual_wait_began(); from && ctx_.plan.timeout && std::chrono::steady_clock::now() >= *from + *ctx_.plan.timeout)
     {
         manual_timed_out_ = "not at their first step: " + not_ready(controller);
         return "--timeout-ms";
@@ -386,7 +386,7 @@ bool RunStart::wait_for_bridges(SimulationController& controller)
     {
         // The "joined" of a bridge whose state came between the two looks of the last round.
         notes_.note_joined(controller, outcome_);
-        return !ctx_.options.check.strict || !stopped_for_shared_device(bridges);
+        return !ctx_.plan.strict || !stopped_for_shared_device(bridges);
     }
     const ParticipantRun& run = outcome_.participants[failed];
     outcome_.failed_participant = run.name;
@@ -410,7 +410,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
     bool saidWaiting = false;
     // A run that waits for a participant started by hand: --timeout-ms counts from here (an
     // automatic run with manual: true in its file must end too).
-    if (waits_for_manual(ctx_.config) && ctx_.options.timeout)
+    if (waits_for_manual(ctx_.config) && ctx_.plan.timeout)
     {
         shared_.manual_wait_began_ns.store(std::chrono::steady_clock::now().time_since_epoch().count());
         outcome_.timeout_from_wait = true;
@@ -422,7 +422,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
             interrupted_before_start();
             return false;
         }
-        if (const auto from = shared_.manual_wait_began(); from && std::chrono::steady_clock::now() >= *from + *ctx_.options.timeout)
+        if (const auto from = shared_.manual_wait_began(); from && std::chrono::steady_clock::now() >= *from + *ctx_.plan.timeout)
         {
             std::string names;
             const std::vector<std::string> left = controller.missing_participants();
@@ -477,7 +477,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
                 " ms: " + names);
             return false;
         }
-        std::this_thread::sleep_for(ctx_.options.poll);
+        std::this_thread::sleep_for(ctx_.plan.poll);
     }
     try
     {
@@ -496,7 +496,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
         {
             const auto left =
                 std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
-            const auto limit = std::max(left, ctx_.options.control_hello_timeout + std::chrono::milliseconds(1000));
+            const auto limit = std::max(left, ctx_.plan.control_hello_timeout + std::chrono::milliseconds(1000));
             shared_.limit.set(std::chrono::steady_clock::now() + limit, limit);
         }
         controller.start(kNoStartLimit, [this, &controller] { return start_given_up(controller); });
@@ -544,7 +544,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
     out_.say("simulation running");
     // Every participant starts at virtual time 0.
     wait_for_pause_at_start(controller);
-    notes_.note_time(controller, TimeNote::Start, outcome_);
+    notes_.note_time(controller, TimeNote::Start);
     return true;
 }
 
@@ -559,7 +559,7 @@ bool RunStart::start_timed_out(const std::string& waiting_for)
     outcome_.timed_out = true;
     outcome_.timed_out_before_start = true;
     outcome_.timed_out_waiting_for = waiting_for;
-    out_.say("the simulation did not start within --timeout-ms (" + std::to_string(ctx_.options.timeout->count()) +
+    out_.say("the simulation did not start within --timeout-ms (" + std::to_string(ctx_.plan.timeout->count()) +
         " ms): " + waiting_for);
     return false;
 }

@@ -64,9 +64,7 @@ describe('App', () => {
     toggle.focus();
     toggle.click();
     await fixture.whenStable();
-    // jsdom does not end the opening transition: Material has not yet remembered where the focus was
     const link = query(element, 'nav')?.querySelector('a') as HTMLElement;
-    link.focus();
     link.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await fixture.whenStable();
     expect(toggle.getAttribute('aria-expanded')).toBe('false');

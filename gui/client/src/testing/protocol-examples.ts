@@ -1,5 +1,7 @@
 // Loads the examples in gui/protocol/examples/ for unit tests. Do not import it from production code.
-// Unit tests run on Node, so the files are read directly (an example you add is picked up by the tests automatically).
+// On Node the files are read directly (an example you add is picked up by the tests automatically). A test in a real
+// browser (the unit tests of gui/web) cannot read files, so there the files come through the command
+// `readProtocolExamples`, which gui/web/vitest-base.config.mts defines and runs on Node.
 // The tests run in gui/web (the gui/client tests run with gui/web's tools too).
 
 /** An HTTP example ({description, request, status, response}). */
@@ -33,6 +35,18 @@ interface NodeProcess {
  * `../protocol/examples`, which is right when the current directory is gui/web).
  */
 export async function protocolExamples(dir?: string): Promise<Map<string, unknown>> {
+  if (!(globalThis as { process?: { versions?: { node?: string } } }).process?.versions?.node) {
+    // Not on Node, so in a browser: the examples directory is the one of gui/web/vitest-base.config.mts unless dir is given.
+    const { commands } = (await import('vitest/browser')) as unknown as {
+      commands: Record<
+        'readProtocolExamples',
+        (dir?: string) => Promise<{ name: string; text: string }[]>
+      >;
+    };
+    return new Map(
+      (await commands.readProtocolExamples(dir)).map(({ name, text }) => [name, JSON.parse(text)]),
+    );
+  }
   // Load node: built-ins at run time, so the test bundle (esbuild) does not include them
   const fsName = 'node:fs';
   const fs = (await import(/* @vite-ignore */ fsName)) as NodeFs;

@@ -73,9 +73,9 @@ public:
     template <class Emit>
     void event(Emit emit) const
     {
-        if (ctx_.options.events != nullptr)
+        if (ctx_.observers.events != nullptr)
         {
-            emit(*ctx_.options.events);
+            emit(*ctx_.observers.events);
         }
     }
 
