@@ -1,6 +1,6 @@
 // シナリオの実行を、本物のランチャーと例の ECU で通す。ランチャーが Control Server を持てば、
 // 実行中は見るだけ: 変数の値は見え、書く部品は理由を言って押せない。時刻の操作（ランチャーの標準入力の命令）と
-// 停止は、ふつうの実行と同じく効く。持たなければ飛ばす（その場合の画面は、流し直しの e2e が確かめる）。
+// 停止は、ふつうの実行と同じく効く。持たなければ飛ばす。
 import { expect, test } from '@playwright/test';
 import { GUI_PORT, guiToken } from '../support/gui-server';
 import { RUN_TIMEOUT, openRun, press, stopButton } from '../support/run-page';

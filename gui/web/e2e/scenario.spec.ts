@@ -1,5 +1,5 @@
-// シナリオを選んで回す、操作をシナリオとして保存する、を流し直すランチャーで通す。流し直すランチャーに Control Server と
-// scenario-control を持たせる（シナリオの実行中も変数を読める）ので、この試験だけの GUI サーバーを起動する。
+// シナリオを選んで回す、操作をシナリオとして保存する、を流し直すランチャーで通す。流し直すランチャーに Control Server を
+// 持たせる（シナリオの実行中も変数を読める）ので、この試験だけの GUI サーバーを起動する。
 // VEHICLE_SIL_GUI_SHOTS にディレクトリを書くと、シナリオが失敗で終わった実行の画面（幅 1280）も撮る。
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
