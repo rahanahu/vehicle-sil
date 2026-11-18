@@ -836,12 +836,16 @@ The time lock (see "Time of a run that is connected outside (`--time-policy`)" i
 
 ### When it starts and stops
 
-- The launcher makes the Server before the run and gives the run a pointer to it (`RunLent::control_endpoint`, a `launch::ControlEndpoint`).
+- `run_file()` owns the Server of its run (a `launch::ControlEndpoint`): it makes it, starts it, ends it and destroys it. The caller only says in the request that it wants one and where (`RunHost::control`: the address and the names of the TLS, credentials and audit log files).
+- `run_file()` makes the Server before the check, and before the phase `checking` is told. It reads and checks what the request names in this order: the form of the address, TLS with both files, the certificate, the key, the credentials, an address that is not the loopback only with TLS and credentials, the audit log. The first thing that is wrong is a usage error of the run (`CheckReport::usage`, one finding with the code `usage`); nothing is checked, and the run tells no phase and writes no event.
+- The Server's time operations go to the time commands of the caller's controls (`RunLent::controls`, which must be set), and a client's Stop goes to their stop requests as an operator's stop.
 - `run_file()` runs a run in two stages (`Runner::prepare()`, then `Runner::run()`) and starts the Server between them, on the main thread: after the check has passed and the run's files (the logs, the timeline) are open, and before the registry starts. The run itself never calls the Server; `run_file()` tells it where the Server listens, and the run writes the event `control_server` and its line.
 - The run makes the Hub and `run_file()` passes it to `ControlEndpoint::start()` as a `std::shared_ptr`. The Server keeps it, so the Hub lives until both the run and the Server have let go of it.
 - A run that was interrupted before it began, or whose files cannot be opened, does not start the Server.
 - If the Server cannot start, nothing is started (`setup`).
-- The Server is closed after `run_file()` returns and before the result is written (on the main thread; `ControlServer::shutdown()`).
+- `run_file()` ends the Server when it returns or throws: after the phase `ended` has been told and before the caller writes the result (on the main thread; `ControlServer::shutdown()`, which waits for the clients' calls to end, with a limit). It then destroys the Server, so the audit log is closed before the result is written.
+- This also holds for a run whose SIL Kit objects did not close in time (`connection_not_closed_ms`), after which the launcher ends the process without running destructors. Once the Server is ended, destroying it waits for nothing: its second `shutdown()` returns at once, its monitor's thread only reads `TimeCommands` (detached by then, so the read returns at once), and the Hub stays with the thread that is still closing. A change that makes the destruction of the Server wait for something else must move it to after the result.
+- A caller may lend a Server of its own instead (`RunLent::control_endpoint`; the launcher's tests do). `run_file()` starts it at the same point; ending and destroying it is the caller's.
 
 ### Time control path
 

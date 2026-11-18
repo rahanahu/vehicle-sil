@@ -88,9 +88,32 @@
 // - What it borrows: the controls (RunControls, the caller's or run_file()'s own), which outlive
 //   the Runner. The Runner holds a reference and never destroys them.
 //
-// A control server (RunLent::control_endpoint) is not the Runner's: run_file() starts it on the
-// main thread between the Runner's two stages (prepare(), then run()), on the hub that prepare()
-// gives it, and tells run() how that went (ControlServerStart); the Runner never calls the server.
+// A control server (RunHost::control) is run_file()'s, not the Runner's. run_file() makes it
+// before the check, and before the phase "checking" is told, from what the request names
+// (make_control_server_of_run(): the address, the files of TLS, the credentials, the audit log);
+// a request that is wrong there is a usage error of the run, and nothing is checked or started.
+// It starts the server on the main thread between the Runner's two stages (prepare(), then
+// run()), on the hub that prepare() gives it, and tells run() how that went (ControlServerStart);
+// the Runner never calls the server. When run_file() returns or throws, after the phase "ended"
+// has been told and the Runner has gone, it ends the server (every call of a client returns, none
+// comes any more) and destroys it: before the caller writes the result.
+// A server that the caller lends instead (RunLent::control_endpoint; the tests') is started at
+// the same point and stays the caller's, to end and to destroy.
+// Why the server may be destroyed here, before the result, also in a run whose closing thread
+// was left (OutcomeClose::not_closed_ms; the caller then ends the process without destructors):
+// once it is ended, its destruction waits for nothing that could keep the result back.
+// - The end is what waits (control_grpc::ControlServer::shutdown(): gRPC's Shutdown() with a
+//   limit, which cancels the calls that are still open, then Wait()), as it did before the result
+//   when the caller ended the server. After it the destructor's own shutdown() returns at once,
+//   and gRPC's server, shut down, only frees what it has.
+// - The server's monitor joins its thread, which sleeps on a condition variable that the
+//   destructor signals, or is in one look at the time: TimeCommands::inspect() under TimeCommands'
+//   mutex, which returns at once because the run has detached its controller (on the main thread,
+//   before the hand-over to the closing thread). No watch of a client is left to call.
+// - The server's share of the hub goes. In a run whose closing thread was left, that thread has a
+//   share too (the RunConnection), so the hub stays; else the hub, which has no thread, is freed
+//   here on the main thread (the Runner goes first).
+// - The audit log's file is closed; every line was flushed when it was written.
 // The server has threads of its own. Of the run they touch the
 // hub (thread safe; its subscriptions are bounded and never make the simulation wait; the server
 // holds the hub itself, so it may use it after the run) and the TimeCommands. With a scenario the
@@ -128,6 +151,7 @@
 
 #include "run_close.hpp"
 #include "run_connection.hpp"
+#include "run_control_server.hpp"
 #include "run_context.hpp"
 #include "run_control.hpp"
 #include "run_notes.hpp"
@@ -223,7 +247,7 @@ using detail::RunWatch;
 using detail::uri_for_participants;
 
 /// What run_file() did between the two stages of a Runner (prepare(), then run()): whether it
-/// started a control server (RunLent::control_endpoint), and how that went. As made: none.
+/// started a control server (RunHost::control), and how that went. As made: none.
 struct ControlServerStart
 {
     std::optional<ControlServerInfo> listening; ///< the server listens there
@@ -615,6 +639,13 @@ private:
 RunReport run_file(const RunRequest& request, const RunObservers& observers, const RunLent& lent, const RunLimits& limits,
                    const CheckOptions& check_options)
 {
+    if (request.host.control && lent.controls == nullptr && lent.control_endpoint == nullptr)
+    {
+        throw std::invalid_argument(
+          "RunHost::control is set, but RunLent::controls is null: the control server's time operations go to the "
+          "caller's controls, whose rules also say what a client may do during a scenario; make a RunControls for "
+          "this run (with RunControls::set_control_server(true)) and lend it, or leave `control` empty.");
+    }
     if (lent.controls != nullptr)
     {
         if (lent.stops != nullptr && lent.stops != &lent.controls->stops())
@@ -646,6 +677,25 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
     RunControls& controls = own ? own->controls : *lent.controls;
     RunReport report;
     report.strict = request.intent.strict;
+    // The control server of this run: made here from the request, or the caller's. Before the
+    // check and its phase: a request for a server that is wrong is a usage error, and nothing is
+    // checked. Declared after the controls, which it uses, and before the Runner: on every way
+    // out, also with an exception, it goes after the Runner and before the controls, and its
+    // destructor ends it first (every call of a client returns, none comes any more).
+    std::unique_ptr<ControlEndpoint> own_server;
+    if (request.host.control && lent.control_endpoint == nullptr)
+    {
+        detail::ControlServerOfRun made = detail::make_control_server_of_run(*request.host.control, controls);
+        if (!made.findings.empty())
+        {
+            report.check.file = request.host.config;
+            report.check.usage = true;
+            report.check.findings = std::move(made.findings);
+            return report;
+        }
+        own_server = std::move(made.server);
+    }
+    ControlEndpoint* const server_of_run = lent.control_endpoint != nullptr ? lent.control_endpoint : own_server.get();
     controls.set_phase(Phase::Checking);
     // The check judges the time by what this run does (its speed and --start-paused, which it
     // reads in the request). A run reads the whole, whatever the caller's options say.
@@ -683,17 +733,17 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
     // (OutcomeClose::not_closed_ms): that thread uses nothing of the Runner.
     // What the run is given, in three kinds: the plan (a value, settled here), the observers (the
     // caller's functions) and what it borrows (the controls; the control server stays here).
-    Runner runner(plan_run(report.check, base, request, limits, lent.control_endpoint != nullptr), observers, controls);
+    Runner runner(plan_run(report.check, base, request, limits, server_of_run != nullptr), observers, controls);
     // The control server between the Runner's two stages: after the run's files are open, before
     // the registry listens. The Runner does not know the server; it is told what became of it.
     ControlServerStart server;
     try
     {
-        if (const std::shared_ptr<control::Hub> hub = runner.prepare(); hub && lent.control_endpoint != nullptr)
+        if (const std::shared_ptr<control::Hub> hub = runner.prepare(); hub && server_of_run != nullptr)
         {
             try
             {
-                server.listening = lent.control_endpoint->start(hub);
+                server.listening = server_of_run->start(hub);
             }
             catch (const std::exception& e)
             {

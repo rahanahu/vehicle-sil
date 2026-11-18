@@ -245,7 +245,7 @@ flowchart LR
   - `RunControls`: 実行が借りるもの（停止の要求、時刻の命令）と、実行が自分で作るものです。
 - `--connect` が足すブリッジの印は計画にあります（`RunMember::outside`。参加者ごとに `RunMember` が 1 つ）。`ParticipantConfig` はファイルが書いたことだけを持ちます。刻みの計画は、ブリッジを足す前の、ファイルの構成で作ります。
 - 実行が見たものは、部分に分かれた `RunOutcome` です（`setup`、`start`、`end`、`control`、`scenario`、`close`、続いて `timing`、`participants` ほか）。JSON の出力の形とは別です。JSON は `format_run_json()` が書き、結果の判定は `assess_run()` が行います。実行が終わった理由は、結果の `end_reason()` です（`EndReason`。stopped と interrupted のどちらかは、最初に止めるよう頼んだものが決めます）。終了コードと、結果が成功かどうかは、1 つの表（`libs/launch/src/exit_codes.hpp`。`RunReport::exit_code()` と `RunReport::ok()` が使う）から決まります。人に見せる 1 文は `RunReport::message()` で、`libs/launch/src/run_report.cpp` の `RunReport::result()` の隣にあります。
-- Control Server の受け口は `libs/launch`（`launch/control_server.hpp`。`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけビルド）にあります。`--control` の引数の読み取りは `tools/launch`（`control_arguments.cpp`）にあり、ライブラリは結果を `control_grpc::ServerOptions` で受け取ります。
+- Control Server の受け口は `libs/launch`（`launch/control_server.hpp`。`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけビルド）にあります。サーバーは実行が持ちます。`run_file()` が、要求が `--control` のために指すもの（`RunHost::control`）から作り、起動し、終え、破棄します。`tools/launch` は引数を要求に写すだけです。
 
 ## 内部の仕組み
 

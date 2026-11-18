@@ -477,9 +477,9 @@ struct ControlServerInfo
     bool credentials = false;
 };
 
-/// run --control: the control server of one run, as the run sees it (RunLent::control_endpoint).
-/// The caller makes it before the run, with the run's controls (its time operations go to their
-/// time commands); run_file() starts it; the caller ends it after run_file().
+/// run --control: the control server of one run, as the run sees it. run_file() makes the one
+/// that the request asks for (RunHost::control), starts it, ends it and destroys it. A caller may
+/// lend its own instead (RunLent::control_endpoint).
 class ControlEndpoint
 {
 public:
@@ -537,6 +537,19 @@ struct RunObservers
 };
 
 /// What a run borrows of its caller: all of it outlives run_file().
+///
+/// run --control (RunHost::control): run_file() makes the control server of the run before it
+/// checks anything, from what the request names (the address, the files of TLS, the credentials,
+/// the audit log). A request that is wrong there is a usage error: CheckReport::usage with one
+/// finding, and nothing is checked, told or started. The server's time operations go to the time
+/// commands of `controls`, which must be set (std::invalid_argument otherwise), and a client's
+/// Stop to their stop requests. run_file() starts the server on the run's hub
+/// (ControlEndpoint::start()) once, on the main thread, when the check has passed and the run's
+/// files are open, before the registry starts; the run then writes the event "control_server" and
+/// the line "control server at <address>". If the start throws, nothing is started
+/// (OutcomeSetup::error). With RunIntent::start_paused, the run holds before the first step
+/// (TimeCommands::hold_before_start()). When run_file() returns or throws, the server has ended
+/// (every call of a client has returned) and is gone, with its audit log closed.
 struct RunLent
 {
     /// The run's controls (run_controls.hpp), the caller's: the stop requests the run reads (as
@@ -554,15 +567,10 @@ struct RunLent
     /// waits for the participants to end. May be null. Not read with `controls`, which has its own
     /// (RunControls::stops()).
     StopRequests* stops = nullptr;
-    /// run --control: the control server of this run, the caller's; null: none. run_file() starts
-    /// it on the run's hub (ControlEndpoint::start()) once, on the main thread, when the check has
-    /// passed and the run's files are open, before the registry starts; the run then writes the
-    /// event "control_server" and the line "control server at <address>". If the start throws,
-    /// nothing is started (OutcomeSetup::error). The server must stay usable while run_file()
-    /// runs (its time operations go to the time commands of `controls`, which must be set); the
-    /// caller ends it after run_file().
-    /// With RunIntent::start_paused, the run holds before the first step
-    /// (TimeCommands::hold_before_start()).
+    /// A control server of the caller's own, in place of the one that run_file() makes for
+    /// RunHost::control (which is not read then); null: none. The launcher's tests stand in for the
+    /// server with it. run_file() starts it as it starts its own; it must stay usable while
+    /// run_file() runs, and the caller ends it after run_file().
     ControlEndpoint* control_endpoint = nullptr;
 };
 

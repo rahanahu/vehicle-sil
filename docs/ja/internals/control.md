@@ -836,12 +836,16 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 
 ### 起動と終了の時期
 
-- ランチャーは実行の前に Server を作り、そのポインターを実行に渡します（`RunLent::control_endpoint`。型は `launch::ControlEndpoint`）。
+- 実行の Server（`launch::ControlEndpoint`）は `run_file()` が持ちます。作り、起動し、終え、破棄します。呼ぶ側は、Server が要ることと場所を要求に書くだけです（`RunHost::control`: アドレスと、TLS、資格情報、監査ログのファイルの名前）。
+- `run_file()` は、照合の前、段階 `checking` を伝える前に Server を作ります。要求が指すものを、次の順に読んで調べます: アドレスの形、TLS の 2 つのファイルがそろうか、証明書、鍵、資格情報、ループバックでないアドレスには TLS と資格情報、監査ログ。最初に見つかった誤りが、実行の usage の誤りになります（`CheckReport::usage`、code が `usage` の指摘 1 つ）。何も照合せず、実行は段階を伝えず、イベントも書きません。
+- Server の時間の操作は、呼ぶ側の操作盤（`RunLent::controls`。必ず渡します）の時間のコマンドに届き、クライアントの Stop は、その停止の要求に、操作者の停止として届きます。
 - `run_file()` は 1 回の実行を 2 つの段（`Runner::prepare()`、次に `Runner::run()`）で進め、その間に main のスレッドで Server を起動します。照合が通り、実行のファイル（ログ、タイムライン）を開いた後で、registry より前です。実行そのものは Server を呼びません。`run_file()` が Server の待ち受け先を実行に伝え、実行がイベント `control_server` とその行を書きます。
 - Hub は実行が作り、`run_file()` が `std::shared_ptr` で `ControlEndpoint::start()` に渡します。Server がそれを持ち続けるので、Hub は実行と Server の両方が手放すまで生きています。
 - 始まる前に中断された実行と、ファイルを開けなかった実行は、Server を起動しません。
 - Server を起動できなければ、何も起動しません（`setup`）。
-- 閉じるのは、`run_file()` が戻った後、結果を書く前です（main のスレッド。`ControlServer::shutdown()`）。
+- `run_file()` は、戻るときと例外で抜けるときに Server を終えます。段階 `ended` を伝えた後で、呼ぶ側が結果を書く前です（main のスレッド。`ControlServer::shutdown()`。クライアントの呼び出しが終わるのを、期限つきで待ちます）。続けて Server を破棄するので、監査ログは結果を書く前に閉じています。
+- SIL Kit のオブジェクトが期限までに閉じなかった実行（`connection_not_closed_ms`。この後、ランチャーはデストラクターを動かさずにプロセスを終えます）でも同じです。終えた後の Server の破棄は、何も待ちません。2 回目の `shutdown()` はすぐ戻り、監視のスレッドが読むのは `TimeCommands` だけで（この時点では切り離し済みなので、すぐ戻ります）、Hub は閉じている途中のスレッドの側に残ります。Server の破棄がほかの何かを待つようになる変更をするときは、破棄を結果の後へ移してください。
+- 呼ぶ側が自分の Server を貸すこともできます（`RunLent::control_endpoint`。ランチャーの試験が使います）。`run_file()` は同じ時点で起動します。終えるのと破棄するのは、呼ぶ側です。
 
 ### 時間の操作の経路
 

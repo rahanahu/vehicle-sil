@@ -28,9 +28,10 @@ struct ControlHooks
     std::function<void()> stop{};
 };
 
-/// The server while the run lasts (ControlEndpoint, for RunLent::control_endpoint):
-/// made here before the run from the checked options (read_control_options()), started by
-/// run_file(), ended after it.
+/// The server while the run lasts (ControlEndpoint). run_file() makes it for a request that asks
+/// for one (RunHost::control), after it has read and checked what the request names, starts it
+/// and ends it; a caller that has the checked options itself makes it here and lends it
+/// (RunLent::control_endpoint).
 /// It keeps the run's hub from its start until it is destroyed (std::runtime_error from start() if
 /// it cannot listen); its destructor ends it too.
 /// The options must be checked already (listen address, TLS, credentials, audit); this reads no

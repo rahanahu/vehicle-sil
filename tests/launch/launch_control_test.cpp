@@ -860,6 +860,57 @@ void what_leaves_run_file_between_the_stages_ends_the_time_commands(const fs::pa
             "the time commands ended with the run: a command after it is refused");
 }
 
+/// A request for a control server (RunHost::control) is the run's to read: without the caller's
+/// controls it is refused as a mistake of the caller, and one that is wrong is a usage error
+/// before anything is checked or told (in a build without the control server: refused, as there
+/// is none to make). The file is not read: it does not exist.
+void a_request_for_a_control_server_is_read_before_any_check(const fs::path& dir)
+{
+    launch::RunObservers watching;
+    watching.write_line = [](std::string_view) {};
+    launch::RunRequest asked = sim_of(dir);
+    asked.host.control.emplace().listen = "not an address";
+    {
+        bool refused = false;
+        try
+        {
+            static_cast<void>(launch::run_file(asked, watching));
+        }
+        catch (const std::invalid_argument& e)
+        {
+            refused = std::string(e.what()).find("RunLent::controls is null") != std::string::npos;
+        }
+        require(refused, "a control server without the caller's controls is refused, and the message says what to set");
+    }
+    launch::StopRequests stops;
+    int told = 0;
+    launch::RunControls::Observers observers;
+    observers.on_phase = [&told](launch::Phase) { ++told; };
+    observers.on_state = [&told](const launch::RunState&) { ++told; };
+    observers.on_command = [&told](const launch::Command&, std::string_view) { ++told; };
+    launch::RunControls controls(stops, false, std::move(observers));
+    launch::RunLent lent;
+    lent.controls = &controls;
+    try
+    {
+        const launch::RunReport report = launch::run_file(asked, watching, lent);
+        require(report.check.usage && !report.check.config && !report.run && report.check.findings.size() == 1,
+                "a wrong address is a usage error of the run, and nothing ran");
+        const launch::Finding& finding = report.check.findings[0];
+        require(finding.code == "usage" && finding.severity == launch::Severity::Error &&
+                    finding.message == "--control must be <port> (on 127.0.0.1; 0: any free port), <host>:<port> (a port from "
+                                       "0 to 65535) or unix:<path>, not 'not an address'",
+                "the finding says what an address is: " + finding.message);
+        require(report.check.file == asked.host.config, "the report names the file");
+    }
+    catch (const std::invalid_argument& e)
+    {
+        require(std::string(e.what()).find("this build has no control server") != std::string::npos,
+                std::string("a build without the control server says so: ") + e.what());
+    }
+    require(told == 0, "no phase, state or command was told: the check had not begun");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -898,6 +949,8 @@ int main(int argc, char** argv)
          [](const fs::path& ecu, const fs::path&, const fs::path& dir) {
              what_leaves_run_file_between_the_stages_ends_the_time_commands(ecu, dir);
          }},
+        {"a_request_for_a_control_server_is_read_before_any_check",
+         [](const fs::path&, const fs::path&, const fs::path& dir) { a_request_for_a_control_server_is_read_before_any_check(dir); }},
     };
     std::string names;
     for (const auto& [name, part] : parts)

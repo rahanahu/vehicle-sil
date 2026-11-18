@@ -378,7 +378,7 @@ if(TARGET vehicle_sil_launch_test_ecu)
   # control server (a participant of the test that never gets ready), a hold longer than the
   # ECUs' own limit for the start, --timeout-ms and Ctrl+C in
   # the hold, a resume before the window, when the control server is started and when it is not,
-  # what its start throws out of run_file().
+  # what its start throws out of run_file(), a request for a control server that is wrong.
   foreach(part IN ITEMS a_write_in_the_start_window_reaches_each_process_before_its_first_step
                         what_fails_before_the_start_aborts_the_simulation
                         a_stop_while_what_is_done_before_the_start_fails_does_not_cut_the_end_short
@@ -390,7 +390,8 @@ if(TARGET vehicle_sil_launch_test_ecu)
                         the_ecus_wait_as_long_as_the_run_stands_still
                         timeout_counts_the_hold an_interrupt_ends_the_hold a_resume_before_the_window_means_no_hold
                         the_control_server_is_started_after_the_runs_files_and_before_the_registry
-                        what_leaves_run_file_between_the_stages_ends_the_time_commands)
+                        what_leaves_run_file_between_the_stages_ends_the_time_commands
+                        a_request_for_a_control_server_is_read_before_any_check)
     add_test(NAME launch_control.${part}
              COMMAND vehicle_sil_launch_control_test $<TARGET_FILE:vehicle_sil_launch_test_ecu>
                      ${CMAKE_CURRENT_BINARY_DIR}/control $<TARGET_FILE:vehicle_sil_process_helper> ${part})
