@@ -160,7 +160,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 
 サーバーは、動いている実行のランチャーの標準入力に 1 行で書き、レスポンスを待たずに返します。止まっているランチャーでリクエストが固まらないようにするためです。
 
-- 受け付けたかどうかと理由は、ランチャーの `command` のイベント（`accepted`、`message`、断った理由のコード `reason`、`id`、`step` の実際に進む `ms`、`run_until` の頼んだ時刻をタイムステップに切り上げた `at_ms`）で届きます。コマンドが反映されたことは `time` のイベントで届きます。どちらも、要約の `last_command` と `time` に残ります。
+- 受け付けたかどうかと理由は、ランチャーの `command` のイベント（`accepted`、`message`、断った理由のコード `reason`、`id`、`step` の実際に進む `ms` とその後に止まる時刻 `at_ms`、`run_until` の頼んだ時刻をタイムステップに切り上げた `at_ms`）で届きます。コマンドが反映されたことは `time` のイベントで届きます。どちらも、要約の `last_command` と `time` に残ります。
 - 動いている実行がなければ（終わった、始まりかけ、ランチャーの入力が閉じた、ランチャーの最後の `state` が `not-running` と言っている）409 `not-running` です。ランチャーの `allowed` にある、ほかの理由では断りません。その `allowed` は少し古いことがあるので、コマンドの答えはランチャー自身が返します。
 - その実行のランチャー（始めたときの `version --json`）の `features` に `time-commands` がなければ 400 `unsupported` です。 `run_until` は、`features` に `stdin-run-until` もなければ 400 `unsupported` です。
 - ランチャーが入力を読まないままのときも、リクエストは長くて約 2 秒で返ります（コマンドはランチャーの入力に残ります）。
@@ -380,7 +380,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 - **`launcher`**: `running` はランチャーのプロセスが動いているかで、止められるかどうかはこれで決めます。終わったら `exit_code` が入ります（シグナルで終わったら `null` で、`signal` にその番号。POSIX だけ）。`silent_s` は、動いているランチャーが何も書かない秒数です（`--silent-after` を超えたときだけ、その倍数ごとに更新。書けば `null`）。
 - **`time`**: 仮想時間 `sim_ms`、いまの速度 `speed`、一時停止 `paused`、実際の速度 `actual_speed`、遅れの数 `late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` です（古いランチャーは `sim_ms` だけ）。途中から開いた画面も、これで今の時間の状態がわかります。
 - **`check`**: participant の `required`、`enabled`、`variables` を含みます。`session_without_check` を頼んだ接続への `session` の通知には、このフィールドがありません（`hello` と HTTP のレスポンスにはあります）。
-- **`last_command`**: `seq`、`command`、`source`、`accepted`、`message`、`reason`、`id`、受け付けた `step` の `ms` です。`seq` で、新しいレスポンスか、前と同じレスポンスかがわかります。`state` より前のランチャーは `reason` と `id` を書きません。
+- **`last_command`**: `seq`、`command`、`source`、`accepted`、`message`、`reason`、`id`、受け付けた `step` の `ms` と `at_ms`、受け付けた `run_until` の `at_ms` です。`seq` で、新しいレスポンスか、前と同じレスポンスかがわかります。`state` より前のランチャーは `reason` と `id` を書きません。
 - **`launcher_state`**: ランチャーが書いた `state` イベントそのまま（[docs/ja/simulation-events.md](../../docs/ja/simulation-events.md) の `state`）に、その `seq` を付けたものです: `rev`、`phase`、`paused`、`speed`、`stop`、`allowed`（ランチャーが受け付けること: `pause`、`resume`、`step`、`speed`、`run_until`、`stop`、`write`。それぞれ `{ok, reason, message, caution}`）など。サーバーは変えません。`rev` は変わるたびに上がるので、画面は新しいものと、同じものがもう一度届いたのとを見分けられます。これは、ランチャーが書いた時点の答えです。`ok` は、ランチャーがそのコマンドを受け付けることを言い、何かが変わることは言いません。`state` の後のイベント（`command`、`time`）のほうが新しいことがあります。`state` のイベントは `event` の通知としても届きますが、要約が覚えるのは最後の 1 つだけなので、後から開いた画面は要約から読み、前のものは再送されません。機能 `state` のないランチャーは何も書かず、このフィールドは `null` です。
 - **`omitted_fields`**: `time`、`registry`、`last_command`、`participants` の各要素は、大きすぎて入れなかったフィールドがあれば、その名前の配列 `omitted_fields` を持ちます。participant では、後のイベントでそのフィールドが届けば消えます（例は `ws-large-fields.json`）。
 - **`variables`**: `hello` の要約と HTTP のレスポンスにあります。**`session` の通知の要約には、このフィールドがありません**。大きく、めったに変わらないので、変わったときに `variables` の通知で送ります。同じ実行の `session` の通知では、手元の値を使い続けます。別の実行の `session` の通知の直後には、その実行の `variables` の通知が届きます。

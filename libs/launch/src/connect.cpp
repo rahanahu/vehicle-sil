@@ -223,6 +223,71 @@ std::vector<std::string> bridge_run_arguments(const NetworkOutside& outside, std
     return out;
 }
 
+std::string connect_device_key(NetworkKind kind, std::string_view target, bool ignore_case)
+{
+    if (kind == NetworkKind::Lin || target_problem(kind, target))
+    {
+        return {};
+    }
+    if (target == kNoTarget)
+    {
+        return {};
+    }
+    if (kind == NetworkKind::Can)
+    {
+        const std::optional<CanTarget> can = can_target(target);
+        if (!can)
+        {
+            return {};
+        }
+        if (can->xl_target == "virtual")
+        {
+            return "virtual";
+        }
+        std::uint32_t value = 0;
+        std::from_chars(can->channel.data(), can->channel.data() + can->channel.size(), value);
+        return "physical:" + std::to_string(value);
+    }
+    std::string key(target);
+    if (ignore_case)
+    {
+        for (char& c : key)
+        {
+            c = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+        }
+    }
+    return key;
+}
+
+bool networks_are_joined(const std::vector<std::vector<std::string>>& participant_networks, const std::string& a,
+                         const std::string& b)
+{
+    std::vector<std::string> reached{a};
+    for (bool grown = true; grown;)
+    {
+        grown = false;
+        for (const std::vector<std::string>& networks : participant_networks)
+        {
+            const bool touches = std::any_of(networks.begin(), networks.end(), [&](const std::string& n) {
+                return std::find(reached.begin(), reached.end(), n) != reached.end();
+            });
+            if (!touches)
+            {
+                continue;
+            }
+            for (const std::string& n : networks)
+            {
+                if (std::find(reached.begin(), reached.end(), n) == reached.end())
+                {
+                    reached.push_back(n);
+                    grown = true;
+                }
+            }
+        }
+    }
+    return std::find(reached.begin(), reached.end(), b) != reached.end();
+}
+
 std::string tool_not_found(const std::filesystem::path& launcher_dir)
 {
     return launcher_dir.empty() ? std::string("not on PATH")

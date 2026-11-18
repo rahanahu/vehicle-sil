@@ -188,7 +188,7 @@ with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launc
 |---|---|---|
 | `Pause` | `pause` | 時刻つきなら `at_ms` |
 | `Resume` | `resume` | なし |
-| `Step` | `step` | `ms` |
+| `Step` | `step` | `ms` と `at_ms`（その step の後に止まる時刻） |
 | `RunUntil` | `run_until` | `at_ms` |
 | `SetSpeed` | `speed` | 速度 |
 | `Stop` | `stop` | なし |
@@ -480,6 +480,7 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
 - `c.sim.time()` と `c.values()` を別々に呼ぶと、その間にシミュレーションが進むことがあり、2 つの間に保証はありません。
 - `step()`、`run_until()`、時刻つきの `pause()` のレスポンス（`TimeState`）と、その直後の `time()` は、コマンドを受け付けた後のその時点の状態です。
 - 進んでいる途中なら、`paused` は偽で、`now` は進む前か途中の時刻です（速ければ、もう達して止まっていることもあります）。
+- `step()` の止まる時刻は、そのレスポンスにあります: 進んでいる途中なら `pause_target`、そこで止まった後なら `now`（`paused` は真）です。標準入力やほかのクライアントが同時に時間のコマンドを送ると、レスポンスはそのコマンドの後の状態のことがあります。ランチャーの `command` のイベントには、step ごとにその step の時刻（`at_ms`）があります。
 - `TimeState.running` が偽のとき、`ended` が真なら終わっていて、偽ならまだ始まっていません。
 
 ### Peer と変数の情報（`peers()`、`watch()`）

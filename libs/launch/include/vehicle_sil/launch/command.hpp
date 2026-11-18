@@ -42,7 +42,7 @@ struct Command
     /// run_until (from standard input or a control server) and pause at a time (a control server
     /// only): pause at, and run_until, this virtual time; once applied
     /// (TimeCommands), where the simulation will stand (the command event's "at_ms"), a whole
-    /// number of the controller's steps.
+    /// number of the controller's steps. step: not read; once applied, where the step ends.
     std::optional<std::int64_t> at_ms{};
 
     [[nodiscard]] bool is_stop() const { return accepted && name == "stop"; }

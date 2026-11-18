@@ -479,6 +479,7 @@ describe('applyEvents', () => {
           ms: null,
           reason: null,
           id: null,
+          at_ms: null,
         },
       }),
     );

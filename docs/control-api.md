@@ -188,7 +188,7 @@ The launcher accepts time commands from stdin (`--stdin-commands`) and from clie
 |---|---|---|
 | `Pause` | `pause` | `at_ms`, for a pause at a time |
 | `Resume` | `resume` | None |
-| `Step` | `step` | `ms` |
+| `Step` | `step` | `ms`, and `at_ms` (the time at which the simulation stops after the step) |
 | `RunUntil` | `run_until` | `at_ms` |
 | `SetSpeed` | `speed` | The speed |
 | `Stop` | `stop` | None |
@@ -480,6 +480,7 @@ Times are virtual time in nanoseconds. Make them with `ms()` and `s()`.
 - If you call `c.sim.time()` and `c.values()` separately, the simulation may advance between them. Nothing is guaranteed about how the two relate.
 - The response (`TimeState`) of `step()`, `run_until()` and `pause()` with a time, and `time()` right after it, give the state at that moment, after the command was accepted.
 - While the simulation is advancing, `paused` is false and `now` is the time before or during the advance. If the simulation is fast, it may already have reached the time and stopped.
+- Where a `step()` ends is in its response: `pause_target` while the simulation is advancing, and `now` once it has stopped there (`paused` is true). If stdin or another client sends a time command at the same moment, the response may already show that command's effect; the launcher's `command` event of each step has the time of that step (`at_ms`).
 - When `TimeState.running` is false, `ended` is true if the simulation has ended, and false if it has not started yet.
 
 ### Peers and variable information (`peers()`, `watch()`)

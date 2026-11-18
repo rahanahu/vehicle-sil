@@ -144,7 +144,7 @@ An event with `paused: true` is normally written after the simulation has paused
 | `message` | Why the command was not accepted (`null` if it was accepted) |
 | `reason` | The code of why the command was not accepted (see [Reason codes](#reason-codes); `null` if it was accepted) |
 | `ms` | Only for an accepted `step`: the virtual time the simulation actually advances (rounded up to a multiple of the time step) |
-| `at_ms` | Only for an accepted `run_until` and an accepted `pause` with a time: the virtual time asked for, rounded up to a multiple of the time step. It is the time at which the simulation pauses, except when that time has already passed (see "Stdin commands") |
+| `at_ms` | Only for an accepted `step`, an accepted `run_until` and an accepted `pause` with a time. For `step`: the virtual time at which the simulation pauses after the step, known when the step is accepted (see "Stdin commands" for where a step counts from). For the other two: the virtual time asked for, rounded up to a multiple of the time step. It is the time at which the simulation pauses, except when that time has already passed (see "Stdin commands") |
 | `id` | The `id` of the stdin line, unchanged (`null` if the line had none, and for the other sources) |
 
 `command` is written when a command arrives on stdin (`--stdin-commands`) and when a Control Server client calls a time operation or a stop (`--control`). `pause` with a time comes only from clients.
@@ -540,7 +540,9 @@ The launcher reads stdin only with `--stdin-commands`. Without it, stdin is not 
 | `pause` | The simulation pauses at a boundary of the controller's time steps (at a time step that is waiting to keep the speed, if there is one; otherwise at the next time step). |
 | `resume` | Speed keeping starts over from here. |
 | `step` | Rounded up to a multiple of the time step (the `ms` of the `command` event is the actual amount). |
-| `step` | Sent while a previous `step` is in progress, it counts from the time at which that step pauses. |
+| `step` | The `at_ms` of the `command` event is the virtual time at which the simulation pauses after the step. To know that the step has arrived, wait for a `time` event with `paused: true` and that `sim_ms`, instead of adding `ms` to a time you read earlier. A later `pause`, `resume`, `run_until` or `step`, or the end of the run, changes where the simulation pauses. |
+| `step` | Sent while a previous `step` or a `run_until` is in progress, it counts from the time at which that one pauses. |
+| `step` | Sent after a `pause` was accepted and before the simulation has paused, where it counts from depends on the moment: usually the time step in progress, but while a `run_until` or a `step` is in progress, it may count from where that one would have paused, and the `pause` then has no effect. The `at_ms` of the `command` event says where it ends. |
 | `run_until` | Works while running and while paused. If the simulation is paused at or after the time, it stays paused and nothing happens. If the time has passed while it runs, it pauses at the next time step. The `at_ms` of the `command` event is the time asked for, rounded up to a multiple of the time step; for a time that has passed, it is not the time at which the simulation pauses (read `sim_ms` of the next `time` event with `paused: true`, or the `state` event, instead of waiting for `at_ms`). |
 | `speed` | A pause stays in effect. |
 | EOF | If a stop request (`stop`, a signal, a closed stdout) has already arrived, does nothing (it does not count as a second one and no `command` event is written). |
