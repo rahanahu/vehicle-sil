@@ -4,7 +4,7 @@
 
 This is the map for changes in this area. Start at [code-map.md](code-map.md); common test rules are in [code-map-testing.md](code-map-testing.md).
 
-Related specifications and change areas: [bridges.md](bridges.md) / [socketcan-bridge.md](socketcan-bridge.md) / [ethernet-bridge.md](ethernet-bridge.md) / [CAN, Ethernet and LIN buses](code-map-buses.md) / [Launcher, process, configuration and run](code-map-launcher.md)
+Related specifications and change areas: [bridge-contract.md](bridge-contract.md) / [bridges.md](bridges.md) / [socketcan-bridge.md](socketcan-bridge.md) / [ethernet-bridge.md](ethernet-bridge.md) / [CAN, Ethernet and LIN buses](code-map-buses.md) / [Launcher, process, configuration and run](code-map-launcher.md)
 
 ## Test labels
 
@@ -119,7 +119,7 @@ One test uses a real participant with an in-process registry (on a free port). T
 | `registry_failure_message()` | `bridge_runtime/registry_failure.hpp` |
 | `describe_json()`, `BridgeDescription` (`--describe` of a bridge) | `bridge_runtime/describe.hpp` |
 | `NothingCameHint`, `kNothingCameAfter` (when a bridge says that nothing came from a device) | `bridge_runtime/nothing_came_hint.hpp` |
-| `DeviceMark`, `look_for_marks()`, `DeviceShareWatch` (the mark on a bridge's device and the other bridges it counts; [bridges.md](bridges.md#device-in-use-by-another-bridge)) | `bridge_runtime/device_mark.hpp` (OS parts in `src/device_mark_os.cpp`) |
+| `DeviceMark`, `look_for_marks()`, `DeviceShareWatch` (the mark on a bridge's device and the other bridges it counts; [bridge-contract.md](bridge-contract.md#device-in-use-by-another-bridge)) | `bridge_runtime/device_mark.hpp` (OS parts in `src/device_mark_os.cpp`) |
 
 - Threads: the counts of a bridge are atomics that the receive threads (the external link's, SIL Kit's) add to. Only the thread of `run_bridge()` reads them, for the statistics line (`BridgeHooks::statistics_line()`) and the hint (`take_warnings()`); `NothingCameHint` has no lock for that reason. `DeviceShareWatch` has none either: the executable places the mark and counts once on the main thread, and then `run_bridge()` (on the same thread) counts in `link_line()`.
 - Tests: `tests/bridge_runtime`, the E2E tests of the bridge executable (`integration.*` in `tests/vector_xl`)
@@ -263,7 +263,7 @@ Where to change:
 
 Documentation to update:
 
-- "[Exit codes](bridges.md#exit-codes)" and "[Participant state while running](bridges.md#participant-state-while-running)" in [bridges.md](bridges.md)
+- "[Exit codes](bridge-contract.md#exit-codes)" and "[Participant state while running](bridge-contract.md#participant-state-while-running)" in [bridge-contract.md](bridge-contract.md)
 
 Tests:
 
@@ -279,6 +279,7 @@ Where to change:
 
 Documentation to update:
 
+- [bridge-contract.md](bridge-contract.md): the statistics keys and their order, the link line, the health lines and the registry message (not compared; keep them in sync by hand)
 - [ethernet-bridge.md](ethernet-bridge.md): copies of the messages (not compared; keep them in sync by hand)
 
 Code to update:

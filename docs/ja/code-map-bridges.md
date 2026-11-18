@@ -4,7 +4,7 @@
 
 この分野を変更するときの地図です。全体の入口は [code-map.md](code-map.md)、テストの共通ルールは [code-map-testing.md](code-map-testing.md) にあります。
 
-関連する仕様と変更範囲: [bridges.md](bridges.md) / [socketcan-bridge.md](socketcan-bridge.md) / [ethernet-bridge.md](ethernet-bridge.md) / [CAN・イーサネット・LIN のバス](code-map-buses.md) / [ランチャー・プロセス・設定・実行](code-map-launcher.md)
+関連する仕様と変更範囲: [bridge-contract.md](bridge-contract.md) / [bridges.md](bridges.md) / [socketcan-bridge.md](socketcan-bridge.md) / [ethernet-bridge.md](ethernet-bridge.md) / [CAN・イーサネット・LIN のバス](code-map-buses.md) / [ランチャー・プロセス・設定・実行](code-map-launcher.md)
 
 ## テストのラベル
 
@@ -119,7 +119,7 @@ E2E で確認すること:
 | `registry_failure_message()` | `bridge_runtime/registry_failure.hpp` |
 | `describe_json()`、`BridgeDescription`（ブリッジの `--describe`） | `bridge_runtime/describe.hpp` |
 | `NothingCameHint`、`kNothingCameAfter`（機器から何も来ないとブリッジが言う時点） | `bridge_runtime/nothing_came_hint.hpp` |
-| `DeviceMark`、`look_for_marks()`、`DeviceShareWatch`（ブリッジのデバイスの使用中の印と、ブリッジが数えるほかのブリッジ。[bridges.md](bridges.md#別のブリッジが使っているデバイス)） | `bridge_runtime/device_mark.hpp`（OS ごとの部分は `src/device_mark_os.cpp`） |
+| `DeviceMark`、`look_for_marks()`、`DeviceShareWatch`（ブリッジのデバイスの使用中の印と、ブリッジが数えるほかのブリッジ。[bridge-contract.md](bridge-contract.md#別のブリッジが使っているデバイス)） | `bridge_runtime/device_mark.hpp`（OS ごとの部分は `src/device_mark_os.cpp`） |
 
 - スレッド: ブリッジの数は atomic で、受信のスレッド（外部リンクのもの、SIL Kit のもの）が足します。読むのは `run_bridge()` のスレッドだけで、統計の行（`BridgeHooks::statistics_line()`）とヒント（`take_warnings()`）のためです。そのため `NothingCameHint` は鍵を持ちません。`DeviceShareWatch` も持ちません。実行ファイルがメインのスレッドで印を置いて 1 回数え、その後は `run_bridge()`（同じスレッド）が `link_line()` の中で数えます。
 - テスト: `tests/bridge_runtime`、ブリッジの実行ファイルの E2E（`tests/vector_xl` の `integration.*`）
@@ -263,7 +263,7 @@ flowchart TD
 
 合わせて直すドキュメント:
 
-- [bridges.md](bridges.md) の「終了コード」と「実行中の participant の状態」
+- [bridge-contract.md](bridge-contract.md) の「終了コード」と「実行中の participant の状態」
 
 テスト:
 
@@ -279,6 +279,7 @@ flowchart TD
 
 合わせて直すドキュメント:
 
+- [bridge-contract.md](bridge-contract.md): 統計のキーとその順序、リンクの行、監視の行、registry のメッセージ（照合しないので、手で合わせる）
 - [ethernet-bridge.md](ethernet-bridge.md): 文言のコピー（照合しないので、手で合わせる）
 
 合わせて直すコード:

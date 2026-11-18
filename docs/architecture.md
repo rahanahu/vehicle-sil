@@ -261,6 +261,7 @@ When you change vehicle-sil, or look up behavior and limitations, read only the 
 | [internals/execution.md](internals/execution.md) | `Ecu`, `Simulation`, `Peer`, `LocalBench` and the test kit (order within one step, ownership and destruction, disconnection from the bus) |
 | [internals/virtual-time.md](internals/virtual-time.md) | Shared virtual time: how it advances, coupling to real time, time gate (pause, single-step, speed, lateness), receive order, integration of fixed-period `tick()` |
 | [internals/control.md](internals/control.md) | Internals of the Control API: Control Agent, Hub, the SIL Kit transport, Control Server, the launcher's Control Server, scenarios |
+| [bridge-contract.md](bridge-contract.md) | What the launcher and every bridge agree on: arguments, `--describe`, lists of devices, exit codes, the lines a bridge prints, the mark on a device, a bridge of your own |
 | [bridges.md](bridges.md) | Vector XL CAN Bridge: first connection, forwarding behavior, bus monitoring, threads, test coverage |
 | [ethernet-bridge.md](ethernet-bridge.md) | Ethernet Bridge: first connection, backends (`tap`, `packet`, `pcap`, `npcap`) and permissions, external interfaces, forwarding, filter, loop prevention, statistics and health lines, arguments, what was verified |
 

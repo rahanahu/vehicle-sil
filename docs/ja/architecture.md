@@ -261,6 +261,7 @@ vehicle-sil を変更するときや、仕様と制限を確認するときに�
 | [internals/execution.md](internals/execution.md) | `Ecu`、`Simulation`、`Peer`、`LocalBench` とテストキット（1 ステップの順序、所有と破棄、バスからの切断） |
 | [internals/virtual-time.md](internals/virtual-time.md) | 共通仮想時間: 進み方、実時間との結合、時間ゲート（一時停止、ステップ実行、速度、遅れ）、受信の順序、固定周期 `tick()` の統合 |
 | [internals/control.md](internals/control.md) | Control API の内部: Control Agent、Hub、SIL Kit の上のトランスポート、Control Server、ランチャーの Control Server、シナリオ |
+| [bridge-contract.md](bridge-contract.md) | ランチャーとすべてのブリッジの取り決め: 引数、`--describe`、デバイスの一覧、終了コード、ブリッジが出す行、デバイスの印、自作のブリッジ |
 | [bridges.md](bridges.md) | Vector XL CAN Bridge: 最初の接続、転送の仕様、バスの監視、スレッド、検証の範囲 |
 | [ethernet-bridge.md](ethernet-bridge.md) | イーサネットのブリッジ: 最初の接続、バックエンド（`tap`、`packet`、`pcap`、`npcap`）と権限、外部のインターフェース、転送、フィルター、ループの防止、統計と監視の行、引数、確認した範囲 |
 

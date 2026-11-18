@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// The statistics line and the monitor line: their wording is documented (docs/ethernet-bridge.md).
+// The statistics line and the monitor line: their wording is documented (docs/bridge-contract.md, docs/ethernet-bridge.md).
 #include "check_text.hpp"
 #include "test_harness.hpp"
 
@@ -39,8 +39,8 @@ TEST_CASE(format_statistics_names_every_counter)
     s.silkit_tx_failures = 12;
     s.ext_checksum_incomplete = 14;
     s.ext_from_devices = 15;
-    // The keys and their order are what programs that read the line rely on (docs/ethernet-bridge.md,
-    // "Statistics"): a change here is a change of that agreement.
+    // The keys and their order are what programs that read the line rely on (docs/bridge-contract.md,
+    // "Statistics line"): a change here is a change of that agreement.
     CHECK_TEXT(format_statistics(s),
                "stats silkit_to_ext=1 ext_to_silkit=2 ext_from_devices=15 own_tx_dropped=3 loop_suspected=4 mac_unguarded=13 "
                "filtered_to_ext=5 filtered_from_ext=6 oversize=7 malformed=8 ext_overruns=9 ext_queue_full=10 "

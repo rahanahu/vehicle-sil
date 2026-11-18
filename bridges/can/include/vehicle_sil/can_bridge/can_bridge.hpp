@@ -121,7 +121,7 @@ struct CanBridgeStatistics
 
 /// One line "stats silkit_to_ext=N ext_to_silkit=N ext_from_devices=N ..." with every counter, in the order of
 /// CanBridgeStatistics. The keys and their order are part of the bridge's documented output
-/// (docs/bridges.md), for programs that read the line; tests hold them.
+/// (docs/bridge-contract.md, "Statistics line"), for programs that read the line; tests hold them.
 [[nodiscard]] std::string format_statistics(const CanBridgeStatistics& statistics);
 
 /// The warning of a bridge that has sent frames to the XL channel for `after` and got none from a
