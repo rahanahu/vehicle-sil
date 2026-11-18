@@ -8,7 +8,7 @@
 
 **このページ:** [テストのラベル](#テストのラベル) / [ディレクトリごとのコードとテスト](#ディレクトリごとのコードとテスト) / [変更するときに一緒に直すもの](#変更するときに一緒に直すもの)
 
-**変更の種類:** [`check` と `run` の出力](#check-と-run-の出力) / [ガイドにある出力とコードのコピー](#ガイドにある出力とコードのコピー) / [照合のルールと `code`](#照合のルールと-code) / [設定ファイルかシナリオのキー](#設定ファイルかシナリオのキー) / [設定ファイルの `network_names`](#設定ファイルの-network_names) / [設定ファイルの `j1939_nodes`](#設定ファイルの-j1939_nodes) / [イベント、標準入力のコマンド、`version --json`](#イベント標準入力のコマンドversion---json) / [`run` の時間](#run-の時間) / [自分で起動する participant](#自分で起動する-participant) / [実行の送受信（`traffic`）](#実行の送受信traffic) / [ランチャーの上限](#ランチャーの上限)
+**変更の種類:** [`check` と `run` の出力](#check-と-run-の出力) / [ガイドにある出力とコードのコピー](#ガイドにある出力とコードのコピー) / [照合のルールと `code`](#照合のルールと-code) / [要求の欄と要求ファイル](#要求の欄と要求ファイル) / [設定ファイルかシナリオのキー](#設定ファイルかシナリオのキー) / [設定ファイルの `network_names`](#設定ファイルの-network_names) / [設定ファイルの `j1939_nodes`](#設定ファイルの-j1939_nodes) / [イベント、標準入力のコマンド、`version --json`](#イベント標準入力のコマンドversion---json) / [`run` の時間](#run-の時間) / [自分で起動する participant](#自分で起動する-participant) / [実行の送受信（`traffic`）](#実行の送受信traffic) / [ランチャーの上限](#ランチャーの上限)
 
 ## テストのラベル
 
@@ -249,6 +249,30 @@
 合わせて直すドキュメント:
 
 - [simulation-check.md](simulation-check.md) の「照合」の `code` の表（テストはこの表を照合しないので、手で合わせる）
+
+### 要求の欄と要求ファイル
+
+照合・実行・テストが何を頼まれるかは、`RunRequest` という 1 つの値です。コマンドラインと要求ファイルのどちらもこの値を埋め、ライブラリが検証します。
+
+変更する場所:
+
+- 欄: `libs/launch/include/vehicle_sil/launch/request.hpp` の `RunIntent`（利用者の選択）か `RunHost`（呼び出し側の指定）。照合・実行・テストが読む欄は、別のオプションにせず、要求を通して `check_file()`、`run_file()`、`test_file()` に渡します。
+- 一緒には成り立たない欄のルール: `libs/launch/src/request.cpp` の `validate_request()`。この種のルールを置く場所はここだけです（`code` が `usage` の指摘）。値が設定ファイルにとって何を意味するかのルールは、照合のルールです（「照合のルールと `code`」）。
+- コマンドライン: `tools/launch/main.cpp` が引数を欄に写し、`validate_request()` を呼びます。ここの `cli::UsageError` は引数の形（値がない、形が違う、別のコマンドのオプション）のためで、意味のルールには使いません。
+- 要求ファイル: 読み手は `libs/launch/src/request_read.cpp` の `read_request_file()` だけです。引数は欄ごとにファイルに勝ちます（`with_request_file()`）。GUI サーバーはファイルを書くだけです。
+- 終了コード: `libs/launch/src/exit_codes.hpp` の 1 つの表（0 は合格かオペレーターの停止、1 は失敗、3 はファイルを読めないか準備の失敗、4 は使い方の誤り、`kExitIncomplete` はシナリオが途中で切れたとき、`kExitInterrupted` は中断）。`check`、`connections`、`test` も同じファイルです。
+
+更新するコードとファイル:
+
+- `schema/run-request.schema.json` と、そのコピー `template/schema/run-request.schema.json`（`schema.files_and_launcher` がキーをランチャーと突き合わせます）
+- GUI サーバーが受けて書く欄（`gui/server/src/vehicle_sil_gui/launcher.py` の `INTENT_FIELDS` と `request_text()`。[GUI の地図](code-map-gui.md#ランチャーへの要求と接続先)）
+
+更新するドキュメント:
+
+- [simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」と、[simulation-run.md](simulation-run.md) と [simulation-config.md](simulation-config.md) のオプションの表
+- [simulation-run.md](simulation-run.md#終了コード) の「終了コード」と、[simulation-check.md](simulation-check.md) の終了コードの表
+
+テスト: `tests/launch/test_request.cpp`（ルール）、`tests/launch/test_request_file.cpp`（ファイル）、`launch_cli.request`、`launch_run.connect_request`（プロセスとしてのランチャー）。
 
 ### 設定ファイルかシナリオのキー
 

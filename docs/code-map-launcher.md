@@ -8,7 +8,7 @@ Related specifications and change areas: [simulation-config.md](simulation-confi
 
 **On this page:** [Test labels](#test-labels) / [Code and tests by directory](#code-and-tests-by-directory) / [What to update together](#what-to-update-together)
 
-**Change topics:** [`check` and `run` output](#check-and-run-output) / [Output and code copied into the guides](#output-and-code-copied-into-the-guides) / [Check rules and `code`](#check-rules-and-code) / [Configuration file or scenario keys](#configuration-file-or-scenario-keys) / [`network_names` in the configuration file](#network_names-in-the-configuration-file) / [`j1939_nodes` in the configuration file](#j1939_nodes-in-the-configuration-file) / [Events, stdin commands, `version --json`](#events-stdin-commands-version---json) / [Timing of `run`](#timing-of-run) / [Participants you start yourself](#participants-you-start-yourself) / [Run traffic (`traffic`)](#run-traffic-traffic) / [Launcher limits](#launcher-limits)
+**Change topics:** [`check` and `run` output](#check-and-run-output) / [Output and code copied into the guides](#output-and-code-copied-into-the-guides) / [Check rules and `code`](#check-rules-and-code) / [Request fields and the request file](#request-fields-and-the-request-file) / [Configuration file or scenario keys](#configuration-file-or-scenario-keys) / [`network_names` in the configuration file](#network_names-in-the-configuration-file) / [`j1939_nodes` in the configuration file](#j1939_nodes-in-the-configuration-file) / [Events, stdin commands, `version --json`](#events-stdin-commands-version---json) / [Timing of `run`](#timing-of-run) / [Participants you start yourself](#participants-you-start-yourself) / [Run traffic (`traffic`)](#run-traffic-traffic) / [Launcher limits](#launcher-limits)
 
 ## Test labels
 
@@ -249,6 +249,30 @@ Where to change:
 Documentation to update:
 
 - The table of `code` values in "[Checks](simulation-check.md#checks)" in [simulation-check.md](simulation-check.md) (no test compares this table; keep it in sync by hand)
+
+### Request fields and the request file
+
+What a check, a run or a test is asked to do is one value, `RunRequest`. The command line and the request file both fill it; the library checks it.
+
+Where to change:
+
+- A field: `RunIntent` (the user's choices) or `RunHost` (the caller's) in `libs/launch/include/vehicle_sil/launch/request.hpp`. A field that a check, a run or a test reads is passed to `check_file()`, `run_file()` or `test_file()` through the request, not as another option.
+- A rule about fields that do not go together: `validate_request()` in `libs/launch/src/request.cpp`, the one place for such rules (a finding of code `usage`). A rule about what a value means for the configuration file is a check rule (see "Check rules and `code`").
+- The command line: `tools/launch/main.cpp` turns arguments into fields and calls `validate_request()`. Its `cli::UsageError` is for the form of an argument (a missing or malformed value, an option that another command does not take), not for rules about meaning.
+- The request file: `read_request_file()` in `libs/launch/src/request_read.cpp` is its only reader. An argument wins over the file field by field (`with_request_file()`); the GUI server only writes the file.
+- Exit codes: the one table in `libs/launch/src/exit_codes.hpp` (0 passed or stopped by the operator, 1 failed, 3 file unreadable or setup failed, 4 usage error, `kExitIncomplete` a scenario cut short, `kExitInterrupted` interrupted). `check`, `connections` and `test` use the same file.
+
+Code and files to update:
+
+- `schema/run-request.schema.json` and its copy `template/schema/run-request.schema.json` (`schema.files_and_launcher` compares the keys with the launcher)
+- The fields that the GUI server accepts and writes (`INTENT_FIELDS` and `request_text()` in `gui/server/src/vehicle_sil_gui/launcher.py`; see [the GUI map](code-map-gui.md#launcher-request-and-targets))
+
+Documentation to update:
+
+- [simulation-run.md](simulation-run.md#request-files---request) ("Request files (`--request`)") and the options table of [simulation-config.md](simulation-config.md)
+- [simulation-run.md](simulation-run.md#exit-codes) ("Exit codes") and the exit code table of [simulation-check.md](simulation-check.md)
+
+Tests: `tests/launch/test_request.cpp` (the rules), `tests/launch/test_request_file.cpp` (the file), `launch_cli.request`, `launch_run.connect_request` (the launcher as a process).
 
 ### Configuration file or scenario keys
 
