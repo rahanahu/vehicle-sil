@@ -42,7 +42,7 @@
 #include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/launch/run.hpp"
-#include "vehicle_sil/launch/stop_requests.hpp"
+#include "vehicle_sil/runner/stop_requests.hpp"
 #include "vehicle_sil/launch/test.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 

@@ -86,10 +86,10 @@
 | `ramp` と `wave` の値を計算する関数（`Waveform` の実装） | `libs/scenario/src/scenario_shapes.cpp` |
 | `points` の CSV ファイル | 分けるのは `libs/scenario/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `libs/launch/src/probe.cpp` の `files_beside()`、パスの検査とセルの意味は `scenario_waves.cpp` の `path_problem()`、`file_points()`、`cell_value()` |
 | 波形の計算 | `libs/signal` の `signal/waveform.hpp` |
-| ランチャーへの組み込み | `libs/launch/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`） |
+| ランチャーへの組み込み | `libs/runner/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`） |
 | 時間のゲートのガード | `SimulationController::guard_from()` と `wait_guarded()` |
 | 全サンプルを受け取る tap | `control::Hub::set_values_tap()` |
-| 実行の tap（シナリオは、ここからサンプルを取り出す） | `libs/launch/src/run_samples.cpp` の `RunSamples` |
+| 実行の tap（シナリオは、ここからサンプルを取り出す） | `libs/runner/src/run_samples.cpp` の `RunSamples` |
 | `dither` の読み手（最上位の `inputs`、手順） | `scenario_inputs.cpp` の `read_inputs()`、`read_dither()`、`read_overlay()`。波形の中身は、`wave` と同じ `read_shape()` で読む（`read_wave_of()` と共用） |
 | 指摘 `scenario-dither-*` と、出力の一覧（`Scenario::lines`） | `scenario_inputs.cpp` の `note_lines()` と `check_dithers()` |
 | エンジンの揺れの書き込み | `scenario_run.cpp` の `submit()`（動きのない間の、ECU のステップごとの書き込み。手順のものでない書き込みで、同じ時刻の分を 1 つの要求にまとめる）、`place()`（揺れを線に置く）、`fail_grid()`（その書き込みが断られたとき、まだ決まっていない最初の手順を失敗にする）。約束は `ScenarioEngine` のコメントの「Dithers」 |

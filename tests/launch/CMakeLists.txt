@@ -33,8 +33,10 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
        vehicle_sil::j1939 # the network that applies j1939_nodes too (test_j1939_nodes_match.cpp)
        # the statistics lines as the bridges print them, which run reads (test_run_outside.cpp)
        vehicle_sil::ethernet_bridge_core vehicle_sil::can_bridge_core)
-# libs/launch/src: the run's parts that have no dependencies and are tested as written (run_start_limit.hpp, run_pacing.hpp).
-target_include_directories(vehicle_sil_launch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/libs/launch/src)
+# libs/runner/src: the run's private headers that the tests read (run_pacing.hpp, run_notes.hpp,
+# run_connection.hpp). libs/launch/src: the outputs' private header (check_format.hpp).
+target_include_directories(vehicle_sil_launch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/libs/launch/src
+                           ${PROJECT_SOURCE_DIR}/libs/runner/src)
 target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}/scratch"
                            # test_shared_values.cpp reads the GUI's sources.
                            VEHICLE_SIL_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -70,10 +72,10 @@ set_tests_properties(launch.described_networks_check_rejects_a_direct_read PROPE
 set(_launch_pure_files
     libs/launch/include/vehicle_sil/launch/timeline_format.hpp
     libs/launch/include/vehicle_sil/launch/connections.hpp
-    libs/launch/include/vehicle_sil/launch/traffic.hpp libs/launch/include/vehicle_sil/launch/command.hpp
+    libs/runner/include/vehicle_sil/runner/traffic.hpp libs/runner/include/vehicle_sil/runner/command.hpp
+    libs/runner/src/control_rules.cpp libs/runner/include/vehicle_sil/runner/control_rules.hpp
     libs/launch/src/check_format.hpp libs/launch/src/check_format.cpp
     libs/launch/src/timeline_format.cpp
-    libs/launch/src/control_rules.cpp libs/launch/include/vehicle_sil/launch/control_rules.hpp
     libs/launch/src/request.cpp libs/launch/include/vehicle_sil/launch/request.hpp
     libs/launch/src/request_read.cpp
     libs/launch/include/vehicle_sil/launch/checked.hpp
@@ -420,11 +422,3 @@ if(TARGET vehicle_sil_launch_test_ecu)
     set_tests_properties(launch_control.${part} PROPERTIES LABELS "integration;launch;control" TIMEOUT 300)
   endforeach()
 endif()
-
-# The public face of the Runner (launch/detail/runner.hpp) keeps SIL Kit, the controller and the
-# run's private headers behind a pointer: no header of that directory reaches SIL Kit or core's
-# runtime (the launcher links core, so the link cannot show it).
-add_test(NAME launch.detail_headers_need_no_silkit
-         COMMAND ${CMAKE_COMMAND} -DDIR=${PROJECT_SOURCE_DIR}/libs/launch/include/vehicle_sil/launch/detail
-                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckNoSilKit.cmake)
-set_tests_properties(launch.detail_headers_need_no_silkit PROPERTIES LABELS "unit;launch" TIMEOUT 60)

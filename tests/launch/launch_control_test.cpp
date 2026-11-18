@@ -15,7 +15,7 @@
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/run.hpp"
-#include "vehicle_sil/launch/run_detail.hpp"
+#include "vehicle_sil/runner/detail/run_detail.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 
 #include <silkit/SilKit.hpp>

@@ -7,14 +7,14 @@
 
 #include "vehicle_sil/launch/error_result.hpp"
 #include "vehicle_sil/launch/run.hpp"
-#include "vehicle_sil/launch/run_detail.hpp"
+#include "vehicle_sil/runner/detail/run_detail.hpp"
 
 #include "vehicle_sil/config/detail/check_words.hpp"
-#include "run_close.hpp"
+#include "vehicle_sil/runner/detail/run_close.hpp"
 #include "run_connection.hpp"
 #include "run_notes.hpp"
-#include "run_samples.hpp"
-#include "run_start_limit.hpp"
+#include "vehicle_sil/runner/detail/run_samples.hpp"
+#include "vehicle_sil/runner/detail/run_start_limit.hpp"
 #include "silkit_test_util.hpp"
 
 #include "vehicle_sil/control/hub.hpp"

@@ -112,15 +112,31 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 
 ```mermaid
 flowchart TD
-    launch --> ecu
+    launch --> runner
+    launch --> scenario
+    launch --> config
     launch --> process
-    launch --> sim_base
-    launch --> control
-    launch -.-> core
-    launch -.-> control_silkit
+    launch -.->|"only with the Control Server"| core
     launch -.-> rapidyaml
-    launch -.-> signal
     launch -.-> json
+    runner --> scenario
+    runner --> config
+    runner --> control
+    runner --> process
+    runner --> sim_base
+    runner -.-> core
+    runner -.-> control_silkit
+    scenario --> config
+    scenario --> control
+    scenario --> sim_base
+    scenario -.-> signal
+    scenario -.-> rapidyaml
+    config --> ecu
+    config --> control
+    config --> sim_base
+    config --> process
+    config -.-> json
+    config -.-> rapidyaml
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -146,7 +162,7 @@ flowchart TD
 | 読むコード | `libs/config/src/config.cpp` の `read_variables()` |
 | ルールと変換 | `libs/control/src/variable_map.cpp` の `MappedSchema` |
 | 変換を適用する所 | `control::Hub`（`set_variable_map()`） |
-| Hub に渡す所 | `libs/launch/src/run_control.cpp` の `RunControl::shared_hub()` |
+| Hub に渡す所 | `libs/runner/src/run_control.cpp` の `RunControl::shared_hub()` |
 | 照合 | `seen_ecu.cpp` の `seen_variables()`（`SeenEcu::variables()`）、`check_rules.cpp` の `variable_map_code()` |
 
 合わせて直すドキュメント:
@@ -225,7 +241,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 変える場所:
 
 - `ServerOptions::observe_only` と、その範囲（`ObserveOnly::Refuses`: 変える呼び出しの全部か、書き込みだけか）
-- ランチャーが尋ねる規則: `libs/launch/src/control_rules.cpp` の `scenario-running` の行と `always_refused()`
+- ランチャーが尋ねる規則: `libs/runner/src/control_rules.cpp` の `scenario-running` の行と `always_refused()`
 - `libs/control_grpc/src/auth.hpp` の `Effect` と、`auth.cpp` の `rpc_rules()`
 - 拒否するコード: `control_service.cpp` の `guarded()`
 - 設定するコード: `libs/launch/src/control_server.cpp`
@@ -291,7 +307,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 守ること:
 
-- どちらの側も `kVersion` で書き、`kVersion` だけを読みます。別のバージョンの hello は報告し（participant 名は読みます）、Peer にしません。ほかのメッセージは、別のバージョンなら捨てます。`vehicle_sil_launch` は、`--describe` が出力したバージョンを `kVersion` と比べ（`libs/config/src/check_rules.cpp`、`run_control.cpp`）、どちらをビルドし直すかを `libs/launch/src/check_words.hpp` の `control_version_fix()` で言います。
+- どちらの側も `kVersion` で書き、`kVersion` だけを読みます。別のバージョンの hello は報告し（participant 名は読みます）、Peer にしません。ほかのメッセージは、別のバージョンなら捨てます。`vehicle_sil_launch` は、`--describe` が出力したバージョンを `kVersion` と比べ（`libs/config/src/check_rules.cpp`、`run_control.cpp`）、どちらをビルドし直すかを `libs/config/include/vehicle_sil/config/detail/check_words.hpp` の `control_version_fix()` で言います。
 - コマンドのどの書き込みが反映されたかと、断った理由がどの書き込みについてかは、数で運びます（`CommandResult::applied_writes`、`SubmitResult::failed_write` と、同じ 2 つの名前を持つ Hub の `TargetResult`）。そのために `reason` を読まないでください（[internals/control.md](internals/control.md) の「Control Server の中核」）。
 - 項目を追加するときは、その要素（変数、書き込み、結果、イベント）の末尾に追加します。メッセージ全体の項目なら、メッセージの末尾に追加します。`control/wire.hpp` の `kRevision` を 1 上げ、その項目は、その改訂番号以降の相手からだけ読みます。古いビルドの復号は、その項目を読み飛ばします。
 - 読み飛ばしてはいけない変更（項目の移動や削除、相手が知らない列挙の値を送ること）には、新しいバージョンが必要です。`kVersion` を上げます。バージョンの違う ECU とランチャーは、変数を一緒に読み書きできなくなります（照合が `control-link-version` を出します）。
@@ -323,7 +339,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 - 開始前の窓: `libs/core/src/simulation_controller.cpp` の `run_window()` と `cancel_window()`
 - 開始前の窓: `libs/core/src/participant_runtime.cpp` の `set_communication_ready_handler_async()`
 - `ecu_main()` がトランスポートを付ける所（`libs/simulation/src/ecu_main.cpp`）
-- ランチャーの Hub: `libs/launch/src/run_start.cpp` の `RunStartWindow::run()`、`run_control.cpp` の `RunControl::note_links()`
+- ランチャーの Hub: `libs/runner/src/run_start.cpp` の `RunStartWindow::run()`、`run_control.cpp` の `RunControl::note_links()`
 
 合わせて直すドキュメント:
 

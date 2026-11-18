@@ -133,6 +133,7 @@ flowchart TD
     subgraph with_silkit["With SIL Kit"]
         bindings["core, can_silkit, eth_silkit, lin_silkit, can_netsim, control_silkit"]
         run["peer, simulation"]
+        runner["runner"]
         launch["launch"]
         grpc["control_grpc, control_proto"]
         tools["executables, vector_xl bridge, bridge_runtime"]
@@ -148,6 +149,12 @@ flowchart TD
     run --> bindings
     run --> protocols
     run --> control
+    runner --> app
+    runner --> process
+    runner --> protocols
+    runner --> bindings
+    runner --> control
+    launch --> runner
     launch --> app
     launch --> process
     launch --> protocols
@@ -205,7 +212,7 @@ Where to change:
 
 - `default_participant_configuration()` and related functions in `libs/core/src/participant_configuration.cpp` (the listen address, TCP on Windows, TCP for the registry on every OS)
 - `merged_participant_configuration()`, which overlays a given configuration, and `--silkit-config` of ecu_main
-- Users of the defaults: the controller in `libs/launch/src/run.cpp`, and the lines addressed to other computers
+- Users of the defaults: the controller in `libs/runner/src/run.cpp`, and the lines addressed to other computers
 - Users of the defaults: the environment variables in `run_participants.cpp`, `environment` of the manual command
 - Users of the defaults: the note `registry-on-network` in `config.cpp`, and `inherited_listen_variable()` (the note `listen-variable-ignored`)
 

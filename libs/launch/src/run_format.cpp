@@ -6,7 +6,7 @@
 
 #include "check_format.hpp"
 #include "run_format.hpp"
-#include "run_words.hpp"
+#include "vehicle_sil/runner/detail/run_words.hpp"
 
 #include "vehicle_sil/process/child_process.hpp"
 
@@ -67,24 +67,6 @@ const char* ending_name(Ending ending)
 
 } // namespace
 
-const char* control_link_name(ControlLink link)
-{
-    switch (link)
-    {
-    case ControlLink::None:
-        return "none";
-    case ControlLink::Connected:
-        return "connected";
-    case ControlLink::NoHello:
-        return "no_hello";
-    case ControlLink::VersionMismatch:
-        return "version_mismatch";
-    case ControlLink::NotOffered:
-        return "not_offered";
-    }
-    return "none";
-}
-
 namespace {
 
 const char* simulation_name(SimulationEnd end)
@@ -118,15 +100,6 @@ const char* result_name(RunResult result)
 }
 
 } // namespace
-
-std::string_view stop_request_name()
-{
-#ifdef _WIN32
-    return "Ctrl+Break";
-#else
-    return "SIGTERM";
-#endif
-}
 
 std::string detail::timing_text(const RunTiming& timing)
 {

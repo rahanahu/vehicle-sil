@@ -22,7 +22,7 @@
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/launch/events.hpp"
-#include "vehicle_sil/launch/stop_requests.hpp"
+#include "vehicle_sil/runner/stop_requests.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 
 #include <silkit/services/orchestration/string_utils.hpp>

@@ -4,7 +4,7 @@
 // input, each read into a Command (command.hpp). Internal; the commands: docs/simulation-events.md.
 #pragma once
 
-#include "vehicle_sil/launch/command.hpp"
+#include "vehicle_sil/runner/command.hpp"
 
 #include <cstddef>
 #include <functional>

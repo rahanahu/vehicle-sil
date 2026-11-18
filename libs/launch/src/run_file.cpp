@@ -8,7 +8,7 @@
 
 #include "run_control_server.hpp"
 
-#include "vehicle_sil/launch/detail/runner.hpp"
+#include "vehicle_sil/runner/detail/runner.hpp"
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/timeline_format.hpp"
 

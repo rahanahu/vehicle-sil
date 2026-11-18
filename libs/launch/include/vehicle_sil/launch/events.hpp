@@ -7,9 +7,9 @@
 
 #include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/checked.hpp"
-#include "vehicle_sil/launch/command.hpp"
-#include "vehicle_sil/launch/run_controls.hpp"
-#include "vehicle_sil/launch/run_events.hpp"
+#include "vehicle_sil/runner/command.hpp"
+#include "vehicle_sil/runner/run_controls.hpp"
+#include "vehicle_sil/runner/run_events.hpp"
 #include "vehicle_sil/scenario/scenario_run.hpp"
 #include "vehicle_sil/process/process.hpp"
 

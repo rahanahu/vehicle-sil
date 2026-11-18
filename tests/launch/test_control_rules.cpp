@@ -14,9 +14,9 @@
 
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/config/config.hpp"
-#include "vehicle_sil/launch/control_rules.hpp"
-#include "vehicle_sil/launch/run_controls.hpp"
-#include "vehicle_sil/launch/time_commands.hpp"
+#include "vehicle_sil/runner/control_rules.hpp"
+#include "vehicle_sil/runner/run_controls.hpp"
+#include "vehicle_sil/runner/time_commands.hpp"
 
 #include <atomic>
 #include <chrono>

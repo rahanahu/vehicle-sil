@@ -112,15 +112,31 @@ See the [diagram legend and layers](code-map-core.md#dependency-direction) and [
 
 ```mermaid
 flowchart TD
-    launch --> ecu
+    launch --> runner
+    launch --> scenario
+    launch --> config
     launch --> process
-    launch --> sim_base
-    launch --> control
-    launch -.-> core
-    launch -.-> control_silkit
+    launch -.->|"only with the Control Server"| core
     launch -.-> rapidyaml
-    launch -.-> signal
     launch -.-> json
+    runner --> scenario
+    runner --> config
+    runner --> control
+    runner --> process
+    runner --> sim_base
+    runner -.-> core
+    runner -.-> control_silkit
+    scenario --> config
+    scenario --> control
+    scenario --> sim_base
+    scenario -.-> signal
+    scenario -.-> rapidyaml
+    config --> ecu
+    config --> control
+    config --> sim_base
+    config --> process
+    config -.-> json
+    config -.-> rapidyaml
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -146,7 +162,7 @@ Where to change:
 | The code that reads it | `read_variables()` in `libs/config/src/config.cpp` |
 | Rules and conversion | `MappedSchema` in `libs/control/src/variable_map.cpp` |
 | Where the conversion is applied | `control::Hub` (`set_variable_map()`) |
-| Where it is passed to the Hub | `RunControl::shared_hub()` in `libs/launch/src/run_control.cpp` |
+| Where it is passed to the Hub | `RunControl::shared_hub()` in `libs/runner/src/run_control.cpp` |
 | Check | `seen_variables()` in `seen_ecu.cpp` (`SeenEcu::variables()`), `variable_map_code()` in `check_rules.cpp` |
 
 Documentation to update:
@@ -225,7 +241,7 @@ While a scenario runs, the Control Server refuses writes. Its clients read, move
 Where to change:
 
 - `ServerOptions::observe_only` and its scope (`ObserveOnly::Refuses`: every change, or the writes alone)
-- The rule that the launcher asks: the row `scenario-running` and `always_refused()` in `libs/launch/src/control_rules.cpp`
+- The rule that the launcher asks: the row `scenario-running` and `always_refused()` in `libs/runner/src/control_rules.cpp`
 - `Effect` in `libs/control_grpc/src/auth.hpp`, and `rpc_rules()` in `auth.cpp`
 - The code that rejects calls: `guarded()` in `control_service.cpp`
 - The code that sets it up: `libs/launch/src/control_server.cpp`
@@ -291,7 +307,7 @@ Where to change:
 
 Rules:
 
-- Both sides write `kVersion` and read only `kVersion`. A hello of another version is reported (its participant name is read) and makes no peer; any other message of another version is dropped. `vehicle_sil_launch` compares what `--describe` announces with `kVersion` (`libs/config/src/check_rules.cpp`, `run_control.cpp`), and `control_version_fix()` in `libs/launch/src/check_words.hpp` says which side to build again.
+- Both sides write `kVersion` and read only `kVersion`. A hello of another version is reported (its participant name is read) and makes no peer; any other message of another version is dropped. `vehicle_sil_launch` compares what `--describe` announces with `kVersion` (`libs/config/src/check_rules.cpp`, `run_control.cpp`), and `control_version_fix()` in `libs/config/include/vehicle_sil/config/detail/check_words.hpp` says which side to build again.
 - Which writes of a command took effect, and which write a refusal is about, travel as numbers (`CommandResult::applied_writes`, `SubmitResult::failed_write`, and the Hub's `TargetResult` with the same two names). Do not read a `reason` for them (see "[Control Server core (`vehicle_sil::control::Hub`)](internals/control.md#control-server-core-vehicle_silcontrolhub)" in [internals/control.md](internals/control.md)).
 - To add a field, put it at the end of its element (a variable, write, result or event), or at the end of the message if it belongs to the message. Raise `kRevision` in `control/wire.hpp` by one, and read the field only from a writer of that revision or later. The decoder of an older build skips it.
 - A change that a reader must not skip (a field moved or removed, a new enumerator sent to a reader that does not know it) needs a new version. Raise `kVersion`: ECUs and launchers of different versions then cannot read and write variables together (the check says `control-link-version`).
@@ -323,7 +339,7 @@ Where to change:
 - The start window: `run_window()` and `cancel_window()` in `libs/core/src/simulation_controller.cpp`
 - The start window: `set_communication_ready_handler_async()` in `libs/core/src/participant_runtime.cpp`
 - Where `ecu_main()` attaches the transport (`libs/simulation/src/ecu_main.cpp`)
-- The launcher's Hub: `RunStartWindow::run()` in `libs/launch/src/run_start.cpp`, `RunControl::note_links()` in `run_control.cpp`
+- The launcher's Hub: `RunStartWindow::run()` in `libs/runner/src/run_start.cpp`, `RunControl::note_links()` in `run_control.cpp`
 
 Documentation to update:
 

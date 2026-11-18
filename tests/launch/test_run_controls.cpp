@@ -15,7 +15,7 @@
 
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/run.hpp"
-#include "vehicle_sil/launch/run_controls.hpp"
+#include "vehicle_sil/runner/run_controls.hpp"
 #include "vehicle_sil/launch/test.hpp"
 #include "vehicle_sil/process/paths.hpp"
 

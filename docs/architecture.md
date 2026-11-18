@@ -64,7 +64,8 @@ vehicle-sil/
 ├── libs/process/     vehicle_sil::process  Child processes (output to a log file, capture of stdout and stderr with a timeout, line-by-line delivery, stop requests, ending a whole process tree; POSIX and Win32; internal)
 ├── libs/config/      vehicle_sil::config  Simulation configuration file and its check against the --describe output of the ECU executables (pure: no process, no SIL Kit; internal)
 ├── libs/scenario/    vehicle_sil::scenario  Scenario: its file, the engine that steps through it, the timeline record (pure: no process, no SIL Kit; internal)
-├── libs/launch/      vehicle_sil::launch  Running the whole simulation, the output of check and run (internal)
+├── libs/runner/      vehicle_sil::runner  The run of the whole simulation: registry, controller, child processes, Hub, the scenario's steps, time and stop commands (uses SIL Kit and the processes; internal)
+├── libs/launch/      vehicle_sil::launch  The use cases of check, run and test, the request, the output of check and run (internal)
 ├── libs/control/     vehicle_sil::control  Core of the Control Agent and the Control Server (Hub), byte format of the messages between them; independent of the transport and of SIL Kit
 ├── libs/control_silkit/ vehicle_sil::control_silkit  Layer that carries messages between Agent and Hub over SIL Kit publish/subscribe (AgentTransport, HubTransport)
 ├── libs/control_grpc/ vehicle_sil::control_grpc  gRPC layer of the Control API (ControlServer for clients; only with VEHICLE_SIL_BUILD_CONTROL_SERVER)
@@ -223,18 +224,21 @@ flowchart LR
     pure["Pure side<br>libs/config (config, check rules, connect rules, time plan),<br>libs/scenario (scenario, timeline records),<br>check format"]
     assemble["check_file(), list_connections(), run_tests()"]
     probe["Computer side<br>launch/probe.hpp, src/probe.cpp"]
-    run["Run side<br>run, events, time_commands, run_*"]
+    run["Run side<br>libs/runner (run, time_commands, run_*)"]
+    run_file["run_file(), events<br>(launch)"]
     assemble --> pure
     assemble --> probe
     run --> pure
-    run --> probe
+    run_file --> run
+    run_file --> pure
 ```
 
-- The pure side turns values into findings and does not look at the computer. It includes none of SIL Kit, `process`, `participant_runtime`, `participant_configuration`, `launch/run.hpp`, `launch/probe.hpp`, `events`, `stop_requests`, `time_commands` or `run_*.hpp`, neither directly nor through the headers it includes.
-- What the launcher finds out from the computer (the file system, the environment, the output of the processes it runs) goes into `probe`. `check_file()`, `list_connections()` and `run_tests()` call `probe` and pass what it found to the pure side as values or as functions. The run side (running the simulation) depends on both.
+- The pure side turns values into findings and does not look at the computer. It includes none of SIL Kit, `process`, `participant_runtime`, `participant_configuration`, `launch/run.hpp`, `launch/probe.hpp`, `events`, `stop_requests`, `runner.hpp`, `runner_impl.hpp`, `time_commands` or `run_*.hpp`, neither directly nor through the headers it includes.
+- What the launcher finds out from the computer (the file system, the environment, the output of the processes it runs) goes into `probe`. `check_file()`, `list_connections()` and `run_tests()` call `probe` and pass what it found to the pure side as values or as functions. The run side (`libs/runner`, running the simulation) depends on the pure side and does not use `probe` (it takes the check that passed).
 - The test `launch.pure_files_include_no_runtime` (`cmake/VehicleSilCheckIncludes.cmake`) guards this. Add a new file of the pure side to `_launch_pure_files` in `tests/launch/CMakeLists.txt`.
 - The configuration and its check are the library `vehicle_sil::config` (`libs/config`). It links neither `core` nor `control_silkit`, includes nothing of `vehicle_sil/launch/`, nor `process.hpp` or `child_process.hpp` of `process`. The link does not show all of that (a header of `core` that needs no SIL Kit compiles, and `process` is linked for `paths.hpp`), so two tests read the directory: `config.no_silkit_boundary` (`cmake/VehicleSilCheckNoSilKit.cmake`) and `config.includes_no_runtime` (`cmake/VehicleSilCheckIncludes.cmake` with `DIR` and `FORBIDDEN_PREFIXES`). A new file in `libs/config` needs no entry.
 - The scenario is the library `vehicle_sil::scenario` (`libs/scenario`). It links `config`, `control` and `sim_base`, and neither `core` nor `control_silkit`. It is guarded the same way (`scenario.no_silkit_boundary`, `scenario.includes_no_runtime`: no header under `vehicle_sil/launch/`, no `child_process.hpp` or `process.hpp`), and `config.includes_no_runtime` also keeps `libs/config` from including `vehicle_sil/scenario/`.
+- The run is the library `vehicle_sil::runner` (`libs/runner`). It links `scenario`, `config`, `control`, `process` and `sim_base` publicly, and `core` and `control_silkit` privately: the SIL Kit parts of a run are behind `RunnerImpl`, so no public header of the library (`vehicle_sil/runner/`) reaches SIL Kit, and `launch` links `core` only for the Control Server. It includes nothing of `vehicle_sil/launch/`, which depends on it. Two tests read the directories: `runner.public_headers_need_no_silkit` (`cmake/VehicleSilCheckNoSilKit.cmake` on `libs/runner/include`) and `runner.includes_no_launcher` (`cmake/VehicleSilCheckIncludes.cmake` with `ONLY_PREFIXES`, because the runner itself uses what that check forbids to the pure side). `config.includes_no_runtime` and `scenario.includes_no_runtime` also keep their libraries from including `vehicle_sil/runner/`.
 - The check of the configuration (`config/check.hpp`, `CheckReport`) does not know the scenario: the scenario depends on the configuration, not the other way round. What `check --scenario` read is `ScenarioCheck` (`scenario/scenario_check.hpp`), and `check_file()` returns it with the `CheckReport` as `Checked` (a `CheckReport` plus the scenario; copying it into a `CheckReport` drops the scenario, so take the result as a `Checked`) (`launch/checked.hpp`). The test `launch.config_files_do_not_reach_the_scenario` guards this; add a new file of the configuration side to `_launch_config_files` in `tests/launch/CMakeLists.txt`.
 - One exception is left: `bridge_working_directory()` in `connect.cpp` makes a relative directory absolute.
 - Do not add code that looks at the computer to the pure side. Put it in `probe` and pass the result in. The files of each part are listed in [code-map-launcher.md](code-map-launcher.md).
@@ -245,7 +249,7 @@ The details of each part are in [code-map-launcher.md](code-map-launcher.md); th
 
 - A run has two stages. `Runner::prepare()` checks for an interruption, opens the logs and the timeline, and returns the Hub of the run (or nothing, if the run cannot go on). Between the stages `run_file()` starts the Control Server (`ControlEndpoint::start()`, only when the run has one) on that Hub, so that it listens before the registry does. `Runner::run()` goes from the registry to the end.
 - The run makes the Hub and the SIL Kit parts (registry, controller, transport) and closes them as one connection, in the reverse order of making: the transport, the controller, then the registry. The Control Server only borrows the Hub (it holds a `std::shared_ptr` and does not own the SIL Kit parts). A closing thread that was left at its limit therefore reaches only the connection, and the `Runner` can be destroyed as after any other run.
-- `run_file()` sees the `Runner` through `launch/detail/runner.hpp`, which reaches no SIL Kit header, no header of the controller (`core/simulation_controller.hpp`) and none of the run's private headers: the parts of the run are behind a pointer (`RunnerImpl`, `src/runner.hpp`).
+- `run_file()` sees the `Runner` through `runner/detail/runner.hpp`, which reaches no SIL Kit header, no header of the controller (`core/simulation_controller.hpp`) and none of the run's private headers: the parts of the run are behind a pointer (`RunnerImpl`, `src/runner_impl.hpp`).
 - What `run_file()` gives to a run is of three kinds:
   - `RunPlan`: values, made by the pure `plan_run()` from the check that passed, its scenario, what was chosen for the run (`RunChoices`, which `run_choices()` copies from the request) and `RunLimits`. `plan_run()` does not know the request (`RunRequest`) or `check_file()`'s result type (`Checked`). The run does not write to the plan.
   - `RunObservers`: the caller's functions that the run calls back (lines, the name of an interruption, `before_start`).
