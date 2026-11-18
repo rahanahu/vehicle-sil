@@ -229,6 +229,8 @@ struct OutcomeStart
     std::string error{};
     /// RunOptions::before_start threw: the simulation had started, and the launcher aborted it. Why.
     std::string before_start_error{};
+    /// How long the start waited at most for the required participants (the configuration's
+    /// start_timeout_ms; not the run's --timeout, which is OutcomeEnd::timeout_ms).
     std::int64_t timeout_ms = 0;
     /// How long the start waited at most for the hello of the control agents.
     std::int64_t control_hello_timeout_ms = 0;
