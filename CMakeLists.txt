@@ -98,6 +98,8 @@ add_subdirectory(bridges/can ${_vehicle_sil_exclude})
 add_subdirectory(bridges/ethernet ${_vehicle_sil_exclude})
 # Vector XL CAN bridge: portable core everywhere, XL backend and executable on Windows only.
 add_subdirectory(bridges/vector-xl ${_vehicle_sil_exclude})
+# SocketCAN CAN bridge (physical CAN and vcan): Linux only.
+add_subdirectory(bridges/socketcan ${_vehicle_sil_exclude})
 
 add_subdirectory(tools/can_bus_simulator ${_vehicle_sil_exclude})
 # Command-line helpers shared by the executables.

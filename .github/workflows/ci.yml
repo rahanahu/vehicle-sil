@@ -150,6 +150,15 @@ jobs:
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
           unshare -Urnm true
+      # socketcan_bridge.netns.* makes a virtual CAN interface (vcan0) in a network namespace: the kernel needs the
+      # modules vcan and can_raw. Where the image does not have them, linux-modules-extra of the running kernel does.
+      - name: Virtual CAN for the SocketCAN bridge tests
+        if: matrix.preset == 'linux-gcc-debug'
+        run: |
+          sudo modprobe -a vcan can_raw || {
+            sudo apt-get install -y -q "linux-modules-extra-$(uname -r)"
+            sudo modprobe -a vcan can_raw
+          }
       # The compiler cache: SIL Kit and everything else compiles once per cache, then comes from here.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -163,6 +172,9 @@ jobs:
           # a packet socket cannot be made in the namespace, or setpriv or ethtool is missing, the test fails rather
           # than skips or leaves a part out, and its first line says what could not be made.
           VEHICLE_SIL_REQUIRE_ETHERNET_NETNS: ${{ matrix.preset == 'linux-gcc-debug' && '1' || '' }}
+          # The SocketCAN bridge on vcan0 (socketcan_bridge.netns.*): where vcan0 or a CAN socket cannot be made in the
+          # namespace, the test fails rather than skips.
+          VEHICLE_SIL_REQUIRE_SOCKETCAN: ${{ matrix.preset == 'linux-gcc-debug' && '1' || '' }}
         run: python3 scripts/verify.py ${{ matrix.preset }} --tag ci
       # The GUI's tests play recordings of the launcher (gui/server/tests/recordings): are they still what this
       # launcher and the ecu_main example ECUs write? (Standard library only. Cases that need the control server
