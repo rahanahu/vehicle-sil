@@ -9,10 +9,12 @@
 #pragma once
 
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/request.hpp"
 
 #include <chrono>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -113,6 +115,32 @@ struct NetworkConnections
     std::string backend{};
 };
 
+/// Whether the target that a request file gives for one network can be used on this computer
+/// (--request): the target as written, and for one that cannot, the code and the reason. The
+/// codes: target-not-listed (the bridge's list of the backend does not have it, or no list of the
+/// backend is made here), target-unusable (it is listed with usable: false), list-failed (the
+/// list could not be made), target-bad (it is no target for this kind of network on this OS, or
+/// the network has no bridge).
+struct RequestedTarget
+{
+    std::string network;
+    std::string target;
+    bool usable = false;
+    std::string code{};   ///< "" if usable
+    std::string reason{}; ///< what is wrong and what to do; "" if usable
+
+    friend bool operator==(const RequestedTarget&, const RequestedTarget&) = default;
+};
+
+/// The request file of `connections --request` and what it asks for.
+struct ConnectionsRequest
+{
+    std::string file; ///< as the user named it
+    /// One entry for each network that the file connects (not none) and that is listed, in the
+    /// file's order. Empty with --network for a network the file does not connect.
+    std::vector<RequestedTarget> connect{};
+};
+
 /// What `vehicle_sil_launch connections` found.
 struct ConnectionsReport
 {
@@ -122,6 +150,8 @@ struct ConnectionsReport
     /// The command line was wrong (findings say why; code "usage").
     bool usage = false;
     std::vector<NetworkConnections> per_network{}; ///< in the file's order; with --network, that one
+    /// With --request: the request file's targets and whether each can be used here.
+    std::optional<ConnectionsRequest> request{};
     /// Why the file could not be read, the usage errors, or the errors of a file that was read
     /// (as check reports them; the networks listed are those it could read).
     std::vector<Finding> findings{};
@@ -129,7 +159,9 @@ struct ConnectionsReport
     /// A bridge that is there could not make its list (any error but tool-missing), a network's
     /// kind could not be read, or the file has an error.
     [[nodiscard]] bool incomplete() const;
-    /// 4 usage, 3 the file cannot be read, 1 incomplete(), else 0.
+    /// A target of the request file cannot be used here.
+    [[nodiscard]] bool request_unusable() const;
+    /// 4 usage, 3 the file cannot be read, 1 incomplete() or request_unusable(), else 0.
     [[nodiscard]] int exit_code() const;
 };
 
@@ -138,10 +170,19 @@ struct ConnectionsReport
 /// `tools.os`; an entry without a list for LIN): each bridge is looked for and asked once for a
 /// backend (`tools`: find, describe for the run of the list), also for two networks of its kind;
 /// a bridge that is not found has the failed list tool-missing. Each list goes through
-/// prefix_targets() and refuse_targets().
+/// prefix_targets() and refuse_targets(). With `only`, just the networks named in it (no bridge is
+/// asked for the others).
 [[nodiscard]] std::vector<NetworkConnections> connections_of(const SimulationConfig& config,
                                                              const std::optional<std::string>& network,
-                                                             const ConnectTools& tools);
+                                                             const ConnectTools& tools,
+                                                             const std::vector<std::string>* only = nullptr);
+
+/// Whether each of `requests` (a target that is not none, for a network that `listed` has) can be
+/// used: its backend and name are compared with the listed targets of that backend, each read by
+/// read_connect_target() on `os`, so `packet:enp3s0` and `enp3s0` are one target. A request for a
+/// network that `listed` does not have is left out. Pure.
+[[nodiscard]] std::vector<RequestedTarget> check_requested(const std::vector<NetworkConnections>& listed,
+                                                           std::span<const ConnectRequest> requests, Os os = kThisOs);
 
 /// The usage error of --network `network` if `config` has no such network, or empty.
 [[nodiscard]] std::optional<Finding> unknown_network(const SimulationConfig& config, std::string_view network);
@@ -150,6 +191,9 @@ struct ConnectionsReport
 struct ConnectionsOptions
 {
     std::optional<std::string> network{};      ///< --network
+    /// --request: the file's "connect" says which networks are listed and checked; its other keys
+    /// are read and not used. Empty: no request.
+    std::optional<RequestFile> request{};
     std::filesystem::path tool_directory{};    ///< where vehicle_sil_launch is (find_tool())
     std::chrono::milliseconds list_timeout = kListTimeout;
 };

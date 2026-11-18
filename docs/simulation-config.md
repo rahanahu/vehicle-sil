@@ -917,7 +917,7 @@ vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... 
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
                         [--disable <name>]... [--enable <name>]...
                         <file> --scenarios <directory or files>...
-vehicle_sil_launch connections [--json] [--network <name>] [--] <file>
+vehicle_sil_launch connections [--json] [--network <name>] [--request <file>] [--] <file>
 vehicle_sil_launch version [--json]
 ```
 
@@ -953,7 +953,7 @@ The usage above shows which commands accept each option. The Condition column of
 | `--describe-timeout-ms <ms>` | | How long to wait for the `--describe` of one executable (an integer of 1 or more; default 10000). |
 | `--connect <network>=<target>` | `check` and `run` | Connects the network to a real bus at `<target>` through its bridge; `none`: SIL Kit only (can be repeated, each network once; see [Connecting a network outside](#connecting-a-network-outside-external---connect)). |
 | `--time-policy realtime\|free` | | The time of a run that is connected outside the simulation: `realtime` (the default) keeps it at speed 1, `free` leaves the speed and the time to you (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)). |
-| `--request <file>` | `check` and `run` | Reads what to run from a request file (JSON); an argument wins over the file, field by field (see "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request)). |
+| `--request <file>` | `check`, `run` and `connections` | Reads what to run from a request file (JSON); an argument wins over the file, field by field. `connections` reads only its `connect` and says whether each target can be used on this computer (see "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request)). |
 | `--network <name>` | `connections` only | Lists the network `<name>` only. |
 | `--disable <name>` | | Disables participant `<name>` (same as `enabled: false`; can be repeated). |
 | `--enable <name>` | | Enables participant `<name>` again (same as `enabled: true`; can be repeated). |
@@ -1017,7 +1017,7 @@ When each exit code occurs:
 | 1 | For `run`, an error of the check (nothing is started) or an error of the run (a participant failed, the participants did not all join, a participant did not end when stopped, and so on). |
 | 1 | For `test`: at least one run failed, a run did not take place although `test` was not interrupted, or, with `--strict`, no run took place at all. |
 | 1 | If the scenario file of `--scenario` does not exist, the exit code is 1 for both `check` and `run` (unlike a missing configuration file, which gives 3). |
-| 1 | For `connections`, a bridge that is on this computer could not make its list, or the file has errors (a bridge that is not there is not an error). |
+| 1 | For `connections`, a bridge that is on this computer could not make its list, the file has errors (a bridge that is not there is not an error), or with `--request` a target of the request file cannot be used. |
 | 3 | The configuration file does not exist, a syntax error, an unknown format version and so on. |
 | 3 | Also when `run` cannot set up the registry or the controller. |
 | 3 | Also when the result cannot be written to stdout, and on an unexpected failure of `vehicle_sil_launch` itself. |

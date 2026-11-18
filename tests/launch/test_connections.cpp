@@ -606,3 +606,103 @@ TEST_CASE(connections_json_passes_each_list_on_with_every_key)
     unreadable.file = "missing.yaml";
     CHECK(format_connections_json(unreadable).find("\"result\": \"unreadable\"") != std::string::npos);
 }
+
+namespace {
+
+bool has(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
+
+/// What check_requested() says of `network=target` as "code" or "usable", on Linux with the Ethernet
+/// bridge there and the SocketCAN bridge not.
+std::string requested_as(const std::string& name, const std::string& target)
+{
+    SimulationConfig config;
+    config.networks = {network("ETH", NetworkKind::Ethernet), network("CAN1", NetworkKind::Can),
+                       network("BODY_LIN", NetworkKind::Lin), network("BROKEN", NetworkKind::Can, false)};
+    FakeTools fake;
+    fake.os = Os::Linux;
+    fake.lists = {{"vehicle_sil_ethernet_bridge", kEthernetList}};
+    fake.found = {"vehicle_sil_ethernet_bridge"};
+    const std::vector<NetworkConnections> listed = connections_of(config, std::nullopt, fake.tools());
+    const std::vector<ConnectRequest> requests{{name, target}};
+    const std::vector<RequestedTarget> checked = check_requested(listed, requests, Os::Linux);
+    if (checked.empty())
+    {
+        return "left out";
+    }
+    return checked.front().usable ? "usable" : checked.front().code;
+}
+
+} // namespace
+
+TEST_CASE(connections_request_a_target_is_compared_by_backend_and_name)
+{
+    // The same target with and without the default backend's prefix; each backend has its own list.
+    CHECK(requested_as("ETH", "vEthernet (A)") == "usable");
+    CHECK(requested_as("ETH", "packet:vEthernet (A)") == "usable");
+    CHECK(requested_as("ETH", "tap:vEthernet (A)") == "usable");
+    CHECK(requested_as("ETH", "tap:vEthernet (B)") == "target-not-listed");
+    // Not in the list; listed but not usable (the reason is the list's).
+    CHECK(requested_as("ETH", "eth9") == "target-not-listed");
+    CHECK(requested_as("ETH", "\\Device\\NPF_Loopback") == "target-unusable");
+    // A backend that this OS has no list for, and one it cannot name.
+    CHECK(requested_as("CAN1", "virtual:1") == "target-not-listed");
+    CHECK(requested_as("ETH", "npcap:vEthernet (A)") == "target-bad");
+    CHECK(requested_as("ETH", "packet:") == "target-bad");
+    // The bridge is not there: its list could not be made.
+    CHECK(requested_as("CAN1", "can0") == "list-failed");
+    // LIN has no bridge; a network with an error in its kind has no list.
+    CHECK(requested_as("BODY_LIN", "eth0") == "target-bad");
+    CHECK(requested_as("BROKEN", "can0") == "list-failed");
+    // none asks for nothing; a network that was not listed is not checked.
+    CHECK(requested_as("ETH", "none") == "left out");
+    CHECK(requested_as("OTHER", "eth0") == "left out");
+}
+
+TEST_CASE(connections_request_says_why_a_target_cannot_be_used_and_ends_with_exit_code_1)
+{
+    FakeTools fake;
+    fake.os = Os::Linux;
+    fake.lists = {{"vehicle_sil_ethernet_bridge", kEthernetList}};
+    fake.found = {"vehicle_sil_ethernet_bridge"};
+    SimulationConfig config;
+    config.networks = {network("ETH", NetworkKind::Ethernet)};
+    ConnectionsReport report;
+    report.file = "simulation.yaml";
+    report.readable = true;
+    report.per_network = connections_of(config, std::nullopt, fake.tools());
+    CHECK(report.exit_code() == 0);
+    report.request = ConnectionsRequest{"bench.json", check_requested(report.per_network, std::vector<ConnectRequest>{{"ETH", "vEthernet (A)"}}, Os::Linux)};
+    CHECK(!report.request_unusable() && report.exit_code() == 0);
+    CHECK(has(format_connections_text(report), "ETH (ethernet; vehicle_sil_ethernet_bridge, npcap: Npcap version 1.80):\n"
+                                                    "  requested in bench.json: --connect \"ETH=vEthernet (A)\"  usable\n"));
+    CHECK(has(format_connections_json(report), "  \"request\": {\n    \"file\": \"bench.json\",\n    \"connect\": [\n      {\n"
+                                                    "        \"network\": \"ETH\",\n        \"target\": \"vEthernet (A)\",\n"
+                                                    "        \"usable\": true,\n        \"code\": null,\n        \"reason\": null\n"));
+
+    report.request = ConnectionsRequest{"bench.json", check_requested(report.per_network, std::vector<ConnectRequest>{{"ETH", "eth9"}}, Os::Linux)};
+    CHECK(report.request_unusable() && report.exit_code() == 1);
+    const std::string text = format_connections_text(report);
+    CHECK(has(text, "  requested in bench.json: --connect ETH=eth9  not usable: eth9 is not in the list of "
+                         "vehicle_sil_ethernet_bridge (packet) for ETH: choose a target from the list, or fix the request file "
+                         "[target-not-listed]\n"));
+    const std::string json = format_connections_json(report);
+    CHECK(has(json, "\"result\": \"failed\"") && has(json, "\"code\": \"target-not-listed\""));
+    // Without --request: no key.
+    report.request.reset();
+    CHECK(!has(format_connections_json(report), "\"request\""));
+    CHECK(report.exit_code() == 0);
+}
+
+TEST_CASE(connections_request_a_name_of_another_backend_is_not_the_target)
+{
+    // A list of packet that has a target written for tap (a value as the bridge wrote it, not prefixed): the name alone is not the target.
+    NetworkConnections entry{"ETH", NetworkKind::Ethernet, "vehicle_sil_ethernet_bridge", fs::path("/bin/eth"),
+                             read_target_list(R"({"vehicle_sil_targets": 1, "tool": "vehicle_sil_ethernet_bridge",
+        "backend": "packet", "source": null,
+        "targets": [{"value": "tap:eth0", "label": "eth0", "detail": "", "usable": true}],
+        "notes": [], "error": null})")};
+    entry.backend = "packet";
+    const std::vector<RequestedTarget> checked =
+        check_requested({entry}, std::vector<ConnectRequest>{{"ETH", "eth0"}, {"ETH", "packet:eth0"}}, Os::Linux);
+    CHECK(checked.size() == 2 && !checked[0].usable && checked[0].code == "target-not-listed" && !checked[1].usable);
+}

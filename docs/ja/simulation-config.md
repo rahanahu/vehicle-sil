@@ -915,7 +915,7 @@ vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... 
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
                         [--disable <name>]... [--enable <name>]...
                         <file> --scenarios <directory or files>...
-vehicle_sil_launch connections [--json] [--network <name>] [--] <file>
+vehicle_sil_launch connections [--json] [--network <name>] [--request <file>] [--] <file>
 vehicle_sil_launch version [--json]
 ```
 
@@ -951,7 +951,7 @@ vehicle_sil_launch version [--json]
 | `--describe-timeout-ms <ms>` | | 1 つの実行ファイルの `--describe` を待つ時間です（1 以上の整数。既定は 10000）。 |
 | `--connect <network>=<target>` | `check` と `run` | ネットワークを、ブリッジで `<target>` の実機のバスにつなぎます。`none` は SIL Kit の中だけです（繰り返せます。1 つのネットワークは 1 回。[ネットワークを外につなぐ](#ネットワークを外につなぐexternal--connect)）。 |
 | `--time-policy realtime\|free` | | シミュレーションの外につながる実行の時間です。`realtime`（既定）は速さ 1 に保ち、`free` は速さと時間の操作を利用者に任せます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。 |
-| `--request <file>` | `check` と `run` | 何を走らせるかを要求ファイル（JSON）から読みます。欄ごとに、引数がファイルに勝ちます（[simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）。 |
+| `--request <file>` | `check`、`run`、`connections` | 何を走らせるかを要求ファイル（JSON）から読みます。欄ごとに、引数がファイルに勝ちます。`connections` が読むのは `connect` だけで、その先がこの PC で使えるかを答えます（[simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）。 |
 | `--network <name>` | `connections` だけ | ネットワーク `<name>` だけを出します。 |
 | `--disable <name>` | | participant `<name>` を無効にします（`enabled: false` と同じ。繰り返せます）。 |
 | `--enable <name>` | | participant `<name>` を有効に戻します（`enabled: true` と同じ。繰り返せます）。 |
@@ -1015,7 +1015,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | 1 | `run` では、照合のエラー（何も起動しない）か、実行のエラー（participant が失敗した、そろわなかった、止めても終わらなかったなど）です。 |
 | 1 | `test` では、失敗した組が 1 つ以上ある、中断されていないのに実行しなかった組がある、`--strict` で実行した組が 1 つもない、のどれかです。 |
 | 1 | `--scenario` のシナリオのファイルがないときは、`check` でも `run` でも 1 です（設定ファイルがないときの 3 とは違います）。 |
-| 1 | `connections` では、この PC にあるブリッジが一覧を作れなかったか、ファイルに誤りがあります（ないブリッジは誤りではありません）。 |
+| 1 | `connections` では、この PC にあるブリッジが一覧を作れなかったか、ファイルに誤りがあるか、`--request` で要求ファイルの先が使えません（ないブリッジは誤りではありません）。 |
 | 3 | 設定ファイルがない、文法のエラー、知らない形式のバージョンなどです。 |
 | 3 | `run` で registry や controller を用意できないときも 3 です。 |
 | 3 | 結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です。 |

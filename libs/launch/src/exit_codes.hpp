@@ -66,7 +66,7 @@ struct ResultMeaning
     {
         return 3;
     }
-    return report.incomplete() ? 1 : 0;
+    return report.incomplete() || report.request_unusable() ? 1 : 0;
 }
 
 [[nodiscard]] constexpr int exit_code_of(TestResult result)

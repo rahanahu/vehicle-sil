@@ -441,13 +441,14 @@ If two networks of this run have different `--connect` values (so the check does
 ### Where a network can be connected (`vehicle_sil_launch connections`)
 
 ```text
-vehicle_sil_launch connections [--json] [--network <name>] [--] <file>
+vehicle_sil_launch connections [--json] [--network <name>] [--request <file>] [--] <file>
 ```
 
 `connections` lists, for each `can` and `ethernet` network of the file, where it can be connected on this computer. It asks the network's bridge for its list (`vehicle_sil_ethernet_bridge --list-interfaces --backend <backend> --json`, `vehicle_sil_socketcan_bridge --list-channels --json`, `vehicle_sil_vector_xl_bridge --list-channels --json`) and looks for the bridge as `--connect` does: next to `vehicle_sil_launch`, then in the absolute directories of `PATH`. It connects to nothing: it starts neither SIL Kit nor a participant, and the bridges open no adapter and no channel. It lists each network once for each backend of this OS that it can list (on Linux an Ethernet network twice, `packet` and `tap`; a CAN network `socketcan`; on Windows `npcap` and `xl`), and each bridge is asked once for a backend, also for two networks of its kind. A target of the default backend is written without a prefix, a target of another backend with it, so the `--connect` line can be copied as it is.
 
 - `--network <name>` lists that network only. A name that the file does not have is a usage error.
 - The file is read without a variant, because every variant has the networks of the file. `--variant` is a usage error.
+- `--request <file>` checks a [request file](#request-files---request) of a test bench against this computer, before a run: for each network that its `connect` gives a target (not `none`) it says whether that target is there and can be used. Only those networks are listed, so no other bridge is started (and no Npcap check is made for a network that the request does not use). `--network` lists that network alone; if the request does not connect it, nothing is checked for it. `connections` reads only `connect` of the file; the other keys are read for their form and not used, and `--connect` is not taken (the file is the only request). A network of the file's `connect` that the configuration lacks is left out with the note `connect-network-unused`, as for `check --request`. A request file that cannot be read is a usage error (exit code 4), with the same message as for `check --request`.
 - Errors in the file do not stop the list: the networks that could be read are listed, and the file's errors follow, as `check` reports them (exit code 1).
 - The launcher starts each bridge in the bridge's own directory, as for `--connect` (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md).
 
@@ -473,6 +474,8 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 | `note: ...` | What the bridge adds (Npcap that offers no network adapter), or a target quoted for sh only (below). |
 | `cannot list: <message> [<code>]` | The list could not be made (see the codes below). |
 | `nothing listed: ...` | The bridge lists nothing on this computer. |
+| `requested in <file>: --connect <network>=<target>  usable` | With `--request`: the target of the request file is in the list and can be used. It is compared by backend and name, so `packet:enp3s0` and `enp3s0` are one target. |
+| `requested in <file>: ...  not usable: <reason> [<code>]` | With `--request`: the target cannot be used here. The reason says what to do: choose a target from the list, or fix the request file. The codes are below. |
 | `<network> (<kind>): SIL Kit only (<why>)` | There is no bridge for the network: none for LIN. |
 | `<network>: its kind in the file has an error` | `check` says what is wrong. |
 
@@ -560,7 +563,8 @@ The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell
 | `vehicle_sil_connections` | The version of this form (1). |
 | `vehicle_sil` | The vehicle-sil version. |
 | `file` | The file as given. |
-| `result` | `listed`: every bridge that is on this computer made its list (a bridge that is not, `tool-missing`, is part of the answer). `failed`: a bridge that is there could not make its list, or the file has errors (also a network's kind). `unreadable`: the file cannot be read. `usage`: the command line is wrong. |
+| `result` | `listed`: every bridge that is on this computer made its list (a bridge that is not, `tool-missing`, is part of the answer). `failed`: a bridge that is there could not make its list, the file has errors (also a network's kind), or a target of the request file cannot be used. `unreadable`: the file cannot be read. `usage`: the command line is wrong. |
+| `request` | Only with `--request`. `file`: the request file as given. `connect[]`: one entry for each network that the file connects (not `none`) and that is listed: `network`, `target` as written, `usable` (boolean), and for a target that cannot be used its `code` and `reason` (`null` if usable). |
 | `networks[]` | The networks in the order of the file; with `--network`, that one. A network has one entry for each backend that is listed on this computer, one after the other (on Linux an Ethernet network has `packet` and `tap`). |
 | `networks[].name` | The network's name. |
 | `networks[].kind` | `can`, `ethernet` or `lin`; `null` if its kind in the file has an error. |
@@ -579,16 +583,25 @@ The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell
 | `tool-timeout` | The bridge did not end within 30 seconds. |
 | `tool-bad-output` | The bridge wrote no list that the launcher reads (a bridge of another vehicle-sil), or nested deeper than 64 levels. The message quotes the line of its stderr that says why. |
 
+The `code` of a target of the request file that cannot be used (`request.connect[].code`):
+
+| `code` | When |
+|---|---|
+| `target-not-listed` | The list of the target's backend does not have it, or no list of that backend is made on this computer. Choose a target from the list. |
+| `target-unusable` | The list has it with `usable: false`. The reason is the list's. |
+| `list-failed` | The list of the network could not be made (its error code is in the reason), or the network's kind in the file has an error. |
+| `target-bad` | The target is not one that `--connect` takes for this kind of network on this OS (including a backend that the OS lacks), or the network has no bridge (LIN). |
+
 | Exit code | Case |
 |---|---|
 | 0 | Every bridge that is on this computer made its list. A bridge that is not there (`tool-missing`) and a network without a bridge here (LIN, CAN elsewhere than on Windows) are part of the answer. |
-| 1 | A bridge that is there could not make its list (`tool-cannot-start`, `tool-timeout`, `tool-bad-output`, or the bridge's own error), or the file has errors. |
+| 1 | A bridge that is there could not make its list (`tool-cannot-start`, `tool-timeout`, `tool-bad-output`, or the bridge's own error), the file has errors, or with `--request` a target of the request file cannot be used. |
 | 3 | The file cannot be read. |
-| 4 | Usage error. |
+| 4 | Usage error, also a request file that cannot be read. |
 
 ## Request files (`--request`)
 
-A request file says what to run: the variant, the scenario and its parameters, the participants to leave out or to start by hand, where the networks are connected outside, and the speed. `check` and `run` read it with `--request <file>`. Put into it what stays the same on one computer or for one kind of run (for example, the adapters of a test bench), and keep the configuration file the same for everyone.
+A request file says what to run: the variant, the scenario and its parameters, the participants to leave out or to start by hand, where the networks are connected outside, and the speed. `check` and `run` read it with `--request <file>`; `connections --request <file>` says before a run whether its targets are there and can be used on this computer (see [Where a network can be connected](#where-a-network-can-be-connected-vehicle_sil_launch-connections)). Put into it what stays the same on one computer or for one kind of run (for example, the adapters of a test bench), and keep the configuration file the same for everyone.
 
 For example, a test bench whose configuration file has the networks `ETH_EXT` and `CAN1` (with a configuration file that has neither, such as the example's, `check` notes both as unused and connects nothing):
 

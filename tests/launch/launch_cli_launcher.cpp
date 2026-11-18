@@ -857,7 +857,7 @@ void request(const Options& o)
                  "the request file, run one scenario with vehicle_sil_launch run --request <file>");
     // --help has the option.
     const Captured help = launch(o, {"--help"});
-    require(contains(help.standard_output, "\n  --request <file>            check, run: what to run, from the request file <file>"),
+    require(contains(help.standard_output, "\n  --request <file>            check, run, connections: what to run, from the request file <file>"),
             "--help wrote:\n" + help.standard_output);
     log("CHECK --request: as the arguments, an argument wins, the scenario beside the configuration, usage errors -> ok");
 }
@@ -1513,6 +1513,51 @@ void connections(const Options& o)
     }
     log("CHECK connections: --json, --network, a bridge that cannot list, no bridge -> ok");
 
+    // --request: the targets of a request file against the lists. Only the networks it connects are listed; a network that
+    // the file has and the configuration lacks is a note.
+    fs::create_directories(o.work_dir / "bench");
+    const auto bench = [&](const std::string& name, const std::string& connect) {
+        write_file(o.work_dir / "bench" / name, "{ \"vehicle_sil_run_request\": 1, \"connect\": " + connect + " }\n");
+        return shown_path(o.work_dir / "bench" / name);
+    };
+    const std::string usable = bench("usable.json", "{ \"ETH_EXT\": \"" + backend + ":fake0\", \"OTHER\": \"eth0\" }");
+    const Captured byRequest = connections_of({"connections", "--json", "--request", usable, file});
+    expect_code(byRequest, 0, "connections --request with a usable target");
+    for (const std::string& part : std::vector<std::string>{
+             "  \"result\": \"listed\",\n  \"request\": {\n    \"file\": " + json_string(usable) + ",\n    \"connect\": [\n      {\n"
+             "        \"network\": \"ETH_EXT\",\n        \"target\": \"" + backend + ":fake0\",\n        \"usable\": true,\n"
+             "        \"code\": null,\n        \"reason\": null\n",
+             "\"code\": \"connect-network-unused\""})
+    {
+        require(contains(lf(byRequest.standard_output), part),
+                "connections --request has not\n" + part + "--- it wrote ---\n" + byRequest.standard_output);
+    }
+    require(!contains(byRequest.standard_output, "\"J1939_CAN1\"") && !contains(byRequest.standard_output, "\"BODY_LIN\""),
+            "connections --request listed a network that the file does not connect:\n" + byRequest.standard_output);
+    const Captured textRequest = connections_of({"connections", "--request", usable, file});
+    expect_code(textRequest, 0, "connections --request (text)");
+    require(contains(lf(textRequest.standard_output), "):\n  requested in " + usable + ": --connect ETH_EXT=" + backend + ":fake0  usable\n"),
+            "connections --request (text) wrote:\n" + textRequest.standard_output);
+    // A target that is not in the list: exit code 1, and why.
+    const std::string absent = bench("absent.json", "{ \"ETH_EXT\": \"nosuch0\" }");
+    const Captured notListed = connections_of({"connections", "--request", absent, file});
+    expect_code(notListed, 1, "connections --request with a target that is not listed");
+    require(contains(lf(notListed.standard_output), "  requested in " + absent + ": --connect ETH_EXT=nosuch0  not usable: nosuch0 is not in the list of "
+                                                    "vehicle_sil_ethernet_bridge (" + backend + ") for ETH_EXT: choose a target from the list, or fix "
+                                                    "the request file [target-not-listed]\n"),
+            "connections --request with a target that is not listed wrote:\n" + notListed.standard_output);
+    const Captured notListedJson = connections_of({"connections", "--json", "--request", absent, file});
+    expect_code(notListedJson, 1, "connections --json --request with a target that is not listed");
+    require(contains(notListedJson.standard_output, "\"result\": \"failed\"") && contains(notListedJson.standard_output, "\"usable\": false"),
+            "connections --json --request with a target that is not listed wrote:\n" + notListedJson.standard_output);
+    // --network for a network the file does not connect: its list only, nothing to check.
+    const Captured other = connections_of({"connections", "--json", "--network", "J1939_CAN1", "--request", absent, file});
+    expect_code(other, 0, "connections --network --request for a network the request does not connect");
+    require(contains(lf(other.standard_output), "\"request\": {\n    \"file\": " + json_string(absent) + ",\n    \"connect\": []\n  },\n") &&
+                contains(other.standard_output, "\"name\": \"J1939_CAN1\""),
+            "connections --network --request wrote:\n" + other.standard_output);
+    log("CHECK connections: --request -> ok");
+
     // The command line and the file.
     const auto expect_usage = [&](const std::vector<std::string>& args, const std::string& error) {
         const Captured run = launch(o, args);
@@ -1527,6 +1572,14 @@ void connections(const Options& o)
                  "connections takes no --variant: every variant has the networks of the file, so leave it out");
     expect_usage({"connections"}, "connections needs the configuration file: vehicle_sil_launch connections <file>");
     expect_usage({"connections", "--strict", file}, "unknown option --strict");
+    // A request file that cannot be read: a usage error, as for check --request.
+    const std::string noRequest = shown_path(o.work_dir / "bench" / "no-such.json");
+    expect_usage({"connections", "--request", noRequest, file}, "--request " + noRequest + ": the file does not exist: check the path");
+    const std::string wrongRequest = bench("wrong.json", "[]");
+    const Captured wrong = launch(o, {"connections", "--request", wrongRequest, file});
+    expect_code(wrong, 4, "connections --request with a request file that is wrong");
+    require(contains(wrong.standard_error, "error: " + wrongRequest + ", line 1: connect must be a mapping"),
+            "connections --request with a request file that is wrong wrote:\n" + wrong.standard_error);
     const Captured usageJson = launch(o, {"connections", "--json", "--network", "NOPE", file});
     expect_code(usageJson, 4, "connections --json --network NOPE");
     require(contains(usageJson.standard_output, "  \"result\": \"usage\",\n  \"networks\": [],\n"),
