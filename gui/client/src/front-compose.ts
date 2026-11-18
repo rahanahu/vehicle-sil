@@ -300,8 +300,9 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
       : control(true);
 
   // stop: whatever the connection says, as long as the last known state is a run (or a start is on its way)
-  const stoppable = s.busy.has('start') || live || run === 'starting';
+  // (a launcher that runs on after its result is not live, but the server, which knows its launcher, still stops it)
   const serverStop = s.allowed?.stop;
+  const stoppable = s.busy.has('start') || live || run === 'starting' || serverStop?.ok === true;
   let stop: Control;
   if (s.busy.has('stop')) stop = control(false, busyReason('stop'));
   else if (s.busy.has('start')) stop = control(true);
@@ -357,7 +358,14 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
 
   const withReason = (base: Control, code: string, message: string): Control =>
     base.ok ? control(false, reason(code, message), base.caution) : base;
-  const paused = state ? state.paused : (session?.time?.paused ?? null);
+  // The launcher writes `paused` of its `state` when its loop turns, so after a step it can still say "not paused" while
+  // the time event already says paused: when the two disagree, neither pause nor resume claims to change nothing.
+  const timePaused = session?.time?.paused ?? null;
+  const paused = state
+    ? timePaused !== null && timePaused !== state.paused
+      ? null
+      : state.paused
+    : timePaused;
 
   const pauseBase = timeControl('pause', 'pause');
   const pause =

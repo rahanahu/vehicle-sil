@@ -414,6 +414,41 @@ describe('the front door', () => {
       expect(rig.front.status.get()).toMatchObject({ run: 'stopping', result: null });
     });
 
+    it('does not call the run not paused when its state lags behind a step that has ended', async () => {
+      const rig = await running(pausedState(1));
+      // the step is on its way: state says not paused; then the time event says paused again, and no new state follows
+      await rig.deliver(
+        event(stateEvent(2, { paused: false }, { pause: ok, resume: ok })),
+        event(timeEvent(40, 25, true)),
+      );
+      const { pause, resume } = rig.front.controls.get();
+      expect(resume.ok).toBe(true);
+      expect(pause.ok).toBe(true);
+    });
+
+    it('lets the run be stopped while the launcher runs on after its result, as the server says', async () => {
+      const rig = await running();
+      await rig.deliver(
+        event({
+          event: 'result',
+          seq: 50,
+          t_ms: 50,
+          result: {
+            vehicle_sil_run: 1,
+            result: 'passed',
+            interrupted_by: null,
+            errors: 0,
+            warnings: 0,
+            notes: 0,
+            participants: [],
+            findings: [],
+          },
+        }),
+      );
+      expect(rig.front.status.get().run).toBe('ended');
+      expect(rig.front.controls.get().stop.ok).toBe(true);
+    });
+
     it('shows the sentences of a result by its name, and a stop by the operator is not a failure', async () => {
       const rig = await running();
       await rig.deliver(

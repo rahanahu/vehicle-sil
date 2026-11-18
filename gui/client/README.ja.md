@@ -316,14 +316,14 @@ try {
 
 各項目は `{ ok, reason, caution }` です。`ok` が偽のとき `reason` は `{ code, message }`、`caution` は、受けるが先に知っておくことがある操作に付く同じ形です。コードは変わりません（増えることはありますが、意味は変わりません）。文は英語で、規則の持ち主が書いたものです。
 
-| 項目                                            | 出どころ                                                                                                                                                                                                |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `start`                                         | GUI サーバーの `allowed.start`（`starting`、`already-running`、`launcher-unusable`、`shutting-down`）とその文                                                                                           |
-| `stop`、`force_stop`                            | GUI サーバーの `allowed.stop` と `allowed.force`。`stop` は、最後に知った実行（か、向かっている開始）があれば、切断中でも `ok`。`force_stop` は、1 回目の停止の後だけ `ok`（それまでは `not-stopping`） |
-| `pause`、`resume`、`step`、`speed`、`run_until` | ランチャーの `state.allowed`（理由、文、`caution` はランチャーが書いたまま。`step` と `speed` の範囲も）。コピーに実行がなければ `not-running`、`state` を出さないランチャーなら `unsupported`          |
-| `pause`、`resume`（何も変わらないとき）         | 一時停止中は `pause` が `ok` でなく（`paused`）、止まっていなければ `resume` が `ok` でありません（`not-paused`）。ランチャーはどちらも受けますが、ボタンにはすることがありません                       |
-| `run_until`                                     | ランチャーが機能 `stdin-run-until` を持つまで `unsupported`                                                                                                                                             |
-| すべて                                          | 接続: `rejected`、`incompatible`、`offline`、`connecting` では不可になります（`stop` と `force_stop` は上のとおり）。このページの同じ操作が答えを待つ間は `busy`                                        |
+| 項目                                            | 出どころ                                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `start`                                         | GUI サーバーの `allowed.start`（`starting`、`already-running`、`launcher-unusable`、`shutting-down`）とその文                                                                                                                                                                                    |
+| `stop`、`force_stop`                            | GUI サーバーの `allowed.stop` と `allowed.force`。`stop` は、最後に知った実行（か、向かっている開始）があれば、切断中でも、結果の後もランチャーが動いているとサーバーが言う間も `ok`。`force_stop` は、1 回目の停止の後だけ `ok`（それまでは `not-stopping`）                                    |
+| `pause`、`resume`、`step`、`speed`、`run_until` | ランチャーの `state.allowed`（理由、文、`caution` はランチャーが書いたまま。`step` と `speed` の範囲も）。コピーに実行がなければ `not-running`、`state` を出さないランチャーなら `unsupported`                                                                                                   |
+| `pause`、`resume`（何も変わらないとき）         | 一時停止中は `pause` が `ok` でなく（`paused`）、止まっていなければ `resume` が `ok` でありません（`not-paused`）。ランチャーはどちらも受けますが、ボタンにはすることがありません。ランチャーの `state` と最後の `time` の事象が食い違うとき（ステップ送りが終わった直後）は、どちらも言いません |
+| `run_until`                                     | ランチャーが機能 `stdin-run-until` を持つまで `unsupported`                                                                                                                                                                                                                                      |
+| すべて                                          | 接続: `rejected`、`incompatible`、`offline`、`connecting` では不可になります（`stop` と `force_stop` は上のとおり）。このページの同じ操作が答えを待つ間は `busy`                                                                                                                                 |
 
 ### 操作
 
