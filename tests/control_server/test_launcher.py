@@ -190,7 +190,9 @@ class LauncherTest(unittest.TestCase):
                 done = c.wait(seq)
                 self.assertEqual((done.target("Engine").status, done.target("Engine").applied_at), ("applied", 0))
                 # The control server's: rounded up to the controller's steps (10 ms).
-                c.sim.step(ms(45))
+                # Its answer says where it ends: the time it runs on to, or that it stands there.
+                answer = c.sim.step(ms(45))
+                self.assertTrue(answer.pause_target == ms(150) or (answer.paused and answer.now == ms(150)), answer)
                 self.assertEqual(c.sim.wait_paused().now, ms(150))
                 c.sim.run_until(ms(201))
                 self.assertEqual(c.sim.wait_paused().now, ms(210))
@@ -210,8 +212,8 @@ class LauncherTest(unittest.TestCase):
                 c.sim.stop("the test is done")
             result = launch.wait()
         self.assertEqual(commands_of(launch), [
-            ("step", "stdin", True, 100, None),
-            ("step", "control_server", True, 50, None),
+            ("step", "stdin", True, 100, 100),  # at_ms: where the step ends
+            ("step", "control_server", True, 50, 150),
             ("run_until", "control_server", True, None, 210),
             ("resume", "control_server", True, None, None),
             ("step", "control_server", False, None, None),
