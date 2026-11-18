@@ -368,6 +368,35 @@ TEST_CASE(time_gate_model_a_pause_ends_the_run_until_in_progress_whether_a_step_
     CHECK(!paced.gate.state(w(55)).pause_target);
     paced.gate.step(10ms, w(56));
     CHECK(paced.gate.state(w(56)).pause_target == std::optional<SimTime>(at(60ms)));
+
+    // A pause_at() for a time that has passed, at a held step: it stands still there, and the
+    // time it was given is not left as a target.
+    Example passed(1.0, 10ms);
+    passed.run_steps(5);
+    CHECK(passed.gate.begin_step(at(50ms), 10ms, w(50)));
+    passed.gate.pause_at(at(20ms), w(55));
+    CHECK(passed.gate.paused());
+    CHECK(!passed.gate.state(w(55)).pause_target);
+}
+
+TEST_CASE(time_gate_model_a_pause_while_it_stands_still_ends_a_pause_at_that_is_ahead)
+{
+    // Stands still at 50 ms; pause_at(1000 ms) leaves it standing with a target ahead. A pause()
+    // gives that target up as it does while the simulation runs, and a step counts from 50 ms.
+    Example e(std::nullopt, 10ms);
+    e.run_steps(5);
+    e.gate.pause(w(5));
+    CHECK(e.gate.begin_step(at(50ms), 10ms, w(6)));
+    CHECK(e.gate.paused());
+    e.gate.pause_at(at(1000ms), w(7));
+    CHECK(e.gate.paused());
+    CHECK(e.gate.state(w(7)).pause_target == std::optional<SimTime>(at(1000ms)));
+    e.gate.pause(w(8));
+    CHECK(e.gate.paused());
+    CHECK(!e.gate.state(w(8)).pause_target);
+    e.gate.step(10ms, w(9));
+    CHECK(!e.gate.paused());
+    CHECK(e.gate.state(w(9)).pause_target == std::optional<SimTime>(at(60ms)));
 }
 
 TEST_CASE(time_gate_model_a_pause_keeps_a_target_that_is_not_ahead)

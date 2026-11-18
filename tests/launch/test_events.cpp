@@ -9,6 +9,7 @@
 #include "silkit_test_util.hpp"
 
 #include "vehicle_sil/ecu/describe.hpp"
+#include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/run.hpp"
@@ -1152,6 +1153,44 @@ TEST_CASE(a_step_after_a_pause_counts_from_the_pause_and_not_from_the_run_until_
     CHECK(step.at_ms == std::optional<std::int64_t>(30));
     CHECK(target() == at(30));
     commands.detach();
+}
+
+TEST_CASE(a_step_after_a_pause_counts_from_where_the_simulation_stands_and_not_from_a_pause_time_ahead)
+{
+    // A simulation that runs (the controller and one participant) and stands still at 50 ms. A pause with a
+    // time ahead leaves it standing there; a pause gives that time up; the step then counts from
+    // 50 ms (not from 0, and not from the time ahead), and the simulation arrives where it said.
+    vehicle_sil::unit::InProcessRegistry registry;
+    SimulationControllerOptions options;
+    options.registry_uri = registry.uri;
+    options.required_participants = {"Peer"};
+    options.time_control = TimeControlOptions{.step = std::chrono::milliseconds(10), .start_paused = true};
+    SimulationController controller(options);
+    ParticipantRuntime peer(vehicle_sil::unit::coordinated_options("Peer", registry.uri, VirtualTimeOptions{10ms, std::nullopt}));
+    peer.set_step_handler([](SimTime, SimDuration) {});
+    const auto command = [](const std::string& line) { return *parse_command(line); };
+    const auto at = [](std::int64_t ms) { return std::optional<SimTime>(SimTime{} + std::chrono::milliseconds(ms)); };
+    TimeCommands commands(true);
+    commands.set_time_lock({});
+    commands.attach(controller, 10, std::nullopt);
+    vehicle_sil::unit::start_together(controller, {&peer}, vehicle_sil::test::scaled_timeout(30s));
+    CHECK(commands.apply(command(R"({"command":"run_until","at_ms":50})"), "stdin").accepted);
+    CHECK(controller.wait_until_paused(vehicle_sil::test::scaled_timeout(10s)) == at(50));
+    Command ahead;
+    ahead.name = "pause";
+    ahead.accepted = true; // as the control server hands it over
+    ahead.at_ms = 100000;
+    CHECK(commands.apply(ahead, "control_server").accepted);
+    CHECK(controller.time_state().paused);
+    CHECK(controller.time_state().pause_target == at(100000));
+    CHECK(commands.apply(command(R"({"command":"pause"})"), "stdin").accepted);
+    CHECK(!controller.time_state().pause_target);
+    const Command step = commands.apply(command(R"({"command":"step","ms":10})"), "stdin");
+    CHECK(step.accepted && step.at_ms == std::optional<std::int64_t>(60));
+    CHECK(controller.wait_until_paused(vehicle_sil::test::scaled_timeout(10s)) == at(60));
+    commands.detach();
+    controller.stop("test done");
+    peer.stop("test done");
 }
 
 TEST_CASE(time_commands_from_another_thread_never_reach_a_controller_that_is_gone)
