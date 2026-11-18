@@ -1,4 +1,4 @@
-// シナリオの実行を、本物のランチャーと例の ECU で通す。ランチャーが Control Server と scenario-control を持てば、
+// シナリオの実行を、本物のランチャーと例の ECU で通す。ランチャーが Control Server を持てば、
 // 実行中は見るだけ: 変数の値は見え、書く部品は理由を言って押せない。時刻の操作（ランチャーの標準入力の命令）と
 // 停止は、ふつうの実行と同じく効く。持たなければ飛ばす（その場合の画面は、流し直しの e2e が確かめる）。
 import { expect, test } from '@playwright/test';
@@ -15,11 +15,10 @@ test('a real scenario run: the variables are read but not written, the time and 
     await page.request.get(new URL('api/app', target.base).href, { headers })
   ).json()) as {
     variables?: { available: boolean };
-    launcher?: { version?: { features?: string[] } | null };
   };
   test.skip(
-    !app.variables?.available || !app.launcher?.version?.features?.includes('scenario-control'),
-    'the launcher has no control server, or none while a scenario runs (scenario-control)',
+    !app.variables?.available,
+    'variables are not available (a launcher without a control server, or a GUI server without gRPC)',
   );
 
   await stopRun(page, target, RUN_TIMEOUT);

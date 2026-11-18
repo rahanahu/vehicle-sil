@@ -40,14 +40,15 @@ export interface LauncherAnswer {
 
 /**
  * What the launcher's last `state` says of one operation (`allowed.<name>`, such as `write` or `pause`), as it wrote
- * it. A launcher that has not said yet (no `state`, or no entry for the operation) does not accept it (`unsupported`).
+ * it. A launcher that has not said yet does not accept it (`unsupported`): no `state` yet (at the start of a run,
+ * before the launcher's first one), or a `state` with no entry for the operation.
  * The one place the client reads `allowed` of the launcher: `controls` of the front door and `client.variables.bind`
  * both use it.
  */
 export function launcherAnswer(state: StateReport | null, name: string): LauncherAnswer {
   if (!state) {
     return {
-      reason: { code: 'unsupported', message: 'this launcher does not say what it accepts' },
+      reason: { code: 'unsupported', message: 'the launcher has not said yet what it accepts' },
       caution: null,
     };
   }

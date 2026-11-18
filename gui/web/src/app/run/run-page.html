@@ -158,73 +158,67 @@
               </button>
             </p>
           }
-          @if (scenarioSupported()) {
-            @if (running()) {
-              <p class="file" data-testid="session-scenario">
-                <ng-container i18n>シナリオ:</ng-container>
-                @if (session()?.scenario; as scenario) {
-                  <code>{{ scenario.file }}</code>
-                } @else {
-                  <ng-container i18n>なし</ng-container>
-                }
-              </p>
-            } @else if (scenarios.hasValue()) {
-              <mat-form-field class="picker" subscriptSizing="dynamic">
-                <mat-label i18n>シナリオ</mat-label>
-                <mat-select
-                  [value]="scenarioChoice()"
-                  (valueChange)="selectScenario($event)"
-                  data-testid="scenario-select"
-                >
-                  <mat-option [value]="null" i18n>なし（自分で操作する）</mat-option>
-                  @for (scenario of scenarios.value().scenarios; track scenario.path) {
-                    <mat-option [value]="scenario.path">{{ scenario.name }}</mat-option>
-                  }
-                </mat-select>
-              </mat-form-field>
-              @if (scenarios.value().scenarios.length === 0) {
-                <p class="hint" data-testid="no-scenarios" i18n>
-                  シナリオはありません。構成ファイルの隣の
-                  <code>{{ scenarios.value().directory }}</code> に .yaml を置くと選べます。
-                </p>
-              } @else if (chosenScenario() !== null) {
-                <p class="hint" i18n>
-                  シナリオを最後まで進めると、ランチャーが止めて合否を出します。シナリオの実行中は、変数を書けません。
-                </p>
+          @if (running()) {
+            <p class="file" data-testid="session-scenario">
+              <ng-container i18n>シナリオ:</ng-container>
+              @if (session()?.scenario; as scenario) {
+                <code>{{ scenario.file }}</code>
+              } @else {
+                <ng-container i18n>なし</ng-container>
               }
-            } @else if (scenarios.error(); as error) {
-              <p class="error" role="alert">
-                <ng-container i18n>シナリオの一覧を取得できませんでした:</ng-container>
-                <span lang="en">{{ error.message }}</span>
+            </p>
+          } @else if (scenarios.hasValue()) {
+            <mat-form-field class="picker" subscriptSizing="dynamic">
+              <mat-label i18n>シナリオ</mat-label>
+              <mat-select
+                [value]="scenarioChoice()"
+                (valueChange)="selectScenario($event)"
+                data-testid="scenario-select"
+              >
+                <mat-option [value]="null" i18n>なし（自分で操作する）</mat-option>
+                @for (scenario of scenarios.value().scenarios; track scenario.path) {
+                  <mat-option [value]="scenario.path">{{ scenario.name }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+            @if (scenarios.value().scenarios.length === 0) {
+              <p class="hint" data-testid="no-scenarios" i18n>
+                シナリオはありません。構成ファイルの隣の
+                <code>{{ scenarios.value().directory }}</code> に .yaml を置くと選べます。
+              </p>
+            } @else if (chosenScenario() !== null) {
+              <p class="hint" i18n>
+                シナリオを最後まで進めると、ランチャーが止めて合否を出します。シナリオの実行中は、変数を書けません。
               </p>
             }
+          } @else if (scenarios.error(); as error) {
+            <p class="error" role="alert">
+              <ng-container i18n>シナリオの一覧を取得できませんでした:</ng-container>
+              <span lang="en">{{ error.message }}</span>
+            </p>
           }
           <!--
             走行中も部品を残して隠すだけ（外すと部品が選択を消す）。実行の後も同じ先が選ばれたままで、開始のボタンの下に
             つなぐ先が出る。照合は選んだファイルの最後のもの（走行中も替わらない）
           -->
           <app-outside-choice [check]="selectedCheck()" [file]="selected()" [hidden]="running()" />
-          @if (speedSupported()) {
-            <app-speed-picker
-              class="speed"
-              [min]="speedRange().speed_min"
-              [max]="speedRange().speed_max"
-              [locked]="running()"
-              [(speed)]="speed"
-              [(invalid)]="speedInvalid"
-            />
-          }
-          @if (startPausedSupported()) {
-            <mat-checkbox
-              class="start-paused"
-              data-testid="start-paused"
-              [checked]="startPaused() && chosenScenario() === null"
-              [disabled]="running() || chosenScenario() !== null"
-              (change)="startPaused.set($event.checked)"
-              i18n
-              >止めた状態で始める（仮想時間 0 で止まり、再開かステップ送りを待つ）</mat-checkbox
-            >
-          }
+          <app-speed-picker
+            class="speed"
+            [min]="speedRange().speed_min"
+            [max]="speedRange().speed_max"
+            [locked]="running()"
+            [(speed)]="speed"
+            [(invalid)]="speedInvalid"
+          />
+          <mat-checkbox
+            class="start-paused"
+            data-testid="start-paused"
+            [checked]="startPaused() && chosenScenario() === null"
+            [disabled]="running() || chosenScenario() !== null"
+            (change)="startPaused.set($event.checked)"
+            i18n
+            >止めた状態で始める（仮想時間 0 で止まり、再開かステップ送りを待つ）</mat-checkbox
+          >
         </mat-card-content>
       </mat-card>
 
@@ -244,7 +238,6 @@
               [check]="check"
               [(disabled)]="disabled"
               [(manual)]="manual"
-              [manualAvailable]="manualSupported()"
               [locked]="running()"
             />
           } @else if (running()) {

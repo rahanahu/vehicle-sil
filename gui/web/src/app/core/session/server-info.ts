@@ -11,8 +11,7 @@ import { GUI_CLIENT, readableSignal } from './gui-client';
 
 /**
  * サーバーとランチャーの情報（GET api/app）と、1 回で終わる要求（構成ファイルの一覧、シナリオ、ダッシュボード）の、Angular の包み。
- * アプリ全体で 1 つ。ランチャーの `features`（何ができるか）を、画面のどの部品からも同じ signal で読む。古い
- * ランチャーが持たない機能の操作は、ここを見て出さない。中身はクライアントのライブラリ（`@vehicle-sil/gui-client`）。
+ * アプリ全体で 1 つ。画面のどの部品からも同じ signal で読む。中身はクライアントのライブラリ（`@vehicle-sil/gui-client`）。
  */
 @Injectable({ providedIn: 'root' })
 export class ServerInfo {
@@ -26,9 +25,6 @@ export class ServerInfo {
     loader: () => this.client.loadApp(),
   });
 
-  /** ランチャーの `version --json` の features（まだわからなければ空）。 */
-  readonly features = computed<readonly string[]>(() => this.info()?.launcher.features ?? []);
-
   /**
    * いま実行を始めたら ECU の変数を読み書きできるか（`available`）と、できない理由（`reason`。英語）。
    * まだわからなければ null。
@@ -40,11 +36,6 @@ export class ServerInfo {
 
   /** 速さの範囲とステップ送りの上限（サーバーが言う。ランチャーと同じ）。 */
   readonly limits = readableSignal(this.client.limits);
-
-  /** ランチャーがその機能を持つか（`speed`、`start-paused`、`time-commands` など）。 */
-  has(feature: string): boolean {
-    return this.features().includes(feature);
-  }
 
   /** GET api/app をもう一度（WebSocket の握手で断られた理由を確かめるとき）。失敗は HttpError。 */
   fetchApp(): Promise<AppInfo> {

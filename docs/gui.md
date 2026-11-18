@@ -418,7 +418,7 @@ While the run is paced at a numeric speed (not as fast as possible), the screen 
 
 ## Scenarios
 
-Select and run a scenario ([scenario.md](scenario.md); a file that sets ECU variables in a fixed sequence of steps and checks the results) from the screen. The **Configuration file** card shows the **Scenario** field only when the launcher's `features` have `scenario`.
+Select and run a scenario ([scenario.md](scenario.md); a file that sets ECU variables in a fixed sequence of steps and checks the results) from the screen. The **Configuration file** card has the **Scenario** field.
 
 | Item | Details |
 |---|---|
@@ -433,7 +433,7 @@ Select and run a scenario ([scenario.md](scenario.md); a file that sets ECU vari
 - The step table advances with the launcher's `scenario_step` events. When the result arrives, it shows every step, including those that did not run. A screen opened during the run shows the same table.
 - A scenario cannot start paused (**Start paused** is disabled).
 - Pause, step, speed changes and stop work as in a run without a scenario (the scenario result does not change). The GUI sends them as commands on the launcher's stdin; a Control Server client's time calls get the same answers.
-- If the launcher has a Control Server (`control-server` in `features`; it then also has `scenario-control`), the Variables screen shows the values (writing widgets are disabled and show "Cannot write while a scenario runs (view only)"). With a launcher without a Control Server, a scenario run has no variables, and the Variables screen shows "Variables are not available while a scenario runs:".
+- If the launcher has a Control Server (`control-server` in `features`), the Variables screen shows the values (writing widgets are disabled and show "Cannot write while a scenario runs (view only)"). With a launcher without a Control Server, no run has variables, a scenario run included, and the Variables screen shows the reason as for any run.
 - The server API is `GET api/scenarios?file=<configuration file>` and `scenario` of `api/check` and `api/run` (see "Scenarios" in [gui/protocol/README.md](../gui/protocol/README.md#scenarios)); in the library, `client.scenarios(file)`, `scenario` of `check` and `run.start`, and `scenario` of the session copy.
 
 ### Timeline of a scenario run
@@ -563,7 +563,7 @@ The server API and the client library can read and write ECU variables in the sa
 
 ### Starting a participant yourself
 
-Available only when the launcher's `features` have `manual-participants`. For the rules, see "Starting a participant yourself (`manual`, `--manual`)" in [simulation-config.md](simulation-config.md#starting-a-participant-yourself-manual---manual).
+For the rules, see "Starting a participant yourself (`manual`, `--manual`)" in [simulation-config.md](simulation-config.md#starting-a-participant-yourself-manual---manual).
 
 | Step | What you do | What the screen shows |
 |---|---|---|
@@ -773,15 +773,12 @@ The time state and commands live in one service for the whole app (built on the 
 | Member | Contents |
 |---|---|
 | `app` | The response of `GET api/app` |
-| `features` | What the launcher can do |
-| `has(name)` | Whether it has that feature |
 | `limits` | The speed range and the step limit |
 
 `SimulationTime` (`gui/web/src/app/core/session/simulation-time.ts`):
 
 | Signal | Contents |
 |---|---|
-| `supported` | Whether the launcher has time commands |
 | `time` | The last `time` event (`null` if none yet) |
 | `simMs`, `actualSpeed` | Virtual time and the actual speed: `sim_ms` and `actual_speed` of `clock` of the library's `connect()` (while paused: the time the launcher's `state` says it is paused at, and `null`) |
 | `speed`, `paused` | The speed set and whether the run is paused: `speed` and `paused` of the launcher's last `state` event (`null` before the first one, and when the launcher is not running) |

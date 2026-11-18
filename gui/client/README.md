@@ -121,7 +121,7 @@ In the browser, call `takeToken(window)`. It reads `#token=` from the URL, remov
 | -------- | ---------------------------------------------------------------------------------------- |
 | Type     | `ClientTime` (`state`, `answerTimeoutMs`, `pause`, `resume`, `step`, `setSpeed`, `send`) |
 | Type     | `TimeState`, `TimeFailure`, `Lateness`, `SendResult`, `NotSentReason`                    |
-| Constant | `ANSWER_TIMEOUT_MS`, `FEATURE_SPEED`, `FEATURE_START_PAUSED`, `FEATURE_TIME_COMMANDS`    |
+| Constant | `ANSWER_TIMEOUT_MS`                                                                      |
 
 ### ECU variable API
 
@@ -183,13 +183,12 @@ Types for the shapes that `gui/protocol` defines, and the parsers to use when yo
 | Parsers                                                    | `readServerMessage`, `readAppInfo`, `readConfigList`, `readCheckResponse`, `readConnections`, `readSessionResponse`, `readTimeResponse`, `readWriteResponse`, `readVariablesSummary`, `readDashboardResponse`, `readScenarioList`, `readRecording` |
 | Shapes of the variable API                                 | `VariablesSummary`, `VariableSummary`, `ValuesMessage`, `OperationReport`, `WatchMessage`, `WriteAnswer`                                                                                                                                           |
 | Dashboard files (`dashboard(file)`)                        | `DashboardResponse`, `DashboardFile`, `DashboardFileSection`, `DashboardFileItem`, `DashboardFileError`, `DashboardPanelModule`, `DashboardVariable`                                                                                               |
-| Scenarios (`--scenario`, `scenarios(file)`, `recording()`) | `ScenarioStep`, `ScenarioStepStatus`, `ScenarioStatus`, `CheckScenario`, `ScenarioResult`, `SummaryScenario`, `ScenarioList`, `ScenarioFile`, `Recording`, `FEATURE_SCENARIO`, `FEATURE_SCENARIO_CONTROL`                                          |
+| Scenarios (`--scenario`, `scenarios(file)`, `recording()`) | `ScenarioStep`, `ScenarioStepStatus`, `ScenarioStatus`, `CheckScenario`, `ScenarioResult`, `SummaryScenario`, `ScenarioList`, `ScenarioFile`, `Recording`                                                                                          |
 | Request shapes                                             | `CheckRequest`, `RunRequest`, `ConnectionsRequest`, `Speed`, `StopRequest`, `TimeCommand`                                                                                                                                                          |
 | List of configuration files                                | `ConfigList`, `ConfigFile`                                                                                                                                                                                                                         |
 | Error shape                                                | `ServerProblem`                                                                                                                                                                                                                                    |
 | Findings                                                   | `Finding`, `Severity`                                                                                                                                                                                                                              |
 | The launcher's keys and traffic                            | `FromLauncher`, `LauncherFields`, `RunTraffic`, `TrafficNetwork`, `TrafficParticipant`, `TrafficUnplaced`, `ParticipantRole`, `OutsideState`                                                                                                       |
-| Participants you start yourself (`manual`)                 | `FEATURE_MANUAL`                                                                                                                                                                                                                                   |
 | `SessionView.scenario` of the session copy                 | `ScenarioView`                                                                                                                                                                                                                                     |
 
 ## Basic usage
@@ -205,7 +204,7 @@ const client = createClient({
   baseUrl: new URL('/', location.href).href,
   token: takeToken(window),
 });
-await client.loadApp(); // the launcher's features (whether it has time commands, and so on)
+await client.loadApp(); // the server's information (the start-up file, the limits, whether variables are available)
 client.connect();
 const stop = client.session.session.subscribe((session) => {
   if (session?.result) console.log(session.result.result);
@@ -263,13 +262,13 @@ The library parses each part separately.
 - In the browser and in Web Workers, do not pass `origin`: the browser sets it (a Worker's WebSocket cannot set handshake headers).
 - To replace the HTTP implementation, pass `http` (`HttpTransport`); to replace the WebSocket, pass `socket` (`SocketFactory`).
 
-For the rules the library does not enforce for you (request fields that match the launcher's `features`, whether a variable is writable, whether a value is stale), see "Rules for building a screen" in [docs/gui.md](../../docs/gui.md#rules-for-building-a-screen).
+For the rules the library does not enforce for you (the fields of check and start requests, whether a variable is writable, whether a value is stale), see "Rules for building a screen" in [docs/gui.md](../../docs/gui.md#rules-for-building-a-screen).
 
 ## The front door (`connect()`)
 
 `connect()` returns the front door of the library: what a screen shows (`status`, `clock`, `controls`, `scenario`), the operations as Promises (`run`, `time`) and one variable at a time (`variable()`). It is built on the client described above and changes nothing in it: `front.low` is the same `GuiClient` (events, logs, findings, participants), and `createClient` still works as before. Use the front door for what a screen needs to decide ("which state is this", "may this button be pressed now, and if not, why"); use `low` for the rest.
 
-An app that must show its screens before the server answers, and while it cannot be reached (the standard screens), uses `createFront(options)` instead: it makes the front door without connecting, as `createClient` does, and the app calls `front.low.connect()` and `front.low.loadApp()` itself. Until `loadApp()` has answered, the front knows no start-up file and no launcher features.
+An app that must show its screens before the server answers, and while it cannot be reached (the standard screens), uses `createFront(options)` instead: it makes the front door without connecting, as `createClient` does, and the app calls `front.low.connect()` and `front.low.loadApp()` itself. Until `loadApp()` has answered, the front knows no start-up file, and the ranges in `controls` are the defaults (`DEFAULT_LIMITS`).
 
 ```ts
 import { ActionError, connect, until, watch } from '@vehicle-sil/gui-client';
@@ -326,14 +325,13 @@ Data fields use the wire's names (`force_stop`, `sim_ms`); functions use JavaScr
 
 Each entry is `{ ok, reason, caution }`: `reason` is `{ code, message }` when `ok` is false, `caution` is the same shape for an operation that is accepted with something to know first. The codes stay the same (a new code may be added; the meaning of one does not change); the sentence is English, written by the owner of the rule.
 
-| Entry                                           | Comes from                                                                                                                                                                                                                                                                                                                                  |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `start`                                         | The GUI server's `allowed.start` (`starting`, `already-running`, `launcher-unusable`, `shutting-down`), with its sentence                                                                                                                                                                                                                   |
-| `stop`, `force_stop`                            | The GUI server's `allowed.stop` and `allowed.force`. `stop` is `ok` for the last known run (or a start on its way), also offline, and while the server says the launcher still runs after its result. `force_stop` is `ok` only after a first stop (`not-stopping` before)                                                                  |
-| `pause`, `resume`, `step`, `speed`, `run_until` | The launcher's `state.allowed` (reason, sentence and `caution` as the launcher wrote them; the ranges of `step` and `speed`; `fastest` is false when `min` equals `max`, as the launcher promises). No run in the copy: `not-running`; a launcher without `state`: `unsupported`                                                            |
-| `pause`, `resume` (what would change nothing)   | `pause` is not `ok` while the run is paused (`paused`), `resume` is not `ok` while it is not (`not-paused`): the launcher accepts both, but a button has nothing to do. While a step or a run_until is on its way (accepted, and not yet seen to arrive: virtual time at its `at_ms` and the launcher's `state` paused), neither is claimed |
-| `run_until`                                     | `unsupported` until the launcher has the feature `stdin-run-until`                                                                                                                                                                                                                                                                          |
-| All of them                                     | The connection: `rejected`, `incompatible`, `offline` or `connecting` turn them off (`stop` and `force_stop` stay as above); `busy` while the same operation of this page has not been answered                                                                                                                                             |
+| Entry                                           | Comes from                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `start`                                         | The GUI server's `allowed.start` (`starting`, `already-running`, `launcher-unusable`, `shutting-down`), with its sentence                                                                                                                                                                                                                                 |
+| `stop`, `force_stop`                            | The GUI server's `allowed.stop` and `allowed.force`. `stop` is `ok` for the last known run (or a start on its way), also offline, and while the server says the launcher still runs after its result. `force_stop` is `ok` only after a first stop (`not-stopping` before)                                                                                |
+| `pause`, `resume`, `step`, `speed`, `run_until` | The launcher's `state.allowed` (reason, sentence and `caution` as the launcher wrote them; the ranges of `step` and `speed`; `fastest` is false when `min` equals `max`, as the launcher promises). No run in the copy: `not-running`; the launcher has not said yet (no `state` yet at the start of a run, or no entry for the operation): `unsupported` |
+| `pause`, `resume` (what would change nothing)   | `pause` is not `ok` while the run is paused (`paused`), `resume` is not `ok` while it is not (`not-paused`): the launcher accepts both, but a button has nothing to do. While a step or a run_until is on its way (accepted, and not yet seen to arrive: virtual time at its `at_ms` and the launcher's `state` paused), neither is claimed               |
+| All of them                                     | The connection: `rejected`, `incompatible`, `offline` or `connecting` turn them off (`stop` and `force_stop` stay as above); `busy` while the same operation of this page has not been answered                                                                                                                                                           |
 
 ### Operations
 
@@ -348,7 +346,7 @@ Each entry is `{ ok, reason, caution }`: `reason` is `{ code, message }` when `o
 
 The client refuses before sending only what it owns: the connection (`rejected`, `incompatible`), the same operation still waiting for its answer (`busy`; this includes `start()`) and the shape of an argument (`invalid-argument`). Anything else is sent even if `controls` says no, and the owner's answer comes back (the copy may be old). The 5 seconds are the front door's own (they do not apply to the wait for arrival, which ends when the run ends or another command interrupts it).
 
-A time command carries a request number (`id`) that the page chose, and the answer is the launcher's `command` event with the same `id`; an answer to another page's or stdin's command with the same name is not taken for it. This needs a launcher that writes `state`: for an older one the GUI server refuses the command (`unsupported`).
+A time command carries a request number (`id`) that the page chose, and the answer is the launcher's `command` event with the same `id`; an answer to another page's or stdin's command with the same name is not taken for it.
 
 ### Connecting a network outside
 

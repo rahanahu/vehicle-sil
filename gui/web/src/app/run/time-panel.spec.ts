@@ -13,7 +13,6 @@ describe('TimePanel: the step field', () => {
     steps = [];
     // 一時停止していて、ステップ送りができる時刻
     const time = {
-      supported: signal(true),
       simMs: signal(0),
       speed: signal(1),
       actualSpeed: signal(null),
@@ -132,7 +131,6 @@ describe('TimePanel: why an operation cannot be used', () => {
     failure.set(null);
     speeds.length = 0;
     const time = {
-      supported: signal(true),
       simMs: signal(1000),
       speed: signal(1),
       actualSpeed: signal(1),
@@ -241,7 +239,7 @@ describe('TimePanel: why an operation cannot be used', () => {
     expect(described(query('step')!)).toContain('サーバーとの接続が切れています');
     expect(described(query('set-speed')!)).toContain('サーバーとの接続が切れています');
     // 3 つの操作の同じ文は、カードに 1 回
-    const unsupported = 'this launcher does not say what it accepts';
+    const unsupported = 'the launcher has not said yet what it accepts';
     controls.set(all('unsupported', unsupported));
     await fixture.whenStable();
     expect(query('pause-hint')!.textContent?.trim()).toBe(unsupported);

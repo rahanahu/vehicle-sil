@@ -91,95 +91,93 @@ export const DEFAULT_STEP_MS = 100;
       }
     </p>
 
-    @if (time.supported()) {
-      <!-- 一時停止と再開（ボタンは状態の帯）の、見える説明。押しても何も変わらないことと、実行がないことは言わない -->
-      @if (pauseLines().length > 0) {
-        <p class="hint" id="time-pause-hint" data-testid="pause-hint">
-          @for (line of pauseLines(); track line.text) {
-            <span [attr.lang]="line.english ? 'en' : null">{{ line.text }}</span>&ngsp;
-          }
-        </p>
-      }
-      <!-- Enter は form の暗黙の送信で送る: 日本語入力の変換を確定する Enter では、ブラウザーは送らない -->
-      <form class="row" (submit)="sendStep($event)">
-        <mat-form-field class="ms" subscriptSizing="dynamic">
-          <mat-label i18n>ステップ送りの量（ms）</mat-label>
-          <input
-            matInput
-            type="text"
-            inputmode="numeric"
-            autocomplete="off"
-            data-testid="step-ms"
-            [value]="stepText()"
-            [attr.aria-invalid]="shownStepError() !== null"
-            [attr.aria-describedby]="shownStepError() !== null ? 'step-ms-error' : null"
-            #stepInput
-            (input)="typeStep(stepInput.value)"
-            (blur)="stepChecked.set(true)"
-          />
-        </mat-form-field>
-        <button
-          matButton="tonal"
-          type="submit"
-          data-testid="step"
-          [disabled]="!canStep()"
-          disabledInteractive
-          [attr.aria-describedby]="stepWhy() ? 'time-step-why' : null"
-          i18n
-        >
-          ステップ送り
-        </button>
-      </form>
-      <!-- 誤りは、欄を離れたときか送ったときに出す（打っている間は消すだけ） -->
-      <p
-        class="error"
-        id="step-ms-error"
-        role="status"
-        data-testid="step-ms-error"
-        [class.shown]="shownStepError() !== null"
-      >
-        {{ shownStepError() }}
-      </p>
-      <p class="hint" id="time-step-why" data-testid="step-hint">
-        @if (stepWhy(); as why) {
-          <span [class.quiet]="!why.shown" [attr.lang]="why.english ? 'en' : null">{{
-            why.text
-          }}</span>&ngsp;
+    <!-- 一時停止と再開（ボタンは状態の帯）の、見える説明。押しても何も変わらないことと、実行がないことは言わない -->
+    @if (pauseLines().length > 0) {
+      <p class="hint" id="time-pause-hint" data-testid="pause-hint">
+        @for (line of pauseLines(); track line.text) {
+          <span [attr.lang]="line.english ? 'en' : null">{{ line.text }}</span>&ngsp;
         }
-        {{ stepMoved() }}
       </p>
-
-      <div class="row">
-        <app-speed-picker
-          [withFile]="false"
-          [label]="speedLabelText"
-          [min]="controls().speed.min"
-          [max]="controls().speed.max"
-          [fastest]="controls().speed.fastest"
-          [locked]="speedLocked()"
-          [(speed)]="newSpeed"
-          [(invalid)]="newSpeedInvalid"
+    }
+    <!-- Enter は form の暗黙の送信で送る: 日本語入力の変換を確定する Enter では、ブラウザーは送らない -->
+    <form class="row" (submit)="sendStep($event)">
+      <mat-form-field class="ms" subscriptSizing="dynamic">
+        <mat-label i18n>ステップ送りの量（ms）</mat-label>
+        <input
+          matInput
+          type="text"
+          inputmode="numeric"
+          autocomplete="off"
+          data-testid="step-ms"
+          [value]="stepText()"
+          [attr.aria-invalid]="shownStepError() !== null"
+          [attr.aria-describedby]="shownStepError() !== null ? 'step-ms-error' : null"
+          #stepInput
+          (input)="typeStep(stepInput.value)"
+          (blur)="stepChecked.set(true)"
         />
-        <button
-          matButton="tonal"
-          type="button"
-          data-testid="set-speed"
-          [disabled]="!canSetSpeed()"
-          disabledInteractive
-          [attr.aria-describedby]="speedWhy() ? 'time-speed-why' : null"
-          (click)="setSpeed()"
-          i18n
-        >
-          速度を変える
-        </button>
-      </div>
-      @if (speedWhy(); as why) {
-        <p class="hint" id="time-speed-why" data-testid="speed-hint">
-          <span [class.quiet]="!why.shown" [attr.lang]="why.english ? 'en' : null">{{
-            why.text
-          }}</span>
-        </p>
+      </mat-form-field>
+      <button
+        matButton="tonal"
+        type="submit"
+        data-testid="step"
+        [disabled]="!canStep()"
+        disabledInteractive
+        [attr.aria-describedby]="stepWhy() ? 'time-step-why' : null"
+        i18n
+      >
+        ステップ送り
+      </button>
+    </form>
+    <!-- 誤りは、欄を離れたときか送ったときに出す（打っている間は消すだけ） -->
+    <p
+      class="error"
+      id="step-ms-error"
+      role="status"
+      data-testid="step-ms-error"
+      [class.shown]="shownStepError() !== null"
+    >
+      {{ shownStepError() }}
+    </p>
+    <p class="hint" id="time-step-why" data-testid="step-hint">
+      @if (stepWhy(); as why) {
+        <span [class.quiet]="!why.shown" [attr.lang]="why.english ? 'en' : null">{{
+          why.text
+        }}</span>&ngsp;
       }
+      {{ stepMoved() }}
+    </p>
+
+    <div class="row">
+      <app-speed-picker
+        [withFile]="false"
+        [label]="speedLabelText"
+        [min]="controls().speed.min"
+        [max]="controls().speed.max"
+        [fastest]="controls().speed.fastest"
+        [locked]="speedLocked()"
+        [(speed)]="newSpeed"
+        [(invalid)]="newSpeedInvalid"
+      />
+      <button
+        matButton="tonal"
+        type="button"
+        data-testid="set-speed"
+        [disabled]="!canSetSpeed()"
+        disabledInteractive
+        [attr.aria-describedby]="speedWhy() ? 'time-speed-why' : null"
+        (click)="setSpeed()"
+        i18n
+      >
+        速度を変える
+      </button>
+    </div>
+    @if (speedWhy(); as why) {
+      <p class="hint" id="time-speed-why" data-testid="speed-hint">
+        <span [class.quiet]="!why.shown" [attr.lang]="why.english ? 'en' : null">{{
+          why.text
+        }}</span>
+      </p>
     }
 
     <p class="error" role="alert" data-testid="time-refused" [class.shown]="refusal() !== null">

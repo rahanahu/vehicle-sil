@@ -191,31 +191,6 @@ test('a small lateness within the tolerance is not called late', async ({ page }
   await stopOnServer(page);
 });
 
-test('a launcher without the time features shows no time controls', async ({ page }) => {
-  await page.route('**/api/app', async (route) => {
-    const response = await route.fetch();
-    const app = (await response.json()) as { launcher: { version: { features: string[] } } };
-    app.launcher.version.features = ['events', 'stdin-commands', 'check-variables'];
-    await route.fulfill({ response, json: app });
-  });
-  await page.reload();
-  await choose(page, 'forever.yaml');
-  await expect(page.getByTestId('check-outcome')).toContainText('通った');
-  await expect(pauseButton(page)).toHaveCount(0);
-  await expect(resumeButton(page)).toHaveCount(0);
-  await expect(page.getByTestId('start-paused')).toHaveCount(0);
-  await expect(page.getByRole('radio', { name: '等速' })).toHaveCount(0);
-  const run = page.waitForRequest((r) => r.url().endsWith('/api/run'));
-  await start(page);
-  const body = (await run).postDataJSON() as Record<string, unknown>;
-  expect(body).toMatchObject({ file: 'forever.yaml' });
-  expect(body).not.toHaveProperty('speed'); // a choice that is not made is not sent (no null)
-  expect(body).not.toHaveProperty('start_paused');
-  await expect(page.getByTestId('log-line').first()).toBeVisible({ timeout: RUN_TIMEOUT });
-  await expect(page.getByTestId('time-card')).toHaveCount(0);
-  await stopOnServer(page);
-});
-
 test('how each participant is linked to its variables, a trouble in words', async ({ page }) => {
   // 構成ファイルの replay-fault: control-trouble: Engine は hello が来ず、Dashboard は形式の版が違い、Gauge は口を出さない
   await choose(page, 'control-trouble.yaml');

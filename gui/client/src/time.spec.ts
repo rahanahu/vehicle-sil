@@ -13,7 +13,6 @@ function view(client: GuiClient) {
   const control: ClientTime = client.time;
   const s = () => control.state.get();
   return {
-    supported: () => s().supported,
     simMs: () => s().time?.simMs ?? null,
     // Whether it is paused and the speed set are the launcher's state's to say (not the time's)
     speed: () => client.session.session.get()?.launcherState?.speed ?? null,
@@ -63,14 +62,10 @@ describe('TimeControl', () => {
     vi.useRealTimers();
   });
 
-  /** Loads the server information (features can be changed) and opens the WebSocket. */
-  async function open(features?: string[]): Promise<{ time: TimeView; socket: FakeSocket }> {
+  /** Loads the server information and opens the WebSocket. */
+  async function open(): Promise<{ time: TimeView; socket: FakeSocket }> {
     const loaded = client.loadApp();
-    const answer = structuredClone(app) as {
-      launcher: { version: { features: string[] } };
-    };
-    if (features) answer.launcher.version.features = features;
-    http.expectOne('api/app').flush(answer);
+    http.expectOne('api/app').flush(app);
     await loaded;
     client.connect();
     const socket = fake.last();
@@ -122,7 +117,6 @@ describe('TimeControl', () => {
 
   it('follows the time of a run and the answers to its commands', async () => {
     const { time, socket } = await open();
-    expect(time.supported()).toBe(true);
 
     // Started paused: the state says that it stands still, the time event where
     let at = await play(socket, 'ws-time', 0, timeEvent({ sim_ms: 0 }));
@@ -334,11 +328,5 @@ describe('TimeControl', () => {
     await sendStep(time);
     client.close();
     expect(time.sending()).toBeNull();
-  });
-
-  it('says that a launcher without time commands has none', async () => {
-    const { time, socket } = await open(['events', 'stdin-commands', 'check-variables']);
-    await play(socket, 'ws-time', 0, standing);
-    expect(time.supported()).toBe(false);
   });
 });

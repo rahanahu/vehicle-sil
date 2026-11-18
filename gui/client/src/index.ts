@@ -16,12 +16,7 @@ export type {
   TimeFailure,
   TimeState,
 } from './time';
-export {
-  ANSWER_TIMEOUT_MS,
-  FEATURE_SPEED,
-  FEATURE_START_PAUSED,
-  FEATURE_TIME_COMMANDS,
-} from './time';
+export { ANSWER_TIMEOUT_MS } from './time';
 
 // Front door: `connect()` returns it. Built on the client above (`front.low`); the client keeps its names and shapes.
 export { connect, createFront, until, watch } from './front';
@@ -124,9 +119,6 @@ export type {
 
 // Shapes of the server API (gui/protocol/ is the authority), and parsers for those who read the API themselves
 export {
-  FEATURE_SCENARIO,
-  FEATURE_SCENARIO_CONTROL,
-  FEATURE_MANUAL,
   PHASES,
   PROTOCOL_VERSION,
   ProtocolError,

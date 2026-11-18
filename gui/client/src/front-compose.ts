@@ -25,9 +25,6 @@ import type {
   RunState,
 } from './front-types';
 
-/** The feature of the launcher that the GUI server lists once it passes `run_until` on. */
-export const FEATURE_RUN_UNTIL = 'stdin-run-until';
-
 /** Everything the composition reads. */
 export interface Snapshot {
   connection: ConnectionState;
@@ -44,7 +41,6 @@ export interface Snapshot {
   /** What the GUI server accepts (null until it says). */
   allowed: ServerAllowed | null;
   limits: AppInfo['limits'];
-  features: readonly string[];
   /** Operations of this page whose request has not been answered yet. */
   busy: ReadonlySet<OperationName>;
 }
@@ -348,14 +344,7 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
   const speedItem = state?.allowed['speed'];
   const speedMin = numberOf(speedItem, 'min') ?? s.limits.speed_min;
   const speedMax = numberOf(speedItem, 'max') ?? s.limits.speed_max;
-  const runUntilBase = timeControl('run_until', 'run until');
-  const runUntil = s.features.includes(FEATURE_RUN_UNTIL)
-    ? runUntilBase
-    : control(
-        false,
-        reason('unsupported', 'this launcher cannot run until a time: step reaches a time'),
-        runUntilBase.caution,
-      );
+  const runUntil = timeControl('run_until', 'run until');
 
   const controls: FrontControls = {
     start,

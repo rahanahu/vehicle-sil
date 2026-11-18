@@ -15,16 +15,7 @@ import { MatCardModule } from '@angular/material/card';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
-import {
-  CheckResult,
-  FEATURE_MANUAL,
-  FEATURE_SCENARIO,
-  FEATURE_SPEED,
-  FEATURE_START_PAUSED,
-  Intent,
-  Speed,
-  errorMessage,
-} from '@vehicle-sil/gui-client';
+import { CheckResult, Intent, Speed, errorMessage } from '@vehicle-sil/gui-client';
 import { pageIntent } from '@vehicle-sil/gui-client/elements';
 import { AuthToken } from '../core/auth/auth-token';
 import { shortPath } from '../core/format/short-path';
@@ -253,10 +244,6 @@ export class RunPage {
     equal: (a, b) => a.size === b.size && [...a].every((name) => b.has(name)),
   });
 
-  /** ランチャーが、利用者が起動する participant を持てるか（できないときは切り替えを出さず、送らない）。 */
-  protected readonly manualSupported = computed(() =>
-    this.info.features().includes(FEATURE_MANUAL),
-  );
   /**
    * 画面で「自分で起動する」にした participant（構成ファイルの manual: true は照合の結果にある）。ファイルを変えたら、
    * そのファイルのセッションで指定したもの（なければ空）に戻す。
@@ -283,19 +270,11 @@ export class RunPage {
     equal: (a, b) => a.size === b.size && [...a].every((name) => b.has(name)),
   });
   /**
-   * 送る「自分で起動する」: ランチャーが持てるときだけ。外したものと重ならないのは、照合の欄（check-panel）が外すときに
-   * 消すから（重なれば、ランチャーが照合で断る）。
+   * 送る「自分で起動する」。外したものと重ならないのは、照合の欄（check-panel）が外すときに消すから（重なれば、
+   * ランチャーが照合で断る）。
    */
-  private readonly manualToSend = computed(() =>
-    this.manualSupported() ? [...this.manual()].sort() : null,
-  );
+  private readonly manualToSend = computed(() => [...this.manual()].sort());
 
-  /** ランチャーが速度を変えられるか（できないときは欄を出さず、速度を送らない）。 */
-  protected readonly speedSupported = computed(() => this.info.features().includes(FEATURE_SPEED));
-  /** ランチャーが止めた状態で始められるか（できないときは欄を出さず、送らない）。 */
-  protected readonly startPausedSupported = computed(() =>
-    this.info.features().includes(FEATURE_START_PAUSED),
-  );
   protected readonly speedRange = this.info.limits;
   /**
    * 帯に一時停止と再開を出すか: 始めてから、結果が出るかランチャーが終わるまで。止めるよう頼んだ後も、押せないまま
@@ -304,19 +283,13 @@ export class RunPage {
    */
   protected readonly timeButtonsShown = computed(() => {
     const session = this.session();
-    if (!this.time.supported()) return false;
     if (this.run.starting()) return true;
     return !!session && session.launcher.running && !session.result;
   });
-  /** 「時刻」のカードを出すか: 実行中で、ランチャーが時刻の操作か速度を持つとき（速度だけなら、見るだけ）。 */
+  /** 「時刻」のカードを出すか: 実行中（結果が出るかランチャーが終わるまで）。 */
   protected readonly timeCardShown = computed(() => {
     const session = this.session();
-    return (
-      (this.time.supported() || this.speedSupported()) &&
-      !!session &&
-      session.launcher.running &&
-      !session.result
-    );
+    return !!session && session.launcher.running && !session.result;
   });
   /** 速度。前の実行のもの（なければ構成ファイルのとおり）から始める。 */
   protected readonly speed = linkedSignal<Speed>(() => {
@@ -332,17 +305,11 @@ export class RunPage {
    */
   protected readonly startPaused = signal(this.carried?.startPaused ?? false);
 
-  /** ランチャーがシナリオを回せるか（できないときは欄を出さず、送らない）。 */
-  protected readonly scenarioSupported = computed(() =>
-    this.info.features().includes(FEATURE_SCENARIO),
-  );
   /** 選んだ構成ファイルの隣の scenarios のシナリオ（ランチャーが動いている間は読まない）。 */
   protected readonly scenarios = resource({
     params: () => {
       const file = this.selected();
-      if (!this.scenarioSupported() || !this.auth.token() || file === null || this.running()) {
-        return undefined;
-      }
+      if (!this.auth.token() || file === null || this.running()) return undefined;
       return { file };
     },
     loader: ({ params }) => this.info.scenarios(params.file),
@@ -403,14 +370,13 @@ export class RunPage {
    */
   private readonly intent = computed<Intent>(
     () => {
-      const manual = this.manualToSend();
       const scenario = this.chosenScenario();
-      const speed = this.speedSupported() ? this.speed() : null;
-      const paused = scenario === null && this.startPausedSupported() && this.startPaused();
+      const speed = this.speed();
+      const paused = scenario === null && this.startPaused();
       const connect = this.connectToSend();
       return {
         disable: [...this.disabled()].sort(),
-        ...(manual !== null ? { manual } : {}),
+        manual: this.manualToSend(),
         ...(scenario !== null ? { scenario } : {}),
         ...(speed !== null ? { speed } : {}),
         ...(paused ? { start_paused: true } : {}),
@@ -476,12 +442,12 @@ export class RunPage {
   /** 始められない理由（なければ空）。ランチャーやサーバーが断る理由は、帯が正面の口の `controls.start` から出す。 */
   protected readonly blockedBy = computed<string[]>(() => {
     if (this.selected() === null) return [$localize`構成ファイルを選んでください。`];
-    if (this.speedSupported() && this.speedInvalid()) {
+    if (this.speedInvalid()) {
       return [$localize`速度の倍率が範囲の外です。`];
     }
     // 選んだシナリオを送れないうちは始めない（シナリオなしの実行が始まらないように）
     const scenario = this.scenarioChoice();
-    if (this.scenarioSupported() && scenario !== null && this.chosenScenario() === null) {
+    if (scenario !== null && this.chosenScenario() === null) {
       if (this.scenarios.error()) {
         return [$localize`シナリオの一覧を読めないので、選んだシナリオで始められません。`];
       }

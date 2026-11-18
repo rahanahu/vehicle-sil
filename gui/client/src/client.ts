@@ -216,7 +216,6 @@ export function buildClient(options: ClientOptions): ClientParts {
   const run = new RunControl(session, http, onError, () => longRequestMs(limits.get()));
   const time = new TimeControl(
     session.session,
-    app.readonly(),
     http,
     options.answerTimeoutMs ?? ANSWER_TIMEOUT_MS,
     onError,
