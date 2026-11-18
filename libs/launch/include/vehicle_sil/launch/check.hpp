@@ -23,9 +23,6 @@
 
 namespace vehicle_sil::launch {
 
-/// The version of the JSON that format_json() writes (its "vehicle_sil_check" key).
-inline constexpr int kCheckFormat = 1;
-
 /// What an executable reported with --describe (docs/ecu-executable.md).
 struct ReportedEcu
 {
@@ -336,8 +333,6 @@ struct CheckReport
     [[nodiscard]] std::size_t notes() const;
     /// true if the file was read and has no error (with `strict`: and no warning).
     [[nodiscard]] bool passed() const;
-    /// The process exit code of `check`: 4 usage, 3 the file was not read, 1 it did not pass, 0 it passed.
-    [[nodiscard]] int exit_code() const;
 };
 
 /// Puts the findings in the report's order: the errors, the warnings, the notes, each by file (the
@@ -348,8 +343,5 @@ struct CheckReport
 [[nodiscard]] control::MappedSchema seen_variables(const ParticipantConfig& participant, const ReportedEcu& ecu);
 
 void sort_findings(std::vector<Finding>& findings);
-
-/// How long one --describe may take unless the request says otherwise (RunHost::describe_timeout).
-inline constexpr std::chrono::milliseconds kDescribeTimeout{10000};
 
 } // namespace vehicle_sil::launch

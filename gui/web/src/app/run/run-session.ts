@@ -1,5 +1,5 @@
 import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
-import { RunRequest } from '@vehicle-sil/gui-client';
+import { CheckResult, Intent } from '@vehicle-sil/gui-client';
 import { RunCommands } from '../core/session/run-commands';
 import { ServerConnection } from '../core/session/server-connection';
 
@@ -66,9 +66,18 @@ export class RunSession {
     inject(DestroyRef).onDestroy(() => clearInterval(timer));
   }
 
-  /** 実行を始める。 */
-  start(request: RunRequest): void {
-    this.commands.start(request);
+  /** `file` を `intent` で照合する（RunCommands.check）。 */
+  check(
+    intent: Intent,
+    file: string,
+    options: { signal?: AbortSignal; fresh?: boolean } = {},
+  ): Promise<CheckResult> {
+    return this.commands.check(intent, file, options);
+  }
+
+  /** `file` の実行を `intent` で始める。 */
+  start(intent: Intent, file: string): void {
+    this.commands.start(intent, file);
   }
 
   /** 順に止める（participant の終わりを待つ）。何度頼んでも、待たずに止めることにはならない。 */

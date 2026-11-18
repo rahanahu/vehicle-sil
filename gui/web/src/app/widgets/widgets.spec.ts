@@ -69,7 +69,24 @@ const variables = (state = 'ready', connected = true) => ({
   operations: [],
 });
 
-const hello = (state = 'ready', id = 1) => ({
+const TAKES = { ok: true, reason: null, message: null, caution: null };
+
+/** ランチャーの state（write: その `allowed.write`）。部品は、ランチャーが受けると言うまで書かない。 */
+const launcherState = (write: object = TAKES) => ({
+  seq: 5,
+  rev: 5,
+  phase: 'running',
+  paused: false,
+  holding: false,
+  speed: 1,
+  pacing: 'on-time',
+  stop: { requests: 0, by: null },
+  scenario: false,
+  allowed: { write },
+  outside: [],
+});
+
+const hello = (state = 'ready', id = 1, write: object = TAKES) => ({
   type: 'hello',
   vehicle_sil_gui: 1,
   version: '0.1.0',
@@ -80,6 +97,7 @@ const hello = (state = 'ready', id = 1) => ({
     launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
     stop: 'none',
     variables: variables(state),
+    launcher_state: launcherState(write),
   },
   replay: null,
 });
@@ -435,6 +453,36 @@ describe('variable widgets', () => {
       'パラメーターは、止めて始めた実行の最初のステップの前だけ書けます',
     );
     expect(select.textContent).toContain('on');
+  });
+
+  it('does not let anything be written while the launcher does not take writes, and says why in its words', async () => {
+    const fixture = TestBed.createComponent(SwitchWidget);
+    fixture.componentRef.setInput('ref', ref('engine.enabled'));
+    fixture.detectChanges();
+    fake.sockets[0].open();
+    const refused = (reason: string, message: string) => ({
+      ok: false,
+      reason,
+      message,
+      caution: null,
+    });
+    await deliver(fixture, hello('ready', 1, refused('scenario-running', 'a scenario plays')));
+    const button = element<HTMLButtonElement>(fixture, 'button[role="switch"]');
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(text(fixture, 'widget-why')).toBe('シナリオの実行中は書けません（見るだけです）');
+    expect(element(fixture, '[data-testid="widget-why"] [lang="en"]')).toBeNull();
+    button.click();
+    expect(writes()).toHaveLength(0);
+
+    // 画面の言葉のない理由は、ランチャーの英語の文をそのまま（lang="en"）
+    await deliver(
+      fixture,
+      hello('ready', 2, refused('some-new-reason', 'the launcher says no for now')),
+    );
+    expect(text(fixture, 'widget-why')).toBe('the launcher says no for now');
+    expect(element(fixture, '[data-testid="widget-why"] [lang="en"]').textContent).toBe(
+      'the launcher says no for now',
+    );
   });
 
   it('does not let anything be written when the run has ended', async () => {

@@ -2,8 +2,8 @@
 //
 // Reading the simulation configuration (vehicle_sil::launch::read_config()): a correct file in
 // YAML and in JSON, every rule of the text with its message and line, many errors at once, the
-// files that cannot be read; the executables (resolve_executable(), check_executable()); the
-// placeholders; "did you mean".
+// files that cannot be read; the executables (resolve_executable(), executable_status() and
+// executable_finding()); the placeholders; "did you mean".
 #include "launch_test_util.hpp"
 
 #include "vehicle_sil/launch/config.hpp"
@@ -25,6 +25,12 @@ using vehicle_sil::launch::test::check_text;
 using vehicle_sil::launch::test::lines;
 
 namespace {
+
+/// What check_file() does with a participant's executable: looks at the file, then judges it.
+std::optional<Finding> check_executable(const ParticipantConfig& participant, const fs::path& path)
+{
+    return executable_finding(participant, path, executable_status(path));
+}
 
 constexpr const char* kExample = R"(# two ECUs
 vehicle_sil_simulation: 1

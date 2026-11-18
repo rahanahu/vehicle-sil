@@ -101,7 +101,7 @@ test('while a scenario runs, the variables can be read but not written', async (
     data: { file: 'forever.yaml', disable: [], scenario: 'scenarios/throttle.yaml', speed: 0.001 },
   });
   expect(response.status()).toBe(200);
-  await expect(page.getByTestId('variables-notice')).toContainText('シナリオの実行中です', {
+  await expect(page.getByTestId('variables-notice')).toContainText('シナリオの実行中は書けません', {
     timeout: RUN_TIMEOUT,
   });
   const demand = widget(page, 'Engine', 'engine.demand');

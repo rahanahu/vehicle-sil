@@ -103,10 +103,10 @@ In the browser, call `takeToken(window)`. It reads `#token=` from the URL, remov
 | Kind     | Name                                                                                                                                           |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | Type     | `ClientSession` (`session`, `ready`, `allowed`, `lastEventAt`, `notices`, `rejected`, `incompatible`, `onMessages`, `report`, `dismissNotice`) |
-| Type     | `Notice`, `SessionView`, `ParticipantView`, `LauncherView`, `LogLine`, `LogSource`, `TimeView`, `CommandView`, `RunOutcome`                    |
-| Function | `runOutcome`, `phaseIndex`, `isHolding`                                                                                                        |
+| Type     | `Notice`, `SessionView`, `ParticipantView`, `LauncherView`, `LogLine`, `LogSource`, `TimeView`, `CommandView`, `RunOutcome`, `LauncherAnswer`  |
+| Function | `runOutcome`, `phaseIndex`, `isHolding`, `launcherAnswer`                                                                                      |
 
-`ClientSession.allowed` is what the GUI server accepts now (`start`, `stop` and `force`, each with `ok`, a `reason` code and a `message`; the larger `rev` wins; `null` until the server says). `SessionView.launcherState` is the launcher's last `state` event (where the run stands and what it accepts; the larger `rev` wins; `null` until one arrives).
+`ClientSession.allowed` is what the GUI server accepts now (`start`, `stop` and `force`, each with `ok`, a `reason` code and a `message`; the larger `rev` wins; `null` until the server says). `SessionView.launcherState` is the launcher's last `state` event (where the run stands and what it accepts; the larger `rev` wins; `null` until one arrives). `launcherAnswer(launcherState, name)` reads what it says of one operation (`write`, `pause`, ...): `reason` (`null` when the launcher accepts it) and `caution`. A launcher that has not said (no `state` yet, or no entry for the operation) does not accept it (`unsupported`). The front door's `controls` and `variables.bind` read the launcher with it.
 
 ### Run control
 
@@ -136,16 +136,16 @@ In the browser, call `takeToken(window)`. It reads `#token=` from the URL, remov
 
 ### Binding variables to widgets (`bind`)
 
-| Kind     | Name                                                                                                                 |
-| -------- | -------------------------------------------------------------------------------------------------------------------- |
-| Method   | `client.variables.bind(ref, options)`                                                                                |
-| Type     | `BindOptions` (`periodMs`, `history`, `needsRange`, `needsValue`, `visible`)                                         |
-| Type     | `VariableBinding` (`ref`, `state`, `history()`, `write(value)`, `reject(message)`, `setVisible(visible)`, `close()`) |
-| Type     | `BoundVariable` (`ref`, `info`, `reading`, `condition`, `block`, `writeStatus`, `pending`)                           |
-| Type     | `ValueCondition`, `WriteBlock`, `WriteStatus`, `WriteValue`                                                          |
-| Function | `isWriteError`, `hasRange`                                                                                           |
-| Function | `valueCondition` (`ConditionInput`), `writeBlock` (`WriteBlockInput`)                                                |
-| Constant | `DROPPED_MESSAGE`                                                                                                    |
+| Kind     | Name                                                                                                                      |
+| -------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Method   | `client.variables.bind(ref, options)`                                                                                     |
+| Type     | `BindOptions` (`periodMs`, `history`, `needsRange`, `needsValue`, `visible`)                                              |
+| Type     | `VariableBinding` (`ref`, `state`, `history()`, `write(value)`, `reject(message)`, `setVisible(visible)`, `close()`)      |
+| Type     | `BoundVariable` (`ref`, `info`, `reading`, `condition`, `block`, `launcherReason` (a `Reason`), `writeStatus`, `pending`) |
+| Type     | `ValueCondition`, `WriteBlock`, `WriteStatus`, `WriteValue`                                                               |
+| Function | `isWriteError`, `hasRange`                                                                                                |
+| Function | `valueCondition` (`ConditionInput`), `writeBlock` (`WriteBlockInput`)                                                     |
+| Constant | `DROPPED_MESSAGE`                                                                                                         |
 
 `valueCondition`, `writeBlock` and `hasRange` are the pure functions that `bind` builds its state with.
 
@@ -364,7 +364,7 @@ const stop = watch(client.outside, (rows) => console.log(rows.map((r) => r.condi
 
 - **`connections({ network }, { file }?)`** asks `POST api/connections` and lays the answer out as one list, in its order: `{ backend, value, label, detail, usable, reason }` for each target, and `{ backend, error }` (the launcher's sentence) for a backend whose bridge could not list, or for an error of the file. Tell the two apart with `'error' in entry`. A list that lacks a backend (exit code 1) is not a failure. It starts that network's bridge on the computer of the GUI server (on Windows, Npcap may ask to raise the rights there), so call it when the user opens the choice, not when the page opens. The list is that computer's, not the browser's. It rejects with an `ActionError` (`check-busy`, `unknown-network`, ...).
 - **`intent.connect`** maps a network to a `value` that the list gave with `usable: true`, as written there; `'none'` keeps it on SIL Kit only, the same as leaving it out. The server refuses a value that its last list of that network did not give (`target-not-listed`): list the network again. **`intent.time_policy`** is `realtime` (the launcher's default: a connected run keeps real time) or `free`.
-- **`check(intent?, { file }?)`** returns the launcher's check result of what `run.start(intent)` would start (`findings`; `time_lock` and `networks[].outside` are in `raw`), or rejects with an `ActionError`. Its failure is not put into `status.problem`.
+- **`check(intent?, { file, signal }?)`** returns the launcher's check result of what `run.start(intent)` would start (`findings`; `time_lock` and `networks[].outside` are in `raw`), or rejects with an `ActionError`. Its failure is not put into `status.problem`. It sends one check at a time: the next is sent after the answer to the one before (the server runs checks one at a time and refuses with `check-busy` when too many wait). A check of the same intent and file as one that waits or is on its way shares it, so the parts and the screen of a page that check the same page intent make one check. A check that waits is not sent when `signal` has aborted for every caller of it; it rejects with the signal's reason. A check on its way is shared too, and its answer reads the file as it was when it was sent: pass `fresh: true` when the user asks to check again (it shares only a check that waits). After `close()`, a check that waits is not sent and rejects with `closed`.
 - **`outside`** has one row for each network that the run's `connect` connected: `network`, `target`, `participant`, `link` (Ethernet) or `bus` (CAN), `condition` (`ok`, `interrupted`, `degraded`), `reasons` (codes, in the launcher's order), `nothing_received` (apart from `condition`), and `to_outside` and `from_outside` (`null` until an `outside` event has arrived on this page). It is empty while no run is going, and in a run that a `role: bridge` participant of the file connects: do not read from it whether the run is connected outside (`time_lock.because` of the check says what makes the run keep real time). How the run ended, `connect-failed` and `connect-lost` included, is in `status`.
 
 ### One variable
@@ -445,7 +445,7 @@ A variable is written `ECU.variable` (cut at the first dot), as for `client.vari
 
 The words are English. Attributes rename the buttons (`label-start` and the others in the table, and `label` of `<vsil-write>`). The sentences of reasons (a button that cannot be used, `caution`, the problem, why a variable cannot be written) come from the owner of the reason, in English; `setReasonText(fn)` replaces them: `fn(reason)` returns the sentence, or `null` or `undefined` to keep the English one, and `setReasonText(null)` removes it. Call it before the parts are in the page. The other words of the parts (`ready`, `writing…`, `(no scenario)`, `fastest`, `behind real time`, `Step (ms)`, `Until (ms)`, `Speed`, `-`, the default `on` and `off`, `SIL Kit only (not connected)`, the sentence of a choice taken back to SIL Kit only, and `link`, `bus`, `to outside`, `from outside` and `nothing received` of `<vsil-outside>`) cannot be changed.
 
-The choosing parts and the start button are separate elements, so the module keeps what the page selected for the next run in `pageIntent` (`get()`, `subscribe(fn)` and `update(patch)`; a field set to `''` or `undefined` is removed). `<vsil-scenario-select>` writes `scenario`; `<vsil-run-controls>` starts with `{ ...pageIntent.get(), ...intent }`, so its `intent` property wins, and it starts the file that `status.file` names, the same file whose scenarios `<vsil-scenario-select>` lists (the server's start-up file when no run has been started). A screen that starts a run with its own code passes the intent to `client.run.start(intent)` itself.
+The choosing parts and the start button are separate elements, so the module keeps what the page selected for the next run in `pageIntent` (`get()`, `subscribe(fn)` and `update(patch)`; a field set to `''` or `undefined` is removed). `<vsil-scenario-select>` writes `scenario`; `<vsil-run-controls>` starts with `{ ...pageIntent.get(), ...intent }`, so its `intent` property wins, and it starts the file that `status.file` names, the same file whose scenarios `<vsil-scenario-select>` lists (the server's start-up file when no run has been started). A screen that starts a run with its own code passes the intent to `client.run.start(intent)` itself; it writes the choices that the check sees into `pageIntent` too, so that `<vsil-connect>` checks what the screen will start.
 
 Start the GUI server with a configuration file (`vehicle-sil-gui --web my-screen simulation.yaml`). Without one the server has no start-up file, and a screen made of parts alone cannot start a run: `<vsil-status>` shows the refusal (`no-file`). Only your own code can name the file then: `client.run.start(intent, { file })`.
 
@@ -465,7 +465,7 @@ The parts need a DOM, so Node does not load them (the main entry does not import
 
 `<vsil-connect network="ETH_EXT">` is a plain `<select>`. Its first choice is `none` (SIL Kit only). It asks for the list (`connections()`) only when the user opens it: a press, or a key other than Tab, Shift, Escape and the modifiers alone (passing it by with Tab asks for nothing, and neither does opening the page). It asks again each time, with `aria-busy` while it waits. The targets come in the list's order, under the name of their backend (`<optgroup>`). A target that cannot be used is a `disabled` option whose text is its label, its detail and the launcher's reason; a backend that has no list is a line in the element that describes the select (`aria-describedby`). The choice goes into `pageIntent.connect` (`none` takes the network out). A choice that the page put into `pageIntent` itself is shown as written. The part lists and checks the configuration file that its `file` attribute names (default: the start-up file, as `run.start`): a page that starts another file sets `file` to it.
 
-While the network has a choice, the part checks the page intent (`check()`) about 200 ms after it last changed, whichever part or script changed it; the parts of a page that check the same intent share one check. It shows, as the launcher wrote them, the findings `connect-*` and `outside-*` of its network, the `connect-*` findings of the other networks of `connect` after their name (`CAN1: ...`; a finding about two networks names one of them), and the `outside-*` findings of the run when the check says that this network makes the run keep real time (`time_lock.because`). Each line has `data-code` and `data-severity`. These lines are a guide before the start: what the run does is decided when it starts, by the GUI server and the launcher. A refusal is shown as the server wrote it. After `target-not-listed`, a part that the user has opened lists the network again, once, and checks again if the choice is still listed. When a new list does not offer the choice, or offers it as one that cannot be used, the choice goes back to `none`: a line in the description says which value and why (`'<value>' is not in the list of this computer: back to SIL Kit only`, or `'<value>' cannot be used (<reason>): back to SIL Kit only`), and `data-reverted` holds the value until the user chooses again. The part does not keep a choice from one page load to the next, and it has no choice of `time_policy`: the page sets it with `pageIntent.update({ time_policy: 'free' })`.
+While the network has a choice, the part checks the page intent (`check()`) about 200 ms after it last changed, whichever part or script changed it; the parts and the screen of a page that check the same intent share one check (`check()` shares it). It shows, as the launcher wrote them, the findings `connect-*` and `outside-*` of its network, the `connect-*` findings of the other networks of `connect` after their name (`CAN1: ...`; a finding about two networks names one of them), and the `outside-*` findings of the run when the check says that this network makes the run keep real time (`time_lock.because`). Each line has `data-code` and `data-severity`. These lines are a guide before the start: what the run does is decided when it starts, by the GUI server and the launcher. A refusal is shown as the server wrote it. After `target-not-listed`, a part that the user has opened lists the network again, once, and checks again if the choice is still listed. When a new list does not offer the choice, or offers it as one that cannot be used, the choice goes back to `none`: a line in the description says which value and why (`'<value>' is not in the list of this computer: back to SIL Kit only`, or `'<value>' cannot be used (<reason>): back to SIL Kit only`), and `data-reverted` holds the value until the user chooses again. The part does not keep a choice from one page load to the next, and it has no choice of `time_policy`: the page sets it with `pageIntent.update({ time_policy: 'free' })`.
 
 `<vsil-outside>` draws the rows of `client.outside` in words (not only in colour; the counts are not a live region, since they change every second), and nothing when there are none.
 
@@ -619,14 +619,15 @@ Always call `close()` when you are done (it cleans up the watch and the subscrip
 
 ### Fields of `state` (`BoundVariable`)
 
-| Field         | Contents                                                                                         |
-| ------------- | ------------------------------------------------------------------------------------------------ |
-| `info`        | The variable definition (`undefined` if the current run does not have the variable)              |
-| `reading`     | The last value (`VariableReading`; `undefined` if there is none yet or while `visible` is false) |
-| `condition`   | The value condition ("Value condition (`condition`)" below)                                      |
-| `block`       | Why the variable cannot be written now ("Why a write is blocked (`block`)" below)                |
-| `writeStatus` | The status of the last write ("Write status (`writeStatus`, `pending`)" below)                   |
-| `pending`     | The value sent and still waiting for its result (`null` if none)                                 |
+| Field            | Contents                                                                                                                            |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `info`           | The variable definition (`undefined` if the current run does not have the variable)                                                 |
+| `reading`        | The last value (`VariableReading`; `undefined` if there is none yet or while `visible` is false)                                    |
+| `condition`      | The value condition ("Value condition (`condition`)" below)                                                                         |
+| `block`          | Why the variable cannot be written now ("Why a write is blocked (`block`)" below)                                                   |
+| `launcherReason` | When `block` is `launcher`: the launcher's reason (`code` and an English `message`, as `launcherAnswer` reads it); `null` otherwise |
+| `writeStatus`    | The status of the last write ("Write status (`writeStatus`, `pending`)" below)                                                      |
+| `pending`        | The value sent and still waiting for its result (`null` if none)                                                                    |
 
 - `subscribe` is called only on changes (get the first state with `state.get()`).
 - `get()` always builds the state from the current values. So if you call `get()` during a notification of another `Readable` (such as `client.variables.state`), it may notify this `state`'s subscribers of a new state right there.
@@ -658,18 +659,20 @@ The `status` of `unavailable` is one of: not running, this run has no variables,
 
 `null` if the variable can be written. If several reasons apply, `block` is the one highest in the table.
 
-| `block`             | Meaning                                                                                                                                     |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `read-only`         | A read-only variable (`role` is `output`)                                                                                                   |
-| `disconnected`      | The connection between the client and the server is down                                                                                    |
-| `ended`             | The run ended                                                                                                                               |
-| `not-ready`         | The variable feature is not available (not running, connecting, cannot connect)                                                             |
-| `missing`           | The current run does not have the variable                                                                                                  |
-| `peer-disconnected` | The ECU is not connected to the Control Server                                                                                              |
-| `parameter`         | A `parameter` can be written only before the first step of a run started paused (`isHolding(session)`: `holding` in the launcher's `state`) |
-| `scenario`          | A scenario is running (view only)                                                                                                           |
-| `no-range`          | `needsRange` is set, but the variable has no range (`min` and `max`)                                                                        |
-| `no-value`          | `needsValue` is set, and there is no value yet (neither read nor sent)                                                                      |
+The facts of the variable and the run come first, then the launcher's answer (`launcher`), then the client's prediction (`parameter`), then what the widget needs. Only `launcher` comes from the launcher; the other values are the client's own. The client has no rule of its own about what the launcher accepts: when the launcher takes a write during a scenario, `bind` lets it through. It reads the launcher's answer with `launcherAnswer(launcherState, 'write')`, as `controls` of the front door read theirs.
+
+| `block`             | Meaning                                                                                                                                                                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read-only`         | A read-only variable (`role` is `output`)                                                                                                                                                                                                                                 |
+| `disconnected`      | The connection between the client and the server is down                                                                                                                                                                                                                  |
+| `ended`             | The run ended                                                                                                                                                                                                                                                             |
+| `not-ready`         | The variable feature is not available (not running, connecting, cannot connect)                                                                                                                                                                                           |
+| `missing`           | The current run does not have the variable                                                                                                                                                                                                                                |
+| `peer-disconnected` | The ECU is not connected to the Control Server                                                                                                                                                                                                                            |
+| `launcher`          | The launcher does not take a write now (`allowed.write` of its `state`; `launcherReason` has its code and sentence, for example `scenario-running` while a scenario plays), or has not said yet that it does: until a `state` with `allowed.write` arrives, `unsupported` |
+| `parameter`         | A `parameter` can be written only before the first step of a run started paused (`isHolding(session)`: `holding` in the launcher's `state`). The client's prediction of the ECU's rule: the launcher does not say it for each variable                                    |
+| `no-range`          | `needsRange` is set, but the variable has no range (`min` and `max`)                                                                                                                                                                                                      |
+| `no-value`          | `needsValue` is set, and there is no value yet (neither read nor sent)                                                                                                                                                                                                    |
 
 ### Write status (`writeStatus`, `pending`)
 

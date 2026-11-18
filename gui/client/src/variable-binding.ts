@@ -1,6 +1,6 @@
 import type { VariableAvailability } from './protocol';
 import { ConnectionState } from './connection';
-import { SessionView, isHolding } from './session-state';
+import { Reason, SessionView, isHolding, launcherAnswer } from './session-state';
 import { ErrorSink, Readable, Writable, callEach } from './values';
 import {
   ValueCondition,
@@ -67,6 +67,11 @@ export interface BoundVariable {
   /** Why the variable cannot be written now (null if it can). */
   readonly block: WriteBlock | null;
   /**
+   * When block is `launcher`: the launcher's reason, as it wrote it in `allowed.write` of its `state` (`code`, such as
+   * `scenario-running`, and one English sentence). null otherwise.
+   */
+  readonly launcherReason: Reason | null;
+  /**
    * Status of the last write to this variable (in the current run). Every bind of the same variable sees the same
    * status.
    */
@@ -128,7 +133,7 @@ export interface VariableBinding {
 /** Text used when a held value was not sent (dropped of WriteStatus). */
 export const DROPPED_MESSAGE =
   'the value kept back was not sent: the variable cannot be written any more ' +
-  '(the run ended or another one started, or the ECU is not connected). ' +
+  '(the run ended or another one started, the ECU is not connected, or the launcher does not take writes now). ' +
   'Check the value and write it again';
 
 /** What bind reads (the client's state). */
@@ -235,8 +240,8 @@ export class VariableBinder {
   }
 
   /**
-   * Why the variable cannot be written now (null if it can). Only the widget-independent reasons (Binding adds
-   * scenario, range and value).
+   * Why the variable cannot be written now (null if it can). Only the widget-independent reasons (Binding adds range
+   * and value).
    */
   block(ref: VariableRef): WriteBlock | null {
     return writeBlock({
@@ -245,7 +250,16 @@ export class VariableBinder {
       connected: this.connected(),
       beforeStart: isHolding(this.sources.session.get()),
       peerConnected: this.peerConnected(ref.peer),
+      launcherRefuses: this.launcherReason() !== null,
     });
+  }
+
+  /**
+   * Why the launcher does not take a write now (launcherAnswer of its last `state`; `unsupported` until a `state` says).
+   * The client keeps no rule of its own about it.
+   */
+  launcherReason(): Reason | null {
+    return launcherAnswer(this.sources.session.get()?.launcherState ?? null, 'write').reason;
   }
 
   /** Status of the last write to that variable in the current run. */
@@ -426,6 +440,8 @@ function sameBound(a: BoundVariable, b: BoundVariable): boolean {
     a.availability === b.availability &&
     a.reading === b.reading &&
     a.block === b.block &&
+    a.launcherReason?.code === b.launcherReason?.code &&
+    a.launcherReason?.message === b.launcherReason?.message &&
     a.writeStatus === b.writeStatus &&
     a.pending === b.pending &&
     sameCondition(a.condition, b.condition)
@@ -487,13 +503,15 @@ class Binding implements VariableBinding {
       readFailing: variables.status === 'ready' && variables.reason !== null,
     });
     const pending = binder.pending(ref);
+    const block = this.blockOf(info, reading, pending);
     return {
       ref,
       info,
       availability: variables.availability.get(ref.peer)?.get(ref.name) ?? 'unknown',
       reading,
       condition,
-      block: this.blockOf(info, reading, pending),
+      block,
+      launcherReason: block === 'launcher' ? binder.launcherReason() : null,
       writeStatus: binder.status(ref),
       pending,
     };
@@ -506,9 +524,6 @@ class Binding implements VariableBinding {
   ): WriteBlock | null {
     const base = this.binder.block(this.ref);
     if (base !== null) return base;
-    // While a scenario runs, the variable is watch-only (no write status is kept; the server refuses writes too)
-    const session = this.binder.sources.session.get();
-    if (session?.scenario && session.launcher.running) return 'scenario';
     if (this.options.needsRange && info && !hasRange(info)) return 'no-range';
     if (this.options.needsValue && reading === undefined && pending === null) return 'no-value';
     return null;

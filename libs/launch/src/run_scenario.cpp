@@ -11,6 +11,17 @@ namespace {
 
 namespace orch = SilKit::Services::Orchestration;
 
+/// One step in words, as a line of the run's output says it when the step is decided:
+/// "line 4: set ...: ok at 100 ms", with the step's message for one that failed or was skipped.
+std::string scenario_step_text(const ScenarioStepRun& step)
+{
+    // The time as the result's table of the steps says it (check_words.hpp: millis_text(), as
+    // scenario_text() writes it).
+    return "line " + std::to_string(step.line) + ": " + step.text + ": " + step_result_text(step.status) +
+           (step.at ? " at " + millis_text(to_ns(*step.at)) + " ms" : std::string{}) +
+           (step.status == StepStatus::Failed || step.status == StepStatus::Skipped ? " (" + step.message + ")" : std::string{});
+}
+
 } // namespace
 
 /// The engine's way to the ECUs: the hub, and a wait until each agent has answered.

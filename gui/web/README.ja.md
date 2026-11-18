@@ -156,7 +156,7 @@ e2e のテストは、GUI サーバーを自分で起動し、終わったら止
 | `server-connection.ts` | 接続とセッションのコピー                                                                        |
 | `server-info.ts`       | `api/app` と 1 回のリクエスト                                                                   |
 | `simulation-time.ts`   | 時間                                                                                            |
-| `run-commands.ts`      | 開始と停止                                                                                      |
+| `run-commands.ts`      | 照合、開始と停止                                                                                |
 | `ecu-variables.ts`     | ECU の変数                                                                                      |
 
 ### `run/`
@@ -252,7 +252,7 @@ API と WebSocket の URL は、先頭に `/` を付けずに書きます（`api
 **リクエストの送り方**:
 
 - 1 回の取得（`api/app`、`api/configs`）は、ラッパーの Promise を返すメソッドを `resource` の loader で呼ぶ。
-- 照合（`POST api/check`）は読み取りに近いので、signal から自動で送る。ただし、切り替えを少し待ってまとめ、前の照合のレスポンスを待ってから次を送り、古いレスポンスを捨てる（`run-page.ts` の `check`）。
+- 照合（`POST api/check`）は読み取りに近いので、signal から自動で送る。ただし、切り替えを少し待ってまとめ、古いレスポンスを捨てる（`run-page.ts` の `check`）。前の照合のレスポンスを待ってから次を送ることと、同じ意図の照合をページの部品と分け合うことは、正面の口の `check()` が行う。
 - 変更を伴うリクエスト（開始、停止、時間のコマンド）は、ラッパーのメソッドで送る。レスポンス（いまの要約）は、ライブラリがその場でセッションのコピーに反映する。
 
 **RxJS を使う所**:

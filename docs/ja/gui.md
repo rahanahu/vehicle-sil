@@ -589,7 +589,7 @@ ECU の変数の読み書きは、サーバーの API とクライアントの�
 選んだファイルの照合に `can` か `ethernet` のネットワークがあるときに出ます。ランチャーがすることは、[simulation-run.md](simulation-run.md#バスを外につなぐ--connect) の「バスを外につなぐ（`--connect`）」にあります。
 
 - **選ぶ**: 「構成ファイル」の下に、そのネットワークごとの選択があり、最初は `SIL Kit only (not connected)` です。先の一覧は、選択を開いたとき（マウスか、Tab と Escape 以外のキー）にだけ尋ねるので、SIL Kit だけを動かす PC ではブリッジを起こしません。一覧は GUI サーバーが動いている PC のもので、ブラウザーの PC のものではありません。使えない先は選べず、理由が出ます。先ごとのブリッジの文（たとえば、別の vehicle-sil のブリッジがそのデバイスを使っていること）は、ブリッジが書いたとおりに出ます。選択の言葉は、どちらの言語でも英語です（クライアントのライブラリの部品 `<vsil-connect>` のもの）。
-- **始める前**: 状態の帯の下に、始めるとどのネットワークをどこにつなぐかを出します。照合は選択を含めてやり直し、その所見（`connect-*`、`outside-*`。実行が実時間を保つという注記など）が、選択の下と「照合」のカードに出ます。
+- **始める前**: 状態の帯の下に、始めるとどのネットワークをどこにつなぐかを出します。照合は選択を含めてやり直し、その所見（`connect-*`、`outside-*`。実行が実時間を保つという注記など）が、選択の下と「照合」のカードに出ます。どちらも同じ照合で、画面の選択（participant、シナリオ、速度、「止めた状態で始める」、ネットワーク）を、開始が送るとおりに全部含みます。実時間を保つ実行は、等速以外の速度と「止めた状態で始める」を断ります: 照合が始める前にそう言い（誤り `outside-real-time`）、「開始」は押せないままです。
 - **実行中**: 選択は隠します（変えられず、一覧も尋ねません）。状態の帯の下の 1 行も出しません。「外につないだネットワーク」のカードに、つないだネットワークごとに 1 行が出ます。リンクかバス、状態とその理由、フレームの数です（部品 `<vsil-outside>`）。外につないだ実行は実時間を保つので、一時停止、ステップ、1 以外の速さは使えず、「時刻」のカードにランチャーの理由が出ます。「停止」はいつでも使えます。ブリッジの失敗（`connect-failed`、`connect-lost`）と終わりの所見は、結果に出ます。
 - **ページを開いている間は残る**: 実行の後も選択はそのままで、状態の帯の下の 1 行が、次に始めるとつなぐ先をまた言い、「もう一度実行」もそこにつなぎます。別の構成ファイルを選ぶと消えます。画面は選択を保存しません。画面を読み込み直した後と、言語を切り替えた後は、どのネットワークも `SIL Kit only (not connected)` に戻ります。
 - **時間の方針**: この画面は、いつも実時間を保ちます。`time_policy: free` は、コマンドライン（`--time-policy free`）か自作の画面から実行します。
@@ -763,7 +763,7 @@ const spec: DashboardSpec = {
 | `info` | 変数の定義 |
 | `reading` | 最後の値 |
 | `condition` | 値の状態 |
-| `block` | 書き込めない理由 |
+| `block`、`launcherReason` | 書き込めない理由（`launcherReason`: `block` が `launcher` のときの、ランチャーの code と文） |
 | `write(value)`、`writeStatus`、`pending` | 書き込みと、その状態 |
 
 - 値は、コンポーネントが見えている間だけ watch されます。
@@ -1064,7 +1064,7 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 |---|---|---|
 | `info`、`reading` | 変数の定義と、最後の値（いつの値かつき） | なし |
 | `condition` | 値の状態 | `condition.kind`: `unavailable`、`missing`、`waiting`、`live`、`paused`、`stale`、`ended` |
-| `block` | いま書き込めない理由（書き込めるなら `null`） | `read-only`、`disconnected`、`ended`、`not-ready`、`missing`、`peer-disconnected`、`parameter`、`scenario`、`no-range`、`no-value` |
+| `block` | いま書き込めない理由（書き込めるなら `null`） | `read-only`、`disconnected`、`ended`、`not-ready`、`missing`、`peer-disconnected`、`launcher`（ランチャーが書き込みを受けない、または受けるとまだ言っていない。理由は `launcherReason`）、`parameter`、`no-range`、`no-value` |
 | `writeStatus`、`pending` | 最後の書き込みの状態と、送って結果を待っている値 | `writeStatus.kind`: `idle`、`sending`、`queued`、`applied` など |
 
 `condition.kind` の意味は次のとおりです。`block` と `writeStatus` の値の意味と細かいルールは、[gui/client/README.md](../../gui/client/README.ja.md) の「コンポーネントを作る（`bind`）」にあります。
@@ -1277,16 +1277,16 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 
 **照合と開始のリクエスト**:
 
-- 選ばないものは、フィールドを書きません（サーバーは `null` を断ります）。フィールドは、ランチャーの要求ファイルのキーで、名前と値の形も同じです（`variant`、`params`、`scenario`、`disable`、`enable`、`manual`、`strict`、開始では `speed` と `start_paused`）。構成ファイルに照らして何を意味するかは、ランチャーが照合の所見で言います。
+- 選ばないものは、フィールドを書きません（サーバーは `null` を断ります）。フィールドは、ランチャーの要求ファイルのキーで、名前と値の形も同じです（`variant`、`params`、`scenario`、`disable`、`enable`、`manual`、`strict`、`speed`、`start_paused`）。照合は、速度と `start_paused` を開始と同じに判じます: 外につないで実時間を保つ実行は、等速以外の速度と `start_paused` を断り（`outside-real-time`）、速度のある照合は、警告 `coarse-time-step` を実行に任せます（実行がその速度で出します。[simulation-run.md](simulation-run.md#タイムステップと-ecu-のステップ) の「タイムステップと ECU のステップ」）。構成ファイルに照らして何を意味するかは、ランチャーが照合の所見で言います。
 - `manual` に `disable` の名前を入れません（ランチャーが拒否します）。
 - シナリオを選んだら `start_paused` は偽にします（シナリオは止めた状態では開始できません）。
-- 照合は、前の照合のレスポンスを待ってから送ります（サーバーは 1 つずつ実行します）。
+- 照合は、前の照合のレスポンスを待ってから送ります（サーバーは 1 つずつ実行します）。正面の口の `check()` はこれを代わりに行い、待っているか送っている途中の、同じ意図と同じファイルの照合を分け合います。下の口の `client.check()` では自分で行います。
 
 **変数に書き込めるか**: コンポーネントを `client.variables.bind` で作れば、`state` の `block` がこのルールを確認します。`write` を直接呼ぶ画面は、自分で確認します。
 
 - `writable` が偽の変数（`output`）には書き込めません。
-- `parameter` は最初のステップの前（ランチャーの `state` の `holding`。ライブラリでは `isHolding(session)`）だけです。
-- シナリオを実行している実行（セッションのコピーに `scenario` があり、ランチャーが動いている）には書き込めません。
+- `parameter` は最初のステップの前（ランチャーの `state` の `holding`。ライブラリでは `isHolding(session)`）だけです。これは ECU の規則のライブラリによる予測です（ランチャーは変数ごとには言いません）。
+- ランチャーがいま受けない書き込みはできません: ランチャーの `state`（セッションのコピーの `launcherState`）の `allowed.write` が `ok` でないとき（たとえば、シナリオの実行中の `scenario-running`）。`allowed.write` のある `state` が届くまでは、ランチャーは受けるとまだ言っていません（`unsupported`）。`launcherAnswer(launcherState, 'write')` で読みます（`block` は `launcher`、code と文は `launcherReason`）。ランチャーの規則が変わっても画面が従うように、セッションのコピーの `scenario` から決めません。これは `parameter` の予測より先です。
 - Control Server と接続していない participant（`client.variables.state` の `peers[].connected` が偽）にも書き込めません。
 
 **値が古いか**: `bind` の `state` の `condition` が `stale` と理由で通知します。`watch` を直接使う画面は、自分で確認します。

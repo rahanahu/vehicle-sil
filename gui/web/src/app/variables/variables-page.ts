@@ -17,7 +17,7 @@ import { EcuVariables } from '../core/session/ecu-variables';
 import { ServerConnection } from '../core/session/server-connection';
 import { ServerInfo } from '../core/session/server-info';
 import { SimulationTime } from '../core/session/simulation-time';
-import { DashboardResponse, errorMessage } from '@vehicle-sil/gui-client';
+import { DashboardResponse, errorMessage, launcherAnswer } from '@vehicle-sil/gui-client';
 import {
   BuiltinLookup,
   autoDashboard,
@@ -26,7 +26,7 @@ import {
   filterDashboard,
 } from '../widgets/dashboard-spec';
 import { DashboardView } from '../widgets/dashboard-view';
-import { monitoringTitle } from '../widgets/labels';
+import { launcherWriteText, monitoringTitle } from '../widgets/labels';
 
 /** 画面の上に出す、変数の機能の様子。english: 添える英語の文（サーバーの理由）。 */
 interface Notice {
@@ -411,6 +411,7 @@ export class VariablesPage {
     const reason = this.variables.reason();
     const app = this.info.variables();
     const session = this.server.session();
+    // 変数の機能そのものが使えない古い経路の説明（書けるかどうかの話ではない）
     const scenario = !!session?.scenario && session.launcher.running;
     if (scenario && (status === 'off' || status === 'failed')) {
       return {
@@ -419,6 +420,8 @@ export class VariablesPage {
         tone: 'warn',
       };
     }
+    // 書けるかどうかはランチャーが言う。client が読んだまま（launcherAnswer。部品の bind と同じ値）を写す
+    const write = launcherAnswer(session?.launcherState ?? null, 'write').reason;
     switch (status) {
       case 'ready':
         // ready のまま理由があるのは、値の読み取りが失敗し続けているとき（出ている値は最後に読めたもの）
@@ -429,12 +432,11 @@ export class VariablesPage {
             tone: 'warn',
           };
         }
-        if (scenario) {
-          return {
-            text: $localize`シナリオの実行中です。値は見られますが、書くことはできません（シナリオの結果を変えないため）。`,
-            english: null,
-            tone: 'info',
-          };
+        if (write) {
+          const line = launcherWriteText(write);
+          return line.english
+            ? { text: '', english: line.text, tone: 'info' }
+            : { text: line.text, english: null, tone: 'info' };
         }
         if (this.time.beforeStart()) {
           return {

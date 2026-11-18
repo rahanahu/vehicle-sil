@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
 // The machine interface of vehicle_sil_launch: the events of `run --events` (one JSON object per
-// line), the commands of `run --stdin-commands` (one JSON object per line on standard input) and
-// `version --json`. Internal; the format: docs/simulation-events.md.
+// line) and `version --json`; the commands of `run --stdin-commands` are read by command_input.hpp.
+// Internal; the format: docs/simulation-events.md.
 #pragma once
 
 #include "vehicle_sil/launch/check.hpp"
@@ -76,38 +76,10 @@ inline constexpr std::string_view kScenarioTimeFeature = "scenario-time";
 /// this build adds).
 [[nodiscard]] std::string format_version_json(const std::vector<std::string_view>& more = {});
 
-/// The longest command line read; a longer one is not accepted.
-inline constexpr std::size_t kMaxCommandLine = 64 * 1024;
-
-/// Reads `line` (without its line end; a "\r" at its end is ignored) as a command: {"command":
-/// "stop"}, {"command":"pause"}, {"command":"resume"}, {"command":"step","ms":<1 to kMaxMillis>},
-/// {"command":"speed","value":<a speed, parse_speed()>}, each with or without "id":<0 to
-/// kMaxCommandId> (other keys are ignored). A line that is not accepted has its `reason`. Only the form
-/// is read: whether the command can be done now is TimeCommands' part. Empty for a line of white
-/// space only (it is skipped).
-[[nodiscard]] std::optional<Command> parse_command(std::string_view line);
-
-/// Cuts the bytes of standard input into lines and reads each as a command (parse_command()). A
-/// line longer than kMaxCommandLine is one command that is not accepted, and the rest of it up to
-/// its line end is skipped. Not thread safe: one reader.
-class CommandInput
-{
-public:
-    explicit CommandInput(std::function<void(const Command&)> on_command) : on_command_(std::move(on_command)) {}
-    /// What was read.
-    void append(std::string_view bytes);
-    /// The end of input: a last line without a line end is read too.
-    void finish();
-
-private:
-    void line(std::string_view text);
-
-    std::function<void(const Command&)> on_command_;
-    std::string pending_;
-    bool skipping_ = false; ///< in a line that was too long, until its end
-};
-
 /// The name of a participant's state in the event "participant": "disabled", "not_started", ...
+/// The members a state brings besides: not_started "message"; started "pid", "command", "log";
+/// manual "command", "working_directory", "command_line", "environment"; failed "reason",
+/// "message"; ended "exit_code", "signal".
 [[nodiscard]] const char* participant_state_name(ParticipantState state);
 
 /// What one call of EventStream's `write` did.
@@ -241,7 +213,7 @@ public:
     /// `environment` the variables to set for it (name, value; "environment" only if there are any).
     void participant_manual(const std::string& name, const std::vector<std::string>& command,
                             const std::string& working_directory, const std::string& command_line,
-                            const std::vector<std::pair<std::string, std::string>>& environment = {}) override;
+                            const std::vector<std::pair<std::string, std::string>>& environment) override;
     /// "control_link": where a started participant's control agent stands when the simulation
     /// has started: `state` is control_link_name(); "variables" with "connected" (how many its
     /// agent offers), "version" with "version_mismatch" (the version of the messages it speaks).

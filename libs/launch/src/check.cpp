@@ -4,7 +4,8 @@
 // each enabled participant and reads its output (describe_read.cpp), compares the descriptions
 // with the file (check_rules.cpp), reads the scenario (scenario.cpp). What it needs from the
 // computer (the files, the executables and their output, the environment) it gets from probe.cpp,
-// in the order of the steps. The outputs are in check_format.cpp.
+// in the order of the steps. The outputs are in check_format.cpp; the counts of the report in
+// check_report.cpp.
 #include "exit_codes.hpp"
 
 #include "vehicle_sil/launch/check.hpp"
@@ -55,64 +56,7 @@ void drop_unusable_commands(CheckReport& report)
 
 } // namespace
 
-ConfigConnect connect_for_config(const SimulationConfig& config, std::span<const ConnectRequest> connect,
-                                 const RequestOrigin& origin)
-{
-    ConfigConnect out;
-    for (const ConnectRequest& request : connect)
-    {
-        const bool fromFile =
-            std::find(origin.connected.begin(), origin.connected.end(), request.network) != origin.connected.end();
-        const bool known = std::any_of(config.networks.begin(), config.networks.end(),
-                                       [&](const NetworkConfig& n) { return n.name == request.network; });
-        if (fromFile && !known)
-        {
-            out.notes.push_back(Finding{Severity::Note, "connect-network-unused",
-                                        "the network " + request.network + " of connect in " + origin.file +
-                                            " is not in this configuration: it is left out",
-                                        0, "", request.network});
-            continue;
-        }
-        out.connect.push_back(request);
-    }
-    return out;
-}
-
-std::size_t CheckReport::errors() const
-{
-    return static_cast<std::size_t>(
-        std::count_if(findings.begin(), findings.end(), [](const Finding& f) { return f.severity == Severity::Error; }));
-}
-
-std::size_t CheckReport::warnings() const
-{
-    return static_cast<std::size_t>(
-        std::count_if(findings.begin(), findings.end(), [](const Finding& f) { return f.severity == Severity::Warning; }));
-}
-
-std::size_t CheckReport::notes() const { return findings.size() - errors() - warnings(); }
-
-bool CheckReport::passed() const
-{
-    return !usage && config.has_value() && errors() == 0 && (!strict || warnings() == 0);
-}
-
-int CheckReport::exit_code() const { return exit_code_of(*this); }
-
-void sort_findings(std::vector<Finding>& findings)
-{
-    std::stable_sort(findings.begin(), findings.end(), [](const Finding& a, const Finding& b) {
-        if (a.severity != b.severity)
-        {
-            return a.severity < b.severity; // errors, warnings, notes
-        }
-        if (a.file != b.file)
-        {
-            return a.file.empty(); // the configuration's, then the scenario's
-        }
-        return a.line < b.line;
-    });
-}
+int check_exit_code(const CheckReport& report) { return exit_code_of(report); }
 
 namespace {
 
@@ -296,7 +240,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         const std::string written = expand_placeholders({p.command.front()}, "", "").front();
         const FoundExecutable found = find_executable(written, base);
         const std::filesystem::path& executable = found.path;
-        if (auto bad = check_executable(p, executable))
+        if (auto bad = executable_finding(p, executable, executable_status(executable)))
         {
             report.findings.push_back(std::move(*bad));
             result.status = ParticipantStatus::Failed;

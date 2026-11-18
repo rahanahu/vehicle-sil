@@ -7,6 +7,7 @@
 
 #include "vehicle_sil/launch/error_result.hpp"
 #include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/run_detail.hpp"
 
 #include "check_words.hpp"
 #include "run_close.hpp"

@@ -581,7 +581,7 @@ Available only when the launcher's `features` have `manual-participants`. For th
 Shown when the check of the selected file has a `can` or `ethernet` network. For what the launcher does, see "Connecting a bus outside (`--connect`)" in [simulation-run.md](simulation-run.md#connecting-a-bus-outside---connect).
 
 - **Choosing**: under **Configuration file**, each such network has a choice, which starts at `SIL Kit only (not connected)`. The screen asks for the list of targets only when you open a choice (with the mouse, or with a key other than Tab and Escape), so a computer that only runs SIL Kit starts no bridge. The list is that of the computer the GUI server runs on, not of the browser's computer. A target that cannot be used cannot be chosen, and says why. The bridge's line about each target (for example, that another vehicle-sil bridge uses the device) appears as the bridge wrote it. The words of the choice are English in both languages (they are the client library's part `<vsil-connect>`).
-- **Before the start**: under the status bar, the screen shows which networks the start connects, and where. The check runs again with the choice, and its findings (`connect-*`, `outside-*`, such as the note that the run keeps real time) appear under the choice and in the **Check** card.
+- **Before the start**: under the status bar, the screen shows which networks the start connects, and where. The check runs again with the choice, and its findings (`connect-*`, `outside-*`, such as the note that the run keeps real time) appear under the choice and in the **Check** card. Both show the same check: it has every choice of the screen (the participants, the scenario, the speed, **Start paused** and the networks), as the start sends them. A run that keeps real time refuses a speed other than 1 and **Start paused**: the check says so before you start (the error `outside-real-time`), and **Start** stays disabled.
 - **While the run goes on**: the choices are hidden (they cannot be changed and no list is asked for), and the line under the status bar is not shown. The card **Networks connected outside** has a row for each connected network: the link or the bus, the condition and its reasons, and the frame counts (the part `<vsil-outside>`). A run connected outside keeps real time, so pause, step and a speed other than 1 cannot be used, and the **Time** card shows the launcher's reason. **Stop** can always be used. A bridge that fails (`connect-failed`, `connect-lost`) and the findings at the end appear in the result.
 - **Kept while the page stays open**: after a run, the choices are as they were, the line under the status bar again says where the next start connects, and **Run again** connects there. Choosing another configuration file clears them. The screen does not save the choice: after reloading the screen and after switching the language, every network is back at `SIL Kit only (not connected)`.
 - **Time policy**: the screen always keeps real time. For `time_policy: free`, run from the command line (`--time-policy free`) or from a screen of your own.
@@ -755,7 +755,7 @@ The `VariableBinding` that `bindVariable` returns holds the following as signals
 | `info` | The variable definition |
 | `reading` | The last value |
 | `condition` | The value condition |
-| `block` | Why it cannot be written |
+| `block`, `launcherReason` | Why it cannot be written (`launcherReason`: the launcher's code and sentence when `block` is `launcher`) |
 | `write(value)`, `writeStatus`, `pending` | Writing, and its status |
 
 - Values are watched only while the widget is visible.
@@ -1056,7 +1056,7 @@ The logic of a widget that shows and writes one variable, such as a slider, a sw
 |---|---|---|
 | `info`, `reading` | The variable definition, and the last value (with the time it belongs to) | None |
 | `condition` | The value condition | `condition.kind`: `unavailable`, `missing`, `waiting`, `live`, `paused`, `stale`, `ended` |
-| `block` | Why it cannot be written now (`null` if it can) | `read-only`, `disconnected`, `ended`, `not-ready`, `missing`, `peer-disconnected`, `parameter`, `scenario`, `no-range`, `no-value` |
+| `block` | Why it cannot be written now (`null` if it can) | `read-only`, `disconnected`, `ended`, `not-ready`, `missing`, `peer-disconnected`, `launcher` (the launcher does not take a write, or has not said yet that it does; its reason is in `launcherReason`), `parameter`, `no-range`, `no-value` |
 | `writeStatus`, `pending` | The status of the last write, and the value sent and waiting for its result | `writeStatus.kind`: `idle`, `sending`, `queued`, `applied` and others |
 
 The meanings of `condition.kind` are below. For the meanings of the values of `block` and `writeStatus` and the detailed rules, see "Build widgets (`bind`)" in [gui/client/README.md](../gui/client/README.md#build-widgets-bind).
@@ -1269,16 +1269,16 @@ The library does not enforce these rules for you. The sample screens follow them
 
 **Check and start requests**:
 
-- A choice that is not made is a field that is left out: the server refuses `null`. The fields are the keys of the launcher's request file, with its names and value forms (`variant`, `params`, `scenario`, `disable`, `enable`, `manual`, `strict`, and for a start `speed` and `start_paused`). What they mean for the configuration file is the launcher's to say, as findings of the check.
+- A choice that is not made is a field that is left out: the server refuses `null`. The fields are the keys of the launcher's request file, with its names and value forms (`variant`, `params`, `scenario`, `disable`, `enable`, `manual`, `strict`, `speed`, `start_paused`). A check judges the speed and `start_paused` as the start would: a run connected outside that keeps real time refuses a speed other than 1 and `start_paused` (`outside-real-time`), and a check with a speed leaves the warning `coarse-time-step` to the run, which reports it for that speed (see "Time steps and ECU steps" in [simulation-run.md](simulation-run.md#time-steps-and-ecu-steps)). What they mean for the configuration file is the launcher's to say, as findings of the check.
 - Do not put a name from `disable` into `manual` (the launcher refuses it).
 - If a scenario is selected, set `start_paused` to false (a scenario cannot start paused).
-- Send a check only after the response to the previous check (the server runs checks one at a time).
+- Send a check only after the response to the previous check (the server runs checks one at a time). The front door's `check()` does this for you, and shares a check of the same intent and file that waits or is on its way; do it yourself with the low-level `client.check()`.
 
 **Whether a variable can be written**: if you build your widgets with `client.variables.bind`, `block` of `state` checks these rules. A screen that calls `write` directly checks them itself.
 
 - A variable whose `writable` is false (`output`) cannot be written.
-- A `parameter` can be written only before the first step (`holding` of the launcher's `state`; `isHolding(session)` in the library).
-- A run that is running a scenario (the session copy has `scenario`, and the launcher is running) cannot be written.
+- A `parameter` can be written only before the first step (`holding` of the launcher's `state`; `isHolding(session)` in the library). This is the library's prediction of the ECU's rule: the launcher does not say it for each variable.
+- A write that the launcher does not take now cannot be written: `allowed.write` of the launcher's `state` (`launcherState` of the session copy) is not `ok`, for example with `scenario-running` while a scenario plays, and until a `state` with `allowed.write` has arrived the launcher has not said that it takes one (`unsupported`). Read it with `launcherAnswer(launcherState, 'write')` (`block` is `launcher`, with the code and the sentence in `launcherReason`); do not decide it from `scenario` of the session copy, so that the screen follows the launcher when its rule changes. This comes before the `parameter` prediction.
 - A participant not connected to the Control Server (`peers[].connected` of `client.variables.state` is false) cannot be written either.
 
 **Whether a value is stale**: `condition` of `bind`'s `state` reports `stale` with the reason. A screen that uses `watch` directly checks this itself.
