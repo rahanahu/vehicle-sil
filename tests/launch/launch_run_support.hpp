@@ -652,6 +652,9 @@ void test_interrupt(const Options& o);
 // launch_run_timeline.cpp
 void timeline(const Options& o);
 
+// launch_run_availability.cpp
+void availability(const Options& o);
+
 // launch_run_manual.cpp
 void network(const Options& o);
 void manual_late(const Options& o);

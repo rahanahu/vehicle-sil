@@ -363,7 +363,7 @@ An ECU whose application decides at run time which of its inputs and outputs it 
 | Which variables report | Those declared with `VariableOptions::availability`, which gives the first state. Which variables report is fixed with the declarations; it does not change while the simulation runs. |
 | Changing the state | `ecu.set_availability(name, state)` from a step of the ECU (`on_step()`, `every()`, `at()`, a handler). The same state again does nothing. |
 | Errors | A name the ECU did not declare, a variable declared without `availability`, and the variables vehicle-sil gives every ECU (`ecu.connected`, the monitoring outputs): `std::invalid_argument`. During the set-up (before the run): `std::logic_error`; give the first state in the declaration instead. |
-| Where the state goes | To the Control Server, when it changes, and again once a second of simulation time (so a server that connects later gets it too). A subscription to the Hub receives it only if it asks (`SubscriptionOptions::availability`). The gRPC service passes it on as below; the GUI does not yet. |
+| Where the state goes | To the Control Server, when it changes, and again once a second of simulation time (so a server that connects later gets it too). A subscription to the Hub receives it only if it asks (`SubscriptionOptions::availability`). The gRPC service passes it on as below, and the GUI server to the screens ("ECU variables" in [gui/protocol](../gui/protocol/README.md#ecu-variables)); the browser GUI does not show it yet. |
 | An ECU built with an older vehicle-sil | Reports nothing: all its variables count as `Active`. The check notes it (`control-link-revision`). |
 
 ```cpp

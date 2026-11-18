@@ -43,7 +43,7 @@ EXAMPLES = {
     "error-variables-not-ready", "error-invalid-watch", "dashboard", "dashboard-errors", "dashboard-none",
     "scenarios", "check-scenario", "error-scenario-not-listed", "ws-scenario", "recording", "error-scenario-running",
     "check-manual", "ws-manual", "ws-allowed", "connections", "check-connect", "run-connect",
-    "error-target-not-listed", "error-unknown-network",
+    "error-target-not-listed", "error-unknown-network", "ws-availability",
 }
 
 
@@ -76,6 +76,15 @@ def resumed(example: dict) -> None:
     assert all(m["event"]["seq"] >= after for m in example["server"][1:-1])
 
 
+def availability_told(example: dict) -> bool:
+    """The summary when ready, the availability after it, the write's result, the summary of the end."""
+    kinds = [m["type"] for m in example["server"]]
+    ready = next(i for i, m in enumerate(example["server"])
+                 if m["type"] == "variables" and m["variables"]["state"] == "ready")
+    return kinds[ready + 1:] == ["availability", "operation", "operation", "variables"] and \
+        example["server"][-1]["variables"]["state"] == "ended"
+
+
 SHOWN = {
     "session-none": lambda e: (e["status"], e["response"]["session"], e["response"]["allowed"]["start"]) ==
     (200, None, {"ok": True, "reason": None, "message": None}),
@@ -86,6 +95,8 @@ SHOWN = {
     "ws-stop": ended("stopped", "stop command", states=["ended", "ended", "ended"]),
     "ws-force-stop": ended("stopped", "stop command", states=["ended", "ended", "killed"]),
     "ws-resume": resumed,
+    # Not a file until the client library reads the availability message (it passes over a type it does not know).
+    "ws-availability": availability_told,
     # an error: its HTTP status (also as the table of errors in gui/protocol/README.md says)
     "error-unauthorized": 401, "error-forbidden-host": 403, "error-forbidden-origin": 403,
     "error-cors-not-allowed": 403, "error-not-found": 404, "error-method-not-allowed": 405, "error-too-large": 413,
@@ -669,6 +680,42 @@ def test_variables_examples(tmp_path: Path, control_env: dict) -> None:
                 "before the first step, a step of 200 ms, the end. Left out here: the launcher's events, the values "
                 "sent while it ran (paused false), and the operation's first state (sent).",
                 sock.sent, variables_only(sock.received)), gui)
+        run_async(talk, gui)
+
+
+def test_availability_example(tmp_path: Path, control_env: dict) -> None:
+    with gui_server(tmp_path, env={**control_env, "REPLAY_TICK_MS": "100", "REPLAY_AVAILABILITY": "1"}) as gui:
+        async def talk(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            _, started = await c.post("api/run", {"file": "forever.yaml", "start_paused": True})
+            sid = started["session"]["id"]
+            ready = await sock.until(lambda m: m["type"] == "variables" and m["variables"]["state"] == "ready")
+            engine = {v["name"]: v for p in ready[-1]["variables"]["peers"] if p["name"] == "Engine"
+                      for v in p["variables"]}
+            assert [engine[n]["availability"] for n in ("ecu.connected", "engine.demand", "engine.speed")] == \
+                ["active", "unknown", "unknown"]
+            await c.post("api/time", {"command": "step", "ms": 100})
+            told = await sock.until(lambda m: m["type"] == "availability")
+            assert told[-1]["peers"]["Engine"] == {"engine.demand": "inactive", "engine.speed": "active"}
+            await sock.until_stands(100)
+            # A variable that is not in use is written as any other.
+            status, _ = await c.post("api/write", {"session": sid, "writes": {"Engine": {"engine.demand": 40}}})
+            assert status == 200
+            await c.post("api/time", {"command": "step", "ms": 100})
+            done = await sock.until(lambda m: m["type"] == "operation" and m["done"])
+            assert done[-1]["state"] == "applied"
+            await c.post("api/stop", {})
+            await sock.until(is_ended)
+            await sock.close()
+            shown = [m for m in sock.received if m["type"] in ("variables", "availability") or
+                     (m["type"] == "operation" and m["state"] != "sent")]
+            check_example("ws-availability", ws(
+                "A run whose ECUs report whether they use some variables (the stand-in's engine.demand and "
+                "engine.speed, unknown until the first step): each variable of the summary has its availability, an "
+                "availability message tells the change after the first step, and a write to a variable that is not in "
+                "use is applied as any other. Only the variables, availability and operation messages are shown "
+                "(not the operation's first state, sent).", sock.sent, shown), gui)
         run_async(talk, gui)
 
 

@@ -51,10 +51,11 @@ function fakeFront() {
 
 @Component({
   imports: [OutsideChoice],
-  template: `<app-outside-choice [check]="check()" [file]="'connect.yaml'" />`,
+  template: `<app-outside-choice [check]="check()" [file]="'connect.yaml'" [hidden]="hidden()" />`,
 })
 class ChoiceHost {
   readonly check = signal<CheckResult | null>(null);
+  readonly hidden = signal(false);
   readonly connect = connectChoice();
 }
 
@@ -150,6 +151,35 @@ describe('OutsideChoice', () => {
     fixture.componentInstance.check.set(checkWith([network('ETH_EXT', 'ethernet')]));
     await fixture.whenStable();
     expect(part('ETH_EXT')).toBe(before);
+    expect(fixture.componentInstance.connect()).toEqual({ ETH_EXT: 'fake0' });
+  });
+
+  it('keeps the part and the choice while hidden (a run), and nothing in it can be reached or opened', async () => {
+    fixture.componentInstance.check.set(checkWith([network('ETH_EXT', 'ethernet')]));
+    await fixture.whenStable();
+    const before = part('ETH_EXT')!;
+    const select = before.querySelector('select')!;
+    select.focus();
+    expect(document.activeElement).toBe(select);
+    pageIntent.update({ connect: { ETH_EXT: 'fake0' } });
+
+    fixture.componentInstance.hidden.set(true);
+    await fixture.whenStable();
+    expect(part('ETH_EXT')).toBe(before);
+    expect(fixture.componentInstance.connect()).toEqual({ ETH_EXT: 'fake0' });
+    // 見えず、キーボードでも届かない（読み上げの木にもない）。開けないので、一覧も取らない
+    expect(select.checkVisibility()).toBe(false);
+    select.blur();
+    select.focus();
+    expect(document.activeElement).not.toBe(select);
+    expect(getComputedStyle(element().querySelector('app-outside-choice')!).display).toBe('none');
+    expect(fake.front.connections).not.toHaveBeenCalled();
+
+    // また出すと、同じ部品が同じ選択のまま
+    fixture.componentInstance.hidden.set(false);
+    await fixture.whenStable();
+    expect(part('ETH_EXT')).toBe(before);
+    expect(select.value).toBe('fake0');
     expect(fixture.componentInstance.connect()).toEqual({ ETH_EXT: 'fake0' });
   });
 });

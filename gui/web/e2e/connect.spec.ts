@@ -6,7 +6,7 @@ import { CONFIGS, REPLAY_LAUNCHER, GuiServer, launchGuiServer } from './support/
 import { VIEWPORTS, findLayoutProblems } from './support/layout';
 import { RUN_TIMEOUT, WORDS, choose, start, startButton, stopButton } from './support/run-page';
 
-test('a network is connected outside only when chosen, says so before the start, and shows its row while it runs', async ({
+test('a network is connected outside only when chosen, says so before each start, and shows its row while it runs', async ({
   page,
 }, testInfo) => {
   // 開発サーバーの形（e2e:dev）では回さない（同じ画面。サーバーを別に起動するので、ビルドした画面で 1 回）
@@ -40,7 +40,8 @@ test('a network is connected outside only when chosen, says so before the start,
     // 照合の can と ethernet のネットワークごとに選択がある。最初は「つながない」で、開くまで一覧を取らない
     // （SIL Kit だけの PC でブリッジを起こさない）
     const eth = page.getByTestId('connect-ETH_EXT');
-    const select = eth.getByRole('combobox');
+    // 選択そのもの（隠れている間は、役割で探すと見つからない）
+    const select = eth.locator('select');
     await expect(page.getByTestId('connect-J1939_CAN').getByRole('combobox')).toHaveValue('none');
     await expect(select).toHaveValue('none');
     // 部品の語は英語のまま
@@ -94,9 +95,19 @@ test('a network is connected outside only when chosen, says so before the start,
     await expect(row).toContainText('fake0');
     await expect(page.getByTestId('step-hint')).toContainText('keeps to real time');
     await expect(page.getByTestId('pause')).toHaveAttribute('aria-disabled', 'true');
+    await expect(page.getByTestId('pause')).toHaveAccessibleDescription(/pause is refused/);
+    await expect(page.getByTestId('pause-hint')).toContainText('pause is refused');
+    // 速さは 1 だけ: 最速と倍率は押せず、そう言う
+    const card = page.getByTestId('time-card');
+    for (const name of ['最速', '倍率'])
+      await expect(card.getByRole('radio', { name })).toHaveAttribute('aria-disabled', 'true');
+    await expect(card.getByTestId('speed-limits')).toHaveText(
+      'この実行で選べる速さは等速だけです。',
+    );
     await expect(stopButton(page)).not.toHaveAttribute('aria-disabled', 'true');
-    // 走行中は選択を出さない
-    await expect(page.getByTestId('connect-ETH_EXT')).toHaveCount(0);
+    // 走行中は選択を隠す（外さないので選択は残る）。開けないので一覧も取らない
+    await expect(page.getByTestId('connect-ETH_EXT')).toBeHidden();
+    await expect(select).toHaveValue('fake0');
     await expect(page.getByTestId('connect-summary')).toHaveCount(0);
     await shoot('running');
     await page.setViewportSize({ width: narrow.width, height: narrow.height });
@@ -104,16 +115,41 @@ test('a network is connected outside only when chosen, says so before the start,
     await shoot('running');
     await page.setViewportSize({ width: 1200, height: 800 });
 
-    // 終わると行は消え、次の実行は「つながない」から（前の選択を戻さない）
+    // 終わると行は消え、選択は残る。開始のボタンの下に、またつなぐ先が出る
     await expect(startButton(page)).toHaveText(new RegExp(WORDS.ja.again), {
       timeout: 3 * RUN_TIMEOUT,
     });
     // 行は実行の状態が言う間は残り、ランチャーが終わると消える
     await expect(page.getByTestId('outside-card')).toHaveCount(0, { timeout: RUN_TIMEOUT });
-    await expect(select).toHaveValue('none');
-    await expect(page.getByTestId('connect-summary')).toHaveCount(0);
+    await expect(select).toBeVisible();
+    await expect(select).toHaveValue('fake0');
+    await expect(page.getByTestId('connect-summary')).toContainText('ETH_EXT → fake0');
+    expect(listed()).toHaveLength(1);
+
+    // 「もう一度実行」は同じ先につなぐ
+    await start(page);
+    expect(posted.filter((p) => p.path === '/api/run')[1]).toEqual({
+      path: '/api/run',
+      body: expect.objectContaining({ connect: { ETH_EXT: 'fake0' } }),
+    });
+    await expect(row).toHaveAttribute('data-network', 'ETH_EXT', { timeout: RUN_TIMEOUT });
+    // 録りの実行は停止の命令を持たないので、ランチャーが終わるまで待つ
+    await expect(startButton(page)).toHaveText(new RegExp(WORDS.ja.again), {
+      timeout: 3 * RUN_TIMEOUT,
+    });
+    await expect(page.getByTestId('outside-card')).toHaveCount(0, { timeout: RUN_TIMEOUT });
     // 画面と部品は 1 本の接続を使う
     expect(sockets).toBe(1);
+
+    // 言語を替えて読み込み直すと、選択は持ち越さない（つながない、に戻る）
+    await page.getByTestId('language-menu').click();
+    const loaded = page.waitForEvent('load');
+    await page.getByRole('menuitemradio', { name: 'English' }).click();
+    await loaded;
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+    await expect(page.getByTestId('check-outcome')).toBeVisible({ timeout: RUN_TIMEOUT });
+    await expect(select).toHaveValue('none');
+    await expect(page.getByTestId('connect-summary')).toHaveCount(0);
   } finally {
     await page.request.post(new URL('api/stop', server.url).href, {
       headers: { Authorization: `Bearer ${server.token}`, Origin: new URL(server.url).origin },

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 LATE_POLICIES = ("reject", "apply")  # a write that comes after its time: not made, or made at the next step
+AVAILABILITY = ("unknown", "active", "inactive")  # whether the ECU uses a variable now (docs/control-api.md)
 
 
 class SourceError(Exception):
@@ -36,7 +37,8 @@ class TimeInfo:
 class PeerInfo:
     """A participant as the source knows it. variables: in the order of its samples, each {"name", "type" (bool,
     integer, real, enum), "role" (input, output, parameter), "unit", "min", "max", "step", "description",
-    "enum": [(name, value), ...]}."""
+    "enum": [(name, value), ...], "availability"}. availability: None when the variable does not report whether it
+    is in use (it always is), else the state each incarnation starts with (one of AVAILABILITY)."""
     name: str
     incarnation: str  # changes when another process takes the name: a sample belongs to one incarnation
     connected: bool
@@ -107,7 +109,9 @@ class Sink(Protocol):
     the latest need be told (the values need not be told at all: they are read with read_snapshot, and only a read
     says of which moment they are); of the operations every one, with its latest state. on_dropped when changes were
     lost on the way. on_lost when the connection ended (fatal: the source will not connect again); after it,
-    nothing of that connection is told."""
+    nothing of that connection is told. on_availability for the peers that have a variable that reports its
+    availability: its state now with the first peers, then when it changes, after the peer's on_peers; only the
+    latest need be told."""
 
     def on_peers(self, peers: list[PeerInfo], removed: list[str]) -> None: ...
     def on_samples(self, samples: dict[str, Sample]) -> None: ...
@@ -115,6 +119,10 @@ class Sink(Protocol):
     def on_time(self, time: TimeInfo) -> None: ...
     def on_synced(self) -> None: ...
     def on_dropped(self) -> None: ...
+    def on_availability(self, peer: str, incarnation: str, states: list[str]) -> None:
+        """The availability of every variable of the peer's incarnation, in the order of its variables (one of
+        AVAILABILITY each; "active" for a variable that does not report). It is information only: nothing here
+        or in the source reads, writes or watches differently because of it."""
     def on_lost(self, reason: str, fatal: bool) -> None: ...
 
 

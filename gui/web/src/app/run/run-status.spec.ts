@@ -2,6 +2,7 @@ import { Component, computed, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import {
   Control,
+  FrontClock,
   FrontControls,
   RunOutcome,
   SessionSummary,
@@ -22,6 +23,7 @@ const GUARD_MS = 200;
       [session]="session()"
       [outcome]="outcome()"
       [controls]="controls()"
+      [clock]="clock()"
       [ready]="ready()"
       [starting]="starting()"
       [stopping]="stopping()"
@@ -41,8 +43,22 @@ class Host {
   readonly stopping = signal<StopAction | null>(null);
   readonly stopWhileStarting = signal(false);
   readonly otherFile = signal(false);
+  /** 正面の口の `clock` を、この試験で直に決める（null: セッションの写しから組み立てる）。 */
+  readonly clockGiven = signal<FrontClock | null>(null);
   starts = 0;
   stops = 0;
+  /** 正面の口の代わり: 仮想時刻と速さを、この試験のセッションから組み立てる。 */
+  readonly clock = computed<FrontClock>(() => {
+    const session = this.session();
+    return (
+      this.clockGiven() ?? {
+        sim_ms: session?.simMs ?? null,
+        speed: session?.launcherState?.speed ?? null,
+        actual_speed: null,
+        pacing: 'not-paced',
+      }
+    );
+  });
   /** 正面の口の代わり: 持ち主の言う可否を、この試験の状態から組み立てる（理由の code は持ち主のもの）。 */
   readonly controls = computed<FrontControls>(() => {
     const session = this.session();
@@ -73,7 +89,7 @@ class Host {
       resume: idle,
       step: { ...idle, min_ms: 1, max_ms: 1000 },
       run_until: idle,
-      speed: { ...idle, min: 0.1, max: 10 },
+      speed: { ...idle, min: 0.1, max: 10, fastest: true },
     };
   });
   outcome(): RunOutcome | null {
@@ -322,6 +338,11 @@ describe('RunStatus', () => {
     );
     expect(query('late')?.textContent).toContain('実時間に遅れました');
     expect(query('speed')?.textContent).toContain('最速');
+    // 時刻と速さは正面の口の `clock` のもの（時刻のカードと同じ値）
+    host.clockGiven.set({ sim_ms: 1500, speed: 2, actual_speed: null, pacing: 'on-time' });
+    await settle();
+    expect(query('speed')?.textContent).toContain('2 倍');
+    expect(query('sim-time')?.textContent).toContain('1.500');
   });
 
   it('says only what it waits for while stopping (the button says that it stops)', async () => {

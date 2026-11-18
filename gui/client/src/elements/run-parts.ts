@@ -1,6 +1,6 @@
 // The parts of the run: status, the run buttons and the time controls.
 import { watch } from '../index';
-import type { Front, Intent } from '../index';
+import type { Front, FrontControls, Intent } from '../index';
 import { pageIntent } from './page-intent';
 import { Part, h, quietly, setData } from './part';
 import { reasonText } from './reasons';
@@ -90,6 +90,14 @@ const speedValue = (text: string): number | 'max' | null => {
   return text !== '' && Number.isFinite(number) && number > 0 ? number : null;
 };
 
+/** Whether the run takes the speed of an option now (`controls.speed`: its range, and `fastest` for `max`). */
+const takes = (text: string, range: FrontControls['speed']): boolean => {
+  const value = speedValue(text);
+  return value === 'max'
+    ? range.fastest
+    : value !== null && value >= range.min && value <= range.max;
+};
+
 /** `<vsil-time-controls speeds="0.5 1 5 max" step-ms="10">`: pause, resume, step, run until and speed. */
 export class VsilTimeControlsElement extends Part {
   static override observedAttributes = [
@@ -113,16 +121,33 @@ export class VsilTimeControlsElement extends Part {
     };
     for (const text of this.text('speeds', '0.5 1 5 max').split(/\s+/))
       if (speedValue(text) !== null) addSpeed(text);
+    // A speed that the run does not take cannot be chosen; the fastest is not offered at all then.
+    const markSpeeds = () => {
+      const range = client.controls.get().speed;
+      for (const option of speed.options) {
+        if (option.value === '') continue;
+        option.disabled = !takes(option.value, range);
+        option.hidden = option.value === 'max' && !range.fastest;
+      }
+    };
     // The select shows the speed that the clock says; after a refused change or an ignored choice it goes back to it.
     const showSpeed = () => {
       const { speed: now } = client.clock.get();
       const text = now === null ? '' : String(now);
-      if (text !== '' && !speeds.includes(text)) addSpeed(text);
+      if (text !== '' && !speeds.includes(text)) {
+        addSpeed(text);
+        markSpeeds();
+      }
       speed.value = text;
     };
     speed.addEventListener('change', () => {
       const value = speedValue(speed.value);
-      if (value === null || speed.getAttribute('aria-disabled') === 'true') showSpeed();
+      if (
+        value === null ||
+        speed.getAttribute('aria-disabled') === 'true' ||
+        !takes(speed.value, client.controls.get().speed)
+      )
+        showSpeed();
       else void quietly(() => client.time.setSpeed(value)).then(showSpeed);
     });
     const speedWhy = this.describe(client, 'speed', speed);
@@ -146,6 +171,7 @@ export class VsilTimeControlsElement extends Part {
       watch(client.controls, (controls) => {
         stepMs.min = String(controls.step.min_ms);
         stepMs.max = String(controls.step.max_ms);
+        markSpeeds();
       }),
     );
     this.own(watch(client.clock, showSpeed));

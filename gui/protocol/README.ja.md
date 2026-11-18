@@ -278,7 +278,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 2. `dropped`（あれば）: `from_seq` 以後の log の行のうち、サーバーが覚えていないので送れない数（source ごと）。
 3. `event`: 覚えている log の行のうち `from_seq` 以後のものを、`seq` の順に。
 4. `synced`: `{session, last_seq}`。再送の終わり。
-5. 以後は、起きるたびに `event`、`session`、`allowed`、`error`、`dropped`、`resync`、`variables`、`values`、`operation`。
+5. 以後は、起きるたびに `event`、`session`、`allowed`、`error`、`dropped`、`resync`、`variables`、`values`、`operation`、`availability`。
 
 `session` の `id` が `hello` の要約と違う、または `from_seq` が今のセッションのものでないときは、最初からの再送になります（`replay.from_seq` が `null`）。
 
@@ -299,6 +299,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | `variables` | `{session, variables}`。その実行の変数の機能の状態か一覧（要約の `variables` と同じ形） | `ws-variables.json`、`ws-variables-failed.json` |
 | `values` | `{id, session, sim_ms, paused, peers}`。watch している変数の最後の値（下の「ECU の変数」） | `ws-variables.json` |
 | `operation` | `{session, seq, state, done, peers}`。書き込みの結果が変わった（下の「ECU の変数」）。全部の接続へ送り、落とさない | `ws-variables.json` |
+| `availability` | `{session, peers}`。ECU が変数を使っているかが変わった（下の「ECU の変数」）。全部の接続へ送る | まだない（形は下の「利用状態」） |
 
 `session` を送るのは、次のときです。`session_without_check` を頼んだ接続には、`check` のフィールドがありません。
 
@@ -327,7 +328,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 2. `time` と `state` は、それぞれ最後の 1 つにまとめ、`heartbeat` は数えずに落とす。
 3. それでも追いつかないときだけ `resync`。
 
-`values` は、送るときに、そのときの最後の値で作ります（待ち行列には watch ごとに 1 つ分の場所だけがあり、送れない間の値はためません）。`variables` と `operation` は落としません。
+`values` は、送るときに、そのときの最後の値で作ります（待ち行列には watch ごとに 1 つ分の場所だけがあり、送れない間の値はためません）。`variables`、`operation`、`availability` は落としません。変数の利用状態を毎ステップ切り替える ECU でも、`availability` の通知は短い時間に 1 通（1 秒に 20 通ほど）までなので、それも読めない画面は `resync` になります。
 
 ### `error` の `code`
 
@@ -446,7 +447,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | `state` | 変数の機能の状態（下の表）。値は増えることがある |
 | `reason` | `off`、`connecting`、`failed` の理由（人向けの英語の文。なければ `null`） |
 | `peers` | `[{"name", "connected", "variables": [...]}]`。Control Server が知っている participant（変数のないものも） |
-| `peers[].variables[]` | `{"name", "type", "role", "writable", "unit", "min", "max", "step", "description", "enum"}` |
+| `peers[].variables[]` | `{"name", "type", "role", "writable", "unit", "min", "max", "step", "description", "enum", "availability"}` |
 | `peers_omitted`、`variables_omitted` | 上限を超えたので入れていない participant と変数の数 |
 | `operations` | 操作（下の `operation` から `type` と `session` を除いたもの。サーバーが初めて見た順） |
 | `operations_from_seq` | この番号（`seq`）以上の操作は、全部 `operations` に入っている（0 なら、サーバーが見た操作の全部） |
@@ -466,6 +467,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 - `role` は `input`（実行中も書ける）、`parameter`（最初のステップの前だけ書ける）、`output`（読むだけ）です。`writable` は `role` が `output` でないことです。
 - `min`、`max`、`step`（編集の刻み幅の目安）は数か `null` です。
 - `enum` は、`type` が `enum` のとき `[{"name", "value"}]`、ほかは `null` です。
+- `availability` は、ECU がいまその変数を使っているかです。`unknown`、`active`、`inactive` のどれかです（下の「利用状態」）。
 - `operations` に入るのは、サーバーが覚えている未確定の操作の全部と、最後の 32 件です。途中から開いた画面と、再接続した画面のためです。
 - participant が接続するたびに一覧が変わるので、`variables` の通知は、短い間の変化をまとめて送ります。
 
@@ -478,6 +480,21 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | ない | `operations_from_seq` より小さい | 切断されている間に確定していて、結果（`operation` の通知）はもう届かない |
 
 最後の行は、`operations_open_omitted` が 0 のときです。1 以上のときは、確定したかどうかもわかりません。ライブラリは、この最後の場合を `no-answer` にします。
+
+### 利用状態（変数の `availability`、`availability` の通知）
+
+ECU は、動いている間に、いま変数のそれぞれを使っているかを言えます。たとえば、最初のステップで設定を読んだ後です（[docs/control-api.md](../../docs/ja/control-api.md#変数の利用状態) の「変数の利用状態」）。画面は、使っていない変数を、薄くするなどして別に見せられます。利用状態は知らせるだけのものです。変数の書き込み、読み取り、watch は、利用状態によらず同じです。
+
+| `availability` | 意味 |
+|---|---|
+| `unknown` | ECU がまだ決めていない（ふつうは最初の数ステップ）。いつもどおりに表示する |
+| `active` | 使っている。利用状態を報告しない変数は、どれも `active` |
+| `inactive` | ECU のいまの構成では使っていない |
+
+- 要約の変数の `availability` は、いまの状態です。再接続した後の `hello` の要約には、そのときの状態が入っています。
+- `availability` の通知は `{"type": "availability", "session", "peers": {"<participant>": {"<変数>": "<状態>", ...}}}` です。状態が変わった participant ごとに、利用状態を報告する変数の全部の状態が入り、その participant について前に届いたものを置き換えます。短い間の変化はまとめて送り、変数を watch しているかによらず、全部の接続に送ります。
+- その変数が載った `variables` の通知（か `hello`）の後に届きます。上限で要約から外した participant と変数は入りません。
+- participant がシミュレーションから抜けても、Control Server との接続が切れても、状態は変わりません。ECU が最後に言ったままです（接続のことは `peers[].connected` と `state` が言います）。participant の新しいプロセスは、変数が宣言した状態から始まります。
 
 ### 値（`watch`、`unwatch`、`values`）
 
@@ -791,6 +808,7 @@ YAML に入れないものは次のとおりです。必要なものは、書き
 | 単位、説明、列挙の項目の名前 | 256 文字 | 切る |
 | 理由の文 | 500 文字 | 切る |
 | 値 | participant ごとに最後の 1 組だけ | |
+| 利用状態 | 変数ごとに最後の状態だけ。50 ms の間の変化を 1 つの `availability` の通知に | |
 | 覚える操作 | 256 件 | 確定したものから忘れる |
 | 要約に入れる操作 | 覚えている未確定の操作の全部と最後の 32 件 | |
 

@@ -919,10 +919,10 @@ TEST_CASE(variables_that_are_not_offered_are_a_note_and_another_version_of_the_m
     r.config = s.config;
     r.participants = s.results;
     const std::string json = format_json(r);
-    // The check's JSON says the version only: the revision is in --describe and in the note.
-    CHECK(json.find("      \"control\": {\n        \"transport\": \"silkit\",\n        \"wire_version\": 2\n      }\n") !=
-          std::string::npos);
-    CHECK(json.find("\"wire_version\": 3\n") != std::string::npos);
+    // The check's JSON says the version and the revision (0: an executable that did not say it).
+    CHECK(json.find("      \"control\": {\n        \"transport\": \"silkit\",\n        \"wire_version\": 2,\n"
+                    "        \"wire_revision\": 1\n      }\n") != std::string::npos);
+    CHECK(json.find("\"wire_version\": 3,\n        \"wire_revision\": 0\n") != std::string::npos);
     // A disabled participant is not in the simulation: nothing about its variables.
     s.config.participants[1].enabled = false;
     CHECK(s.check().find("control-link") == std::string::npos);

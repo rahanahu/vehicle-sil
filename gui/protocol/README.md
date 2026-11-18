@@ -278,7 +278,7 @@ After authentication, the server sends, in this order:
 2. `dropped` (if any): the number of log lines from `from_seq` on that the server cannot send because it no longer keeps them (per source).
 3. `event`: the kept log lines from `from_seq` on, in `seq` order.
 4. `synced`: `{session, last_seq}`. The end of the replay.
-5. From then on, as things happen: `event`, `session`, `allowed`, `error`, `dropped`, `resync`, `variables`, `values`, `operation`.
+5. From then on, as things happen: `event`, `session`, `allowed`, `error`, `dropped`, `resync`, `variables`, `values`, `operation`, `availability`.
 
 If `session` differs from the `id` of the `hello` summary, or `from_seq` does not belong to the current session, the replay starts from the beginning (`replay.from_seq` is `null`).
 
@@ -299,6 +299,7 @@ After authentication, a screen can send variable `watch` and `unwatch` messages 
 | `variables` | `{session, variables}`. The state or list of that run's variable feature (same shape as `variables` in the summary) | `ws-variables.json`, `ws-variables-failed.json` |
 | `values` | `{id, session, sim_ms, paused, peers}`. The last values of the watched variables ("ECU variables" below) | `ws-variables.json` |
 | `operation` | `{session, seq, state, done, peers}`. The result of a write changed ("ECU variables" below). Sent to every connection, never dropped | `ws-variables.json` |
+| `availability` | `{session, peers}`. Whether the ECUs use their variables changed ("ECU variables" below). Sent to every connection | None yet ("Availability" below has its shape) |
 
 The server sends `session` at these times. Connections that asked for `session_without_check` get it without the `check` field.
 
@@ -327,7 +328,7 @@ For a screen that receives slowly, the server does the following, in order:
 2. Collapses `time` and `state` events into the last one of each, and drops `heartbeat` without counting.
 3. Only if it still cannot catch up: `resync`.
 
-`values` is built from the latest values when it is sent (the queue has room for one per watch; values are not stored while they cannot be sent). `variables` and `operation` are never dropped.
+`values` is built from the latest values when it is sent (the queue has room for one per watch; values are not stored while they cannot be sent). `variables`, `operation` and `availability` are never dropped. An ECU that switches the availability of its variables in every step sends at most one `availability` notification per short time (about 20 a second), so a screen that cannot read even those reaches `resync`.
 
 ### The `code` of `error` messages
 
@@ -446,7 +447,7 @@ When the launcher has a Control Server (`variables.available` in `api/app`), the
 | `state` | The state of the variable feature (table below). Values may be added |
 | `reason` | The reason for `off`, `connecting` and `failed` (human-readable text, not localized; `null` if none) |
 | `peers` | `[{"name", "connected", "variables": [...]}]`. The participants the Control Server knows (also those without variables) |
-| `peers[].variables[]` | `{"name", "type", "role", "writable", "unit", "min", "max", "step", "description", "enum"}` |
+| `peers[].variables[]` | `{"name", "type", "role", "writable", "unit", "min", "max", "step", "description", "enum", "availability"}` |
 | `peers_omitted`, `variables_omitted` | Numbers of participants and variables left out because a limit was exceeded |
 | `operations` | Operations (`operation` below without `type` and `session`; in the order the server first saw them) |
 | `operations_from_seq` | Every operation with this number (`seq`) or higher is in `operations` (0 means every operation the server saw) |
@@ -466,6 +467,7 @@ When the launcher has a Control Server (`variables.available` in `api/app`), the
 - `role` is `input` (writable during the run), `parameter` (writable only before the first step) or `output` (read-only). `writable` means `role` is not `output`.
 - `min`, `max` and `step` (a hint for the editing increment) are numbers or `null`.
 - `enum` is `[{"name", "value"}]` when `type` is `enum`, otherwise `null`.
+- `availability` is whether the ECU uses the variable now: `unknown`, `active` or `inactive` ("Availability" below).
 - `operations` holds every open operation the server keeps and the last 32 operations. It serves screens opened midway and screens that reconnect.
 - The list changes each time a participant connects, so `variables` notifications collect changes over a short time and send them together.
 
@@ -478,6 +480,21 @@ A client waiting for the result of an operation tells, from the summary in `hell
 | No | Below `operations_from_seq` | It completed while disconnected, and its result (the `operation` notification) will not arrive |
 
 The last row holds when `operations_open_omitted` is 0. When it is 1 or more, it is not even known whether the operation completed. The library treats this last case as `no-answer`.
+
+### Availability (`availability` of a variable, the `availability` notification)
+
+An ECU can say while it runs whether it uses each of its variables now, for example once it has read its configuration in its first steps (see "Availability of a variable" in [docs/control-api.md](../../docs/control-api.md#availability-of-a-variable)). A screen can show a variable that is not in use differently, greyed out for example. The availability is information only: a variable is written, read and watched in the same way whatever its availability.
+
+| `availability` | Meaning |
+|---|---|
+| `unknown` | The ECU has not decided yet (usually in its first steps). Show the variable as usual |
+| `active` | In use. Every variable that does not report its availability is `active` |
+| `inactive` | Not in use in the present set-up of the ECU |
+
+- `availability` of a variable in the summary is its state now. The summary in `hello` after a reconnection has the states of that moment.
+- The `availability` notification is `{"type": "availability", "session", "peers": {"<participant>": {"<variable>": "<state>", ...}}}`. Of each participant whose states changed, it holds the state of every variable that reports its availability, and replaces what came before for that participant. Changes over a short time are sent together, to every connection, whether it watches variables or not.
+- It comes after the `variables` notification (or the `hello`) that lists those variables. Participants and variables that a limit leaves out of the summary are not in it.
+- A participant that leaves the simulation, and a lost connection to the Control Server, do not change the states: they stay what the ECU said last (`peers[].connected` and `state` tell of the connection). A new process of the participant starts from the states its variables declare.
 
 ### Values (`watch`, `unwatch`, `values`)
 
@@ -791,6 +808,7 @@ Required fields kept even beyond 4 KiB. If these alone exceed 4 KiB, the item is
 | Unit, description, enum item name | 256 characters | Cut |
 | Reason text | 500 characters | Cut |
 | Values | Only the last set per participant | |
+| Availability | Only the last state per variable; changes over 50 ms in one `availability` notification | |
 | Operations kept | 256 | The completed ones are forgotten first |
 | Operations in the summary | Every open operation kept, and the last 32 | |
 

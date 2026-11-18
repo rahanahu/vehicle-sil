@@ -9,7 +9,8 @@ directory, removed at exit); python/vehicle_sil_control/_generated of the reposi
 not enough by itself: the stubs must be given with VEHICLE_SIL_CONTROL_STUBS until they are shipped in the
 package.
 
-Threads: one reader thread per source reads the Watch stream (the peers, the operations, the time) and keeps
+Threads: one reader thread per source reads the Watch stream (the peers, the operations, the time, the availability
+of the variables) and keeps
 only the latest of what it reads (per peer, per operation) until the event loop takes it; it never waits for the
 loop, and the loop never waits for it. Single calls (the time and the values, a write) are gRPC futures whose
 result is passed to the loop.
@@ -43,7 +44,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .source import OperationInfo, PeerInfo, Sink, SnapshotInfo, SourceError, TargetInfo, TimeInfo
+from .source import AVAILABILITY, OperationInfo, PeerInfo, Sink, SnapshotInfo, SourceError, TargetInfo, TimeInfo
 
 FEATURE = "control-server"  # of vehicle_sil_launch version --json: run --control and the event below
 EVENT = "control_server"  # {"address", "tls", "credentials"}: where the run's control server listens
@@ -255,6 +256,7 @@ class GrpcSource:
         self._removed: set[str] = set()
         self._values: dict[str, object] = {}
         self._operations: dict[int, object] = {}
+        self._availability: dict[str, object] = {}  # the latest PeerAvailability of each peer
         self._time = None
         self._synced = False
         self._dropped = False
@@ -382,6 +384,7 @@ class GrpcSource:
             removed, self._removed = self._removed, set()
             values, self._values = self._values, {}
             operations, self._operations = self._operations, {}
+            availability, self._availability = self._availability, {}
             time_, self._time = self._time, None
             synced, self._synced = self._synced, False
             dropped, self._dropped = self._dropped, False
@@ -393,6 +396,8 @@ class GrpcSource:
         try:
             if peers or removed:
                 sink.on_peers([self._peer(p) for p in peers.values()], sorted(removed))
+            for a in availability.values():  # after the peers: the incarnation it is of may be one of them
+                sink.on_availability(a.peer, a.incarnation, [self._state(s) for s in a.states])
             if operations:
                 sink.on_operations([self._operation(o) for _, o in sorted(operations.items())])
             if values:
@@ -419,9 +424,25 @@ class GrpcSource:
         variables = [{"name": v.name, "type": types.get(v.type, ""), "role": roles.get(v.causality, "output"),
                       "unit": v.unit, "min": v.min if v.HasField("min") else None,
                       "max": v.max if v.HasField("max") else None, "step": v.step if v.HasField("step") else None,
-                      "description": v.description, "enum": [(i.name, i.value) for i in v.items]}
+                      "description": v.description, "enum": [(i.name, i.value) for i in v.items],
+                      "availability": self._declared(v)}
                      for v in p.schema]
         return PeerInfo(p.participant, p.incarnation, p.connected, variables)
+
+    def _declared(self, v) -> str | None:
+        """The state a VariableInfo starts with; None: it does not report (UNSPECIFIED, and stubs older than the
+        field)."""
+        value = getattr(v, "availability", 0)
+        return self._state(value) if value else None
+
+    def _state(self, value: int) -> str:
+        """An Availability of the Control API as the screens name it. One this side does not know is shown as in
+        use, as a variable that does not report."""
+        try:
+            name = self._pb.Availability.Name(value)[len("AVAILABILITY_"):].lower()
+        except ValueError:
+            return "active"
+        return name if name in AVAILABILITY else "active"
 
     def _operation(self, o) -> OperationInfo:
         pb = self._pb
@@ -458,8 +479,10 @@ class GrpcSource:
             reason, fatal, synced = "the control server ended the connection", False, False
             silent = threading.Event()
             try:
-                call = self._stub.Watch(pb.WatchRequest(values=False, events=False, operations=True, time=True),
-                                        metadata=self._metadata)
+                request = pb.WatchRequest(values=False, events=False, operations=True, time=True)
+                if "availability" in request.DESCRIPTOR.fields_by_name:  # not in stubs older than it
+                    request.availability = True
+                call = self._stub.Watch(request, metadata=self._metadata)
                 with self._lock:
                     self._call = call
                 if self._stop.is_set():
@@ -541,12 +564,15 @@ class GrpcSource:
                 elif kind == "removed_peer":
                     self._peers.pop(update.removed_peer, None)
                     self._values.pop(update.removed_peer, None)
+                    self._availability.pop(update.removed_peer, None)
                     self._removed.add(update.removed_peer)
                 elif kind == "operation":
                     self._operations[update.operation.seq] = update.operation
                     if len(self._operations) > OPERATIONS_WAITING:  # the loop does not take them: read again later
                         del self._operations[next(iter(self._operations))]
                         self._dropped = True
+                elif kind == "availability":
+                    self._availability[update.availability.peer] = update.availability
                 elif kind == "time":
                     self._time = update.time
                 elif kind == "initial_done":
