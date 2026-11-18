@@ -248,6 +248,7 @@ describe('RunStatus', () => {
         rev: 3,
         phase: 'running',
         paused,
+        paused_at_ms: paused ? 0 : null,
         holding: false,
         speed,
         pacing: null,

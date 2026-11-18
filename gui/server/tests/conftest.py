@@ -347,15 +347,15 @@ class Socket:
 
     async def until_stands(self, sim_ms: int | None = None, timeout: float = 20, **fields) -> list[dict]:
         """Receives until the simulation stands still: the launcher's latest state event says paused (and has
-        `fields`, such as speed), and, with `sim_ms`, a time event of that time has come (the time event says where
-        the simulation is, the state that it stands still). Looks at everything received so far; returns the
-        messages received by this call."""
+        `fields`, such as speed) and where (`paused_at_ms`: at `sim_ms`, if given), and the time event of that time
+        has come. Looks at everything received so far; returns the messages received by this call."""
         def stands(_: dict | None = None) -> bool:
             seen = [m["event"] for m in self.received if m["type"] == "event"]
             states = [e for e in seen if e["event"] == "state"]
-            return bool(states) and states[-1].get("paused") is True and \
-                all(states[-1].get(k) == v for k, v in fields.items()) and \
-                (sim_ms is None or any(e["event"] == "time" and e.get("sim_ms") == sim_ms for e in seen))
+            at = states[-1].get("paused_at_ms") if states else None
+            return bool(states) and states[-1].get("paused") is True and isinstance(at, int) and \
+                all(states[-1].get(k) == v for k, v in fields.items()) and (sim_ms is None or at == sim_ms) and \
+                any(e["event"] == "time" and e.get("sim_ms") == at for e in seen)
         return [] if stands() else await self.until(stands, timeout)
 
     async def close(self) -> None:

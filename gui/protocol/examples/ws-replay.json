@@ -31,8 +31,8 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 42,
-        "last_t_ms": 420,
+        "last_seq": 43,
+        "last_t_ms": 430,
         "time": {
           "event": "time",
           "seq": 29,
@@ -374,10 +374,11 @@
         "findings_omitted": 0,
         "last_command": null,
         "launcher_state": {
-          "seq": 41,
+          "seq": 42,
           "rev": 8,
           "phase": "ended",
           "paused": false,
+          "paused_at_ms": null,
           "holding": false,
           "speed": "max",
           "pacing": "not-paced",
@@ -954,10 +955,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 20,
-        "t_ms": 200,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
+        "seq": 25,
+        "t_ms": 250,
+        "source": "vehicle_sil_launch",
+        "line": "simulation running"
       }
     },
     {
@@ -965,10 +966,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 26,
-        "t_ms": 260,
-        "source": "vehicle_sil_launch",
-        "line": "simulation running"
+        "seq": 27,
+        "t_ms": 270,
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -987,8 +988,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 30,
-        "t_ms": 300,
+        "seq": 31,
+        "t_ms": 310,
         "source": "vehicle_sil_launch",
         "line": "the simulation ended"
       }
@@ -998,8 +999,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 33,
-        "t_ms": 330,
+        "seq": 34,
+        "t_ms": 340,
         "source": "vehicle_sil_launch",
         "line": "Engine exited with code 0"
       }
@@ -1009,8 +1010,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 35,
-        "t_ms": 350,
+        "seq": 36,
+        "t_ms": 360,
         "source": "vehicle_sil_launch",
         "line": "Dashboard exited with code 0"
       }
@@ -1020,8 +1021,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 37,
-        "t_ms": 370,
+        "seq": 38,
+        "t_ms": 380,
         "source": "vehicle_sil_launch",
         "line": "asking Logger to stop (SIGTERM)"
       }
@@ -1029,7 +1030,7 @@
     {
       "type": "synced",
       "session": 1,
-      "last_seq": 42
+      "last_seq": 43
     }
   ]
 }

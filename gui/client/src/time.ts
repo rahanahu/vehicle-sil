@@ -96,7 +96,7 @@ export interface ClientTime {
   /** Changes the speed (a pause stays in effect). */
   setSpeed(value: number | 'max'): SendResult;
   /**
-   * Sends a command. The result arrives as the launcher's command and time events. With no run, or while waiting for
+   * Sends a command. The result arrives as the launcher's command, state and time events. With no run, or while waiting for
    * the answer to the previous command, nothing is sent and `{sent: false, reason}` is returned. Whether the launcher
    * would accept the command is `allowed` of its state (or `controls` of connect()); a command it refuses comes back in
    * lastCommand with the reason.
@@ -111,7 +111,7 @@ export interface ClientTime {
  * - The state is built from the session copy (summary and launcher events; the summary is authoritative). A client
  *   that connects midway gets the same state from the summary.
  * - The server passes commands to the launcher and returns at once. lastCommand shows whether the launcher accepted a
- *   command, time shows that it took effect.
+ *   command; the launcher's state (a pause, a resume, the speed) and time (where it is) show that it took effect.
  */
 export class TimeControl implements ClientTime {
   private readonly inFlight: Writable<number>;
@@ -163,7 +163,7 @@ export class TimeControl implements ClientTime {
   }
 
   /**
-   * Sends a command. The result arrives as the launcher's command and time events (the content of the HTTP answer is
+   * Sends a command. The result arrives as the launcher's command, state and time events (the content of the HTTP answer is
    * not used). With no run, or while waiting for the answer to the previous command (sending), nothing is sent and
    * `{sent: false, reason}` is returned. If no answer comes within answerTimeoutMs, stops waiting and reports it in
    * failure. Whether the launcher would accept the command is `allowed` of its state.

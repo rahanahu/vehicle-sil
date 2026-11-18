@@ -26,7 +26,7 @@ from typing import Any
 from .allowed import Facts, Numbered, allowed as allowed_of
 from .launcher import CONTROL_EVENT, CONTROL_SUMMARY_FIELD, SCENARIO_STEP_EVENT
 
-EVENTS_FORMAT = 1  # the `vehicle_sil_events` of hello that this server reads
+EVENTS_FORMAT = 2  # the `vehicle_sil_events` of hello that this server reads
 SHARED_LOG = "*"  # the source key of the log shared by the sources after Limits.log_sources
 ENVELOPE = ("event", "seq", "t_ms")  # what is removed from an event when its fields are kept in the summary
 MAX_COUNT = 2 ** 53  # seq and t_ms: integers that JavaScript reads exactly
@@ -36,7 +36,7 @@ ESSENTIAL = {
     "participant": ("name", "state", "pid", "exit_code", "signal", "reason", "stop_requested", CONTROL_SUMMARY_FIELD),
     "time": ("event", "seq", "t_ms", "sim_ms", "late_steps", "max_late_ms", "slipped_ms", "late_ms"),
     "registry": ("uri",),
-    "command": ("seq", "command", "accepted", "ms", "reason", "id"),
+    "command": ("seq", "command", "accepted", "ms", "at_ms", "reason", "id"),
 }
 # Problems that the server notices about the run, as opposed to what the launcher wrote: each has its own room
 # in the summary, so that a launcher that writes junk cannot push them out.

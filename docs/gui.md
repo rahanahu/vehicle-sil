@@ -766,7 +766,7 @@ The time state and commands live in one service for the whole app (built on the 
 |---|---|
 | `supported` | Whether the launcher has time commands |
 | `time` | The last `time` event (`null` if none yet) |
-| `simMs`, `actualSpeed` | The fields of `time` |
+| `simMs`, `actualSpeed` | Virtual time and the actual speed: `sim_ms` and `actual_speed` of `clock` of the library's `connect()` (while paused: the time the launcher's `state` says it is paused at, and `null`) |
 | `speed`, `paused` | The speed set and whether the run is paused: `speed` and `paused` of the launcher's last `state` event (`null` before the first one, and when the launcher is not running) |
 | `paced` | Whether the speed is numeric (whether lateness is counted) |
 | `lateness`, `behind` | The lateness figures, and whether the run fell behind real time (a step was later than the tolerance) |

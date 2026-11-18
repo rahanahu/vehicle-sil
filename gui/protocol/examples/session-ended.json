@@ -25,8 +25,8 @@
       },
       "stop": "none",
       "phase": "ended",
-      "last_seq": 42,
-      "last_t_ms": 420,
+      "last_seq": 43,
+      "last_t_ms": 430,
       "time": {
         "event": "time",
         "seq": 29,
@@ -368,10 +368,11 @@
       "findings_omitted": 0,
       "last_command": null,
       "launcher_state": {
-        "seq": 41,
+        "seq": 42,
         "rev": 8,
         "phase": "ended",
         "paused": false,
+        "paused_at_ms": null,
         "holding": false,
         "speed": "max",
         "pacing": "not-paced",

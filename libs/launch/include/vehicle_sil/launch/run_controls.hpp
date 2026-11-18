@@ -49,6 +49,9 @@ struct RunState
     Phase phase = Phase::Checking;
     /// TimeFacts::standing.
     bool paused = false;
+    /// Where it stands still (TimeFacts::standing_at_ms): empty while `paused` is false, and while
+    /// the simulation has not come to a stand yet.
+    std::optional<std::int64_t> paused_at_ms{};
     /// The run waits in the hold before its first step.
     bool holding = false;
     /// The speed set (TimeFacts::speed): the outer empty, not known yet; the inner empty, max.

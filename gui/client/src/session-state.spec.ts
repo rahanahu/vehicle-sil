@@ -110,7 +110,7 @@ describe('applyEvents', () => {
       events(
         {
           event: 'hello',
-          vehicle_sil_events: 1,
+          vehicle_sil_events: 2,
           vehicle_sil: '1',
           pid: 1,
           file: 'sim.yaml',

@@ -378,10 +378,10 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 - **始めたときの指定**: `manual` は `api/run` で指定したものだけです（設定ファイルの `manual: true` は `check` にあります）。`speed` の `null` は設定ファイルのままで、いまの速度は `launcher_state.speed` です。
 - **`state`**: `ended` は、ランチャーが終わり、その出力を読み終えた（または `output-left-open` で打ち切った）状態です。その間（長くて 2 秒）は、`api/session` で `launcher.running: false` と `running` が見えることがあります。
 - **`launcher`**: `running` はランチャーのプロセスが動いているかで、止められるかどうかはこれで決めます。終わったら `exit_code` が入ります（シグナルで終わったら `null` で、`signal` にその番号。POSIX だけ）。`silent_s` は、動いているランチャーが何も書かない秒数です（`--silent-after` を超えたときだけ、その倍数ごとに更新。書けば `null`）。
-- **`time`**: 仮想時間 `sim_ms`、実際の速度 `actual_speed`、遅れの数 `late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` です。途中から開いた画面も、これで今の時刻がわかります。一時停止しているかと、指定の速度は、`launcher_state` にあります（`paused`、`speed`）。
+- **`time`**: 仮想時間 `sim_ms`、実際の速度 `actual_speed`、遅れの数 `late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` です。途中から開いた画面も、これで今の時刻がわかります。一時停止しているか、その時刻、指定の速度は、`launcher_state` にあります（`paused`、`paused_at_ms`、`speed`）。一時停止している間、`time` は止まる前のものでありえます（ランチャーが次に見るまで `sim_ms` が前の時刻、`actual_speed` と `late_ms` が止まる前の値）。
 - **`check`**: participant の `required`、`enabled`、`variables` を含みます。`session_without_check` を頼んだ接続への `session` の通知には、このフィールドがありません（`hello` と HTTP のレスポンスにはあります）。
 - **`last_command`**: `seq`、`command`、`source`、`accepted`、`message`、`reason`、`id`、受け付けた `step` の `ms` と `at_ms`、受け付けた `run_until` の `at_ms` です。`seq` で、新しいレスポンスか、前と同じレスポンスかがわかります。`state` より前のランチャーは `reason` と `id` を書きません。
-- **`launcher_state`**: ランチャーが書いた `state` イベントそのまま（[docs/ja/simulation-events.md](../../docs/ja/simulation-events.md) の `state`）に、その `seq` を付けたものです: `rev`、`phase`、`paused`、`speed`、`stop`、`allowed`（ランチャーが受け付けること: `pause`、`resume`、`step`、`speed`、`run_until`、`stop`、`write`。それぞれ `{ok, reason, message, caution}`）など。サーバーは変えません。`rev` は変わるたびに上がるので、画面は新しいものと、同じものがもう一度届いたのとを見分けられます。これは、ランチャーが書いた時点の答えです。`ok` は、ランチャーがそのコマンドを受け付けることを言い、何かが変わることは言いません。`state` の後のイベント（`command`、`time`）のほうが新しいことがあります。`state` のイベントは `event` の通知としても届きますが、要約が覚えるのは最後の 1 つだけなので、後から開いた画面は要約から読み、前のものは再送されません。機能 `state` のないランチャーは何も書かず、このフィールドは `null` です。
+- **`launcher_state`**: ランチャーが書いた `state` イベントそのまま（[docs/ja/simulation-events.md](../../docs/ja/simulation-events.md) の `state`）に、その `seq` を付けたものです: `rev`、`phase`、`paused`、`paused_at_ms`（一時停止している時刻）、`speed`、`stop`、`allowed`（ランチャーが受け付けること: `pause`、`resume`、`step`、`speed`、`run_until`、`stop`、`write`。それぞれ `{ok, reason, message, caution}`）など。サーバーは変えません。`rev` は変わるたびに上がるので、画面は新しいものと、同じものがもう一度届いたのとを見分けられます。これは、ランチャーが書いた時点の答えです。`ok` は、ランチャーがそのコマンドを受け付けることを言い、何かが変わることは言いません。`state` の後のイベント（`command`、`time`）のほうが新しいことがあります。`state` のイベントは `event` の通知としても届きますが、要約が覚えるのは最後の 1 つだけなので、後から開いた画面は要約から読み、前のものは再送されません。機能 `state` のないランチャーは何も書かず、このフィールドは `null` です。
 - **`omitted_fields`**: `time`、`registry`、`last_command`、`participants` の各要素は、大きすぎて入れなかったフィールドがあれば、その名前の配列 `omitted_fields` を持ちます。participant では、後のイベントでそのフィールドが届けば消えます（例は `ws-large-fields.json`）。
 - **`variables`**: `hello` の要約と HTTP のレスポンスにあります。**`session` の通知の要約には、このフィールドがありません**。大きく、めったに変わらないので、変わったときに `variables` の通知で送ります。同じ実行の `session` の通知では、手元の値を使い続けます。別の実行の `session` の通知の直後には、その実行の `variables` の通知が届きます。
 - **`log`**: 落とした行は、サーバーが覚えずに落とした行と、ランチャーが読む側の遅さで書けなかった行です（後者は `log_dropped` の `sources`）。`log_dropped` のイベントは、名前の挙がった source の log の、来た位置に覚えます。再接続した画面にも同じ位置に届き、1 つのイベントは 1 回だけ送ります。画面はそこに「ここで N 行が落ちた」を表示します。
@@ -754,7 +754,7 @@ YAML に入れないものは次のとおりです。必要なものは、書き
 | `phase` | 段階の名前 |
 | `time` | `sim_ms`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` |
 | `registry` | `uri` |
-| `command` | `seq`、`command`、`accepted`、`ms`、`reason`、`id` |
+| `command` | `seq`、`command`、`accepted`、`ms`、`at_ms`、`reason`、`id` |
 
 ### `problems`
 

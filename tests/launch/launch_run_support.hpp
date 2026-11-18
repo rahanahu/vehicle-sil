@@ -331,14 +331,13 @@ public:
         require(seen && paused(), "the latest state does not say paused:\n" + text_locked());
     }
 
-    /// Waits until the simulation stands still at `ms`: a "time" event of that time has come, and
-    /// the latest "state" says paused. (The time event does not say whether it stands still; the
-    /// state does not say where.) Returns the time event.
+    /// Waits until the simulation stands still at `ms`: a "state" says paused with that time
+    /// (`paused_at_ms`), and the "time" event of that time has come (the look that finds it standing
+    /// writes it; before or after the state). Returns the time event.
     std::string wait_standing(std::int64_t ms)
     {
-        const std::string time = wait_for({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(ms) + ","});
-        wait_paused();
-        return time;
+        static_cast<void>(wait_for({"\"event\":\"state\"", "\"paused\":true,\"paused_at_ms\":" + std::to_string(ms) + ","}));
+        return wait_for({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(ms) + ","});
     }
 
     /// Waits for an event line with every one of `parts` that comes after one with every one of

@@ -45,7 +45,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `finding` | 実行の指摘が決まったとき | 結果の `findings[]` の 1 つと同じキー |
 | `scenario_step` | `--scenario` の手順が始まったとき、決まったとき | 結果の `scenario.steps[]` の 1 つと同じキー |
 | `time` | 仮想時間が進んだとき、別の時刻で一時停止したとき、遅れているとき | `sim_ms`、`actual_speed`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` |
-| `state` | 実行の状態か、受け付ける操作が変わったとき | `rev`、`phase`、`paused`、`holding`、`speed`、`pacing`、`stop`、`scenario`、`allowed`、`outside` |
+| `state` | 実行の状態か、受け付ける操作が変わったとき | `rev`、`phase`、`paused`、`paused_at_ms`、`holding`、`speed`、`pacing`、`stop`、`scenario`、`allowed`、`outside` |
 | `command` | コマンドを受けたとき | `command`、`source`、`accepted`、`message`、`reason`、`ms`、`at_ms`、`id` |
 | `heartbeat` | 1 秒のあいだ何も書かなかったとき | なし（3 つのキーだけ） |
 | `result` | 最後の行 | `result` |
@@ -56,7 +56,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 
 | キー | 値 |
 |---|---|
-| `vehicle_sil_events` | イベントの形式のバージョン（今は 1） |
+| `vehicle_sil_events` | イベントの形式のバージョン（今は 2） |
 | `vehicle_sil` | vehicle-sil のバージョン |
 | `pid` | `vehicle_sil_launch` のプロセス ID |
 | `file` | 設定ファイル（引数に書いたとおり。わからなければ `null`） |
@@ -124,7 +124,8 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `late_ms` | 期限を過ぎてもまだ始まっていないタイムステップの、いまの遅れ（なければ 0） |
 
 - `actual_speed` は、動いた時間が短いときと、一時停止している間に書く `time` では `null` です。
-- 一時停止しているかと、指定の速度は、`time` にありません。最新の `state` の `paused` と `speed` を読んでください。
+- 一時停止しているか、その時刻、指定の速度は、`time` にありません。最新の `state` の `paused`、`paused_at_ms`、`speed` を読んでください。
+- 一時停止している間、最後の `time` は止まる前のものでありえます。その `sim_ms` は `paused_at_ms` より前のことがあり（ランチャーが次に見るまで。20 ms）、`actual_speed` と `late_ms` は止まる前の値のことがあります（最後の `time` と同じ時刻で止まったときは、新しい `time` を書きません）。
 - `late_steps`、`max_late_ms`、`slipped_ms` は、結果の `timing` と同じ意味で、いま実行が終わったとしたときの値です。
 - シミュレーションが止まっている間（仮想時間が進まず、`late_ms` が許容を超えて増えている間）も、`time` は 100 ms に 1 回まで書きます。
 
@@ -156,6 +157,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `rev` | ランチャーが作った状態の番号: 1、2、3、…（飛んでいれば、書かれる前に置き換えられた状態があります。失われるものはありません） |
 | `phase` | いまの段階（`phase` のイベントの値） |
 | `paused` | シミュレーションが一時停止しているか。始まる前は、時刻 0 で止まることになっているか（`--start-paused`、`pause`）。シミュレーションが終わった後は `false` |
+| `paused_at_ms` | 一時停止している仮想時刻（ミリ秒）。`paused` が `false` の間と、`paused` が `true` でもまだ止まっていない間（下の説明）は `null` |
 | `holding` | 時刻 0 のステップの前で待っているか（`--control` と `--start-paused`。[control-api.md](control-api.md) の「始まる前に書く」） |
 | `speed` | 指定の速度: 数か `"max"`。まだ分からない間は `null`（ランチャーがシミュレーションを準備する前。`speed` のコマンドが来ていれば、その値） |
 | `pacing` | 指定の速度を保てているか: `"not-paced"`、`"on-time"`、`"late"`（下の表） |
@@ -173,7 +175,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 - 始まった後 2 秒たっても、時刻 0 で止まらなかったとき（待つのをやめて書きます）。
 - 動いている間に、時刻を指定した `pause` や `run_until` が今の時刻以下を指していて、次のタイムステップで止まるとき。
 
-`paused` は、どの時刻で止まっているかを言いません。止まっている時刻は、ランチャーが見た後の、最後の `time` の `sim_ms` です（下の、`state` を書く時点の表）。
+止まっている時刻は `paused_at_ms` です。`paused` と同じ `state` にあるので、時刻を知るのに `time` のイベントは要りません。まだ止まっていない間は `null` です: シミュレーションが始まる前（`--start-paused` で、まだ時刻 0 に着いていない実行）と、上の 2 つの例外です。止まったときに、時刻の入った `state` が続きます。`paused_at_ms` だけが変わったとき（ステップ実行が別の時刻で終わった）も、`state` を書きます。
 
 `pacing`:
 
@@ -207,12 +209,12 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | とき | 書くもの |
 |---|---|
 | 段階が変わった | 新しい段階の `state` を書きます。ふつうは `phase` のイベントの後。 |
-| コマンドが状態を変えた（一時停止、速度、標準入力やクライアントからの停止） | その変化を反映した `state` を、そのコマンドの `command` のイベントの後に書きます。何も変えないコマンドでは書きません。 |
-| シミュレーションが止まった・動き出した、`pacing` が変わった、シグナルが停止を求めた | ランチャーが次に見たとき（シミュレーションが走っている間は 20 ms ごと）。最後の `time` と別の時刻で止まっているのを見つけたときは、先にその時刻の `time` のイベントを書き、そのすぐ後にこの `state` を書きます。 |
+| コマンドが状態を変えた（一時停止、速度、標準入力やクライアントからの停止） | その変化を反映した `state` を、そのコマンドの `command` のイベントの後に書きます。何も変えないコマンドでは書きません。`pause` はすぐに効くことがあります（速度を合わせて待っているタイムステップがあるとき）。そのときは、この `state` がもう `paused` `true` と `paused_at_ms` を持っています。 |
+| シミュレーションが止まった・動き出した、`pacing` が変わった、シグナルが停止を求めた | ランチャーが次に見たとき（シミュレーションが走っている間は 20 ms ごと）。最後の `time` と別の時刻で止まっているのを見つけたときは、先にその時刻の `time` のイベントを書き、そのすぐ後にこの `state`（`paused_at_ms` つき）を書きます。 |
 
 `state` はランチャーの複数のスレッドが書くので、ほかのイベントとの間の正確な位置には頼らないでください。`phase` のイベント、標準入力の `stop` の `command` のイベント、`time` のイベントの近くでは、そのイベントの直前に作られた `state` が 1 つ、そのイベントの後に来ることがあり、その `state` はまだそのイベントを反映していません。新しい段階の `state` が、その `phase` のイベントの直前に来ることもあります。変化を反映した `state` は必ず書かれ、最後の `state` は正しい内容です。イベントの後の最初の `state` ではなく、最新の `state` を使ってください。
 
-`step` と `run_until` は、その `command` のイベントの `at_ms` でシミュレーションが止まって終わります。その時刻に着いただけでは何も書きません。ランチャーが次に見たときに、その `sim_ms` の `time` のイベントを書き、続けて `paused` が `true` の `state` を書きます。着いてからコマンドを送るには、その `time` のイベントを待ち、さらに最新の `state` の `paused` が `true` になるのを待ってください。`time` のイベントが来てすぐに送ったコマンドは、その `state` が書かれる前に受け付けられることがあります。そのときは、次の `state` がそのコマンドの結果を示します。
+`step` と `run_until` は、その `command` のイベントの `at_ms` でシミュレーションが止まって終わります。その時刻に着いただけでは何も書きません。ランチャーが次に見たときに、その `sim_ms` の `time` のイベントを書き、続けて `paused` が `true` で `paused_at_ms` がその時刻の `state` を書きます。着いてからコマンドを送るには、最新の `state` の `paused` が `true` で、`paused_at_ms` がその `at_ms` 以上になるのを待ってください。その時刻の `time` のイベントより先に、`state` がそう言うこともあります（コマンド自身の `state`。シミュレーションがもう着いていたとき）。`time` のイベントが来てすぐに送ったコマンドは、その `state` が書かれる前に受け付けられることがあります。そのときは、次の `state` がそのコマンドの結果を示します。
 
 シミュレーションが走る前に来た、シグナル（Ctrl+C）による停止の要求は、次の `state`（次の段階のもの）に現れます。
 
@@ -224,6 +226,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
   "rev": 9,
   "phase": "running",
   "paused": false,
+  "paused_at_ms": null,
   "holding": false,
   "speed": 1,
   "pacing": "on-time",
@@ -351,7 +354,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | 遅れているとき（`late_ms` が許容を超えた、遅れたタイムステップが増えた） | 実時間で 100 ms に 1 回まで書きます。 |
 | シミュレーションが終わったとき | 最後の `time` から仮想時間が進んでいるか、遅れていれば、間隔によらず、そのときの時刻を書きます。 |
 
-一時停止に入った・出たことと、速度の変化だけでは、`time` を書きません。`state` を書きます。一時停止している間、最後の `time` に、止まっている時刻があります。
+一時停止に入った・出たことと、速度の変化だけでは、`time` を書きません。`state` を書きます。止まっている時刻は `state` の `paused_at_ms` です。最後の `time` が別の時刻のものなら、ランチャーが次に見たときに、その時刻の `time` が続きます。
 
 最初の `time` は時刻 0 のものです。このイベントを書く時点で 0 より先に進んでいても、そうです。始まる前に受け付けた `step` や `run_until` で進んだときなどです。その後に止まっていれば、次の `time` に、止まった時刻があります。その前に次のコマンドで進むか、シミュレーションが終われば、その `time` はありません。
 
@@ -477,7 +480,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 `result` が来なかったときは、プロセスの終了コードで判断します。
 
-`event`、キー、理由のコード、`phase` の値と参加者の `state` の値は、バージョンを上げずに増えることがあります。キーの意味が変わるとき、なくなるときは `vehicle_sil_events` を上げます。
+`event`、キー、理由のコード、`phase` の値と参加者の `state` の値は、バージョンを上げずに増えることがあります。キーの意味が変わるとき、なくなるときは `vehicle_sil_events` を上げます。形式 2 で、`time` から `paused` と `speed` がなくなりました（`state` にあります）。
 
 `--events` のとき、標準エラーに書くのは `vehicle_sil_launch` 自身の通知（引数のエラー、イベントを書けなくなった、結果を書けない、想定外の失敗）だけで、participant の行も経過も書きません。`vehicle_sil_launch` の中のライブラリが標準出力に書いたものは、標準エラーに行きます（イベントの行に混ざりません）。
 
@@ -496,7 +499,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 <!-- vehicle_sil_launch run simulation.yaml --events --disable Dashboard -->
 ```text
-{"event":"hello","seq":0,"t_ms":<t_ms>,"vehicle_sil_events":1,"vehicle_sil":"<version>","pid":<pid>,"file":"simulation.yaml","arguments":["run","simulation.yaml","--events","--disable","Dashboard"]}
+{"event":"hello","seq":0,"t_ms":<t_ms>,"vehicle_sil_events":2,"vehicle_sil":"<version>","pid":<pid>,"file":"simulation.yaml","arguments":["run","simulation.yaml","--events","--disable","Dashboard"]}
 {"event":"phase","seq":1,"t_ms":<t_ms>,"phase":"checking"}
 {"event":"check","seq":2,"t_ms":<t_ms>,"check":{"vehicle_sil_check":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"stop_at_ms":1000,"start_timeout_ms":30000,"stop_timeout_ms":10000,"registry_uri":null,"participants":[{"name":"Engine","line":11,"command":["engine/vehicle_sil_engine_ecu"],"describe":true,"required":true,"enabled":true,"manual":false,"role":"ecu","step_ms":10,"status":"described","reported":{"vehicle_sil":"<version>","name":"Engine","step_ns":10000000,"networks":[{"name":"J1939_CAN","kind":"can","use":"j1939","nodes":[{"address":0,"j1939_name":"0x00000000FE000001","arbitrary_address_capable":false}],"mac":null}]},"variables":[{"name":"ecu.connected","type":"bool","causality":"input","unit":"","min":null,"max":null,"step":null,"description":"on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on","items":[],"builtin":true},{"name":"engine.throttle","type":"real","causality":"input","unit":"%","min":0,"max":100,"step":null,"description":"accelerator pedal position","items":[],"builtin":false},{"name":"engine.speed","type":"integer","causality":"output","unit":"rpm","min":null,"max":null,"step":null,"description":"","items":[],"builtin":false}],"network_map":null,"j1939_nodes":null,"control":{"transport":"silkit","wire_version":2}},{"name":"Dashboard","line":14,"command":["dashboard/vehicle_sil_dashboard_ecu"],"describe":true,"required":true,"enabled":false,"manual":false,"role":"ecu","step_ms":5,"status":"disabled","reported":null,"variables":null,"network_map":null,"j1939_nodes":null,"control":null}],"networks":[{"name":"J1939_CAN","kind":"can","line":8,"participants":["Engine"],"outside":null}],"time_lock":{"locked":false,"because":[]},"findings":[{"severity":"warning","code":"single-participant","file":"simulation.yaml","line":8,"participant":null,"network":"J1939_CAN","message":"network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it","detail":null},{"severity":"note","code":"participant-disabled","file":"simulation.yaml","line":14,"participant":"Dashboard","network":null,"message":"participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it","detail":null}]}}
 {"event":"participant","seq":3,"t_ms":<t_ms>,"name":"Dashboard","state":"disabled"}
@@ -547,10 +550,10 @@ participant の `log` の終わりの側には、保証がありません。part
 | `pause` | controller のタイムステップの境目で止まります（速度を合わせて待っているタイムステップがあれば、そこで。なければ次のタイムステップで）。 |
 | `resume` | 速度は、ここから数え直します。 |
 | `step` | タイムステップの倍数に切り上げます（`command` のイベントの `ms` が、実際に進む量です）。 |
-| `step` | `command` のイベントの `at_ms` は、その step の後に止まる仮想時刻です。step が着いたことは、前に読んだ時刻に `ms` を足して判断せず、`sim_ms` がその時刻の `time` のイベントを待ち、さらに最新の `state` の `paused` が `true` になるのを待ってください。後から来た `pause`、`resume`、`run_until`、`step` と、実行の終わりは、止まる時刻を変えます。 |
+| `step` | `command` のイベントの `at_ms` は、その step の後に止まる仮想時刻です。step が着いたことは、前に読んだ時刻に `ms` を足して判断せず、最新の `state` の `paused` が `true` で、`paused_at_ms` がその時刻（以上）になるのを待ってください。後から来た `pause`、`resume`、`run_until`、`step` と、実行の終わりは、止まる時刻を変えます。 |
 | `step` | 前の `step` か `run_until` の途中で送ると、その止まる時刻から数えます。 |
 | `step` | `pause` を受け付けてから止まるまでの間に送ると、進めている途中のタイムステップから数えます。進行中だった `run_until` や `step` は、その `pause` で終わっています（その瞬間に、速度を合わせて待っているタイムステップがあってもなくても同じです）。 |
-| `run_until` | 動いている間も、一時停止している間も使えます。止まっている時刻がすでに指定の時刻以上なら、そのまま止まっていて、何も起きません。動いている間に過ぎた時刻なら、次のタイムステップで止まります。`command` のイベントの `at_ms` は、頼んだ時刻をタイムステップの倍数に切り上げたものです。過ぎた時刻では止まる時刻と一致しないので、`at_ms` を待たず、最新の `state` の `paused` が `true` になるのを待って、最後の `time` のイベントの `sim_ms` を見てください。 |
+| `run_until` | 動いている間も、一時停止している間も使えます。止まっている時刻がすでに指定の時刻以上なら、そのまま止まっていて、何も起きません。動いている間に過ぎた時刻なら、次のタイムステップで止まります。`command` のイベントの `at_ms` は、頼んだ時刻をタイムステップの倍数に切り上げたものです。過ぎた時刻では止まる時刻と一致しないので、`at_ms` を待たず、最新の `state` の `paused` が `true` で `paused_at_ms` が入るのを待って、それを読んでください。 |
 | `speed` | 一時停止はそのままです。 |
 | EOF | すでに止める要求（`stop`、シグナル、閉じた標準出力）を受けていれば、何もしません（2 回目に数えません。`command` のイベントも書きません）。 |
 | それ以外 | JSON のオブジェクトでない、`command` がない、知らないコマンド、`id` が 0 以上 2^53 以下の整数でない、64 KiB を超える行がこれに当たります。 |
@@ -622,7 +625,7 @@ participant の `log` の終わりの側には、保証がありません。part
   "formats": {
     "check": 1,
     "run": 1,
-    "events": 1,
+    "events": 2,
     "describe": 1,
     "test": 1,
     "timeline": 1,

@@ -261,7 +261,7 @@ void events_usage(const Options& o)
     // The state at the check and at the end, each after its phase (the first is not written if
     // the second came before the writer got to it): nothing was set up, nothing was asked to stop.
     require(!states.empty() && states.size() <= 2 && (states.size() == 1 || contains(states[0], "\"rev\":1,\"phase\":\"checking\",")) &&
-                contains(states.back(), "\"rev\":2,\"phase\":\"ended\",\"paused\":false,\"holding\":false,\"speed\":null,"
+                contains(states.back(), "\"rev\":2,\"phase\":\"ended\",\"paused\":false,\"paused_at_ms\":null,\"holding\":false,\"speed\":null,"
                                         "\"pacing\":\"not-paced\",\"stop\":{\"requests\":0,\"by\":null},\"scenario\":false,") &&
                 contains(states.back(), "\"outside\":[]}"),
             "a state after each phase of a run that ends at its check:\n" + name.standard_output);

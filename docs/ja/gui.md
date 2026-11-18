@@ -774,7 +774,7 @@ const spec: DashboardSpec = {
 |---|---|
 | `supported` | ランチャーが時間のコマンドを持つか |
 | `time` | 最後の `time` のイベント（まだなければ `null`） |
-| `simMs`、`actualSpeed` | `time` の各フィールド |
+| `simMs`、`actualSpeed` | 仮想時刻と実際の速度: ライブラリの `connect()` の `clock` の `sim_ms` と `actual_speed`（一時停止中は、ランチャーの `state` が言う止まった時刻と、`null`） |
 | `speed`、`paused` | 指定の速度と、一時停止しているか: ランチャーの最後の `state` のイベントの `speed` と `paused`（最初の `state` の前と、ランチャーが動いていないときは `null`） |
 | `paced` | 速度が数値か（遅れを数えているか） |
 | `lateness`、`behind` | 遅れの数と、実時間に遅れたか（許容を超えて遅れたステップがある） |

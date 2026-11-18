@@ -380,6 +380,7 @@
           "rev": 8,
           "phase": "ended",
           "paused": false,
+          "paused_at_ms": null,
           "holding": false,
           "speed": "max",
           "pacing": "not-paced",

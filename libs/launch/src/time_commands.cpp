@@ -97,11 +97,19 @@ template <typename S> TimeFacts facts_of(S& s)
         const TimeState t = s.controller->time_state();
         // It stands still, or does with its next step (the same rule as noted_standing() of the time events).
         f.standing = s.holding || t.paused || (t.pause_target && *t.pause_target <= t.now);
+        if (t.paused)
+        {
+            f.standing_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t.now.time_since_epoch()).count();
+        }
         s.gate_speed = t.speed;
     }
     else
     {
         f.standing = !s.detached && s.paused;
+    }
+    if (s.holding)
+    {
+        f.standing_at_ms = 0; // before the step at 0, whether or not the controller is there yet
     }
     f.speed = s.gate_speed ? s.gate_speed : s.speed;
     return f;

@@ -140,7 +140,7 @@
         "event": "hello",
         "seq": 0,
         "t_ms": 0,
-        "vehicle_sil_events": 1,
+        "vehicle_sil_events": 2,
         "vehicle_sil": "0.1.0",
         "pid": 10001,
         "file": "forever.yaml",
@@ -178,6 +178,7 @@
         "rev": 1,
         "phase": "checking",
         "paused": true,
+        "paused_at_ms": null,
         "holding": false,
         "speed": null,
         "pacing": "not-paced",
@@ -539,6 +540,7 @@
         "rev": 2,
         "phase": "starting",
         "paused": true,
+        "paused_at_ms": null,
         "holding": false,
         "speed": null,
         "pacing": "not-paced",
@@ -629,6 +631,7 @@
         "rev": 3,
         "phase": "starting",
         "paused": true,
+        "paused_at_ms": null,
         "holding": false,
         "speed": "max",
         "pacing": "not-paced",
@@ -785,6 +788,7 @@
         "rev": 4,
         "phase": "waiting",
         "paused": true,
+        "paused_at_ms": null,
         "holding": false,
         "speed": "max",
         "pacing": "not-paced",
@@ -921,6 +925,7 @@
         "rev": 5,
         "phase": "running",
         "paused": true,
+        "paused_at_ms": 0,
         "holding": false,
         "speed": "max",
         "pacing": "not-paced",
@@ -1033,6 +1038,7 @@
         "rev": 6,
         "phase": "running",
         "paused": false,
+        "paused_at_ms": null,
         "holding": false,
         "speed": "max",
         "pacing": "not-paced",
@@ -1117,6 +1123,7 @@
         "rev": 7,
         "phase": "running",
         "paused": true,
+        "paused_at_ms": 30,
         "holding": false,
         "speed": "max",
         "pacing": "not-paced",
@@ -1201,6 +1208,7 @@
         "rev": 8,
         "phase": "running",
         "paused": true,
+        "paused_at_ms": 30,
         "holding": false,
         "speed": 1,
         "pacing": "not-paced",
@@ -1285,6 +1293,7 @@
         "rev": 9,
         "phase": "running",
         "paused": false,
+        "paused_at_ms": null,
         "holding": false,
         "speed": 1,
         "pacing": "on-time",
@@ -1348,9 +1357,24 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "command",
+        "event": "time",
         "seq": 34,
         "t_ms": 340,
+        "sim_ms": 120,
+        "actual_speed": null,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "command",
+        "seq": 35,
+        "t_ms": 350,
         "command": "step",
         "source": "stdin",
         "accepted": false,
@@ -1364,8 +1388,8 @@
       "session": 1,
       "event": {
         "event": "command",
-        "seq": 35,
-        "t_ms": 350,
+        "seq": 36,
+        "t_ms": 360,
         "command": "pause",
         "source": "stdin",
         "accepted": true,
@@ -1379,11 +1403,12 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 36,
-        "t_ms": 360,
+        "seq": 37,
+        "t_ms": 370,
         "rev": 10,
         "phase": "running",
         "paused": true,
+        "paused_at_ms": 130,
         "holding": false,
         "speed": 1,
         "pacing": "not-paced",
@@ -1444,6 +1469,21 @@
       }
     },
     {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 38,
+        "t_ms": 380,
+        "sim_ms": 130,
+        "actual_speed": null,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
+      }
+    },
+    {
       "type": "session",
       "session": {
         "id": 1,
@@ -1466,13 +1506,13 @@
         },
         "stop": "requested",
         "phase": "running",
-        "last_seq": 36,
-        "last_t_ms": 360,
+        "last_seq": 38,
+        "last_t_ms": 380,
         "time": {
           "event": "time",
-          "seq": 28,
-          "t_ms": 280,
-          "sim_ms": 30,
+          "seq": 38,
+          "t_ms": 380,
+          "sim_ms": 130,
           "actual_speed": null,
           "late_steps": 0,
           "max_late_ms": 0,
@@ -1792,7 +1832,7 @@
         "findings": [],
         "findings_omitted": 0,
         "last_command": {
-          "seq": 35,
+          "seq": 36,
           "command": "pause",
           "source": "stdin",
           "accepted": true,
@@ -1801,10 +1841,11 @@
           "id": null
         },
         "launcher_state": {
-          "seq": 36,
+          "seq": 37,
           "rev": 10,
           "phase": "running",
           "paused": true,
+          "paused_at_ms": 130,
           "holding": false,
           "speed": 1,
           "pacing": "not-paced",
@@ -1902,8 +1943,8 @@
       "session": 1,
       "event": {
         "event": "command",
-        "seq": 37,
-        "t_ms": 370,
+        "seq": 39,
+        "t_ms": 390,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -1917,11 +1958,12 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 38,
-        "t_ms": 380,
+        "seq": 40,
+        "t_ms": 400,
         "rev": 11,
         "phase": "running",
         "paused": true,
+        "paused_at_ms": 130,
         "holding": false,
         "speed": 1,
         "pacing": "not-paced",
@@ -1963,75 +2005,6 @@
             "ok": true,
             "reason": null,
             "message": null,
-            "caution": null
-          },
-          "stop": {
-            "ok": true,
-            "reason": null,
-            "message": null,
-            "caution": null
-          },
-          "write": {
-            "ok": false,
-            "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
-            "caution": null
-          }
-        },
-        "outside": []
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "state",
-        "seq": 39,
-        "t_ms": 390,
-        "rev": 12,
-        "phase": "running",
-        "paused": false,
-        "holding": false,
-        "speed": 1,
-        "pacing": "not-paced",
-        "stop": {
-          "requests": 1,
-          "by": "stop command"
-        },
-        "scenario": false,
-        "allowed": {
-          "pause": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): pause works from the start of the run until the simulation ends",
-            "caution": null
-          },
-          "resume": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): resume works from the start of the run until the simulation ends",
-            "caution": null
-          },
-          "step": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): step works from the start of the run until the simulation ends",
-            "caution": null,
-            "min_ms": 1,
-            "max_ms": 1000000000000
-          },
-          "speed": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): speed works from the start of the run until the simulation ends",
-            "caution": null,
-            "min": 1e-06,
-            "max": 1000000.0
-          },
-          "run_until": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
             "caution": null
           },
           "stop": {
@@ -2055,8 +2028,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 40,
-        "t_ms": 400,
+        "seq": 41,
+        "t_ms": 410,
         "source": "vehicle_sil_launch",
         "line": "interrupted (stop command): the simulation was stopped"
       }
@@ -2066,8 +2039,8 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 41,
-        "t_ms": 410,
+        "seq": 42,
+        "t_ms": 420,
         "severity": "warning",
         "code": "coarse-time-step",
         "file": "forever.yaml",
@@ -2083,8 +2056,8 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 42,
-        "t_ms": 420,
+        "seq": 43,
+        "t_ms": 430,
         "severity": "note",
         "code": "interrupted",
         "file": "forever.yaml",
@@ -2100,8 +2073,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 43,
-        "t_ms": 430,
+        "seq": 44,
+        "t_ms": 440,
         "phase": "stopping"
       }
     },
@@ -2110,11 +2083,12 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 44,
-        "t_ms": 440,
+        "seq": 45,
+        "t_ms": 450,
         "rev": 13,
         "phase": "stopping",
         "paused": false,
+        "paused_at_ms": null,
         "holding": false,
         "speed": 1,
         "pacing": "not-paced",
@@ -2179,8 +2153,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 45,
-        "t_ms": 450,
+        "seq": 46,
+        "t_ms": 460,
         "source": "vehicle_sil_launch",
         "line": "Engine exited with code 0"
       }
@@ -2190,8 +2164,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 46,
-        "t_ms": 460,
+        "seq": 47,
+        "t_ms": 470,
         "name": "Engine",
         "state": "ended",
         "exit_code": 0,
@@ -2203,8 +2177,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 47,
-        "t_ms": 470,
+        "seq": 48,
+        "t_ms": 480,
         "source": "vehicle_sil_launch",
         "line": "Dashboard exited with code 0"
       }
@@ -2214,8 +2188,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 48,
-        "t_ms": 480,
+        "seq": 49,
+        "t_ms": 490,
         "name": "Dashboard",
         "state": "ended",
         "exit_code": 0,
@@ -2227,8 +2201,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 49,
-        "t_ms": 490,
+        "seq": 50,
+        "t_ms": 500,
         "phase": "ended"
       }
     },
@@ -2237,11 +2211,12 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 50,
-        "t_ms": 500,
+        "seq": 51,
+        "t_ms": 510,
         "rev": 14,
         "phase": "ended",
         "paused": false,
+        "paused_at_ms": null,
         "holding": false,
         "speed": 1,
         "pacing": "not-paced",
@@ -2306,8 +2281,8 @@
       "session": 1,
       "event": {
         "event": "result",
-        "seq": 51,
-        "t_ms": 510,
+        "seq": 52,
+        "t_ms": 520,
         "result": {
           "vehicle_sil_run": 1,
           "vehicle_sil": "0.1.0",
@@ -2326,10 +2301,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 5,
             "late_tolerance_ms": 10,
-            "sim_ms": 30,
+            "sim_ms": 130,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 0,
+            "paced_steps": 10,
             "late_steps": 0,
             "max_late_ms": 0,
             "slipped_ms": 0,
@@ -2394,7 +2369,7 @@
           ],
           "outside": [],
           "traffic": {
-            "before_ms": 30,
+            "before_ms": 130,
             "unplaced": [],
             "networks": [
               {
@@ -2411,8 +2386,8 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 20,
-                    "frames_sent": 2,
+                    "at_ms": 120,
+                    "frames_sent": 3,
                     "frames_received": 0
                   },
                   {
@@ -2420,9 +2395,9 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 20,
+                    "at_ms": 120,
                     "frames_sent": 0,
-                    "frames_received": 2
+                    "frames_received": 3
                   }
                 ]
               }
@@ -2738,13 +2713,13 @@
         },
         "stop": "requested",
         "phase": "ended",
-        "last_seq": 51,
-        "last_t_ms": 510,
+        "last_seq": 52,
+        "last_t_ms": 520,
         "time": {
           "event": "time",
-          "seq": 28,
-          "t_ms": 280,
-          "sim_ms": 30,
+          "seq": 38,
+          "t_ms": 380,
+          "sim_ms": 130,
           "actual_speed": null,
           "late_steps": 0,
           "max_late_ms": 0,
@@ -3089,7 +3064,7 @@
         ],
         "findings_omitted": 0,
         "last_command": {
-          "seq": 37,
+          "seq": 39,
           "command": "stop",
           "source": "stdin",
           "accepted": true,
@@ -3098,10 +3073,11 @@
           "id": null
         },
         "launcher_state": {
-          "seq": 50,
+          "seq": 51,
           "rev": 14,
           "phase": "ended",
           "paused": false,
+          "paused_at_ms": null,
           "holding": false,
           "speed": 1,
           "pacing": "not-paced",
@@ -3196,10 +3172,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 5,
             "late_tolerance_ms": 10,
-            "sim_ms": 30,
+            "sim_ms": 130,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 0,
+            "paced_steps": 10,
             "late_steps": 0,
             "max_late_ms": 0,
             "slipped_ms": 0,
@@ -3264,7 +3240,7 @@
           ],
           "outside": [],
           "traffic": {
-            "before_ms": 30,
+            "before_ms": 130,
             "unplaced": [],
             "networks": [
               {
@@ -3281,8 +3257,8 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 20,
-                    "frames_sent": 2,
+                    "at_ms": 120,
+                    "frames_sent": 3,
                     "frames_received": 0
                   },
                   {
@@ -3290,9 +3266,9 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 20,
+                    "at_ms": 120,
                     "frames_sent": 0,
-                    "frames_received": 2
+                    "frames_received": 3
                   }
                 ]
               }

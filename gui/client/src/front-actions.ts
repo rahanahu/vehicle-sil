@@ -7,7 +7,7 @@ import { HttpError, HttpTransport, errorMessage } from './http';
 import type { FrontControls, Intent, OperationName, RunState } from './front-types';
 import { ActionError } from './front-types';
 import type { Snapshot } from './front-compose';
-import { linkOf } from './front-compose';
+import { linkOf, simMsOf } from './front-compose';
 import type { LauncherEvent, RunRequest, ServerMessage } from './protocol';
 import { ErrorSink, Readable, Writable } from './values';
 
@@ -441,8 +441,8 @@ export class FrontActions {
         );
         continue;
       }
-      const sim = session.time?.simMs ?? session.simMs;
-      // Arrived: the time event says where it is, the state that it stands still (neither says both)
+      const sim = simMsOf(session);
+      // Arrived: the latest state says that it stands still, and virtual time is at the target
       if (sim !== null && (w.exact || sim > w.from) && sim >= w.target && state?.paused === true)
         this.settle(w, null);
     }

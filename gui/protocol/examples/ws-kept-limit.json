@@ -31,8 +31,8 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 40042,
-        "last_t_ms": 400420,
+        "last_seq": 40043,
+        "last_t_ms": 400430,
         "time": {
           "event": "time",
           "seq": 40029,
@@ -393,10 +393,11 @@
         "findings_omitted": 39000,
         "last_command": null,
         "launcher_state": {
-          "seq": 40041,
+          "seq": 40042,
           "rev": 8,
           "phase": "ended",
           "paused": false,
+          "paused_at_ms": null,
           "holding": false,
           "speed": "max",
           "pacing": "not-paced",
@@ -550,7 +551,7 @@
     {
       "type": "synced",
       "session": 1,
-      "last_seq": 40042
+      "last_seq": 40043
     }
   ]
 }

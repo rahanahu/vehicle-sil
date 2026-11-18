@@ -322,6 +322,49 @@ void run_until_stdin(const Options& o)
     const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
     require(status && status->code == 130, "stopped while paused: 130");
     require(gone, "no participant is left");
+    // A time that has passed while it runs as fast as it can: the simulation stands still at its next
+    // step, not where it was when the command came. The state says paused at once and where only once it
+    // stands (paused_at_ms is null until then): no state names a time it does not stand at, and the last
+    // time event is of the time the state names. (At a speed, where a step waits for its real time, the
+    // simulation stands still at once and the command's own state says where.)
+    {
+        const fs::path fast = one_ecu(o, "", "pid");
+        Live run(o, fast, {"run", "--events", "--stdin-commands", "sim.yaml"});
+        run.wait_for_count({"\"event\":\"time\""}, 2);
+        run.write("{\"command\":\"run_until\",\"at_ms\":0,\"id\":3}\n");
+        const std::vector<std::string> sent{"\"command\":\"run_until\"", "\"accepted\":true,", "\"id\":3}"};
+        static_cast<void>(run.wait_for(sent));
+        const std::vector<std::string> standing{"\"event\":\"state\"", "\"paused\":true,\"paused_at_ms\":"};
+        // (the first state after the command may be the one that does not say where yet)
+        std::string stands;
+        const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(120s);
+        while (stands.empty() || value_of(stands, "paused_at_ms") == "null")
+        {
+            require(std::chrono::steady_clock::now() < deadline, "no state says where it stands still:\n" + stands);
+            std::this_thread::sleep_for(5ms);
+            const std::vector<std::string> states = events_with(run.lines(), standing);
+            stands = states.empty() ? std::string{} : states.back();
+        }
+        std::this_thread::sleep_for(300ms);
+        run.write("{\"command\":\"stop\"}\n");
+        const auto [ended, out] = run.finish();
+        require(ended && ended->code == 130, "stopped while paused: 130");
+        const auto command = std::find_if(out.begin(), out.end(), [&](const std::string& l) {
+            return std::all_of(sent.begin(), sent.end(), [&](const std::string& p) { return contains(l, p); });
+        });
+        const std::string where = value_of(stands, "paused_at_ms");
+        for (auto line = command; line != out.end(); ++line)
+        {
+            if (std::all_of(standing.begin(), standing.end(), [&](const std::string& p) { return contains(*line, p); }))
+            {
+                const std::string at = value_of(*line, "paused_at_ms");
+                require(at == "null" || at == where, "a state names a time (" + at + ") that it does not stand at (" + where + "):\n" + *line);
+            }
+        }
+        const std::vector<std::string> times = events_with(out, {"\"event\":\"time\""});
+        require(!times.empty() && value_of(times.back(), "sim_ms") == where,
+                "the last time event is of the time the state says it stands at (" + where + "):\n" + (times.empty() ? "" : times.back()));
+    }
 }
 
 void state_on_arrival(const Options& o)
@@ -333,7 +376,7 @@ void state_on_arrival(const Options& o)
     const fs::path dir = one_ecu(o, "", "pid");
     Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
     const std::string stateEvent = "\"event\":\"state\"";
-    const auto says_paused = [](const std::string& state) { return contains(state, "\"paused\":true,\"holding\":"); };
+    const auto says_paused = [](const std::string& state) { return contains(state, "\"paused\":true,\"paused_at_ms\":"); };
     // Waits for the time event that stands still at `ms`, then until the latest state says paused.
     const auto stands_at = [&](std::int64_t ms) {
         live.wait_for({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(ms) + ","});
@@ -620,7 +663,7 @@ void pause_step(const Options& o)
     Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
     live.wait_standing(0);
     // The state says the same, and that a step is taken now.
-    live.wait_for({"\"event\":\"state\"", "\"phase\":\"running\",\"paused\":true,\"holding\":false,\"speed\":\"max\","
+    live.wait_for({"\"event\":\"state\"", "\"phase\":\"running\",\"paused\":true,\"paused_at_ms\":0,\"holding\":false,\"speed\":\"max\","
                                         "\"pacing\":\"not-paced\",\"stop\":{\"requests\":0,\"by\":null}",
                    "\"step\":{\"ok\":true,\"reason\":null,\"message\":null,\"caution\":null,\"min_ms\":1,"});
     // A step goes the time given, in whole steps of the controller (10 ms), and stands still.
@@ -663,15 +706,15 @@ void pause_step(const Options& o)
     live.write("{\"command\":\"step\",\"ms\":10,\"id\":8}\n{\"command\":\"speed\",\"value\":1}\n");
     live.wait_for({"\"command\":\"step\"", "\"accepted\":false", "\"reason\":\"not-paused\",\"id\":8}"});
     // The speed set, and whether the run keeps up with it (on time, unless this computer is busy).
-    const std::string paced = live.wait_for({"\"event\":\"state\"", "\"paused\":false,\"holding\":false,\"speed\":1,\"pacing\":\""});
+    const std::string paced = live.wait_for({"\"event\":\"state\"", "\"paused\":false,\"paused_at_ms\":null,\"holding\":false,\"speed\":1,\"pacing\":\""});
     require(contains(paced, "\"pacing\":\"on-time\"") || contains(paced, "\"pacing\":\"late\""),
             "a run that goes at a speed is on time or late:\n" + paced);
     live.write("{\"command\":\"pause\"}\n");
-    live.wait_for({"\"event\":\"state\"", "\"paused\":true,\"holding\":false,\"speed\":1,\"pacing\":\"not-paced\","});
-    // Where it stands: the last time event, once the look that found it standing has written it.
-    std::this_thread::sleep_for(300ms);
-    const std::string paused = events_with(live.lines(), {"\"event\":\"time\""}).back();
-    std::this_thread::sleep_for(300ms);
+    // The state says that it stands still, and where (the time event of that time may come after it).
+    const std::string paused = live.wait_for({"\"event\":\"state\"", "\"paused\":true,\"paused_at_ms\":", "\"holding\":false,\"speed\":1,"
+                                                                    "\"pacing\":\"not-paced\","});
+    require(value_of(paused, "paused_at_ms") != "null", "the state that says paused at a speed says where:\n" + paused);
+    std::this_thread::sleep_for(600ms);
     live.write("{\"command\":\"stop\"}\n");
     // The stop request is in the state at once, by its name in the result.
     live.wait_for({"\"event\":\"state\"", "\"stop\":{\"requests\":1,\"by\":\"stop command\"}"});
@@ -679,14 +722,14 @@ void pause_step(const Options& o)
     const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
     require(status && status->code == 130, "stopped while paused: 130");
     require(gone, "no participant is left");
-    require_ended_not_paused(lines, std::stoll(value_of(paused, "sim_ms")), "was stopped by a command");
+    require_ended_not_paused(lines, std::stoll(value_of(paused, "paused_at_ms")), "was stopped by a command");
     std::string all;
     for (const auto& line : lines)
     {
         all += line + "\n";
     }
     // It stood still where it paused.
-    const std::int64_t where = std::stoll(value_of(paused, "sim_ms"));
+    const std::int64_t where = std::stoll(value_of(paused, "paused_at_ms"));
     for (const auto& time : events_with(lines, {"\"event\":\"time\""}))
     {
         require(std::stoll(value_of(time, "sim_ms")) <= where, "nothing moved after the pause:\n" + all);
@@ -720,7 +763,7 @@ void pause_step(const Options& o)
     require(at({"\"command\":\"stop\""}) < at({"\"event\":\"state\"", "\"stop\":{\"requests\":1,"}),
             "the stop command comes before the state with the request:\n" + all);
     require(!states.empty() &&
-                contains(states.back(), "\"phase\":\"ended\",\"paused\":false,\"holding\":false,\"speed\":1,\"pacing\":\"not-paced\","
+                contains(states.back(), "\"phase\":\"ended\",\"paused\":false,\"paused_at_ms\":null,\"holding\":false,\"speed\":1,\"pacing\":\"not-paced\","
                                         "\"stop\":{\"requests\":1,\"by\":\"stop command\"}") &&
                 contains(states.back(), "\"pause\":{\"ok\":false,\"reason\":\"not-running\",") &&
                 contains(states.back(), "\"stop\":{\"ok\":true,\"reason\":null,"),

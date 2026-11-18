@@ -34,19 +34,20 @@ export class SimulationTime {
   /** 各操作を押せるか、押せない理由、範囲（ステップ送りの上限、速さの範囲）。正面の口が言う。 */
   readonly controls = readableSignal(this.front.controls);
   private readonly status = readableSignal(this.front.status);
+  private readonly clock = readableSignal(this.front.clock);
 
   /** ランチャーが時刻の命令（pause、resume、step、speed）を持つか。持たなければ操作を出さない。 */
   readonly supported = computed(() => this.state().supported);
   /** いまのセッションの時刻（time の事象が来るまでは null）。 */
   readonly time = computed<TimeView | null>(() => this.state().time);
-  /** 仮想時間（ミリ秒）。 */
-  readonly simMs = computed(() => this.time()?.simMs ?? null);
+  /** 仮想時間（ミリ秒）。正面の口の `clock`（一時停止中は、ランチャーの `state` が言う止まった時刻も見る）。 */
+  readonly simMs = computed(() => this.clock().sim_ms);
   /** いまの速さ（数か 'max'。ランチャーの `state` がまだなければ null）。 */
   readonly speed = computed(() => this.launcherState()?.speed ?? null);
   /** 一時停止しているか（ランチャーの `state` がまだなければ null）。 */
   readonly paused = computed(() => this.launcherState()?.paused ?? null);
-  /** 直近 1 秒ほどの実際の速さ。 */
-  readonly actualSpeed = computed(() => this.time()?.actualSpeed ?? null);
+  /** 直近 1 秒ほどの実際の速さ。正面の口の `clock`（一時停止中は null。最後の time の値は止まる前のもの）。 */
+  readonly actualSpeed = computed(() => this.clock().actual_speed);
   /** 速さを合わせている（数の速さ）。最速では遅れを数えないので、遅れの欄は出さない。 */
   readonly paced = computed(() => this.state().paced);
   /** 遅れの数（ランチャーが書かないときは null）。 */

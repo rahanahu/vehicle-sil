@@ -466,7 +466,7 @@ export interface SessionSummary {
   sim_ms: number | null;
   /** Names of the fields of the last time event too large to put in the summary. */
   time_omitted_fields: string[];
-  /** The last time event (virtual time, speed, pause, lateness figures). null until it arrives. */
+  /** The last time event (virtual time, actual speed, lateness figures; whether it is paused, where, and the speed set are in launcher_state). null until it arrives. */
   time: TimeReport | null;
   /** The last command event (whether it was accepted, and why not). null until it arrives. */
   last_command: SummaryCommand | null;

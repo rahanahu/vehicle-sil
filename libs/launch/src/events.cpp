@@ -943,6 +943,14 @@ void EventStream::state(const RunState& state)
              w.integer("rev", static_cast<std::int64_t>(state.rev));
              w.string("phase", phase_name(state.phase));
              w.boolean("paused", state.paused);
+             if (state.paused_at_ms)
+             {
+                 w.integer("paused_at_ms", *state.paused_at_ms);
+             }
+             else
+             {
+                 w.null("paused_at_ms");
+             }
              w.boolean("holding", state.holding);
              if (!state.speed)
              {

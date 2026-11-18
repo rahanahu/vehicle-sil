@@ -48,6 +48,7 @@ const stateEvent = (
   rev,
   phase: 'running',
   paused: false,
+  paused_at_ms: null,
   holding: false,
   speed: 1,
   pacing: 'on-time',
@@ -58,10 +59,11 @@ const stateEvent = (
   ...more,
 });
 
-const pausedState = (rev: number) =>
+/** A state that says paused; `at`: where (`paused_at_ms`; null: the simulation has not come to a stand yet). */
+const pausedState = (rev: number, at: number | null = null) =>
   stateEvent(
     rev,
-    { paused: true },
+    { paused: true, paused_at_ms: at },
     { pause: ok, resume: ok, step: { ...ok, min_ms: 10, max_ms: 5000 } },
   );
 
@@ -434,9 +436,22 @@ describe('the front door', () => {
       expect(controls()).toEqual(['paused', null]);
     });
 
-    it('believes a state that says paused before the time event of the arrival only once that has come', async () => {
+    it('takes the arrival from a state that says where it stands, before the time event of that time', async () => {
+      const rig = await running(pausedState(1, 500));
+      // The state from before the command stands at 500: not there. Then the simulation was there before the
+      // command's own state was put together: that state says paused at 530 already, and no time event has said so
+      await rig.deliver(event(commandEvent(60, 'step', null, { ms: 30, at_ms: 530 })));
+      expect(rig.front.controls.get().pause.ok).toBe(true);
+      await rig.deliver(event(pausedState(2, 530)));
+      expect(rig.front.controls.get().pause.reason?.code).toBe('paused');
+      // The clock is where the state says it stands, though the last time event is older
+      expect(rig.front.clock.get().sim_ms).toBe(530);
+      await rig.deliver(event(timeEvent(61, 530)));
+      expect(rig.front.clock.get().sim_ms).toBe(530);
+    });
+
+    it('does not take a state that says paused without saying where for the arrival', async () => {
       const rig = await running(pausedState(1));
-      // The simulation was there before the command's state was put together: that state says paused already
       await rig.deliver(
         event(commandEvent(60, 'step', null, { ms: 30, at_ms: 530 })),
         event(pausedState(2)),
@@ -797,6 +812,19 @@ describe('the front door', () => {
       await rig.deliver(event(timeEvent(62, 530)));
       expect(done).toBe(false);
       await rig.deliver(event(pausedState(3)));
+      await step;
+      expect(done).toBe(true);
+      expect(rig.front.clock.get().sim_ms).toBe(530);
+    });
+
+    it('resolves a step when the state says that it stands at the target, without a time event', async () => {
+      const rig = await running(pausedState(1, 500));
+      let done = false;
+      const step = rig.front.time.step(25).then(() => (done = true));
+      const id = rig.timeBody().id;
+      await rig.deliver(event(commandEvent(60, 'step', id, { ms: 30, at_ms: 530 })));
+      expect(done).toBe(false); // the state from before the command stands at 500
+      await rig.deliver(event(pausedState(2, 530)));
       await step;
       expect(done).toBe(true);
       expect(rig.front.clock.get().sim_ms).toBe(530);

@@ -26,7 +26,7 @@
 namespace vehicle_sil::launch {
 
 /// The version of the events (hello's "vehicle_sil_events").
-inline constexpr int kEventsFormat = 1;
+inline constexpr int kEventsFormat = 2;
 /// The version of `version --json` (its "vehicle_sil_launch").
 inline constexpr int kVersionFormat = 1;
 /// What this launcher can do, by name, for a reader that asks "is it there" instead of comparing

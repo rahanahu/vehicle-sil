@@ -178,16 +178,31 @@ export function statusOf(s: Snapshot, initialFile: string | null): Omit<FrontSta
 }
 
 /**
- * Whether a step or a run_until that the launcher accepted has not been seen to arrive. It has arrived when virtual
- * time is at the `at_ms` of its command event (the time event) and the latest state says paused; either alone does
- * not say so (the state may be the one from before the command, and a time event does not say whether it stands
- * still). Another command after it (a pause, a resume) ends the question: it is then the last command.
+ * Where virtual time is, as far as the session copy knows: the last time event, or the time the launcher's state says
+ * it stands still at (`paused_at_ms`), whichever is later. The state can be ahead of the time events: the launcher
+ * writes the time event of a standstill at its next look.
+ */
+export function simMsOf(session: SessionView | null): number | null {
+  if (!session) return null;
+  const sim = session.time?.simMs ?? session.simMs;
+  const state = session.launcherState;
+  const stands = state?.paused === true ? state.paused_at_ms : null;
+  if (stands === null || stands === undefined) return sim;
+  return sim === null ? stands : Math.max(sim, stands);
+}
+
+/**
+ * Whether a step or a run_until that the launcher accepted has not been seen to arrive. It has arrived when the latest
+ * state says paused and virtual time (simMsOf) is at the `at_ms` of its command event. That the state says paused is
+ * not enough: it may be the one from before the command. Another command after it (a pause, a resume) ends the
+ * question (it is then the last command), and so does the end of the run.
  */
 export function onItsWay(session: SessionView | null): boolean {
   const last = session?.lastCommand;
-  if (!session || !last || !last.accepted || last.atMs === null) return false;
+  if (!session || !session.launcher.running || !last || !last.accepted || last.atMs === null)
+    return false;
   if (last.name !== 'step' && last.name !== 'run_until') return false;
-  const sim = session.time?.simMs ?? session.simMs;
+  const sim = simMsOf(session);
   return !(sim !== null && sim >= last.atMs && session.launcherState?.paused === true);
 }
 
@@ -200,7 +215,7 @@ export function clockOf(s: Snapshot): FrontClock {
   const live = !!session && session.launcher.running;
   const pacing = state?.pacing;
   return {
-    sim_ms: time?.simMs ?? session?.simMs ?? null,
+    sim_ms: simMsOf(session ?? null),
     speed: state?.speed ?? null,
     // The last time event may be from before the pause: nothing moves while it stands still
     actual_speed: state?.paused === true ? null : (time?.actualSpeed ?? null),

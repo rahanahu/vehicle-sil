@@ -696,17 +696,26 @@ def state_paused(events: list[dict], value: bool, **fields) -> bool:
 
 
 def paused(sim_ms: int | None = None, **fields) -> Callable[[list[dict]], bool]:
-    """The latest state says paused (and has these fields, such as speed), and, with sim_ms, a time event of that
-    time has come: the time event says where the simulation is, the state that it stands still."""
+    """The latest state says paused (and has these fields, such as speed) and where (paused_at_ms: at sim_ms, if
+    given), and the time event of that time has come (the launcher's look writes it; the state may come first)."""
     def seen(events: list[dict]) -> bool:
-        return state_paused(events, True, **fields) and (
-            sim_ms is None or any(e.get("event") == "time" and e.get("sim_ms") == sim_ms for e in events))
+        states = [e for e in events if e.get("event") == "state"]
+        at = states[-1].get("paused_at_ms") if states else None
+        return state_paused(events, True, **fields) and isinstance(at, int) and (sim_ms is None or at == sim_ms) and \
+            any(e.get("event") == "time" and e.get("sim_ms") == at for e in events)
     return seen
 
 
 def going() -> Callable[[list[dict]], bool]:
-    """The latest state says that the simulation is not paused."""
-    return lambda events: state_paused(events, False)
+    """The simulation goes on and has said so: the latest state is not paused, and a time event of a later time
+    than the one it last stood at has come (a recording of a resume has the time moving in it)."""
+    def seen(events: list[dict]) -> bool:
+        stood = [e["paused_at_ms"] for e in events
+                 if e.get("event") == "state" and isinstance(e.get("paused_at_ms"), int)]
+        after = stood[-1] if stood else -1
+        return state_paused(events, False) and any(
+            e.get("event") == "time" and isinstance(e.get("sim_ms"), int) and e["sim_ms"] > after for e in events)
+    return seen
 
 
 def log(text: str) -> Callable[[list[dict]], bool]:

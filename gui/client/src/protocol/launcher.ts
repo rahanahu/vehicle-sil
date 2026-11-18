@@ -957,6 +957,11 @@ export interface StateReport {
   phase: string;
   /** Whether the simulation stands still. null if not written. */
   paused: boolean | null;
+  /**
+   * The virtual time (ms) at which it stands still. null while it does not, and while `paused` is true but the
+   * simulation has not come to a stand yet (before it starts; a pause at a time that has passed, until the next step).
+   */
+  paused_at_ms: number | null;
   /** Whether the run waits before the step at time 0 (a run started paused with a Control Server). null if not written. */
   holding: boolean | null;
   /** The speed that was asked for. null before the launcher knows it. */
@@ -976,6 +981,7 @@ export function readStateFields(f: Fields, path: string, u?: Unreadable): StateR
     rev: field(f, path, 'rev', integer),
     phase: field(f, path, 'phase', lenient(string, '', u)),
     paused: field(f, path, 'paused', soft(nullable(boolean), null, u)),
+    paused_at_ms: field(f, path, 'paused_at_ms', soft(nullable(number), null, u)),
     holding: field(f, path, 'holding', soft(nullable(boolean), null, u)),
     speed: field(f, path, 'speed', soft(readSpeed, null, u)),
     pacing: field(f, path, 'pacing', soft(nullable(string), null, u)),

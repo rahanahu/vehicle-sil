@@ -272,7 +272,7 @@ TEST_CASE(each_event_is_one_line_with_event_seq_and_t_ms_first)
     CHECK(e.wait_written(10s));
     const std::string v = version();
     check_text(sink.text(),
-               R"({"event":"hello","seq":0,"t_ms":7,"vehicle_sil_events":1,"vehicle_sil":")" + v +
+               R"({"event":"hello","seq":0,"t_ms":7,"vehicle_sil_events":2,"vehicle_sil":")" + v +
                    R"(","pid":42,"file":"dir/sim.yaml","arguments":["run","--events","dir/sim.yaml"]}
 {"event":"phase","seq":1,"t_ms":7,"phase":"checking"}
 {"event":"registry","seq":2,"t_ms":7,"uri":"silkit://127.0.0.1:8500"}
@@ -574,6 +574,7 @@ TEST_CASE(a_state_event_has_the_state_and_what_is_allowed_with_the_ranges)
     RunState s = state_of(2);
     s.phase = Phase::Running;
     s.paused = true;
+    s.paused_at_ms = 120;
     s.holding = true;
     s.speed = std::optional<double>(0.5);
     s.pacing = Pacing::Late;
@@ -594,10 +595,10 @@ TEST_CASE(a_state_event_has_the_state_and_what_is_allowed_with_the_ranges)
     const std::vector<std::string> lines = sink.lines();
     CHECK_EQ(lines.size(), std::size_t{3});
     check_text(lines.at(0),
-               R"({"event":"state","seq":0,"t_ms":7,"rev":1,"phase":"checking","paused":false,"holding":false,"speed":null,"pacing":"not-paced","stop":{"requests":0,"by":null},"scenario":false,"allowed":{"pause":{"ok":true,"reason":null,"message":null,"caution":null},"resume":{"ok":true,"reason":null,"message":null,"caution":null},"step":{"ok":false,"reason":"not-set-up","message":"the simulation has not been set up yet","caution":null,"min_ms":1,"max_ms":1000000000000},"speed":{"ok":true,"reason":null,"message":null,"caution":null,"min":1e-06,"max":1e+06},"run_until":{"ok":true,"reason":null,"message":null,"caution":null},"stop":{"ok":true,"reason":null,"message":null,"caution":null},"write":{"ok":true,"reason":null,"message":null,"caution":null}},"outside":[]})");
+               R"({"event":"state","seq":0,"t_ms":7,"rev":1,"phase":"checking","paused":false,"paused_at_ms":null,"holding":false,"speed":null,"pacing":"not-paced","stop":{"requests":0,"by":null},"scenario":false,"allowed":{"pause":{"ok":true,"reason":null,"message":null,"caution":null},"resume":{"ok":true,"reason":null,"message":null,"caution":null},"step":{"ok":false,"reason":"not-set-up","message":"the simulation has not been set up yet","caution":null,"min_ms":1,"max_ms":1000000000000},"speed":{"ok":true,"reason":null,"message":null,"caution":null,"min":1e-06,"max":1e+06},"run_until":{"ok":true,"reason":null,"message":null,"caution":null},"stop":{"ok":true,"reason":null,"message":null,"caution":null},"write":{"ok":true,"reason":null,"message":null,"caution":null}},"outside":[]})");
     check_text(lines.at(1),
-               R"({"event":"state","seq":1,"t_ms":7,"rev":2,"phase":"running","paused":true,"holding":true,"speed":0.5,"pacing":"late","stop":{"requests":2,"by":"SIGINT"},"scenario":true,"allowed":{"pause":{"ok":true,"reason":null,"message":null,"caution":{"code":"some-code","message":"a caution"}},"resume":{"ok":true,"reason":null,"message":null,"caution":null},"step":{"ok":true,"reason":null,"message":null,"caution":null,"min_ms":1,"max_ms":1000000000000},"speed":{"ok":true,"reason":null,"message":null,"caution":null,"min":1,"max":1},"run_until":{"ok":true,"reason":null,"message":null,"caution":null},"stop":{"ok":true,"reason":null,"message":null,"caution":null},"write":{"ok":false,"reason":"scenario-running","message":"why \"not\"","caution":null}},"outside":[]})");
-    CHECK(lines.at(2).find(R"("rev":3,"phase":"running","paused":true,"holding":true,"speed":"max","pacing":"on-time",)") !=
+               R"({"event":"state","seq":1,"t_ms":7,"rev":2,"phase":"running","paused":true,"paused_at_ms":120,"holding":true,"speed":0.5,"pacing":"late","stop":{"requests":2,"by":"SIGINT"},"scenario":true,"allowed":{"pause":{"ok":true,"reason":null,"message":null,"caution":{"code":"some-code","message":"a caution"}},"resume":{"ok":true,"reason":null,"message":null,"caution":null},"step":{"ok":true,"reason":null,"message":null,"caution":null,"min_ms":1,"max_ms":1000000000000},"speed":{"ok":true,"reason":null,"message":null,"caution":null,"min":1,"max":1},"run_until":{"ok":true,"reason":null,"message":null,"caution":null},"stop":{"ok":true,"reason":null,"message":null,"caution":null},"write":{"ok":false,"reason":"scenario-running","message":"why \"not\"","caution":null}},"outside":[]})");
+    CHECK(lines.at(2).find(R"("rev":3,"phase":"running","paused":true,"paused_at_ms":120,"holding":true,"speed":"max","pacing":"on-time",)") !=
           std::string::npos);
 }
 
@@ -1539,7 +1540,7 @@ TEST_CASE(version_names_the_formats_and_the_features)
   "formats": {
     "check": 1,
     "run": 1,
-    "events": 1,
+    "events": 2,
     "describe": 1,
     "test": 1,
     "timeline": 1,

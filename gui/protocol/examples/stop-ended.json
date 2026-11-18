@@ -25,13 +25,13 @@
       },
       "stop": "forced",
       "phase": "ended",
-      "last_seq": 267,
-      "last_t_ms": 2670,
+      "last_seq": 241,
+      "last_t_ms": 2410,
       "time": {
         "event": "time",
-        "seq": 249,
-        "t_ms": 2490,
-        "sim_ms": 108090,
+        "seq": 223,
+        "t_ms": 2230,
+        "sim_ms": 95210,
         "actual_speed": 1.5,
         "late_steps": 0,
         "max_late_ms": 0,
@@ -376,7 +376,7 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 261,
+        "seq": 235,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -385,10 +385,11 @@
         "id": null
       },
       "launcher_state": {
-        "seq": 266,
+        "seq": 240,
         "rev": 10,
         "phase": "ended",
         "paused": false,
+        "paused_at_ms": null,
         "holding": false,
         "speed": "max",
         "pacing": "not-paced",
@@ -483,7 +484,7 @@
           "ecu_step_ms": null,
           "step_delay_ms": null,
           "late_tolerance_ms": 10,
-          "sim_ms": 108090,
+          "sim_ms": 95210,
           "wall_ms": 1000,
           "actual_speed": 1.5,
           "paced_steps": 0,
@@ -551,7 +552,7 @@
         ],
         "outside": [],
         "traffic": {
-          "before_ms": 108090,
+          "before_ms": 95210,
           "unplaced": [
             {
               "participant": "Logger",
@@ -578,8 +579,8 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 108080,
-                  "frames_sent": 1082,
+                  "at_ms": 95200,
+                  "frames_sent": 953,
                   "frames_received": 0
                 },
                 {
@@ -587,9 +588,9 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 108080,
+                  "at_ms": 95200,
                   "frames_sent": 0,
-                  "frames_received": 1082
+                  "frames_received": 953
                 }
               ]
             }
@@ -876,7 +877,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 217,
+          "kept": 191,
           "dropped": 0
         }
       },
