@@ -410,6 +410,12 @@ void connect_bus_off(const Options& base)
     require(index_of(lines, {"\"source\":\"bridge.CAN\"", "] link bus="}) == lines.size(), "no link line of the bridge:\n" + out_of(lines));
     require(contains(lines.back(), "\"simulation\":\"reached_stop_at\"") && contains(lines.back(), "\"counts\":{"),
             "the run went to its end, and the result has the counts:\n" + lines.back());
+    // The state says it while it lasts: interrupted for bus-off (and ok before, with the bridge there).
+    require(index_of(lines, {"\"event\":\"state\"", "\"outside\":[{\"network\":\"CAN\",\"target\":\"virtual:1\",\"participant\":\"bridge.CAN\"",
+                             "\"bus\":\"bus-off\"", "\"condition\":\"interrupted\",\"reasons\":[\"bus-off\"]}]"}) < lines.size(),
+            "a state event with outside[0].condition interrupted for bus-off:\n" + out_of(lines));
+    require(index_of(lines, {"\"event\":\"state\"", "\"network\":\"CAN\"", "\"condition\":\"ok\",\"reasons\":[]}]"}) < lines.size(),
+            "a state event with the bridge and condition ok before it:\n" + out_of(lines));
 }
 
 /// connect_bus_off_lost: the CAN controller is bus off from the start and stays so (the bridge has

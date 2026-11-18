@@ -415,6 +415,8 @@ The kinds of loss are told from the counts of the statistics line and the link l
 
 The other counts (`own_tx_dropped`, `filtered_to_ext`, `filtered_from_ext`, `mac_unguarded`, `oversize`, `malformed`, `ext_checksum_incomplete`) are no losses of the bridge and give no finding; they are in the result, as the bridge wrote them. The messages say what happened, whether to trust the result and what to check, for example `network 'ETH_EXT' -> enp3s0: the link was down once, for 2.70 s in all. The run went on, but frames sent meanwhile did not reach the devices, ...`. These findings are made at the end, from what was read until then.
 
+With `--events`, each `state` event tells the same while the run goes, for each bridge, in `outside[]` (`condition` `ok`, `interrupted` or `degraded`, with `reasons`; see [the `state` event](simulation-events.md#the-state-event)). A link or bus that is down, or a bus that is off, is `interrupted`; error passive, lost frames or stopped loops (for 5 s after the count grew), and a device that a bridge outside the run shares, are `degraded`.
+
 ### A device that another run uses too
 
 A bridge puts a mark on the device it opens and reports how many other vehicle-sil bridges are on it (`shared`, and on Linux their process IDs in `peers`; see "[Device in use by another bridge](bridges.md#device-in-use-by-another-bridge)"). Two runs on one device, or a bridge left over from an earlier run, mix their frames: the devices of this run get frames meant for the other, and the other's get this run's. `run` takes the bridges of its own run out of the count, so only a bridge that is not part of this run counts, and tells it once, with the time since the run began and, on Linux, the process ID:

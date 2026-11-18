@@ -433,3 +433,121 @@ TEST_CASE(outside_state_keeps_the_device_and_the_bridges_outside_the_run)
     CHECK(sum.device == "ab12" && sum.shared_most == 2 && sum.shared_peers == std::vector<long>({4321, 4400}));
     CHECK(sum.shared_first == 3100ms && sum.shared_stop == OutsideLink::SharedStop::AfterDelay);
 }
+
+namespace {
+
+using launch::detail::kOutsideDegradedHold;
+using launch::detail::kOutsideNothingReceivedAfter;
+using launch::detail::sent_without_answer;
+
+using Counts = std::map<std::string, std::uint64_t>;
+using Reasons = std::vector<std::string>;
+
+OutsideLinkLine line_of(OutsideLinkValue link, OutsideBusValue bus)
+{
+    return OutsideLinkLine{link, bus};
+}
+
+} // namespace
+
+TEST_CASE(outside_facts_are_ok_without_a_reason_until_something_is_seen)
+{
+    const auto t0 = Clock::time_point{} + 1h;
+    OutsideState state;
+    CHECK(state.facts(t0).condition == "ok" && state.facts(t0).reasons.empty());
+    CHECK(state.facts(t0).link.empty() && state.facts(t0).bus.empty() && !state.facts(t0).nothing_received);
+    state.on_link(line_of(OutsideLinkValue::Up, OutsideBusValue::Active), t0);
+    const auto up = state.facts(t0 + 1s);
+    CHECK(up.condition == "ok" && up.reasons.empty() && up.link == "up" && up.bus == "active");
+}
+
+TEST_CASE(outside_facts_say_interrupted_for_a_link_that_is_down_or_a_bus_that_is_off)
+{
+    const auto t0 = Clock::time_point{} + 1h;
+    OutsideState state;
+    state.on_link(line_of(OutsideLinkValue::Down, OutsideBusValue::Active), t0);
+    auto f = state.facts(t0);
+    CHECK(f.condition == "interrupted" && f.reasons == Reasons({"link-down"}));
+    state.on_link(line_of(OutsideLinkValue::Up, OutsideBusValue::BusOff), t0 + 1s);
+    f = state.facts(t0 + 1s);
+    CHECK(f.condition == "interrupted" && f.reasons == Reasons({"bus-off"}));
+    state.on_link(line_of(OutsideLinkValue::Up, OutsideBusValue::Active), t0 + 2s);
+    CHECK(state.facts(t0 + 2s).condition == "ok");
+}
+
+TEST_CASE(outside_facts_say_degraded_for_a_passive_bus_as_long_as_it_is_passive)
+{
+    const auto t0 = Clock::time_point{} + 1h;
+    OutsideState state;
+    state.on_link(line_of(OutsideLinkValue::Up, OutsideBusValue::Passive), t0);
+    // Not held for 5 s only: for as long as the bus is passive.
+    auto f = state.facts(t0 + 1h);
+    CHECK(f.condition == "degraded" && f.reasons == Reasons({"bus-errors"}));
+    state.on_link(line_of(OutsideLinkValue::Up, OutsideBusValue::Active), t0 + 1h + 1s);
+    CHECK(state.facts(t0 + 1h + 1s).condition == "ok");
+}
+
+TEST_CASE(outside_facts_keep_dropped_frames_and_loops_for_five_seconds_after_the_count_grew)
+{
+    const auto t0 = Clock::time_point{} + 1h;
+    OutsideState state;
+    state.on_counts(Counts{{"ext_queue_full", 0}, {"loop_suspected", 0}}, t0);
+    CHECK(state.facts(t0).condition == "ok");
+    state.on_counts(Counts{{"ext_queue_full", 3}, {"loop_suspected", 0}}, t0 + 1s);
+    CHECK(state.facts(t0 + 1s).reasons == Reasons({"frames-dropped"}));
+    // The same count again does not renew the hold; the hold ends 5 s after the growth.
+    state.on_counts(Counts{{"ext_queue_full", 3}, {"loop_suspected", 0}}, t0 + 3s);
+    CHECK(state.facts(t0 + 1s + kOutsideDegradedHold - 1ms).condition == "degraded");
+    CHECK(state.facts(t0 + 1s + kOutsideDegradedHold).condition == "ok");
+    // A count that grows again renews it; the loops have their own reason, after the dropped one.
+    state.on_counts(Counts{{"ext_queue_full", 4}, {"loop_suspected", 1}}, t0 + 10s);
+    CHECK(state.facts(t0 + 10s).reasons == Reasons({"frames-dropped", "loop-suspected"}));
+    CHECK(state.facts(t0 + 10s).condition == "degraded");
+    // Keys that are no losses do not count.
+    OutsideState other;
+    other.on_counts(Counts{{"oversize", 9}, {"filtered_to_ext", 9}}, t0);
+    CHECK(other.facts(t0).condition == "ok");
+}
+
+TEST_CASE(outside_facts_say_degraded_while_a_bridge_outside_the_run_shares_the_device)
+{
+    const auto t0 = Clock::time_point{} + 1h;
+    OutsideState state;
+    CHECK(state.on_foreign({1, {4321}}, t0, 100ms));
+    // Not 5 s: as long as the sharing lasts.
+    CHECK(state.facts(t0 + 1h).reasons == Reasons({"device-shared"}));
+    CHECK(state.facts(t0 + 1h).condition == "degraded");
+    state.on_foreign({}, t0 + 1h + 1s, 1h);
+    CHECK(state.facts(t0 + 1h + 1s).condition == "ok");
+}
+
+TEST_CASE(outside_facts_put_interrupted_before_degraded_and_name_the_reasons_of_both_in_order)
+{
+    const auto t0 = Clock::time_point{} + 1h;
+    OutsideState state;
+    state.on_link(line_of(OutsideLinkValue::Down, OutsideBusValue::Passive), t0);
+    state.on_counts(Counts{{"overruns", 1}, {"loop_suspected", 2}}, t0);
+    state.on_foreign({1, {}}, t0, 1s);
+    const auto f = state.facts(t0 + 1s);
+    CHECK(f.condition == "interrupted");
+    CHECK(f.reasons == Reasons({"link-down", "bus-errors", "frames-dropped", "loop-suspected", "device-shared"}));
+}
+
+TEST_CASE(outside_facts_say_nothing_received_ten_seconds_after_the_first_frame_to_the_bus_if_none_came)
+{
+    const auto t0 = Clock::time_point{} + 1h;
+    OutsideState state;
+    state.on_counts(Counts{{"silkit_to_ext", 0}, {"ext_from_devices", 0}}, t0);
+    CHECK(!state.facts(t0 + 1h).nothing_received); // nothing was sent
+    state.on_counts(Counts{{"silkit_to_ext", 5}, {"ext_from_devices", 0}}, t0 + 2s);
+    CHECK(!state.facts(t0 + 2s + kOutsideNothingReceivedAfter - 1ms).nothing_received);
+    CHECK(state.facts(t0 + 2s + kOutsideNothingReceivedAfter).nothing_received);
+    // Nothing_received is no reason of the condition.
+    CHECK(state.facts(t0 + 1h).condition == "ok");
+    // Something came: it is over.
+    state.on_counts(Counts{{"silkit_to_ext", 6}, {"ext_from_devices", 1}}, t0 + 20s);
+    CHECK(!state.facts(t0 + 20s).nothing_received);
+    // The condition of the note at the end is the same function.
+    CHECK(sent_without_answer(5, 0) && !sent_without_answer(5, 1) && !sent_without_answer(0, 0) &&
+          !sent_without_answer(std::nullopt, 0) && !sent_without_answer(5, std::nullopt));
+}
