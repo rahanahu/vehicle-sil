@@ -18,6 +18,7 @@
 | API の仕様と例 | `gui/protocol` |
 | クライアントのライブラリ | `gui/client/src` |
 | サンプルの画面 | `gui/web/src/app` |
+| 自分の画面に配るクライアントライブラリと部品（`vsil/`） | `gui/server/src/vehicle_sil_gui/client_files.py`、`server.py` の `get_client_file()`。ファイルの一覧は `scripts/package.py` の `CLIENT_BUNDLES` にもあります。試験: `gui/server/tests/test_client_files.py` |
 
 - テスト: `gui/server/tests`（pytest）、`gui/client/src` と `gui/web/src/app` の単体テスト、`gui/web/e2e`（Playwright）
 - `ctest -R`: CTest には入っていません。`scripts/verify-gui.py`（`-k` でサーバーのテストを絞る、`--skip-web`）と `scripts/verify-web.py` で実行します。

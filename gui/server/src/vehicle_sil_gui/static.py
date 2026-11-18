@@ -31,7 +31,9 @@ MEDIA_TYPES = {
     ".woff2": "font/woff2",
 }
 
-RESERVED = ("api", "ws", "panels")  # never answered with index.html: a wrong path there is a 404, not the screen
+# The server's own: a wrong path there is a 404, never the screen (also one with an encoded slash, /vsil%2Fx,
+# which no route of the server matches).
+RESERVED = ("api", "ws", "panels", "vsil", "timeline")
 
 NOT_BUILT = """<!doctype html>
 <html lang="ja">
