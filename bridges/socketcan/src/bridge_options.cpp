@@ -24,8 +24,9 @@ std::string bridge_usage()
 {
     return "usage:\n"
            "  vehicle_sil_socketcan_bridge --list-channels [--json]\n"
-           "  vehicle_sil_socketcan_bridge --registry-uri <silkit://host:port> --interface <name> [options]\n"
-           "  vehicle_sil_socketcan_bridge --describe --interface <name> [options]\n"
+           "  vehicle_sil_socketcan_bridge --registry-uri <silkit://host:port> --network <name>\n"
+           "                                 --interface <name> [options]\n"
+           "  vehicle_sil_socketcan_bridge --describe --network <name> --interface <name> [options]\n"
            "\n"
            "Forwards classic CAN frames in both directions between a SIL Kit CAN network and a SocketCAN\n"
            "interface of this computer (a CAN adapter such as can0, or a virtual one such as vcan0) until\n"
@@ -42,7 +43,7 @@ std::string bridge_usage()
            "  --start-timeout-ms <ms>  how long to wait for the participant to run in SIL Kit (15000)\n"
            "  --stats-every-ms <ms>    also print the statistics line while running, at this interval\n"
            "                           where it changed, 100..3600000 (without it: once, when stopping)\n"
-           "  --network <name>         SIL Kit CAN network (J1939_CAN1)\n"
+           "  --network <name>         SIL Kit CAN network (no default)\n"
            "  --interface <name>       the SocketCAN interface, see --list-channels\n"
            "  --bitrate <bit/s>        the bit rate the interface must run at, 15000..1000000. The bridge does\n"
            "                           not set it (that needs root: sudo ip link set can0 type can bitrate N);\n"
@@ -189,7 +190,8 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
     }
     if (options.network.empty())
     {
-        throw BridgeUsageError("--network must not be empty");
+        throw BridgeUsageError("missing --network: name the SIL Kit CAN network to bridge (there is no default, so "
+                               "that the bridge never joins a network by mistake)");
     }
     return options;
 }

@@ -77,8 +77,8 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 
 ```
 vehicle_sil_vector_xl_bridge --list-channels [--json]
-vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--network <name>] [--name <name>] [--start-timeout-ms <ms>] [--stats-every-ms <ms>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
-vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-channel <n> [options]
+vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --network <name> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--name <name>] [--start-timeout-ms <ms>] [--stats-every-ms <ms>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
+vehicle_sil_vector_xl_bridge --describe --network <name> --xl-target <virtual|physical> --xl-channel <n> [options]
 ```
 
 | 引数 | 意味 |
@@ -89,7 +89,7 @@ vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-chan
 | `--xl-target <virtual\|physical>` | `virtual` は Vector Virtual CAN（`XL_HWTYPE_VIRTUAL`）、`physical` はそれ以外のハードウェアの CAN チャネル（CANcase、VN16xx など）を選びます（必須）。 |
 | `--xl-channel <n>` | そのターゲットの CAN 対応チャネルの中での、1 始まりの番号です（必須）。 |
 | `--bitrate <bit/s>` | XL のチャネルのビットレートを 15000〜1000000 bit/s（`xlCanSetChannelBitrate` の範囲）で設定します。 |
-| `--network <name>` | SIL Kit の CAN ネットワークの名前です（既定 `J1939_CAN1`）。 |
+| `--network <name>` | SIL Kit の CAN ネットワークの名前です（必須。既定はありません。思わぬネットワークに参加しないためです）。 |
 | `--name <name>` | participant の名前です（既定 `VectorXlBridge`）。 |
 | `--participant <name>` | `--name` と同じです（どちらか 1 つを書きます）。 |
 | `--start-timeout-ms <ms>` | SIL Kit で participant が Running になるのを待つ上限です（1〜10^12、既定 15000）。なれなければ終了コード 3 で終わります。 |

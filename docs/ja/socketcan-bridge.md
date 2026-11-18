@@ -29,7 +29,7 @@ cansend vcan0 123#1122   # a frame into the simulation
 ```sh
 sudo ip link set can0 type can bitrate 250000 restart-ms 100
 sudo ip link set can0 up
-vehicle_sil_socketcan_bridge --registry-uri silkit://127.0.0.1:8500 --interface can0 --bitrate 250000
+vehicle_sil_socketcan_bridge --registry-uri silkit://127.0.0.1:8500 --network J1939_CAN1 --interface can0 --bitrate 250000
 ```
 
 ## 引数
@@ -38,7 +38,7 @@ vehicle_sil_socketcan_bridge --registry-uri silkit://127.0.0.1:8500 --interface 
 |---|---|
 | `--registry-uri <uri>` | SIL Kit のレジストリ（必須。`--describe` と `--list-channels` では不要） |
 | `--interface <name>` | SocketCAN のインターフェース（必須） |
-| `--network <name>` | SIL Kit の CAN ネットワーク（`J1939_CAN1`） |
+| `--network <name>` | SIL Kit の CAN ネットワーク（必須。既定はありません） |
 | `--name <name>`、`--participant <name>` | SIL Kit の参加者の名前（`SocketCanBridge`） |
 | `--bitrate <bit/s>` | インターフェースが動いているべき速さ（15000..1000000）。ブリッジは設定しません |
 | `--tx-timeout-ms <ms>` | バスがこの時間、1 つも受け取らないあいだはフレームを捨てる（100..60000） |

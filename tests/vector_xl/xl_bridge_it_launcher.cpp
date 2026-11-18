@@ -626,12 +626,12 @@ int main(int argc, char** argv)
         else if (options.scenario == "bad-channel")
         {
             result = run_single(options,
-                                {"--registry-uri", "silkit://127.0.0.1:1", "--xl-target", "physical", "--xl-channel", "3"}, cli::kExitSetupFailed,
+                                {"--registry-uri", "silkit://127.0.0.1:1", "--network", "XL_IT_CAN", "--xl-target", "physical", "--xl-channel", "3"}, cli::kExitSetupFailed,
                                 {"no physical CAN channel 3; available: 1=\"Test CAN Device Channel 1\" 2=\"Test CAN Device Channel 2\""}, {});
         }
         else if (options.scenario == "bad-usage")
         {
-            result = run_single(options, {"--registry-uri", "silkit://127.0.0.1:1", "--xl-target", "cancase", "--xl-channel", "1"},
+            result = run_single(options, {"--registry-uri", "silkit://127.0.0.1:1", "--network", "XL_IT_CAN", "--xl-target", "cancase", "--xl-channel", "1"},
                                 cli::kExitUsage,
                                 {"error: --xl-target must be 'virtual' or 'physical', got: cancase",
                                  "Run 'vehicle_sil_vector_xl_bridge --help' for the options."},
@@ -640,7 +640,7 @@ int main(int argc, char** argv)
         else if (options.scenario == "no-registry")
         {
             const std::string nowhere = "silkit://127.0.0.1:1";
-            result = run_single(options, {"--registry-uri", nowhere, "--xl-target", "virtual", "--xl-channel", "1"},
+            result = run_single(options, {"--registry-uri", nowhere, "--network", "XL_IT_CAN", "--xl-target", "virtual", "--xl-channel", "1"},
                                 cli::kExitSetupFailed,
                                 {"[bridge] FAIL setup: cannot connect to the SIL Kit registry at " + nowhere + " (",
                                  "). Start the registry first ('sil-kit-registry --listen-uri " + nowhere +
@@ -676,8 +676,10 @@ int main(int argc, char** argv)
                                 {"\"vehicle_sil_ecu\": 1,", "\"name\": \"XlBridge\",", "\"step_ns\": null,",
                                  "\"name\": \"VehicleCAN\",", "\"kind\": \"can\",", "\"use\": \"raw\","},
                                 {"[bridge]", "cannot open"});
-            result |= run_single(options, {"--describe", "--xl-target", "physical"}, cli::kExitUsage,
+            result |= run_single(options, {"--describe", "--network", "VehicleCAN", "--xl-target", "physical"}, cli::kExitUsage,
                                  {"missing --xl-channel"}, {"\"vehicle_sil_ecu\""});
+            result |= run_single(options, {"--describe", "--xl-target", "physical", "--xl-channel", "2"}, cli::kExitUsage,
+                                 {"missing --network: name the SIL Kit CAN network to bridge"}, {"\"vehicle_sil_ecu\""});
         }
         else if (options.scenario == "device-lost")
         {
