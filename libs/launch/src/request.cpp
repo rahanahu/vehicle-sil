@@ -62,12 +62,13 @@ std::vector<Finding> validate_request(const RunRequest& request, RequestCommand 
     }
     if (intent.scenario && intent.start_paused)
     {
-        // Also with a control server, whose clients could end the hold: the scenario makes its
-        // writes for 0 in the start window and then runs by itself, and a hold before the first
-        // step is not part of that.
+        // A pause that comes before the simulation runs makes a scenario's run stand still at 0 too
+        // (the gate's pause, after the start window). What is refused here is the hold before the
+        // start (hold_before_start(), which --start-paused with a control server is): where it
+        // comes among the scenario's writes for 0 in the start window is not settled.
         out.push_back(usage(scenario + " cannot be used with " + paused +
-                            ": the scenario writes its values for 0 before "
-                            "the first step and runs by itself; pause and step it with --stdin-commands if needed"));
+                            ": the scenario writes its values for 0 before the first step and runs by itself; pause "
+                            "and step it with --stdin-commands or from a Control Server client (--control) if needed"));
     }
     // A check starts nothing: it has neither of the two options, and nothing waits.
     if (command != RequestCommand::Check && intent.start_paused && !host.stdin_commands && !host.control)

@@ -29,7 +29,7 @@ constexpr const char* kTimelineNeedsScenario = "--timeline writes what a scenari
                                                "too, or leave --timeline out";
 constexpr const char* kScenarioNotPaused = "--scenario cannot be used with --start-paused: the scenario writes its values for "
                                            "0 before the first step and runs by itself; pause and step it with "
-                                           "--stdin-commands if needed";
+                                           "--stdin-commands or from a Control Server client (--control) if needed";
 constexpr const char* kPausedNeedsCommands = "--start-paused needs --stdin-commands or --control: without commands nothing "
                                              "could make the simulation go on (resume, step)";
 

@@ -847,7 +847,7 @@ void scenario_failures(const Options& o)
         expect_code(run, 4, "--scenario with --start-paused");
         require(contains(run.standard_error, "error: --scenario cannot be used with --start-paused: the scenario writes its values "
                                              "for 0 before the first step and runs by itself; pause and step it with "
-                                             "--stdin-commands if needed\n"),
+                                             "--stdin-commands or from a Control Server client (--control) if needed\n"),
                 run.standard_error);
         run = launch(o, {"run", "sim.yaml", "--scenario"}, dir);
         expect_code(run, 4, "--scenario without a file");

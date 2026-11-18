@@ -7,8 +7,9 @@
 //                gives. One scenario (writes for 0 ms, a write at a time, a wave with an expect
 //                beside it, expects with within_ms and hold_for_ms, a wait_until, a ramp) is run
 //                once that nobody touches, and then several times with the five time commands from
-//                standard input, at times of the wall clock that differ from run to run and at the
-//                very times the scenario writes and decides at. Each of those runs must give, byte
+//                standard input: paused before the first step (it stands still at 0 with the
+//                scenario's first writes), at the very times the scenario writes and decides at,
+//                and at times of the wall clock that differ from run to run. Each of those runs must give, byte
 //                for byte, the same three things as the untouched one:
 //                  - the object "scenario" of the result (every step's status, times and message),
 //                  - the scenario_step events in their order (without seq and t_ms),
@@ -192,17 +193,28 @@ void scenario_time_commands_same(const Options& o)
                 "the timeline has what the scenario saw:\n" + untouched.timeline);
     }
 
-    // At a speed of 0.2 the scenario takes 1.5 s: the commands below come while it plays.
-    // 1. The simulation is made to stand still at the very times the scenario writes and decides
-    //    at, and one step before and after them: its hold of a step and the pause are both there.
+    // No command below has to come within a time of the wall clock that a slow computer could
+    // miss. The first pause of each run is sent before the simulation runs (it is taken then, and
+    // the simulation stands still at 0), and from where it stands the simulation is moved on with
+    // step and run_until. Where a run is left to go on with a pause to follow at a time of the
+    // wall clock, its speed is so low that the scenario is seconds from its end (and lower by the
+    // factor of the test timeouts).
+    const double scale = static_cast<double>(scaled_timeout(1000ms).count()) / 1000.0;
+    const auto slow = [scale](double speed) { return "\"value\":" + std::to_string(speed / scale); };
+
+    // 1. Paused before the first step: the scenario's writes for 0 and its hold of the step at 0
+    //    are there together with the pause. Then the simulation is made to stand still at the
+    //    very times the scenario writes and decides at, and one step before and after them.
     {
         Run run(o, dir, "0.2");
-        static_cast<void>(run.live().wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""}));
         run.send("pause");
         std::int64_t now = run.standing();
+        require(now == 0, "a pause before the simulation runs: it stands still at 0 ms, not at " + std::to_string(now) + " ms");
+        run.send_and_stand("step", "\"ms\":10", 10);
+        now = 10;
         for (const std::int64_t at : {20, 30, 31, 50, 70, 90, 110, 170, 195, 200, 210, 220, 230, 240, 250, 270, 290, 300})
         {
-            if (at > now)
+            if (at > now) // (a run_until to where it stands moves nothing)
             {
                 now = (at + 9) / 10 * 10; // a run_until stands still at the first step at or after its time
                 run.send_and_stand("run_until", "\"at_ms\":" + std::to_string(at), now);
@@ -210,30 +222,33 @@ void scenario_time_commands_same(const Options& o)
         }
         run.send("speed", "\"value\":\"max\"");
         run.send("resume");
-        expect_same(run.finish("standing still at the scenario's own times", over_at_ms), untouched,
-                    "standing still at the scenario's own times");
+        expect_same(run.finish("paused before the first step, then standing still at the scenario's own times", over_at_ms),
+                    untouched, "paused before the first step, then standing still at the scenario's own times");
     }
 
-    // 2. A pause at a time of the wall clock (in the wave; `wait_ms` later each time), steps of
-    //    10 ms (one step of the ECUs) and of 30 ms, a run_until to a time between two steps,
-    //    another speed, a run_until into the wait for the pulse (between its sample and the step
-    //    the scenario goes on at), and the rest as fast as possible.
+    // 2. A pause at a time of the wall clock: from the beginning of the wave (70 ms) the
+    //    simulation goes on slowly, and the pause comes `wait_ms` later, in whatever step that is.
+    //    Then steps of 10 ms (one step of the ECUs) and of 30 ms, a run_until to a time between
+    //    two steps, another speed, a run_until into the wait for the pulse (between its sample and
+    //    the step the scenario goes on at), and the rest as fast as possible.
     for (const int wait_ms : {0, 23, 61, 137})
     {
         const std::string what = "a pause " + std::to_string(wait_ms) + " ms into the wave, steps and a run_until";
         Run run(o, dir, "0.2");
-        static_cast<void>(run.live().wait_for({"\"event\":\"scenario_step\"", "\"kind\":\"wave\"", "\"status\":\"running\""}));
+        run.send("pause");
+        static_cast<void>(run.standing());
+        run.send_and_stand("run_until", "\"at_ms\":70", 70);
+        run.send("speed", slow(0.02)); // 240 ms to the end: 12 s
+        run.send("resume");
         std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
         run.send("pause");
         const std::int64_t at = run.standing();
+        require(at >= 70 && at + 60 < 210, what + ": the pause came in the wave, not at " + std::to_string(at) + " ms");
         run.send_and_stand("step", "\"ms\":10", at + 10);
         run.send_and_stand("step", "\"ms\":30", at + 40);
         run.send_and_stand("run_until", "\"at_ms\":" + std::to_string(at + 55), at + 60);
         run.send("speed", "\"value\":0.5");
-        if (at + 60 < 210)
-        {
-            run.send_and_stand("run_until", "\"at_ms\":205", 210);
-        }
+        run.send_and_stand("run_until", "\"at_ms\":205", 210);
         run.send("speed", "\"value\":\"max\"");
         run.send("resume");
         expect_same(run.finish(what, over_at_ms), untouched, what);
@@ -245,21 +260,21 @@ void scenario_time_commands_same(const Options& o)
     {
         const std::string what = "speeds and pauses of " + std::to_string(wait_ms) + " ms and more";
         Run run(o, dir, "0.2");
-        static_cast<void>(run.live().wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""}));
-        run.send("speed", "\"value\":0.05");
+        run.send("pause");
+        static_cast<void>(run.standing());
+        run.send("speed", slow(0.02)); // 310 ms to the end: 15 s
+        run.send("resume");
+        std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
+        run.send("speed", slow(0.03));
         run.send("pause");
         if (run.standing() < 45)
         {
             run.send_and_stand("run_until", "\"at_ms\":45", 50); // in the expect within 40 ms of 30 ms
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(3 * wait_ms));
-        run.send("speed", "\"value\":0.1");
-        run.send("resume");
         // In the wait for the pulse: longer on the wall clock than anything in the scenario allows for.
-        static_cast<void>(run.live().wait_for({"\"event\":\"scenario_step\"", "\"kind\":\"wait_until\"", "\"status\":\"running\""}));
-        std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
-        run.send("pause");
-        static_cast<void>(run.standing());
+        run.send("speed", "\"value\":2");
+        run.send_and_stand("run_until", "\"at_ms\":185", 190);
         std::this_thread::sleep_for(std::chrono::milliseconds(300 + wait_ms));
         run.send("speed", "\"value\":4");
         run.send("resume");
@@ -276,9 +291,9 @@ void scenario_paused_timeout(const Options& o)
                              "  - at_ms: 100\n"
                              "    expect: { Body.level: 5 }\n";
     const fs::path dir = scenario_ecus(o, "", file);
-    const std::vector<std::string> args{"run",     "--events",     "--stdin-commands", "--scenario", "s.yaml",
-                                        "--speed", "0.2",          "--timeout-ms",     "3000",       "sim.yaml"};
-    // Without a pause it is over long before the timeout (100 ms of the simulation, 0.5 s).
+    const std::string timeout = std::to_string(scaled_timeout(3000ms).count());
+    const std::vector<std::string> args{"run", "--events", "--stdin-commands", "--scenario", "s.yaml", "--timeout-ms", timeout, "sim.yaml"};
+    // Without a pause it is over long before the timeout (as fast as possible).
     {
         Live live(o, dir, args);
         const auto [status, lines] = live.finish();
@@ -286,12 +301,12 @@ void scenario_paused_timeout(const Options& o)
         require(contains(lines.back(), "\"scenario\":{\"file\":\"s.yaml\",\"name\":\"left paused\",\"status\":\"passed\","),
                 "the scenario passes:\n" + lines.back());
     }
-    // Paused and left so: the timeout counts the time it stands still, and ends the run.
+    // Paused and left so: the timeout counts the time it stands still, and ends the run. (The
+    // pause is sent before the simulation runs: it stands still at 0, however slow this computer is.)
     Live live(o, dir, args);
-    static_cast<void>(live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""}));
     live.write("{\"command\":\"pause\"}\n");
     static_cast<void>(live.wait_for({"\"event\":\"command\"", "\"command\":\"pause\"", "\"accepted\":true,"}));
-    live.wait_paused();
+    static_cast<void>(live.wait_standing(0));
     const auto [status, lines] = live.finish();
     require(status && status->code == 1, "a scenario's run left paused until --timeout-ms: 1, not " + code_text(status));
     const std::string& result = lines.back();

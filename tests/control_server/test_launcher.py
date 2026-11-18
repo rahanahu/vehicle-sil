@@ -648,23 +648,25 @@ class LauncherTest(unittest.TestCase):
         alone = json.loads(out.stdout)["scenario"]
         self.assertEqual(alone["status"], "passed")
 
-        # The five time operations from a client, at whatever time they happen to come: the scenario's
-        # steps have the same times, values and outcome as in the run that nobody touched.
+        # The five time operations from a client: the scenario's steps have the same times, values and outcome
+        # as in the run that nobody touched. No call has to come within a time a slow computer could miss: the
+        # first pause comes before the simulation runs (it stands still at 0), a step and a run_until move it
+        # on from where it stands, and the pause at a time is sent while it goes so slowly that the scenario
+        # is seconds from its end.
         with self.launch("scenario_time", stop_at_ms=5000, arguments=["--scenario", str(play), "--speed", "0.5"]) as launch:
             with Control(launch.address) as c:
-                launch.wait_for_event("phase", phase="running")
                 c.sim.pause()
-                stood = c.sim.wait_paused().now
+                self.assertEqual(c.sim.wait_paused(60).now, 0)
                 self.assertTrue(c.snapshot().consistent)
                 c.sim.step(ms(20))
-                wait_until(self, "the step", lambda: c.sim.time().paused and c.sim.time().now >= stood + ms(20))
+                wait_until(self, "the step", lambda: c.sim.time().paused and c.sim.time().now >= ms(20))
                 target = c.sim.time().now + ms(137)
                 c.sim.run_until(target)
                 wait_until(self, "the run_until", lambda: c.sim.time().paused and c.sim.time().now >= target)
-                c.sim.set_speed(4.0)
+                c.sim.set_speed(0.02)
                 c.sim.resume()
-                c.sim.pause(c.sim.time().now + ms(60))
-                later = c.sim.wait_paused().now
+                c.sim.pause(c.sim.time().now + ms(40))
+                later = c.sim.wait_paused(60).now
                 self.assertGreater(later, target)
                 c.sim.set_speed(None)
                 c.sim.resume()

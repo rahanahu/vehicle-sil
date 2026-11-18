@@ -334,7 +334,7 @@ TEST_CASE(a_rule_about_a_value_of_the_request_file_names_the_key_and_the_file)
     RunRequest commands;
     commands.host.stdin_commands = true;
     const std::string rest = ": the scenario writes its values for 0 before the first step and runs by itself; pause and step "
-                             "it with --stdin-commands if needed";
+                             "it with --stdin-commands or from a Control Server client (--control) if needed";
     CHECK(messages(with_request_file(commands, both, false)) ==
           list("scenario in bench.json cannot be used with start_paused in bench.json" + rest));
     RunRequest scenario = commands;

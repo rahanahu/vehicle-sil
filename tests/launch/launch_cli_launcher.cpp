@@ -615,7 +615,7 @@ void usage(const Options& o)
                  "2: twice as fast) or max (as fast as possible), not 'fast'");
     expect_usage({"run", "a.yaml", "--scenario", "s.yaml", "--start-paused"},
                  "--scenario cannot be used with --start-paused: the scenario writes its values for 0 before the first step and "
-                 "runs by itself; pause and step it with --stdin-commands if needed");
+                 "runs by itself; pause and step it with --stdin-commands or from a Control Server client (--control) if needed");
     expect_usage({"run", "a.yaml", "--start-paused", "--control-audit-log", "a.log"},
                  "--control-audit-log is for --control: without it there is no control server");
     expect_usage({"check", "a.yaml", "--events"}, "--events is for run: check starts no participant");
