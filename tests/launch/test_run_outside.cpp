@@ -123,6 +123,16 @@ TEST_CASE(outside_note_writes_changes_at_most_once_a_second_and_the_last_at_the_
     CHECK(note.last() == counts(7, 2));
 }
 
+TEST_CASE(is_link_line_takes_the_link_lines_of_the_bridges)
+{
+    CHECK(launch::detail::is_link_line("[eth-bridge] link link=up"));
+    CHECK(launch::detail::is_link_line("[bridge] link bus=bus-off"));
+    CHECK(launch::detail::is_link_line("link link=down"));
+    CHECK(!launch::detail::is_link_line("[eth-bridge] linked to enp3s0"));
+    CHECK(!launch::detail::is_link_line("[eth-bridge] stats silkit_to_ext=1"));
+    CHECK(!launch::detail::is_link_line("warning: link down"));
+}
+
 TEST_CASE(without_tag_takes_off_a_word_in_brackets)
 {
     check_text(std::string(launch::detail::without_tag("[eth-bridge] stats a=1")), "stats a=1");

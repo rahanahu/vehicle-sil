@@ -131,6 +131,17 @@ bool problems_grew(const EthernetBridgeStatistics& before, const EthernetBridgeS
     return false;
 }
 
+std::string_view link_line_value(eth_link::LinkState state) noexcept
+{
+    switch (state)
+    {
+    case LinkState::Up: return "up";
+    case LinkState::Down: return "down";
+    case LinkState::Unknown: break;
+    }
+    return "unknown";
+}
+
 std::optional<std::string> format_health_change(const EthernetBridgeHealth& before, const EthernetBridgeHealth& now,
                                                 std::string_view interface_name, bool problems_before)
 {

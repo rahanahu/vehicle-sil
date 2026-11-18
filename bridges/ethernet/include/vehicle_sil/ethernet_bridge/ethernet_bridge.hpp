@@ -98,6 +98,11 @@ struct EthernetBridgeHealth
                                                               std::string_view interface_name,
                                                               bool problems_before = false);
 
+/// The value of the "link link=<value>" line: "up", "down" or "unknown" (a link that cannot tell,
+/// such as npcap, is always "unknown"). The bridge executable puts it into the line with
+/// bridge_runtime::format_link_line().
+[[nodiscard]] std::string_view link_line_value(eth_link::LinkState state) noexcept;
+
 /// How many addresses on both sides a bridge names in warnings; the rest are only counted.
 inline constexpr std::size_t kMaxNamedConflicts = 8;
 

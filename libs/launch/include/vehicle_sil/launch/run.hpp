@@ -651,6 +651,11 @@ struct OutsideCounts
 /// either key (a bridge of another version), and for any other tool.
 [[nodiscard]] std::optional<OutsideCounts> read_outside_counts(std::string_view tool, std::string_view line);
 
+/// Whether `line` is the link line of a bridge ("link key=value ...", after the tag the bridge puts
+/// first; see "Link line" in docs/bridges.md). Run does not show these lines: they are for the
+/// launcher to read, like the statistics lines.
+[[nodiscard]] bool is_link_line(std::string_view line);
+
 /// When run --events writes the event "outside" of one bridge: when its counts have changed
 /// (on_counts()), at most once in kEvery; counts held back by that go out once kEvery has passed
 /// (due(), which the run asks while it watches the simulation) and at the end (flush()), so the last

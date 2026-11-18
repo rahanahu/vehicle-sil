@@ -300,6 +300,7 @@ The startup line shows what is connected to what, what may pass, and the state o
 |---|---|---|
 | Warning | `[eth-bridge] warning: <text>` | At most once a second |
 | Health line (see "[Health lines](#health-lines)") | `[eth-bridge] interface <name>: ...` | At most once a second |
+| Link line (see "[Link line](#link-line)") | `[eth-bridge] link link=<value>` | Once before the SIL Kit lifecycle starts, then when the value changes |
 | Statistics line, with `--stats-every-ms` (see "[Statistics](#statistics)") | `[eth-bridge] stats silkit_to_ext=<n> ...` | At the first interval, then at each interval where a count changed |
 
 ### Stopping
@@ -796,6 +797,27 @@ stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_s
 - A change from an unknown state to `link up` is the first report of a healthy link, so it makes no line.
 - The link state is one of `link up`, `link down` and `link state unknown`.
 
+## Link line
+
+For programs that read the output (the launcher, a script of yours), the bridge prints the state of its link on one line, apart from the health lines for people: `link link=<value>`, after the tag like the statistics line.
+
+```
+[eth-bridge] link link=up
+```
+
+| Value | Meaning |
+|---|---|
+| `up` | The link is up (`tap`, `packet`, `pcap`: the interface is up and has a carrier) |
+| `down` | The link is down |
+| `unknown` | The link has not reported yet, or cannot tell. `npcap` does not watch the link, so its value is always `unknown` |
+
+- The first line is printed once the interface is open, before the bridge starts the SIL Kit lifecycle (before the startup line, and so before the participant can be Running). A value that is not known then is `unknown`.
+- After that, the bridge looks once a second (like the health line) and prints a line only when the value has changed. The same value is never printed twice in a row.
+- No line comes when the bridge ends (`FAIL:`, stop): the state of the participant says it.
+- `link_line_value()` gives the value, `bridge_runtime::format_link_line()` the line (`bridges/common`, shared with the Vector XL bridge).
+- A program that reads the line must skip keys and values it does not know: values and keys may be added.
+- `vehicle_sil_launch run --connect` does not show the line in the run's output, as with the statistics line.
+
 ## Filter (`FrameFilter`)
 
 The same rules apply in both directions (`vehicle_sil/eth_link/frame_filter.hpp`).
@@ -1067,7 +1089,7 @@ The tests `ethernet_bridge.netns.*` verify the following against the real execut
 - A frame that another socket on the same interface sends is received by a peer on the SIL Kit side. It does not count in `ext_from_devices` (the kernel marks it as sent here), nor do frames from the address of the interface or of another interface of the namespace.
 - Frames that the bridge sends do not come back to the bridge.
 - Promiscuous mode with `--promiscuous` raises the promiscuity of the interface only while the bridge runs. The default and `--no-promiscuous` are not checked on the real kernel here (the unit tests cover how the bridge chooses the mode).
-- Health lines for the link going up and down.
+- Health lines and link lines for the link going up and down (`link link=up`, then `down`, then `up` again, each once).
 - UDP sent by the OS stack (from the other end of the veth pair and from the bridge's own interface) is received unchanged by a peer on the SIL Kit side, counted in `ext_checksum_incomplete`, and warned about once only.
 - After `ethtool -K <name> tx off` as the warning says, there is neither a count nor a warning.
 
@@ -1164,7 +1186,7 @@ Run them with `ctest -R '^(eth_link|ethernet_bridge)\.'`. Except for the namespa
 | Test | Platform | What it verifies |
 |---|---|---|
 | `eth_link.*` | All | MAC addresses, the filter, the MAC table, the fake external link |
-| `ethernet_bridge.*` | All | Forwarding with a fake controller and a fake external link, statistics and health lines, argument error texts |
+| `ethernet_bridge.*` | All | Forwarding with a fake controller and a fake external link, statistics, health and link lines, argument error texts |
 | `eth_link.os_link_*` | All | The messages and kinds when an OS external link cannot be opened, the `--list-interfaces` output |
 | `ethernet_bridge.app_*` | All | The backends available on each OS and the message when one is not, the startup line, the promiscuous mode hint |
 | `ethernet_bridge.integration.*` | All | The behavior of an executable linked with a fake external link, run as a process |

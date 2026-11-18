@@ -12,6 +12,8 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -31,6 +33,7 @@ using vehicle_sil::vector_xl::ExternalBusState;
 using vehicle_sil::vector_xl::ExternalCanEvent;
 using vehicle_sil::vector_xl::ExternalEventKind;
 using vehicle_sil::vector_xl::format_health_change;
+using vehicle_sil::vector_xl::link_line_value;
 using vehicle_sil::vector_xl::problems_grew;
 using vehicle_sil::vector_xl::TransmitResult;
 using vehicle_sil::vector_xl::validate_classic_frame;
@@ -284,6 +287,37 @@ TEST_CASE(bridge_keeps_the_bus_state_and_the_fault)
     bridge.start();
     CHECK(!bridge.fault());
     CHECK(bridge.health().bus_state.level == ExternalBusState::Level::Unknown);
+}
+
+TEST_CASE(link_line_value_follows_the_bus_state)
+{
+    using Level = ExternalBusState::Level;
+    CHECK(link_line_value({Level::Unknown, 0, 0}) == std::string_view("unknown"));
+    CHECK(link_line_value({Level::ErrorActive, 0, 0}) == std::string_view("active"));
+    CHECK(link_line_value({Level::ErrorWarning, 100, 0}) == std::string_view("active"));
+    CHECK(link_line_value({Level::ErrorPassive, 128, 0}) == std::string_view("passive"));
+    CHECK(link_line_value({Level::BusOff, 255, 0}) == std::string_view("bus-off"));
+
+    // From the bridge's health: unknown until the first answer, then what the port reports.
+    FakeCanController controller;
+    FakeExternalPort port;
+    CanBridge bridge(controller, port);
+    bridge.start();
+    bridge.start_controller();
+    CHECK(link_line_value(bridge.health().bus_state) == std::string_view("unknown"));
+    const std::pair<ExternalBusState, std::string_view> steps[] = {
+        {{Level::ErrorActive, 0, 0}, "active"},
+        {{Level::ErrorPassive, 128, 0}, "passive"},
+        {{Level::BusOff, 255, 0}, "bus-off"},
+        {{Level::ErrorActive, 0, 0}, "active"},
+    };
+    for (const auto& [state, value] : steps)
+    {
+        ExternalCanEvent event{ExternalEventKind::BusState, {}, {}};
+        event.bus_state = state;
+        port.deliver_event(event);
+        CHECK(link_line_value(bridge.health().bus_state) == value);
+    }
 }
 
 TEST_CASE(bridge_health_change_line)

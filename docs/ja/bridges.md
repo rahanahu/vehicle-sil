@@ -314,6 +314,28 @@ nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the b
 
 それより前にバスから来たフレームも、ヒントを止めます。レスポンスを待たない使い方（送信するだけ）でも出るので、文は条件つきです。イーサネットのブリッジも同じヒントを出します（[ethernet-bridge.md](ethernet-bridge.md#機器から何も来ないときのヒント) の「機器から何も来ないときのヒント」）。
 
+## リンクの行
+
+出力を読むプログラム（ランチャーや自作のスクリプト）のために、ブリッジは外側のバスの状態を、人向けの監視の行とは別に 1 行で出します。形は `link bus=<値>` で、統計の行と同じようにタグの後ろに付きます。
+
+```
+[bridge] link bus=active
+```
+
+| 値 | 意味 |
+|---|---|
+| `active` | error active、または error warning（エラーカウンターが警告の限度に達した。コントローラーはまだ error active） |
+| `passive` | error passive |
+| `bus-off` | バスオフ |
+| `unknown` | エラー状態の問い合わせの最初の答えがまだ来ていない、または答えが来ない（`--no-bus-monitor`、答えないドライバー。「[エラー状態の問い合わせ](#エラー状態の問い合わせ)」） |
+
+- 最初の行は、XL のポートを開いた後、ブリッジが SIL Kit のライフサイクルを始める前に出ます（開始の行より前で、参加者が Running になりうる前）。最初の答えが来るまでは `unknown` で、答えは後から来ます。
+- その後は、監視の行と同じく 1 秒ごとに確かめ、値が変わったときだけ行を出します。同じ値が続けて出ることはありません。
+- ブリッジが終わるとき（`FAIL:`、停止）には出ません。参加者の状態で分かります。
+- 値は `link_line_value()`、行は `bridge_runtime::format_link_line()` が作ります（`bridges/common`。Ethernet のブリッジと共通）。
+- 行を読むプログラムは、知らないキーと値を読み飛ばしてください。キーと値は増えることがあります。
+- `vehicle_sil_launch run --connect` は、統計の行と同じく、この行を実行の出力に出しません。
+
 ## 物理 CAN と仮想時間
 
 - 物理 CAN に接続するときは、原則として実時間で動かします。`vehicle_sil_launch` は既定でそうします。`--connect` のある実行と、ファイルに有効な `role: bridge` の participant のいる実行は、速さ 1 で動きます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
@@ -519,7 +541,7 @@ XL バックエンドは 2 つに分かれます。
 - フェイクは、チャネルごとのバス、送信レシート、init 権限、受信キューのあふれ、エラーフレーム、コントローラーのエラー状態の問い合わせ、デバイスの喪失を模擬します。
 - フェイクは、XL の次の制約も模擬します: 送信レシートの設定とビットレートは init 権限が必要、送信の DLC は 0〜8、受信キューは指定した容量から 1 を引いた数、受信は 1 回に 1 件。
 - `xl_backend_vector.cpp` の変換（関数、定数、構造体のメンバーの対応）は自動テストの対象外です。
-- `tests/vector_xl/xl_bridge_it_launcher` の `no-answers` のシナリオは、後ろにノードのないチャンネルへ `--stats-every-ms 100` で送信し、動いている間に統計の行が、変わったときだけ、すべてのキーを順に並べて出て、`xl_to_silkit=0` であることを確かめます。何も来ないときのヒントは、単体試験（`bridge_runtime.nothing_came_hint_*`）でだけ、テストが時刻を与えて確かめます。
+- `tests/vector_xl/xl_bridge_it_launcher` の `no-answers` のシナリオは、後ろにノードのないチャンネルへ `--stats-every-ms 100` で送信し、動いている間に統計の行が、変わったときだけ、すべてのキーを順に並べて出て、`xl_to_silkit=0` であること、リンクの行が開始の行より前に出て、値ごとに 1 回であることを確かめます。何も来ないときのヒントは、単体試験（`bridge_runtime.nothing_came_hint_*`）でだけ、テストが時刻を与えて確かめます。
 
 ### 確認したこと（Windows 11、Vector Virtual CAN と VN5620）
 

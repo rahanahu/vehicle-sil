@@ -9,6 +9,7 @@
 //               connection lost) or the XL channel stopped working (e.g. device removed),
 //             3 setup failed (XL driver, channel selection, SIL Kit), 4 bad command line.
 #include "vehicle_sil/bridge_runtime/describe.hpp"
+#include "vehicle_sil/bridge_runtime/link_line.hpp"
 #include "vehicle_sil/bridge_runtime/nothing_came_hint.hpp"
 #include "vehicle_sil/bridge_runtime/registry_failure.hpp"
 #include "vehicle_sil/bridge_runtime/run_bridge.hpp"
@@ -72,6 +73,7 @@ public:
         }
         return warnings;
     }
+    std::optional<std::string> link_line() override { return bridge_runtime::format_link_line("bus", link_line_value(bridge_.health().bus_state)); }
     std::string statistics_line() override { return format_statistics(bridge_.statistics()); }
     std::optional<std::string> health_line() override
     {
@@ -187,6 +189,7 @@ int run(const BridgeOptions& options)
     std::unique_ptr<ParticipantRuntime> runtime;
     std::unique_ptr<XlCanPort> port;
     std::unique_ptr<CanBridge> bridge;
+    std::string firstLinkLine;
     try
     {
         ParticipantRuntimeOptions runtimeOptions{options.participant, options.registry_uri};
@@ -217,6 +220,9 @@ int run(const BridgeOptions& options)
         bridge = std::make_unique<CanBridge>(controller, *port);
         runtime->add_communication_ready_handler([b = bridge.get()] { b->start_controller(); });
         bridge->start();
+        // The first link line, before the lifecycle starts (a program that waits for Running has read it).
+        firstLinkLine = bridge_runtime::format_link_line("bus", link_line_value(bridge->health().bus_state));
+        log(kTag, "%s", firstLinkLine.c_str());
         runtime->start(options.start_timeout);
     }
     catch (const std::exception& e)
@@ -251,6 +257,7 @@ int run(const BridgeOptions& options)
     runOptions.ready_line = "bridging SIL Kit network '" + options.network + "' (participant '" + options.participant
                             + "', " + options.registry_uri + ") <-> " + xlChannel + "; Ctrl+C to stop";
     runOptions.statistics_interval = options.statistics_interval;
+    runOptions.link_line_printed = firstLinkLine;
     XlBridgeHooks hooks(*bridge, xlChannel);
     return bridge_runtime::run_bridge(*runtime, hooks, runOptions);
 }

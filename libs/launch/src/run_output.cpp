@@ -184,6 +184,11 @@ void RunOutput::on_line(std::size_t index, std::string_view line)
             last_statistics_[index] = std::string(line);
             return;
         }
+        // The state of the bridge's link, for the launcher (not read yet); the log keeps it.
+        if (is_link_line(line))
+        {
+            return;
+        }
     }
     show(index, line);
 }

@@ -13,6 +13,7 @@
 #include "pcap_library.hpp"
 
 #include "vehicle_sil/bridge_runtime/describe.hpp"
+#include "vehicle_sil/bridge_runtime/link_line.hpp"
 #include "vehicle_sil/bridge_runtime/nothing_came_hint.hpp"
 #include "vehicle_sil/bridge_runtime/registry_failure.hpp"
 #include "vehicle_sil/bridge_runtime/run_bridge.hpp"
@@ -89,6 +90,7 @@ public:
         }
         return warnings;
     }
+    std::optional<std::string> link_line() override { return bridge_runtime::format_link_line("link", link_line_value(bridge_.health().link_state)); }
     std::string statistics_line() override { return format_statistics(bridge_.statistics()); }
     std::optional<std::string> health_line() override
     {
@@ -201,6 +203,10 @@ int run(const BridgeOptions& options)
     // The controller is activated where SIL Kit wants it, in the CommunicationReady handler.
     runtime.add_communication_ready_handler([&bridge] { bridge.start_controller(); });
     bridge.start();
+    // The first link line, before the lifecycle starts (a program that waits for Running has read it).
+    const std::string firstLinkLine =
+        bridge_runtime::format_link_line("link", link_line_value(bridge.health().link_state));
+    log(kTag, "%s", firstLinkLine.c_str());
     try
     {
         runtime.start(options.start_timeout);
@@ -219,6 +225,7 @@ int run(const BridgeOptions& options)
     runOptions.tag = kTag;
     runOptions.ready_line = format_start_line(options, external.describe(), external.promiscuous());
     runOptions.statistics_interval = options.statistics_interval;
+    runOptions.link_line_printed = firstLinkLine;
     std::unique_ptr<bridge_runtime::NothingCameHint> nothingCame;
     if (reaches_real_adapters(*options.backend))
     {
