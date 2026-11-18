@@ -6,7 +6,7 @@ import { CONFIGS, REPLAY_LAUNCHER, GuiServer, launchGuiServer } from './support/
 import { RUN_TIMEOUT, WORDS, choose, result, start } from './support/run-page';
 
 const CONTROL_FEATURES =
-  'events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,control-server,state';
+  'events,stdin-commands,request,check-variables,speed,start-paused,time-commands,control-links,control-server,state';
 
 test('started paused with a control server: it waits before the first step, and the screen resumes it', async ({
   page,

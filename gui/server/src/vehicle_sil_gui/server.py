@@ -24,11 +24,11 @@ from aiohttp import WSCloseCode, WSMsgType, web
 from . import __version__, control, dashboard, process
 from .allowed import Facts, Numbered, allowed as allowed_of
 from .hub import Client, Hub, Outgoing, encode
-from .launcher import (CHECK_FIELDS, FEATURE_SCENARIO_CONTROL, FEATURE_STATE, FEATURE_STDIN_RUN_UNTIL,
+from .launcher import (REQUEST_FIELDS, FEATURE_SCENARIO_CONTROL, FEATURE_STATE, FEATURE_STDIN_RUN_UNTIL,
                        FEATURE_TIME_COMMANDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, InvalidRequest,
-                       RUN_FIELDS, Launcher, check_command, check_disable, check_enable, check_fields, check_manual,
+                       Launcher, check_command, check_disable, check_enable, check_fields, check_manual,
                        check_params, check_speed, check_strict, check_time_command, check_variant, command_line,
-                       run_command, write_request_file)
+                       hide_request, hide_request_in_line, run_command, write_request_file)
 from . import client_files
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .recording import Recording
@@ -153,7 +153,8 @@ class Run:
     task: asyncio.Task | None = None
     features: tuple[str, ...] = ()  # of the launcher that runs it (version --json when it started)
     credentials: Path | None = None  # the control server's credentials file, until the launcher has read it
-    request: Path | None = None  # the request file (what the browser chose), until the run has ended
+    request: Path | None = None  # the request file (what the browser chose); its name is hidden from the output
+    request_gone: bool = False  # the file is removed (when the launcher has ended)
     token: str | None = None  # of that file
     recording: Recording = field(default_factory=Recording)  # the applied writes made through this server
     timeline: Path | None = None  # the file the launcher writes the scenario's timeline to (--timeline)
@@ -491,13 +492,17 @@ class GuiServer:
         params = check_params(body.get("params"))
         enable = check_enable(body.get("enable"))
         strict = check_strict(body.get("strict"))
+        speed = check_speed(body.get("speed"))
+        start_paused = body.get("start_paused", False)
+        if not isinstance(start_paused, bool):
+            raise InvalidRequest("invalid-field", "start_paused must be true or false")
         wanted, wanted_manual = body.get("disable"), body.get("manual")
         known = await self.participant_names(config.relative, variant) if always or wanted or wanted_manual else []
         disable, manual = check_disable(wanted, known), check_manual(wanted_manual, known)
         intent = {"variant": variant, "params": params or None,
                   "scenario": relative_to_config(config, scenario) if scenario is not None else None,
                   "disable": disable or None, "enable": enable or None, "manual": manual or None,
-                  "strict": strict or None}
+                  "strict": strict or None, "speed": speed, "start_paused": start_paused or None}
         return {k: v for k, v in intent.items() if v is not None}, disable, manual
 
     async def api_not_found(self, request: web.Request) -> web.Response:
@@ -507,7 +512,7 @@ class GuiServer:
         try:
             self._not_closing()
             body = await self._body(request)
-            check_fields("api/check", body, CHECK_FIELDS)
+            check_fields("api/check", body, REQUEST_FIELDS)
             config = self.root.resolve(body.get("file"))
             await self._usable()
             scenario = self._scenario(config, body)
@@ -522,7 +527,7 @@ class GuiServer:
         try:
             self._not_closing()
             body = await self._body(request)
-            check_fields("api/run", body, RUN_FIELDS)
+            check_fields("api/run", body, REQUEST_FIELDS)
             self._not_closing()
             if self.session is not None and self.session.state == "running":
                 raise Refused(409, "already-running", "a simulation is running: stop it and wait for it to "
@@ -550,18 +555,11 @@ class GuiServer:
     async def _start(self, body: dict) -> web.Response:
         config = self.root.resolve(body.get("file"))
         await self._usable()
-        speed = check_speed(body.get("speed"))
-        start_paused = body.get("start_paused", False)
-        if not isinstance(start_paused, bool):
-            raise InvalidRequest("invalid-field", "start_paused must be true or false")
         scenario = self._scenario(config, body)
-        if scenario is not None and start_paused:
-            raise InvalidRequest("invalid-field", "start_paused cannot be used with a scenario (the launcher plays "
-                                                  "it from time 0): leave start_paused false")
         intent, disable, manual = await self._intent(config, body, scenario, always=True)
-        # The check of what this run is made of (its own intent, without the speed and start_paused that only a run
-        # has): a run that the check refuses is not started, and the answer carries the findings (the same as
-        # `api/check`'s).
+        speed, start_paused = intent.get("speed"), intent.get("start_paused", False)
+        # The check of what this run is made of (the same request file as the run's): a run that the check refuses
+        # is not started, and the answer carries the findings (the same as `api/check`'s).
         _, checked = await self._check(config.relative, intent)
         if checked.get("result") != "passed":
             raise Refused(422, "check-failed", self._check_failed_message(config.relative, checked),
@@ -587,13 +585,10 @@ class GuiServer:
         timeline = await asyncio.to_thread(self.timelines.new_file) \
             if scenario is not None and FEATURE_TIMELINE in self.launcher.features else None
         try:
-            request = write_request_file({**intent, **({"speed": speed} if speed is not None else {}),
-                                          **({"start_paused": True} if start_paused else {})})
-        except BaseException as e:
+            request = self._make_request(intent)
+        except BaseException:
             control.remove(credentials)
-            if not isinstance(e, OSError):
-                raise
-            raise Refused(500, "request-file", f"the file with the run's request could not be made ({e})") from None
+            raise
         argv = run_command(self.launcher, config.relative, request, credentials, timeline)
         try:
             proc = await process.start(argv, cwd=self.root.root)
@@ -839,11 +834,21 @@ class GuiServer:
 
     async def _check_locked(self, relative: str, intent: dict) -> tuple[int, dict]:
         stamp = self._stamp(relative)
-        request = write_request_file(intent)  # a few lines, and removed here whatever comes of the check
+        request = self._make_request(intent)  # a few lines, and removed here whatever comes of the check
         try:
             return await self._run_check(relative, intent, request, stamp)
         finally:
             control.remove(request)
+
+    @staticmethod
+    def _make_request(intent: dict) -> Path:
+        """The request file of a check or a run; Refused (500 request-file) when no file can be made."""
+        try:
+            return write_request_file(intent)
+        except OSError as e:
+            raise Refused(500, "request-file", f"the file that carries the request to the launcher could not be "
+                                               f"made in the temporary directory ({e}): free space there, or set "
+                                               "TMPDIR to a directory that this user can write") from None
 
     async def _run_check(self, relative: str, intent: dict, request: Path, stamp: tuple) -> tuple[int, dict]:
         variant = intent.get("variant")
@@ -858,11 +863,11 @@ class GuiServer:
             raise Refused(502, "launcher-start", f"cannot start {self.launcher.path}: {e}") from None
         self._not_closing()  # stopped by the server's end: not a launcher that misbehaved
         try:
-            result = json.loads(out)
+            result = hide_request(json.loads(out), request)
         except (ValueError, RecursionError):
             result = None
         if not isinstance(result, dict) or not isinstance(result.get("participants"), list):
-            tail = err.decode("utf-8", "replace").strip().splitlines()[-10:]
+            tail = hide_request(err.decode("utf-8", "replace"), request).strip().splitlines()[-10:]
             raise Refused(502, "launcher-output", f"check --json exited with code {code} and did not write the "
                                                   "check object", tail)
         names = [p["name"] for p in result["participants"] if isinstance(p, dict) and isinstance(p.get("name"), str)]
@@ -888,6 +893,7 @@ class GuiServer:
             # Recorded now (api/session and a stop see it), sent with the end: a summary sent before the
             # launcher's last lines are read would be older than the events that follow it.
             session.launcher_exited(code)
+            run.request_gone = control.remove(run.request)  # the launcher has ended: it needs the file no more
             done, _ = await asyncio.wait({reader}, timeout=process.OUTPUT_GRACE_S)
             await self._close_variables(run)  # before the end: the summary sent with it has their last state
             await self._keep_timeline(run)  # before the end too: the summary says where the file is
@@ -898,9 +904,7 @@ class GuiServer:
             await asyncio.gather(reader, watch, return_exceptions=True)
             process.close_pipes(proc)
             self._remove_credentials(run, last=True)
-            if control.remove(run.request):
-                run.request = None
-            else:
+            if not run.request_gone and not control.remove(run.request):
                 log.warning("the request file %s of run %s could not be removed: remove it by hand", run.request,
                             run.session.id)
             if not run.variables.closed:  # cancelled on the way: the connection is still closed
@@ -969,12 +973,12 @@ class GuiServer:
                     self.hub.broadcast(session.problem("line-too-long", f"the launcher wrote a line longer than "
                                                        f"{MAX_LINE} bytes: it is skipped", None))
                 elif line.strip():
-                    self.relay(session, line, run)
+                    self.relay(session, hide_request_in_line(line, run.request), run)
 
         async def stderr() -> None:
             async for line in process.lines(proc.stderr, 64 * 1024):
                 if line:
-                    self.hub.broadcast(session.stderr_line(line))
+                    self.hub.broadcast(session.stderr_line(hide_request(line, run.request)))
 
         await asyncio.gather(stdout(), stderr(), return_exceptions=True)
 

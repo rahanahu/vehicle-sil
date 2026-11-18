@@ -129,6 +129,8 @@ export class ActionError extends Error {
  * file are not here: the GUI server does not take them yet.)
  */
 export interface Intent {
+  /** The format of the request file: 1, or left out (the client adds none). */
+  vehicle_sil_run_request?: 1;
   disable?: string[];
   enable?: string[];
   manual?: string[];

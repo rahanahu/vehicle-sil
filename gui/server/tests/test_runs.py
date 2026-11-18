@@ -243,6 +243,35 @@ def test_the_intent_goes_to_the_launcher_in_a_request_file_that_is_removed_after
         run_async(main, gui)
 
 
+@pytest.mark.skipif(not POSIX, reason="file modes")
+def test_the_launchers_words_do_not_name_the_temporary_request_file(tmp_path: Path) -> None:
+    """The launcher says where in its request file a value is wrong, naming the file that this server made: the
+    answer says "the request" instead (a file that is gone before the answer, and not one the sender can open)."""
+    launcher = tmp_path / "vehicle_sil_launch"
+    launcher.write_text(f"#!{sys.executable}\nimport json, runpy, sys\na = sys.argv[1:]\n"
+                        "if a[:1] == ['check'] and '--request' in a:\n    p = a[a.index('--request') + 1]\n"
+                        "    print(json.dumps({'vehicle_sil_check': 1, 'result': 'usage', 'participants': [], "
+                        "'findings': [{'severity': 'error', 'code': 'usage', 'file': p, 'line': 5, "
+                        "'message': p + ', line 5: params: a name is letters', 'participant': None, "
+                        "'network': None}]}))\n    sys.stderr.write('error: ' + p + ', line 5: bad\\n')\n"
+                        "    sys.exit(2)\n"
+                        f"runpy.run_path({str(REPLAY)!r}, run_name='__main__')\n")
+    launcher.chmod(0o755)
+
+    async def main(c: Client) -> None:
+        status, body = await c.post("api/check", {"file": "simulation.yaml", "params": {"1a": 1}})
+        assert status == 200 and "vehicle-sil-gui-request" not in json.dumps(body), body
+        finding = body["check"]["findings"][0]
+        assert (finding["file"], finding["line"]) == ("the request", None)
+        assert finding["message"] == "the request: params: a name is letters"
+        status, body = await c.post("api/run", {"file": "simulation.yaml", "params": {"1a": 1}})
+        assert (status, body["error"]["code"]) == (422, "check-failed"), body
+        assert "vehicle-sil-gui-request" not in json.dumps(body), body
+        assert body["error"]["detail"]["findings"][0]["message"] == "the request: params: a name is letters"
+    with gui_server(tmp_path, launcher=launcher) as gui:
+        run_async(main, gui)
+
+
 def test_variant_and_params_of_the_wrong_shape_are_refused(gui: Gui) -> None:
     async def main(c: Client) -> None:
         scenario = "scenarios/throttle.yaml"

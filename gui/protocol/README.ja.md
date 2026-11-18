@@ -122,8 +122,8 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 ### 照合と開始（`api/check`、`api/run`）
 
 - **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけている間は 409 `starting`、動いている間は 409 `already-running` です。レスポンスの要約を、画面はその場で手元の状態に反映します（後から届く `session` も同じ内容です）。
-- **照合のあとの開始**: `api/run` は、まず実行を成す内容（`speed` と `start_paused` 以外のすべて）を、`api/check` と同じ順番で照合します。照合が通らなければ（`result` が `passed` でなければ）実行は始めず、422 `check-failed` を返します。`detail` は `{result, findings}` で、`result` は照合の `result`（`failed`、`unreadable`、`usage`）、`findings` は同じリクエストで `api/check` が返す `findings`（同じオブジェクト）です。警告や注記があるだけで通る照合は、実行を始めます。所見を直してから、もう一度 `api/run` を送ります。何も始める前に断るので、止めるものはありません。例: `error-check-failed.json`。
-- **意図と要求ファイル**: 本文は、`file`（このサーバーのフィールド。root からの相対の構成ファイル）と、ランチャーの要求ファイル（`schema/run-request.schema.json`。[docs/simulation-run.md](../../docs/ja/simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）のキーです。名前と値の形は同じです。`variant`（文字列）、`params`（パラメーター名から文字列、数、真偽への object）、`scenario`、`disable`、`enable`、`manual`（participant 名の配列）、`strict`（真偽）、`api/run` では `speed` と `start_paused` です。`vehicle_sil_run_request` は `1` なら送れます（要求ファイルの JSON に `file` を足したものを、そのまま渡せます）。サーバーは、各値の形と大きさ、パス（`file`、`api/scenarios` の一覧と照らす `scenario`）だけを調べ、意図を自分の要求ファイル（この利用者だけが読める。照合か実行が終わったら消す）に書いて、ランチャーに `--request <そのファイル>` を渡します。値がそのファイルで何を意味するか（その variant があるか、`disable` と `manual` を併せてよいか、シナリオにその `params` があるか）は、ランチャーが言います。所見（`api/check`）か 422 `check-failed`（`api/run`）に出ます。`disable` と `manual` に使える名前は、その variant の照合の結果のものです。
+- **照合のあとの開始**: `api/run` は、まず実行を成す内容（実行と同じ要求ファイル）を、`api/check` と同じ順番で照合します。照合が通らなければ（`result` が `passed` でなければ）実行は始めず、422 `check-failed` を返します。`detail` は `{result, findings}` で、`result` は照合の `result`（`failed`、`unreadable`、`usage`）、`findings` は同じリクエストで `api/check` が返す `findings`（同じオブジェクト）です。警告や注記があるだけで通る照合は、実行を始めます。所見を直してから、もう一度 `api/run` を送ります。何も始める前に断るので、止めるものはありません。例: `error-check-failed.json`。
+- **意図と要求ファイル**: 本文は、`file`（このサーバーのフィールド。root からの相対の構成ファイル）と、ランチャーの要求ファイル（`schema/run-request.schema.json`。[docs/simulation-run.md](../../docs/ja/simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）のキーです。名前と値の形は同じです。`variant`（文字列）、`params`（パラメーター名から文字列、数、真偽への object）、`scenario`、`disable`、`enable`、`manual`（participant 名の配列）、`strict`（真偽）、`speed` と `start_paused`（`api/check` でも。ランチャーの照合が、時間とシナリオの規則に使います）です。`vehicle_sil_run_request` は `1` なら、`$schema` は文字列なら送れます（後者は捨てます）。キーの名前と値の形は要求ファイルと同じで、`file` が加わります。`scenario` は `api/scenarios` の一覧の名前で、構成ファイルのディレクトリからのパスではありません。サーバーは、各値の形（本文は 64 KiB まで）、パス（`file`、`api/scenarios` の一覧と照らす `scenario`）だけを調べ、意図を自分の要求ファイル（この利用者だけが読める。照合か実行が終わったら消す）に書いて、ランチャーに `--request <そのファイル>` を渡します。値がそのファイルで何を意味するか（その variant があるか、`disable` と `manual` を併せてよいか、シナリオにその `params` があるか）は、ランチャーが言います。所見（`api/check`）か 422 `check-failed`（`api/run`）に出ます。要求ファイルについての所見は、そのファイルを「the request」と呼びます（一時ファイルは、読むときにはもうありません）。`disable` と `manual` に使える名前は、その variant の照合の結果のものです。
 - **選ばないことは、キーを書かないこと。** `null` は断ります（400 `invalid-field`）。要求ファイルの `connect` と `time_policy` は、まだ受けません（400 `unsupported`）。実行をする側のキー（`control`、`timeline`、`log_dir` など）は知らないフィールドです（400 `invalid-field`）。サーバーが決めます。送る `scenario` は、`api/scenarios` が返す `path`（root からの相対）です。サーバーは、要求ファイルが読む基準である構成ファイルのディレクトリからの相対に直して書きます。`request` の feature がないランチャーは使えません（`api/app` の `launcher.problems` に出ます）。
 - **照合**: 同時の `api/check` は拒否せず、順に 1 つずつ実行します。待っているリクエストが多すぎるか、待ちが照合の時間の上限（`api/app` の `limits.check_timeout_s`）を過ぎたら 503 `check-busy` です。`api/run` も同じ順番で照合します。
 
@@ -206,10 +206,11 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 503 | `write-busy` | `api/write`: 前の書き込みが Control Server のレスポンスを待っていて、順番が来なかった（送っていない） |
 | 503 | `shutting-down` | サーバーが終了しようとしている |
 | 503 | `too-many-connections` | WebSocket の数の上限（ハンドシェイクのレスポンス） |
+| 500 | `request-file` | ランチャーに要求を渡す一時ファイルを作れなかった（空きがない、一時ディレクトリに書けない。`TMPDIR` を設定する） |
 | 504 | `check-timeout` | 照合が時間の上限までに終わらなかった（止めた） |
 | 504 | `write-timeout` | `api/write`: Control Server が時間内（`limits.write_timeout_s`）に応答しなかった。受け取られたかもしれない（送り直さない） |
 
-- `api/check` が受けるフィールドは `file`、`vehicle_sil_run_request`、`scenario`、`variant`、`params`、`disable`、`enable`、`manual`、`strict` で、`api/run` はそれらと `speed`、`start_paused` です。ほかのフィールド（打ち間違い、実行をする側のキー、`api/check` の `speed`）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
+- `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`speed`、`start_paused`。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
 - `invalid-field` の対象: `speed`、`start_paused`、`variant`、`params`、`enable`、`strict`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`value`、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
 - `unsupported` の対象: `api/check` か `api/run` に `connect` か `time_policy` を送った。`time-commands` を持たないのに `api/time` を送った。`control-server` を持たないのに `api/write` を送った。
 
@@ -605,7 +606,7 @@ participant ごとの `state` は次のとおりです。
 
 | 操作 | 扱い |
 |---|---|
-| 止めた状態で始める（`start_paused: true`） | 400 `invalid-field` |
+| 止めた状態で始める（`start_paused: true`） | ランチャーが断る: 422 `check-failed`（`api/run`）、`usage` の結果（`api/check`） |
 | 変数を読む | ランチャーの `features` に `scenario-control` があれば読める |
 | `api/write` | 409 `scenario-running` で拒否する |
 | 時間のコマンド（`api/time`）と停止 | ふつうの実行と同じ |

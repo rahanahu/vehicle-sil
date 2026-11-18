@@ -104,8 +104,12 @@ def test_the_listing_and_a_check_with_a_scenario(gui) -> None:
         status, body = await c.post("api/check", {"file": "simulation.yaml", "scenario": "simulation.yaml"})
         assert (status, body["error"]["code"]) == (400, "scenario-not-listed")
         assert "GET api/scenarios?file=simulation.yaml" in body["error"]["message"]
+        # The launcher refuses a scenario that starts paused (the check says it): the run is not started
         status, body = await c.post("api/run", {"file": "simulation.yaml", "scenario": PASS, "start_paused": True})
-        assert (status, body["error"]["code"]) == (400, "invalid-field") and "start_paused" in body["error"]["message"]
+        assert (status, body["error"]["code"]) == (422, "check-failed"), body
+        assert body["error"]["detail"]["result"] == "usage" and body["error"]["detail"]["findings"][0]["code"] == "usage"
+        status, body = await c.get("api/session")
+        assert body["session"] is None
     run_async(talk, gui)
 
 

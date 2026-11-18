@@ -11,7 +11,6 @@ and the launcher's reading of it (whoever can write in the root can write the sc
 from __future__ import annotations
 
 import os
-import posixpath
 import stat
 from pathlib import Path
 
@@ -79,19 +78,19 @@ def list_scenarios(root: ConfigRoot, config: ConfigFile) -> tuple[str, bool, lis
 def relative_to_config(config: ConfigFile, scenario: str) -> str:
     """A scenario of the listing (root-relative) as the request file writes it: from the directory of the
     configuration file, which is where the launcher reads a relative scenario of a request file from."""
-    return posixpath.relpath(scenario, config.relative.rpartition("/")[0] or ".")
+    return f"{DIRECTORY}/{scenario.rpartition('/')[2]}"  # the listing holds only <its directory>/scenarios/<name>
 
 
 def resolve_scenario(root: ConfigRoot, config: ConfigFile, wanted: object) -> str | None:
-    """The scenario to give the launcher: None for none (null or left out), else `wanted` when the listing of the
+    """The scenario of the request: None for none (left out), else `wanted` when the listing of the
     configuration's scenario directory has it. Raises PathRejected with what to send instead."""
     if wanted is None:
         return None
     try:  # the shape: a non-empty root-relative path, no '..', not absolute, no NUL, not too long
         root.parts(wanted)
     except PathRejected as e:
-        raise PathRejected(e.code, f"scenario must be null or a path as GET api/scenarios?file={config.relative} "
-                                   f"lists it ({e})") from None
+        raise PathRejected(e.code, f"scenario must be a path as GET api/scenarios?file={config.relative} "
+                                   f"lists it, or left out ({e})") from None
     relative, found, files, _ = list_scenarios(root, config)
     if any(f["path"] == wanted for f in files):
         return wanted

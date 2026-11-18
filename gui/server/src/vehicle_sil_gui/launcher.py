@@ -6,6 +6,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -166,8 +167,8 @@ class InvalidRequest(ValueError):
 # (control, timeline, log_dir, events, stdin) are not in the list: this server decides them.
 REQUEST_VERSION_KEY = "vehicle_sil_run_request"
 INTENT_FIELDS = ("scenario", "variant", "params", "disable", "enable", "manual", "strict")
-CHECK_FIELDS = ("file", REQUEST_VERSION_KEY, *INTENT_FIELDS)
-RUN_FIELDS = CHECK_FIELDS + ("speed", "start_paused")
+# `$schema` is the editor's key of a request file: read and dropped, as the launcher does.
+REQUEST_FIELDS = ("file", "$schema", REQUEST_VERSION_KEY, *INTENT_FIELDS, "speed", "start_paused")
 # Keys of the request file that this server does not pass on yet.
 UNSUPPORTED_FIELDS = {"connect": "where a network is connected outside the simulation",
                       "time_policy": "the time policy of a run that is connected outside the simulation"}
@@ -188,6 +189,8 @@ def check_fields(endpoint: str, body: dict, allowed: tuple[str, ...]) -> None:
     if nulls:
         raise InvalidRequest("invalid-field", f"{endpoint} takes no null: leave out {', '.join(repr(k) for k in nulls)} "
                                               "to choose nothing")
+    if "$schema" in body and not isinstance(body["$schema"], str):
+        raise InvalidRequest("invalid-field", "$schema must be a text (the path or URL of the schema), or left out")
     version = body.get(REQUEST_VERSION_KEY)
     if REQUEST_VERSION_KEY in body and (isinstance(version, bool) or version != 1):
         raise InvalidRequest("invalid-field", f"{REQUEST_VERSION_KEY} must be 1 (the format of the request file) or "
@@ -381,3 +384,34 @@ def run_command(launcher: Launcher, file: str, request: Path, control_credential
     if control_credentials is not None:
         argv += ["--control", "0", "--control-credentials", str(control_credentials)]
     return argv + ["--request", str(request), "--", file]
+
+
+REQUEST_NAME = "the request"
+
+
+def hide_request(value: object, path: Path) -> object:
+    """The launcher's words with the name of this server's own request file (a temporary file that nobody can open)
+    said as "the request": in every text, "<file>, line N" too, and the `line` of a finding that was about the file.
+    value: a text, or what json.loads made of the launcher's output."""
+    name = str(path)
+    if isinstance(value, str):
+        return re.sub(re.escape(name) + r"(?:, line \d+)?", REQUEST_NAME, value)
+    if isinstance(value, list):
+        return [hide_request(v, path) for v in value]
+    if isinstance(value, dict):
+        out = {k: hide_request(v, path) for k, v in value.items()}
+        if value.get("file") == name and "line" in out:
+            out["line"] = None
+        return out
+    return value
+
+
+def hide_request_in_line(line: str, path: Path) -> str:
+    """One line of the launcher's events, with hide_request applied when it names the request file."""
+    name = str(path)
+    if name not in line and json.dumps(name)[1:-1] not in line:
+        return line
+    try:
+        return json.dumps(hide_request(json.loads(line), path), ensure_ascii=False, separators=(",", ":"))
+    except (ValueError, RecursionError):
+        return hide_request(line, path)

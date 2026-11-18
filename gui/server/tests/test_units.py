@@ -15,7 +15,8 @@ from vehicle_sil_gui.hub import Client, Hub, encode
 from vehicle_sil_gui.launcher import (InvalidRequest, Launcher, check_command, check_disable, check_enable,
                                      check_fields, check_manual, check_params, check_speed, check_strict,
                                      check_time_command, check_variant, command_line, request_text, run_command,
-                                     speed_argument, write_request_file, CHECK_FIELDS, RUN_FIELDS)
+                                     speed_argument, write_request_file, hide_request, hide_request_in_line,
+                                     REQUEST_FIELDS)
 from vehicle_sil_gui.paths import ConfigRoot, PathRejected
 from vehicle_sil_gui.session import Limits, Session
 from vehicle_sil_gui.static import StaticFiles
@@ -1028,14 +1029,46 @@ def test_the_intent_becomes_a_request_file_and_the_launchers_arguments(tmp_path:
 
 
 def test_a_request_field_is_checked_before_anything_is_made_of_it() -> None:
-    check_fields("api/run", {"file": "a.yaml", "vehicle_sil_run_request": 1, "speed": 2}, RUN_FIELDS)
+    check_fields("api/run", {"file": "a.yaml", "$schema": "x.json", "vehicle_sil_run_request": 1, "speed": 2},
+                 REQUEST_FIELDS)
+    check_fields("api/check", {"file": "a.yaml", "speed": 1, "start_paused": True}, REQUEST_FIELDS)
     for body, code in (({"connect": {"N": "x"}}, "unsupported"), ({"time_policy": "free"}, "unsupported"),
                        ({"variant": None}, "invalid-field"), ({"speed": None}, "invalid-field"),
                        ({"vehicle_sil_run_request": 2}, "invalid-field"),
-                       ({"vehicle_sil_run_request": True}, "invalid-field"), ({"control": 0}, "invalid-field")):
+                       ({"vehicle_sil_run_request": True}, "invalid-field"), ({"control": 0}, "invalid-field"),
+                       ({"$schema": 1}, "invalid-field")):
         with pytest.raises(InvalidRequest) as e:
-            check_fields("api/run", {"file": "a.yaml", **body}, RUN_FIELDS)
+            check_fields("api/run", {"file": "a.yaml", **body}, REQUEST_FIELDS)
         assert e.value.code == code, body
-    with pytest.raises(InvalidRequest, match="'speed'"):
-        check_fields("api/check", {"file": "a.yaml", "speed": 1}, CHECK_FIELDS)
 
+
+def test_the_name_of_the_request_file_is_hidden_from_what_the_launcher_says(tmp_path: Path) -> None:
+    path = tmp_path / "vehicle-sil-gui-request-x.json"
+    finding = {"severity": "error", "code": "usage", "file": str(path), "line": 5,
+               "message": f"{path}, line 5: params has a name that is not a name; variant in {path}"}
+    other = {"severity": "note", "code": "x", "file": "a.yaml", "line": 3, "message": "a.yaml, line 3: fine"}
+    hidden = hide_request({"findings": [finding, other]}, path)
+    assert hidden["findings"][0] == {"severity": "error", "code": "usage", "file": "the request", "line": None,
+                                     "message": "the request: params has a name that is not a name; variant in "
+                                                "the request"}
+    assert hidden["findings"][1] == other
+    line = json.dumps({"event": "finding", **finding})
+    assert str(path) not in hide_request_in_line(line, path) and json.loads(hide_request_in_line(line, path))["line"] is None
+    assert hide_request_in_line("not JSON " + str(path) + ", line 2", path) == "not JSON the request"
+    assert hide_request_in_line('{"event":"time"}', path) == '{"event":"time"}'
+
+
+
+def test_a_request_file_that_cannot_be_made_is_said_so(monkeypatch) -> None:
+    """No space, or no directory that can be written: 500 request-file with what to do (not "a bug"). The
+    stand-in cannot make the temporary directory unusable (tempfile falls back to others), so the write fails here."""
+    from vehicle_sil_gui import server
+
+    def full(intent):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(server, "write_request_file", full)
+    with pytest.raises(server.Refused) as e:
+        server.GuiServer._make_request({})
+    assert (e.value.status, e.value.code) == (500, "request-file")
+    assert "No space left on device" in str(e.value) and "TMPDIR" in str(e.value)

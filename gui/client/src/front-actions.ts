@@ -87,6 +87,7 @@ const MOVES = new Set(['pause', 'resume']);
 
 /** The fields of an `Intent` (what `run.start()` takes). */
 const INTENT_FIELDS = new Set([
+  'vehicle_sil_run_request',
   'disable',
   'enable',
   'manual',
@@ -158,6 +159,9 @@ export class FrontActions {
     const request: RunRequest = {
       file,
       disable: intent.disable ?? [],
+      ...(intent.vehicle_sil_run_request
+        ? { vehicle_sil_run_request: intent.vehicle_sil_run_request }
+        : {}),
       ...(intent.enable ? { enable: intent.enable } : {}),
       ...(intent.manual ? { manual: intent.manual } : {}),
       ...(intent.scenario !== undefined ? { scenario: intent.scenario } : {}),

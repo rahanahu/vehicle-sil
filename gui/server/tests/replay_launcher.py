@@ -164,12 +164,12 @@ def expand_request(argv: list[str]) -> list[str]:
         options += ["--variant", request["variant"]]
     for name, value in request.get("params", {}).items():
         options += ["--param", f"{name}={value if isinstance(value, str) else json.dumps(value)}"]
-    if "speed" in request:
+    if "speed" in request and argv[0] != "check":  # a check has no --speed: it does not change its output
         speed = request["speed"]
         options += ["--speed", speed if isinstance(speed, str) else (str(int(speed)) if float(speed).is_integer()
                                                                        else repr(float(speed)))]
-    if request.get("start_paused"):
-        options += ["--start-paused"]
+    if request.get("start_paused") and (argv[0] != "check" or "scenario" in request):
+        options += ["--start-paused"]  # a check has no such option: only the scenario's rule is recorded (by a request)
     if request.get("strict"):
         options += ["--strict"]
     if "scenario" in request and len(after) > 1:
