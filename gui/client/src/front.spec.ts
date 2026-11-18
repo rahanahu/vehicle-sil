@@ -1,6 +1,6 @@
 import { BATCH_MS } from './connection';
 import { ActionError, Front } from './front-types';
-import { connect, until, watch } from './front';
+import { connect, createFront, until, watch } from './front';
 import { HttpError } from './http';
 import { FakeHttp } from './testing/fake-http';
 import { FakeSocket, FakeWebSockets } from './testing/fake-web-socket';
@@ -160,6 +160,27 @@ describe('the front door', () => {
   afterEach(() => {
     for (const rig of rigs) rig.front.close();
     vi.useRealTimers();
+  });
+
+  it('createFront makes the front at once, without connecting or asking the server', () => {
+    const http = new FakeHttp();
+    const fake = new FakeWebSockets();
+    const front = createFront({
+      baseUrl: 'http://127.0.0.1:1/',
+      token: 'secret',
+      http: http.transport,
+      socket: fake.factory,
+    });
+    try {
+      expect(http.requests).toHaveLength(0);
+      expect(fake.sockets).toHaveLength(0);
+      // Before the app answered, a start without a file cannot be sent
+      expect(front.controls.get().start.ok).toBe(false);
+      front.low.connect();
+      expect(fake.sockets).toHaveLength(1);
+    } finally {
+      front.close();
+    }
   });
 
   async function open(features: string[] = [], without: string[] = []): Promise<Rig> {

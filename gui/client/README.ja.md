@@ -70,7 +70,7 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 
 | 種類   | 名前                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 関数   | `connect(options?)`、`watch(source, fn)`、`until(source, test, options?)`                                                                                                                                                                                                                                                                                                                                                                  |
+| 関数   | `connect(options?)`、`createFront(options)`、`watch(source, fn)`、`until(source, test, options?)`                                                                                                                                                                                                                                                                                                                                          |
 | クラス | `ActionError`（`code`、`message`、`outcome`、`findings`）                                                                                                                                                                                                                                                                                                                                                                                  |
 | 型     | `ConnectOptions`（`base_url`、`token`、`origin`、`http`、`socket`、`answer_timeout_ms`、`on_error`）、`Front`（`low`、`status`、`clock`、`controls`、`scenario`、`run`、`time`、`variable()`、`close()`）、`FrontStatus`、`FrontResult`、`FrontClock`、`FrontControls`、`Control`、`Reason`、`FrontScenario`、`FrontRun`、`FrontTime`、`FrontVariable`、`VariableView`、`Intent`、`Link`、`RunState`、`EndKind`、`Pacing`、`OperationName` |
 
@@ -260,6 +260,8 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 ## 正面の口（`connect()`）
 
 `connect()` は、ライブラリの正面の口を返します。画面が見せるもの（`status`、`clock`、`controls`、`scenario`）、Promise で返す操作（`run`、`time`）、変数 1 つ（`variable()`）です。ここまでに説明したクライアントの上に作ってあり、そちらは何も変えません。`front.low` は同じ `GuiClient`（イベント、ログ、所見、参加者）で、`createClient` もこれまでどおり使えます。画面が決めなければならないこと（「いまはどの状態か」「このボタンはいま押せるか、押せないなら理由は何か」）には正面の口を使い、それ以外には `low` を使います。
+
+サーバーが答える前から、また届かない間も画面を出す必要のあるアプリ（標準の画面）は、代わりに `createFront(options)` を使います。`createClient` と同じく、接続せずに正面の口を作るだけで、アプリが自分で `front.low.connect()` と `front.low.loadApp()` を呼びます。`loadApp()` が答えるまで、正面の口は起動時のファイルもランチャーの機能も知りません。
 
 ```ts
 import { ActionError, connect, until, watch } from '@vehicle-sil/gui-client';
