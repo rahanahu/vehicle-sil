@@ -90,8 +90,8 @@ module.exports = defineConfig([
     },
   },
   {
-    // The widgets (widgets/) and the wrappers (core/) can be copied into another Angular app: they do not depend on the
-    // screens (run/, variables/) or the app shell ("Copy the sample widgets" in docs/gui.md)
+    // The widgets (widgets/) and the wrappers (core/) do not depend on the screens (run/, variables/) or the app shell,
+    // so that they stay usable on their own
     files: ['src/app/widgets/**/*.ts', 'src/app/core/**/*.ts'],
     ignores: ['src/**/*.spec.ts'],
     rules: {

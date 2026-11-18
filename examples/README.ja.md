@@ -26,7 +26,7 @@
 | Python から値を書き込み、時間を進めて、読む（最短） | [launch_control](launch_control) | `write_and_read.py` |
 | 動いているシミュレーションを止めて、時刻を指定して書き込む | [launch_control](launch_control) | `pause_and_step.py` |
 | ブラウザの GUI のサーバーを、画面を使わずに呼び出す | [gui_client](gui_client) | `run.mjs`、`run-with-library.mjs`、`variables.mjs`（素の JavaScript） |
-| ブラウザの GUI に、自分の画面を作る | [gui_starter](gui_starter) | 素の HTML と JavaScript（ビルドなし） |
+| ブラウザの GUI に、自分の画面を作る | [gui_starter](gui_starter) | 部品を並べた HTML と短いスクリプト（ビルドなし） |
 | 層を自分で組み立てる（バス、ホスト、ドライバー、ネットワーク） | [low_level](low_level) | `vehicle_sil_low_level` |
 
 ## 実行のしかた
@@ -143,7 +143,7 @@ CMake には入っていません（`scripts/verify-gui.py` が、流し直す�
 
 ### gui_starter
 
-GUI サーバーに配信させる自分の画面（`vehicle-sil-gui --web <dir>`）を、好きなフレームワークで一から作るときに読みます。クライアントのライブラリだけで、接続、照合、開始と停止、変数を 1 つ見て書き込む、`client.variables.bind` で作ったスライダーとランプ、までの最小の形です。TypeScript と好きなフレームワークで作るときの、ライブラリのパッケージ（`.tgz`）の使い方も [README](gui_starter/README.ja.md) にあります。
+GUI サーバーに配信させる自分の画面（`vehicle-sil-gui --web <dir>`）を、フレームワークの有無を問わず作るときに読みます。部品（`<vsil-run-controls>`、`<vsil-slider>`、`<vsil-value>` など）を並べた画面で、変数の名前を自分の ECU のものに変えて使い、部品にないことは短い自分のスクリプトで足します。部品とライブラリは GUI サーバーから読み込むので、コピーするものはありません。TypeScript と好きなフレームワークで作るときの、ライブラリのパッケージ（`.tgz`）の使い方も [README](gui_starter/README.ja.md) にあります。
 
 CMake には入っていません（`scripts/verify-gui.py` が、流し直すランチャーを相手に `--web` で配信してブラウザで確認します）。使い方は [docs/gui.md](../docs/ja/gui.md) の「自分の画面を作る」にあります。
 

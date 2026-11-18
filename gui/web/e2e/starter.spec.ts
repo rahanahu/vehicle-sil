@@ -1,9 +1,20 @@
-// 自分の画面のひな形（examples/gui_starter）を、GUI サーバーの --web で配って通す。サンプルの画面を使わず、
-// クライアントのライブラリを 1 つにまとめたファイル（npm run build:client）だけで、つなぐ、照合、開始と停止、変数を
-// 見て書く、シナリオの実行の時間の軸を要素 <vehicle-sil-timeline> で出す、ができること。流し直すランチャーと偽の
-// Control Server が相手。
+// The starter of a screen of your own (examples/gui_starter), served as it is handed out: copied to a directory and
+// served with --web, with no copy of the library next to it (the page loads the parts and the library from the
+// server's vsil/, which npm run build:client builds). The replaying launcher and a fake Control Server are the other
+// side, so the variables are those of the fake (the starter names those of examples/ecu_main), and the test renames
+// them the way README.md tells a user to rename them for their own ECU.
+// What it must do: the parts run and stop, write a variable and show it; the script of its own (main.js) shows a value,
+// reports a refused operation and shows the timeline of a scenario run; the page makes one connection.
 import { expect, test } from '@playwright/test';
-import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -18,114 +29,147 @@ import { RUN_TIMEOUT } from './support/run-page';
 const CONTROL_FEATURES =
   'events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,control-server,' +
   'scenario,timeline';
-const BUNDLE = join(REPOSITORY, 'build', 'gui-client', 'vehicle-sil-gui-client.mjs');
+const BUILD = join(REPOSITORY, 'build', 'gui-client');
+// The starter's variables, and the fake's (README.md: change the variable attributes to your own)
+const RENAME: [string, string][] = [
+  ['Engine.engine.throttle', 'Engine.engine.demand'],
+  ['Dashboard.dashboard.engine_lost', 'Engine.engine.warning'],
+];
 
-let server: GuiServer;
 let screen: string;
+const cleanups: (() => Promise<void>)[] = [];
 
-test.beforeAll(async () => {
-  // 開発サーバーの形（e2e:dev）では回さない（サンプルの画面を使わないので、1 回で足りる）
+test.afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
+});
+
+test.beforeAll(() => {
+  // Not in the development server's form (e2e:dev): the starter does not use the sample screens
   test.skip(test.info().project.name !== 'static', 'only once');
-  if (!existsSync(BUNDLE)) {
-    throw new Error(`${BUNDLE} is missing: run npm run build:client in gui/web first`);
+  for (const name of ['vehicle-sil-gui-client.mjs', 'vehicle-sil-gui-elements.mjs']) {
+    if (!existsSync(join(BUILD, name))) {
+      throw new Error(`${join(BUILD, name)} is missing: run npm run build:client in gui/web first`);
+    }
   }
-  // As README.md says: copy the starter and put the library next to it
   screen = mkdtempSync(join(tmpdir(), 'vehicle-sil-gui-starter-'));
   cpSync(join(REPOSITORY, 'examples', 'gui_starter'), screen, { recursive: true });
-  copyFileSync(BUNDLE, join(screen, 'vehicle-sil-gui-client.mjs'));
-  server = await launchGuiServer({
+  for (const name of ['index.html', 'main.js']) {
+    let text = readFileSync(join(screen, name), 'utf8');
+    for (const [from, to] of RENAME) text = text.replaceAll(from, to);
+    writeFileSync(join(screen, name), text);
+  }
+});
+
+test.afterAll(() => {
+  if (screen) rmSync(screen, { recursive: true, force: true });
+});
+
+async function serve(config: string): Promise<GuiServer> {
+  const server = await launchGuiServer({
     launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
-    // more: スライダーとランプに合う変数（範囲のある engine.demand、それが 50 を超えると真の engine.warning）
+    config: join(CONFIGS, config),
+    // more: the variables that a slider and a lamp need (engine.demand has a range; engine.warning is true above 50)
     env: { REPLAY_TICK_MS: '50', REPLAY_FEATURES: CONTROL_FEATURES, REPLAY_VARIABLES: 'more' },
     port: 0,
     web: screen,
   });
-});
+  cleanups.push(() => server.stop());
+  return server;
+}
 
-test.afterAll(async () => {
-  await server?.stop();
-  if (screen) rmSync(screen, { recursive: true, force: true });
-});
-
-test('the starter screen checks, runs, shows a variable and writes it', async ({ page }) => {
+test('the starter runs and stops, writes and shows variables, and reports a refused operation of its own', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  // The starter has no copy of the library: it comes from the server
+  expect(readdirSync(screen).filter((name) => name.endsWith('.mjs'))).toEqual([]);
+  const server = await serve('forever.yaml');
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text());
   });
+  const sockets: string[] = [];
+  page.on('websocket', (socket) => sockets.push(socket.url()));
   await page.goto(server.url);
-  await expect(page.getByTestId('connection')).toHaveText('connection: open');
+  const status = page.locator('vsil-status');
+  await expect(status).toHaveAttribute('data-link', 'online');
   expect(new URL(page.url()).hash).toBe(''); // the token left the URL
+  await expect(status).toHaveAttribute('data-run', 'none');
+  // The attribute of the time part reaches its list of speeds
+  await expect(page.locator('vsil-time-controls select option')).toHaveText([
+    '-',
+    '1×',
+    '5×',
+    'fastest',
+  ]);
+  const button = (name: string) => page.getByRole('button', { name, exact: true });
 
-  await page.getByTestId('config').selectOption('forever.yaml');
-  await page.getByTestId('check').click();
-  await expect(page.getByTestId('check-result')).toHaveText(/^passed \(errors 0/);
+  // Nothing runs: the button of its own is refused, and says so next to itself (the parts keep to their own words)
+  await button('Throttle to 100 %').click();
+  await expect(page.locator('#floor-error')).toHaveText(/\w+/);
 
-  await page.getByTestId('start').click();
-  await expect(page.getByTestId('phase')).toHaveText('running');
-  await expect(page.getByTestId('variables')).toHaveText('ready');
-  await page.getByTestId('variable').selectOption('Engine.engine.demand');
-  await page.getByTestId('new-value').fill('40');
-  await page.getByTestId('write').click();
-  await expect(page.getByTestId('write-result')).toHaveText(/^applied at \d+ ms$/);
-  await expect(page.getByTestId('value')).toHaveText(/^40 % \(at \d+ ms\)$/);
+  await button('Start').click();
+  await expect(status).toHaveAttribute('data-run', 'running', { timeout: RUN_TIMEOUT });
+  await expect(page.locator('#floor-error')).toHaveText(/\w+/); // still the old sentence: it is the script's to clear
 
-  // スライダーとランプ（client.variables.bind）: 値、書き込みの様子、書けない理由
-  await expect(page.getByTestId('slider-name')).toHaveText('Engine.engine.demand');
-  await expect(page.getByTestId('lamp-name')).toHaveText('Engine.engine.warning');
-  await expect(page.getByTestId('slider-value')).toHaveText('40 %');
-  await expect(page.getByTestId('slider')).toHaveValue('40');
-  await expect(page.getByTestId('lamp')).toHaveText('off');
-  await page.getByTestId('slider').fill('80');
-  await expect(page.getByTestId('slider-write')).toHaveText('applied');
-  await expect(page.getByTestId('slider-value')).toHaveText('80 %');
-  await expect(page.getByTestId('lamp')).toHaveText('on');
-  await expect(page.getByTestId('lamp')).toHaveAttribute('data-on', 'true');
+  // A part writes: the slider. The fake ECU raises the warning above 50, which another part shows
+  const slider = page.locator('vsil-slider input');
+  const warning = page.locator('vsil-value[variable="Engine.engine.warning"]');
+  await expect(slider).toBeEnabled();
+  await expect(warning).toHaveAttribute('data-on', 'false');
+  await slider.fill('70');
+  await expect(warning).toHaveAttribute('data-on', 'true');
+  await slider.fill('30');
+  await expect(warning).toHaveAttribute('data-on', 'false');
+  // The button of its own writes through the same connection, and the parts show it
+  await button('Throttle to 100 %').click();
+  await expect(slider).toHaveValue('100');
+  await expect(warning).toHaveAttribute('data-on', 'true');
+  await expect(page.locator('#floor-error')).toHaveText('');
+  // The display of its own
+  await expect(page.locator('#rpm-text')).toHaveText(/^\d+ rpm$/);
+  await expect(page.locator('#rpm')).toHaveAttribute('data-stale', 'false');
+  // A part writes: the button
+  await button('Cut engine from the bus').click();
+  await expect(button('Cut engine from the bus')).toHaveAttribute('aria-disabled', 'true');
 
-  // つまみを動かしている途中で実行が終わる: 離しても書かず、つまみは読んだ値へ戻る
-  const box = (await page.getByTestId('slider').boundingBox())!;
-  await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2, { steps: 5 });
-  await expect(page.getByTestId('slider')).not.toHaveValue('80');
-  await page.getByTestId('stop').evaluate((button: HTMLButtonElement) => button.click());
-  await expect(page.getByTestId('result')).not.toHaveText('-');
-  await expect(page.getByTestId('slider')).toBeDisabled();
-  await page.mouse.up();
-  await expect(page.getByTestId('slider-value')).toHaveText('80 %');
-  await expect(page.getByTestId('slider')).toHaveValue('80');
-  await expect(page.getByTestId('slider-why')).toHaveText('(cannot write: ended)');
+  await button('Stop').click();
+  await expect(status).not.toHaveAttribute('data-run', 'running', { timeout: RUN_TIMEOUT });
+  await expect(slider).toBeDisabled();
+  await expect(status).toHaveAttribute('data-run', 'ended');
+  // What is not a live value any more is marked (style.css dims it), also in the display of its own
+  await expect(page.locator('#rpm')).toHaveAttribute('data-stale', 'true');
+  expect(sockets).toHaveLength(1);
   expect(errors).toEqual([]);
 });
 
-test('the starter screen shows the timeline of a scenario run with the element', async ({
-  page,
-}) => {
+test('the starter runs a scenario and shows its timeline', async ({ page }) => {
+  test.setTimeout(120_000);
+  const server = await serve('simulation.yaml');
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text());
   });
   await page.goto(server.url);
-  await expect(page.getByTestId('connection')).toHaveText('connection: open');
-  await expect(page.getByTestId('timeline-none')).toBeVisible();
-  // A scenario run started by another screen (here the API): the starter follows the session
-  const run = await page.request.post(new URL('api/run', server.url).href, {
-    headers: { Authorization: `Bearer ${server.token}`, Origin: new URL(server.url).origin },
-    data: { file: 'simulation.yaml', scenario: 'scenarios/fails.yaml' },
+  await expect(page.locator('vsil-status')).toHaveAttribute('data-link', 'online');
+  const timeline = page.locator('vehicle-sil-timeline');
+  await expect(timeline).toBeHidden(); // no scenario run yet
+  const scenario = page.locator('vsil-scenario-select select');
+  await expect(scenario.locator('option', { hasText: 'fails.yaml' })).toHaveCount(1);
+  await scenario.selectOption({ label: 'fails.yaml' });
+  await page.getByRole('button', { name: 'Start', exact: true }).click();
+  await expect(page.locator('vsil-scenario-result')).toHaveAttribute('data-status', 'failed', {
+    timeout: RUN_TIMEOUT,
   });
-  expect(run.status(), await run.text()).toBe(200);
-  const timeline = page.getByTestId('timeline');
   await expect(timeline.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveText(
     /^Step 2 failed at [\d.]+ ms$/,
     { timeout: RUN_TIMEOUT },
   );
-  await expect(page.getByTestId('timeline-none')).toBeHidden();
+  await expect(timeline).toBeVisible();
   await expect(timeline.locator('#help')).toBeHidden();
-  await timeline.locator('#chart').focus();
-  await page.keyboard.press('ArrowRight');
-  await expect(page.getByTestId('timeline-cursor')).toHaveText(/^[\d.]+ ms$/);
   const shots = process.env['VEHICLE_SIL_GUI_SHOTS'];
   if (shots) {
     await page.setViewportSize({ width: 1280, height: 900 });

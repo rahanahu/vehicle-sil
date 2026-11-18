@@ -13,6 +13,7 @@ The library handles the connection (token, reconnection), the session copy (a co
 | The code to connect and start a run                                | [Basic usage](#basic-usage)                              |
 | Reading and writing variable values                                | [ECU variables](#ecu-variables)                          |
 | What a screen shows and which buttons work: `connect()`            | [The front door (`connect()`)](#the-front-door-connect)  |
+| The elements to put in HTML, with no script                        | [Parts (custom elements)](#parts-custom-elements)        |
 | Building sliders and lamps (the values of `condition` and `block`) | [Build widgets (`bind`)](#build-widgets-bind)            |
 | What happens after `connect()` and `close()`                       | [Lifecycle](#lifecycle)                                  |
 | Developing the library                                             | [Coding rules](#coding-rules), [Tests](#tests)           |
@@ -21,11 +22,12 @@ The library handles the connection (token, reconnection), the session copy (a co
 
 The library is TypeScript source with no dependencies. It is not published to the npm registry.
 
-| Use                                             | How to get it                                                                                            | Import                                                        |
-| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Plain JavaScript, no build step                 | Put `vehicle-sil-gui-client.mjs`, the library bundled into one ESM file, in the screen's directory       | `import { createClient } from './vehicle-sil-gui-client.mjs'` |
-| TypeScript and any framework                    | Get the package `vehicle-sil-gui-client-<version>.tgz` and run `npm install <that .tgz>` in your project | `import { createClient } from '@vehicle-sil/gui-client'`      |
-| A TypeScript app in this repository (`gui/web`) | Point the entry point names to `src/` with `paths` in `tsconfig.json`                                    | `import { createClient } from '@vehicle-sil/gui-client'`      |
+| Use                                             | How to get it                                                                                            | Import                                                       |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| A page that the GUI server serves (`--web`)     | Nothing to copy: the server serves the files (below)                                                     | `import { connect } from '/vsil/vehicle-sil-gui-client.mjs'` |
+| Plain JavaScript, outside such a page           | Put `vehicle-sil-gui-client.mjs`, the library bundled into one ESM file, next to your script             | `import { connect } from './vehicle-sil-gui-client.mjs'`     |
+| TypeScript and any framework                    | Get the package `vehicle-sil-gui-client-<version>.tgz` and run `npm install <that .tgz>` in your project | `import { connect } from '@vehicle-sil/gui-client'`          |
+| A TypeScript app in this repository (`gui/web`) | Point the entry point names to `src/` with `paths` in `tsconfig.json`                                    | `import { createClient } from '@vehicle-sil/gui-client'`     |
 
 Where to find the 3 files:
 
@@ -191,6 +193,8 @@ Types for the shapes that `gui/protocol` defines, and the parsers to use when yo
 | `SessionView.scenario` of the session copy                 | `ScenarioView`                                                                                                                                                                                                                  |
 
 ## Basic usage
+
+This is the lower door of the library, `createClient`, which the front door is built on (it is `client.low` there). A screen starts with `connect()` and the parts ("The front door (`connect()`)" and "Parts (custom elements)" below) and uses this door for what they do not cover: events, logs, findings, participants and `bind`.
 
 ```ts
 import { createClient, takeToken } from '@vehicle-sil/gui-client';
@@ -367,16 +371,16 @@ The view has `value`, `text` (an enum shows the item's name), `unit`, `min`, `ma
 
 `@vehicle-sil/gui-client/elements` defines 8 custom elements that draw what `connect()` returns, so that a screen can be written as HTML without a script. They use native controls in the light DOM and have no styles of their own: your CSS styles them, and they work in plain HTML and in the templates of Angular, React, Vue and Svelte. Importing the module defines them (a name that is defined already is skipped).
 
-| Element                  | What it shows or does                                                                                     | Attributes and properties                                                                                                  |
-| ------------------------ | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `<vsil-status>`          | The connection, the run, the virtual time (marked when it falls behind real time) and the one problem     | none                                                                                                                       |
-| `<vsil-run-controls>`    | Start (with the page's selection), Stop and, after a first stop, Stop without waiting                     | property `intent`; `label-start`, `label-stop`, `label-force-stop`                                                         |
-| `<vsil-time-controls>`   | Pause, Resume, Step, Run until and the speed                                                              | `speeds` (default `0.5 1 5 max`), `step-ms` (default `10`); `label-pause`, `label-resume`, `label-step`, `label-run-until` |
-| `<vsil-value>`           | The value and its unit, and a sentence when it is not live. A bool shows as the `on` and `off` text       | `variable`, `on`, `off`, `no-unit`                                                                                         |
-| `<vsil-slider>`          | A number in the variable's range; it is written when the knob is released                                 | `variable`                                                                                                                 |
-| `<vsil-write>`           | A button that writes one value (not usable when the variable already has it)                              | `variable`, `value` (JSON: `false`, `3`; otherwise text), `label`                                                          |
-| `<vsil-scenario-select>` | The scenario of the next run, among those next to the run's configuration file (the first choice is none) | none                                                                                                                       |
-| `<vsil-scenario-result>` | The status and the steps of the run's scenario                                                            | none                                                                                                                       |
+| Element                  | What it shows or does                                                                                     | Attributes and properties                                                                                                                                                                                               |
+| ------------------------ | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<vsil-status>`          | The connection, the run, the virtual time (marked when it falls behind real time) and the one problem     | none                                                                                                                                                                                                                    |
+| `<vsil-run-controls>`    | Start (with the page's selection), Stop and, after a first stop, Stop without waiting                     | property `intent` (what the next run starts with); `label-start`, `label-stop`, `label-force-stop` (the button texts)                                                                                                   |
+| `<vsil-time-controls>`   | Pause, Resume, Step, Run until and the speed                                                              | `speeds` (the speeds to choose from, separated by spaces; default `0.5 1 5 max`), `step-ms` (the size of a step in ms; default `10`); `label-pause`, `label-resume`, `label-step`, `label-run-until` (the button texts) |
+| `<vsil-value>`           | The value and its unit, and a sentence when it is not live. A bool shows as the `on` and `off` text       | `variable`; `on`, `off` (the text for a bool's true and false); `no-unit` (leave the unit out)                                                                                                                          |
+| `<vsil-slider>`          | A number in the variable's range; it is written when the knob is released                                 | `variable`                                                                                                                                                                                                              |
+| `<vsil-write>`           | A button that writes one value (not usable when the variable already has it)                              | `variable`; `value` (what to write: JSON such as `false` or `3`, otherwise text); `label` (the button text)                                                                                                             |
+| `<vsil-scenario-select>` | The scenario of the next run, among those next to the run's configuration file (the first choice is none) | none                                                                                                                                                                                                                    |
+| `<vsil-scenario-result>` | The status and the steps of the run's scenario                                                            | none                                                                                                                                                                                                                    |
 
 A variable is written `ECU.variable` (cut at the first dot), as for `client.variable()`.
 

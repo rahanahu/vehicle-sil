@@ -26,7 +26,7 @@ The further down the list, the lower the layer an example uses.
 | Write a value from Python, advance time and read a value (the shortest example) | [launch_control](launch_control) | `write_and_read.py` |
 | Pause a running simulation and write at a specified time | [launch_control](launch_control) | `pause_and_step.py` |
 | Call the browser GUI server without the screens | [gui_client](gui_client) | `run.mjs`, `run-with-library.mjs`, `variables.mjs` (plain JavaScript) |
-| Build your own screen for the browser GUI | [gui_starter](gui_starter) | Plain HTML and JavaScript (no build) |
+| Build your own screen for the browser GUI | [gui_starter](gui_starter) | HTML of parts and a short script (no build) |
 | Assemble the layers yourself (bus, host, driver, network) | [low_level](low_level) | `vehicle_sil_low_level` |
 
 ## How to run the examples
@@ -143,7 +143,7 @@ It is not part of the CMake build (`scripts/verify-gui.py` runs it against a sta
 
 ### gui_starter
 
-Read this to build your own screen, served by the GUI server (`vehicle-sil-gui --web <dir>`), from scratch in the framework of your choice. It is a minimal screen built only on the client library: connect, check, start and stop, watch and write one variable, and a slider and a lamp made with `client.variables.bind`. Its [README](gui_starter/README.md) also explains how to use the library package (`.tgz`) with TypeScript and the framework of your choice.
+Read this to build your own screen, served by the GUI server (`vehicle-sil-gui --web <dir>`), with or without a framework. It is a screen of parts (`<vsil-run-controls>`, `<vsil-slider>`, `<vsil-value>` and others) that you change to your own ECU's variables, with a short script of your own for what the parts do not have. The page loads the parts and the library from the GUI server, so there is nothing to copy. Its [README](gui_starter/README.md) also explains how to use the library package (`.tgz`) with TypeScript and the framework of your choice.
 
 It is not part of the CMake build (`scripts/verify-gui.py` serves it with `--web` against a stand-in launcher that replays the output of the real one, and checks it in a browser). For how to use it, see "Build your own screen" in [docs/gui.md](../docs/gui.md#build-your-own-screen).
 
