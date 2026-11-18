@@ -348,11 +348,11 @@ void RunParticipants::end_children(bool ran, int interrupts_at_end)
     {
         const Waited waited = wait_until(stopTimeout, interrupts_at_end, [this] { return !any_running(true); });
         waitedInFull = waited == Waited::TimedOut;
-        if (waited == Waited::Interrupted && outcome_.interrupted_by.empty())
+        if (waited == Waited::Interrupted && outcome_.end.interrupted_by.empty())
         {
-            outcome_.interrupted_by = ctx_.interrupt_name();
-            outcome_.interrupted_while_ending = true;
-            out_.say("interrupted (" + outcome_.interrupted_by + "): no more waiting for the participants to end");
+            outcome_.end.interrupted_by = ctx_.interrupt_name();
+            outcome_.end.interrupted_while_ending = true;
+            out_.say("interrupted (" + outcome_.end.interrupted_by + "): no more waiting for the participants to end");
         }
     }
     std::vector<std::size_t> asked;

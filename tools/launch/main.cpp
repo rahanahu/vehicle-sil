@@ -344,7 +344,7 @@ void finish_threads()
 
 /// Ends the process with `code` now, when the result has been written: without the destructors of
 /// static objects and without unloading SIL Kit, which a thread of the run still uses
-/// (RunOutcome::connection_not_closed_ms). Nothing is left to flush: the result and every line on
+/// (OutcomeClose::not_closed_ms). Nothing is left to flush: the result and every line on
 /// stderr are flushed where they are written, the events by their own thread before the result
 /// counts as written.
 [[noreturn]] void end_process_at_once(int code)
@@ -1265,7 +1265,7 @@ int run(const cli::Args& args, launch::EventStream* events)
                          ? finish_events(*events, report, report.exit_code())
                          : write_or_fail(args.flag("json") ? launch::format_run_json(report) : launch::format_run_text(report),
                                          report.exit_code());
-    if (report.run && report.run->connection_not_closed_ms)
+    if (report.run && report.run->close.not_closed_ms)
     {
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
         server.reset(); // its audit log is complete; the hub stays, with the thread that was left closing

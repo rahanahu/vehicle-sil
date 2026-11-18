@@ -138,7 +138,7 @@ void RunScenario::start(SimulationController& controller, RunOutcome& outcome)
     {
         // The window ended before the scenario began (the start was being given up): nothing
         // moves the guard, so the simulation is stopped where it stands.
-        outcome.scenario_error = "the scenario could not begin before the simulation started";
+        outcome.scenario.error = "the scenario could not begin before the simulation started";
         over_.store(true);
         return;
     }
@@ -192,12 +192,12 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
         const std::lock_guard lock(error_mutex_);
         if (!thread_error_.empty())
         {
-            outcome.scenario_error = thread_error_;
+            outcome.scenario.error = thread_error_;
         }
     }
     if (!engine_)
     {
-        outcome.scenario->status = ScenarioStatus::Incomplete;
+        outcome.scenario.result->status = ScenarioStatus::Incomplete;
         return;
     }
     // Whatever is taken from here on is not the scenario's (below: once more, for a stop_at_ms).
@@ -228,10 +228,10 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
         // the run's result is the participant's failure and a scenario that did not finish.
         engine_->superseded();
     }
-    const std::string file = outcome.scenario->file;
-    outcome.scenario = engine_->run();
-    outcome.scenario->file = file;
-    outcome.timeline_record = record_;
+    const std::string file = outcome.scenario.result->file;
+    outcome.scenario.result = engine_->run();
+    outcome.scenario.result->file = file;
+    outcome.scenario.timeline_record = record_;
 }
 
 void RunScenario::end()

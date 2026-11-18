@@ -389,10 +389,10 @@ bool RunStart::wait_for_bridges(SimulationController& controller)
         return !ctx_.plan.strict || !stopped_for_shared_device(bridges);
     }
     const ParticipantRun& run = outcome_.participants[failed];
-    outcome_.failed_participant = run.name;
+    outcome_.end.failed_participant = run.name;
     if (!run.exit)
     {
-        outcome_.failure_reason = why;
+        outcome_.end.failure_reason = why;
     }
     notes_.note_failed(outcome_, run.name, run.exit ? "ended_before_start" : "left_simulation");
     out_.say(run.name + " did not start: " + (run.exit ? "its process " : "it ") + why + "; nothing else is started");
@@ -413,7 +413,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
     if (waits_for_manual(ctx_.config) && ctx_.plan.timeout)
     {
         shared_.manual_wait_began_ns.store(std::chrono::steady_clock::now().time_since_epoch().count());
-        outcome_.timeout_from_wait = true;
+        outcome_.start.timeout_from_wait = true;
     }
     while (true)
     {
@@ -442,8 +442,8 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
         const int ended = participants_.look_at_children(true);
         if (ended >= 0 && !late)
         {
-            outcome_.failed_participant = outcome_.participants[static_cast<std::size_t>(ended)].name;
-            notes_.note_failed(outcome_, outcome_.failed_participant, "ended_before_start");
+            outcome_.end.failed_participant = outcome_.participants[static_cast<std::size_t>(ended)].name;
+            notes_.note_failed(outcome_, outcome_.end.failed_participant, "ended_before_start");
             return false;
         }
         if (missing.empty())
@@ -463,7 +463,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
         }
         if (late)
         {
-            outcome_.start_timed_out = true;
+            outcome_.start.timed_out = true;
             std::string names;
             for (auto& run : outcome_.participants)
             {
@@ -517,26 +517,26 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
         if (const int gone = participants_.gone_process(!gone_before_start(ctx_, controller).empty()); gone >= 0)
         {
             // A participant's process ended before the simulation started: as in the wait above.
-            outcome_.failed_participant = outcome_.participants[static_cast<std::size_t>(gone)].name;
-            notes_.note_failed(outcome_, outcome_.failed_participant, "ended_before_start");
+            outcome_.end.failed_participant = outcome_.participants[static_cast<std::size_t>(gone)].name;
+            notes_.note_failed(outcome_, outcome_.end.failed_participant, "ended_before_start");
             return false;
         }
-        outcome_.start_error = one_line(e.what());
-        out_.say("the simulation did not start: " + outcome_.start_error);
+        outcome_.start.error = one_line(e.what());
+        out_.say("the simulation did not start: " + outcome_.start.error);
         return false;
     }
     note_control(transport);
     {
         const std::lock_guard lock(shared_.found_mutex);
-        outcome_.before_start_error = shared_.before_start_error;
+        outcome_.start.before_start_error = shared_.before_start_error;
     }
-    if (!outcome_.before_start_error.empty())
+    if (!outcome_.start.before_start_error.empty())
     {
         // It runs (every participant got to its first step), but not as it was to: ended here.
-        out_.say("the simulation started, but what was to be done before it failed (" + outcome_.before_start_error +
+        out_.say("the simulation started, but what was to be done before it failed (" + outcome_.start.before_start_error +
             "): aborting it");
         controller.abort();
-        outcome_.simulation = SimulationEnd::Aborted;
+        outcome_.end.simulation = SimulationEnd::Aborted;
         before_start_failed_ = true;
         return false;
     }
@@ -550,15 +550,15 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
 
 void RunStart::interrupted_before_start()
 {
-    outcome_.interrupted_by = ctx_.interrupt_name();
-    out_.say("interrupted (" + outcome_.interrupted_by + ") before the simulation started");
+    outcome_.end.interrupted_by = ctx_.interrupt_name();
+    out_.say("interrupted (" + outcome_.end.interrupted_by + ") before the simulation started");
 }
 
 bool RunStart::start_timed_out(const std::string& waiting_for)
 {
-    outcome_.timed_out = true;
-    outcome_.timed_out_before_start = true;
-    outcome_.timed_out_waiting_for = waiting_for;
+    outcome_.end.timed_out = true;
+    outcome_.start.timed_out_before_start = true;
+    outcome_.start.timed_out_waiting_for = waiting_for;
     out_.say("the simulation did not start within --timeout-ms (" + std::to_string(ctx_.plan.timeout->count()) +
         " ms): " + waiting_for);
     return false;

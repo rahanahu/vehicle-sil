@@ -194,9 +194,9 @@ void RunControl::note_links(RunOutcome& outcome, const std::optional<ControlStar
 void RunControl::note_late_values(RunOutcome& outcome, control_silkit::HubTransport& transport) const
 {
     const control_silkit::HubTransportStats stats = transport.stats();
-    outcome.control_refused_hellos = stats.refused_hellos;
-    outcome.control_undecodable = stats.undecodable;
-    outcome.control_unknown = stats.unknown;
+    outcome.control.refused_hellos = stats.refused_hellos;
+    outcome.control.undecodable = stats.undecodable;
+    outcome.control.unknown = stats.unknown;
     for (const control_silkit::LinkInfo& link : transport.links())
     {
         for (ParticipantRun& run : outcome.participants)

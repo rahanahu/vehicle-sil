@@ -87,8 +87,8 @@ Finding shared_finding(const RunOutside& o, const ParticipantRun& bridge)
 /// connect-failed or connect-lost for the bridge `p` of --connect, or nothing: it did not fail the run.
 std::optional<Finding> bridge_failure(const RunOutcome& outcome, const ParticipantRun& p)
 {
-    const bool ran = outcome.simulation != SimulationEnd::NotStarted;
-    const bool blamed = !outcome.failed_participant.empty() && p.name == outcome.failed_participant;
+    const bool ran = outcome.end.simulation != SimulationEnd::NotStarted;
+    const bool blamed = !outcome.end.failed_participant.empty() && p.name == outcome.end.failed_participant;
     const auto outside = std::find_if(outcome.outside.begin(), outcome.outside.end(),
                                       [&p](const RunOutside& o) { return o.network == p.for_network; });
     const std::string target = outside != outcome.outside.end() ? outside->target : std::string{};
@@ -98,7 +98,7 @@ std::optional<Finding> bridge_failure(const RunOutcome& outcome, const Participa
         p.last_line.empty() ? std::string("it wrote no line that says why") : "it wrote: " + p.last_line;
     // What it ended with: its process, or what the launcher saw.
     const std::string how = p.exit && ended_by_itself(p) ? "its process " + exit_text(*p.exit)
-                            : !outcome.failure_reason.empty() && blamed ? "it " + outcome.failure_reason
+                            : !outcome.end.failure_reason.empty() && blamed ? "it " + outcome.end.failure_reason
                                                                         : std::string("it left the simulation");
     // The run's own stop: the device is shared with a bridge outside the run (--strict).
     if (outside != outcome.outside.end() && outside->link.shared_stop != OutsideLink::SharedStop::None)
@@ -146,7 +146,7 @@ std::optional<Finding> bridge_failure(const RunOutcome& outcome, const Participa
     }
     else if (p.missing_at_start)
     {
-        what = "did not run in SIL Kit within " + std::to_string(outcome.start_timeout_ms) +
+        what = "did not run in SIL Kit within " + std::to_string(outcome.start.timeout_ms) +
                " ms (start_timeout_ms; " + said + ")";
     }
     // One that ended by itself while the launcher was ending the run that did not start (the other
@@ -255,7 +255,7 @@ std::vector<Finding> time_changed_findings(const RunOutcome& outcome)
 std::vector<Finding> nothing_received_findings(const RunOutcome& outcome)
 {
     std::vector<Finding> out;
-    if (outcome.simulation == SimulationEnd::NotStarted)
+    if (outcome.end.simulation == SimulationEnd::NotStarted)
     {
         return out;
     }
@@ -301,7 +301,7 @@ std::string seconds_text(std::chrono::milliseconds ms)
 std::vector<Finding> outside_findings(const RunOutcome& outcome)
 {
     std::vector<Finding> out;
-    if (outcome.simulation == SimulationEnd::NotStarted)
+    if (outcome.end.simulation == SimulationEnd::NotStarted)
     {
         return out;
     }
@@ -414,11 +414,11 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
         out.push_back(Finding{severity, std::move(code), std::move(message), p != nullptr ? p->line : 0,
                               p != nullptr ? p->name : std::string{}, ""});
     };
-    if (!outcome.setup_error.empty())
+    if (!outcome.setup.error.empty())
     {
-        add(Severity::Error, "setup", "cannot set up the simulation: " + outcome.setup_error, nullptr);
+        add(Severity::Error, "setup", "cannot set up the simulation: " + outcome.setup.error, nullptr);
     }
-    const bool ran = outcome.simulation != SimulationEnd::NotStarted;
+    const bool ran = outcome.end.simulation != SimulationEnd::NotStarted;
     for (const ParticipantRun& p : outcome.participants)
     {
         const std::string pre = prefix_of(p);
@@ -435,7 +435,7 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
             // When the launcher aborts the simulation (for another participant, or --timeout-ms),
             // SIL Kit tells the bridges too, and one may end by itself with exit code 1 before the
             // launcher asks it to stop: it followed the abort, which another finding explains.
-            if (outcome.simulation == SimulationEnd::Aborted)
+            if (outcome.end.simulation == SimulationEnd::Aborted)
             {
                 continue;
             }
@@ -445,7 +445,7 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
             add(weight, "start", pre + p.start_error + ": check the command in the configuration file", &p);
             continue;
         }
-        const bool blamed = !outcome.failed_participant.empty() && p.name == outcome.failed_participant;
+        const bool blamed = !outcome.end.failed_participant.empty() && p.name == outcome.end.failed_participant;
         // An optional participant may end before or after the start (it does not hold the start
         // up): only its exit code counts, so that the same run gives the same result.
         if (p.ending == Ending::ExitedBeforeStart && p.required)
@@ -462,9 +462,9 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
             {
                 what = "its process " + exit_text(*p.exit);
             }
-            else if (!outcome.failure_reason.empty())
+            else if (!outcome.end.failure_reason.empty())
             {
-                what = "it " + outcome.failure_reason;
+                what = "it " + outcome.end.failure_reason;
             }
             else
             {
@@ -478,7 +478,7 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
         else if (p.missing_at_start)
         {
             add(Severity::Error, "not-joined",
-                pre + "it did not join the simulation within " + std::to_string(outcome.start_timeout_ms) +
+                pre + "it did not join the simulation within " + std::to_string(outcome.start.timeout_ms) +
                     " ms (start_timeout_ms), although its process was running: " +
                     (p.describe ? "it did not connect to the registry; " + lines_hint(p)
                                 : "it must connect to the registry given with {registry_uri} as the participant '" +
@@ -507,10 +507,10 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
             else
             {
                 how = "asked it to stop (" + std::string(stop_request_name()) + "), and as it did not end within " +
-                      std::to_string(outcome.stop_timeout_ms) + " ms either, ended it with the processes it started";
+                      std::to_string(outcome.end.stop_timeout_ms) + " ms either, ended it with the processes it started";
             }
             add(weight, "did-not-end",
-                pre + "it was still running " + std::to_string(outcome.stop_timeout_ms) +
+                pre + "it was still running " + std::to_string(outcome.end.stop_timeout_ms) +
                     " ms (stop_timeout_ms) after the simulation ended: the launcher " + how +
                     "; a participant should end when the simulation ends (" + lines_hint(p) + ")",
                 &p);
@@ -522,7 +522,7 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                     (p.control_hello_seen ? "its control agent said hello and then did not answer that it receives the "
                                             "launcher's commands within "
                                           : "its control agent did not say hello within ") +
-                    std::to_string(outcome.control_hello_timeout_ms) +
+                    std::to_string(outcome.start.control_hello_timeout_ms) +
                     " ms before the simulation started, so its variables cannot be read or written in this run. " +
                     (p.control_hello_seen
                          ? "Its transport did not answer the launcher's probe: look in the ECU's output for an error of "
@@ -577,28 +577,28 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                 &p);
         }
     }
-    if (!outcome.start_error.empty())
+    if (!outcome.start.error.empty())
     {
-        add(Severity::Error, "simulation-start", "the simulation did not start: " + outcome.start_error, nullptr);
+        add(Severity::Error, "simulation-start", "the simulation did not start: " + outcome.start.error, nullptr);
     }
-    if (outcome.connection_not_closed_ms && !outcome.connection_close_interrupted)
+    if (outcome.close.not_closed_ms && !outcome.close.interrupted)
     {
         // Not when one more interrupt cut the wait: then the launcher did what it was asked to.
         add(Severity::Warning, "connection-not-closed",
             "the launcher's own connection to the simulation (SIL Kit) had not closed " +
-                std::to_string(*outcome.connection_not_closed_ms) +
+                std::to_string(*outcome.close.not_closed_ms) +
                 " ms after the participants had ended: the launcher ended without closing it. The result is complete. "
                 "This is not expected of any configuration: it is a defect of the launcher or of SIL Kit. Report it "
                 "with this result, the launcher's output and what the participants were doing (was one stopped in a "
                 "debugger?)",
             nullptr);
     }
-    if (outcome.control_refused_hellos + outcome.control_undecodable + outcome.control_unknown > 0)
+    if (outcome.control.refused_hellos + outcome.control.undecodable + outcome.control.unknown > 0)
     {
         add(Severity::Warning, "control-link-dropped",
-            "the launcher dropped messages of control agents: " + std::to_string(outcome.control_refused_hellos) +
-                " hellos it did not take, " + std::to_string(outcome.control_undecodable) + " messages it could not read and " +
-                std::to_string(outcome.control_unknown) +
+            "the launcher dropped messages of control agents: " + std::to_string(outcome.control.refused_hellos) +
+                " hellos it did not take, " + std::to_string(outcome.control.undecodable) + " messages it could not read and " +
+                std::to_string(outcome.control.unknown) +
                 " messages (or samples) that fit no agent it knows. Hellos are not taken beyond " +
                 std::to_string(control_silkit::HubTransportOptions{}.max_links) +
                 " participants with control agents, or with the session number of another participant; a message cannot be "
@@ -609,64 +609,64 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                 "agent announced. The variables of the participants concerned may be missing or stale",
             nullptr);
     }
-    if (!outcome.before_start_error.empty())
+    if (!outcome.start.before_start_error.empty())
     {
         add(Severity::Error, "before-start",
             "what was to be done before the simulation started failed, and the launcher aborted the simulation at once: " +
-                outcome.before_start_error,
+                outcome.start.before_start_error,
             nullptr);
     }
-    if (!outcome.controller_state.empty())
+    if (!outcome.end.controller_state.empty())
     {
         add(Severity::Error, "simulation",
-            "the simulation ended in state " + outcome.controller_state +
+            "the simulation ended in state " + outcome.end.controller_state +
                 " instead of shutting down normally: the lines above show what the participants wrote",
             nullptr);
     }
-    if (outcome.timed_out && outcome.timed_out_before_start)
+    if (outcome.end.timed_out && outcome.start.timed_out_before_start)
     {
         add(Severity::Error, "timeout",
-            "the simulation did not start within " + std::to_string(outcome.timeout_ms.value_or(0)) +
+            "the simulation did not start within " + std::to_string(outcome.end.timeout_ms.value_or(0)) +
                 " ms of wall-clock time (--timeout-ms, which counts from when the launcher began to wait for the "
                 "participants, as the run waits for a participant you start yourself), so the launcher gave up: " +
-                outcome.timed_out_waiting_for +
+                outcome.start.timed_out_waiting_for +
                 "; start the participants started by hand (manual) in time, or leave --timeout-ms out to wait for them",
             nullptr);
     }
-    else if (outcome.timed_out)
+    else if (outcome.end.timed_out)
     {
         add(Severity::Error, "timeout",
-            "the simulation did not end within " + std::to_string(outcome.timeout_ms.value_or(0)) +
+            "the simulation did not end within " + std::to_string(outcome.end.timeout_ms.value_or(0)) +
                 " ms of wall-clock time (--timeout-ms), so the launcher aborted it: " +
-                (outcome.timed_out_while_holding
+                (outcome.end.timed_out_while_holding
                      ? std::string("it stood still before its first step all that time, waiting for a resume, step or "
                                    "run_until command (--start-paused with a control server): no client let it go on")
                      : std::string("a participant may hang in a step (the lines above show what the participants "
                                    "wrote); if it is only slow, raise --timeout-ms") +
-                           (outcome.timeout_from_wait
-                                ? ". Those " + std::to_string(outcome.timeout_ms.value_or(0)) +
+                           (outcome.start.timeout_from_wait
+                                ? ". Those " + std::to_string(outcome.end.timeout_ms.value_or(0)) +
                                       " ms count from when the launcher began to wait for the participants, as the run "
                                       "waits for a participant you start yourself (manual)"
-                            : outcome.held_before_start_ms
-                                ? ". Those " + std::to_string(outcome.timeout_ms.value_or(0)) +
+                            : outcome.start.held_before_start_ms
+                                ? ". Those " + std::to_string(outcome.end.timeout_ms.value_or(0)) +
                                       " ms count from when the run began to stand still before its first step "
                                       "(--start-paused with a control server), and " +
-                                      std::to_string(*outcome.held_before_start_ms) +
+                                      std::to_string(*outcome.start.held_before_start_ms) +
                                       " ms of them passed before a client let it go on: allow for that time in --timeout-ms"
                                 : std::string{})),
             nullptr);
     }
-    else if (outcome.simulation == SimulationEnd::Aborted && outcome.failed_participant.empty() &&
-             outcome.before_start_error.empty())
+    else if (outcome.end.simulation == SimulationEnd::Aborted && outcome.end.failed_participant.empty() &&
+             outcome.start.before_start_error.empty())
     {
         add(Severity::Error, "simulation", "the simulation was aborted: the lines above show what the participants wrote",
             nullptr);
     }
-    if (!outcome.interrupted_by.empty())
+    if (!outcome.end.interrupted_by.empty())
     {
         add(Severity::Note, "interrupted",
-            "interrupted (" + outcome.interrupted_by + "): the launcher " +
-                (outcome.interrupted_while_ending ? std::string("stopped the participants instead of waiting for them to end")
+            "interrupted (" + outcome.end.interrupted_by + "): the launcher " +
+                (outcome.end.interrupted_while_ending ? std::string("stopped the participants instead of waiting for them to end")
                  : ran                            ? std::string("stopped the simulation and the participants")
                                                   : std::string("stopped the participants before the simulation started")),
             nullptr);
@@ -707,9 +707,9 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
             out.push_back(std::move(*f));
         }
     }
-    if (outcome.scenario)
+    if (outcome.scenario.result)
     {
-        const ScenarioRun& scenario = *outcome.scenario;
+        const ScenarioRun& scenario = *outcome.scenario.result;
         const auto add_scenario = [&](std::string code, std::string message, std::size_t line) {
             out.push_back(Finding{Severity::Error, std::move(code), std::move(message), line, "", "", "", scenario.file});
         };
@@ -734,36 +734,36 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                              (reached != scenario.steps.rend() && reached->status == StepStatus::Unfinished
                                   ? " and the step at line " + std::to_string(reached->line) + " (" + reached->text + ") was not decided yet"
                                   : std::string{}) +
-                             (outcome.scenario_error.empty()
+                             (outcome.scenario.error.empty()
                                   ? "; the other findings and the lines above say why the simulation ended"
-                                  : "; the launcher's scenario thread failed (" + outcome.scenario_error +
+                                  : "; the launcher's scenario thread failed (" + outcome.scenario.error +
                                         "): this is an error of vehicle_sil_launch"),
                          reached != scenario.steps.rend() ? reached->line : 0);
         }
     }
-    if (!outcome.timeline.empty() && outcome.timeline_record && outcome.timeline_record->dropped() > 0)
+    if (!outcome.scenario.timeline.empty() && outcome.scenario.timeline_record && outcome.scenario.timeline_record->dropped() > 0)
     {
-        const std::uint64_t points = outcome.timeline_record->dropped();
+        const std::uint64_t points = outcome.scenario.timeline_record->dropped();
         add(Severity::Note, "timeline-limit",
-            "the timeline " + outcome.timeline + " does not have the whole run: " + std::to_string(points) +
+            "the timeline " + outcome.scenario.timeline + " does not have the whole run: " + std::to_string(points) +
                 (points == 1 ? " older point was" : " older points were") +
                 " dropped at its limits (the newest points, up to the end of the scenario, are all there). limits.dropped in "
                 "the file says of which series and of which time; for a file with every point, record a shorter scenario",
             nullptr);
     }
-    if (!outcome.timeline_error.empty())
+    if (!outcome.scenario.timeline_error.empty())
     {
         add(Severity::Error, "timeline-write",
-            "the timeline " + outcome.timeline + " could not be written: " + outcome.timeline_error +
+            "the timeline " + outcome.scenario.timeline + " could not be written: " + outcome.scenario.timeline_error +
                 "; what is in the file is not complete: do not use it. The scenario's result is not changed by this. Make "
                 "room on the disk, or name another file with --timeline, and run again",
             nullptr);
     }
-    if (outcome.simulation == SimulationEnd::Ended && outcome.stop_at_ms && outcome.controller_state.empty() &&
-        !outcome.stopped_by_scenario)
+    if (outcome.end.simulation == SimulationEnd::Ended && outcome.end.stop_at_ms && outcome.end.controller_state.empty() &&
+        !outcome.end.stopped_by_scenario)
     {
         add(Severity::Note, "ended-before-stop-at",
-            "the simulation ended before stop_at_ms (" + std::to_string(*outcome.stop_at_ms) +
+            "the simulation ended before stop_at_ms (" + std::to_string(*outcome.end.stop_at_ms) +
                 " ms): a participant stopped it; if that is not expected, the lines above show which one",
             nullptr);
     }

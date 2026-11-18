@@ -157,7 +157,7 @@ bool RunOutput::open_logs(RunOutcome& outcome)
         logs_[i] = std::make_unique<std::ofstream>(file, std::ios::binary | std::ios::trunc);
         if (!*logs_[i])
         {
-            outcome.setup_error = "cannot write the log " + process::shown_path(file) +
+            outcome.setup.error = "cannot write the log " + process::shown_path(file) +
                                    ": check that --log-dir names a directory you can write to";
             return false;
         }

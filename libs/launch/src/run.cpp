@@ -115,7 +115,7 @@
 // So a closing thread that was left touches the RunConnection only, and run_file() destroys the
 // Runner of such a run as that of any other: nothing of the Runner has to outlive run(). What is
 // left for the caller is to end the process without the destructors of static objects (the thread
-// is inside SIL Kit): RunOutcome::connection_not_closed_ms.
+// is inside SIL Kit): OutcomeClose::not_closed_ms.
 #include "vehicle_sil/launch/run.hpp"
 
 #include "run_close.hpp"
@@ -263,7 +263,7 @@ public:
     {
         if (ctx_.interrupts() > 0)
         {
-            outcome_.interrupted_by = ctx_.interrupt_name();
+            outcome_.end.interrupted_by = ctx_.interrupt_name();
             return nullptr;
         }
         ctx_.controls.set_phase(Phase::Starting);
@@ -315,7 +315,7 @@ public:
             return outcome_;
         }
         const auto no_server = [this](const std::string& why) {
-            outcome_.setup_error = "the control server cannot be started: " + one_line(why);
+            outcome_.setup.error = "the control server cannot be started: " + one_line(why);
         };
         if (server.error)
         {
@@ -357,7 +357,7 @@ public:
                                          detail::registry_listen_hint(listen, ctx_.config.registry_uri.has_value(), fixed,
                                                                       detail::host_addresses(true, true)));
             }
-            outcome_.registry_uri = uri;
+            outcome_.setup.registry_uri = uri;
             out_.event([&uri](EventStream& e) { e.registry(uri); });
             out_.say("registry at " + uri);
             if (!is_loopback_registry_uri(listen))
@@ -420,7 +420,7 @@ public:
         }
         catch (const std::exception& e)
         {
-            outcome_.setup_error = one_line(e.what());
+            outcome_.setup.error = one_line(e.what());
             return outcome_;
         }
 
@@ -438,7 +438,7 @@ public:
                 scenario_.start(*connection->controller, outcome_);
                 const RunWatch::Watched watched = watch_.watch(*connection->controller);
                 interrupts_at_end_ = watch_.settle(*connection->controller, watched);
-                if (outcome_.simulation != SimulationEnd::Aborted && outcome_.interrupted_by.empty())
+                if (outcome_.end.simulation != SimulationEnd::Aborted && outcome_.end.interrupted_by.empty())
                 {
                     participants_.note_bridges_ended_with_run();
                 }
@@ -481,7 +481,7 @@ public:
     /// run --timeline: writes the timeline file of the run that is over, with `findings` (the
     /// check's and the run's), and says where it is. Nothing if the file was not opened (no
     /// --timeline, or the run ended before it got there). If it cannot be written: why (also in
-    /// the outcome: RunOutcome::timeline_error), else "".
+    /// the outcome: OutcomeScenario::timeline_error), else "".
     std::string write_timeline(const CheckReport& check, std::vector<Finding> findings)
     {
         if (!timeline_file_.is_open())
@@ -495,20 +495,20 @@ public:
         input.params = check.scenario->params;
         input.time_step_ms = ctx_.plan.timing.time_step_ms;
         input.scenario = ctx_.scenario;
-        input.run = &*outcome_.scenario;
+        input.run = &*outcome_.scenario.result;
         input.catalog = &catalog;
-        input.record = outcome_.timeline_record.get();
+        input.record = outcome_.scenario.timeline_record.get();
         input.findings = std::move(findings);
         const std::string text = format_timeline_json(input);
         timeline_file_.write(text.data(), static_cast<std::streamsize>(text.size()));
         timeline_file_.close();
         if (timeline_file_.fail())
         {
-            outcome_.timeline_error = "writing " + std::to_string(text.size()) + " bytes to it failed (is the disk full?)";
-            return outcome_.timeline_error;
+            outcome_.scenario.timeline_error = "writing " + std::to_string(text.size()) + " bytes to it failed (is the disk full?)";
+            return outcome_.scenario.timeline_error;
         }
-        const std::uint64_t dropped = outcome_.timeline_record ? outcome_.timeline_record->dropped() : 0;
-        out_.say("timeline: " + outcome_.timeline +
+        const std::uint64_t dropped = outcome_.scenario.timeline_record ? outcome_.scenario.timeline_record->dropped() : 0;
+        out_.say("timeline: " + outcome_.scenario.timeline +
                  (dropped > 0 ? " (without " + std::to_string(dropped) + (dropped == 1 ? " older point" : " older points") +
                                     ", dropped at its limits: limits.dropped in the file)"
                               : ""));
@@ -517,7 +517,7 @@ public:
 
 private:
     /// run --timeline: opens the timeline file, before anything starts. false (with
-    /// outcome_.setup_error) if it cannot be written.
+    /// outcome_.setup.error) if it cannot be written.
     [[nodiscard]] bool open_timeline()
     {
         if (ctx_.plan.timeline.empty() || ctx_.scenario == nullptr)
@@ -532,12 +532,12 @@ private:
         timeline_file_.open(ctx_.plan.timeline, std::ios::binary | std::ios::trunc);
         if (!timeline_file_)
         {
-            outcome_.setup_error = "cannot write the timeline " + ctx_.plan.timeline_shown +
+            outcome_.setup.error = "cannot write the timeline " + ctx_.plan.timeline_shown +
                                    ": check that --timeline names a file in a directory you can write to (the file is opened "
                                    "before anything starts, so that a run is not lost for it)";
             return false;
         }
-        outcome_.timeline = ctx_.plan.timeline_shown;
+        outcome_.scenario.timeline = ctx_.plan.timeline_shown;
         return true;
     }
 
@@ -549,7 +549,7 @@ private:
     /// threads were suspended: docs/dependencies.md). So the three are destroyed on a thread of
     /// their own (detail::close_connection_within()), which takes over `connection`, the only
     /// hold of them; if it has not ended in time, it is left with them and with its share of the
-    /// hub (RunOutcome::connection_not_closed_ms), and the run goes on to its result.
+    /// hub (OutcomeClose::not_closed_ms), and the run goes on to its result.
     void close_connection(std::shared_ptr<RunConnection> connection)
     {
         // The tap reads the controller's time and belongs to this Runner, which may be destroyed
@@ -565,8 +565,8 @@ private:
         {
             return;
         }
-        outcome_.connection_not_closed_ms = left->waited.count();
-        outcome_.connection_close_interrupted = left->interrupted;
+        outcome_.close.not_closed_ms = left->waited.count();
+        outcome_.close.interrupted = left->interrupted;
         out_.say("the launcher's own connection to the simulation (SIL Kit) has not closed " + std::to_string(left->waited.count()) +
                  " ms after the participants ended" +
                  (left->interrupted ? " and the launcher was asked to stop once more" : std::string{}) +
@@ -669,7 +669,7 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
     });
     const std::filesystem::path base = path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
     // Destroyed when run_file() returns, also if the run's closing thread was left at its limit
-    // (RunOutcome::connection_not_closed_ms): that thread uses nothing of the Runner.
+    // (OutcomeClose::not_closed_ms): that thread uses nothing of the Runner.
     // What the run is given, in three kinds: the plan (a value, settled here), the observers (the
     // caller's functions) and what it borrows (the controls; the control server stays here).
     Runner runner(plan_run(report.check, base, options),
@@ -706,7 +706,7 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
         findings.insert(findings.end(), report.findings.begin(), report.findings.end());
         if (const std::string error = runner.write_timeline(report.check, std::move(findings)); !error.empty())
         {
-            report.run->timeline_error = error;
+            report.run->scenario.timeline_error = error;
             report.findings = assess_run(*report.run);
         }
     }

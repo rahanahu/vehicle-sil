@@ -80,7 +80,7 @@ public:
     }
 
     /// --log-dir: opens a log for every enabled participant and notes its name in `outcome`.
-    /// false (with outcome.setup_error) if one cannot be written. Main thread, before any
+    /// false (with outcome.setup.error) if one cannot be written. Main thread, before any
     /// participant starts: the files are only used under the lock from then on.
     [[nodiscard]] bool open_logs(RunOutcome& outcome);
 
