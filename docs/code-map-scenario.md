@@ -169,7 +169,7 @@ Where to change:
 | Where the engine records | In `scenario_run.cpp`: `submit_one()` (writes), `observe()` (samples), `place()` (the input lines `lines[]`; the contents of `shape` are `ScenarioMotion::described`, which the scenario's reader fills when it reads the scenario), `issue_step()` (watches), `fail()` (what failed; what it says comes from `scenario_failure.cpp`), `close_record()` (the end of the record, `recorded_to_ms`) |
 | The file format | `format_timeline_json()` in `timeline_format.cpp` |
 | One point per line | `JsonWriter::begin_array_on_one_line()` in `libs/json/include/vehicle_sil/json/json_writer.hpp` |
-| Opening and writing the file | `Runner::open_timeline()` and `write_timeline()` in `run.cpp`. `run_file()` (`run_file.cpp`) makes the text (it calls `format_timeline_json()`) and gives it to `write_timeline()` |
+| Opening and writing the file | `RunnerImpl::open_timeline()` and `write_timeline()` in `run.cpp`. `run_file()` (`run_file.cpp`) makes the text (it calls `format_timeline_json()`) and gives it to `write_timeline()` |
 | The findings `timeline-write` and `timeline-limit` | `run_assess.cpp` |
 | The argument | `tools/launch/main.cpp` |
 | The element `<vehicle-sil-timeline>` that draws the file | `gui/timeline/viewer.js` (the part above "The element" needs no DOM and is what the unit tests call; below it, the drawing functions work on the element that `enter()` makes current, and the class `VehicleSilTimelineElement` with its attributes, properties and events). Its CSS is `gui/timeline/timeline.css` (in its shadow root; `hide`, `compact` and `theme` are read there) |

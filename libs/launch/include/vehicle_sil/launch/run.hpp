@@ -195,5 +195,8 @@ struct RunLent
 [[nodiscard]] RunReport run_file(const RunRequest& request, const RunObservers& observers = {}, const RunLent& lent = {},
                                  const RunLimits& limits = {}, const CheckOptions& check = {});
 
+/// What plan_run() takes of `request` (RunChoices): RunIntent::speed, start_paused and strict,
+/// RunHost::log_dir, timeline and timeout, copied. run_file() plans its run with it.
+[[nodiscard]] RunChoices run_choices(const RunRequest& request);
 
 } // namespace vehicle_sil::launch

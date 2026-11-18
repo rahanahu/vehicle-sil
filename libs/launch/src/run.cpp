@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
 // vehicle_sil_launch run: the order of a run from its setup to the end of the participants
-// (Runner::run(), runner.hpp). run_file() drives a Runner (run_file.cpp). The parts of a run are in
-// the files beside this one:
+// (Runner::run(), detail/runner.hpp, which forwards to its RunnerImpl: runner.hpp). run_file() drives
+// a Runner (run_file.cpp). The parts of a run are in the files beside this one:
 //
 //   run_plan.*           RunPlan, plan_run(), planned_outcome()   what is settled before the run: a value
 //   run_context.hpp      RunContext                 what the run is given (the plan, the observers,
@@ -50,7 +50,7 @@
 //   main thread writes the counts held back while it watches the simulation (outside_due()), and
 //   takes the last ones, with their event, into the result after the end (take_counts()), before
 //   the result's event).
-// - The closing thread (Runner::close_connection(), at the end of run()): destroys the hub's
+// - The closing thread (RunnerImpl::close_connection(), at the end of run()): destroys the hub's
 //   transport, the controller and the registry (the RunConnection, which it holds from then on),
 //   and touches nothing else of the run. The main thread waits for it with a limit. What a closing
 //   thread that was left at the limit may still reach is listed below.
@@ -205,7 +205,7 @@ std::vector<std::string> participant_names(const SimulationConfig& config)
 
 } // namespace
 
-Runner::Runner(RunPlan plan, RunObservers observers, RunEvents* events, RunControls& controls) :
+RunnerImpl::RunnerImpl(RunPlan plan, RunObservers observers, RunEvents* events, RunControls& controls) :
   plan_(std::move(plan)), observers_(std::move(observers)),
   ctx_{plan_.config(), plan_.check, plan_, observers_, events, plan_.scenario(), controls, controls.time()},
   outcome_(planned_outcome(plan_)), out_(ctx_), control_(ctx_, out_),
@@ -216,7 +216,7 @@ Runner::Runner(RunPlan plan, RunObservers observers, RunEvents* events, RunContr
 {
 }
 
-std::shared_ptr<control::Hub> Runner::prepare()
+std::shared_ptr<control::Hub> RunnerImpl::prepare()
 {
     if (ctx_.interrupts() > 0)
     {
@@ -232,7 +232,7 @@ std::shared_ptr<control::Hub> Runner::prepare()
     return control_.shared_hub();
 }
 
-RunOutcome Runner::run(const ControlServerStart& server)
+RunOutcome RunnerImpl::run(const ControlServerStart& server)
 {
     // The registry, the controller and the hub's transport of this run (the hub's end of the
     // ECUs' control agents, on the controller's participant), with the hub. Before the guards
@@ -255,12 +255,12 @@ RunOutcome Runner::run(const ControlServerStart& server)
     // time the tap reads) and the transport go (declared after them); the thread first.
     struct EndSamples
     {
-        Runner& runner;
+        RunnerImpl& runner;
         ~EndSamples() { runner.samples_.untap(); }
     } const endSamples{*this};
     struct EndScenario
     {
-        Runner& runner;
+        RunnerImpl& runner;
         ~EndScenario() { runner.scenario_.end(); }
     } const endScenario{*this};
     if (!prepared_)
@@ -426,7 +426,7 @@ RunOutcome Runner::run(const ControlServerStart& server)
     return outcome_;
 }
 
-std::string Runner::write_timeline(const std::string& text)
+std::string RunnerImpl::write_timeline(const std::string& text)
 {
     if (!timeline_file_.is_open())
     {
@@ -447,7 +447,7 @@ std::string Runner::write_timeline(const std::string& text)
     return {};
 }
 
-bool Runner::open_timeline()
+bool RunnerImpl::open_timeline()
 {
     if (ctx_.plan.timeline.empty() || ctx_.scenario == nullptr)
     {
@@ -470,7 +470,7 @@ bool Runner::open_timeline()
     return true;
 }
 
-void Runner::close_connection(std::shared_ptr<RunConnection> connection)
+void RunnerImpl::close_connection(std::shared_ptr<RunConnection> connection)
 {
     // The tap reads the controller's time and belongs to this Runner, which may be destroyed
     // while the closing thread still closes: it is off before the thread has the connection.
@@ -492,6 +492,25 @@ void Runner::close_connection(std::shared_ptr<RunConnection> connection)
              (left->interrupted ? " and the launcher was asked to stop once more" : std::string{}) +
              ": the launcher ends without closing it");
 }
+
+Runner::Runner(RunPlan plan, RunObservers observers, RunEvents* events, RunControls& controls) :
+  impl_(std::make_unique<RunnerImpl>(std::move(plan), std::move(observers), events, controls))
+{
+}
+
+Runner::~Runner() = default;
+
+std::shared_ptr<control::Hub> Runner::prepare() { return impl_->prepare(); }
+
+RunOutcome Runner::run(const ControlServerStart& server) { return impl_->run(server); }
+
+void Runner::publish_findings(bool final) { impl_->publish_findings(final); }
+
+const RunPlan& Runner::plan() const { return impl_->plan(); }
+
+bool Runner::timeline_open() const { return impl_->timeline_open(); }
+
+std::string Runner::write_timeline(const std::string& text) { return impl_->write_timeline(text); }
 
 } // namespace detail
 

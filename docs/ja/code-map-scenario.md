@@ -169,7 +169,7 @@
 | 記録に入れる所 | `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`place()`（入力の線 `lines[]`。`shape` の中身はシナリオの読み手が読んだ `ScenarioMotion::described`）、`issue_step()`（見張り）、`fail()`（失敗の中身。書く内容は `scenario_failure.cpp` が作る）、`close_record()`（記録の終わり `recorded_to_ms`） |
 | ファイルの形 | `timeline_format.cpp` の `format_timeline_json()` |
 | 1 行に 1 点 | `libs/json/include/vehicle_sil/json/json_writer.hpp` の `JsonWriter::begin_array_on_one_line()` |
-| ファイルを開く所と書く所 | `run.cpp` の `Runner::open_timeline()` と `write_timeline()`。文は `run_file()`（`run_file.cpp`）が作り（`format_timeline_json()` を呼びます）、`write_timeline()` に渡します |
+| ファイルを開く所と書く所 | `run.cpp` の `RunnerImpl::open_timeline()` と `write_timeline()`。文は `run_file()`（`run_file.cpp`）が作り（`format_timeline_json()` を呼びます）、`write_timeline()` に渡します |
 | 指摘 `timeline-write` と `timeline-limit` | `run_assess.cpp` |
 | 引数 | `tools/launch/main.cpp` |
 | ファイルを描く要素 `<vehicle-sil-timeline>` | `gui/timeline/viewer.js`（「The element」より上は DOM なしで動き、単体テストが呼ぶ部分。その下は、`enter()` がいまの要素にしたものに描く関数と、属性・プロパティ・事象を持つクラス `VehicleSilTimelineElement`）。CSS は `gui/timeline/timeline.css`（shadow root の中。`hide`、`compact`、`theme` をここで読む） |

@@ -245,8 +245,9 @@ flowchart LR
 
 - 実行は 2 段です。`Runner::prepare()` は中断を確かめ、ログとタイムラインを開き、実行の Hub を返します（続けられないときは何も返しません）。2 段の間に `run_file()` が、その Hub の上で Control Server を始めます（`ControlEndpoint::start()`。実行が持つときだけ）。registry より先に待ち受けるためです。`Runner::run()` は registry から終わりまでを行います。
 - Hub と SIL Kit の部品（registry、controller、transport）は実行が作り、1 つの接続として、作った順の逆（transport、controller、registry）に閉じます。Control Server は Hub を借りるだけです（`std::shared_ptr` を持ち、SIL Kit の部品は持ちません）。そのため、期限で放置された閉じるスレッドが触るのは接続だけで、`Runner` はほかの実行と同じように破棄できます。
+- `run_file()` は `Runner` を `launch/detail/runner.hpp` から見ます。このヘッダーは、SIL Kit のヘッダーにも、コントローラーのヘッダー（`core/simulation_controller.hpp`）にも、実行の私的なヘッダーにも届きません。実行の部品はポインターの先（`RunnerImpl`、`src/runner.hpp`）にあります。
 - `run_file()` が実行に渡すものは 3 種類です。
-  - `RunPlan`: 値です。通った照合、要求（`RunRequest`）、`RunLimits` から、純粋な `plan_run()` が作ります。実行はこれに書きません。
+  - `RunPlan`: 値です。通った照合、そのシナリオ、実行に選んだもの（`RunChoices`。`run_choices()` が要求から写します）、`RunLimits` から、純粋な `plan_run()` が作ります。`plan_run()` は要求（`RunRequest`）も、`check_file()` の結果の型（`Checked`）も知りません。実行は計画に書きません。
   - `RunObservers`: 実行が呼び返す、呼び出し側の関数です（行、中断の名前、`before_start`）。
   - `RunControls`: 実行が借りるもの（停止の要求、時刻の命令）と、実行が自分で作るものです。
 
