@@ -156,7 +156,7 @@ The wrapper only turns the library's `Readable` (read-only value) into signals.
 | `server-connection.ts` | Connection and session copy                                                                     |
 | `server-info.ts`       | `api/app` and one-off requests                                                                  |
 | `simulation-time.ts`   | Time                                                                                            |
-| `run-commands.ts`      | Start and stop                                                                                  |
+| `run-commands.ts`      | Check, start and stop                                                                           |
 | `ecu-variables.ts`     | ECU variables                                                                                   |
 
 ### `run/`
@@ -252,7 +252,7 @@ A service exposes only read-only signals (`asReadonly()`) and methods that chang
 **How to send requests**:
 
 - One-off fetches (`api/app`, `api/configs`): call the wrapper's Promise-returning method in the loader of a `resource`.
-- Check (`POST api/check`) is close to a read, so it is sent automatically from a signal. But it waits briefly to collect changes, waits for the previous check's response before sending the next, and discards stale responses (`check` in `run-page.ts`).
+- Check (`POST api/check`) is close to a read, so it is sent automatically from a signal. But it waits briefly to collect changes and discards stale responses (`check` in `run-page.ts`). The front door's `check()` waits for the previous check's response before it sends the next, and shares a check of the same intent with the parts of the page.
 - Requests that change something (start, stop, time commands) go through the wrapper's methods. The library applies the response (the current summary) to the session copy at once.
 
 **Where to use RxJS**:

@@ -34,7 +34,7 @@ describe('RunSession', () => {
   afterEach(() => sessionStorage.clear());
 
   it('starts, and shows the new session from the answer at once', () => {
-    run.start({ file: 'a.yaml', disable: ['B'], speed: 'max', start_paused: false });
+    run.start({ disable: ['B'], speed: 'max', start_paused: false }, 'a.yaml');
     expect(run.starting()).toBe(true);
     const request = http.expectOne('api/run');
     expect(request.request.headers.get('Authorization')).toBe('Bearer secret');
