@@ -27,7 +27,7 @@ import {
 import { RUN_TIMEOUT } from './support/run-page';
 
 const CONTROL_FEATURES =
-  'events,stdin-commands,request,check-variables,speed,start-paused,time-commands,control-links,control-server,' +
+  'events,stdin-commands,request,stdin-run-until,state,check-variables,speed,start-paused,time-commands,control-links,control-server,' +
   'scenario,timeline';
 const BUILD = join(REPOSITORY, 'build', 'gui-client');
 // The starter's variables, and the fake's (README.md: change the variable attributes to your own)
