@@ -156,7 +156,7 @@ jobs:
       # ethtool: ethernet_bridge.netns.packet turns an offload off with it.
       # libpcap0.8: ethernet_bridge.netns.pcap loads the library at run time (nothing is built against it).
       - name: Trial only (do not merge) - fail a leg on purpose
-        if: matrix.preset == 'linux-clang-tsan'
+        if: matrix.preset == 'linux-clang-tsan' || matrix.preset == 'linux-gcc-control'
         run: exit 1
       - name: Install Ninja, ccache, ethtool and libpcap
         run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache ethtool libpcap0.8
