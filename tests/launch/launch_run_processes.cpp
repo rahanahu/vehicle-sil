@@ -346,12 +346,16 @@ void quitter(const Options& o)
     const Captured run = launch(o, {"run", "sim.yaml"}, dir);
     expect_code(run, 1, "run with a participant that ends before the start");
     // Engine is told to stop right after it was started. On a slow machine that is before it installs its handler,
-    // and it ends by the signal itself. Both endings are right: this scenario is about Quitter.
+    // and it ends by the signal itself (on Windows, by Ctrl+Break with the code 0xC000013A). Both endings are right:
+    // this scenario is about Quitter.
     std::string shown = run_part(run.standard_output);
-    const std::string by_signal = "stopped (" + kStop + "), signal " + kStop + "\n";
-    if (const auto at = shown.find(by_signal); at != std::string::npos)
+    for (const std::string& by_signal : {"stopped (" + kStop + "), signal " + kStop + "\n",
+                                         "stopped (" + kStop + "), exit code 0xC000013A\n"})
     {
-        shown.replace(at, by_signal.size(), "stopped (" + kStop + "), exit code 130\n");
+        if (const auto at = shown.find(by_signal); at != std::string::npos)
+        {
+            shown.replace(at, by_signal.size(), "stopped (" + kStop + "), exit code 130\n");
+        }
     }
     try
     {
