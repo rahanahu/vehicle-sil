@@ -1381,6 +1381,19 @@ describe('the front door', () => {
       expect(rig.front.status.get().problem).toBeNull();
     });
 
+    it('refuses to check an intent with a field it does not know, without sending', async () => {
+      const rig = await open();
+      const misspelt = { conect: { ETH_EXT: 'fake0' } } as unknown as Parameters<
+        typeof rig.front.check
+      >[0];
+      await expect(rig.front.check(misspelt, { file: 'connect.yaml' })).rejects.toMatchObject({
+        code: 'unknown-field',
+        outcome: 'refused',
+      });
+      rig.http.expectNone('api/check');
+      expect(rig.front.status.get().problem).toBeNull();
+    });
+
     const row = (more: Record<string, unknown> = {}) => ({
       network: 'ETH_EXT',
       target: 'fake0',

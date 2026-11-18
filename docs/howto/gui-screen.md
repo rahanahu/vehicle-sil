@@ -302,7 +302,7 @@ A `can` or `ethernet` network of your configuration file can be connected to a r
 | `<vsil-connect network="...">` | Where the network is connected in the next run. It starts at `SIL Kit only (not connected)`. It asks for the list of targets only when you open it, and the list is that of the PC where the GUI server runs, not of the PC of the browser. After you choose, it shows what the check says about that choice, in the launcher's words (for example, that the run then keeps real time). **Start** of `<vsil-run-controls>` starts with the choice. |
 | `<vsil-outside>` | While the run goes, one row for each network that it connected: the link or the bus, the condition and the frame counts. Nothing when there is none. |
 
-A run connected outside keeps real time, so pause and step cannot be used. To use them anyway, set the time policy from a script of your own: `pageIntent.update({ time_policy: 'free' })` (`pageIntent` is exported by `/vsil/vehicle-sil-gui-elements.mjs`; the check then says what that means).
+A run connected outside keeps real time, so pause and step cannot be used. To use them anyway, and only when what is connected there can take messages that do not come in real time, set the time policy from a script of your own: `pageIntent.update({ time_policy: 'free' })` (`pageIntent` is exported by `/vsil/vehicle-sil-gui-elements.mjs`; the check then says what that means).
 
 A test bench can keep its choices in a [request file](../simulation-run.md#request-files---request). A script can read one into the choice of the next run, and save the choice as one; the GUI server writes no file:
 
@@ -325,7 +325,7 @@ document.querySelector('#save').addEventListener('click', () => {
 });
 ```
 
-- `<vsil-connect>` shows a target read from a file as written. The GUI server takes a target only from its last list of that network, so open the choice before you start: a target that the list does not offer goes back to SIL Kit only. Without a list, the start is refused with `target-not-listed`.
+- `<vsil-connect>` shows a target read from a file as written. The GUI server takes a target only from its last list of that network, so open the choice before you start: a target that the list does not offer goes back to SIL Kit only, with a line under the choice that says which and why. Without a list, the start is refused with `target-not-listed`.
 - `scenario` of a request file is a path from the directory of the configuration file; the GUI server takes the path from its list of scenarios instead (`<vsil-scenario-select>` writes it).
 
 ## What to read next

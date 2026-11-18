@@ -92,7 +92,7 @@ What the starter leaves out, because the sample screens do it: choosing the conf
 
 ### Connect a network outside
 
-To connect a `can` or `ethernet` network of your configuration file to a real bus, add `<vsil-connect network="<network>">` (where it is connected in the next run; it starts at SIL Kit only and lists the targets of the GUI server's PC only when it is opened) and `<vsil-outside>` (the connected networks while the run goes). The starter has neither, because the network names are those of your configuration file. A run connected outside keeps real time; `pageIntent.update({ time_policy: 'free' })` from your script lifts that. How to read a request file of a test bench into the next run and save one is in "Connect a network outside (optional)" in the [guide](../../docs/howto/gui-screen.md#connect-a-network-outside-optional).
+To connect a `can` or `ethernet` network of your configuration file to a real bus, add `<vsil-connect network="<network>">` (where it is connected in the next run; it starts at SIL Kit only and lists the targets of the GUI server's PC only when it is opened) and `<vsil-outside>` (the connected networks while the run goes). The starter has neither, because the network names are those of your configuration file. A run connected outside keeps real time; `pageIntent.update({ time_policy: 'free' })` from your script lifts that, for when what is connected can take messages that do not come in real time. How to read a request file of a test bench into the next run and save one is in "Connect a network outside (optional)" in the [guide](../../docs/howto/gui-screen.md#connect-a-network-outside-optional).
 
 ### A project with a framework
 

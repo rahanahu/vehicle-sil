@@ -302,7 +302,7 @@ rm token.header
 | `<vsil-connect network="...">` | 次の実行でネットワークをつなぐ先。最初は `SIL Kit only (not connected)` です。先の一覧は、開いたときにだけ取ります。一覧は GUI サーバーが動いている PC のもので、ブラウザーの PC のものではありません。選ぶと、その選択について check が言うことを、ランチャーの文のまま出します（たとえば、実行が実時間を保つこと）。`<vsil-run-controls>` の「Start」は、この選択で開始します。 |
 | `<vsil-outside>` | 実行中、つないだネットワークごとに 1 行: リンクかバス、状態、フレームの数。なければ何も出しません。 |
 
-外につないだ実行は実時間を保つので、一時停止とステップは使えません。それでも使うときは、自分のスクリプトで時間の方針を決めます: `pageIntent.update({ time_policy: 'free' })`（`pageIntent` は `/vsil/vehicle-sil-gui-elements.mjs` が export します。それが何を意味するかは check が言います）。
+外につないだ実行は実時間を保つので、一時停止とステップは使えません。それでも使うときは、つないだ先が実時間でないメッセージを受けても困らないときだけ、自分のスクリプトで時間の方針を決めます: `pageIntent.update({ time_policy: 'free' })`（`pageIntent` は `/vsil/vehicle-sil-gui-elements.mjs` が export します。それが何を意味するかは check が言います）。
 
 試験台は、選択を[要求ファイル](../simulation-run.md#要求ファイル--request)に持てます。スクリプトで、要求ファイルを次の実行の選択に読み込み、選択を要求ファイルとして保存できます。GUI サーバーはファイルを書きません。
 
@@ -325,7 +325,7 @@ document.querySelector('#save').addEventListener('click', () => {
 });
 ```
 
-- `<vsil-connect>` は、ファイルから読んだ先を書かれたとおりに出します。GUI サーバーは、そのネットワークの最後の一覧にある先だけを受けるので、開始の前に選択を開いてください。一覧にない先は SIL Kit だけに戻ります。一覧がないと、開始は `target-not-listed` で断られます。
+- `<vsil-connect>` は、ファイルから読んだ先を書かれたとおりに出します。GUI サーバーは、そのネットワークの最後の一覧にある先だけを受けるので、開始の前に選択を開いてください。一覧にない先は SIL Kit だけに戻り、選択の下に、どの先をなぜ戻したかの 1 行が出ます。一覧がないと、開始は `target-not-listed` で断られます。
 - 要求ファイルの `scenario` は構成ファイルのディレクトリからのパスです。GUI サーバーは、代わりにシナリオの一覧のパスを受けます（`<vsil-scenario-select>` が書きます）。
 
 ## 次に読むもの

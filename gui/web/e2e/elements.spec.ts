@@ -290,7 +290,14 @@ test('the connect part lists its network only when it is opened, and the run it 
   // Opening the page asks for no list (no bridge starts on a computer that only runs SIL Kit)
   expect(listed()).toEqual([]);
 
+  // Passing it by with Tab does not either
   await select.focus();
+  await select.press('Tab');
+  await expect(connect).toHaveAttribute('data-chosen', 'none');
+  expect(listed()).toEqual([]);
+
+  // Opening it does
+  await select.click();
   await expect(select.locator('option[value="fake0"]')).toHaveCount(1);
   expect(listed()).toEqual([
     { path: '/api/connections', body: { file: 'connect.yaml', network: 'ETH_EXT' } },
