@@ -111,6 +111,7 @@ public:
     eth_link::TransmitResult transmit(std::span<const std::uint8_t> frame) override;
     [[nodiscard]] bool echoes_own_transmissions() const noexcept override { return link_.echoes_own_transmissions(); }
     [[nodiscard]] std::string describe() const override { return link_.describe(); }
+    [[nodiscard]] std::string device_identity() const override { return link_.device_identity(); }
     [[nodiscard]] std::string last_error() const override { return link_.last_error(); }
     [[nodiscard]] std::optional<bool> promiscuous() const noexcept override { return link_.promiscuous(); }
     [[nodiscard]] std::optional<std::vector<eth_link::MacAddress>> this_computer_addresses() const override

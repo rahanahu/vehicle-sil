@@ -128,6 +128,9 @@ You choose the channel and the device on this command line when the bridge start
       "detail": "virtual 1; hwType=1 hwIndex=0 hwChannel=0 serial=0 Virtual CAN",
       "usable": true,
       "reason": null,
+      "in_use": false,
+      "in_use_by": [],
+      "in_use_count": 0,
       "can": {
         "target": "virtual",
         "number": 1,
@@ -153,7 +156,8 @@ You choose the channel and the device on this command line when the bridge start
 | `targets[].value` | `<target>:<number>`: give the part before `:` to `--xl-target` and the number to `--xl-channel`. |
 | `targets[].label` | The channel name from the driver. |
 | `targets[].detail` | The target and number, then what the line of the text shows. |
-| `targets[].usable` | Always `true`. |
+| `targets[].usable` | Always `true`, also for a channel in use. |
+| `targets[].in_use`, `in_use_by`, `in_use_count` | Whether vehicle-sil bridges use the channel's bus now, as in the Ethernet bridge's list (see "[Device in use by another bridge](#device-in-use-by-another-bridge)"). The channels of Vector Virtual CAN are one bus: a bridge on any of them makes all of them in use. |
 | `targets[].can` | `target`, `number`, `name`, `hw_type`, `hw_index`, `hw_channel`, `serial` and `transceiver` (`null` where the driver gives none). |
 | `notes` | Empty. |
 
@@ -316,10 +320,10 @@ A frame from the bus that came earlier keeps the hint back as well. The hint als
 
 ## Link line
 
-For programs that read the output (the launcher, a script of yours), the bridge prints the state of the external bus on one line, apart from the health lines for people: `link bus=<value>`, after the tag like the statistics line.
+For programs that read the output (the launcher, a script of yours), the bridge prints the state of the external bus on one line, apart from the health lines for people: `link bus=<value>`, after the tag like the statistics line, followed by the keys of the device mark (`device`, `marked`, `shared` and, on Linux, `peers`; see "[Device in use by another bridge](#device-in-use-by-another-bridge)").
 
 ```
-[bridge] link bus=active
+[bridge] link bus=active device=552dd508e2f03efe marked=1 shared=0
 ```
 
 | Value | Meaning |
@@ -330,11 +334,51 @@ For programs that read the output (the launcher, a script of yours), the bridge 
 | `unknown` | The first answer to the error state query has not come yet, or no answer comes (`--no-bus-monitor`, or a driver that does not answer; see "[Error state queries](#error-state-queries)") |
 
 - The first line is printed once the XL port is open, before the bridge starts the SIL Kit lifecycle (before the startup line, and so before the participant can be Running). It is `unknown` until the first answer, which comes later.
-- After that, the bridge looks once a second (like the health line) and prints a line only when the value has changed. The same value is never printed twice in a row.
+- After that, the bridge looks once a second (like the health line) and prints a line only when the value or a key of the device mark has changed. The same line is never printed twice in a row.
 - No line comes when the bridge ends (`FAIL:`, stop): the state of the participant says it.
-- `link_line_value()` gives the value, `bridge_runtime::format_link_line()` the line (`bridges/common`, shared with the Ethernet bridge).
+- `link_line_value()` gives the value, `bridge_runtime::format_link_line()` the line and `bridge_runtime::DeviceShareWatch` the keys of the device mark (`bridges/common`, shared with the Ethernet bridge).
 - A program that reads the line must skip keys and values it does not know: values and keys may be added.
 - `vehicle_sil_launch run --connect` does not show the line in the run's output, as with the statistics line.
+
+## Device in use by another bridge
+
+Two bridges that open the same device receive each other's frames: two networks, or two runs, mix there. Each bridge (this one and the Ethernet bridge) puts a mark on the device it opens and counts the marks of the other vehicle-sil bridges on it, once at startup and then once a second while it runs, so a bridge started later is found by the one that was there first, too. The mark excludes nobody: a bridge that finds others warns and goes on.
+
+```
+[bridge] link bus=active device=552dd508e2f03efe marked=1 shared=1 peers=4321
+[bridge] warning: XL 'Virtual Channel 1' (Vector Virtual CAN, whose channels are all one bus) is also used by another vehicle-sil bridge (process 4321): their frames and this bridge's mix there; give each run its own device, or stop a bridge that is left over
+```
+
+| Key of the link line | Meaning |
+|---|---|
+| `device` | The device, as 16 hexadecimal digits of a hash: the same in every bridge on the device, whatever its backend |
+| `marked` | `1`: the bridge placed its mark. `0`: it could not, and said why in a warning; the other bridges cannot find it, but it still finds them |
+| `shared` | How many other bridges have marked the device now |
+| `peers` | Their process IDs, separated by `,` (Linux only; left out where there are none) |
+
+- The first count is in the first link line (before the SIL Kit lifecycle starts). The warning comes whenever `shared` grows, with the process IDs of the bridges that came; a link line comes whenever a key changes, also when another bridge ends.
+- The lists (`--list-channels --json`, `--list-interfaces --json`) say `in_use: true`, `in_use_by` (the process IDs; empty on Windows) and `in_use_count` for a device with marks, and add "in use by a vehicle-sil bridge (process 4321)" to `detail` and to the line of the text. `usable` stays `true`. A list places no mark.
+- The device is the port to a bus: an Ethernet interface, a CAN channel of Vector hardware (its hardware type, index, serial number and channel, as the XL driver reports them), or Vector Virtual CAN (all its channels are one device). Two channels of one Vector device are two devices.
+
+| The mark finds | The mark does not find |
+|---|---|
+| vehicle-sil bridges on this computer: of another run, of another user, started by hand, and bridges of your own that place the same mark | Programs outside vehicle-sil that open the device (Wireshark, candump, CANoe): they are the outside the bridge connects to |
+| | On Linux, bridges in another network namespace (they see other interfaces) |
+| | On Windows, bridges in another session, where the marks are in the session's namespace (`Local\`, below) |
+
+On Linux a process ID in `peers` is the one in the PID namespace of the bridge that placed the mark: a bridge in a container with its own PID namespace (and the same network namespace) shows its number in the container.
+
+How the mark is placed (a bridge of your own, `role: bridge` in a configuration file, can place the same mark so that the others find it):
+
+| OS | Mark |
+|---|---|
+| Linux | A Unix socket (close-on-exec) bound to the abstract name `vehicle-sil/device/<kind>/<identity>/<pid>/<random>`, kept open while the bridge runs (`<random>`: 16 hexadecimal digits; another one is tried where the name is taken). Counting reads `/proc/net/unix` for the names that begin with the same `vehicle-sil/device/<kind>/<identity>/` |
+| Windows | A named mutex `Global\vehicle-sil-device-<device>-<n>`, not owned and not inherited, with the first free `<n>` from 0 to 15, kept open while the bridge runs; its security descriptor lets everyone open it with `SYNCHRONIZE`. Where this user may not create global names, the marks go to `Local\` (this session). Counting opens the other numbers in both and closes them at once |
+
+- `<kind>` is `ethernet` or `can`. `<identity>`: the interface's name (Linux), the pcap name (Npcap), `xl-<hwType>-<hwIndex>-<serial>-<hwChannel>` for a channel of Vector hardware, `xl-virtual` for Vector Virtual CAN. Where the identity has a character other than ASCII letters, digits and `._:@+-`, or the name would exceed the 107 bytes of an abstract name, `<identity>` is the `device` hash instead.
+- `<device>` is the `device` key: the hash (FNV-1a, 64 bits) of `<kind>/<identity>`.
+- The C++ bridges use `bridge_runtime::DeviceMark` and `DeviceShareWatch` (`bridges/common`).
+- The bridges built for the tests mark their fake devices per process, so that tests that run at the same time do not find each other; a test that wants two of them to share a device gives both the same `VEHICLE_SIL_FAKE_DEVICE_SCOPE`.
 
 ## Physical CAN and virtual time
 
@@ -542,6 +586,7 @@ The XL backend has 2 parts.
 - The fake also simulates these XL constraints: transmit receipt settings and the bit rate need init access, the transmit DLC is 0–8, the receive queue holds 1 fewer than the given size, and receiving returns one event per call.
 - The conversions in `xl_backend_vector.cpp` (the mapping of functions, constants and struct members) are not covered by automated tests.
 - The `no-answers` scenario of `tests/vector_xl/xl_bridge_it_launcher` sends to a channel with no node behind it, with `--stats-every-ms 100`: the statistics line comes while the bridge runs, only where it changed, with every key in order, and `xl_to_silkit=0`; the link line comes before the startup line, and a value is printed once. The hint when nothing came is checked in unit tests only (`bridge_runtime.nothing_came_hint_*`), with the time given by the test.
+- The `device-shared` scenario starts bridges on Vector Virtual CAN: with the default scope of the fake driver two bridges do not find each other; with one scope a bridge on `virtual:2` and one on `virtual:1` find each other at the start and while running, the first warns, the list says both virtual channels are in use, and `shared` goes back to 0 once the first ends. The marks themselves (Linux and Windows, in one process) are checked by `bridge_runtime.device_mark_*`.
 
 ### Verified (Windows 11, Vector Virtual CAN and VN5620)
 
@@ -570,4 +615,5 @@ The following are not yet verified with Vector's driver and hardware:
 - The behavior when a channel running in CAN FD mode is opened with a classic CAN port (`XL_INTERFACE_VERSION`)
 - The round-trip end-to-end test in `tests/vector_xl/xl_bridge_it_launcher` kills the bridge on Windows, so it does not check the statistics and the exit code. The `stop-request` scenario checks the statistics line and exit code 0 after a stop request (SIGTERM on POSIX, Ctrl+Break to the process group on Windows). On Windows, Ctrl+Break can only be sent when the test executable and the bridge share a console, so this scenario is skipped there (the `device-lost` scenario is checked everywhere, because the bridge ends on its own).
 - A protocol stack placed on an XL channel with `ExternalPortAdapter` (the automated tests run only against a fake `ExternalCanPort`)
+- The device mark on Windows across sessions, and whether a user who is not an administrator can create its global names (`Global\`) or falls back to the session's (`Local\`). The automated tests check the marks of one session.
 - Starting the bridge from a configuration file of `vehicle_sil_launch`. The automated tests check `--describe` with the fake driver (`describe` in `tests/vector_xl/xl_bridge_it_launcher`); a run from a configuration file is checked with the Ethernet Bridge only (`ethernet_bridge.integration.pcap-launcher`).

@@ -36,7 +36,10 @@ pcap    the same veth pair with --backend pcap, which loads the libpcap of this 
         device unless it is from the address of an interface (libpcap lists them); what the bridge sends
         does not come back to it. --promiscuous, --list-interfaces. The messages for an interface
         that is missing, not Ethernet, down, and (with the capability dropped) not allowed to be
-        opened. The link down and up: the monitor lines and the link lines. The interface removed: exit code 1.
+        opened. The link down and up: the monitor lines and the link lines. A bridge with --backend
+        packet on the same interface: each finds the other's mark (the link lines' shared and
+        peers, a warning), and --list-interfaces says the interface is in use; once it stops, the
+        first one's shared is 0 again. The interface removed: exit code 1.
 launch  vehicle_sil_launch run --connect ETH_EXT=va starts the bridge itself (found on PATH, with
         its default backend, packet) on one end of a veth pair; this script answers at the other
         end. A scenario (--speed 1 --strict) expects 3 answers at the ECU eth_bridge_it_ecu; the
@@ -198,10 +201,12 @@ class Proc:
                 self.lock.wait(0.2)
 
     def link_values(self) -> list[str]:
-        """The values of the `link link=<value>` lines so far, in order; a first `unknown` (printed
-        before the link's first report arrived) is left out."""
+        """The values of the `link link=<value> ...` lines so far, in order (the keys after the value
+        left out, and with them the lines that differ only there); a first `unknown` (printed before
+        the link's first report arrived) is left out."""
         with self.lock:
-            values = [line.split("link link=", 1)[1] for line in self.lines if line.startswith("[eth-bridge] link link=")]
+            values = [line.split("link link=", 1)[1].split()[0] for line in self.lines if line.startswith("[eth-bridge] link link=")]
+        values = [value for i, value in enumerate(values) if i == 0 or value != values[i - 1]]
         return values[1:] if values[:1] == ["unknown"] else values
 
     def wait_for_link_values(self, expected: list[str], timeout: float = WAIT) -> None:
@@ -471,7 +476,12 @@ def tap(world: World) -> None:
                   "link set vsil1 up'.")
     sh("ip", "link", "set", "vsil1", "up")
     made.wait_for("[eth-bridge] interface vsil1: link up")
-    made.wait_for_link_values(["up"])  # not known while it is down (the first line), then up
+    # The first line: unknown, or down where the link's first report came before it; then up.
+    end = time.monotonic() + WAIT
+    while made.link_values() not in (["up"], ["down", "up"]):
+        if time.monotonic() > end:
+            fail(f"the link lines are {made.link_values()}, not ['up'] or ['down', 'up']; the output:\n{made.text()}")
+        time.sleep(0.1)
     wire1 = Wire("vsil1")
     round_trips(world, wire1, [frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 46, 6)], "tap made by the bridge")
     check(made.stop() == 0, "the bridge that made its TAP device stops with exit code 0:\n" + made.text())
@@ -811,6 +821,28 @@ def pcap(world: World) -> None:
 
     last_bridge = world.bridge("pcap", "va", ["--all-frames"], "LastBridge")
     last_bridge.wait_for("Ctrl+C to stop")
+    check(re.search(r"^\[eth-bridge\] link link=\S+ device=[0-9a-f]{16} marked=1 shared=0$", last_bridge.text(), re.M) is not None,
+          "the first link line has the device keys, with no other bridge on va:\n" + last_bridge.text())
+    # Another backend on the same interface: the same device, so the two find each other.
+    sharing = world.bridge("packet", "va", ["--all-frames"], "SharingBridge")
+    sharing.wait_for("Ctrl+C to stop")
+    first, second = last_bridge.p.pid, sharing.p.pid
+    check(re.search(rf"^\[eth-bridge\] link link=\S+ device=[0-9a-f]{{16}} marked=1 shared=1 peers={first}$", sharing.text(), re.M)
+          is not None, f"the second bridge finds the first (process {first}) at its start:\n" + sharing.text())
+    last_bridge.wait_for(f" marked=1 shared=1 peers={second}")
+    last_bridge.wait_for(f"[eth-bridge] warning: interface 'va' is also used by another vehicle-sil bridge (process {second}): ")
+    listing = world.run([world.bridge_path, "--list-interfaces", "--backend", "pcap"])
+    check(listing.wait() == 0 and re.search(rf"^  --interface va +up.*; in use by 2 vehicle-sil bridges \(processes "
+                                            rf"{min(first, second)}, {max(first, second)}\)$", listing.text(), re.M) is not None,
+          "--list-interfaces says that two bridges use va:\n" + listing.text())
+    check(sharing.stop() == 0, "the second bridge stops with exit code 0:\n" + sharing.text())
+    end = time.monotonic() + WAIT
+    while not [line for line in last_bridge.text().splitlines() if line.startswith("[eth-bridge] link ")][-1].endswith(
+            " marked=1 shared=0"):
+        if time.monotonic() > end:
+            fail("the first bridge's shared is not 0 again after the second stopped:\n" + last_bridge.text())
+        time.sleep(0.1)
+    say("pcap: a packet bridge on the same interface: the two found each other, the list said so, and shared went back to 0")
     sh("ip", "link", "del", "va")
     code = last_bridge.wait()
     check(code == 1 and "[eth-bridge] FAIL: interface 'va' is gone (removed or renamed while the bridge ran)" in last_bridge.text()

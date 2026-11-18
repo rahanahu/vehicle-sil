@@ -61,6 +61,8 @@ With fake `hooks` and a fake participant whose states are scripted, they check:
 
 The rule of the hint that nothing came from a device (`NothingCameHint`) is checked with the time given by the test.
 
+The device mark (`bridge_runtime.device_mark_*`): the names, the hash, reading `/proc/net/unix` and the texts with given values, and real marks of the test process on Linux and Windows (each test on a device of its own).
+
 One test uses a real participant with an in-process registry (on a free port). The message for a registry that cannot be reached (`registry_failure_message()`) is also checked with the text that SIL Kit actually throws.
 
 `describe_json()` (what a bridge writes for `--describe`) is compared byte for byte with `to_json()` of `libs/ecu` and read with the reader of `vehicle_sil_launch` (`read_description()`), so the bridges keep the form of an ecu_main executable without linking `libs/ecu`.
@@ -86,8 +88,9 @@ One test uses a real participant with an in-process registry (on a free port). T
 | `registry_failure_message()` | `bridge_runtime/registry_failure.hpp` |
 | `describe_json()`, `BridgeDescription` (`--describe` of a bridge) | `bridge_runtime/describe.hpp` |
 | `NothingCameHint`, `kNothingCameAfter` (when a bridge says that nothing came from a device) | `bridge_runtime/nothing_came_hint.hpp` |
+| `DeviceMark`, `look_for_marks()`, `DeviceShareWatch` (the mark on a bridge's device and the other bridges it counts; [bridges.md](bridges.md#device-in-use-by-another-bridge)) | `bridge_runtime/device_mark.hpp` (OS parts in `src/device_mark_os.cpp`) |
 
-- Threads: the counts of a bridge are atomics that the receive threads (the external link's, SIL Kit's) add to. Only the thread of `run_bridge()` reads them, for the statistics line (`BridgeHooks::statistics_line()`) and the hint (`take_warnings()`); `NothingCameHint` has no lock for that reason.
+- Threads: the counts of a bridge are atomics that the receive threads (the external link's, SIL Kit's) add to. Only the thread of `run_bridge()` reads them, for the statistics line (`BridgeHooks::statistics_line()`) and the hint (`take_warnings()`); `NothingCameHint` has no lock for that reason. `DeviceShareWatch` has none either: the executable places the mark and counts once on the main thread, and then `run_bridge()` (on the same thread) counts in `link_line()`.
 - Tests: `tests/bridge_runtime`, the E2E tests of the bridge executable (`integration.*` in `tests/vector_xl`)
 - `ctest -R`: `^bridge_runtime\.`, `^vector_xl\.integration\.`
 
@@ -109,7 +112,7 @@ In this entry, "external link" means a connection to an interface outside SIL Ki
 | The text and the JSON of `--list-interfaces` (`pcap_interfaces_json()` and others) | `ethernet_bridge/interface_list.hpp` |
 | Executable | `bridges/ethernet/app/main.cpp` |
 | Where external links are created | `app/link_factory.hpp`, `app/os_link_factory.cpp` |
-| Location of the pcap library, the default of `--backend` | `app/pcap_library.hpp` |
+| Location of the pcap library, the default of `--backend`, the identity of the device mark | `app/pcap_library.hpp` |
 
 Contents of `libs/eth_link/src/pcap`:
 
@@ -130,6 +133,7 @@ Contents of `libs/eth_link/src/pcap`:
 | Executable with the fake external link | `fake_link_factory.cpp` in `tests/ethernet_bridge` |
 | Executable that loads the fake pcap library | `fake_pcap_library.cpp` in `tests/ethernet_bridge` |
 | Namespace tests | `bridge_netns.py` in `tests/ethernet_bridge` |
+| The device mark of the fake devices per process (`VEHICLE_SIL_FAKE_DEVICE_SCOPE`) | `fake_device_scope.hpp` in `tests/ethernet_bridge`; for the fake XL driver `mark_identity()` in `tests/vector_xl/fake_xl` |
 | ECU of the test that starts the bridge from a configuration file (`pcap-launcher`) | `eth_bridge_it_ecu.cpp` in `tests/ethernet_bridge` |
 
 ## Dependency direction
@@ -150,6 +154,7 @@ flowchart TD
     vector_xl_bridge_core --> SilKit["SilKit::SilKit"]
     vector_xl_bridge_core --> can
     vector_xl_bridge_core --> can_silkit
+    vector_xl_bridge_core --> bridge_runtime
     vehicle_sil_vector_xl_logic --> vector_xl_bridge_core
     vector_xl --> vector_xl_bridge_core
     vector_xl -.-> vehicle_sil_vector_xl_logic
@@ -170,6 +175,7 @@ flowchart TD
 flowchart TD
     ethernet_bridge_core --> SilKit["SilKit::SilKit"]
     ethernet_bridge_core --> eth_link
+    ethernet_bridge_core --> bridge_runtime
     eth_link --> Threads["Threads::Threads"]
     vehicle_sil_eth_link_fake --> eth_link
     vehicle_sil_ethernet_bridge -.-> ethernet_bridge_core

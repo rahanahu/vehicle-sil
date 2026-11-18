@@ -42,6 +42,11 @@ public:
 
     /// All channels from xlGetDriverConfig(), in driver order.
     [[nodiscard]] std::vector<XlChannelInfo> channels() const;
+    /// The identity under which the bridge marks the device behind `channel`
+    /// (bridge_runtime::DeviceMark): vector_xl::device_identity(). The fake driver of the tests
+    /// makes it differ per process unless a test names a scope (VEHICLE_SIL_FAKE_DEVICE_SCOPE), so
+    /// that tests that run at the same time on the same fake channel do not find each other.
+    [[nodiscard]] std::string device_identity(const XlChannelInfo& channel) const;
 };
 
 struct XlCanPortOptions

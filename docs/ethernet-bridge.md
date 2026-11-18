@@ -300,7 +300,7 @@ The startup line shows what is connected to what, what may pass, and the state o
 |---|---|---|
 | Warning | `[eth-bridge] warning: <text>` | At most once a second |
 | Health line (see "[Health lines](#health-lines)") | `[eth-bridge] interface <name>: ...` | At most once a second |
-| Link line (see "[Link line](#link-line)") | `[eth-bridge] link link=<value>` | Once before the SIL Kit lifecycle starts, then when the value changes |
+| Link line (see "[Link line](#link-line)") | `[eth-bridge] link link=<value> device=<hash> marked=<0/1> shared=<n>` | Once before the SIL Kit lifecycle starts, then when a value changes |
 | Statistics line, with `--stats-every-ms` (see "[Statistics](#statistics)") | `[eth-bridge] stats silkit_to_ext=<n> ...` | At the first interval, then at each interval where a count changed |
 
 ### Stopping
@@ -404,7 +404,7 @@ interfaces of this computer (--backend packet and --backend pcap take the Ethern
   --interface vsil0   Ethernet, down
 ```
 
-For `npcap` (the default on Windows) and `pcap`, it prints the interfaces that the pcap library returns.
+An interface that vehicle-sil bridges use now ends its line with `; in use by a vehicle-sil bridge (process 4321)` (see "[Device in use by another bridge](bridges.md#device-in-use-by-another-bridge)" in bridges.md). For `npcap` (the default on Windows) and `pcap`, it prints the interfaces that the pcap library returns.
 
 ```
 interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); --backend npcap takes the Ethernet ones:
@@ -440,6 +440,9 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
       "detail": "up, connected; Intel(R) Ethernet; \\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}",
       "usable": true,
       "reason": null,
+      "in_use": false,
+      "in_use_by": [],
+      "in_use_count": 0,
       "ethernet": {
         "pcap_name": "\\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}",
         "connection": "Ethernet 2",
@@ -456,6 +459,9 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
       "detail": "up, loopback; Adapter for loopback traffic capture",
       "usable": false,
       "reason": "loopback: not an Ethernet adapter",
+      "in_use": false,
+      "in_use_by": [],
+      "in_use_count": 0,
       "ethernet": {
         "pcap_name": "\\Device\\NPF_Loopback",
         "connection": null,
@@ -484,6 +490,9 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 | `targets[].detail` | What the line of the text says after the name, its parts separated by `; `. |
 | `targets[].usable` | `false` where the bridge cannot use the interface; `reason` then says why. |
 | `targets[].reason` | Why the interface cannot be used, or `null`. |
+| `targets[].in_use` | `true` where vehicle-sil bridges use the interface now (their device marks; see "[Device in use by another bridge](bridges.md#device-in-use-by-another-bridge)" in bridges.md). `detail` then ends with `in use by a vehicle-sil bridge (process 4321)`. `usable` does not change. |
+| `targets[].in_use_by` | The process IDs of those bridges, ascending. Empty on Windows, where the marks do not tell them. |
+| `targets[].in_use_count` | How many bridges use the interface (also on Windows). |
 | `targets[].ethernet` | What the backend reports. `npcap`, `pcap`: `pcap_name`, `connection` and `description` (`null` where there is none), `up`, `connected` (`null` where the library does not say), `loopback`, `wireless`. `packet`, `tap`: `name`, `ethernet`, `link_type`, `up`. |
 | `notes` | The explanations of the text's last line, one sentence each (Npcap that offers no network adapter); otherwise empty. |
 | `error` | `null`, or the error when the list could not be made (below). |
@@ -799,10 +808,10 @@ stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_s
 
 ## Link line
 
-For programs that read the output (the launcher, a script of yours), the bridge prints the state of its link on one line, apart from the health lines for people: `link link=<value>`, after the tag like the statistics line.
+For programs that read the output (the launcher, a script of yours), the bridge prints the state of its link on one line, apart from the health lines for people: `link link=<value>`, after the tag like the statistics line, followed by the keys of the device mark (`device`, `marked`, `shared` and, on Linux, `peers`): whether other vehicle-sil bridges use the same interface (see "[Device in use by another bridge](bridges.md#device-in-use-by-another-bridge)" in bridges.md).
 
 ```
-[eth-bridge] link link=up
+[eth-bridge] link link=up device=af3d43e7e4b8883a marked=1 shared=0
 ```
 
 | Value | Meaning |
@@ -812,9 +821,10 @@ For programs that read the output (the launcher, a script of yours), the bridge 
 | `unknown` | The link has not reported yet, or cannot tell. `npcap` does not watch the link, so its value is always `unknown` |
 
 - The first line is printed once the interface is open, before the bridge starts the SIL Kit lifecycle (before the startup line, and so before the participant can be Running). A value that is not known then is `unknown`.
-- After that, the bridge looks once a second (like the health line) and prints a line only when the value has changed. The same value is never printed twice in a row.
+- After that, the bridge looks once a second (like the health line) and prints a line only when the value or a key of the device mark has changed. The same line is never printed twice in a row.
 - No line comes when the bridge ends (`FAIL:`, stop): the state of the participant says it.
-- `link_line_value()` gives the value, `bridge_runtime::format_link_line()` the line (`bridges/common`, shared with the Vector XL bridge).
+- The bridge places its mark once the interface is open (only then does Npcap's link know the pcap name of a connection name). `packet` and `pcap` on the same interface are the same device.
+- `link_line_value()` gives the value, `bridge_runtime::format_link_line()` the line and `bridge_runtime::DeviceShareWatch` the keys of the device mark (`bridges/common`, shared with the Vector XL bridge).
 - A program that reads the line must skip keys and values it does not know: values and keys may be added.
 - `vehicle_sil_launch run --connect` does not show the line in the run's output, as with the statistics line.
 
@@ -1100,6 +1110,7 @@ The tests `ethernet_bridge.netns.*` verify the following against the real execut
 - A frame that another socket on the same interface sends is received by a peer on the SIL Kit side. It counts in `ext_from_devices` (libpcap does not tell that it was sent here), but frames from the address of the interface or of another interface of the namespace do not.
 - Frames that the bridge sends do not come back to the bridge.
 - `--promiscuous`, `--list-interfaces`, and health lines for the link going up and down.
+- A `packet` bridge on the same interface: the two find each other through their device marks (`shared`, `peers`, the warning), `--list-interfaces` says that 2 bridges use the interface, and the first one's `shared` goes back to 0 once the second stops.
 - The messages when the interface cannot be opened (missing, not Ethernet, down, privileges dropped).
 - CI runs the same tests with the libpcap of the Ubuntu package `libpcap0.8` and fails if they are skipped (`VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1`).
 
@@ -1217,6 +1228,7 @@ Run them with `ctest -R '^(eth_link|ethernet_bridge)\.'`. Except for the namespa
 These tests run, as processes, the executable linked with a fake external link (`vehicle_sil_ethernet_bridge_on_fake`, `tests/ethernet_bridge/fake_link_factory.cpp`), together with a registry and a peer on the SIL Kit side. The peer is `eth_bridge_it_peer`, which uses SIL Kit's `IEthernetController` directly.
 
 - They check round trips and statistics, the startup line, argument errors (4), an interface that cannot be opened (3), `Fault` (1) and a stop request (statistics, `stopped`, 0).
+- `device-shared` starts two bridges on `fake0`: with the default scope of the fake devices (one per process, so that tests that run at the same time do not find each other) they do not find each other; with one scope (`VEHICLE_SIL_FAKE_DEVICE_SCOPE`) the second finds the first at its start, the first finds the second while it runs and warns, both run on, `--list-interfaces --json` says `fake0` is in use by 2 bridges, and once the first ends the second's `shared` is 0 again.
 - `backend-not-here` uses the real executable and checks the message for a backend not available on that OS, and the pcap list. If the library is on that computer, the output is the list; otherwise it is the message that says how to install the library.
 
 ### `eth_link.pcap_*` and `ethernet_bridge.integration.pcap-*`

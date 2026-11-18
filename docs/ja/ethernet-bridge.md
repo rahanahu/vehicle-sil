@@ -300,7 +300,7 @@ Run 'vehicle_sil_ethernet_bridge --help' for the options.
 |---|---|---|
 | 警告 | `[eth-bridge] warning: <文>` | 1 秒に 1 回まで |
 | 監視の行（「[監視の行](#監視の行)」） | `[eth-bridge] interface <名前>: ...` | 1 秒に 1 回まで |
-| リンクの行（「[リンクの行](#リンクの行)」） | `[eth-bridge] link link=<値>` | SIL Kit のライフサイクルを始める前に 1 回、その後は値が変わったとき |
+| リンクの行（「[リンクの行](#リンクの行)」） | `[eth-bridge] link link=<値> device=<ハッシュ> marked=<0/1> shared=<数>` | SIL Kit のライフサイクルを始める前に 1 回、その後は値が変わったとき |
 | 統計の行。`--stats-every-ms` のとき（「[統計](#統計)」） | `[eth-bridge] stats silkit_to_ext=<数> ...` | 最初の間隔で 1 回、その後は数が変わった間隔ごと |
 
 ### 停止
@@ -404,7 +404,7 @@ interfaces of this computer (--backend packet and --backend pcap take the Ethern
   --interface vsil0   Ethernet, down
 ```
 
-`npcap`（Windows の既定）と `pcap` では、pcap のライブラリが返すインターフェースを表示します。
+いま vehicle-sil のブリッジが使っているインターフェースは、行の終わりに `; in use by a vehicle-sil bridge (process 4321)` が付きます（bridges.md の「[別のブリッジが使っているデバイス](bridges.md#別のブリッジが使っているデバイス)」）。`npcap`（Windows の既定）と `pcap` では、pcap のライブラリが返すインターフェースを表示します。
 
 ```
 interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); --backend npcap takes the Ethernet ones:
@@ -440,6 +440,9 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
       "detail": "up, connected; Intel(R) Ethernet; \\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}",
       "usable": true,
       "reason": null,
+      "in_use": false,
+      "in_use_by": [],
+      "in_use_count": 0,
       "ethernet": {
         "pcap_name": "\\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}",
         "connection": "Ethernet 2",
@@ -456,6 +459,9 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
       "detail": "up, loopback; Adapter for loopback traffic capture",
       "usable": false,
       "reason": "loopback: not an Ethernet adapter",
+      "in_use": false,
+      "in_use_by": [],
+      "in_use_count": 0,
       "ethernet": {
         "pcap_name": "\\Device\\NPF_Loopback",
         "connection": null,
@@ -484,6 +490,9 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 | `targets[].detail` | 文の一覧の行で、名前の後ろにある内容を `; ` でつないだものです。 |
 | `targets[].usable` | ブリッジが使えないインターフェースでは `false` です。そのとき `reason` が理由を言います。 |
 | `targets[].reason` | 使えない理由、または `null` です。 |
+| `targets[].in_use` | いま vehicle-sil のブリッジがインターフェースを使っているとき（その使用中の印。bridges.md の「[別のブリッジが使っているデバイス](bridges.md#別のブリッジが使っているデバイス)」）`true` です。そのとき `detail` の終わりに `in use by a vehicle-sil bridge (process 4321)` が付きます。`usable` は変わりません。 |
+| `targets[].in_use_by` | それらのブリッジのプロセス ID で、小さい順です。Windows では、印からは分からないので空です。 |
+| `targets[].in_use_count` | インターフェースを使っているブリッジの数です（Windows でも出ます）。 |
 | `targets[].ethernet` | バックエンドが返す内容です。`npcap`、`pcap` では `pcap_name`、`connection` と `description`（ないときは `null`）、`up`、`connected`（ライブラリが言わないときは `null`）、`loopback`、`wireless` です。`packet`、`tap` では `name`、`ethernet`、`link_type`、`up` です。 |
 | `notes` | 文の一覧の最後の行の説明です。1 文ずつ入ります（ネットワークのアダプターを返さない Npcap）。ほかのときは空です。 |
 | `error` | `null`、または一覧を作れなかったときのエラーです（下）。 |
@@ -799,10 +808,10 @@ stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_s
 
 ## リンクの行
 
-出力を読むプログラム（ランチャーや自作のスクリプト）のために、ブリッジはリンクの状態を、人向けの監視の行とは別に 1 行で出します。形は `link link=<値>` で、統計の行と同じようにタグの後ろに付きます。
+出力を読むプログラム（ランチャーや自作のスクリプト）のために、ブリッジはリンクの状態を、人向けの監視の行とは別に 1 行で出します。形は `link link=<値>` で、統計の行と同じようにタグの後ろに付き、その後にデバイスの使用中の印のキー（`device`、`marked`、`shared`、Linux では `peers`）が続きます。ほかの vehicle-sil のブリッジが同じインターフェースを使っているかを表します（bridges.md の「[別のブリッジが使っているデバイス](bridges.md#別のブリッジが使っているデバイス)」）。
 
 ```
-[eth-bridge] link link=up
+[eth-bridge] link link=up device=af3d43e7e4b8883a marked=1 shared=0
 ```
 
 | 値 | 意味 |
@@ -812,9 +821,10 @@ stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_s
 | `unknown` | リンクがまだ知らせていない、または知らせられない。`npcap` はリンクを見ないので、いつも `unknown` |
 
 - 最初の行は、インターフェースを開いた後、ブリッジが SIL Kit のライフサイクルを始める前に出ます（開始の行より前で、参加者が Running になりうる前）。その時点で分からない値は `unknown` です。
-- その後は、監視の行と同じく 1 秒ごとに確かめ、値が変わったときだけ行を出します。同じ値が続けて出ることはありません。
+- その後は、監視の行と同じく 1 秒ごとに確かめ、値か使用中の印のキーが変わったときだけ行を出します。同じ行が続けて出ることはありません。
 - ブリッジが終わるとき（`FAIL:`、停止）には出ません。参加者の状態で分かります。
-- 値は `link_line_value()`、行は `bridge_runtime::format_link_line()` が作ります（`bridges/common`。Vector XL のブリッジと共通）。
+- ブリッジは、インターフェースを開いてから印を置きます（Npcap のリンクが接続の名前から pcap の名前を知るのは、開いた後です）。同じインターフェースの `packet` と `pcap` は、同じデバイスです。
+- 値は `link_line_value()`、行は `bridge_runtime::format_link_line()`、使用中の印のキーは `bridge_runtime::DeviceShareWatch` が作ります（`bridges/common`。Vector XL のブリッジと共通）。
 - 行を読むプログラムは、知らないキーと値を読み飛ばしてください。キーと値は増えることがあります。
 - `vehicle_sil_launch run --connect` は、統計の行と同じく、この行を実行の出力に出しません。
 
@@ -1100,6 +1110,7 @@ packet ソケットと pcap のライブラリは、オプションに `promiscu
 - 同じインターフェースの別のソケットが送信したフレームを、SIL Kit 側の相手が受信する。`ext_from_devices` に数える（libpcap はここで送信したことを伝えない）。インターフェースのアドレスと、名前空間のほかのインターフェースのアドレスからのフレームは数えない。
 - ブリッジが送信したフレームがブリッジに戻らない。
 - `--promiscuous`、`--list-interfaces`、リンクの up と down の監視の行。
+- 同じインターフェースの `packet` のブリッジ。2 つが使用中の印で互いを見つけ（`shared`、`peers`、警告）、`--list-interfaces` がインターフェースを 2 つのブリッジが使っていると言い、2 つ目が止まると 1 つ目の `shared` が 0 に戻ります。
 - 開けないときのメッセージ（ない、イーサネットでない、down、権限を落としたとき）。
 - CI は Ubuntu のパッケージ `libpcap0.8` の libpcap で同じテストを実行し、スキップしたら失敗にします（`VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1`）。
 
@@ -1217,6 +1228,7 @@ Linux:
 実行ファイルにフェイクの外部リンクをリンクしたもの（`vehicle_sil_ethernet_bridge_on_fake`。`tests/ethernet_bridge/fake_link_factory.cpp`）を、registry と SIL Kit 側の相手と一緒に、プロセスとして動かします。相手は `eth_bridge_it_peer` で、SIL Kit の `IEthernetController` を直接使います。
 
 - 確認するのは、往復と統計、起動の 1 行、引数のエラー（4）、開けないインターフェース（3）、`Fault`（1）、止める要求（統計、`stopped`、0）です。
+- `device-shared` は、`fake0` に 2 つのブリッジを起こします。偽のデバイスの既定のスコープ（プロセスごと。同時に走る試験が互いを見つけないため）では、互いを見つけません。同じスコープ（`VEHICLE_SIL_FAKE_DEVICE_SCOPE`）では、2 つ目が起動のときに 1 つ目を見つけ、1 つ目は動いている間に 2 つ目を見つけて警告し、両方が動き続け、`--list-interfaces --json` は `fake0` を 2 つのブリッジが使っていると言い、1 つ目が終わると 2 つ目の `shared` が 0 に戻ります。
 - `backend-not-here` は本物の実行ファイルで、その OS で使えないバックエンドのメッセージと、pcap の一覧を確認します。一覧は、その PC にライブラリがあれば一覧、なければインストールの方法のメッセージです。
 
 ### `eth_link.pcap_*` と `ethernet_bridge.integration.pcap-*`

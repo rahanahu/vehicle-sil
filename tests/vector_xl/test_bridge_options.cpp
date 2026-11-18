@@ -256,6 +256,9 @@ TEST_CASE(selection_channel_list_json_numbers_the_can_channels_of_each_target)
           "      \"detail\": \"virtual 1; hwType=1 hwIndex=0 hwChannel=0 serial=0 Virtual CAN\",\n"
           "      \"usable\": true,\n"
           "      \"reason\": null,\n"
+          "      \"in_use\": false,\n"
+          "      \"in_use_by\": [],\n"
+          "      \"in_use_count\": 0,\n"
           "      \"can\": {\n"
           "        \"target\": \"virtual\",\n"
           "        \"number\": 1,\n"
@@ -273,6 +276,9 @@ TEST_CASE(selection_channel_list_json_numbers_the_can_channels_of_each_target)
           "      \"detail\": \"virtual 2; hwType=100 hwIndex=0 hwChannel=0 serial=0\",\n"
           "      \"usable\": true,\n"
           "      \"reason\": null,\n"
+          "      \"in_use\": false,\n"
+          "      \"in_use_by\": [],\n"
+          "      \"in_use_count\": 0,\n"
           "      \"can\": {\n"
           "        \"target\": \"virtual\",\n"
           "        \"number\": 2,\n"
@@ -290,6 +296,9 @@ TEST_CASE(selection_channel_list_json_numbers_the_can_channels_of_each_target)
           "      \"detail\": \"physical 1; hwType=200 hwIndex=0 hwChannel=0 serial=0\",\n"
           "      \"usable\": true,\n"
           "      \"reason\": null,\n"
+          "      \"in_use\": false,\n"
+          "      \"in_use_by\": [],\n"
+          "      \"in_use_count\": 0,\n"
           "      \"can\": {\n"
           "        \"target\": \"physical\",\n"
           "        \"number\": 1,\n"
@@ -307,6 +316,9 @@ TEST_CASE(selection_channel_list_json_numbers_the_can_channels_of_each_target)
           "      \"detail\": \"physical 2; hwType=200 hwIndex=0 hwChannel=0 serial=4711\",\n"
           "      \"usable\": true,\n"
           "      \"reason\": null,\n"
+          "      \"in_use\": false,\n"
+          "      \"in_use_by\": [],\n"
+          "      \"in_use_count\": 0,\n"
           "      \"can\": {\n"
           "        \"target\": \"physical\",\n"
           "        \"number\": 2,\n"
@@ -343,4 +355,50 @@ TEST_CASE(selection_channel_list_json_of_no_channel_and_of_an_error)
           "    \"message\": \"cannot open the Vector XL driver: \\\"xlOpenDriver\\\" failed\"\n"
           "  }\n"
           "}\n");
+}
+
+TEST_CASE(selection_device_identity_is_one_bus_for_virtual_can_and_the_channel_of_a_device_for_hardware)
+{
+    XlChannelInfo first = channel("Virtual Channel 1", true, true, 0);
+    XlChannelInfo second = channel("Virtual Channel 2", true, true, 1);
+    second.hw_channel = 1;
+    CHECK(device_identity(first) == "xl-virtual");
+    CHECK(device_identity(second) == "xl-virtual");
+    XlChannelInfo hardware = channel("VN1630A Channel 2", false, true, 3);
+    hardware.hw_type = 57;
+    hardware.hw_index = 1;
+    hardware.serial_number = 4711;
+    hardware.hw_channel = 1;
+    CHECK(device_identity(hardware) == "xl-57-1-4711-1");
+}
+
+TEST_CASE(selection_channel_list_says_which_channels_vehicle_sil_bridges_use)
+{
+    using vehicle_sil::bridge_runtime::DevicePeers;
+    // Every virtual channel is on the one bus of Virtual CAN.
+    const ChannelInUse inUse = [](const XlChannelInfo& info) {
+        return device_identity(info) == "xl-virtual" ? DevicePeers{1, {4321}} : DevicePeers{};
+    };
+    const std::string json = channels_json(sample_channels(), inUse);
+    const std::string used = "      \"usable\": true,\n"
+                             "      \"reason\": null,\n"
+                             "      \"in_use\": true,\n"
+                             "      \"in_use_by\": [\n"
+                             "        4321\n"
+                             "      ],\n"
+                             "      \"in_use_count\": 1,\n";
+    CHECK(json.find("      \"detail\": \"virtual 1; hwType=100 hwIndex=0 hwChannel=0 serial=0; in use by a vehicle-sil bridge "
+                    "(process 4321)\",\n" + used) != std::string::npos);
+    CHECK(json.find("      \"detail\": \"virtual 2; hwType=100 hwIndex=0 hwChannel=0 serial=0; in use by a vehicle-sil bridge "
+                    "(process 4321)\",\n" + used) != std::string::npos);
+    CHECK(json.find("      \"detail\": \"physical 1; hwType=200 hwIndex=0 hwChannel=0 serial=0\",\n"
+                    "      \"usable\": true,\n"
+                    "      \"reason\": null,\n"
+                    "      \"in_use\": false,\n"
+                    "      \"in_use_by\": [],\n"
+                    "      \"in_use_count\": 0,\n") != std::string::npos);
+    const std::string text = format_channel_list(sample_channels(), inUse);
+    CHECK(text.find("Virtual Channel 2                hwType=100 hwIndex=0 hwChannel=0 serial=0 ; in use by a vehicle-sil bridge "
+                    "(process 4321)\n") != std::string::npos);
+    CHECK(text.find("CANcaseXL Channel 1              hwType=200 hwIndex=0 hwChannel=0 serial=0 \n") != std::string::npos);
 }
