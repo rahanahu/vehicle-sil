@@ -251,20 +251,6 @@ class Targets(Base):
         self.assertIn("its coordinator edits it directly", cm.exception.message)
         self.assertEqual(stream.read_text(), "x\n")
 
-    def test_t10_a_long_state_row_that_the_change_wrote_is_noted_and_the_change_is_kept(self):
-        self.state.write_text("| a | short | x |\n| b | short | y |\n", encoding="utf-8")
-        long_row = "| a | " + "ね" * 210 + " | x |"
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            code = shared_edit.main(["plans/STATE.md", "--old", "| a | short | x |", "--new", long_row], root=self.root)
-        self.assertEqual(code, 0)
-        self.assertIn(long_row, self.state.read_text(encoding="utf-8"))
-        self.assertIn("shared-edit: note plans/STATE.md line 1 has", out.getvalue())
-        out = io.StringIO()  # a short change elsewhere does not repeat the note about row a
-        with contextlib.redirect_stdout(out):
-            shared_edit.main(["plans/STATE.md", "--old", "| b | short | y |", "--new", "| b | new | y |"], root=self.root)
-        self.assertNotIn("note", out.getvalue())
-
     def test_t10_only_the_shared_files_are_written(self):
         other = self.root / "plans/OTHER.md"
         other.write_text("x\n")

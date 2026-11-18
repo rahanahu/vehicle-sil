@@ -38,7 +38,7 @@ Zero hits do not prove that no decision exists. Try the title words and other di
 - Before a large rewrite of a shared file, copy it to `plans/archive/`. Undo a change with the inverse edit; restore a whole file from a copy only while no other writer is running.
 - Do not keep a shared file open in an editor and save it later: the save discards the tool's changes.
 - Record external facts by pointer, not by copy: pull requests, CI, counts, commits, and the list of working trees come from `gh` and `git`. A merged pull request needs no line of its own: GitHub and the plan's record keep it.
-- Tell another stream by message only when its coordinator has to do something: say what, and what it waits for. Information that changes nothing for them now ("merged", "started", "no change needed on your side") goes into your own stream file, or into `STATE.md` when it spans streams; they read it when they need it. Never write into another stream's file. The receiver rewrites the lines of its stream file that the message changes; it does not paste the message.
+- Send another stream a message when it changes what that stream does or waits for: a request, an answer it waits for, a merge or a change that unblocks or breaks its work. Say what changed for them. Do not send news that changes nothing for them ("started", "no change needed on your side", progress); it stays in your own stream file. Never write into another stream's file. The receiver rewrites the lines of its stream file that the message changes (a dependency now met, a step now possible); it does not paste the message.
 
 **Expire.**
 - A state line (`State: <word> ...`) near the top of a record, in English or in the project's own language, says whether the record still applies. The words superseded, rejected, handed-over, done, finished and cancelled end it. Any other word (adopted, decided, implemented, in progress, proposal, under review) does not make the record current, and a record without a state line is unjudged: check it against newer documents and Git.
@@ -47,7 +47,7 @@ Zero hits do not prove that no decision exists. Try the title words and other di
 
 **Hand over.** `.local/plans/STATE.md` and your stream file are the handover. They say what is true now, not what happened: rewrite the part that changed, and delete what is finished. Never delete or discard a working tree with uncommitted changes; record where it is and who owns it.
 
-A row of `STATE.md` is one line: the stream, what is happening now, what it waits for (another stream, the user), the coordinator. No finished pull requests, no history; `shared_edit.py` notes a row longer than 200 characters.
+A row of `STATE.md` is one line: the stream, what is happening now, what it waits for (another stream, the user), the coordinator. No finished pull requests, no history. Each coordinator rewrites only its own row; an item in the waiting list across streams belongs to the stream that waits, which deletes it when the wait is over.
 
 **Tidy at the points where you stop anyway.** Removing is part of the step, not a separate task:
 
@@ -55,7 +55,7 @@ A row of `STATE.md` is one line: the stream, what is happening now, what it wait
 |---|---|
 | A pull request merges (when you remove its working tree) | Delete its lines from the state and the next steps. Move its review findings still open to open items. |
 | A plan finishes | Delete it from the next steps; put a state line in the plan's record. |
-| A message from another stream arrives | Rewrite the lines it changes. A message that needs nothing from you changes nothing. |
+| A message from another stream arrives | Rewrite the lines it changes (a dependency met, a step now possible); do not record the message itself. |
 | Before a context clear, or when you stop | Rewrite the state and the next steps from what is true now; delete what is done or no longer applies; update `Last updated`. |
 | A decision is replaced | Change its `ACTIVE.md` entry; delete the old wording wherever your stream file repeats it. |
 | The stream finishes | `State: finished` and a one-line result; empty the next steps and the waiting items; mark its `STATE.md` row finished. |

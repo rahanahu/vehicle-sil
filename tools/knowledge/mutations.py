@@ -33,7 +33,6 @@ MUTATIONS = [
     ("put the temporary file outside the directory of the shared file", [("tmp_path = target.with_name(", "tmp_path = Path('/dev/shm').joinpath(")]),
     ("release the lock before the rename", [("os.replace(tmp, target)", "fcntl.flock(lock_fd, fcntl.LOCK_UN); os.replace(tmp, target)")]),
     ("write any file inside .local", [("if rel in SHARED_FILES:", "if True:")]),
-    ("never note a long row of STATE.md", [("len(line) > STATE_ROW_LIMIT", "False")]),
     ("follow a symbolic link", [("or os.path.islink(target) \\\n                or os.path.realpath(target) != os.path.join(os.path.realpath(root), rel):", ":")]),
     ("lose the permissions of the file", [("os.fchmod(f.fileno(), st.st_mode & 0o7777)", "pass")]),
     ("accept an empty text to replace", [("    if not old:\n", "    if False:\n")]),
