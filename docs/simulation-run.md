@@ -1442,8 +1442,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
         "j1939_nodes": null,
         "control": {
           "transport": "silkit",
-          "wire_version": 2,
-          "wire_revision": 1
+          "wire_version": 2
         }
       },
       {
@@ -1521,8 +1520,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
         "j1939_nodes": null,
         "control": {
           "transport": "silkit",
-          "wire_version": 2,
-          "wire_revision": 1
+          "wire_version": 2
         }
       }
     ],

@@ -132,7 +132,7 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `coarse-time-step` | Warning | The file has `speed` (a number) and `time_step_ms`, and an ECU's steps do not start on time step boundaries. | Set `time_step_ms` to the value given in the finding message. |
 | `control-link-not-offered` | Note | An ECU with variables does not report in its `--describe` output that it exposes them to the simulation (`--no-control`, or an old executable without `control`). | To read and write the variables, remove `--no-control`, or rebuild the ECU with a newer vehicle-sil. |
 | `control-link-version` | Warning | An ECU with variables reports another message format version than `vehicle_sil_launch`, or another transport than `silkit`. The simulation runs, but `run` cannot read or write that ECU's variables. The message says which side is older. | If the ECU is older, rebuild it with the vehicle-sil of `vehicle_sil_launch`. If it is newer, use a `vehicle_sil_launch` of its vehicle-sil version or a newer one. For another transport, make the executable offer its variables over `silkit`. |
-| `control-link-revision` | Note | An ECU with variables writes an older revision of the message format than `vehicle_sil_launch` (`control.wire_revision` of `--describe`; 0 if it does not say). Its variables are read and written as usual, but what later revisions added does not arrive from it: its variables report no availability, so every one of them looks Active. | Rebuild the ECU with the vehicle-sil of `vehicle_sil_launch`. |
+| `control-link-revision` | Note | An ECU with variables writes an older revision of the message format than `vehicle_sil_launch` (`control.wire_revision` of `--describe`; 0 if it does not say). Its variables are read and written as usual, but what later revisions added does not arrive from it: its variables report no availability, so every one of them looks Active. | If its variables should report their availability, rebuild the ECU with the vehicle-sil of `vehicle_sil_launch` and declare those variables with `VariableOptions::availability`. |
 | `variable-map-unknown` | Error | The `from` variable of a mapping in `variables` does not exist in the executable. | Correct the `from` name (the finding message gives a close name or the list of the executable's variables). |
 | `variable-map-type` | Error | The form of the mapping does not fit the type of the variable. | Write `scale`, `offset` for integer or real variables, and `map` for integer or enum variables. |
 | `variable-map-value` | Error | The executable's variable cannot take a value in `map` (not an item of the enum, or out of range). | Change the values in `map` to values the variable can take. |
@@ -443,7 +443,7 @@ If only one of `scale` and `offset` is written, the other has its default, 1 or 
 | `from`, `address`, `identity_number`, `function_instance`, `ecu_instance` | The values written, as numbers (`null` if not written) |
 | `node` | The node that the entry takes: `coded_address` (its address in the executable's code, as `address` in `reported`), then `address`, `j1939_name` and `arbitrary_address_capable` after the entry (in the same form as the nodes in `reported`). `null` for an entry that takes no node, an entry that changes nothing, and a participant that was not described |
 
-**`control`**: The keys are `transport` (currently `"silkit"`), `wire_version` (the message format version) and `wire_revision` (the revision of that format the executable writes; 0 if it does not say). It is `null` for a participant that does not report `control` (`--no-control`, an old executable), and for a participant that was not checked, failed or is disabled.
+**`control`**: The keys are `transport` (currently `"silkit"`) and `wire_version` (the message format version). It is `null` for a participant that does not report `control` (`--no-control`, an old executable), and for a participant that was not checked, failed or is disabled.
 
 Keys of each element of `networks[]` and `findings[]`:
 
@@ -572,8 +572,7 @@ participants:
       "j1939_nodes": null,
       "control": {
         "transport": "silkit",
-        "wire_version": 2,
-        "wire_revision": 1
+        "wire_version": 2
       }
     }
   ],

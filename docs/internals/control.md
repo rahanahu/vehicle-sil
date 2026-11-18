@@ -125,6 +125,8 @@ A variable declared with `VariableOptions::availability` reports whether it is i
 - `availability_version()` goes up by one each time `set_availability()` changes a state (0: the declared states). The same state again changes nothing.
 - `set_availability()` and both readers belong to the step thread (or the setup thread after the schema is fixed and before the first step). No other thread reads the states: the transport reads them in its step sink. Before the schema is fixed, `set_availability()` throws `std::logic_error` (the declaration gives the first state).
 - Which variables report is fixed with the schema. The states are not part of a sample, and `--describe` does not write them.
+- The time of a state is the start of the step whose message carries it, decided as for the values of a sample: read the states of a variable as a sequence that is constant between changes (its state at T is the last change at or before T). The sequence begins with the declared state of the hello, which holds from the start until the first step message that carries states.
+- Every change is sent in the step that made it (several changes in one step: the state at the end of that step), from within that step, so it falls under the same completeness promise as the samples (HubTransport). Only receivers fold changes together: a subscription keeps the latest state of each peer. A resend repeats the same states with the same version, so it adds no change.
 
 #### When the schema is fixed
 

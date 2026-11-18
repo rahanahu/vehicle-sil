@@ -132,7 +132,7 @@
 | `coarse-time-step` | 警告 | ファイルに `speed`（数）と `time_step_ms` があり、ECU のステップがタイムステップの境目で始まりません。 | 指摘の文にある値を、`time_step_ms` に書きます。 |
 | `control-link-not-offered` | 注記 | 変数のある ECU が、それをシミュレーションに公開すると `--describe` に出力していません（`--no-control`、`control` のない古い実行ファイル）。 | 変数を読み書きしたいなら、`--no-control` を削除するか、新しい vehicle-sil で ECU をビルドし直します。 |
 | `control-link-version` | 警告 | 変数のある ECU が出力した、メッセージの形式のバージョンが `vehicle_sil_launch` と違うか、トランスポートが `silkit` ではありません。シミュレーションは動きますが、`run` はその ECU の変数を読み書きできません。どちらが古いかは文に出ます。 | ECU のほうが古ければ、`vehicle_sil_launch` の vehicle-sil でビルドし直します。新しければ、ECU と同じかそれより新しいバージョンの `vehicle_sil_launch` を使います。別のトランスポートなら、実行ファイルが `silkit` で変数を出すようにします。 |
-| `control-link-revision` | 注記 | 変数のある ECU が書くメッセージの形式の改訂が、`vehicle_sil_launch` より古い（`--describe` の `control.wire_revision`。ないときは 0）。変数はふつうに読み書きできますが、後の改訂で足したものはその ECU から届きません。変数は利用状態を報告せず、すべて Active に見えます。 | ECU を `vehicle_sil_launch` の vehicle-sil でビルドし直します。 |
+| `control-link-revision` | 注記 | 変数のある ECU が書くメッセージの形式の改訂が、`vehicle_sil_launch` より古い（`--describe` の `control.wire_revision`。ないときは 0）。変数はふつうに読み書きできますが、後の改訂で足したものはその ECU から届きません。変数は利用状態を報告せず、すべて Active に見えます。 | 変数に利用状態を報告させるなら、ECU を `vehicle_sil_launch` の vehicle-sil でビルドし直し、その変数を `VariableOptions::availability` で宣言します。 |
 | `variable-map-unknown` | エラー | `variables` の対応の `from` の変数が、実行ファイルにありません。 | `from` の名前を直します（指摘の文に、近い名前か、実行ファイルの変数の一覧があります）。 |
 | `variable-map-type` | エラー | 対応の形が、変数の型に合いません。 | `scale`、`offset` は整数か実数の変数に、`map` は整数か列挙の変数に書きます。 |
 | `variable-map-value` | エラー | `map` の値を、実行ファイルの変数が取れません（列挙の項目にない、範囲の外）。 | `map` の値を、変数が取れる値にします。 |
@@ -443,7 +443,7 @@ failed: 3 errors, 1 warning, 0 notes
 | `from`、`address`、`identity_number`、`function_instance`、`ecu_instance` | 書いた値（数。書いていなければ `null`） |
 | `node` | 行が当たったノード: `coded_address`（実行ファイルのコードのアドレス。`reported` の `address` と同じ）、行を当てた後の `address`、`j1939_name`、`arbitrary_address_capable`（`reported` のノードと同じ形）。どのノードにも当たらない行、何も変えない行、照合していない participant では `null` |
 
-**`control`**: キーは `transport`（今は `"silkit"`）、`wire_version`（メッセージの形式のバージョン）、`wire_revision`（実行ファイルが書くその形式の改訂。ないときは 0）です。`control` を出力していない（`--no-control`、古い実行ファイル）、照合していない、失敗した、無効にした participant では `null` です。
+**`control`**: キーは `transport`（今は `"silkit"`）と `wire_version`（メッセージの形式のバージョン）です。`control` を出力していない（`--no-control`、古い実行ファイル）、照合していない、失敗した、無効にした participant では `null` です。
 
 `networks[]` と `findings[]` の要素のキーは次のとおりです。
 
@@ -572,8 +572,7 @@ participants:
       "j1939_nodes": null,
       "control": {
         "transport": "silkit",
-        "wire_version": 2,
-        "wire_revision": 1
+        "wire_version": 2
       }
     }
   ],

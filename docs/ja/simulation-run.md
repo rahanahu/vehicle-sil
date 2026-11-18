@@ -1442,8 +1442,7 @@ passed: 0 errors, 1 warning, 1 note
         "j1939_nodes": null,
         "control": {
           "transport": "silkit",
-          "wire_version": 2,
-          "wire_revision": 1
+          "wire_version": 2
         }
       },
       {
@@ -1521,8 +1520,7 @@ passed: 0 errors, 1 warning, 1 note
         "j1939_nodes": null,
         "control": {
           "transport": "silkit",
-          "wire_version": 2,
-          "wire_revision": 1
+          "wire_version": 2
         }
       }
     ],

@@ -925,7 +925,7 @@ void control(const Options& o)
         // The check notes the variables that are not offered, and says what each executable offers.
         require(contains(out, "\"code\":\"control-link-not-offered\"") &&
                     contains(out, "participant 'Quiet': it describes variables, but does not offer them to the simulation") &&
-                    contains(out, "\"control\":{\"transport\":\"silkit\",\"wire_version\":2,\"wire_revision\":1}") && contains(out, "\"control\":null") &&
+                    contains(out, "\"control\":{\"transport\":\"silkit\",\"wire_version\":2}") && contains(out, "\"control\":null") &&
                     !contains(out, "control-link-no-hello") && !contains(out, "control-link-version"),
                 "the check notes what is not offered, and nothing else is found:\n" + out);
         log("CHECK control agents in the events and the result -> ok");
