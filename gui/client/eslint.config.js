@@ -58,6 +58,11 @@ module.exports = defineConfig([
     },
   },
   {
+    // The parts are custom elements: they need the DOM. Nothing outside src/elements imports them, so Node never loads them.
+    files: ['src/elements/**/*.ts'],
+    rules: { 'no-restricted-globals': 'off' },
+  },
+  {
     // The test helpers load Node built-ins (node:fs) at run time
     files: ['src/testing/**/*.ts'],
     rules: { 'no-restricted-syntax': 'off' },

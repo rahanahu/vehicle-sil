@@ -83,6 +83,8 @@ export interface GuiServerOptions {
   port?: number;
   /** 配る画面のディレクトリ（`--web`。既定はサンプルの画面）。 */
   web?: string;
+  /** 最初に出す構成ファイル（root の下にあるファイルのパス。画面が `start()` に file を渡さないときの既定になる）。 */
+  config?: string;
 }
 
 /** 起動した GUI サーバー。 */
@@ -136,6 +138,7 @@ export async function launchGuiServer(options: GuiServerOptions): Promise<GuiSer
       root,
       ...(devOrigin ? ['--dev-origin', devOrigin] : []),
       ...(web ? ['--web', web] : []),
+      ...(options.config ? [options.config] : []),
     ],
     {
       cwd: REPOSITORY,
