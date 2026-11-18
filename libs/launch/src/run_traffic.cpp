@@ -135,7 +135,7 @@ TrafficSchema traffic_schema(const control::PeerInfo& peer)
     return out;
 }
 
-TrafficPlan traffic_plan(const SimulationConfig& config, const CheckReport& check)
+TrafficPlan traffic_plan(const SimulationConfig& config, const CheckReport& check, const std::vector<RunMember>& members)
 {
     TrafficPlan plan;
     for (const NetworkConfig& network : config.networks)
@@ -151,7 +151,7 @@ TrafficPlan traffic_plan(const SimulationConfig& config, const CheckReport& chec
         TrafficPlan::Participant who;
         who.name = p.name;
         who.in_run = p.enabled;
-        if (!p.for_network.empty())
+        if (i < members.size() && members[i].outside)
         {
             // A bridge of --connect: it carries the frames of the others and has no counters of
             // its own; known, so that it is not taken for one that may be on any network.

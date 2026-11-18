@@ -564,6 +564,12 @@ TEST_CASE(a_described_participants_networks_are_under_the_simulations_names)
           plan.participants.at(0).on == (std::vector<std::string>{"VehicleCAN", "BodyLIN"}));
     CHECK(plan.participants.at(1).in_run && !plan.participants.at(1).described && plan.participants.at(1).on.empty());
     CHECK(!plan.participants.at(2).in_run);
+    // A bridge of --connect (the plan's mark) carries the frames of the others: known, on no network of its own.
+    std::vector<launch::RunMember> members(3);
+    members[1].outside = launch::NetworkOutside{"VehicleCAN", "vehicle_sil_can_bridge", "/t/can", "can0", "bridge.VehicleCAN", std::nullopt};
+    const TrafficPlan connected = launch::detail::traffic_plan(config, check, members);
+    CHECK(connected.participants.at(1).described && connected.participants.at(1).on.empty());
+    CHECK(connected.participants.at(0).described && !connected.participants.at(0).on.empty());
 }
 
 TEST_CASE(the_traffic_for_people_is_a_line_and_a_table)

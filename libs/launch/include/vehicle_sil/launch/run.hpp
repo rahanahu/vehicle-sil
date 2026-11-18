@@ -543,7 +543,7 @@ inline constexpr std::string_view kManualRegistryUri = "silkit://127.0.0.1:8500"
 namespace detail {
 /// The check that run_file() runs with: a copy of `check` (that passed) with one participant at the
 /// end for each network that --connect connects (CheckReport::outside, in its order): the bridge
-/// bridge.<network> (role: bridge, required: false, its network's line, for_network set), with a
+/// bridge.<network> (role: bridge, required: false, its network's line), with a
 /// ParticipantResult that is NotChecked and has the bridge's executable. Without --connect the copy
 /// is the same as `check`.
 [[nodiscard]] CheckReport with_bridges(const CheckReport& check);

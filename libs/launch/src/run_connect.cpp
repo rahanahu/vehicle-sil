@@ -31,7 +31,6 @@ CheckReport with_bridges(const CheckReport& check)
         p.enabled = true;
         p.role = ParticipantRole::Bridge;
         p.role_written = true;
-        p.for_network = outside.network;
         p.line = network != out.config->networks.end() ? network->line : 0;
         p.command_line = p.line;
         p.step_line = p.line;

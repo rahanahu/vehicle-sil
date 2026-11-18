@@ -92,18 +92,17 @@ RunOutput::RunOutput(const RunContext& ctx) : ctx_(ctx)
     outside_.resize(ctx.config.participants.size());
     states_.resize(ctx.config.participants.size());
     last_statistics_.resize(ctx.config.participants.size());
-    for (const ParticipantConfig& p : ctx.config.participants)
-    {
-        const auto outside = std::find_if(ctx.check.outside.begin(), ctx.check.outside.end(), [&p](const NetworkOutside& o) {
-            return !p.for_network.empty() && o.network == p.for_network;
-        });
-        tools_.push_back(outside != ctx.check.outside.end() ? outside->tool : std::string{});
-    }
+}
+
+const NetworkOutside* RunOutput::outside_of(std::size_t index) const
+{
+    const std::optional<NetworkOutside>& outside = ctx_.plan.members[index].outside;
+    return outside ? &*outside : nullptr;
 }
 
 void RunOutput::write_outside(std::size_t index, const OutsideCounts& counts) const
 {
-    event([&](EventStream& e) { e.outside(ctx_.config.participants[index].for_network, counts.to_outside, counts.from_outside); });
+    event([&](EventStream& e) { e.outside(outside_of(index)->network, counts.to_outside, counts.from_outside); });
 }
 
 void RunOutput::write(const std::string& line) const
@@ -172,16 +171,16 @@ void RunOutput::on_line(std::size_t index, std::string_view line)
     {
         *logs_[index] << line << '\n' << std::flush;
     }
-    if (!ctx_.config.participants[index].for_network.empty())
+    if (const NetworkOutside* outside = outside_of(index); outside != nullptr)
     {
         last_lines_[index].add(line);
         // The launcher's to read while the bridge runs: the event "outside" and the result show its
         // counts; the last such line is shown once at the end (take_counts()).
-        if (const auto all = read_outside_stats(tools_[index], line))
+        if (const auto all = read_outside_stats(outside->tool, line))
         {
             states_[index].on_counts(*all);
         }
-        if (const auto counts = read_outside_counts(tools_[index], line))
+        if (const auto counts = read_outside_counts(outside->tool, line))
         {
             if (const auto now = outside_[index].on_counts(*counts, std::chrono::steady_clock::now()))
             {
@@ -225,13 +224,10 @@ void RunOutput::on_line(std::size_t index, std::string_view line)
 
 void RunOutput::say_link_change(std::size_t index, const std::string& what, std::chrono::steady_clock::time_point now)
 {
-    const std::string& network = ctx_.config.participants[index].for_network;
-    const auto outside = std::find_if(ctx_.check.outside.begin(), ctx_.check.outside.end(),
-                                      [&network](const NetworkOutside& o) { return o.network == network; });
+    const NetworkOutside& outside = *outside_of(index);
     char seconds[32];
     std::snprintf(seconds, sizeof seconds, "%.2f", std::chrono::duration<double>(now - began_).count());
-    say_held("outside: " + network + " -> " + (outside != ctx_.check.outside.end() ? outside->target : std::string{}) + ": " +
-             what + " at " + seconds + " s");
+    say_held("outside: " + outside.network + " -> " + outside.target + ": " + what + " at " + seconds + " s");
 }
 
 void RunOutput::say_outside_shared(std::size_t index, const OutsideForeign& foreign, std::chrono::steady_clock::time_point now)
@@ -295,7 +291,7 @@ std::optional<std::size_t> RunOutput::outside_shared(std::chrono::steady_clock::
     std::optional<std::size_t> stop;
     for (std::size_t i = 0; i < states_.size(); ++i)
     {
-        if (tools_[i].empty())
+        if (outside_of(i) == nullptr)
         {
             continue; // not a bridge of --connect
         }
