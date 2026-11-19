@@ -79,7 +79,7 @@ Windows でも、ランチャーを起動する前に同じようにシェルで
 | `hub.receive_step` | span | ハブが受け取ったエージェントのステップのメッセージ（結果、イベント、標本） | エージェントのステップ | バイト数 |
 | `hub.receive_answer` | span | エージェントの答えの受信（`answer` の矢印の終わり） | | seq |
 | `agent.receive_command` | span | このエージェント宛てのコマンド。受け付けて答える（`command` の終わり、`answer` の始まり） | | seq |
-| `agent.receive_other` | span | 同じグループのほかのエージェント宛てのメッセージ（グループのエージェントには互いのコマンドも届く。internals/control.md の「トピック」） | | |
+| `agent.receive_other` | span | ほかのエージェント宛てのメッセージ。同じグループのもの（グループのエージェントには互いのコマンドも届く）と、hello のなかったセッションの最後の通知への返事（全エージェントに届く）。internals/control.md の「トピック」 | | |
 | `agent.step_begin` | span | エージェントが時刻の来たコマンドを適用する | ステップ | コマンドの数 |
 | `agent.apply` | instant | コマンド 1 つの適用 | ステップ | seq |
 | `agent.late` | instant | 遅れとして断ったコマンド 1 つ | ステップ | seq |

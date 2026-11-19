@@ -319,7 +319,9 @@ Agent と Hub の間を publish/subscribe で運ぶ層（`vehicle_sil::control_s
 
 `CreateDataPublisher` は、発行者の登録を participant の I/O スレッドに任せて、その完了を待ちます。そのため、そのスレッド（受信のハンドラーやステップのハンドラー）からは呼べません（自分を待って止まります）。`HubTransport` は、発行者を全部コンストラクターで作ります。
 
-発行者は、合う購読者（トピック、メディアの型、ラベル）を持つ participant にだけ送信します。種類が Optional のラベルは、相手にそのキーがないときと、値が同じときに合い、値が違うと合いません。Hub のコマンドの、Agent のグループごとの発行者は、これを前提にしています（テスト `control_silkit.a_command_reaches_the_agents_of_its_group_only_and_in_the_order_written`）。
+ラベル（文書にある規則）: 種類が Optional のラベルは、相手にそのキーがないときと、値が同じときに合い、値が違うと合いません。合わない発行者と購読者は通信しません。Hub のコマンドの、Agent のグループごとの発行者の正しさは、これを前提にしています。Agent は、自分のグループの発行者と、ラベルのない発行者から受け取ります（テスト `control_silkit.a_command_reaches_the_agents_of_its_group_only_and_in_the_order_written`、`control_silkit.a_last_word_is_answered_also_for_a_session_that_has_ended_or_was_never_connected`）。
+
+送信（実装を読んで頼っていること。文書にはない）: 発行者はそれぞれ自分の link を持ち、メッセージはその発行者に合った購読者を持つ participant にだけ送られます。ほかの participant には何も届きません。グループの速さだけがこれに頼ります。SIL Kit が全 participant に送って受け手の側で絞るようになっても、コマンドはグループの前と同じく届きます。
 
 履歴 1 の発行者が最後に送信したメッセージは、後から購読した相手にも届きます（発行者の participant が接続している間）。participant を始める前に送信した hello も届きます。
 

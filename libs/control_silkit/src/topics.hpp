@@ -35,11 +35,14 @@ inline SilKit::Services::PubSub::PubSubSpec spec(const char* topic)
 // of the participant's name, so that every process (on any machine) finds the same one. Agents of
 // one group still receive each other's commands and drop them by the session. Optional labels
 // (SIL Kit): a subscriber or publisher without the label matches every group, so an agent without
-// it receives every command, and a hub without it reaches every agent.
+// it receives every command, and a hub without it reaches every agent. Changing the hash or the
+// number of groups breaks hubs and agents of other builds: raise wire::kVersion with it.
 inline constexpr std::size_t kCommandGroups = 32;
 inline constexpr const char* kGroupLabel = "vehicle_sil.control.group";
 
-/// The group of the agent of `participant`: FNV-1a (32 bits) of its name, modulo kCommandGroups.
+/// The group of the agent of `participant`: FNV-1a (32 bits) of its name, its upper half folded
+/// into the lower (else the group would depend on the low bits of each byte only: names that
+/// differ in case alone would share it), modulo kCommandGroups.
 inline std::size_t command_group(std::string_view participant)
 {
     std::uint32_t h = 2166136261U;
@@ -48,6 +51,7 @@ inline std::size_t command_group(std::string_view participant)
         h ^= static_cast<std::uint8_t>(c);
         h *= 16777619U;
     }
+    h ^= h >> 16;
     return h % kCommandGroups;
 }
 

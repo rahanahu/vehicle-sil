@@ -490,7 +490,7 @@ A hello is always a single message, because a subscriber that joins later receiv
 - Commands go to the ECUs of one group, not to every ECU. A participant's group is a hash of its name (FNV-1a of the bytes, modulo 32), the same on every machine. `HubTransport` makes one command publisher per group before the start, with the group as an Optional SIL Kit label (`vehicle_sil.control.group`), and each `AgentTransport` subscribes with the label of its own group.
 - The probes, the commands and the answer to the last word for one Agent all go out on its group's publisher, so they arrive in the order sent.
 - ECUs of the same group receive each other's commands and drop the ones that are not addressed to them (the session).
-- `HubTransport` also has a command publisher without a label, which reaches every ECU. It only answers the last word of a session it has no connection for.
+- `HubTransport` also has a command publisher without a label, which reaches every ECU. It only answers the last word of a session that never said hello (a session that has ended is answered on its group's publisher).
 - Do not create SIL Kit services whose names start with these names.
 
 ### ECU-side threads (`AgentTransport`)

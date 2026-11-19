@@ -14,7 +14,6 @@
 #include <deque>
 #include <map>
 #include <mutex>
-#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -57,7 +56,7 @@ struct HubTransport::State
         /// of that group and keep their order. The participant's; not used once `closed`.
         std::vector<pubsub::IDataPublisher*> groups;
         /// Without a group: reaches every agent. Only for the answer to the last word of a session
-        /// that has no link (its participant, and so its group, is not known).
+        /// that never said hello (its participant, and so its group, is not known).
         pubsub::IDataPublisher* every = nullptr;
         ParticipantRuntime* runtime = nullptr; ///< not used once `closed`
         bool closed = false;
@@ -110,17 +109,17 @@ struct HubTransport::State
     std::map<std::string, LinkInfo, std::less<>> names;    ///< by participant: the latest hello
     std::map<std::string, std::uint64_t, std::less<>> current; ///< by participant: its connected session
     /// The sessions that ended last (at most kEndedKept, oldest first in ended_order): their hello,
-    /// seen again, makes no new link.
+    /// seen again, makes no new link; their last word is answered on their group's publisher.
     static constexpr std::size_t kEndedKept = 1024;
-    std::set<std::uint64_t> ended;
+    std::map<std::uint64_t, pubsub::IDataPublisher*> ended;
     std::deque<std::uint64_t> ended_order;
 
     /// With `mutex` held.
-    void remember_ended(std::uint64_t session)
+    void remember_ended(const Link& link)
     {
-        if (ended.insert(session).second)
+        if (ended.emplace(link.session, link.commands).second)
         {
-            ended_order.push_back(session);
+            ended_order.push_back(link.session);
             if (ended_order.size() > kEndedKept)
             {
                 ended.erase(ended_order.front());
@@ -164,13 +163,17 @@ struct HubTransport::State
     /// A message of a session that is not connected: counted, unless the session has ended (what
     /// an agent still sends after its connection was ended for its participant's failure, such
     /// as its last word, is expected).
-    void count_unknown(std::uint64_t session)
+    /// @returns the publisher of its group if the session has ended, else null.
+    pubsub::IDataPublisher* count_unknown(std::uint64_t session)
     {
         const std::lock_guard lock(mutex);
-        if (ended.count(session) == 0)
+        const auto it = ended.find(session);
+        if (it == ended.end())
         {
             n_unknown.fetch_add(1, std::memory_order_relaxed);
+            return nullptr;
         }
+        return it->second;
     }
 
     [[nodiscard]] std::shared_ptr<Link> find(std::uint64_t session) const
@@ -187,7 +190,7 @@ struct HubTransport::State
         link->close();
         {
             const std::lock_guard lock(mutex);
-            remember_ended(link->session);
+            remember_ended(*link);
             if (sessions.erase(link->session) == 0)
             {
                 return; // ended already (by the other of: the last word, the lifecycle, the destructor)
@@ -209,9 +212,10 @@ struct HubTransport::State
     /// order does not rely on when SIL Kit writes what is published from one of its handlers).
     /// Also for a session that has ended already or was never connected: nothing waits here for
     /// that agent, and it need not wait either. An agent that does not know the answer ignores
-    /// it. On a receive handler (handler_mutex held), as a probe. On the link's publisher when
-    /// there is a link (`link` may be null).
-    void answer_last_word(std::uint64_t session, const Link* link)
+    /// it. On a receive handler (handler_mutex held), as a probe. On the publisher of the
+    /// session's group (`to`: its link's, or the one it had when it ended); without one (a
+    /// session that never said hello), on the publisher that reaches every agent.
+    void answer_last_word(std::uint64_t session, pubsub::IDataPublisher* to)
     {
         const std::lock_guard lock(sender->mutex);
         if (sender->closed)
@@ -222,7 +226,7 @@ struct HubTransport::State
         // Counted first: whoever receives the answer may look at the count at once (this does
         // not rely on when SIL Kit writes what is published from one of its handlers).
         n_last_words.fetch_add(1, std::memory_order_relaxed);
-        (link != nullptr ? link->commands : sender->every)->Publish(detail::span_of(sender->bytes));
+        (to != nullptr ? to : sender->every)->Publish(detail::span_of(sender->bytes));
     }
 
     void on_hello(const pubsub::DataMessageEvent& event)
@@ -321,7 +325,7 @@ struct HubTransport::State
                 if (const auto old = sessions.find(it->second); old != sessions.end())
                 {
                     replaced = old->second;
-                    remember_ended(old->first);
+                    remember_ended(*old->second);
                     sessions.erase(old);
                 }
             }
@@ -363,10 +367,10 @@ struct HubTransport::State
         const auto link = find(step.session);
         if (!link)
         {
-            count_unknown(step.session);
+            pubsub::IDataPublisher* const group = count_unknown(step.session);
             if (step.final)
             {
-                answer_last_word(step.session, nullptr);
+                answer_last_word(step.session, group);
             }
             return;
         }
@@ -405,7 +409,7 @@ struct HubTransport::State
         if (step.final)
         {
             end(link, "the participant's control agent has ended");
-            answer_last_word(step.session, link.get());
+            answer_last_word(step.session, link->commands);
         }
     }
 

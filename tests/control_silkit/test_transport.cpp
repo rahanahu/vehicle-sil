@@ -1324,6 +1324,19 @@ namespace {
 
 /// A participant that speaks the agent's side by hand: whatever bytes the test gives it. It
 /// answers the hub's probes only if told to.
+/// The first of `prefix`0, `prefix`1, ... whose group of commands is `group` (`same`), or is not.
+std::string name_in_group(const std::string& prefix, std::size_t group, bool same)
+{
+    for (int i = 0;; ++i)
+    {
+        std::string name = prefix + std::to_string(i);
+        if ((topics::command_group(name) == group) == same)
+        {
+            return name;
+        }
+    }
+}
+
 struct RawAgent
 {
     std::string name;
@@ -1847,12 +1860,16 @@ TEST_CASE(an_agent_waits_for_the_answer_to_its_last_word_no_longer_than_it_is_to
 }
 
 // The hub's side of the answer, with an agent made by hand that takes no notice of it (as an
-// agent of an earlier version): the connection ends as it always did.
+// agent of an earlier version): the connection ends as it always did. The agents subscribe to
+// their groups' commands only, as an AgentTransport does (neither in group 0): an answer reaches
+// a connected session and one that has ended on its group's publisher, and one that never said
+// hello on the publisher that reaches every agent.
 TEST_CASE(a_last_word_is_answered_also_for_a_session_that_has_ended_or_was_never_connected)
 {
     const InProcessRegistry registry;
     HubSide side(registry.uri, {"Unused"});
-    RawAgent agent("Old", registry.uri, 55);
+    RawAgent agent(name_in_group("Old", 0, false), registry.uri, 55, true);
+    RawAgent never(name_in_group("Never", 0, false), registry.uri, 56, true);
     agent.answers.store(true);
     // What the hub's side shows at the moment the answer arrives (in the agent's receive handler:
     // an AgentTransport's destructor returns from there on): the connection has ended by then.
@@ -1863,7 +1880,7 @@ TEST_CASE(a_last_word_is_answered_also_for_a_session_that_has_ended_or_was_never
         connected_when_answered += side.hub.peers().at(0).connected ? 1 : 0;
     };
     agent.hello(3);
-    side.wait_ready({"Old"});
+    side.wait_ready({agent.name});
     const auto last_word = [](std::uint64_t session) {
         wire::Bytes scratch;
         wire::Bytes out;
@@ -1884,8 +1901,9 @@ TEST_CASE(a_last_word_is_answered_also_for_a_session_that_has_ended_or_was_never
     CHECK(eventually([&] { return agent.last_word_answers.load() == 2; }, 30s));
     CHECK_EQ(side.transport->stats().unknown, std::uint64_t{0});
     // Of a session that never said hello: answered too (and counted as a message nobody knows).
-    agent.step(last_word(56));
-    CHECK(eventually([&] { return side.transport->stats().last_words == 3; }, 30s));
+    never.step(last_word(56));
+    CHECK(eventually([&] { return never.last_word_answers.load() == 1; }, 30s));
+    CHECK_EQ(side.transport->stats().last_words, std::uint64_t{3});
     CHECK_EQ(side.transport->stats().unknown, std::uint64_t{1});
     CHECK_EQ(agent.last_word_answers.load(), 2);
 }
@@ -1981,28 +1999,18 @@ TEST_CASE(an_agent_does_not_answer_what_is_written_to_it_in_another_version)
     a.end();
 }
 
-/// The first of `prefix`0, `prefix`1, ... whose group of commands is `group` (`same`), or is not.
-std::string name_in_group(const std::string& prefix, std::size_t group, bool same)
-{
-    for (int i = 0;; ++i)
-    {
-        std::string name = prefix + std::to_string(i);
-        if ((topics::command_group(name) == group) == same)
-        {
-            return name;
-        }
-    }
-}
-
 // The group is part of what a hub and an agent of different builds (and machines) must agree on:
 // a change of the hash would make them miss each other's commands.
 TEST_CASE(the_group_of_a_participant_is_a_fixed_hash_of_its_name)
 {
-    CHECK_EQ(topics::command_group("A"), std::size_t{12});
-    CHECK_EQ(topics::command_group("B"), std::size_t{5});
-    CHECK_EQ(topics::command_group("Engine"), std::size_t{27});
-    CHECK_EQ(topics::command_group("ECU1"), std::size_t{15});
-    CHECK_EQ(topics::command_group(""), std::size_t{2166136261U % topics::kCommandGroups});
+    CHECK_EQ(topics::command_group("A"), std::size_t{7});
+    CHECK_EQ(topics::command_group("B"), std::size_t{14});
+    CHECK_EQ(topics::command_group("ECU1"), std::size_t{4});
+    CHECK_EQ(topics::command_group(""), std::size_t{25});
+    // Names that differ in case alone fall into different groups.
+    CHECK_EQ(topics::command_group("Engine"), std::size_t{26});
+    CHECK_EQ(topics::command_group("engine"), std::size_t{30});
+    CHECK_EQ(topics::command_group("ENGINE"), std::size_t{17});
 }
 
 // A probe or a command goes to the agents of its target's group only. Agents of one group still
@@ -2077,8 +2085,13 @@ TEST_CASE(an_agent_transport_receives_the_commands_of_its_group_only)
     }
     CHECK_EQ(a.transport->stats().commands, std::uint64_t{kWrites});
     CHECK(eventually([&] { return same.transport->stats().ignored >= same_before + kWrites; }, 30s));
+    // A write to `other` itself after them: its connection delivers in order, so a command for A
+    // that had gone there would have arrived before this one.
+    const std::uint64_t fence = hub.write(OperationRequest{{{other.name, "cmd", Value{std::int64_t{1}}}}});
+    check_status(settled(hub.wait_done(fence, scaled_timeout(30s)), fence, "a write to " + other.name), other.name,
+                 TargetStatus::Applied);
     CHECK_EQ(other.transport->stats().ignored, std::uint64_t{0});
-    CHECK_EQ(other.transport->stats().commands, std::uint64_t{0});
+    CHECK_EQ(other.transport->stats().commands, std::uint64_t{1});
 }
 
 // Which write a refusal is about travels as a number; the reason is never read for it.

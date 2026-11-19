@@ -319,7 +319,9 @@ Receive handlers are called on the participant's I/O thread, one at a time, in a
 
 `CreateDataPublisher` hands the registration of the publisher to the participant's I/O thread and waits for it, so it cannot be called on that thread (from a receive handler or the step handler): it would wait for itself. `HubTransport` therefore makes all its publishers in its constructor.
 
-A publisher sends only to the participants with a subscriber that matched it (topic, media type and labels). A label of kind Optional matches a counterpart without that key, and one with the same value; it does not match another value. The Hub's command publishers per group of Agents rely on this (test `control_silkit.a_command_reaches_the_agents_of_its_group_only_and_in_the_order_written`).
+Labels (documented): a label of kind Optional matches a counterpart without that key, and one with the same value; it does not match another value, and a publisher and a subscriber that do not match do not communicate. The correctness of the Hub's command publishers per group of Agents relies on this: an Agent receives its group's publisher and the one without a label (tests `control_silkit.a_command_reaches_the_agents_of_its_group_only_and_in_the_order_written`, `control_silkit.a_last_word_is_answered_also_for_a_session_that_has_ended_or_was_never_connected`).
+
+Sending (read in the implementation, not documented): each publisher has a link of its own, and a message goes only to the participants whose subscribers matched that publisher; the others receive nothing at all. Only the speed of the groups relies on this: if SIL Kit sent to every participant and filtered on the receiving side, the commands would still arrive, as before the groups.
 
 The last message sent by a publisher with history 1 also reaches receivers that subscribe later (while the publisher's participant is connected). A hello sent before the participant starts arrives too.
 
