@@ -219,29 +219,56 @@ LIN はホストに載せません。いまの 1 ステップの順序は「ア�
 
 ### `libs/launch` の層
 
+`libs/launch` は、組み立てと翻訳をします。下の層を順に呼び、見つけたものを出力として書きます。判断（構成が妥当か、いまできるか、実行が合格か）は持ちません。判断は `config`、`scenario`、`runner` にあります。ライブラリと `launch` の部分を、1 枚ずつの図に分けて描きます。
+
+4 つのライブラリ（`process`、`control_grpc` ほかは省きます）:
+
 ```mermaid
 flowchart LR
-    pure["純粋な側<br>libs/config（config、照合の規則、connect の規則、time plan）、<br>libs/scenario（scenario、timeline の記録）、<br>check の書式"]
-    assemble["check_file()、list_connections()、run_tests()"]
-    probe["計算機を調べる側<br>launch/probe.hpp、src/probe.cpp"]
-    run["実行の側<br>libs/runner（run、time_commands、run_*）"]
-    run_file["run_file()、events（launch）"]
-    assemble --> pure
-    assemble --> probe
-    run --> pure
-    run_file --> run
-    run_file --> pure
+    launch["launch（libs/launch）<br>組み立てと翻訳"]
+    runner["runner（libs/runner）<br>実行"]
+    scenario["scenario（libs/scenario）<br>scenario、timeline の記録"]
+    config["config（libs/config）<br>config、照合の規則、<br>connect の規則、time plan"]
+    launch --> runner
+    launch --> scenario
+    launch --> config
+    runner --> scenario
+    runner --> config
+    scenario --> config
 ```
 
-- 純粋な側は、値から指摘を作り、計算機を調べません。SIL Kit、`process`、`participant_runtime`、`participant_configuration`、`launch/run.hpp`、`launch/probe.hpp`、`events`、`stop_requests`、`runner.hpp`、`runner_impl.hpp`、`time_commands`、`run_*.hpp` を、直接にも、include するヘッダーを通しても含みません。
-- ランチャーが計算機について調べること（ファイルシステム、環境、起動したプロセスの出力）は `probe` に置きます。`check_file()`、`list_connections()`、`run_tests()` が `probe` を呼び、調べた結果を値か関数として純粋な側に渡します。実行の側（`libs/runner`、シミュレーションの実行）は純粋な側に依存し、`probe` は使いません（照合の結果を受け取ります）。
-- この向きは試験 `launch.pure_files_include_no_runtime`（`cmake/VehicleSilCheckIncludes.cmake`）で守ります。純粋な側に新しいファイルを足したら、`tests/launch/CMakeLists.txt` の `_launch_pure_files` に足します。
+`libs/launch/src` の 5 つの部分（`include/vehicle_sil/launch/` の公開ヘッダーは平らなままで、実装する部分に属します。`request.hpp` は `request/`、`probe.hpp` は `probe/`、`events.hpp`、`error_result.hpp`、`timeline_format.hpp` は `format/`、`command_input.hpp` は `endpoints/`、`run.hpp`、`checked.hpp`、`connections.hpp`、`test.hpp` は `usecases/`）:
+
+```mermaid
+flowchart TB
+    usecases["usecases/<br>check、run、test、connections:<br>ほかの部分を順に呼ぶ"]
+    request["request/<br>RunRequest、argv と JSON の読み取り"]
+    probe["probe/<br>計算機を調べる"]
+    format["format/<br>出力、終了コード"]
+    endpoints["endpoints/<br>stdin の命令、Control Server"]
+    usecases --> request
+    usecases --> probe
+    usecases --> format
+    usecases --> endpoints
+```
+
+| 部分 | 持つもの | include しないもの |
+|---|---|---|
+| `usecases/` | `check_file()`、`list_connections()`、`run_file()`、`run_tests()`: 調べ役、規則、計画、runner、出力の順 | （制限なし） |
+| `request/` | `RunRequest`、要求ファイルの読み取り、一緒に使えない欄の規則 | `runner`、`scenario`、`process`、SIL Kit、ほかの部分、利用場面のヘッダー |
+| `probe/` | 計算機を調べること（ファイル、環境、起動する道具）。結果は値で返す | `runner`、SIL Kit、出力、受け口、利用場面 |
+| `format/` | check、run、test、events、timeline、connections の出力（JSON とテキスト）、終了コードの表 | `probe.hpp`、SIL Kit、`control_grpc`、受け口、利用場面 |
+| `endpoints/` | stdin の命令と Control Server を、実行の操作盤への呼び出しにすること | `probe.hpp`、check、run、timeline の出力（`*_format.hpp`） |
+
+- `endpoints/` は、構成の値型と YAML の読み手（`config/detail/`）を読んでかまいません。stdin の命令は YAML か JSON で、`command_input.cpp` の `parse_command()` がそこで読みます（書く側の `format/` には置きません）。Control Server は、シミュレーションを止め、失敗を調べるので、実行のコントローラーと SIL Kit の型を使います。使うのは Control Server のファイルだけで、`VEHICLE_SIL_BUILD_CONTROL_SERVER` のときだけです。
+- ランチャーが計算機について調べること（ファイルシステム、環境、起動したプロセスの出力）は `probe/` に置きます。利用場面が `probe` を呼び、調べた結果を値か関数として規則に渡します。runner は `probe` を使いません（照合の結果を受け取ります）。
+- `request/`、`probe/`、`format/`、`endpoints/` に 1 本ずつ、向きを守る試験があります。`launch.request_boundary`、`launch.probe_boundary`、`launch.format_boundary`、`launch.endpoints_boundary` です（`tests/launch/CMakeLists.txt`。`cmake/VehicleSilCheckIncludes.cmake` の `DIR`、`FORBIDDEN_PREFIXES`、`ONLY_PREFIXES`）。部分のファイルと公開ヘッダー、それらが include するヘッダーを読みます。部分の間の私的なヘッダーは部分のディレクトリをつけて include する（`"format/check_format.hpp"`）ので、`/` で終わる禁止の前置きが部分を指します。`launch.parts_include_check_rejects_a_forbidden_include` は、禁止されたヘッダーに（ほかの部分の私的なヘッダーを通しても）届くファイルを、この検査が断ることを見せます。新しいファイルは、その部分のディレクトリに置くだけで、一覧に足す必要はありません。向きを破るファイルは、例外として一覧に載せず、移すか分けます。
 - 構成とその照合は、ライブラリ `vehicle_sil::config`（`libs/config`）です。`core` も `control_silkit` もリンクせず、`vehicle_sil/launch/` のヘッダーも、`process` の `process.hpp` と `child_process.hpp` も含みません。リンクだけでは守りきれない（SIL Kit の要らない `core` のヘッダーはコンパイルでき、`process` は `paths.hpp` のためにリンクしています）ので、2 つの試験がディレクトリを読みます。`config.no_silkit_boundary`（`cmake/VehicleSilCheckNoSilKit.cmake`）と `config.includes_no_runtime`（`cmake/VehicleSilCheckIncludes.cmake` の `DIR` と `FORBIDDEN_PREFIXES`）です。`libs/config` に足すファイルは、一覧に足す必要がありません。
 - シナリオは、ライブラリ `vehicle_sil::scenario`（`libs/scenario`）です。`config`、`control`、`sim_base` をリンクし、`core` も `control_silkit` もリンクしません。同じ形で守ります（`scenario.no_silkit_boundary`、`scenario.includes_no_runtime`: `vehicle_sil/launch/` 以下のヘッダー、`child_process.hpp`、`process.hpp` を含まない）。`config.includes_no_runtime` は、`libs/config` が `vehicle_sil/scenario/` を含まないことも守ります。
-- 実行は、ライブラリ `vehicle_sil::runner`（`libs/runner`）です。`scenario`、`config`、`control`、`process`、`sim_base` を PUBLIC に、`core` と `control_silkit` を PRIVATE にリンクします。実行の SIL Kit の部分は `RunnerImpl` の後ろにあるので、ライブラリの公開ヘッダー（`vehicle_sil/runner/`）は SIL Kit に届かず、`launch` が `core` をリンクするのは Control Server のためだけです。これに依存する `vehicle_sil/launch/` のヘッダーは含みません。ディレクトリを読む試験が 2 つあります。`runner.public_headers_need_no_silkit`（`libs/runner/include` に `cmake/VehicleSilCheckNoSilKit.cmake`）と `runner.includes_no_launcher`（`cmake/VehicleSilCheckIncludes.cmake` の `ONLY_PREFIXES`。runner 自身が、この検査が純粋な側に禁じるものを使うため）です。`config.includes_no_runtime` と `scenario.includes_no_runtime` は、それぞれのライブラリが `vehicle_sil/runner/` を含まないことも守ります。
-- 構成の照合（`config/check.hpp` の `CheckReport`）はシナリオを知りません。シナリオが構成に依存し、逆はありません。`check --scenario` が読んだものは `ScenarioCheck`（`scenario/scenario_check.hpp`）で、`check_file()` は `CheckReport` にシナリオを足した `Checked`（`launch/checked.hpp`）で返します。CheckReport に写すとシナリオが落ちるので、受けるときは `Checked` で受けます。試験 `launch.config_files_do_not_reach_the_scenario` が守ります。構成の側に新しいファイルを足したら、`tests/launch/CMakeLists.txt` の `_launch_config_files` に足します。
+- 実行は、ライブラリ `vehicle_sil::runner`（`libs/runner`）です。`scenario`、`config`、`control`、`process`、`sim_base` を PUBLIC に、`core` と `control_silkit` を PRIVATE にリンクします。実行の SIL Kit の部分は `RunnerImpl` の後ろにあるので、ライブラリの公開ヘッダー（`vehicle_sil/runner/`）は SIL Kit に届かず、`launch` が `core` をリンクするのは Control Server のためだけです。これに依存する `vehicle_sil/launch/` のヘッダーは含みません。ディレクトリを読む試験が 2 つあります。`runner.public_headers_need_no_silkit`（`libs/runner/include` に `cmake/VehicleSilCheckNoSilKit.cmake`）と `runner.includes_no_launcher`（`cmake/VehicleSilCheckIncludes.cmake` の `ONLY_PREFIXES`。runner 自身が、この検査が既定で禁じる process と SIL Kit のヘッダーを使うため）です。`runner.pure_files_include_no_runtime` は、実行のただのデータと規則（`command.hpp`、`traffic.hpp`、`control_rules.*`）が、SIL Kit、process、run、events のヘッダーを含まないことを守ります。`config.includes_no_runtime` と `scenario.includes_no_runtime` は、それぞれのライブラリが `vehicle_sil/runner/` を含まないことも守ります。
+- 構成の照合（`config/check.hpp` の `CheckReport`）はシナリオを知りません。シナリオが構成に依存し、逆はありません。`check --scenario` が読んだものは `ScenarioCheck`（`scenario/scenario_check.hpp`）で、`check_file()` は `CheckReport` にシナリオを足した `Checked`（`launch/checked.hpp`）で返します。CheckReport に写すとシナリオが落ちるので、受けるときは `Checked` で受けます。試験 `launch.config_files_do_not_reach_the_scenario` が `connections.hpp` を、`launch.request_boundary` が要求を、シナリオから守ります。
 - 例外が 1 つ残っています。`connect.cpp` の `bridge_working_directory()` が、相対のディレクトリを絶対にします。
-- 純粋な側に、計算機を調べる処理を足さないでください。`probe` に置き、結果を渡します。各部分のファイルは [code-map-launcher.md](code-map-launcher.md) にあります。
+- `probe/` の外に、計算機を調べる処理を足さないでください。そこに置き、結果を渡します。各部分のファイルは [code-map-launcher.md](code-map-launcher.md) にあります。
 
 ### 実行を計画し、観察し、閉じる形
 
@@ -259,9 +286,9 @@ flowchart LR
 - 照合・実行・テストが何を頼まれるかは、1 つの値 `RunRequest`（`launch/request.hpp`）です。2 つの部分から成ります。利用者の選択（`RunIntent`）と、呼び出し側の指定（`RunHost`。ツールとログの場所、上限、Control Server や標準入力のコマンドを求めるか）です。`check_file()`、`run_file()`、`test_file()` がこれを受け取ります。コマンドラインと要求ファイルは、これを埋める 2 つの方法です。`validate_request()`（純粋）が、一緒には成り立たない欄のルールを置く唯一の場所です。`tools/launch` は引数を欄に写すだけなので、そこでの `cli::UsageError` は引数の形の誤りを意味し、意味のルールには使いません。
 - `--request <file>` は、意図を JSON のファイルから読みます（`schema/run-request.schema.json`）。形式の読み手は 1 つ（`read_request_file()`）で、引数は欄ごとにファイルに勝ちます。値がファイルから来たときは、メッセージがファイルの名前を挙げます。
 - `--connect` が足すブリッジの印は計画にあります（`RunMember::outside`。参加者ごとに `RunMember` が 1 つ）。`ParticipantConfig` はファイルが書いたことだけを持ちます。刻みの計画は、ブリッジを足す前の、ファイルの構成で作ります。
-- 実行が見たものは、部分に分かれた `RunOutcome` です（`setup`、`start`、`end`、`control`、`scenario`、`close`、続いて `timing`、`participants` ほか）。JSON の出力の形とは別です。JSON は `format_run_json()` が書き、結果の判定は `assess_run()` が行います。実行が終わった理由は、結果の `end_reason()` です（`EndReason`。stopped と interrupted のどちらかは、最初に止めるよう頼んだものが決めます）。終了コードと、結果が成功かどうかは、1 つの表（`libs/launch/src/exit_codes.hpp`。`RunReport::exit_code()`、`RunReport::ok()`、`check_exit_code()`、`ConnectionsReport::exit_code()` が使う）から決まります。人に見せる 1 文は `RunReport::message()` で、`libs/launch/src/run_report.cpp` の `RunReport::result()` の隣にあります。
+- 実行が見たものは、部分に分かれた `RunOutcome` です（`setup`、`start`、`end`、`control`、`scenario`、`close`、続いて `timing`、`participants` ほか）。JSON の出力の形とは別です。JSON は `format_run_json()` が書き、結果の判定は `assess_run()` が行います。実行が終わった理由は、結果の `end_reason()` です（`EndReason`。stopped と interrupted のどちらかは、最初に止めるよう頼んだものが決めます）。終了コードと、結果が成功かどうかは、1 つの表（`libs/launch/src/format/exit_codes.hpp`。`RunReport::exit_code()`、`RunReport::ok()`、`check_exit_code()`、`ConnectionsReport::exit_code()` が使う）から決まります。人に見せる 1 文は `RunReport::message()` で、`libs/launch/src/format/run_report.cpp` の `RunReport::result()` の隣にあります。
 - 終了コード: 合格とオペレーターの停止は 0、失敗は 1、読めないファイルと失敗した準備は 3、使い方の誤り（読めない要求ファイルも）は 4。途中で切れたシナリオと中断には、それぞれ専用の値があります。
-- Control Server の受け口は `libs/launch`（`src/control_server.cpp`。`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけビルド。ライブラリの公開ヘッダーは gRPC のヘッダーを include しません）にあります。`run_file()` が、要求が `--control` のために指すもの（`RunHost::control`）から作り、起動し、終えます。破棄は、呼ぶ側が結果の後に行います。`tools/launch` は引数を要求に写すだけです。
+- Control Server の受け口は `libs/launch`（`src/endpoints/control_server.cpp`。`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけビルド。ライブラリの公開ヘッダーは gRPC のヘッダーを include しません）にあります。`run_file()` が、要求が `--control` のために指すもの（`RunHost::control`）から作り、起動し、終えます。破棄は、呼ぶ側が結果の後に行います。`tools/launch` は引数を要求に写すだけです。
 
 ### GUI サーバーが実行をランチャーに渡す形
 

@@ -5,10 +5,10 @@
 
 #include "vehicle_sil/launch/test.hpp"
 
-#include "check_format.hpp"
+#include "format/check_format.hpp"
 #include "vehicle_sil/config/detail/check_words.hpp"
-#include "exit_codes.hpp"
-#include "run_format.hpp"
+#include "format/exit_codes.hpp"
+#include "format/run_format.hpp"
 #include "vehicle_sil/runner/detail/run_words.hpp"
 
 #include "vehicle_sil/ecu/describe.hpp"

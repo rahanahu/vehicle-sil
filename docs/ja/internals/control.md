@@ -822,7 +822,7 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 
 ## ランチャーの Control Server（`vehicle_sil_launch run --control`）
 
-`VEHICLE_SIL_BUILD_CONTROL_SERVER` のビルドの `vehicle_sil_launch` だけが持ちます（`libs/launch/src/control_server.cpp`）。`libs/launch` が `vehicle_sil::control_grpc` をリンクするのはそのビルドだけで、含めるのは `control_server.cpp` だけです。ライブラリのそれ以外は gRPC に依存しません。ランチャーは、`run` の Hub（ECU の Agent が SIL Kit で接続する。上の「SIL Kit の上のトランスポート」）を、`ServerOptions::external_hub` で `ControlServer` に渡します。
+`VEHICLE_SIL_BUILD_CONTROL_SERVER` のビルドの `vehicle_sil_launch` だけが持ちます（`libs/launch/src/endpoints/control_server.cpp`）。`libs/launch` が `vehicle_sil::control_grpc` をリンクするのはそのビルドだけで、含めるのは `control_server.cpp` だけです。ライブラリのそれ以外は gRPC に依存しません。ランチャーは、`run` の Hub（ECU の Agent が SIL Kit で接続する。上の「SIL Kit の上のトランスポート」）を、`ServerOptions::external_hub` で `ControlServer` に渡します。
 
 ### スレッドと呼ぶもの
 

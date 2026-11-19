@@ -208,8 +208,8 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 変える場所:
 
-- `libs/launch/src/control_server.cpp`: 要求が `--control` のために指すもの（`launch/request.hpp` の `RunHost::control`）の読み取りと検査（usage の誤り）と、検査済みの `ServerOptions` から作るサーバー。`tools/launch/main.cpp` は引数を要求に写すだけです。Control Server のないビルドでは `--control` を断り、ライブラリには代わりに `src/control_server_none.cpp` が入ります
-- `launch::ControlEndpoint`（`launch/run.hpp`）。`libs/launch/src/run_file.cpp` の `run_file()` が、照合の前に Server を作り（`src/run_control_server.hpp` の `make_control_server_of_run()`）、`Runner::prepare()` と `Runner::run()` の間で起動し、戻るときに終えます。破棄は、呼ぶ側が結果の後に行います（`RunReport::ended_control_server`）。`RunLent::control_endpoint` は、呼ぶ側の自分のサーバーを代わりに貸すためのものです（試験が使います）
+- `libs/launch/src/endpoints/control_server.cpp`: 要求が `--control` のために指すもの（`launch/request.hpp` の `RunHost::control`）の読み取りと検査（usage の誤り）と、検査済みの `ServerOptions` から作るサーバー。`tools/launch/main.cpp` は引数を要求に写すだけです。Control Server のないビルドでは `--control` を断り、ライブラリには代わりに `src/control_server_none.cpp` が入ります
+- `launch::ControlEndpoint`（`launch/run.hpp`）。`libs/launch/src/usecases/run_file.cpp` の `run_file()` が、照合の前に Server を作り（`src/run_control_server.hpp` の `make_control_server_of_run()`）、`Runner::prepare()` と `Runner::run()` の間で起動し、戻るときに終えます。破棄は、呼ぶ側が結果の後に行います（`RunReport::ended_control_server`）。`RunLent::control_endpoint` は、呼ぶ側の自分のサーバーを代わりに貸すためのものです（試験が使います）
 - `TimeCommands` の `hold_before_start()`、`inspect()`、`wait_paused()`
 - `ServerOptions::external_hub`
 - `python/vehicle_sil_control/launcher.py`
@@ -244,7 +244,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 - ランチャーが尋ねる規則: `libs/runner/src/control_rules.cpp` の `scenario-running` の行と `always_refused()`
 - `libs/control_grpc/src/auth.hpp` の `Effect` と、`auth.cpp` の `rpc_rules()`
 - 拒否するコード: `control_service.cpp` の `guarded()`
-- 設定するコード: `libs/launch/src/control_server.cpp`
+- 設定するコード: `libs/launch/src/endpoints/control_server.cpp`
 
 合わせて直すドキュメント:
 

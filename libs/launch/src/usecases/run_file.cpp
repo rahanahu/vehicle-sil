@@ -6,7 +6,7 @@
 // and the control server's lifetime: the comment at the top of run.cpp.
 #include "vehicle_sil/launch/run.hpp"
 
-#include "run_control_server.hpp"
+#include "endpoints/run_control_server.hpp"
 
 #include "vehicle_sil/runner/detail/runner.hpp"
 #include "vehicle_sil/launch/events.hpp"

@@ -88,7 +88,7 @@ Implementation:
 | The reported networks under the names after `network_names` of the configuration file, with the J1939 nodes after `j1939_nodes` (`seen_networks()`) | `src/check_networks.cpp` |
 | The check rules (one function per network kind) | `src/check_rules.cpp` |
 | The check of `--connect` (`check_connections()`: the requests, the bridges found and their `--describe`); the rules that need the whole simulation (the bridge as a participant of its network, `connect-loop`) are in `check_rules.cpp` | `src/check_connect.cpp` |
-| The forms of `--connect` and the bridges' arguments. `find_tool()` (next to the launcher, then `PATH`) and the search of `PATH` that it shares with `find_executable()` (`detail::find_on_path()`) are in `libs/launch/src/probe.cpp` | `src/connect.cpp` |
+| The forms of `--connect` and the bridges' arguments. `find_tool()` (next to the launcher, then `PATH`) and the search of `PATH` that it shares with `find_executable()` (`detail::find_on_path()`) are in `libs/launch/src/probe/probe.cpp` | `src/connect.cpp` |
 | Code shared by the readers of configuration files and scenarios | `config/detail/yaml_reader.hpp` |
 | The time lock and the planned speed, `detail::plan_time_step()` (the default time step of the controller), `detail::coarse_time_step()` and `RunTiming::actual_speed()` | `src/time_plan.cpp` |
 
@@ -97,7 +97,7 @@ Implementation:
 
 ### `libs/scenario`
 
-The scenario (pure: no process, no SIL Kit; `launch.*` tests it, `scenario.*` guards its boundary). Headers of `scenario/detail/` are for the library's own parts, for `probe.cpp` (`scenario_csv.hpp`) and for tests.
+The scenario (pure: no process, no SIL Kit; `launch.*` tests it, `scenario.*` guards its boundary). Headers of `scenario/detail/` are for the library's own parts, for `probe/probe.cpp` (`scenario_csv.hpp`) and for tests.
 
 Public headers:
 
@@ -151,6 +151,8 @@ The comment at the top of `run.cpp` and the class comments in each `run_*.hpp` d
 
 ### `libs/launch`, `tools/launch`
 
+`libs/launch/src` has five parts, one directory each: `usecases/` (`check.cpp`, `connections.cpp`, `run_file.cpp`, `test.cpp`), `request/` (`request.cpp`, `request_read.cpp`), `probe/` (`probe.cpp`), `format/` (the outputs and `exit_codes.hpp`) and `endpoints/` (`command_input.cpp`, `control_server*.cpp`, `run_control_server.hpp`). The public headers below stay flat in `include/vehicle_sil/launch/`. Which part may include what is in "Layers in `libs/launch`" of [architecture.md](architecture.md#layers-in-libslaunch); put a new file in the part whose job it does.
+
 Public headers:
 
 | Name | Location |
@@ -159,8 +161,8 @@ Public headers:
 | What the launcher asks the computer it runs on: `find_executable()` and `executable_status()` (a participant's executable), `find_tool()` and `bridge_tools()` (a bridge), `run_tool()` (one run of `--describe` or of a bridge's list), `read_config_file()`, `read_scenario_file()`, `files_beside()`, `environment_value()` | `launch/probe.hpp` |
 | `vehicle_sil_launch connections`: `list_connections()`, `connections_of()` (each bridge asked once for each backend; `prefix_targets()` gives a value that `--connect` takes), `interpret_list()` (the bridge's list, or the one the launcher makes: `tool-*`), `check_requested()` (`--request`: whether the request file's targets are in the lists, by backend and name; the file is read and cut to the configuration by the functions of the request-file row), `quoted_for_shells()`, the outputs | `launch/connections.hpp` |
 | `run_file()`, its result (`RunReport`; `format_run_text()` and `format_run_json()` write it), what a run borrows (`RunLent`) and the control server as the run sees it (`ControlEndpoint`) | `launch/run.hpp` |
-| What a check, a run or a test is asked to do, as a value: `RunRequest` in two parts, `RunIntent` (the user's: variant, parameters, scenario as named, `--disable`, `--enable`, `--manual`, `--connect`, `--time-policy`, speed, `--start-paused`, `--strict`) and `RunHost` (the caller's: the file as named, where the tools and the logs are, the `--describe` and run limits, the timeline's file as named, the control server that is asked for (its address and the names of its files), whether standard-input commands are asked for). `validate_request()` (pure) holds the rules about fields that do not go together (`--param` and `--timeline` need a scenario, `--start-paused` with a scenario or without a way to go on), as findings of code `usage`; `check_file()`, `run_file()` and `test_file()` (in `TestOptions::request`) take it and make the paths of the names; `CheckOptions` has only what is not asked for (`file_only`, `params_for_many`, `fastest_by_default`). `read_request()` and `run()` in `tools/launch/main.cpp` read the arguments in the order their mistakes are reported in and call `validate_request()` at 3 points, refusing the first finding (with `--request`, once after every argument is read). Tested without a process in `tests/launch/test_request.cpp` (the rules, and what the check and the plan read of each field) | `launch/request.hpp`, `src/request.cpp` |
-| The request file of `--request` (the intent as JSON): `read_request_file()` reads its text (pure; the one reader of the format, built on `YamlReader` so that an unknown key and a key written twice read as in the other files), `with_request_file()` lays the arguments over it field by field and `merge_connect()` does so for `connect`. `RunRequest::origin` (`RequestOrigin` in `config/config.hpp`: the file's name, the keys and the networks whose value is the file's) is what the messages of `validate_request()` and `time_lock_findings()` name the file from. `connect_for_config()` (`config/check.hpp`, in `check_report.cpp`) leaves out the file's networks that the configuration lacks (`connect-network-unused`); `check_file()` reads the file's scenario from the directory of the configuration file. `probe.cpp` reads the file (`read_request_file_text()`); `tools/launch/main.cpp` only names it (`read_request_argument()`). Tested without a process in `tests/launch/test_request_file.cpp`, with the launcher in `launch_cli.request`, `launch_cli.connect` and `launch_run.connect_request` | `launch/request.hpp`, `src/request_read.cpp`, `src/request.cpp` |
+| What a check, a run or a test is asked to do, as a value: `RunRequest` in two parts, `RunIntent` (the user's: variant, parameters, scenario as named, `--disable`, `--enable`, `--manual`, `--connect`, `--time-policy`, speed, `--start-paused`, `--strict`) and `RunHost` (the caller's: the file as named, where the tools and the logs are, the `--describe` and run limits, the timeline's file as named, the control server that is asked for (its address and the names of its files), whether standard-input commands are asked for). `validate_request()` (pure) holds the rules about fields that do not go together (`--param` and `--timeline` need a scenario, `--start-paused` with a scenario or without a way to go on), as findings of code `usage`; `check_file()`, `run_file()` and `test_file()` (in `TestOptions::request`) take it and make the paths of the names; `CheckOptions` has only what is not asked for (`file_only`, `params_for_many`, `fastest_by_default`). `read_request()` and `run()` in `tools/launch/main.cpp` read the arguments in the order their mistakes are reported in and call `validate_request()` at 3 points, refusing the first finding (with `--request`, once after every argument is read). Tested without a process in `tests/launch/test_request.cpp` (the rules, and what the check and the plan read of each field) | `launch/request.hpp`, `src/request/request.cpp` |
+| The request file of `--request` (the intent as JSON): `read_request_file()` reads its text (pure; the one reader of the format, built on `YamlReader` so that an unknown key and a key written twice read as in the other files), `with_request_file()` lays the arguments over it field by field and `merge_connect()` does so for `connect`. `RunRequest::origin` (`RequestOrigin` in `config/config.hpp`: the file's name, the keys and the networks whose value is the file's) is what the messages of `validate_request()` and `time_lock_findings()` name the file from. `connect_for_config()` (`config/check.hpp`, in `check_report.cpp`) leaves out the file's networks that the configuration lacks (`connect-network-unused`); `check_file()` reads the file's scenario from the directory of the configuration file. `probe.cpp` reads the file (`read_request_file_text()`); `tools/launch/main.cpp` only names it (`read_request_argument()`). Tested without a process in `tests/launch/test_request_file.cpp`, with the launcher in `launch_cli.request`, `launch_cli.connect` and `launch_run.connect_request` | `launch/request.hpp`, `src/request/request_read.cpp`, `src/request/request.cpp` |
 | `EventStream`, which writes the events of `run --events` and implements `RunEvents` | `launch/events.hpp` |
 | `parse_command()` and `CommandInput`, which read the commands of `--stdin-commands` | `launch/command_input.hpp` |
 | `format_timeline_json()`, which writes the file of `run --timeline` from the record and the scenario's result | `launch/timeline_format.hpp` |
@@ -169,16 +171,16 @@ Implementation:
 
 | What | Location |
 |---|---|
-| The overall flow of the check (`check_file()`) | `src/check.cpp` |
-| Looking at the computer: the file system (where an executable or a bridge is, the configuration, scenario and points files), the environment (`PATH`, `VEHICLE_SIL_LISTEN_ON_NETWORK`) and the processes run for their output. The rules get what was found as values (`executable_finding()` in `config.cpp` gets the file's status) or as functions (`ConnectTools`, `ScenarioContext::read_file`); one exception left: `bridge_working_directory()` in `connect.cpp` makes a relative directory absolute | `src/probe.cpp` |
-| The networks of the check's JSON as the executable described them (`write_reported_networks()`) | `src/reported_networks.cpp` |
-| `connections`: the bridges' lists read (`TargetReader`) and passed on with every key (`write_node()`), the lists the launcher makes, the text and the JSON. The bridges run through `run_tool()` of `src/probe.cpp` (`bridge_tools()`), as their `--describe` | `src/connections.cpp` |
-| The check output | `src/check_format.cpp` |
-| The result of a wrong command line or an internal error (JSON, result event) | `src/error_result.cpp` |
-| `run_file()`: the check, the run's own controls and control server, the `Runner`'s two stages, the timeline file | `src/run_file.cpp` |
-| Reading the commands of `--stdin-commands` | `src/command_input.cpp` |
+| The overall flow of the check (`check_file()`) | `src/usecases/check.cpp` |
+| Looking at the computer: the file system (where an executable or a bridge is, the configuration, scenario and points files), the environment (`PATH`, `VEHICLE_SIL_LISTEN_ON_NETWORK`) and the processes run for their output. The rules get what was found as values (`executable_finding()` in `config.cpp` gets the file's status) or as functions (`ConnectTools`, `ScenarioContext::read_file`); one exception left: `bridge_working_directory()` in `connect.cpp` makes a relative directory absolute | `src/probe/probe.cpp` |
+| The networks of the check's JSON as the executable described them (`write_reported_networks()`) | `src/format/reported_networks.cpp` |
+| `connections`: the bridges' lists read (`TargetReader`) and passed on with every key (`write_node()`), the lists the launcher makes, the text and the JSON. The bridges run through `run_tool()` of `src/probe/probe.cpp` (`bridge_tools()`), as their `--describe` | `src/usecases/connections.cpp` |
+| The check output | `src/format/check_format.cpp` |
+| The result of a wrong command line or an internal error (JSON, result event) | `src/format/error_result.cpp` |
+| `run_file()`: the check, the run's own controls and control server, the `Runner`'s two stages, the timeline file | `src/usecases/run_file.cpp` |
+| Reading the commands of `--stdin-commands` | `src/endpoints/command_input.cpp` |
 | The command line, and the stdin and stdout threads | `tools/launch/main.cpp` |
-| The Control Server of `run --control` (only when `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`). The run sees it as a `ControlEndpoint` (`launch/run.hpp`); `run_file()` makes it from the request (`RunHost::control`) before the check, starts it between the two stages of a run (`Runner::prepare()`, `Runner::run()` in `src/run.cpp`), and ends it when it returns; the caller destroys it after the result (`RunReport::ended_control_server`) | `libs/launch/src/control_server.cpp` (the server, and reading and checking what the request names for it), `libs/launch/src/run_control_server.hpp` (what `run_file()` calls) |
+| The Control Server of `run --control` (only when `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`). The run sees it as a `ControlEndpoint` (`launch/run.hpp`); `run_file()` makes it from the request (`RunHost::control`) before the check, starts it between the two stages of a run (`Runner::prepare()`, `Runner::run()` in `src/run.cpp`), and ends it when it returns; the caller destroys it after the result (`RunReport::ended_control_server`) | `libs/launch/src/endpoints/control_server.cpp` (the server, and reading and checking what the request names for it), `libs/launch/src/endpoints/run_control_server.hpp` (what `run_file()` calls) |
 
 - Tests: `tests/launch`, `tests/multi_host`
 - `ctest -R`: `^launch\.` (no processes), `^launch_cli\.` (`check`), `^launch_run\.` (`run`), `^multi_host\.`
@@ -232,7 +234,7 @@ What `launch_docs.integrate_ecus` (`tests/launch/integrate_ecus.cmake`) compares
 |---|---|
 | `schema/simulation.schema.json` | Configuration file |
 | `schema/scenario.schema.json` | Scenario |
-| `schema/run-request.schema.json` | Request file of `check --request` and `run --request` (the code that reads it: `libs/launch/src/request_read.cpp`) |
+| `schema/run-request.schema.json` | Request file of `check --request` and `run --request` (the code that reads it: `libs/launch/src/request/request_read.cpp`) |
 | `schema/timeline.schema.json` | The file that `run --timeline` writes. It describes launcher output, for the tools that read it. It is in `schema/` of the tools archive, not in the template's `template/schema/` |
 | `gui/protocol/dashboard.schema.json` | Dashboard |
 
@@ -269,7 +271,7 @@ This test needs a Python with PyYAML and jsonschema (`uv sync`; on Windows, `min
 Where to change:
 
 - The output of `vehicle_sil_launch check` and `run` (`libs/launch/src`)
-- The result of a run: why it ended (`end_reason()`), the result (`RunReport::result()`) and the sentence for people (`RunReport::message()`) in `libs/launch/src/run_report.cpp`; the exit code and `ok` of each result in the one table of `libs/launch/src/exit_codes.hpp` (also the exit codes of `check` and `connections`)
+- The result of a run: why it ended (`end_reason()`), the result (`RunReport::result()`) and the sentence for people (`RunReport::message()`) in `libs/launch/src/format/run_report.cpp`; the exit code and `ok` of each result in the one table of `libs/launch/src/format/exit_codes.hpp` (also the exit codes of `check` and `connections`)
 - `examples/ecu_main/simulation.yaml`
 
 Documentation to update:
@@ -319,10 +321,10 @@ What a check, a run or a test is asked to do is one value, `RunRequest`. The com
 Where to change:
 
 - A field: `RunIntent` (the user's choices) or `RunHost` (the caller's) in `libs/launch/include/vehicle_sil/launch/request.hpp`. A field that a check, a run or a test reads is passed to `check_file()`, `run_file()` or `test_file()` through the request, not as another option.
-- A rule about fields that do not go together: `validate_request()` in `libs/launch/src/request.cpp`, the one place for such rules (a finding of code `usage`). A rule about what a value means for the configuration file is a check rule (see "Check rules and `code`").
+- A rule about fields that do not go together: `validate_request()` in `libs/launch/src/request/request.cpp`, the one place for such rules (a finding of code `usage`). A rule about what a value means for the configuration file is a check rule (see "Check rules and `code`").
 - The command line: `tools/launch/main.cpp` turns arguments into fields and calls `validate_request()`. Its `cli::UsageError` is for the form of an argument (a missing or malformed value, an option that another command does not take), not for rules about meaning.
-- The request file: `read_request_file()` in `libs/launch/src/request_read.cpp` is its only reader. An argument wins over the file field by field (`with_request_file()`); the GUI server only writes the file.
-- Exit codes: the one table in `libs/launch/src/exit_codes.hpp` (0 passed or stopped by the operator, 1 failed, 3 file unreadable or setup failed, 4 usage error, `kExitIncomplete` a scenario cut short, `kExitInterrupted` interrupted). `check`, `connections` and `test` use the same file.
+- The request file: `read_request_file()` in `libs/launch/src/request/request_read.cpp` is its only reader. An argument wins over the file field by field (`with_request_file()`); the GUI server only writes the file.
+- Exit codes: the one table in `libs/launch/src/format/exit_codes.hpp` (0 passed or stopped by the operator, 1 failed, 3 file unreadable or setup failed, 4 usage error, `kExitIncomplete` a scenario cut short, `kExitInterrupted` interrupted). `check`, `connections` and `test` use the same file.
 
 Code and files to update:
 
@@ -441,8 +443,8 @@ When changing events or commands consumed by the GUI, also check [GUI implementa
 
 Where to change:
 
-- The events of `run --events`, the commands of `--stdin-commands`, `version --json` (`libs/launch/src/events.cpp`, `libs/launch/src/command_input.cpp`, `tools/launch/main.cpp`)
-- The members of the event `result`: `format_result_event()` in `libs/launch/src/run_format.cpp` (`EventStream::result()` takes them as written). The event `command` of a time command or a stop: `TimeCommands::apply()` calls the function it was given (`TimeCommands::OnCommand`; `main.cpp` passes `EventStream::command()`). The event `phase`: `RunControls::set_phase()` calls the function the controls were given (`RunControls::Observers`; `main.cpp` passes `EventStream::phase()`, and a run that makes its own controls writes to `RunObservers::events`)
+- The events of `run --events`, the commands of `--stdin-commands`, `version --json` (`libs/launch/src/format/events.cpp`, `libs/launch/src/endpoints/command_input.cpp`, `tools/launch/main.cpp`)
+- The members of the event `result`: `format_result_event()` in `libs/launch/src/format/run_format.cpp` (`EventStream::result()` takes them as written). The event `command` of a time command or a stop: `TimeCommands::apply()` calls the function it was given (`TimeCommands::OnCommand`; `main.cpp` passes `EventStream::command()`). The event `phase`: `RunControls::set_phase()` calls the function the controls were given (`RunControls::Observers`; `main.cpp` passes `EventStream::phase()`, and a run that makes its own controls writes to `RunObservers::events`)
 
 Documentation to update:
 

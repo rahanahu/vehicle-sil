@@ -88,7 +88,7 @@
 | 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で、J1939 のノードを `j1939_nodes` を当てた値で渡す（`seen_networks()`） | `src/check_networks.cpp` |
 | 照合のルール（ネットワークは種類ごとの関数） | `src/check_rules.cpp` |
 | `--connect` の照合（`check_connections()`: 要求、見つけたブリッジとその `--describe`）。シミュレーション全体が要るルール（ブリッジをネットワークの participant に数える、`connect-loop`）は `check_rules.cpp` | `src/check_connect.cpp` |
-| `--connect` の形とブリッジの引数。`find_tool()`（ランチャーの隣、次に `PATH`）と、それが `find_executable()` と共有する `PATH` の探索（`detail::find_on_path()`）は `libs/launch/src/probe.cpp` | `src/connect.cpp` |
+| `--connect` の形とブリッジの引数。`find_tool()`（ランチャーの隣、次に `PATH`）と、それが `find_executable()` と共有する `PATH` の探索（`detail::find_on_path()`）は `libs/launch/src/probe/probe.cpp` | `src/connect.cpp` |
 | 設定ファイルとシナリオの読み取りの共通の部分 | `config/detail/yaml_reader.hpp` |
 | 時間の固定と計画した速さ、`detail::plan_time_step()`（コントローラーの既定のステップ）、`detail::coarse_time_step()`、`RunTiming::actual_speed()` | `src/time_plan.cpp` |
 
@@ -151,6 +151,8 @@
 
 ### `libs/launch`、`tools/launch`
 
+`libs/launch/src` は 5 つの部分に分かれ、ディレクトリが 1 つずつあります。`usecases/`（`check.cpp`、`connections.cpp`、`run_file.cpp`、`test.cpp`）、`request/`（`request.cpp`、`request_read.cpp`）、`probe/`（`probe.cpp`）、`format/`（出力と `exit_codes.hpp`）、`endpoints/`（`command_input.cpp`、`control_server*.cpp`、`run_control_server.hpp`）です。下の公開ヘッダーは `include/vehicle_sil/launch/` に平らなまま置きます。どの部分が何を include してよいかは [architecture.md](architecture.md#libslaunch-の層) の「`libs/launch` の層」にあります。新しいファイルは、その仕事をする部分に置きます。
+
 公開ヘッダー:
 
 | 名前 | 場所 |
@@ -159,8 +161,8 @@
 | ランチャーが、動いているコンピューターに尋ねること: `find_executable()` と `executable_status()`（participant の実行ファイル）、`find_tool()` と `bridge_tools()`（ブリッジ）、`run_tool()`（`--describe` やブリッジの一覧の 1 回の実行）、`read_config_file()`、`read_scenario_file()`、`files_beside()`、`environment_value()` | `launch/probe.hpp` |
 | `vehicle_sil_launch connections` の `list_connections()`、`connections_of()`（backend ごとに各ブリッジに 1 回だけ聞く。`prefix_targets()` が `--connect` の受ける値にする）、`interpret_list()`（ブリッジの一覧か、ランチャーが作る一覧: `tool-*`）、`check_requested()`（`--request`: 要求ファイルの先が一覧にあるか。backend と名前で比べる。ファイルを読み構成に合わせて切るのは、要求ファイルの行の関数）、`quoted_for_shells()`、出力 | `launch/connections.hpp` |
 | `run_file()`、その結果（`RunReport`。書くのは `format_run_text()` と `format_run_json()`）、実行が借りるもの（`RunLent`）、実行から見た Control Server（`ControlEndpoint`） | `launch/run.hpp` |
-| check、run、test が何を頼まれたかを、値にしたもの: `RunRequest`。2 つの部分に分かれる。`RunIntent`（利用者のもの: variant、パラメーター、利用者が書いたとおりのシナリオ、`--disable`、`--enable`、`--manual`、`--connect`、`--time-policy`、速さ、`--start-paused`、`--strict`）と `RunHost`（呼ぶ側のもの: 利用者が書いたとおりのファイル、道具とログの場所、`--describe` と実行の期限、利用者が書いたとおりのタイムラインのファイル、求められた Control Server（アドレスとファイルの名前）、標準入力の命令を求めているか）。`validate_request()`（純粋）が、一緒には使えない欄の規則（`--param` と `--timeline` にはシナリオが要る、`--start-paused` をシナリオと使う、続ける手段なしに使う）を、code が `usage` の指摘として持つ。`check_file()`、`run_file()`、`test_file()`（`TestOptions::request`）がこれを受け、名前からパスを作る。`CheckOptions` に残るのは、頼まれたことではないものだけ（`file_only`、`params_for_many`、`fastest_by_default`）。`tools/launch/main.cpp` の `read_request()` と `run()` が、誤りを報告する順に引数を読み、3 か所で `validate_request()` を呼んで最初の指摘を断る（`--request` があるときは、全部の引数を読んだ後に 1 度）。プロセスなしの試験は `tests/launch/test_request.cpp`（規則と、check と計画が欄ごとに読むもの） | `launch/request.hpp`、`src/request.cpp` |
-| `--request` の要求ファイル（意図を JSON にしたもの）: `read_request_file()` が文を読む（純粋。この形式の読み手は 1 つで、`YamlReader` から作ってあるので、知らないキーと 2 回書いたキーの文がほかのファイルと同じになる）。`with_request_file()` が欄ごとに引数を重ね、`connect` は `merge_connect()` が重ねる。`RunRequest::origin`（`config/config.hpp` の `RequestOrigin`: ファイルの名前と、値がファイルから来たキーとネットワーク）を見て、`validate_request()` と `time_lock_findings()` の文がファイル名を書く。`connect_for_config()`（`config/check.hpp`。実体は `check_report.cpp`）が、設定ファイルにないファイルのネットワークを外す（`connect-network-unused`）。`check_file()` は、ファイルのシナリオを設定ファイルのディレクトリから読む。ファイルを読むのは `probe.cpp`（`read_request_file_text()`）で、`tools/launch/main.cpp` は名前を渡すだけ（`read_request_argument()`）。プロセスなしの試験は `tests/launch/test_request_file.cpp`、ランチャーを使う試験は `launch_cli.request`、`launch_cli.connect`、`launch_run.connect_request` | `launch/request.hpp`、`src/request_read.cpp`、`src/request.cpp` |
+| check、run、test が何を頼まれたかを、値にしたもの: `RunRequest`。2 つの部分に分かれる。`RunIntent`（利用者のもの: variant、パラメーター、利用者が書いたとおりのシナリオ、`--disable`、`--enable`、`--manual`、`--connect`、`--time-policy`、速さ、`--start-paused`、`--strict`）と `RunHost`（呼ぶ側のもの: 利用者が書いたとおりのファイル、道具とログの場所、`--describe` と実行の期限、利用者が書いたとおりのタイムラインのファイル、求められた Control Server（アドレスとファイルの名前）、標準入力の命令を求めているか）。`validate_request()`（純粋）が、一緒には使えない欄の規則（`--param` と `--timeline` にはシナリオが要る、`--start-paused` をシナリオと使う、続ける手段なしに使う）を、code が `usage` の指摘として持つ。`check_file()`、`run_file()`、`test_file()`（`TestOptions::request`）がこれを受け、名前からパスを作る。`CheckOptions` に残るのは、頼まれたことではないものだけ（`file_only`、`params_for_many`、`fastest_by_default`）。`tools/launch/main.cpp` の `read_request()` と `run()` が、誤りを報告する順に引数を読み、3 か所で `validate_request()` を呼んで最初の指摘を断る（`--request` があるときは、全部の引数を読んだ後に 1 度）。プロセスなしの試験は `tests/launch/test_request.cpp`（規則と、check と計画が欄ごとに読むもの） | `launch/request.hpp`、`src/request/request.cpp` |
+| `--request` の要求ファイル（意図を JSON にしたもの）: `read_request_file()` が文を読む（純粋。この形式の読み手は 1 つで、`YamlReader` から作ってあるので、知らないキーと 2 回書いたキーの文がほかのファイルと同じになる）。`with_request_file()` が欄ごとに引数を重ね、`connect` は `merge_connect()` が重ねる。`RunRequest::origin`（`config/config.hpp` の `RequestOrigin`: ファイルの名前と、値がファイルから来たキーとネットワーク）を見て、`validate_request()` と `time_lock_findings()` の文がファイル名を書く。`connect_for_config()`（`config/check.hpp`。実体は `check_report.cpp`）が、設定ファイルにないファイルのネットワークを外す（`connect-network-unused`）。`check_file()` は、ファイルのシナリオを設定ファイルのディレクトリから読む。ファイルを読むのは `probe.cpp`（`read_request_file_text()`）で、`tools/launch/main.cpp` は名前を渡すだけ（`read_request_argument()`）。プロセスなしの試験は `tests/launch/test_request_file.cpp`、ランチャーを使う試験は `launch_cli.request`、`launch_cli.connect`、`launch_run.connect_request` | `launch/request.hpp`、`src/request/request_read.cpp`、`src/request/request.cpp` |
 | `EventStream`（`run --events` のイベントを書き、`RunEvents` を実装します） | `launch/events.hpp` |
 | `parse_command()` と `CommandInput`（`--stdin-commands` のコマンドを読む） | `launch/command_input.hpp` |
 | 記録とシナリオの結果から `run --timeline` のファイルを作る `format_timeline_json()` | `launch/timeline_format.hpp` |
@@ -169,16 +171,16 @@
 
 | 内容 | 場所 |
 |---|---|
-| 照合の全体の流れ（`check_file()`） | `src/check.cpp` |
-| コンピューターを調べる: ファイルシステム（実行ファイルやブリッジの場所、設定ファイル、シナリオ、点のファイル）、環境変数（`PATH`、`VEHICLE_SIL_LISTEN_ON_NETWORK`）、出力を読むために動かすプロセス。ルールは調べた結果を値（`config.cpp` の `executable_finding()` はファイルの状態を受け取る）か関数（`ConnectTools`、`ScenarioContext::read_file`）で受け取る。例外が 1 つ残る: `connect.cpp` の `bridge_working_directory()` は相対のディレクトリを絶対にする | `src/probe.cpp` |
-| check の JSON に、実行ファイルが申告したとおりのネットワークを書く（`write_reported_networks()`） | `src/reported_networks.cpp` |
-| `connections`: ブリッジの一覧を読み（`TargetReader`）、キーをすべてそのまま渡す（`write_node()`）こと、ランチャーが作る一覧、文と JSON。ブリッジは、`--describe` と同じく `src/probe.cpp` の `run_tool()`（`bridge_tools()`）で起こします | `src/connections.cpp` |
-| 照合の出力 | `src/check_format.cpp` |
-| 間違ったコマンドラインや内部の誤りの結果（JSON、結果のイベント） | `src/error_result.cpp` |
-| `run_file()`: 照合、実行が自分で作る操作盤と Control Server、`Runner` の 2 つの段、タイムラインのファイル | `src/run_file.cpp` |
-| `--stdin-commands` のコマンドを読む | `src/command_input.cpp` |
+| 照合の全体の流れ（`check_file()`） | `src/usecases/check.cpp` |
+| コンピューターを調べる: ファイルシステム（実行ファイルやブリッジの場所、設定ファイル、シナリオ、点のファイル）、環境変数（`PATH`、`VEHICLE_SIL_LISTEN_ON_NETWORK`）、出力を読むために動かすプロセス。ルールは調べた結果を値（`config.cpp` の `executable_finding()` はファイルの状態を受け取る）か関数（`ConnectTools`、`ScenarioContext::read_file`）で受け取る。例外が 1 つ残る: `connect.cpp` の `bridge_working_directory()` は相対のディレクトリを絶対にする | `src/probe/probe.cpp` |
+| check の JSON に、実行ファイルが申告したとおりのネットワークを書く（`write_reported_networks()`） | `src/format/reported_networks.cpp` |
+| `connections`: ブリッジの一覧を読み（`TargetReader`）、キーをすべてそのまま渡す（`write_node()`）こと、ランチャーが作る一覧、文と JSON。ブリッジは、`--describe` と同じく `src/probe/probe.cpp` の `run_tool()`（`bridge_tools()`）で起こします | `src/usecases/connections.cpp` |
+| 照合の出力 | `src/format/check_format.cpp` |
+| 間違ったコマンドラインや内部の誤りの結果（JSON、結果のイベント） | `src/format/error_result.cpp` |
+| `run_file()`: 照合、実行が自分で作る操作盤と Control Server、`Runner` の 2 つの段、タイムラインのファイル | `src/usecases/run_file.cpp` |
+| `--stdin-commands` のコマンドを読む | `src/endpoints/command_input.cpp` |
 | コマンドラインと、標準入力・標準出力のスレッド | `tools/launch/main.cpp` |
-| `run --control` の Control Server（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ）。実行からは `ControlEndpoint` として見える（`launch/run.hpp`）。`run_file()` が、照合の前に要求（`RunHost::control`）から作り、実行の 2 つの段（`src/run.cpp` の `Runner::prepare()` と `Runner::run()`）の間で起動し、戻るときに終える。破棄は、呼ぶ側が結果の後に行う（`RunReport::ended_control_server`） | `libs/launch/src/control_server.cpp`（サーバーと、要求がそのために指すものの読み取りと検査）、`libs/launch/src/run_control_server.hpp`（`run_file()` が呼ぶもの） |
+| `run --control` の Control Server（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ）。実行からは `ControlEndpoint` として見える（`launch/run.hpp`）。`run_file()` が、照合の前に要求（`RunHost::control`）から作り、実行の 2 つの段（`src/run.cpp` の `Runner::prepare()` と `Runner::run()`）の間で起動し、戻るときに終える。破棄は、呼ぶ側が結果の後に行う（`RunReport::ended_control_server`） | `libs/launch/src/endpoints/control_server.cpp`（サーバーと、要求がそのために指すものの読み取りと検査）、`libs/launch/src/endpoints/run_control_server.hpp`（`run_file()` が呼ぶもの） |
 
 - テスト: `tests/launch`、`tests/multi_host`
 - `ctest -R`: `^launch\.`（プロセスなし）、`^launch_cli\.`（`check`）、`^launch_run\.`（`run`）、`^multi_host\.`
@@ -232,7 +234,7 @@
 |---|---|
 | `schema/simulation.schema.json` | 設定ファイル |
 | `schema/scenario.schema.json` | シナリオ |
-| `schema/run-request.schema.json` | `check --request` と `run --request` の要求ファイル（読むコードは `libs/launch/src/request_read.cpp`） |
+| `schema/run-request.schema.json` | `check --request` と `run --request` の要求ファイル（読むコードは `libs/launch/src/request/request_read.cpp`） |
 | `schema/timeline.schema.json` | `run --timeline` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。ツールのアーカイブの `schema/` に入れ、テンプレートの `template/schema/` には置かない |
 | `gui/protocol/dashboard.schema.json` | ダッシュボード |
 
@@ -269,7 +271,7 @@
 変える場所:
 
 - `vehicle_sil_launch check` と `run` の出力（`libs/launch/src`）
-- 実行の結果: 終わった理由（`end_reason()`）、結果（`RunReport::result()`）、人に見せる 1 文（`RunReport::message()`）は `libs/launch/src/run_report.cpp`。結果ごとの終了コードと `ok` は `libs/launch/src/exit_codes.hpp` の 1 つの表（`check` と `connections` の終了コードも）
+- 実行の結果: 終わった理由（`end_reason()`）、結果（`RunReport::result()`）、人に見せる 1 文（`RunReport::message()`）は `libs/launch/src/format/run_report.cpp`。結果ごとの終了コードと `ok` は `libs/launch/src/format/exit_codes.hpp` の 1 つの表（`check` と `connections` の終了コードも）
 - `examples/ecu_main/simulation.yaml`
 
 合わせて直すドキュメント:
@@ -319,10 +321,10 @@
 変更する場所:
 
 - 欄: `libs/launch/include/vehicle_sil/launch/request.hpp` の `RunIntent`（利用者の選択）か `RunHost`（呼び出し側の指定）。照合・実行・テストが読む欄は、別のオプションにせず、要求を通して `check_file()`、`run_file()`、`test_file()` に渡します。
-- 一緒には成り立たない欄のルール: `libs/launch/src/request.cpp` の `validate_request()`。この種のルールを置く場所はここだけです（`code` が `usage` の指摘）。値が設定ファイルにとって何を意味するかのルールは、照合のルールです（「照合のルールと `code`」）。
+- 一緒には成り立たない欄のルール: `libs/launch/src/request/request.cpp` の `validate_request()`。この種のルールを置く場所はここだけです（`code` が `usage` の指摘）。値が設定ファイルにとって何を意味するかのルールは、照合のルールです（「照合のルールと `code`」）。
 - コマンドライン: `tools/launch/main.cpp` が引数を欄に写し、`validate_request()` を呼びます。ここの `cli::UsageError` は引数の形（値がない、形が違う、別のコマンドのオプション）のためで、意味のルールには使いません。
-- 要求ファイル: 読み手は `libs/launch/src/request_read.cpp` の `read_request_file()` だけです。引数は欄ごとにファイルに勝ちます（`with_request_file()`）。GUI サーバーはファイルを書くだけです。
-- 終了コード: `libs/launch/src/exit_codes.hpp` の 1 つの表（0 は合格かオペレーターの停止、1 は失敗、3 はファイルを読めないか準備の失敗、4 は使い方の誤り、`kExitIncomplete` はシナリオが途中で切れたとき、`kExitInterrupted` は中断）。`check`、`connections`、`test` も同じファイルです。
+- 要求ファイル: 読み手は `libs/launch/src/request/request_read.cpp` の `read_request_file()` だけです。引数は欄ごとにファイルに勝ちます（`with_request_file()`）。GUI サーバーはファイルを書くだけです。
+- 終了コード: `libs/launch/src/format/exit_codes.hpp` の 1 つの表（0 は合格かオペレーターの停止、1 は失敗、3 はファイルを読めないか準備の失敗、4 は使い方の誤り、`kExitIncomplete` はシナリオが途中で切れたとき、`kExitInterrupted` は中断）。`check`、`connections`、`test` も同じファイルです。
 
 更新するコードとファイル:
 
@@ -441,8 +443,8 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 
 変える場所:
 
-- `run --events` のイベント、`--stdin-commands` のコマンド、`version --json`（`libs/launch/src/events.cpp`、`libs/launch/src/command_input.cpp`、`tools/launch/main.cpp`）
-- `result` イベントの中身: `libs/launch/src/run_format.cpp` の `format_result_event()`（`EventStream::result()` は、書かれたものを受け取ります）。時刻のコマンドか stop の `command` イベント: `TimeCommands::apply()` が、渡された関数（`TimeCommands::OnCommand`。`main.cpp` は `EventStream::command()` を渡します）を呼びます。`phase` イベント: `RunControls::set_phase()` が、操作盤に渡された関数（`RunControls::Observers`。`main.cpp` は `EventStream::phase()` を渡し、自分で操作盤を作る run は `RunObservers::events` に書きます）を呼びます
+- `run --events` のイベント、`--stdin-commands` のコマンド、`version --json`（`libs/launch/src/format/events.cpp`、`libs/launch/src/endpoints/command_input.cpp`、`tools/launch/main.cpp`）
+- `result` イベントの中身: `libs/launch/src/format/run_format.cpp` の `format_result_event()`（`EventStream::result()` は、書かれたものを受け取ります）。時刻のコマンドか stop の `command` イベント: `TimeCommands::apply()` が、渡された関数（`TimeCommands::OnCommand`。`main.cpp` は `EventStream::command()` を渡します）を呼びます。`phase` イベント: `RunControls::set_phase()` が、操作盤に渡された関数（`RunControls::Observers`。`main.cpp` は `EventStream::phase()` を渡し、自分で操作盤を作る run は `RunObservers::events` に書きます）を呼びます
 
 合わせて直すドキュメント:
 
