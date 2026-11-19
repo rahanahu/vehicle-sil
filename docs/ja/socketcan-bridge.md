@@ -13,7 +13,7 @@
 
 ## 最初の接続
 
-ランチャーを使うなら、自分で registry を起こす必要はありません。`vehicle_sil_launch connections simulation.yaml` でこの PC のインターフェースを見て、`vehicle_sil_launch run --connect CAN=vcan0 simulation.yaml` が registry とこのブリッジを起動します（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。次のコマンドはブリッジを手で起動する手順で、`sil-kit-registry`（SIL Kit のリリース、またはソースからのビルドの `_deps` の下にあります） とインターフェース `vcan0` が要ります。
+ランチャーを使うなら、自分で registry を起こす必要はありません。`vehicle_sil_launch connections simulation.yaml` でこの PC のインターフェースを見て、`vehicle_sil_launch run --connect CAN=vcan0 simulation.yaml` が registry とこのブリッジを起動します（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。使う構成は `stop_at_ms` のないものにします（プロジェクトのテンプレートでは `simulation.live.yaml`。`simulation.yaml` は短い時間で止まります）。。次のコマンドはブリッジを手で起動する手順で、`sil-kit-registry`（SIL Kit のリリース、またはソースからのビルドの `_deps` の下にあります） とインターフェース `vcan0` が要ります。
 
 ```sh
 sudo modprobe vcan
@@ -91,7 +91,7 @@ CAN interfaces (--interface):
 [bridge] link bus=active link=up device=552dd508e2f03efe marked=1 shared=0
 ```
 
-`bus` は `active`、`passive`、`bus-off`、`unknown` で、「[リンクの行](bridge-contract.md#リンクの行)」と同じです。vcan の値は `unknown` だけです。`link=down` はインターフェースが down（`IFF_UP` がない）ことで、down になったときと戻ったときに `warning:` の行も出します。ブリッジは 1 秒に 4 回インターフェースを見て、送信が `ENETDOWN` で断られたときはすぐ見ます。down のあいだも動き続け、up に戻れば送受信を再開します。そのあいだフレームは送れません（断られた数は `ext_tx_failures`）。down をどれだけ許すかはランチャーが決めます。
+`bus` は `active`、`passive`、`bus-off`、`unknown` で、「[リンクの行](bridge-contract.md#リンクの行)」と同じです。vcan の値は `unknown` だけです。`link=down` はインターフェースが down（`IFF_UP` がない）ことで、down になったときと戻ったときに `warning:` の行も出します。ブリッジは 1 秒に 4 回インターフェースを見て、送信が `ENETDOWN` で断られたときはすぐ見ます。down のあいだも動き続け、up に戻れば送受信を再開します。そのあいだフレームは送れません（断られた数は `ext_tx_failures`）。`--connect` では、インターフェースが 30 秒 down のままだとランチャーが実行を止めます（simulation-run.md の「[リンクとバスの状態](simulation-run.md#リンクとバスの状態)」）。手で起動したブリッジは、自分からはあきらめません。
 
 ## バスの状態と `restart-ms`
 
