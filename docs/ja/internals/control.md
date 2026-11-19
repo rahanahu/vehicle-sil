@@ -66,7 +66,7 @@ flowchart LR
 
 - 開始はランチャーが決めます（必須の participant がそろったとき。`--start-paused` では `Resume`、`Step`、`RunUntil` で始まります）。
 - リセットはありません。やり直すには、プロセスを起動し直します。
-- CAN/LIN のチャネルと Vector のデバイスは選べません（[bridges.md](../bridges.md) の「引数」）。
+- 実行中は、Control API でネットワークのつなぎ先を変えられません。実行の前に、`--connect`、要求ファイルの `connect`、GUI のどれかで決めます（simulation-run.md の「[バスを外につなぐ](../simulation-run.md#バスを外につなぐ--connect)」）。構成ファイルは、同じファイルを完全 SIL と外部接続の両方で使うために、あえて先を持ちません。LIN のブリッジはありません。
 
 ## 設計の方針
 

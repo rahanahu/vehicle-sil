@@ -16,7 +16,7 @@ For the Ethernet Bridge (`vehicle_sil_ethernet_bridge`), see [ethernet-bridge.md
 
 ## First connection
 
-These steps connect the bridge to the first channel of Vector Virtual CAN. The bridge runs on Windows only.
+With the launcher you need no registry of your own: `vehicle_sil_launch connections simulation.yaml` lists the channels of this computer, and `vehicle_sil_launch run --connect J1939_CAN1=virtual:1 simulation.yaml` starts the registry and the bridge (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md). These steps start the bridge by hand, on Windows only, and connect it to the first channel of Vector Virtual CAN. Step 3 needs `sil-kit-registry` (from a SIL Kit release, or under `_deps` of a build from source).
 
 | Step | What you do | What you see |
 |---|---|---|
@@ -109,7 +109,7 @@ Notes on the arguments:
 - `--tx-timeout-ms` and `--bus-off-restart-ms` take effect only with init access (`--bitrate`). If you give them without init access, the bridge prints a `warning:` at startup.
 - On Windows, the bridge reads its arguments as UTF-8 from the wide-character command line. `--name` and `--network` can therefore contain non-ASCII characters.
 
-You choose the channel and the device on this command line when the bridge starts. The Control API and the configuration file (`vehicle_sil_launch`) have no setting to choose them. If you add a way to choose them to the Control API, the configuration file or the GUI, use the same model as the command line (`vehicle_sil::vector_xl::XlTarget` and the channel number).
+When you start the bridge by hand, you choose the channel and the device on this command line. With `vehicle_sil_launch`, you choose them before the run: `--connect`, the `connect` of a request file or the GUI (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md). The configuration file has no target on purpose, so one file serves a run fully in SIL Kit and a connected run, and the Control API cannot choose it while a run is going. Any other way to choose them uses the same model as the command line (`vehicle_sil::vector_xl::XlTarget` and the channel number).
 
 ### The channel list as JSON (`--json`)
 

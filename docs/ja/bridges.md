@@ -16,7 +16,7 @@
 
 ## 最初の接続
 
-Vector Virtual CAN の 1 番目のチャネルに接続する手順です。ブリッジは Windows でだけ動きます。
+ランチャーを使うなら、自分で registry を起こす必要はありません。`vehicle_sil_launch connections simulation.yaml` でこの PC のチャネルを見て、`vehicle_sil_launch run --connect J1939_CAN1=virtual:1 simulation.yaml` が registry とブリッジを起動します（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。以降は、ブリッジを手で起動して Vector Virtual CAN の 1 番目のチャネルに接続する手順で、Windows でだけ動きます。手順 3 には `sil-kit-registry`（SIL Kit のリリース、またはソースからのビルドの `_deps` の下にあります） が要ります。
 
 | 手順 | すること | 確認 |
 |---|---|---|
@@ -109,7 +109,7 @@ vehicle_sil_vector_xl_bridge --describe --network <name> --xl-target <virtual|ph
 - `--tx-timeout-ms` と `--bus-off-restart-ms` は、init 権限（`--bitrate`）があるときだけ使います。init 権限がないのに指定すると、ブリッジは起動時に `warning:` を出力します。
 - Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます。そのため、`--name` と `--network` に ASCII 以外の文字を使えます。
 
-チャネルとデバイスは、起動のときにこの CLI で決めます。Control API と設定ファイル（`vehicle_sil_launch`）には、チャネルとデバイスを選ぶ項目はありません。Control API、設定ファイル、GUI に選ぶ手段を追加するときは、CLI と同じモデル（`vehicle_sil::vector_xl::XlTarget` とチャネル番号）を使います。
+ブリッジを手で起動するときは、チャネルとデバイスをこの CLI で決めます。`vehicle_sil_launch` では、実行の前に `--connect`、要求ファイルの `connect`、GUI のどれかで決めます（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。構成ファイルは、同じファイルを完全 SIL と外部接続の両方で使うために、あえて先を持ちません。Control API では、実行中は選べません。ほかの選ぶ手段を足すときも、CLI と同じモデル（`vehicle_sil::vector_xl::XlTarget` とチャネル番号）を使います。
 
 ### チャネルの一覧の JSON（`--json`）
 
