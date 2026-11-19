@@ -735,30 +735,31 @@ TEST_CASE(a_run_that_does_not_start_ends_the_same_way_whatever_kept_it_from_star
     const std::string plain = vehicle_sil::process::utf8_from_path(config_file("plain.yaml", engine));
     RunRequest unknown_name;
     unknown_name.intent.disable = {"NoSuchParticipant"};
-    // The file cannot be read (no lock came: the pause still waits); the check failed (the lock
-    // decided the pause); a usage error found by reading the file.
+    // The file cannot be read; the check failed; a name of --disable that the file does not have
+    // (a usage error found by reading the file).
     const std::vector<std::vector<std::string>> runs = {run("no-such-directory/sim.yaml", RunRequest{}),
                                                         run(plain, RunRequest{}), run(plain, unknown_name)};
-    for (const std::vector<std::string>& told : runs)
+    // The pause waits for the time lock, which comes only with a configuration: refused at the
+    // end when the file cannot be read or the arguments do not fit it; decided by the lock when
+    // the check reads the file and then fails.
+    const std::vector<bool> waited = {true, false, true};
+    for (std::size_t i = 0; i < runs.size(); ++i)
     {
+        const std::vector<std::string>& told = runs[i];
         // The end: a state that takes no time command, the refusals of what still waited, the
         // phase, the last state; nothing is taken after it.
         const auto end = std::find(told.begin(), told.end(), "state checking not-running");
         CHECK(end != told.end());
-        std::vector<std::string> tail;
-        for (auto it = end; it != told.end(); ++it)
+        std::vector<std::string> expected = {"state checking not-running"};
+        if (waited[i])
         {
-            if (*it != "command pause not-running")
-            {
-                tail.push_back(*it);
-            }
+            expected.push_back("command pause not-running");
         }
-        CHECK((tail == std::vector<std::string>{"state checking not-running", "phase ended", "state ended not-running",
-                                                "command resume not-running", "after not-running"}));
-        // The pause was answered once: refused at the end, or decided by the lock before it.
+        expected.insert(expected.end(), {"phase ended", "state ended not-running", "command resume not-running", "after not-running"});
+        CHECK((std::vector<std::string>(end, told.end()) == expected));
+        // The pause was answered once.
         CHECK(std::count_if(told.begin(), told.end(), [](const std::string& t) { return t.starts_with("command pause"); }) == 1);
     }
-    CHECK(std::find(runs[0].begin(), runs[0].end(), "command pause not-running") != runs[0].end());
     CHECK(std::find(runs[1].begin(), runs[1].end(), "command pause accepted") != runs[1].end());
 }
 

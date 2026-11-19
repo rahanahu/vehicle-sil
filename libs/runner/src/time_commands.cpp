@@ -7,7 +7,8 @@
 // a command (the thread that reads the commands, a control server's); the run's main thread
 // attaches and detaches the controller; the start window's thread holds before the first step.
 // Taken while that mutex is held: whatever on_command and on_change take (the event stream's, for
-// the "command" and "state" events), the controller's gate's (pause, resume, run_until, set_speed,
+// the "command" and "state" events), what the `f` of look() takes (RunControls::set_phase(): the
+// event stream's, for the "phase" event), the controller's gate's (pause, resume, run_until, set_speed,
 // time_state) and whatever on_detach takes.
 // hold_before_start() calls on_hold and give_up without it.
 //

@@ -73,7 +73,7 @@ Values of `phase` in the `phase` event:
 | `stopping` | Ending the participants |
 | `ended` | Everything has ended |
 
-The phases advance in this order and never go back. A phase can be skipped: if the check fails, `ended` follows `checking`.
+The phases advance in this order and never go back. A phase can be skipped: if the check fails, `ended` follows `checking`; a run that cannot be set up goes from `starting` to `ended` (from `checking`, if it was stopped before it started). See [How a run ends](#how-a-run-ends).
 
 `check`, `registry`, `result`, `control_server`:
 
@@ -382,12 +382,12 @@ For a participant that failed during the simulation, `participant-failed` includ
 Every run that has written `phase` `checking` ends the same way, whether the simulation ran, could not be set up, or the run did not get past the check. A reader needs no special handling for each case:
 
 1. A `state` whose `allowed` takes no time command any more (`pause`, `resume`, `step`, `run_until` and `speed` have `ok: false` and the reason `not-running`).
-2. For each time command that was still waiting for the configuration to be read (only when the file could not be read), a `command` with `accepted: false` and the reason `not-running`, in the order the commands arrived.
-3. Only if the check passed: the findings decided at that point, `phase` `stopping` and the end of the participants (an internal error of the launcher before anything has started goes on with step 4).
+2. For each time command that was still waiting for the configuration (see [When time commands are accepted](#when-time-commands-are-accepted)), a `command` with `accepted: false` and the reason `not-running`, in the order the commands arrived. Commands wait only until the launcher has made a configuration of the file, so these refusals come when it could not: the file cannot be read (`result` `"unreadable"`), cannot be read as a configuration (a syntax error, not UTF-8 text, an empty file and the like: `"check_failed"`), or the arguments do not fit it (a name of `--disable`, `--enable` or `--manual` that it does not have, `--variant` missing or unknown, overrides that conflict: `"usage"`).
+3. Only if the registry and the controller were set up: the findings decided at that point, `phase` `stopping` and the end of the participants. A run whose check passed but that ends before that writes the findings that say why and goes on with step 4, without `stopping`: a stop before the start (there is no `starting` either; `"interrupted"`), log or timeline files that cannot be opened, a control server that cannot be started, a registry or a controller that cannot be set up (`"setup_failed"`). So does a run that an internal error of the launcher ends (the finding `internal`).
 4. `phase` `ended`, then the last `state` (`phase` `ended`, still taking no time command).
 5. `result`.
 
-The `state` of step 1 is not written when the one of step 4 replaces it before the reader has read it (see [The `state` event](#the-state-event)). A time command after step 1 is refused with `not-running`; a `stop` on stdin is still accepted (see [What `accepted` means](#what-accepted-means-and-the-result-of-a-stopped-run)). A run that is refused before its check (a usage error on the command line, or in the values of `--control`) reads no command and writes no `phase` and no `state`: only `hello` and `result`.
+The `state` of step 1 is not written when the one of step 4 replaces it before the reader has read it (see [The `state` event](#the-state-event)). A command that arrives while the run ends is answered before step 4 or after its `state`, never between `phase` `ended` and the last `state`. A time command after step 1 is refused with `not-running`; a `stop` on stdin is still accepted (see [What `accepted` means](#what-accepted-means-and-the-result-of-a-stopped-run)). A run that is refused before its check (a usage error on the command line, or in the values of `--control`) reads no command and writes no `phase` and no `state`: only `hello` and `result`.
 
 ### Events when the run does not start
 
@@ -397,9 +397,11 @@ The `state` of step 1 is not written when the one of step 4 replaces it before t
 |---|---|---|---|
 | Usage error (unknown option, no configuration file given, `--events` together with `--json`, a value of `--control` that is wrong, and so on) | `hello`, `result` | `"usage"` | 4 |
 | Usage error found by reading the configuration file | `hello`, `phase` (`checking`), `check`, `phase` (`ended`), `result` | `"usage"` | 4 |
-| The configuration file cannot be read | The same 5, with the `command` refusals of step 2 before `phase` (`ended`) | `"unreadable"` | 3 |
+| The configuration file cannot be read | The same 5 | `"unreadable"` | 3 |
 | The check found errors | The same 5 | `"check_failed"` | 1 |
 | No stdout (started with stdout closed) | Nothing can be written (an error is written to stderr). | | 4 |
+
+Time commands sent before the configuration was made are refused before `phase` (`ended`) when the file cannot be read, on a usage error found by reading it, and when the check fails because the file cannot be read as a configuration (step 2 of [How a run ends](#how-a-run-ends)).
 
 These usage errors are found by reading the configuration file:
 
@@ -610,7 +612,7 @@ Whether a run keeps real time (`--connect`, a `role: bridge` participant, `--tim
 - It waits. Its `command` event is written when the file has been read, with the answer of that moment. The commands that waited are answered in the order in which they arrived, before any command that arrives later, so the order of the `command` events is still the order in which the commands took effect.
 - `stop` does not wait: it is accepted at once, whatever waits.
 - At most 256 commands wait. One more is refused at once with the reason `not-set-up`; send it again after the `check` event (the file has been read then; the first `state` event comes before that).
-- If the file cannot be read, nothing starts, and the commands that waited are refused with the reason `not-running`, before `phase` `ended` (see [How a run ends](#how-a-run-ends)).
+- If the launcher cannot make a configuration of the file (it cannot be read, it cannot be read as a configuration, or the arguments do not fit it), nothing starts, and the commands that waited are refused with the reason `not-running`, before `phase` `ended` (see [How a run ends](#how-a-run-ends)).
 - The `state` event written before the file is read does not know the rule yet: its `allowed` is the answer for a run that is not connected outside. The next `state` has the rule.
 
 In a run with `--control` and `--start-paused` that pauses before the step at time 0, a `resume`, `step`, `run_until` or `pause` accepted before the pause also decides how the run pauses afterwards (see "Write before the start (`--start-paused`)" in [control-api.md](control-api.md#write-before-the-start---start-paused)).

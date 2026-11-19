@@ -483,7 +483,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 変える場所:
 
 - `libs/runner/src/time_commands.cpp` の `TimeCommands`
-- 操作盤の時間のロック: `check_file()` が、構成を読んだ直後（どの `--describe` よりも前）に `on_time_lock` を呼び、`run_file()` がそこで `RunControls::set_time_lock()` にロックを渡します。それまで `TimeCommands::apply()` は停止のほかを決めません。コマンドは届いた順に待ち、`set_time_lock()` が決めます（構成が読めなければ `detach()` が断ります。`RunControls::set_phase(Phase::Ended)` は段階を伝える前に時間のコマンドを切り離すので、始まらなかった実行も含め、どの実行も同じ形で終わります）。ロックの行と `--time-policy free` の注意は `control_rules.cpp`（`ControlSituation::time_locked`、`time_free`）
+- 操作盤の時間のロック: `check_file()` が、構成を読んだ直後（どの `--describe` よりも前）に `on_time_lock` を呼び、`run_file()` がそこで `RunControls::set_time_lock()` にロックを渡します。それまで `TimeCommands::apply()` は停止のほかを決めません。コマンドは届いた順に待ち、`set_time_lock()` が決めます（ファイルから構成ができなければ `detach()` が断ります: 読めない、構文などで読み取れない、上書きがファイルに合わない。`RunControls::set_phase(Phase::Ended)` は段階を伝える前に時間のコマンドを切り離し、段階とその状態を TimeCommands のミューテックスの中で伝えるので、始まらなかった実行も含め、どの実行も同じ形で終わります。例外で抜ける実行も `run_file()` が終えます）。ロックの行と `--time-policy free` の注意は `control_rules.cpp`（`ControlSituation::time_locked`、`time_free`）
 - 注記 `outside-time-changed` と `unsynchronized-time-changed`: `run_assess.cpp` の `time_changed_findings()`。材料は `RunOutcome::time_changed`、`time_lock`、`real_time_peers`（`time_plan.cpp` の `detail::real_time_peers()`）
 - 時刻のコマンド、停止、書き込みを受けるかどうかと、断るときの文: `libs/runner/src/control_rules.cpp` の行（`TimeCommands::apply()`、`RunControls::allowed()`、Control Server の `observe_only` が読む 1 か所。標準入力の停止も、Control Server の停止と同じく `TimeCommands::apply()` を通ります。行のテストは `tests/runner/test_control_rules.cpp`）
 - `time_plan.cpp` の `detail::plan_time_step()`（controller のタイムステップの既定）、`detail::coarse_time_step()`、`RunTiming::actual_speed()`（宣言は `time_plan.hpp`。`check.cpp` は `run.hpp` なしで使います）

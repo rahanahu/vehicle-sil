@@ -186,6 +186,30 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     } end_own_server{own_server.get()};
     ControlEndpoint* const server_of_run = lent.control_endpoint != nullptr ? lent.control_endpoint : own_server.get();
     controls.set_phase(runner::Phase::Checking);
+    // Whatever leaves run_file() by an exception from here on (an internal error of the launcher),
+    // the run ends as every run does before the caller writes the result: the time commands are
+    // refused (each that waited with its command event), then the phase `ended`. Declared before
+    // the Runner, so this comes after the Runner has gone (its participants have ended), and
+    // before the control server ends.
+    const struct EndOnException
+    {
+        runner::RunControls& controls;
+        ~EndOnException()
+        {
+            if (controls.phase() == runner::Phase::Ended)
+            {
+                return; // every way out that returns has ended the run
+            }
+            try
+            {
+                controls.set_phase(runner::Phase::Ended);
+            }
+            catch (...)
+            {
+                // The exception that leaves run_file() is the one to report; nothing more is told.
+            }
+        }
+    } end_on_exception{controls};
     // The check judges the time by what this run does (its speed and --start-paused, which it
     // reads in the request). A run reads the whole, whatever the caller's options say.
     CheckOptions check = check_options;
@@ -227,27 +251,18 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     // The control server between the Runner's two stages: after the run's files are open, before
     // the registry listens. The Runner does not know the server; it is told what became of it.
     runner::detail::ControlServerStart server;
-    try
+    // What else leaves here (not a std::exception of the server's start) leaves run_file():
+    // end_on_exception ends the run.
+    if (const std::shared_ptr<control::Hub> hub = runner.prepare(); hub && server_of_run != nullptr)
     {
-        if (const std::shared_ptr<control::Hub> hub = runner.prepare(); hub && server_of_run != nullptr)
+        try
         {
-            try
-            {
-                server.listening = server_of_run->start(hub);
-            }
-            catch (const std::exception& e)
-            {
-                server.error = e.what();
-            }
+            server.listening = server_of_run->start(hub);
         }
-    }
-    catch (...)
-    {
-        // What leaves here does not reach run(), and nothing has started: the run ends as every
-        // run does (the time commands are refused from now on, then the phase `ended`), before
-        // the caller writes the result.
-        controls.set_phase(runner::Phase::Ended);
-        throw;
+        catch (const std::exception& e)
+        {
+            server.error = e.what();
+        }
     }
     report.run = runner.run(server);
     report.findings = runner::assess_run(*report.run);

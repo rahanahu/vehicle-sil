@@ -26,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <thread>
 #include <vector>
 
 
@@ -143,6 +144,34 @@ TEST_CASE(the_phase_ended_ends_the_time_commands_before_it_is_told_whatever_came
     decided.set_phase(Phase::Ended);
     CHECK((std::vector<std::string>(failed.told.begin() + static_cast<std::ptrdiff_t>(before), failed.told.end()) ==
            std::vector<std::string>{"phase ended"}));
+}
+
+TEST_CASE(a_command_that_races_the_end_comes_before_the_phase_or_after_its_state)
+{
+    // A command applied on another thread while the run enters the phase ended (here: started by
+    // the phase's observer, which then takes its time) waits for the phase, its event and its
+    // state: the last state still follows the phase event.
+    Sequence seq;
+    StopRequests stops;
+    std::thread racer;
+    RunControls::Observers observers = seq.observers();
+    RunControls* made = nullptr;
+    observers.on_phase = [&seq, &racer, &made](Phase phase) {
+        seq.told.push_back(std::string("phase ") + vehicle_sil::runner::phase_name(phase));
+        if (phase == Phase::Ended)
+        {
+            racer = std::thread([&made] { static_cast<void>(made->time().apply(named("pause"), "stdin")); });
+            std::this_thread::sleep_for(50ms); // time enough for the racer, if nothing held it back
+        }
+    };
+    RunControls controls(stops, false, std::move(observers), false);
+    made = &controls;
+    controls.set_time_lock({});
+    controls.set_phase(Phase::Checking);
+    controls.set_phase(Phase::Ended);
+    racer.join();
+    CHECK((seq.told == std::vector<std::string>{"phase checking", "state checking ok", "state checking not-running",
+                                                "phase ended", "state ended not-running", "command pause not-running"}));
 }
 
 TEST_CASE(run_controls_keep_whether_the_run_has_a_control_server)

@@ -65,12 +65,17 @@ void RunControls::set_phase(Phase phase)
         // that says so, then the refusals of what still waited), also when nothing started.
         time_.detach();
     }
-    phase_.store(phase);
-    if (on_phase_)
-    {
-        on_phase_(phase);
-    }
-    publish();
+    // The phase, its event and the state it makes, as one step under TimeCommands' mutex: a
+    // command that another thread applies meanwhile is answered before the phase event or after
+    // the state, never in between (the state of a phase follows its phase event).
+    time_.look([this, phase](const TimeFacts& facts) {
+        phase_.store(phase);
+        if (on_phase_)
+        {
+            on_phase_(phase);
+        }
+        tell(facts);
+    });
 }
 
 RunState RunControls::compose(const TimeFacts& facts) const

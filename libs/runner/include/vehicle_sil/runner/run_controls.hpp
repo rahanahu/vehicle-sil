@@ -131,12 +131,13 @@ struct RunState
 /// set_outside() takes TimeCommands' mutex too, and its caller (RunOutput) holds its own mutex then:
 /// RunOutput's mutex, then TimeCommands' (see run.cpp, "The locks"). Nothing under TimeCommands'
 /// mutex calls RunOutput, so the reverse order never happens.
-/// set_phase() calls `on_phase` with no lock, then publish(). `on_command` is called under
-/// TimeCommands' mutex (TimeCommands::OnCommand).
+/// set_phase() stores the phase, calls `on_phase` and tells the state under TimeCommands' mutex,
+/// as one step (a command of another thread comes before or after all three). `on_command` is
+/// called under the same mutex (TimeCommands::OnCommand).
 ///
 /// What takes TimeCommands' mutex here (allowed(), publish(), state(), set_phase()) must not be
 /// called from what runs under it: the observers `on_command` and `on_state`, the `accepted` of
-/// TimeCommands::apply(), the `f` of TimeCommands::inspect() and look(), on_detach. Such a call
+/// TimeCommands::apply(), the `f` of TimeCommands::inspect() and look(), on_detach, and `on_phase`. Such a call
 /// would wait for itself. Nor from a signal handler.
 class RunControls
 {
@@ -148,7 +149,8 @@ public:
         /// the command events).
         TimeCommands::OnCommand on_command{};
         /// Each phase the run enters, on the run's thread, after phase() has it (the writer of the
-        /// phase events). Must not call set_phase().
+        /// phase events), under TimeCommands' mutex: short, must not wait, must not call this
+        /// object or its time commands (it may start a thread that does).
         std::function<void(Phase phase)> on_phase{};
         /// Each state that differs from the one told last (the writer of the state events), under
         /// TimeCommands' mutex: short, must not wait, must not call this object or its time
@@ -199,7 +201,7 @@ public:
     /// The phase the run entered last; Phase::Checking before it has said any.
     [[nodiscard]] Phase phase() const noexcept { return phase_.load(); }
     /// The run enters `phase`: phase() has it from now on, then Observers::on_phase is called,
-    /// then publish(). Phase::Ended first ends the time commands (TimeCommands::detach(), which
+    /// then the state is told, all under TimeCommands' mutex. Phase::Ended first ends the time commands (TimeCommands::detach(), which
     /// does nothing more if the run has done it): a state says that no time command is taken, and
     /// each command that still waits for the time lock is refused with its command event, before
     /// the phase is told. So every run ends the same way, whether its simulation ran, did not

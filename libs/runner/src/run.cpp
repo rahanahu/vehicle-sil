@@ -71,7 +71,8 @@
 // - StartLimit's mutex, StartShared::found_mutex, RunSamples' mutex, RunScenario's error mutex:
 //   nothing under them.
 // The controls (RunControls) add no lock: the main thread sets the phase with none of the locks
-// above held, and the phase's observer takes the event stream's only. The run's state is put
+// above held, and the phase's observer takes the event stream's only, under TimeCommands' mutex
+// (set_phase() tells the phase and its state as one step). The run's state is put
 // together and told under TimeCommands' mutex (RunControls::publish(), TimeCommands::OnChange),
 // which reads the time gate and then takes the event stream's: the order of the first line. So
 // publish() is called with none of the locks above held (set_phase() and RunNotes::note_time() on
