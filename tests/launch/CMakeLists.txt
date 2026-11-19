@@ -348,6 +348,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       connect_device_shared
       connect_device_shared_later
       connect_device_shared_own
+      connect_dies_while_held
       connect_dies_while_waiting
       connect_lost_exit0
       connect_lost_kill

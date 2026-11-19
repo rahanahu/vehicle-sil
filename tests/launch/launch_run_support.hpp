@@ -567,6 +567,7 @@ void connect_bus_off_lost(const Options& o);
 void connect_lost_kill(const Options& o);
 void connect_lost_exit0(const Options& o);
 void connect_dies_while_waiting(const Options& o);
+void connect_dies_while_held(const Options& o);
 void connect_request(const Options& o);
 void connect_speed(const Options& o);
 void connect_time_changed(const Options& o);
