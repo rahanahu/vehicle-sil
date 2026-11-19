@@ -275,6 +275,7 @@ The GUI server looks for the launcher in `--launcher <path>`, the environment va
 | Situation | What happens |
 |---|---|
 | The launcher found on `PATH` is in the current directory | The server does not use it and exits with exit code 2. |
+| The launcher is of another vehicle-sil version than this GUI server (compared in full, pre-release included) | The server prints both versions (use the `vehicle_sil_launch` of the same version) and exits with exit code 2. A launcher replaced while the server runs is refused the same way (`launcher-unusable`). |
 | The launcher lacks one of the features above in `features` | The server prints what is missing (use the `vehicle_sil_launch` of the same vehicle-sil version) and exits with exit code 2. A launcher replaced while the server runs is refused the same way (`launcher-unusable`). |
 
 The server refuses a launcher in the current directory because Windows searches the current directory before `PATH`: starting the GUI in a folder you received from someone would run whatever program is in it. To use that launcher, name it with `--launcher`.

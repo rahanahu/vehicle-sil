@@ -567,6 +567,44 @@ def test_launcher_that_is_not_found_or_too_old(tmp_path: Path) -> None:
         assert gui.proc.returncode == 2 and "older than this GUI" in gui.stderr_text()
 
 
+@pytest.mark.parametrize("theirs", ["0.1.0", "0.2.0", "0.2.0-rc.2", "0.1.0-rc.1"])
+def test_launcher_of_another_version_is_refused_at_start(tmp_path: Path, theirs: str) -> None:
+    from vehicle_sil_gui import __version__
+    shown = theirs if theirs != __version__ else theirs + "-x"  # never the GUI's own version
+    with gui_server(tmp_path, env={"REPLAY_VERSION": shown}, expect_start=False) as gui:
+        assert gui.proc.returncode == 2
+        assert f"is vehicle-sil {shown}, this GUI is {__version__}" in gui.stderr_text()
+
+
+def test_launcher_of_the_version_of_the_gui_is_used(tmp_path: Path) -> None:
+    from vehicle_sil_gui import __version__
+    with gui_server(tmp_path, env={"REPLAY_VERSION": __version__}):
+        pass
+
+
+def test_a_launcher_replaced_by_another_version_is_refused(tmp_path: Path) -> None:
+    from vehicle_sil_gui import __version__
+    launcher = tmp_path / "vehicle_sil_launch"
+
+    def write(version: str) -> None:  # another size each time: the server asks the new one for its version
+        launcher.write_text(f"#!{sys.executable}\n# {version}\nimport os, runpy\n"
+                            f"os.environ['REPLAY_VERSION'] = {version!r}\n"
+                            f"runpy.run_path({str(REPLAY)!r}, run_name='__main__')\n")
+        launcher.chmod(0o755)
+
+    write(__version__)
+    with gui_server(tmp_path, launcher=launcher) as gui:
+        async def main(c: Client) -> None:
+            other = await c.ws()
+            assert (await other.until(is_synced))[0]["allowed"]["start"]["ok"]
+            write(__version__ + "-rc.9")
+            await c.get("api/app")
+            got = await other.until(lambda m: m["type"] == "allowed" and not m["allowed"]["start"]["ok"])
+            assert got[-1]["allowed"]["start"]["reason"] == "launcher-unusable"
+            assert "this GUI is " + __version__ in got[-1]["allowed"]["start"]["message"]
+        run_async(main, gui)
+
+
 def test_a_config_outside_the_root_is_refused_at_start(tmp_path: Path) -> None:
     outside = tmp_path / "elsewhere.yaml"
     shutil.copy(CONFIGS / "simulation.yaml", outside)
@@ -590,7 +628,10 @@ def test_a_launcher_in_the_current_directory_is_not_taken_from_path(tmp_path: Pa
     planted = here / "vehicle_sil_launch"
     planted.write_text(f"#!{sys.executable}\n" + REPLAY.read_text())
     planted.chmod(0o755)
-    env = {"PATH": os.pathsep.join([".", os.environ.get("PATH", "")]), "VEHICLE_SIL_LAUNCH": ""}
+    from vehicle_sil_gui import __version__
+    # The copy is outside the source tree, so it cannot read the GUI's version itself: give it the same one.
+    env = {"PATH": os.pathsep.join([".", os.environ.get("PATH", "")]), "VEHICLE_SIL_LAUNCH": "",
+           "REPLAY_VERSION": __version__}
     with gui_server(tmp_path, launcher=None, env=env, cwd=here, expect_start=False) as gui:
         assert gui.proc.returncode == 2 and "current directory" in gui.stderr_text()
     with gui_server(tmp_path, launcher=planted, env=env, cwd=here) as gui:

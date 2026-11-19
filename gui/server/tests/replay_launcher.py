@@ -94,7 +94,8 @@ first one after the phase running, "the next" the one after it.
 REPLAY_REPORT names a file to which every line about a test's mistake (no recording, a command that no recording
 has, or that came later than recorded) is added too: the tests make sure it stays empty.
 
-Other environment variables: REPLAY_FEATURES (the features of version --json, comma-separated, to stand in for an
+Other environment variables: REPLAY_VERSION (the vehicle-sil version of version --json; default: the version of this GUI
+server, because the server refuses a launcher of another version), REPLAY_FEATURES (the features of version --json, comma-separated, to stand in for an
 older launcher; default: the recorded ones without control-server, a launcher built without the control server,
 so that only the tests that ask for it need gRPC), REPLAY_CHECK_DELAY_MS (how long check and connections take),
 REPLAY_AVAILABILITY=1 (the stand-in's peers report the availability of two variables: fake_control.availability),
@@ -133,6 +134,17 @@ SIGNAL = "<SIGTERM>"  # in the queue of the commands: SIGTERM came
 
 
 # ---------------------------------------------------------------- choosing a recording
+
+
+def gui_version() -> str | None:
+    """The version of the GUI server in this source tree (read from its file: this stand-in imports nothing of it)."""
+    import re
+    try:
+        text = (Path(__file__).resolve().parents[1] / "src" / "vehicle_sil_gui" / "__init__.py").read_text("utf-8")
+    except OSError:
+        return None
+    m = re.search(r'(?m)^\s*__version__ = "([^"]*)"', text)
+    return m.group(1) if m else None
 
 
 def text_sha256(path: str | None) -> str | None:
@@ -921,6 +933,7 @@ class Player:
                     wanted = os.environ.get("REPLAY_FEATURES")
                     printed["features"] = [f for f in printed["features"] if f != "control-server"] \
                         if wanted is None else [f for f in wanted.split(",") if f]
+                    printed["vehicle_sil"] = os.environ.get("REPLAY_VERSION") or gui_version() or printed["vehicle_sil"]
                     self._line(json.dumps(printed, indent=2, ensure_ascii=False))
                 else:
                     self._line(json.dumps(printed, indent=2, ensure_ascii=False))

@@ -13,7 +13,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import process
+from . import __version__, process
 
 LAUNCHER_NAME = "vehicle_sil_launch"
 ENV_VARIABLE = "VEHICLE_SIL_LAUNCH"
@@ -120,6 +120,12 @@ class Launcher:
                                          f"{LAUNCHER_NAME} is older than this GUI"}])
             return
         self.version = version
+        theirs = version.get("vehicle_sil")
+        if theirs != __version__:  # in full, pre-release included
+            self._set(version, [{"code": "launcher-version-mismatch",
+                                 "message": f"this {LAUNCHER_NAME} ({self.path}) is vehicle-sil {theirs}, this GUI is "
+                                            f"{__version__}: use the {LAUNCHER_NAME} of the same version"}])
+            return
         missing = [f for f in REQUIRED_FEATURES if f not in self.features]
         self._set(version, [{"code": "missing-feature",
                              "message": f"{self.path} has no '{f}' (its features: "
