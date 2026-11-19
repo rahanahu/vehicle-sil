@@ -4,7 +4,7 @@ Changes of vehicle-sil by version, in the format of [Keep a Changelog 1.1.0](htt
 
 The version comes from `project(vehicle_sil VERSION ...)` and `VEHICLE_SIL_VERSION_PRERELEASE` (`""` for a release) in the root `CMakeLists.txt` (`vehicle_sil_launch version` and `vehicle_sil` in the `--describe` output of an ECU print it). When the version is raised, write the same number in `pyproject.toml`, `gui/server/pyproject.toml`, `__version__` in `python/vehicle_sil_control/__init__.py` and in `gui/server/src/vehicle_sil_gui/__init__.py`, `VERSION` in `template/get_tools.py`, `GIT_TAG` in `template/CMakeLists.txt`, the version written in `template/README.md` and `template/README.ja.md`, and the heading in this file, `## [<version>] - Unreleased` until the release. The commit that is tagged `v<version>` replaces `Unreleased` with the release date (`YYYY-MM-DD`). `scripts/package.py version` finds mismatches; with `--expect v<version>`, which the release workflow runs for the tag, it also refuses a heading without the date. The release notes are this version's section.
 
-## [0.2.0-rc.1] - Unreleased
+## [0.2.0-rc.1] - 2026-11-20
 
 A release candidate of 0.2.0: real buses connected from the launcher (`run --connect`, `connections`, the SocketCAN bridge), run request files, scenario timelines, ECU variable availability, the GUI parts and the client's front door, and the Network design screen.
 
@@ -16,11 +16,13 @@ A release candidate of 0.2.0: real buses connected from the launcher (`run --con
 - **GUI API version 2**: `vehicle_sil_gui` is 2. A client made for 0.1.0 is refused with a message that says so, instead of misreading the summary (#302).
 - **The GUI server requires the launcher of its own release**: it refuses, at start, a launcher whose `features` lack `time-commands`, `stdin-run-until`, `state`, `speed`, `start-paused`, `scenario` or `manual-participants`, and no longer answers 400 `unsupported` for time commands. Use the `vehicle_sil_launch` of the same vehicle-sil version (#283, #288).
 - **The Python Control API client** (`vehicle_sil_control`) refuses, at its first call, a Control Server of another vehicle-sil release, including a 0.1.0 launcher, with `ControlError` `FAILED_PRECONDITION` and a message that names both releases. Stubs generated before the release field was added are refused with how to generate them again. The 0.1.0 client has no such check and still connects to a 0.2.0 server (#314).
+- **The GUI server refuses a launcher of another release**: it compares `vehicle_sil` in the launcher's `version --json` with its own version in full, pre-release part included, and refuses at start (exit code 2) and when the launcher is replaced (`launcher-unusable`). Use the `vehicle_sil_launch` of the same release (#333).
 
 #### Launcher, scenarios and their output
 
 - **Events format 2** (`vehicle_sil_events`): the `time` event (and `time` in the GUI server's summary) no longer has `paused` and `speed`; read the `state` event, which has them and `paused_at_ms`. `time` is written when virtual time moves, when the run stands still at another time, or when it is late (#223).
-- **Run format 2** (`vehicle_sil_run`): a run stopped by a command (`{"command":"stop"}`, `Stop` of the Control API) is no longer "interrupted". It ends with exit code 0 (result `stopped`), or 5 (result `incomplete`) if a scenario was stopped before its end; 130 is left for signals and a lost supervisor (end of stdin, closed output), and a stopped run whose result could not be written exits with 3. The result has `end`, `ok` and `message`; the notes are `stopped`, `scenario-incomplete` and `ended-by-force` (#231).
+- **Run format 2** (`vehicle_sil_run`): a run stopped by a command (`{"command":"stop"}`, `Stop` of the Control API) is no longer "interrupted". It ends with exit code 0 (result `stopped`), or 5 (result `incomplete`) if a scenario was stopped before its end; 130 is left for signals and a lost supervisor (end of stdin, closed output), and a stopped run whose result could not be written exits with 3. The result has `end`, `ok` and `message`; the notes are `stopped`, `scenario-incomplete` and `ended-by-force`. A `stop` that comes only after the simulation has ended, when every required participant had already ended by itself, gives how the simulation ended (`completed` and `passed`, or `failed`) instead of `stopped`; `ended-by-force` names the participants that a stop or an interrupt cut short, also in interrupted runs (#231, #335).
+- **One ending for every run that does not start**: every run that began its check ends with the same events, whatever kept it from starting or ended it: a `state` that takes no time command, a `command` refusal (`not-running`) for each time command still waiting, then `phase` `ended`, the last `state` and `result`; `phase` `stopping` only when the registry and the controller were set up. A run whose check failed no longer accepts time commands after its end, and a command that arrives while a run ends is answered before `phase` `ended` or after the last `state`, never between them (#336).
 - **A run connected outside the simulation keeps real time**: with an enabled `role: bridge` participant (or `--connect`; `test` too), the run goes at speed 1 by default (`--time-policy realtime`). Another `--speed` or `--start-paused` is the error `outside-real-time` (the note `outside-speed-set` says when the file's speed is replaced), and pause, step, run_until and a speed other than 1 are refused with the reason `outside-real-time` from stdin, the Control API (`FAILED_PRECONDITION`, reason in the `vehicle-sil-reason` metadata) and the GUI. `--time-policy free` allows them (notes `outside-not-real-time`, `outside-time-changed`). `check --json` has `time_lock` (#192, #200).
 - **Time commands while a scenario plays**: pause, resume, step, run_until and speed are accepted from the Control API too (they were refused with `scenario-running`); they do not change the scenario's result or its timeline. Writes from outside are still refused (feature `scenario-time`) (#256).
 - **Scenarios judge with a sample of every ECU step**: `run --scenario` starts the ECUs whose values the scenario reads with `--sample-every-step`. Verdicts and step times can change for scenarios that relied on coarse samples (an `expect` at the time of a `set`, `wait_until`/`within_ms`, short ramps), and an ECU that still sends less often than its step fails the run before the first step with `scenario-not-observed`. Write `samples: as_sent` at the top of a scenario to judge with the values as sent; the scenario format version stays 1 (#300).
@@ -31,6 +33,7 @@ A release candidate of 0.2.0: real buses connected from the launcher (`run --con
 - **A second J1939 `Observer`** on a `Network`, or a second `TapListener` on a `TapPort` (and so a second `testkit::J1939Events` or `FrameLog` on the same network or tap), throws `std::logic_error` instead of silently replacing the first. Share the first one or remove it with `set_observer(nullptr)` / `set_listener(nullptr)` (#115).
 - **Control library**: `control::Update` has a new alternative, `AvailabilityUpdate`, and `control::wire::encode_step()` takes a new `availability` argument (#247).
 - **CAN bridge parts**: `CanBridge`, `ExternalPortAdapter` and the other parts that do not depend on Vector XL moved from namespace `vehicle_sil::vector_xl` and `vehicle_sil/vector_xl/*.hpp` to `vehicle_sil::can_bridge` and `vehicle_sil/can_bridge/*.hpp`. The target `vehicle_sil::vector_xl_bridge_core` is replaced by `vehicle_sil::can_bridge_core`, and `ExternalPortAdapter` is in its own target, `vehicle_sil::can_external` (link it to use the adapter) (#208, #260).
+- **`run_file()` and lent controls**: `run_file()` refuses lent `RunControls` whose `set_control_server()` disagrees with the request (`RunHost::control` or `RunLent::control_endpoint`); a run's own controls now know about a control server the caller lends (#336).
 
 #### Bridges
 
@@ -122,12 +125,15 @@ A release candidate of 0.2.0: real buses connected from the launcher (`run --con
 
 - `scripts/doctor.py` reports whether Playwright's Chromium starts, which the unit tests of the GUI parts need (#212).
 - `scripts/hotspots.py` shows, for contributors, which of the files they plan to touch are large, busy or changed by other work (#171).
+- **Pre-release versions**: a version can carry a pre-release part (`0.2.0-rc.1`), set with `VEHICLE_SIL_VERSION_PRERELEASE` in the root `CMakeLists.txt`. The executables, the Python client and the GUI server report the full version, and a tag with a pre-release part makes a GitHub pre-release (#332).
 
 #### Documentation
 
 - `docs/bridge-contract.md`: what the launcher and every bridge agree on (arguments, `--describe`, lists, exit codes, output lines, the device mark, a bridge of your own) (#230).
 - The Ethernet bridge page records what was checked with the real Npcap and with `packet` on a real USB adapter, has a step-by-step trial of `run --connect` on one Linux computer (a veth pair), and says that Npcap does not report the link state and that an ECU must not use the MAC of a NIC of the bridge's computer (#153, #166, #279, #309).
 - The README lists every release asset and says that one release's assets go together (#258).
+- The run manual explains how to estimate, and measure with `--speed max`, how fast a simulation can run on a given PC (#328).
+- The README says which version differences the launcher refuses and which it only reports, and lists the bridges in the tools archive (#329). The run, events and scenario-test pages, the GUI protocol README and the client README match the code in several places: when a signal stop shows in `state`, that no argument takes away a request file's `scenario` or `params`, where a `step` counts from after a timed `pause`, that a stop also leaves a scenario incomplete (exit code 5), the finding `outside-time-changed`, and the client's `clock.sim_ms` and `actual_speed` (#331).
 
 ### Changed
 
@@ -139,6 +145,7 @@ A release candidate of 0.2.0: real buses connected from the launcher (`run --con
 - **The GUI server and scenario writes**: the GUI server no longer receives or forwards the operations of a scenario's own writes (`operation` messages and the summary's `operations` leave them out) (#292).
 - **On Windows**, the command that `run --manual` shows quotes words with `,` or `;` (#124).
 - **Faster write-heavy scenarios**: the Control Hub counts a peer's commands in flight over the unfinished operations only, scenario runs send the writes of each controller step together and wait once, a `ramp` without `from` or a `wave` without `around` on a variable that an earlier step wrote no longer makes its ECU send a sample of every step, and commands reach only the ECUs of the target's name-hash group. When an ECU's agent refuses a write at once, the writes sent after it in the same step appear in the timeline file (#296, #317, #326, #327).
+- **`scripts/doctor.py` and Node.js**: Node.js 25, and anything outside 24.15 up to 25 or 26, is reported as not usable, matching the `engines` range that `npm ci` enforces (#329).
 
 ### Removed
 
