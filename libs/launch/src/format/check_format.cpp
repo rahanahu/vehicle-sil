@@ -147,6 +147,8 @@ const char* status_name(ParticipantStatus status)
         return "described";
     case ParticipantStatus::NotChecked:
         return "not_checked";
+    case ParticipantStatus::NotDescribed:
+        return "not_described";
     case ParticipantStatus::Failed:
         return "failed";
     case ParticipantStatus::Skipped:
@@ -194,10 +196,11 @@ std::string detail::check_text_body(const CheckReport& report, const ScenarioChe
             else
             {
                 row.push_back("-");
-                row.push_back(result.status == ParticipantStatus::NotChecked ? "not checked (describe: false)"
-                              : result.status == ParticipantStatus::Failed   ? "no description (see the errors)"
-                              : result.status == ParticipantStatus::Disabled ? "disabled"
-                                                                             : "not read (see the errors)");
+                row.push_back(result.status == ParticipantStatus::NotChecked     ? "not checked (describe: false)"
+                              : result.status == ParticipantStatus::NotDescribed ? "not described (see the notes)"
+                              : result.status == ParticipantStatus::Failed       ? "no description (see the errors)"
+                              : result.status == ParticipantStatus::Disabled     ? "disabled"
+                                                                                 : "not read (see the errors)");
             }
             rows.push_back(std::move(row));
         }

@@ -276,17 +276,17 @@ struct Rules
     const std::vector<ParticipantResult>& results;
     std::vector<Finding>& out;
     /// The rules that need every participant's description: not said while a description is
-    /// missing (the error of that participant says why), only noted while a participant has
-    /// describe: false (it may be the one). Only the enabled participants count: a disabled one is
-    /// not in the simulation, whatever its status.
+    /// missing (the error or the note not-described of that participant says why), only noted
+    /// while a participant has describe: false (it may be the one). Only the enabled participants
+    /// count: a disabled one is not in the simulation, whatever its status.
     bool incomplete = false;
     bool unchecked = false;
     std::string not_counted{};
     /// The enabled participants (indexes) that may carry networks to real buses: those with
     /// role: bridge if there are any (`bridges_marked`), otherwise those with describe: false and
     /// no role. One that described itself carries the networks it uses; one with describe: false
-    /// may carry any of them. A role: bridge whose description failed is left out (its error says
-    /// why).
+    /// may carry any of them. A role: bridge whose description failed or was not saved
+    /// (NotDescribed) is left out (its error or note says why): it has describe: true.
     std::vector<std::size_t> bridges{};
     bool bridges_marked = false;
     /// The networks of each participant that counts (is_on_any()) as the simulation sees them
@@ -963,6 +963,15 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
         rules.add(Severity::Note, "not-checked", p.line,
             prefix + "not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks "
                      "with this file",
+            p.name, "");
+        return;
+    }
+    if (result.status == ParticipantStatus::NotDescribed)
+    {
+        rules.add(Severity::Note, "not-described", p.line,
+            prefix + "not described: the saved descriptions (--descriptions) have no --describe output for its "
+                     "command and executable as they are now, so vehicle_sil_launch cannot compare its name, step and "
+                     "networks with this file: check without --descriptions to describe it",
             p.name, "");
         return;
     }
@@ -1869,7 +1878,10 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
             }
         }
     }
-    rules.incomplete = any_enabled(ParticipantStatus::Failed) || any_enabled(ParticipantStatus::Skipped);
+    // A participant without a saved description is as one whose --describe failed: its networks
+    // are not known (its note says why), and it is no bridge that may carry any network.
+    rules.incomplete = any_enabled(ParticipantStatus::Failed) || any_enabled(ParticipantStatus::Skipped) ||
+                       any_enabled(ParticipantStatus::NotDescribed);
     rules.unchecked = any_enabled(ParticipantStatus::NotChecked);
     rules.not_counted = rules.unchecked ? " (participants with describe: false are not counted)" : "";
     for (std::size_t i = 0; i < config.participants.size() && i < results.size(); ++i)

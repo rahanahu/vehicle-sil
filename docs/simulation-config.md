@@ -53,7 +53,7 @@ vehicle_sil_launch run simulation.yaml
 | Configurations per file | One (a second document after `---` is an error). |
 | Anchors and aliases (`&name`, `*name`, `<<`) | Not supported; write the values out in full (the file is reported as unreadable). |
 | Size | Files larger than 16 MiB are not read. |
-| File type | Anything that is not a regular file (a device or a pipe) is not read. |
+| File type | Anything that is not a regular file (a device or a pipe) is not read. The exception is `check --text-from-stdin`, which reads the text from stdin under the other rules of this table (see [Arguments](#arguments)). |
 
 Example: [examples/ecu_main/simulation.yaml](../examples/ecu_main/simulation.yaml). CMake copies it next to the executables, to `build/<preset>/examples/ecu_main/`.
 
@@ -903,8 +903,9 @@ For the syntax and the errors, see "Variants and parameters" in [scenario.md](sc
 ```text
 vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
-                         [--time-policy realtime|free] [--request <file>] [--disable <name>]...
-                         [--enable <name>]... [--manual <name>]... [--] <file>
+                         [--time-policy realtime|free] [--request <file>]
+                         [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]
+                         [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
@@ -955,6 +956,9 @@ The usage above shows which commands accept each option. The Condition column of
 | `--time-policy realtime\|free` | | The time of a run that is connected outside the simulation: `realtime` (the default) keeps it at speed 1, `free` leaves the speed and the time to you (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)). |
 | `--request <file>` | `check`, `run` and `connections` | Reads what to run from a request file (JSON); an argument wins over the file, field by field. `connections` reads only its `connect` and says whether each target can be used on this computer (see "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request)). |
 | `--network <name>` | `connections` only | Lists the network `<name>` only. |
+| `--text-from-stdin` | `check` only | Reads the text of the configuration from stdin instead of from `<file>`. `<file>` still names it: its relative paths and the `scenario` of a request file are from its directory, and the findings and the JSON name it. The file need not exist. |
+| `--write-descriptions <file>` | `check` only | Writes the `--describe` output of each participant whose output was read to `<file>`, for `--descriptions` (see "Saved descriptions (`--write-descriptions`, `--descriptions`)" in [simulation-check.md](simulation-check.md#saved-descriptions---write-descriptions---descriptions)). |
+| `--descriptions <file>` | `check` only | Starts no process: takes each participant's `--describe` output from `<file>`, if its command and its executable are as they were when the output was saved; any other participant is not described (see the same section of [simulation-check.md](simulation-check.md#saved-descriptions---write-descriptions---descriptions)). |
 | `--disable <name>` | | Disables participant `<name>` (same as `enabled: false`; can be repeated). |
 | `--enable <name>` | | Enables participant `<name>` again (same as `enabled: true`; can be repeated). |
 | `--manual <name>` | | You start participant `<name>` yourself (same as `manual: true`; can be repeated). |
@@ -992,6 +996,9 @@ Notes on individual options:
 | `--request` | Only the file that is named is read; the launcher looks for none. |
 | `--request` | `scenario` in the file is from the directory of the configuration file, not from the working directory. |
 | `--time-policy` | `test` runs each scenario at speed 1 when the file has an enabled `role: bridge` participant; `--time-policy free` runs them as fast as possible all the same. |
+| `--text-from-stdin` | The rules of a configuration file apply to the text (see [File format](#file-format)): UTF-8 with an optional BOM, no UTF-16 or NUL, at most 16 MiB. It is read as bytes, on Windows too, so CRLF line ends and the line numbers are as in a file. |
+| `--descriptions` | `--connect` and `connect` of a request file are checked for their form and network names only: no bridge is looked for or run. |
+| `--descriptions`, `--write-descriptions` | Can be given together (the outputs taken from the file are written again), and with `--text-from-stdin`. |
 
 On Windows, the arguments are read as UTF-8 from the wide-character command line, so paths with non-ASCII characters work.
 
@@ -1018,6 +1025,7 @@ When each exit code occurs:
 | 1 | For `test`: at least one run failed, a run did not take place although `test` was not interrupted, or, with `--strict`, no run took place at all. |
 | 1 | If the scenario file of `--scenario` does not exist, the exit code is 1 for both `check` and `run` (unlike a missing configuration file, which gives 3). |
 | 1 | For `connections`, a bridge that is on this computer could not make its list, the file has errors (a bridge that is not there is not an error), or with `--request` a target of the request file cannot be used. |
+| 1 | For `check --write-descriptions`, also when the file cannot be written (the error `descriptions-write`). |
 | 3 | The configuration file does not exist, a syntax error, an unknown format version and so on. |
 | 3 | Also when `run` cannot set up the registry or the controller. |
 | 3 | Also when the result cannot be written to stdout, and on an unexpected failure of `vehicle_sil_launch` itself. |
@@ -1038,6 +1046,7 @@ The following give exit code 4:
 | `check` | `--events`, `--stdin-commands` |
 | `check` | `--log-dir`, `--timeout-ms`, `--speed`, `--start-paused`, `--control` and `--control-*` |
 | `run` | `--json` and `--events` together |
+| `run` | `--text-from-stdin`, `--descriptions`, `--write-descriptions` (they are for `check`) |
 | `run` | `--events-stall-ms` without `--events`, or with a value out of range |
 | `run` | `--start-paused` with neither `--stdin-commands` nor `--control` |
 | `run` | `--speed` that is neither a number nor `max` |
@@ -1056,6 +1065,7 @@ The following give exit code 4:
 | Variants and parameters | A malformed `--param`, `--param` without `--scenario`, or `--param` with a name that is not in the scenario |
 | `test` | No `--scenarios`, a `--scenarios` path that does not exist, or a directory with no scenario files |
 | `test` | Options for `run` only, and `--scenario`, given to `test` |
+| `test` | `--text-from-stdin`, `--descriptions`, `--write-descriptions` (they are for `check`) |
 | `test` | An enabled participant with `manual: true` in the configuration file given to `test` |
 
 ## See also

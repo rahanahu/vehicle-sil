@@ -27,18 +27,27 @@
 //               devices, the fake XL driver's channels): the --connect lines, which check takes; the
 //               JSON; --network; bridges that cannot list and no bridge (exit 1); the command line
 //               (exit 4) and a file that cannot be read (exit 3)
+//   descriptions check --write-descriptions and --descriptions: a check with saved descriptions starts no
+//               process (participants, role: bridge, --connect and the request file's connect: a copy of
+//               the helper marks each start), the same report as the check that saved them, a changed
+//               command or executable, a file that is missing, broken or of another version, a file that
+//               cannot be written; --text-from-stdin (the text as of a file, CRLF, too large, NUL); run
+//               and test refuse the three (exit 4)
 #include "launcher_support.hpp"
 #include "test_timeout_scale.hpp"
 
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/process/child_process.hpp"
+#include "vehicle_sil/process/process.hpp"
 
 #include <algorithm>
 #include <chrono>
+#include <csignal>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -1594,6 +1603,262 @@ void connections(const Options& o)
 
 } // namespace
 
+/// Runs vehicle_sil_launch with `args` and `input` on its standard input (then closed). Its
+/// standard output and error as lines, each with "\n".
+Captured launch_with_input(const Options& o, const std::vector<std::string>& args, const std::string& input)
+{
+#ifndef _WIN32
+    // A launcher that stops reading a text that is too large: the write fails, it does not end us.
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
+    std::mutex mutex;
+    Captured captured;
+    vehicle_sil::process::ProcessOptions options;
+    options.input = true;
+    options.max_line = std::size_t{1} << 20;
+    options.on_line = [&](vehicle_sil::process::Stream stream, std::string_view line) {
+        const std::lock_guard lock(mutex);
+        (stream == vehicle_sil::process::Stream::Output ? captured.standard_output : captured.standard_error) +=
+            std::string(line) + "\n";
+    };
+    vehicle_sil::process::Process process(o.launch, args, std::move(options));
+    static_cast<void>(process.write_input(input)); // false once the launcher has stopped reading
+    process.close_input();
+    const std::optional<vehicle_sil::process::ExitStatus> status = process.wait_for(scaled_timeout(120s));
+    if (!status)
+    {
+        process.kill_tree();
+    }
+    process.finish_output(scaled_timeout(10s));
+    const std::lock_guard lock(mutex);
+    if (status)
+    {
+        captured.exit_code = status->code;
+    }
+    return captured;
+}
+
+/// The value of "status" of the participant `name` in the JSON of check.
+std::string status_of(const std::string& json, const std::string& name)
+{
+    const auto at = json.find("      \"name\": \"" + name + "\",\n");
+    require(at != std::string::npos, "the JSON has no participant " + name + ":\n" + json);
+    const std::string key = "\"status\": \"";
+    const auto from = json.find(key, at) + key.size();
+    return json.substr(from, json.find('"', from) - from);
+}
+
+std::size_t count_of(const std::string& text, const std::string& part)
+{
+    std::size_t n = 0;
+    for (auto at = text.find(part); at != std::string::npos; at = text.find(part, at + part.size()))
+    {
+        ++n;
+    }
+    return n;
+}
+
+void descriptions(const Options& o)
+{
+    const fs::path dir = o.work_dir;
+    // Every start of a copy of the helper adds a line to this file (process_helper.cpp).
+    const fs::path mark = dir / "started.txt";
+    set_environment("VEHICLE_SIL_HELPER_MARK", vehicle_sil::process::utf8_from_path(mark));
+    const auto starts = [&] { return fs::exists(mark) ? count_of(read_file(mark), "started\n") : std::size_t{0}; };
+    // Engine's executable is a copy of its own (built again below); the bridge of --connect is a
+    // copy under the bridge's name on PATH.
+    const fs::path engine = dir / ("engine_ecu" + std::string(kExe));
+    fs::copy_file(o.helper, engine, fs::copy_options::overwrite_existing);
+    fs::create_directories(dir / "bridges");
+    fs::copy_file(o.helper, dir / "bridges" / ("vehicle_sil_ethernet_bridge" + std::string(kExe)),
+                  fs::copy_options::overwrite_existing);
+#ifdef _WIN32
+    const std::string runtime = runtime_path();
+    const std::string bridges = vehicle_sil::process::utf8_from_path(dir / "bridges");
+    const PathSetting path(runtime.empty() ? bridges : bridges + ";" + runtime);
+#else
+    const PathSetting path(shown_path(dir / "bridges"));
+#endif
+    const auto description = [](const std::string& name, const std::string& networks) {
+        return "{\"vehicle_sil_ecu\": 1, \"name\": \"" + name + "\", \"step_ns\": 1000000, \"networks\": [" + networks + "]}";
+    };
+    const std::string can = "{\"name\": \"CAN1\", \"kind\": \"can\", \"use\": \"raw\", \"nodes\": []}";
+    const auto eth = [](const std::string& mac) {
+        return "{\"name\": \"ETH\", \"kind\": \"ethernet\", \"use\": \"ethernet\", \"nodes\": [], \"mac\": \"" + mac + "\"}";
+    };
+    write_file(dir / "engine.json", description("Engine", eth("02:00:00:00:00:01") + ", " + can));
+    write_file(dir / "dashboard.json", description("Dashboard", eth("02:00:00:00:00:02") + ", " + can));
+    write_file(dir / "gateway.json", description("Gateway", can));
+    const std::string helper = yaml_quote(shown_path(o.helper));
+    const std::string text = "vehicle_sil_simulation: 1\n"
+                             "networks:\n"
+                             "  - name: ETH\n"
+                             "    kind: ethernet\n"
+                             "  - name: CAN1\n"
+                             "    kind: can\n"
+                             "participants:\n"
+                             "  - name: Engine\n"
+                             "    command: [engine_ecu, --out-file, engine.json]\n"
+                             "  - name: Dashboard\n"
+                             "    command: [" + helper + ", --out-file, dashboard.json]\n"
+                             "  - name: Gateway\n"
+                             "    role: bridge\n"
+                             "    command: [" + helper + ", --out-file, gateway.json]\n";
+    const fs::path config = dir / "sim.yaml";
+    write_file(config, text);
+    const std::string file = shown_path(config);
+    const std::string saved = shown_path(dir / "saved.json");
+    write_file(dir / "request.json", "{\"vehicle_sil_run_request\": 1, \"connect\": {\"ETH\": \"eth0\"}}");
+    const std::string request = shown_path(dir / "request.json");
+
+    // The fixture: a check runs each participant and the bridge of --connect (which says nothing:
+    // connect-tool-failed).
+    const Captured connected = launch(o, {"check", "--json", "--connect", "ETH=eth0", file});
+    expect_code(connected, 1, "check --connect");
+    require(contains(connected.standard_output, "\"code\": \"connect-tool-failed\"") && starts() == 4,
+            "check --connect did not start the 3 participants and the bridge (" + std::to_string(starts()) + " starts):\n" +
+                connected.standard_output);
+    fs::remove(mark);
+    const Captured written = launch(o, {"check", "--json", "--write-descriptions", saved, file});
+    expect_code(written, 0, "check --write-descriptions");
+    require(starts() == 3 && fs::exists(dir / "saved.json"), "check --write-descriptions: " + std::to_string(starts()) +
+                                                                 " starts, or no file");
+    fs::remove(mark);
+
+    // With the saved descriptions: nothing starts, whatever asks for a bridge.
+    for (const std::vector<std::string>& args :
+         {std::vector<std::string>{"check", "--json", "--descriptions", saved, file},
+          {"check", "--json", "--descriptions", saved, "--connect", "ETH=eth0", file},
+          {"check", "--json", "--descriptions", saved, "--request", request, file},
+          {"check", "--json", "--descriptions", shown_path(dir / "none.json"), "--connect", "ETH=eth0", file}})
+    {
+        const Captured run = launch(o, args);
+        require(run.exit_code == 0 && starts() == 0,
+                "check " + args.at(args.size() - 2) + " with saved descriptions started " + std::to_string(starts()) +
+                    " processes or did not pass:\n" + run.standard_output + run.standard_error);
+        require(!contains(run.standard_output, "\"tool_path\": \"/") && !contains(run.standard_output, "connect-tool"),
+                "check --descriptions looked for the bridge:\n" + run.standard_output);
+    }
+    // The same report as the check that saved them; written again, the same file.
+    const Captured replayed =
+        launch(o, {"check", "--json", "--descriptions", saved, "--write-descriptions", shown_path(dir / "again.json"), file});
+    expect_code(replayed, 0, "check --descriptions --write-descriptions");
+    expect_text(replayed.standard_output, written.standard_output, "check --descriptions (the report of the check that saved them)");
+    expect_text(read_file(dir / "again.json"), read_file(dir / "saved.json"), "the descriptions written again");
+    const Captured table = launch(o, {"check", "--descriptions", saved, file});
+    expect_text(table.standard_output, launch(o, {"check", file}).standard_output, "check --descriptions (text)");
+    fs::remove(mark);
+
+    // No file yet: no participant is described, and nothing else is said.
+    const Captured none = launch(o, {"check", "--json", "--descriptions", shown_path(dir / "none.json"), file});
+    expect_code(none, 0, "check --descriptions <missing file>");
+    require(status_of(none.standard_output, "Engine") == "not_described" &&
+                status_of(none.standard_output, "Dashboard") == "not_described" &&
+                status_of(none.standard_output, "Gateway") == "not_described" &&
+                count_of(none.standard_output, "\"code\": \"not-described\"") == 3 &&
+                !contains(none.standard_output, "descriptions-not-used"),
+            "check --descriptions <missing file>:\n" + none.standard_output);
+    // A file that is not one, and one of another version: one note, and no participant is described.
+    write_file(dir / "broken.json", "{\"vehicle_sil_descriptions\": 1, \"vehicle_sil\": ");
+    std::string other = read_file(dir / "saved.json");
+    const std::string version_key = "\"vehicle_sil\": \"";
+    other.insert(other.find(version_key) + version_key.size(), "0.0.1-other-");
+    write_file(dir / "other.json", other);
+    for (const std::string name : {"broken.json", "other.json"})
+    {
+        const Captured unusable = launch(o, {"check", "--json", "--descriptions", shown_path(dir / name), file});
+        expect_code(unusable, 0, "check --descriptions " + name);
+        require(count_of(unusable.standard_output, "\"code\": \"descriptions-not-used\"") == 1 &&
+                    status_of(unusable.standard_output, "Engine") == "not_described" &&
+                    status_of(unusable.standard_output, "Gateway") == "not_described",
+                "check --descriptions " + name + ":\n" + unusable.standard_output);
+    }
+    require(contains(launch(o, {"check", "--descriptions", shown_path(dir / "other.json"), file}).standard_output,
+                     "the saved descriptions (--descriptions) are not used: vehicle-sil 0.0.1-other-"),
+            "check --descriptions other.json does not say which version wrote it");
+
+    // Another command, and an executable built again: that participant only.
+    std::string changed = text;
+    replace_all(changed, "--out-file, dashboard.json]", "--out-file, dashboard.json, --verbose]");
+    write_file(dir / "changed.yaml", changed);
+    const Captured command = launch(o, {"check", "--json", "--descriptions", saved, shown_path(dir / "changed.yaml")});
+    require(status_of(command.standard_output, "Dashboard") == "not_described" &&
+                status_of(command.standard_output, "Engine") == "described" &&
+                count_of(command.standard_output, "\"code\": \"not-described\"") == 1 &&
+                contains(command.standard_output, "\"participant 'Dashboard': not described: "),
+            "check --descriptions with another command of Dashboard:\n" + command.standard_output);
+    {
+        std::ofstream out(engine, std::ios::binary | std::ios::app);
+        out << "built again";
+    }
+    const Captured rebuilt = launch(o, {"check", "--json", "--descriptions", saved, file});
+    require(status_of(rebuilt.standard_output, "Engine") == "not_described" &&
+                status_of(rebuilt.standard_output, "Dashboard") == "described" &&
+                count_of(rebuilt.standard_output, "\"code\": \"not-described\"") == 1,
+            "check --descriptions after Engine was built again:\n" + rebuilt.standard_output);
+    require(starts() == 0, "a check with saved descriptions started a process");
+    fs::copy_file(o.helper, engine, fs::copy_options::overwrite_existing);
+    expect_text(launch(o, {"check", "--json", "--write-descriptions", saved, file}).standard_output, written.standard_output,
+                "check --write-descriptions after Engine was copied again");
+    log("CHECK --descriptions: nothing starts, the same report, a changed command or executable, unusable files -> ok");
+
+    // A file that cannot be written: an error, the rest as without it.
+    const Captured unwritable =
+        launch(o, {"check", "--json", "--write-descriptions", shown_path(dir / "no-such-dir" / "saved.json"), file});
+    expect_code(unwritable, 1, "check --write-descriptions <a file in a missing directory>");
+    require(count_of(unwritable.standard_output, "\"code\": \"descriptions-write\"") == 1 &&
+                status_of(unwritable.standard_output, "Engine") == "described",
+            "check --write-descriptions <a file in a missing directory>:\n" + unwritable.standard_output);
+    fs::remove(mark);
+
+    // The text from stdin: as the same text in the file named, which need not exist; its relative
+    // paths are from that file's directory. With CRLF and an error on a known line.
+    std::string crlf = text + "colour: red\n";
+    replace_all(crlf, "\n", "\r\n");
+    write_file(dir / "crlf.yaml", crlf);
+    const Captured from_file = launch(o, {"check", "--json", shown_path(dir / "crlf.yaml")});
+    expect_code(from_file, 1, "check crlf.yaml");
+    require(contains(from_file.standard_output, "\"line\": 15,"), "check crlf.yaml:\n" + from_file.standard_output);
+    Captured piped = launch_with_input(o, {"check", "--json", "--text-from-stdin", shown_path(dir / "stdin.yaml")}, crlf);
+    expect_code(piped, 1, "check --text-from-stdin");
+    expect_text(shown_as(piped.standard_output, dir / "stdin.yaml", shown_path(dir / "crlf.yaml")), from_file.standard_output,
+                "check --text-from-stdin (as the file)");
+    require(!fs::exists(dir / "stdin.yaml"), "check --text-from-stdin made the file it names");
+    // With the saved descriptions too: what the screen of a configuration that is being edited does.
+    fs::remove(mark);
+    piped = launch_with_input(o, {"check", "--json", "--text-from-stdin", "--descriptions", saved, file}, text);
+    expect_text(piped.standard_output, written.standard_output, "check --text-from-stdin --descriptions");
+    require(starts() == 0, "check --text-from-stdin --descriptions started a process");
+    // What a file may not be either.
+    const Captured large = launch_with_input(o, {"check", "--json", "--text-from-stdin", file},
+                                             std::string((std::size_t{16} << 20) + 1, '#'));
+    expect_code(large, 3, "check --text-from-stdin with more than 16 MiB");
+    require(contains(large.standard_output, "the text on standard input (--text-from-stdin) is larger than 16 MiB"),
+            "check --text-from-stdin with more than 16 MiB:\n" + large.standard_output);
+    static constexpr char kWithNul[] = "vehicle_sil_simulation: 1\n\0networks: []\n";
+    const Captured nul = launch_with_input(o, {"check", "--json", "--text-from-stdin", file},
+                                           std::string(kWithNul, sizeof kWithNul - 1));
+    expect_code(nul, 3, "check --text-from-stdin with NUL");
+    require(contains(nul.standard_output, "\"code\": \"encoding\""), "check --text-from-stdin with NUL:\n" + nul.standard_output);
+    log("CHECK --text-from-stdin: as the file, CRLF and lines, too large, NUL -> ok");
+
+    // Only check takes them.
+    fs::create_directories(dir / "scenarios");
+    for (const auto& [args, message] : std::vector<std::pair<std::vector<std::string>, std::string>>{
+             {{"run", "--text-from-stdin", file}, "--text-from-stdin is for check"},
+             {{"run", "--descriptions", saved, file}, "--descriptions is for check"},
+             {{"run", "--request", request, "--write-descriptions", saved, file}, "--write-descriptions is for check"},
+             {{"test", file, "--descriptions", saved, "--scenarios", shown_path(dir / "scenarios")}, "--descriptions is for check"}})
+    {
+        const Captured refused = launch(o, args);
+        expect_code(refused, 4, args.front() + " " + args.at(1));
+        require(contains(refused.standard_error, "error: " + message), args.front() + " " + args.at(1) + ":\n" +
+                                                                         refused.standard_error);
+    }
+    require(starts() == 0, "run or test started a process with a usage error");
+    log("CHECK run and test refuse --text-from-stdin, --descriptions and --write-descriptions -> ok");
+}
+
 int main(int argc, char** argv)
 {
     set_log_tag("launch-cli");
@@ -1639,6 +1904,10 @@ int main(int argc, char** argv)
         else if (o.scenario == "connections")
         {
             connections(o);
+        }
+        else if (o.scenario == "descriptions")
+        {
+            descriptions(o);
         }
         else
         {

@@ -1842,6 +1842,57 @@ TEST_CASE(a_disabled_participant_is_a_note_and_the_rules_are_about_the_rest)
     }
 }
 
+TEST_CASE(a_participant_without_a_saved_description_is_a_note_and_holds_back_the_rules_that_need_every_description)
+{
+    const std::string note = "N 9 not-described: participant 'Dashboard': not described: the saved descriptions "
+                             "(--descriptions) have no --describe output for its command and executable as they are now, so "
+                             "vehicle_sil_launch cannot compare its name, step and networks with this file: check without "
+                             "--descriptions to describe it\n";
+    Setup s = good_pair();
+    s.results[1] = ParticipantResult{ParticipantStatus::NotDescribed, std::nullopt};
+    // Its networks are not known: Engine alone on J1939_CAN is not said (as for a failed --describe).
+    check_text(s.check(), note);
+    // Disabled is decisive, as for any status.
+    s.config.participants[1].enabled = false;
+    CHECK(s.check().find("not-described") == std::string::npos);
+}
+
+TEST_CASE(a_participant_without_a_saved_description_is_not_a_bridge_that_may_carry_a_network)
+{
+    // describe: true and no role: the author says it is an ecu_main executable, so it is not counted
+    // as one that may be a bridge (only describe: false is), as when its --describe failed.
+    constexpr std::uint64_t kToolName = 0x80000000FE000080; // arbitrary address capable, Manufacturer Code 0x7F0
+    Setup s = good_pair();
+    s.described(with_role(participant("Tool", 12), ParticipantRole::Test),
+                ecu("Tool", 10ms, {on_j1939("J1939_CAN", {node(0x80, kToolName)})}));
+    s.config.participants.push_back(participant("Logger", 15));
+    s.results.push_back(ParticipantResult{ParticipantStatus::NotDescribed, std::nullopt});
+    CHECK(s.check().find("test-participant-talks-on-bridged-network") == std::string::npos);
+    CHECK(s.check().find("N 15 not-described: participant 'Logger'") != std::string::npos);
+    // With role: bridge it is no bridge that may carry the network either: its networks are not known.
+    s.config.participants.back().role = ParticipantRole::Bridge;
+    s.config.participants.back().role_written = true;
+    CHECK(s.check().find("test-participant-talks-on-bridged-network") == std::string::npos);
+    // The same participant with describe: false is one.
+    s.config.participants.back() = participant("Logger", 15, std::nullopt, false);
+    s.results.back().status = ParticipantStatus::NotChecked;
+    CHECK(s.check().find("W 12 test-participant-talks-on-bridged-network") != std::string::npos);
+}
+
+TEST_CASE(the_reports_show_a_participant_without_a_saved_description)
+{
+    Setup s = good_pair();
+    s.results[1] = ParticipantResult{ParticipantStatus::NotDescribed, std::nullopt};
+    Checked r;
+    r.file = "sim.yaml";
+    r.config = s.config;
+    r.participants = s.results;
+    r.findings = check_participants(s.config, s.results, "1.0.0");
+    CHECK(format_text(r).find("Dashboard    -      not described (see the notes)\n") != std::string::npos);
+    CHECK(format_json(r).find("      \"step_ms\": null,\n      \"status\": \"not_described\",\n      \"reported\": null,\n") !=
+          std::string::npos);
+}
+
 TEST_CASE(the_reports_show_a_disabled_participant)
 {
     const Setup s = without_dashboard();

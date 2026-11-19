@@ -7,6 +7,7 @@
 | 調べること | 節 |
 |---|---|
 | 何を、どの順に照合するか | [照合の順序](#照合の順序) |
+| 実行ファイルを起動せずに照合する | [保存した説明](#保存した説明--write-descriptions--descriptions) |
 | 指摘のコードの意味と直し方 | [指摘のコード](#指摘のコード) |
 | J1939 のアドレスが重なったときの重大度 | [J1939 のアドレスの重なり](#j1939-のアドレスの重なり) |
 | 人が読む出力の読み方 | [人向け](#人向け) |
@@ -60,6 +61,23 @@
 | 読む量 | 標準出力の最初の 1 MiB と、標準エラーの最後の 1 MiB です。 |
 | 標準出力を切ったとき | `--describe` の出力のエラーに添える文に、そう書きます。 |
 | 標準エラーを切ったとき | 末尾を添えるところに、そう書きます。 |
+
+### 保存した説明（`--write-descriptions`、`--descriptions`）
+
+`check --write-descriptions <file>` は、`--describe` の出力を読めた participant ごとに、その出力を `<file>` に書きます。participant の名前、書かれたとおりの `command`、実行ファイルのパス・大きさ・更新時刻を一緒に書きます。`check --descriptions <file>` は、順 3 をこのファイルから取ります。**プロセスを 1 つも起動しません**。participant の実行ファイル（`role: bridge` も）も、`--connect` のブリッジも起動しません。
+
+| 項目 | ルール |
+|---|---|
+| どの出力を使うか | participant の名前と `command` が同じで、実行ファイルのパス・大きさ・更新時刻が今も同じものです。なければ、その participant の `status` は `"not_described"` で、注記 `not-described` が出ます。実行ファイルを作り直したときもここに入ります。 |
+| すべての説明が要るルール | `not_described` の participant がいる間は出しません。`--describe` が失敗した participant がいるときと同じです（たとえば、ネットワークに ECU が 1 つだけ、という指摘）。 |
+| `--connect` と、要求ファイルの `connect` | 要求の形とネットワークの名前だけを照合します。ブリッジを探さず、起動もせず、イーサネットのアドレスも比べません（`connect-tool-missing`、`connect-tool-failed`、`connect-filter` は出ません）。 |
+| ファイルがない | まだ何も保存していない、とみなします。`describe: true` の participant はすべて `not_described` で、ほかの指摘は出ません。 |
+| ファイルが使えない | 読めない、保存した説明のファイルでない、別の vehicle-sil の版が書いた、のどれかです。`describe: true` の participant はすべて `not_described` で、注記 `descriptions-not-used` が理由を言います。 |
+| ファイルの中身 | 同じ vehicle-sil の版の `vehicle_sil_launch` だけが読みます。形はインターフェースではなく、変わることがあります。 |
+| 書き方 | 隣に新しいファイルを書いてから置き換えるので、書きかけのファイルは残りません。書けないときはエラー `descriptions-write` で照合が失敗します。ほかの結果は、この選択肢がないときと同じです。設定ファイルが読めないときは何も書きません。 |
+| 一緒に使う | `--descriptions` と `--write-descriptions` は一緒に使えます（ファイルから取った出力を書き直します）。どちらも `--text-from-stdin` と一緒に使えます。 |
+
+`run` は、毎回すべての participant の `--describe` をやり直します。そのため `run` と `test` は、これらの選択肢を受けません（終了コード 4）。
 
 ### 指摘のコード
 
@@ -127,6 +145,9 @@
 | `outside-speed-set` | 注記 | 実行がシミュレーションの外につながっていて、実時間を保ちます。ファイルの `speed`（速さがない、つまり最速のときも）でなく、速さ 1 で動きます。 | 直すものはありません。ほかの速さにするには `outside-real-time` を見ます。 |
 | `outside-not-real-time` | 注記 | `--time-policy free` のとき: 実行がシミュレーションの外につながっていて、速さが 1 でない（`--speed`、なければファイルの値。速さがなければ最速）か、`--start-paused` が付いています。ブリッジは両方向にフレームを運び続けます。 | 実時間で動かすなら、`--time-policy free` を外します。 |
 | `not-checked` | 注記 | `describe: false` の participant です（照合していない）。 | 対応は不要です。 |
+| `not-described` | 注記 | `--descriptions` のとき: `describe: true` の participant に、今の `command` と実行ファイルに合う保存した `--describe` の出力がありません（コマンドを変えた、実行ファイルを作り直した、保存していない）。 | `--descriptions` なしで照合します。`--write-descriptions` を付けると、出力を保存し直します。 |
+| `descriptions-not-used` | 注記 | `--descriptions` のとき: ファイルが読めない、保存した説明のファイルでない、別の vehicle-sil の版が書いた、のどれかです。どの participant も照合しません。 | `--descriptions` なしで照合します。`--write-descriptions` を付けると、出力を保存し直します。 |
+| `descriptions-write` | エラー | `--write-descriptions` のファイルを書けません（ディレクトリがない、権限がない、ディスクがいっぱい。Windows では、ほかのプログラムが開いていることがあります）。ほかの結果には影響しません。 | あるディレクトリの、書けるファイルを指定します。 |
 | `participant-disabled` | 注記 | 無効にした participant です（`enabled: false`、`--disable`。照合も起動もしない）。 | 対応は不要です。 |
 | `participant-manual` | 注記 | 自分で起動する participant です（`manual: true`、`--manual`。`run` は起動せず、コマンドを表示して待つ）。 | `run` が表示するコマンドで起動します。 |
 | `version-mismatch` | 注記 | 実行ファイルをビルドした vehicle-sil のバージョンが、`vehicle_sil_launch` のバージョンと違います。 | 一緒に動かなければ、同じバージョンでビルドし直します。 |
@@ -404,6 +425,7 @@ failed: 3 errors, 1 warning, 0 notes
 |---|---|
 | `"described"` | `--describe` の出力を読んだ |
 | `"not_checked"` | `describe: false` |
+| `"not_described"` | `--descriptions` に、その `--describe` の出力がなかった（[保存した説明](#保存した説明--write-descriptions--descriptions)） |
 | `"failed"` | 実行ファイルがない、`--describe` の失敗 |
 | `"skipped"` | 設定ファイルのエラーで進めなかった |
 | `"disabled"` | 無効にした（項目にエラーがあっても） |

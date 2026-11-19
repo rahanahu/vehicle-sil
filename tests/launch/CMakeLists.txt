@@ -182,6 +182,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       connect
       connections
       describe
+      descriptions
       docs
       enabled
       request

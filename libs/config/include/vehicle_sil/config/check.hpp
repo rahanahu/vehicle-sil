@@ -133,6 +133,9 @@ enum class ParticipantStatus
 {
     Described,  ///< its executable described itself (ParticipantResult::ecu)
     NotChecked, ///< describe: false
+    /// describe: true, but the check ran no --describe and had no saved output of it
+    /// (check --descriptions): what it is on is not known, as for Failed, without an error
+    NotDescribed,
     Failed,     ///< its executable is missing, or --describe failed
     Skipped,    ///< its entry in the file has an error (and it is enabled)
     Disabled,   ///< enabled: false (or --disable), also with an error in its entry: not checked, not started
@@ -142,8 +145,8 @@ struct ParticipantResult
 {
     ParticipantStatus status = ParticipantStatus::Skipped;
     std::optional<ReportedEcu> ecu{};
-    /// Its executable (find_executable()) if it is one (Described, NotChecked, and Failed by
-    /// --describe); empty otherwise.
+    /// Its executable (find_executable()) if it is one (Described, NotChecked, NotDescribed, and
+    /// Failed by --describe); empty otherwise.
     std::filesystem::path executable{};
 };
 
@@ -276,10 +279,12 @@ struct ConnectTools
 /// role: test), connect-tool-missing, connect-tool-failed (its --describe failed, or it described
 /// another name or network); the bridge's --describe runs only if nothing else is wrong with the
 /// request and every enabled participant was described. (What a connection outside means for the
-/// time is not judged here: time_lock_findings() in time_plan.hpp.) Without `tools` (only the file is read)
-/// neither the tools nor the participants' descriptions are looked at: only the requests' form and
-/// names. NetworkOutside::arguments is empty for a network with an error here; check_file() also
-/// empties it for one with an error of check_participants() (connect-loop).
+/// time is not judged here: time_lock_findings() in time_plan.hpp.) Without `tools` no tool is
+/// looked for or run, and the MAC addresses are not compared (connect-filter): only the requests'
+/// form and names, and, if `results` has one for each participant (check --descriptions; empty
+/// when only the file is read), which networks the described ECUs join (connect-shared-loop).
+/// NetworkOutside::arguments is empty for a network with an error here; check_file() also empties
+/// it for one with an error of check_participants() (connect-loop).
 struct ConnectCheck
 {
     std::vector<Finding> findings;

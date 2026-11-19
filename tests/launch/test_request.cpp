@@ -6,7 +6,9 @@
 
 #include "launch_test_util.hpp"
 
+#include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/launch/checked.hpp"
+#include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/launch/run.hpp"
 #include "vehicle_sil/runner/run_plan.hpp"
@@ -125,6 +127,22 @@ TEST_CASE(a_start_paused_needs_a_way_to_go_on)
     r.intent.start_paused = false;
     r.host.control.reset();
     CHECK(messages(r).empty());
+}
+
+TEST_CASE(the_text_from_stdin_and_the_saved_descriptions_are_for_check_only)
+{
+    RunRequest r;
+    r.host.config_from_stdin = true;
+    r.host.descriptions = "saved.json";
+    r.host.write_descriptions = "saved.json";
+    CHECK(messages(r, RequestCommand::Check).empty());
+    const auto refused = list("--text-from-stdin is for check: run and test read the configuration file itself, so leave it out",
+                              "--descriptions is for check: run and test run --describe of each participant again before "
+                              "they start it, so leave it out",
+                              "--write-descriptions is for check: leave it out, and write the descriptions with "
+                              "vehicle_sil_launch check --write-descriptions <file>");
+    CHECK(messages(r, RequestCommand::Run) == refused);
+    CHECK(messages(r, RequestCommand::Test) == refused);
 }
 
 TEST_CASE(the_rules_are_reported_in_the_order_of_the_checks)
@@ -282,6 +300,126 @@ TEST_CASE(a_check_reads_every_field_of_the_request_that_is_the_checks)
     r.host.stdin_commands = true;
     CHECK(codes(check_file(r), "") == codes(none, ""));
     CHECK(!std::filesystem::exists(dir / "logs") && !std::filesystem::exists(dir / "out"));
+    // The saved descriptions: the file to write them to (none here: no executable described
+    // itself), and the file to take them from, with which no bridge is looked for either.
+    r = of_file("sim.yaml");
+    r.host.write_descriptions = "saved.json";
+    CHECK(codes(check_file(r), "") == codes(none, ""));
+    CHECK(std::filesystem::exists(dir / "saved.json") && read_saved_descriptions(dir / "saved.json").problem.empty() &&
+          read_saved_descriptions(dir / "saved.json").entries.empty());
+    r = of_file("sim.yaml");
+    r.host.descriptions = "sim.yaml"; // not a file of saved descriptions
+    CHECK(codes(check_file(r), "descriptions-") == "descriptions-not-used ");
+    r = of_file("sim.yaml");
+    r.intent.connect.push_back({"ETH1", "eth-none0"});
+    r.host.tool_directory = dir / "tools";
+    r.host.descriptions = "saved.json";
+    const Checked saved = check_file(r);
+    CHECK(codes(saved, "connect-tool-missing").empty() && codes(saved, "descriptions-").empty());
+    CHECK(saved.outside.size() == 1 && saved.outside.at(0).tool_path.empty());
+}
+
+namespace {
+
+std::filesystem::path scratch(const char* name)
+{
+    const std::filesystem::path dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "descriptions" / name;
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    return dir;
+}
+
+ParticipantConfig participant(const std::string& name, std::vector<std::string> command)
+{
+    ParticipantConfig p;
+    p.name = name;
+    p.command = std::move(command);
+    return p;
+}
+
+} // namespace
+
+TEST_CASE(saved_descriptions_come_back_as_they_were_written)
+{
+    const std::filesystem::path dir = scratch("round-trip");
+    std::vector<SavedDescription> entries(2);
+    entries[0].name = "Engine";
+    entries[0].command = {"engine/engine_ecu", "--mode", "a \"b\""};
+    entries[0].executable = ExecutableStamp{"/x/engine/engine_ecu", 12345, -6789012345678};
+    entries[0].output = "{\"name\": \"Engine \xC3\xA9\"}\n\ttab \\ back\x01\r\n";
+    entries[1].name = "Dashboard";
+    entries[1].command = {"dashboard"};
+    entries[1].executable = ExecutableStamp{"/x/dashboard", 0, 1};
+    CHECK(write_saved_descriptions(dir / "saved.json", entries).empty());
+    const SavedDescriptions read = read_saved_descriptions(dir / "saved.json");
+    CHECK(read.problem.empty() && read.entries.size() == 2);
+    for (std::size_t i = 0; i < read.entries.size() && i < entries.size(); ++i)
+    {
+        CHECK(read.entries[i].name == entries[i].name && read.entries[i].command == entries[i].command &&
+              read.entries[i].executable == entries[i].executable && read.entries[i].output == entries[i].output);
+    }
+    // Only the file is left in the directory: the one written beside it was renamed.
+    CHECK(std::distance(std::filesystem::directory_iterator(dir), std::filesystem::directory_iterator{}) == 1);
+    // An output that is not UTF-8 would not come back as it was: it is not saved.
+    entries[1].output = "\xFF";
+    CHECK(write_saved_descriptions(dir / "saved.json", entries).empty());
+    CHECK(read_saved_descriptions(dir / "saved.json").entries.size() == 1);
+}
+
+TEST_CASE(saved_descriptions_that_cannot_be_used_say_why)
+{
+    const std::filesystem::path dir = scratch("unusable");
+    // None yet: nothing to use, and nothing wrong.
+    SavedDescriptions none = read_saved_descriptions(dir / "none.json");
+    CHECK(none.entries.empty() && none.problem.empty());
+    CHECK(read_saved_descriptions(dir).problem == "the file is not a regular file");
+    std::ofstream(dir / "garbage.json", std::ios::binary) << "{\"vehicle_sil_descriptions\": ";
+    CHECK(read_saved_descriptions(dir / "garbage.json").problem.rfind("the file is not one that check --write-descriptions wrote (", 0) == 0);
+    std::ofstream(dir / "config.json", std::ios::binary) << "{\"vehicle_sil_simulation\": 1}";
+    CHECK(read_saved_descriptions(dir / "config.json").problem ==
+          "the file is not one that check --write-descriptions wrote (it has no vehicle_sil_descriptions)");
+    std::ofstream(dir / "other.json", std::ios::binary)
+        << "{\"vehicle_sil_descriptions\": 1, \"vehicle_sil\": \"0.0.1-other\", \"participants\": "
+           "[{\"name\": \"Engine\"}]}";
+    const SavedDescriptions other = read_saved_descriptions(dir / "other.json");
+    CHECK(other.entries.empty() && other.problem == "vehicle-sil 0.0.1-other wrote the file, and this vehicle_sil_launch is " +
+                                                        std::string(vehicle_sil::version()) +
+                                                        " (only the same version reads it)");
+    // A file that cannot be written: what is wrong, and nothing left behind.
+    CHECK(!write_saved_descriptions(dir / "missing" / "saved.json", {}).empty());
+    CHECK(!std::filesystem::exists(dir / "missing"));
+}
+
+TEST_CASE(a_saved_description_is_taken_for_the_same_name_command_and_executable_only)
+{
+    const std::filesystem::path dir = scratch("source");
+    const std::filesystem::path exe = dir / "engine_ecu";
+    std::ofstream(exe, std::ios::binary) << "built";
+    const std::optional<ExecutableStamp> stamp = executable_stamp(exe);
+    CHECK(stamp.has_value());
+    if (!stamp)
+    {
+        return;
+    }
+    // Another spelling of the same file has the same stamp.
+    CHECK(executable_stamp(dir / "." / "engine_ecu") == stamp);
+    CHECK(!executable_stamp(dir / "missing"));
+    std::vector<SavedDescription> saved(1);
+    saved[0].name = "Engine";
+    saved[0].command = {"engine_ecu", "--mode", "x"};
+    saved[0].executable = *stamp;
+    saved[0].output = "{}";
+    const DescribeSource source = describe_from_saved(saved);
+    const std::vector<std::string> arguments{"--mode", "x", "--describe", "--name", "Engine"};
+    const std::optional<DescribeRun> run = source(participant("Engine", {"engine_ecu", "--mode", "x"}), exe, arguments);
+    CHECK(run.has_value() && run->exit_code == 0 && run->standard_output == "{}" && !run->start_error &&
+          run->command_text == "engine_ecu --mode x --describe --name Engine");
+    CHECK(!source(participant("Engine2", {"engine_ecu", "--mode", "x"}), exe, arguments));
+    CHECK(!source(participant("Engine", {"engine_ecu", "--mode", "y"}), exe, arguments));
+    CHECK(!source(participant("Engine", {"engine_ecu", "--mode", "x"}), dir / "missing", arguments));
+    // Built again: another size.
+    std::ofstream(exe, std::ios::binary) << "built again";
+    CHECK(!source(participant("Engine", {"engine_ecu", "--mode", "x"}), exe, arguments));
 }
 
 TEST_CASE(the_describe_limit_of_the_request_is_what_a_test_reports_and_defaults_to_the_checks)
