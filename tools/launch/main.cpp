@@ -89,6 +89,7 @@ constexpr const char* kUsage =
     "usage: vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]\n"
     "                                [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
     "                                [--time-policy realtime|free] [--request <file>]\n"
+    "                                [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]\n"
     "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]\n"
     "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
@@ -170,6 +171,14 @@ constexpr const char* kUsage =
     "                              with --start-paused and --control, from when it stands still before the start);\n"
     "                              test: each run\n"
     "  --describe-timeout-ms <ms>  how long one executable may take for --describe (default 10000)\n"
+    "  --text-from-stdin           check: read the configuration's text from stdin, not from <file>; <file> still\n"
+    "                              says where it is (its relative paths are from its directory) and names it in\n"
+    "                              the findings, and need not exist\n"
+    "  --write-descriptions <file> check: write each participant's --describe output that the check read to <file>,\n"
+    "                              for --descriptions (only the same vehicle_sil_launch reads it)\n"
+    "  --descriptions <file>       check: start no process: take each participant's --describe output from <file>\n"
+    "                              (check --write-descriptions) if its command and executable are as they were;\n"
+    "                              any other participant is not described. --connect: only its form and names\n"
     "  --connect <network>=<target> connect the network <network> of <file> to a real bus at <target>: an\n"
     "                              Ethernet adapter, or virtual:<n> or physical:<n> for a CAN channel (connections\n"
     "                              <file> lists those of this computer); none: SIL Kit only. check finds the\n"
@@ -872,8 +881,8 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
                  a == "--disable" || a == "--enable" || a == "--manual" || a == "--speed" || a == "--scenario" || a == "--control" ||
                  a == "--variant" || a == "--param" || a == "--scenarios" || a == "--timeline" || a == "--connect" ||
-                 a == "--network" || a == "--time-policy" || a == "--request" ||
-                 a == "--control-credentials" ||
+                 a == "--network" || a == "--time-policy" || a == "--request" || a == "--descriptions" ||
+                 a == "--write-descriptions" || a == "--control-credentials" ||
                  a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log")
         {
             ++i;
@@ -1088,6 +1097,18 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
         if (intent.scenario->empty())
         {
             throw cli::UsageError("--scenario needs a scenario file");
+        }
+    }
+    // What a check reads instead of the file and the executables (validate_request(): check only).
+    host.config_from_stdin = args.flag("text-from-stdin");
+    host.descriptions = args.str("descriptions", "");
+    host.write_descriptions = args.str("write-descriptions", "");
+    require_valid(request, command, asked);
+    for (const std::string option : {"descriptions", "write-descriptions"})
+    {
+        if (args.has(option) && args.str(option, "").empty())
+        {
+            throw cli::UsageError("--" + option + " needs a file: --" + option + " <file>.json");
         }
     }
     host.config = positionals[1];
@@ -1577,14 +1598,14 @@ int main(int argc, char** argv)
             : isTest ? cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline",
-                                "time-policy", "request"},
-                               {"json", "strict", "events", "stdin-commands", "start-paused", "fail-fast"},
+                                "time-policy", "request", "descriptions", "write-descriptions"},
+                               {"json", "strict", "events", "stdin-commands", "start-paused", "fail-fast", "text-from-stdin"},
                                {"disable", "enable", "manual", "param", "variant", "scenarios", "connect"})
                    : cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "variant",
-                                "timeline", "time-policy", "request"},
-                               {"json", "strict", "events", "stdin-commands", "start-paused"},
+                                "timeline", "time-policy", "request", "descriptions", "write-descriptions"},
+                               {"json", "strict", "events", "stdin-commands", "start-paused", "text-from-stdin"},
                                {"disable", "enable", "manual", "param", "connect"});
         if (args.positionals().empty())
         {

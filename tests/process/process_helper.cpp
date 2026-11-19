@@ -25,6 +25,8 @@
 //                        without a console (DETACHED_PROCESS) with this helper's standard handles,
 //                        waits for it and exits with its exit code; nothing after it is read
 //   --exit <code>        the exit code (default 0)
+// Before them: with VEHICLE_SIL_HELPER_MARK=<path> in its environment it appends a line to <path>, so
+// that a test can tell whether a copy of it was started at all (also under another name).
 // On Windows it reads its arguments as UTF-8 from the wide command line and writes "\n" as it is.
 #include "spawn_sleeper.hpp"
 
@@ -118,6 +120,10 @@ std::vector<std::string> arguments(int argc, char** argv)
 int main(int argc, char** argv)
 {
     const std::vector<std::string> args = arguments(argc, argv);
+    if (const char* mark = std::getenv("VEHICLE_SIL_HELPER_MARK"); mark != nullptr && *mark != '\0')
+    {
+        std::ofstream(mark, std::ios::binary | std::ios::app) << "started\n";
+    }
     const std::size_t count = args.size();
     int code = 0;
     for (std::size_t i = 1; i < count; ++i)
