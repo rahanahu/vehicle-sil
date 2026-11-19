@@ -7,6 +7,8 @@ archives made here stand in for the release's.
 
 from __future__ import annotations
 
+import argparse
+import contextlib
 import hashlib
 import importlib.util
 import io
@@ -343,6 +345,107 @@ def test_version() -> None:
     check(p.returncode == 1 and "tag" in p.stderr, f"package.py version --expect another tag: exit code 1 ({p.stderr})")
 
 
+def test_prerelease(tmp: Path) -> None:
+    """The full version of CMakeLists.txt (project VERSION and VEHICLE_SIL_VERSION_PRERELEASE), and the versions that
+    the template's README names: 0.2.0-rc.1 is one version, not also 0.2.0."""
+    package = package_module()
+    project = "project(\n  vehicle_sil\n  VERSION 0.2.0\n  LANGUAGES C CXX)\n"
+    cases = [  # (CMakeLists.txt, the full version, or what the refusal says)
+        (project + 'set(VEHICLE_SIL_VERSION_PRERELEASE "rc.1")\n', "0.2.0-rc.1"),
+        (project + 'set(VEHICLE_SIL_VERSION_PRERELEASE "beta.12")\n', "0.2.0-beta.12"),
+        (project + 'set(VEHICLE_SIL_VERSION_PRERELEASE "")\n', "0.2.0"),
+        (project + 'set(VEHICLE_SIL_VERSION_PRERELEASE "rc1")\n', 'is "rc1": write rc.<n>, beta.<n> or alpha.<n>'),
+        (project + 'set(VEHICLE_SIL_VERSION_PRERELEASE "dev")\n', 'is "dev": write rc.<n>'),
+        (project + 'set(VEHICLE_SIL_VERSION_PRERELEASE "rc.01")\n', 'is "rc.01": write rc.<n>'),  # SemVer
+        (project, 'no set(VEHICLE_SIL_VERSION_PRERELEASE "...")'),
+    ]
+    root = package.ROOT
+    package.ROOT = tmp
+    try:
+        for text, want in cases:
+            (tmp / "CMakeLists.txt").write_text(text, encoding="utf-8")
+            try:
+                got = package.project_version()
+            except package.Usage as e:
+                got = f"refused: {e}"
+            if want.startswith(("0", "1")):
+                check(got == want, f"project_version of {text.splitlines()[-1]!r}: {want} ({got})")
+            else:
+                check(got.startswith("refused") and want in got,
+                      f"project_version of {text.splitlines()[-1]!r}: refused with {want!r} ({got})")
+    finally:
+        package.ROOT = root
+    # Each place that names the version is checked: another version there is a problem that names the file.
+    places = ["pyproject.toml", "gui/server/pyproject.toml", "gui/server/src/vehicle_sil_gui/__init__.py",
+              "python/vehicle_sil_control/__init__.py", "template/get_tools.py", "template/CMakeLists.txt",
+              "template/README.md", "template/README.ja.md"]
+    copy = tmp / "copy"
+    for name in ["CMakeLists.txt", "CHANGELOG.md", *places]:
+        (copy / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / name, copy / name)
+    package.ROOT = copy
+    try:
+        for name in places:
+            text = (copy / name).read_text(encoding="utf-8")
+            (copy / name).write_text(text.replace(VERSION, "9.8.7"), encoding="utf-8")
+            got = [x for x in package.version_problems(VERSION) if not x.startswith("CHANGELOG.md")]
+            (copy / name).write_text(text, encoding="utf-8")
+            check(len(got) == 1 and name.split("/")[-1] in got[0] and "9.8.7" in got[0],
+                  f"version_problems: 9.8.7 in {name} is a problem that names it ({got})")
+    finally:
+        package.ROOT = root
+
+    # The release workflow's check of the tag (version --expect) with a pre-release version: every place names
+    # 0.2.0-rc.1, and the heading has the date of the tagged commit.
+    rc = tmp / "rc"
+    for name in places:
+        (rc / name).parent.mkdir(parents=True, exist_ok=True)
+        (rc / name).write_text((ROOT / name).read_text(encoding="utf-8").replace(VERSION, "0.2.0-rc.1"), encoding="utf-8")
+    (rc / "CMakeLists.txt").write_text(project + 'set(VEHICLE_SIL_VERSION_PRERELEASE "rc.1")\n', encoding="utf-8")
+    dated = "# Changelog\n\n## [0.2.0-rc.1] - 2026-02-03\n\n- a\n\n## [0.1.0] - 2026-01-02\n\n- b\n"
+    tags = [  # (CHANGELOG.md, the tag, the exit code, what stdout or stderr says)
+        (dated, "v0.2.0-rc.1", 0, "0.2.0-rc.1"),
+        (dated, "v0.2.0", 1, "the tag is v0.2.0, the version 0.2.0-rc.1: tag v0.2.0-rc.1"),
+        (dated, "v0.2.0-rc.2", 1, "the tag is v0.2.0-rc.2"),
+        (dated.replace("2026-02-03", "Unreleased"), "v0.2.0-rc.1", 1, 'write the release date in its place'),
+    ]
+    package.ROOT = rc
+    try:
+        for changelog, tag, code, want in tags:
+            (rc / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                got = package.version_command(argparse.Namespace(expect=tag))
+            check(got == code and want in out.getvalue() + err.getvalue(),
+                  f"version --expect {tag} ({changelog.splitlines()[2]!r}): exit code {code}, says {want!r} "
+                  f"({got}: {out.getvalue()} {err.getvalue()})")
+    finally:
+        package.ROOT = root
+
+    text = ("Download `vehicle-sil-template-0.2.0-rc.1.zip`, extract it to `tools/vehicle-sil-tools-0.2.0-rc.1-<OS>/`; "
+            "see https://example.invalid/blob/v0.2.0-rc.1/docs. It is 0.2.0-rc.1.")
+    check(package.text_versions(text) == {"0.2.0-rc.1"},
+          f"a README that names 0.2.0-rc.1 names no other version ({package.text_versions(text)})")
+    check(package.text_versions("from 0.1.0 to 0.2.0-rc.2 and 0.2.0, in v0.2.0.zip") == {"0.1.0", "0.2.0-rc.2", "0.2.0"},
+          "the other versions that a README names are found, with and without a pre-release part")
+
+
+def test_prerelease_flag() -> None:
+    """release.yml makes a tag with a pre-release part (v0.2.0-rc.1) a pre-release on GitHub, and v0.2.0 not."""
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    m = re.search(r"(?m)^ *(prerelease=\(\))\n *(case \"\$version\" in .*esac)$", workflow)
+    check(m is not None, "release.yml sets prerelease=() and then --prerelease with case \"$version\" in ... esac")
+    bash = shutil.which("bash")
+    if m is None or bash is None:
+        return
+    for version, want in (("0.2.0-rc.1", "--prerelease"), ("0.2.0", "")):
+        script = f'version="{version}"\n{m.group(1)}\n{m.group(2)}\necho "${{prerelease[@]}}"\n'
+        p = subprocess.run([bash, "-c", script], capture_output=True, text=True)
+        check(p.returncode == 0 and p.stdout.strip() == want,
+              f"release.yml: the release of {version} is {'a pre-release' if want else 'no pre-release'} "
+              f"({p.returncode}: {p.stdout!r} {p.stderr})")
+
+
 def test_changelog() -> None:
     """The CHANGELOG.md heading of a version (Keep a Changelog), and the release notes that release.yml cuts."""
     package = package_module()
@@ -369,6 +472,11 @@ def test_changelog() -> None:
             check(got == [], f"changelog {first!r} (release {release}): accepted ({got})")
         else:
             check(len(got) == 1 and want in got[0], f"changelog {first!r} (release {release}): refused with {want!r} ({got})")
+    pre = head + "## [0.2.0-rc.1] - Unreleased\n\n" + body + "\n## [0.2.0] - 2026-02-03\n\n- later\n"
+    check(package.changelog_problems(pre, "0.2.0-rc.1") == [], "changelog: the heading of a pre-release is accepted")
+    check(any('no heading "## [0.2.0] - Unreleased"' in x for x in package.changelog_problems(
+              head + "## [0.2.0-rc.1] - Unreleased\n\n" + body, "0.2.0")),
+          "changelog: the heading of 0.2.0-rc.1 is not that of 0.2.0")
     check(package.changelog_problems((ROOT / "CHANGELOG.md").read_text(encoding="utf-8"), VERSION) == [],
           "CHANGELOG.md has the heading of the version")
 
@@ -380,17 +488,21 @@ def test_changelog() -> None:
     if m is None or awk is None:
         print("note: no awk here, the release notes are not tried")
         return
-    for text in (head + "## [0.1.0] - 2026-02-03\n\n" + body + older + links,
-                 head + "## [Unreleased]\n\n- next\n\n## [0.1.0] - 2026-02-03\n\n" + body + links):
-        p = subprocess.run([awk, "-v", "h=## [0.1.0] - ", m.group(1)], input=text, capture_output=True, text=True,
-                           encoding="utf-8")
+    for version, text in (
+            ("0.1.0", head + "## [0.1.0] - 2026-02-03\n\n" + body + older + links),
+            ("0.1.0", head + "## [Unreleased]\n\n- next\n\n## [0.1.0] - 2026-02-03\n\n" + body + links),
+            ("0.2.0-rc.1", head + "## [0.2.0] - 2026-03-04\n\n- final\n\n## [0.2.0-rc.1] - 2026-02-03\n\n" + body
+             + older + links)):
+        p = subprocess.run([awk, "-v", f"h=## [{version}] - ", m.group(1)], input=text, capture_output=True,
+                           text=True, encoding="utf-8")
         check(p.returncode == 0 and p.stdout.strip() == body.strip(),
-              f"release.yml's awk cuts the body of \"## [0.1.0] - <date>\" ({p.returncode}: {p.stdout!r} {p.stderr})")
+              f"release.yml's awk cuts the body of \"## [{version}] - <date>\" ({p.returncode}: {p.stdout!r} {p.stderr})")
 
 
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
-        for test in (test_fetch, test_path_lines, test_broken, test_unsafe, test_template_archive, test_schemas):
+        for test in (test_fetch, test_path_lines, test_broken, test_unsafe, test_template_archive, test_schemas,
+                     test_prerelease):
             d = Path(tmp) / test.__name__
             d.mkdir()
             test(d)
@@ -398,6 +510,7 @@ def main() -> int:
     test_version()
     test_timeline_page()
     test_changelog()
+    test_prerelease_flag()
     print(f"{'FAILED' if failures else 'passed'}: {len(failures)} failures")
     return 1 if failures else 0
 

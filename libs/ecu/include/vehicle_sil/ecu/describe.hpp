@@ -250,8 +250,8 @@ struct EcuDescription
 /// one ECU) with a value it does not know.
 inline constexpr int kEcuDescriptionFormat = 1;
 
-/// The version of vehicle-sil this library was built from (the CMake project version, e.g.
-/// "0.1.0"); to_json() writes it as "vehicle_sil".
+/// The version of vehicle-sil this library was built from (the CMake project version with its
+/// pre-release part, e.g. "0.2.0" or "0.2.0-rc.1"); to_json() writes it as "vehicle_sil".
 [[nodiscard]] const char* version() noexcept;
 
 /// `description` as a JSON object, indented by two spaces, ending with a newline (LF). The same

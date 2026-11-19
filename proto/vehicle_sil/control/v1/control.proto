@@ -115,8 +115,8 @@ message PingRequest {
 message PingReply {
   string text = 1;
   string server_version = 2; // "vehicle-sil control v1"
-  // The vehicle-sil release the server was built from (e.g. "0.1.0"). The Python client compares it with its
-  // own at its first call and refuses another release ("": a server from before this field).
+  // The vehicle-sil release the server was built from (e.g. "0.2.0" or "0.2.0-rc.1"). The Python client
+  // compares it with its own at its first call and refuses another release ("": a server from before this field).
   string vehicle_sil = 3;
 }
 

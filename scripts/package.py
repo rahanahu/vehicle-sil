@@ -50,11 +50,13 @@ Commands:
             filled into get_tools.py, and build/dist/SHA256SUMS of the archives and of the client library's npm
             package build/dist/vehicle-sil-gui-client-<version>.tgz (put there from build/gui-client), which the
             release carries on its own (npm install <its URL>).
-  version   prints the version and checks that every place that names it agrees: CMakeLists.txt (project VERSION, the
-            source), pyproject.toml, gui/server/pyproject.toml, python/vehicle_sil_control/__init__.py (__version__),
-            template/get_tools.py (VERSION), template/CMakeLists.txt
-            (GIT_TAG v<version>), CHANGELOG.md (a heading "## [<version>] - Unreleased" or "## [<version>] -
-            YYYY-MM-DD"). --expect v<version> also checks a tag, and that the heading has the release date.
+  version   prints the version and checks that every place that names it agrees: CMakeLists.txt (the source:
+            project VERSION and VEHICLE_SIL_VERSION_PRERELEASE, x.y.z or x.y.z-rc.<n>), pyproject.toml,
+            gui/server/pyproject.toml, gui/server/src/vehicle_sil_gui/__init__.py (__version__),
+            python/vehicle_sil_control/__init__.py (__version__), template/get_tools.py (VERSION), the versions
+            that template/README*.md name, template/CMakeLists.txt (GIT_TAG v<version>), CHANGELOG.md (a heading
+            "## [<version>] - Unreleased" or "## [<version>] - YYYY-MM-DD"). --expect v<version> also checks a
+            tag, and that the heading has the release date.
 
 The full output of each step goes to build/logs/<tag>-<step>.log; the summary shows one line per step and, for a
 failed step, its first error lines and its log. Stops at the first failed step.
@@ -226,12 +228,33 @@ def run_steps(tag: str, steps: list[tuple[str, object]]) -> bool:
 # --- version --------------------------------------------------------------------------------------------------
 
 
+# The pre-release part of a version: SemVer's form, which PEP 440 also takes in pyproject.toml (rc.1 is rc1 there).
+PRERELEASE = r"(?:rc|beta|alpha)\.(?:0|[1-9][0-9]*)"  # SemVer: no leading zero in a number
+# A version as the template's README names it, with its pre-release part; not the 0.2.0 inside 0.2.0-rc.1.
+VERSION_IN_TEXT = re.compile(rf"(?<![\d.])\d+\.\d+\.\d+(?:-{PRERELEASE})?(?!\d|\.\d|-{PRERELEASE})")
+
+
 def project_version() -> str:
+    """The full version: project(vehicle_sil VERSION x.y.z) and VEHICLE_SIL_VERSION_PRERELEASE of CMakeLists.txt."""
     text = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
     m = re.search(r"project\(\s*vehicle_sil\s+VERSION\s+(\d+\.\d+\.\d+)", text)
     if not m:
         raise Usage("CMakeLists.txt has no project(vehicle_sil VERSION x.y.z): the version comes from there")
-    return m.group(1)
+    pre = re.search(r'(?m)^set\(VEHICLE_SIL_VERSION_PRERELEASE "([^"]*)"\)', text)
+    if not pre:
+        raise Usage('CMakeLists.txt has no set(VEHICLE_SIL_VERSION_PRERELEASE "..."): write it after project(), '
+                    'with "" for a release')
+    if pre.group(1) == "":
+        return m.group(1)
+    if not re.fullmatch(PRERELEASE, pre.group(1)):
+        raise Usage(f'CMakeLists.txt: VEHICLE_SIL_VERSION_PRERELEASE is "{pre.group(1)}": write rc.<n>, beta.<n> or '
+                    'alpha.<n> (the form that both SemVer and PEP 440 take), or "" for a release')
+    return f"{m.group(1)}-{pre.group(1)}"
+
+
+def text_versions(text: str) -> set[str]:
+    """The versions that a text names (x.y.z, with a pre-release part when it has one)."""
+    return set(VERSION_IN_TEXT.findall(text))
 
 
 def version_problems(version: str, release: bool = False) -> list[str]:
@@ -241,6 +264,7 @@ def version_problems(version: str, release: bool = False) -> list[str]:
         ("gui/server/pyproject.toml", r'(?m)^version = "([^"]*)"', '{}'),
         ("python/vehicle_sil_control/__init__.py", r'(?m)^__version__ = "([^"]*)"', '{}'),
         ("template/get_tools.py", r'(?m)^VERSION = "([^"]*)"', '{}'),
+        ("gui/server/src/vehicle_sil_gui/__init__.py", r'(?m)^__version__ = "([^"]*)"', '{}'),
         ("template/CMakeLists.txt", r"GIT_TAG\s+(\S+)", 'v{}'),
     ]
     problems = []
@@ -253,8 +277,7 @@ def version_problems(version: str, release: bool = False) -> list[str]:
         elif m.group(1) != want:
             problems.append(f"{name} says {m.group(1)}, CMakeLists.txt says {version}: make it {want}")
     for readme in sorted((ROOT / "template").glob("README*.md")):  # English and Japanese
-        others = sorted(set(re.findall(r"(?<![\d.])\d+\.\d+\.\d+(?![\d.])", readme.read_text(encoding="utf-8")))
-                        - {version})
+        others = sorted(text_versions(readme.read_text(encoding="utf-8")) - {version})
         if others:
             problems.append(f"template/{readme.name} names version {', '.join(others)}, CMakeLists.txt says {version}: "
                             f"make it {version}")
@@ -271,7 +294,7 @@ def changelog_problems(text: str, version: str, release: bool = False) -> list[s
     want = f"\"## [{version}] - Unreleased\" (\"## [{version}] - YYYY-MM-DD\" in the tagged commit)"
     m = re.search(rf"(?m)^## \[{v}\] - (Unreleased|\d{{4}}-\d{{2}}-\d{{2}})[ \t]*$", text)
     if m is None:
-        old = re.search(rf"(?m)^##[ \t]+\[?v?{v}(?![\d.]).*$", text)
+        old = re.search(rf"(?m)^##[ \t]+\[?v?{v}(?![\d.]|-\w).*$", text)  # not 0.2.0-rc.1 for 0.2.0
         if old:
             return [f"CHANGELOG.md has the heading \"{old.group(0).strip()}\", which is not in the form of Keep a "
                     f"Changelog: write it as {want}"]
@@ -1244,9 +1267,9 @@ def main() -> int:
         prog="scripts/package.py", description=__doc__.split("\n\n")[0],
         epilog=__doc__.split("\n\n", 1)[1] + "\nExamples:\n"
         "  scripts/verify-web.py --skip-e2e && scripts/package.py tools\n"
-        "  scripts/package.py verify build/dist/vehicle-sil-tools-0.1.0-linux-x86_64.tar.gz\n"
+        "  scripts/package.py verify build/dist/vehicle-sil-tools-0.2.0-rc.1-linux-x86_64.tar.gz\n"
         "  scripts/package.py template            # after both tools archives are in build/dist/\n"
-        "  scripts/package.py version --expect v0.1.0\n",
+        "  scripts/package.py version --expect v0.2.0-rc.1\n",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     tools = sub.add_parser("tools", help="build and pack the tools archive of this platform")
