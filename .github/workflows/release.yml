@@ -5,7 +5,10 @@
 #             distributions it runs on), and checked as a user uses it (scripts/package.py tools, verify)
 #   windows   the same for Windows x86_64 with MSYS2 UCRT64
 #   draft     once ci.yml has passed on the same commit: the template archive with both archives' SHA-256,
-#             SHA256SUMS, and the draft release (with the client library's npm package on its own)
+#             SHA256SUMS, and the draft release (with the client library's npm package on its own), a pre-release
+#             when the version has a pre-release part
+# Publishing the draft (by a person) starts publish-npm.yml, which puts that npm package on the npm registry; this
+# workflow never publishes to npm.
 # Run by hand (workflow_dispatch), it is a rehearsal: the same files, no release.
 # Security: read-only token except in the draft job (contents: write, to create the release; actions: read, to
 # see ci.yml's runs), no other secrets,
@@ -246,7 +249,8 @@ jobs:
             echo "error: CHANGELOG.md has no section \"## [$version] - YYYY-MM-DD\" with changes under it: add it in the commit that is tagged $TAG"
             exit 1
           fi
-          # A version with a pre-release part (0.2.0-rc.1) is a pre-release on GitHub, not the latest release.
+          # A version with a pre-release part (0.2.0-rc.1) is a pre-release on GitHub, not the latest release (and
+          # publish-npm.yml puts it on npm as "next", not "latest").
           prerelease=()
           case "$version" in *-*) prerelease=(--prerelease) ;; esac
           gh release create "$TAG" --draft --verify-tag "${prerelease[@]}" --title "vehicle-sil $version" \

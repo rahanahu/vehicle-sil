@@ -20,14 +20,14 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 
 ## 入手とインポート
 
-ライブラリは TypeScript のソースで、依存はありません。npm のレジストリには公開していません。
+ライブラリは TypeScript のソースで、依存はありません。リリースのたびに npm のレジストリに `@vehicle-sil/gui-client` として公開し（dist-tag の `latest` は最新のリリース、`next` は最新のプレリリース）、同じパッケージを `vehicle-sil-gui-client-<version>.tgz` としてリリースにも添付します。GUI サーバーと同じ版をインストールしてください。クライアントは、GUI のプロトコルの版が違うサーバーを断ります。
 
-| 使い方                                                | 入手                                                                                                              | import の書き方                                              |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| GUI サーバーが配信する画面（`--web`）                 | コピーするものはありません。サーバーがファイルを配信します（下）                                                  | `import { connect } from '/vsil/vehicle-sil-gui-client.mjs'` |
-| 上の画面の外の素の JavaScript                         | 1 つの ESM のファイルにまとめた `vehicle-sil-gui-client.mjs` を、スクリプトの隣に置く                             | `import { connect } from './vehicle-sil-gui-client.mjs'`     |
-| TypeScript と好きなフレームワーク                     | パッケージ `vehicle-sil-gui-client-<version>.tgz` を入手し、自分のプロジェクトで `npm install <that .tgz>` をする | `import { connect } from '@vehicle-sil/gui-client'`          |
-| このリポジトリの中の TypeScript のアプリ（`gui/web`） | `tsconfig.json` の `paths` で、エントリーポイントの名前を `src/` に向ける                                         | `import { createClient } from '@vehicle-sil/gui-client'`     |
+| 使い方                                                | 入手                                                                                                                  | import の書き方                                              |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| GUI サーバーが配信する画面（`--web`）                 | コピーするものはありません。サーバーがファイルを配信します（下）                                                      | `import { connect } from '/vsil/vehicle-sil-gui-client.mjs'` |
+| 上の画面の外の素の JavaScript                         | 1 つの ESM のファイルにまとめた `vehicle-sil-gui-client.mjs` を、スクリプトの隣に置く                                 | `import { connect } from './vehicle-sil-gui-client.mjs'`     |
+| TypeScript と好きなフレームワーク                     | 自分のプロジェクトで `npm install @vehicle-sil/gui-client@<version>` をする（または `npm install <リリースの .tgz>`） | `import { connect } from '@vehicle-sil/gui-client'`          |
+| このリポジトリの中の TypeScript のアプリ（`gui/web`） | `tsconfig.json` の `paths` で、エントリーポイントの名前を `src/` に向ける                                             | `import { createClient } from '@vehicle-sil/gui-client'`     |
 
 3 つのファイルは、次の場所にあります。
 

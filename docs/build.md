@@ -153,7 +153,7 @@ The archive contains the items below. The `README.md` in the archive describes t
 
 The Vector XL CAN Bridge is not in the archive, because it cannot be built without the Vector XL Driver Library (see "[Build](bridges.md#build)" in bridges.md).
 
-To build your own screen for the browser GUI, install `vehicle-sil-gui-client-<version>.tgz` from the releases page with `npm install <its URL or the file>`. You can then use the client library as `@vehicle-sil/gui-client` (see "Build your own screen" in [gui.md](gui.md#build-your-own-screen)). The same file is also in `client/` of the tools archive.
+To build your own screen for the browser GUI, install the client library of the same version with `npm install @vehicle-sil/gui-client@<version>` (from the npm registry), or `vehicle-sil-gui-client-<version>.tgz` from the releases page with `npm install <its URL or the file>`. You can then use the client library as `@vehicle-sil/gui-client` (see "Build your own screen" in [gui.md](gui.md#build-your-own-screen)). The same file is also in `client/` of the tools archive.
 
 `scripts/package.py` creates the archives.
 
@@ -163,7 +163,7 @@ To build your own screen for the browser GUI, install `vehicle-sil-gui-client-<v
 | `verify` | Checks an archive by following the steps a user takes. |
 | `template` | Creates the template archive. |
 
-`scripts/package.py --help` prints the arguments. When you push a tag `v<version>`, GitHub Actions creates and checks the archives on both OSes and attaches them to a draft release.
+`scripts/package.py --help` prints the arguments. When you push a tag `v<version>`, GitHub Actions creates and checks the archives on both OSes and attaches them to a draft release. When the draft is published, GitHub Actions puts its client library package on the npm registry (see "[Publish the client library to npm](code-map-build.md#publish-the-client-library-to-npm)" in code-map-build.md).
 
 ## Use from another project (FetchContent)
 

@@ -106,11 +106,33 @@ At a release:
 
 - In the commit that you tag, replace `Unreleased` in the heading with the release date (`YYYY-MM-DD`).
 - `.github/workflows/release.yml` cuts the release notes from this version's section of `CHANGELOG.md`.
+- Publishing the draft release puts the client library on npm (below).
 
 Tests:
 
 - `scripts/package.py version` (and `template.get_tools`) finds mismatches.
 - `--expect v<version>` (the release workflow) also rejects a heading without a date.
+
+### Publish the client library to npm
+
+`.github/workflows/publish-npm.yml` puts `@vehicle-sil/gui-client` on the npm registry when a person publishes a release (the event "release published"). Publishing the release is the approval to publish to npm; the tag push, the draft and the rehearsal of `release.yml` publish nothing to npm. To retry (when that run failed), run the workflow by hand from `main` (Actions > publish-npm > Run workflow) with the tag of the published release; it refuses a draft and another branch.
+
+- It publishes the release's `vehicle-sil-gui-client-<version>.tgz` as it is, without building it again. First it checks that the tag is `v<version>`, the release is published and its pre-release mark agrees with the version, `release.yml` uploaded the file and `SHA256SUMS` (`github-actions[bot]`), the file's SHA-256 is the one in `SHA256SUMS`, and the `package.json` in it has the name, the version and this repository as `repository.url` (`gui/client/pack.mjs` writes it; npm compares it with the repository that publishes).
+- The dist-tag is `latest` for a version without a pre-release part and `next` for one with it (`0.2.0-rc.1`). A release of an older line after a newer one (0.1.x after 0.2.0) would move `latest` back: move it with `npm dist-tag add` by hand.
+- It uses npm's trusted publishing (OIDC) and keeps no npm token. Only the `publish` job has `id-token: write`, in the GitHub environment `npm`. npm attaches provenance. It needs a GitHub-hosted runner, npm 11.5.1 or later and Node.js 22.14.0 or later; the job checks the versions.
+- Run again, or with the version already on npm: the same file (`dist.integrity`) succeeds without publishing, another file fails. npm never takes a version twice, even after it is unpublished.
+
+The package's owner sets once, on npmjs.com, in the package's Settings, under "Trusted publishing" (GitHub Actions):
+
+| Field | Value |
+|---|---|
+| Organization or user | `rahanahu` |
+| Repository | `vehicle-sil` |
+| Workflow filename | `publish-npm.yml` |
+| Environment name | `npm` |
+| Allowed actions | `npm publish` |
+
+Change these together with the workflow's file name, the repository or the environment: npm accepts the OIDC token only when they match. After the first publish with it, "Publishing access" can require two-factor authentication and disallow tokens; this does not stop trusted publishing. In the repository's Settings > Environments > `npm`, limit the deployment branches and tags to `main` and the tags `v*` (the event runs on the tag, a run by hand on `main`); no reviewers are needed, because publishing the release is the approval.
 
 ### `VEHICLE_SIL_STATIC`
 

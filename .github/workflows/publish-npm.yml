@@ -1,0 +1,210 @@
+# When a person publishes a release (a draft that release.yml made), puts its client library package on the npm
+# registry: @vehicle-sil/gui-client, with the dist-tag latest, or next for a pre-release (a version with a "-" part).
+#   verify    the release and its tag agree, then takes the release's vehicle-sil-gui-client-<version>.tgz and
+#             SHA256SUMS (both uploaded by release.yml), and checks the file's SHA-256 and its package.json (name,
+#             version, repository). Nothing is built again: what goes to npm is the file the release carries.
+#   publish   that same file, with npm's trusted publishing (OIDC): no npm token, no secret. Provenance is attached.
+# Publishing the release is the approval to publish to npm. The tag push, the draft and the rehearsal of release.yml do
+# not run this workflow.
+# Run by hand (workflow_dispatch, from main) with the tag of a release that is already published: for a retry, e.g.
+# when the run of the event failed. A draft is refused.
+# Run again (or a version that is already on npm): if npm already has that version with the same file, the job
+# says so and succeeds without publishing; with a different file it fails (npm never takes a version twice).
+# Security: the verify job reads with a read-only token; only the publish job may ask for an OIDC token
+# (id-token: write) and has no other permission; no checkout, no dependencies installed, no cache; actions pinned
+# by commit hash (the tag in the comment); the release's values reach the scripts through env, never pasted into a
+# command line. npm accepts the OIDC token only from this file in this repository, as set on npmjs.com
+# (docs/code-map-build.md, "Publish the client library to npm").
+name: publish-npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag of a published release (v0.2.0, v0.2.0-rc.1)"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: publish-npm-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  PACKAGE: "@vehicle-sil/gui-client"
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read  # the release and its files
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      EVENT: ${{ github.event_name }}
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      dist-tag: ${{ steps.release.outputs.dist-tag }}
+      file: ${{ steps.release.outputs.file }}
+      sha256: ${{ steps.file.outputs.sha256 }}
+    steps:
+      - name: The release and its tag
+        id: release
+        run: |
+          # By hand, only the workflow of main: npm trusts this file name, whatever branch it is run from.
+          if [ "$EVENT" = workflow_dispatch ] && [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::run this workflow by hand from main (it was run from $GITHUB_REF)"
+            exit 1
+          fi
+          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::the release's tag \"$TAG\" is not v<version> (v1.2.3 or v1.2.3-rc.1): not published to npm"
+            exit 1
+          fi
+          version="${TAG#v}"
+          case "$version" in
+            *-*) dist_tag=next; want_prerelease=true ;;
+            *)   dist_tag=latest; want_prerelease=false ;;
+          esac
+          # The release as it is now (the event may be old on a re-run, and a run by hand names only the tag).
+          if ! state=$(gh release view "$TAG" --json tagName,isDraft,isPrerelease \
+              --jq '"\(.tagName) draft=\(.isDraft) prerelease=\(.isPrerelease)"'); then
+            echo "::error::there is no release $TAG"
+            exit 1
+          fi
+          if [ "$state" != "$TAG draft=false prerelease=$want_prerelease" ]; then
+            echo "::error::the release $TAG is \"$state\": it must be published (not a draft) and marked" \
+                 "pre-release=$want_prerelease as its version says (fix the release's \"Set as a pre-release\" box)"
+            exit 1
+          fi
+          gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq .ref > /dev/null
+          {
+            echo "version=$version"
+            echo "dist-tag=$dist_tag"
+            echo "file=vehicle-sil-gui-client-$version.tgz"
+          } >> "$GITHUB_OUTPUT"
+      - name: The release's package and SHA256SUMS
+        env:
+          FILE: ${{ steps.release.outputs.file }}
+        run: |
+          # Only the files that release.yml uploaded (with the workflow's token) count, not ones added by hand.
+          uploaders=$(gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.assets[] | "\(.name) \(.uploader.login)"' |
+            awk -v f="$FILE" '$1 == f || $1 == "SHA256SUMS"' | sort)
+          expected=$(printf '%s github-actions[bot]\n' SHA256SUMS "$FILE" | sort)
+          if [ "$uploaders" != "$expected" ]; then
+            echo "::error::the release $TAG must carry $FILE and SHA256SUMS, both uploaded by release.yml;" \
+                 "it has: ${uploaders:-neither}"
+            exit 1
+          fi
+          mkdir dist
+          gh release download "$TAG" --dir dist --pattern "$FILE" --pattern SHA256SUMS
+      - name: The package's SHA-256, name, version and repository
+        id: file
+        working-directory: dist
+        env:
+          FILE: ${{ steps.release.outputs.file }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          line=$(grep -F -x -e "$(sha256sum "$FILE" | cut -d' ' -f1)  $FILE" SHA256SUMS || true)
+          if [ -z "$line" ]; then
+            echo "::error::$FILE does not match its line in SHA256SUMS (or has none): not published"
+            exit 1
+          fi
+          echo "$line" | sha256sum --check --strict -
+          python3 -I - "$FILE" "$PACKAGE" "$VERSION" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" <<'EOF'
+          import json, sys, tarfile
+          path, name, version, repository = sys.argv[1:]
+          with tarfile.open(path, "r:gz") as tar:
+              manifest = json.load(tar.extractfile("package/package.json"))
+          url = (manifest.get("repository") or {}).get("url", "")
+          problems = [f"{key} is {got!r}, expected {want!r}" for key, got, want in [
+              ("name", manifest.get("name"), name),
+              ("version", manifest.get("version"), version),
+              # npm compares it with the repository of the OIDC token (provenance).
+              ("repository.url", url.removeprefix("git+").removesuffix(".git"), repository),
+          ] if got != want]
+          for problem in problems:
+              print(f"::error::package/package.json of {path}: {problem}")
+          sys.exit(1 if problems else 0)
+          EOF
+          echo "sha256=${line%% *}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-package
+          path: dist/${{ steps.release.outputs.file }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Set as the environment of the trusted publisher on npmjs.com; its protection rules (reviewers, which tags)
+    # are set in the repository's settings.
+    environment: npm
+    permissions:
+      id-token: write  # npm's trusted publishing: the OIDC token that npm exchanges for a one-time publish token
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      DIST_TAG: ${{ needs.verify.outputs.dist-tag }}
+      FILE: ${{ needs.verify.outputs.file }}
+      SHA256: ${{ needs.verify.outputs.sha256 }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-package
+      - name: The file that the verify job checked
+        run: echo "$SHA256  $FILE" | sha256sum --check --strict -
+      # As npm's example: the Node.js line of the project (gui/web/.nvmrc; there is no checkout here) with the npm
+      # it bundles, the registry, no cache. No token is given: npm publish exchanges the OIDC token for one itself.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      # Trusted publishing needs npm 11.5.1 or later and Node.js 22.14.0 or later (docs.npmjs.com/trusted-publishers).
+      - name: npm and Node.js can publish with OIDC
+        run: |
+          node -e '
+            const at = (v, min) => { const a = v.split(".").map(Number);
+              for (let i = 0; i < 3; i++) if (a[i] !== min[i]) return a[i] > min[i]; return true; };
+            const npm = process.argv[1], node = process.versions.node;
+            if (!at(npm, [11, 5, 1]) || !at(node, [22, 14, 0])) {
+              console.log(`::error::trusted publishing needs npm 11.5.1+ and Node.js 22.14.0+, this runner has npm ${npm} and Node.js ${node}`);
+              process.exit(1);
+            }
+            console.log(`npm ${npm}, Node.js ${node}`);' "$(npm --version)"
+      - name: Is this version on npm already?
+        id: published
+        env:
+          # A plain read, without the .npmrc of setup-node (its token entry reads NODE_AUTH_TOKEN, which is not set).
+          NPM_CONFIG_USERCONFIG: /dev/null
+        run: |
+          integrity="sha512-$(openssl dgst -sha512 -binary "$FILE" | base64 -w0)"
+          if published=$(npm view "$PACKAGE@$VERSION" dist.integrity 2> view.err); then
+            :
+          elif grep -q E404 view.err; then
+            published=""
+          else
+            cat view.err
+            echo "::error::could not ask npm whether $PACKAGE@$VERSION exists"
+            exit 1
+          fi
+          if [ -z "$published" ]; then
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          elif [ "$published" = "$integrity" ]; then
+            echo "::notice::$PACKAGE@$VERSION is on npm already, with this same file: nothing to publish" \
+                 "(dist-tags now: $(npm view "$PACKAGE" dist-tags --json | tr -d ' \n'))"
+            echo "already=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::$PACKAGE@$VERSION is on npm already with a different file ($published, this one is" \
+                 "$integrity). npm never takes a version twice: release a new version"
+            exit 1
+          fi
+      - name: Publish
+        if: steps.published.outputs.already == 'false'
+        run: npm publish "./$FILE" --tag "$DIST_TAG" --access public --provenance

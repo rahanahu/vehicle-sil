@@ -933,11 +933,11 @@ The rules that apply to your own screen served with `--web`. For the steps to bu
 |---|---|---|
 | Bundled file (`vehicle-sil-gui-client.mjs`) | `client/` | `npm run build:client` (creates `build/gui-client/vehicle-sil-gui-client.mjs`) |
 | The parts (`vehicle-sil-gui-elements.mjs`, which imports the file above) | `client/` | `npm run build:client` (creates `build/gui-client/vehicle-sil-gui-elements.mjs`) |
-| npm package (`vehicle-sil-gui-client-<version>.tgz`) | `client/` (the releases page has the same file) | `npm run pack:client` (creates `build/gui-client/vehicle-sil-gui-client-<version>.tgz`) |
+| npm package (`vehicle-sil-gui-client-<version>.tgz`) | `client/` (the releases page and the npm registry have the same file) | `npm run pack:client` (creates `build/gui-client/vehicle-sil-gui-client-<version>.tgz`) |
 
 - **From the GUI server**: the server serves the bundled file and the parts as `/vsil/vehicle-sil-gui-client.mjs` and `/vsil/vehicle-sil-gui-elements.mjs`, so a screen without a build needs no copy of them (`<script type="module" src="/vsil/vehicle-sil-gui-elements.mjs">`, `import { connect } from '/vsil/vehicle-sil-gui-client.mjs'`). Load both from `/vsil/` or both from copies, never one of each: the parts import the client library by its file name, and a second copy of it makes a second connection. See "[Files served under `vsil/`](#files-served-under-vsil)".
 - **Bundled file**: for a tool that runs outside a page (Node 22 or later), or a screen that is not served by the GUI server. Put it (and the parts, which import it by the name `./vehicle-sil-gui-client.mjs`) in one directory and import it with a relative path.
-- **Package**: run `npm install <that .tgz>` in your project, then import it as `@vehicle-sil/gui-client` (`npm install <its URL>` also works). It is not published to the npm registry.
+- **Package**: run `npm install @vehicle-sil/gui-client@<version>` in your project, with the version of your GUI server, then import it as `@vehicle-sil/gui-client`. `npm install <that .tgz>` and `npm install <its URL>` also work. On the npm registry, the dist-tag `latest` is the newest release and `next` the newest pre-release; both are the file that the release carries.
   - It contains the bundled ESM (`dist/index.js`), the types (`types/`), a `package.json` with `exports`, the README and the LICENSE, and has no dependencies. Its version is the same as the GUI server's.
   - Its types use the browser types (`DOM` in `lib`: `WebSocket` and others).
   - Before it finishes, `npm run pack:client` installs the package it built, imports it from Node, and type-checks the TypeScript example in the screen template's README with both `nodenext` and `bundler` module resolution.
