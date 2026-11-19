@@ -614,6 +614,15 @@ bool encode_hello(const Hello& hello, Bytes& out, std::string& why)
                   variable.name.substr(0, 40) + "); it must have 1 to " + std::to_string(kMaxNameBytes);
             return false;
         }
+        // A hub refuses the whole hello for a state it does not know (read_variable()).
+        if (variable.availability &&
+            static_cast<std::uint8_t>(*variable.availability) > static_cast<std::uint8_t>(Availability::Inactive))
+        {
+            why = "the availability of variable '" + variable.name.substr(0, 40) + "' is " +
+                  std::to_string(static_cast<unsigned>(*variable.availability)) +
+                  "; it must be Unknown (0), Active (1) or Inactive (2)";
+            return false;
+        }
     }
     if (hello.max_pending == 0 || hello.max_pending > kMaxPending)
     {

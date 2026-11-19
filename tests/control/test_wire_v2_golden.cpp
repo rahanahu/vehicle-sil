@@ -285,6 +285,59 @@ TEST_CASE(wire_v2_revision_1_hello_has_its_bytes)
     CHECK(!decoded.schema.at(3).availability.has_value());
 }
 
+namespace {
+
+/// kHello as the encoder of revision 1 writes it: the revision in the header, and each variable
+/// one byte longer, its availability (`availability[i]` for variable i) behind its enum items.
+wire::Bytes hello_with_availability(std::span<const std::uint8_t> revision_0, const std::vector<std::uint8_t>& availability)
+{
+    const auto u32_at = [&](std::size_t at) {
+        return static_cast<std::uint32_t>(revision_0[at]) | static_cast<std::uint32_t>(revision_0[at + 1]) << 8 |
+               static_cast<std::uint32_t>(revision_0[at + 2]) << 16 | static_cast<std::uint32_t>(revision_0[at + 3]) << 24;
+    };
+    // Header 8, participant, session 8, virtual time 1, step 8, sample period 8, max pending 4.
+    std::size_t at = 8 + 4 + u32_at(8) + 8 + 1 + 8 + 8 + 4;
+    const std::uint32_t variables = u32_at(at);
+    at += 4;
+    wire::Bytes out(revision_0.begin(), revision_0.begin() + static_cast<std::ptrdiff_t>(at));
+    out.at(7) = std::uint8_t{1};
+    for (std::uint32_t i = 0; i < variables; ++i)
+    {
+        const std::uint32_t size = u32_at(at) + 1;
+        out.insert(out.end(), {static_cast<std::uint8_t>(size), static_cast<std::uint8_t>(size >> 8),
+                               static_cast<std::uint8_t>(size >> 16), static_cast<std::uint8_t>(size >> 24)});
+        out.insert(out.end(), revision_0.begin() + static_cast<std::ptrdiff_t>(at + 4),
+                   revision_0.begin() + static_cast<std::ptrdiff_t>(at + size + 3));
+        out.push_back(availability.at(i));
+        at += size + 3;
+    }
+    CHECK_EQ(at, revision_0.size());
+    return out;
+}
+
+} // namespace
+
+TEST_CASE(wire_v2_revision_1_hello_keeps_every_field_of_revision_0)
+{
+    // The variables of kHello (every field: unit, minimum, maximum, step, description, enum
+    // items) as revision 1 writes them: the bytes of revision 0, and the availability behind.
+    CHECK_EQ(wire::kRevision, std::uint8_t{1});
+    wire::Hello hello = golden::hello();
+    hello.schema.at(0).availability = Availability::Inactive; // byte 3
+    hello.schema.at(1).availability = Availability::Unknown;  // byte 1
+    hello.schema.at(3).availability = Availability::Active;   // byte 2; "gain" does not report (0)
+    const wire::Bytes expected = hello_with_availability(golden::kHello, {3, 1, 0, 2});
+    CHECK_EQ(expected.size(), sizeof golden::kHello + hello.schema.size());
+    wire::Bytes bytes;
+    std::string why;
+    CHECK(wire::encode_hello(hello, bytes, why));
+    CHECK_BYTES(bytes, expected);
+
+    wire::Hello decoded;
+    check_read(wire::decode_hello(expected, decoded), __LINE__, 1);
+    CHECK(decoded == hello);
+}
+
 TEST_CASE(wire_v2_revision_1_step_has_its_bytes)
 {
     const Snapshot sample = golden::step_sample_revision_1();
