@@ -176,3 +176,36 @@ TEST_CASE(the_gui_reads_the_launchers_manual_stays_line)
                             "without the other)");
     }
 }
+
+TEST_CASE(the_gui_and_the_launcher_name_the_scenario_client_alike)
+{
+    // A scenario's writes carry one client name: the GUI leaves its own operations out of the
+    // "in flight" count by that name, and the launcher sets it on the writes (docs/control-api.md).
+    const std::string gui_file = "gui/server/src/vehicle_sil_gui/control.py";
+    const std::string gui_text = read_source(gui_file);
+    const std::string gui_before = "SCENARIO_CLIENT = \"";
+    const std::size_t gui_at = gui_text.find(gui_before);
+    if (gui_at == std::string::npos)
+    {
+        throw unit::Failure(gui_file + ": \"" + gui_before + "\" is not there any more; change this test with it");
+    }
+    const std::size_t gui_start = gui_at + gui_before.size();
+    const std::string gui = gui_text.substr(gui_start, gui_text.find('"', gui_start) - gui_start);
+
+    const std::string writer = "libs/runner/src/run_scenario.cpp";
+    const std::string launcher_text = read_source(writer);
+    const std::string launcher_before = "request.client = \"";
+    const std::size_t launcher_at = launcher_text.find(launcher_before);
+    if (launcher_at == std::string::npos)
+    {
+        throw unit::Failure(writer + ": \"" + launcher_before + "\" is not there any more; change this test with it");
+    }
+    const std::size_t launcher_start = launcher_at + launcher_before.size();
+    const std::string launcher =
+        launcher_text.substr(launcher_start, launcher_text.find('"', launcher_start) - launcher_start);
+    if (gui != launcher)
+    {
+        throw unit::Failure(gui_file + " names the scenario's client \"" + gui + "\", but " + writer + " sets \"" +
+                            launcher + "\": make them the same (one of them changed without the other)");
+    }
+}
