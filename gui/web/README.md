@@ -171,13 +171,15 @@ The wrapper turns the library's `Readable` (read-only value) into signals and pa
 
 The variable widgets are: value display, number input, slider, switch, lamp, choice and chart.
 
-| File                  | Contents                                                                         |
-| --------------------- | -------------------------------------------------------------------------------- |
-| `variable-binding.ts` | Connects a widget to a variable (built on the library's `client.variables.bind`) |
-| `variable-frame.ts`   | The frame around a widget                                                        |
-| `dashboard-spec.ts`   | Dashboard data and default widgets, and building them from a dashboard file      |
-| `dashboard-view.ts`   | Shows dashboard data                                                             |
-| `panel-host.ts`       | Hosts custom panels                                                              |
+| File                  | Contents                                                                                  |
+| --------------------- | ----------------------------------------------------------------------------------------- |
+| `variable-binding.ts` | Connects a widget to a variable (built on the library's `client.variables.bind`)          |
+| `variable-frame.ts`   | The frame around a widget                                                                 |
+| `dashboard-spec.ts`   | Dashboard data and default widgets, and building them from a dashboard file               |
+| `dashboard-view.ts`   | Shows dashboard data                                                                      |
+| `panel-host.ts`       | Hosts custom panels                                                                       |
+| `check-labels.ts`     | The words for a check's outcome, status and findings (used by the Run and Design screens) |
+| `control-labels.ts`   | The words for why an operation is not possible now (used by the Run and Design screens)   |
 
 The code in this directory uses only the wrapper's public API (the same way you add a widget yourself; see "The Variables screen and widgets" in docs/gui.md).
 

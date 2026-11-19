@@ -21,8 +21,9 @@ import { GUI_FRONT } from '../core/session/gui-client';
 import { RunCommands } from '../core/session/run-commands';
 import { ServerConnection } from '../core/session/server-connection';
 import { ServerInfo } from '../core/session/server-info';
+import { checkOutcomeLabel, checkStatusLabel } from '../widgets/check-labels';
+import { controlLine } from '../widgets/control-labels';
 import { FindingsList } from '../run/findings-list';
-import { checkOutcomeLabel, checkStatusLabel, controlLine } from '../run/labels';
 import {
   ChannelView,
   DesignerModel,

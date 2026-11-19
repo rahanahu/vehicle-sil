@@ -27,6 +27,7 @@ import {
 } from '@vehicle-sil/gui-client';
 import { MeasurePipe } from '../core/format/measure-pipe';
 import { settledAfter } from '../core/streams/stream-signals';
+import { reasonText } from '../widgets/control-labels';
 import { ForceStopDialog } from './force-stop-dialog';
 import {
   LATE_ANNOUNCEMENT,
@@ -34,7 +35,6 @@ import {
   cutShort,
   latenessText,
   phaseLabel,
-  reasonText,
   resultLine,
   resultTone,
   speedLabel,

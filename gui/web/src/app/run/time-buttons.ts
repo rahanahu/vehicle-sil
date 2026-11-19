@@ -1,7 +1,8 @@
 import { Component, computed, inject } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { SimulationTime } from '../core/session/simulation-time';
-import { WAITING_TEXT, controlLine, failureLine } from './labels';
+import { WAITING_TEXT, controlLine } from '../widgets/control-labels';
+import { failureLine } from './labels';
 
 /**
  * 一時停止と再開のボタン（実行している間、状態の帯の開始と停止の後に置く）。2 つは別のボタンで、いつもこの順に同じ
