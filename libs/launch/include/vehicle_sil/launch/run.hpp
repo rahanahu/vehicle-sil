@@ -148,7 +148,9 @@ struct RunLent
     /// commands, and the run writes its phases to `events`. With `events` the controls
     /// must have the three observers (on_phase, on_command, on_state), `stops` must be null or the controls' own, and the controls must
     /// be made with the request's RunIntent::start_paused and whether it has a scenario
-    /// (RunControls::start_paused(), scenario()): run_file() throws std::invalid_argument otherwise.
+    /// (RunControls::start_paused(), scenario()) and be told whether the run has a control server
+    /// (RunControls::set_control_server(): RunHost::control or `control_endpoint`): run_file()
+    /// throws std::invalid_argument otherwise.
     runner::RunControls* controls = nullptr;
     /// Without `controls`: the requests to stop (the caller's: its signal handler and whatever
     /// else asks). The run reads their count: 1 stops the simulation in order, 2 or more skip the

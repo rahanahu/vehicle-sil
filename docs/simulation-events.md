@@ -377,15 +377,27 @@ The first `time` is at time 0, even if the simulation is already past 0 when the
 
 For a participant that failed during the simulation, `participant-failed` includes how the process ended, so it is written after the process has ended. The `participant` event with `failed` reports the failure as soon as the launcher notices it. The `log` lines of `vehicle_sil_launch` also give the reason.
 
+### How a run ends
+
+Every run that has written `phase` `checking` ends the same way, whether the simulation ran, could not be set up, or the run did not get past the check. A reader needs no special handling for each case:
+
+1. A `state` whose `allowed` takes no time command any more (`pause`, `resume`, `step`, `run_until` and `speed` have `ok: false` and the reason `not-running`).
+2. For each time command that was still waiting for the configuration to be read (only when the file could not be read), a `command` with `accepted: false` and the reason `not-running`, in the order the commands arrived.
+3. Only if the check passed: the findings decided at that point, `phase` `stopping` and the end of the participants (an internal error of the launcher before anything has started goes on with step 4).
+4. `phase` `ended`, then the last `state` (`phase` `ended`, still taking no time command).
+5. `result`.
+
+The `state` of step 1 is not written when the one of step 4 replaces it before the reader has read it (see [The `state` event](#the-state-event)). A time command after step 1 is refused with `not-running`; a `stop` on stdin is still accepted (see [What `accepted` means](#what-accepted-means-and-the-result-of-a-stopped-run)). A run that is refused before its check (a usage error on the command line, or in the values of `--control`) reads no command and writes no `phase` and no `state`: only `hello` and `result`.
+
 ### Events when the run does not start
 
-`run` with `--events` writes `hello` first and `result` last even on a usage error (`heartbeat` can come in between).
+`run` with `--events` writes `hello` first and `result` last even on a usage error. The table leaves out the `state` and `heartbeat` lines; a run that has begun its check ends as [How a run ends](#how-a-run-ends) says.
 
 | Case | Events | `result` of `result` | Exit code |
 |---|---|---|---|
-| Usage error (unknown option, no configuration file given, `--events` together with `--json`, and so on) | `hello`, `result` | `"usage"` | 4 |
+| Usage error (unknown option, no configuration file given, `--events` together with `--json`, a value of `--control` that is wrong, and so on) | `hello`, `result` | `"usage"` | 4 |
 | Usage error found by reading the configuration file | `hello`, `phase` (`checking`), `check`, `phase` (`ended`), `result` | `"usage"` | 4 |
-| The configuration file cannot be read | The same 5 | `"unreadable"` | 3 |
+| The configuration file cannot be read | The same 5, with the `command` refusals of step 2 before `phase` (`ended`) | `"unreadable"` | 3 |
 | The check found errors | The same 5 | `"check_failed"` | 1 |
 | No stdout (started with stdout closed) | Nothing can be written (an error is written to stderr). | | 4 |
 
@@ -598,7 +610,7 @@ Whether a run keeps real time (`--connect`, a `role: bridge` participant, `--tim
 - It waits. Its `command` event is written when the file has been read, with the answer of that moment. The commands that waited are answered in the order in which they arrived, before any command that arrives later, so the order of the `command` events is still the order in which the commands took effect.
 - `stop` does not wait: it is accepted at once, whatever waits.
 - At most 256 commands wait. One more is refused at once with the reason `not-set-up`; send it again after the `check` event (the file has been read then; the first `state` event comes before that).
-- If the file cannot be read, nothing starts, and the commands that waited are refused with the reason `not-running`.
+- If the file cannot be read, nothing starts, and the commands that waited are refused with the reason `not-running`, before `phase` `ended` (see [How a run ends](#how-a-run-ends)).
 - The `state` event written before the file is read does not know the rule yet: its `allowed` is the answer for a run that is not connected outside. The next `state` has the rule.
 
 In a run with `--control` and `--start-paused` that pauses before the step at time 0, a `resume`, `step`, `run_until` or `pause` accepted before the pause also decides how the run pauses afterwards (see "Write before the start (`--start-paused`)" in [control-api.md](control-api.md#write-before-the-start---start-paused)).
