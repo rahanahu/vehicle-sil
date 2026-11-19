@@ -51,6 +51,7 @@ int main(int argc, char** argv)
             {"connect_device_shared", connect_device_shared},
             {"connect_device_shared_later", connect_device_shared_later},
             {"connect_device_shared_own", connect_device_shared_own},
+            {"connect_dies_while_held", connect_dies_while_held},
             {"connect_dies_while_waiting", connect_dies_while_waiting},
             {"connect_lost_exit0", connect_lost_exit0},
             {"connect_lost_kill", connect_lost_kill},
