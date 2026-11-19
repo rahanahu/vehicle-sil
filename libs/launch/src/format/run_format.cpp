@@ -18,12 +18,12 @@ namespace vehicle_sil::launch {
 
 namespace {
 
-using detail::hex_code;
+using runner::detail::hex_code;
 using config::detail::kNanosPerMilli;
 using config::detail::millis_text;
 
 /// The cell of the participants' table.
-std::string ending_cell(const ParticipantRun& p)
+std::string ending_cell(const runner::ParticipantRun& p)
 {
     const auto status = [&p] {
         if (!p.exit)
@@ -31,36 +31,36 @@ std::string ending_cell(const ParticipantRun& p)
             return std::string{};
         }
         return p.exit->signal ? "signal " + process::signal_name(*p.exit->signal)
-                              : "exit code " + (p.exit->code < 0 ? hex_code(p.exit->code) : std::to_string(p.exit->code));
+                              : "exit code " + (p.exit->code < 0 ? runner::detail::hex_code(p.exit->code) : std::to_string(p.exit->code));
     };
     switch (p.ending)
     {
-    case Ending::NotStarted:
+    case runner::Ending::NotStarted:
         if (p.enabled && p.manual)
         {
             return p.manual_joined ? "started by you (manual)" : "not joined (manual)";
         }
         return p.enabled ? "not started" : "not started (disabled)";
-    case Ending::ExitedBeforeStart:
-    case Ending::Exited:
+    case runner::Ending::ExitedBeforeStart:
+    case runner::Ending::Exited:
         return status();
-    case Ending::Stopped:
-        return "stopped (" + std::string(stop_request_name()) + "), " + status();
-    case Ending::Killed:
+    case runner::Ending::Stopped:
+        return "stopped (" + std::string(runner::stop_request_name()) + "), " + status();
+    case runner::Ending::Killed:
         return "killed";
     }
     return "-";
 }
 
-const char* ending_name(Ending ending)
+const char* ending_name(runner::Ending ending)
 {
     switch (ending)
     {
-    case Ending::NotStarted: return "not_started";
-    case Ending::ExitedBeforeStart:
-    case Ending::Exited: return "exited";
-    case Ending::Stopped: return "stopped";
-    case Ending::Killed: return "killed";
+    case runner::Ending::NotStarted: return "not_started";
+    case runner::Ending::ExitedBeforeStart:
+    case runner::Ending::Exited: return "exited";
+    case runner::Ending::Stopped: return "stopped";
+    case runner::Ending::Killed: return "killed";
     }
     return "not_started";
 }
@@ -69,15 +69,15 @@ const char* ending_name(Ending ending)
 
 namespace {
 
-const char* simulation_name(SimulationEnd end)
+const char* simulation_name(runner::SimulationEnd end)
 {
     switch (end)
     {
-    case SimulationEnd::NotStarted: return "not_started";
-    case SimulationEnd::ReachedStopAt: return "reached_stop_at";
-    case SimulationEnd::Ended: return "ended";
-    case SimulationEnd::Aborted: return "aborted";
-    case SimulationEnd::Interrupted: return "interrupted";
+    case runner::SimulationEnd::NotStarted: return "not_started";
+    case runner::SimulationEnd::ReachedStopAt: return "reached_stop_at";
+    case runner::SimulationEnd::Ended: return "ended";
+    case runner::SimulationEnd::Aborted: return "aborted";
+    case runner::SimulationEnd::Interrupted: return "interrupted";
     }
     return "not_started";
 }
@@ -138,36 +138,36 @@ std::string format_run_text(const RunReport& report)
                report.check.file + " shows the same)\n\nfailed: " + counts + "\n";
         return out;
     }
-    const RunOutcome& run = *report.run;
+    const runner::RunOutcome& run = *report.run;
     std::string state;
     switch (run.end.simulation)
     {
-    case SimulationEnd::NotStarted:
+    case runner::SimulationEnd::NotStarted:
         state = !run.setup.error.empty()      ? "the simulation could not be set up"
                 : !run.end.interrupted_by.empty() ? run.end.stop_text() + " before the simulation started"
                                               : "the simulation did not start";
         break;
-    case SimulationEnd::ReachedStopAt:
+    case runner::SimulationEnd::ReachedStopAt:
         state = "the simulation ran to stop_at_ms (" + std::to_string(run.end.stop_at_ms.value_or(0)) + " ms) and ended";
         break;
-    case SimulationEnd::Ended:
+    case runner::SimulationEnd::Ended:
         state = !run.end.controller_state.empty() ? "the simulation ended in state " + run.end.controller_state
                 : run.end.stopped_by_scenario     ? "the simulation ran until the scenario was over (" +
                                                     std::to_string(run.timing.sim_ms) + " ms) and ended"
                                               : "the simulation ran until a participant ended it";
         break;
-    case SimulationEnd::Aborted:
+    case runner::SimulationEnd::Aborted:
         state = run.end.timed_out ? "the simulation was aborted: it did not end within --timeout-ms (" +
                                     std::to_string(run.end.timeout_ms.value_or(0)) + " ms)"
                 : run.end.failed_participant.empty() ? "the simulation was aborted"
                                                  : "the simulation was aborted: participant '" + run.end.failed_participant + "' failed";
         break;
-    case SimulationEnd::Interrupted:
+    case runner::SimulationEnd::Interrupted:
         state = run.end.stop_text() + ": the simulation was stopped";
         break;
     }
     out += "run: " + state + "\n";
-    if (const std::string time = run.end.simulation != SimulationEnd::NotStarted ? detail::timing_text(run.timing) : std::string{};
+    if (const std::string time = run.end.simulation != runner::SimulationEnd::NotStarted ? detail::timing_text(run.timing) : std::string{};
         !time.empty())
     {
         out += time + "\n";
@@ -178,7 +178,7 @@ std::string format_run_text(const RunReport& report)
         out += detail::scenario_text(*run.scenario.result) + "\n";
     }
     // --connect: the networks connected to a real bus, each through its bridge (the last rows below).
-    for (const RunOutside& o : run.outside)
+    for (const runner::RunOutside& o : run.outside)
     {
         out += "outside: " + o.network + " -> " + o.target + " (" + o.participant + ")";
         if (o.to_outside && o.from_outside)
@@ -229,37 +229,37 @@ std::string sim_millis_text(SimTime t)
 
 } // namespace
 
-std::string detail::traffic_text(const RunTraffic& traffic)
+std::string detail::traffic_text(const runner::RunTraffic& traffic)
 {
     if (traffic.per_network.empty())
     {
         return "traffic: no network in use\n";
     }
-    const auto why = [](TrafficNotCounted reason) -> std::string {
+    const auto why = [](runner::TrafficNotCounted reason) -> std::string {
         switch (reason)
         {
-        case TrafficNotCounted::None: return {};
-        case TrafficNotCounted::NoControlLink: return "not counted: no control link";
-        case TrafficNotCounted::Restarted: return "not counted: restarted";
-        case TrafficNotCounted::RealTime: return "not counted: real time";
-        case TrafficNotCounted::NoCounters: return "not counted: no J1939 counters";
-        case TrafficNotCounted::Mapped: return "not counted: counters mapped by variables";
-        case TrafficNotCounted::NoSample: return "not counted: no sample before the end";
+        case runner::TrafficNotCounted::None: return {};
+        case runner::TrafficNotCounted::NoControlLink: return "not counted: no control link";
+        case runner::TrafficNotCounted::Restarted: return "not counted: restarted";
+        case runner::TrafficNotCounted::RealTime: return "not counted: real time";
+        case runner::TrafficNotCounted::NoCounters: return "not counted: no J1939 counters";
+        case runner::TrafficNotCounted::Mapped: return "not counted: counters mapped by variables";
+        case runner::TrafficNotCounted::NoSample: return "not counted: no sample before the end";
         }
         return {};
     };
-    const auto unplaced = [](const TrafficUnplaced& p) -> std::string {
+    const auto unplaced = [](const runner::TrafficUnplaced& p) -> std::string {
         switch (p.reason)
         {
-        case TrafficUnplacedReason::NoControlLink: return "unplaced: no control link";
-        case TrafficUnplacedReason::NoCounters: return "unplaced: no J1939 counters";
+        case runner::TrafficUnplacedReason::NoControlLink: return "unplaced: no control link";
+        case runner::TrafficUnplacedReason::NoCounters: return "unplaced: no J1939 counters";
         }
         return {};
     };
     const auto participants = [](std::size_t n) { return std::to_string(n) + (n == 1 ? " participant" : " participants"); };
     std::string line;
     std::vector<std::vector<std::string>> rows{{"network", "participant", "sent", "received"}};
-    for (const TrafficNetwork& network : traffic.per_network)
+    for (const runner::TrafficNetwork& network : traffic.per_network)
     {
         const std::size_t counted = network.counted();
         const std::size_t others = network.participants.size() - counted;
@@ -276,7 +276,7 @@ std::string detail::traffic_text(const RunTraffic& traffic)
                  : silent                     ? "nothing sent" + in_all
                                               : participants(network.senders()) + " sent, " +
                                                     std::to_string(network.receivers()) + " received" + in_all);
-        for (const TrafficParticipant& p : network.participants)
+        for (const runner::TrafficParticipant& p : network.participants)
         {
             std::vector<std::string> row{network.name, p.name, p.frames_sent ? std::to_string(*p.frames_sent) : "-",
                                          p.frames_received ? std::to_string(*p.frames_received) : "-"};
@@ -292,7 +292,7 @@ std::string detail::traffic_text(const RunTraffic& traffic)
         }
         // One that its counters place on another network gets a row here; one that is known on
         // no network gets one row after the networks.
-        for (const TrafficUnplaced& p : network.unplaced)
+        for (const runner::TrafficUnplaced& p : network.unplaced)
         {
             if (std::find(traffic.unplaced.begin(), traffic.unplaced.end(), p) == traffic.unplaced.end())
             {
@@ -300,7 +300,7 @@ std::string detail::traffic_text(const RunTraffic& traffic)
             }
         }
     }
-    for (const TrafficUnplaced& p : traffic.unplaced)
+    for (const runner::TrafficUnplaced& p : traffic.unplaced)
     {
         rows.push_back({"-", p.name, "-", "-", unplaced(p)});
     }
@@ -397,7 +397,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
     w.string("result", result_name(report.result()));
     if (report.run)
     {
-        w.string("end", end_reason_name(end_reason(*report.run)));
+        w.string("end", runner::end_reason_name(runner::end_reason(*report.run)));
     }
     else
     {
@@ -512,8 +512,8 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
                 w.string("log", p.log);
             }
             w.begin_object("control_link");
-            w.string("state", control_link_name(p.control));
-            if (p.control == ControlLink::Connected)
+            w.string("state", runner::control_link_name(p.control));
+            if (p.control == runner::ControlLink::Connected)
             {
                 w.integer("variables", static_cast<std::int64_t>(p.control_variables));
             }
@@ -521,7 +521,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
             {
                 w.null("variables");
             }
-            if (p.control == ControlLink::VersionMismatch)
+            if (p.control == runner::ControlLink::VersionMismatch)
             {
                 w.integer("version", p.control_version);
             }
@@ -538,7 +538,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
     w.begin_array("outside");
     if (report.run)
     {
-        for (const RunOutside& o : report.run->outside)
+        for (const runner::RunOutside& o : report.run->outside)
         {
             w.begin_object();
             w.string("network", o.network);
@@ -569,23 +569,23 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
     w.end_array();
     if (report.run && report.run->traffic)
     {
-        const RunTraffic& traffic = *report.run->traffic;
+        const runner::RunTraffic& traffic = *report.run->traffic;
         w.begin_object("traffic");
         w.integer("before_ms", traffic.before_ms);
-        const auto unplaced = [&w](const std::vector<TrafficUnplaced>& all) {
+        const auto unplaced = [&w](const std::vector<runner::TrafficUnplaced>& all) {
             w.begin_array("unplaced");
-            for (const TrafficUnplaced& p : all)
+            for (const runner::TrafficUnplaced& p : all)
             {
                 w.begin_object();
                 w.string("participant", p.name);
-                w.string("reason", traffic_unplaced_reason_name(p.reason));
+                w.string("reason", runner::traffic_unplaced_reason_name(p.reason));
                 w.end_object();
             }
             w.end_array();
         };
         unplaced(traffic.unplaced);
         w.begin_array("networks");
-        for (const TrafficNetwork& network : traffic.per_network)
+        for (const runner::TrafficNetwork& network : traffic.per_network)
         {
             w.begin_object();
             w.string("name", network.name);
@@ -603,7 +603,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
             }
             unplaced(network.unplaced);
             w.begin_array("participants");
-            for (const TrafficParticipant& p : network.participants)
+            for (const runner::TrafficParticipant& p : network.participants)
             {
                 const auto number = [&w](std::string_view member, const std::optional<std::int64_t>& value) {
                     if (value)
@@ -624,7 +624,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
                 }
                 else
                 {
-                    w.string("not_counted", traffic_not_counted_name(p.not_counted));
+                    w.string("not_counted", runner::traffic_not_counted_name(p.not_counted));
                 }
                 if (p.virtual_time)
                 {

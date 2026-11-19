@@ -100,7 +100,7 @@ std::vector<std::pair<std::string, std::string>> participants_of(SimulationContr
 class LaunchTimeControl final : public control_grpc::TimeControl
 {
 public:
-    LaunchTimeControl(TimeCommands& commands, std::function<void()> stop) :
+    LaunchTimeControl(runner::TimeCommands& commands, std::function<void()> stop) :
       commands_(commands), stop_(std::move(stop))
     {
         // The last look, as the controller goes: what the server reports from then on is where the
@@ -137,7 +137,7 @@ public:
             const std::lock_guard lock(mutex_);
             last_view_ = v;
         });
-        if (stage == TimeCommands::Stage::Detached)
+        if (stage == runner::TimeCommands::Stage::Detached)
         {
             // The run is over (or did not start): where it got, for good.
             const std::lock_guard lock(mutex_);
@@ -150,7 +150,7 @@ public:
 
     void pause(std::optional<SimTime> at) override
     {
-        Command c = command("pause");
+        runner::Command c = command("pause");
         if (at)
         {
             c.at_ms = at_ms(*at);
@@ -160,19 +160,19 @@ public:
     void resume() override { apply(command("resume")); }
     void run_until(SimTime t) override
     {
-        Command c = command("run_until");
+        runner::Command c = command("run_until");
         c.at_ms = at_ms(t);
         apply(c);
     }
     void step(SimDuration d) override
     {
-        Command c = command("step");
+        runner::Command c = command("step");
         c.ms = d.count() > 0 ? ceil_ms(d.count()) : 0;
         apply(c);
     }
     void set_speed(std::optional<double> speed) override
     {
-        Command c = command("speed");
+        runner::Command c = command("speed");
         c.speed = speed;
         apply(c);
     }
@@ -193,7 +193,7 @@ public:
             const std::lock_guard lock(mutex_);
             last_participants_ = out;
         });
-        if (stage == TimeCommands::Stage::Detached)
+        if (stage == runner::TimeCommands::Stage::Detached)
         {
             const std::lock_guard lock(mutex_);
             out = last_participants_;
@@ -212,7 +212,7 @@ public:
                 last_left_ = left;
             }
         });
-        if (stage == TimeCommands::Stage::Detached)
+        if (stage == runner::TimeCommands::Stage::Detached)
         {
             const std::lock_guard lock(mutex_);
             left = last_left_;
@@ -221,9 +221,9 @@ public:
     }
 
 private:
-    static Command command(const char* name)
+    static runner::Command command(const char* name)
     {
-        Command c;
+        runner::Command c;
         c.name = name;
         c.accepted = true;
         return c;
@@ -243,9 +243,9 @@ private:
     /// the argument (out-of-range, missing-argument), else control_grpc::Refused
     /// (FAILED_PRECONDITION, with the code of the refusal, as the command event's "reason", for
     /// the client's program).
-    void apply(const Command& c, const std::function<void()>& accepted = {})
+    void apply(const runner::Command& c, const std::function<void()>& accepted = {})
     {
-        const Command done = commands_.apply(c, kSource, accepted);
+        const runner::Command done = commands_.apply(c, kSource, accepted);
         if (done.pending)
         {
             // Not while this server listens: the run gives its time commands the time lock before
@@ -255,7 +255,7 @@ private:
         }
         if (!done.accepted)
         {
-            if (done.reason == reason::kOutOfRange || done.reason == reason::kMissingArgument)
+            if (done.reason == runner::reason::kOutOfRange || done.reason == runner::reason::kMissingArgument)
             {
                 throw std::invalid_argument(done.message);
             }
@@ -263,7 +263,7 @@ private:
         }
     }
 
-    TimeCommands& commands_;
+    runner::TimeCommands& commands_;
     std::function<void()> stop_;
     mutable std::mutex mutex_; ///< after TimeCommands' mutex
     mutable control_grpc::TimeView last_view_{};
@@ -290,14 +290,14 @@ public:
     }
     ~Server() override { end(); }
 
-    ControlServerInfo start(std::shared_ptr<control::Hub> hub) override
+    runner::ControlServerInfo start(std::shared_ptr<control::Hub> hub) override
     {
         hub_ = std::move(hub);
         control_grpc::ServerOptions o = options_;
         o.external_hub = hub_.get();
         o.time = time_.get();
         server_ = std::make_unique<control_grpc::ControlServer>(std::move(o));
-        ControlServerInfo info;
+        runner::ControlServerInfo info;
         info.address = actual_address(options_.listen, server_->port());
         info.tls = !options_.security.certificate_chain_pem.empty();
         info.credentials = !options_.security.credentials.empty();
@@ -431,7 +431,7 @@ control_grpc::ServerOptions read_control_options(const ControlHost& asked)
 
 /// The server of a run on `controls`, from the checked options: its time operations go through
 /// their time commands, and a client's Stop is a stop request of theirs. Not started.
-std::unique_ptr<ControlEndpoint> make_server(control_grpc::ServerOptions options, RunControls& controls)
+std::unique_ptr<ControlEndpoint> make_server(control_grpc::ServerOptions options, runner::RunControls& controls)
 {
     // A run that plays a scenario: what a client writes is not in the scenario's file: with it,
     // the same scenario would not give the same result any more. Reading changes nothing (the
@@ -439,14 +439,14 @@ std::unique_ptr<ControlEndpoint> make_server(control_grpc::ServerOptions options
     // change where the time stands still and how fast it goes, not what happens at a time (they
     // go to the time commands, as in any run), and a stop is the run's to take as always. The
     // rule is the controls'; the refusal is the server's, in one place before the call.
-    if (auto only = controls.always_refused(Entry::ControlServer, Operation::Write))
+    if (auto only = controls.always_refused(runner::Entry::ControlServer, runner::Operation::Write))
     {
         options.observe_only = control_grpc::ObserveOnly{std::move(only->reason), std::move(only->message),
                                                          control_grpc::ObserveOnly::Refuses::Writes};
     }
     // The stop's event (and its refusal once the run is over) comes from the time commands.
     auto time = std::make_unique<LaunchTimeControl>(
-      controls.time(), [&controls] { controls.stops().request(stop_source::kControlStop); });
+      controls.time(), [&controls] { controls.stops().request(runner::stop_source::kControlStop); });
     return std::make_unique<Server>(std::move(options), std::move(time));
 }
 
@@ -454,7 +454,7 @@ std::unique_ptr<ControlEndpoint> make_server(control_grpc::ServerOptions options
 
 namespace detail {
 
-ControlServerOfRun make_control_server_of_run(const ControlHost& asked, RunControls& controls)
+ControlServerOfRun make_control_server_of_run(const ControlHost& asked, runner::RunControls& controls)
 {
     ControlServerOfRun out;
     try

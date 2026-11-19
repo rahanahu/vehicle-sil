@@ -868,7 +868,7 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 
 ### 時間の操作の経路
 
-- `TimeControl` の実装は、`launch::TimeCommands` に渡すだけです。
+- `TimeControl` の実装は、`runner::TimeCommands` に渡すだけです。
 - 標準入力のコマンドと同じ `apply()` を、`source` を `control_server` にして呼びます。
 - `apply()` は 1 つのミューテックスの中で、受け付けるかを決め、`command` のイベントを書き、ゲートに渡すので、標準入力と gRPC のコマンドは 1 列に並び、イベントの順が反映された順になります。
 - ルールも同じです（`step` は一時停止中だけ、など）。

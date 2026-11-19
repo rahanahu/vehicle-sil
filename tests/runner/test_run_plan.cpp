@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
-// The plan of a run (launch::plan_run()) and the outcome a run begins with
-// (launch::planned_outcome()): values made from a check, what the caller chose (RunChoices) and the
+// The plan of a run (vehicle_sil::runner::plan_run()) and the outcome a run begins with
+// (vehicle_sil::runner::planned_outcome()): values made from a check, what the caller chose (RunChoices) and the
 // limits. No process, no thread.
 
 #include "test_harness.hpp"
@@ -20,7 +20,7 @@
 
 namespace {
 
-using namespace vehicle_sil::launch;
+using namespace vehicle_sil::runner;
 using namespace vehicle_sil::scenario;
 using namespace vehicle_sil::config;
 using Speed = std::optional<double>;

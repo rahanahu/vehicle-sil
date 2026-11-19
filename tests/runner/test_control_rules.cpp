@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// The rules of a run's controls (launch::decide(), control_rules.hpp): every row of the table with
+// The rules of a run's controls (vehicle_sil::runner::decide(), control_rules.hpp): every row of the table with
 // its code and its message, the order of the rows, where the two entries differ, the answer
 // without arguments (allowed()) and what is refused for the whole run (always_refused()). Then
 // the same rules where they are used: what TimeCommands::allowed() says and what apply() does
@@ -33,7 +33,7 @@
 namespace {
 
 using namespace vehicle_sil;
-using namespace vehicle_sil::launch;
+using namespace vehicle_sil::runner;
 using namespace vehicle_sil::config;
 using vehicle_sil::config::test::check_text;
 

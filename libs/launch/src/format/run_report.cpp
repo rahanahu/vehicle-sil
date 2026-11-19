@@ -43,20 +43,20 @@ RunResult RunReport::result() const
     {
         return RunResult::CheckFailed;
     }
-    const EndReason end = end_reason(*run);
-    if (end == EndReason::SetupFailed)
+    const runner::EndReason end = runner::end_reason(*run);
+    if (end == runner::EndReason::SetupFailed)
     {
         return RunResult::SetupFailed;
     }
-    if (end == EndReason::Interrupted)
+    if (end == runner::EndReason::Interrupted)
     {
         return RunResult::Interrupted;
     }
-    if (end == EndReason::Failed || errors() > 0 || (strict && warnings() > 0))
+    if (end == runner::EndReason::Failed || errors() > 0 || (strict && warnings() > 0))
     {
         return RunResult::Failed;
     }
-    if (end == EndReason::Stopped)
+    if (end == runner::EndReason::Stopped)
     {
         // A scenario that did not pass and did not fail has no verdict: it did not begin, or the
         // stop came before its end.
@@ -110,7 +110,7 @@ std::string RunReport::message() const
     const scenario::ScenarioRun* scenario = run && run->scenario.result ? &*run->scenario.result : nullptr;
     const std::string by = run ? run->end.stop_phrase() : std::string{};
     // The operator did not wait for them: no error, but said.
-    const std::vector<std::string> forced = run ? ended_by_force(*run) : std::vector<std::string>{};
+    const std::vector<std::string> forced = run ? runner::ended_by_force(*run) : std::vector<std::string>{};
     const std::string force =
         forced.empty() ? std::string{}
                        : "; " + config::detail::and_list(forced) + (forced.size() == 1 ? " was" : " were") + " ended by force, without waiting";
@@ -126,7 +126,7 @@ std::string RunReport::message() const
         return "The run was stopped " + by + " before the scenario reached its end, so the scenario has no verdict" + force;
     case RunResult::Interrupted: return "The run was interrupted " + by;
     case RunResult::Failed:
-        return with_first_problem(*this, end_reason(*run) == EndReason::Stopped ? "The run was stopped " + by + " and failed"
+        return with_first_problem(*this, runner::end_reason(*run) == runner::EndReason::Stopped ? "The run was stopped " + by + " and failed"
                                                                                   : "The run failed");
     case RunResult::SetupFailed: return with_first_problem(*this, "The run failed before anything was started");
     case RunResult::CheckFailed: return with_first_problem(*this, "Nothing was started, because the check failed");

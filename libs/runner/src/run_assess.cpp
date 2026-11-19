@@ -22,7 +22,7 @@
 #include <numeric>
 #include <utility>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 namespace {
 
@@ -830,4 +830,4 @@ std::vector<config::Finding> detail::settled_findings(const RunOutcome& outcome)
     return out;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

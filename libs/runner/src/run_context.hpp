@@ -17,7 +17,7 @@
 #include <string>
 #include <string_view>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// What a run is given, fixed before it begins: the parts of the run (run_*.hpp) keep a reference.
 /// Three things: the plan (a value: what was settled before the run), the observers (what the run
@@ -79,4 +79,4 @@ inline std::string one_line(std::string text)
     return text;
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

@@ -12,7 +12,7 @@
 #include <filesystem>
 #include <set>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 std::string detail::log_name(const std::string& name)
 {
@@ -370,4 +370,4 @@ std::optional<OutsideCounts> RunOutput::take_counts(std::size_t index)
 
 } // namespace detail
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

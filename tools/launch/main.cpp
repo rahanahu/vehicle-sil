@@ -18,7 +18,7 @@
 // The threads of run: main (the check, the run, the launcher's events, the result); one reader per
 // participant (its lines); with --stdin-commands, the reader of stdin (the command events, stop
 // requests, the time commands: it hands each to the controller's time gate itself, through
-// launch::TimeCommands, waiting only for that object's and the gate's mutexes); with --events, the
+// runner::TimeCommands, waiting only for that object's and the gate's mutexes); with --events, the
 // writer of the events (the only thread that waits for their reader) and their watch (a reader
 // that does not read; says on stderr that the stream closed). SIL Kit's threads run the
 // controller's steps (the gate holds them). They meet in the event stream (a queue: no thread
@@ -241,7 +241,7 @@ struct Shared
     launch::EventStream* events = nullptr;
     /// The controls of the run (run), on g_stops: the reader of stdin hands the time commands to
     /// the run through them, a control server its time operations.
-    launch::RunControls* controls = nullptr;
+    runner::RunControls* controls = nullptr;
     /// Without --events: the lines about refused commands of standard input that are not written
     /// yet (write_stdin_notes()). They are decided under the time commands' mutex, where nothing
     /// may wait for stderr, so they are kept here and written outside it.
@@ -397,12 +397,12 @@ void write_stderr_line_without_waiting(std::string line)
 
 /// The stop requests of the process (run: those of the run's controls; test:
 /// launch::RunLent::stops). The source of a request: a
-/// signal (POSIX), a console event + 1 (Windows), or one of launch::stop_source.
-constinit launch::StopRequests g_stops;
-using launch::stop_source::kEndOfInput;
-using launch::stop_source::kOutputClosed;
-using launch::stop_source::kStopCommand;
-using launch::stop_source_name;
+/// signal (POSIX), a console event + 1 (Windows), or one of runner::stop_source.
+constinit runner::StopRequests g_stops;
+using runner::stop_source::kEndOfInput;
+using runner::stop_source::kOutputClosed;
+using runner::stop_source::kStopCommand;
+using runner::stop_source_name;
 
 #ifdef _WIN32
 BOOL WINAPI on_console_event(DWORD event)
@@ -427,7 +427,7 @@ std::string interrupt_name()
     const int first = g_stops.first();
     if (first < 0)
     {
-        return stop_source_name(first);
+        return runner::stop_source_name(first);
     }
     switch (first - 1)
     {
@@ -443,13 +443,13 @@ void watch_interrupts() { SetConsoleCtrlHandler(on_console_event, TRUE); }
 /// A broken pipe is an error of the write, not a signal, on Windows.
 void ignore_broken_pipes() {}
 #else
-/// Only launch::StopRequests::request(): lock-free atomics, nothing else (async-signal-safe).
+/// Only runner::StopRequests::request(): lock-free atomics, nothing else (async-signal-safe).
 extern "C" void on_signal(int signal) { g_stops.request(signal); }
 
 std::string interrupt_name()
 {
     const int first = g_stops.first();
-    return first < 0 ? stop_source_name(first) : process::signal_name(first);
+    return first < 0 ? runner::stop_source_name(first) : process::signal_name(first);
 }
 
 void watch_interrupts()
@@ -652,21 +652,21 @@ launch::EventStream* start_events(const std::string& file, const std::vector<std
 /// At most this many lines wait in Shared::stdin_notes (more are left out: nobody reads stderr).
 constexpr std::size_t kMaxStdinNotes = 1024;
 
-std::string stdin_ignored_line(const launch::Command& command)
+std::string stdin_ignored_line(const runner::Command& command)
 {
     return "vehicle_sil_launch: a line of the standard input was ignored: " + command.message;
 }
 
 /// Without --events: a line of standard input that was not accepted, as a line on stderr. From
 /// the thread that reads standard input, outside every mutex of the run.
-void note_stdin_ignored(const launch::Command& command)
+void note_stdin_ignored(const runner::Command& command)
 {
     note_from_thread(stdin_ignored_line(command));
 }
 
 /// note_stdin_ignored() for where nothing may wait (under the time commands' mutex): the line is
 /// kept for write_stdin_notes().
-void keep_stdin_note(const launch::Command& command)
+void keep_stdin_note(const runner::Command& command)
 {
     const std::lock_guard lock(shared().stdin_notes_mutex);
     if (shared().stdin_notes.size() < kMaxStdinNotes)
@@ -707,8 +707,8 @@ void start_reading_commands()
         launch::EventStream* events = shared().events;
         // Never null: the reader starts from the phase observer of these controls, which are set
         // before the run begins.
-        launch::RunControls* controls = shared().controls;
-        launch::CommandInput input([events, controls](const launch::Command& command) {
+        runner::RunControls* controls = shared().controls;
+        launch::CommandInput input([events, controls](const runner::Command& command) {
             // The time commands and a stop: the run's rules decide whether one is taken (a time
             // command now, or once the run has read its configuration; a stop at once), as for a
             // control server's, and its event is written before it is done (neither waits for the
@@ -776,7 +776,7 @@ void start_reading_commands()
         static_cast<void>(g_stops.request_first(kEndOfInput, [events] {
             if (events != nullptr)
             {
-                launch::Command stop;
+                runner::Command stop;
                 stop.name = "stop";
                 stop.accepted = true;
                 events->command(stop, "eof");
@@ -1244,7 +1244,7 @@ int run(const cli::Args& args, launch::EventStream* events)
     // From here on the request is the whole of it: the arguments over the file of --request,
     // judged now that the fields the rules need (--stdin-commands, --control) are read.
     request = whole_request(request, launch::RequestCommand::Run, asked);
-    launch::RunObservers watching;
+    runner::RunObservers watching;
     launch::RunLent lent;
     watch_interrupts();
     if (events != nullptr)
@@ -1264,14 +1264,14 @@ int run(const cli::Args& args, launch::EventStream* events)
     {
         // The controls of this run, on the stop requests of the process. Never destroyed: the
         // reader of stdin may use them until the process ends.
-        launch::RunControls::Observers observers;
+        runner::RunControls::Observers observers;
         // The reader of standard input starts when the run begins its check, the first thing a
         // run tells: before any --describe, so that a command given at once is read while the
         // check runs. A run that is refused before its check (--control with a value that is
         // wrong) reads no command, and its only event is the result.
         const bool reads_commands = host.stdin_commands;
-        observers.on_phase = [events, reads_commands](launch::Phase phase) {
-            if (phase == launch::Phase::Checking && reads_commands)
+        observers.on_phase = [events, reads_commands](runner::Phase phase) {
+            if (phase == runner::Phase::Checking && reads_commands)
             {
                 start_reading_commands();
             }
@@ -1282,23 +1282,23 @@ int run(const cli::Args& args, launch::EventStream* events)
         };
         if (events != nullptr)
         {
-            observers.on_command = [events](const launch::Command& command, std::string_view source) {
+            observers.on_command = [events](const runner::Command& command, std::string_view source) {
                 events->command(command, source);
             };
-            observers.on_state = [events](const launch::RunState& state) { events->state(state); };
+            observers.on_state = [events](const runner::RunState& state) { events->state(state); };
         }
         else
         {
             // No event says what became of a command: a refused one of standard input is a line,
             // written once the time commands' mutex is left (this is called under it).
-            observers.on_command = [](const launch::Command& command, std::string_view source) {
+            observers.on_command = [](const runner::Command& command, std::string_view source) {
                 if (!command.accepted && source == "stdin")
                 {
                     keep_stdin_note(command);
                 }
             };
         }
-        shared().controls = new launch::RunControls(g_stops, request.intent.start_paused, std::move(observers),
+        shared().controls = new runner::RunControls(g_stops, request.intent.start_paused, std::move(observers),
                                                     request.intent.scenario.has_value());
         // The state names the first stop request as the result does.
         shared().controls->set_stop_name(interrupt_name);

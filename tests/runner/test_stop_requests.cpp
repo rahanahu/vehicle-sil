@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// The requests to stop a run (launch::StopRequests) by themselves: the count that the run reads
+// The requests to stop a run (vehicle_sil::runner::StopRequests) by themselves: the count that the run reads
 // (1 stops in order, 2 or more skip the waits) and the source of the first request.
 
 #include "test_harness.hpp"
@@ -14,9 +14,9 @@
 
 namespace {
 
-using vehicle_sil::launch::StopKind;
-using vehicle_sil::launch::StopRequests;
-namespace stop_source = vehicle_sil::launch::stop_source;
+using vehicle_sil::runner::StopKind;
+using vehicle_sil::runner::StopRequests;
+namespace stop_source = vehicle_sil::runner::stop_source;
 
 constexpr int kSignal = 2;
 constexpr int kOther = 15;
@@ -145,7 +145,7 @@ TEST_CASE(stop_requests_from_several_threads_are_all_counted_and_one_is_the_firs
 
 TEST_CASE(the_known_stop_sources_keep_their_values_and_names)
 {
-    using vehicle_sil::launch::stop_source_name;
+    using vehicle_sil::runner::stop_source_name;
     CHECK_EQ(stop_source::kStopCommand, -1);
     CHECK_EQ(stop_source::kEndOfInput, -2);
     CHECK_EQ(stop_source::kOutputClosed, -3);
@@ -161,8 +161,8 @@ TEST_CASE(the_known_stop_sources_keep_their_values_and_names)
 
 TEST_CASE(a_stop_source_has_the_kind_of_who_asked)
 {
-    using vehicle_sil::launch::stop_kind;
-    using vehicle_sil::launch::stop_kind_name;
+    using vehicle_sil::runner::stop_kind;
+    using vehicle_sil::runner::stop_kind_name;
     CHECK(stop_kind(stop_source::kStopCommand) == StopKind::Operator);
     CHECK(stop_kind(stop_source::kControlStop) == StopKind::Operator);
     CHECK(stop_kind(stop_source::kEndOfInput) == StopKind::Supervisor);

@@ -12,7 +12,7 @@
 #include <utility>
 #include <variant>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 const char* traffic_not_counted_name(TrafficNotCounted why)
 {
@@ -336,4 +336,4 @@ RunTraffic count_traffic(const TrafficPlan& plan, const std::vector<TrafficSeen>
 
 } // namespace detail
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

@@ -25,7 +25,7 @@ namespace vehicle_sil::control {
 class Hub;
 } // namespace vehicle_sil::control
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 /// The event "time": the virtual time and how it keeps up. Whether the simulation stands still and
 /// the speed set are in the event "state" (RunState), not here.
@@ -163,4 +163,4 @@ struct RunObservers
     std::function<void(const std::shared_ptr<control::Hub>& hub)> before_start{};
 };
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

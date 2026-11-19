@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 /// How long a bridge of --connect may report the link or the bus down before the launcher stops the
 /// run (RunLimits::outside_lost_after).
@@ -148,4 +148,4 @@ struct RunPlan
 /// connected outside), and nothing of what the run finds.
 [[nodiscard]] RunOutcome planned_outcome(const RunPlan& plan);
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

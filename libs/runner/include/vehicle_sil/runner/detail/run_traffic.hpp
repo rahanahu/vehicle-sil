@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// Where the samples of one control agent have the J1939 counters of one network.
 struct TrafficColumns
@@ -133,4 +133,4 @@ struct TrafficSeen
 /// that are known to be on no network (RunTraffic::unplaced).
 [[nodiscard]] RunTraffic count_traffic(const TrafficPlan& plan, const std::vector<TrafficSeen>& seen, std::int64_t end_ms);
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

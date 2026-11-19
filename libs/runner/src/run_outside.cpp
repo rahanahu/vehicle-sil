@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 bool is_link_line(std::string_view line)
 {
@@ -521,4 +521,4 @@ std::optional<OutsideCounts> OutsideNote::flush()
     return last_;
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

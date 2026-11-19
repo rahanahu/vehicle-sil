@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 namespace {
 
@@ -563,4 +563,4 @@ bool RunStart::start_timed_out(const std::string& waiting_for)
     return false;
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

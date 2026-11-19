@@ -14,7 +14,7 @@
 #include <optional>
 #include <utility>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// The hub of a run and the three SIL Kit objects that the run makes for it, in the order of their
 /// making: the registry, the controller (the launcher's participant) and the hub's transport on
@@ -71,4 +71,4 @@ template <class Connection>
     return close_within([closing = std::move(connection)] { closing->close(); }, limit, poll, interrupted);
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

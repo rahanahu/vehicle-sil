@@ -52,7 +52,7 @@ void write_finding_members(vehicle_sil::json::JsonWriter& w, const std::string& 
 /// counted"; and before which virtual time), an empty line, and the table (network, participant,
 /// sent, received; a row that is not counted has "-" and says why to its right; a network nobody
 /// is known to be on has one such row). A configuration without a network: one line.
-[[nodiscard]] std::string traffic_text(const RunTraffic& traffic);
+[[nodiscard]] std::string traffic_text(const runner::RunTraffic& traffic);
 /// run --scenario, for people: one line with the result, then a table of the steps (line, what,
 /// result, the virtual time that decided it).
 [[nodiscard]] std::string scenario_text(const scenario::ScenarioRun& scenario);

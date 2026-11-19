@@ -10,7 +10,7 @@
 #include <optional>
 #include <string>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 /// The largest "id" of a command: 2^53, which every JSON reader keeps exactly.
 inline constexpr std::int64_t kMaxCommandId = std::int64_t{1} << 53;
@@ -50,4 +50,4 @@ struct Command
     [[nodiscard]] bool is_time() const { return accepted && name && *name != "stop"; }
 };
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

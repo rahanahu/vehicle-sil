@@ -15,7 +15,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 namespace {
 
@@ -306,4 +306,4 @@ int RunWatch::settle(SimulationController& controller, const Watched& over)
     return interrupts_at_end;
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

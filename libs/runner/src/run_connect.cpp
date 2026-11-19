@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 config::CheckReport with_bridges(const config::CheckReport& check)
 {
@@ -43,4 +43,4 @@ config::CheckReport with_bridges(const config::CheckReport& check)
     return out;
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

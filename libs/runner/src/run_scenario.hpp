@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// The scenario of a run. Every call but end() and over() is made only in a run with a scenario
 /// (RunContext::scenario is not null), or does nothing without one (start(), finish()).
@@ -117,4 +117,4 @@ private:
     std::string thread_error_; ///< guarded by error_mutex_
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

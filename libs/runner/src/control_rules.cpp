@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <initializer_list>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 const char* operation_name(Operation operation)
 {
@@ -275,4 +275,4 @@ std::optional<Decision> always_refused(bool scenario, Entry entry, Operation ope
     return first;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// The processes the launcher started, one per participant (none for a disabled one, for one
 /// started by hand and for one that could not be started).
@@ -110,4 +110,4 @@ private:
     std::vector<std::unique_ptr<process::Process>> children_;
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

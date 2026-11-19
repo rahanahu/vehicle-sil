@@ -11,7 +11,7 @@
 
 namespace vehicle_sil::launch {
 
-std::optional<Command> parse_command(std::string_view line)
+std::optional<runner::Command> parse_command(std::string_view line)
 {
     if (!line.empty() && line.back() == '\r')
     {
@@ -22,12 +22,12 @@ std::optional<Command> parse_command(std::string_view line)
     {
         return std::nullopt;
     }
-    Command out;
+    runner::Command out;
     const std::string kExpected = "write one JSON object per line, such as {\"command\":\"stop\"}";
     if (line[first] != '{')
     {
         out.message = "the line is not a JSON object: " + kExpected;
-        out.reason = reason::kInvalidCommand;
+        out.reason = runner::reason::kInvalidCommand;
         return out;
     }
     try
@@ -38,7 +38,7 @@ std::optional<Command> parse_command(std::string_view line)
         if (root == ryml::NONE || !tree.is_map(root))
         {
             out.message = "the line is not a JSON object: " + kExpected;
-            out.reason = reason::kInvalidCommand;
+            out.reason = runner::reason::kInvalidCommand;
             return out;
         }
         const auto node = tree.find_child(root, ryml::csubstr("command", 7));
@@ -46,7 +46,7 @@ std::optional<Command> parse_command(std::string_view line)
         {
             out.message = std::string(node == ryml::NONE ? "the object has no \"command\"" : "\"command\" is not a string") +
                           ": " + kExpected;
-            out.reason = reason::kInvalidCommand;
+            out.reason = runner::reason::kInvalidCommand;
             return out;
         }
         out.name = config::detail::to_string(tree.val(node));
@@ -65,12 +65,12 @@ std::optional<Command> parse_command(std::string_view line)
             std::int64_t value = 0;
             const char* end = id ? id->first.data() + id->first.size() : nullptr;
             if (!id || id->second || id->first.empty() || std::from_chars(id->first.data(), end, value).ptr != end ||
-                value < 0 || value > kMaxCommandId)
+                value < 0 || value > runner::kMaxCommandId)
             {
-                out.message = "\"id\" must be a whole number from 0 to " + std::to_string(kMaxCommandId) +
+                out.message = "\"id\" must be a whole number from 0 to " + std::to_string(runner::kMaxCommandId) +
                               " (the sender's number for the command, written back in its command event), such as "
                               "{\"command\":\"pause\",\"id\":1}; leave it out if no answer is looked for";
-                out.reason = reason::kInvalidArgument;
+                out.reason = runner::reason::kInvalidArgument;
                 return out;
             }
             out.id = value;
@@ -85,7 +85,7 @@ std::optional<Command> parse_command(std::string_view line)
             {
                 out.message = "step needs \"ms\", a whole number of milliseconds of virtual time from 1 to " +
                               std::to_string(config::kMaxMillis) + ", such as {\"command\":\"step\",\"ms\":100}";
-                out.reason = reason::kInvalidArgument;
+                out.reason = runner::reason::kInvalidArgument;
                 return out;
             }
             out.ms = value;
@@ -101,7 +101,7 @@ std::optional<Command> parse_command(std::string_view line)
                 out.message = "run_until needs \"at_ms\", the virtual time to stand still at, a whole number of "
                               "milliseconds from 0 to " +
                               std::to_string(config::kMaxMillis) + ", such as {\"command\":\"run_until\",\"at_ms\":5000}";
-                out.reason = reason::kInvalidArgument;
+                out.reason = runner::reason::kInvalidArgument;
                 return out;
             }
             out.at_ms = value;
@@ -113,7 +113,7 @@ std::optional<Command> parse_command(std::string_view line)
             {
                 out.message = "speed needs \"value\", a number of simulation seconds per wall-clock second from 0.000001 "
                               "to 1000000 or \"max\", such as {\"command\":\"speed\",\"value\":1}";
-                out.reason = reason::kInvalidArgument;
+                out.reason = runner::reason::kInvalidArgument;
                 return out;
             }
         }
@@ -121,7 +121,7 @@ std::optional<Command> parse_command(std::string_view line)
     catch (const config::detail::YamlSyntaxError&)
     {
         out.message = "the line is not valid JSON: " + kExpected;
-        out.reason = reason::kInvalidCommand;
+        out.reason = runner::reason::kInvalidCommand;
         return out;
     }
     static constexpr std::string_view kNames[] = {"stop", "pause", "resume", "step", "run_until", "speed"};
@@ -130,7 +130,7 @@ std::optional<Command> parse_command(std::string_view line)
         // The name as far as it is worth showing.
         const std::string shown = out.name->size() > 64 ? out.name->substr(0, 64) + "..." : *out.name;
         out.message = "unknown command '" + shown + "': the commands are stop, pause, resume, step, run_until and speed";
-        out.reason = reason::kUnknownCommand;
+        out.reason = runner::reason::kUnknownCommand;
         return out;
     }
     out.accepted = true;
@@ -148,9 +148,9 @@ void CommandInput::append(std::string_view bytes)
             pending_.append(part);
             if (pending_.size() > kMaxCommandLine)
             {
-                Command tooLong;
+                runner::Command tooLong;
                 tooLong.message = "the line is longer than " + std::to_string(kMaxCommandLine) + " bytes";
-                tooLong.reason = reason::kInvalidCommand;
+                tooLong.reason = runner::reason::kInvalidCommand;
                 on_command_(tooLong);
                 pending_.clear();
                 skipping_ = true;

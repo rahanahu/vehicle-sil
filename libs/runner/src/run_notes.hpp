@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// When RunNotes::note_time() is called.
 enum class TimeNote
@@ -114,4 +114,4 @@ private:
     PacingWatch pacing_;             ///< for the state's `pacing`
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

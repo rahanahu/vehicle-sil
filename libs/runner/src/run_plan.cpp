@@ -11,7 +11,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck* scenario, std::filesystem::path base,
                  const RunChoices& choices, const RunLimits& limits, bool control_server)
@@ -102,4 +102,4 @@ RunOutcome planned_outcome(const RunPlan& plan)
     return outcome;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

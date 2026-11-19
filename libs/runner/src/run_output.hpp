@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// The run's lines and log files.
 ///
@@ -163,4 +163,4 @@ private:
     std::vector<std::string> last_statistics_;
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

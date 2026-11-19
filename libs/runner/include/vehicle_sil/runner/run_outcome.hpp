@@ -22,7 +22,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 /// How the launcher asks a participant to stop, in messages: "SIGTERM" (POSIX) or "Ctrl+Break"
 /// (Windows).
@@ -384,4 +384,4 @@ namespace detail {
 [[nodiscard]] std::vector<config::Finding> settled_findings(const RunOutcome& outcome);
 } // namespace detail
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

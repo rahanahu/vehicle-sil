@@ -5,7 +5,7 @@
 
 #include <algorithm>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 namespace {
 
@@ -253,4 +253,4 @@ void RunScenario::end()
     samples_.scenario_ends();
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

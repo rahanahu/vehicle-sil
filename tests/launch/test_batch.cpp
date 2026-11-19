@@ -19,6 +19,7 @@
 
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
+using namespace vehicle_sil::runner;
 using namespace vehicle_sil::config;
 using vehicle_sil::config::test::check_text;
 

@@ -12,7 +12,7 @@
 #include <string_view>
 #include <utility>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 std::int64_t detail::ecu_start_timeout_ms(const config::SimulationConfig& config, bool stands_still_before_start)
 {
@@ -516,4 +516,4 @@ void RunParticipants::end_manual(SimulationController& controller, bool ran, int
 
 } // namespace detail
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

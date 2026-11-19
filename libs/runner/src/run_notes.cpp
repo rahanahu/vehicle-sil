@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 namespace {
 
@@ -153,4 +153,4 @@ void RunNotes::note_time(SimulationController& controller, TimeNote note)
     last_time_wall_ = wall;
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

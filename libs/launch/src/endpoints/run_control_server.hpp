@@ -28,6 +28,6 @@ struct ControlServerOfRun
 /// to their stop requests as stop_source::kControlStop), which must outlive it. Reads files;
 /// starts nothing and listens nowhere (ControlEndpoint::start() does).
 /// In a build without the control server: throws std::invalid_argument.
-[[nodiscard]] ControlServerOfRun make_control_server_of_run(const ControlHost& asked, RunControls& controls);
+[[nodiscard]] ControlServerOfRun make_control_server_of_run(const ControlHost& asked, runner::RunControls& controls);
 
 } // namespace vehicle_sil::launch::detail

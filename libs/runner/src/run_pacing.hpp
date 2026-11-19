@@ -10,7 +10,7 @@
 #include <cstdint>
 #include <optional>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// Whether a run keeps up with the speed set for it (the state's `pacing`), from the looks of the
 /// watch at the time gate. Late: the step that has not begun is later than the tolerance, or a
@@ -46,4 +46,4 @@ private:
     std::optional<std::chrono::steady_clock::time_point> late_until_{};
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

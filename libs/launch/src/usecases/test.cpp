@@ -107,7 +107,7 @@ std::string failure_reason(const RunReport& report)
     }
     if (first == nullptr)
     {
-        return report.run && report.run->end.simulation != SimulationEnd::Ended && report.run->end.simulation != SimulationEnd::ReachedStopAt
+        return report.run && report.run->end.simulation != runner::SimulationEnd::Ended && report.run->end.simulation != runner::SimulationEnd::ReachedStopAt
                    ? "the simulation did not run to its end"
                    : "";
     }
@@ -631,7 +631,7 @@ TestReport test_file(const TestOptions& options)
     const auto say = [&options](const std::string& text) {
         if (options.observers.write_line)
         {
-            options.observers.write_line(std::string(detail::kLauncherTag) + text);
+            options.observers.write_line(std::string(runner::detail::kLauncherTag) + text);
         }
     };
     const auto interrupted = [&options] { return options.lent.stops != nullptr && options.lent.stops->count() > 0; };

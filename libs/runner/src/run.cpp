@@ -174,7 +174,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 std::string detail::uri_for_participants(std::string uri)
 {
@@ -514,4 +514,4 @@ std::string Runner::write_timeline(const std::string& text) { return impl_->writ
 
 } // namespace detail
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

@@ -139,12 +139,12 @@ struct TestOptions
     /// scenario are set for each run.
     RunRequest request{};
     /// For every run: where the lines go, and the name of an interrupt.
-    RunObservers observers{};
+    runner::RunObservers observers{};
     /// For every run: the interrupts (RunLent::stops). Its controls must be null (test_file()
     /// throws std::invalid_argument otherwise): each run makes its own (RunControls serves one run).
     RunLent lent{};
     /// For every run: the waits that only tests shorten.
-    RunLimits limits{};
+    runner::RunLimits limits{};
     /// CheckOptions::fastest_by_default of every run: RunIntent::speed of `request` is the test's
     /// default, not a speed the user asked for.
     bool fastest_by_default = false;

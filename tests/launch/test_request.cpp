@@ -22,6 +22,7 @@
 namespace {
 
 using namespace vehicle_sil::launch;
+using namespace vehicle_sil::runner;
 using namespace vehicle_sil::config;
 using namespace std::chrono_literals;
 

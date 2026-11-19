@@ -16,7 +16,7 @@
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/core/simulation_watch.hpp"
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// Watches the simulation from its start to its end (watch()), then settles what is known when it
 /// is over (settle(), which the run calls right after).
@@ -68,4 +68,4 @@ private:
     StandStill stand_still_;
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

@@ -7,7 +7,7 @@
 
 #include <algorithm>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 const std::shared_ptr<control::Hub>& RunControl::shared_hub()
 {
@@ -225,4 +225,4 @@ void RunControl::note_late_maps(RunOutcome& outcome) const
     }
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

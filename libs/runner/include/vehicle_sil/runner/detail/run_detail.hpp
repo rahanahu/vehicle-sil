@@ -24,7 +24,7 @@
 #include <thread>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 /// Where the registry listens if the start waits for a participant someone starts by hand and the
 /// file has no registry_uri: a fixed port, so that the command to start it is the same in every
@@ -430,4 +430,4 @@ private:
 [[nodiscard]] std::string log_name(const std::string& name);
 } // namespace detail
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner
