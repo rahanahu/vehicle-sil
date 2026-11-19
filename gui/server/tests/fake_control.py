@@ -83,20 +83,28 @@ def more_variables(base: str) -> list[dict]:
 
 
 def load():
+    import shutil
+
     import grpc
 
-    stubs = os.environ.get("VEHICLE_SIL_CONTROL_STUBS") or _make_stubs()
+    given = os.environ.get("VEHICLE_SIL_CONTROL_STUBS")
+    stubs = given or _make_stubs()
     if stubs not in sys.path:
         sys.path.insert(0, stubs)
-    from vehicle_sil.control.v1 import control_pb2 as pb
-    from vehicle_sil.control.v1 import control_pb2_grpc as rpc
+    try:
+        from vehicle_sil.control.v1 import control_pb2 as pb
+        from vehicle_sil.control.v1 import control_pb2_grpc as rpc
+    finally:
+        if not given:  # made here: removed as soon as it is imported, so that a process that is killed leaves none
+            sys.path.remove(stubs)
+            shutil.rmtree(stubs, ignore_errors=True)
     return grpc, pb, rpc
 
 
 def _make_stubs() -> str:
-    """The stubs, made now from the repository's proto file (needs grpcio-tools) into a directory that is removed
-    at exit: for a stand-in launcher that is started without VEHICLE_SIL_CONTROL_STUBS (the e2e of gui/web)."""
-    import atexit
+    """The stubs, made now from the repository's proto file (needs grpcio-tools) into a temporary directory that
+    load() removes after the import: for a stand-in launcher that is started without VEHICLE_SIL_CONTROL_STUBS
+    (the e2e of gui/web)."""
     import shutil
     import tempfile
     from pathlib import Path
@@ -105,10 +113,10 @@ def _make_stubs() -> str:
 
     proto = Path(__file__).resolve().parents[3] / "proto"
     out = tempfile.mkdtemp(prefix="fake-control-stubs-")
-    atexit.register(shutil.rmtree, out, ignore_errors=True)
     code = protoc.main(["protoc", f"-I{proto}", f"--python_out={out}", f"--grpc_python_out={out}",
                         str(proto / "vehicle_sil" / "control" / "v1" / "control.proto")])
     if code != 0:
+        shutil.rmtree(out, ignore_errors=True)
         raise RuntimeError(f"protoc failed ({code})")
     return out
 
