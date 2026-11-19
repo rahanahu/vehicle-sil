@@ -398,7 +398,7 @@ gRPC の呼び出しと、Python のクライアント（`Control` のメソッ�
 
 | gRPC | すること | Python | CLI | ロール |
 |---|---|---|---|---|
-| `Ping` | サーバーのバージョンを返します。 | `ping()` | なし | `viewer` |
+| `Ping` | サーバーのバージョンと、サーバーを作った vehicle-sil のリリース（`vehicle_sil`）を返します。 | `ping()` | なし | `viewer` |
 | `ListPeers` | Peer と変数の一覧を読みます。 | `peers()`、`peer()` | `peers`、`show` | `viewer` |
 | `GetValues` | 1 つの Peer の最後の値を読みます。 | `values()` | `show` | `viewer` |
 | `GetSnapshot` | 時刻と値をまとめて読みます。 | `snapshot()` | なし | `viewer` |
@@ -490,6 +490,8 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
 | 呼び出しの失敗 | 例外 `ControlError` です（[エラー](#エラー)）。 |
 | Agent が拒否した書き込み | 例外ではなく、操作の結果（`invalid` など）になります。 |
 
+`vehicle_sil_control` は、ランチャーと同じ vehicle-sil のリリースのものを使います。`Control` を作っただけでは接続しません。最初の呼び出しか watch のときに、`Control` は `Ping` を 1 回送ってサーバーのリリースを確かめます。別のリリースのサーバーと、リリースを返さないサーバーは、`ControlError`（`code` は `FAILED_PRECONDITION`）で断ります。メッセージは `the control server is vehicle-sil <X>; this vehicle_sil_control is <Y>: use the vehicle_sil_control of the same release as the launcher` です（リリースを返さないサーバーでは、`vehicle-sil <X>` が `an older vehicle-sil` になります）。`Ping` が失敗したとき（サーバーがまだない）は、次の呼び出しでもう一度確かめます。
+
 ### 書き込みのルール
 
 | 項目 | ルール |
@@ -526,15 +528,12 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
 | `simulation_state` | SIL Kit の状態です。 |
 | `virtual_time` | Agent がシミュレーションの時刻で動くかです（Agent の hello のとおり。偽は実時間の Peer か、Agent がない）。 |
 
-`virtual_time` を持たない前のバージョンの Server では、どの Peer も偽になります。
-
 | 変数（`schema` の各要素）のフィールド | 意味 |
 |---|---|
 | `builtin` | vehicle-sil が付けた変数か（真）、アプリケーションが宣言した変数か（偽）です。 |
 | `source` | 設定ファイルの対応表（`participants[].variables`）が適用されている変数の、実行ファイルでの名前です（適用されていなければ空）。 |
 
 - `builtin` は、Server が名前で決めます（名前が `ecu.`、`peer.`、`j1939.` で始まれば真）。アプリケーションが `j1939.` で始まる名前の変数を宣言すると、それも真になります。
-- `source` を持たない前のバージョンの Server でも、`source` は空です。
 
 対応表のある Peer では、次のものが対応の後のものになります。
 
@@ -613,7 +612,6 @@ if snap.consistent:                       # 値は、止まっている時刻 sn
 | ロール | `viewer` で呼べます。 |
 | 1 回に挙げられる名前 | 1024 個までです（超えると `INVALID_ARGUMENT`）。 |
 | レスポンスが 1 つのメッセージの上限（4 MiB）を超える | `RESOURCE_EXHAUSTED` です。メッセージのとおり、Peer を分けて呼びます（分けた呼び出しどうしの間に保証はありません）。 |
-| この呼び出しを持たない前のバージョンの Server | `ControlError`（`code` は `UNIMPLEMENTED`）になります。そのときは `sim.time()` と `values()` を使います（2 つの間に保証はありません）。 |
 
 ## CLI
 
@@ -643,7 +641,7 @@ python -m vehicle_sil_control stop
 | 状態コード | 返るとき |
 |---|---|
 | `INVALID_ARGUMENT` | 引数のエラーです（範囲の外の速度、0 以下のステップ、`snapshot()` の名前が 1024 個を超える）。 |
-| `FAILED_PRECONDITION` | 今はできない呼び出しです（一時停止していないときの `step`、終わった後の `Stop`、シナリオの実行中の書き込み、外につながっていて実時間を保つ実行での一時停止や速度の変更）。 |
+| `FAILED_PRECONDITION` | 今はできない呼び出しです（一時停止していないときの `step`、終わった後の `Stop`、シナリオの実行中の書き込み、外につながっていて実時間を保つ実行での一時停止や速度の変更）。Python のクライアントは、別の vehicle-sil のリリースのサーバーにも出します。 |
 | `CANCELLED` | 待っている間に、サーバーが閉じました（`WaitPaused`。`FAILED_PRECONDITION` のこともあります）。 |
 | `RESOURCE_EXHAUSTED` | `snapshot()` のレスポンスが、1 つのメッセージの上限（4 MiB）を超えました。 |
 | `UNIMPLEMENTED` | Server が、その呼び出しを持たない前のバージョンです。 |

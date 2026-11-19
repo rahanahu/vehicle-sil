@@ -114,7 +114,10 @@ message PingRequest {
 
 message PingReply {
   string text = 1;
-  string server_version = 2;
+  string server_version = 2; // "vehicle-sil control v1"
+  // The vehicle-sil release the server was built from (e.g. "0.1.0"). The Python client compares it with its
+  // own at its first call and refuses another release ("": a server from before this field).
+  string vehicle_sil = 3;
 }
 
 // What a peer's agent reported about its participant.

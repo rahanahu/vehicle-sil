@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import dataclasses
 import sys
+import threading
 import warnings
 from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Union
 
 import grpc
 
+from . import __version__
 from ._stubs import pb, rpc
 
 Number = Union[bool, int, float]
@@ -330,6 +332,9 @@ class Control:
             seq = c.write({"Body": {"cabin.parking_brake": True}}, at=c.sim.time().now + ms(10))
             c.wait(seq, until="queued")
             c.sim.step(ms(100))
+
+    Making one does not connect. The first call (or watch) checks that the server is of this
+    client's vehicle-sil release (__version__) and refuses another with ControlError.
     """
 
     def __init__(self, address: str, timeout: float = 10.0, token: Optional[str] = None,
@@ -347,6 +352,8 @@ class Control:
         self._stub = rpc.ControlServiceStub(self._channel)
         self._timeout = timeout
         self._schemas: Dict[tuple, List[Variable]] = {}  # (peer, incarnation) -> schema, for snapshot()
+        self._checked = False  # the server's release was compared with this client's (_check_release)
+        self._check_lock = threading.Lock()
         self.sim = _Simulation(self)
 
     def __enter__(self) -> "Control":
@@ -358,7 +365,28 @@ class Control:
     def close(self) -> None:
         self._channel.close()
 
+    def _check_release(self) -> None:
+        """Before the first call: the server must be of this client's vehicle-sil release (one Ping, once
+        per Control; a Ping that fails is tried again at the next call). Another release, or a server
+        that does not say its release, is refused: ControlError FAILED_PRECONDITION."""
+        if self._checked:
+            return
+        with self._check_lock:
+            if self._checked:
+                return
+            try:
+                reply = self._stub.Ping(pb.PingRequest(), timeout=self._timeout)
+            except grpc.RpcError as e:
+                raise _error(e) from None
+            if reply.vehicle_sil != __version__:
+                server = f"vehicle-sil {reply.vehicle_sil}" if reply.vehicle_sil else "an older vehicle-sil"
+                raise ControlError(grpc.StatusCode.FAILED_PRECONDITION,
+                                   f"the control server is {server}; this vehicle_sil_control is {__version__}: use "
+                                   "the vehicle_sil_control of the same release as the launcher")
+            self._checked = True
+
     def _call(self, method, request, timeout: Optional[float] = None):
+        self._check_release()
         try:
             return method(request, timeout=timeout or self._timeout)
         except grpc.RpcError as e:
@@ -455,6 +483,7 @@ class Control:
         SimulationState (with simulation=True: participants' states, a failure, the end) and
         ("initial_done",) once the current state has been sent, until the caller stops iterating (or
         the server ends the stream)."""
+        self._check_release()
         schemas: Dict[str, List[Variable]] = {}
         request = pb.WatchRequest(peers=list(peers), values=values, events=events, operations=operations,
                                   capacity=capacity, time=time, simulation=simulation)

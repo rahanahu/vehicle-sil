@@ -94,6 +94,7 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 合わせて直す所は、[CHANGELOG.md](../../CHANGELOG.md) に書いてあります。
 
 - `pyproject.toml`、`gui/server/pyproject.toml`
+- `python/vehicle_sil_control/__init__.py` の `__version__`
 - `template/get_tools.py`
 - `template/CMakeLists.txt` の `GIT_TAG`
 - `template/README.md` のバージョン

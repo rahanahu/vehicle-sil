@@ -5,6 +5,10 @@ The names are loaded on first use, so `python -m vehicle_sil_control.generate` w
 gRPC stubs exist, and Launch, LaunchError and control_address (the launcher as a child process,
 standard library only) without gRPC.
 """
+# The vehicle-sil release of this client. A literal, not the package metadata (the tools archive puts the
+# client in place without installing it); scripts/package.py version keeps it equal to CMakeLists.txt.
+__version__ = "0.1.0"
+
 _LAUNCHER = ["Launch", "LaunchError", "control_address"]
 __all__ = ["Control", "ControlError", "ControlWarning", "EventInfo", "Operation", "Peer", "SimulationState", "Snapshot", "Target",
            "TimeState", "Values", "Variable",

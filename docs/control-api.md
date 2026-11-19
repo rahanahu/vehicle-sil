@@ -398,7 +398,7 @@ The gRPC calls, the matching methods of the Python client (methods of `Control`;
 
 | gRPC | What it does | Python | CLI | Role |
 |---|---|---|---|---|
-| `Ping` | Returns the server version. | `ping()` | None | `viewer` |
+| `Ping` | Returns the server version and the vehicle-sil release the server was built from (`vehicle_sil`). | `ping()` | None | `viewer` |
 | `ListPeers` | Reads the list of peers and their variables. | `peers()`, `peer()` | `peers`, `show` | `viewer` |
 | `GetValues` | Reads the latest values of one peer. | `values()` | `show` | `viewer` |
 | `GetSnapshot` | Reads the time and values together. | `snapshot()` | None | `viewer` |
@@ -490,6 +490,8 @@ Times are virtual time in nanoseconds. Make them with `ms()` and `s()`.
 | A call fails | The exception `ControlError` (see [Errors](#errors)). |
 | The Agent rejects a write | Not an exception: the result of the operation (`invalid` and others). |
 
+Use the `vehicle_sil_control` of the same vehicle-sil release as the launcher. Making a `Control` does not connect. At its first call or watch, `Control` asks the server's release with one `Ping`. Another release, and a server that does not give its release, is refused with `ControlError` (`code` `FAILED_PRECONDITION`): `the control server is vehicle-sil <X>; this vehicle_sil_control is <Y>: use the vehicle_sil_control of the same release as the launcher` (`an older vehicle-sil` in place of `vehicle-sil <X>` for a server that gives none). A `Ping` that fails (the server is not there yet) is tried again at the next call.
+
 ### Rules for writes
 
 | Topic | Rule |
@@ -526,15 +528,12 @@ Times are virtual time in nanoseconds. Make them with `ms()` and `s()`.
 | `simulation_state` | The SIL Kit state. |
 | `virtual_time` | Whether the Agent runs on the simulation's time, as the Agent's hello says. False means a real-time peer, or no Agent. |
 
-A server of an earlier version, without `virtual_time`, gives false for every peer.
-
 | Variable field (each element of `schema`) | Meaning |
 |---|---|
 | `builtin` | Whether vehicle-sil added the variable (true) or the application declared it (false). |
 | `source` | For a variable to which the variable map of the configuration file (`participants[].variables`) applies, its name in the executable. Empty if no mapping applies. |
 
 - The server decides `builtin` by the name: true if the name starts with `ecu.`, `peer.` or `j1939.`. If the application declares a variable whose name starts with `j1939.`, that variable is true as well.
-- A server of an earlier version, without `source`, also gives an empty `source`.
 
 For a peer with a variable map, these are after mapping:
 
@@ -613,7 +612,6 @@ Which peers `values` contains:
 | Role | `viewer` can call it. |
 | Names per call | Up to 1024. More gives `INVALID_ARGUMENT`. |
 | The response is larger than the limit of one message (4 MiB) | `RESOURCE_EXHAUSTED`. As the message says, split the peers over several calls. Nothing is guaranteed about how separate calls relate. |
-| A server of an earlier version, without this call | `ControlError` (`code` is `UNIMPLEMENTED`). Use `sim.time()` and `values()` instead. Nothing is guaranteed about how the two relate. |
 
 ## CLI
 
@@ -643,7 +641,7 @@ A failed call returns a gRPC status code. In Python, it raises the exception `Co
 | Status code | Returned when |
 |---|---|
 | `INVALID_ARGUMENT` | An argument is wrong (a speed out of range, a step of 0 or less, more than 1024 names for `snapshot()`). |
-| `FAILED_PRECONDITION` | The call is not possible now (`step` while not paused, `Stop` after the end, writes during a scenario, a pause or another speed in a run that is connected outside and keeps real time). |
+| `FAILED_PRECONDITION` | The call is not possible now (`step` while not paused, `Stop` after the end, writes during a scenario, a pause or another speed in a run that is connected outside and keeps real time). The Python client also raises it for a server of another vehicle-sil release. |
 | `CANCELLED` | The server closed while the call was waiting (`WaitPaused`; it can also get `FAILED_PRECONDITION`). |
 | `RESOURCE_EXHAUSTED` | The response of `snapshot()` was larger than the limit of one message (4 MiB). |
 | `UNIMPLEMENTED` | The server is an earlier version without that call. |

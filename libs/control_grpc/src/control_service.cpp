@@ -4,6 +4,7 @@
 #include "convert.hpp"
 #include "vehicle_sil/control/v1/control.grpc.pb.h"
 #include "vehicle_sil/control_grpc/simulation_monitor.hpp"
+#include "vehicle_sil/ecu/describe.hpp"
 
 #include <algorithm>
 #include <deque>
@@ -165,6 +166,7 @@ public:
         return guarded(context, "Ping", [&](const Call&) -> grpc::Status {
             reply->set_text(request->text());
             reply->set_server_version("vehicle-sil control v1");
+            reply->set_vehicle_sil(vehicle_sil::version());
             return grpc::Status::OK;
         });
     }

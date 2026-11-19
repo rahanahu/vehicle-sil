@@ -94,6 +94,7 @@ Where to change:
 [CHANGELOG.md](../CHANGELOG.md) lists the places to update with it:
 
 - `pyproject.toml`, `gui/server/pyproject.toml`
+- `__version__` in `python/vehicle_sil_control/__init__.py`
 - `template/get_tools.py`
 - `GIT_TAG` in `template/CMakeLists.txt`
 - The version in `template/README.md`
