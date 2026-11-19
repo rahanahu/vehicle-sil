@@ -255,7 +255,7 @@ describe('TimeControl', () => {
     await sendStep(time);
     const hello = (seq: number) => ({
       type: 'hello',
-      vehicle_sil_gui: 1,
+      vehicle_sil_gui: 2,
       instance: '0123456789abcdef',
       replay: { from_seq: null },
       session: lastSummary((s) => {

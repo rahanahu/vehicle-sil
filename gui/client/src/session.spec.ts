@@ -176,11 +176,11 @@ describe('SessionFeed', () => {
   it('stops and says why when the server speaks another version', () => {
     const { run, socket } = open();
     const hello = examples.get('ws-replay')?.server[0] as Record<string, unknown>;
-    socket.send({ ...hello, vehicle_sil_gui: 2 });
+    socket.send({ ...hello, vehicle_sil_gui: 3 });
     vi.advanceTimersByTime(BATCH_MS);
     expect(socket.closedByClient).toBe(true);
     expect(run.ready()).toBe(false);
-    expect(run.incompatible()).toContain('version 2');
+    expect(run.incompatible()).toContain('version 3');
     vi.advanceTimersByTime(backoffMs(5) * 2);
     expect(fake.sockets).toHaveLength(1);
   });
