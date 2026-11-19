@@ -769,7 +769,7 @@ SIL Kit pads frames shorter than 60 bytes with zeros on the receiving side (see 
 
 ## Loop prevention (`MacSideTable`)
 
-Put only one bridge between the same 2 networks (the SIL Kit Ethernet network and the external wire). A second bridge makes a wrong setup in which frames can keep circling through both bridges. When it can, the bridge detects this setup from the source MAC addresses of frames, stops the frames from that address and warns. It does not guarantee to stop every case (see "[When a loop is not stopped](#when-a-loop-is-not-stopped)"). It does not rely on OS settings (`vehicle_sil/eth_link/mac_side_table.hpp`).
+Put only one bridge between the same 2 networks (the SIL Kit Ethernet network and the external wire). A second bridge makes a wrong setup in which frames can keep circling through both bridges. When it can, the bridge detects this setup from the source MAC addresses of frames, stops the frames from that address and warns. It does not guarantee to stop every case (see "[When a loop is not stopped](#when-a-loop-is-not-stopped)"). It does not rely on OS settings (`vehicle_sil/eth_link/mac_side_table.hpp`). The bridge applies the MAC rules to frames from the outside from `start()` on, also before the SIL Kit controller is activated (those frames are not passed into SIL Kit), so a bridge that is not yet ready does not keep sending back what another bridge passed in.
 
 ### MAC rules
 
@@ -987,7 +987,7 @@ The fake external link for tests is `tests/eth_link/fake_link` (`FakeLink`, and 
 
 `start_controller()` is called from the participant's CommunicationReady handler (`runtime.add_communication_ready_handler([&bridge] { bridge.start_controller(); })`). This is the point that SIL Kit recommends (on a SIL Kit thread, before Running).
 
-- Frames received from the external link before then are not passed to SIL Kit (and not counted). From SIL Kit to the outside, forwarding runs from `start()`.
+- Frames received from the external link before then are not passed to SIL Kit (and not counted), but the MAC rules already learn their sources. From SIL Kit to the outside, forwarding runs from `start()`.
 - If `Activate()` fails, it is reported through `fault()`, not by an exception.
 - `start()` after `start_controller()` (stopping and starting again) also calls `Activate()`.
 - The bridge is an autonomous participant, so there is no guarantee that it has found a network simulator for Ethernet by that point.
