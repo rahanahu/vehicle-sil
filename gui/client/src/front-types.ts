@@ -353,7 +353,8 @@ export interface Front {
    * file), and resolves with the stamp of the saved content. By default the server saves only an edit that keeps the
    * commands that run, as the launcher's check of the text says (`controls.save` tells what applies). `file` defaults
    * to the start-up file (`no-file` if there is none). Rejects with an ActionError: `save-disabled`,
-   * `commands-changed` (`findings` are the launcher's), `config-changed` (read the file again and make the edit on
+   * `commands-changed` (`findings` are the launcher's; also a new file, `stamp` null, to a server started without
+   * `--allow-command-changes`), `config-changed` (read the file again and make the edit on
    * that text), `config-busy`, `config-unreadable`, `text-too-large`, ...; a failure is not put into `status.problem`.
    */
   saveConfig(options: { file?: string; text: string; stamp: string | null }): Promise<SavedConfig>;

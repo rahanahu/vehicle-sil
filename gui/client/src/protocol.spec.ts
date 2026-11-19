@@ -12,6 +12,7 @@ import {
   readRecording,
   readSavedConfig,
   readScenarioList,
+  readServerAllowed,
   readServerMessage,
   readSessionResponse,
   readTimeResponse,
@@ -394,6 +395,16 @@ describe('the readers refuse what they cannot read', () => {
     message: 'm',
     detail: null,
   };
+
+  it('refuses an allowed without save, or a save without caution', () => {
+    const item = { ok: true, reason: null, message: null };
+    const allowed = { rev: 1, start: item, stop: item, force: item };
+    expect(() =>
+      readServerAllowed({ ...allowed, save: { ...item, caution: null } }, 'a'),
+    ).not.toThrow();
+    expect(() => readServerAllowed(allowed, 'a')).toThrow(ProtocolError);
+    expect(() => readServerAllowed({ ...allowed, save: item }, 'a')).toThrow(ProtocolError);
+  });
 
   it('ignores unknown fields and unknown events', () => {
     expect(readLauncherEvent({ ...finding, colour: 'blue' }, 'e')).toMatchObject({

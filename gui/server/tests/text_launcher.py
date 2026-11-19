@@ -32,6 +32,8 @@ the text. Its result is passed, or unreadable with the line "# stand-in: unreada
 `commands` is "changed" when a `command:` line of a participant differs from the file's, or with the line "# stand-in:
 commands changed"; "not_compared" ("# stand-in: commands not compared"); null ("# stand-in: commands null"); else
 "same". The launcher's notes commands-changed and commands-not-compared come with them. Without the option, null.
+With the line "# stand-in: the file changes during the check", it adds the line "# changed by another program" to the
+file of --compare-commands before it answers (another program saved the file while the launcher checked).
 """
 
 from __future__ import annotations
@@ -84,6 +86,9 @@ def save_check(text: str, compare: str | None) -> int:
     result = "unreadable" if "# stand-in: unreadable text" in lines else "passed"
     check = json.loads(fabricated(result))
     commands = None
+    if compare is not None and "# stand-in: the file changes during the check" in lines:
+        with open(compare, "a", encoding="utf-8", newline="") as f:
+            f.write("# changed by another program\n")
     if compare is not None:
         ours, theirs = command_lines(text), command_lines(Path(compare).read_text(encoding="utf-8"))
         differ = [n for n in ours if theirs.get(n, ours[n]) != ours[n]]

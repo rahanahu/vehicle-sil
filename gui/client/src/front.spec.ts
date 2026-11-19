@@ -100,6 +100,7 @@ const serverAllowed = (rev: number, start: object, stop: object = ok) => ({
   start,
   stop,
   force: stop,
+  save: { ok: true, reason: null, message: null, caution: null },
 });
 const startOk = { ok: true, reason: null, message: null };
 const notRunning = {

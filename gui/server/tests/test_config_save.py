@@ -17,10 +17,11 @@ from pathlib import Path
 
 import pytest
 from conftest import CONFIGS, Client, gui_server, run_async
-from vehicle_sil_gui.config_save import (TEMP_PREFIX, SaveRefused, check_unchanged, decide, new_file, replace_file,
-                                         save_request)
+from vehicle_sil_gui.config_save import (TEMP_PREFIX, check_text, check_unchanged, decide, existing_file, new_file,
+                                         replace_file, save_request)
 from vehicle_sil_gui.launcher import InvalidRequest
 from vehicle_sil_gui.paths import MAX_DEPTH, ConfigFile, ConfigRoot, PathRejected
+from vehicle_sil_gui.refusal import Refused
 from vehicle_sil_gui.server import MAX_TEXT
 
 TEXT_LAUNCHER = Path(__file__).resolve().parent / "text_launcher.py"
@@ -80,7 +81,7 @@ def test_what_a_body_may_hold() -> None:
         with pytest.raises(InvalidRequest) as e:
             save_request(body, 10)
         assert e.value.code == "invalid-field", body
-    with pytest.raises(SaveRefused) as e:
+    with pytest.raises(Refused) as e:
         save_request({"file": "a.yaml", "text": "x" * 11, "stamp": None}, 10)
     assert (e.value.status, e.value.code) == (413, "text-too-large")
 
@@ -97,19 +98,19 @@ def test_the_decision_is_the_launcher_s_commands() -> None:
     decide("a.yaml", check("failed", "same"), False)  # "same" does not depend on the result
     for commands in ("changed", "not_compared", None, "other"):
         decide("a.yaml", check("passed", commands), True)
-        with pytest.raises(SaveRefused) as e:
+        with pytest.raises(Refused) as e:
             decide("a.yaml", check("passed", commands, ("commands-changed", "the commands differ")), False)
         assert (e.value.status, e.value.code) == (403, "commands-changed")
         assert e.value.args[0].startswith("the GUI server saves only an edit that keeps the commands that run (the "
                                           "commands differ): make this edit in a text editor")
         assert e.value.detail["commands"] == commands
-    with pytest.raises(SaveRefused) as e:
+    with pytest.raises(Refused) as e:
         decide("a.yaml", check("passed", None), False)
     assert "(commands is null)" in str(e.value) and "--allow-command-changes" in str(e.value)
     # What the launcher cannot read is never saved, whatever the options
     for result in ("unreadable", "usage"):
         for allowed in (False, True):
-            with pytest.raises(SaveRefused) as e:
+            with pytest.raises(Refused) as e:
                 decide("a.yaml", check(result, None), allowed)
             assert (e.value.status, e.value.code) == (422, "config-unreadable")
             assert "(line 3: a tab)" in str(e.value) and e.value.detail["result"] == result
@@ -135,12 +136,40 @@ def test_where_a_new_file_may_be_made(tmp_path: Path) -> None:
         with pytest.raises(PathRejected) as e:
             new_file(root, relative)
         assert e.value.code == code, (relative, str(e.value))
-    with pytest.raises(SaveRefused) as e:
+    with pytest.raises(Refused) as e:
         new_file(root, "taken.yaml")
     assert (e.value.status, e.value.code) == (409, "config-changed")
 
 
 @pytest.mark.skipif(not POSIX, reason="symbolic links (POSIX)")
+def test_where_an_existing_file_may_be_saved(tmp_path: Path) -> None:
+    """The same places as for a new file: what GET api/config reads is not enough (a dashboard file or a scenario file
+    can have the marker in a comment)."""
+    marked = b"vehicle_sil_simulation: 1\n"
+    deep = "/".join(f"d{n}" for n in range(MAX_DEPTH + 1))
+    names = ("sim.yaml", "sim.dashboard.yaml", "sub/scenarios/s.yaml", f"{deep}/a.yaml",
+             "/".join(f"d{n}" for n in range(MAX_DEPTH)) + "/ok.yaml")
+    for name in names:
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_bytes(marked)
+    root = ConfigRoot(tmp_path)
+    assert existing_file(root, "sim.yaml") == ConfigFile("sim.yaml", tmp_path.resolve() / "sim.yaml")
+    assert existing_file(root, names[-1]).relative == names[-1]
+    for name in names[1:-1]:
+        with pytest.raises(PathRejected) as e:
+            existing_file(root, name)
+        assert e.value.code == "not-a-configuration", name
+
+
+def test_the_text_stays_readable() -> None:
+    check_text("a.yaml", b"vehicle_sil_simulation: 1\n")
+    for data, said in ((b"vehicle_sil_simulation: 1\n\0", "a NUL character at byte 26"),
+                       (b"key: 1\n", "has no vehicle_sil_simulation in its first 4096 bytes")):
+        with pytest.raises(Refused) as e:
+            check_text("a.yaml", data)
+        assert (e.value.status, e.value.code) == (422, "config-unreadable") and said in str(e.value)
+
+
 def test_a_new_file_through_links(tmp_path: Path) -> None:
     outside, base = tmp_path / "outside", tmp_path / "root"
     outside.mkdir()
@@ -150,13 +179,21 @@ def test_a_new_file_through_links(tmp_path: Path) -> None:
     (base / "inner").symlink_to(base / ".private")
     (base / "alias").symlink_to(base / "real")
     (base / "dangling.yaml").symlink_to(base / "nowhere.yaml")
+    (base / "real" / "sim.yaml").write_text("vehicle_sil_simulation: 1\n", encoding="utf-8")
+    (base / "link.yaml").symlink_to(base / "real" / "sim.yaml")
     root = ConfigRoot(base)
-    assert new_file(root, "alias/new.yaml").absolute == base.resolve() / "real" / "new.yaml"
-    for relative, code in (("out/new.yaml", "outside-root"), ("inner/new.yaml", "not-a-configuration")):
+    assert new_file(root, "real/new.yaml").absolute == base.resolve() / "real" / "new.yaml"
+    # A file that is a link is listed, and its file is written; a linked directory is not entered by the listing
+    assert existing_file(root, "link.yaml").absolute == base.resolve() / "real" / "sim.yaml"
+    with pytest.raises(PathRejected) as e:
+        existing_file(root, "alias/sim.yaml")
+    assert e.value.code == "not-a-configuration" and "linked directory" in str(e.value)
+    for relative, code in (("out/new.yaml", "outside-root"), ("inner/new.yaml", "not-a-configuration"),
+                           ("alias/new.yaml", "not-a-configuration")):
         with pytest.raises(PathRejected) as e:
             new_file(root, relative)
         assert e.value.code == code, relative
-    with pytest.raises(SaveRefused):  # a link, even one that leads nowhere, is a file that is there
+    with pytest.raises(Refused):  # a link, even one that leads nowhere, is a file that is there
         new_file(root, "dangling.yaml")
 
 
@@ -196,13 +233,22 @@ def test_a_file_that_cannot_be_replaced_leaves_nothing(tmp_path: Path) -> None:
     assert target.read_bytes() == b"old\n" and leftovers(tmp_path) == []
 
 
+def test_a_new_file_does_not_replace_one_made_meanwhile(tmp_path: Path) -> None:
+    target = tmp_path / "new.yaml"
+    replace_file(target, b"mine\n", new=True)
+    assert target.read_bytes() == b"mine\n" and leftovers(tmp_path) == []
+    with pytest.raises(FileExistsError):  # another program made it after the checks
+        replace_file(target, b"again\n", new=True)
+    assert target.read_bytes() == b"mine\n" and leftovers(tmp_path) == []
+
+
 def test_unchanged_compares_the_bytes(tmp_path: Path) -> None:
     target = tmp_path / "sim.yaml"
     target.write_bytes(b"a\r\n")
     config = ConfigFile("sim.yaml", target)
     check_unchanged(config, sha(b"a\r\n"), 10)
     for stamp in (sha(b"a\n"), None):
-        with pytest.raises(SaveRefused) as e:
+        with pytest.raises(Refused) as e:
             check_unchanged(config, stamp, 10)
         assert e.value.code == "config-changed"
     check_unchanged(ConfigFile("new.yaml", tmp_path / "new.yaml"), None, 10)
@@ -313,7 +359,9 @@ def test_with_command_changes_allowed(tmp_path: Path, root: Path) -> None:
 
 def test_files_that_are_not_saved(tmp_path: Path, root: Path) -> None:
     files = {"other.yaml": b"key: 1\n", ".hidden/x.yaml": b"vehicle_sil_simulation: 1\n",
-             "notes.txt": b"vehicle_sil_simulation: 1\n"}
+             "notes.txt": b"vehicle_sil_simulation: 1\n",
+             "sim.dashboard.yaml": b"# vehicle_sil_simulation: 1\npanels: []\n",
+             "scenarios/marked.yaml": b"# vehicle_sil_simulation: 1\nsteps: []\n"}
     for name, data in files.items():
         (root / name).parent.mkdir(exist_ok=True)
         (root / name).write_bytes(data)
@@ -324,6 +372,9 @@ def test_files_that_are_not_saved(tmp_path: Path, root: Path) -> None:
         for name, data in files.items():
             refused(*await c.post("api/config", {"file": name, "text": text, "stamp": sha(data)}),
                     (400, "not-a-configuration"))
+        message = refused(*await c.post("api/config", {"file": FILE, "text": text + "\0", "stamp": sha(b"")}),
+                          (422, "config-unreadable"))
+        assert "a NUL character at byte 26" in message
         refused(*await c.post("api/config", {"file": "../x.yaml", "text": text, "stamp": sha(b"")}),
                 (400, "outside-root"))
         refused(*await c.post("api/config", {"file": "missing.yaml", "text": text, "stamp": sha(b"")}),
@@ -364,6 +415,24 @@ def test_a_file_that_cannot_be_replaced(tmp_path: Path, root: Path) -> None:
             run_async(main, gui)
     finally:
         (root / FILE).chmod(0o644)
+
+
+def test_a_file_that_changes_during_the_check_is_not_replaced(tmp_path: Path, root: Path) -> None:
+    """Another program saves the file while the launcher checks the text: the stamp is compared again before the
+    file is replaced, so that program's content stays."""
+    saved = (root / FILE).read_bytes()
+    server, _ = serve(tmp_path, root)
+
+    async def main(c: Client) -> None:
+        text = saved.decode() + "# stand-in: the file changes during the check\n"
+        message = refused(*await c.post("api/config", {"file": FILE, "text": text, "stamp": sha(saved)}),
+                          (409, "config-changed"))
+        assert message.startswith(f"{FILE} has changed since the screen read it")
+        assert (root / FILE).read_bytes() == saved + b"# changed by another program\n"
+        assert leftovers(root) == []
+
+    with server as gui:
+        run_async(main, gui)
 
 
 def test_a_saved_file_is_described_again(tmp_path: Path, root: Path) -> None:

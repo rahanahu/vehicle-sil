@@ -148,7 +148,8 @@ export interface GuiClient {
   describe(request: DescribeRequest): Promise<CheckResult>;
   /**
    * `POST api/config`: saves a text as a configuration file, with the `stamp` it was read with (null: a new file).
-   * Rejects with an HttpError (`save-disabled`, `commands-changed`, `config-changed`, `config-busy`,
+   * Rejects with an HttpError (`save-disabled`, `commands-changed` (also a new file to a server started without
+   * `--allow-command-changes`), `config-changed`, `config-busy`,
    * `config-unreadable`, `text-too-large`, ...). Waits in the queue of the checks, as long as `check`.
    */
   saveConfig(request: SaveConfigRequest): Promise<SavedConfig>;

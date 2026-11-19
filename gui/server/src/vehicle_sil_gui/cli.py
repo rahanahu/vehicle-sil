@@ -47,7 +47,8 @@ the server is started on a free port of 127.0.0.1 with a token made for each run
 in this Python; without them, or with --no-variables, everything else works.
 
 The screen can save the text of a configuration file (POST api/config) when the launcher's check says that the edit
-keeps the commands that run (the networks, the mapping, external: the work of a network editor). --no-save saves
+keeps the commands that run (the networks, the mapping, external: the work of a network editor). Whoever has the
+token can then change those parts of the configuration files, and no copy of the old content is kept. --no-save saves
 nothing. --allow-command-changes also saves an edit that changes the commands, and new files: then whoever has the
 token in the URL can run any command as this user (also the code of a --web screen and of its panels).
 
@@ -87,7 +88,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
                    help="do not start the launcher's control server (run --control): the screen then shows no "
                         "variables of the ECUs, and --start-paused stands still after the first step, not before it")
     p.add_argument("--no-save", action="store_true",
-                   help="the screen saves no configuration file (POST api/config is refused with save-disabled)")
+                   help="the screen saves no configuration file (POST api/config is refused with save-disabled); use "
+                        "it when the screen is only for looking, or others may see the token")
     p.add_argument("--allow-command-changes", action="store_true",
                    help="the screen also saves an edit that changes the commands that run, and new files: whoever "
                         "has the token can then run any command as this user (not with --no-save)")

@@ -37,6 +37,8 @@ import {
   SummaryCommand,
   SummaryState,
   TimeReport,
+  Caution,
+  readCaution,
   readCheckResult,
   readCommandFields,
   readControlLink,
@@ -791,7 +793,7 @@ export interface ServerAllowedItem {
 /** `save` of `allowed`: also `caution`, `{code, message}` when the server saves but there is something to know first. */
 export interface ServerSaveItem extends ServerAllowedItem {
   /** `command-changes-allowed`: the server also saves edits that change the commands that run, and new files. */
-  caution: { code: string; message: string } | null;
+  caution: Caution | null;
 }
 
 /**
@@ -810,8 +812,8 @@ export interface ServerAllowed {
   start: ServerAllowedItem;
   stop: ServerAllowedItem;
   force: ServerAllowedItem;
-  /** POST api/config (null from a server that does not say). */
-  save: ServerSaveItem | null;
+  /** POST api/config. */
+  save: ServerSaveItem;
 }
 
 const readServerAllowedItem: Reader<ServerAllowedItem> = (value, path) => {
@@ -823,14 +825,9 @@ const readServerAllowedItem: Reader<ServerAllowedItem> = (value, path) => {
   };
 };
 
-const readCaution: Reader<{ code: string; message: string }> = (value, path) => {
-  const f = object(value, path);
-  return { code: field(f, path, 'code', string), message: field(f, path, 'message', string) };
-};
-
 const readServerSaveItem: Reader<ServerSaveItem> = (value, path) => ({
   ...readServerAllowedItem(value, path),
-  caution: field(object(value, path), path, 'caution', optional(nullable(readCaution), null)),
+  caution: field(object(value, path), path, 'caution', nullable(readCaution)),
 });
 
 export const readServerAllowed: Reader<ServerAllowed> = (value, path) => {
@@ -840,7 +837,7 @@ export const readServerAllowed: Reader<ServerAllowed> = (value, path) => {
     start: field(f, path, 'start', readServerAllowedItem),
     stop: field(f, path, 'stop', readServerAllowedItem),
     force: field(f, path, 'force', readServerAllowedItem),
-    save: field(f, path, 'save', optional(nullable(readServerSaveItem), null)),
+    save: field(f, path, 'save', readServerSaveItem),
   };
 };
 

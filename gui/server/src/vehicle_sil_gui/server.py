@@ -34,11 +34,12 @@ from .launcher import (CONNECTIONS_FIELDS, DESCRIBE_FIELDS, DESCRIPTIONS_NAME, N
                        hide_request_in_line, run_command, save_check_command, text_check_command,
                        write_request_file)
 from . import client_files
-from .config_save import (SaveRefused, check_marker, check_unchanged, decide, new_file, replace_file,
-                          save_request, stamp_of)
+from .config_save import (check_text, check_unchanged, decide, existing_file, new_file, replace_file, save_request,
+                          stamp_of)
 from .descriptions import Descriptions
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .recording import Recording
+from .refusal import Refused
 from .scenarios import list_scenarios, relative_to_config, resolve_scenario
 from .session import SILENT_AFTER_S, Limits, Session
 from .source import Source
@@ -154,14 +155,6 @@ def count_or_none(value: object) -> int | None:
 def _read_at_most(path: Path, size: int) -> bytes:
     with open(path, "rb") as f:
         return f.read(size)
-
-
-class Refused(Exception):
-    """A request that is refused with an HTTP error (status, code, message, detail)."""
-
-    def __init__(self, status: int, code: str, message: str, detail: object = None):
-        super().__init__(message)
-        self.status, self.code, self.detail = status, code, detail
 
 
 def _unreadable(relative: str, e: OSError) -> Exception:
@@ -416,7 +409,7 @@ class GuiServer:
             return error(404 if e.code == "file-not-found" else 400, e.code, str(e))
         if isinstance(e, InvalidRequest):
             return error(400 if e.code != "launcher-unusable" else 503, e.code, str(e))
-        assert isinstance(e, (Refused, Rejected, SaveRefused))
+        assert isinstance(e, (Refused, Rejected))
         return error(e.status, e.code, str(e), e.detail)
 
     # ------------------------------------------------------------ API
@@ -498,14 +491,11 @@ class GuiServer:
                               "its commands with; the GUI server makes new files only when it was started with "
                               "--allow-command-changes: create the file in a text editor, or start the GUI with "
                               "--allow-command-changes")
-            if stamp is None:
-                config = await asyncio.to_thread(new_file, self.root, relative)
-            else:
-                config = await self._configuration(relative)
-            check_marker(config.relative, data)
+            config = await self._save_target(relative, stamp)  # refused here before it waits in the queue
+            check_text(config.relative, data)
             await self._usable()
             await self._in_check_queue(lambda: self._save_locked(config, data, stamp))
-        except (PathRejected, InvalidRequest, Refused, SaveRefused) as e:
+        except (PathRejected, InvalidRequest, Refused) as e:
             return self._refusal(e)
         return web.json_response({"file": config.relative, "stamp": stamp_of(data)})
 
@@ -513,19 +503,31 @@ class GuiServer:
         """In one turn of the queue of the checks: the file is as the screen read it; the launcher checks the text as
         that file's with the saved descriptions (no process starts) and compares its commands with the saved file;
         the file is looked at once more (it may have changed meanwhile: a guard against most races, not all), then
-        replaced. What the server kept of the old content is dropped."""
+        replaced. The file is resolved once more here, in the queue: the launcher compares with that real file and the
+        server writes that real file (a link that changed while the save waited leads to 409 config-changed). What the
+        server kept of the old content is dropped."""
+        again = await self._save_target(config.relative, stamp)
+        if again.absolute != config.absolute:
+            raise Refused(409, "config-changed", f"{config.relative} leads to another file than when the save was "
+                                                 "sent (a symbolic link changed): read it again and save again")
         await self._unchanged(config, stamp)
         descriptions = await asyncio.to_thread(self.descriptions.path_of, (config.relative, None))
         request = self._make_request({})
+        real = config.absolute.relative_to(self.root.root).as_posix()  # what --compare-commands reads: no link
         try:
-            argv = save_check_command(self.launcher, config.relative, request, descriptions, stamp is not None)
+            argv = save_check_command(self.launcher, config.relative, request, descriptions,
+                                      real if stamp is not None else None)
             _, result = await self._launcher_check(argv, request, descriptions, data)
         finally:
             control.remove(request)
         decide(config.relative, result, self.o.command_changes_allowed)
         await self._unchanged(config, stamp)
         try:
-            await asyncio.to_thread(replace_file, config.absolute, data)
+            await asyncio.to_thread(replace_file, config.absolute, data, stamp is None)
+        except FileExistsError:
+            raise Refused(409, "config-changed", f"{config.relative} was made by another program while the save "
+                                                 "waited: read it (GET api/config) and save it with its stamp, or "
+                                                 "choose another name") from None
         except OSError as e:
             raise Refused(409, "config-busy",
                           f"{config.relative} could not be replaced ({e.strerror or e}): another program may have it "
@@ -535,6 +537,15 @@ class GuiServer:
         for kept in (self._names, self._targets):
             for key in [k for k in kept if k[0] == config.relative]:
                 del kept[key]
+
+    async def _save_target(self, relative: object, stamp: str | None) -> ConfigFile:
+        """The file a save writes: a new file (stamp None) or an existing configuration file (config_save.py)."""
+        try:
+            return await asyncio.to_thread(new_file if stamp is None else existing_file, self.root, relative)
+        except PathRejected:
+            raise
+        except OSError as e:
+            raise _unreadable(str(relative), e) from None
 
     async def _unchanged(self, config: ConfigFile, stamp: str | None) -> None:
         try:

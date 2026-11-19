@@ -350,13 +350,12 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
   const speedMax = numberOf(speedItem, 'max') ?? s.limits.speed_max;
   const runUntil = timeControl('run_until', 'run until');
 
-  // save: the GUI server owns it (`allowed.save`); the client adds the connection. Unknown until the server says: open,
-  // as start is (the server refuses what it does not save)
-  const serverSave = s.allowed?.save;
+  // save: the GUI server owns it (`allowed.save`); the client adds the connection. Before the server's first `allowed`:
+  // open, as start is (the server refuses what it does not save)
   let save: Control;
   if (down) save = control(false, down);
-  else if (serverSave)
-    save = fromServer(serverSave, 'the server does not save now', serverSave.caution);
+  else if (s.allowed)
+    save = fromServer(s.allowed.save, 'the server does not save now', s.allowed.save.caution);
   else save = control(true);
 
   const controls: FrontControls = {
