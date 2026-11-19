@@ -129,7 +129,8 @@ export interface GuiClient {
   /**
    * `POST api/check`: checks a configuration file (a failed check still gets a successful answer; its result is then
    * not passed). Waits twice the server's check limit (limits.check_timeout_s; waiting its turn, then checking) plus
-   * the default HTTP timeout.
+   * the default HTTP timeout. A check of a `text` may first describe the saved file in the same turn (the server does
+   * it when it has no saved descriptions); the second limit covers that.
    */
   check(request: CheckRequest | CheckTextRequest): Promise<CheckResult>;
   /**

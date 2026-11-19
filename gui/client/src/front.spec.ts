@@ -1478,14 +1478,16 @@ describe('the front door', () => {
       it('reads the saved text, the start-up file by default, and leaves a refusal out of the problem', async () => {
         const rig = await open();
         const config = await example('config');
-        const read = rig.front.readConfig('connect.yaml');
+        const read = rig.front.readConfig({ file: 'connect.yaml' });
         const sent = rig.http.expectOne('api/config?file=connect.yaml');
         sent.flush(config);
         expect(await read).toMatchObject({ text: expect.any(String), stamp: expect.any(String) });
         // The app example has no start-up file
         await expect(rig.front.readConfig()).rejects.toMatchObject({ code: 'no-file' });
         rig.http.expectNone('api/config?file=connect.yaml');
-        const refused = rig.front.readConfig('x.yaml').catch((e: unknown) => e as ActionError);
+        const refused = rig.front
+          .readConfig({ file: 'x.yaml' })
+          .catch((e: unknown) => e as ActionError);
         rig.http
           .expectOne('api/config?file=x.yaml')
           .flush(
@@ -1499,20 +1501,23 @@ describe('the front door', () => {
       it('checks a text with the text in the body, and refuses a field that a text does not take', async () => {
         const rig = await open();
         const check = rig.front.check(
-          { variant: 'v', strict: true },
+          { variant: 'v', strict: true, vehicle_sil_run_request: 1 },
           { file: 'connect.yaml', text: 'vehicle_sil_simulation: 1\n' },
         );
         const request = rig.http.expectOne('api/check');
         expect(request.request.body).toEqual({
           file: 'connect.yaml',
           text: 'vehicle_sil_simulation: 1\n',
+          vehicle_sil_run_request: 1,
           variant: 'v',
           strict: true,
         });
         request.flush(await example('check-text'));
         expect((await check).findings).toBeDefined();
+        // The types refuse this; plain JavaScript can still send it
+        const wrong = { disable: ['A'] } as unknown as { variant?: string };
         await expect(
-          rig.front.check({ disable: ['A'] }, { file: 'connect.yaml', text: '' }),
+          rig.front.check(wrong, { file: 'connect.yaml', text: '' }),
         ).rejects.toMatchObject({ code: 'unknown-field', outcome: 'refused' });
         rig.http.expectNone('api/check');
       });
@@ -1563,27 +1568,43 @@ describe('the front door', () => {
         expect(rig.front.status.get().problem).toBeNull();
       });
 
-      it('describes again the saved file, and the answer is not the page check', async () => {
+      it('describes again the saved file in the line, shares only a describe of the same file and variant, and keeps its failure out of the problem', async () => {
         const rig = await open();
         const file = { file: 'connect.yaml' };
         const page = rig.front.check({}, file);
         const going = rig.http.expectOne('api/check');
+        // The line is not empty: these two wait behind the page check
         const described = rig.front.describeAgain({ ...file, variant: 'v' });
+        const again = rig.front.describeAgain({ ...file, variant: 'v' });
+        const other = rig.front.describeAgain({ ...file, variant: 'w' });
+        const plain = rig.front.describeAgain(file);
+        expect(again).toBe(described);
+        expect(other).not.toBe(described);
+        expect(plain).not.toBe(described);
         rig.http.expectNone('api/describe');
+        // A page check is not a describe, and neither is a check of a text
+        expect(rig.front.check({}, { ...file, fresh: true })).not.toBe(described);
         going.flush(await example('check-connect'));
         await page;
         const sent = await vi.waitFor(() => rig.http.expectOne('api/describe'));
         expect(sent.request.body).toEqual({ file: 'connect.yaml', variant: 'v' });
         sent.flush(await example('describe'));
         expect((await described).findings).toBeDefined();
-        // Not shared: the page check asked now is a new one
-        void rig.front.check({}, file);
-        rig.http.expectOne('api/check');
-        await expect(rig.front.describeAgain()).rejects.toMatchObject({ code: 'no-file' });
+        const next = await vi.waitFor(() => rig.http.expectOne('api/describe'));
+        expect(next.request.body).toEqual({ file: 'connect.yaml', variant: 'w' });
+        // The server refuses: the failure is the caller's, with the server's code
+        const failed = other.catch((e: unknown) => e as ActionError);
+        next.flush(
+          { error: { code: 'check-busy', message: 'checks are waiting.', detail: null } },
+          { status: 503, statusText: 'Service Unavailable' },
+        );
+        expect(await failed).toMatchObject({ code: 'check-busy', outcome: 'refused' });
         expect(rig.front.status.get().problem).toBeNull();
-        const refused = rig.front.describeAgain(file).catch((e: unknown) => e as ActionError);
+        await expect(rig.front.describeAgain()).rejects.toMatchObject({ code: 'no-file' });
+        // Closed while one waits: it is not sent
+        const waiting = plain.catch((e: unknown) => e as ActionError);
         rig.front.close();
-        expect(await refused).toMatchObject({ code: 'closed' });
+        expect(await waiting).toMatchObject({ code: 'closed' });
       });
     });
 

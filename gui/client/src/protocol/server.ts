@@ -260,6 +260,8 @@ export interface CheckRequest {
 export interface CheckTextRequest {
   /** Path relative to root: the file whose content `text` is (it must exist; its directory is where paths start). */
   file: string;
+  /** The format of the request file: 1, or left out. */
+  vehicle_sil_run_request?: 1;
   /** The content of the file as the screen has it (at most 1 MiB as UTF-8). */
   text: string;
   /** The variant of the configuration file. */

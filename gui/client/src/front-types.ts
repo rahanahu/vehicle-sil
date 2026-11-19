@@ -305,23 +305,27 @@ export interface Front {
    * `close()` (`closed`).
    *
    * With `text`, it checks that text as the content of `file` (a text that is not saved yet; no process starts). The
-   * intent then takes only `variant` and `strict` (another field is `unknown-field`). A check of a text is never
+   * intent then takes only `variant`, `strict` and `vehicle_sil_run_request` (another field is `unknown-field`). A check of a text is never
    * shared with another check, and its answer is the caller's alone: the parts of the page do not see it.
    */
   check(
+    intent: Pick<Intent, 'vehicle_sil_run_request' | 'variant' | 'strict'>,
+    options: { file?: string; text: string; signal?: AbortSignal },
+  ): Promise<CheckResult>;
+  check(
     intent?: Intent,
-    options?: { file?: string; text?: string; signal?: AbortSignal; fresh?: boolean },
+    options?: { file?: string; signal?: AbortSignal; fresh?: boolean },
   ): Promise<CheckResult>;
   /**
    * Reads the text of a configuration file as it is saved (`GET api/config`), with the SHA-256 of its bytes (`stamp`).
    * `file` defaults to the start-up file (`no-file` if there is none). Rejects with an ActionError
    * (`not-a-configuration`, `config-too-large`, `config-unreadable`, ...); a failure is not put into `status.problem`.
    */
-  readConfig(file?: string): Promise<ConfigText>;
+  readConfig(options?: { file?: string }): Promise<ConfigText>;
   /**
    * Describes the participants of the saved `file` again (`POST api/describe`: after an executable was built again),
    * so that the checks of a text compare them, and returns that check as `check()` does. The answer is the caller's
-   * alone: it does not change what the parts of the page show. Rejects with an ActionError (`check-busy`,
+   * alone: it does not change what the parts of the page show. A describe of the same file and variant that waits or is on its way is shared. Rejects with an ActionError (`check-busy`,
    * `check-timeout`, ...); a failure is not put into `status.problem`.
    */
   describeAgain(options?: { file?: string; variant?: string }): Promise<CheckResult>;
