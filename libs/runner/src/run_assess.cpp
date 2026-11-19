@@ -735,8 +735,8 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
         {
             // Not a step's failure: nothing was judged. Named so that it is told apart from a
             // condition that was false ("scenario-failed").
-            out.push_back(Finding{
-                Severity::Error, "scenario-not-observed",
+            out.push_back(config::Finding{
+                config::Severity::Error, "scenario-not-observed",
                 "the scenario was not begun: it reads values of participant '" + coarse.participant +
                     "' and judges with every step of the ECU, and '" + coarse.participant + "' sends its values every " +
                     millis_text(coarse.sample_period.count()) + " ms (its sample_period) while its step is " +

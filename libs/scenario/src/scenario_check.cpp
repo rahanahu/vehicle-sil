@@ -91,13 +91,13 @@ struct SampleSource
     std::string built_with; ///< the vehicle-sil its executable was built with, or ""
 };
 
-std::vector<SampleSource> sample_sources(const CheckReport& check, const Scenario& scenario)
+std::vector<SampleSource> sample_sources(const config::CheckReport& check, const Scenario& scenario)
 {
     std::vector<SampleSource> out(check.config ? check.config->participants.size() : 0);
     const std::vector<bool> read = participants_read(scenario);
     for (std::size_t i = 0; i < out.size(); ++i)
     {
-        const ParticipantConfig& p = check.config->participants[i];
+        const config::ParticipantConfig& p = check.config->participants[i];
         const auto used = std::find_if(scenario.participants.begin(), scenario.participants.end(),
                                        [&p](const ScenarioParticipant& s) { return s.name == p.name; });
         out[i].read = used != scenario.participants.end() && read[static_cast<std::size_t>(used - scenario.participants.begin())];
@@ -105,9 +105,9 @@ std::vector<SampleSource> sample_sources(const CheckReport& check, const Scenari
         // missing, nothing then says what the executable takes.
         if (i < check.participants.size() && check.participants[i].ecu)
         {
-            const ReportedEcu& ecu = *check.participants[i].ecu;
+            const config::ReportedEcu& ecu = *check.participants[i].ecu;
             out[i].described = true;
-            out[i].takes = SeenEcu(p, ecu).takes(ecu_executable::kFeatureSampleEveryStep);
+            out[i].takes = config::SeenEcu(p, ecu).takes(ecu_executable::kFeatureSampleEveryStep);
             out[i].built_with = ecu.vehicle_sil_version;
         }
     }
@@ -116,7 +116,7 @@ std::vector<SampleSource> sample_sources(const CheckReport& check, const Scenari
 
 } // namespace
 
-std::vector<bool> sample_every_step_participants(const CheckReport& check, const Scenario& scenario)
+std::vector<bool> sample_every_step_participants(const config::CheckReport& check, const Scenario& scenario)
 {
     const std::vector<SampleSource> sources = sample_sources(check, scenario);
     std::vector<bool> out(sources.size(), false);
@@ -127,15 +127,15 @@ std::vector<bool> sample_every_step_participants(const CheckReport& check, const
     return out;
 }
 
-std::vector<Finding> scenario_samples_findings(const CheckReport& check, const Scenario& scenario, std::string_view launcher_version)
+std::vector<config::Finding> scenario_samples_findings(const config::CheckReport& check, const Scenario& scenario, std::string_view launcher_version)
 {
-    std::vector<Finding> out;
+    std::vector<config::Finding> out;
     const std::vector<SampleSource> sources = sample_sources(check, scenario);
     if (scenario.samples == ScenarioSamples::AsSent)
     {
         if (std::any_of(sources.begin(), sources.end(), [](const SampleSource& s) { return s.read; }))
         {
-            out.push_back(Finding{Severity::Note, "scenario-samples-as-sent",
+            out.push_back(config::Finding{config::Severity::Note, "scenario-samples-as-sent",
                                   "samples: as_sent: the scenario judges with the values as often as each ECU sends them "
                                   "(its sample_period), not after every step of the ECU. A condition does not see what a "
                                   "variable does between two samples: an expect reads a value up to one sample_period old, "
@@ -153,8 +153,8 @@ std::vector<Finding> scenario_samples_findings(const CheckReport& check, const S
             continue;
         }
         const std::string& name = check.config->participants[i].name;
-        out.push_back(Finding{
-            Severity::Warning, "scenario-samples-unsupported",
+        out.push_back(config::Finding{
+            config::Severity::Warning, "scenario-samples-unsupported",
             "participant '" + name + "': the scenario reads its values, and its executable does not say that it takes " +
                 std::string(ecu_executable::kSampleEveryStepArgument) + " (no \"" +
                 std::string(ecu_executable::kFeatureSampleEveryStep) + "\" in the features of its --describe" +

@@ -699,29 +699,29 @@ void a_refused_scenario_does_not_hold(const fs::path& ecu, const fs::path& dir)
     std::ofstream(dir / "test-ecu-own-sample-period", std::ios::binary) << "\n";
     std::ofstream(dir / "s.yaml", std::ios::binary)
         << "vehicle_sil_scenario: 1\nsteps:\n  - at_ms: 20\n    expect: { Engine.ticks: { ge: 0 } }\n";
-    launch::StopRequests stops;
-    launch::RunControls controls(stops, true, {}, true);
+    runner::StopRequests stops;
+    runner::RunControls controls(stops, true, {}, true);
     launch::RunRequest asked = sim_of(dir);
     asked.intent.start_paused = true;
     asked.intent.scenario = process::utf8_from_path(dir / "s.yaml");
     asked.host.timeout = 20s; // a run that held would end by this, as a failure of another kind
-    launch::RunObservers watching;
+    runner::RunObservers watching;
     launch::RunLent lent;
     lent.controls = &controls;
     struct NoServer final : launch::ControlEndpoint
     {
-        launch::ControlServerInfo start(std::shared_ptr<control::Hub>) override { return {"(test)", false, false}; }
+        runner::ControlServerInfo start(std::shared_ptr<control::Hub>) override { return {"(test)", false, false}; }
         void end() override {}
     } endpoint;
     lent.control_endpoint = &endpoint;
     std::string lines;
     watching.write_line = [&](std::string_view line) { lines += std::string(line) + "\n"; };
-    const launch::RunReport report = launch::run_file(asked, watching, lent, launch::RunLimits{});
+    const launch::RunReport report = launch::run_file(asked, watching, lent, runner::RunLimits{});
     fs::remove(dir / "test-ecu-step-ms");
     fs::remove(dir / "test-ecu-own-sample-period");
     fs::remove(dir / "Engine.behaviour");
     std::string codes;
-    for (const launch::Finding& f : report.findings)
+    for (const config::Finding& f : report.findings)
     {
         codes += f.code + " ";
     }
@@ -731,7 +731,7 @@ void a_refused_scenario_does_not_hold(const fs::path& ecu, const fs::path& dir)
                 codes.find("timeout") == std::string::npos,
             "the run failed for the scenario, not for a timeout" + seen);
     require(report.run && report.run->timing.sim_ms == 0 && report.run->scenario.result &&
-                report.run->scenario.result->status == launch::ScenarioStatus::Failed,
+                report.run->scenario.result->status == scenario::ScenarioStatus::Failed,
             "it ended at 0 ms with the scenario failed" + seen);
 }
 

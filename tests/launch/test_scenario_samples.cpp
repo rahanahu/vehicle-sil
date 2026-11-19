@@ -29,8 +29,11 @@ namespace {
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
-using vehicle_sil::launch::test::check_text;
-using vehicle_sil::launch::test::lines;
+using namespace vehicle_sil::config;
+using namespace vehicle_sil::scenario;
+using namespace vehicle_sil::runner;
+using vehicle_sil::config::test::check_text;
+using vehicle_sil::config::test::lines;
 
 const std::string kHead = "vehicle_sil_scenario: 1\nsteps:\n";
 
@@ -184,8 +187,8 @@ TEST_CASE(the_run_asks_the_ecus_a_scenario_reads_for_a_sample_in_every_step)
     CHECK(plan.members.at(1).sample_every_step);
     CHECK(!plan_run(old, nullptr, "dir", RunChoices{}).members.at(1).sample_every_step); // no scenario: no one
     const SimulationConfig& config = plan.config();
-    const std::vector<std::string> without = launch::detail::participant_arguments(config, config.participants[1], "silkit://127.0.0.1:8500", false, false);
-    std::vector<std::string> asked = launch::detail::participant_arguments(config, config.participants[1], "silkit://127.0.0.1:8500", false, true);
+    const std::vector<std::string> without = runner::detail::participant_arguments(config, config.participants[1], "silkit://127.0.0.1:8500", false, false);
+    std::vector<std::string> asked = runner::detail::participant_arguments(config, config.participants[1], "silkit://127.0.0.1:8500", false, true);
     CHECK(std::find(without.begin(), without.end(), "--sample-every-step") == without.end());
     CHECK(!asked.empty() && asked.back() == "--sample-every-step");
     asked.pop_back();

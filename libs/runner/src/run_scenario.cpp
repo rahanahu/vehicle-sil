@@ -122,15 +122,15 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
             }
         }
     }
-    if (ctx_.scenario->samples == ScenarioSamples::EveryStep)
+    if (ctx_.scenario->samples == scenario::ScenarioSamples::EveryStep)
     {
         // Before anything is written: with samples further apart than the ECU's steps, a condition
         // would pass over what the variable does in between. The step is the description's (the
         // hello's is 0 unless the transport's owner gave it).
-        const std::vector<bool> read = participants_read(*ctx_.scenario);
+        const std::vector<bool> read = scenario::participants_read(*ctx_.scenario);
         for (std::size_t i = 0; i < found.size(); ++i)
         {
-            const ScenarioParticipant& participant = ctx_.scenario->participants[i];
+            const scenario::ScenarioParticipant& participant = ctx_.scenario->participants[i];
             const auto link = std::find_if(links.begin(), links.end(), [&participant](const control_silkit::LinkInfo& info) {
                 return info.participant == participant.name && info.state == control_silkit::LinkState::Connected && info.ready;
             });

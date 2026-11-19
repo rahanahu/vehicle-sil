@@ -47,7 +47,7 @@ struct ScenarioCheck
 /// executable that does not say so is started without it (it would not know the argument); the
 /// check warns of it (scenario_samples_findings()) and the run refuses it if it sends its values
 /// less often than its step.
-[[nodiscard]] std::vector<bool> sample_every_step_participants(const CheckReport& check, const Scenario& scenario);
+[[nodiscard]] std::vector<bool> sample_every_step_participants(const config::CheckReport& check, const Scenario& scenario);
 
 /// What the check says about the samples `scenario` judges with (Finding::file is not set):
 /// - "scenario-samples-unsupported" (warning) for each participant whose values the scenario reads
@@ -55,7 +55,7 @@ struct ScenarioCheck
 ///   that was described: without a description nothing says what the executable takes, and the
 ///   run finds out at its start ("scenario-not-observed").
 /// - "scenario-samples-as-sent" (note) for a scenario with samples: as_sent that reads a value.
-[[nodiscard]] std::vector<Finding> scenario_samples_findings(const CheckReport& check, const Scenario& scenario,
+[[nodiscard]] std::vector<config::Finding> scenario_samples_findings(const config::CheckReport& check, const Scenario& scenario,
                                                              std::string_view launcher_version);
 
 } // namespace vehicle_sil::scenario

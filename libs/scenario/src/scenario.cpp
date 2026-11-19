@@ -165,7 +165,7 @@ void Reader::read()
         }
         else if (key == "samples")
         {
-            const std::string word = is_scalar(child) && !is_null(child) ? detail::to_string(tree_.val(child)) : std::string{};
+            const std::string word = is_scalar(child) && !is_null(child) ? config::detail::to_string(tree_.val(child)) : std::string{};
             if (word == scenario_samples_name(ScenarioSamples::EveryStep))
             {
                 scenario_.samples = ScenarioSamples::EveryStep;
