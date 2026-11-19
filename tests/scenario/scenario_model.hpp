@@ -137,6 +137,8 @@ public:
     std::optional<SimDuration> ends_after;
     /// "Body.level=5 for 130 applied at 130", in the order applied.
     std::vector<std::string> log;
+    /// Per settle() of the engine: how many writes it waited for.
+    std::vector<std::size_t> settles;
     ScenarioEngine* engine = nullptr;
     const Scenario* scenario = nullptr;
     /// What the engine notes for a timeline, if set (run()).
@@ -212,8 +214,26 @@ public:
             }
             command->writes.emplace_back(w.name, w.value);
         }
-        visible_[ticket] = op;
+        // What the agents answered is known once the engine has waited (settle()); until then
+        // every target is on its way, as in the hub.
+        control::OperationResult sent = op;
+        for (auto& target : sent.targets)
+        {
+            target = control::TargetResult{target.peer, control::TargetStatus::Sent, std::nullopt, false, ""};
+        }
+        visible_[ticket] = std::move(sent);
+        unsettled_.emplace_back(ticket, std::move(op));
         return ticket;
+    }
+
+    void settle() override
+    {
+        settles.push_back(unsettled_.size());
+        for (auto& [ticket, op] : unsettled_)
+        {
+            visible_[ticket] = std::move(op);
+        }
+        unsettled_.clear();
     }
 
     std::optional<control::OperationResult> result(std::uint64_t ticket) override
@@ -443,6 +463,7 @@ private:
 
     std::uint64_t tickets_ = 0;
     std::map<std::uint64_t, control::OperationResult> visible_;
+    std::vector<std::pair<std::uint64_t, control::OperationResult>> unsettled_; ///< in the order written
     std::vector<Produced> produced_;
 };
 

@@ -58,7 +58,7 @@ function(expect_records name)
   endforeach()
 endfunction()
 
-expect_records(SimulationController step step.release gate.release scenario.tick scenario.write hub.write hub.send
+expect_records(SimulationController step step.release gate.release scenario.tick scenario.write scenario.settle hub.write hub.send
                hub.receive_step hub.receive_answer)
 expect_records(Engine step step.handler agent.step_begin agent.step_end agent.publish agent.receive_command agent.apply)
 expect_records(Dashboard step step.handler agent.step_end agent.publish)

@@ -727,12 +727,10 @@ void ScenarioEngine::close_record()
 
 // --- writes ---
 
-bool ScenarioEngine::submit_one(Write write)
+bool ScenarioEngine::submit_one(Write write, std::size_t unchecked)
 {
-    if (!write.grid)
-    {
-        started(write.step);
-    }
+    // Its step begins when the engine looks at what became of it (taken_at_once()), in the order
+    // sent: a write after one that was refused at once leaves its step NotRun.
     if (write.grid)
     {
         // Its values were worked out when it was made (submit()).
@@ -768,6 +766,11 @@ bool ScenarioEngine::submit_one(Write write)
         const std::optional<detail::LineMotion>& placed = lines_->placed[*write.motion];
         if (!placed || !placed->has_value())
         {
+            // A write that went out before this one and was refused at once comes first.
+            if (!taken_at_once(unchecked))
+            {
+                return false;
+            }
             const std::string kind = step_kind_name(scenario_.steps[write.step].kind);
             TimelineFailure failure;
             // Nothing was sent: the one write the step could not make.
@@ -805,9 +808,34 @@ bool ScenarioEngine::submit_one(Write write)
     }
     write.ticket = port_.write(std::move(out), write.at);
     write.judge = judge_time(write.writes, write.at);
-    // Refused at once (the agent's check, no room, no link): no need to wait for the step.
-    if (const auto result = port_.result(write.ticket))
+    sent_.push_back(std::move(write));
+    return true;
+}
+
+bool ScenarioEngine::taken_at_once(std::size_t from)
+{
+    if (from >= sent_.size())
     {
+        return true;
+    }
+    port_.settle();
+    for (std::size_t i = from; i < sent_.size(); ++i)
+    {
+        const Write& write = sent_[i];
+        if (!write.grid)
+        {
+            started(write.step);
+        }
+        if (write.writes.empty())
+        {
+            continue; // a dither step with nothing to write: nothing went out
+        }
+        // Refused at once (the agent's check, no room, no link): no need to wait for the step.
+        const auto result = port_.result(write.ticket);
+        if (!result)
+        {
+            continue;
+        }
         for (const control::TargetResult& target : result->targets)
         {
             if (control::is_final(target.status) && target.status != control::TargetStatus::Applied)
@@ -815,20 +843,23 @@ bool ScenarioEngine::submit_one(Write write)
                 if (write.grid)
                 {
                     fail_grid(write, &*result, target, "did not take");
-                    return false;
                 }
-                TimelineFailure failure = failed_write(write, &*result, target);
-                const std::string which = applied_text(failure, target.peer); // before `failure` is moved from
-                fail(write.step, write.at, "scenario-write",
-                     "the write for " + ms_text(write.at) + " ms was not taken by participant '" + target.peer + "': " +
-                         target_status_text(target.status) + (target.reason.empty() ? "" : " (" + target.reason + ")") +
-                         which,
-                     std::move(failure));
+                else
+                {
+                    TimelineFailure failure = failed_write(write, &*result, target);
+                    const std::string which = applied_text(failure, target.peer); // before `failure` is moved from
+                    fail(write.step, write.at, "scenario-write",
+                         "the write for " + ms_text(write.at) + " ms was not taken by participant '" + target.peer +
+                             "': " + target_status_text(target.status) +
+                             (target.reason.empty() ? "" : " (" + target.reason + ")") + which,
+                         std::move(failure));
+                }
+                // This write and the ones after it are not judged: as if they had not been made.
+                sent_.erase(sent_.begin() + static_cast<std::ptrdiff_t>(i), sent_.end());
                 return false;
             }
         }
     }
-    sent_.push_back(std::move(write));
     return true;
 }
 
@@ -910,6 +941,9 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
     grid.erase(std::unique(grid.begin(), grid.end()), grid.end());
 
     std::vector<bool> stepWrites(scenario_.variables.size(), false); // per variable: a step writes it at the time at hand
+    // The writes go out one after the other without waiting; the engine waits once, after the
+    // last, and then looks at what the agents said (taken_at_once()).
+    const std::size_t unchecked = sent_.size();
     for (std::size_t first = 0, next = 0; first < due.size() || next < grid.size();)
     {
         const SimTime t = first < due.size() && (next == grid.size() || due[first].at <= grid[next]) ? due[first].at : grid[next];
@@ -952,7 +986,7 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
         }
         for (; first < end; ++first)
         {
-            if (!submit_one(std::move(due[first])))
+            if (!submit_one(std::move(due[first]), unchecked))
             {
                 return;
             }
@@ -983,12 +1017,13 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
                     write.bases.push_back(*line.number(t));
                 }
             }
-            if (!write.writes.empty() && !submit_one(std::move(write)))
+            if (!write.writes.empty() && !submit_one(std::move(write), unchecked))
             {
                 return;
             }
         }
     }
+    taken_at_once(unchecked);
 }
 
 void ScenarioEngine::fail_grid(const Write& write, const control::OperationResult* result, const control::TargetResult& target,

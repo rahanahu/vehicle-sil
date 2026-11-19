@@ -999,7 +999,7 @@ The launcher sets the guard from the controller's step 0. Each time step P is he
 |---|---|
 | 1 | Checks the writes whose results should have arrived |
 | 2 | Evaluates conditions, looking only at samples of steps that started before P, in time order (for equal times, in the order in which the participants appear in the scenario) |
-| 3 | Passes the writes with times in (P, P + the controller's step size] to the Hub, and waits until the Agents have queued them (`wait_queued()`) |
+| 3 | Passes the writes with times in (P, P + the controller's step size] to the Hub one after the other without waiting, then waits once until the Agents have queued or refused all of them (`wait_queued()` of each), and then looks at whether one was refused at once, in the order sent. The Hub sends the commands of one Agent in the order of their sequence numbers, and the Agent applies the commands of one time in that order, so the writes of one time to one ECU take effect in the order of the scenario's steps |
 
 Writes at time 0 are passed in the start window before the first step (see "Transport over SIL Kit").
 

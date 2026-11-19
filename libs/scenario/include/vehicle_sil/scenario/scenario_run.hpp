@@ -112,9 +112,13 @@ class ScenarioPort
 public:
     virtual ~ScenarioPort() = default;
     /// Hands the writes to their agents, to take effect in each agent's first step at or after
-    /// `at`, and returns when every agent has queued or refused its part (or the run is ending).
+    /// `at`, and returns without waiting for the agents. Writes of one time to one agent take
+    /// effect in the order they were handed out, once they are queued (settle()).
     /// @returns a ticket for result().
     virtual std::uint64_t write(std::vector<control::PeerWrite> writes, SimTime at) = 0;
+    /// Returns when every agent has queued or refused its part of every write handed out so far
+    /// (or the run is ending). Until then result() may not know yet that a write was refused.
+    virtual void settle() = 0;
     /// Where the writes of `ticket` stand now; empty if that is not known any more.
     virtual std::optional<control::OperationResult> result(std::uint64_t ticket) = 0;
 };
@@ -144,8 +148,11 @@ struct EnginePeer
 ///   1. judges the writes whose result must be there (below),
 ///   2. looks at the samples of steps before P in the order of their times (ties: in the order of
 ///      Scenario::participants) and decides the expectations and waits whose time has come,
-///   3. hands out the writes for the times in (P, P + tick] (ScenarioPort::write()), which are
-///      therefore queued in their agents before any step at those times: no write is late.
+///   3. hands out the writes for the times in (P, P + tick] (ScenarioPort::write(), all of them
+///      without waiting), then waits once until every agent has queued or refused them
+///      (ScenarioPort::settle()): they are therefore queued in their agents before any step at
+///      those times, and no write is late. Then it looks, in the order they went out, at whether
+///      an agent refused one at once (below).
 ///   It returns true once the scenario is over (passed or failed): the caller stops the
 ///   simulation at P.
 /// - stopped_at(P): instead of tick(P) when the simulation stopped by itself at the step P
@@ -234,6 +241,13 @@ struct EnginePeer
 ///
 /// The first failure in this order ends the scenario; steps that had begun are Unfinished, later
 /// ones NotRun (their writes for times up to P + tick may have gone out).
+///
+/// A write that its agent refuses at once (the agent's check, no room, no link) fails its step
+/// when the engine looks at the results of the writes it handed out at P, in the order they went
+/// out: the first refused one fails, as if the writes after it had not been made (a step that
+/// had not begun before them stays NotRun, and no step fails for them). They did go out before
+/// the engine knew of the refusal, so the record has them; no ECU applies them, as the
+/// simulation stops at P.
 ///
 /// Skipped steps (ScenarioStep::skipped) write and compare nothing. One at T ends at T +
 /// ScenarioStep::skipped_ms (the time its text says it takes; 0 for a set and for a step that
@@ -345,7 +359,15 @@ private:
     /// Puts on the lines what `write` begins, if it is the first write of its step for a
     /// variable: before any write of its time is sent.
     void place(const Write& write);
-    bool submit_one(Write write);
+    /// Hands out `write` (without waiting) and puts it on sent_. false: the scenario is over (a
+    /// motion without a base; a write handed out before it, from sent_[`unchecked`] on, that was
+    /// refused at once comes first: taken_at_once()).
+    bool submit_one(Write write, std::size_t unchecked);
+    /// Waits until the agents have answered the writes handed out (ScenarioPort::settle()), then
+    /// goes through sent_ from `from` in the order sent: begins their steps, and fails the step
+    /// of the first write an agent refused at once. Those after it are taken off sent_ (as if
+    /// they had not been made). false: the scenario is over.
+    bool taken_at_once(std::size_t from);
     /// A write of no step (Write::grid) that `target` (of `result`; null: no result is known)
     /// refused or did not apply (`did_not`: which, as the message says it, "did not take";
     /// `hint`: what to add to the reason): the first step that is not decided yet fails. The

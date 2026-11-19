@@ -13,9 +13,10 @@ Steps: SIL Kit starts step t+1 of a participant when every participant has compl
 the end of its handler, or, when the launcher held it (a scenario), when it was released (step.release). For each step
 the summary names the participant that completed last (the critical one), how long its step took, and the time from
 that completion to the first start of the next step (synchronisation: SIL Kit's messages and thread wake-ups).
-Launcher hold: the launcher's step, the scenario thread's wake-up, the scenario's writes, the rest of the tick, the
-gate thread's wake-up. Write round trip (writes to one ECU): the hub up to the send, the send, the way to the ECU's
-handler, the handler, the way back, the hub's handler, the scenario thread's wake-up.
+Launcher hold: the launcher's step, the scenario thread's wake-up, the scenario's writes (handed out without waiting),
+its wait for the agents' answers to them (settle), the rest of the tick, the gate thread's wake-up. Write round trip
+(writes to one ECU): the hub up to the send, the send, the way to the ECU's handler, the handler, the way back, the
+hub's handler, the wait for the answers to the other writes of its tick, the scenario thread's wake-up.
 
 Numbers are us: mean, p50, p90, p99 over the steps after --skip-ms of virtual time (the start-up), without the last
 five. The summary goes to the output; the details (as JSON) go to build/logs/trace-report.json (--json). Exit codes:
@@ -203,23 +204,32 @@ def analyse_hold(t: Trace, launcher: int, vts, start, length, released, held, pe
     gate = {vt: s for s, e, vt, _, _ in t.spans.get((launcher, "gate.release"), [])}
     writes = t.spans.get((launcher, "scenario.write"), [])
     write_starts = [w[0] for w in writes]
+    settles = t.spans.get((launcher, "scenario.settle"), [])
+    settle_starts = [w[0] for w in settles]
+
+    def inside(spans, starts, s, e):
+        i = bisect.bisect_left(starts, s)
+        out = []
+        while i < len(spans) and spans[i][0] < e:
+            out.append(spans[i][1] - spans[i][0])
+            i += 1
+        return out
+
     rows = []
     for vt in vts:
         if vt not in held or vt not in ticks or vt not in woken or vt not in gate:
             continue
         s, e = ticks[vt]
-        i = bisect.bisect_left(write_starts, s)
-        inside = []
-        while i < len(writes) and writes[i][0] < e:
-            inside.append(writes[i][1] - writes[i][0])
-            i += 1
+        sent = inside(writes, write_starts, s, e)
+        waited = inside(settles, settle_starts, s, e)
         step_end = start[launcher][vt] + length[launcher][vt]
-        rows.append({"vt": vt, "n_writes": len(inside),
+        rows.append({"vt": vt, "n_writes": len(sent),
                      "launcher_step": length[launcher][vt],
                      "scenario_wake": woken[vt] - step_end,
                      "to_tick": s - woken[vt],
-                     "writes": sum(inside),
-                     "rest_of_tick": (e - s) - sum(inside),
+                     "writes": sum(sent),
+                     "settle": sum(waited),
+                     "rest_of_tick": (e - s) - sum(sent) - sum(waited),
                      "gate_wake": gate[vt] - e,
                      "release": released[vt] - gate[vt],
                      "hold": released[vt] - start[launcher][vt]})
@@ -236,8 +246,11 @@ def analyse_hold(t: Trace, launcher: int, vts, start, length, released, held, pe
 def analyse_writes(t: Trace, launcher: int, ecus: list[int], window: tuple[int, int]) -> dict:
     """Each write's round trip, per agent: the command's arrow (hub.send -> agent.receive_command) and the answer's
     (agent.receive_command -> hub.receive_answer) have ids of their own for each agent of a write. A write to several
-    agents is taken by the agent whose answer came last."""
+    agents is taken by the agent whose answer came last. A write ends with the wait (scenario.settle) that follows it:
+    the scenario hands out the writes of a tick and then waits once for all of them."""
     writes = {seq: (s, e) for s, e, _, seq, _ in t.spans.get((launcher, "scenario.write"), [])}
+    settles = sorted((s, e) for s, e, *_ in t.spans.get((launcher, "scenario.settle"), []))
+    settle_starts = [s for s, _ in settles]
     targets: dict[int, list] = defaultdict(list)
     for fid, ends in t.flows.items():
         if fid % 2:
@@ -255,12 +268,23 @@ def analyse_writes(t: Trace, launcher: int, ecus: list[int], window: tuple[int, 
         i = bisect.bisect_left(steps, (a, a)) - 1
         return any(s < b and e > a for s, e in steps[max(i, 0):i + 3])
 
+    # Per write: the end of the wait that followed it, and the last answer the hub handled for that wait.
+    ended = {}
+    for seq, (ws, we) in writes.items():
+        i = bisect.bisect_left(settle_starts, we)
+        if i < len(settles) and targets.get(seq):
+            ended[seq] = (i, settles[i][1])
+    last_answer = defaultdict(int)
+    for seq, (i, _) in ended.items():
+        last_answer[i] = max(last_answer[i], max(x[2][1] for x in targets[seq]))
+
     parts = defaultdict(list)
     offsets = defaultdict(list)
     n = more_targets = during_step = 0
-    for seq, (ws, we) in writes.items():
-        if not window[0] <= ws <= window[1] or not targets.get(seq):
+    for seq, (ws, _) in writes.items():
+        if not window[0] <= ws <= window[1] or seq not in ended:
             continue
+        i, we = ended[seq]
         n += 1
         more_targets += len(targets[seq]) > 1
         for (_, se, *_), (cs, ce, *_), (bs, *_), p in targets[seq]:
@@ -268,7 +292,8 @@ def analyse_writes(t: Trace, launcher: int, ecus: list[int], window: tuple[int, 
         (ss, se, *_), (cs, ce, *_), (bs, be, *_), p = max(targets[seq], key=lambda x: x[2][1])
         during_step += in_step(p, se, cs)
         for k, v in (("total", we - ws), ("hub to send", ss - ws), ("send", se - ss), ("to the ECU", cs - se),
-                     ("ECU handler", ce - cs), ("back", bs - ce), ("hub handler", be - bs), ("scenario wake", we - be)):
+                     ("ECU handler", ce - cs), ("back", bs - ce), ("hub handler", be - bs),
+                     ("the other writes", last_answer[i] - be), ("scenario wake", we - last_answer[i])):
             parts[k].append(v)
     out = {"write_round_trip": {"n": n, "with_more_targets": more_targets,
                                 "share_arriving_during_an_ecu_step": round(during_step / n, 3) if n else None,
@@ -310,7 +335,8 @@ def summary(d: dict) -> list[str]:
             lines.append(f"  {title} ({h['hold']['n']} steps, {h['writes_per_step']:g} writes per step)")
             row("step period", h["period"], 4)
             for k, label in (("hold", "hold (launcher step to release)"), ("launcher_step", "launcher step"),
-                             ("scenario_wake", "scenario thread wake-up"), ("writes", "writes"),
+                             ("scenario_wake", "scenario thread wake-up"), ("writes", "writes (handed out)"),
+                             ("settle", "wait for the agents (settle)"),
                              ("rest_of_tick", "rest of the tick"), ("gate_wake", "gate thread wake-up")):
                 row(label, h[k], 4)
     w = d.get("write_round_trip")
@@ -318,7 +344,8 @@ def summary(d: dict) -> list[str]:
         lines.append(f"  write round trip ({w['n']} writes, {w['with_more_targets']} of them to several ECUs, taken by "
                      f"the last to answer; "
                      f"{100 * w['share_arriving_during_an_ecu_step']:.1f}% arrived during the ECU's step)")
-        for k in ("total", "hub to send", "send", "to the ECU", "ECU handler", "back", "hub handler", "scenario wake"):
+        for k in ("total", "hub to send", "send", "to the ECU", "ECU handler", "back", "hub handler", "the other writes",
+                  "scenario wake"):
             row(k, w[k], 4)
         lines.append("  clock offset from the launcher (us, estimate): "
                      + ", ".join(f"{k} {v:g}" for k, v in d["clock_offset_from_launcher_us"].items()))

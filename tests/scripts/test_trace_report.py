@@ -43,7 +43,7 @@ def command_flow(seq, session):
 
 
 def round_trip(launcher, ecu, pid, session, seq, t, later=0):
-    """One agent's part of write `seq` (its times as in made_up_run(), its answer `later` ns later)."""
+    """One agent's part of write `seq` (its times as in made_up_run() from `t`, its answer `later` ns later)."""
     c = command_flow(seq, session)
     launcher.append(span(100, 3, "hub.send", t + 12_000, t + 13_000, -1, seq))
     launcher.append(flow("s", 100, 3, "command", t + 12_500, c))
@@ -58,12 +58,14 @@ def instant(pid, tid, name, time, vt=-1, arg=0):
     return {"pid": pid, "tid": tid, "name": name, "ts": time / 1000, "ph": "i", "s": "t", "args": {"vt": vt, "arg": arg}}
 
 
-def made_up_run() -> tuple[list[dict], list[dict]]:
+def made_up_run(two=()) -> tuple[list[dict], list[dict]]:
     """A launcher (pid 100) that holds every step for its scenario, which writes to the ECU (pid 200) in every even
     step. Times in ns from each step's base T (all made up so that each part has its own length):
       ECU step T..T+10us; launcher step T+1..T+3us, held; scenario woken T+5us, tick T+6..T+40us;
-      write T+10..T+30us (send T+12..T+13, ECU handler T+18..T+19, answer T+24..T+25); gate T+45..T+51us,
-      step released at T+50us."""
+      write T+10..T+14us (send T+12..T+13, ECU handler T+18..T+19, answer T+24..T+25), the wait for it (settle)
+      T+14..T+30us; gate T+45..T+51us, step released at T+50us.
+    In the steps of `two` a second write follows, T+14..T+16us (all its times 3 us after the first's), and the wait
+    is T+16..T+30us."""
     launcher, ecu = [], []
     for k in range(STEPS):
         t, vt = 1_000_000_000 + k * PERIOD, k * STEP
@@ -72,8 +74,14 @@ def made_up_run() -> tuple[list[dict], list[dict]]:
         launcher.append(instant(100, 3, "scenario.woken", t + 5_000, vt))
         launcher.append(span(100, 3, "scenario.tick", t + 6_000, t + 40_000, vt))
         if k % 2 == 0:
-            launcher.append(span(100, 3, "scenario.write", t + 10_000, t + 30_000, vt, k))
+            launcher.append(span(100, 3, "scenario.write", t + 10_000, t + 14_000, vt, k))
             round_trip(launcher, ecu, 200, 7, k, t)
+            settle = t + 14_000
+            if k in two:
+                launcher.append(span(100, 3, "scenario.write", t + 14_000, t + 16_000, vt, 1000 + k))
+                round_trip(launcher, ecu, 200, 7, 1000 + k, t + 3_000)
+                settle = t + 16_000
+            launcher.append(span(100, 3, "scenario.settle", settle, t + 30_000, -1, 2 if k in two else 1))
         launcher.append(span(100, 4, "gate.release", t + 45_000, t + 51_000, vt))
         launcher.append(instant(100, 4, "step.release", t + 50_000, vt))
     return launcher, ecu
@@ -120,20 +128,37 @@ class TraceReportTest(unittest.TestCase):
         self.assertEqual(d["slowest_ecu_step"]["p50_us"], 10.0)
         with_writes = d["hold_with_writes"]
         self.assertEqual(with_writes["writes_per_step"], 1)
-        self.assertEqual({k: with_writes[k]["p50_us"] for k in ("launcher_step", "scenario_wake", "writes", "rest_of_tick",
-                                                                "gate_wake", "hold")},
-                         {"launcher_step": 2.0, "scenario_wake": 2.0, "writes": 20.0, "rest_of_tick": 14.0,
+        self.assertEqual({k: with_writes[k]["p50_us"] for k in ("launcher_step", "scenario_wake", "writes", "settle",
+                                                                "rest_of_tick", "gate_wake", "hold")},
+                         {"launcher_step": 2.0, "scenario_wake": 2.0, "writes": 4.0, "settle": 16.0, "rest_of_tick": 14.0,
                           "gate_wake": 5.0, "hold": 49.0})
         self.assertEqual(d["hold_without_writes"]["rest_of_tick"]["p50_us"], 34.0)
         w = d["write_round_trip"]
         self.assertEqual(w["n"], 7)  # the even steps among 0..13
         self.assertEqual({k: w[k]["p50_us"] for k in ("total", "hub to send", "send", "to the ECU", "ECU handler", "back",
-                                                      "hub handler", "scenario wake")},
+                                                      "hub handler", "the other writes", "scenario wake")},
                          {"total": 20.0, "hub to send": 2.0, "send": 1.0, "to the ECU": 5.0, "ECU handler": 1.0,
-                          "back": 5.0, "hub handler": 1.0, "scenario wake": 5.0})
+                          "back": 5.0, "hub handler": 1.0, "the other writes": 0.0, "scenario wake": 5.0})
         self.assertEqual(w["share_arriving_during_an_ecu_step"], 0)
         self.assertEqual(d["clock_offset_from_launcher_us"], {"Engine": 0.0})
         self.assertIn(f"details: {self.details}", out)
+
+    def test_writes_of_one_tick_end_with_the_wait_for_all_of_them(self):
+        launcher, ecu = made_up_run(two=(4,))
+        write_trace(self.dir, 100, "vehicle_sil_launch", launcher)
+        write_trace(self.dir, 200, "Engine", ecu)
+        code, out, err = run(str(self.dir), "--skip-ms", "0", "--json", str(self.details))
+        self.assertEqual(code, 0, err)
+        d = json.loads(self.details.read_text(encoding="utf-8"))
+        self.assertEqual(d["hold_with_writes"]["writes_per_step"], 1.14)  # 8 writes in 7 steps
+        w = d["write_round_trip"]
+        self.assertEqual(w["n"], 8)
+        # The first write of step 4 waits 3 us for the answer to the second; both end with the wait, 2 us after
+        # the last answer.
+        self.assertEqual({k: (w[k]["p50_us"], w[k]["p99_us"]) for k in ("total", "the other writes", "scenario wake")},
+                         {"total": (20.0, 20.0), "the other writes": (0.0, 3.0), "scenario wake": (5.0, 5.0)})
+        self.assertIn("wait for the agents (settle)", out)
+        self.assertIn("    the other writes", out)
 
     def test_a_write_to_two_ecus_is_taken_by_the_last_answer(self):
         launcher, ecu = made_up_run()

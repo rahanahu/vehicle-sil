@@ -1080,8 +1080,9 @@ TEST_CASE(timeline_lines_say_where_each_motion_starts_and_where_that_is_from)
 
     // The file has what happened: a line of which no write was sent is not in it, and not in the
     // writes of its step. A set that its agent refuses at once (sent: its point is in the series,
-    // marked), and at the same time a ramp, of which nothing went out: the set's line alone, and
-    // the ramp's step (not run) has no writes.
+    // marked), and at the same time a ramp: the writes of a tick go out before the engine looks at
+    // their results, so the ramp's first write went out too, and its line is in the file, though
+    // its step is not run.
     ScenarioCatalog loose = catalog();
     loose[0].variables[0].max.reset();
     const std::string refused = timeline_of(kHead + "  - at_ms: 40\n"
@@ -1089,7 +1090,8 @@ TEST_CASE(timeline_lines_say_where_each_motion_starts_and_where_that_is_from)
                                                     "  - ramp: { Body.level: { to: 50, over_ms: 20 } }\n",
                                             10ms, {}, loose);
     CHECK(refused.find("    \"status\": \"failed\",") != std::string::npos);
-    check_text(lines_of(refused), "Body.level set 40-40 base=105 written\n");
+    check_text(lines_of(refused), "Body.level set 40-40 base=105 written\n"
+                                  "Body.level ramp 40-60 base=105 line\n");
     const auto step_lines_of = [](const std::string& timeline) {
         std::istringstream in(timeline);
         std::string out;
@@ -1102,7 +1104,7 @@ TEST_CASE(timeline_lines_say_where_each_motion_starts_and_where_that_is_from)
         }
         return out;
     };
-    check_text(step_lines_of(refused), "[0], [], ");
+    check_text(step_lines_of(refused), "[0], [1], ");
     // One step moves three variables. The second finds no base (the scenario has not written it
     // and no sample is there at 0 ms): the first was sent and is a line, the second and the third
     // (which names its base) were not and are not. Whatever the controller's step.
