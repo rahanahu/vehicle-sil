@@ -18,6 +18,10 @@
       "source": "変数 - vehicle-sil",
       "target": "Variables - vehicle-sil"
     },
+    "9021176947486116785": {
+      "source": "ネットワークの設計 - vehicle-sil",
+      "target": "Network design - vehicle-sil"
+    },
     "4407674405558635807": {
       "source": "レイアウトの試験 - vehicle-sil",
       "target": "Layout test - vehicle-sil"
@@ -38,6 +42,242 @@
       "source": "言語（Language）: {$language}",
       "target": "Language: {$language}"
     },
+    "2003932294110602969": {
+      "source": "ネットワークの設計",
+      "target": "Network design"
+    },
+    "5897589235032745351": {
+      "source": " この画面は、GUI サーバーが起動したときに表示した URL（{$START_TAG_CODE}#token={$CLOSE_TAG_CODE} の付いたもの）から開いてください。 ",
+      "target": " Open the GUI from the URL that the GUI server printed when it started (the one with {$START_TAG_CODE}#token={$CLOSE_TAG_CODE}). "
+    },
+    "6386120766786105326": {
+      "source": "構成ファイル",
+      "target": "Configuration file"
+    },
+    "2064717148884879073": {
+      "source": "variant",
+      "target": "variant"
+    },
+    "2269347886103732879": {
+      "source": "選ばない",
+      "target": "None"
+    },
+    "479802170964894337": {
+      "source": " ファイルを読み直す ",
+      "target": " Reload the file "
+    },
+    "4783322918523851928": {
+      "source": "選べる構成ファイル（.yaml、.yml）がありません。",
+      "target": "No configuration files (.yaml, .yml) to choose from."
+    },
+    "987394291298224651": {
+      "source": "構成ファイルの一覧を取得できませんでした。",
+      "target": "Could not get the list of configuration files."
+    },
+    "6324604665730725815": {
+      "source": "一覧を取得しています。",
+      "target": "Loading the list…"
+    },
+    "5845905319069847697": {
+      "source": "構成ファイルを読めませんでした:",
+      "target": "Cannot read the configuration file:"
+    },
+    "7164617033296054934": {
+      "source": " ここで直すのは、この画面に開いている文です。「保存」を押すまで、ファイルは変わりません（「ダウンロード」で、ファイルとして受け取ることもできます）。 ",
+      "target": " You edit the text open on this screen. The file does not change until you press Save (Download gives you the text as a file). "
+    },
+    "5264943725947502211": {
+      "source": " 申告を読んでいない participant が {$INTERPOLATION} 個あります（{$INTERPOLATION_1}）。チャネルが分からないので、結果が「通った」でも、つなぎ方はまだ確かめていません。 ",
+      "target": " {$INTERPOLATION} participants were not described ({$INTERPOLATION_1}). Their channels are unknown, so even if the check passed, the connections are not verified yet. "
+    },
+    "5934713126962903373": {
+      "source": " 保存したファイルにいる participant（{$INTERPOLATION}）は、ECU を読み直すと照合できます。 ",
+      "target": " The participants in the saved file ({$INTERPOLATION}) can be checked after you describe the ECUs again. "
+    },
+    "380767905724484324": {
+      "source": " ECU を読み直す ",
+      "target": " Describe the ECUs again "
+    },
+    "934404666573275390": {
+      "source": "{$INTERPOLATION} は、保存した構成と違います（文で足した、command を変えた、など）。読み直しでは照合できず、保存してから照合できます。既定では、command を変える編集は保存できません。",
+      "target": "{$INTERPOLATION} differ from the saved configuration (added in the text, command changed, and so on). Describing again cannot check them; they can be checked after you save. By default, an edit that changes a command cannot be saved."
+    },
+    "1741097445009664830": {
+      "source": "「保存」を押すと、保存して照合し直します。",
+      "target": "Press Save to save it and check again."
+    },
+    "1097090833802825029": {
+      "source": "この GUI サーバーでは保存できないので、「ダウンロード」して、ファイルを置いてください。",
+      "target": "This GUI server does not save, so download the text and put the file in place."
+    },
+    "7548676693464643643": {
+      "source": "ECU を読み直せませんでした:",
+      "target": "Cannot describe the ECUs again:"
+    },
+    "3768842026472517490": {
+      "source": "照合の結果",
+      "target": "Check result"
+    },
+    "5328600852229174510": {
+      "source": "（照合しています）",
+      "target": "(checking)"
+    },
+    "7479271004379569664": {
+      "source": "照合しています。",
+      "target": "Checking…"
+    },
+    "1020559885915128353": {
+      "source": "照合できませんでした:",
+      "target": "Cannot check:"
+    },
+    "1331432515772557768": {
+      "source": "文の行へ:",
+      "target": "Go to a line of the text:"
+    },
+    "1674368050321993236": {
+      "source": "{$INTERPOLATION} 行目",
+      "target": "Line {$INTERPOLATION}"
+    },
+    "5308341116414730785": {
+      "source": " この構成は JSON なので、表では直せません。下の文の欄で直してください。 ",
+      "target": " This configuration is JSON, so the tables cannot edit it. Edit it in the text below. "
+    },
+    "5609127341214145087": {
+      "source": "文を YAML として読めません（表は止めてあります）:",
+      "target": "The text is not YAML (the tables are stopped):"
+    },
+    "2173214285793739688": {
+      "source": " {$INTERPOLATION} 行目 ",
+      "target": " Line {$INTERPOLATION} "
+    },
+    "6209379517884416233": {
+      "source": "表では書けませんでした:",
+      "target": "The tables could not write this:"
+    },
+    "6302265096968565611": {
+      "source": "ネットワーク",
+      "target": "Networks"
+    },
+    "4132015225571509527": {
+      "source": "つながっている participant はありません",
+      "target": "No participant is on it"
+    },
+    "5238953066811527365": {
+      "source": " 消す ",
+      "target": " Remove "
+    },
+    "8354836027561087899": {
+      "source": "ネットワークはまだありません。",
+      "target": "There is no network yet."
+    },
+    "648412382115717634": {
+      "source": "名前",
+      "target": "Name"
+    },
+    "6927892842988644291": {
+      "source": "種類",
+      "target": "Kind"
+    },
+    "6719661718812829086": {
+      "source": " 足す ",
+      "target": " Add "
+    },
+    "2184449536016308732": {
+      "source": " ネットワークの名前は変えられません（消して足してください）。外につないだときのふるまい（{$START_TAG_CODE}external{$CLOSE_TAG_CODE}）は下の文の欄に書きます。つなぐ先は実行を始めるときに選びます。ネットワークを消しても、それを指す j1939_nodes の項目と variant の中の行は残ります（照合が言うので、文で直します）。 ",
+      "target": " A network cannot be renamed (remove it and add it again). Write {$START_TAG_CODE}external{$CLOSE_TAG_CODE}, how the network behaves when it is connected outside, in the text below. Where to connect it is chosen when a run starts. Removing a network keeps the j1939_nodes entries and the lines of variants that name it: the check reports them, so edit them in the text. "
+    },
+    "6737720035542127809": {
+      "source": "participant のチャネル",
+      "target": "Channels of the participants"
+    },
+    "312529149730585024": {
+      "source": "describe: false（申告を読まない）",
+      "target": "describe: false (its description is not read)"
+    },
+    "5080596488336446120": {
+      "source": "MAC:",
+      "target": "MAC:"
+    },
+    "6021256028984459213": {
+      "source": "報告なし",
+      "target": "not reported"
+    },
+    "4037092514112040149": {
+      "source": "が上書きする（文の欄で直す）:",
+      "target": "overrides this (edit it in the text):"
+    },
+    "4559159834072709623": {
+      "source": "入るネットワーク",
+      "target": "Network"
+    },
+    "5070952201149440593": {
+      "source": "（名前のまま）",
+      "target": "(same name)"
+    },
+    "127827457202273785": {
+      "source": "この participant は、ネットワークを申告していません。",
+      "target": "This participant reports no network."
+    },
+    "778172331316418112": {
+      "source": " チャネルが分かりません（申告を読んでいません）。写像は文の欄で書いてください。 ",
+      "target": " Its channels are unknown (its description was not read). Write the mapping in the text. "
+    },
+    "4891945258315392245": {
+      "source": " この participant は構成ファイルの共通の部分にいないので、表では直せません。 ",
+      "target": " This participant is not in the common part of the configuration file, so the tables cannot edit it. "
+    },
+    "1231569490753108814": {
+      "source": "participant がありません。",
+      "target": "No participants."
+    },
+    "7666878014613945762": {
+      "source": "文",
+      "target": "Text"
+    },
+    "3049988307660367323": {
+      "source": "YAML",
+      "target": "YAML"
+    },
+    "2723673763126499592": {
+      "source": " 保存 ",
+      "target": " Save "
+    },
+    "8577998398972315352": {
+      "source": " ダウンロード ",
+      "target": " Download "
+    },
+    "8065993676874046950": {
+      "source": " ファイルの内容に戻す ",
+      "target": " Revert to the file "
+    },
+    "6081127796714668656": {
+      "source": "注意:",
+      "target": "Note:"
+    },
+    "578578727726381205": {
+      "source": "保存できません:",
+      "target": "Cannot save:"
+    },
+    "7142206097703485730": {
+      "source": "保存しました。",
+      "target": "Saved."
+    },
+    "31965280858752881": {
+      "source": "保存できませんでした:",
+      "target": "Could not save:"
+    },
+    "78104505772156248": {
+      "source": " 表で書き換えるのは、共通の部分の {$START_TAG_CODE}networks{$CLOSE_TAG_CODE} と {$START_TAG_CODE}network_names{$CLOSE_TAG_CODE} だけです。それ以外（{$START_TAG_CODE}command{$CLOSE_TAG_CODE}、{$START_TAG_CODE}variants{$CLOSE_TAG_CODE} など）は、ここで直します。コメントと、表が触らない値の綴りは残ります。字下げの幅と改行も元のとおりです。行末のコメントの揃えと続く空行は、整えられることがあります。 ",
+      "target": " The tables write only {$START_TAG_CODE}networks{$CLOSE_TAG_CODE} and {$START_TAG_CODE}network_names{$CLOSE_TAG_CODE} of the common part. Edit everything else ({$START_TAG_CODE}command{$CLOSE_TAG_CODE}, {$START_TAG_CODE}variants{$CLOSE_TAG_CODE} and so on) here. Comments and the spelling of values the tables do not touch are kept, and so are the indentation width and the line ends. The alignment of comments at the end of a line and runs of blank lines may be tidied. "
+    },
+    "8642530009194031206": {
+      "source": "直した文は、ダウンロードしていなければ消えます。捨てますか。",
+      "target": "Edits that you have not downloaded will be lost. Discard them?"
+    },
+    "1194111179635876924": {
+      "source": "ファイルが、この画面で読んだ後に外で変わりました。読み直しますか（直した文は消えます）。",
+      "target": "The file changed outside after this screen read it. Read it again? Your edits will be lost."
+    },
     "8542080435534198197": {
       "source": "実行",
       "target": "Run"
@@ -45,6 +285,10 @@
     "3116623762056091741": {
       "source": "変数",
       "target": "Variables"
+    },
+    "2161497013529300189": {
+      "source": "設計",
+      "target": "Design"
     },
     "4701042726840341535": {
       "source": "画面が見つからない",
@@ -109,10 +353,6 @@
     "2475584079216036275": {
       "source": "構成ファイルで自分で起動すると指定してあります（manual: true）。",
       "target": "Set in the configuration file to be started by you (manual: true)."
-    },
-    "1231569490753108814": {
-      "source": "participant がありません。",
-      "target": "No participants."
     },
     "5937475454163217594": {
       "source": "所見",
@@ -185,6 +425,10 @@
     "5562034637386172728": {
       "source": "照合していない",
       "target": "Not checked"
+    },
+    "5707510582628265851": {
+      "source": "申告を読んでいない",
+      "target": "Not described"
     },
     "708845366436870643": {
       "source": "照合できない",
@@ -542,10 +786,6 @@
       "source": " 起動する前に、次の環境変数を設定します（設定の書き方は、シェルや IDE によって違います）: ",
       "target": "Before you start it, set these environment variables (how to set them depends on your shell or IDE):"
     },
-    "648412382115717634": {
-      "source": "名前",
-      "target": "Name"
-    },
     "6903603163429670126": {
       "source": "値",
       "target": "Value"
@@ -714,10 +954,6 @@
       "source": "実行の所見",
       "target": "Run findings"
     },
-    "5897589235032745351": {
-      "source": " この画面は、GUI サーバーが起動したときに表示した URL（{$START_TAG_CODE}#token={$CLOSE_TAG_CODE} の付いたもの）から開いてください。 ",
-      "target": " Open the GUI from the URL that the GUI server printed when it started (the one with {$START_TAG_CODE}#token={$CLOSE_TAG_CODE}). "
-    },
     "9009873899296566776": {
       "source": " サーバーがこの画面の鍵（トークン）を受け付けませんでした。サーバーを起動し直したときは、新しく表示された URL から開き直してください。 ",
       "target": " The server rejected the token in this URL. If you restarted the server, open the new URL that it printed. "
@@ -754,25 +990,9 @@
       "source": "操作を受け付けられませんでした:",
       "target": "The request was refused:"
     },
-    "6386120766786105326": {
-      "source": "構成ファイル",
-      "target": "Configuration file"
-    },
-    "4783322918523851928": {
-      "source": "選べる構成ファイル（.yaml、.yml）がありません。",
-      "target": "No configuration files (.yaml, .yml) to choose from."
-    },
     "8752660157361370778": {
       "source": "多すぎるので、一覧を途中で打ち切りました。",
       "target": "Too many files: the list is truncated."
-    },
-    "987394291298224651": {
-      "source": "構成ファイルの一覧を取得できませんでした。",
-      "target": "Could not get the list of configuration files."
-    },
-    "6324604665730725815": {
-      "source": "一覧を取得しています。",
-      "target": "Loading the list…"
     },
     "6649189367386432573": {
       "source": "選べる範囲:",
@@ -817,10 +1037,6 @@
     "5988127550695008293": {
       "source": "この実行の照合の結果はありません。",
       "target": "No check result for this run."
-    },
-    "7479271004379569664": {
-      "source": "照合しています。",
-      "target": "Checking…"
     },
     "4443246497430797772": {
       "source": "照合できませんでした。",

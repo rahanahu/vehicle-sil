@@ -13,6 +13,11 @@ export const routes: Routes = [
     loadComponent: () => import('./variables/variables-page').then((m) => m.VariablesPage),
   },
   {
+    path: 'design',
+    title: $localize`ネットワークの設計 - vehicle-sil`,
+    loadComponent: () => import('./design/design-page').then((m) => m.DesignPage),
+  },
+  {
     // レイアウトの e2e（e2e/layout.spec.ts）が使う試験用の中身。ナビゲーションには出さない。
     path: '_test/layout',
     title: $localize`レイアウトの試験 - vehicle-sil`,

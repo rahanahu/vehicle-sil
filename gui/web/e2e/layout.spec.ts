@@ -12,6 +12,7 @@ const ROUTES = [
   { path: '_test/layout', heading: 'レイアウトの試験', english: 'Layout test' },
   { path: '', heading: '実行', english: 'Run' },
   { path: 'variables', heading: '変数', english: 'Variables' },
+  { path: 'design', heading: 'ネットワークの設計', english: 'Network design' },
 ];
 
 /** スクリーンショットを残す幅。 */

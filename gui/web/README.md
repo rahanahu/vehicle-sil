@@ -113,22 +113,23 @@ Set the environment variable `VEHICLE_SIL_GUI_SHOTS` to a directory to take scre
 
 ## Directories
 
-| Path                                     | Contents                                                                         |
-| ---------------------------------------- | -------------------------------------------------------------------------------- |
-| `src/app/app.*`                          | The shell (toolbar, navigation, content area)                                    |
-| `src/app/app.routes.ts`, `navigation.ts` | Routes and navigation items                                                      |
-| `src/app/core/`                          | Things shared across screens ("`core/`" below)                                   |
-| `src/app/core/session/`                  | The Angular wrapper of the client library ("`core/session/`" below)              |
-| `src/app/run/`                           | The Run screen (`''`) ("`run/`" below)                                           |
-| `src/app/widgets/`                       | Variable widgets and dashboards ("`widgets/`" below)                             |
-| `src/app/variables/`                     | The Variables screen (`variables`). Automatic dashboard and filtering            |
-| `src/app/not-found/`                     | The screen for unknown routes                                                    |
-| `src/app/testing/`                       | A screen for tests (`/_test/layout`)                                             |
-| `src/theme.scss`, `src/styles.css`       | Material theme (light and dark), layout dimensions (CSS custom properties)       |
-| `src/main.ts`, `src/start.ts`            | Startup                                                                          |
-| `src/locale/`                            | Translation files (`messages.<language>.json`). The build puts them in `locale/` |
-| `public/`                                | Files served as they are (icons)                                                 |
-| `e2e/`                                   | Playwright tests ("`e2e/`" below)                                                |
+| Path                                     | Contents                                                                                                                                                    |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/app/app.*`                          | The shell (toolbar, navigation, content area)                                                                                                               |
+| `src/app/app.routes.ts`, `navigation.ts` | Routes and navigation items                                                                                                                                 |
+| `src/app/core/`                          | Things shared across screens ("`core/`" below)                                                                                                              |
+| `src/app/core/session/`                  | The Angular wrapper of the client library ("`core/session/`" below)                                                                                         |
+| `src/app/run/`                           | The Run screen (`''`) ("`run/`" below)                                                                                                                      |
+| `src/app/widgets/`                       | Variable widgets and dashboards ("`widgets/`" below)                                                                                                        |
+| `src/app/variables/`                     | The Variables screen (`variables`). Automatic dashboard and filtering                                                                                       |
+| `src/app/design/`                        | The Network design screen (`design`): the editing logic in `designer-model.ts` (it uses `yaml`; the route is loaded lazily), the screen in `design-page.ts` |
+| `src/app/not-found/`                     | The screen for unknown routes                                                                                                                               |
+| `src/app/testing/`                       | A screen for tests (`/_test/layout`)                                                                                                                        |
+| `src/theme.scss`, `src/styles.css`       | Material theme (light and dark), layout dimensions (CSS custom properties)                                                                                  |
+| `src/main.ts`, `src/start.ts`            | Startup                                                                                                                                                     |
+| `src/locale/`                            | Translation files (`messages.<language>.json`). The build puts them in `locale/`                                                                            |
+| `public/`                                | Files served as they are (icons)                                                                                                                            |
+| `e2e/`                                   | Playwright tests ("`e2e/`" below)                                                                                                                           |
 
 - `src/main.ts` chooses the language and loads the translations, and only then loads `src/start.ts` (the app).
 - The screen in `src/app/testing/` is used by the layout end-to-end tests. It does not appear in the navigation. The helpers for unit tests (fake WebSocket and HTTP, functions that read `gui/protocol/examples/`) are in `@vehicle-sil/gui-client/testing`.
@@ -182,22 +183,23 @@ The code in this directory uses only the wrapper's public API (the same way you 
 
 ### `e2e/`
 
-| File                                             | Contents                                                            |
-| ------------------------------------------------ | ------------------------------------------------------------------- |
-| `app.spec.ts`                                    | Serving and routing                                                 |
-| `run.spec.ts`                                    | The Run screen                                                      |
-| `before-start.spec.ts`                           | Before the first step                                               |
-| `manual.spec.ts`                                 | Participants you start yourself                                     |
-| `connect.spec.ts`                                | Connecting a network outside                                        |
-| `scenario.spec.ts`                               | Scenarios                                                           |
-| `starter.spec.ts`                                | Serving the screen template `examples/gui_starter` with `--web`     |
-| `i18n.spec.ts`                                   | The English screens and switching languages                         |
-| `layout.spec.ts`, `support/layout.ts`            | Layout                                                              |
-| `support/gui-server.ts`                          | Starting the GUI server                                             |
-| `support/run-page.ts`                            | Actions on the Run screen                                           |
-| `variables.spec.ts`, `support/variables-page.ts` | The Variables screen                                                |
-| `shots.spec.ts`                                  | Screenshots                                                         |
-| `real/`                                          | Tests that run with the real launcher (`playwright.real.config.ts`) |
+| File                                             | Contents                                                                                                                                                |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app.spec.ts`                                    | Serving and routing                                                                                                                                     |
+| `run.spec.ts`                                    | The Run screen                                                                                                                                          |
+| `before-start.spec.ts`                           | Before the first step                                                                                                                                   |
+| `manual.spec.ts`                                 | Participants you start yourself                                                                                                                         |
+| `connect.spec.ts`                                | Connecting a network outside                                                                                                                            |
+| `scenario.spec.ts`                               | Scenarios                                                                                                                                               |
+| `starter.spec.ts`                                | Serving the screen template `examples/gui_starter` with `--web`                                                                                         |
+| `i18n.spec.ts`                                   | The English screens and switching languages                                                                                                             |
+| `layout.spec.ts`, `support/layout.ts`            | Layout                                                                                                                                                  |
+| `support/gui-server.ts`                          | Starting the GUI server                                                                                                                                 |
+| `support/run-page.ts`                            | Actions on the Run screen                                                                                                                               |
+| `variables.spec.ts`, `support/variables-page.ts` | The Variables screen                                                                                                                                    |
+| `shots.spec.ts`                                  | Screenshots                                                                                                                                             |
+| `real/`                                          | Tests that run with the real launcher (`playwright.real.config.ts`)                                                                                     |
+|                                                  | `real/design.spec.ts` runs the Network design screen with the real launcher and an ECU that only answers `--describe` (`support/describe-only-ecu.mjs`) |
 
 ## URLs and CSP
 
