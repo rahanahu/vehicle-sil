@@ -20,7 +20,7 @@ Vector XL の CAN のブリッジは [bridges.md](bridges.md) にあります。
 
 ## 最初の接続
 
-Linux で、PC の中の TAP デバイスに接続する手順です。先に作った自分が所有者の TAP デバイスなら、外部のライブラリも、実行時の権限も不要です。ランチャーを使うなら、自分で registry を起こす必要はありません。手順 1 の後に、`vehicle_sil_launch connections simulation.yaml` でこの PC のインターフェースを見て、`vehicle_sil_launch run --connect ETH1=tap:vsil0 simulation.yaml` が registry とブリッジを起動します（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。以降の手順はブリッジを手で起動するもので、`vehicle_sil_ethernet_bridge` と `sil-kit-registry`（SIL Kit のリリース、またはソースからのビルドの `_deps` の下にあります） には `PATH` が通っているものとします。
+Linux で、PC の中の TAP デバイスに接続する手順です。先に作った自分が所有者の TAP デバイスなら、外部のライブラリも、実行時の権限も不要です。ランチャーを使うなら、自分で registry を起こす必要はありません。手順 1 の後に、`vehicle_sil_launch connections simulation.yaml` でこの PC のインターフェースを見て、`vehicle_sil_launch run --connect ETH1=tap:vsil0 simulation.yaml` が registry とブリッジを起動します（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。使う構成は `stop_at_ms` のないものにします（プロジェクトのテンプレートでは `simulation.live.yaml`。`simulation.yaml` は短い時間で止まります）。。以降の手順はブリッジを手で起動するもので、`vehicle_sil_ethernet_bridge` と `sil-kit-registry`（SIL Kit のリリース、またはソースからのビルドの `_deps` の下にあります） には `PATH` が通っているものとします。
 
 | 手順 | すること | 確認 |
 |---|---|---|

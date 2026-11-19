@@ -13,7 +13,7 @@ The launcher starts this bridge from `--connect`: on Linux, `vehicle_sil_launch 
 
 ## First connection
 
-With the launcher you need no registry of your own: `vehicle_sil_launch connections simulation.yaml` lists the interfaces of this computer, and `vehicle_sil_launch run --connect CAN=vcan0 simulation.yaml` starts the registry and this bridge (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md). The commands below start the bridge by hand; they need `sil-kit-registry` (from a SIL Kit release, or under `_deps` of a build from source) and the interface `vcan0`.
+With the launcher you need no registry of your own: `vehicle_sil_launch connections simulation.yaml` lists the interfaces of this computer, and `vehicle_sil_launch run --connect CAN=vcan0 simulation.yaml` starts the registry and this bridge (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md). Use a configuration without `stop_at_ms` for it (in the project template, `simulation.live.yaml`; `simulation.yaml` stops after a short time). The commands below start the bridge by hand; they need `sil-kit-registry` (from a SIL Kit release, or under `_deps` of a build from source) and the interface `vcan0`.
 
 ```sh
 sudo modprobe vcan
@@ -91,7 +91,7 @@ Besides `bus` the bridge prints `link=<up|down>` for programs, then the keys of 
 [bridge] link bus=active link=up device=552dd508e2f03efe marked=1 shared=0
 ```
 
-`bus` is `active`, `passive`, `bus-off` or `unknown`, as in "[Link line](bridge-contract.md#link-line)". `unknown` is the only value of a vcan interface. `link=down` is an interface that is down (`IFF_UP` cleared); the bridge also prints a `warning:` line when it goes down and when it is up again. The bridge looks at the interface four times a second, and at once when a send is refused with `ENETDOWN`. It keeps running while the interface is down and receives and sends again when it is up: no frame is sent meanwhile (`ext_tx_failures` counts the refusals). How long a down interface is tolerated is the launcher's decision.
+`bus` is `active`, `passive`, `bus-off` or `unknown`, as in "[Link line](bridge-contract.md#link-line)". `unknown` is the only value of a vcan interface. `link=down` is an interface that is down (`IFF_UP` cleared); the bridge also prints a `warning:` line when it goes down and when it is up again. The bridge looks at the interface four times a second, and at once when a send is refused with `ENETDOWN`. It keeps running while the interface is down and receives and sends again when it is up: no frame is sent meanwhile (`ext_tx_failures` counts the refusals). With `--connect`, the launcher stops the run when the interface has been down for 30 s (see "[The state of the link and the bus](simulation-run.md#the-state-of-the-link-and-the-bus)" in simulation-run.md); a bridge started by hand never gives up.
 
 ## Bus state and `restart-ms`
 

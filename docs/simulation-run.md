@@ -340,7 +340,7 @@ What is connected there does not wait for the virtual time, so by default such a
 
 | `--time-policy` | Speed of the run | `--speed` other than 1, `--start-paused` |
 |---|---|---|
-| `realtime` (the default) | 1, whatever `speed` the file has. The note `outside-speed-set` says so when the file's speed is not 1 (also without a speed). | The error `outside-real-time` of the check: nothing starts. |
+| `realtime` (the default) | 1, whatever `speed` the file has. The note `outside-speed-set` says so when the file's speed is not 1 (also without a speed). | The error `outside-real-time` of the check: nothing starts. (`--start-paused` goes with `--control` or `--stdin-commands`; alone it is a usage error, exit code 4, before this check.) |
 | `free` | As in any run: `--speed`, or else `speed` in the file, or else as fast as possible. | Accepted. The note `outside-not-real-time` says that the run is not in real time. |
 
 - `--time-policy` has no effect on a run that is not connected outside.
@@ -405,13 +405,13 @@ The first line of a bridge says nothing when all is well (`up`, `active`). `run`
 
 | Kind | What `run` does | At the end |
 |---|---|---|
-| The link or the bus is down for a while (`link=down`, `bus=bus-off`) and the bridge goes on | Goes on. When it has lasted 30 s (`RunLimits::outside_lost_after`), `run` aborts the simulation as for a bridge that ended: an unplugged cable that is plugged in again, or a device that restarts, is a matter of seconds, but a run that is meant to be connected must not go on to its end without the bus. | A warning (`outside-link-down`, `outside-bus-off`: how many times, and how long in all), or, for the 30 s, the error `connect-lost` ("link down for 30 s", "bus off for 30 s"). |
+| The link or the bus is down for a while (`link=down`, `bus=bus-off`) and the bridge goes on | Goes on. When it has lasted 30 s, `run` aborts the simulation as for a bridge that ended: an unplugged cable that is plugged in again, or a device that restarts, is a matter of seconds, but a run that is meant to be connected must not go on to its end without the bus. | A warning (`outside-link-down`, `outside-bus-off`: how many times, and how long in all), or, for the 30 s, the error `connect-lost` ("link down for 30 s", "bus off for 30 s"). |
 | The bridge is connected, but frames were lost | Goes on | A warning for each kind that happened (below). One frame is enough. |
 | The bridge cannot go on | Aborts the simulation | The error `connect-lost` (above) |
 
 Npcap does not read the state of the link, so when the link goes down, neither `outside-link-down` nor `connect-lost` follows: the frames that cannot be sent show in `frames-dropped` and, at the end, in `outside-frames-dropped`.
 
-The kinds of loss are told from the counts of the statistics line and the link line; one table in the launcher (`detail::kOutsideDroppedKeys`) holds the keys:
+The kinds of loss are told from the counts of the statistics line and the link line; the launcher keeps one table of the keys:
 
 | Finding | From |
 |---|---|
@@ -435,8 +435,8 @@ The bridge's own warning about it (`warning: ... is also used by another vehicle
 
 | When | Without `--strict` | With `--strict` |
 |---|---|---|
-| The device is shared when the bridges have started | The run goes on. `run` says it (the log line and the state `outside`) before it starts the ECUs, from the first link line of the bridge, with the same wait as `--strict` | `run` starts no ECU and ends the run: the error `outside-device-shared`, result `failed`. It waits up to 2 s (`kOutsideFirstLineWait`) for the first link line of each bridge, which comes before the bridge's lifecycle; a bridge that has not written it by then is taken as one that shares nothing |
-| It begins while the simulation runs | The run goes on | When it has lasted 3 s (`kOutsideSharedAfter`), `run` aborts the simulation as for a bridge that ended: the error `outside-device-shared`. A bridge that another run started and that is gone again within 3 s does not stop this run, so one run that stops before its ECUs start does not take the other down |
+| The device is shared when the bridges have started | The run goes on. `run` says it (the log line and the state `outside`) before it starts the ECUs, from the first link line of the bridge, with the same wait as `--strict` | `run` starts no ECU and ends the run: the error `outside-device-shared`, result `failed`. It waits up to 2 s for the first link line of each bridge, which comes before the bridge's lifecycle; a bridge that has not written it by then is taken as one that shares nothing |
+| It begins while the simulation runs | The run goes on | When it has lasted 3 s, `run` aborts the simulation as for a bridge that ended: the error `outside-device-shared`. A bridge that another run started and that is gone again within 3 s does not stop this run, so one run that stops before its ECUs start does not take the other down |
 | At the end | The warning `outside-device-shared`: the process IDs, when it was first seen | The same warning, and `--strict` fails on it; the error where `run` stopped the run |
 
 The message says what happens (the frames of both mix, so what the run says of the devices cannot be trusted) and what to do: connect each run to a device of its own, or stop the bridge left over from an earlier run.
