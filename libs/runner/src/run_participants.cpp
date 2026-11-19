@@ -40,6 +40,7 @@ detail::StopRequest detail::record_stop_request(ParticipantRun& run, bool sent, 
         run.exit = status;
         run.ending = Ending::Exited;
         run.stopped_after_end = false;
+        run.end_cut_short = false;
         return StopRequest::HadEnded;
     }
     run.stop_request_failed = true;
@@ -347,10 +348,12 @@ void RunParticipants::end_children(bool ran, int interrupts_at_end)
     // the waiting (a first one too: the simulation has ended already); a second interrupt in
     // all skips the wait after the stop requests as well.
     bool waitedInFull = false;
+    bool cutShort = false; // a stop request cut the wait for them to end by themselves short
     if (ran)
     {
         const Waited waited = wait_until(stopTimeout, interrupts_at_end, [this] { return !any_running(true); });
         waitedInFull = waited == Waited::TimedOut;
+        cutShort = waited == Waited::Interrupted;
         if (waited == Waited::Interrupted && outcome_.end.interrupted_by.empty())
         {
             ctx_.note_interrupt(outcome_.end);
@@ -367,6 +370,7 @@ void RunParticipants::end_children(bool ran, int interrupts_at_end)
             continue;
         }
         run.stopped_after_end = waitedInFull && run.required;
+        run.end_cut_short = cutShort;
         const bool sent = children_[i]->request_stop();
         switch (detail::record_stop_request(run, sent, children_[i]->poll()))
         {
@@ -391,11 +395,12 @@ void RunParticipants::end_children(bool ran, int interrupts_at_end)
     {
         // The first process of each and what it started: a wrapper (sh -c) may end before the
         // program it started has cleaned up.
-        static_cast<void>(wait_until(stopTimeout, 1, [this, &asked] {
+        const Waited waited = wait_until(stopTimeout, 1, [this, &asked] {
             return std::all_of(asked.begin(), asked.end(), [this](std::size_t i) {
                 return children_[i]->poll().has_value() && !children_[i]->others_running();
             });
-        }));
+        });
+        cutShort = cutShort || waited == Waited::Interrupted;
     }
     for (const std::size_t i : asked)
     {
@@ -411,6 +416,7 @@ void RunParticipants::end_children(bool ran, int interrupts_at_end)
             out_.say("ending " + run.name + " (it did not stop)");
             children_[i]->kill_tree();
             run.ending = Ending::Killed;
+            run.end_cut_short = cutShort;
             out_.event([&run](RunEvents& e) { e.participant(run.name, ParticipantState::Killed); });
         }
     }

@@ -1431,6 +1431,16 @@ TEST_CASE(why_a_run_ended_is_decided_by_the_setup_then_by_what_asked_first_then_
     late.end.simulation = SimulationEnd::Ended;
     late.end.stopped_by_scenario = true;
     CHECK(end_reason(late) == EndReason::Completed);
+    // ... unless it cut short the end of a required participant still running: then it decided
+    // how that one ended (asked to stop, or ended by force). An optional one does not count.
+    RunOutcome cut = late;
+    cut.participants[0].ending = Ending::Stopped;
+    cut.participants[0].end_cut_short = true;
+    CHECK(end_reason(cut) == EndReason::Stopped);
+    cut.participants[0].ending = Ending::Killed;
+    CHECK(end_reason(cut) == EndReason::Stopped);
+    cut.participants[0].required = false;
+    CHECK(end_reason(cut) == EndReason::Completed);
     // An interrupt decides at any time, also while the participants were ending.
     RunOutcome lateSignal = late;
     lateSignal.end.interrupted_by = "SIGINT";

@@ -25,6 +25,8 @@
 //                stops the run in order
 //   stdin_twice  a second stop command ends the waiting for a participant that does not end
 //   stdin_ending a stop command while the launcher waits for the participants after the simulation
+//   stdin_ending_optional a second stop command while the launcher waits for an optional participant
+//                it asked to stop: it ends it by force, and the run passed
 //   output_closed the reader of the events goes away (while the simulation runs, while the launcher
 //                waits for the start, while it ends the participants): it stops in order, leaves nothing
 //   stop_once    the end of input and a closed output after a stop are no second stop
@@ -461,10 +463,11 @@ void stdin_ending(const Options& o)
     live.write("{\"command\":\"stop\"}\n");
     const auto [status, lines] = live.finish();
     const bool gone = all_gone(dir, {"Stuck.pid"}, 30s);
-    // The stop came after the simulation had reached its end: it only cut the wait short, and the
-    // run ended as the simulation did (Stuck, asked to stop, ended: no error).
+    // The stop came after the simulation had reached its end, but cut short the end of Stuck, which
+    // is required and still ran: the stop decided how Stuck ended, so the run was stopped (no
+    // error: whether Stuck ends by itself is not known).
     require(status.has_value() && status->code == 0, "the launcher ends with 0 when stopped while it waits, not " + code_text(status));
-    require(contains(lines.back(), "\"result\":\"passed\",\"end\":\"completed\",\"ok\":true,") &&
+    require(contains(lines.back(), "\"result\":\"stopped\",\"end\":\"stopped\",\"ok\":true,") &&
                 contains(lines.back(), "\"simulation\":\"reached_stop_at\",\"interrupted_by\":\"stop command\""),
             "the result:\n" + lines.back());
     require(events_with(lines, {"\"name\":\"Stuck\"", "\"state\":\"stop_requested\""}).size() == 1 ||
@@ -475,6 +478,43 @@ void stdin_ending(const Options& o)
     require(notes.size() == 1 && contains(notes[0], "the launcher stopped the participants instead of waiting for them to end"),
             "the note as a finding");
     require(gone, "Stuck has ended");
+}
+
+void stdin_ending_optional(const Options& o)
+{
+    if (!can_request_stop())
+    {
+        throw Skip("the launcher cannot ask a participant to stop here (no console): it ends it at once");
+    }
+    // Engine ends after the simulation; optional Deaf (a logger) does not and ignores the stop request, so the
+    // launcher would wait 10 minutes for it after asking. A first stop command there does not cut
+    // that wait short; a second one does, and Deaf is ended by force. Every required participant
+    // had ended by itself: the run passed, and its message names Deaf.
+    const fs::path dir = scenario_dir(o,
+                                      "vehicle_sil_simulation: 1\n"
+                                      "stop_at_ms: 1000\n"
+                                      "stop_timeout_ms: 600000\n"
+                                      "networks: []\n"
+                                      "participants:\n"
+                                      "  - name: Engine\n"
+                                      "    command: [" + ecu(o) + "]\n"
+                                      "  - name: Deaf\n"
+                                      "    command: [" + helper(o) + ", --pid-file, deaf.pid, --ignore-stop, --sleep-ms, \"600000\"]\n"
+                                      "    describe: false\n"
+                                      "    required: false\n",
+                                      {{"Engine", ""}});
+    Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+    live.wait_for({"\"name\":\"Deaf\"", "\"state\":\"stop_requested\""});
+    live.write("{\"command\":\"stop\"}\n");
+    live.write("{\"command\":\"stop\"}\n");
+    const auto [status, lines] = live.finish();
+    const bool gone = all_gone(dir, {"deaf.pid"}, 30s);
+    require(status.has_value() && status->code == 0, "the launcher ends with 0, not " + code_text(status));
+    require(contains(lines.back(), "\"result\":\"passed\",\"end\":\"completed\",\"ok\":true,\"message\":\"The run reached its "
+                                   "end; Deaf was ended by force, without waiting\",") &&
+                contains(lines.back(), "{\"severity\":\"note\",\"code\":\"ended-by-force\""),
+            "the result:\n" + lines.back());
+    require(gone, "Deaf has ended");
 }
 
 void output_closed(const Options& o)

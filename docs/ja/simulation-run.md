@@ -725,7 +725,7 @@ participant を終了させた後、`run` は自分の SIL Kit の接続（ECU �
 
 ## 中断（Ctrl+C）
 
-Ctrl+C（SIGINT）、SIGTERM、SIGHUP（Windows: Ctrl+C、Ctrl+Break、コンソールを閉じる）を受けると、`vehicle_sil_launch` はシミュレーションを順に止め（controller の stop）、上の止め方で participant を終了させ、結果に中断を書いて、終了コード 130 で終わります（participant の終わりを待つ間に来た中断でも同じです）。`--stdin-commands` の標準入力の終わりと、`--events` の閉じた標準出力も同じ扱いです（ランチャーを起動したプログラムがいなくなった）。コマンド（`{"command":"stop"}`、Control API の `Stop`）で止めた実行は、中断ではありません。[実行の終わり方](#実行の終わり方endokmessage)を見てください。
+Ctrl+C（SIGINT）、SIGTERM、SIGHUP（Windows: Ctrl+C、Ctrl+Break、コンソールを閉じる）を受けると、`vehicle_sil_launch` はシミュレーションを順に止め（controller の stop）、上の止め方で participant を終了させ、結果に中断を書いて、終了コード 130 で終わります（participant が自分で終わるのを待つ間、つまり[止め方](#止め方)の 1 の間に来た中断でも同じです）。それより後に来た中断は、結果も終了コードも変えません（[実行の終わり方](#実行の終わり方endokmessage)を参照）。`--stdin-commands` の標準入力の終わりと、`--events` の閉じた標準出力も同じ扱いです（ランチャーを起動したプログラムがいなくなった）。コマンド（`{"command":"stop"}`、Control API の `Stop`）で止めた実行は、中断ではありません。[実行の終わり方](#実行の終わり方endokmessage)を見てください。
 
 | 受けた時点 | すること |
 |---|---|
@@ -1103,7 +1103,7 @@ passed: 0 errors, 1 warning, 1 note
 | 終了コード | 意味 | `--json` の `result` |
 |---|---|---|
 | 0 | シミュレーションが正常に終わり、必須の participant がどれも 0 で終わった（`--strict` では警告もない） | `"passed"` |
-| 0 | コマンド（`{"command":"stop"}`、Control Server のクライアントの `Stop`）でシミュレーションの終わりより前に止め、ほかに問題がなかった。止める要求を 2 回出したために強制終了された participant は、ここではエラーにしません（注記 `ended-by-force` が名前を書きます） | `"stopped"` |
+| 0 | コマンド（`{"command":"stop"}`、Control Server のクライアントの `Stop`）でシミュレーションの終わりより前に止めたか、終わりの後に `{"command":"stop"}` がまだ動いていた必須の participant の終わりを打ち切り、ほかに問題がなかった。止める要求を 2 回出したために強制終了された participant は、ここではエラーにしません（注記 `ended-by-force` が名前を書きます） | `"stopped"` |
 | 1 | 照合のエラーで、何も起動しなかった | `"check_failed"` |
 | 1 | 実行のエラー（participant が失敗した、そろわなかった、止めても終わらなかったなど） | `"failed"` |
 | 3 | 設定ファイルを読めない（ファイルがない、文法のエラー、知らない形式のバージョンなど） | `"unreadable"` |
@@ -1113,7 +1113,7 @@ passed: 0 errors, 1 warning, 1 note
 | 5 | コマンドで、シナリオが終わる前（または始まる前）に止め、ほかに問題がなかった。シナリオの判定はない | `"incomplete"` |
 | 130 | 中断された。シグナル（Ctrl+C、SIGTERM、コンソールを閉じる）か、ランチャーを起動したプログラムがいなくなった（標準入力の終わり、閉じた標準出力） | `"interrupted"` |
 
-いくつかに当てはまるときは、強いものが決めます。順は 4、3、130、1、5、0 です。シグナルで中断された実行は、エラーがあっても 130 です。コマンドで止めた実行は、エラー（失敗したシナリオのステップ、失敗した participant や終わらなかった participant、`--strict` での警告）があれば 1 です。シミュレーションが終わった後（participant の終わりを待つ間）に来た `{"command":"stop"}` は、結果を決めません。実行はシミュレーションの終わり方のとおりに、0 か 1 で終わります。自分の `stop` コマンドの後に 130 を待っていたスクリプトは、0（シナリオつきなら 5 も）を受けるように直してください。
+いくつかに当てはまるときは、強いものが決めます。順は 4、3、130、1、5、0 です。シグナルで中断された実行は、エラーがあっても 130 です。コマンドで止めた実行は、エラー（失敗したシナリオのステップ、失敗した participant や終わらなかった participant、`--strict` での警告）があれば 1 です。シミュレーションが終わった後（participant の終わりを待つ間）に来た `{"command":"stop"}` が結果を決めるのは、必須の participant の終わりを打ち切ったときだけです。そうでなければ、実行はシミュレーションの終わり方のとおりに、0 か 1 で終わります。自分の `stop` コマンドの後に 130 を待っていたスクリプトは、0（シナリオつきなら 5 も）を受けるように直してください。
 
 ### 実行の終わり方（`end`、`ok`、`message`）
 
@@ -1128,14 +1128,15 @@ passed: 0 errors, 1 warning, 1 note
 | `end` | 終わった理由 | `result` |
 |---|---|---|
 | `"completed"` | 決めた終わりに達した。`stop_at_ms`、participant がシミュレーションを終えた、シナリオが終わった | `"passed"`。エラーがあれば `"failed"` |
-| `"stopped"` | コマンド（`{"command":"stop"}`、Control API の `Stop`）でシミュレーションの終わりより前に止めた | `"stopped"`。シナリオが最後まで進まなかったときは `"incomplete"`。エラーがあれば `"failed"` |
-| `"interrupted"` | シグナルやコンソールのイベント、標準入力の終わり、閉じた標準出力。いつ来ても（participant の終わりを待つ間でも） | `"interrupted"` |
+| `"stopped"` | コマンド（`{"command":"stop"}`、Control API の `Stop`）でシミュレーションの終わりより前に止めた。または、終わりの後の `{"command":"stop"}` が必須の participant の終わりを打ち切った | `"stopped"`。シナリオが最後まで進まなかったときは `"incomplete"`。エラーがあれば `"failed"` |
+| `"interrupted"` | シグナルやコンソールのイベント、標準入力の終わり、閉じた標準出力。シミュレーションの終わりより前か、participant が自分で終わるのを待つ間に来たもの | `"interrupted"` |
 | `"failed"` | 始められなかった、または続けられなかった。participant やブリッジの失敗、`--timeout-ms`、participant がそろわなかった | `"failed"` |
 | `"setup_failed"` | registry や controller を用意できない | `"setup_failed"` |
 | `null` | 何も起動しなかった | `"check_failed"`、`"unreadable"`、`"usage"` |
 
 - `"stopped"` と `"interrupted"` のどちらになるかは、最初に止めるよう頼んだものが決めます。`stop` コマンドの後の Ctrl+C は、コマンドによる停止のままです。`interrupted_by` が、最初に頼んだものの名前です。
-- シミュレーションが終わった後（`stop_at_ms` に達した、participant が終えたか失敗させた、シナリオが終わった）に来た `{"command":"stop"}` は、participant の終わりの待ちを打ち切るだけです（Control API の `Stop` はこのとき断られます）。`end` はシミュレーションの終わり方のまま（`"completed"` か `"failed"`）で、結果もそれに従います（`"passed"` か `"failed"`）。`interrupted_by` はそのコマンドの名前で、注記 `stopped` が待ちを打ち切ったことを書きます。
+- シミュレーションが終わった後（`stop_at_ms` に達した、participant が終えたか失敗させた、シナリオが終わった）、participant が自分で終わるのを待つ間に来た `{"command":"stop"}` は、その待ちを打ち切ります。必須の participant がまだ動いていたなら、その終わり方は停止が決めたので、`end` は `"stopped"` です（結果は `"stopped"`、エラーがあれば `"failed"`）。必須の participant がすべて自分で終わっていて、打ち切ったのがほかの participant の待ちだけなら、`end` はシミュレーションの終わり方のまま（`"completed"` か `"failed"`）で、結果もそれに従います（`"passed"` か `"failed"`）。どちらでも `interrupted_by` はそのコマンドの名前で、注記 `stopped` が待ちを打ち切ったことを書きます。Control API の `Stop` は、`run` がシミュレーションの終わりを受け取るまでは受け付け、その後は断ります。その間のわずかな時間に受け付けたものは、何も変えません。
+- それより後に来た止める要求は、`end` も結果も変えず、`interrupted_by` は `null` のままです。シミュレーションの終わりからその待ちまでのわずかな時間、participant に止まるよう求めた後（[止め方](#止め方)の 2 と 3。ここでは最初の要求は待ちも打ち切らず、2 回目が打ち切ります）、自分で起動した participant を待つ間、自分の接続を閉じる間です。シグナルでも同じで、130 ではなく結果の終了コードで終わります。
 - 止める要求、participant が終わる間に起きた問題、結果を分けます。終わる間に起きた問題は、何が頼んだかによらず、それぞれの所見です。待ち切った participant には `did-not-end`（エラー）、自分で失敗して終わったものには `exit-code`（エラー）、待ちを打ち切ったために強制終了したものには `ended-by-force`（注記。エラーではない）。結果は、`end` とエラーから、[終了コード](#終了コード)の順で決まります。
 - 停止や中断で途中になったシナリオは `incomplete` で、指摘 `scenario-incomplete` は注記になります（シナリオがどこまで進んだかを書きます）。ほかの理由（participant の失敗、`--timeout-ms`）で終わった実行では、この指摘はエラーで、終了コードは 1 です。
 - `message` は表示のための文です。判断には `ok`、`result`、`end`、`scenario.status` を使ってください。
@@ -1162,7 +1163,7 @@ passed: 0 errors, 1 warning, 1 note
 | `strict` | `--strict` を付けたか |
 | `errors`、`warnings`、`notes` | 照合と実行を合わせた数 |
 | `simulation` | シミュレーションの終わり方（下の表）。何も起動しなかったときは `null` |
-| `interrupted_by` | 最初に止めるよう頼んだもの。シグナルかキー（`"SIGINT"`、`"Ctrl+C"` など）、または `"stop command"`、`"control server stop"`、`"end of input"`、`"output closed"`。`end` が `"stopped"` のときも入る。participant の終わりを待つ間にだけ `stop` コマンドが来たときも入る（`end` はシミュレーションの終わり方）。何も頼まなければ `null` |
+| `interrupted_by` | 最初に止めるよう頼んだもの。シグナルかキー（`"SIGINT"`、`"Ctrl+C"` など）、または `"stop command"`、`"control server stop"`、`"end of input"`、`"output closed"`。`end` が `"stopped"` のときも入る。participant が自分で終わるのを待つ間にだけ `stop` コマンドが来たときも入る（`end` はシミュレーションの終わり方のこともある）。何も頼まなければ、または最初の要求がその待ちより後に来たときは `null` |
 | `registry_uri` | 実行の registry が待ち受けた URI で、participant に渡したもの。ファイルのポートが 0 なら、取ったポートです（`check` の `registry_uri` は書いたとおり）。registry を起動しなかったときは `null` |
 | `timing` | 時間の進み方（下の表）。何も起動しなかったときは `null` |
 | `participants[]` | participant ごとの結果（下の表）。設定ファイルの順で、無効にした participant も含む。その後に `--connect` のブリッジ |

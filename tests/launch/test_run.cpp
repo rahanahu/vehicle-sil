@@ -526,11 +526,11 @@ TEST_CASE(the_json_report)
                "  \"result\": \"interrupted\",\n"
                "  \"end\": \"interrupted\",\n"
                "  \"ok\": false,\n"
-               "  \"message\": \"The run was interrupted by a signal; Brake was ended by force, without waiting\",\n"
+               "  \"message\": \"The run was interrupted by a signal\",\n"
                "  \"strict\": false,\n"
                "  \"errors\": 0,\n"
                "  \"warnings\": 1,\n"
-               "  \"notes\": 2,\n"
+               "  \"notes\": 1,\n"
                "  \"simulation\": \"interrupted\",\n"
                "  \"interrupted_by\": \"SIGINT\",\n"
                "  \"registry_uri\": \"silkit://127.0.0.1:41234\",\n"
@@ -640,18 +640,6 @@ TEST_CASE(the_json_report)
                "      \"participant\": null,\n"
                "      \"network\": null,\n"
                "      \"message\": \"interrupted (SIGINT): the launcher stopped the simulation and the participants\",\n"
-               "      \"detail\": null\n"
-               "    },\n"
-               "    {\n"
-               "      \"severity\": \"note\",\n"
-               "      \"code\": \"ended-by-force\",\n"
-               "      \"file\": \"sim.yaml\",\n"
-               "      \"line\": null,\n"
-               "      \"participant\": null,\n"
-               "      \"network\": null,\n"
-               "      \"message\": \"the launcher did not wait for Brake to end, because it was asked to stop again (or while it "
-               "waited for the participants to end): it ended it by force, with the processes started. This is no error of a run "
-               "that was stopped that way; whether it ends when asked to is not known from this run (stop once and wait to see)\",\n"
                "      \"detail\": null\n"
                "    }\n"
                "  ],\n");
@@ -1623,6 +1611,7 @@ TEST_CASE(a_participant_ended_by_force_after_a_stop_request_is_no_error_but_is_s
     RunOutcome o = stopped_run("stop command", StopKind::Operator);
     o.participants[0].ending = Ending::Killed;
     o.participants[0].exit.reset();
+    o.participants[0].end_cut_short = true;
     CHECK(ended_by_force(o) == std::vector<std::string>{"Engine"});
     const RunReport forced = report_of(o);
     check_meaning(forced, {RunResult::Stopped, 0, true, "\"stopped\""}, "ended by force");
@@ -1630,14 +1619,15 @@ TEST_CASE(a_participant_ended_by_force_after_a_stop_request_is_no_error_but_is_s
     check_text(lines(forced.findings),
                "N 0 stopped: stopped by a stop request: the launcher stopped the simulation and the participants\n"
                "N 0 ended-by-force: the launcher did not wait for Engine to end, because it was asked to stop again (or while it "
-               "waited for the participants to end): it ended it by force, with the processes started. This is no error of a run "
-               "that was stopped that way; whether it ends when asked to is not known from this run (stop once and wait to see)\n");
+               "waited for the participants to end): it ended it by force, with the processes started. This is no error: whoever "
+               "asked chose not to wait; whether it ends when asked to is not known from this run (stop once and wait to see)\n");
     // Known once the participants have ended: not among the findings written before that.
     CHECK(lines(vehicle_sil::runner::detail::settled_findings(o)).find("ended-by-force") == std::string::npos);
     // Two of them, in a scenario that was cut short.
     RunOutcome both = with_scenario(o, ScenarioStatus::Incomplete);
     both.participants[1].ending = Ending::Killed;
     both.participants[1].exit.reset();
+    both.participants[1].end_cut_short = true;
     check_text(report_of(both).message(), "The run was stopped by a stop request before the scenario reached its end, so the scenario "
                                           "has no verdict; Engine and Brake were ended by force, without waiting");
     CHECK(lines(report_of(both).findings).find("did not wait for Engine and Brake to end") != std::string::npos);
@@ -1657,20 +1647,40 @@ TEST_CASE(a_participant_ended_by_force_after_a_stop_request_is_no_error_but_is_s
     RunOutcome signal = stopped_run("SIGINT", StopKind::Signal);
     signal.participants[0].ending = Ending::Killed;
     signal.participants[0].exit.reset();
+    signal.participants[0].end_cut_short = true;
     CHECK(ended_by_force(signal) == std::vector<std::string>{"Engine"});
     check_meaning(report_of(signal), {RunResult::Interrupted, 130, false, "\"interrupted\""}, "interrupted, ended by force");
     check_text(report_of(signal).message(), "The run was interrupted by a signal; Engine was ended by force, without waiting");
     CHECK(lines(report_of(signal).findings).starts_with("N 0 interrupted: interrupted (SIGINT): the launcher stopped the simulation and the participants\n"
                                                         "N 0 ended-by-force: the launcher did not wait for Engine to end"));
     // A stop that came only while the participants were ending, after the simulation had reached
-    // its end: the run passed, and the message says who was ended by force.
+    // its end, and cut short the end of a required participant: it decided how that one ended, so
+    // the run was stopped (not passed: whether Engine ends by itself is not known).
     RunOutcome late = o;
     late.end.simulation = SimulationEnd::ReachedStopAt;
     late.end.interrupted_while_ending = true;
-    check_meaning(report_of(late), {RunResult::Passed, 0, true, "\"completed\""}, "ended by force after the end");
-    check_text(report_of(late).message(), "The run reached its end; Engine was ended by force, without waiting");
-    check_text(report_of(with_scenario(late, ScenarioStatus::Passed)).message(),
+    check_meaning(report_of(late), {RunResult::Stopped, 0, true, "\"stopped\""}, "a required one ended by force after the end");
+    check_text(report_of(late).message(), "The run was stopped by a stop request; Engine was ended by force, without waiting");
+    RunOutcome lateAsked = late;
+    lateAsked.participants[0].ending = Ending::Stopped;
+    lateAsked.participants[0].exit = ExitStatus{9, std::nullopt};
+    check_meaning(report_of(lateAsked), {RunResult::Stopped, 0, true, "\"stopped\""}, "a required one asked to stop after the end");
+    // ... that cut short only the end of an optional one (every required one had ended by itself):
+    // the run passed, and the message says who was ended by force.
+    RunOutcome lateOptional = late;
+    lateOptional.participants[0].required = false;
+    check_meaning(report_of(lateOptional), {RunResult::Passed, 0, true, "\"completed\""}, "an optional one ended by force after the end");
+    check_text(report_of(lateOptional).message(), "The run reached its end; Engine was ended by force, without waiting");
+    check_text(report_of(with_scenario(lateOptional, ScenarioStatus::Passed)).message(),
                "The run reached its end, and the scenario passed; Engine was ended by force, without waiting");
+    // One killed after the full waits (an interrupt before the start, nothing asked again): no wait
+    // was cut short, so it is not named "without waiting".
+    RunOutcome early = stopped_run("SIGINT", StopKind::Signal);
+    early.end.simulation = SimulationEnd::NotStarted;
+    early.participants[0].ending = Ending::Killed;
+    early.participants[0].exit.reset();
+    CHECK(ended_by_force(early).empty());
+    check_text(report_of(early).message(), "The run was interrupted by a signal");
     // Nothing asked to stop: nobody is named (a kill of the launcher's own waits is did-not-end).
     RunOutcome unstopped = passed_run();
     unstopped.participants[0].ending = Ending::Killed;

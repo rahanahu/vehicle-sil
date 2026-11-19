@@ -100,6 +100,10 @@ struct ParticipantRun
     bool stopped_after_end = false;
     /// The launcher could not ask it to stop (Windows: no console) and ended it at once.
     bool stop_request_failed = false;
+    /// A stop request cut short a wait of the launcher for it to end (the wait for it to end by
+    /// itself, or the one after the launcher asked it to stop), and the launcher then asked it to
+    /// stop or ended it: it was not given stop_timeout_ms for that. ended_by_force(), end_reason().
+    bool end_cut_short = false;
     /// Processes it started were still running after it had ended; the launcher ended them.
     bool left_processes = false;
     /// Its log file (--log-dir) as shown, or "".
@@ -250,8 +254,10 @@ struct OutcomeEnd
     {
         return interrupted_kind == StopKind::Operator ? "stopped " + stop_phrase() : "interrupted (" + interrupted_by + ")";
     }
-    /// The first stop request came after the simulation had ended, while the launcher waited for
-    /// the participants to end: an operator's stop then does not decide end_reason().
+    /// The first stop request cut short the launcher's wait for the participants to end by
+    /// themselves, after the simulation had ended (or had been aborted right after its start): an
+    /// operator's stop then decides end_reason() only if it cut short the end of a required
+    /// participant (ParticipantRun::end_cut_short).
     bool interrupted_while_ending = false;
     /// The simulation did not end within --timeout-ms of wall-clock time: the launcher aborted it.
     bool timed_out = false;
@@ -377,19 +383,23 @@ enum class EndReason
     SetupFailed, ///< the registry or the controller could not be set up
 };
 
-/// Why `outcome` ended. Pure. The order: a set-up that failed; then what asked first to stop,
-/// whatever came after it: anything but an operator, Interrupted, at any time; an operator,
-/// Stopped, unless its stop came only while the launcher waited for the participants to end (it
-/// cut that wait short, and did not end the simulation); then how far the simulation got. A run
-/// whose scenario was over is Completed.
+/// Why `outcome` ended. Pure. The order: a set-up that failed; then what asked first to stop and
+/// was noted (OutcomeEnd::interrupted_by), whatever came after it: anything but an operator,
+/// Interrupted; an operator, Stopped, unless its stop came only while the launcher waited for the
+/// participants to end and every required participant had ended by itself (it cut short only
+/// the wait for the others); then how far the simulation got. A run whose scenario was over is
+/// Completed. A stop request that comes at a moment the run does not note (after the launcher has
+/// asked the participants to stop, while it waits for manual participants or closes its
+/// connection) is not in interrupted_by and decides nothing.
 [[nodiscard]] EndReason end_reason(const RunOutcome& outcome);
 
-/// The participants that the launcher ended by force, without having waited for them in full,
-/// because it was asked to stop (by anything: an operator, a signal, a supervisor that went
-/// away): the request was repeated, or came while the launcher waited for them to end. They did
-/// not end when asked to (not those the launcher could not ask), and are no error (whoever asked
-/// chose not to wait), whatever the result; the note "ended-by-force" and the result's message
-/// name them. Empty for a run that nothing asked to stop.
+/// The participants that the launcher ended by force because a stop request (of anything: an
+/// operator, a signal, a supervisor that went away) cut short a wait for them
+/// (ParticipantRun::end_cut_short): the request was repeated, or came while the launcher waited
+/// for them to end. They did not end when asked to (not those the launcher could not ask), and
+/// are no error (whoever asked chose not to wait), whatever the result; the note
+/// "ended-by-force" and the result's message name them. One killed after the full waits is not
+/// among them.
 [[nodiscard]] std::vector<std::string> ended_by_force(const RunOutcome& outcome);
 
 /// "completed", "stopped", "interrupted", "failed" or "setup_failed": the member "end" of the result.

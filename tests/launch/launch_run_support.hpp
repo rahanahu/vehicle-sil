@@ -603,6 +603,7 @@ void stdin_stop(const Options& o);
 void stdin_eof(const Options& o);
 void stdin_twice(const Options& o);
 void stdin_ending(const Options& o);
+void stdin_ending_optional(const Options& o);
 void output_closed(const Options& o);
 void stop_once(const Options& o);
 void events_stalled(const Options& o);
