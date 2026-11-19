@@ -137,7 +137,7 @@ failed: 2 errors, 1 warning, 0 notes
 | CMake | 3.21 以上（gRPC をビルドするときは 3.28 以上） | configure とビルドに使います。 |
 | Ninja、Git | 指定なし | ビルドと、SIL Kit の取得に使います。 |
 | [uv](https://docs.astral.sh/uv/) | 指定なし | ビルドと GUI が使う Python（3.11 以上）とパッケージをインストールします。 |
-| Node.js、npm | 24.15 以上、11.12 以上 | GUI の画面のビルドに使います。 |
+| Node.js、npm | 24.15 以上の 24 か 26、11.12 以上 | GUI の画面のビルドに使います。 |
 
 リポジトリをビルドして、上の例を実行し、GUI を起動します。最初の構成とビルドは、SIL Kit と（PC になければ）gRPC をダウンロードしてコンパイルするので、ネットワークへの接続と、数分から十数分の時間が必要です。コマンドは Linux のものです。Windows の手順、ほかのプリセット、テストの実行方法は [docs/build.md](docs/ja/build.md) にあります。
 
@@ -172,11 +172,11 @@ scripts/run-gui.py                   # ブラウザを開く（開かないと�
 | 配布物 | 内容 |
 |---|---|
 | テンプレート | 上の例と同じ 2 つの ECU、設定ファイル、シナリオが入った、出発点になる ECU のプロジェクトです（[template/](template/) と同じもの）。 |
-| ビルド済みのツール | `vehicle_sil_launch`、ブラウザの GUI、Python のクライアントを、OS ごとに 1 つのアーカイブにまとめたものです。 |
+| ビルド済みのツール | `vehicle_sil_launch`、Ethernet ブリッジ `vehicle_sil_ethernet_bridge`（Linux と Windows）、SocketCAN ブリッジ `vehicle_sil_socketcan_bridge`（Linux だけ）、ブラウザの GUI、Python のクライアントを、OS ごとに 1 つのアーカイブにまとめたものです。 |
 | GUI のクライアント | 自分の画面を作るための npm のパッケージ `vehicle-sil-gui-client-<version>.tgz` です（[gui/client](gui/client/README.ja.md) を参照）。ビルド済みのツールにも同じファイルが入っています。 |
 | `SHA256SUMS` | ほかの配布物の SHA-256 のチェックサムです。 |
 
-同じリリースの配布物を組み合わせて使います。ランチャーは、読めない形式の説明を出す ECU の実行ファイル（別の版の vehicle-sil でビルドしたもの）を断ります。GUI のクライアントは、別の版の GUI のプロトコルを話す GUI サーバーを断ります。
+同じリリースの配布物を組み合わせて使います。ランチャーが ECU の実行ファイルを断るのは、`--describe` の出力の形式（`vehicle_sil_ecu`）が違うときだけです。変数を読み書きするメッセージの形式が違えば、シミュレーションは動きますが、ランチャーは警告 `control-link-version` を出し、その ECU の変数を読み書きできません（その変数を使うシナリオは、照合の誤り `scenario-variable` になります）。vehicle-sil の版だけが違うときは、注記 `version-mismatch` を出します。GUI のクライアントは、別の版の GUI のプロトコルを話す GUI サーバーを断り、Python の Control API のクライアントは、別のリリースの vehicle-sil の launcher を断ります。
 
 テンプレートを展開したディレクトリで、次の順に実行します。
 

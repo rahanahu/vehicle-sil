@@ -90,12 +90,13 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 
 変える場所:
 
-- ルートの `CMakeLists.txt` の `project(... VERSION)`
+- ルートの `CMakeLists.txt` の `project(... VERSION)`（数字だけ）と、その隣の `VEHICLE_SIL_VERSION_PRERELEASE`。プレリリースは `rc.<n>`、`beta.<n>`、`alpha.<n>`、リリースは `""` です。
+- 2 つを合わせたものが完全なバージョン（`0.2.0-rc.1`、SemVer の形）、`VEHICLE_SIL_VERSION_FULL` です。実行ファイルはこれを報告し、下の所はどれもこれを書きます。タグは `v<完全なバージョン>` です。プレリリースの部分があるタグは、GitHub でプレリリースになります。
 
 合わせて直す所は、[CHANGELOG.md](../../CHANGELOG.md) に書いてあります。
 
-- `pyproject.toml`、`gui/server/pyproject.toml`
-- `python/vehicle_sil_control/__init__.py` の `__version__`
+- `pyproject.toml`、`gui/server/pyproject.toml`（`uv lock` は、`uv.lock` に PEP 440 の形 `0.2.0rc1` で書きます）
+- `python/vehicle_sil_control/__init__.py` と `gui/server/src/vehicle_sil_gui/__init__.py` の `__version__`
 - `template/get_tools.py`
 - `template/CMakeLists.txt` の `GIT_TAG`
 - `template/README.md` のバージョン

@@ -682,6 +682,8 @@ An argument wins over the file, field by field.
 | `params` | By name: `--param <name>=<value>` replaces the file's value of that parameter. The others stay; their `from` in the check JSON is `request_file`. |
 | `disable`, `enable`, `manual` | The names of the file and of the arguments add up. Where they disagree about a name (the file's `disable` and `--enable`, the file's `enable` or `manual` and `--disable`, the file's `disable` and `--manual`), the argument wins. |
 
+No argument takes away the file's `scenario` or one of its `params` (`--scenario` and `--param` only replace them): for a run without them, use a request file that does not have them.
+
 Where a request file differs from the arguments:
 
 | Case | Arguments | Request file |
