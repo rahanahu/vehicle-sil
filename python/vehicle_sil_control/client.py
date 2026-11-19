@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import dataclasses
 import sys
+import threading
 import warnings
 from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Union
 
 import grpc
 
-from ._stubs import pb, rpc
+from . import __version__
+from ._stubs import _STUBS, pb, rpc
 
 Number = Union[bool, int, float]
 
@@ -101,8 +103,8 @@ class Peer:
     error: str = ""
     has_agent: bool = False  # an agent has connected for it (else it is known from SIL Kit only)
     simulation_state: str = ""  # the SIL Kit lifecycle state the server sees ("" if unknown)
-    # its agent runs on the simulation's time (false: in real time, or no agent; always false from an
-    # earlier server without the field); Snapshot.consistent looks only at these peers
+    # its agent runs on the simulation's time (false: in real time, or no agent); Snapshot.consistent
+    # looks only at these peers
     virtual_time: bool = False
 
 
@@ -330,6 +332,9 @@ class Control:
             seq = c.write({"Body": {"cabin.parking_brake": True}}, at=c.sim.time().now + ms(10))
             c.wait(seq, until="queued")
             c.sim.step(ms(100))
+
+    Making one does not connect. The first call (or watch) checks that the server is of this
+    client's vehicle-sil release (__version__) and refuses another with ControlError.
     """
 
     def __init__(self, address: str, timeout: float = 10.0, token: Optional[str] = None,
@@ -347,6 +352,8 @@ class Control:
         self._stub = rpc.ControlServiceStub(self._channel)
         self._timeout = timeout
         self._schemas: Dict[tuple, List[Variable]] = {}  # (peer, incarnation) -> schema, for snapshot()
+        self._checked = False  # the server's release was compared with this client's (_check_release)
+        self._check_lock = threading.Lock()
         self.sim = _Simulation(self)
 
     def __enter__(self) -> "Control":
@@ -358,7 +365,38 @@ class Control:
     def close(self) -> None:
         self._channel.close()
 
+    def _check_release(self) -> None:
+        """Before the first call: the server must be of this client's vehicle-sil release (one Ping, once
+        per Control; a Ping that fails is tried again at the next call). Another release, a server
+        that does not report its release, or stubs generated before the field: ControlError
+        FAILED_PRECONDITION."""
+        if self._checked:
+            return
+        with self._check_lock:
+            if self._checked:
+                return
+            if "vehicle_sil" not in pb.PingReply.DESCRIPTOR.fields_by_name:
+                raise ControlError(grpc.StatusCode.FAILED_PRECONDITION,
+                                   f"the Control API stubs in {_STUBS} are older than this vehicle_sil_control (their "
+                                   "PingReply has no vehicle_sil): make them again with `python -m "
+                                   "vehicle_sil_control.generate` (with --out <directory> for VEHICLE_SIL_CONTROL_STUBS)")
+            try:
+                reply = self._stub.Ping(pb.PingRequest(), timeout=self._timeout)
+            except grpc.RpcError as e:
+                raise _error(e) from None
+            if not reply.vehicle_sil:
+                raise ControlError(grpc.StatusCode.FAILED_PRECONDITION,
+                                   "the control server does not report its vehicle-sil release (a 0.1.0 launcher, or "
+                                   f"one built before this check); this vehicle_sil_control is {__version__}: use the "
+                                   "vehicle_sil_control that came with the launcher")
+            if reply.vehicle_sil != __version__:
+                raise ControlError(grpc.StatusCode.FAILED_PRECONDITION,
+                                   f"the control server is vehicle-sil {reply.vehicle_sil}; this vehicle_sil_control is "
+                                   f"{__version__}: use the vehicle_sil_control of the same release as the launcher")
+            self._checked = True
+
     def _call(self, method, request, timeout: Optional[float] = None):
+        self._check_release()
         try:
             return method(request, timeout=timeout or self._timeout)
         except grpc.RpcError as e:
@@ -399,17 +437,10 @@ class Control:
         """The time state and the latest values of `peers` (empty: every peer with an agent), read
         by the server in one go: see Snapshot for what holds between the time and the values.
         After `sim.wait_paused()`, `consistent` says that the values are those of the time the
-        simulation stands still at. ControlError with code UNIMPLEMENTED: the server is older and
-        has no such call (read `sim.time()` and `values()` instead; nothing holds between them)."""
+        simulation stands still at."""
         if isinstance(peers, (str, bytes)):
             raise TypeError("peers is a sequence of names, not one name: pass [name]")
-        try:
-            reply = self._call(self._stub.GetSnapshot, pb.GetSnapshotRequest(peers=list(peers)))
-        except ControlError as e:
-            if e.code == grpc.StatusCode.UNIMPLEMENTED:
-                raise ControlError(e.code, "the server has no GetSnapshot (it is older than this client): read "
-                                           "sim.time() and values() instead; nothing holds between the two") from None
-            raise
+        reply = self._call(self._stub.GetSnapshot, pb.GetSnapshotRequest(peers=list(peers)))
         sampled = [v for v in reply.values if v.HasField("snapshot")]
         if any((v.peer, v.incarnation) not in self._schemas for v in sampled):
             # The names of the values: a schema belongs to an incarnation and does not change.
@@ -455,6 +486,7 @@ class Control:
         SimulationState (with simulation=True: participants' states, a failure, the end) and
         ("initial_done",) once the current state has been sent, until the caller stops iterating (or
         the server ends the stream)."""
+        self._check_release()
         schemas: Dict[str, List[Variable]] = {}
         request = pb.WatchRequest(peers=list(peers), values=values, events=events, operations=operations,
                                   capacity=capacity, time=time, simulation=simulation)

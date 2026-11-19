@@ -348,7 +348,7 @@ Do items 1 and 2 below on the launcher computer, and item 3 on the client comput
        print(sorted(p.participant for p in c.peers()))
    ```
 
-   Run it in a shell in which you have set up the client as described in "Python" in [control-api.md](../control-api.md#python):
+   On every computer, use the `vehicle_sil_control` of the same vehicle-sil release as the launcher: the client refuses a launcher of another release at its first call. Run it in a shell in which you have set up the client as described in "Python" in [control-api.md](../control-api.md#python):
 
    ```sh
    python list_peers.py

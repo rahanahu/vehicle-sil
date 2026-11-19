@@ -348,7 +348,7 @@ netsh advfirewall firewall add rule name="vehicle-sil launch" dir=in action=allo
        print(sorted(p.participant for p in c.peers()))
    ```
 
-   [control-api.md](../control-api.md) の「Python」のコマンドでクライアントを準備したシェルで、実行します。
+   どの PC でも、ランチャーと同じ vehicle-sil のリリースの `vehicle_sil_control` を使います（クライアントは、別のリリースのランチャーを最初の呼び出しで断ります）。[control-api.md](../control-api.md) の「Python」のコマンドでクライアントを準備したシェルで、実行します。
 
    ```sh
    python list_peers.py

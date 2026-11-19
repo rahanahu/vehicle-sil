@@ -144,6 +144,7 @@ flowchart TD
     control_grpc --> control
     control_grpc --> core
     control_grpc -.-> control_proto
+    control_grpc -.-> ecu
     control_proto --> grpcpp
 ```
 

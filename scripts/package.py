@@ -40,8 +40,8 @@ Commands:
             run and run --scenario with the archive's launcher, runs check --connect on the template with an
             Ethernet network added (the launcher finds the bridge next to it in bin/ and runs its --describe; no
             adapter is opened), runs examples/launch_control/write_before_start.py with the archive's Python client
-            against `run --control` (gRPC: write before the start, step, read back), and starts the archive's
-            vehicle-sil-gui (its Python packages: uv run, which may download them; on Windows both the .cmd and the
+            against `run --control` (gRPC: the client's release check, write before the start, step, read back), and
+            starts the archive's vehicle-sil-gui (its Python packages: uv run, which may download them; on Windows both the .cmd and the
             sh entry) and asks it: the launcher usable, the variables available, the built screen, the timeline
             page (timeline/) and the client files (vsil/), both without the token, a check of simulation.yaml; then starts it with --web gui_starter (the archive's starter screen) and gets its page
             and, from vsil/, the client library and the parts it loads, and api/app with the token. Keeps the directory when a step fails (--keep:
@@ -51,7 +51,8 @@ Commands:
             package build/dist/vehicle-sil-gui-client-<version>.tgz (put there from build/gui-client), which the
             release carries on its own (npm install <its URL>).
   version   prints the version and checks that every place that names it agrees: CMakeLists.txt (project VERSION, the
-            source), pyproject.toml, gui/server/pyproject.toml, template/get_tools.py (VERSION), template/CMakeLists.txt
+            source), pyproject.toml, gui/server/pyproject.toml, python/vehicle_sil_control/__init__.py (__version__),
+            template/get_tools.py (VERSION), template/CMakeLists.txt
             (GIT_TAG v<version>), CHANGELOG.md (a heading "## [<version>] - Unreleased" or "## [<version>] -
             YYYY-MM-DD"). --expect v<version> also checks a tag, and that the heading has the release date.
 
@@ -238,6 +239,7 @@ def version_problems(version: str, release: bool = False) -> list[str]:
     checks = [
         ("pyproject.toml", r'(?m)^version = "([^"]*)"', '{}'),
         ("gui/server/pyproject.toml", r'(?m)^version = "([^"]*)"', '{}'),
+        ("python/vehicle_sil_control/__init__.py", r'(?m)^__version__ = "([^"]*)"', '{}'),
         ("template/get_tools.py", r'(?m)^VERSION = "([^"]*)"', '{}'),
         ("template/CMakeLists.txt", r"GIT_TAG\s+(\S+)", 'v{}'),
     ]
@@ -1041,8 +1043,8 @@ def verify_command(args: argparse.Namespace) -> int:
         s.notes.append(f"check --connect ETH=...: {ETHERNET_BRIDGE} found next to the launcher, its --describe passed")
 
     def control(s: Step) -> None:
-        # The launcher's control server through gRPC, with the archive's Python client: one write before the start,
-        # a step, a read (examples/launch_control/write_before_start.py on the template's ECUs).
+        # The launcher's control server through gRPC, with the archive's Python client: its release check, one write
+        # before the start, a step, a read (examples/launch_control/write_before_start.py on the template's ECUs).
         env = dict(os.environ, PYTHONPATH=str(tools / "python"))
         s.run(["uv", "run", "--quiet", "--no-project", "--no-build", *UV_MANAGED, "--python", python_versions(),
                "--with-requirements", tools / "python" / "requirements.txt", "python", "-P",

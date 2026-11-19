@@ -4,7 +4,7 @@
 - LaunchedTest: against vehicle_sil_launch run --control with the two ECUs of examples/ecu_main
   (started here).
 - ConversionTest: what the client makes of variables and values, without a server.
-- OlderServerTest: a server without GetSnapshot.
+- ReleaseTest: the release check of the first call, against a server here that answers Ping alone.
 (TLS, tokens and roles, the audit log and the CLI with them: test_launcher.py.)
 
 Environment: VEHICLE_SIL_LAUNCH_EXE, VEHICLE_SIL_EXAMPLE_DIR (examples/ecu_main in the build tree),
@@ -240,24 +240,80 @@ class ConversionTest(unittest.TestCase):
                          [("rejected", 1, 1), ("invalid", 0, None), ("unknown", None, None)])
 
 
-class OlderServerTest(unittest.TestCase):
-    """A server from before GetSnapshot (here: a gRPC server without any service)."""
+def ping_server(test, release):
+    """A gRPC server on a free local port whose ControlService answers Ping alone (with `release` as
+    the server's vehicle-sil release) and every other call with UNIMPLEMENTED. Returns (its address,
+    the list of the Ping requests' texts)."""
+    from concurrent import futures
+    import grpc
+    from vehicle_sil_control._stubs import pb, rpc
+    pings = []
 
-    def test_snapshot_says_that_the_server_has_no_such_call(self):
-        from concurrent import futures
+    class Service(rpc.ControlServiceServicer):
+        def Ping(self, request, context):
+            pings.append(request.text)
+            return pb.PingReply(text=request.text, server_version="vehicle-sil control v1", vehicle_sil=release)
+
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
+    rpc.add_ControlServiceServicer_to_server(Service(), server)
+    port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    test.addCleanup(server.stop, None)
+    return f"127.0.0.1:{port}", pings
+
+
+class ReleaseTest(unittest.TestCase):
+    """The client pings once before its first call and refuses a server of another release."""
+
+    def test_the_same_release_is_checked_once(self):
+        import vehicle_sil_control
+        address, pings = ping_server(self, vehicle_sil_control.__version__)
+        c = Control(address)
+        self.addCleanup(c.close)
+        self.assertEqual(pings, [])  # making a Control does not connect
+        self.assertEqual(c.ping("one"), "vehicle-sil control v1")
+        self.assertEqual(c.ping("two"), "vehicle-sil control v1")
+        self.assertEqual(pings, ["", "one", "two"])  # the check, then the calls
+
+    def refused(self, release):
         import grpc
-        from vehicle_sil_control import Control, ControlError
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
-        port = server.add_insecure_port("127.0.0.1:0")
-        server.start()
-        self.addCleanup(server.stop, None)
-        with Control(f"127.0.0.1:{port}") as c:
+        address, pings = ping_server(self, release)
+        with Control(address) as c:
+            for call in (c.peers, lambda: next(iter(c.watch()))):  # a call, and a watch
+                with self.assertRaises(ControlError) as refused:
+                    call()
+                self.assertEqual(refused.exception.code, grpc.StatusCode.FAILED_PRECONDITION)
+        self.assertEqual(pings, ["", ""])  # refused at the check, before the call; asked again next time
+        return str(refused.exception)
+
+    def test_another_release_is_refused(self):
+        import vehicle_sil_control
+        self.assertEqual(self.refused("0.0.1"),
+                         f"FAILED_PRECONDITION: the control server is vehicle-sil 0.0.1; this vehicle_sil_control is "
+                         f"{vehicle_sil_control.__version__}: use the vehicle_sil_control of the same release as the "
+                         "launcher")
+
+    def test_a_server_that_does_not_report_its_release_is_refused(self):
+        import vehicle_sil_control
+        self.assertEqual(self.refused(""),
+                         "FAILED_PRECONDITION: the control server does not report its vehicle-sil release (a 0.1.0 "
+                         "launcher, or one built before this check); this vehicle_sil_control is "
+                         f"{vehicle_sil_control.__version__}: use the vehicle_sil_control that came with the launcher")
+
+    def test_stubs_from_before_the_field_are_refused_without_a_call(self):
+        import types
+        from unittest import mock
+        import grpc
+        from vehicle_sil_control import client
+        address, pings = ping_server(self, "")
+        old = types.SimpleNamespace(DESCRIPTOR=types.SimpleNamespace(fields_by_name={}))  # a PingReply without the field
+        with Control(address) as c, mock.patch.object(client.pb, "PingReply", old):
             with self.assertRaises(ControlError) as refused:
-                c.snapshot()
-        self.assertEqual(refused.exception.code, grpc.StatusCode.UNIMPLEMENTED)
-        self.assertEqual(str(refused.exception),
-                         "UNIMPLEMENTED: the server has no GetSnapshot (it is older than this client): read "
-                         "sim.time() and values() instead; nothing holds between the two")
+                c.peers()
+        self.assertEqual(refused.exception.code, grpc.StatusCode.FAILED_PRECONDITION)
+        self.assertIn("are older than this vehicle_sil_control (their PingReply has no vehicle_sil): make them again "
+                      "with `python -m vehicle_sil_control.generate`", str(refused.exception))
+        self.assertEqual(pings, [])
 
 
 if __name__ == "__main__":

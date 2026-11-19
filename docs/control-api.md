@@ -105,7 +105,7 @@ In a scenario run (`--scenario`), a client can read, wait, move time and stop. I
 
 `vehicle-sil-reason` in the trailing metadata (value `scenario-running`) identifies the rejection of a write. For the table of calls and the guarantees, see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control).
 
-The scenario writes as the client `scenario`: its operations have `client` `scenario` (`Operation.client` in `Watch`, `GetOperation` and `WaitOperation`). This name is fixed. A watch that does not need the scenario's own operations (there can be one in every step) names it in `WatchRequest.operation_clients_excluded`: the operations of the clients in that list are not sent at all, and `Update.dropped` does not count them. An empty list sends every operation. The initial updates of a watch have no operations. A name matches `Operation.client` exactly: a gRPC client's `client` is `<name>@<the address of its connection>` and changes with each connection, so only a fixed name is useful in the list, and `scenario` is the only fixed name now. A Control Server of an earlier version ignores the list and sends every operation. The GUI server's watch leaves out `scenario`. The Python client's `Control.watch()` has no argument for the list, so a Python watch receives the scenario's operations too.
+The scenario writes as the client `scenario`: its operations have `client` `scenario` (`Operation.client` in `Watch`, `GetOperation` and `WaitOperation`). This name is fixed. A watch that does not need the scenario's own operations (there can be one in every step) names it in `WatchRequest.operation_clients_excluded`: the operations of the clients in that list are not sent at all, and `Update.dropped` does not count them. An empty list sends every operation. The initial updates of a watch have no operations. A name matches `Operation.client` exactly: a gRPC client's `client` is `<name>@<the address of its connection>` and changes with each connection, so only a fixed name is useful in the list, and `scenario` is the only fixed name now. The GUI server's watch leaves out `scenario`. The Python client's `Control.watch()` has no argument for the list, so a Python watch receives the scenario's operations too.
 
 ### In a run that is connected outside
 
@@ -398,7 +398,7 @@ The gRPC calls, the matching methods of the Python client (methods of `Control`;
 
 | gRPC | What it does | Python | CLI | Role |
 |---|---|---|---|---|
-| `Ping` | Returns the server version. | `ping()` | None | `viewer` |
+| `Ping` | Returns the server version (`server_version`) and the vehicle-sil release the server was built from (`vehicle_sil`). | `ping()` (returns `server_version`) | None | `viewer` |
 | `ListPeers` | Reads the list of peers and their variables. | `peers()`, `peer()` | `peers`, `show` | `viewer` |
 | `GetValues` | Reads the latest values of one peer. | `values()` | `show` | `viewer` |
 | `GetSnapshot` | Reads the time and values together. | `snapshot()` | None | `viewer` |
@@ -490,6 +490,8 @@ Times are virtual time in nanoseconds. Make them with `ms()` and `s()`.
 | A call fails | The exception `ControlError` (see [Errors](#errors)). |
 | The Agent rejects a write | Not an exception: the result of the operation (`invalid` and others). |
 
+Use the `vehicle_sil_control` of the same vehicle-sil release as the launcher. Making a `Control` does not connect. At its first call or watch, `Control` asks the server's release with one `Ping`. Another release is refused with `ControlError` (`code` `FAILED_PRECONDITION`): `the control server is vehicle-sil <X>; this vehicle_sil_control is <Y>: use the vehicle_sil_control of the same release as the launcher`. A server that does not report its release (a 0.1.0 launcher, or one built before this check) is refused the same way: `the control server does not report its vehicle-sil release (...); this vehicle_sil_control is <Y>: use the vehicle_sil_control that came with the launcher`. Stubs generated before the client knew the field are refused before any call, with a message that says to run `python -m vehicle_sil_control.generate` again. A `Ping` that fails (the server is not there yet) is tried again at the next call.
+
 ### Rules for writes
 
 | Topic | Rule |
@@ -526,15 +528,12 @@ Times are virtual time in nanoseconds. Make them with `ms()` and `s()`.
 | `simulation_state` | The SIL Kit state. |
 | `virtual_time` | Whether the Agent runs on the simulation's time, as the Agent's hello says. False means a real-time peer, or no Agent. |
 
-A server of an earlier version, without `virtual_time`, gives false for every peer.
-
 | Variable field (each element of `schema`) | Meaning |
 |---|---|
 | `builtin` | Whether vehicle-sil added the variable (true) or the application declared it (false). |
 | `source` | For a variable to which the variable map of the configuration file (`participants[].variables`) applies, its name in the executable. Empty if no mapping applies. |
 
 - The server decides `builtin` by the name: true if the name starts with `ecu.`, `peer.` or `j1939.`. If the application declares a variable whose name starts with `j1939.`, that variable is true as well.
-- A server of an earlier version, without `source`, also gives an empty `source`.
 
 For a peer with a variable map, these are after mapping:
 
@@ -613,7 +612,6 @@ Which peers `values` contains:
 | Role | `viewer` can call it. |
 | Names per call | Up to 1024. More gives `INVALID_ARGUMENT`. |
 | The response is larger than the limit of one message (4 MiB) | `RESOURCE_EXHAUSTED`. As the message says, split the peers over several calls. Nothing is guaranteed about how separate calls relate. |
-| A server of an earlier version, without this call | `ControlError` (`code` is `UNIMPLEMENTED`). Use `sim.time()` and `values()` instead. Nothing is guaranteed about how the two relate. |
 
 ## CLI
 
@@ -643,10 +641,10 @@ A failed call returns a gRPC status code. In Python, it raises the exception `Co
 | Status code | Returned when |
 |---|---|
 | `INVALID_ARGUMENT` | An argument is wrong (a speed out of range, a step of 0 or less, more than 1024 names for `snapshot()`). |
-| `FAILED_PRECONDITION` | The call is not possible now (`step` while not paused, `Stop` after the end, writes during a scenario, a pause or another speed in a run that is connected outside and keeps real time). |
+| `FAILED_PRECONDITION` | The call is not possible now (`step` while not paused, `Stop` after the end, writes during a scenario, a pause or another speed in a run that is connected outside and keeps real time). The Python client also raises it for a server of another vehicle-sil release. |
 | `CANCELLED` | The server closed while the call was waiting (`WaitPaused`; it can also get `FAILED_PRECONDITION`). |
 | `RESOURCE_EXHAUSTED` | The response of `snapshot()` was larger than the limit of one message (4 MiB). |
-| `UNIMPLEMENTED` | The server is an earlier version without that call. |
+| `UNIMPLEMENTED` | The address answers gRPC but is not a vehicle-sil Control Server (it has no such call). |
 
 Writes during a scenario have the `reason` `scenario-running`.
 
