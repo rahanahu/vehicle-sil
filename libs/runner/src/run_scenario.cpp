@@ -122,6 +122,40 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
             }
         }
     }
+    if (ctx_.scenario->samples == ScenarioSamples::EveryStep)
+    {
+        // Before anything is written: with samples further apart than the ECU's steps, a condition
+        // would pass over what the variable does in between. The step is the description's (the
+        // hello's is 0 unless the transport's owner gave it).
+        const std::vector<bool> read = participants_read(*ctx_.scenario);
+        for (std::size_t i = 0; i < found.size(); ++i)
+        {
+            const ScenarioParticipant& participant = ctx_.scenario->participants[i];
+            const auto link = std::find_if(links.begin(), links.end(), [&participant](const control_silkit::LinkInfo& info) {
+                return info.participant == participant.name && info.state == control_silkit::LinkState::Connected && info.ready;
+            });
+            if (read[i] && found[i].connected && link->sample_period > participant.step)
+            {
+                bool asked = false;
+                for (std::size_t place = 0; place < places_.size(); ++place)
+                {
+                    asked = asked || (places_[place] == std::optional<std::size_t>(i) && ctx_.plan.members[place].sample_every_step);
+                }
+                not_observed_.push_back(ScenarioNotObserved{participant.name, link->sample_period, participant.step, asked});
+            }
+        }
+        if (!not_observed_.empty())
+        {
+            std::string names;
+            for (const ScenarioNotObserved& coarse : not_observed_)
+            {
+                names += (names.empty() ? "" : ", ") + coarse.participant;
+            }
+            out_.say("scenario: not begun: the scenario reads values of " + names +
+                     ", which sends them less often than every step of its own (scenario-not-observed)");
+            return;
+        }
+    }
     port_ = std::make_unique<HubPort>(control_.hub());
     port_->give_up = cancelled;
     if (!ctx_.plan.timeline.empty())
@@ -147,7 +181,11 @@ void RunScenario::start(SimulationController& controller, RunOutcome& outcome)
     {
         // The window ended before the scenario began (the start was being given up): nothing
         // moves the guard, so the simulation is stopped where it stands.
-        outcome.scenario.error = "the scenario could not begin before the simulation started";
+        // (Or begin() refused to begin it: not_observed_, which finish() reports.)
+        if (not_observed_.empty())
+        {
+            outcome.scenario.error = "the scenario could not begin before the simulation started";
+        }
         over_.store(true);
         return;
     }
@@ -206,7 +244,9 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
     }
     if (!engine_)
     {
-        outcome.scenario.result->status = ScenarioStatus::Incomplete;
+        // Refused at the start: a failure with a reason of its own, and no step was run.
+        outcome.scenario.result->status = not_observed_.empty() ? ScenarioStatus::Incomplete : ScenarioStatus::Failed;
+        outcome.scenario.not_observed = not_observed_;
         return;
     }
     // Whatever is taken from here on is not the scenario's (below: once more, for a stop_at_ms).

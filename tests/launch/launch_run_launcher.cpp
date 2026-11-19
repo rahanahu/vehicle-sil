@@ -113,6 +113,7 @@ int main(int argc, char** argv)
             {"scenario_disconnect", scenario_disconnect},
             {"scenario_each_write", scenario_each_write},
             {"scenario_failures", scenario_failures},
+            {"scenario_samples", scenario_samples},
             {"scenario_same", scenario_same},
             {"scenario_time_commands_same", scenario_time_commands_same},
             {"scenario_paused_timeout", scenario_paused_timeout},

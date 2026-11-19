@@ -638,6 +638,7 @@ void scenario_disconnect(const Options& o);
 void ethernet(const Options& o);
 void scenario_expect_beside(const Options& o);
 void scenario_failures(const Options& o);
+void scenario_samples(const Options& o);
 
 // launch_run_scenario_time.cpp
 void scenario_time_commands_same(const Options& o);

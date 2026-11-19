@@ -70,7 +70,10 @@ enum class ScenarioStatus
 {
     NotRun,     ///< the simulation did not start
     Passed,     ///< every step passed or was skipped (ScenarioRun::skipped() says how many)
-    Failed,     ///< a step failed (the first one in virtual time; ScenarioRun::steps says which)
+    /// A step failed (the first one in virtual time; ScenarioRun::steps says which), or the run
+    /// refused to begin the scenario (no step was run; the run's finding says why, e.g.
+    /// "scenario-not-observed").
+    Failed,
     Incomplete, ///< the simulation ended for another reason before the last step was decided
 };
 /// "not_run", "passed", "failed", "incomplete".

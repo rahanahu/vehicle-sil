@@ -522,7 +522,7 @@ parameters: throttle = 30 (--param), speed = 1400 (--param)
 ```text
 line  step                                                                              result  at
 6     set Engine.engine.throttle = 30                                                   ok      0 ms
-7     expect Dashboard.dashboard.engine_speed near 1400 (tolerance 50) (within 600 ms)  ok      310 ms
+7     expect Dashboard.dashboard.engine_speed near 1400 (tolerance 50) (within 600 ms)  ok      305 ms
 ```
 
 機種 `engine_only` を選ぶと、何も起動せずに終了コード 1 で終わり、次のエラーが表示されます。
@@ -713,9 +713,9 @@ scenario scenarios/engine_disconnect.yaml (engine disconnect): passed, 4 of 4 st
 
 line  step                                                             result  at
 9     set Engine.ecu.connected = false                                 ok      300 ms
-11    expect Dashboard.dashboard.engine_lost eq true (within 400 ms)   ok      510 ms
+11    expect Dashboard.dashboard.engine_lost eq true (within 400 ms)   ok      505 ms
 13    set Engine.ecu.connected = true                                  ok      520 ms
-14    expect Dashboard.dashboard.engine_lost eq false (within 200 ms)  ok      610 ms
+14    expect Dashboard.dashboard.engine_lost eq false (within 200 ms)  ok      605 ms
 ```
 
 `line` は、コメントを含むファイルの行番号です。
@@ -729,12 +729,13 @@ line  step                                                             result  a
 
 ## 注意点
 
-シナリオが見る値は、ECU が `sample_period`（既定は仮想時間の 10 ms）ごとに送信するサンプルです。次の表の上の 2 つは、そのために起きます。
+シナリオが見る値は、ECU のサンプルです。シナリオつきの実行では、シナリオが値を読む ECU は、ECU のステップごとにサンプルを送信します。次の表の上の 2 つは、`samples: as_sent` を書いたシナリオだけで起きます。このシナリオは、それぞれの ECU が `sample_period`（既定は仮想時間の 10 ms）ごとに送信するサンプルを使います（[scenario.md](../scenario.md#ecu-が値を送る頻度samples) の「ECU が値を送る頻度」）。
 
 | 症状 | 原因 | 直し方 |
 |---|---|---|
-| `set` と同じ時刻の `expect` が、設定する前の値を見て失敗する | その時刻に始まる ECU のステップが、サンプルを取らないことがあります。照合ではわかりません。 | 値が反映されたことは、`within_ms` を付けた `expect` で確認します。 |
-| 短いパルスが、`within_ms` でも `hold_for_ms` でも見えない | サンプルとサンプルの間に変化して戻った値は、条件に現れません。 | ECU の `sample_period` を小さくします（[control-api.md](../control-api.md) の「ECU の変数」の `set_agent_options()`）。 |
+| `samples: as_sent` で、`set` と同じ時刻の `expect` が、設定する前の値を見て失敗する | その時刻に始まる ECU のステップが、サンプルを取らないことがあります。 | `samples: as_sent` を消します。または、値が反映されたことを、`within_ms` を付けた `expect` で確認します。 |
+| `samples: as_sent` で、短いパルスが、`within_ms` でも `hold_for_ms` でも見えない | サンプルとサンプルの間に変化して戻った値は、条件に現れません。 | `samples: as_sent` を消して、ECU がステップごとにサンプルを送信するようにします。 |
+| 最初のステップの前に、実行が `scenario-not-observed` で失敗する | シナリオが値を読む ECU が、ステップより粗い頻度で値を送信していて、その実行ファイルが `--sample-every-step` を受け取りません。 | 実行ファイルをこの vehicle-sil で作り直します。作り直せなければ、シナリオの最上位に `samples: as_sent` を書きます。 |
 | 待つ手順の次の `after_ms` が、表の `at` から数えた時刻とずれる | 待つ手順が終わる時刻は、条件が成り立ったサンプルの時刻（`at`）の少し後です。 | 時刻に余裕を持たせます。決め方は、[scenario.md](../scenario.md) の「時刻」にあります。 |
 | `--scenario cannot be used with --start-paused`（終了コード 4） | シナリオは、時刻 0 の値を自分で書き込んで実行します。 | `--start-paused` を外します。 |
 | `--control` で接続したクライアントが、シナリオの実行中に値を書き込めない | シナリオの実行中、クライアントは書き込めません。シナリオのファイルにない書き込みは、結果を変えるからです。読む、待つ、一時停止する、ステップで進める、止めることはできます（一時停止とステップ実行は、結果を変えません）。 | 値を変えながら確認するときは、[信号を外から操作する](operate-signals.md) の方法を使います。 |

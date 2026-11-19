@@ -250,7 +250,7 @@ JSON Schema は [schema/simulation.schema.json](../../schema/simulation.schema.j
 
 | 書くもの | 扱い |
 |---|---|
-| `ecu_main` の引数（`--describe`、`--name`、`--registry-uri`、`--local`、`--run-for-ms`、`--start-timeout-ms`、`--map-network`、`--j1939-node`、`--help`、`-h`。`--name=X` の形も） | 書けません（エラー `launcher-argument`）。`--map-network` は `network_names` に（[ネットワークの名前を合わせる](#ネットワークの名前を合わせるnetwork_names)）、`--j1939-node` は `j1939_nodes` に（[J1939 のアドレスと NAME を合わせる](#j1939-のアドレスと-name-を合わせるj1939_nodes)）書きます。 |
+| `ecu_main` の引数（`--describe`、`--name`、`--registry-uri`、`--local`、`--run-for-ms`、`--start-timeout-ms`、`--map-network`、`--j1939-node`、`--sample-every-step`、`--help`、`-h`。`--name=X` の形も） | 書けません（エラー `launcher-argument`）。`--map-network` は `network_names` に（[ネットワークの名前を合わせる](#ネットワークの名前を合わせるnetwork_names)）、`--j1939-node` は `j1939_nodes` に（[J1939 のアドレスと NAME を合わせる](#j1939-のアドレスと-name-を合わせるj1939_nodes)）書きます。 |
 | `--no-control` | 書けます（その ECU は変数を公開しません）。 |
 | `--silkit-config <file>` | 書けます（その ECU に SIL Kit の設定ファイルを渡します）。 |
 | `required: false` | 書けません（エラー `not-required-ecu`）。`role: bridge` なら書けます。 |

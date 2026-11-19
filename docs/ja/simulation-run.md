@@ -180,7 +180,7 @@ SIL Kit が participant を接続する順序から、hello はこの待ちが�
 
 ### 通信量と認証
 
-値は間引きません。ECU は Agent の `sample_period`（既定 10 ms の仮想時間）ごとに全変数を送信します。ECU が多く、変数が多く、速く動かすほど、量が増えます。重いときは、ECU の `sample_period` を大きくします。
+値は間引きません。ECU は Agent の `sample_period`（既定 10 ms の仮想時間）ごとに全変数を送信します。ECU が多く、変数が多く、速く動かすほど、量が増えます。重いときは、ECU の `sample_period` を大きくします。シナリオつきの実行では、シナリオが値を読む ECU は、`sample_period` にかかわらず、ECU のステップごとに送信します（[scenario.md](scenario.md#ecu-が値を送る頻度samples) の「ECU が値を送る頻度」）。
 
 ECU と `vehicle_sil_launch` の間に認証はありません。registry に参加できる者は、ECU の変数に書けます（バスにフレームを送信できるのと同じです）。registry は既定で 127.0.0.1 だけで待ち受けます。
 
@@ -1032,6 +1032,7 @@ passed: 0 errors, 1 warning, 1 note
 | `before-start` | エラー | 開始を待っている間にする処理が失敗した |
 | `behind-real-time` | 警告 | 速度を合わせたタイムステップのうち、遅れが `late_tolerance_ms` を超えたものがあった |
 | `coarse-time-step` | 警告 | 速度の指定があり、controller のタイムステップが ECU のステップより粗い |
+| `scenario-not-observed` | エラー | シナリオを始めなかった。シナリオが値を読む ECU が、ステップより粗い頻度で値を送信している |
 | `timeline-write` | エラー | `--timeline` のファイルを、実行の後に書けなかった（開けたが、書き込みが失敗した） |
 | `timeline-limit` | 注記 | `--timeline` のファイルが、上限で古い側の点を捨てた |
 | `interrupted` | 注記 | 中断された（シグナル、標準入力の終わり、閉じた標準出力） |
@@ -1049,6 +1050,7 @@ passed: 0 errors, 1 warning, 1 note
 | `control-link-dropped` | 受け付けなかった hello、読めなかったメッセージ、知っている ECU やその変数に合わなかったメッセージの数を書きます。 |
 | `control-link-version` | `--describe` の出力のバージョンが違うときは、照合の同じ `code` の指摘で、実行では繰り返しません。 |
 | `control-link-late-values` | ステップの外から送信しています（自作の通信の側のエラー）。 |
+| `scenario-not-observed` | シナリオの手順は 1 つも動かず、`scenario.status` は `failed` です。指摘の文に、participant、その `sample_period` とステップ、直し方があります（[scenario.md](scenario.md#ecu-が値を送る頻度samples) の「ECU が値を送る頻度」）。 |
 | `variable-map-not-applied` | どれが、なぜ合わないかを書きます。 |
 | `before-start` | 処理は、`run` を関数として呼ぶ側が渡すものです（内部用）。 |
 | `behind-real-time` | 遅れたタイムステップの数、最大の遅れ、ずれの合計、全体の実際の速度、止まったまま終わったならそのときの遅れを書きます。外につながっていて実時間を保つ実行では、つながっている相手は待たないので、遅れた分だけ相手とずれたことも書きます。 |

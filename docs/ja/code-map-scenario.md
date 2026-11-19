@@ -87,6 +87,9 @@
 | `points` の CSV ファイル | 分けるのは `libs/scenario/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `libs/launch/src/probe/probe.cpp` の `files_beside()`、パスの検査とセルの意味は `scenario_waves.cpp` の `path_problem()`、`file_points()`、`cell_value()` |
 | 波形の計算 | `libs/signal` の `signal/waveform.hpp` |
 | ランチャーへの組み込み | `libs/runner/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`） |
+| シナリオが判定に使うサンプル（`samples`）: シナリオが値を読む participant | `libs/scenario/src/scenario.cpp` の `participants_read()` |
+| 照合の指摘 `scenario-samples-*` と、実行が `--sample-every-step` を付けて起動する participant | `libs/scenario/src/scenario_check.cpp` の `scenario_samples_findings()` と `sample_every_step_participants()`。計画は答えを `RunMember::sample_every_step` に持つ |
+| ECU がステップより粗い頻度で送信するシナリオを断る（`scenario-not-observed`） | `RunScenario::begin()`。指摘の文は `libs/runner/src/run_assess.cpp` |
 | 時間のゲートのガード | `SimulationController::guard_from()` と `wait_guarded()` |
 | 全サンプルを受け取る tap | `control::Hub::set_values_tap()` |
 | 実行の tap（シナリオは、ここからサンプルを取り出す） | `libs/runner/src/run_samples.cpp` の `RunSamples` |
@@ -154,6 +157,8 @@
 - `launch_run.scenario_time_commands_same`: 「判定は仮想時間だけで決まる」ことの基準。1 つのシナリオ（0 ms の書き込み、`expect` つきの波形、`within_ms`、`hold_for_ms`、`wait_until`、ramp）を、だれも触らずに 1 回、標準入力の `pause`、`resume`、`step`、`run_until`、`speed` を混ぜて何回か実行する。コマンドは、実行ごとに違う実時間と、シナリオが書き込み、判定するちょうどその時刻に送る。結果の `scenario`、`scenario_step` のイベント、タイムラインのファイルが 1 バイトも違わないこと
 - `launch_run.scenario_paused_timeout`: 一時停止のまま `--timeout-ms` が切れたシナリオの実行。実行は失敗（`timeout`）、シナリオは `incomplete`
 - `launch_run.scenario_failures`
+- `launch_run.scenario_samples`: ECU 自身の周期のサンプルとサンプルの間の、1 ステップだけの異常な値で、保持と `expect` が失敗し、`samples: as_sent` では通ること。`--sample-every-step` に従わない ECU を、最初のステップの前に断ること
+- `tests/launch/test_scenario_samples.cpp`: キー `samples`、シナリオが値を読む participant、照合の指摘、計画と引数、指摘 `scenario-not-observed`
 - `core.time_gate_model_the_guard_*`、`core.virtual_time_gate_guard_*`
 - `control.control_hub_tap_*`
 

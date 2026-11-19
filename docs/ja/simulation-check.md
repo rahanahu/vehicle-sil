@@ -159,6 +159,8 @@
 | `j1939-node-changed` | 注記 | participant の `j1939_nodes` の行が、ノードのアドレスか NAME を変えます（participant ごとに 1 件）。 | 古い値に頼っている ECU がないかを確かめます（下の補足）。 |
 | `variant-participant` | エラー | 機種（`variants`）の `participants` に、設定ファイルの `participants` にない名前があります。 | 名前を直すか、その機種にだけいる participant なら、`participants` に `enabled: false` で書きます。 |
 | `scenario-nothing-checked` | 警告 | `--scenario` のシナリオの確認する手順（`expect`、`wait_until`）が、この設定（機種）では全部飛びます。 | 変数の名前が違うだけなら `variables` で対応させ、この機種向けでないシナリオなら、シナリオの `only` に対象の機種を書きます。 |
+| `scenario-samples-unsupported` | 警告 | `--scenario` のシナリオが値を読む participant の実行ファイルが、`--sample-every-step` を受け取れません（`--describe` の出力の `features` に `sample-every-step` がありません）。`run` は、ECU のステップごとのサンプルを頼めません。説明のない participant には出しません。 | 実行ファイルを、この vehicle-sil かそれ以降で作り直します。または、シナリオに `samples: as_sent` を書きます。 |
+| `scenario-samples-as-sent` | 注記 | `--scenario` のシナリオに `samples: as_sent` があり、値を読みます。それぞれの ECU が送信するままのサンプルで判定します。 | 意図したとおりなら、何もしません。 |
 | `usage` | エラー | 引数のエラーです（`--json` のときの JSON だけ）。 | 標準エラーの使い方に従って、引数を直します。 |
 | `internal` | エラー | `vehicle_sil_launch` 自身の想定外の失敗です（`--json` のときの JSON だけ）。 | 標準エラーの理由を確認します。 |
 
@@ -194,6 +196,7 @@
 | `j1939-node-changed` | 変わるノードごとに、コードの値と新しい値を並べます。照合は、古い値に頼っているものを見られません。古いアドレスをコードに書いているほかの ECU（宛先や、送り手の見分け）、古い NAME の全体で探すほかの ECU、ECU 自身のコードの定数（フィルター、送るデータの中の値）です。全部の行がコードと同じ値になる participant と、無効にした participant には出しません。コードで空いているアドレスを取るノードには、アドレスについての文を付けません。 |
 | `network-map-not-checked` | 指摘の文は、その実行で `run` が追加する引数を書きます。引数は、選んだ機種と `--disable` を当てた後の設定で決まり、追加する引数のない participant には出しません。`run` は `--map-network` を追加するので、ecu_main でない実行ファイルは、起動のときに引数のエラーで終わります。 |
 | `scenario-nothing-checked` | シナリオは、何も確認せずに通ります（[scenario.md](scenario.md) の「機種とパラメーター」）。 |
+| `scenario-samples-unsupported` | 実行は、その実行ファイルを引数なしで起動します。その ECU がステップより粗い頻度で値を送信していれば、実行は最初のステップの前に `scenario-not-observed` で失敗します（[scenario.md](scenario.md#ecu-が値を送る頻度samples) の「ECU が値を送る頻度」）。 |
 | `usage` | 機種を書いた設定ファイルに `--variant` がない、ない機種の名前、シナリオにない名前の `--param`、も含みます。 |
 
 **`unknown-network`**: 指摘の文は、同じ種類のネットワークで、その participant が使わず、ほかの participant が使うものがあれば、それを名指しします（`networks` にあるものも、ないものも）。そのうえで、1 つのバスのつもりなら、その participant に書く `network_names` の行（`network_names: { J1939_CAN: VehicleCAN }`。向きは「シミュレーションの名前: 実行ファイルの名前」。実行ファイルは変えない）を、別のバスなら `networks` に追加することを言います。挙げたネットワークがどれも `networks` にないときは、先に名前を 1 つ決めて `networks` に追加することを言います。名指しするネットワークがなければ、`networks` に追加することを先に言います。`network_names` で名前を替えたネットワークは、替えた後の名前で比べます。

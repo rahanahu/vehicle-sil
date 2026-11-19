@@ -522,7 +522,7 @@ parameters: throttle = 30 (--param), speed = 1400 (--param)
 ```text
 line  step                                                                              result  at
 6     set Engine.engine.throttle = 30                                                   ok      0 ms
-7     expect Dashboard.dashboard.engine_speed near 1400 (tolerance 50) (within 600 ms)  ok      310 ms
+7     expect Dashboard.dashboard.engine_speed near 1400 (tolerance 50) (within 600 ms)  ok      305 ms
 ```
 
 If you select the variant `engine_only`, the launcher starts nothing, exits with code 1 and prints the error below.
@@ -713,9 +713,9 @@ scenario scenarios/engine_disconnect.yaml (engine disconnect): passed, 4 of 4 st
 
 line  step                                                             result  at
 9     set Engine.ecu.connected = false                                 ok      300 ms
-11    expect Dashboard.dashboard.engine_lost eq true (within 400 ms)   ok      510 ms
+11    expect Dashboard.dashboard.engine_lost eq true (within 400 ms)   ok      505 ms
 13    set Engine.ecu.connected = true                                  ok      520 ms
-14    expect Dashboard.dashboard.engine_lost eq false (within 200 ms)  ok      610 ms
+14    expect Dashboard.dashboard.engine_lost eq false (within 200 ms)  ok      605 ms
 ```
 
 The `line` column counts lines in the file including its comments.
@@ -729,12 +729,13 @@ The code of the Dashboard ECU does the detection; the scenario only reads its ou
 
 ## Pitfalls
 
-The values that a scenario sees are the samples that each ECU sends every `sample_period` (10 ms of virtual time by default). The first 2 rows of this table follow from that.
+The values that a scenario sees are the samples of the ECUs. In a run with a scenario, an ECU whose values the scenario reads sends one after every ECU step. The first 2 rows of this table apply only to a scenario with `samples: as_sent`, which takes the samples every `sample_period` of each ECU (10 ms of virtual time by default); see "How often the ECUs send their values" in [scenario.md](../scenario.md#how-often-the-ecus-send-their-values-samples).
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| An `expect` at the same time as a `set` sees the value from before the `set`, and fails | The ECU step that starts at that time may not take a sample. The check cannot detect this. | Use an `expect` with `within_ms` to check that the value was applied. |
-| A short pulse is not seen, with either `within_ms` or `hold_for_ms` | A value that changes and changes back between 2 samples does not appear in the condition. | Make the ECU's `sample_period` smaller (`set_agent_options()` in "ECU variables" in [control-api.md](../control-api.md#ecu-variables)). |
+| With `samples: as_sent`, an `expect` at the same time as a `set` sees the value from before the `set`, and fails | The ECU step that starts at that time may not take a sample. | Remove `samples: as_sent`, or use an `expect` with `within_ms` to check that the value was applied. |
+| With `samples: as_sent`, a short pulse is not seen, with either `within_ms` or `hold_for_ms` | A value that changes and changes back between 2 samples does not appear in the condition. | Remove `samples: as_sent`, so that the ECU sends a sample after every ECU step. |
+| The run fails before the first step with `scenario-not-observed` | An ECU whose values the scenario reads sends them less often than its step, and its executable does not accept `--sample-every-step`. | Build the executable again with this vehicle-sil. If you cannot, write `samples: as_sent` at the top of the scenario. |
 | An `after_ms` after a wait step does not match the time counted from the `at` in the table | A wait step ends a little after the time of the sample in which the condition held (`at`). | Leave a margin in the times. For how the time is decided, see "Timing" in [scenario.md](../scenario.md#timing). |
 | `--scenario cannot be used with --start-paused` (exit code 4) | A scenario itself writes the values at time 0 when it runs. | Remove `--start-paused`. |
 | A client connected with `--control` cannot write values while a scenario runs | While a scenario runs, a client cannot write: a write that is not in the scenario file would change the result. It can read, wait, pause, step and stop (pausing and stepping do not change the result). | To check values while you change them, use the methods in [Read and write signals from outside](operate-signals.md). |

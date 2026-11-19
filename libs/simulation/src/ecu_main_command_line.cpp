@@ -113,6 +113,7 @@ std::string usage(const std::string& program, const EcuMainOptions& options)
            "       " + pad + "                      [--silkit-config <file>]\n"
            "       " + pad + "                      [--map-network <simulation's name>=<executable's name>]...\n"
            "       " + pad + "                      [--j1939-node <network>=<setting>:<value>[,...]]...\n"
+           "       " + pad + "                      [--sample-every-step]\n"
            "       " + pad + " --local --run-for-ms <ms> [--name <name>]\n"
            "       " + pad + " --help\n"
            "the ECU " + in_quotes(options.name) + ", step " + duration_text(options.step) + "\n"
@@ -134,6 +135,9 @@ std::string usage(const std::string& program, const EcuMainOptions& options)
            "                          from:<address in the code>, address:<a>, identity_number:<n>,\n"
            "                          function_instance:<n>, ecu_instance:<n>, separated by commas\n"
            "                          (e.g. " + std::string(kJ1939NodeExample) + ")\n"
+           "  --sample-every-step     with --registry-uri: send the values of the ECU's variables after every\n"
+           "                          step of the ECU, whatever its code says (sample_period); vehicle_sil_launch\n"
+           "                          gives it to the ECUs whose values a scenario reads\n"
            "  --local                 run this ECU alone on local virtual buses, for --run-for-ms\n"
            "  --run-for-ms <ms>       how long --local runs (virtual time, > 0)\n"
            "  --name <name>           the participant name instead of " + in_quotes(options.name) + "; only the name\n"
@@ -195,6 +199,10 @@ CommandLine parse(const std::vector<std::string_view>& args)
         else if (arg == "--no-control")
         {
             c.no_control = true; // only --registry-uri has anything to leave out; accepted with every mode
+        }
+        else if (arg == ecu_executable::kSampleEveryStepArgument)
+        {
+            c.sample_every_step = true;
         }
         else if (arg == "--registry-uri")
         {
@@ -341,6 +349,14 @@ CommandLine parse(const std::vector<std::string_view>& args)
                                "code, whatever a simulation changes them to; leave --j1939-node out"
                              : "--j1939-node is for --registry-uri: --local runs the ECU alone on local virtual buses, "
                                "where no other ECU needs another address; leave --j1939-node out");
+    }
+    if (c.sample_every_step && !c.registry_uri)
+    {
+        throw UsageError(c.describe
+                             ? "--sample-every-step is for --registry-uri: --describe runs nothing, so there are no values "
+                               "to sample; leave --sample-every-step out"
+                             : "--sample-every-step is for --registry-uri: --local runs the ECU alone, and nothing reads "
+                               "its variables from outside; leave --sample-every-step out");
     }
     if (const std::string error = ecu_executable::j1939_node_arguments_error(c.j1939_nodes); !error.empty())
     {

@@ -163,6 +163,25 @@ void Reader::read()
                 out_.name = scenario_.name;
             }
         }
+        else if (key == "samples")
+        {
+            const std::string word = is_scalar(child) && !is_null(child) ? detail::to_string(tree_.val(child)) : std::string{};
+            if (word == scenario_samples_name(ScenarioSamples::EveryStep))
+            {
+                scenario_.samples = ScenarioSamples::EveryStep;
+            }
+            else if (word == scenario_samples_name(ScenarioSamples::AsSent))
+            {
+                scenario_.samples = ScenarioSamples::AsSent;
+            }
+            else
+            {
+                error("value", doc_.line(child),
+                      "samples must be every_step or as_sent, not " + shown_value(child) +
+                          ": every_step (the default) makes the ECUs whose values the scenario reads send them after "
+                          "every step of theirs; as_sent takes the values as often as each ECU sends them");
+            }
+        }
         else if (key == "steps")
         {
             stepsNode = child;
@@ -1315,6 +1334,32 @@ bool holds(const ScenarioComparison& comparison, const control::Value& value)
     case Compare::Near: return std::fabs(x - y) <= comparison.tolerance;
     }
     return false;
+}
+
+const char* scenario_samples_name(ScenarioSamples samples)
+{
+    return samples == ScenarioSamples::AsSent ? "as_sent" : "every_step";
+}
+
+std::vector<bool> participants_read(const Scenario& scenario)
+{
+    std::vector<bool> out(scenario.participants.size(), false);
+    const auto reads = [&](std::size_t variable) { out[scenario.variables[variable].participant] = true; };
+    for (const ScenarioStep& step : scenario.steps)
+    {
+        for (const ScenarioCondition& condition : step.conditions)
+        {
+            reads(condition.variable);
+        }
+        for (const ScenarioMotion& motion : step.motions)
+        {
+            if (!motion.base && motion.shape && motion.shape->uses_base())
+            {
+                reads(motion.variable);
+            }
+        }
+    }
+    return out;
 }
 
 ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog, const ScenarioContext& context)

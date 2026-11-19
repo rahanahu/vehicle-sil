@@ -34,6 +34,14 @@ RunPlan plan_run(const CheckReport& check, const ScenarioCheck* scenario, std::f
     {
         plan.members.emplace_back().outside = outside;
     }
+    if (const Scenario* read = plan.scenario(); read != nullptr)
+    {
+        const std::vector<bool> asked = sample_every_step_participants(check, *read);
+        for (std::size_t i = 0; i < asked.size(); ++i)
+        {
+            plan.members[i].sample_every_step = asked[i];
+        }
+    }
     plan.base = std::move(base);
     // The file's participants only: a bridge of --connect runs in real time, the gate does not move it.
     const SimulationConfig& config = *check.config;

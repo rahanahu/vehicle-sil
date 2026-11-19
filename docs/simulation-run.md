@@ -180,7 +180,7 @@ A participant that joins after the start (`required: false`, a real-time `Peer` 
 
 ### Traffic and authentication
 
-Values are not thinned out. An ECU sends all its variables every `sample_period` of its Agent (default: 10 ms of virtual time). The traffic grows with more ECUs, more variables and a higher speed. If the load is too high, increase the ECU's `sample_period`.
+Values are not thinned out. An ECU sends all its variables every `sample_period` of its Agent (default: 10 ms of virtual time). The traffic grows with more ECUs, more variables and a higher speed. If the load is too high, increase the ECU's `sample_period`. In a run with a scenario, the ECUs whose values the scenario reads send after every ECU step instead, whatever their `sample_period` (see "How often the ECUs send their values" in [scenario.md](scenario.md#how-often-the-ecus-send-their-values-samples)).
 
 There is no authentication between the ECUs and `vehicle_sil_launch`. Anyone who can join the registry can write ECU variables, in the same way as they can send frames on the bus. By default, the registry listens only on 127.0.0.1.
 
@@ -1032,6 +1032,7 @@ When the simulation started, the result shows after the participant table whethe
 | `before-start` | Error | An action to perform while waiting for the start failed |
 | `behind-real-time` | Warning | Some of the paced time steps were later than `late_tolerance_ms` |
 | `coarse-time-step` | Warning | A speed is set, and the controller's time step is coarser than the ECU steps |
+| `scenario-not-observed` | Error | The scenario was not begun: an ECU whose values it reads sends them less often than its step |
 | `timeline-write` | Error | The `--timeline` file was opened but could not be written after the run |
 | `timeline-limit` | Note | The `--timeline` file dropped older points at its limits |
 | `interrupted` | Note | The run was interrupted (a signal, the end of stdin, a closed stdout) |
@@ -1049,6 +1050,7 @@ Notes on individual codes:
 | `control-link-dropped` | Gives the numbers of rejected hellos, of unreadable messages, and of messages that matched no known ECU or none of its variables. |
 | `control-link-version` | When the version in the `--describe` output differs, it is a check finding with the same `code`, and the run does not repeat it. |
 | `control-link-late-values` | The ECU sends from outside its step (an error in hand-written communication code). |
+| `scenario-not-observed` | No step of the scenario ran, and `scenario.status` is `failed`. The message names the participant, its `sample_period` and its step, and says how to fix it (see "How often the ECUs send their values" in [scenario.md](scenario.md#how-often-the-ecus-send-their-values-samples)). |
 | `variable-map-not-applied` | Says which entries do not match, and why. |
 | `before-start` | The action is supplied by the code that calls `run` as a function (internal use). |
 | `behind-real-time` | Gives the number of late time steps, the largest lateness, the total slip, the overall actual speed and, if the run ended while standing still, the lateness at that moment. In a run that keeps real time because it is connected outside, it also says that what is connected does not wait: the run was that far off from it. |

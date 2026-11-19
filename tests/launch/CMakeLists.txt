@@ -22,6 +22,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_run_outside.cpp
     test_scenario.cpp
     test_scenario_line.cpp
+    test_scenario_samples.cpp
     test_shared_values.cpp
     test_stop_requests.cpp
     test_traffic.cpp
@@ -231,6 +232,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     launch_run_manual.cpp
     launch_run_networks.cpp
     launch_run_processes.cpp
+    launch_run_samples.cpp
     launch_run_scenario.cpp
     launch_run_scenario_time.cpp
     launch_run_support.cpp
@@ -309,6 +311,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       scenario_failures
       scenario_paused_timeout
       scenario_same
+      scenario_samples
       scenario_time_commands_same
       scenario_wave
       run_until_stdin
