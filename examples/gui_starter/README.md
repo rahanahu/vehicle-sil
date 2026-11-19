@@ -130,6 +130,7 @@ try {
   await until(front.status, (status) => status.run === 'paused', { timeout_ms: 30_000 });
   unsubscribe = front.variable('Engine.engine.speed').subscribe((view) => console.log(view.text, view.unit)); // values arrive while you subscribe
   const written = front.variable('Engine.engine.throttle').write(60); // not awaited yet: a paused run applies it in the next step
+  written.catch(() => undefined); // no unhandled rejection if the step fails first; `await written` below still throws
   await front.time.step(100); // resolves when 100 ms of simulated time have passed and the run is paused again
   await written;
   await front.time.resume();
@@ -150,7 +151,7 @@ import { connect, until } from '@vehicle-sil/gui-client';
 const front = await connect();
 const [scenario] = await front.scenarios(); // the list is empty if there are none
 if (scenario) {
-  await front.run.start({ scenario: scenario.path });
+  await front.run.start({ scenario: scenario.path }); // when it resolves, `status` already shows this run, not an earlier one that ended
   const status = await until(front.status, (s) => s.run === 'ended' || s.run === 'crashed', {
     timeout_ms: 600_000,
   });

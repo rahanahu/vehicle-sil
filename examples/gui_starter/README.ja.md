@@ -130,6 +130,7 @@ try {
   await until(front.status, (status) => status.run === 'paused', { timeout_ms: 30_000 });
   unsubscribe = front.variable('Engine.engine.speed').subscribe((view) => console.log(view.text, view.unit)); // 値は購読している間に届きます
   const written = front.variable('Engine.engine.throttle').write(60); // まだ待たない: 一時停止中の実行は、次のステップで適用します
+  written.catch(() => undefined); // ステップが先に失敗しても、未処理の拒否になりません。下の `await written` は投げます
   await front.time.step(100); // 100 ms 進んで、再び一時停止したときに解決します
   await written;
   await front.time.resume();
@@ -150,7 +151,7 @@ import { connect, until } from '@vehicle-sil/gui-client';
 const front = await connect();
 const [scenario] = await front.scenarios(); // なければ一覧は空です
 if (scenario) {
-  await front.run.start({ scenario: scenario.path });
+  await front.run.start({ scenario: scenario.path }); // 解決したとき、`status` はこの実行を示しています（前に終わった実行ではありません）
   const status = await until(front.status, (s) => s.run === 'ended' || s.run === 'crashed', {
     timeout_ms: 600_000,
   });

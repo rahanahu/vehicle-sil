@@ -1176,6 +1176,35 @@ describe('the front door', () => {
       expect(rig.front.status.get().run).not.toBe('none');
     });
 
+    it('has left the ended state of the run before it when start resolves (the answer is applied first)', async () => {
+      const rig = await open();
+      const ended = summary({
+        state: 'ended',
+        launcher: { pid: 1, running: false, exit_code: 0, signal: null, silent_s: null },
+        allowed: serverAllowed(2, startOk, notRunning),
+      });
+      await rig.deliver(
+        {
+          type: 'hello',
+          vehicle_sil_gui: 2,
+          version: '0.1.0',
+          instance: 'x',
+          session: ended,
+          allowed: serverAllowed(2, startOk, notRunning),
+          replay: null,
+        },
+        { type: 'synced', session: 1, last_seq: 0 },
+      );
+      // A run that is over (without the launcher's end event it reads as crashed): both are what a wait for the end tests
+      expect(['ended', 'crashed']).toContain(rig.front.status.get().run);
+      const start = rig.front.run.start({}, { file: 'sim.yaml' });
+      rig.http.expectOne('api/run').flush({ session: summary({}, 2) });
+      await start;
+      // `until(status, s => s.run === 'ended')` after `await start()` waits for the new run, not for the old one
+      expect(['ended', 'crashed']).not.toContain(rig.front.status.get().run);
+      expect(rig.front.status.get().result).toBeNull();
+    });
+
     it('sends the intent as the request file has it: every key it was given, and no null', async () => {
       const rig = await open();
       await rig.deliver(
