@@ -18,7 +18,7 @@ A set of tools for simulating vehicle ECUs (electronic control units) in softwar
 | Write tests and run them automatically | A YAML scenario lists steps that set values, wait and check the results. | [Write tests with scenarios](docs/howto/scenario-tests.md) |
 | Read and write values of a running simulation from Python | The Control API (gRPC) and its Python client. | [Read and write signals from outside](docs/howto/operate-signals.md) |
 | Watch and change values in a browser | `vehicle-sil-gui` shows variables as sliders and charts. | [gui.md](docs/gui.md) |
-| Connect to real CAN hardware or real networks | Bridges relay frames between a simulated bus and a real one. There is one for Vector XL CAN (Windows), one for SocketCAN (Linux) and one for Ethernet. | [bridges.md](docs/bridges.md), [socketcan-bridge.md](docs/socketcan-bridge.md), [ethernet-bridge.md](docs/ethernet-bridge.md); to write a bridge of your own, [bridge-contract.md](docs/bridge-contract.md) |
+| Connect to real CAN hardware or real networks | Bridges relay frames between a simulated bus and a real one. There is one for Vector XL CAN (Windows), one for SocketCAN (Linux) and one for Ethernet. | Vector XL (Windows): [bridges.md](docs/bridges.md); SocketCAN (Linux): [socketcan-bridge.md](docs/socketcan-bridge.md); Ethernet: [ethernet-bridge.md](docs/ethernet-bridge.md); to write a bridge of your own, [bridge-contract.md](docs/bridge-contract.md) |
 | Let ECUs on other computers join | In the configuration file, give the address of the SIL Kit registry (the server that introduces participants to each other) and list the ECUs that the people on the other computers start themselves. | [Run on several computers](docs/howto/multi-pc.md) |
 
 ```mermaid
@@ -61,7 +61,7 @@ These commands need a build. First build as described in "[Quick start](#quick-s
 | `vehicle_sil_launch check simulation.yaml` | Has each ECU print its own configuration and checks the configuration file against it. | Each ECU with `--describe` only. No simulation runs. |
 | `vehicle_sil_launch run simulation.yaml` | Runs the simulation until `stop_at_ms`. | The SIL Kit registry and every ECU. It ends them when the run is over. |
 | `vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml` | Sets and checks values as the steps of the scenario say. | The same processes. The exit code is 0 if every step passes. |
-| `vehicle-sil-gui simulation.live.yaml` | Runs the same 2 ECUs until you stop them, with a configuration file that has no time limit (next to `simulation.yaml`). You watch and change values in a browser. | The GUI server. Click **Start** in the GUI to start the simulation. In "Quick start", `scripts/run-gui.py` runs this command for you. |
+| `vehicle-sil-gui simulation.live.yaml` | Runs the same 2 ECUs until you stop them, with a configuration file that has no time limit (next to `simulation.yaml`). You watch and change values in a browser. | The GUI server. Click **Start** in the GUI to start the simulation. In "Quick start", `scripts/run-gui.py` runs this command for you (in a clone of this repository only: a prebuilt tools archive has no such script). |
 
 The `check` output:
 

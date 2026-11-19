@@ -117,6 +117,62 @@ try {
 }
 ```
 
-- `npm run pack:client` type-checks this example against the types of the package it built, with both `nodenext` and `bundler` module resolution.
-- Every state is a `Readable`: a read-only value with `get()` and `subscribe(fn)`. To turn it into your framework's state (React `useSyncExternalStore`, a Vue `ref`, a Svelte store, an Angular signal and so on), convert it with `subscribe`.
+- `npm run pack:client` type-checks this example, and the other `ts` examples below (except the one that imports from Angular), against the types of the package it built, with both `nodenext` and `bundler` module resolution. It checks the types only: it does not run the calls.
+- Through the front door only, a screen starts, pauses, steps, resumes and stops a run, writes an input and reads an output (every call is an operation of `connect()`). A write while the run is paused is applied by the next step, so the example sends it without waiting, steps, and then waits for it. `until` waits for a state of `status`:
+
+```ts
+import { ActionError, connect, until } from '@vehicle-sil/gui-client';
+
+const front = await connect();
+let unsubscribe = () => {};
+try {
+  await front.run.start({ start_paused: true }); // resolves when the server has accepted the start, not when the run is up
+  await until(front.status, (status) => status.run === 'paused', { timeout_ms: 30_000 });
+  unsubscribe = front.variable('Engine.engine.speed').subscribe((view) => console.log(view.text, view.unit)); // values arrive while you subscribe
+  const written = front.variable('Engine.engine.throttle').write(60); // not awaited yet: a paused run applies it in the next step
+  written.catch(() => undefined); // no unhandled rejection if the step fails first; `await written` below still throws
+  await front.time.step(100); // resolves when 100 ms of simulated time have passed and the run is paused again
+  await written;
+  await front.time.resume();
+} catch (error) {
+  if (error instanceof ActionError) console.log(error.code, error.message, error.outcome);
+  else throw error;
+} finally {
+  unsubscribe();
+  await front.run.stop().catch(() => undefined); // never leave the run behind
+}
+```
+
+- To play a scenario, choose one of the scenario files next to the start-up file (`scenarios()` takes `{ file }` for another configuration file; give the same `file` to `run.start`) and wait for the end of the run. A run with a scenario refuses writes (`scenario-running`), so this example writes nothing:
+
+```ts
+import { connect, until } from '@vehicle-sil/gui-client';
+
+const front = await connect();
+const [scenario] = await front.scenarios(); // the list is empty if there are none
+if (scenario) {
+  await front.run.start({ scenario: scenario.path }); // when it resolves, `status` already shows this run, not an earlier one that ended
+  const status = await until(front.status, (s) => s.run === 'ended' || s.run === 'crashed', {
+    timeout_ms: 600_000,
+  });
+  console.log(status.result?.ok, status.result?.message);
+}
+```
+
+- To turn a `Readable` into an Angular signal, subscribe in an injection context and unsubscribe when the component goes (`DestroyRef`):
+
+```ts
+import { DestroyRef, inject, signal } from '@angular/core';
+import type { Readable } from '@vehicle-sil/gui-client';
+
+/** An Angular signal that follows a `Readable` (call it in an injection context). */
+export function readableSignal<T>(readable: Readable<T>) {
+  const destroyRef = inject(DestroyRef); // first: it throws outside an injection context, before anything is subscribed
+  const state = signal(readable.get());
+  destroyRef.onDestroy(readable.subscribe((value) => state.set(value)));
+  return state.asReadonly();
+}
+```
+
+- Every state is a `Readable`: a read-only value with `get()` and `subscribe(fn)`. To turn it into your framework's state (React `useSyncExternalStore`, a Vue `ref`, a Svelte store, an Angular signal and so on), convert it with `subscribe` (the signal above is an example; the package itself has no framework code).
 - To develop on a development server (Vite and others) while connected, see "Use a development server" in [docs/gui.md](../../docs/gui.md#use-a-development-server).

@@ -222,6 +222,7 @@ API と WebSocket の URL は、先頭に `/` を付けずに書きます（`api
 - zone.js は使わない（zoneless）。変更の検出は OnPush（既定）のまま。
 - 実験的、開発者プレビューの API を土台にしない。安定した代わりを使う。
 - guard、interceptor、resolver は関数で書く。ルートの引数は `input()` で受け取る（`withComponentInputBinding`）。
+- 画面は、セッションの項目 `stopRequests`、`runOutcome`、`features`、`launcher.running`（とその別名 `launcherRunning`）を読まない（TypeScript でもテンプレートでも）。「してよいか、だめなら理由は」は入口（front door）の `controls` と `status` から取る。表示だけに使うファイルは `eslint.config.js` に一覧がある。
 
 ### 状態を持つ場所
 

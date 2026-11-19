@@ -17,10 +17,7 @@ export class VsilScenarioSelectElement extends Part {
         if (status.file === file) return;
         file = status.file;
         const asked = file;
-        const options =
-          asked === null
-            ? Promise.resolve([])
-            : client.low.scenarios(asked).then((list) => list.scenarios);
+        const options = asked === null ? Promise.resolve([]) : client.scenarios({ file: asked });
         options.then(
           (scenarios) => {
             if (!alive() || file !== asked) return;

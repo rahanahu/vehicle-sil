@@ -112,7 +112,7 @@ function serverVersion() {
   return match[1];
 }
 
-function node(script, args, cwd) {
+function node(script, args, cwd, what = null) {
   try {
     return execFileSync(process.execPath, [script, ...args], {
       cwd,
@@ -121,7 +121,7 @@ function node(script, args, cwd) {
     });
   } catch (error) {
     const output = `${error.stdout ?? ''}${error.stderr ?? ''}`.trim();
-    fail(`${relative(REPOSITORY, script)} ${args.join(' ')}\n${output}`);
+    fail(`${what ? `${what}: ` : ''}${relative(REPOSITORY, script)} ${args.join(' ')}\n${output}`);
   }
 }
 
@@ -141,16 +141,25 @@ function addExtensions(directory) {
   }
 }
 
-/** The ```ts example of the starter's README, English and Japanese: what a TypeScript screen writes first. */
+/**
+ * Every ```ts example of the starter's README, English and Japanese (the Japanese page has its own comments, so both
+ * are checked), except those that import from '@angular/' (they need Angular). Each is {what, code}: `what` names the block.
+ */
 function readmeExamples() {
   const examples = [];
   for (const name of ['README.md', 'README.ja.md']) {
     const path = join(REPOSITORY, 'examples', 'gui_starter', name);
     if (!existsSync(path)) continue;
-    const match = /```ts\n([\s\S]*?)```/.exec(readFileSync(path, 'utf8'));
-    if (!match)
+    const blocks = [...readFileSync(path, 'utf8').matchAll(/```ts\n([\s\S]*?)```/g)];
+    if (blocks.length === 0)
       fail(`examples/gui_starter/${name} has no \`\`\`ts example to check the types with`);
-    examples.push(match[1]);
+    blocks.forEach((block, index) => {
+      if (block[1].includes("'@angular/")) return;
+      examples.push({
+        what: `examples/gui_starter/${name}, \`\`\`ts block ${index + 1}`,
+        code: block[1],
+      });
+    });
   }
   if (examples.length === 0) fail('examples/gui_starter/README.md is missing');
   return examples;
@@ -189,9 +198,13 @@ function check(packageDir, checkDir, tsc) {
       config,
       JSON.stringify({ compilerOptions: { ...base, ...settings }, files: ['main.ts'] }),
     );
-    for (const example of [...examples, TIMELINE_EXAMPLE, ELEMENTS_EXAMPLE, ...elementsReadme()]) {
-      writeFileSync(join(checkDir, 'main.ts'), `export {};\n${example}`);
-      node(tsc, ['-p', config], checkDir);
+    const others = [TIMELINE_EXAMPLE, ELEMENTS_EXAMPLE, ...elementsReadme()].map((code) => ({
+      what: null,
+      code,
+    }));
+    for (const { what, code } of [...examples, ...others]) {
+      writeFileSync(join(checkDir, 'main.ts'), `export {};\n${code}`);
+      node(tsc, ['-p', config], checkDir, what);
     }
   }
   const probe =

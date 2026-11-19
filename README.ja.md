@@ -18,7 +18,7 @@ vehicle-sil は、車の ECU（電子制御ユニット）をソフトウェア�
 | テストを書いて自動で実行する | YAML のシナリオに、値の設定、待機、確認の手順を書きます。 | [シナリオでテストを書く](docs/ja/howto/scenario-tests.md) |
 | 動いているシミュレーションの値を Python から読み書きする | Control API（gRPC）と、その Python のクライアントを使います。 | [信号を外から操作する](docs/ja/howto/operate-signals.md) |
 | ブラウザで値を見て操作する | `vehicle-sil-gui` が、変数をスライダーやグラフで表示します。 | [gui.md](docs/ja/gui.md) |
-| 実機の CAN やネットワークにつなぐ | シミュレーションのバスと実機のバスの間でフレームを中継するブリッジが、Vector XL の CAN 用（Windows）、SocketCAN 用（Linux）、イーサネット用にあります。 | [bridges.md](docs/ja/bridges.md)、[socketcan-bridge.md](docs/ja/socketcan-bridge.md)、[ethernet-bridge.md](docs/ja/ethernet-bridge.md)。自分でブリッジを作るときは [bridge-contract.md](docs/ja/bridge-contract.md) |
+| 実機の CAN やネットワークにつなぐ | シミュレーションのバスと実機のバスの間でフレームを中継するブリッジが、Vector XL の CAN 用（Windows）、SocketCAN 用（Linux）、イーサネット用にあります。 | Vector XL（Windows）は [bridges.md](docs/ja/bridges.md)、SocketCAN（Linux）は [socketcan-bridge.md](docs/ja/socketcan-bridge.md)、イーサネットは [ethernet-bridge.md](docs/ja/ethernet-bridge.md)。自分でブリッジを作るときは [bridge-contract.md](docs/ja/bridge-contract.md) |
 | ほかの PC の ECU を参加させる | 設定ファイルに、SIL Kit の registry（参加者どうしを引き合わせるサーバー）のアドレスと、相手が自分で起動する ECU を書きます。 | [複数の PC で動かす](docs/ja/howto/multi-pc.md) |
 
 ```mermaid
@@ -61,7 +61,7 @@ participants:
 | `vehicle_sil_launch check simulation.yaml` | 各 ECU に自身の構成を出力させて、設定ファイルと照合します。 | 各 ECU を `--describe` で起動するだけで、シミュレーションは実行しません。 |
 | `vehicle_sil_launch run simulation.yaml` | シミュレーションを `stop_at_ms` まで実行します。 | SIL Kit の registry とすべての ECU を起動し、終わったら終了させます。 |
 | `vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml` | シナリオの手順どおりに値を設定して確認します。 | 同じものを起動し、すべての手順が成功すれば終了コード 0 で終わります。 |
-| `vehicle-sil-gui simulation.live.yaml` | 同じ 2 つの ECU を、時間の制限のない設定ファイル（`simulation.yaml` の隣にあります）で、停止するまで実行し、ブラウザで値を見て操作します。 | GUI サーバーを起動し、画面の「開始」でシミュレーションを起動します。「クイックスタート」の `scripts/run-gui.py` は、このコマンドを代わりに実行します。 |
+| `vehicle-sil-gui simulation.live.yaml` | 同じ 2 つの ECU を、時間の制限のない設定ファイル（`simulation.yaml` の隣にあります）で、停止するまで実行し、ブラウザで値を見て操作します。 | GUI サーバーを起動し、画面の「開始」でシミュレーションを起動します。「クイックスタート」の `scripts/run-gui.py` は、このコマンドを代わりに実行します（このリポジトリのクローンでだけです。ビルド済みのツールのアーカイブに、このスクリプトはありません）。 |
 
 `check` の出力です。
 

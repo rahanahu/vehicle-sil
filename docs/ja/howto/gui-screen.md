@@ -331,7 +331,7 @@ document.querySelector('#save').addEventListener('click', () => {
 ## 次に読むもの
 
 - スクリプトで、自分の表示、ボタン、ルールを足す → テンプレートの `main.js`、[gui/client/README.md](../../../gui/client/README.ja.md#正面の口connect) の「正面の口（`connect()`）」。スクリプトは部品と同じ接続を使います。
-- TypeScript とフレームワーク（React、Vue、Angular など）で作る（部品は custom element なので、どのテンプレートにも書けます） → [examples/gui_starter/README.md](../../../examples/gui_starter/README.ja.md#フレームワークのプロジェクト) の「フレームワークのプロジェクト」
+- TypeScript とフレームワーク（React、Vue、Angular など）で作る（部品は custom element なので、どのテンプレートにも書けます） → [examples/gui_starter/README.md](../../../examples/gui_starter/README.ja.md#フレームワークのプロジェクト) の「フレームワークのプロジェクト」（正面の口だけでの実行の一巡と、Angular の signal があります）
 - シナリオの実行の時間の軸を自分の画面に出す（スクリプト 1 つとタグ 1 つ。フレームワークを選びません） → [gui.md](../gui.md#自分の画面に時間の軸を置く) の「自分の画面に時間の軸を置く」
 - 配信されるファイル、CSP、開発サーバー、守るルールを調べる → [gui.md](../gui.md) の「自分の画面のリファレンス」
 - サンプルの画面を残して部品を足す → [gui.md](../gui.md#カスタムパネル) の「カスタムパネル」

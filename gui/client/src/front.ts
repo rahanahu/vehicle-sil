@@ -211,6 +211,24 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
         throw actionError(error);
       });
     },
+    scenarios: (listOptions = {}) => {
+      const file = listOptions.file ?? initialFile();
+      if (file === null) {
+        return Promise.reject(
+          new ActionError(
+            'no-file',
+            'no configuration file was given and the server has none to start with: pass { file } (a path from client.low.configs())',
+            'refused',
+          ),
+        );
+      }
+      return low.scenarios(file).then(
+        (list) => list.scenarios,
+        (error: unknown) => {
+          throw actionError(error);
+        },
+      );
+    },
     check: (intent, checkOptions) => actions.check(intent, checkOptions),
     readConfig: (readOptions) => actions.readConfig(readOptions),
     describeAgain: (describeOptions) => actions.describeAgain(describeOptions),

@@ -44,7 +44,7 @@ target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_S
 # JSON is read and written back; the check itself must reject a read anywhere else (also one
 # through a pointer to the member), and pass the networks of the file.
 add_test(NAME launch.described_networks_are_read_in_one_place
-         COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DDIR=libs/config,libs/launch,tools/launch
+         COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DDIR=libs/config,libs/launch,libs/runner,libs/scenario,tools/launch
                  -DFILES=libs/config/src/check_networks.cpp,libs/config/src/describe_read.cpp,libs/launch/src/format/reported_networks.cpp
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckDescribedNetworks.cmake)
 add_test(NAME launch.described_networks_check_rejects_a_direct_read
@@ -108,6 +108,9 @@ _launch_part_test(probe_boundary probe "probe.hpp"
 _launch_part_test(format_boundary format "timeline_format.hpp;error_result.hpp"
     ${_launch_silkit_prefixes} vehicle_sil/control_grpc/ ${_launch_probe_headers} ${_launch_endpoint_headers}
     probe/ endpoints/ usecases/)
+# usecases/ has no limit on the other parts, but it reaches no SIL Kit header: the SIL Kit parts of a run are
+# behind the runner, and the Control Server's file (endpoints/) is the one place in libs/launch that includes them.
+_launch_part_test(usecases_boundary usecases "run.hpp;test.hpp;connections.hpp;checked.hpp" ${_launch_silkit_prefixes})
 _launch_part_test(endpoints_boundary endpoints "command_input.hpp"
     ${_launch_probe_headers} vehicle_sil/launch/timeline_format probe/ format/)
 # The check itself must reject a file that reaches a forbidden header through a header beside it

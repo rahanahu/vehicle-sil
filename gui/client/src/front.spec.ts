@@ -184,7 +184,7 @@ describe('the front door', () => {
     }
   });
 
-  async function open(): Promise<Rig> {
+  async function open(appAnswer: unknown = app): Promise<Rig> {
     const fake = new FakeWebSockets();
     const http = new FakeHttp();
     const promise = connect({
@@ -197,7 +197,7 @@ describe('the front door', () => {
         throw error;
       },
     });
-    http.expectOne('api/app').flush(app);
+    http.expectOne('api/app').flush(appAnswer);
     const front = await promise;
     const socket = fake.last();
     socket.open();
@@ -1176,6 +1176,35 @@ describe('the front door', () => {
       expect(rig.front.status.get().run).not.toBe('none');
     });
 
+    it('has left the ended state of the run before it when start resolves (the answer is applied first)', async () => {
+      const rig = await open();
+      const ended = summary({
+        state: 'ended',
+        launcher: { pid: 1, running: false, exit_code: 0, signal: null, silent_s: null },
+        allowed: serverAllowed(2, startOk, notRunning),
+      });
+      await rig.deliver(
+        {
+          type: 'hello',
+          vehicle_sil_gui: 2,
+          version: '0.1.0',
+          instance: 'x',
+          session: ended,
+          allowed: serverAllowed(2, startOk, notRunning),
+          replay: null,
+        },
+        { type: 'synced', session: 1, last_seq: 0 },
+      );
+      // A run that is over (without the launcher's end event it reads as crashed): both are what a wait for the end tests
+      expect(['ended', 'crashed']).toContain(rig.front.status.get().run);
+      const start = rig.front.run.start({}, { file: 'sim.yaml' });
+      rig.http.expectOne('api/run').flush({ session: summary({}, 2) });
+      await start;
+      // `until(status, s => s.run === 'ended')` after `await start()` waits for the new run, not for the old one
+      expect(['ended', 'crashed']).not.toContain(rig.front.status.get().run);
+      expect(rig.front.status.get().result).toBeNull();
+    });
+
     it('sends the intent as the request file has it: every key it was given, and no null', async () => {
       const rig = await open();
       await rig.deliver(
@@ -1228,6 +1257,54 @@ describe('the front door', () => {
         .catch((e: unknown) => e as ActionError);
       rig.http.expectOne('api/run').fail(HttpError.noAnswer('POST', 'api/run', 240_000));
       expect(await start).toMatchObject({ code: 'no-answer', outcome: 'unknown' });
+    });
+  });
+
+  describe('listing the scenarios', () => {
+    const answer = (file: string) => ({
+      file,
+      directory: 'scenarios',
+      found: true,
+      scenarios: [{ path: 'scenarios/a.yaml', name: 'a.yaml' }],
+      truncated: false,
+    });
+
+    it('lists the scenarios of the file that is given, as the entries of the list', async () => {
+      const rig = await open();
+      const list = rig.front.scenarios({ file: 'sim.yaml' });
+      const request = rig.http.expectOne('api/scenarios?file=sim.yaml');
+      expect(request.request.method).toBe('GET');
+      request.flush(answer('sim.yaml'));
+      expect(await list).toEqual([{ path: 'scenarios/a.yaml', name: 'a.yaml' }]);
+    });
+
+    it('asks for the start-up file when none is given (as run.start does), and rejects without one', async () => {
+      const rig = await open({ ...(app as object), initial_file: 'start.yaml' });
+      const list = rig.front.scenarios();
+      rig.http.expectOne('api/scenarios?file=start.yaml').flush(answer('start.yaml'));
+      expect(await list).toHaveLength(1);
+      // The app example has no start-up file
+      const bare = await open();
+      await expect(bare.front.scenarios()).rejects.toMatchObject({
+        code: 'no-file',
+        outcome: 'refused',
+      });
+      bare.http.expectNone('api/scenarios');
+    });
+
+    it("rejects with the server's code as an ActionError", async () => {
+      const rig = await open();
+      const list = rig.front
+        .scenarios({ file: 'gone.yaml' })
+        .catch((e: unknown) => e as ActionError);
+      rig.http
+        .expectOne('api/scenarios?file=gone.yaml')
+        .flush(
+          { error: { code: 'unknown-file', message: 'no such file.', detail: null } },
+          { status: 404, statusText: 'Not Found' },
+        );
+      expect(await list).toBeInstanceOf(ActionError);
+      expect(await list).toMatchObject({ code: 'unknown-file' });
     });
   });
 
