@@ -49,7 +49,7 @@ jobs:
   # - Only a push to main adds linux-clang-asan (the address sanitizer). A leg that builds linux-gcc-release (a
   #   push to main, or a pull request that changes how things are built) also runs the test that builds the ECU
   #   project template with FetchContent.
-  # - The gui job is left out when every changed file is in the `not_gui` list below and none is in `gui_reads`.
+  # - The gui jobs (gui and gui-server) are left out when every changed file is in the `not_gui` list below and none is in `gui_reads`.
   #   The job builds no C++; the GUI server against the launcher runs in linux-gcc-control. Rule for the lists:
   #   a path outside gui/ that a test of the gui job reads belongs in `gui_reads`, never only in `not_gui`.
   # The job `all checks` at the end is the one required check of main's branch protection: keep its name. The
@@ -430,9 +430,10 @@ jobs:
         if: needs.changes.outputs.docs_only != 'true'
         working-directory: gui/web
         run: npx playwright install --with-deps --only-shell chromium
-      - name: Server, screen and examples
+      # The server's tests run in the job gui-server at the same time (the two take about as long as each other).
+      - name: Screen and examples
         if: needs.changes.outputs.docs_only != 'true'
-        run: python3 scripts/verify-gui.py --skip-install --tag ci
+        run: python3 scripts/verify-gui.py --skip-server --skip-install --tag ci
       # Only documents changed, and one of them is read by a test of this job (the `gui_reads` list of the job
       # `changes`): the GUI server's tests and the timeline element's test, which need no browser and no C++ build.
       - name: Tests that read the changed documents (the server, the timeline element)
@@ -447,6 +448,30 @@ jobs:
           path: |
             build/logs
             gui/web/test-results
+          retention-days: 14
+
+  # The GUI server's tests against the stand-in launcher (no Node, no C++ build). Apart from the job gui so that
+  # the two run at the same time; a pull request that changes only documents runs them in the job gui.
+  gui-server:
+    needs: changes
+    if: needs.changes.outputs.gui == 'true' && needs.changes.outputs.docs_only != 'true'
+    name: gui (server)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      VEHICLE_SIL_LOG_ARTIFACT: logs-gui-server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Server
+        run: python3 scripts/verify-gui.py --skip-web --tag ci
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logs-gui-server
+          path: build/logs
           retention-days: 14
 
   python:
@@ -506,7 +531,7 @@ jobs:
   # required check counts as passed.
   all-checks:
     name: all checks
-    needs: [changes, linux, linux-oldest-cmake, windows, gui, python]
+    needs: [changes, linux, linux-oldest-cmake, windows, gui, gui-server, python]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -519,6 +544,7 @@ jobs:
             linux-oldest-cmake ${{ needs.linux-oldest-cmake.result }}
             windows ${{ needs.windows.result }}
             gui ${{ needs.gui.result }}
+            gui-server ${{ needs.gui-server.result }}
             python ${{ needs.python.result }}
         run: |
           echo "$RESULTS"
