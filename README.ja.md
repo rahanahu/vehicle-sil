@@ -176,7 +176,7 @@ scripts/run-gui.py                   # ブラウザを開く（開かないと�
 | GUI のクライアント | 自分の画面を作るための npm のパッケージ `vehicle-sil-gui-client-<version>.tgz` です（[gui/client](gui/client/README.ja.md) を参照）。ビルド済みのツールにも同じファイルが入っています。 |
 | `SHA256SUMS` | ほかの配布物の SHA-256 のチェックサムです。 |
 
-同じリリースの配布物を組み合わせて使います。ランチャーが ECU の実行ファイルを断るのは、`--describe` の出力の形式（`vehicle_sil_ecu`）が違うときだけです。変数を読み書きするメッセージの形式が違えば、シミュレーションは動きますが、ランチャーは警告 `control-link-version` を出し、その ECU の変数を読み書きできません（その変数を使うシナリオは、照合の誤り `scenario-variable` になります）。vehicle-sil の版だけが違うときは、注記 `version-mismatch` を出します。GUI のクライアントは、別の版の GUI のプロトコルを話す GUI サーバーを断ります。
+同じリリースの配布物を組み合わせて使います。ランチャーが ECU の実行ファイルを断るのは、`--describe` の出力の形式（`vehicle_sil_ecu`）が違うときだけです。変数を読み書きするメッセージの形式が違えば、シミュレーションは動きますが、ランチャーは警告 `control-link-version` を出し、その ECU の変数を読み書きできません（その変数を使うシナリオは、照合の誤り `scenario-variable` になります）。vehicle-sil の版だけが違うときは、注記 `version-mismatch` を出します。GUI のクライアントは、別の版の GUI のプロトコルを話す GUI サーバーを断り、Python の Control API のクライアントは、別のリリースの vehicle-sil の launcher を断ります。
 
 テンプレートを展開したディレクトリで、次の順に実行します。
 

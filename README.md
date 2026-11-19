@@ -176,7 +176,7 @@ With this approach you do not build the repository. The [releases page](https://
 | GUI client | The npm package `vehicle-sil-gui-client-<version>.tgz` for your own screen (see [gui/client](gui/client/README.md)). The prebuilt tools contain the same file. |
 | `SHA256SUMS` | The SHA-256 checksums of the other assets. |
 
-Use the assets of one release together. The launcher refuses an ECU executable only when its `--describe` output has another format (`vehicle_sil_ecu`). If the message format of the variables differs, the simulation runs but the launcher warns (`control-link-version`) and cannot read or write that ECU's variables (a scenario that uses one gets the check error `scenario-variable`). If only the vehicle-sil version differs, it notes `version-mismatch`. The GUI client refuses a GUI server that speaks another version of the GUI protocol.
+Use the assets of one release together. The launcher refuses an ECU executable only when its `--describe` output has another format (`vehicle_sil_ecu`). If the message format of the variables differs, the simulation runs but the launcher warns (`control-link-version`) and cannot read or write that ECU's variables (a scenario that uses one gets the check error `scenario-variable`). If only the vehicle-sil version differs, it notes `version-mismatch`. The GUI client refuses a GUI server that speaks another version of the GUI protocol, and the Python Control API client refuses a launcher of another vehicle-sil release.
 
 In the directory where you extracted the template, run these commands in order:
 
