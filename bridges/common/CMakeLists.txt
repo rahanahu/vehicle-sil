@@ -21,5 +21,5 @@ if(WIN32)
   target_link_libraries(vehicle_sil_bridge_runtime PRIVATE advapi32)
 endif()
 # "vehicle_sil" of --describe: the version of the vehicle_sil project, also as a subproject.
-target_compile_definitions(vehicle_sil_bridge_runtime PRIVATE VEHICLE_SIL_VERSION="${vehicle_sil_VERSION}")
+target_compile_definitions(vehicle_sil_bridge_runtime PRIVATE VEHICLE_SIL_VERSION="${VEHICLE_SIL_VERSION_FULL}")
 vehicle_sil_target_defaults(vehicle_sil_bridge_runtime)
