@@ -487,7 +487,10 @@ A hello is always a single message, because a subscriber that joins later receiv
 - There is one topic for each direction and kind, shared by all participants (`vehicle_sil.control.hello`, `.step`, `.submitted`, `.command`).
 - Topics do not contain participant names.
 - A message identifies its sending or destination Agent by a 64-bit number that each `AgentTransport` creates anew (the session; to the Hub, the incarnation).
-- Commands reach every ECU, and ECUs that are not the destination drop them.
+- Commands go to the ECUs of one group, not to every ECU. A participant's group is a hash of its name (FNV-1a of the bytes, modulo 32), the same on every machine. `HubTransport` makes one command publisher per group before the start, with the group as an Optional SIL Kit label (`vehicle_sil.control.group`), and each `AgentTransport` subscribes with the label of its own group.
+- The probes, the commands and the answer to the last word for one Agent all go out on its group's publisher, so they arrive in the order sent.
+- ECUs of the same group receive each other's commands and drop the ones that are not addressed to them (the session).
+- `HubTransport` also has a command publisher without a label, which reaches every ECU. It only answers the last word of a session that never said hello (a session that has ended is answered on its group's publisher).
 - Do not create SIL Kit services whose names start with these names.
 
 ### ECU-side threads (`AgentTransport`)
@@ -514,8 +517,8 @@ A hello is always a single message, because a subscriber that joins later receiv
 - The receive handler runs on the participant's SIL Kit thread. That thread also runs the participant's steps, so a slow handler makes the whole simulation wait.
 - There is no queue, and nothing is dropped (slowness makes the run late instead of losing values; see `HubTransportStats::handler_time`).
 - Delivery to the Hub's subscribers happens on the subscriber's thread, in `Subscription::poll()`.
-- The thread that called `Hub::write()` publishes the commands itself.
-- Create `HubTransport` before starting the participant.
+- The thread that called `Hub::write()` publishes the commands itself, on the publisher of the Agent's group.
+- Create `HubTransport` before starting the participant. It makes all its publishers in its constructor: SIL Kit cannot make a publisher on the participant's I/O thread, where the receive handlers run.
 
 ### Hub-side checks and limits
 
@@ -526,7 +529,7 @@ A hello is always a single message, because a subscriber that joins later receiv
 
 ### Until commands can be sent
 
-Receiving a hello does not mean that the ECU's subscription to commands is established (each direction connects separately). `HubTransport` sends a probe, and sends commands to an Agent only after it receives the ECU's answer (ready) (`LinkInfo::ready`). It sends a probe when a hello arrives, once every 8 step messages until ready arrives, and in `wait_for_hellos()`.
+Receiving a hello does not mean that the ECU's subscription to commands is established (each direction connects separately). `HubTransport` sends a probe, and sends commands to an Agent only after it receives the ECU's answer (ready) (`LinkInfo::ready`). It sends a probe when a hello arrives, once every 8 step messages until ready arrives, and in `wait_for_hellos()`. The probe goes out on the same publisher as the Agent's commands, so ready means that the commands that follow arrive, in the order sent.
 
 `AgentLink::send()` refuses the following writes, and the Hub makes them Invalid at once. This keeps a command that reaches no one from leaving its operation unsettled.
 

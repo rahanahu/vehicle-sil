@@ -79,7 +79,7 @@ Each record has the steady clock's time, the virtual time of its step (`vt`, ns;
 | `hub.receive_step` | span | An agent's step message (results, events, the sample) received by the hub | the agent's step | bytes |
 | `hub.receive_answer` | span | An agent's answer received (end of an `answer` arrow) | | seq |
 | `agent.receive_command` | span | A command for this agent: submitted and answered (end of `command`, start of `answer`) | | seq |
-| `agent.receive_other` | span | A message for another agent (every agent receives every command) | | |
+| `agent.receive_other` | span | A message for another agent: of the same group (the agents of a group receive each other's commands), or the answer to the last word of a session that never said hello, which reaches every agent (see "Topics" in internals/control.md) | | |
 | `agent.step_begin` | span | The agent applies its due commands | the step | commands |
 | `agent.apply` | instant | One command applied | the step | seq |
 | `agent.late` | instant | One command refused as late | the step | seq |

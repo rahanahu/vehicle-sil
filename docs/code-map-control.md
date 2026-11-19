@@ -371,6 +371,7 @@ Rules:
 - A change that lengthens or removes this wait changes how late the ECU ends and the final result of the run (Cancelled or Unknown).
 - Values and results are sent from the step thread right after the values are read. Handing them to another thread breaks the order guarantee (`HubTransportStats::late_messages` counts such cases).
 - The availability is sent again each second of step time (`kAvailabilityResend` in `agent_transport.cpp`) for a Hub that connected late (`control_silkit.the_availability_is_said_again_each_second_of_step_time`, `control_silkit.a_hub_that_comes_late_gets_the_availability_the_ecu_has_now`).
+- Commands go out on the publisher of the Agent's group (`command_group()` and `kCommandGroups` in `topics.hpp`), and the probe on the same one. A change of the hash or of the number of groups makes a Hub and Agents of different builds miss each other's commands: when you change either, raise `wire::kVersion` too, so that the version check reports the mismatch (`control_silkit.the_group_of_a_participant_is_a_fixed_hash_of_its_name`, `control_silkit.a_command_reaches_the_agents_of_its_group_only_and_in_the_order_written`).
 - Do not add anything that waits, or heavy processing, to the receive handlers on the Hub side. The whole simulation would wait for it.
 
 Tests:

@@ -34,7 +34,10 @@ struct AgentTransportStats
     std::uint64_t step_messages = 0; ///< published from the steps (and the last word)
     std::uint64_t step_bytes = 0;
     std::uint64_t commands = 0;      ///< received for this agent and given to Agent::submit()
-    std::uint64_t ignored = 0;       ///< commands for another agent (every agent receives every command)
+    /// Commands, probes and answers for another agent: of its group (the agents of a group
+    /// receive each other's), and the answers to the last word of sessions that never said hello
+    /// (they reach every agent).
+    std::uint64_t ignored = 0;
     /// Received on the command topic and not a command or probe of this version (a kind a later
     /// version added counts here and is otherwise ignored).
     std::uint64_t undecodable = 0;
@@ -54,8 +57,9 @@ struct AgentTransportStats
 ///   step that starts after it. Nothing is sent from another thread: that would lose the order.
 /// - A command is given to control::Agent::submit() in SIL Kit's receive handler, and what
 ///   submit() said goes back from there at once (outside the steps: in order, but without a time).
-///   Every agent receives every command and looks first at whom it is for (the session); the
-///   hub's probe ("do you receive my commands?") is answered from the same handler.
+///   An agent receives the commands of its group of agents (a hash of the participant's name; with
+///   few agents, mostly its own) and looks first at whom each is for (the session); the hub's
+///   probe ("do you receive my commands?") is answered from the same handler.
 /// - The destructor publishes the agent's last word: the results not sent yet (after Peer::stop()
 ///   those of the writes it cancelled). The hub answers it after it has ended the connection, and
 ///   the destructor waits for that answer, at most AgentTransportOptions::last_word_wait: the
