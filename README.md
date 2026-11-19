@@ -249,11 +249,11 @@ You can also run several ECUs in one process. This runs without SIL Kit, which m
 | LIN | Runs in virtual time only. | A real-time `Peer` throws `std::logic_error`. |
 | LIN | Uses experimental SIL Kit APIs, such as LIN dynamic response. | — |
 | LIN | A slave that runs on SIL Kit needs a step size shorter than the slot length of the frames it responds to. | Set the step size with `step_ms` in the configuration file. |
+| LIN | A LIN network cannot be connected to a real bus: there is no LIN bridge, and `--connect` takes CAN and Ethernet networks. | Use the LIN network inside the simulation. |
 | LIN | A slave receives only the frames that the master sends. | On the virtual LIN bus, a slave cannot receive the responses of other slaves. On SIL Kit, it receives them for the IDs it subscribes to, but the step and the time at which it receives them are not deterministic. |
 | Ethernet | Raw frames only; there is no TCP/IP stack. | Connect to external networks with the bridge described in [ethernet-bridge.md](docs/ethernet-bridge.md). |
 | Time and control | There is no operation that restarts a simulation from the beginning (reset). | Stop the simulation and run `run` again. |
 | Time and control | `vehicle_sil_sim_controller` cannot pause virtual time or step it. | The C++ API (the time gate of `SimulationController`), the stdin commands of `vehicle_sil_launch run` and the Control API (`--control`) can. |
-| Time and control | The Control API, the configuration file and the GUI cannot select CAN or LIN channels or devices. | Give the channel of the Vector XL CAN Bridge as an argument when you start the bridge. |
 | Time and control | If the DLL of an existing ECU uses real time internally (sleeping, reading the clock), vehicle-sil cannot replace it with virtual time. | — |
 | Tools and build | The test library (`vehicle_sil::testkit`) has no LIN fault injection or recording. | To record, observe the virtual LIN bus. To disconnect a single ECU, use `ecu.connected`. |
 | Tools and build | The APIs of `LocalBench` (`vehicle_sil::local`), `vehicle_sil::testkit` and `vehicle_sil::spy` are not stable. | — |

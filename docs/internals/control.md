@@ -66,7 +66,7 @@ flowchart LR
 
 - The launcher decides when the simulation starts: when the required participants have all joined. With `--start-paused`, it starts with `Resume`, `Step` or `RunUntil`.
 - There is no reset. To start over, restart the processes.
-- The Control API cannot select CAN/LIN channels or Vector devices (see "Arguments" in [bridges.md](../bridges.md#arguments)).
+- The Control API cannot choose what a network is connected to while a run is going. Choose it before the run: `--connect`, the `connect` of a request file, or the GUI (see "[Connecting a bus outside](../simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md). The configuration file has no target on purpose, so one file serves a run fully in SIL Kit and a connected run. LIN has no bridge.
 
 ## Design principles
 

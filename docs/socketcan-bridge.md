@@ -13,6 +13,8 @@ The launcher starts this bridge from `--connect`: on Linux, `vehicle_sil_launch 
 
 ## First connection
 
+With the launcher you need no registry of your own: `vehicle_sil_launch connections simulation.yaml` lists the interfaces of this computer, and `vehicle_sil_launch run --connect CAN=vcan0 simulation.yaml` starts the registry and this bridge (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md). The commands below start the bridge by hand; they need `sil-kit-registry` (from a SIL Kit release, or under `_deps` of a build from source) and the interface `vcan0`.
+
 ```sh
 sudo modprobe vcan
 sudo ip link add dev vcan0 type vcan
