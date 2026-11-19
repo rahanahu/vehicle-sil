@@ -98,6 +98,8 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
     std::vector<scenario::EnginePeer> found(ctx_.scenario->participants.size());
     // Per participant of the configuration: the control agent whose samples the scenario gets.
     std::vector<std::string> incarnations(places_.size());
+    // The connected, ready link of each participant (null: none), found once.
+    std::vector<const control_silkit::LinkInfo*> ready_links(found.size(), nullptr);
     {
         for (std::size_t i = 0; i < found.size(); ++i)
         {
@@ -110,6 +112,7 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
             });
             if (peer != peers.end() && link != links.end())
             {
+                ready_links[i] = &*link;
                 found[i].connected = true;
                 found[i].schema = peer->schema;
                 for (std::size_t place = 0; place < places_.size(); ++place)
@@ -131,10 +134,8 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
         for (std::size_t i = 0; i < found.size(); ++i)
         {
             const scenario::ScenarioParticipant& participant = ctx_.scenario->participants[i];
-            const auto link = std::find_if(links.begin(), links.end(), [&participant](const control_silkit::LinkInfo& info) {
-                return info.participant == participant.name && info.state == control_silkit::LinkState::Connected && info.ready;
-            });
-            if (read[i] && found[i].connected && link->sample_period > participant.step)
+            const control_silkit::LinkInfo* link = ready_links[i];
+            if (read[i] && link != nullptr && link->sample_period > participant.step)
             {
                 bool asked = false;
                 for (std::size_t place = 0; place < places_.size(); ++place)
