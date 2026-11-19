@@ -52,7 +52,8 @@ class Report:
         self.items.append({"name": name, "ok": ok, "needed": needed, "detail": detail,
                            "for": purpose, "fix": "" if ok else fix})
 
-    def tool(self, name: str, command: str, *, at_least: tuple[int, ...] = (), needed: bool, purpose: str,
+    def tool(self, name: str, command: str, *, at_least: tuple[int, ...] = (),
+             ranges: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (), needed: bool, purpose: str,
              fix: str) -> bool:
         path = shutil.which(command)
         if path is None:
@@ -66,6 +67,11 @@ class Report:
             return False
         if at_least and version < at_least:
             self.add(name, False, f"{shown(version)} at {path}, but {shown(at_least)} or newer is needed",
+                     needed=needed, purpose=purpose, fix=fix)
+            return False
+        if ranges and not any(low <= version < high for low, high in ranges):
+            allowed = ", or ".join(f"{shown(low)} or later {low[0]}.x" if len(low) > 1 else f"{low[0]}.x" for low, _ in ranges)
+            self.add(name, False, f"{shown(version)} at {path}, which is not usable; usable: {allowed}",
                      needed=needed, purpose=purpose, fix=fix)
             return False
         self.add(name, True, f"{shown(version)} at {path}", needed=needed, purpose=purpose)
@@ -175,8 +181,9 @@ def check() -> Report:
 
     report.tool("uv", "uv", needed=False, purpose="scripts/verify-python.py, the GUI server and its tests",
                 fix="install uv (https://docs.astral.sh/uv/)")
-    report.tool("Node.js", "node", at_least=(24, 15), needed=False, purpose="the GUI screen and client library (gui/)",
-                fix="install Node.js 24.15 or newer (see gui/web/package.json)")
+    report.tool("Node.js", "node", ranges=(((24, 15), (25,)), ((26,), (27,))), needed=False,
+                purpose="the GUI screen and client library (gui/)",
+                fix="install Node.js 24.15 or newer 24, or 26 (the engines of gui/web/package.json; npm ci refuses other versions)")
     report.tool("npm", "npm", at_least=(11, 12), needed=False, purpose="the GUI screen and client library (gui/)",
                 fix="npm comes with Node.js; update it with: npm install -g npm")
     chromium(report)
