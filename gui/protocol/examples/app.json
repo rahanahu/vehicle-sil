@@ -17,7 +17,7 @@
       "problems": [],
       "version": {
         "vehicle_sil_launch": 1,
-        "vehicle_sil": "0.1.0",
+        "vehicle_sil": "0.2.0-rc.1",
         "formats": {
           "check": 1,
           "run": 2,

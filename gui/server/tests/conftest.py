@@ -39,6 +39,10 @@ def manual_pages(english: str) -> list[Path]:
     return pages
 # Where replay_launcher.py finds its recordings, also a copy of it that a test makes elsewhere
 os.environ["REPLAY_RECORDINGS"] = str(TESTS / "recordings")
+# The vehicle-sil version that the stand-in launcher prints: the GUI's own, also for a copy made elsewhere (which
+# cannot read it from the source tree). A test of another version gives REPLAY_VERSION itself.
+from vehicle_sil_gui import __version__ as _gui_version  # noqa: E402
+os.environ.setdefault("REPLAY_VERSION", _gui_version)
 
 
 def _timeout_scale() -> float:
