@@ -378,7 +378,7 @@ line  step                                                result  at
 | `scenario-failed` | `expect` の条件が成り立ちませんでした。 | `error:` の行の値と時刻を見て、ECU かシナリオを直します。 |
 | `scenario-timeout` | `wait_until` の条件が、`timeout_ms` の間に成り立ちませんでした。 | 前提がそろわない原因を調べるか、`timeout_ms` を大きくします。 |
 | `scenario-out-of-time` | シナリオが終わる前に、設定ファイルの `stop_at_ms` に達しました。 | `stop_at_ms` を大きくするか、消します。シナリオが終わればシミュレーションも止まります。 |
-| `scenario-incomplete` | ECU の異常終了、Ctrl+C、`--timeout-ms` で、シナリオの途中で実行が終わりました。 | 一緒に表示されるエラーを先に直します。 |
+| `scenario-incomplete` | ECU の異常終了、Ctrl+C、`--timeout-ms`、停止（標準入力の `stop`、Control API の `Stop`）で、シナリオの途中で実行が終わりました（停止のときの終了コードは 5）。 | 一緒に表示されるエラーを先に直します。 |
 
 結果のルールは、[scenario.md](../scenario.md) の「結果」にあります。
 
