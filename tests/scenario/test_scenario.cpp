@@ -34,10 +34,11 @@
 
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
-using namespace vehicle_sil::launch;
-using vehicle_sil::launch::test::check_text;
-using vehicle_sil::launch::test::lines;
-using namespace vehicle_sil::launch::test::scenario_model;
+using namespace vehicle_sil::scenario;
+using namespace vehicle_sil::config;
+using vehicle_sil::config::test::check_text;
+using vehicle_sil::config::test::lines;
+using namespace vehicle_sil::scenario::test::scenario_model;
 
 TEST_CASE(scenario_file_is_read_with_its_steps_and_what_each_does)
 {

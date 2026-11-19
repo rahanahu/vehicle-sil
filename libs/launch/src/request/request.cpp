@@ -6,9 +6,9 @@
 namespace vehicle_sil::launch {
 namespace {
 
-Finding usage(std::string message)
+config::Finding usage(std::string message)
 {
-    Finding f;
+    config::Finding f;
     f.code = "usage";
     f.message = std::move(message);
     return f;
@@ -39,18 +39,18 @@ bool add_names(std::vector<std::string>& names, const std::vector<std::string>& 
 
 } // namespace
 
-std::vector<Finding> validate_request(const RunRequest& request, RequestCommand command)
+std::vector<config::Finding> validate_request(const RunRequest& request, RequestCommand command)
 {
     const RunIntent& intent = request.intent;
     const RunHost& host = request.host;
-    const RequestOrigin& origin = request.origin;
+    const config::RequestOrigin& origin = request.origin;
     const std::string scenario = origin.named("scenario", "--scenario", "scenario");
     const std::string paused = origin.named("start_paused", "--start-paused", "start_paused");
-    std::vector<Finding> out;
+    std::vector<config::Finding> out;
     // A test takes the scenarios of its own list: a parameter is for each of them.
     // The params of a request file wait for a run with a scenario: one file serves runs with and without.
     const bool typed = std::any_of(intent.params.begin(), intent.params.end(),
-                                   [](const ParamValue& p) { return p.source != ParamSource::RequestFile; });
+                                   [](const config::ParamValue& p) { return p.source != config::ParamSource::RequestFile; });
     if (command != RequestCommand::Test && typed && !intent.scenario)
     {
         out.push_back(usage("--param sets a parameter of a scenario: give --scenario <file> too, or leave --param out"));
@@ -99,15 +99,15 @@ std::vector<Finding> validate_request(const RunRequest& request, RequestCommand 
     return out;
 }
 
-std::vector<ConnectRequest> merge_connect(std::span<const ConnectRequest> arguments, std::span<const ConnectRequest> file,
+std::vector<config::ConnectRequest> merge_connect(std::span<const config::ConnectRequest> arguments, std::span<const config::ConnectRequest> file,
                                           std::vector<std::string>* from_file)
 {
-    std::vector<ConnectRequest> out(arguments.begin(), arguments.end());
-    for (const ConnectRequest& written : file)
+    std::vector<config::ConnectRequest> out(arguments.begin(), arguments.end());
+    for (const config::ConnectRequest& written : file)
     {
         const bool given = std::any_of(arguments.begin(), arguments.end(),
-                                       [&](const ConnectRequest& a) { return a.network == written.network; });
-        if (given || written.target == kNoTarget)
+                                       [&](const config::ConnectRequest& a) { return a.network == written.network; });
+        if (given || written.target == config::kNoTarget)
         {
             continue;
         }
@@ -126,7 +126,7 @@ RunRequest with_request_file(const RunRequest& arguments, const RequestFile& fil
     RunIntent& intent = out.intent;
     const RunIntent& given = arguments.intent;
     const RunIntent& written = file.intent;
-    RequestOrigin& origin = out.origin;
+    config::RequestOrigin& origin = out.origin;
     origin = {};
     origin.file = file.shown;
     const auto wrote = [&](const char* key) { return std::find(file.fields.begin(), file.fields.end(), key) != file.fields.end(); };
@@ -161,9 +161,9 @@ RunRequest with_request_file(const RunRequest& arguments, const RequestFile& fil
         origin.fields.emplace_back("strict");
     }
     bool params = false;
-    for (const ParamValue& param : written.params)
+    for (const config::ParamValue& param : written.params)
     {
-        if (std::none_of(given.params.begin(), given.params.end(), [&](const ParamValue& p) { return p.name == param.name; }))
+        if (std::none_of(given.params.begin(), given.params.end(), [&](const config::ParamValue& p) { return p.name == param.name; }))
         {
             intent.params.push_back(param);
             params = true;

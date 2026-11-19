@@ -22,7 +22,7 @@ namespace vehicle_sil::control {
 class Hub;
 } // namespace vehicle_sil::control
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// What run_file() did between the two stages of a Runner (prepare(), then run()): whether it
 /// started a control server (RunHost::control), and how that went. As made: none.
@@ -87,4 +87,4 @@ private:
     std::unique_ptr<RunnerImpl> impl_; ///< never null
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

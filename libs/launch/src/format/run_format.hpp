@@ -16,6 +16,6 @@ void write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view key, cons
 
 /// The line of the text output about the time ("time: ..."), or "" if no speed was set and no
 /// step was paced.
-[[nodiscard]] std::string timing_text(const RunTiming& timing);
+[[nodiscard]] std::string timing_text(const config::RunTiming& timing);
 
 } // namespace vehicle_sil::launch::detail

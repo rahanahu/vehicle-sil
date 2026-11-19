@@ -81,7 +81,7 @@ inline constexpr std::string_view kScenarioTimeFeature = "scenario-time";
 /// The members a state brings besides: not_started "message"; started "pid", "command", "log";
 /// manual "command", "working_directory", "command_line", "environment"; failed "reason",
 /// "message"; ended "exit_code", "signal".
-[[nodiscard]] const char* participant_state_name(ParticipantState state);
+[[nodiscard]] const char* participant_state_name(runner::ParticipantState state);
 
 /// What one call of EventStream's `write` did.
 struct EventWrite
@@ -173,7 +173,7 @@ struct EventStreamOptions
 /// What the run itself tells is RunEvents (run_events.hpp), which this implements: the parts of a
 /// run call those members and do not know this class. The other members are for whoever runs the
 /// launcher's commands (hello, check, phase, command, state, result).
-class EventStream : public RunEvents
+class EventStream : public runner::RunEvents
 {
 public:
     /// Writes the beginning of `bytes` to the output (as much as it takes); may block while the
@@ -190,7 +190,7 @@ public:
 
     /// The first event. `file`: the configuration file as given, or "" (null) if unknown.
     void hello(long pid, const std::string& file, const std::vector<std::string>& arguments);
-    void phase(Phase phase);
+    void phase(runner::Phase phase);
     /// The check's result, as `check --json` writes it.
     void check(const Checked& report);
     void registry(const std::string& uri) override;
@@ -198,7 +198,7 @@ public:
     /// with TLS or not, with credentials (every call needs a token) or not.
     void control_server(const std::string& address, bool tls, bool credentials) override;
     /// Disabled, Joined, StopRequested, Killed.
-    void participant(const std::string& name, ParticipantState state) override;
+    void participant(const std::string& name, runner::ParticipantState state) override;
     void participant_not_started(const std::string& name, const std::string& message) override;
     /// Failed. `reason`: "left_simulation" (it left the simulation while its process runs),
     /// "process_ended" (its process ended as a failure while the simulation ran) or
@@ -222,7 +222,7 @@ public:
                       std::optional<int> version) override;
     /// "scenario_step" (run --scenario): a step of the scenario began ("status": "running") or was
     /// decided ("passed", "failed"), with the members of the result's "scenario"."steps".
-    void scenario_step(const ScenarioStepRun& step) override;
+    void scenario_step(const scenario::ScenarioStepRun& step) override;
     /// One line of a participant's output (`source`: its name) or of the launcher
     /// ("vehicle_sil_launch"), as the text output shows it but without "[<source>] ". The only
     /// event that may be dropped (see above).
@@ -231,18 +231,18 @@ public:
     /// outside[].to_outside and from_outside). Not dropped, unlike "log".
     void outside(const std::string& network, std::uint64_t to_outside, std::uint64_t from_outside) override;
     /// One of the run's findings, with the fields of the results' "findings".
-    void finding(const std::string& file, const Finding& finding) override;
+    void finding(const std::string& file, const config::Finding& finding) override;
     /// The simulation's virtual time as the controller sees it, and how it goes.
-    void time(const TimeEvent& time) override;
+    void time(const runner::TimeEvent& time) override;
     /// A command from standard input (`source` "stdin"), its end ("eof"), or a call of a control
     /// client ("control_server").
-    void command(const Command& command, std::string_view source);
+    void command(const runner::Command& command, std::string_view source);
     /// "state": where the run stands and what it takes now (RunControls::publish() calls this
     /// when that has changed). Unlike every other event it is no history: only the latest means
     /// anything, so a "state" that still waits to be written is replaced by this one, which goes
     /// to the end of the queue (its "seq" is higher than that of every event made before the
     /// call). It is never counted for max_other_events, and at most one waits.
-    void state(const RunState& state);
+    void state(const runner::RunState& state);
     /// The last event: the run's result as `run --json` writes it. `members`: the event's members
     /// as a compact JSON object, {"result":{...}} (format_result_event() of run.hpp writes it from
     /// the run's report). Waits until it has been written

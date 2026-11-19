@@ -24,7 +24,7 @@
 #include <thread>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 /// Where the registry listens if the start waits for a participant someone starts by hand and the
 /// file has no registry_uri: a fixed port, so that the command to start it is the same in every
@@ -37,7 +37,7 @@ namespace detail {
 /// bridge.<network> (role: bridge, required: false, its network's line), with a
 /// ParticipantResult that is NotChecked and has the bridge's executable. Without --connect the copy
 /// is the same as `check`.
-[[nodiscard]] CheckReport with_bridges(const CheckReport& check);
+[[nodiscard]] config::CheckReport with_bridges(const config::CheckReport& check);
 
 /// The --start-timeout-ms the launcher gives an ecu_main executable: longer than the launcher's own
 /// wait for the start, so that the launcher, not the ECU, decides that the start failed and names
@@ -46,7 +46,7 @@ namespace detail {
 /// `stands_still_before_start`, stands still before the first step until a command (--start-paused
 /// with a control server): either may take any time, and the ECU is not Running until it is over.
 /// The launcher's own limits (before and after the wait) still end a start that does not come.
-[[nodiscard]] std::int64_t ecu_start_timeout_ms(const SimulationConfig& config, bool stands_still_before_start);
+[[nodiscard]] std::int64_t ecu_start_timeout_ms(const config::SimulationConfig& config, bool stands_still_before_start);
 
 /// The arguments that run starts the participant with, after its executable; the command to start
 /// it by hand (manual) and the events show the same ones. An ecu_main executable (describe:
@@ -57,7 +57,7 @@ namespace detail {
 /// after what the file wrote, never inside it). Last, with `sample_every_step`
 /// (RunMember::sample_every_step: a scenario reads the participant's values and its executable
 /// says that it takes the argument), --sample-every-step.
-[[nodiscard]] std::vector<std::string> participant_arguments(const SimulationConfig& config, const ParticipantConfig& participant,
+[[nodiscard]] std::vector<std::string> participant_arguments(const config::SimulationConfig& config, const config::ParticipantConfig& participant,
                                                              const std::string& registry_uri,
                                                              bool stands_still_before_start,
                                                              bool sample_every_step);
@@ -433,4 +433,4 @@ private:
 [[nodiscard]] std::string log_name(const std::string& name);
 } // namespace detail
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

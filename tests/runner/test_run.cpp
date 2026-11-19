@@ -43,11 +43,13 @@
 
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
-using namespace vehicle_sil::launch;
-using vehicle_sil::launch::test::check_text;
-using vehicle_sil::launch::test::lines;
+using namespace vehicle_sil::runner;
+using namespace vehicle_sil::scenario;
+using namespace vehicle_sil::config;
+using vehicle_sil::config::test::check_text;
+using vehicle_sil::config::test::lines;
 using vehicle_sil::process::ExitStatus;
-using namespace vehicle_sil::launch::test::run_support;
+using namespace vehicle_sil::runner::test::run_support;
 
 TEST_CASE(a_timeline_that_dropped_points_or_was_not_written_is_said)
 {
@@ -161,7 +163,7 @@ TEST_CASE(what_is_settled_before_the_participants_end_is_in_the_findings_of_the_
     std::size_t compared = 0;
     for (const RunOutcome& middle : middles)
     {
-        const std::vector<Finding> settled = launch::detail::settled_findings(middle);
+        const std::vector<Finding> settled = vehicle_sil::runner::detail::settled_findings(middle);
         for (const ParticipantRun& engine : ends(middle.participants[0]))
         {
             for (const ParticipantRun& brake : ends(middle.participants[1]))
@@ -196,16 +198,16 @@ TEST_CASE(what_is_settled_before_the_participants_end_is_in_the_findings_of_the_
 
     // Left out: only the participant that failed while its process still runs. Its finding names
     // how the process ended, so it is written when that is known.
-    check_text(lines(launch::detail::settled_findings(middles[1])), "");
+    check_text(lines(vehicle_sil::runner::detail::settled_findings(middles[1])), "");
     CHECK(lines(assess_run(middles[1])).find("participant-failed") != std::string::npos);
     RunOutcome ended = middles[1];
     ended.participants[0] = exited(participant("Engine", 5), 7);
-    check_text(lines(launch::detail::settled_findings(ended)), lines(assess_run(ended)));
-    CHECK(lines(launch::detail::settled_findings(ended)).find("its process exited with code 7") != std::string::npos);
+    check_text(lines(vehicle_sil::runner::detail::settled_findings(ended)), lines(assess_run(ended)));
+    CHECK(lines(vehicle_sil::runner::detail::settled_findings(ended)).find("its process exited with code 7") != std::string::npos);
     // Everything else is written at once.
-    check_text(lines(launch::detail::settled_findings(middles[3])), lines(assess_run(middles[3])));
-    check_text(lines(launch::detail::settled_findings(middles[4])), lines(assess_run(middles[4])));
-    check_text(lines(launch::detail::settled_findings(middles[6])), lines(assess_run(middles[6])));
+    check_text(lines(vehicle_sil::runner::detail::settled_findings(middles[3])), lines(assess_run(middles[3])));
+    check_text(lines(vehicle_sil::runner::detail::settled_findings(middles[4])), lines(assess_run(middles[4])));
+    check_text(lines(vehicle_sil::runner::detail::settled_findings(middles[6])), lines(assess_run(middles[6])));
 }
 
 TEST_CASE(a_participant_that_does_not_end_after_the_simulation_is_an_error)
@@ -282,7 +284,7 @@ TEST_CASE(a_connection_of_the_launcher_that_did_not_close_is_a_warning_beside_th
 TEST_CASE(a_close_that_ends_in_time_is_waited_for_and_joined)
 {
     std::atomic<bool> ran{false};
-    const auto left = launch::detail::close_within([&ran] { ran = true; }, 10s, 1ms, [] { return false; });
+    const auto left = vehicle_sil::runner::detail::close_within([&ran] { ran = true; }, 10s, 1ms, [] { return false; });
     CHECK(!left);
     CHECK(ran.load()); // joined: it has run when close_within() returns
 }
@@ -304,7 +306,7 @@ TEST_CASE(a_close_that_does_not_end_is_left_at_the_limit_and_may_end_later)
         latch->changed.notify_all();
     };
     const auto began = std::chrono::steady_clock::now();
-    const auto left = launch::detail::close_within(close, 100ms, 5ms, [] { return false; });
+    const auto left = vehicle_sil::runner::detail::close_within(close, 100ms, 5ms, [] { return false; });
     const auto took = std::chrono::steady_clock::now() - began;
     CHECK(left.has_value());
     CHECK(left && !left->interrupted);
@@ -323,7 +325,7 @@ TEST_CASE(a_close_that_does_not_end_is_left_before_the_limit_when_interrupted)
     const std::shared_future<void> opened = open->get_future().share();
     std::atomic<int> asked{0};
     const auto began = std::chrono::steady_clock::now();
-    const auto left = launch::detail::close_within([opened] { opened.wait(); }, 60s, 2ms, [&asked] { return ++asked > 3; });
+    const auto left = vehicle_sil::runner::detail::close_within([opened] { opened.wait(); }, 60s, 2ms, [&asked] { return ++asked > 3; });
     const auto took = std::chrono::steady_clock::now() - began;
     open->set_value();
     CHECK(left.has_value());
@@ -397,7 +399,7 @@ struct NotedTransport
     std::weak_ptr<NotedHub> hub;
 };
 
-using NotedConnection = launch::detail::ConnectionOf<NotedHub, NotedRegistry, NotedController, NotedTransport>;
+using NotedConnection = vehicle_sil::runner::detail::ConnectionOf<NotedHub, NotedRegistry, NotedController, NotedTransport>;
 
 /// A connection with all its parts, made in the run's order. `hub`: the maker's own hold of the hub.
 std::shared_ptr<NotedConnection> noted_connection(const std::shared_ptr<Going>& going, const std::shared_ptr<NotedHub>& hub)
@@ -416,7 +418,7 @@ TEST_CASE(a_connection_closes_its_transport_then_its_controller_then_its_registr
     const auto going = std::make_shared<Going>();
     auto hub = std::make_shared<NotedHub>(going);
     const auto left =
-        launch::detail::close_connection_within(noted_connection(going, hub), 60s, 1ms, [] { return false; });
+        vehicle_sil::runner::detail::close_connection_within(noted_connection(going, hub), 60s, 1ms, [] { return false; });
     CHECK(!left);
     // Closed and joined: the three have gone in the order, and the hub is still the holder's.
     CHECK(going->noted() == (std::vector<std::string>{"transport", "controller", "registry"}));
@@ -453,7 +455,7 @@ TEST_CASE(a_connection_whose_close_was_left_keeps_itself_and_the_hub_until_the_c
     going->open = false;
     std::weak_ptr<NotedHub> hub;
     std::weak_ptr<NotedConnection> watched;
-    std::optional<launch::detail::CloseLeft> left;
+    std::optional<vehicle_sil::runner::detail::CloseLeft> left;
     {
         // The run's holds: the hub's and the connection's. Both are given up here, as by a caller
         // that destroys the run although its close was left.
@@ -461,7 +463,7 @@ TEST_CASE(a_connection_whose_close_was_left_keeps_itself_and_the_hub_until_the_c
         hub = held;
         auto connection = noted_connection(going, held);
         watched = connection;
-        left = launch::detail::close_connection_within(std::move(connection), 100ms, 5ms, [] { return false; });
+        left = vehicle_sil::runner::detail::close_connection_within(std::move(connection), 100ms, 5ms, [] { return false; });
         CHECK(connection == nullptr); // NOLINT(bugprone-use-after-move): the hold was given away
     }
     CHECK(left.has_value());
@@ -510,7 +512,7 @@ struct HeldTransport
 };
 
 using HeldConnection =
-    launch::detail::ConnectionOf<control::Hub, vehicle_sil::unit::InProcessRegistry, SimulationController, HeldTransport>;
+    vehicle_sil::runner::detail::ConnectionOf<control::Hub, vehicle_sil::unit::InProcessRegistry, SimulationController, HeldTransport>;
 
 /// What a run has beside its connection, and the connection's parts are given pointers to (as
 /// the Runner of run.cpp): what the start window's function names, and the hub's tap.
@@ -518,7 +520,7 @@ struct RunParts
 {
     explicit RunParts(std::shared_ptr<control::Hub> h) : hub(std::move(h)) {}
     std::shared_ptr<control::Hub> hub;
-    launch::detail::RunSamples samples{{}, {}};
+    vehicle_sil::runner::detail::RunSamples samples{{}, {}};
     int windows = 0; ///< the start window's thread; read once start() has returned
 };
 
@@ -539,7 +541,7 @@ TEST_CASE(what_a_run_has_beside_its_connection_can_be_destroyed_while_a_close_th
     const auto hub_gone = std::make_shared<std::promise<std::thread::id>>();
     std::future<std::thread::id> hub_went = hub_gone->get_future();
     std::weak_ptr<HeldConnection> watched;
-    std::optional<launch::detail::CloseLeft> left;
+    std::optional<vehicle_sil::runner::detail::CloseLeft> left;
     {
         auto parts = std::make_unique<RunParts>(std::shared_ptr<control::Hub>(new control::Hub, [hub_gone](control::Hub* hub) {
             delete hub;
@@ -571,7 +573,7 @@ TEST_CASE(what_a_run_has_beside_its_connection_can_be_destroyed_while_a_close_th
             ecu.stop("done");
         }
         parts->samples.untap();
-        left = launch::detail::close_connection_within(std::move(connection), 100ms, 5ms, [] { return false; });
+        left = vehicle_sil::runner::detail::close_connection_within(std::move(connection), 100ms, 5ms, [] { return false; });
         // Here the run's parts go: the tap's owner, what the window's function names, and the
         // run's hold of the hub.
     }
@@ -599,24 +601,24 @@ namespace {
 
 /// A check of `config` in which each participant described itself with the step of the same place
 /// in `steps_us` (microseconds; 0: an ECU in real time, without a step; -1: not described).
-launch::CheckReport described(const launch::SimulationConfig& config, const std::vector<std::int64_t>& steps_us)
+vehicle_sil::config::CheckReport described(const vehicle_sil::config::SimulationConfig& config, const std::vector<std::int64_t>& steps_us)
 {
-    launch::CheckReport check;
+    vehicle_sil::config::CheckReport check;
     check.config = config;
     for (std::size_t i = 0; i < config.participants.size(); ++i)
     {
-        launch::ParticipantResult r;
+        vehicle_sil::config::ParticipantResult r;
         if (!config.participants[i].enabled)
         {
-            r.status = launch::ParticipantStatus::Disabled;
+            r.status = vehicle_sil::config::ParticipantStatus::Disabled;
         }
         else if (steps_us[i] < 0)
         {
-            r.status = launch::ParticipantStatus::NotChecked;
+            r.status = vehicle_sil::config::ParticipantStatus::NotChecked;
         }
         else
         {
-            r.status = launch::ParticipantStatus::Described;
+            r.status = vehicle_sil::config::ParticipantStatus::Described;
             r.ecu.emplace();
             r.ecu->description.name = config.participants[i].name;
             if (steps_us[i] > 0)
@@ -629,15 +631,15 @@ launch::CheckReport described(const launch::SimulationConfig& config, const std:
     return check;
 }
 
-launch::SimulationConfig config_of(std::size_t participants, std::optional<std::int64_t> stop_at_ms = std::nullopt,
+vehicle_sil::config::SimulationConfig config_of(std::size_t participants, std::optional<std::int64_t> stop_at_ms = std::nullopt,
                                    std::optional<std::int64_t> time_step_ms = std::nullopt)
 {
-    launch::SimulationConfig config;
+    vehicle_sil::config::SimulationConfig config;
     config.stop_at_ms = stop_at_ms;
     config.time_step_ms = time_step_ms;
     for (std::size_t i = 0; i < participants; ++i)
     {
-        launch::ParticipantConfig p;
+        vehicle_sil::config::ParticipantConfig p;
         p.name = "Ecu" + std::to_string(i);
         config.participants.push_back(p);
     }
@@ -653,9 +655,9 @@ struct Plan
     friend bool operator==(const Plan&, const Plan&) = default;
 };
 
-Plan plan(const launch::SimulationConfig& config, const std::vector<std::int64_t>& steps_us, std::optional<double> speed)
+Plan plan(const vehicle_sil::config::SimulationConfig& config, const std::vector<std::int64_t>& steps_us, std::optional<double> speed)
 {
-    const RunTiming t = launch::detail::plan_time_step(config, described(config, steps_us), speed);
+    const RunTiming t = vehicle_sil::config::detail::plan_time_step(config, described(config, steps_us), speed);
     CHECK(t.time_step_written == config.time_step_ms.has_value());
     const auto us = [](const std::optional<std::int64_t>& ns) { return ns ? std::optional<std::int64_t>(*ns / 1000) : std::nullopt; };
     return Plan{t.time_step_ms, us(t.ecu_step_ns), us(t.step_delay_ns), t.fine_step_ms};
@@ -690,7 +692,7 @@ TEST_CASE(with_a_speed_the_controller_steps_as_finely_as_the_ecus_need)
     CHECK(plan(config_of(2), {-1, 10000}, 1.0) == (Plan{1, std::nullopt, std::nullopt, 1}));
     CHECK(plan(config_of(2), {-1, 10000}, max) == (Plan{10, std::nullopt, std::nullopt, 1}));
     // A disabled participant does not count, described or not.
-    launch::SimulationConfig disabled = config_of(2);
+    vehicle_sil::config::SimulationConfig disabled = config_of(2);
     disabled.participants[0].enabled = false;
     CHECK(plan(disabled, {-1, 10000}, 1.0) == (Plan{10, 10000, 0, 10}));
     // A step that is no whole number of milliseconds: 1 ms, and what is left is told.
@@ -705,26 +707,26 @@ TEST_CASE(with_a_speed_the_controller_steps_as_finely_as_the_ecus_need)
 
 TEST_CASE(the_participants_in_real_time_are_the_described_ecus_and_test_participants_without_a_step)
 {
-    launch::SimulationConfig config = config_of(7);
-    config.participants[1].role = launch::ParticipantRole::Test;
-    config.participants[3].role = launch::ParticipantRole::Bridge; // a bridge locks the time: not one of them
+    vehicle_sil::config::SimulationConfig config = config_of(7);
+    config.participants[1].role = vehicle_sil::config::ParticipantRole::Test;
+    config.participants[3].role = vehicle_sil::config::ParticipantRole::Bridge; // a bridge locks the time: not one of them
     config.participants[4].enabled = false;
-    config.participants[5].role = launch::ParticipantRole::Bridge; // as is a bridge of --connect (with_bridges())
+    config.participants[5].role = vehicle_sil::config::ParticipantRole::Bridge; // as is a bridge of --connect (with_bridges())
     // Ecu0 and Ecu1 (a test participant) describe no step; Ecu2 has one; Ecu6 is not described.
     const std::vector<std::string> peers =
-        launch::detail::real_time_peers(config, described(config, {0, 0, 10'000, 0, 0, 0, -1}));
+        vehicle_sil::config::detail::real_time_peers(config, described(config, {0, 0, 10'000, 0, 0, 0, -1}));
     CHECK((peers == std::vector<std::string>{"Ecu0", "Ecu1"}));
-    CHECK(launch::detail::real_time_peers(config, described(config, {10'000, 5'000, 10'000, 0, 0, 0, -1})).empty());
+    CHECK(vehicle_sil::config::detail::real_time_peers(config, described(config, {10'000, 5'000, 10'000, 0, 0, 0, -1})).empty());
     // A check that has fewer results than the file has participants (it stopped early): no reach beyond.
-    launch::CheckReport cut = described(config, {0, 0, 0, 0, 0, 0, 0});
+    vehicle_sil::config::CheckReport cut = described(config, {0, 0, 0, 0, 0, 0, 0});
     cut.participants.resize(1);
-    CHECK((launch::detail::real_time_peers(config, cut) == std::vector<std::string>{"Ecu0"}));
+    CHECK((vehicle_sil::config::detail::real_time_peers(config, cut) == std::vector<std::string>{"Ecu0"}));
 }
 
 TEST_CASE(what_ends_just_as_an_interrupt_comes_has_ended)
 {
-    using launch::detail::wait_for;
-    using launch::detail::Waited;
+    using vehicle_sil::runner::detail::wait_for;
+    using vehicle_sil::runner::detail::Waited;
     using namespace std::chrono_literals;
     // The window: the launcher looks (not done), then the awaited thing happens and an interrupt
     // comes, then the launcher looks at the interrupts. Without a second look the wait would be
@@ -752,16 +754,16 @@ TEST_CASE(what_ends_just_as_an_interrupt_comes_has_ended)
 
 TEST_CASE(the_participants_reach_a_registry_on_every_address_at_the_loopback_address)
 {
-    CHECK(launch::detail::uri_for_participants("silkit://0.0.0.0:8500") == "silkit://127.0.0.1:8500");
-    CHECK(launch::detail::uri_for_participants("silkit://[::]:8500") == "silkit://[::1]:8500");
-    CHECK(launch::detail::uri_for_participants("silkit://192.168.1.2:8500") == "silkit://192.168.1.2:8500");
-    CHECK(launch::detail::uri_for_participants("silkit://127.0.0.1:41234") == "silkit://127.0.0.1:41234");
+    CHECK(vehicle_sil::runner::detail::uri_for_participants("silkit://0.0.0.0:8500") == "silkit://127.0.0.1:8500");
+    CHECK(vehicle_sil::runner::detail::uri_for_participants("silkit://[::]:8500") == "silkit://[::1]:8500");
+    CHECK(vehicle_sil::runner::detail::uri_for_participants("silkit://192.168.1.2:8500") == "silkit://192.168.1.2:8500");
+    CHECK(vehicle_sil::runner::detail::uri_for_participants("silkit://127.0.0.1:41234") == "silkit://127.0.0.1:41234");
 }
 
 TEST_CASE(the_time_event_at_the_start_says_paused_only_if_it_stands_still_at_0)
 {
-    using launch::detail::noted_standing;
-    using launch::detail::TimeNote;
+    using vehicle_sil::runner::detail::noted_standing;
+    using vehicle_sil::runner::detail::TimeNote;
     using namespace std::chrono_literals;
     const SimTime zero{};
     const auto state = [](SimTime now, bool paused, std::optional<SimTime> target) {
@@ -798,7 +800,7 @@ TEST_CASE(the_time_event_at_the_start_says_paused_only_if_it_stands_still_at_0)
 
 TEST_CASE(a_simulation_that_stands_still_is_told_of_at_10_s_60_s_and_10_min)
 {
-    using launch::detail::StandStill;
+    using vehicle_sil::runner::detail::StandStill;
     using Clock = std::chrono::steady_clock;
     const Clock::time_point t0{};
     const std::string why = " ms, not paused): a participant may have lost its network connection (on another computer), "
@@ -850,7 +852,7 @@ TEST_CASE(a_simulation_that_stands_still_is_told_of_at_10_s_60_s_and_10_min)
 
 TEST_CASE(a_participant_outside_the_file_is_named_when_it_waits_for_the_start)
 {
-    using launch::detail::StrangerWait;
+    using vehicle_sil::runner::detail::StrangerWait;
     using State = StrangerWait::State;
     using Clock = std::chrono::steady_clock;
     const Clock::time_point t0{};
@@ -873,8 +875,8 @@ TEST_CASE(a_participant_outside_the_file_is_named_when_it_waits_for_the_start)
 
 TEST_CASE(a_registry_that_cannot_listen_is_told_the_likely_cause)
 {
-    using launch::detail::HostAddress;
-    using launch::detail::registry_listen_hint;
+    using vehicle_sil::runner::detail::HostAddress;
+    using vehicle_sil::runner::detail::registry_listen_hint;
     const std::vector<HostAddress> here = {{"198.51.100.5", true}, {"[2001:db8::10]", false}};
     // An IPv4 address that is not this computer's, with port 0 or not, written or not.
     const std::string elsewhere = " (192.0.2.1 is not an address of this computer, and the registry listens on this computer: "
@@ -913,8 +915,8 @@ TEST_CASE(a_registry_that_cannot_listen_is_told_the_likely_cause)
 
 TEST_CASE(other_computers_are_told_where_to_join)
 {
-    using launch::detail::HostAddress;
-    using launch::detail::other_computers_line;
+    using vehicle_sil::runner::detail::HostAddress;
+    using vehicle_sil::runner::detail::other_computers_line;
     const std::string tail = ": give it as --registry-uri to a participant started by hand on another computer (instead of "
                              "the loopback address in its command; it needs no VEHICLE_SIL_LISTEN_ON_NETWORK)";
     CHECK(other_computers_line("silkit://0.0.0.0:8500", {{"192.0.2.10", true}}) ==
@@ -953,7 +955,7 @@ TEST_CASE(other_computers_are_told_where_to_join)
     CHECK(other_computers_line("silkit://192.0.2.10:8500", {{"198.51.100.5", true}}) ==
           "from other computers, join at silkit://192.0.2.10:8500" + tail);
     // Which addresses are listed: not 0/8, loopback or link-local.
-    using launch::detail::reachable_ipv4_text;
+    using vehicle_sil::runner::detail::reachable_ipv4_text;
     const auto text = [](std::uint8_t a, std::uint8_t b, std::uint8_t c, std::uint8_t d) {
         const std::uint8_t bytes[] = {a, b, c, d};
         return reachable_ipv4_text(bytes);
@@ -965,7 +967,7 @@ TEST_CASE(other_computers_are_told_where_to_join)
     CHECK(text(127, 255, 0, 9).empty());
     CHECK(text(169, 254, 3, 4).empty());
     CHECK(text(0, 0, 0, 0).empty());
-    using launch::detail::reachable_ipv6_text;
+    using vehicle_sil::runner::detail::reachable_ipv6_text;
     const auto text6 = [](std::initializer_list<std::uint8_t> head, std::uint8_t last) {
         std::uint8_t bytes[16] = {};
         std::copy(head.begin(), head.end(), bytes);
@@ -994,10 +996,10 @@ TEST_CASE(other_computers_are_told_where_to_join)
                            zero + " 00 " + zero + " 00 " + zero + " ffffffff 00000001 00000000 00200200 lo\n" + // unreachable
                            zero + " 00 " + zero + " 00 " + zero + " 00000400 00000001 00000000 00000201 eth9\n" + // rejects
                            "fe800000000000000000000000000000 40 " + zero + " 00 " + zero + " 00000100 00000001 00000000 00000001 eth0\n";
-    CHECK((launch::detail::default_route_interfaces(v4, v6) == std::vector<std::string>{"eth0", "wlan0"}));
-    CHECK(launch::detail::default_route_interfaces("", "").empty());
+    CHECK((vehicle_sil::runner::detail::default_route_interfaces(v4, v6) == std::vector<std::string>{"eth0", "wlan0"}));
+    CHECK(vehicle_sil::runner::detail::default_route_interfaces("", "").empty());
     // The order: those with the default route first, IPv4 before IPv6, otherwise as they are.
-    const auto order = launch::detail::in_order(
+    const auto order = vehicle_sil::runner::detail::in_order(
         {{"[2001:db8::5]", false}, {"172.17.0.1", false}, {"[2001:db8::10]", true}, {"198.51.100.5", false}, {"192.0.2.10", true}});
     std::string seen;
     for (const HostAddress& a : order)
@@ -1010,7 +1012,7 @@ TEST_CASE(other_computers_are_told_where_to_join)
     }
     CHECK(seen == "192.0.2.10* [2001:db8::10]* 172.17.0.1 198.51.100.5 [2001:db8::5] ");
     // This computer's addresses: none loopback or link-local, those with the default route first.
-    const auto here = launch::detail::host_addresses(true, true);
+    const auto here = vehicle_sil::runner::detail::host_addresses(true, true);
     bool before = true;
     for (const HostAddress& a : here)
     {
@@ -1020,11 +1022,11 @@ TEST_CASE(other_computers_are_told_where_to_join)
         CHECK(before || !a.default_route);
         before = a.default_route;
     }
-    for (const HostAddress& a : launch::detail::host_addresses(true, false))
+    for (const HostAddress& a : vehicle_sil::runner::detail::host_addresses(true, false))
     {
         CHECK(a.host.front() != '[');
     }
-    for (const HostAddress& a : launch::detail::host_addresses(false, true))
+    for (const HostAddress& a : vehicle_sil::runner::detail::host_addresses(false, true))
     {
         CHECK(a.host.front() == '[');
     }
@@ -1032,10 +1034,10 @@ TEST_CASE(other_computers_are_told_where_to_join)
 
 TEST_CASE(a_participants_line_is_shown_without_control_characters_and_its_log_has_a_plain_name)
 {
-    CHECK(launch::detail::printable("a\tb\x1b[2Jc\rd\x7f") == "a\tb?[2Jc?d?");
-    CHECK(launch::detail::printable("\xC3\xBC ok") == "\xC3\xBC ok"); // UTF-8 stays
-    CHECK(launch::detail::log_name("Engine_2.a-b") == "Engine_2.a-b");
-    CHECK(launch::detail::log_name("ECU/1 \xC3\xBC:x") == "ECU_1____x"); // one "_" per byte
+    CHECK(vehicle_sil::runner::detail::printable("a\tb\x1b[2Jc\rd\x7f") == "a\tb?[2Jc?d?");
+    CHECK(vehicle_sil::runner::detail::printable("\xC3\xBC ok") == "\xC3\xBC ok"); // UTF-8 stays
+    CHECK(vehicle_sil::runner::detail::log_name("Engine_2.a-b") == "Engine_2.a-b");
+    CHECK(vehicle_sil::runner::detail::log_name("ECU/1 \xC3\xBC:x") == "ECU_1____x"); // one "_" per byte
 }
 
 TEST_CASE(a_participant_that_ended_just_before_the_stop_request_ended_by_itself)
@@ -1043,7 +1045,7 @@ TEST_CASE(a_participant_that_ended_just_before_the_stop_request_ended_by_itself)
     // The request found it ended: its exit is recorded, and it is no "did-not-end".
     ParticipantRun run = participant("Engine", 5);
     run.stopped_after_end = true;
-    CHECK(launch::detail::record_stop_request(run, false, ExitStatus{3, std::nullopt}) == launch::detail::StopRequest::HadEnded);
+    CHECK(vehicle_sil::runner::detail::record_stop_request(run, false, ExitStatus{3, std::nullopt}) == vehicle_sil::runner::detail::StopRequest::HadEnded);
     CHECK(run.ending == Ending::Exited);
     CHECK(run.exit == (ExitStatus{3, std::nullopt}));
     CHECK(!run.stopped_after_end);
@@ -1057,9 +1059,9 @@ TEST_CASE(a_participant_that_ended_just_before_the_stop_request_ended_by_itself)
                                      "[Engine] above show what it wrote\n");
     // Sent, or it runs and cannot be asked.
     ParticipantRun asked = participant("Brake", 7);
-    CHECK(launch::detail::record_stop_request(asked, true, std::nullopt) == launch::detail::StopRequest::Sent);
+    CHECK(vehicle_sil::runner::detail::record_stop_request(asked, true, std::nullopt) == vehicle_sil::runner::detail::StopRequest::Sent);
     CHECK(asked.ending == Ending::NotStarted && !asked.stop_request_failed);
-    CHECK(launch::detail::record_stop_request(asked, false, std::nullopt) == launch::detail::StopRequest::CannotSend);
+    CHECK(vehicle_sil::runner::detail::record_stop_request(asked, false, std::nullopt) == vehicle_sil::runner::detail::StopRequest::CannotSend);
     CHECK(asked.stop_request_failed);
     // A status that is not there is not read (the text without it).
     ParticipantRun unknown = participant("Odd", 9);
@@ -1076,23 +1078,23 @@ TEST_CASE(the_ecu_waits_for_the_start_longer_than_the_launcher)
     SimulationConfig c;
     c.start_timeout_ms = 8000;
     c.stop_timeout_ms = 2000;
-    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c, false), std::int64_t{20000});
-    CHECK(launch::detail::ecu_start_timeout_ms(c, false) > c.start_timeout_ms + c.stop_timeout_ms);
+    CHECK_EQ(vehicle_sil::runner::detail::ecu_start_timeout_ms(c, false), std::int64_t{20000});
+    CHECK(vehicle_sil::runner::detail::ecu_start_timeout_ms(c, false) > c.start_timeout_ms + c.stop_timeout_ms);
     // A run that stands still before the first step (--start-paused with a control server) may
     // do so for any time: the ECU's limit must not end it.
-    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c, true), kMaxMillis);
+    CHECK_EQ(vehicle_sil::runner::detail::ecu_start_timeout_ms(c, true), kMaxMillis);
     // Never more than ecu_main takes as --start-timeout-ms.
     c.start_timeout_ms = kMaxMillis;
     c.stop_timeout_ms = kMaxMillis;
-    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c, false), kMaxMillis);
+    CHECK_EQ(vehicle_sil::runner::detail::ecu_start_timeout_ms(c, false), kMaxMillis);
     c.start_timeout_ms = kMaxMillis - 10000;
     c.stop_timeout_ms = 1;
-    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c, false), kMaxMillis);
+    CHECK_EQ(vehicle_sil::runner::detail::ecu_start_timeout_ms(c, false), kMaxMillis);
 }
 
 TEST_CASE(a_participant_is_started_with_its_network_names_after_everything_else)
 {
-    using vehicle_sil::launch::detail::participant_arguments;
+    using vehicle_sil::runner::detail::participant_arguments;
     const auto words = [](const std::vector<std::string>& list) {
         std::string out;
         for (const std::string& word : list)
@@ -1106,7 +1108,7 @@ TEST_CASE(a_participant_is_started_with_its_network_names_after_everything_else)
     ParticipantConfig p;
     p.name = "Engine";
     p.command = {"engine/engine_ecu", "--verbose"};
-    const std::string timeout = std::to_string(vehicle_sil::launch::detail::ecu_start_timeout_ms(config, false));
+    const std::string timeout = std::to_string(vehicle_sil::runner::detail::ecu_start_timeout_ms(config, false));
     const std::string own = "[--verbose][--name][Engine][--registry-uri][silkit://127.0.0.1:8500][--start-timeout-ms][" + timeout + "]";
     // Without network_names: what it was.
     check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false)), own + "\n");
@@ -1129,7 +1131,7 @@ TEST_CASE(a_participant_is_started_with_its_network_names_after_everything_else)
 
 TEST_CASE(a_participant_is_started_with_its_j1939_nodes_after_its_network_names)
 {
-    using vehicle_sil::launch::detail::participant_arguments;
+    using vehicle_sil::runner::detail::participant_arguments;
     const auto words = [](const std::vector<std::string>& list) {
         std::string out;
         for (const std::string& word : list)
@@ -1142,7 +1144,7 @@ TEST_CASE(a_participant_is_started_with_its_j1939_nodes_after_its_network_names)
     ParticipantConfig p;
     p.name = "Engine2";
     p.command = {"engine/engine_ecu"};
-    const std::string timeout = std::to_string(vehicle_sil::launch::detail::ecu_start_timeout_ms(config, false));
+    const std::string timeout = std::to_string(vehicle_sil::runner::detail::ecu_start_timeout_ms(config, false));
     const std::string own = "[--name][Engine2][--registry-uri][silkit://127.0.0.1:8500][--start-timeout-ms][" + timeout + "]";
     // After --map-network, in the file's order; an entry that changes nothing is not given.
     p.network_names = {NetworkName{"VehicleCAN", "J1939_CAN", 5}};
@@ -1163,7 +1165,7 @@ TEST_CASE(a_participant_is_started_with_its_j1939_nodes_after_its_network_names)
 
 TEST_CASE(the_command_to_start_a_participant_by_hand_is_quoted_for_the_shell)
 {
-    using vehicle_sil::launch::detail::shell_command_line;
+    using vehicle_sil::runner::detail::shell_command_line;
     const std::vector<std::string> args{"--name", "Engine", "--registry-uri", "silkit://127.0.0.1:8500", "", "a b",
                                         "it's", "say \"hi\"", "C:\\dir\\", "%PATH%", "R&D",
                                         "VehicleCAN=from:0x00,address:0x01", "a;b"};
@@ -1182,17 +1184,17 @@ TEST_CASE(the_command_to_start_a_participant_by_hand_is_quoted_for_the_shell)
 
 TEST_CASE(a_participants_line_shows_no_c1_control_and_no_broken_utf8)
 {
-    CHECK(launch::detail::printable("a\xC2\x9B" "1m\xC2\xA0" "b") == "a?1m\xC2\xA0" "b"); // C1 CSI, then NBSP
-    CHECK(launch::detail::printable("\xFF\xC3") == "??");                       // not UTF-8, cut short
-    CHECK(launch::detail::printable("\xE2\x82\xAC \xF0\x9F\x98\x80") == "\xE2\x82\xAC \xF0\x9F\x98\x80");
-    CHECK(launch::detail::printable("\xC0\xAF\xED\xA0\x80") == "?????");        // overlong, a surrogate
+    CHECK(vehicle_sil::runner::detail::printable("a\xC2\x9B" "1m\xC2\xA0" "b") == "a?1m\xC2\xA0" "b"); // C1 CSI, then NBSP
+    CHECK(vehicle_sil::runner::detail::printable("\xFF\xC3") == "??");                       // not UTF-8, cut short
+    CHECK(vehicle_sil::runner::detail::printable("\xE2\x82\xAC \xF0\x9F\x98\x80") == "\xE2\x82\xAC \xF0\x9F\x98\x80");
+    CHECK(vehicle_sil::runner::detail::printable("\xC0\xAF\xED\xA0\x80") == "?????");        // overlong, a surrogate
 }
 
 // The limit of the start, in the orders the main thread and the start window's thread can meet
 // (no clock: the times are given).
 TEST_CASE(the_start_limit_of_a_run_without_manual_participants_is_the_one_set)
 {
-    using vehicle_sil::launch::detail::StartLimit;
+    using vehicle_sil::runner::detail::StartLimit;
     const StartLimit::Clock::time_point t0{std::chrono::seconds(100)};
     const std::chrono::milliseconds length(5000);
     StartLimit limit;
@@ -1219,7 +1221,7 @@ TEST_CASE(the_start_limit_of_a_run_without_manual_participants_is_the_one_set)
 
 TEST_CASE(the_start_limit_with_manual_participants_begins_when_they_are_ready_and_never_in_the_hold)
 {
-    using vehicle_sil::launch::detail::StartLimit;
+    using vehicle_sil::runner::detail::StartLimit;
     const StartLimit::Clock::time_point t0{std::chrono::seconds(100)};
     const auto none = StartLimit::Clock::time_point::max();
     const std::chrono::milliseconds length(5000);
@@ -1269,10 +1271,10 @@ TEST_CASE(with_bridges_adds_a_participant_for_each_connected_network_after_those
     check.participants.resize(1);
     check.participants[0].status = ParticipantStatus::Described;
     // Without --connect: the same participants.
-    CHECK_EQ(launch::detail::with_bridges(check).config->participants.size(), std::size_t{1});
+    CHECK_EQ(vehicle_sil::runner::detail::with_bridges(check).config->participants.size(), std::size_t{1});
     check.outside = {NetworkOutside{"CAN1", "vehicle_sil_vector_xl_bridge", "/t/xl", "virtual:1", "bridge.CAN1", std::nullopt},
                      NetworkOutside{"ETH", "vehicle_sil_ethernet_bridge", "/t/eth", "eth0", "bridge.ETH", std::nullopt}};
-    const CheckReport run = launch::detail::with_bridges(check);
+    const CheckReport run = vehicle_sil::runner::detail::with_bridges(check);
     CHECK(run.config->participants.size() == 3 && run.participants.size() == 3);
     if (run.config->participants.size() != 3 || run.participants.size() != 3)
     {
@@ -1294,7 +1296,7 @@ TEST_CASE(with_bridges_adds_a_participant_for_each_connected_network_after_those
 TEST_CASE(the_line_of_a_bridge_that_says_why_it_ended)
 {
     const auto failure = [](std::initializer_list<const char*> lines) {
-        launch::detail::LastLine last;
+        vehicle_sil::config::detail::LastLine last;
         for (const char* line : lines)
         {
             last.add(line);
@@ -1393,14 +1395,14 @@ TEST_CASE(a_link_that_stayed_down_is_connect_lost_with_the_time_it_was_waited_fo
                      "running: bridge.ETH reported link down for 30 s") == 0);
     // connect-lost says it: not the same again.
     CHECK(found.find("outside-link-down") == std::string::npos);
-    CHECK(launch::detail::settled_findings(o).empty());
+    CHECK(vehicle_sil::runner::detail::settled_findings(o).empty());
 }
 
 TEST_CASE(why_a_run_ended_is_decided_by_the_setup_then_by_what_asked_first_then_by_the_simulation)
 {
-    using vehicle_sil::launch::end_reason;
-    using vehicle_sil::launch::EndReason;
-    using vehicle_sil::launch::StopKind;
+    using vehicle_sil::runner::end_reason;
+    using vehicle_sil::runner::EndReason;
+    using vehicle_sil::runner::StopKind;
     CHECK(end_reason(passed_run()) == EndReason::Completed);
     RunOutcome ended = passed_run();
     ended.end.simulation = SimulationEnd::Ended;
@@ -1426,9 +1428,9 @@ TEST_CASE(why_a_run_ended_is_decided_by_the_setup_then_by_what_asked_first_then_
     // A set-up that failed is stronger than a stop.
     late.setup.error = "no registry";
     CHECK(end_reason(late) == EndReason::SetupFailed);
-    check_text(vehicle_sil::launch::end_reason_name(EndReason::Completed), "completed");
-    check_text(vehicle_sil::launch::end_reason_name(EndReason::Stopped), "stopped");
-    check_text(vehicle_sil::launch::end_reason_name(EndReason::Interrupted), "interrupted");
-    check_text(vehicle_sil::launch::end_reason_name(EndReason::Failed), "failed");
-    check_text(vehicle_sil::launch::end_reason_name(EndReason::SetupFailed), "setup_failed");
+    check_text(vehicle_sil::runner::end_reason_name(EndReason::Completed), "completed");
+    check_text(vehicle_sil::runner::end_reason_name(EndReason::Stopped), "stopped");
+    check_text(vehicle_sil::runner::end_reason_name(EndReason::Interrupted), "interrupted");
+    check_text(vehicle_sil::runner::end_reason_name(EndReason::Failed), "failed");
+    check_text(vehicle_sil::runner::end_reason_name(EndReason::SetupFailed), "setup_failed");
 }

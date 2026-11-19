@@ -22,15 +22,15 @@
 #include <numeric>
 #include <utility>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 namespace {
 
 using detail::ended_by_itself;
 using detail::exit_text;
 using detail::failed_exit;
-using detail::kNanosPerMilli;
-using detail::millis_text;
+using config::detail::kNanosPerMilli;
+using config::detail::millis_text;
 
 std::string prefix_of(const ParticipantRun& p) { return "participant '" + p.name + "': "; }
 
@@ -49,7 +49,7 @@ std::string lines_hint(const ParticipantRun& p)
 /// outside-device-shared of the bridge of `o`: another vehicle-sil bridge that is not this run's used its
 /// device. A warning; an error where the launcher stopped the run, or did not start it, for it
 /// (--strict).
-Finding shared_finding(const RunOutside& o, const ParticipantRun& bridge)
+config::Finding shared_finding(const RunOutside& o, const ParticipantRun& bridge)
 {
     const OutsideLink& link = o.link;
     detail::OutsideForeign foreign{std::max<std::uint32_t>(link.shared_most, static_cast<std::uint32_t>(link.shared_peers.size())),
@@ -67,26 +67,26 @@ Finding shared_finding(const RunOutside& o, const ParticipantRun& bridge)
     const std::string limit = std::to_string(kOutsideSharedAfter.count() / 1000) + " s";
     if (link.shared_stop == OutsideLink::SharedStop::AtStart)
     {
-        return Finding{Severity::Error, "outside-device-shared",
+        return config::Finding{config::Severity::Error, "outside-device-shared",
                        where + "the device is also used by " + who + ", and --strict does not start a run on it: " + mixed + fix +
                            " and run again; without --strict the run starts and warns",
                        bridge.line, bridge.name, o.network};
     }
     if (link.shared_stop == OutsideLink::SharedStop::AfterDelay)
     {
-        return Finding{Severity::Error, "outside-device-shared",
+        return config::Finding{config::Severity::Error, "outside-device-shared",
                        where + "the device was also used by " + who + " from " + at + " s on, and --strict stopped the run after " +
                            limit + " of it: " + mixed + fix + ", then run again",
                        bridge.line, bridge.name, o.network};
     }
-    return Finding{Severity::Warning, "outside-device-shared",
+    return config::Finding{config::Severity::Warning, "outside-device-shared",
                    where + "the device was also used by " + who + " from " + at + " s on: " + mixed + fix +
                        "; --strict does not start a run on a device that is shared, and stops one that shares it for " + limit,
                    bridge.line, bridge.name, o.network};
 }
 
 /// connect-failed or connect-lost for the bridge `p` of --connect, or nothing: it did not fail the run.
-std::optional<Finding> bridge_failure(const RunOutcome& outcome, const ParticipantRun& p)
+std::optional<config::Finding> bridge_failure(const RunOutcome& outcome, const ParticipantRun& p)
 {
     const bool ran = outcome.end.simulation != SimulationEnd::NotStarted;
     const bool blamed = !outcome.end.failed_participant.empty() && p.name == outcome.end.failed_participant;
@@ -109,7 +109,7 @@ std::optional<Finding> bridge_failure(const RunOutcome& outcome, const Participa
     // The run's own stop: the bridge went on, but its link or bus stayed down (OutsideState::lost()).
     if (blamed && ran && outside != outcome.outside.end() && !outside->link.lost.empty())
     {
-        return Finding{Severity::Error, "connect-lost",
+        return config::Finding{config::Severity::Error, "connect-lost",
                        "network '" + p.for_network + "': the connection to the real bus (" + target +
                            ") was lost while the simulation was running: " + p.name + " reported " + outside->link.lost +
                            " (the longest the launcher waits for it to come back), so the launcher aborted the "
@@ -120,7 +120,7 @@ std::optional<Finding> bridge_failure(const RunOutcome& outcome, const Participa
     }
     if (blamed && ran)
     {
-        return Finding{Severity::Error, "connect-lost",
+        return config::Finding{config::Severity::Error, "connect-lost",
                        "network '" + p.for_network + "': the connection to the real bus (" + target +
                            ") was lost while the simulation was running: " + p.name + " ended (" + how + "; " + said +
                            "), so the launcher aborted the simulation. The devices on the bus missed what came after; "
@@ -129,7 +129,7 @@ std::optional<Finding> bridge_failure(const RunOutcome& outcome, const Participa
     }
     if (p.ended_with_run)
     {
-        return Finding{Severity::Error, "connect-lost",
+        return config::Finding{config::Severity::Error, "connect-lost",
                        "network '" + p.for_network + "': the connection to the real bus (" + target +
                            ") was lost at about the time the simulation ended: " + p.name + " ended (" + how + "; " +
                            said + ") before the launcher asked it to stop. The devices on the bus may have missed the "
@@ -165,7 +165,7 @@ std::optional<Finding> bridge_failure(const RunOutcome& outcome, const Participa
     const bool othersStarted = std::any_of(outcome.participants.begin(), outcome.participants.end(), [](const ParticipantRun& o) {
         return !detail::stops_run(o) && o.ending != Ending::NotStarted;
     });
-    return Finding{Severity::Error, "connect-failed",
+    return config::Finding{config::Severity::Error, "connect-failed",
                    "network '" + p.for_network + "' could not be connected to the real bus (" + target + "): " + p.name +
                        " " + what + (othersStarted ? ", so the simulation was not started" : ", so nothing else was started") +
                        ". Check that " + target +
@@ -180,10 +180,10 @@ std::optional<Finding> bridge_failure(const RunOutcome& outcome, const Participa
 /// - the note outside-time-changed, in a run that is connected outside the simulation (it took
 ///   the command, so its --time-policy is free);
 /// - the note unsynchronized-time-changed, in a run with participants that run in real time.
-std::vector<Finding> time_changed_findings(const RunOutcome& outcome)
+std::vector<config::Finding> time_changed_findings(const RunOutcome& outcome)
 {
-    std::vector<Finding> out;
-    const std::string outside = detail::connected_outside(outcome.time_lock);
+    std::vector<config::Finding> out;
+    const std::string outside = config::detail::connected_outside(outcome.time_lock);
     if (!outcome.time_changed || (outside.empty() && outcome.real_time_peers.empty()))
     {
         return out;
@@ -205,10 +205,10 @@ std::vector<Finding> time_changed_findings(const RunOutcome& outcome)
     }
     else if (t.command == "speed")
     {
-        command += " " + speed_text(t.speed);
+        command += " " + config::speed_text(t.speed);
     }
     const std::string effect = t.command != "speed" ? std::string("the simulation stood still")
-                               : t.speed            ? "the simulation ran at speed " + speed_text(t.speed)
+                               : t.speed            ? "the simulation ran at speed " + config::speed_text(t.speed)
                                                     : std::string("the simulation ran as fast as possible");
     const std::string took = "the run took the time command '" + command + "' from " + t.source + " at " +
                              std::to_string(t.sim_ms) + " ms";
@@ -216,7 +216,7 @@ std::vector<Finding> time_changed_findings(const RunOutcome& outcome)
                               "events show each one)";
     if (!outside.empty())
     {
-        out.push_back(Finding{Severity::Note, "outside-time-changed",
+        out.push_back(config::Finding{config::Severity::Note, "outside-time-changed",
                               outside + ", which does not wait for the virtual time, and with --time-policy free " + took +
                                   ": " + effect +
                                   " while what is connected there went on in real time, so from then on it got the messages "
@@ -224,7 +224,7 @@ std::vector<Finding> time_changed_findings(const RunOutcome& outcome)
                                   "outside pile up while the simulation stands still). " +
                                   first + ". To keep the run to real time, leave --time-policy free out; to pause, step or "
                                           "change the speed with nothing outside, run " +
-                                  detail::not_connected(outcome.time_lock),
+                                  config::detail::not_connected(outcome.time_lock),
                               0, "", ""});
     }
     if (!outcome.real_time_peers.empty())
@@ -235,8 +235,8 @@ std::vector<Finding> time_changed_findings(const RunOutcome& outcome)
             quoted.push_back("'" + name + "'");
         }
         const bool one = quoted.size() == 1;
-        out.push_back(Finding{Severity::Note, "unsynchronized-time-changed",
-                              std::string(one ? "participant " : "participants ") + detail::and_list(quoted) +
+        out.push_back(config::Finding{config::Severity::Note, "unsynchronized-time-changed",
+                              std::string(one ? "participant " : "participants ") + config::detail::and_list(quoted) +
                                   (one ? " runs" : " run") + " in real time (no step: the virtual time does not move " +
                                   (one ? "it" : "them") + "), and " + took + ": " + effect + " while " +
                                   (one ? "that participant" : "those participants") +
@@ -253,9 +253,9 @@ std::vector<Finding> time_changed_findings(const RunOutcome& outcome)
 /// connect-nothing-received: a bridge of --connect that sent frames to the real bus while the
 /// simulation ran and got none from a device there, for each such network. Not for a bridge that
 /// failed the run (connect-failed, connect-lost say more), nor without counts (none could be read).
-std::vector<Finding> nothing_received_findings(const RunOutcome& outcome)
+std::vector<config::Finding> nothing_received_findings(const RunOutcome& outcome)
 {
-    std::vector<Finding> out;
+    std::vector<config::Finding> out;
     if (outcome.end.simulation == SimulationEnd::NotStarted)
     {
         return out;
@@ -272,9 +272,9 @@ std::vector<Finding> nothing_received_findings(const RunOutcome& outcome)
         {
             continue;
         }
-        const bool can = is_can_bridge_tool(o.tool);
-        out.push_back(Finding{
-            Severity::Note, "connect-nothing-received",
+        const bool can = config::is_can_bridge_tool(o.tool);
+        out.push_back(config::Finding{
+            config::Severity::Note, "connect-nothing-received",
             "network '" + o.network + "': nothing came from a device on the real bus (" + o.target + ") before the run ended: " + o.participant +
                 " sent " + std::to_string(*o.to_outside) + (*o.to_outside == 1 ? " frame" : " frames") +
                 " there and got none from a device" +
@@ -299,9 +299,9 @@ std::string seconds_text(std::chrono::milliseconds ms)
 /// outside-loop-suspected: what the bridges of --connect saw of the real bus while the simulation
 /// ran, for each network. A warning each (--strict fails on it): the run went on, but what it says of
 /// the devices outside may be wrong. Not for a bridge that failed the run (connect-lost says more).
-std::vector<Finding> outside_findings(const RunOutcome& outcome)
+std::vector<config::Finding> outside_findings(const RunOutcome& outcome)
 {
-    std::vector<Finding> out;
+    std::vector<config::Finding> out;
     if (outcome.end.simulation == SimulationEnd::NotStarted)
     {
         return out;
@@ -319,12 +319,12 @@ std::vector<Finding> outside_findings(const RunOutcome& outcome)
             {
                 continue;
             }
-            const NetworkKind kind = is_can_bridge_tool(a.tool) ? NetworkKind::Can : NetworkKind::Ethernet;
-            if (connect_device_key(kind, a.target) == connect_device_key(kind, b.target))
+            const NetworkKind kind = config::is_can_bridge_tool(a.tool) ? NetworkKind::Can : NetworkKind::Ethernet;
+            if (config::connect_device_key(kind, a.target) == config::connect_device_key(kind, b.target))
             {
                 continue;
             }
-            out.push_back(Finding{Severity::Warning, "connect-target-shared",
+            out.push_back(config::Finding{config::Severity::Warning, "connect-target-shared",
                                   "networks '" + a.network + "' and '" + b.network + "': --connect gives them the same device under two names ('" +
                                       a.target + "' and '" + b.target +
                                       "'; the bridges report one device): the frames of both networks are mixed there: connect them to different "
@@ -341,14 +341,14 @@ std::vector<Finding> outside_findings(const RunOutcome& outcome)
             continue;
         }
         const OutsideLink& link = o.link;
-        const bool can = is_can_bridge_tool(o.tool);
+        const bool can = config::is_can_bridge_tool(o.tool);
         if (link.shared_most > 0)
         {
             out.push_back(shared_finding(o, *bridge));
         }
         const std::string where = "network '" + o.network + "' -> " + o.target + ": ";
         const auto add = [&](const char* code, std::string message) {
-            out.push_back(Finding{Severity::Warning, code, where + message, bridge->line, bridge->name, o.network});
+            out.push_back(config::Finding{config::Severity::Warning, code, where + message, bridge->line, bridge->name, o.network});
         };
         const auto times = [](std::uint32_t n) { return n == 1 ? std::string("once") : std::to_string(n) + " times"; };
         if (link.down_count > 0)
@@ -408,27 +408,27 @@ std::vector<Finding> outside_findings(const RunOutcome& outcome)
 // A finding that is added here and that the end of the participants can still change
 // (RunParticipants::end_children(): exit, ending, stopped_after_end, stop_request_failed, left_processes,
 // interrupted_by, interrupted_while_ending) must be left out by detail::settled_findings() until it cannot.
-std::vector<Finding> assess_run(const RunOutcome& outcome)
+std::vector<config::Finding> assess_run(const RunOutcome& outcome)
 {
-    std::vector<Finding> out;
-    const auto add = [&out](Severity severity, std::string code, std::string message, const ParticipantRun* p) {
-        out.push_back(Finding{severity, std::move(code), std::move(message), p != nullptr ? p->line : 0,
+    std::vector<config::Finding> out;
+    const auto add = [&out](config::Severity severity, std::string code, std::string message, const ParticipantRun* p) {
+        out.push_back(config::Finding{severity, std::move(code), std::move(message), p != nullptr ? p->line : 0,
                               p != nullptr ? p->name : std::string{}, ""});
     };
     if (!outcome.setup.error.empty())
     {
-        add(Severity::Error, "setup", "cannot set up the simulation: " + outcome.setup.error, nullptr);
+        add(config::Severity::Error, "setup", "cannot set up the simulation: " + outcome.setup.error, nullptr);
     }
     const bool ran = outcome.end.simulation != SimulationEnd::NotStarted;
     for (const ParticipantRun& p : outcome.participants)
     {
         const std::string pre = prefix_of(p);
-        const Severity weight = p.required ? Severity::Error : Severity::Warning;
+        const config::Severity weight = p.required ? config::Severity::Error : config::Severity::Warning;
         // A bridge of --connect that ended before its time says so in one finding, instead of
         // start, ended-before-start, participant-failed, not-joined or exit-code.
         if (detail::stops_run(p))
         {
-            if (std::optional<Finding> f = bridge_failure(outcome, p))
+            if (std::optional<config::Finding> f = bridge_failure(outcome, p))
             {
                 out.push_back(std::move(*f));
                 continue;
@@ -451,7 +451,7 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
         // up): only its exit code counts, so that the same run gives the same result.
         if (p.ending == Ending::ExitedBeforeStart && p.required)
         {
-            add(Severity::Error, "ended-before-start",
+            add(config::Severity::Error, "ended-before-start",
                 pre + "it ended before the simulation started: " + process_text(p) +
                     ", so the simulation could not start; " + lines_hint(p),
                 &p);
@@ -471,14 +471,14 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
             {
                 what = "it left the simulation";
             }
-            add(Severity::Error, "participant-failed",
+            add(config::Severity::Error, "participant-failed",
                 pre + "it failed while the simulation was running, and the launcher aborted the simulation: " + what +
                     "; " + lines_hint(p),
                 &p);
         }
         else if (p.missing_at_start)
         {
-            add(Severity::Error, "not-joined",
+            add(config::Severity::Error, "not-joined",
                 pre + "it did not join the simulation within " + std::to_string(outcome.start.timeout_ms) +
                     " ms (start_timeout_ms), although its process was running: " +
                     (p.describe ? "it did not connect to the registry; " + lines_hint(p)
@@ -518,7 +518,7 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
         }
         if (p.control == ControlLink::NoHello)
         {
-            add(Severity::Warning, "control-link-no-hello",
+            add(config::Severity::Warning, "control-link-no-hello",
                 pre + "it offers its variables (--describe), but " +
                     (p.control_hello_seen ? "its control agent said hello and then did not answer that it receives the "
                                             "launcher's commands within "
@@ -538,10 +538,10 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
         // Said by the check already if --describe announced the version.
         else if (p.control == ControlLink::VersionMismatch && !p.control_version_described)
         {
-            add(Severity::Warning, "control-link-version",
+            add(config::Severity::Warning, "control-link-version",
                 pre + "its control agent speaks version " + std::to_string(p.control_version) +
                     " of the control messages and this launcher version " + std::to_string(control::wire::kVersion) +
-                    ", so its variables cannot be read or written in this run: " + detail::control_version_fix(p.control_version),
+                    ", so its variables cannot be read or written in this run: " + config::detail::control_version_fix(p.control_version),
                 &p);
         }
         if (!p.variable_map_problems.empty())
@@ -551,7 +551,7 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
             {
                 problems += (problems.empty() ? "" : "; ") + problem;
             }
-            add(Severity::Error, "variable-map-not-applied",
+            add(config::Severity::Error, "variable-map-not-applied",
                 pre + "variables: " + std::to_string(p.variable_map_problems.size()) +
                     " of its mappings do not fit the variables its control agent announced and were not applied, so "
                     "those variables were seen under the executable's names and values in this run and writes to the names "
@@ -562,7 +562,7 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
         }
         if (p.control_late_messages > 0)
         {
-            add(Severity::Warning, "control-link-late-values",
+            add(config::Severity::Warning, "control-link-late-values",
                 pre + std::to_string(p.control_late_messages) +
                     " messages of its control agent's steps reached the launcher after the launcher's controller had "
                     "begun a later step: the values and results that the launcher had at a pause were not complete. Its "
@@ -572,7 +572,7 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
         }
         if (p.left_processes)
         {
-            add(Severity::Warning, "left-processes",
+            add(config::Severity::Warning, "left-processes",
                 pre + "processes it started were still running after it had ended: the launcher ended them; end them "
                       "in the participant before it exits",
                 &p);
@@ -580,12 +580,12 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     }
     if (!outcome.start.error.empty())
     {
-        add(Severity::Error, "simulation-start", "the simulation did not start: " + outcome.start.error, nullptr);
+        add(config::Severity::Error, "simulation-start", "the simulation did not start: " + outcome.start.error, nullptr);
     }
     if (outcome.close.not_closed_ms && !outcome.close.interrupted)
     {
         // Not when one more interrupt cut the wait: then the launcher did what it was asked to.
-        add(Severity::Warning, "connection-not-closed",
+        add(config::Severity::Warning, "connection-not-closed",
             "the launcher's own connection to the simulation (SIL Kit) had not closed " +
                 std::to_string(*outcome.close.not_closed_ms) +
                 " ms after the participants had ended: the launcher ended without closing it. The result is complete. "
@@ -596,7 +596,7 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     }
     if (outcome.control.refused_hellos + outcome.control.undecodable + outcome.control.unknown > 0)
     {
-        add(Severity::Warning, "control-link-dropped",
+        add(config::Severity::Warning, "control-link-dropped",
             "the launcher dropped messages of control agents: " + std::to_string(outcome.control.refused_hellos) +
                 " hellos it did not take, " + std::to_string(outcome.control.undecodable) + " messages it could not read and " +
                 std::to_string(outcome.control.unknown) +
@@ -612,21 +612,21 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     }
     if (!outcome.start.before_start_error.empty())
     {
-        add(Severity::Error, "before-start",
+        add(config::Severity::Error, "before-start",
             "what was to be done before the simulation started failed, and the launcher aborted the simulation at once: " +
                 outcome.start.before_start_error,
             nullptr);
     }
     if (!outcome.end.controller_state.empty())
     {
-        add(Severity::Error, "simulation",
+        add(config::Severity::Error, "simulation",
             "the simulation ended in state " + outcome.end.controller_state +
                 " instead of shutting down normally: the lines above show what the participants wrote",
             nullptr);
     }
     if (outcome.end.timed_out && outcome.start.timed_out_before_start)
     {
-        add(Severity::Error, "timeout",
+        add(config::Severity::Error, "timeout",
             "the simulation did not start within " + std::to_string(outcome.end.timeout_ms.value_or(0)) +
                 " ms of wall-clock time (--timeout-ms, which counts from when the launcher began to wait for the "
                 "participants, as the run waits for a participant you start yourself), so the launcher gave up: " +
@@ -636,7 +636,7 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     }
     else if (outcome.end.timed_out)
     {
-        add(Severity::Error, "timeout",
+        add(config::Severity::Error, "timeout",
             "the simulation did not end within " + std::to_string(outcome.end.timeout_ms.value_or(0)) +
                 " ms of wall-clock time (--timeout-ms), so the launcher aborted it: " +
                 (outcome.end.timed_out_while_holding
@@ -660,13 +660,13 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     else if (outcome.end.simulation == SimulationEnd::Aborted && outcome.end.failed_participant.empty() &&
              outcome.start.before_start_error.empty())
     {
-        add(Severity::Error, "simulation", "the simulation was aborted: the lines above show what the participants wrote",
+        add(config::Severity::Error, "simulation", "the simulation was aborted: the lines above show what the participants wrote",
             nullptr);
     }
     if (!outcome.end.interrupted_by.empty())
     {
         // An operator's stop is "stopped"; a signal, or a supervisor that went away, "interrupted".
-        add(Severity::Note, outcome.end.interrupted_kind == StopKind::Operator ? "stopped" : "interrupted",
+        add(config::Severity::Note, outcome.end.interrupted_kind == StopKind::Operator ? "stopped" : "interrupted",
             outcome.end.stop_text() + ": the launcher " +
                 (outcome.end.interrupted_while_ending ? std::string("stopped the participants instead of waiting for them to end")
                  : ran                            ? std::string("stopped the simulation and the participants")
@@ -675,17 +675,17 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     }
     if (const std::vector<std::string> forced = ended_by_force(outcome); !forced.empty())
     {
-        add(Severity::Note, "ended-by-force",
-            "the launcher did not wait for " + detail::and_list(forced) + " to end, because it was asked to stop again (or while it "
+        add(config::Severity::Note, "ended-by-force",
+            "the launcher did not wait for " + config::detail::and_list(forced) + " to end, because it was asked to stop again (or while it "
             "waited for the participants to end): it ended " + (forced.size() == 1 ? "it" : "them") +
                 " by force, with the processes started. This is no error of a run that was stopped that way; whether " +
                 (forced.size() == 1 ? "it ends" : "they end") + " when asked to is not known from this run (stop once and wait to see)",
             nullptr);
     }
-    if (const RunTiming& t = outcome.timing; t.late_steps > 0)
+    if (const config::RunTiming& t = outcome.timing; t.late_steps > 0)
     {
         const auto actual = t.actual_speed();
-        add(Severity::Warning, "behind-real-time",
+        add(config::Severity::Warning, "behind-real-time",
             "the simulation fell behind real time: " + std::to_string(t.late_steps) + " of " + std::to_string(t.paced_steps) +
                 " paced steps of the launcher's controller (" + std::to_string(t.time_step_ms) + " ms each) began more than " +
                 std::to_string(t.late_tolerance_ms) + " ms (late_tolerance_ms) after the real time they stand for, the latest by " +
@@ -696,10 +696,10 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                 ". The launcher does not catch up after a late step (the ECUs' periodic messages would leave in a burst): it "
                 "goes on at the speed from there, so the simulation came " +
                 std::to_string(t.slipped_ms) + " ms behind in all" +
-                (actual ? " and ran at " + speed_text(actual) + " times real time (pauses not counted)" : std::string{}) +
+                (actual ? " and ran at " + config::speed_text(actual) + " times real time (pauses not counted)" : std::string{}) +
                 "; a device attached in real time got the ECUs' messages late by up to that" +
                 (outcome.time_lock.locked
-                     ? " (" + detail::connected_outside(outcome.time_lock) +
+                     ? " (" + config::detail::connected_outside(outcome.time_lock) +
                            ": what is connected there does not wait, so the run was that far off from it)"
                      : std::string{}) +
                 ". Lower the speed (speed, run "
@@ -713,20 +713,20 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     std::ranges::move(nothing_received_findings(outcome), std::back_inserter(out));
     if (!outcome.timing.coarse_step_checked)
     {
-        if (auto f = detail::coarse_time_step(outcome.timing))
+        if (auto f = config::detail::coarse_time_step(outcome.timing))
         {
             out.push_back(std::move(*f));
         }
     }
     if (outcome.scenario.result)
     {
-        const ScenarioRun& scenario = *outcome.scenario.result;
-        const auto add_scenario = [&](std::string code, std::string message, std::size_t line, Severity severity = Severity::Error) {
-            out.push_back(Finding{severity, std::move(code), std::move(message), line, "", "", "", scenario.file});
+        const scenario::ScenarioRun& scenario = *outcome.scenario.result;
+        const auto add_scenario = [&](std::string code, std::string message, std::size_t line, config::Severity severity = config::Severity::Error) {
+            out.push_back(config::Finding{severity, std::move(code), std::move(message), line, "", "", "", scenario.file});
         };
-        for (const ScenarioStepRun& step : scenario.steps)
+        for (const scenario::ScenarioStepRun& step : scenario.steps)
         {
-            if (step.status == StepStatus::Failed)
+            if (step.status == scenario::StepStatus::Failed)
             {
                 add_scenario(step.code, step.text + ": " + step.message, step.line);
             }
@@ -750,13 +750,13 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                     ", or write samples: as_sent at the top of the scenario to judge with the values as the ECU sends them",
                 0, coarse.participant, "", "", scenario.file});
         }
-        if (scenario.status == ScenarioStatus::Incomplete)
+        if (scenario.status == scenario::ScenarioStatus::Incomplete)
         {
-            const auto reached = std::find_if(scenario.steps.rbegin(), scenario.steps.rend(), [](const ScenarioStepRun& step) {
-                return step.status != StepStatus::NotRun;
+            const auto reached = std::find_if(scenario.steps.rbegin(), scenario.steps.rend(), [](const scenario::ScenarioStepRun& step) {
+                return step.status != scenario::StepStatus::NotRun;
             });
             const auto passed = static_cast<std::size_t>(std::count_if(
-                scenario.steps.begin(), scenario.steps.end(), [](const ScenarioStepRun& step) { return step.status == StepStatus::Passed; }));
+                scenario.steps.begin(), scenario.steps.end(), [](const scenario::ScenarioStepRun& step) { return step.status == scenario::StepStatus::Passed; }));
             const EndReason end = end_reason(outcome);
             // The stop ended the simulation (one that came while the participants were ending did not).
             const bool cutShort = (end == EndReason::Stopped || end == EndReason::Interrupted) &&
@@ -765,7 +765,7 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                          "the scenario did not get to its end: the simulation ended at " + std::to_string(outcome.timing.sim_ms) +
                              " ms when " + std::to_string(passed) + " of " + std::to_string(scenario.steps.size()) +
                              " steps had passed" +
-                             (reached != scenario.steps.rend() && reached->status == StepStatus::Unfinished
+                             (reached != scenario.steps.rend() && reached->status == scenario::StepStatus::Unfinished
                                   ? " and the step at line " + std::to_string(reached->line) + " (" + reached->text + ") was not decided yet"
                                   : std::string{}) +
                              (!outcome.scenario.error.empty()
@@ -777,13 +777,13 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                          reached != scenario.steps.rend() ? reached->line : 0,
                          // Cut short by a stop or an interrupt: that is why, and it is not an error
                          // of the run (the result says that the scenario has no verdict).
-                         cutShort ? Severity::Note : Severity::Error);
+                         cutShort ? config::Severity::Note : config::Severity::Error);
         }
     }
     if (!outcome.scenario.timeline.empty() && outcome.scenario.timeline_record && outcome.scenario.timeline_record->dropped() > 0)
     {
         const std::uint64_t points = outcome.scenario.timeline_record->dropped();
-        add(Severity::Note, "timeline-limit",
+        add(config::Severity::Note, "timeline-limit",
             "the timeline " + outcome.scenario.timeline + " does not have the whole run: " + std::to_string(points) +
                 (points == 1 ? " older point was" : " older points were") +
                 " dropped at its limits (the newest points, up to the end of the scenario, are all there). limits.dropped in "
@@ -792,7 +792,7 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     }
     if (!outcome.scenario.timeline_error.empty())
     {
-        add(Severity::Error, "timeline-write",
+        add(config::Severity::Error, "timeline-write",
             "the timeline " + outcome.scenario.timeline + " could not be written: " + outcome.scenario.timeline_error +
                 "; what is in the file is not complete: do not use it. The scenario's result is not changed by this. Make "
                 "room on the disk, or name another file with --timeline, and run again",
@@ -801,23 +801,23 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     if (outcome.end.simulation == SimulationEnd::Ended && outcome.end.stop_at_ms && outcome.end.controller_state.empty() &&
         !outcome.end.stopped_by_scenario)
     {
-        add(Severity::Note, "ended-before-stop-at",
+        add(config::Severity::Note, "ended-before-stop-at",
             "the simulation ended before stop_at_ms (" + std::to_string(*outcome.end.stop_at_ms) +
                 " ms): a participant stopped it; if that is not expected, the lines above show which one",
             nullptr);
     }
-    for (Finding& f : outside_findings(outcome))
+    for (config::Finding& f : outside_findings(outcome))
     {
         out.push_back(std::move(f));
     }
-    sort_findings(out);
+    config::sort_findings(out);
     return out;
 }
 
-std::vector<Finding> detail::settled_findings(const RunOutcome& outcome)
+std::vector<config::Finding> detail::settled_findings(const RunOutcome& outcome)
 {
-    std::vector<Finding> out;
-    for (Finding& f : assess_run(outcome))
+    std::vector<config::Finding> out;
+    for (config::Finding& f : assess_run(outcome))
     {
         // A bridge's quotes its last line, or its counts (and the outside-* findings are made of them), which are known once its output has been
         // read to the end (after the participants have ended).
@@ -849,4 +849,4 @@ std::vector<Finding> detail::settled_findings(const RunOutcome& outcome)
     return out;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

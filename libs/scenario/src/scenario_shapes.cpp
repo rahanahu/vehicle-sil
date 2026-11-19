@@ -3,7 +3,7 @@
 
 #include <utility>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::scenario::detail {
 
 namespace {
 
@@ -206,4 +206,4 @@ std::shared_ptr<const Waveform> points_shape(std::vector<signal::Point> points, 
     return std::make_shared<Points>(std::move(points), hold);
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::scenario::detail

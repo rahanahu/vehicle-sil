@@ -27,7 +27,7 @@
 #include <type_traits>
 #include <vector>
 
-namespace vehicle_sil::launch::test::run_controls_support {
+namespace vehicle_sil::runner::test::run_controls_support {
 
 
 
@@ -56,4 +56,4 @@ struct Told
     RunControls controls;
 };
 
-} // namespace vehicle_sil::launch::test::run_controls_support
+} // namespace vehicle_sil::runner::test::run_controls_support

@@ -84,19 +84,19 @@ std::string format_version_json(const std::vector<std::string_view>& more)
     return out;
 }
 
-const char* participant_state_name(ParticipantState state)
+const char* participant_state_name(runner::ParticipantState state)
 {
     switch (state)
     {
-    case ParticipantState::Disabled: return "disabled";
-    case ParticipantState::NotStarted: return "not_started";
-    case ParticipantState::Started: return "started";
-    case ParticipantState::Manual: return "manual";
-    case ParticipantState::Joined: return "joined";
-    case ParticipantState::Failed: return "failed";
-    case ParticipantState::Ended: return "ended";
-    case ParticipantState::StopRequested: return "stop_requested";
-    case ParticipantState::Killed: return "killed";
+    case runner::ParticipantState::Disabled: return "disabled";
+    case runner::ParticipantState::NotStarted: return "not_started";
+    case runner::ParticipantState::Started: return "started";
+    case runner::ParticipantState::Manual: return "manual";
+    case runner::ParticipantState::Joined: return "joined";
+    case runner::ParticipantState::Failed: return "failed";
+    case runner::ParticipantState::Ended: return "ended";
+    case runner::ParticipantState::StopRequested: return "stop_requested";
+    case runner::ParticipantState::Killed: return "killed";
     }
     return "ended";
 }
@@ -506,9 +506,9 @@ void EventStream::hello(long pid, const std::string& file, const std::vector<std
          }));
 }
 
-void EventStream::phase(Phase phase)
+void EventStream::phase(runner::Phase phase)
 {
-    emit("phase", object([&](Writer& w) { w.string("phase", phase_name(phase)); }));
+    emit("phase", object([&](Writer& w) { w.string("phase", runner::phase_name(phase)); }));
 }
 
 void EventStream::check(const Checked& report)
@@ -530,7 +530,7 @@ void EventStream::control_server(const std::string& address, bool tls, bool cred
          }));
 }
 
-void EventStream::participant(const std::string& name, ParticipantState state)
+void EventStream::participant(const std::string& name, runner::ParticipantState state)
 {
     emit("participant", object([&](Writer& w) {
              w.string("name", name);
@@ -555,7 +555,7 @@ void EventStream::control_link(const std::string& name, std::string_view state, 
          }));
 }
 
-void EventStream::scenario_step(const ScenarioStepRun& step)
+void EventStream::scenario_step(const scenario::ScenarioStepRun& step)
 {
     emit("scenario_step", object([&](Writer& w) { detail::write_scenario_step_members(w, step); }));
 }
@@ -564,7 +564,7 @@ void EventStream::participant_not_started(const std::string& name, const std::st
 {
     emit("participant", object([&](Writer& w) {
              w.string("name", name);
-             w.string("state", participant_state_name(ParticipantState::NotStarted));
+             w.string("state", participant_state_name(runner::ParticipantState::NotStarted));
              w.string("message", message);
          }));
 }
@@ -573,7 +573,7 @@ void EventStream::participant_failed(const std::string& name, std::string_view r
 {
     emit("participant", object([&](Writer& w) {
              w.string("name", name);
-             w.string("state", participant_state_name(ParticipantState::Failed));
+             w.string("state", participant_state_name(runner::ParticipantState::Failed));
              w.string("reason", reason);
              if (!message.empty())
              {
@@ -587,7 +587,7 @@ void EventStream::participant_started(const std::string& name, long pid, const s
 {
     emit("participant", object([&](Writer& w) {
              w.string("name", name);
-             w.string("state", participant_state_name(ParticipantState::Started));
+             w.string("state", participant_state_name(runner::ParticipantState::Started));
              w.integer("pid", pid);
              w.begin_array("command");
              for (const auto& word : command)
@@ -605,7 +605,7 @@ void EventStream::participant_manual(const std::string& name, const std::vector<
 {
     emit("participant", object([&](Writer& w) {
              w.string("name", name);
-             w.string("state", participant_state_name(ParticipantState::Manual));
+             w.string("state", participant_state_name(runner::ParticipantState::Manual));
              w.begin_array("command");
              for (const auto& word : command)
              {
@@ -630,7 +630,7 @@ void EventStream::participant_ended(const std::string& name, const process::Exit
 {
     emit("participant", object([&](Writer& w) {
              w.string("name", name);
-             w.string("state", participant_state_name(ParticipantState::Ended));
+             w.string("state", participant_state_name(runner::ParticipantState::Ended));
              // As the result's participants[]: the exit code, or the signal.
              if (status.signal)
              {
@@ -663,12 +663,12 @@ void EventStream::outside(const std::string& network, std::uint64_t to_outside, 
          }));
 }
 
-void EventStream::finding(const std::string& file, const Finding& finding)
+void EventStream::finding(const std::string& file, const config::Finding& finding)
 {
     emit("finding", object([&](Writer& w) { detail::write_finding_members(w, file, finding); }));
 }
 
-void EventStream::time(const TimeEvent& time)
+void EventStream::time(const runner::TimeEvent& time)
 {
     emit("time", object([&](Writer& w) {
              w.integer("sim_ms", time.sim_ms);
@@ -680,7 +680,7 @@ void EventStream::time(const TimeEvent& time)
          }));
 }
 
-void EventStream::command(const Command& command, std::string_view source)
+void EventStream::command(const runner::Command& command, std::string_view source)
 {
     emit("command", object([&](Writer& w) {
              if (command.name)
@@ -723,7 +723,7 @@ namespace {
 /// allowed.<key>: whether the operation is taken, why not, and the range of its argument
 /// (`min`, `max`: the names of its two keys, null for an operation without one; `whole`: the
 /// range is of whole numbers).
-void write_allowed(Writer& w, std::string_view key, const Allowed& a, const char* min = nullptr,
+void write_allowed(Writer& w, std::string_view key, const runner::Allowed& a, const char* min = nullptr,
                    const char* max = nullptr, bool whole = false)
 {
     w.begin_object(key);
@@ -756,11 +756,11 @@ void write_allowed(Writer& w, std::string_view key, const Allowed& a, const char
 
 } // namespace
 
-void EventStream::state(const RunState& state)
+void EventStream::state(const runner::RunState& state)
 {
     emit("state", object([&](Writer& w) {
              w.integer("rev", static_cast<std::int64_t>(state.rev));
-             w.string("phase", phase_name(state.phase));
+             w.string("phase", runner::phase_name(state.phase));
              w.boolean("paused", state.paused);
              if (state.paused_at_ms)
              {
@@ -783,7 +783,7 @@ void EventStream::state(const RunState& state)
              {
                  w.string("speed", "max");
              }
-             w.string("pacing", pacing_name(state.pacing));
+             w.string("pacing", runner::pacing_name(state.pacing));
              w.begin_object("stop");
              w.integer("requests", state.stop_requests);
              optional_text(w, "by", state.stopped_by);
@@ -800,7 +800,7 @@ void EventStream::state(const RunState& state)
              w.end_object();
              // What the run is connected to outside: one element for each bridge of --connect.
              w.begin_array("outside");
-             for (const RunState::Outside& o : state.outside)
+             for (const runner::RunState::Outside& o : state.outside)
              {
                  w.begin_object({});
                  w.string("network", o.network);

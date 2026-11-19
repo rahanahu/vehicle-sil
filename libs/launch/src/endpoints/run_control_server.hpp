@@ -18,7 +18,7 @@ struct ControlServerOfRun
 {
     std::shared_ptr<ControlEndpoint> server; ///< null if `findings` is not empty
     /// What is wrong with the request, as a usage error (code "usage"): the first thing found.
-    std::vector<Finding> findings{};
+    std::vector<config::Finding> findings{};
 };
 
 /// Reads and checks what `asked` names, in this order: the form of the address, TLS with both of
@@ -28,6 +28,6 @@ struct ControlServerOfRun
 /// to their stop requests as stop_source::kControlStop), which must outlive it. Reads files;
 /// starts nothing and listens nowhere (ControlEndpoint::start() does).
 /// In a build without the control server: throws std::invalid_argument.
-[[nodiscard]] ControlServerOfRun make_control_server_of_run(const ControlHost& asked, RunControls& controls);
+[[nodiscard]] ControlServerOfRun make_control_server_of_run(const ControlHost& asked, runner::RunControls& controls);
 
 } // namespace vehicle_sil::launch::detail

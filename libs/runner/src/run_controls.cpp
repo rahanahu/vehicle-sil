@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 const char* phase_name(Phase phase)
 {
@@ -101,7 +101,7 @@ RunState RunControls::compose(const TimeFacts& facts) const
     }
     out.scenario = facts.situation.scenario;
     out.outside = outside_;
-    const auto ask = [&facts](Operation o, Entry e) { return launch::allowed(facts.situation, e, o); };
+    const auto ask = [&facts](Operation o, Entry e) { return runner::allowed(facts.situation, e, o); };
     out.allowed.pause = ask(Operation::Pause, Entry::Stdin);
     out.allowed.resume = ask(Operation::Resume, Entry::Stdin);
     out.allowed.step = ask(Operation::Step, Entry::Stdin);
@@ -153,4 +153,4 @@ RunState RunControls::state()
     return out;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

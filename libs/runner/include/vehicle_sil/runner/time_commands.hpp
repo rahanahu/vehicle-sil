@@ -23,7 +23,7 @@ namespace vehicle_sil {
 class SimulationController;
 } // namespace vehicle_sil
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 /// A time command that changed how the simulation's time goes: a pause (also at a time), a step,
 /// a run_until, or a speed other than 1 (also max). A resume, a speed of 1 and run --start-paused
@@ -150,7 +150,7 @@ public:
     Command apply(const Command& command, std::string_view source, const std::function<void()>& accepted);
 
     /// Whether `operation` from `entry` would be taken now, and the range of its argument
-    /// (launch::allowed()): what apply() decides for a command of that operation whose arguments
+    /// (runner::allowed()): what apply() decides for a command of that operation whose arguments
     /// are in range, at this moment (another thread's command may change it right after). Before
     /// set_time_lock(), when apply() decides nothing yet: the answer without a lock, which the
     /// lock may change. Changes nothing and writes nothing. Takes this object's mutex: not to be called from what runs
@@ -169,7 +169,7 @@ public:
     /// Calls `f` once with the facts as they are now, under this object's mutex (the rules for
     /// `f`: as OnChange). Reads the controller's time gate while attached.
     void look(const std::function<void(const TimeFacts& facts)>& f);
-    /// launch::always_refused() for this run: whether `operation` from `entry` is refused for the
+    /// runner::always_refused() for this run: whether `operation` from `entry` is refused for the
     /// whole run. The same answer whenever it is asked.
     [[nodiscard]] std::optional<Decision> always_refused(Entry entry, Operation operation) const;
     /// Whether this run is connected outside the simulation, and whether that keeps it to real time
@@ -178,7 +178,7 @@ public:
     /// before anything of it starts (run_file(): from the check, before --describe). Tells
     /// OnChange if the run is connected outside (the lock changes what is taken), then decides the commands that waited for it, in their order (see above). The
     /// first call is the run's for good: a later one changes nothing.
-    void set_time_lock(const TimeLock& lock);
+    void set_time_lock(const config::TimeLock& lock);
 
     /// The run's part. attach(): from now on the commands go to `controller` (its time gate,
     /// made with `step_ms`); std::logic_error before set_time_lock(). First it is given the speed
@@ -228,4 +228,4 @@ private:
     std::unique_ptr<State> state_;
 };
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

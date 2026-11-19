@@ -41,7 +41,7 @@ struct ResultMeaning
 
 /// The one table of `check`: 4 the command line was wrong, 3 the file could not be read, 1 the
 /// check did not pass (an error; with --strict also a warning), 0 it passed.
-[[nodiscard]] inline int exit_code_of(const CheckReport& report)
+[[nodiscard]] inline int exit_code_of(const config::CheckReport& report)
 {
     if (report.usage)
     {

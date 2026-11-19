@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::config {
 
 ConfigConnect connect_for_config(const SimulationConfig& config, std::span<const ConnectRequest> connect,
                                  const RequestOrigin& origin)
@@ -69,4 +69,4 @@ void sort_findings(std::vector<Finding>& findings)
     });
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::config

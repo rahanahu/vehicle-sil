@@ -15,7 +15,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::config {
 
 namespace {
 
@@ -385,4 +385,4 @@ ReportedEcu read_description(std::string_view json)
     }
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::config

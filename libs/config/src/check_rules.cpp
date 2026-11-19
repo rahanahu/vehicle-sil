@@ -20,7 +20,7 @@
 #include <sstream>
 #include <utility>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::config {
 
 namespace {
 
@@ -1918,4 +1918,4 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
     return out;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::config

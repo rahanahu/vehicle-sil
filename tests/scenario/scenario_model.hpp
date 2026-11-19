@@ -25,7 +25,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch::test::scenario_model {
+namespace vehicle_sil::scenario::test::scenario_model {
 
 using namespace std::chrono_literals;
 
@@ -83,7 +83,7 @@ inline Scenario read(const std::string& text, const ScenarioCatalog& c = catalog
     ScenarioRead r = read_scenario(text, c);
     if (!r.scenario)
     {
-        throw unit::Failure("the scenario has errors:\n" + lines(r.findings));
+        throw unit::Failure("the scenario has errors:\n" + config::test::lines(r.findings));
     }
     return *r.scenario;
 }
@@ -566,4 +566,4 @@ inline std::string steps_without_one_write(const World& world, const std::string
     return out;
 }
 
-} // namespace vehicle_sil::launch::test::scenario_model
+} // namespace vehicle_sil::scenario::test::scenario_model

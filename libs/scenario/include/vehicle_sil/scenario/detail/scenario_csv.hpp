@@ -12,7 +12,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::scenario::detail {
 
 /// The most lines of values a points file may have (one point each).
 inline constexpr std::size_t kMaxCsvRows = 100'000;
@@ -43,4 +43,4 @@ struct CsvTable
 /// so that a message says which cell without repeating the file.
 [[nodiscard]] std::string shown_cell(const std::string& cell);
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::scenario::detail

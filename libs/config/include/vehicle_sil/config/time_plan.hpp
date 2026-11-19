@@ -17,7 +17,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::config {
 
 struct CheckReport; // check.hpp, which includes this header
 
@@ -154,7 +154,7 @@ namespace detail {
 /// what it means for the ECUs' steps: RunTiming's time_step_ms, time_step_written, ecu_step_ns,
 /// step_delay_ns and fine_step_ms (the rest is left as it is in the result).
 /// - time_step_ms as written, if it is.
-/// - Without a speed: launch::time_step_ms() (kDefaultTimeStepMs or what of it divides stop_at_ms).
+/// - Without a speed: config::time_step_ms() (kDefaultTimeStepMs or what of it divides stop_at_ms).
 /// - With a speed: the greatest common divisor of kDefaultTimeStepMs, stop_at_ms and the steps of
 ///   the enabled ECUs as `check` has them, so that every ECU step starts at a controller step (the
 ///   gate keeps real time only there); 1 ms if a participant's step is not known (describe: false)
@@ -172,4 +172,4 @@ namespace detail {
 [[nodiscard]] std::optional<Finding> coarse_time_step(const RunTiming& timing);
 } // namespace detail
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::config

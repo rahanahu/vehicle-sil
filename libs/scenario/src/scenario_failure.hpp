@@ -8,9 +8,9 @@
 
 #include <string>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::scenario::detail {
 
 /// A virtual time in milliseconds, in the shortest form ("300", "2.5"): as the messages say it.
 [[nodiscard]] std::string ms_text(SimTime t);
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::scenario::detail

@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// The scenario of a run. Every call but end() and over() is made only in a run with a scenario
 /// (RunContext::scenario is not null), or does nothing without one (start(), finish()).
@@ -101,7 +101,7 @@ public:
 private:
     class HubPort;
 
-    void note_step(const ScenarioStepRun& step);
+    void note_step(const scenario::ScenarioStepRun& step);
     /// Gives the engine the samples that have arrived since the last call.
     void drain();
     void loop(SimulationController& controller);
@@ -117,8 +117,8 @@ private:
     std::unique_ptr<HubPort> port_;
     /// run --timeline: what the engine notes (made in begin(), before the engine). Touched as
     /// engine_ is: the engine fills it; finish() gives it to the outcome.
-    std::shared_ptr<TimelineRecord> record_;
-    std::unique_ptr<ScenarioEngine> engine_; ///< the window's thread, then the scenario's, then main
+    std::shared_ptr<scenario::TimelineRecord> record_;
+    std::unique_ptr<scenario::ScenarioEngine> engine_; ///< the window's thread, then the scenario's, then main
     /// begin() found these and made no engine (the scenario does not begin). Touched as engine_ is.
     std::vector<ScenarioNotObserved> not_observed_;
     std::thread thread_;
@@ -128,4 +128,4 @@ private:
     std::string thread_error_; ///< guarded by error_mutex_
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

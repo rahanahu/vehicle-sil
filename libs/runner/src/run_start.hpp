@@ -24,7 +24,7 @@
 #include <string>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// What the main thread (RunStart) and the start window's thread (RunStartWindow) share while
 /// the simulation starts. Nothing else of the run is touched by both.
@@ -183,4 +183,4 @@ private:
     bool before_start_failed_ = false;
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

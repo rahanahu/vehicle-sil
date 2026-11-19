@@ -15,7 +15,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::scenario {
 
 /// The scenario that was checked with the configuration (--scenario).
 struct ScenarioCheck
@@ -27,7 +27,7 @@ struct ScenarioCheck
     /// Set if the configuration could be read and the scenario has no error: it can run.
     std::optional<Scenario> scenario{};
     /// ScenarioRead::params, only, skipped and unchecked_expects.
-    std::vector<ParamValue> params{};
+    std::vector<config::ParamValue> params{};
     std::optional<std::vector<std::string>> only{};
     std::size_t skipped = 0;
     std::size_t unchecked_expects = 0;
@@ -38,7 +38,7 @@ struct ScenarioCheck
 
 /// The catalog of a checked configuration, for read_scenario() (CheckReport::config must be set):
 /// each participant as a scenario can use it, from its entry and what its executable described.
-[[nodiscard]] ScenarioCatalog scenario_catalog(const CheckReport& check);
+[[nodiscard]] ScenarioCatalog scenario_catalog(const config::CheckReport& check);
 
 /// Per participant of the checked configuration: whether the run gives its executable
 /// --sample-every-step (ecu_executable::kSampleEveryStepArgument). True where `scenario` asks for
@@ -58,4 +58,4 @@ struct ScenarioCheck
 [[nodiscard]] std::vector<Finding> scenario_samples_findings(const CheckReport& check, const Scenario& scenario,
                                                              std::string_view launcher_version);
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::scenario

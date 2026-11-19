@@ -249,11 +249,11 @@ int main(int argc, char** argv)
 | LIN | 仮想時間だけで動きます。 | 実時間の `Peer` では `std::logic_error` になります。 |
 | LIN | LIN の dynamic response など、SIL Kit の experimental API を使っています。 | — |
 | LIN | SIL Kit で動かす Slave は、応答するフレームのスロット長より短いステップ幅で動かす必要があります。 | ステップ幅は、設定ファイルの `step_ms` で指定します。 |
+| LIN | LIN のネットワークは実際のバスにつなげません。LIN のブリッジはなく、`--connect` が取るのは CAN と Ethernet のネットワークです。 | LIN のネットワークはシミュレーションの中で使います。 |
 | LIN | Slave が受信できるのは、Master が送るフレームだけです。 | ほかの Slave の応答は、仮想 LIN バスでは受信できず、SIL Kit では購読した ID なら受信できますが、受信するステップと時刻は決定論的ではありません。 |
 | イーサネット | 生のフレームだけで、TCP/IP のスタックはありません。 | 外部のネットワークとは [ethernet-bridge.md](docs/ja/ethernet-bridge.md) のブリッジで接続します。 |
 | 時間と操作 | シミュレーションを最初からやり直す操作（リセット）はありません。 | 停止してから `run` を実行し直します。 |
 | 時間と操作 | `vehicle_sil_sim_controller` からは、仮想時間の一時停止とステップ実行ができません。 | C++ の API（`SimulationController` の時間ゲート）、`vehicle_sil_launch run` の標準入力のコマンド、Control API（`--control`）からできます。 |
-| 時間と操作 | CAN と LIN のチャネルやデバイスは、Control API、設定ファイル、GUI からは選択できません。 | Vector XL CAN Bridge のチャネルは、起動時の引数で指定します。 |
 | 時間と操作 | 既存 ECU の DLL が内部で実時間（スリープ、時刻の取得）を使っている場合、vehicle-sil はそれを仮想時間に置き換えられません。 | — |
 | ツールとビルド | テスト用のライブラリ（`vehicle_sil::testkit`）に、LIN の故障注入と記録の機能はありません。 | 記録は仮想 LIN バスの観測、ECU ごとの通信断は `ecu.connected` でできます。 |
 | ツールとビルド | `LocalBench`（`vehicle_sil::local`）、`vehicle_sil::testkit`、`vehicle_sil::spy` の API は安定していません。 | — |

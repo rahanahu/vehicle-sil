@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// The processes the launcher started, one per participant (none for a disabled one, for one
 /// started by hand and for one that could not be started).
@@ -95,7 +95,7 @@ public:
 
 private:
     /// A participant someone starts by hand: the lines (or the event) with where and how to start it.
-    void show_manual(const ParticipantConfig& p, const std::filesystem::path& executable,
+    void show_manual(const config::ParticipantConfig& p, const std::filesystem::path& executable,
                      const std::vector<std::string>& arguments, const std::filesystem::path& workDir);
     [[nodiscard]] bool any_running(bool required_only);
     /// Waits up to `timeout` until `done()`; stops waiting once more than `interrupts_allowed`
@@ -110,4 +110,4 @@ private:
     std::vector<std::unique_ptr<process::Process>> children_;
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

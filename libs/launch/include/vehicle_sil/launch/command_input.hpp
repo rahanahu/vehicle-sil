@@ -24,7 +24,7 @@ inline constexpr std::size_t kMaxCommandLine = 64 * 1024;
 /// kMaxCommandId> (other keys are ignored). A line that is not accepted has its `reason`. Only the form
 /// is read: whether the command can be done now is TimeCommands' part. Empty for a line of white
 /// space only (it is skipped).
-[[nodiscard]] std::optional<Command> parse_command(std::string_view line);
+[[nodiscard]] std::optional<runner::Command> parse_command(std::string_view line);
 
 /// Cuts the bytes of standard input into lines and reads each as a command (parse_command()). A
 /// line longer than kMaxCommandLine is one command that is not accepted, and the rest of it up to
@@ -32,7 +32,7 @@ inline constexpr std::size_t kMaxCommandLine = 64 * 1024;
 class CommandInput
 {
 public:
-    explicit CommandInput(std::function<void(const Command&)> on_command) : on_command_(std::move(on_command)) {}
+    explicit CommandInput(std::function<void(const runner::Command&)> on_command) : on_command_(std::move(on_command)) {}
     /// What was read.
     void append(std::string_view bytes);
     /// The end of input: a last line without a line end is read too.
@@ -41,7 +41,7 @@ public:
 private:
     void line(std::string_view text);
 
-    std::function<void(const Command&)> on_command_;
+    std::function<void(const runner::Command&)> on_command_;
     std::string pending_;
     bool skipping_ = false; ///< in a line that was too long, until its end
 };

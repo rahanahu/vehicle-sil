@@ -10,37 +10,37 @@
 #include <algorithm>
 #include <utility>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
-CheckReport with_bridges(const CheckReport& check)
+config::CheckReport with_bridges(const config::CheckReport& check)
 {
-    CheckReport out = check;
+    config::CheckReport out = check;
     if (!out.config)
     {
         return out;
     }
-    for (const NetworkOutside& outside : check.outside)
+    for (const config::NetworkOutside& outside : check.outside)
     {
         const auto network = std::find_if(out.config->networks.begin(), out.config->networks.end(),
-                                          [&outside](const NetworkConfig& n) { return n.name == outside.network; });
-        ParticipantConfig p;
+                                          [&outside](const config::NetworkConfig& n) { return n.name == outside.network; });
+        config::ParticipantConfig p;
         p.name = outside.participant;
         p.command = {outside.tool};
         p.describe = true;
         p.required = false;
         p.enabled = true;
-        p.role = ParticipantRole::Bridge;
+        p.role = config::ParticipantRole::Bridge;
         p.role_written = true;
         p.line = network != out.config->networks.end() ? network->line : 0;
         p.command_line = p.line;
         p.step_line = p.line;
         out.config->participants.push_back(std::move(p));
-        ParticipantResult result;
-        result.status = ParticipantStatus::NotChecked;
+        config::ParticipantResult result;
+        result.status = config::ParticipantStatus::NotChecked;
         result.executable = outside.tool_path;
         out.participants.push_back(std::move(result));
     }
     return out;
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

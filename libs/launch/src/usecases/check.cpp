@@ -31,10 +31,10 @@ namespace vehicle_sil::launch {
 namespace {
 
 /// The names of the networks in `outside`.
-std::vector<std::string> outside_names(const std::vector<NetworkOutside>& outside)
+std::vector<std::string> outside_names(const std::vector<config::NetworkOutside>& outside)
 {
     std::vector<std::string> names;
-    for (const NetworkOutside& network : outside)
+    for (const config::NetworkOutside& network : outside)
     {
         names.push_back(network.network);
     }
@@ -43,12 +43,12 @@ std::vector<std::string> outside_names(const std::vector<NetworkOutside>& outsid
 
 /// Empties NetworkOutside::arguments of a network that an error about connecting it is about: a
 /// command that a run cannot use is not shown.
-void drop_unusable_commands(CheckReport& report)
+void drop_unusable_commands(config::CheckReport& report)
 {
-    for (NetworkOutside& outside : report.outside)
+    for (config::NetworkOutside& outside : report.outside)
     {
-        if (std::any_of(report.findings.begin(), report.findings.end(), [&](const Finding& f) {
-                return f.severity == Severity::Error && f.network == outside.network && f.code.rfind("connect-", 0) == 0;
+        if (std::any_of(report.findings.begin(), report.findings.end(), [&](const config::Finding& f) {
+                return f.severity == config::Severity::Error && f.network == outside.network && f.code.rfind("connect-", 0) == 0;
             }))
         {
             outside.arguments.reset();
@@ -64,7 +64,7 @@ struct Executables
 {
     DescribeSource describe;
     /// Empty: --connect is checked for its form and its names only (check_connections() without tools).
-    std::optional<ConnectTools> bridges;
+    std::optional<config::ConnectTools> bridges;
     /// RunHost::descriptions could not be used: why (the note descriptions-not-used).
     std::string unusable{};
 };
@@ -82,20 +82,20 @@ Executables executables_for(const RunHost& host, const std::filesystem::path& di
 
 } // namespace
 
-int check_exit_code(const CheckReport& report) { return exit_code_of(report); }
+int check_exit_code(const config::CheckReport& report) { return exit_code_of(report); }
 
 namespace {
 
 /// The note for the params of a request file that nothing uses: one file serves several
 /// scenarios, so they are left alone.
-[[nodiscard]] Finding unused_request_params(const std::string& file, const std::vector<std::string>& names, const std::string& why)
+[[nodiscard]] config::Finding unused_request_params(const std::string& file, const std::vector<std::string>& names, const std::string& why)
 {
     std::string list;
     for (const std::string& name : names)
     {
         list += (list.empty() ? "" : ", ") + name;
     }
-    return Finding{Severity::Note, "request-params-unused",
+    return config::Finding{config::Severity::Note, "request-params-unused",
                    std::string("params ") + list + " in " + file + " " + (names.size() == 1 ? "is" : "are") +
                        " not used: " + why + "; they are ignored",
                    0, "", ""};
@@ -104,13 +104,13 @@ namespace {
 /// --scenario: reads the scenario file and checks it against the participants of `report`.
 /// @returns the usage errors that only the scenario can tell (ScenarioRead::usage_errors); then
 /// `report` has no scenario.
-[[nodiscard]] std::vector<Finding> check_scenario_file(Checked& report, const RunIntent& intent, const std::string& named,
+[[nodiscard]] std::vector<config::Finding> check_scenario_file(Checked& report, const RunIntent& intent, const std::string& named,
                                                        bool params_for_many,
-                                                       const RequestOrigin& origin)
+                                                       const config::RequestOrigin& origin)
 {
-    ScenarioCheck check;
+    scenario::ScenarioCheck check;
     check.file = named;
-    const auto add = [&](Finding finding) {
+    const auto add = [&](config::Finding finding) {
         finding.file = check.file;
         report.findings.push_back(std::move(finding));
     };
@@ -119,11 +119,11 @@ namespace {
     const std::string problem = read_scenario_file(path, text);
     if (!problem.empty())
     {
-        add(Finding{Severity::Error, "file", problem, 0, "", ""});
+        add(config::Finding{config::Severity::Error, "file", problem, 0, "", ""});
     }
     else
     {
-        ScenarioContext context;
+        scenario::ScenarioContext context;
         context.variant = report.config->variant;
         context.variants = report.variants;
         context.params = report.config->params;
@@ -134,7 +134,7 @@ namespace {
             context.request_file = origin.file; // the file's own scenario: its params must fit it
         }
         context.read_file = files_beside(path);
-        ScenarioRead read = read_scenario(text, scenario_catalog(report), context);
+        scenario::ScenarioRead read = scenario::read_scenario(text, scenario::scenario_catalog(report), context);
         check.name = std::move(read.name);
         check.steps = read.steps;
         check.scenario = std::move(read.scenario);
@@ -152,7 +152,7 @@ namespace {
             report.findings.push_back(unused_request_params(origin.file, read.unused_request_params,
                                                             "the scenario has no parameter of that name"));
         }
-        for (Finding& finding : read.findings)
+        for (config::Finding& finding : read.findings)
         {
             add(std::move(finding));
         }
@@ -172,12 +172,12 @@ namespace {
 } // namespace
 
 Checked check_file(const RunRequest& request, const CheckOptions& options,
-                       const std::function<void(const TimeLock& lock)>& on_time_lock)
+                       const std::function<void(const config::TimeLock& lock)>& on_time_lock)
 {
     const RunIntent& intent = request.intent;
     const RunHost& host = request.host;
     const std::filesystem::path path = process::path_from_utf8(host.config);
-    EnabledOverrides overrides;
+    config::EnabledOverrides overrides;
     overrides.disable = intent.disable;
     overrides.enable = intent.enable;
     overrides.manual = intent.manual;
@@ -187,12 +187,12 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     const std::optional<std::optional<double>> run_speed =
         options.fastest_by_default ? std::optional<std::optional<double>>{} : intent.speed;
     // What of the request's connect counts for this file: known once it is read.
-    std::vector<ConnectRequest> connect;
+    std::vector<config::ConnectRequest> connect;
     Checked report;
     report.file = host.config;
     report.strict = intent.strict;
     // Known without the file.
-    if (auto conflicts = override_conflicts(overrides); !conflicts.empty())
+    if (auto conflicts = config::override_conflicts(overrides); !conflicts.empty())
     {
         report.usage = true;
         report.findings = std::move(conflicts);
@@ -202,13 +202,13 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     if (const std::string problem = host.config_from_stdin ? read_config_stdin(text) : read_config_file(path, text);
         !problem.empty())
     {
-        report.findings.push_back(Finding{Severity::Error, "file", problem, 0, "", ""});
+        report.findings.push_back(config::Finding{config::Severity::Error, "file", problem, 0, "", ""});
         return report;
     }
-    ConfigRead read = read_config(text, overrides);
+    config::ConfigRead read = config::read_config(text, overrides);
     if (read.config)
     {
-        for (const VariantConfig& variant : read.config->variants)
+        for (const config::VariantConfig& variant : read.config->variants)
         {
             report.variants.push_back(variant.name);
         }
@@ -223,13 +223,13 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     report.config = std::move(read.config);
     if (report.config)
     {
-        ConfigConnect counted = connect_for_config(*report.config, intent.connect, request.origin);
+        config::ConfigConnect counted = config::connect_for_config(*report.config, intent.connect, request.origin);
         connect = std::move(counted.connect);
         report.findings.insert(report.findings.end(), counted.notes.begin(), counted.notes.end());
         // The file and the request decide it: before any executable is asked.
-        report.time_lock = time_lock(*report.config, connect, intent.time_policy);
-        const std::vector<Finding> time =
-            time_lock_findings(report.time_lock, run_speed,
+        report.time_lock = config::time_lock(*report.config, connect, intent.time_policy);
+        const std::vector<config::Finding> time =
+            config::time_lock_findings(report.time_lock, run_speed,
                                options.fastest_by_default ? std::optional<double>{} : report.config->speed, intent.start_paused,
                                request.origin);
         report.findings.insert(report.findings.end(), time.begin(), time.end());
@@ -241,7 +241,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     if (report.config && options.file_only && !connect.empty())
     {
         // Only the form and the names: no tool is looked for.
-        ConnectCheck checked = check_connections(*report.config, {}, connect, nullptr);
+        config::ConnectCheck checked = config::check_connections(*report.config, {}, connect, nullptr);
         report.findings.insert(report.findings.end(), checked.findings.begin(), checked.findings.end());
         report.outside = std::move(checked.outside);
         drop_unusable_commands(report);
@@ -251,7 +251,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         return report;
     }
     const std::optional<std::string> listen = environment_value(kListenOnNetworkVariable);
-    if (auto ignored = inherited_listen_variable(*report.config, listen ? listen->c_str() : nullptr))
+    if (auto ignored = config::inherited_listen_variable(*report.config, listen ? listen->c_str() : nullptr))
     {
         report.findings.push_back(std::move(*ignored));
     }
@@ -260,7 +260,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     const Executables executables = executables_for(host, std::filesystem::absolute(base));
     if (!executables.unusable.empty())
     {
-        report.findings.push_back(Finding{Severity::Note, "descriptions-not-used",
+        report.findings.push_back(config::Finding{config::Severity::Note, "descriptions-not-used",
                                           "the saved descriptions (--descriptions) are not used: " + executables.unusable +
                                               "; no participant is described: check without --descriptions to describe "
                                               "them, with --write-descriptions to save them again",
@@ -268,13 +268,13 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     }
     // What --write-descriptions saves: each output that was read.
     std::vector<SavedDescription> described;
-    for (const ParticipantConfig& p : report.config->participants)
+    for (const config::ParticipantConfig& p : report.config->participants)
     {
-        ParticipantResult result;
+        config::ParticipantResult result;
         // Disabled whatever its entry's errors (they are findings).
         if (!p.enabled)
         {
-            result.status = ParticipantStatus::Disabled;
+            result.status = config::ParticipantStatus::Disabled;
             report.participants.push_back(result);
             continue;
         }
@@ -284,20 +284,20 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
             continue;
         }
         // "{{word}}" in the path is the literal "{word}" (a valid entry has no other "{word}").
-        const std::string written = expand_placeholders({p.command.front()}, "", "").front();
+        const std::string written = config::expand_placeholders({p.command.front()}, "", "").front();
         const FoundExecutable found = find_executable(written, base);
         const std::filesystem::path& executable = found.path;
-        if (auto bad = executable_finding(p, executable, executable_status(executable)))
+        if (auto bad = config::executable_finding(p, executable, executable_status(executable)))
         {
             report.findings.push_back(std::move(*bad));
-            result.status = ParticipantStatus::Failed;
+            result.status = config::ParticipantStatus::Failed;
             report.participants.push_back(result);
             continue;
         }
         result.executable = executable;
         if (found.on_path)
         {
-            report.findings.push_back(Finding{Severity::Note, "found-on-path",
+            report.findings.push_back(config::Finding{config::Severity::Note, "found-on-path",
                                               "participant '" + p.name + "': " + written +
                                                   " is not in the directory of the configuration file; it runs " +
                                                   process::shown_path(executable) + " (found on PATH)",
@@ -305,34 +305,34 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         }
         if (!p.describe)
         {
-            result.status = ParticipantStatus::NotChecked;
+            result.status = config::ParticipantStatus::NotChecked;
             report.participants.push_back(result);
             continue;
         }
         // "{{word}}" stands for "{word}" here too (an ecu_main command has no placeholders).
         std::vector<std::string> arguments =
-            expand_placeholders(std::vector<std::string>(p.command.begin() + 1, p.command.end()), "", "");
+            config::expand_placeholders(std::vector<std::string>(p.command.begin() + 1, p.command.end()), "", "");
         arguments.insert(arguments.end(), {"--describe", "--name", p.name});
         // --write-descriptions: the executable as it was before --describe ran, so that one built
         // again meanwhile does not get the output of the one before.
         const std::optional<ExecutableStamp> before =
             host.write_descriptions.empty() ? std::nullopt : executable_stamp(executable);
-        const std::optional<DescribeRun> run = executables.describe(p, executable, arguments);
+        const std::optional<config::DescribeRun> run = executables.describe(p, executable, arguments);
         if (!run)
         {
-            result.status = ParticipantStatus::NotDescribed;
+            result.status = config::ParticipantStatus::NotDescribed;
             report.participants.push_back(std::move(result));
             continue;
         }
-        DescribeOutcome outcome = interpret_describe(p, *run);
+        config::DescribeOutcome outcome = config::interpret_describe(p, *run);
         if (outcome.error)
         {
             report.findings.push_back(std::move(*outcome.error));
-            result.status = ParticipantStatus::Failed;
+            result.status = config::ParticipantStatus::Failed;
         }
         else
         {
-            result.status = ParticipantStatus::Described;
+            result.status = config::ParticipantStatus::Described;
             result.ecu = std::move(outcome.ecu);
             if (before && before == executable_stamp(executable))
             {
@@ -351,7 +351,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
                 write_saved_descriptions(process::path_from_utf8(host.write_descriptions), described);
             !problem.empty())
         {
-            report.findings.push_back(Finding{Severity::Error, "descriptions-write",
+            report.findings.push_back(config::Finding{config::Severity::Error, "descriptions-write",
                                               "cannot write the descriptions to " + host.write_descriptions +
                                                   " (--write-descriptions): " + problem +
                                                   "; the rest of this check is not affected: name a file in a directory "
@@ -361,23 +361,23 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     }
     if (!connect.empty())
     {
-        ConnectCheck checked = check_connections(*report.config, report.participants, connect,
+        config::ConnectCheck checked = config::check_connections(*report.config, report.participants, connect,
                                                  executables.bridges ? &*executables.bridges : nullptr);
         report.findings.insert(report.findings.end(), checked.findings.begin(), checked.findings.end());
         report.outside = std::move(checked.outside);
     }
     const std::vector<std::string> outside = outside_names(report.outside);
-    auto compared = check_participants(*report.config, report.participants, version(), outside);
+    auto compared = config::check_participants(*report.config, report.participants, version(), outside);
     report.findings.insert(report.findings.end(), compared.begin(), compared.end());
     drop_unusable_commands(report);
     // A run at the file's speed (1 with the time lock) with the file's time_step_ms: known before
     // it runs. A run with a speed of its own (run --speed, test) reports its own afterwards.
-    if (const std::optional<double> speed = planned_speed(report.time_lock, {}, report.config->speed);
+    if (const std::optional<double> speed = config::planned_speed(report.time_lock, {}, report.config->speed);
         !run_speed && !options.fastest_by_default && speed && report.config->time_step_ms)
     {
-        RunTiming timing = detail::plan_time_step(*report.config, report, speed);
+        config::RunTiming timing = config::detail::plan_time_step(*report.config, report, speed);
         timing.speed = speed;
-        if (auto f = detail::coarse_time_step(timing))
+        if (auto f = config::detail::coarse_time_step(timing))
         {
             report.findings.push_back(std::move(*f));
         }
@@ -405,9 +405,9 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     else
     {
         std::vector<std::string> unused;
-        for (const ParamValue& param : intent.params)
+        for (const config::ParamValue& param : intent.params)
         {
-            if (param.source == ParamSource::RequestFile)
+            if (param.source == config::ParamSource::RequestFile)
             {
                 unused.push_back(param.name);
             }
@@ -417,7 +417,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
             report.findings.push_back(unused_request_params(request.origin.file, unused, "this run has no scenario"));
         }
     }
-    sort_findings(report.findings);
+    config::sort_findings(report.findings);
     return report;
 }
 

@@ -17,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::config {
 
 namespace {
 
@@ -506,4 +506,4 @@ ConnectCheck check_connections(const SimulationConfig& config, const std::vector
     return out;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::config

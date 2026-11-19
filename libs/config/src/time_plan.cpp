@@ -18,7 +18,7 @@
 #include <string>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::config {
 
 using detail::and_list;
 using detail::kNanosPerMilli;
@@ -358,4 +358,4 @@ std::optional<Finding> detail::coarse_time_step(const RunTiming& t)
                                      : " (or give the speed from the start, with speed or run --speed: the default is then that)"), 0, "", ""};
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::config

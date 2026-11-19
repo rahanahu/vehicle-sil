@@ -21,7 +21,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::config {
 
 /// What an executable reported with --describe (docs/ecu-executable.md).
 struct ReportedEcu
@@ -351,4 +351,4 @@ struct CheckReport
 
 void sort_findings(std::vector<Finding>& findings);
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::config

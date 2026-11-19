@@ -124,9 +124,9 @@ void one_run(const fs::path& ecu, const fs::path& dir, int round)
     std::optional<control::OperationResult> queued;
     std::size_t peers_in_window = 0;
     launch::RunRequest asked = sim_of(dir);
-    launch::RunObservers watching;
+    vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
-    launch::RunLimits limits;
+    vehicle_sil::runner::RunLimits limits;
     watching.before_start = [&](const std::shared_ptr<control::Hub>& given) {
         kept = given;
         control::Hub& h = *given;
@@ -146,10 +146,10 @@ void one_run(const fs::path& ecu, const fs::path& dir, int round)
 
     require(report.result() == launch::RunResult::Passed, "the run did not pass" + shown);
     require(report.findings.empty(), "the run has findings" + shown);
-    require(report.run.has_value() && report.run->end.simulation == launch::SimulationEnd::ReachedStopAt, "the run did not reach stop_at_ms" + shown);
+    require(report.run.has_value() && report.run->end.simulation == vehicle_sil::runner::SimulationEnd::ReachedStopAt, "the run did not reach stop_at_ms" + shown);
     for (const auto& p : report.run->participants)
     {
-        require(p.control == launch::ControlLink::Connected, p.name + " is not connected" + shown);
+        require(p.control == vehicle_sil::runner::ControlLink::Connected, p.name + " is not connected" + shown);
         require(p.control_variables == 8, p.name + " offers " + std::to_string(p.control_variables) + " variables, not 8");
         require(p.control_late_messages == 0, p.name + ": messages arrived late");
     }
@@ -196,9 +196,9 @@ void failing_start(const fs::path& ecu, const fs::path& dir)
                yaml_quote(process::shown_path(ecu)) + "]\n";
     std::ofstream(dir / "Engine.behaviour") << "variables\n";
     launch::RunRequest asked = sim_of(dir);
-    launch::RunObservers watching;
+    vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
-    launch::RunLimits limits;
+    vehicle_sil::runner::RunLimits limits;
     watching.before_start = [](const std::shared_ptr<control::Hub>&) { throw std::runtime_error("the scenario could not be set up"); };
     std::string lines;
     watching.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };
@@ -208,13 +208,13 @@ void failing_start(const fs::path& ecu, const fs::path& dir)
     // Without stop_at_ms the simulation would run for ever: it was ended for the failure.
     require(std::chrono::steady_clock::now() - begin < 60s, "the run took too long" + shown);
     require(report.result() == launch::RunResult::Failed, "the run did not fail" + shown);
-    require(report.run.has_value() && report.run->end.simulation == launch::SimulationEnd::Aborted, "the simulation was not aborted" + shown);
+    require(report.run.has_value() && report.run->end.simulation == vehicle_sil::runner::SimulationEnd::Aborted, "the simulation was not aborted" + shown);
     require(report.findings.size() == 1 && report.findings[0].code == "before-start" &&
                 report.findings[0].message.find("the scenario could not be set up") != std::string::npos,
             "the finding says what failed" + shown);
     require(lines.find("the simulation started, but what was to be done before it failed") != std::string::npos,
             "the launcher says that the simulation had started" + shown);
-    require(report.run->participants.at(0).control == launch::ControlLink::Connected, "Engine was connected" + shown);
+    require(report.run->participants.at(0).control == vehicle_sil::runner::ControlLink::Connected, "Engine was connected" + shown);
     require(report.run->participants.at(0).exit.has_value(), "Engine's process was ended and waited for" + shown);
 }
 
@@ -226,11 +226,11 @@ void failing_start_with_a_stop(const fs::path& ecu, const fs::path& dir)
         << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
                yaml_quote(process::shown_path(ecu)) + "]\n";
     std::ofstream(dir / "Engine.behaviour") << "variables\n";
-    launch::StopRequests stops;
+    vehicle_sil::runner::StopRequests stops;
     launch::RunRequest asked = sim_of(dir);
-    launch::RunObservers watching;
+    vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
-    launch::RunLimits limits;
+    vehicle_sil::runner::RunLimits limits;
     lent.stops = &stops;
     watching.interrupt_name = [] { return std::string("control server stop"); };
     watching.before_start = [&stops](const std::shared_ptr<control::Hub>&) {
@@ -261,9 +261,9 @@ void hello_without_an_answer(const fs::path& ecu, const fs::path& dir)
     namespace topics = control_silkit::detail;
     std::unique_ptr<SilKit::IParticipant> impostor;
     launch::RunRequest asked = sim_of(dir);
-    launch::RunObservers watching;
+    vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
-    launch::RunLimits limits;
+    vehicle_sil::runner::RunLimits limits;
     limits.control_hello_timeout = 700ms;
     std::string lines;
     watching.write_line = [&](std::string_view line) {
@@ -294,7 +294,7 @@ void hello_without_an_answer(const fs::path& ecu, const fs::path& dir)
     const std::string shown = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
     require(report.result() == launch::RunResult::Passed, "the run did not pass (the findings are warnings)" + shown);
     const auto& engine = report.run->participants.at(0);
-    require(engine.control == launch::ControlLink::NoHello && engine.control_hello_seen,
+    require(engine.control == vehicle_sil::runner::ControlLink::NoHello && engine.control_hello_seen,
             "Engine said hello and did not answer: no_hello" + shown);
     bool no_answer = false;
     bool dropped = false;
@@ -324,9 +324,9 @@ void an_ecu_without_variables_is_waited_for(const fs::path& ecu, const fs::path&
     std::ofstream(dir / "test-ecu-no-control") << "\n";
     std::ofstream(dir / "test-ecu-no-variables") << "\n";
     launch::RunRequest asked = sim_of(dir);
-    launch::RunObservers watching;
+    vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
-    launch::RunLimits limits;
+    vehicle_sil::runner::RunLimits limits;
     limits.control_hello_timeout = 300ms;
     std::string lines;
     watching.write_line = [&](std::string_view line) { lines += std::string(line) + "\n"; };
@@ -337,7 +337,7 @@ void an_ecu_without_variables_is_waited_for(const fs::path& ecu, const fs::path&
     require(report.run.has_value() && report.result() == launch::RunResult::Passed,
             "the run did not pass (the finding is a warning)" + shown);
     const auto& engine = report.run->participants.at(0);
-    require(engine.control == launch::ControlLink::NoHello && !engine.control_hello_seen,
+    require(engine.control == vehicle_sil::runner::ControlLink::NoHello && !engine.control_hello_seen,
             "Engine has no variables and was waited for: no_hello" + shown);
     require(std::any_of(report.findings.begin(), report.findings.end(),
                         [](const auto& f) { return f.code == "control-link-no-hello" && f.participant == "Engine"; }),
@@ -403,9 +403,9 @@ void a_late_hello(const fs::path& ecu, const fs::path& dir, bool in_window)
     bool hello_arrived = false;
     bool marker_arrived = false;
     launch::RunRequest asked = sim_of(dir);
-    launch::RunObservers watching;
+    vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
-    launch::RunLimits limits;
+    vehicle_sil::runner::RunLimits limits;
     watching.before_start = [&](const std::shared_ptr<control::Hub>& given) {
         hub = given;
         if (in_window)
@@ -464,7 +464,7 @@ void a_late_hello(const fs::path& ecu, const fs::path& dir, bool in_window)
     const auto& body = report.run->participants.at(0);
     const std::vector<std::string> problems{"body.fill: the executable has no variable 'levle'"};
     require(body.variable_map_problems == problems, "what does not fit is in the result" + shown);
-    require(body.control == (in_window ? launch::ControlLink::Connected : launch::ControlLink::None),
+    require(body.control == (in_window ? vehicle_sil::runner::ControlLink::Connected : vehicle_sil::runner::ControlLink::None),
             in_window ? "an agent that connected in the window is connected" + shown
                       : "the link is as it was at the start" + shown);
     const bool finding = std::any_of(report.findings.begin(), report.findings.end(), [](const auto& f) {
@@ -500,10 +500,10 @@ struct HoldRun
 };
 
 HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& dir, bool stuck, bool start_paused,
-                 launch::RunControls& controls, std::optional<std::chrono::milliseconds> timeout,
+                 vehicle_sil::runner::RunControls& controls, std::optional<std::chrono::milliseconds> timeout,
                  const std::function<void()>& during_hold, const std::string& more_keys = {})
 {
-    launch::TimeCommands& commands = controls.time();
+    vehicle_sil::runner::TimeCommands& commands = controls.time();
     std::string config = "vehicle_sil_simulation: 1\nstop_at_ms: 200\nstart_timeout_ms: 2000\n" + more_keys +
                          "networks: []\nparticipants:\n"
                          "  - name: Engine\n    command: [" + yaml_quote(process::shown_path(ecu)) + "]\n";
@@ -518,16 +518,16 @@ HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& di
     std::thread holder;
     HoldRun out;
     launch::RunRequest asked = sim_of(dir);
-    launch::RunObservers watching;
+    vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
-    launch::RunLimits limits;
+    vehicle_sil::runner::RunLimits limits;
     asked.intent.start_paused = start_paused;
     lent.controls = &controls;
     asked.host.timeout = timeout;
     watching.interrupt_name = [] { return std::string("SIGINT"); };
     struct NoServer final : launch::ControlEndpoint
     {
-        launch::ControlServerInfo start(std::shared_ptr<control::Hub>) override { return {"(test)", false, false}; }
+        vehicle_sil::runner::ControlServerInfo start(std::shared_ptr<control::Hub>) override { return {"(test)", false, false}; }
         void end() override {}
     } endpoint;
     lent.control_endpoint = &endpoint;
@@ -547,7 +547,7 @@ HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& di
         if ((line.find("] asking ") != std::string_view::npos || line.find("] cannot ask ") != std::string_view::npos) &&
             !out.stop_while_ending)
         {
-            launch::Command stop;
+            vehicle_sil::runner::Command stop;
             stop.name = "stop";
             stop.accepted = true;
             out.stop_while_ending = commands.apply(stop, "control_server").accepted;
@@ -574,9 +574,9 @@ std::string shown(const HoldRun& run)
     return "\n--- result ---\n" + launch::format_run_text(run.report) + "--- lines ---\n" + run.lines;
 }
 
-launch::Command resume_command()
+vehicle_sil::runner::Command resume_command()
 {
-    launch::Command c;
+    vehicle_sil::runner::Command c;
     c.name = "resume";
     c.accepted = true;
     return c;
@@ -587,11 +587,11 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
 {
     {
         // Without the hold: a participant that never gets ready ends the start at its limit.
-        launch::StopRequests stops;
-        launch::RunControls controls(stops, false);
+        vehicle_sil::runner::StopRequests stops;
+        vehicle_sil::runner::RunControls controls(stops, false);
         const HoldRun run = hold_run(ecu, helper, dir, true, false, controls, std::nullopt, [] {});
         require(!run.held, "no hold without --start-paused" + shown(run));
-        require(run.report.run && run.report.run->end.simulation == launch::SimulationEnd::NotStarted &&
+        require(run.report.run && run.report.run->end.simulation == vehicle_sil::runner::SimulationEnd::NotStarted &&
                     run.report.run->start.error.find("did not all get to their first step within") != std::string::npos &&
                     run.report.run->start.error.find("Stuck (") != std::string::npos &&
                     run.report.run->start.error.find("after the run stopped standing still") == std::string::npos,
@@ -605,9 +605,9 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
     {
         // With the hold: it stands still longer than start_timeout_ms (2000 ms), then the start
         // has start_timeout_ms again from the resume.
-        launch::StopRequests stops;
-        launch::RunControls controls(stops, true);
-        launch::TimeCommands& commands = controls.time();
+        vehicle_sil::runner::StopRequests stops;
+        vehicle_sil::runner::RunControls controls(stops, true);
+        vehicle_sil::runner::TimeCommands& commands = controls.time();
         std::chrono::steady_clock::time_point resumed{};
         const HoldRun run = hold_run(ecu, helper, dir, true, true, controls, std::nullopt, [&] {
             std::this_thread::sleep_for(3000ms);
@@ -615,7 +615,7 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
             require(commands.apply(resume_command(), "stdin").accepted, "the resume was refused");
         });
         require(run.held, "the run held before the first step" + shown(run));
-        require(run.report.run && run.report.run->end.simulation == launch::SimulationEnd::NotStarted &&
+        require(run.report.run && run.report.run->end.simulation == vehicle_sil::runner::SimulationEnd::NotStarted &&
                     run.report.run->start.error.find("within 2000 ms after the run stopped standing still before it") !=
                         std::string::npos &&
                     run.report.run->start.error.find("Stuck (") != std::string::npos,
@@ -630,14 +630,14 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
 /// (start_timeout_ms + stop_timeout_ms + 10 s), then resumes: the run passes.
 void the_ecus_wait_as_long_as_the_run_stands_still(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
 {
-    launch::SimulationConfig limits;
+    config::SimulationConfig limits;
     limits.start_timeout_ms = 2000;
     limits.stop_timeout_ms = 1000;
-    const std::chrono::milliseconds without_hold{launch::detail::ecu_start_timeout_ms(limits, false)};
+    const std::chrono::milliseconds without_hold{vehicle_sil::runner::detail::ecu_start_timeout_ms(limits, false)};
     require(without_hold == 13000ms, "the limit of an ECU without the hold is the one this test stands still for");
-    launch::StopRequests stops;
-    launch::RunControls controls(stops, true);
-    launch::TimeCommands& commands = controls.time();
+    vehicle_sil::runner::StopRequests stops;
+    vehicle_sil::runner::RunControls controls(stops, true);
+    vehicle_sil::runner::TimeCommands& commands = controls.time();
     const HoldRun run = hold_run(ecu, helper, dir, false, true, controls, std::nullopt, [&] {
         // The ECU began its wait before the hold: this is longer than its limit would be.
         std::this_thread::sleep_for(without_hold + 1500ms);
@@ -646,7 +646,7 @@ void the_ecus_wait_as_long_as_the_run_stands_still(const fs::path& ecu, const fs
     require(run.held, "the run held before the first step" + shown(run));
     require(run.took >= without_hold, "the run stood still longer than the limit" + shown(run));
     require(run.report.result() == launch::RunResult::Passed && run.report.run &&
-                run.report.run->end.simulation == launch::SimulationEnd::ReachedStopAt,
+                run.report.run->end.simulation == vehicle_sil::runner::SimulationEnd::ReachedStopAt,
             "the run went on after the hold and passed" + shown(run));
 }
 
@@ -654,8 +654,8 @@ void the_ecus_wait_as_long_as_the_run_stands_still(const fs::path& ecu, const fs
 /// comes does not leave the run waiting.
 void timeout_counts_the_hold(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
 {
-    launch::StopRequests stops;
-    launch::RunControls controls(stops, true);
+    vehicle_sil::runner::StopRequests stops;
+    vehicle_sil::runner::RunControls controls(stops, true);
     const HoldRun run = hold_run(ecu, helper, dir, false, true, controls, 1500ms, [] {});
     require(run.held, "the run held" + shown(run));
     require(run.report.run && run.report.run->end.timed_out && run.report.run->end.timed_out_while_holding &&
@@ -673,15 +673,15 @@ void timeout_counts_the_hold(const fs::path& ecu, const fs::path& helper, const 
 /// Ctrl+C in the hold ends it: the simulation starts and is stopped (its step at 0 runs).
 void an_interrupt_ends_the_hold(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
 {
-    launch::StopRequests stops;
-    launch::RunControls controls(stops, true);
+    vehicle_sil::runner::StopRequests stops;
+    vehicle_sil::runner::RunControls controls(stops, true);
     const HoldRun run = hold_run(ecu, helper, dir, false, true, controls, std::nullopt, [&] {
         std::this_thread::sleep_for(200ms);
         stops.request(kAnySource);
     });
     require(run.held, "the run held" + shown(run));
     require(run.report.result() == launch::RunResult::Interrupted && run.report.run &&
-                run.report.run->end.simulation == launch::SimulationEnd::Interrupted,
+                run.report.run->end.simulation == vehicle_sil::runner::SimulationEnd::Interrupted,
             "the run was interrupted after the start" + shown(run));
 }
 
@@ -739,21 +739,21 @@ void a_refused_scenario_does_not_hold(const fs::path& ecu, const fs::path& dir)
 /// the run has read its configuration, so it waits for the run's time lock and is accepted then.
 void a_resume_before_the_window_means_no_hold(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
 {
-    launch::StopRequests stops;
-    launch::RunControls controls(stops, true);
-    launch::TimeCommands& commands = controls.time();
-    const launch::Command early = commands.apply(resume_command(), "control_server");
+    vehicle_sil::runner::StopRequests stops;
+    vehicle_sil::runner::RunControls controls(stops, true);
+    vehicle_sil::runner::TimeCommands& commands = controls.time();
+    const vehicle_sil::runner::Command early = commands.apply(resume_command(), "control_server");
     require(early.pending && !early.accepted, "the resume before the run was decided without the run's time lock");
     const HoldRun run = hold_run(ecu, helper, dir, false, true, controls, std::nullopt, [] {});
     require(!run.held && run.report.result() == launch::RunResult::Passed && run.report.run &&
-                run.report.run->end.simulation == launch::SimulationEnd::ReachedStopAt,
+                run.report.run->end.simulation == vehicle_sil::runner::SimulationEnd::ReachedStopAt,
             "no hold, and the run ran to its end" + shown(run));
 }
 
 /// A control server of the test: counts its starts, notes what it saw, and fails if told to.
 struct CountingEndpoint final : launch::ControlEndpoint
 {
-    launch::ControlServerInfo start(std::shared_ptr<control::Hub> served) override
+    vehicle_sil::runner::ControlServerInfo start(std::shared_ptr<control::Hub> served) override
     {
         ++starts;
         hub = std::move(served);
@@ -790,7 +790,7 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
                yaml_quote(process::shown_path(ecu)) + "]\n";
     fs::remove(dir / "Engine.behaviour");
     const auto run = [](const launch::RunRequest& asked, const launch::RunLent& lent, std::string& lines) {
-        launch::RunObservers watching;
+        vehicle_sil::runner::RunObservers watching;
         watching.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };
         const launch::RunReport report = launch::run_file(asked, watching, lent);
         lines = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
@@ -849,7 +849,7 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
         // Asked to stop before it began: the server is not started.
         CountingEndpoint endpoint;
         std::string lines;
-        launch::StopRequests stops;
+        vehicle_sil::runner::StopRequests stops;
         stops.request(kAnySource);
         launch::RunRequest asked = sim_of(dir);
         launch::RunLent lent;
@@ -883,16 +883,16 @@ void what_leaves_run_file_between_the_stages_ends_the_time_commands(const fs::pa
         << "vehicle_sil_simulation: 1\nstop_at_ms: 200\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
                yaml_quote(process::shown_path(ecu)) + "]\n";
     fs::remove(dir / "Engine.behaviour");
-    launch::StopRequests stops;
-    launch::RunControls controls(stops, true);
+    vehicle_sil::runner::StopRequests stops;
+    vehicle_sil::runner::RunControls controls(stops, true);
     require(controls.time().apply(resume_command(), "control_server").pending,
             "a command before the run waits for the time lock");
     CountingEndpoint endpoint;
     endpoint.fail_with_no_exception_type = true;
     launch::RunRequest asked = sim_of(dir);
-    launch::RunObservers watching;
+    vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
-    launch::RunLimits limits;
+    vehicle_sil::runner::RunLimits limits;
     asked.intent.start_paused = true;
     lent.controls = &controls;
     lent.control_endpoint = &endpoint;
@@ -917,7 +917,7 @@ void what_leaves_run_file_between_the_stages_ends_the_time_commands(const fs::pa
 /// is none to make). The file is not read: it does not exist.
 void a_request_for_a_control_server_is_read_before_any_check(const fs::path& dir)
 {
-    launch::RunObservers watching;
+    vehicle_sil::runner::RunObservers watching;
     watching.write_line = [](std::string_view) {};
     launch::RunRequest asked = sim_of(dir);
     asked.host.control.emplace().listen = "not an address";
@@ -933,13 +933,13 @@ void a_request_for_a_control_server_is_read_before_any_check(const fs::path& dir
         }
         require(refused, "a control server without the caller's controls is refused, and the message says what to set");
     }
-    launch::StopRequests stops;
+    vehicle_sil::runner::StopRequests stops;
     int told = 0;
-    launch::RunControls::Observers observers;
-    observers.on_phase = [&told](launch::Phase) { ++told; };
-    observers.on_state = [&told](const launch::RunState&) { ++told; };
-    observers.on_command = [&told](const launch::Command&, std::string_view) { ++told; };
-    launch::RunControls controls(stops, false, std::move(observers), false);
+    vehicle_sil::runner::RunControls::Observers observers;
+    observers.on_phase = [&told](vehicle_sil::runner::Phase) { ++told; };
+    observers.on_state = [&told](const vehicle_sil::runner::RunState&) { ++told; };
+    observers.on_command = [&told](const vehicle_sil::runner::Command&, std::string_view) { ++told; };
+    vehicle_sil::runner::RunControls controls(stops, false, std::move(observers), false);
     launch::RunLent lent;
     lent.controls = &controls;
     try
@@ -947,8 +947,8 @@ void a_request_for_a_control_server_is_read_before_any_check(const fs::path& dir
         const launch::RunReport report = launch::run_file(asked, watching, lent);
         require(report.check.usage && !report.check.config && !report.run && report.check.findings.size() == 1,
                 "a wrong address is a usage error of the run, and nothing ran");
-        const launch::Finding& finding = report.check.findings[0];
-        require(finding.code == "usage" && finding.severity == launch::Severity::Error &&
+        const config::Finding& finding = report.check.findings[0];
+        require(finding.code == "usage" && finding.severity == config::Severity::Error &&
                     finding.message == "--control must be <port> (on 127.0.0.1; 0: any free port), <host>:<port> (a port from "
                                        "0 to 65535) or unix:<path>, not 'not an address'",
                 "the finding says what an address is: " + finding.message);

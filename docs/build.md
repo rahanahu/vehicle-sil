@@ -143,7 +143,7 @@ The archive contains the items below. The `README.md` in the archive describes t
 |---|---|
 | `vehicle_sil_launch` | With the Control Server. |
 | `vehicle_sil_ethernet_bridge` | The Ethernet bridge ([ethernet-bridge.md](ethernet-bridge.md)), next to `vehicle_sil_launch`, where `vehicle_sil_launch run --connect` finds it. Its `npcap` (Windows) and `pcap` (Linux) backends need Npcap or libpcap, which the archive does not contain: install them yourself. |
-| `vehicle_sil_socketcan_bridge` (Linux archive only) | The SocketCAN bridge ([socketcan-bridge.md](socketcan-bridge.md)): a CAN adapter or `vcan0` of this computer. It needs no privileges; the launcher does not start it from `--connect` yet. |
+| `vehicle_sil_socketcan_bridge` (Linux archive only) | The SocketCAN bridge ([socketcan-bridge.md](socketcan-bridge.md)): a CAN adapter or `vcan0` of this computer. It needs no privileges; `vehicle_sil_launch run --connect CAN=can0` starts it. |
 | GUI server and screens | — |
 | Python client of the Control API | With the gRPC stubs. |
 | GUI client library | A single ES module, and an npm package with types. |

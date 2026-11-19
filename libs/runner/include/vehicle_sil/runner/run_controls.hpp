@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 /// The stages of a run, in this order (a run may skip some, never goes back).
 enum class Phase
@@ -65,7 +65,7 @@ struct RunState
     std::string stopped_by{};
     /// The run plays a scenario.
     bool scenario = false;
-    /// What the run takes now (launch::allowed()), each as from the entry that has the operation:
+    /// What the run takes now (runner::allowed()), each as from the entry that has the operation:
     /// pause, resume, step, run_until, speed and stop as from standard input; write as from a
     /// control server (standard input has none). In a run without a control server
     /// (RunControls::set_control_server()) nothing can send a write: refused, with
@@ -194,7 +194,7 @@ public:
     /// Whether this run is connected outside the simulation and keeps to real time
     /// (TimeCommands::set_time_lock()): once, right after the configuration has been read. Until
     /// then the time commands wait undecided; this decides them, each with its command event.
-    void set_time_lock(const TimeLock& lock) { time_.set_time_lock(lock); }
+    void set_time_lock(const config::TimeLock& lock) { time_.set_time_lock(lock); }
 
     /// The phase the run entered last; Phase::Checking before it has said any.
     [[nodiscard]] Phase phase() const noexcept { return phase_.load(); }
@@ -259,4 +259,4 @@ private:
     std::vector<RunState::Outside> outside_{};
 };
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

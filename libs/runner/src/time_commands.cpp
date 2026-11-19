@@ -29,7 +29,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 struct TimeCommands::State
 {
@@ -465,16 +465,16 @@ Allowed TimeCommands::allowed(Operation operation, Entry entry)
 {
     State& s = *state_;
     const std::lock_guard lock(s.mutex);
-    return launch::allowed(situation_of(s), entry, operation);
+    return runner::allowed(situation_of(s), entry, operation);
 }
 
 std::optional<Decision> TimeCommands::always_refused(Entry entry, Operation operation) const
 {
     // Fixed since the constructor: no lock.
-    return launch::always_refused(state_->scenario, entry, operation);
+    return runner::always_refused(state_->scenario, entry, operation);
 }
 
-void TimeCommands::set_time_lock(const TimeLock& lock)
+void TimeCommands::set_time_lock(const config::TimeLock& lock)
 {
     State& s = *state_;
     const std::lock_guard guard(s.mutex);
@@ -548,4 +548,4 @@ std::optional<SimTime> TimeCommands::wait_paused(std::chrono::milliseconds timeo
     }
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

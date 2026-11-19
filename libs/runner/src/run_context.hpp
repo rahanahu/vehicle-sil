@@ -17,7 +17,7 @@
 #include <string>
 #include <string_view>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// What a run is given, fixed before it begins: the parts of the run (run_*.hpp) keep a reference.
 /// Three things: the plan (a value: what was settled before the run), the observers (what the run
@@ -31,8 +31,8 @@ struct RunContext
 {
     /// The plan's configuration and check (RunPlan::config(), RunPlan::check), named here because
     /// every part reads them.
-    const SimulationConfig& config;
-    const CheckReport& check;
+    const config::SimulationConfig& config;
+    const config::CheckReport& check;
     const RunPlan& plan;
     /// The Runner's copy of the caller's functions (run_events.hpp says of each which thread calls it and
     /// what it may do); none of them is in the RunPlan.
@@ -42,7 +42,7 @@ struct RunContext
     /// Null: nothing is told this way, and the lines go to RunObservers::write_line.
     RunEvents* events;
     /// run --scenario: the scenario the check read (RunPlan::scenario()); null without one.
-    const Scenario* scenario;
+    const scenario::Scenario* scenario;
     /// The run's controls: RunLent::controls, or the run's own (on RunLent::stops).
     RunControls& controls;
     /// The time commands of `controls`.
@@ -79,4 +79,4 @@ inline std::string one_line(std::string text)
     return text;
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

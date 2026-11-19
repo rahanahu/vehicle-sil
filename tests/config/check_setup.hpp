@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch::test::check_setup {
+namespace vehicle_sil::config::test::check_setup {
 
 using namespace std::chrono_literals;
 
@@ -452,4 +452,4 @@ inline std::string shared_lines(const Setup& s, const std::vector<ConnectRequest
     return out;
 }
 
-} // namespace vehicle_sil::launch::test::check_setup
+} // namespace vehicle_sil::config::test::check_setup

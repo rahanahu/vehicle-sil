@@ -14,7 +14,7 @@
 #include <string>
 #include <string_view>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 /// What can be asked of a run from outside.
 enum class Operation
@@ -162,4 +162,4 @@ struct Allowed
 /// asks it for the write once, before the run, to refuse those calls itself in one place.
 [[nodiscard]] std::optional<Decision> always_refused(bool scenario, Entry entry, Operation operation);
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

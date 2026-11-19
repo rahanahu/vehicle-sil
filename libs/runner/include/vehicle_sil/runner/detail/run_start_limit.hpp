@@ -8,7 +8,7 @@
 #include <chrono>
 #include <mutex>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// When the start is given up, and what the message says about it.
 ///
@@ -89,4 +89,4 @@ private:
     bool holding_ = false;
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

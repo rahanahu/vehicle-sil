@@ -22,7 +22,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 /// How the launcher asks a participant to stop, in messages: "SIGTERM" (POSIX) or "Ctrl+Break"
 /// (Windows).
@@ -298,7 +298,7 @@ struct ScenarioNotObserved
 struct OutcomeScenario
 {
     /// What became of the scenario (ScenarioStatus::NotRun if the simulation did not start).
-    std::optional<ScenarioRun> result{};
+    std::optional<scenario::ScenarioRun> result{};
     /// Why the scenario did not begin although the simulation started: these participants' values
     /// cannot be judged with every step. The scenario is then Failed with no step run.
     std::vector<ScenarioNotObserved> not_observed{};
@@ -308,7 +308,7 @@ struct OutcomeScenario
     /// without one.
     std::string timeline{};
     /// What the scenario's engine noted for the timeline; null if the scenario did not begin.
-    std::shared_ptr<const TimelineRecord> timeline_record{};
+    std::shared_ptr<const scenario::TimelineRecord> timeline_record{};
     /// The timeline file could be opened, but not written when the run was over: why (finding
     /// "timeline-write"; the scenario's result stands). (A record that dropped points at its
     /// limits is the note "timeline-limit".)
@@ -343,7 +343,7 @@ struct RunOutcome
     OutcomeControl control{};
     OutcomeScenario scenario{};
     OutcomeClose close{};
-    RunTiming timing{};
+    config::RunTiming timing{};
     /// In the order of the configuration, then the bridges that run started for --connect.
     std::vector<ParticipantRun> participants{};
     /// --connect: the networks connected to a real bus, in the order of the file's networks.
@@ -356,7 +356,7 @@ struct RunOutcome
     std::optional<TimeChange> time_changed{};
     /// CheckReport::time_lock of the run: whether it kept to real time, and what connected it
     /// outside the simulation.
-    TimeLock time_lock{};
+    config::TimeLock time_lock{};
     /// The participants of the file that ran in real time (detail::real_time_peers()).
     std::vector<std::string> real_time_peers{};
     /// What went over the networks; empty if the simulation did not start.
@@ -365,7 +365,7 @@ struct RunOutcome
 
 /// Judges a run: the errors (they fail it), warnings and notes, each about the participant (with
 /// its line) or the simulation, in sort_findings() order.
-[[nodiscard]] std::vector<Finding> assess_run(const RunOutcome& outcome);
+[[nodiscard]] std::vector<config::Finding> assess_run(const RunOutcome& outcome);
 
 /// Why a run ended, whatever was found in it.
 enum class EndReason
@@ -397,7 +397,7 @@ namespace detail {
 /// ended: whatever happens to them from here on, assess_run() of the final outcome has each of
 /// these unchanged. (Left out: a participant that failed while its process still runs, whose
 /// finding says how the process ended.) What run --events writes before the participants end.
-[[nodiscard]] std::vector<Finding> settled_findings(const RunOutcome& outcome);
+[[nodiscard]] std::vector<config::Finding> settled_findings(const RunOutcome& outcome);
 } // namespace detail
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

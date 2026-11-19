@@ -14,7 +14,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::config {
 
 /// One participant's ECU as the simulation sees it.
 ///
@@ -30,7 +30,7 @@ public:
     /// Its step; empty: it runs in real time.
     [[nodiscard]] const std::optional<SimDuration>& step() const noexcept;
     /// Its networks, each under its name in the simulation, with its J1939 nodes as the
-    /// simulation has them (launch::seen_networks()). Not named networks(): no member of that
+    /// simulation has them (config::seen_networks()). Not named networks(): no member of that
     /// name is read outside check_networks.cpp (launch.described_networks_are_read_in_one_place).
     [[nodiscard]] std::vector<SeenNetwork> seen_networks() const;
     /// Its variables as the simulation sees them, through the participant's variable map
@@ -53,4 +53,4 @@ private:
     const ReportedEcu& ecu_;
 };
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::config

@@ -18,12 +18,12 @@ namespace vehicle_sil::launch {
 
 namespace {
 
-using detail::hex_code;
-using detail::kNanosPerMilli;
-using detail::millis_text;
+using runner::detail::hex_code;
+using config::detail::kNanosPerMilli;
+using config::detail::millis_text;
 
 /// The cell of the participants' table.
-std::string ending_cell(const ParticipantRun& p)
+std::string ending_cell(const runner::ParticipantRun& p)
 {
     const auto status = [&p] {
         if (!p.exit)
@@ -31,36 +31,36 @@ std::string ending_cell(const ParticipantRun& p)
             return std::string{};
         }
         return p.exit->signal ? "signal " + process::signal_name(*p.exit->signal)
-                              : "exit code " + (p.exit->code < 0 ? hex_code(p.exit->code) : std::to_string(p.exit->code));
+                              : "exit code " + (p.exit->code < 0 ? runner::detail::hex_code(p.exit->code) : std::to_string(p.exit->code));
     };
     switch (p.ending)
     {
-    case Ending::NotStarted:
+    case runner::Ending::NotStarted:
         if (p.enabled && p.manual)
         {
             return p.manual_joined ? "started by you (manual)" : "not joined (manual)";
         }
         return p.enabled ? "not started" : "not started (disabled)";
-    case Ending::ExitedBeforeStart:
-    case Ending::Exited:
+    case runner::Ending::ExitedBeforeStart:
+    case runner::Ending::Exited:
         return status();
-    case Ending::Stopped:
-        return "stopped (" + std::string(stop_request_name()) + "), " + status();
-    case Ending::Killed:
+    case runner::Ending::Stopped:
+        return "stopped (" + std::string(runner::stop_request_name()) + "), " + status();
+    case runner::Ending::Killed:
         return "killed";
     }
     return "-";
 }
 
-const char* ending_name(Ending ending)
+const char* ending_name(runner::Ending ending)
 {
     switch (ending)
     {
-    case Ending::NotStarted: return "not_started";
-    case Ending::ExitedBeforeStart:
-    case Ending::Exited: return "exited";
-    case Ending::Stopped: return "stopped";
-    case Ending::Killed: return "killed";
+    case runner::Ending::NotStarted: return "not_started";
+    case runner::Ending::ExitedBeforeStart:
+    case runner::Ending::Exited: return "exited";
+    case runner::Ending::Stopped: return "stopped";
+    case runner::Ending::Killed: return "killed";
     }
     return "not_started";
 }
@@ -69,15 +69,15 @@ const char* ending_name(Ending ending)
 
 namespace {
 
-const char* simulation_name(SimulationEnd end)
+const char* simulation_name(runner::SimulationEnd end)
 {
     switch (end)
     {
-    case SimulationEnd::NotStarted: return "not_started";
-    case SimulationEnd::ReachedStopAt: return "reached_stop_at";
-    case SimulationEnd::Ended: return "ended";
-    case SimulationEnd::Aborted: return "aborted";
-    case SimulationEnd::Interrupted: return "interrupted";
+    case runner::SimulationEnd::NotStarted: return "not_started";
+    case runner::SimulationEnd::ReachedStopAt: return "reached_stop_at";
+    case runner::SimulationEnd::Ended: return "ended";
+    case runner::SimulationEnd::Aborted: return "aborted";
+    case runner::SimulationEnd::Interrupted: return "interrupted";
     }
     return "not_started";
 }
@@ -101,14 +101,14 @@ const char* result_name(RunResult result)
 
 } // namespace
 
-std::string detail::timing_text(const RunTiming& timing)
+std::string detail::timing_text(const config::RunTiming& timing)
 {
     if (!timing.speed && timing.paced_steps == 0)
     {
         return {};
     }
     const auto actual = timing.actual_speed();
-    std::string out = "time: speed " + speed_text(timing.speed) + ", ran at " + (actual ? speed_text(actual) : std::string("-")) +
+    std::string out = "time: speed " + config::speed_text(timing.speed) + ", ran at " + (actual ? config::speed_text(actual) : std::string("-")) +
                       " times real time; " + std::to_string(timing.late_steps) + " of " +
                       std::to_string(timing.paced_steps) + " paced steps more than " +
                       std::to_string(timing.late_tolerance_ms) + " ms late (the latest by " +
@@ -138,19 +138,19 @@ std::string format_run_text(const RunReport& report)
                report.check.file + " shows the same)\n\nfailed: " + counts + "\n";
         return out;
     }
-    const RunOutcome& run = *report.run;
+    const runner::RunOutcome& run = *report.run;
     std::string state;
     switch (run.end.simulation)
     {
-    case SimulationEnd::NotStarted:
+    case runner::SimulationEnd::NotStarted:
         state = !run.setup.error.empty()      ? "the simulation could not be set up"
                 : !run.end.interrupted_by.empty() ? run.end.stop_text() + " before the simulation started"
                                               : "the simulation did not start";
         break;
-    case SimulationEnd::ReachedStopAt:
+    case runner::SimulationEnd::ReachedStopAt:
         state = "the simulation ran to stop_at_ms (" + std::to_string(run.end.stop_at_ms.value_or(0)) + " ms) and ended";
         break;
-    case SimulationEnd::Ended:
+    case runner::SimulationEnd::Ended:
         state = !run.end.controller_state.empty() ? "the simulation ended in state " + run.end.controller_state
                 : !run.scenario.not_observed.empty()
                     ? "the simulation was stopped before its first step: the scenario was not begun"
@@ -158,18 +158,18 @@ std::string format_run_text(const RunReport& report)
                                                     std::to_string(run.timing.sim_ms) + " ms) and ended"
                                               : "the simulation ran until a participant ended it";
         break;
-    case SimulationEnd::Aborted:
+    case runner::SimulationEnd::Aborted:
         state = run.end.timed_out ? "the simulation was aborted: it did not end within --timeout-ms (" +
                                     std::to_string(run.end.timeout_ms.value_or(0)) + " ms)"
                 : run.end.failed_participant.empty() ? "the simulation was aborted"
                                                  : "the simulation was aborted: participant '" + run.end.failed_participant + "' failed";
         break;
-    case SimulationEnd::Interrupted:
+    case runner::SimulationEnd::Interrupted:
         state = run.end.stop_text() + ": the simulation was stopped";
         break;
     }
     out += "run: " + state + "\n";
-    if (const std::string time = run.end.simulation != SimulationEnd::NotStarted ? detail::timing_text(run.timing) : std::string{};
+    if (const std::string time = run.end.simulation != runner::SimulationEnd::NotStarted ? detail::timing_text(run.timing) : std::string{};
         !time.empty())
     {
         out += time + "\n";
@@ -180,7 +180,7 @@ std::string format_run_text(const RunReport& report)
         out += detail::scenario_text(*run.scenario.result) + "\n";
     }
     // --connect: the networks connected to a real bus, each through its bridge (the last rows below).
-    for (const RunOutside& o : run.outside)
+    for (const runner::RunOutside& o : run.outside)
     {
         out += "outside: " + o.network + " -> " + o.target + " (" + o.participant + ")";
         if (o.to_outside && o.from_outside)
@@ -226,42 +226,42 @@ namespace {
 /// A virtual time in milliseconds for people ("300", "2.5").
 std::string sim_millis_text(SimTime t)
 {
-    return millis_text(to_ns(t));
+    return config::detail::millis_text(to_ns(t));
 }
 
 } // namespace
 
-std::string detail::traffic_text(const RunTraffic& traffic)
+std::string detail::traffic_text(const runner::RunTraffic& traffic)
 {
     if (traffic.per_network.empty())
     {
         return "traffic: no network in use\n";
     }
-    const auto why = [](TrafficNotCounted reason) -> std::string {
+    const auto why = [](runner::TrafficNotCounted reason) -> std::string {
         switch (reason)
         {
-        case TrafficNotCounted::None: return {};
-        case TrafficNotCounted::NoControlLink: return "not counted: no control link";
-        case TrafficNotCounted::Restarted: return "not counted: restarted";
-        case TrafficNotCounted::RealTime: return "not counted: real time";
-        case TrafficNotCounted::NoCounters: return "not counted: no J1939 counters";
-        case TrafficNotCounted::Mapped: return "not counted: counters mapped by variables";
-        case TrafficNotCounted::NoSample: return "not counted: no sample before the end";
+        case runner::TrafficNotCounted::None: return {};
+        case runner::TrafficNotCounted::NoControlLink: return "not counted: no control link";
+        case runner::TrafficNotCounted::Restarted: return "not counted: restarted";
+        case runner::TrafficNotCounted::RealTime: return "not counted: real time";
+        case runner::TrafficNotCounted::NoCounters: return "not counted: no J1939 counters";
+        case runner::TrafficNotCounted::Mapped: return "not counted: counters mapped by variables";
+        case runner::TrafficNotCounted::NoSample: return "not counted: no sample before the end";
         }
         return {};
     };
-    const auto unplaced = [](const TrafficUnplaced& p) -> std::string {
+    const auto unplaced = [](const runner::TrafficUnplaced& p) -> std::string {
         switch (p.reason)
         {
-        case TrafficUnplacedReason::NoControlLink: return "unplaced: no control link";
-        case TrafficUnplacedReason::NoCounters: return "unplaced: no J1939 counters";
+        case runner::TrafficUnplacedReason::NoControlLink: return "unplaced: no control link";
+        case runner::TrafficUnplacedReason::NoCounters: return "unplaced: no J1939 counters";
         }
         return {};
     };
     const auto participants = [](std::size_t n) { return std::to_string(n) + (n == 1 ? " participant" : " participants"); };
     std::string line;
     std::vector<std::vector<std::string>> rows{{"network", "participant", "sent", "received"}};
-    for (const TrafficNetwork& network : traffic.per_network)
+    for (const runner::TrafficNetwork& network : traffic.per_network)
     {
         const std::size_t counted = network.counted();
         const std::size_t others = network.participants.size() - counted;
@@ -278,7 +278,7 @@ std::string detail::traffic_text(const RunTraffic& traffic)
                  : silent                     ? "nothing sent" + in_all
                                               : participants(network.senders()) + " sent, " +
                                                     std::to_string(network.receivers()) + " received" + in_all);
-        for (const TrafficParticipant& p : network.participants)
+        for (const runner::TrafficParticipant& p : network.participants)
         {
             std::vector<std::string> row{network.name, p.name, p.frames_sent ? std::to_string(*p.frames_sent) : "-",
                                          p.frames_received ? std::to_string(*p.frames_received) : "-"};
@@ -294,7 +294,7 @@ std::string detail::traffic_text(const RunTraffic& traffic)
         }
         // One that its counters place on another network gets a row here; one that is known on
         // no network gets one row after the networks.
-        for (const TrafficUnplaced& p : network.unplaced)
+        for (const runner::TrafficUnplaced& p : network.unplaced)
         {
             if (std::find(traffic.unplaced.begin(), traffic.unplaced.end(), p) == traffic.unplaced.end())
             {
@@ -302,7 +302,7 @@ std::string detail::traffic_text(const RunTraffic& traffic)
             }
         }
     }
-    for (const TrafficUnplaced& p : traffic.unplaced)
+    for (const runner::TrafficUnplaced& p : traffic.unplaced)
     {
         rows.push_back({"-", p.name, "-", "-", unplaced(p)});
     }
@@ -322,17 +322,17 @@ std::string detail::traffic_text(const RunTraffic& traffic)
     return "traffic: " + line + " (steps before " + std::to_string(traffic.before_ms) + " ms)\n\n" + detail::table_text(rows);
 }
 
-std::string detail::scenario_text(const ScenarioRun& scenario)
+std::string detail::scenario_text(const scenario::ScenarioRun& scenario)
 {
     const auto passed = static_cast<std::size_t>(std::count_if(
-        scenario.steps.begin(), scenario.steps.end(), [](const ScenarioStepRun& step) { return step.status == StepStatus::Passed; }));
+        scenario.steps.begin(), scenario.steps.end(), [](const scenario::ScenarioStepRun& step) { return step.status == scenario::StepStatus::Passed; }));
     std::string state;
     switch (scenario.status)
     {
-    case ScenarioStatus::NotRun: state = "not run"; break;
-    case ScenarioStatus::Passed: state = "passed"; break;
-    case ScenarioStatus::Failed: state = "FAILED"; break;
-    case ScenarioStatus::Incomplete: state = "incomplete"; break;
+    case scenario::ScenarioStatus::NotRun: state = "not run"; break;
+    case scenario::ScenarioStatus::Passed: state = "passed"; break;
+    case scenario::ScenarioStatus::Failed: state = "FAILED"; break;
+    case scenario::ScenarioStatus::Incomplete: state = "incomplete"; break;
     }
     std::string out = "scenario " + scenario.file + (scenario.name.empty() ? "" : " (" + scenario.name + ")") + ": " + state +
                       ", " + std::to_string(passed) + " of " + std::to_string(scenario.steps.size()) + " steps passed" +
@@ -343,17 +343,17 @@ std::string detail::scenario_text(const ScenarioRun& scenario)
                            : std::string{}) +
                       "\n\n";
     std::vector<std::vector<std::string>> rows{{"line", "step", "result", "at"}};
-    for (const ScenarioStepRun& step : scenario.steps)
+    for (const scenario::ScenarioStepRun& step : scenario.steps)
     {
-        rows.push_back({std::to_string(step.line), step.text, step_result_text(step.status),
+        rows.push_back({std::to_string(step.line), step.text, scenario::step_result_text(step.status),
                         step.at ? sim_millis_text(*step.at) + " ms" : "-"});
     }
     out += detail::table_text(rows);
     // Why, for the steps that were skipped and the expects that were not checked: the table has no
     // room for it.
-    for (const ScenarioStepRun& step : scenario.steps)
+    for (const scenario::ScenarioStepRun& step : scenario.steps)
     {
-        if (step.status == StepStatus::Skipped)
+        if (step.status == scenario::StepStatus::Skipped)
         {
             out += "line " + std::to_string(step.line) + " skipped: " + step.message + "\n";
         }
@@ -399,7 +399,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
     w.string("result", result_name(report.result()));
     if (report.run)
     {
-        w.string("end", end_reason_name(end_reason(*report.run)));
+        w.string("end", runner::end_reason_name(runner::end_reason(*report.run)));
     }
     else
     {
@@ -437,7 +437,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
     }
     if (report.run)
     {
-        const RunTiming& t = report.run->timing;
+        const config::RunTiming& t = report.run->timing;
         w.begin_object("timing");
         if (t.speed)
         {
@@ -448,7 +448,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
             w.string("speed", "max");
         }
         const auto millis = [](const std::optional<std::int64_t>& ns) {
-            return ns ? std::optional<double>(static_cast<double>(*ns) / static_cast<double>(kNanosPerMilli)) : std::nullopt;
+            return ns ? std::optional<double>(static_cast<double>(*ns) / static_cast<double>(config::detail::kNanosPerMilli)) : std::nullopt;
         };
         w.integer("time_step_ms", t.time_step_ms);
         w.real("ecu_step_ms", millis(t.ecu_step_ns));
@@ -514,8 +514,8 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
                 w.string("log", p.log);
             }
             w.begin_object("control_link");
-            w.string("state", control_link_name(p.control));
-            if (p.control == ControlLink::Connected)
+            w.string("state", runner::control_link_name(p.control));
+            if (p.control == runner::ControlLink::Connected)
             {
                 w.integer("variables", static_cast<std::int64_t>(p.control_variables));
             }
@@ -523,7 +523,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
             {
                 w.null("variables");
             }
-            if (p.control == ControlLink::VersionMismatch)
+            if (p.control == runner::ControlLink::VersionMismatch)
             {
                 w.integer("version", p.control_version);
             }
@@ -540,7 +540,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
     w.begin_array("outside");
     if (report.run)
     {
-        for (const RunOutside& o : report.run->outside)
+        for (const runner::RunOutside& o : report.run->outside)
         {
             w.begin_object();
             w.string("network", o.network);
@@ -571,23 +571,23 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
     w.end_array();
     if (report.run && report.run->traffic)
     {
-        const RunTraffic& traffic = *report.run->traffic;
+        const runner::RunTraffic& traffic = *report.run->traffic;
         w.begin_object("traffic");
         w.integer("before_ms", traffic.before_ms);
-        const auto unplaced = [&w](const std::vector<TrafficUnplaced>& all) {
+        const auto unplaced = [&w](const std::vector<runner::TrafficUnplaced>& all) {
             w.begin_array("unplaced");
-            for (const TrafficUnplaced& p : all)
+            for (const runner::TrafficUnplaced& p : all)
             {
                 w.begin_object();
                 w.string("participant", p.name);
-                w.string("reason", traffic_unplaced_reason_name(p.reason));
+                w.string("reason", runner::traffic_unplaced_reason_name(p.reason));
                 w.end_object();
             }
             w.end_array();
         };
         unplaced(traffic.unplaced);
         w.begin_array("networks");
-        for (const TrafficNetwork& network : traffic.per_network)
+        for (const runner::TrafficNetwork& network : traffic.per_network)
         {
             w.begin_object();
             w.string("name", network.name);
@@ -605,7 +605,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
             }
             unplaced(network.unplaced);
             w.begin_array("participants");
-            for (const TrafficParticipant& p : network.participants)
+            for (const runner::TrafficParticipant& p : network.participants)
             {
                 const auto number = [&w](std::string_view member, const std::optional<std::int64_t>& value) {
                     if (value)
@@ -626,7 +626,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
                 }
                 else
                 {
-                    w.string("not_counted", traffic_not_counted_name(p.not_counted));
+                    w.string("not_counted", runner::traffic_not_counted_name(p.not_counted));
                 }
                 if (p.virtual_time)
                 {
@@ -636,7 +636,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
                 {
                     w.null("virtual_time");
                 }
-                w.real("at_ms", p.at ? std::optional<double>(static_cast<double>(to_ns(*p.at)) / static_cast<double>(kNanosPerMilli))
+                w.real("at_ms", p.at ? std::optional<double>(static_cast<double>(to_ns(*p.at)) / static_cast<double>(config::detail::kNanosPerMilli))
                                      : std::nullopt);
                 number("frames_sent", p.frames_sent);
                 number("frames_received", p.frames_received);
@@ -662,20 +662,20 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
     w.end_object();
 }
 
-void detail::write_scenario_step_members(vehicle_sil::json::JsonWriter& w, const ScenarioStepRun& step)
+void detail::write_scenario_step_members(vehicle_sil::json::JsonWriter& w, const scenario::ScenarioStepRun& step)
 {
     const auto time = [&w](std::string_view key, const std::optional<SimTime>& t) {
-        w.real(key, t ? std::optional<double>(static_cast<double>(to_ns(*t)) / static_cast<double>(kNanosPerMilli)) : std::nullopt);
+        w.real(key, t ? std::optional<double>(static_cast<double>(to_ns(*t)) / static_cast<double>(config::detail::kNanosPerMilli)) : std::nullopt);
     };
     w.integer("index", static_cast<std::int64_t>(step.index));
     w.integer("line", static_cast<std::int64_t>(step.line));
-    w.string("kind", step_kind_name(step.kind));
+    w.string("kind", scenario::step_kind_name(step.kind));
     w.string("text", step.text);
-    w.string("status", step_status_name(step.status));
+    w.string("status", scenario::step_status_name(step.status));
     time("start_ms", step.start);
     time("at_ms", step.at);
     time("end_ms", step.end);
-    if (step.status == StepStatus::Failed || step.status == StepStatus::Skipped)
+    if (step.status == scenario::StepStatus::Failed || step.status == scenario::StepStatus::Skipped)
     {
         w.string("code", step.code);
         w.string("message", step.message);
@@ -692,7 +692,7 @@ void detail::write_scenario_step_members(vehicle_sil::json::JsonWriter& w, const
     }
 }
 
-void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const ScenarioRun& scenario,
+void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const scenario::ScenarioRun& scenario,
                                  const std::string& timeline)
 {
     w.begin_object(key);
@@ -705,9 +705,9 @@ void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_v
     {
         w.string("name", scenario.name);
     }
-    w.string("status", scenario_status_name(scenario.status));
+    w.string("status", scenario::scenario_status_name(scenario.status));
     w.real("over_at_ms", scenario.over_at ? std::optional<double>(static_cast<double>(to_ns(*scenario.over_at)) /
-                                                                  static_cast<double>(kNanosPerMilli))
+                                                                  static_cast<double>(config::detail::kNanosPerMilli))
                                           : std::nullopt);
     if (scenario.skipped() > 0)
     {
@@ -720,7 +720,7 @@ void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_v
         w.integer("unchecked_expects", static_cast<std::int64_t>(scenario.unchecked_expects()));
     }
     w.begin_array("steps");
-    for (const ScenarioStepRun& step : scenario.steps)
+    for (const scenario::ScenarioStepRun& step : scenario.steps)
     {
         w.begin_object();
         write_scenario_step_members(w, step);
@@ -743,7 +743,7 @@ void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_v
 std::string format_internal_error_json(bool run, const std::string& message)
 {
     Checked check;
-    check.findings.push_back(Finding{Severity::Error, "internal", message, 0, "", ""});
+    check.findings.push_back(config::Finding{config::Severity::Error, "internal", message, 0, "", ""});
     if (!run)
     {
         return format_json(check);
