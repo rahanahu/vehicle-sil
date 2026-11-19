@@ -136,8 +136,7 @@ message PeerInfo {
   string simulation_state = 7; // its SIL Kit lifecycle state as the server sees it ("" if unknown)
   // Its agent runs on the simulation's time (its steps are those of the time synchronisation, as
   // its hello says); false: in real time, or no agent (has_agent false). GetSnapshotReply.consistent
-  // looks only at the peers with virtual_time. An earlier server without this field leaves it
-  // false for every peer.
+  // looks only at the peers with virtual_time.
   bool virtual_time = 8;
 }
 
@@ -258,7 +257,7 @@ message WatchRequest {
   // client "scenario"): they are not sent at all, so Update.dropped does not count them. Empty:
   // every operation. A name matches Operation.client exactly: a gRPC client's is "<name>@<the
   // address of its connection>" and changes with the connection, so only a fixed name is useful
-  // here; the one fixed name now is "scenario". A server of an earlier version ignores the list.
+  // here; the one fixed name now is "scenario".
   repeated string operation_clients_excluded = 9;
 }
 

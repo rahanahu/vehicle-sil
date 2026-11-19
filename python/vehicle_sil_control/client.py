@@ -11,7 +11,7 @@ from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Union
 import grpc
 
 from . import __version__
-from ._stubs import pb, rpc
+from ._stubs import _STUBS, pb, rpc
 
 Number = Union[bool, int, float]
 
@@ -103,8 +103,8 @@ class Peer:
     error: str = ""
     has_agent: bool = False  # an agent has connected for it (else it is known from SIL Kit only)
     simulation_state: str = ""  # the SIL Kit lifecycle state the server sees ("" if unknown)
-    # its agent runs on the simulation's time (false: in real time, or no agent; always false from an
-    # earlier server without the field); Snapshot.consistent looks only at these peers
+    # its agent runs on the simulation's time (false: in real time, or no agent); Snapshot.consistent
+    # looks only at these peers
     virtual_time: bool = False
 
 
@@ -367,22 +367,32 @@ class Control:
 
     def _check_release(self) -> None:
         """Before the first call: the server must be of this client's vehicle-sil release (one Ping, once
-        per Control; a Ping that fails is tried again at the next call). Another release, or a server
-        that does not say its release, is refused: ControlError FAILED_PRECONDITION."""
+        per Control; a Ping that fails is tried again at the next call). Another release, a server
+        that does not report its release, or stubs generated before the field: ControlError
+        FAILED_PRECONDITION."""
         if self._checked:
             return
         with self._check_lock:
             if self._checked:
                 return
+            if "vehicle_sil" not in pb.PingReply.DESCRIPTOR.fields_by_name:
+                raise ControlError(grpc.StatusCode.FAILED_PRECONDITION,
+                                   f"the Control API stubs in {_STUBS} are older than this vehicle_sil_control (their "
+                                   "PingReply has no vehicle_sil): make them again with `python -m "
+                                   "vehicle_sil_control.generate` (with --out <directory> for VEHICLE_SIL_CONTROL_STUBS)")
             try:
                 reply = self._stub.Ping(pb.PingRequest(), timeout=self._timeout)
             except grpc.RpcError as e:
                 raise _error(e) from None
-            if reply.vehicle_sil != __version__:
-                server = f"vehicle-sil {reply.vehicle_sil}" if reply.vehicle_sil else "an older vehicle-sil"
+            if not reply.vehicle_sil:
                 raise ControlError(grpc.StatusCode.FAILED_PRECONDITION,
-                                   f"the control server is {server}; this vehicle_sil_control is {__version__}: use "
-                                   "the vehicle_sil_control of the same release as the launcher")
+                                   "the control server does not report its vehicle-sil release (a 0.1.0 launcher, or "
+                                   f"one built before this check); this vehicle_sil_control is {__version__}: use the "
+                                   "vehicle_sil_control that came with the launcher")
+            if reply.vehicle_sil != __version__:
+                raise ControlError(grpc.StatusCode.FAILED_PRECONDITION,
+                                   f"the control server is vehicle-sil {reply.vehicle_sil}; this vehicle_sil_control is "
+                                   f"{__version__}: use the vehicle_sil_control of the same release as the launcher")
             self._checked = True
 
     def _call(self, method, request, timeout: Optional[float] = None):
@@ -427,17 +437,10 @@ class Control:
         """The time state and the latest values of `peers` (empty: every peer with an agent), read
         by the server in one go: see Snapshot for what holds between the time and the values.
         After `sim.wait_paused()`, `consistent` says that the values are those of the time the
-        simulation stands still at. ControlError with code UNIMPLEMENTED: the server is older and
-        has no such call (read `sim.time()` and `values()` instead; nothing holds between them)."""
+        simulation stands still at."""
         if isinstance(peers, (str, bytes)):
             raise TypeError("peers is a sequence of names, not one name: pass [name]")
-        try:
-            reply = self._call(self._stub.GetSnapshot, pb.GetSnapshotRequest(peers=list(peers)))
-        except ControlError as e:
-            if e.code == grpc.StatusCode.UNIMPLEMENTED:
-                raise ControlError(e.code, "the server has no GetSnapshot (it is older than this client): read "
-                                           "sim.time() and values() instead; nothing holds between the two") from None
-            raise
+        reply = self._call(self._stub.GetSnapshot, pb.GetSnapshotRequest(peers=list(peers)))
         sampled = [v for v in reply.values if v.HasField("snapshot")]
         if any((v.peer, v.incarnation) not in self._schemas for v in sampled):
             # The names of the values: a schema belongs to an incarnation and does not change.

@@ -5,7 +5,6 @@
   (started here).
 - ConversionTest: what the client makes of variables and values, without a server.
 - ReleaseTest: the release check of the first call, against a server here that answers Ping alone.
-- OlderServerTest: a server without GetSnapshot.
 (TLS, tokens and roles, the audit log and the CLI with them: test_launcher.py.)
 
 Environment: VEHICLE_SIL_LAUNCH_EXE, VEHICLE_SIL_EXAMPLE_DIR (examples/ecu_main in the build tree),
@@ -294,28 +293,27 @@ class ReleaseTest(unittest.TestCase):
                          f"{vehicle_sil_control.__version__}: use the vehicle_sil_control of the same release as the "
                          "launcher")
 
-    def test_a_server_that_does_not_say_its_release_is_refused(self):
+    def test_a_server_that_does_not_report_its_release_is_refused(self):
         import vehicle_sil_control
         self.assertEqual(self.refused(""),
-                         f"FAILED_PRECONDITION: the control server is an older vehicle-sil; this vehicle_sil_control "
-                         f"is {vehicle_sil_control.__version__}: use the vehicle_sil_control of the same release as "
-                         "the launcher")
+                         "FAILED_PRECONDITION: the control server does not report its vehicle-sil release (a 0.1.0 "
+                         "launcher, or one built before this check); this vehicle_sil_control is "
+                         f"{vehicle_sil_control.__version__}: use the vehicle_sil_control that came with the launcher")
 
-
-class OlderServerTest(unittest.TestCase):
-    """A server from before GetSnapshot (here: one that answers Ping alone)."""
-
-    def test_snapshot_says_that_the_server_has_no_such_call(self):
+    def test_stubs_from_before_the_field_are_refused_without_a_call(self):
+        import types
+        from unittest import mock
         import grpc
-        import vehicle_sil_control
-        address, _ = ping_server(self, vehicle_sil_control.__version__)
-        with Control(address) as c:
+        from vehicle_sil_control import client
+        address, pings = ping_server(self, "")
+        old = types.SimpleNamespace(DESCRIPTOR=types.SimpleNamespace(fields_by_name={}))  # a PingReply without the field
+        with Control(address) as c, mock.patch.object(client.pb, "PingReply", old):
             with self.assertRaises(ControlError) as refused:
-                c.snapshot()
-        self.assertEqual(refused.exception.code, grpc.StatusCode.UNIMPLEMENTED)
-        self.assertEqual(str(refused.exception),
-                         "UNIMPLEMENTED: the server has no GetSnapshot (it is older than this client): read "
-                         "sim.time() and values() instead; nothing holds between the two")
+                c.peers()
+        self.assertEqual(refused.exception.code, grpc.StatusCode.FAILED_PRECONDITION)
+        self.assertIn("are older than this vehicle_sil_control (their PingReply has no vehicle_sil): make them again "
+                      "with `python -m vehicle_sil_control.generate`", str(refused.exception))
+        self.assertEqual(pings, [])
 
 
 if __name__ == "__main__":

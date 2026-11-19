@@ -105,7 +105,7 @@ vehicle_sil_launch run --events --stdin-commands --start-paused --control 0 simu
 
 書き込みの拒否は、trailing metadata の `vehicle-sil-reason`（値は `scenario-running`）で見分けます。呼び出しごとの表と保証は [scenario.md](scenario.md) の「実行中に変数を見る」にあります。
 
-シナリオは、クライアント `scenario` として書き込みます。その操作の `client` は `scenario` です（`Watch`、`GetOperation`、`WaitOperation` の `Operation.client`）。この名前は変わりません。シナリオ自身の操作（ステップごとに 1 件になりうる）が要らない watch は、`WatchRequest.operation_clients_excluded` にこの名前を入れます。この一覧のクライアントの操作は送られず、`Update.dropped` にも数えられません。空の一覧なら、操作は全部送られます。watch の初めの更新には、操作は入りません。名前は `Operation.client` と完全に一致したものだけが当たります。gRPC のクライアントの `client` は `<名前>@<接続のアドレス>` で、接続ごとに変わるので、一覧に入れて役に立つのは固定の名前だけです。いまの固定の名前は `scenario` だけです。前の版の Control Server は、一覧を無視して操作を全部送ります。GUI サーバーの watch は `scenario` を除きます。Python のクライアントの `Control.watch()` には一覧の引数がないので、Python の watch にはシナリオの操作も届きます。
+シナリオは、クライアント `scenario` として書き込みます。その操作の `client` は `scenario` です（`Watch`、`GetOperation`、`WaitOperation` の `Operation.client`）。この名前は変わりません。シナリオ自身の操作（ステップごとに 1 件になりうる）が要らない watch は、`WatchRequest.operation_clients_excluded` にこの名前を入れます。この一覧のクライアントの操作は送られず、`Update.dropped` にも数えられません。空の一覧なら、操作は全部送られます。watch の初めの更新には、操作は入りません。名前は `Operation.client` と完全に一致したものだけが当たります。gRPC のクライアントの `client` は `<名前>@<接続のアドレス>` で、接続ごとに変わるので、一覧に入れて役に立つのは固定の名前だけです。いまの固定の名前は `scenario` だけです。GUI サーバーの watch は `scenario` を除きます。Python のクライアントの `Control.watch()` には一覧の引数がないので、Python の watch にはシナリオの操作も届きます。
 
 ### 外につながる実行
 
@@ -398,7 +398,7 @@ gRPC の呼び出しと、Python のクライアント（`Control` のメソッ�
 
 | gRPC | すること | Python | CLI | ロール |
 |---|---|---|---|---|
-| `Ping` | サーバーのバージョンと、サーバーを作った vehicle-sil のリリース（`vehicle_sil`）を返します。 | `ping()` | なし | `viewer` |
+| `Ping` | サーバーのバージョン（`server_version`）と、サーバーを作った vehicle-sil のリリース（`vehicle_sil`）を返します。 | `ping()`（`server_version` を返す） | なし | `viewer` |
 | `ListPeers` | Peer と変数の一覧を読みます。 | `peers()`、`peer()` | `peers`、`show` | `viewer` |
 | `GetValues` | 1 つの Peer の最後の値を読みます。 | `values()` | `show` | `viewer` |
 | `GetSnapshot` | 時刻と値をまとめて読みます。 | `snapshot()` | なし | `viewer` |
@@ -490,7 +490,7 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
 | 呼び出しの失敗 | 例外 `ControlError` です（[エラー](#エラー)）。 |
 | Agent が拒否した書き込み | 例外ではなく、操作の結果（`invalid` など）になります。 |
 
-`vehicle_sil_control` は、ランチャーと同じ vehicle-sil のリリースのものを使います。`Control` を作っただけでは接続しません。最初の呼び出しか watch のときに、`Control` は `Ping` を 1 回送ってサーバーのリリースを確かめます。別のリリースのサーバーと、リリースを返さないサーバーは、`ControlError`（`code` は `FAILED_PRECONDITION`）で断ります。メッセージは `the control server is vehicle-sil <X>; this vehicle_sil_control is <Y>: use the vehicle_sil_control of the same release as the launcher` です（リリースを返さないサーバーでは、`vehicle-sil <X>` が `an older vehicle-sil` になります）。`Ping` が失敗したとき（サーバーがまだない）は、次の呼び出しでもう一度確かめます。
+`vehicle_sil_control` は、ランチャーと同じ vehicle-sil のリリースのものを使います。`Control` を作っただけでは接続しません。最初の呼び出しか watch のときに、`Control` は `Ping` を 1 回送ってサーバーのリリースを確かめます。別のリリースのサーバーは、`ControlError`（`code` は `FAILED_PRECONDITION`）で断ります。メッセージは `the control server is vehicle-sil <X>; this vehicle_sil_control is <Y>: use the vehicle_sil_control of the same release as the launcher` です。リリースを返さないサーバー（0.1.0 のランチャーか、この確認より前に作ったもの）も同じように断ります。メッセージは `the control server does not report its vehicle-sil release (...); this vehicle_sil_control is <Y>: use the vehicle_sil_control that came with the launcher` です。クライアントがこの欄を知る前に作ったスタブは、呼び出しの前に断ります。メッセージは、`python -m vehicle_sil_control.generate` をもう一度実行するように言います。`Ping` が失敗したとき（サーバーがまだない）は、次の呼び出しでもう一度確かめます。
 
 ### 書き込みのルール
 
@@ -644,7 +644,7 @@ python -m vehicle_sil_control stop
 | `FAILED_PRECONDITION` | 今はできない呼び出しです（一時停止していないときの `step`、終わった後の `Stop`、シナリオの実行中の書き込み、外につながっていて実時間を保つ実行での一時停止や速度の変更）。Python のクライアントは、別の vehicle-sil のリリースのサーバーにも出します。 |
 | `CANCELLED` | 待っている間に、サーバーが閉じました（`WaitPaused`。`FAILED_PRECONDITION` のこともあります）。 |
 | `RESOURCE_EXHAUSTED` | `snapshot()` のレスポンスが、1 つのメッセージの上限（4 MiB）を超えました。 |
-| `UNIMPLEMENTED` | Server が、その呼び出しを持たない前のバージョンです。 |
+| `UNIMPLEMENTED` | そのアドレスは gRPC に答えますが、vehicle-sil の Control Server ではありません（その呼び出しがない）。 |
 
 シナリオの実行中の書き込みは、`reason` が `scenario-running` です。
 
