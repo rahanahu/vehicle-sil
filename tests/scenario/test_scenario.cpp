@@ -277,6 +277,39 @@ TEST_CASE(scenario_write_refused_at_once_fails_the_first_refused_in_the_order_se
                    std::get<std::int64_t>(c.writes[0].second) == 8;
         }));
     }
+    // The hub refuses Door's write itself (no room): that is known at once, the engine sends
+    // nothing after it, and the step fails the same way.
+    {
+        World world;
+        world.refuse = refusing({"Door"});
+        world.refused_by_hub = true;
+        check_text(text_of(world.run(read(file))),
+                   "failed over=40\n"
+                   "3 passed start=0 at=0 end=0\n"
+                   "4 unfinished start=50 at=- end=-\n"
+                   "6 failed start=50 at=50 end=50 scenario-write: the write for 50 ms was not taken by participant 'Door': the "
+                   "ECU's agent had too many commands waiting (the peer has too many commands in flight)\n"
+                   "7 not_run start=- at=- end=-\n"
+                   "8 not_run start=- at=- end=-\n");
+        CHECK(world.settles == std::vector<std::size_t>({1, 2}));
+        CHECK(std::none_of(world.ecus[0].queue.begin(), world.ecus[0].queue.end(), [](const ModelEcu::Command& c) {
+            return c.at == SimTime{} + 50ms && c.writes.size() == 1 && std::get<std::int64_t>(c.writes[0].second) == 8;
+        }));
+    }
+    // The result of a write is not known any more when the engine looks (cannot happen with the
+    // hub's memory): the step of the first such write fails, as when it is judged.
+    {
+        World world;
+        world.forgets = SimTime{} + 50ms;
+        check_text(text_of(world.run(read(file))),
+                   "failed over=40\n"
+                   "3 passed start=0 at=0 end=0\n"
+                   "4 failed start=50 at=50 end=50 scenario-write: the result of the write for 50 ms is not known any more: this "
+                   "is an error of vehicle_sil_launch\n"
+                   "6 not_run start=- at=- end=-\n"
+                   "7 not_run start=- at=- end=-\n"
+                   "8 not_run start=- at=- end=-\n");
+    }
     // Body refuses too: the first refused write in the order sent is Body's of the step before.
     {
         World world;

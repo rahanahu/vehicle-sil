@@ -808,8 +808,14 @@ bool ScenarioEngine::submit_one(Write write, std::size_t unchecked)
     }
     write.ticket = port_.write(std::move(out), write.at);
     write.judge = judge_time(write.writes, write.at);
+    // Refused by the hub (no link, an unknown variable, no room): known now, without waiting.
+    // Nothing more goes out; the writes before it come first (taken_at_once()).
+    const auto result = port_.result(write.ticket);
+    const bool refused = result && std::any_of(result->targets.begin(), result->targets.end(), [](const control::TargetResult& t) {
+                             return control::is_final(t.status) && t.status != control::TargetStatus::Applied;
+                         });
     sent_.push_back(std::move(write));
-    return true;
+    return !refused || taken_at_once(unchecked);
 }
 
 bool ScenarioEngine::taken_at_once(std::size_t from)
@@ -834,7 +840,24 @@ bool ScenarioEngine::taken_at_once(std::size_t from)
         const auto result = port_.result(write.ticket);
         if (!result)
         {
-            continue;
+            // (Cannot happen: as judge().)
+            if (write.grid)
+            {
+                control::TargetResult lost;
+                lost.peer = scenario_.participants[scenario_.variables[write.writes.front().variable].participant].name;
+                lost.status = control::TargetStatus::Unknown;
+                lost.reason = "the result is not known any more: this is an error of vehicle_sil_launch";
+                fail_grid(write, nullptr, lost, "did not take");
+            }
+            else
+            {
+                fail(write.step, write.at, "scenario-write",
+                     "the result of the write for " + ms_text(write.at) + " ms is not known any more: this is an error of "
+                                                                          "vehicle_sil_launch",
+                     failed_write(write, nullptr, {}));
+            }
+            sent_.erase(sent_.begin() + static_cast<std::ptrdiff_t>(i), sent_.end());
+            return false;
         }
         for (const control::TargetResult& target : result->targets)
         {

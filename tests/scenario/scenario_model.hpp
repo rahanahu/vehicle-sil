@@ -147,6 +147,12 @@ public:
     /// (its status and reason, and failed_write if it is about one write; empty: it takes the
     /// command as ever).
     std::function<std::optional<control::TargetResult>(const std::string& peer, SimTime at)> refuse;
+    /// What `refuse` answers is the hub's own refusal (no link, no room): known when write()
+    /// returns, not only after settle().
+    bool refused_by_hub = false;
+    /// The results of the writes for this time are forgotten by the time the engine has waited
+    /// (as a hub that keeps too few).
+    std::optional<SimTime> forgets{};
 
     World()
     {
@@ -219,9 +225,14 @@ public:
         control::OperationResult sent = op;
         for (auto& target : sent.targets)
         {
-            target = control::TargetResult{target.peer, control::TargetStatus::Sent, std::nullopt, false, ""};
+            const bool known = refused_by_hub && control::is_final(target.status) && target.status != control::TargetStatus::Applied;
+            if (!known)
+            {
+                target = control::TargetResult{target.peer, control::TargetStatus::Sent, std::nullopt, false, ""};
+            }
         }
         visible_[ticket] = std::move(sent);
+        times_[ticket] = time;
         unsettled_.emplace_back(ticket, std::move(op));
         return ticket;
     }
@@ -231,6 +242,11 @@ public:
         settles.push_back(unsettled_.size());
         for (auto& [ticket, op] : unsettled_)
         {
+            if (forgets && times_[ticket] == *forgets)
+            {
+                visible_.erase(ticket);
+                continue;
+            }
             visible_[ticket] = std::move(op);
         }
         unsettled_.clear();
@@ -464,6 +480,7 @@ private:
     std::uint64_t tickets_ = 0;
     std::map<std::uint64_t, control::OperationResult> visible_;
     std::vector<std::pair<std::uint64_t, control::OperationResult>> unsettled_; ///< in the order written
+    std::map<std::uint64_t, SimTime> times_;                                     ///< of each write
     std::vector<Produced> produced_;
 };
 

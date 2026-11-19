@@ -245,9 +245,11 @@ struct EnginePeer
 /// A write that its agent refuses at once (the agent's check, no room, no link) fails its step
 /// when the engine looks at the results of the writes it handed out at P, in the order they went
 /// out: the first refused one fails, as if the writes after it had not been made (a step that
-/// had not begun before them stays NotRun, and no step fails for them). They did go out before
-/// the engine knew of the refusal, so the record has them; no ECU applies them, as the
-/// simulation stops at P.
+/// had not begun before them stays NotRun, and no step fails for them). Where the agent refused
+/// it, they did go out before the engine knew of the refusal, so the record has them; no ECU
+/// applies them, as the simulation stops at P. Where the hub refused it (no link, an unknown
+/// variable, no room), result() says so when write() returns, and the engine sends nothing after
+/// it. A write whose result is not known any more fails its step as in judging.
 ///
 /// Skipped steps (ScenarioStep::skipped) write and compare nothing. One at T ends at T +
 /// ScenarioStep::skipped_ms (the time its text says it takes; 0 for a set and for a step that
@@ -360,13 +362,13 @@ private:
     /// variable: before any write of its time is sent.
     void place(const Write& write);
     /// Hands out `write` (without waiting) and puts it on sent_. false: the scenario is over (a
-    /// motion without a base; a write handed out before it, from sent_[`unchecked`] on, that was
-    /// refused at once comes first: taken_at_once()).
+    /// motion without a base, or a write the hub refused at once; a write handed out before it,
+    /// from sent_[`unchecked`] on, that was refused at once comes first: taken_at_once()).
     bool submit_one(Write write, std::size_t unchecked);
     /// Waits until the agents have answered the writes handed out (ScenarioPort::settle()), then
     /// goes through sent_ from `from` in the order sent: begins their steps, and fails the step
-    /// of the first write an agent refused at once. Those after it are taken off sent_ (as if
-    /// they had not been made). false: the scenario is over.
+    /// of the first write an agent refused at once (or whose result is not known any more). Those
+    /// after it are taken off sent_ (as if they had not been made). false: the scenario is over.
     bool taken_at_once(std::size_t from);
     /// A write of no step (Write::grid) that `target` (of `result`; null: no result is known)
     /// refused or did not apply (`did_not`: which, as the message says it, "did not take";

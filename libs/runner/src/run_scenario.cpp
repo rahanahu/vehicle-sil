@@ -7,6 +7,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace vehicle_sil::runner::detail {
@@ -66,15 +69,36 @@ public:
     void settle() override
     {
         trace::Span traceSettle("scenario.settle", -1, open_.size());
+        const std::vector<std::uint64_t> open = std::exchange(open_, {});
         // No limit in real time: an agent that is gone is settled by the hub, and a run that
-        // ends gives up.
-        for (const std::uint64_t seq : open_)
+        // ends gives up (then the rest is not waited for either).
+        for (const std::uint64_t seq : open)
         {
-            while (!hub_.wait_queued(seq, std::chrono::milliseconds(20)) && hub_.operation(seq) && !(give_up && give_up()))
+            while (!hub_.wait_queued(seq, std::chrono::milliseconds(20)) && hub_.operation(seq))
             {
+                if (give_up && give_up())
+                {
+                    return;
+                }
             }
         }
-        open_.clear();
+        // What the engine relies on: every write is queued or refused before the step is
+        // released. A target still on its way is an error of this wait, not of the scenario.
+        for (const std::uint64_t seq : open)
+        {
+            if (const auto op = hub_.operation(seq))
+            {
+                for (const control::TargetResult& target : op->targets)
+                {
+                    if (target.status == control::TargetStatus::Sent)
+                    {
+                        throw std::logic_error("the scenario's write " + std::to_string(seq) + " was still on its way to participant '" +
+                                               target.peer +
+                                               "' after the wait for the agents: this is an error of vehicle_sil_launch");
+                    }
+                }
+            }
+        }
     }
     std::optional<control::OperationResult> result(std::uint64_t ticket) override { return hub_.operation(ticket); }
 
