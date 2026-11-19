@@ -40,7 +40,7 @@ public:
 class Reader
 {
 public:
-    explicit Reader(const detail::YamlDocument& doc) : tree_(doc.tree()), root_(doc.root()) {}
+    explicit Reader(const config::detail::YamlDocument& doc) : tree_(doc.tree()), root_(doc.root()) {}
 
     /// The entries, or throws NotSaved; `written_by` gets the vehicle-sil version that wrote it.
     std::vector<SavedDescription> read(std::string& written_by) const
@@ -112,7 +112,7 @@ private:
     bool is_scalar(ryml::id_type node) const { return tree_.has_val(node) && !tree_.is_container(node); }
     std::int64_t integer(ryml::id_type node, const std::string& what) const
     {
-        const std::string value = is_scalar(node) && !tree_.is_val_quoted(node) ? detail::to_string(tree_.val(node)) : "";
+        const std::string value = is_scalar(node) && !tree_.is_val_quoted(node) ? config::detail::to_string(tree_.val(node)) : "";
         std::int64_t out = 0;
         const char* end = value.data() + value.size();
         const auto [ptr, ec] = std::from_chars(value.data(), end, out);
@@ -128,7 +128,7 @@ private:
         {
             throw NotSaved(what + " is not a string");
         }
-        return detail::to_string(tree_.val(node));
+        return config::detail::to_string(tree_.val(node));
     }
 
     const ryml::Tree& tree_;
@@ -255,7 +255,7 @@ SavedDescriptions read_saved_descriptions(const std::filesystem::path& file)
     }
     try
     {
-        const detail::YamlDocument doc(text);
+        const config::detail::YamlDocument doc(text);
         std::string written_by;
         out.entries = Reader(doc).read(written_by);
         if (written_by != vehicle_sil::version())
@@ -264,7 +264,7 @@ SavedDescriptions read_saved_descriptions(const std::filesystem::path& file)
                           vehicle_sil::version() + " (only the same version reads it)";
         }
     }
-    catch (const detail::YamlSyntaxError& e)
+    catch (const config::detail::YamlSyntaxError& e)
     {
         out.entries.clear();
         out.problem = "the file is not one that check --write-descriptions wrote (" + e.message() + ")";
@@ -320,8 +320,8 @@ std::string write_saved_descriptions(const std::filesystem::path& file, const st
 
 DescribeSource describe_from_saved(std::vector<SavedDescription> saved)
 {
-    return [saved = std::move(saved)](const ParticipantConfig& participant, const std::filesystem::path& executable,
-                                      const std::vector<std::string>& arguments) -> std::optional<DescribeRun> {
+    return [saved = std::move(saved)](const config::ParticipantConfig& participant, const std::filesystem::path& executable,
+                                      const std::vector<std::string>& arguments) -> std::optional<config::DescribeRun> {
         const std::optional<ExecutableStamp> now = executable_stamp(executable);
         if (!now)
         {
@@ -333,7 +333,7 @@ DescribeSource describe_from_saved(std::vector<SavedDescription> saved)
             {
                 std::vector<std::string> words{participant.command.front()};
                 words.insert(words.end(), arguments.begin(), arguments.end());
-                std::optional<DescribeRun> run(std::in_place);
+                std::optional<config::DescribeRun> run(std::in_place);
                 run->command_text = detail::command_text(words);
                 run->exit_code = 0;
                 run->standard_output = entry.output;

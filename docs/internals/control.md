@@ -412,7 +412,7 @@ Writes:
 - The converted `Command` is sent only to that incarnation (after a restart, it is dropped).
 - The operation record (`request`) keeps the names and values that the client wrote.
 
-The rules (types, ranges, conflicts) live in one place, `MappedSchema::make()`, and the check (`launch::seen_variables()`) applies the same function to the `--describe` list. To add a kind of mapping, change:
+The rules (types, ranges, conflicts) live in one place, `MappedSchema::make()`, and the check (`config::seen_variables()`) applies the same function to the `--describe` list. To add a kind of mapping, change:
 
 - The members of `VariableMapping`
 - `MappedSchema::make()` and the conversion
@@ -868,7 +868,7 @@ The time lock (see "Time of a run that is connected outside (`--time-policy`)" i
 
 ### Time control path
 
-- The `TimeControl` implementation only forwards to `launch::TimeCommands`.
+- The `TimeControl` implementation only forwards to `runner::TimeCommands`.
 - It calls the same `apply()` as stdin commands, with `source` set to `control_server`.
 - `apply()` decides whether to accept a command, writes the `command` event and passes the command to the gate, all inside one mutex. Commands from stdin and gRPC therefore form one sequence, and the order of the events is the order in which the commands took effect.
 - The rules are the same too (`step` only while paused, and so on).

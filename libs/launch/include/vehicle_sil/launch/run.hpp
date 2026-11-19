@@ -60,9 +60,9 @@ struct RunReport
 {
     Checked check{};
     /// Empty if nothing was started because of the check (or the command line).
-    std::optional<RunOutcome> run{};
+    std::optional<runner::RunOutcome> run{};
     /// assess_run() of `run`.
-    std::vector<Finding> findings{};
+    std::vector<config::Finding> findings{};
     bool strict = false;
     bool usage = false;
     /// run --control: the run's control server, ended (no call of a client is open, none comes
@@ -116,7 +116,7 @@ public:
     /// Starts listening on `hub`, the run's (never null), and keeps it for as long as the server
     /// uses it (as RunObservers::before_start says of the hub); says where it listens. Throws
     /// std::exception if it cannot listen.
-    virtual ControlServerInfo start(std::shared_ptr<control::Hub> hub) = 0;
+    virtual runner::ControlServerInfo start(std::shared_ptr<control::Hub> hub) = 0;
     /// Ends every call (the waits and watches return); idempotent.
     virtual void end() = 0;
 };
@@ -149,12 +149,12 @@ struct RunLent
     /// must have the three observers (on_phase, on_command, on_state), `stops` must be null or the controls' own, and the controls must
     /// be made with the request's RunIntent::start_paused and whether it has a scenario
     /// (RunControls::start_paused(), scenario()): run_file() throws std::invalid_argument otherwise.
-    RunControls* controls = nullptr;
+    runner::RunControls* controls = nullptr;
     /// Without `controls`: the requests to stop (the caller's: its signal handler and whatever
     /// else asks). The run reads their count: 1 stops the simulation in order, 2 or more skip the
     /// waits for the participants to end. May be null. Not read with `controls`, which has its own
     /// (RunControls::stops()).
-    StopRequests* stops = nullptr;
+    runner::StopRequests* stops = nullptr;
     /// A control server of the caller's own, in place of the one that run_file() makes for
     /// RunHost::control (which is not read then); null: none. The launcher's tests stand in for the
     /// server with it. run_file() starts it as it starts its own; it must stay usable while
@@ -192,11 +192,11 @@ struct RunLent
 ///
 /// `check`: of it the run reads `params_for_many` and `fastest_by_default` (a test's runs); a run
 /// never reads the file only.
-[[nodiscard]] RunReport run_file(const RunRequest& request, const RunObservers& observers = {}, const RunLent& lent = {},
-                                 const RunLimits& limits = {}, const CheckOptions& check = {});
+[[nodiscard]] RunReport run_file(const RunRequest& request, const runner::RunObservers& observers = {}, const RunLent& lent = {},
+                                 const runner::RunLimits& limits = {}, const CheckOptions& check = {});
 
 /// What plan_run() takes of `request` (RunChoices): RunIntent::speed, start_paused and strict,
 /// RunHost::log_dir, timeline and timeout, copied. run_file() plans its run with it.
-[[nodiscard]] RunChoices run_choices(const RunRequest& request);
+[[nodiscard]] runner::RunChoices run_choices(const RunRequest& request);
 
 } // namespace vehicle_sil::launch

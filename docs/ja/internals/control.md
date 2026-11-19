@@ -412,7 +412,7 @@ Peer ごとの状態は Sent → Queued（Agent が積んだ）→ Applied、Lat
 - 直した `Command` は、その incarnation にだけ送信します（再起動なら捨てます）。
 - 操作の記録（`request`）は、クライアントが書いた名前と値のままです。
 
-ルール（型、範囲、衝突）は `MappedSchema::make()` の 1 か所にあり、照合（`launch::seen_variables()`）も同じ関数を `--describe` の一覧に掛けます。対応の形を追加するときは、次を直します。
+ルール（型、範囲、衝突）は `MappedSchema::make()` の 1 か所にあり、照合（`config::seen_variables()`）も同じ関数を `--describe` の一覧に掛けます。対応の形を追加するときは、次を直します。
 
 - `VariableMapping` のメンバー
 - `MappedSchema::make()` と変換
@@ -868,7 +868,7 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 
 ### 時間の操作の経路
 
-- `TimeControl` の実装は、`launch::TimeCommands` に渡すだけです。
+- `TimeControl` の実装は、`runner::TimeCommands` に渡すだけです。
 - 標準入力のコマンドと同じ `apply()` を、`source` を `control_server` にして呼びます。
 - `apply()` は 1 つのミューテックスの中で、受け付けるかを決め、`command` のイベントを書き、ゲートに渡すので、標準入力と gRPC のコマンドは 1 列に並び、イベントの順が反映された順になります。
 - ルールも同じです（`step` は一時停止中だけ、など）。

@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::scenario {
 
 using detail::ms_text;
 
@@ -191,4 +191,4 @@ std::string ScenarioEngine::applied_text(const TimelineFailure& failure, const s
            "), and " + (count > 1 ? "they stay" : "it stays") + " applied";
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::scenario

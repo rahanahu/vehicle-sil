@@ -30,16 +30,16 @@
 
 
 using namespace std::chrono_literals;
-using vehicle_sil::launch::Command;
-using vehicle_sil::launch::Entry;
-using vehicle_sil::launch::Operation;
-using vehicle_sil::launch::Pacing;
-using vehicle_sil::launch::Phase;
-using vehicle_sil::launch::RunControls;
-using vehicle_sil::launch::RunState;
-using vehicle_sil::launch::StopRequests;
-using vehicle_sil::launch::TimeCommands;
-using namespace vehicle_sil::launch::test::run_controls_support;
+using vehicle_sil::runner::Command;
+using vehicle_sil::runner::Entry;
+using vehicle_sil::runner::Operation;
+using vehicle_sil::runner::Pacing;
+using vehicle_sil::runner::Phase;
+using vehicle_sil::runner::RunControls;
+using vehicle_sil::runner::RunState;
+using vehicle_sil::runner::StopRequests;
+using vehicle_sil::runner::TimeCommands;
+using namespace vehicle_sil::runner::test::run_controls_support;
 
 TEST_CASE(run_controls_lend_the_stop_requests_they_were_made_with)
 {
@@ -78,7 +78,7 @@ TEST_CASE(run_controls_keep_the_phase_before_they_tell_it)
 
 TEST_CASE(phase_names_are_those_of_the_phase_events)
 {
-    using vehicle_sil::launch::phase_name;
+    using vehicle_sil::runner::phase_name;
     CHECK(std::string(phase_name(Phase::Checking)) == "checking");
     CHECK(std::string(phase_name(Phase::Starting)) == "starting");
     CHECK(std::string(phase_name(Phase::Waiting)) == "waiting");
@@ -197,7 +197,7 @@ TEST_CASE(the_state_says_the_hold_while_it_lasts)
 
 TEST_CASE(the_pacing_is_late_until_five_seconds_have_passed_without_a_late_step)
 {
-    using vehicle_sil::launch::detail::PacingWatch;
+    using vehicle_sil::runner::detail::PacingWatch;
     using Clock = std::chrono::steady_clock;
     const Clock::time_point t0{};
     PacingWatch w;
@@ -219,9 +219,9 @@ TEST_CASE(the_pacing_is_late_until_five_seconds_have_passed_without_a_late_step)
     CHECK(w.look(t0 + 20s, true, true, 2) == Pacing::Late);
     CHECK(w.look(t0 + 21s, false, false, 3) == Pacing::NotPaced);
     CHECK(w.look(t0 + 22s, true, false, 3) == Pacing::OnTime);
-    CHECK(std::string(vehicle_sil::launch::pacing_name(Pacing::NotPaced)) == "not-paced");
-    CHECK(std::string(vehicle_sil::launch::pacing_name(Pacing::OnTime)) == "on-time");
-    CHECK(std::string(vehicle_sil::launch::pacing_name(Pacing::Late)) == "late");
+    CHECK(std::string(vehicle_sil::runner::pacing_name(Pacing::NotPaced)) == "not-paced");
+    CHECK(std::string(vehicle_sil::runner::pacing_name(Pacing::OnTime)) == "on-time");
+    CHECK(std::string(vehicle_sil::runner::pacing_name(Pacing::Late)) == "late");
 }
 
 TEST_CASE(run_controls_tell_the_state_of_the_bridges_once_for_each_change)

@@ -3,7 +3,7 @@
 
 #include <algorithm>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::config {
 
 control::MappedSchema seen_variables(const ParticipantConfig& participant, const ReportedEcu& ecu)
 {
@@ -22,7 +22,7 @@ const std::optional<SimDuration>& SeenEcu::step() const noexcept
 
 std::vector<SeenNetwork> SeenEcu::seen_networks() const
 {
-    return launch::seen_networks(participant_, ecu_);
+    return config::seen_networks(participant_, ecu_);
 }
 
 control::MappedSchema SeenEcu::variables() const
@@ -56,4 +56,4 @@ const EcuDescription& SeenEcu::as_described() const noexcept
     return ecu_.description;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::config

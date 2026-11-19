@@ -19,11 +19,11 @@
 
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
-using namespace vehicle_sil::launch;
-using launch::detail::OutsideCounts;
-using launch::detail::OutsideNote;
-using launch::detail::read_outside_counts;
-using vehicle_sil::launch::test::check_text;
+using namespace vehicle_sil::runner;
+using vehicle_sil::runner::detail::OutsideCounts;
+using vehicle_sil::runner::detail::OutsideNote;
+using vehicle_sil::runner::detail::read_outside_counts;
+using vehicle_sil::config::test::check_text;
 
 namespace {
 
@@ -128,36 +128,36 @@ TEST_CASE(outside_note_writes_changes_at_most_once_a_second_and_the_last_at_the_
 
 TEST_CASE(is_link_line_takes_the_link_lines_of_the_bridges)
 {
-    CHECK(launch::detail::is_link_line("[eth-bridge] link link=up"));
-    CHECK(launch::detail::is_link_line("[bridge] link bus=bus-off"));
-    CHECK(launch::detail::is_link_line("link link=down"));
-    CHECK(!launch::detail::is_link_line("[eth-bridge] linked to enp3s0"));
-    CHECK(!launch::detail::is_link_line("[eth-bridge] stats silkit_to_ext=1"));
-    CHECK(!launch::detail::is_link_line("warning: link down"));
+    CHECK(vehicle_sil::runner::detail::is_link_line("[eth-bridge] link link=up"));
+    CHECK(vehicle_sil::runner::detail::is_link_line("[bridge] link bus=bus-off"));
+    CHECK(vehicle_sil::runner::detail::is_link_line("link link=down"));
+    CHECK(!vehicle_sil::runner::detail::is_link_line("[eth-bridge] linked to enp3s0"));
+    CHECK(!vehicle_sil::runner::detail::is_link_line("[eth-bridge] stats silkit_to_ext=1"));
+    CHECK(!vehicle_sil::runner::detail::is_link_line("warning: link down"));
 }
 
 TEST_CASE(without_tag_takes_off_a_word_in_brackets)
 {
-    check_text(std::string(launch::detail::without_tag("[eth-bridge] stats a=1")), "stats a=1");
-    check_text(std::string(launch::detail::without_tag("[bridge] FAIL")), "FAIL");
+    check_text(std::string(vehicle_sil::config::detail::without_tag("[eth-bridge] stats a=1")), "stats a=1");
+    check_text(std::string(vehicle_sil::config::detail::without_tag("[bridge] FAIL")), "FAIL");
     // Not a tag: a space in it, nothing in it, no space after it.
-    check_text(std::string(launch::detail::without_tag("[not a tag] FAIL")), "[not a tag] FAIL");
-    check_text(std::string(launch::detail::without_tag("[] FAIL")), "[] FAIL");
-    check_text(std::string(launch::detail::without_tag("[bridge]FAIL")), "[bridge]FAIL");
+    check_text(std::string(vehicle_sil::config::detail::without_tag("[not a tag] FAIL")), "[not a tag] FAIL");
+    check_text(std::string(vehicle_sil::config::detail::without_tag("[] FAIL")), "[] FAIL");
+    check_text(std::string(vehicle_sil::config::detail::without_tag("[bridge]FAIL")), "[bridge]FAIL");
 }
 
 namespace {
 
-using launch::detail::OutsideBusValue;
-using launch::detail::OutsideLinkLine;
-using launch::detail::OutsideLinkValue;
-using launch::detail::OutsideForeign;
-using launch::detail::OutsideOwn;
-using launch::detail::OutsideSharing;
-using launch::detail::OutsideState;
-using launch::detail::foreign_sharing;
-using launch::detail::read_outside_link_line;
-using launch::detail::read_outside_stats;
+using vehicle_sil::runner::detail::OutsideBusValue;
+using vehicle_sil::runner::detail::OutsideLinkLine;
+using vehicle_sil::runner::detail::OutsideLinkValue;
+using vehicle_sil::runner::detail::OutsideForeign;
+using vehicle_sil::runner::detail::OutsideOwn;
+using vehicle_sil::runner::detail::OutsideSharing;
+using vehicle_sil::runner::detail::OutsideState;
+using vehicle_sil::runner::detail::foreign_sharing;
+using vehicle_sil::runner::detail::read_outside_link_line;
+using vehicle_sil::runner::detail::read_outside_stats;
 using Clock = std::chrono::steady_clock;
 
 OutsideLinkLine link_of(OutsideLinkValue v) { return OutsideLinkLine{v, std::nullopt}; }
@@ -294,7 +294,7 @@ TEST_CASE(dropped_counts_names_the_keys_of_the_table_that_are_not_zero)
                                                 {"silkit_rejected", 2},    {"own_tx_dropped", 9}, {"filtered_to_ext", 4},
                                                 {"oversize", 5},           {"malformed", 6},      {"mac_unguarded", 7},
                                                 {"ext_checksum_incomplete", 8}, {"loop_suspected", 1}, {"error_frames", 1}};
-    const auto dropped = launch::detail::dropped_counts(counts);
+    const auto dropped = vehicle_sil::runner::detail::dropped_counts(counts);
     CHECK(dropped.size() == 3);
     if (dropped.size() != 3)
     {
@@ -303,11 +303,11 @@ TEST_CASE(dropped_counts_names_the_keys_of_the_table_that_are_not_zero)
     CHECK(dropped[0] == std::make_pair(std::string("ext_queue_full"), std::uint64_t{3}));
     CHECK(dropped[1].first == "ext_tx_unsent" && dropped[2].first == "silkit_rejected");
     // Every key of the table counts, and only those.
-    for (const std::string_view key : launch::detail::kOutsideDroppedKeys)
+    for (const std::string_view key : vehicle_sil::runner::detail::kOutsideDroppedKeys)
     {
-        CHECK(launch::detail::dropped_counts({{std::string(key), 1}}).size() == 1);
+        CHECK(vehicle_sil::runner::detail::dropped_counts({{std::string(key), 1}}).size() == 1);
     }
-    CHECK(launch::detail::dropped_counts({}).empty());
+    CHECK(vehicle_sil::runner::detail::dropped_counts({}).empty());
 }
 
 namespace {
@@ -376,20 +376,20 @@ TEST_CASE(foreign_sharing_counts_without_the_pids_the_runs_own_live_marked_bridg
 
 TEST_CASE(shared_text_names_the_bridges_and_their_pids)
 {
-    CHECK(launch::detail::shared_text({1, {4321}}) == "another vehicle-sil bridge (process 4321)");
-    CHECK(launch::detail::shared_text({2, {4321, 4400}}) == "2 other vehicle-sil bridges (processes 4321, 4400)");
-    CHECK(launch::detail::shared_text({1, {}}) == "another vehicle-sil bridge");
-    CHECK(launch::detail::shared_text({3, {}}) == "3 other vehicle-sil bridges");
+    CHECK(vehicle_sil::runner::detail::shared_text({1, {4321}}) == "another vehicle-sil bridge (process 4321)");
+    CHECK(vehicle_sil::runner::detail::shared_text({2, {4321, 4400}}) == "2 other vehicle-sil bridges (processes 4321, 4400)");
+    CHECK(vehicle_sil::runner::detail::shared_text({1, {}}) == "another vehicle-sil bridge");
+    CHECK(vehicle_sil::runner::detail::shared_text({3, {}}) == "3 other vehicle-sil bridges");
 }
 
 TEST_CASE(is_shared_warning_takes_the_warnings_of_the_bridges_about_a_device_in_use)
 {
-    CHECK(launch::detail::is_shared_warning("[eth-bridge] warning: interface 'fake0' is also used by another vehicle-sil bridge (process 4321): the frames of both mix there: ..."));
-    CHECK(launch::detail::is_shared_warning("[bridge] warning: XL 'Virtual Channel 1' is also used by 2 more vehicle-sil bridges (processes 1, 2): ..."));
-    CHECK(launch::detail::is_shared_warning("warning: x is also used by another vehicle-sil bridge"));
-    CHECK(!launch::detail::is_shared_warning("[bridge] warning: --tx-timeout-ms is not used: it needs init access"));
-    CHECK(!launch::detail::is_shared_warning("[bridge] link link=up device=ab marked=1 shared=1"));
-    CHECK(!launch::detail::is_shared_warning("[bridge] FAIL: interface is also used by another vehicle-sil bridge"));
+    CHECK(vehicle_sil::runner::detail::is_shared_warning("[eth-bridge] warning: interface 'fake0' is also used by another vehicle-sil bridge (process 4321): the frames of both mix there: ..."));
+    CHECK(vehicle_sil::runner::detail::is_shared_warning("[bridge] warning: XL 'Virtual Channel 1' is also used by 2 more vehicle-sil bridges (processes 1, 2): ..."));
+    CHECK(vehicle_sil::runner::detail::is_shared_warning("warning: x is also used by another vehicle-sil bridge"));
+    CHECK(!vehicle_sil::runner::detail::is_shared_warning("[bridge] warning: --tx-timeout-ms is not used: it needs init access"));
+    CHECK(!vehicle_sil::runner::detail::is_shared_warning("[bridge] link link=up device=ab marked=1 shared=1"));
+    CHECK(!vehicle_sil::runner::detail::is_shared_warning("[bridge] FAIL: interface is also used by another vehicle-sil bridge"));
 }
 
 TEST_CASE(outside_state_keeps_the_device_and_the_bridges_outside_the_run)
@@ -436,9 +436,9 @@ TEST_CASE(outside_state_keeps_the_device_and_the_bridges_outside_the_run)
 
 namespace {
 
-using launch::detail::kOutsideDegradedHold;
-using launch::detail::kOutsideNothingReceivedAfter;
-using launch::detail::sent_without_answer;
+using vehicle_sil::runner::detail::kOutsideDegradedHold;
+using vehicle_sil::runner::detail::kOutsideNothingReceivedAfter;
+using vehicle_sil::runner::detail::sent_without_answer;
 
 using Counts = std::map<std::string, std::uint64_t>;
 using Reasons = std::vector<std::string>;

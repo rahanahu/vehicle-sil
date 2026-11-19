@@ -6,7 +6,7 @@
 #include <atomic>
 #include <string>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 /// What kind of party asked to stop a run: a person or a client that gave the command (Operator),
 /// a signal or a console event of the operating system (Signal), or the program that runs the
@@ -128,4 +128,4 @@ private:
     std::atomic<int> first_{0};
 };
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// Reading the simulation configuration (vehicle_sil::launch::read_config()): a correct file in
+// Reading the simulation configuration (vehicle_sil::config::read_config()): a correct file in
 // YAML and in JSON, every rule of the text with its message and line, many errors at once, the
 // files that cannot be read; the placeholders; "did you mean". The executables are in
 // test_config_executables.cpp.
@@ -19,9 +19,9 @@
 
 namespace fs = std::filesystem;
 using namespace vehicle_sil;
-using namespace vehicle_sil::launch;
-using vehicle_sil::launch::test::check_text;
-using vehicle_sil::launch::test::lines;
+using namespace vehicle_sil::config;
+using vehicle_sil::config::test::check_text;
+using vehicle_sil::config::test::lines;
 
 namespace {
 
@@ -656,13 +656,13 @@ TEST_CASE(expands_the_placeholders_in_any_argument)
 TEST_CASE(suggests_close_names_only)
 {
     const std::vector<std::string> keys{"name", "command", "step_ms", "describe", "required"};
-    CHECK(launch::detail::closest("comand", keys) == "command");
-    CHECK(launch::detail::closest("STEP_MS", keys) == "step_ms");
-    CHECK(launch::detail::closest("step", keys) == "step_ms");     // a beginning
-    CHECK(launch::detail::closest("nmae", keys) == "name");        // two edits
-    CHECK(launch::detail::closest("bitrate", keys).empty());
-    CHECK(launch::detail::closest("x", keys).empty());
-    CHECK_EQ(launch::detail::edit_distance("kitten", "sitting"), std::size_t{3});
+    CHECK(vehicle_sil::config::detail::closest("comand", keys) == "command");
+    CHECK(vehicle_sil::config::detail::closest("STEP_MS", keys) == "step_ms");
+    CHECK(vehicle_sil::config::detail::closest("step", keys) == "step_ms");     // a beginning
+    CHECK(vehicle_sil::config::detail::closest("nmae", keys) == "name");        // two edits
+    CHECK(vehicle_sil::config::detail::closest("bitrate", keys).empty());
+    CHECK(vehicle_sil::config::detail::closest("x", keys).empty());
+    CHECK_EQ(vehicle_sil::config::detail::edit_distance("kitten", "sitting"), std::size_t{3});
 }
 
 TEST_CASE(expands_escaped_braces)

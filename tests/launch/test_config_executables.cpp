@@ -20,8 +20,9 @@
 namespace fs = std::filesystem;
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
-using vehicle_sil::launch::test::check_text;
-using vehicle_sil::launch::test::lines;
+using namespace vehicle_sil::config;
+using vehicle_sil::config::test::check_text;
+using vehicle_sil::config::test::lines;
 
 namespace {
 

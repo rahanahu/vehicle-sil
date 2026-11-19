@@ -19,10 +19,10 @@ namespace {
 
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
-using namespace vehicle_sil::launch;
-using launch::detail::BaseSource;
-using launch::detail::Line;
-using launch::detail::LineMotion;
+using namespace vehicle_sil::scenario;
+using vehicle_sil::scenario::detail::BaseSource;
+using vehicle_sil::scenario::detail::Line;
+using vehicle_sil::scenario::detail::LineMotion;
 
 /// The line from the base to `to`, reached at `length`.
 class To : public Waveform
@@ -122,10 +122,10 @@ TEST_CASE(scenario_line_has_the_value_of_its_motion_at_any_time_as_the_type_has_
     CHECK(text(line.value(at(55ms))) == "6" && text(line.value(at(99ms))) == "10");
     CHECK(text(line.value(at(100ms))) == "10" && text(line.value(at(5s))) == "10");
     // Before the type: the number on the line, and the end value from the end on.
-    CHECK(launch::detail::motion_number(up, at(54ms)) == 5.4 && launch::detail::motion_number(up, at(100ms)) == 10.0 &&
-          launch::detail::motion_number(up, at(5s)) == 10.0);
+    CHECK(vehicle_sil::scenario::detail::motion_number(up, at(54ms)) == 5.4 && vehicle_sil::scenario::detail::motion_number(up, at(100ms)) == 10.0 &&
+          vehicle_sil::scenario::detail::motion_number(up, at(5s)) == 10.0);
     // The function the engine sends with is the same one.
-    CHECK(text(launch::detail::motion_value(up, at(55ms))) == "6" && text(launch::detail::motion_value(up, at(100ms))) == "10");
+    CHECK(text(vehicle_sil::scenario::detail::motion_value(up, at(55ms))) == "6" && text(vehicle_sil::scenario::detail::motion_value(up, at(100ms))) == "10");
     // A real is not rounded, a bool is true from a half.
     Line real(control::ValueType::Real);
     real.set(at(0ms), control::Value{0.0});
@@ -163,7 +163,7 @@ TEST_CASE(scenario_line_gives_the_second_of_two_motions_at_one_time_the_value_of
 
 TEST_CASE(scenario_line_adds_its_overlay_before_the_type_is_applied)
 {
-    using launch::detail::Periodic;
+    using vehicle_sil::scenario::detail::Periodic;
     // An integer whose ramp ended at 10.4: the line stands at 10 (where the next motion starts),
     // and its number is 10.4. The overlay is added to the number: at the top of a triangle of
     // 0.2 that is 10.6, written as 11. Added to the rounded value it would be 10.
@@ -171,14 +171,14 @@ TEST_CASE(scenario_line_adds_its_overlay_before_the_type_is_applied)
     line.move(at(0ms), ramp_shape(10.4, 100ms), 100ms, 0.0, std::nullopt);
     CHECK(text(line.value(at(100ms))) == "10" && line.number(at(100ms)) == 10.4);
     CHECK(text(line.written_value(at(110ms))) == "10"); // no overlay: the value as the type has it
-    line.overlay(launch::detail::triangle_shape(0.2, Periodic{40ms, 0.0}));
+    line.overlay(vehicle_sil::scenario::detail::triangle_shape(0.2, Periodic{40ms, 0.0}));
     CHECK(text(line.written_value(at(130ms))) == "11" && text(line.written_value(at(120ms))) == "10");
     // What is put on the line leaves the overlay, and what starts from the line does not see it.
     CHECK(line.move(at(130ms), ramp_shape(0.0, 100ms), 100ms, std::nullopt, std::nullopt).base == 10.0);
     line.set(at(240ms), control::Value{std::int64_t{10}});
     // A half is rounded away from zero, at the top and at the bottom of a triangle of 0.5:
     // 10.5 is 11, and 9.5 is 10. In between (a quarter of the way up: 10.25) it is 10.
-    line.overlay(launch::detail::triangle_shape(0.5, Periodic{40ms, 0.0}));
+    line.overlay(vehicle_sil::scenario::detail::triangle_shape(0.5, Periodic{40ms, 0.0}));
     CHECK(text(line.written_value(at(250ms))) == "11" && text(line.written_value(at(270ms))) == "10" &&
           text(line.written_value(at(245ms))) == "10" && text(line.written_value(at(240ms))) == "10");
     // A set's value and a motion's number get the same: written() is the one place.
@@ -190,19 +190,19 @@ TEST_CASE(scenario_line_adds_its_overlay_before_the_type_is_applied)
     Line real(control::ValueType::Real);
     CHECK(std::signbit(std::get<double>(real.written(-0.0, at(0ms)))));
     // Nothing on the line: nothing to write, with or without an overlay.
-    real.overlay(launch::detail::triangle_shape(1.0, Periodic{40ms, 0.0}));
+    real.overlay(vehicle_sil::scenario::detail::triangle_shape(1.0, Periodic{40ms, 0.0}));
     CHECK(!real.written_value(at(10ms)) && !real.number(at(10ms)));
 }
 
 TEST_CASE(scenario_line_overlay_is_a_function_of_the_virtual_time_itself)
 {
-    using launch::detail::Periodic;
+    using vehicle_sil::scenario::detail::Periodic;
     // The same bits as a wave around the same value that began at 0: base + amplitude * factor.
     Line line(control::ValueType::Real);
     line.set(at(0ms), control::Value{0.3});
-    const auto triangle = launch::detail::triangle_shape(0.07, Periodic{40ms, 30.0});
-    const auto noise = launch::detail::noise_shape(0.07, 10ms, 7, false);
-    const auto square = launch::detail::square_shape(0.07, Periodic{40ms, 0.0}, 25.0);
+    const auto triangle = vehicle_sil::scenario::detail::triangle_shape(0.07, Periodic{40ms, 30.0});
+    const auto noise = vehicle_sil::scenario::detail::noise_shape(0.07, 10ms, 7, false);
+    const auto square = vehicle_sil::scenario::detail::square_shape(0.07, Periodic{40ms, 0.0}, 25.0);
     for (const auto& shape : {triangle, noise, square})
     {
         line.overlay(shape);
@@ -223,7 +223,7 @@ TEST_CASE(scenario_line_overlay_is_a_function_of_the_virtual_time_itself)
     const SimDuration hour = std::chrono::hours(1);
     CHECK(triangle->value(hour + 17ms, 0.0) == triangle->value(17ms, 0.0));
     CHECK(square->value(hour + 5ms, 0.0) == 0.07 && square->value(hour + 15ms, 0.0) == -0.07);
-    CHECK(launch::detail::sine_shape(1.0, Periodic{40ms, 0.0})->value(hour + 10ms, 0.0) > 0.999);
+    CHECK(vehicle_sil::scenario::detail::sine_shape(1.0, Periodic{40ms, 0.0})->value(hour + 10ms, 0.0) > 0.999);
     const double late = noise->value(hour + 1ms, 0.0);
     CHECK(std::fabs(late) <= 0.07 && late == noise->value(hour + 9ms, 0.0) && late != noise->value(hour + 11ms, 0.0));
 }

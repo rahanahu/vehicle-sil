@@ -64,7 +64,7 @@ TEST_CASE(vehicle_sil_launch_reads_a_bridge_as_a_participant_in_real_time_on_its
 {
     // A name and a network in another script: the bytes as given (UTF-8).
     const std::string name = "\xE3\x83\x96\xE3\x83\xAA\xE3\x83\x83\xE3\x82\xB8";
-    const auto read = vehicle_sil::launch::read_description(
+    const auto read = vehicle_sil::config::read_description(
         describe_json(BridgeDescription{name, "ETH \"ext\"", BridgedNetworkKind::Ethernet}));
     CHECK(read.vehicle_sil_version == vehicle_sil::version());
     CHECK(read.description.name == name);
@@ -78,7 +78,7 @@ TEST_CASE(vehicle_sil_launch_reads_a_bridge_as_a_participant_in_real_time_on_its
     CHECK(!read.description.control.has_value());
     CHECK(read.description.features.empty());
 
-    const auto can = vehicle_sil::launch::read_description(
+    const auto can = vehicle_sil::config::read_description(
         describe_json(BridgeDescription{"XlBridge", "VehicleCAN", BridgedNetworkKind::Can}));
     CHECK(can.description.networks.size() == 1);
     CHECK(can.description.networks.at(0).use == NetworkUse::Raw);

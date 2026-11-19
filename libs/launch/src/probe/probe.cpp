@@ -65,13 +65,13 @@ std::string detail::command_text(const std::vector<std::string>& words)
     return out;
 }
 
-DescribeRun run_tool(const std::filesystem::path& executable, const std::string& shown,
+config::DescribeRun run_tool(const std::filesystem::path& executable, const std::string& shown,
                      const std::vector<std::string>& arguments, std::chrono::milliseconds timeout,
                      const std::filesystem::path& directory)
 {
     std::vector<std::string> words{shown};
     words.insert(words.end(), arguments.begin(), arguments.end());
-    DescribeRun run;
+    config::DescribeRun run;
     run.command_text = detail::command_text(words);
     run.timeout = timeout;
     try
@@ -345,22 +345,22 @@ std::optional<std::filesystem::path> find_tool(std::string_view name, const std:
     return detail::find_on_path(name);
 }
 
-ConnectTools bridge_tools(const std::filesystem::path& tool_directory, std::chrono::milliseconds timeout)
+config::ConnectTools bridge_tools(const std::filesystem::path& tool_directory, std::chrono::milliseconds timeout)
 {
-    ConnectTools tools;
+    config::ConnectTools tools;
     tools.launcher_dir = tool_directory;
     tools.find = [tool_directory](std::string_view name) { return find_tool(name, tool_directory); };
-    // In the bridge's own directory, not the configuration file's (bridge_working_directory()).
+    // In the bridge's own directory, not the configuration file's (config::bridge_working_directory()).
     tools.describe = [timeout](const std::filesystem::path& tool, const std::vector<std::string>& arguments) {
-        return run_tool(tool, process::utf8_from_path(tool.stem()), arguments, timeout, bridge_working_directory(tool));
+        return run_tool(tool, process::utf8_from_path(tool.stem()), arguments, timeout, config::bridge_working_directory(tool));
     };
     return tools;
 }
 
 DescribeSource describe_by_running(std::chrono::milliseconds timeout, const std::filesystem::path& directory)
 {
-    return [timeout, directory](const ParticipantConfig& participant, const std::filesystem::path& executable,
-                                const std::vector<std::string>& arguments) -> std::optional<DescribeRun> {
+    return [timeout, directory](const config::ParticipantConfig& participant, const std::filesystem::path& executable,
+                                const std::vector<std::string>& arguments) -> std::optional<config::DescribeRun> {
         return run_tool(executable, participant.command.front(), arguments, timeout, directory);
     };
 }
@@ -381,9 +381,9 @@ std::function<std::optional<std::string>(const std::string&, std::string&)> file
             problem = "is not a regular file: name the CSV file";
             return std::nullopt;
         }
-        if (std::filesystem::file_size(path, ec) > detail::kMaxCsvBytes)
+        if (std::filesystem::file_size(path, ec) > scenario::detail::kMaxCsvBytes)
         {
-            problem = "is larger than " + std::to_string(detail::kMaxCsvBytes >> 20) +
+            problem = "is larger than " + std::to_string(scenario::detail::kMaxCsvBytes >> 20) +
                       " MiB, too large for points: keep fewer points, or split it into steps of their own";
             return std::nullopt;
         }

@@ -19,7 +19,9 @@
 
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
-using vehicle_sil::launch::test::check_text;
+using namespace vehicle_sil::runner;
+using namespace vehicle_sil::config;
+using vehicle_sil::config::test::check_text;
 
 namespace {
 
@@ -52,7 +54,7 @@ std::string shown(const ScenarioList& list)
 /// with.)
 TestReport test_in(const std::filesystem::path& dir, const std::string& name, TestOptions options)
 {
-    const vehicle_sil::launch::test::InDirectory there(dir);
+    const vehicle_sil::config::test::InDirectory there(dir);
     options.request.host.config = name;
     return test_file(options);
 }

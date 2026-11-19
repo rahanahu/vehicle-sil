@@ -7,7 +7,7 @@
 
 namespace vehicle_sil::launch::detail {
 
-ControlServerOfRun make_control_server_of_run(const ControlHost&, RunControls&)
+ControlServerOfRun make_control_server_of_run(const ControlHost&, runner::RunControls&)
 {
     throw std::invalid_argument(
       "RunHost::control is set, but this build has no control server; configure with "

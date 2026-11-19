@@ -25,25 +25,25 @@ namespace vehicle_sil::launch {
 
 namespace {
 
-using detail::ControlServerStart;
-using detail::Runner;
+using runner::detail::ControlServerStart;
+using runner::detail::Runner;
 
 /// The controls of a run that was given none (RunLent::controls): made by run_file() for that
 /// run, on the caller's stop requests if there are any. Its phases go to RunLent::events.
 struct OwnControls
 {
-    static RunControls::Observers observers(EventStream* events)
+    static runner::RunControls::Observers observers(EventStream* events)
     {
-        RunControls::Observers out;
+        runner::RunControls::Observers out;
         if (events != nullptr)
         {
-            out.on_phase = [events](Phase phase) { events->phase(phase); };
-            out.on_state = [events](const RunState& state) { events->state(state); };
+            out.on_phase = [events](runner::Phase phase) { events->phase(phase); };
+            out.on_state = [events](const runner::RunState& state) { events->state(state); };
         }
         return out;
     }
 
-    OwnControls(StopRequests* stops, const RunIntent& intent, const RunObservers& given, EventStream* events) :
+    OwnControls(runner::StopRequests* stops, const RunIntent& intent, const runner::RunObservers& given, EventStream* events) :
       controls(stops != nullptr ? *stops : none, intent.start_paused, observers(events), intent.scenario.has_value())
     {
         if (given.interrupt_name)
@@ -52,15 +52,15 @@ struct OwnControls
         }
     }
 
-    StopRequests none; ///< without RunLent::stops: nothing ever asks
-    RunControls controls;
+    runner::StopRequests none; ///< without RunLent::stops: nothing ever asks
+    runner::RunControls controls;
 };
 
 } // namespace
 
-RunChoices run_choices(const RunRequest& request)
+runner::RunChoices run_choices(const RunRequest& request)
 {
-    RunChoices choices;
+    runner::RunChoices choices;
     choices.speed = request.intent.speed;
     choices.start_paused = request.intent.start_paused;
     choices.strict = request.intent.strict;
@@ -70,7 +70,7 @@ RunChoices run_choices(const RunRequest& request)
     return choices;
 }
 
-RunReport run_file(const RunRequest& request, const RunObservers& observers, const RunLent& lent, const RunLimits& limits,
+RunReport run_file(const RunRequest& request, const runner::RunObservers& observers, const RunLent& lent, const runner::RunLimits& limits,
                    const CheckOptions& check_options)
 {
     if (request.host.control && lent.controls == nullptr && lent.control_endpoint == nullptr)
@@ -133,7 +133,7 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
     // borrows them: they outlive it.
     const std::unique_ptr<OwnControls> own =
         lent.controls == nullptr ? std::make_unique<OwnControls>(lent.stops, request.intent, observers, lent.events) : nullptr;
-    RunControls& controls = own ? own->controls : *lent.controls;
+    runner::RunControls& controls = own ? own->controls : *lent.controls;
     RunReport report;
     report.strict = request.intent.strict;
     // The control server of this run: made here from the request, or the caller's. Before the
@@ -167,14 +167,14 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
         }
     } end_own_server{own_server.get()};
     ControlEndpoint* const server_of_run = lent.control_endpoint != nullptr ? lent.control_endpoint : own_server.get();
-    controls.set_phase(Phase::Checking);
+    controls.set_phase(runner::Phase::Checking);
     // The check judges the time by what this run does (its speed and --start-paused, which it
     // reads in the request). A run reads the whole, whatever the caller's options say.
     CheckOptions check = check_options;
     check.file_only = false;
     // The controls get the time lock as soon as the configuration has been read, before any
     // --describe: the time commands that came until then wait for it, and are decided there.
-    report.check = check_file(request, check, [&controls](const TimeLock& lock) { controls.set_time_lock(lock); });
+    report.check = check_file(request, check, [&controls](const config::TimeLock& lock) { controls.set_time_lock(lock); });
     event([&report](EventStream& e) { e.check(report.check); });
     if (!report.check.config)
     {
@@ -185,7 +185,7 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
     }
     if (!report.check.passed())
     {
-        controls.set_phase(Phase::Ended);
+        controls.set_phase(runner::Phase::Ended);
         return report;
     }
     // The participants that will not start, before anything starts, in the file's order.
@@ -194,7 +194,7 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
         {
             if (!p.enabled)
             {
-                e.participant(p.name, ParticipantState::Disabled);
+                e.participant(p.name, runner::ParticipantState::Disabled);
             }
         }
     });
@@ -207,12 +207,12 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
     // control server stay here).
     // The run tells through the interface it knows (RunEvents), which the stream of the events
     // implements; the stream's own members (check(), phase(), state()) are called here only.
-    Runner runner(plan_run(report.check, detail::scenario_of(report.check), base, run_choices(request), limits,
+    runner::detail::Runner runner(runner::plan_run(report.check, detail::scenario_of(report.check), base, run_choices(request), limits,
                            server_of_run != nullptr),
                   observers, lent.events, controls);
     // The control server between the Runner's two stages: after the run's files are open, before
     // the registry listens. The Runner does not know the server; it is told what became of it.
-    ControlServerStart server;
+    runner::detail::ControlServerStart server;
     try
     {
         if (const std::shared_ptr<control::Hub> hub = runner.prepare(); hub && server_of_run != nullptr)
@@ -235,14 +235,14 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
         throw;
     }
     report.run = runner.run(server);
-    report.findings = assess_run(*report.run);
+    report.findings = runner::assess_run(*report.run);
     if (runner.timeline_open())
     {
         // run --timeline: the file is made here, of the plan and of what the run left (the
         // scenario's result and the record its engine filled); the Runner only writes the text
         // to the file it opened before anything started. The file has the scenario's findings
         // of the check and of the run.
-        const ScenarioCatalog catalog = scenario_catalog(report.check);
+        const scenario::ScenarioCatalog catalog = scenario::scenario_catalog(report.check);
         TimelineInput input;
         input.file = report.check.file;
         input.variant = runner.plan().config().variant;
@@ -257,11 +257,11 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
         if (const std::string error = runner.write_timeline(format_timeline_json(input)); !error.empty())
         {
             report.run->scenario.timeline_error = error;
-            report.findings = assess_run(*report.run);
+            report.findings = runner::assess_run(*report.run);
         }
     }
     runner.publish_findings(true);
-    controls.set_phase(Phase::Ended);
+    controls.set_phase(runner::Phase::Ended);
     return report;
 }
 

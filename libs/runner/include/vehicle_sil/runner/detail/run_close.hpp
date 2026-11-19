@@ -14,7 +14,7 @@
 #include <thread>
 #include <utility>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// A close that had not ended when the wait for it did.
 struct CloseLeft
@@ -81,4 +81,4 @@ inline std::optional<CloseLeft> close_within(std::function<void()> close, std::c
     return CloseLeft{std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began), cut};
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

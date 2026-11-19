@@ -23,8 +23,8 @@ namespace vehicle_sil::launch {
 
 namespace {
 
-using detail::hex2;
-using detail::step_text;
+using config::detail::hex2;
+using config::detail::step_text;
 
 /// The number of code points of UTF-8 text (its width in a table).
 std::size_t width(std::string_view text)
@@ -73,7 +73,7 @@ std::string count_text(std::size_t n, const char* one, const char* many)
 /// that the entry renames with both names, the simulation's first: "VehicleCAN <- J1939_CAN (j1939 0x00)";
 /// a node whose address j1939_nodes changes with both addresses, the simulation's first and no
 /// space around the arrow: "J1939_CAN (j1939 0x01<-0x00)" (254: "any").
-std::string network_cell(const SeenNetwork& seen)
+std::string network_cell(const config::SeenNetwork& seen)
 {
     const NetworkDescription& network = seen.network;
     std::string out = network.name + (seen.renamed() ? " <- " + seen.executable_name : std::string{}) + " (" +
@@ -84,7 +84,7 @@ std::string network_cell(const SeenNetwork& seen)
         {
             out += ", no node";
         }
-        const auto address = [](j1939::Address a) { return a == j1939::kNullAddress ? std::string("any") : hex2(a); };
+        const auto address = [](j1939::Address a) { return a == j1939::kNullAddress ? std::string("any") : config::detail::hex2(a); };
         for (std::size_t k = 0; k < network.nodes.size(); ++k)
         {
             const j1939::Address now = network.nodes[k].address;
@@ -101,20 +101,20 @@ std::string network_cell(const SeenNetwork& seen)
 
 /// true if the participant is enabled and described itself on `network` with its kind (as the rules
 /// count; any kind for a network whose kind could not be read).
-bool is_on(const ParticipantConfig& participant, const ParticipantResult& result, const NetworkConfig& network)
+bool is_on(const config::ParticipantConfig& participant, const config::ParticipantResult& result, const config::NetworkConfig& network)
 {
-    if (!participant.enabled || result.status != ParticipantStatus::Described || !result.ecu)
+    if (!participant.enabled || result.status != config::ParticipantStatus::Described || !result.ecu)
     {
         return false;
     }
-    const std::vector<SeenNetwork> seen = SeenEcu(participant, *result.ecu).seen_networks();
-    return std::any_of(seen.begin(), seen.end(), [&](const SeenNetwork& n) {
+    const std::vector<config::SeenNetwork> seen = config::SeenEcu(participant, *result.ecu).seen_networks();
+    return std::any_of(seen.begin(), seen.end(), [&](const config::SeenNetwork& n) {
         return n.network.name == network.name && (!network.valid || n.network.kind() == network.kind);
     });
 }
 
 /// " (1 skipped, 1 expect not checked)", or "" if the run skips nothing.
-std::string scenario_counts_text(const ScenarioCheck& scenario)
+std::string scenario_counts_text(const scenario::ScenarioCheck& scenario)
 {
     std::vector<std::string> parts;
     if (scenario.skipped > 0)
@@ -134,26 +134,26 @@ std::string scenario_counts_text(const ScenarioCheck& scenario)
     return out.empty() ? out : out + ")";
 }
 
-const char* severity_name(Severity severity)
+const char* severity_name(config::Severity severity)
 {
-    return severity == Severity::Error ? "error" : severity == Severity::Warning ? "warning" : "note";
+    return severity == config::Severity::Error ? "error" : severity == config::Severity::Warning ? "warning" : "note";
 }
 
-const char* status_name(ParticipantStatus status)
+const char* status_name(config::ParticipantStatus status)
 {
     switch (status)
     {
-    case ParticipantStatus::Described:
+    case config::ParticipantStatus::Described:
         return "described";
-    case ParticipantStatus::NotChecked:
+    case config::ParticipantStatus::NotChecked:
         return "not_checked";
-    case ParticipantStatus::NotDescribed:
+    case config::ParticipantStatus::NotDescribed:
         return "not_described";
-    case ParticipantStatus::Failed:
+    case config::ParticipantStatus::Failed:
         return "failed";
-    case ParticipantStatus::Skipped:
+    case config::ParticipantStatus::Skipped:
         return "skipped";
-    case ParticipantStatus::Disabled:
+    case config::ParticipantStatus::Disabled:
         return "disabled";
     }
     return "skipped";
@@ -161,14 +161,14 @@ const char* status_name(ParticipantStatus status)
 
 } // namespace
 
-std::string detail::check_text_body(const CheckReport& report, const ScenarioCheck* scenario)
+std::string detail::check_text_body(const config::CheckReport& report, const scenario::ScenarioCheck* scenario)
 {
     std::string out;
     if (report.config)
     {
-        const SimulationConfig& config = *report.config;
+        const config::SimulationConfig& config = *report.config;
         const auto disabled = static_cast<std::size_t>(std::count_if(
-            config.participants.begin(), config.participants.end(), [](const ParticipantConfig& p) { return !p.enabled; }));
+            config.participants.begin(), config.participants.end(), [](const config::ParticipantConfig& p) { return !p.enabled; }));
         out += report.file + (config.variant.empty() ? std::string{} : " (variant " + config.variant + ")") + ": " +
                count_text(config.participants.size(), "participant", "participants") +
                (disabled > 0 ? " (" + std::to_string(disabled) + " disabled)" : std::string{}) + ", " +
@@ -176,18 +176,18 @@ std::string detail::check_text_body(const CheckReport& report, const ScenarioChe
         std::vector<std::vector<std::string>> rows{{"participant", "step", "networks"}};
         for (std::size_t i = 0; i < config.participants.size(); ++i)
         {
-            const ParticipantConfig& p = config.participants[i];
-            const ParticipantResult result = i < report.participants.size() ? report.participants[i] : ParticipantResult{};
+            const config::ParticipantConfig& p = config.participants[i];
+            const config::ParticipantResult result = i < report.participants.size() ? report.participants[i] : config::ParticipantResult{};
             // A participant that is not an ECU says so after its name: "Spy (role: test)".
             std::vector<std::string> row{(p.name.empty() ? "participants[" + std::to_string(i) + "]" : p.name) +
-                                         (p.role == ParticipantRole::Ecu ? std::string{}
+                                         (p.role == config::ParticipantRole::Ecu ? std::string{}
                                                                          : std::string(" (role: ") + to_string(p.role) + ")")};
-            if (result.status == ParticipantStatus::Described && result.ecu)
+            if (result.status == config::ParticipantStatus::Described && result.ecu)
             {
-                const SeenEcu ecu(p, *result.ecu);
-                row.push_back(ecu.step() ? step_text(*ecu.step()) : "real time");
+                const config::SeenEcu ecu(p, *result.ecu);
+                row.push_back(ecu.step() ? config::detail::step_text(*ecu.step()) : "real time");
                 std::string cells;
-                for (const SeenNetwork& network : ecu.seen_networks())
+                for (const config::SeenNetwork& network : ecu.seen_networks())
                 {
                     cells += (cells.empty() ? "" : ", ") + network_cell(network);
                 }
@@ -196,10 +196,10 @@ std::string detail::check_text_body(const CheckReport& report, const ScenarioChe
             else
             {
                 row.push_back("-");
-                row.push_back(result.status == ParticipantStatus::NotChecked     ? "not checked (describe: false)"
-                              : result.status == ParticipantStatus::NotDescribed ? "not described (see the notes)"
-                              : result.status == ParticipantStatus::Failed       ? "no description (see the errors)"
-                              : result.status == ParticipantStatus::Disabled     ? "disabled"
+                row.push_back(result.status == config::ParticipantStatus::NotChecked     ? "not checked (describe: false)"
+                              : result.status == config::ParticipantStatus::NotDescribed ? "not described (see the notes)"
+                              : result.status == config::ParticipantStatus::Failed       ? "no description (see the errors)"
+                              : result.status == config::ParticipantStatus::Disabled     ? "disabled"
                                                                                  : "not read (see the errors)");
             }
             rows.push_back(std::move(row));
@@ -228,7 +228,7 @@ std::string detail::check_text_body(const CheckReport& report, const ScenarioChe
             if (!report.outside.empty())
             {
                 const auto outside = std::find_if(report.outside.begin(), report.outside.end(),
-                                                  [&](const NetworkOutside& o) { return o.network == network.name; });
+                                                  [&](const config::NetworkOutside& o) { return o.network == network.name; });
                 rows.back().push_back(outside != report.outside.end() ? outside->target : "-");
             }
         }
@@ -245,9 +245,9 @@ std::string detail::check_text_body(const CheckReport& report, const ScenarioChe
         if (!scenario->params.empty())
         {
             std::string params;
-            for (const ParamValue& param : scenario->params)
+            for (const config::ParamValue& param : scenario->params)
             {
-                params += (params.empty() ? "" : ", ") + param.name + " = " + param.text + " (" + param_source_text(param.source) + ")";
+                params += (params.empty() ? "" : ", ") + param.name + " = " + param.text + " (" + config::param_source_text(param.source) + ")";
             }
             out += "parameters: " + params + "\n";
         }
@@ -262,8 +262,8 @@ std::string detail::check_text_body(const CheckReport& report, const ScenarioChe
     return out;
 }
 
-void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const std::vector<ScenarioLineText>& inputs,
-                                       const std::vector<ScenarioLineText>& lines)
+void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const std::vector<scenario::ScenarioLineText>& inputs,
+                                       const std::vector<scenario::ScenarioLineText>& lines)
 {
     const auto number = [&w](std::string_view key, const std::optional<std::int64_t>& n) {
         if (n)
@@ -276,7 +276,7 @@ void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const s
         }
     };
     // As a line of a timeline file has it: its type, and the keys of the text with their values.
-    const auto shape = [&w](const std::optional<ScenarioShapeText>& described) {
+    const auto shape = [&w](const std::optional<scenario::ScenarioShapeText>& described) {
         if (!described)
         {
             w.null("shape");
@@ -306,7 +306,7 @@ void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const s
         w.end_object();
     };
     w.begin_array("inputs");
-    for (const ScenarioLineText& input : inputs)
+    for (const scenario::ScenarioLineText& input : inputs)
     {
         w.begin_object();
         w.string("variable", input.variable);
@@ -319,7 +319,7 @@ void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const s
     }
     w.end_array();
     w.begin_array("lines");
-    for (const ScenarioLineText& line : lines)
+    for (const scenario::ScenarioLineText& line : lines)
     {
         w.begin_object();
         w.string("variable", line.variable);
@@ -328,8 +328,8 @@ void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const s
         number("step", line.step ? std::optional<std::int64_t>(static_cast<std::int64_t>(*line.step)) : std::nullopt);
         number("from_ms", line.from_ms);
         number("to_ms", line.to_ms);
-        w.string("time_source", line_time_source_name(line.time_source));
-        number("after_line", line.time_source == ScenarioLineText::TimeSource::AfterWait
+        w.string("time_source", scenario::line_time_source_name(line.time_source));
+        number("after_line", line.time_source == scenario::ScenarioLineText::TimeSource::AfterWait
                                  ? std::optional<std::int64_t>(static_cast<std::int64_t>(line.after_wait))
                                  : std::nullopt);
         shape(line.shape);
@@ -339,10 +339,10 @@ void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const s
     w.end_array();
 }
 
-std::string detail::scenario_lines_text(const std::vector<ScenarioLineText>& lines)
+std::string detail::scenario_lines_text(const std::vector<scenario::ScenarioLineText>& lines)
 {
     std::vector<std::vector<std::string>> rows{{"input", "from", "to", "what", "line"}};
-    for (const ScenarioLineText& line : lines)
+    for (const scenario::ScenarioLineText& line : lines)
     {
         // A time that the text does not give ("?": after a step that waits; "first write": a
         // declared dither begins with the first write of its input), and no end ("-").
@@ -350,10 +350,10 @@ std::string detail::scenario_lines_text(const std::vector<ScenarioLineText>& lin
         const bool dither = line.kind == "dither";
         // (The text without the variable, which has its own column.)
         const std::string what = line.text.rfind(line.variable + " ", 0) == 0 ? line.text.substr(line.variable.size() + 1) : line.text;
-        rows.push_back({line.variable, line.time_source == ScenarioLineText::TimeSource::FirstWrite ? "first write" : ms(line.from_ms),
+        rows.push_back({line.variable, line.time_source == scenario::ScenarioLineText::TimeSource::FirstWrite ? "first write" : ms(line.from_ms),
                         dither ? "-" : ms(line.to_ms),
                         line.kind + " " + what +
-                            (line.time_source == ScenarioLineText::TimeSource::AfterWait
+                            (line.time_source == scenario::ScenarioLineText::TimeSource::AfterWait
                                  ? " (after the wait of line " + std::to_string(line.after_wait) + ")"
                                  : ""),
                         std::to_string(line.line)});
@@ -361,7 +361,7 @@ std::string detail::scenario_lines_text(const std::vector<ScenarioLineText>& lin
     return table(rows);
 }
 
-std::string detail::findings_text(const std::string& file, const std::vector<Finding>& findings)
+std::string detail::findings_text(const std::string& file, const std::vector<config::Finding>& findings)
 {
     std::string out;
     for (const auto& finding : findings)
@@ -394,11 +394,11 @@ std::string detail::count_summary(std::size_t errors, std::size_t warnings, std:
 
 std::string detail::table_text(const std::vector<std::vector<std::string>>& rows) { return table(rows); }
 
-const char* detail::severity_text(Severity severity) { return severity_name(severity); }
+const char* detail::severity_text(config::Severity severity) { return severity_name(severity); }
 
 namespace {
 
-std::string text_of(const CheckReport& report, const ScenarioCheck* scenario)
+std::string text_of(const config::CheckReport& report, const scenario::ScenarioCheck* scenario)
 {
     std::string out = detail::check_text_body(report, scenario);
     const std::string counts = count_text(report.errors(), "error", "errors") + ", " +
@@ -423,7 +423,7 @@ std::string text_of(const CheckReport& report, const ScenarioCheck* scenario)
 
 std::string format_text(const Checked& checked) { return text_of(checked, detail::scenario_of(checked)); }
 
-void detail::write_finding_members(vehicle_sil::json::JsonWriter& w, const std::string& file, const Finding& finding)
+void detail::write_finding_members(vehicle_sil::json::JsonWriter& w, const std::string& file, const config::Finding& finding)
 {
     const auto optional_text = [&w](std::string_view key, const std::string& value) {
         if (value.empty())
@@ -452,10 +452,10 @@ void detail::write_finding_members(vehicle_sil::json::JsonWriter& w, const std::
     optional_text("detail", finding.detail);
 }
 
-void detail::write_params_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::vector<ParamValue>& params)
+void detail::write_params_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::vector<config::ParamValue>& params)
 {
     w.begin_array(key);
-    for (const ParamValue& param : params)
+    for (const config::ParamValue& param : params)
     {
         w.begin_object();
         w.string("name", param.name);
@@ -486,13 +486,13 @@ void detail::write_params_json(vehicle_sil::json::JsonWriter& w, std::string_vie
         {
             w.string("value", text);
         }
-        w.string("from", param_source_name(param.source));
+        w.string("from", config::param_source_name(param.source));
         w.end_object();
     }
     w.end_array();
 }
 
-void detail::write_findings_json(vehicle_sil::json::JsonWriter& w, const std::string& file, const std::vector<Finding>& findings)
+void detail::write_findings_json(vehicle_sil::json::JsonWriter& w, const std::string& file, const std::vector<config::Finding>& findings)
 {
     w.begin_array("findings");
     for (const auto& finding : findings)
@@ -506,7 +506,7 @@ void detail::write_findings_json(vehicle_sil::json::JsonWriter& w, const std::st
 
 namespace {
 
-std::string json_of(const CheckReport& report, const ScenarioCheck* scenario)
+std::string json_of(const config::CheckReport& report, const scenario::ScenarioCheck* scenario)
 {
     vehicle_sil::json::JsonWriter w;
     detail::write_check_json(w, {}, report, scenario);
@@ -519,8 +519,8 @@ std::string json_of(const CheckReport& report, const ScenarioCheck* scenario)
 
 std::string format_json(const Checked& checked) { return json_of(checked, detail::scenario_of(checked)); }
 
-void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view member, const CheckReport& report,
-                              const ScenarioCheck* scenario)
+void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view member, const config::CheckReport& report,
+                              const scenario::ScenarioCheck* scenario)
 {
     const auto optional_text = [&w](std::string_view key, const std::string& value) {
         if (value.empty())
@@ -581,8 +581,8 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
     {
         for (std::size_t i = 0; i < report.config->participants.size(); ++i)
         {
-            const ParticipantConfig& p = report.config->participants[i];
-            const ParticipantResult result = i < report.participants.size() ? report.participants[i] : ParticipantResult{};
+            const config::ParticipantConfig& p = report.config->participants[i];
+            const config::ParticipantResult result = i < report.participants.size() ? report.participants[i] : config::ParticipantResult{};
             w.begin_object();
             optional_text("name", p.name);
             w.integer("line", static_cast<std::int64_t>(p.line));
@@ -605,7 +605,7 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
             }
             else
             {
-                const SeenEcu seen(p, *result.ecu);
+                const config::SeenEcu seen(p, *result.ecu);
                 const EcuDescription& ecu = seen.as_described();
                 w.begin_object("reported");
                 optional_text("vehicle_sil", result.ecu->vehicle_sil_version);
@@ -617,7 +617,7 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
             if (result.ecu && result.ecu->variables_reported)
             {
                 // As the simulation sees them (the run's hub applies the same map).
-                vehicle_sil::write_variables(w, "variables", SeenEcu(p, *result.ecu).variables().schema());
+                vehicle_sil::write_variables(w, "variables", config::SeenEcu(p, *result.ecu).variables().schema());
             }
             else
             {
@@ -674,7 +674,7 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
             else
             {
                 w.begin_array("network_map");
-                for (const NetworkName& entry : p.network_names)
+                for (const config::NetworkName& entry : p.network_names)
                 {
                     w.begin_object();
                     w.string("name", entry.name);
@@ -693,9 +693,9 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
             }
             else
             {
-                const std::vector<SeenNetwork> seen = p.enabled && result.status == ParticipantStatus::Described && result.ecu
-                                                          ? SeenEcu(p, *result.ecu).seen_networks()
-                                                          : std::vector<SeenNetwork>{};
+                const std::vector<config::SeenNetwork> seen = p.enabled && result.status == config::ParticipantStatus::Described && result.ecu
+                                                          ? config::SeenEcu(p, *result.ecu).seen_networks()
+                                                          : std::vector<config::SeenNetwork>{};
                 const auto number = [&w](const char* key, const auto& value) {
                     if (value)
                     {
@@ -709,7 +709,7 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
                 w.begin_array("j1939_nodes");
                 for (std::size_t e = 0; e < p.j1939_nodes.size(); ++e)
                 {
-                    const J1939NodeEntry& entry = p.j1939_nodes[e];
+                    const config::J1939NodeEntry& entry = p.j1939_nodes[e];
                     w.begin_object();
                     w.string("network", entry.network);
                     w.integer("line", static_cast<std::int64_t>(entry.line));
@@ -718,11 +718,11 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
                     number("identity_number", entry.node.identity_number);
                     number("function_instance", entry.node.function_instance);
                     number("ecu_instance", entry.node.ecu_instance);
-                    const SeenNetwork* on = nullptr;
-                    const J1939NodeMatch* taken = nullptr;
-                    for (const SeenNetwork& n : seen)
+                    const config::SeenNetwork* on = nullptr;
+                    const config::J1939NodeMatch* taken = nullptr;
+                    for (const config::SeenNetwork& n : seen)
                     {
-                        for (const J1939NodeMatch& match : n.j1939_matches)
+                        for (const config::J1939NodeMatch& match : n.j1939_matches)
                         {
                             if (match.entry == e && match.result.match == j1939::NodeOverrideMatch::Applied)
                             {
@@ -756,7 +756,7 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
                 }
                 w.end_array();
             }
-            if (const std::optional<ControlOffer> offer = result.ecu ? SeenEcu(p, *result.ecu).control() : std::nullopt)
+            if (const std::optional<ControlOffer> offer = result.ecu ? config::SeenEcu(p, *result.ecu).control() : std::nullopt)
             {
                 w.begin_object("control");
                 w.string("transport", offer->transport);
@@ -793,7 +793,7 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
             // null on a network that --connect does not connect: no tool is looked for for it, so
             // the output of a check without --connect does not depend on the tools this computer has.
             const auto outside = std::find_if(report.outside.begin(), report.outside.end(),
-                                              [&](const NetworkOutside& o) { return o.network == network.name; });
+                                              [&](const config::NetworkOutside& o) { return o.network == network.name; });
             if (outside != report.outside.end())
             {
                 w.begin_object("outside");
@@ -875,7 +875,7 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
         if (scenario->scenario)
         {
             // Empty for a scenario without a dither (Scenario::has_dither).
-            detail::write_scenario_lines_json(w, scenario_inputs_text(*scenario->scenario), scenario->scenario->lines);
+            detail::write_scenario_lines_json(w, scenario::scenario_inputs_text(*scenario->scenario), scenario->scenario->lines);
         }
         else
         {

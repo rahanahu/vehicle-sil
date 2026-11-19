@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// The samples of a run. The hub has one tap, and it is this one, in every run. For each sample
 /// of a participant of the configuration it does two things:
@@ -103,4 +103,4 @@ private:
     bool tapped_ = false;
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

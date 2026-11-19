@@ -26,16 +26,17 @@
 #include <vector>
 
 using namespace vehicle_sil;
-using namespace vehicle_sil::launch;
+using namespace vehicle_sil::runner;
+using namespace vehicle_sil::config;
 using namespace std::chrono_literals;
-using vehicle_sil::launch::test::check_text;
-using launch::detail::RunSamples;
-using launch::detail::TrafficColumns;
-using launch::detail::TrafficLatest;
-using launch::detail::TrafficSeen;
-using launch::detail::TrafficPlan;
-using launch::detail::TrafficSchema;
-using namespace vehicle_sil::launch::test::traffic_support;
+using vehicle_sil::config::test::check_text;
+using vehicle_sil::runner::detail::RunSamples;
+using vehicle_sil::runner::detail::TrafficColumns;
+using vehicle_sil::runner::detail::TrafficLatest;
+using vehicle_sil::runner::detail::TrafficSeen;
+using vehicle_sil::runner::detail::TrafficPlan;
+using vehicle_sil::runner::detail::TrafficSchema;
+using namespace vehicle_sil::runner::test::traffic_support;
 
 namespace {
 
@@ -60,9 +61,9 @@ std::string said(const TrafficParticipant& p)
 std::string said(const RunTraffic& traffic)
 {
     std::string out = "before " + std::to_string(traffic.before_ms) + "\n";
-    for (const launch::TrafficUnplaced& p : traffic.unplaced)
+    for (const vehicle_sil::runner::TrafficUnplaced& p : traffic.unplaced)
     {
-        out += "unplaced " + p.name + " " + launch::traffic_unplaced_reason_name(p.reason) + "\n";
+        out += "unplaced " + p.name + " " + vehicle_sil::runner::traffic_unplaced_reason_name(p.reason) + "\n";
     }
     for (const TrafficNetwork& network : traffic.per_network)
     {
@@ -76,9 +77,9 @@ std::string said(const RunTraffic& traffic)
         {
             out += "  " + said(p) + "\n";
         }
-        for (const launch::TrafficUnplaced& p : network.unplaced)
+        for (const vehicle_sil::runner::TrafficUnplaced& p : network.unplaced)
         {
-            out += "  " + p.name + " unplaced " + launch::traffic_unplaced_reason_name(p.reason) + "\n";
+            out += "  " + p.name + " unplaced " + vehicle_sil::runner::traffic_unplaced_reason_name(p.reason) + "\n";
         }
     }
     return out;
@@ -110,7 +111,7 @@ struct Fed
             seen[i].off_time = latest[i].off_time();
             seen[i].last = latest[i].last_before(at(std::chrono::milliseconds(end_ms)), kStep);
         }
-        return launch::detail::count_traffic(plan, seen, end_ms);
+        return vehicle_sil::runner::detail::count_traffic(plan, seen, end_ms);
     }
 };
 
@@ -318,7 +319,7 @@ TEST_CASE(a_network_says_whether_what_was_sent_arrived_as_far_as_the_counters_te
     const TrafficParticipant other{"Tool", TrafficNotCounted::NoCounters, true};
     const auto of = [](std::vector<TrafficParticipant> participants, std::size_t unplaced = 0) {
         const TrafficNetwork network{"BUS", "can", std::move(participants),
-                                     std::vector<launch::TrafficUnplaced>(unplaced, launch::TrafficUnplaced{"Bridge"})};
+                                     std::vector<vehicle_sil::runner::TrafficUnplaced>(unplaced, vehicle_sil::runner::TrafficUnplaced{"Bridge"})};
         const std::optional<bool> delivered = network.delivered();
         return std::to_string(network.counted()) + " " + std::to_string(network.senders()) + " " +
                std::to_string(network.receivers()) + " " + (!delivered ? "?" : *delivered ? "yes" : "no");
@@ -490,7 +491,7 @@ TEST_CASE(the_counters_of_a_hello_are_found_by_the_names_the_agent_announced)
                    variable("j1939.A.B.frames_received"),              variable("j1939.BUS.send_failures"),
                    variable("j1939..frames_sent"),                     variable("j1939.REAL.frames_sent", control::ValueType::Real),
                    variable("j1939.HALF.frames_sent")};
-    TrafficSchema schema = launch::detail::traffic_schema(peer);
+    TrafficSchema schema = vehicle_sil::runner::detail::traffic_schema(peer);
     CHECK(!schema.virtual_time);
     CHECK_EQ(schema.counters.size(), std::size_t{3});
     CHECK(schema.counters.at(0).network == "BUS" && schema.counters.at(0).received == std::optional<std::size_t>(1) &&
@@ -509,7 +510,7 @@ TEST_CASE(the_counters_of_a_hello_are_found_by_the_names_the_agent_announced)
     peer.sources.assign(peer.schema.size(), std::string{});
     peer.sources.at(0) = "engine.speed";
     peer.sources.at(1) = "j1939.BUS.frames_received";
-    schema = launch::detail::traffic_schema(peer);
+    schema = vehicle_sil::runner::detail::traffic_schema(peer);
     CHECK_EQ(schema.counters.size(), std::size_t{3});
     CHECK(schema.counters.at(0).network == "BUS" && schema.counters.at(0).mapped && schema.counters.at(0).complete());
     CHECK(!schema.counters.at(1).mapped);
@@ -536,8 +537,8 @@ TEST_CASE(a_described_participants_networks_are_under_the_simulations_names)
     ecu.description.networks = {NetworkDescription{"J1939_CAN"}, NetworkDescription{"BodyLIN", NetworkUse::LinMaster}};
     check.participants[0].ecu = ecu;
     check.participants[2].ecu = ecu;
-    std::vector<launch::RunMember> members(3); // participants of the file: none is a bridge of --connect
-    const TrafficPlan plan = launch::detail::traffic_plan(config, check, members);
+    std::vector<vehicle_sil::runner::RunMember> members(3); // participants of the file: none is a bridge of --connect
+    const TrafficPlan plan = vehicle_sil::runner::detail::traffic_plan(config, check, members);
     CHECK_EQ(plan.buses.size(), std::size_t{2});
     CHECK(plan.buses.at(0).name == "VehicleCAN" && plan.buses.at(0).kind == "can" && plan.buses.at(1).name == "BodyLIN" &&
           plan.buses.at(1).kind == "lin");
@@ -547,8 +548,8 @@ TEST_CASE(a_described_participants_networks_are_under_the_simulations_names)
     CHECK(plan.participants.at(1).in_run && !plan.participants.at(1).described && plan.participants.at(1).on.empty());
     CHECK(!plan.participants.at(2).in_run);
     // A bridge of --connect (the plan's mark) carries the frames of the others: known, on no network of its own.
-    members[1].outside = launch::NetworkOutside{"VehicleCAN", "vehicle_sil_can_bridge", "/t/can", "can0", "bridge.VehicleCAN", std::nullopt};
-    const TrafficPlan connected = launch::detail::traffic_plan(config, check, members);
+    members[1].outside = vehicle_sil::config::NetworkOutside{"VehicleCAN", "vehicle_sil_can_bridge", "/t/can", "can0", "bridge.VehicleCAN", std::nullopt};
+    const TrafficPlan connected = vehicle_sil::runner::detail::traffic_plan(config, check, members);
     CHECK(connected.participants.at(1).described && connected.participants.at(1).on.empty());
     CHECK(connected.participants.at(0).described && !connected.participants.at(0).on.empty());
 }

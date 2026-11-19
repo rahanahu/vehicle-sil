@@ -47,10 +47,13 @@
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
-using vehicle_sil::launch::test::check_text;
-using vehicle_sil::launch::test::lines;
+using namespace vehicle_sil::runner;
+using namespace vehicle_sil::scenario;
+using namespace vehicle_sil::config;
+using vehicle_sil::config::test::check_text;
+using vehicle_sil::config::test::lines;
 using vehicle_sil::process::ExitStatus;
-using namespace vehicle_sil::launch::test::run_support;
+using namespace vehicle_sil::runner::test::run_support;
 
 namespace {
 
@@ -239,7 +242,7 @@ TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)
         "vehicle-sil; use a vehicle_sil_launch of its vehicle-sil or a newer one\n";
     check_text(lines(assess_run(o)), expected);
     // They are settled when the simulation starts: the participants' end does not change them.
-    check_text(lines(launch::detail::settled_findings(o)), expected);
+    check_text(lines(vehicle_sil::runner::detail::settled_findings(o)), expected);
     const RunReport r = report_of(o);
     CHECK(r.result() == RunResult::Passed); // warnings
     CHECK(report_of(o, true).result() == RunResult::Failed); // --strict
@@ -308,7 +311,7 @@ TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)
                      "messages it could not read and 40 messages (or samples) that fit no agent it knows. Hellos are not taken "
                      "beyond 256 participants with control agents",
                      0) == 0);
-    CHECK(lines(launch::detail::settled_findings(dropped)) == said);
+    CHECK(lines(vehicle_sil::runner::detail::settled_findings(dropped)) == said);
     dropped.control.refused_hellos = 0;
     dropped.control.unknown = 0;
     dropped.control.undecodable = 1;
@@ -758,7 +761,7 @@ TEST_CASE(a_run_that_fell_behind_real_time_is_a_warning_that_says_what_to_do)
     CHECK(r.result() == RunResult::Passed);
     CHECK(report_of(late_run(), true).result() == RunResult::Failed);
     // Settled once the simulation is over: written before the participants are ended.
-    CHECK(launch::detail::settled_findings(late_run()) == r.findings);
+    CHECK(vehicle_sil::runner::detail::settled_findings(late_run()) == r.findings);
     // One late step is enough.
     RunOutcome once = late_run();
     once.timing.late_steps = 1;
@@ -836,7 +839,7 @@ TEST_CASE(a_controller_step_coarser_than_the_ecus_steps_is_a_warning_when_a_spee
                "small as 1 ms" + what + " (or leave time_step_ms out: with a speed, the default is that)\n");
     CHECK(report_of(o).result() == RunResult::Passed);
     CHECK(report_of(o, true).result() == RunResult::Failed);
-    CHECK(launch::detail::settled_findings(o) == assess_run(o));
+    CHECK(vehicle_sil::runner::detail::settled_findings(o) == assess_run(o));
     // The run started as fast as possible (the default step is 10 ms then) and a speed command
     // came later: at the end a speed is set, or steps were paced.
     o.timing.time_step_written = false;
@@ -919,12 +922,12 @@ TEST_CASE(an_interrupt_while_the_launcher_waits_for_the_end_is_no_did_not_end)
 
 TEST_CASE(log_names_avoid_windows_devices_and_the_json_names_the_log)
 {
-    CHECK(launch::detail::log_name("NUL") == "NUL_");
-    CHECK(launch::detail::log_name("con.x") == "con_.x");
-    CHECK(launch::detail::log_name("Com7") == "Com7_");
-    CHECK(launch::detail::log_name("LPT9") == "LPT9_");
-    CHECK(launch::detail::log_name("COM10") == "COM10");
-    CHECK(launch::detail::log_name("Console") == "Console");
+    CHECK(vehicle_sil::runner::detail::log_name("NUL") == "NUL_");
+    CHECK(vehicle_sil::runner::detail::log_name("con.x") == "con_.x");
+    CHECK(vehicle_sil::runner::detail::log_name("Com7") == "Com7_");
+    CHECK(vehicle_sil::runner::detail::log_name("LPT9") == "LPT9_");
+    CHECK(vehicle_sil::runner::detail::log_name("COM10") == "COM10");
+    CHECK(vehicle_sil::runner::detail::log_name("Console") == "Console");
     RunOutcome o = passed_run();
     o.participants[0].log = "logs/Engine.log";
     const std::string json = format_run_json(report_of(o));
@@ -1007,7 +1010,7 @@ TEST_CASE(a_bridge_that_ends_before_the_start_is_connect_failed_and_nothing_else
     CHECK(r.result() == RunResult::Failed);
     CHECK(r.findings[0].participant == "bridge.ETH" && r.findings[0].network == "ETH");
     // Its line is known only once its output has been read: not settled before.
-    CHECK(launch::detail::settled_findings(o).empty());
+    CHECK(vehicle_sil::runner::detail::settled_findings(o).empty());
     // The other of two bridges that ended at once: seen when the launcher ended the run.
     o.participants[2].ending = Ending::Exited;
     o.end.failed_participant.clear();
@@ -1071,7 +1074,7 @@ TEST_CASE(a_bridge_that_ends_while_the_simulation_runs_is_connect_lost_whatever_
                        "; it wrote: [eth-bridge] FAIL: interface eth0 went down), so the launcher aborted the simulation. The devices on the "
                        "bus missed what came after; the lines [bridge.ETH] above show what the bridge wrote\n");
         CHECK(r.result() == RunResult::Failed);
-        CHECK(launch::detail::settled_findings(o).empty());
+        CHECK(vehicle_sil::runner::detail::settled_findings(o).empty());
     }
 }
 
@@ -1142,7 +1145,7 @@ TEST_CASE(a_time_command_in_a_run_that_is_connected_outside_is_one_note_about_th
     CHECK(report_of(o).result() == RunResult::Passed);
     CHECK(report_of(o, true).result() == RunResult::Passed);
     // Known once the simulation is over: an event before the participants have ended.
-    CHECK(launch::detail::settled_findings(o).size() == 1);
+    CHECK(vehicle_sil::runner::detail::settled_findings(o).size() == 1);
     // How each command is named, and what it did.
     const auto said = [&o](TimeChange t) {
         o.time_changed = std::move(t);
@@ -1197,7 +1200,7 @@ TEST_CASE(a_time_command_in_a_run_with_a_participant_in_real_time_is_one_note_ab
                "stepped or changed the speed (the command events show each one). For a run that repeats, give the "
                "participant a step (so that it follows the virtual time), or do not pause, step or change the speed\n");
     CHECK(report_of(o, true).result() == RunResult::Passed);
-    CHECK(launch::detail::settled_findings(o).size() == 1);
+    CHECK(vehicle_sil::runner::detail::settled_findings(o).size() == 1);
     o.real_time_peers = {"Tool", "Spy"};
     o.time_changed = TimeChange{"speed", "control_server", 0, std::nullopt, std::nullopt, 4.0};
     const std::vector<Finding> two = assess_run(o);
@@ -1259,7 +1262,7 @@ TEST_CASE(a_bridge_that_sent_and_got_nothing_from_a_device_is_a_note)
     // A note: --strict passes.
     CHECK(report_of(o, true).result() == RunResult::Passed);
     // Known once the bridge's output has been read to the end: no event before the participants have ended.
-    CHECK(launch::detail::settled_findings(o).empty());
+    CHECK(vehicle_sil::runner::detail::settled_findings(o).empty());
     // One frame; the bridge of a CAN network.
     o = counted(1, 0);
     o.outside[0].tool = "vehicle_sil_vector_xl_bridge";
@@ -1310,7 +1313,7 @@ TEST_CASE(what_a_bridge_saw_of_the_real_bus_is_a_warning_for_each_kind)
     // A warning: --strict fails, and the end of the participants decides (no event before).
     CHECK(report_of(o, true).result() != RunResult::Passed);
     CHECK(report_of(o).result() == RunResult::Passed);
-    CHECK(launch::detail::settled_findings(o).empty());
+    CHECK(vehicle_sil::runner::detail::settled_findings(o).empty());
     // The bus.
     OutsideLink bus;
     bus.bus_off_count = 2;
@@ -1367,7 +1370,7 @@ TEST_CASE(a_device_that_another_run_used_too_is_a_warning_with_the_pid_and_the_t
     // --strict fails on the warning; the end of the participants decides (no event before).
     CHECK(report_of(o, true).result() != RunResult::Passed);
     CHECK(report_of(o).result() == RunResult::Passed);
-    CHECK(launch::detail::settled_findings(o).empty());
+    CHECK(vehicle_sil::runner::detail::settled_findings(o).empty());
     // No pid (Windows), and more than one.
     o.outside[0].link.shared_peers = {};
     CHECK(lines(assess_run(o)).find("used by another vehicle-sil bridge that is not part of this run") != std::string::npos);
@@ -1392,7 +1395,7 @@ TEST_CASE(a_strict_run_that_was_stopped_for_a_shared_device_says_so_as_an_error)
                      "(process 4321) that is not part of this run from 12.50 s on, and --strict stopped the run after 3 s of it: ") == 0);
     // Said once: neither participant-failed nor the warning again.
     CHECK(found.find("participant-failed") == std::string::npos && found.find("W 3 outside-device-shared") == std::string::npos);
-    CHECK(launch::detail::settled_findings(o).empty());
+    CHECK(vehicle_sil::runner::detail::settled_findings(o).empty());
     // Before the simulation started: nothing else was started, the bridge did not fail.
     RunOutcome start = connected_run(stopped_bridge(0));
     start.outside[0].tool = "vehicle_sil_vector_xl_bridge";
@@ -1428,17 +1431,17 @@ namespace {
 /// `o` with a scenario of one step in `status` (made in place: no struct is built and moved).
 RunOutcome with_scenario(RunOutcome o, ScenarioStatus status)
 {
-    vehicle_sil::launch::ScenarioRun& scenario = o.scenario.result.emplace();
+    vehicle_sil::scenario::ScenarioRun& scenario = o.scenario.result.emplace();
     scenario.file = "s.yaml";
     scenario.status = status;
-    vehicle_sil::launch::ScenarioStepRun& step = scenario.steps.emplace_back();
+    vehicle_sil::scenario::ScenarioStepRun& step = scenario.steps.emplace_back();
     step.index = 1;
     step.line = 4;
     step.text = "expect Body.level == 1";
-    step.status = status == ScenarioStatus::Passed       ? vehicle_sil::launch::StepStatus::Passed
-                  : status == ScenarioStatus::Failed     ? vehicle_sil::launch::StepStatus::Failed
-                  : status == ScenarioStatus::Incomplete ? vehicle_sil::launch::StepStatus::Unfinished
-                                                         : vehicle_sil::launch::StepStatus::NotRun;
+    step.status = status == ScenarioStatus::Passed       ? vehicle_sil::scenario::StepStatus::Passed
+                  : status == ScenarioStatus::Failed     ? vehicle_sil::scenario::StepStatus::Failed
+                  : status == ScenarioStatus::Incomplete ? vehicle_sil::scenario::StepStatus::Unfinished
+                                                         : vehicle_sil::scenario::StepStatus::NotRun;
     if (status == ScenarioStatus::Failed)
     {
         step.code = "scenario-expect";
@@ -1476,7 +1479,7 @@ void check_meaning(const RunReport& r, const Meaning& want, const char* where)
 
 TEST_CASE(each_result_has_its_exit_code_its_ok_and_a_message)
 {
-    using vehicle_sil::launch::StopKind;
+    using vehicle_sil::runner::StopKind;
     CHECK_EQ(vehicle_sil::launch::kExitIncomplete, 5);
     // Reached its end.
     check_meaning(report_of(passed_run()), {RunResult::Passed, 0, true, "\"completed\""}, "passed");
@@ -1579,8 +1582,8 @@ TEST_CASE(each_result_has_its_exit_code_its_ok_and_a_message)
 
 TEST_CASE(a_participant_ended_by_force_in_a_stopped_run_is_no_error_but_is_said)
 {
-    using vehicle_sil::launch::ended_by_force;
-    using vehicle_sil::launch::StopKind;
+    using vehicle_sil::runner::ended_by_force;
+    using vehicle_sil::runner::StopKind;
     // The operator did not wait (a second stop request, or one while the launcher waited): Engine
     // was ended by force. The run is still a success, and the note and the message name Engine.
     RunOutcome o = stopped_run("stop command", StopKind::Operator);
@@ -1596,7 +1599,7 @@ TEST_CASE(a_participant_ended_by_force_in_a_stopped_run_is_no_error_but_is_said)
                "waited for the participants to end): it ended it by force, with the processes started. This is no error of a run "
                "that was stopped that way; whether it ends when asked to is not known from this run (stop once and wait to see)\n");
     // Known once the participants have ended: not among the findings written before that.
-    CHECK(lines(launch::detail::settled_findings(o)).find("ended-by-force") == std::string::npos);
+    CHECK(lines(vehicle_sil::runner::detail::settled_findings(o)).find("ended-by-force") == std::string::npos);
     // Two of them, in a scenario that was cut short.
     RunOutcome both = with_scenario(o, ScenarioStatus::Incomplete);
     both.participants[1].ending = Ending::Killed;
@@ -1626,7 +1629,7 @@ TEST_CASE(a_participant_ended_by_force_in_a_stopped_run_is_no_error_but_is_said)
 
 TEST_CASE(what_asked_to_stop_is_said_in_words_by_its_kind)
 {
-    using vehicle_sil::launch::StopKind;
+    using vehicle_sil::runner::StopKind;
     check_text(report_of(stopped_run("stop command", StopKind::Operator)).message(), "The run was stopped by a stop request without errors");
     check_text(report_of(stopped_run("control server stop", StopKind::Operator)).message(), "The run was stopped by a stop request without errors");
     check_text(report_of(stopped_run("SIGTERM", StopKind::Signal)).message(), "The run was interrupted by a signal");

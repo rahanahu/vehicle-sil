@@ -59,29 +59,29 @@ void write_text_or_null(JsonWriter& w, std::string_view key, const std::string& 
     }
 }
 
-const char* compare_name(Compare op)
+const char* compare_name(scenario::Compare op)
 {
     switch (op)
     {
-    case Compare::Eq: return "eq";
-    case Compare::Ne: return "ne";
-    case Compare::Ge: return "ge";
-    case Compare::Le: return "le";
-    case Compare::Gt: return "gt";
-    case Compare::Lt: return "lt";
-    case Compare::Near: return "near";
+    case scenario::Compare::Eq: return "eq";
+    case scenario::Compare::Ne: return "ne";
+    case scenario::Compare::Ge: return "ge";
+    case scenario::Compare::Le: return "le";
+    case scenario::Compare::Gt: return "gt";
+    case scenario::Compare::Lt: return "lt";
+    case scenario::Compare::Near: return "near";
     }
     return "eq";
 }
 
-const control::VariableInfo* described(const ScenarioCatalog* catalog, const Scenario& scenario, const ScenarioVariable& variable)
+const control::VariableInfo* described(const scenario::ScenarioCatalog* catalog, const scenario::Scenario& scenario, const scenario::ScenarioVariable& variable)
 {
     if (catalog == nullptr)
     {
         return nullptr;
     }
     const std::string& participant = scenario.participants[variable.participant].name;
-    for (const CatalogParticipant& p : *catalog)
+    for (const scenario::CatalogParticipant& p : *catalog)
     {
         if (p.name == participant)
         {
@@ -95,14 +95,14 @@ const control::VariableInfo* described(const ScenarioCatalog* catalog, const Sce
 
 void write_variables(JsonWriter& w, const TimelineInput& input)
 {
-    const Scenario& scenario = *input.scenario;
+    const scenario::Scenario& scenario = *input.scenario;
     // Without a record (the scenario never began): from the steps, as the record does.
-    const TimelineRecord fromSteps(scenario);
-    const TimelineRecord& uses = input.record != nullptr ? *input.record : fromSteps;
+    const scenario::TimelineRecord fromSteps(scenario);
+    const scenario::TimelineRecord& uses = input.record != nullptr ? *input.record : fromSteps;
     w.begin_array("variables");
     for (std::size_t i = 0; i < scenario.variables.size(); ++i)
     {
-        const ScenarioVariable& v = scenario.variables[i];
+        const scenario::ScenarioVariable& v = scenario.variables[i];
         const control::VariableInfo* info = described(input.catalog, scenario, v);
         w.begin_object();
         w.string("name", v.text);
@@ -141,45 +141,45 @@ void write_variables(JsonWriter& w, const TimelineInput& input)
     w.end_array();
 }
 
-void write_watch(JsonWriter& w, const Scenario& scenario, const ScenarioStep& step, const ScenarioStepRun& run,
-                 const std::optional<TimelineRecord::Watch>& watch)
+void write_watch(JsonWriter& w, const scenario::Scenario& scenario, const scenario::ScenarioStep& step, const scenario::ScenarioStepRun& run,
+                 const std::optional<scenario::TimelineRecord::Watch>& watch)
 {
     if (step.conditions.empty())
     {
         w.null("watch");
         return;
     }
-    WatchMode mode = WatchMode::At;
-    if (step.kind == StepKind::Ramp || step.kind == StepKind::Wave)
+    scenario::WatchMode mode = scenario::WatchMode::At;
+    if (step.kind == scenario::StepKind::Ramp || step.kind == scenario::StepKind::Wave)
     {
-        mode = WatchMode::During;
+        mode = scenario::WatchMode::During;
     }
     else if (step.within_ms)
     {
-        mode = WatchMode::Once;
+        mode = scenario::WatchMode::Once;
     }
     else if (step.hold_for_ms)
     {
-        mode = WatchMode::Always;
+        mode = scenario::WatchMode::Always;
     }
     w.begin_object("watch");
-    w.string("mode", watch_mode_name(mode));
+    w.string("mode", scenario::watch_mode_name(mode));
     // The times of a step that has its time; a step the scenario did not get to has none.
     const bool timed = watch && run.start;
     write_ms(w, "from_ms", timed ? std::optional<SimTime>(watch->from) : std::nullopt);
     write_ms(w, "to_ms", timed ? watch->until : std::nullopt);
     w.begin_array("conditions");
-    for (const ScenarioCondition& condition : step.conditions)
+    for (const scenario::ScenarioCondition& condition : step.conditions)
     {
         w.begin_object();
         w.string("variable", scenario.variables[condition.variable].text);
         w.begin_array("compare");
-        for (const ScenarioComparison& c : condition.all)
+        for (const scenario::ScenarioComparison& c : condition.all)
         {
             w.begin_object();
             w.string("op", compare_name(c.op));
             write_value(w, "value", c.value);
-            if (c.op == Compare::Near)
+            if (c.op == scenario::Compare::Near)
             {
                 w.real("tolerance", c.tolerance);
             }
@@ -196,10 +196,10 @@ void write_watch(JsonWriter& w, const Scenario& scenario, const ScenarioStep& st
     w.end_object();
 }
 
-void write_failed(JsonWriter& w, const Scenario& scenario, const ScenarioStepRun& run, const std::optional<TimelineFailure>& failure,
-                  const TimelineRecord* record)
+void write_failed(JsonWriter& w, const scenario::Scenario& scenario, const scenario::ScenarioStepRun& run, const std::optional<scenario::TimelineFailure>& failure,
+                  const scenario::TimelineRecord* record)
 {
-    if (run.status != StepStatus::Failed)
+    if (run.status != scenario::StepStatus::Failed)
     {
         w.null("failed");
         return;
@@ -210,7 +210,7 @@ void write_failed(JsonWriter& w, const Scenario& scenario, const ScenarioStepRun
     w.begin_array("conditions");
     if (failure)
     {
-        for (const TimelineFailedCondition& c : failure->conditions)
+        for (const scenario::TimelineFailedCondition& c : failure->conditions)
         {
             w.begin_object();
             w.integer("condition", static_cast<std::int64_t>(c.condition));
@@ -225,7 +225,7 @@ void write_failed(JsonWriter& w, const Scenario& scenario, const ScenarioStepRun
     w.begin_array("writes");
     if (failure)
     {
-        for (const TimelineFailedWrite& write : failure->writes)
+        for (const scenario::TimelineFailedWrite& write : failure->writes)
         {
             w.begin_object();
             w.string("variable", scenario.variables[write.variable].text);
@@ -270,7 +270,7 @@ void write_series(JsonWriter& w, const TimelineInput& input)
     w.begin_array("series");
     if (input.record != nullptr)
     {
-        for (const TimelineRecord::Series& series : input.record->series())
+        for (const scenario::TimelineRecord::Series& series : input.record->series())
         {
             w.begin_object();
             w.string("variable", input.scenario->variables[series.variable].text);
@@ -302,7 +302,7 @@ void write_series(JsonWriter& w, const TimelineInput& input)
                 // was not applied (or has no result) and what was sent after it, and what was
                 // written for a time after the step at which the scenario was over (no ECU got
                 // to that time).
-                const auto it = std::find_if(series.written.begin(), series.written.end(), [&](const TimelineRecord::Written& p) {
+                const auto it = std::find_if(series.written.begin(), series.written.end(), [&](const scenario::TimelineRecord::Written& p) {
                     return p.refused || (input.run->over_at && p.at > *input.run->over_at);
                 });
                 if (it != series.written.end())
@@ -315,7 +315,7 @@ void write_series(JsonWriter& w, const TimelineInput& input)
                 }
             }
             w.begin_array("points");
-            for (const TimelineRecord::Written& point : series.written)
+            for (const scenario::TimelineRecord::Written& point : series.written)
             {
                 w.begin_array_on_one_line({});
                 write_ms(w, {}, point.at);
@@ -326,7 +326,7 @@ void write_series(JsonWriter& w, const TimelineInput& input)
                 }
                 w.end_array();
             }
-            for (const TimelineRecord::Sampled& point : series.samples)
+            for (const scenario::TimelineRecord::Sampled& point : series.samples)
             {
                 if (!point.repeats)
                 {
@@ -343,7 +343,7 @@ void write_series(JsonWriter& w, const TimelineInput& input)
     w.end_array();
 }
 
-void write_shape_value(JsonWriter& w, std::string_view key, const ScenarioShapeText::Value& value)
+void write_shape_value(JsonWriter& w, std::string_view key, const scenario::ScenarioShapeText::Value& value)
 {
     if (const auto* d = std::get_if<double>(&value))
     {
@@ -365,10 +365,10 @@ void write_shape_value(JsonWriter& w, std::string_view key, const ScenarioShapeT
 
 /// A dither as a line: what "inputs" declares (no step) or a dither step put, from the first
 /// write that carried it. It has no end in the text and no base.
-void write_dither_line(JsonWriter& w, const Scenario& scenario, const TimelineRecord::Line& line)
+void write_dither_line(JsonWriter& w, const scenario::Scenario& scenario, const scenario::TimelineRecord::Line& line)
 {
-    const bool declared = line.step == TimelineRecord::kNoStep;
-    const ScenarioOverlay& overlay = declared ? scenario.inputs[line.part] : scenario.steps[line.step].overlays[line.part];
+    const bool declared = line.step == scenario::TimelineRecord::kNoStep;
+    const scenario::ScenarioOverlay& overlay = declared ? scenario.inputs[line.part] : scenario.steps[line.step].overlays[line.part];
     w.begin_object();
     w.string("variable", scenario.variables[line.variable].text);
     w.string("kind", "dither");
@@ -406,22 +406,22 @@ void write_dither_line(JsonWriter& w, const Scenario& scenario, const TimelineRe
 /// The lines of the inputs: what each step put on the line of a variable it writes.
 void write_lines(JsonWriter& w, const TimelineInput& input)
 {
-    const Scenario& scenario = *input.scenario;
+    const scenario::Scenario& scenario = *input.scenario;
     w.begin_array("lines");
     if (input.record != nullptr)
     {
-        for (const TimelineRecord::Line& line : input.record->lines())
+        for (const scenario::TimelineRecord::Line& line : input.record->lines())
         {
             if (line.dither)
             {
                 write_dither_line(w, scenario, line);
                 continue;
             }
-            const ScenarioStep& step = scenario.steps[line.step];
-            const ScenarioMotion* motion = step.kind == StepKind::Set ? nullptr : &step.motions[line.part];
+            const scenario::ScenarioStep& step = scenario.steps[line.step];
+            const scenario::ScenarioMotion* motion = step.kind == scenario::StepKind::Set ? nullptr : &step.motions[line.part];
             w.begin_object();
             w.string("variable", scenario.variables[line.variable].text);
-            w.string("kind", step_kind_name(step.kind));
+            w.string("kind", scenario::step_kind_name(step.kind));
             w.integer("line", static_cast<std::int64_t>(step.line));
             w.integer("step", static_cast<std::int64_t>(line.step + 1));
             write_ms(w, "from_ms", line.from);
@@ -469,14 +469,14 @@ void write_step_lines(JsonWriter& w, const TimelineInput& input, std::size_t ste
 
 void write_limits(JsonWriter& w, const TimelineInput& input)
 {
-    const TimelineLimits limits = input.record != nullptr ? input.record->limits() : TimelineLimits{};
+    const scenario::TimelineLimits limits = input.record != nullptr ? input.record->limits() : scenario::TimelineLimits{};
     w.begin_object("limits");
     w.integer("points_per_series", static_cast<std::int64_t>(limits.points_per_series));
     w.integer("points_total", static_cast<std::int64_t>(limits.points_total));
     w.begin_array("dropped");
     if (input.record != nullptr)
     {
-        for (const TimelineRecord::Series& series : input.record->series())
+        for (const scenario::TimelineRecord::Series& series : input.record->series())
         {
             if (series.dropped > 0)
             {
@@ -506,8 +506,8 @@ bool timeline_takes_finding(const std::string& code, bool& code_only)
 
 std::string format_timeline_json(const TimelineInput& input)
 {
-    const Scenario& scenario = *input.scenario;
-    const ScenarioRun& run = *input.run;
+    const scenario::Scenario& scenario = *input.scenario;
+    const scenario::ScenarioRun& run = *input.run;
     JsonWriter w;
     w.begin_object();
     w.integer("vehicle_sil_timeline", kTimelineFormat);
@@ -520,7 +520,7 @@ std::string format_timeline_json(const TimelineInput& input)
     w.begin_object("scenario");
     w.string("file", run.file);
     write_text_or_null(w, "name", run.name);
-    w.string("status", scenario_status_name(run.status));
+    w.string("status", scenario::scenario_status_name(run.status));
     write_ms(w, "over_at_ms", run.over_at);
     write_ms(w, "recorded_to_ms", input.record != nullptr ? input.record->recorded_to() : std::nullopt);
     w.end_object();
@@ -540,7 +540,7 @@ std::string format_timeline_json(const TimelineInput& input)
     write_series(w, input);
     write_lines(w, input);
     w.begin_array("findings");
-    for (const Finding& finding : input.findings)
+    for (const config::Finding& finding : input.findings)
     {
         bool codeOnly = false;
         if (!timeline_takes_finding(finding.code, codeOnly))

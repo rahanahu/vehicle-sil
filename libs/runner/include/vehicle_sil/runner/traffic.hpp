@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 /// Why a participant's frames on a network were not counted (TrafficParticipant).
 enum class TrafficNotCounted
@@ -112,4 +112,4 @@ struct RunTraffic
     std::vector<TrafficUnplaced> unplaced{};
 };
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

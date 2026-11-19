@@ -25,7 +25,7 @@ namespace vehicle_sil::control {
 class Hub;
 } // namespace vehicle_sil::control
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 /// The event "time": the virtual time and how it keeps up. Whether the simulation stands still and
 /// the speed set are in the event "state" (RunState), not here.
@@ -107,7 +107,7 @@ public:
     virtual void control_link(const std::string& name, std::string_view state, std::optional<std::size_t> variables,
                               std::optional<int> version) = 0;
     /// run --scenario: a step of the scenario began (StepStatus::Running) or was decided.
-    virtual void scenario_step(const ScenarioStepRun& step) = 0;
+    virtual void scenario_step(const scenario::ScenarioStepRun& step) = 0;
     /// One line of a participant's output (`source`: its name) or of the launcher
     /// ("vehicle_sil_launch"), as the text output shows it but without "[<source>] ". The only
     /// thing told here that an implementation may drop.
@@ -116,7 +116,7 @@ public:
     /// outside[].to_outside and from_outside).
     virtual void outside(const std::string& network, std::uint64_t to_outside, std::uint64_t from_outside) = 0;
     /// One of the run's findings (`file`: the configuration file).
-    virtual void finding(const std::string& file, const Finding& finding) = 0;
+    virtual void finding(const std::string& file, const config::Finding& finding) = 0;
     /// The simulation's virtual time as the controller sees it, and how it goes.
     virtual void time(const TimeEvent& time) = 0;
     /// How many things told but "log" have not got out yet (short, no wait). The run does not
@@ -163,4 +163,4 @@ struct RunObservers
     std::function<void(const std::shared_ptr<control::Hub>& hub)> before_start{};
 };
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

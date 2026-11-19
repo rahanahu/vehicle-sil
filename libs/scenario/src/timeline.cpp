@@ -6,7 +6,7 @@
 #include <cmath>
 #include <utility>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::scenario {
 
 namespace {
 
@@ -398,4 +398,4 @@ void TimelineRecord::enforce(bool final)
     total_ = total;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::scenario

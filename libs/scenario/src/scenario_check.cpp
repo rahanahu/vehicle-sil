@@ -8,9 +8,9 @@
 #include <memory>
 #include <utility>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::scenario {
 
-ScenarioCatalog scenario_catalog(const CheckReport& check)
+ScenarioCatalog scenario_catalog(const config::CheckReport& check)
 {
     ScenarioCatalog out;
     if (!check.config)
@@ -19,10 +19,10 @@ ScenarioCatalog scenario_catalog(const CheckReport& check)
     }
     for (std::size_t i = 0; i < check.config->participants.size(); ++i)
     {
-        const ParticipantConfig& p = check.config->participants[i];
+        const config::ParticipantConfig& p = check.config->participants[i];
         CatalogParticipant c;
         c.name = p.name;
-        const ParticipantResult* result = i < check.participants.size() ? &check.participants[i] : nullptr;
+        const config::ParticipantResult* result = i < check.participants.size() ? &check.participants[i] : nullptr;
         if (!p.enabled && p.left_out_by_variant && !check.config->variant.empty())
         {
             c.not_in_variant = true;
@@ -37,13 +37,13 @@ ScenarioCatalog scenario_catalog(const CheckReport& check)
             c.unusable = "has describe: false, so the launcher does not know its variables: a scenario can use the variables "
                          "of ecu_main executables only";
         }
-        else if (result == nullptr || result->status != ParticipantStatus::Described || !result->ecu)
+        else if (result == nullptr || result->status != config::ParticipantStatus::Described || !result->ecu)
         {
             c.unusable = "could not be described (the errors of the configuration say why), so its variables are not known";
         }
         else
         {
-            const SeenEcu d(p, *result->ecu);
+            const config::SeenEcu d(p, *result->ecu);
             // As the run's hub shows them.
             auto seen = std::make_shared<const control::MappedSchema>(d.variables());
             c.variables = seen->schema();
@@ -77,4 +77,4 @@ ScenarioCatalog scenario_catalog(const CheckReport& check)
     return out;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::scenario

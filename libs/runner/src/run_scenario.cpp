@@ -5,7 +5,7 @@
 
 #include <algorithm>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 namespace {
 
@@ -13,19 +13,19 @@ namespace orch = SilKit::Services::Orchestration;
 
 /// One step in words, as a line of the run's output says it when the step is decided:
 /// "line 4: set ...: ok at 100 ms", with the step's message for one that failed or was skipped.
-std::string scenario_step_text(const ScenarioStepRun& step)
+std::string scenario_step_text(const scenario::ScenarioStepRun& step)
 {
     // The time as the result's table of the steps says it (check_words.hpp: millis_text(), as
     // scenario_text() writes it).
-    return "line " + std::to_string(step.line) + ": " + step.text + ": " + step_result_text(step.status) +
-           (step.at ? " at " + millis_text(to_ns(*step.at)) + " ms" : std::string{}) +
-           (step.status == StepStatus::Failed || step.status == StepStatus::Skipped ? " (" + step.message + ")" : std::string{});
+    return "line " + std::to_string(step.line) + ": " + step.text + ": " + scenario::step_result_text(step.status) +
+           (step.at ? " at " + config::detail::millis_text(to_ns(*step.at)) + " ms" : std::string{}) +
+           (step.status == scenario::StepStatus::Failed || step.status == scenario::StepStatus::Skipped ? " (" + step.message + ")" : std::string{});
 }
 
 } // namespace
 
 /// The engine's way to the ECUs: the hub, and a wait until each agent has answered.
-class RunScenario::HubPort final : public ScenarioPort
+class RunScenario::HubPort final : public scenario::ScenarioPort
 {
 public:
     explicit HubPort(control::Hub& hub) : hub_(hub) {}
@@ -60,10 +60,10 @@ RunScenario::RunScenario(const RunContext& ctx, RunOutput& out, RunControl& cont
 {
     if (ctx_.scenario != nullptr)
     {
-        for (const ParticipantConfig& p : ctx_.config.participants)
+        for (const config::ParticipantConfig& p : ctx_.config.participants)
         {
             const auto used = std::find_if(ctx_.scenario->participants.begin(), ctx_.scenario->participants.end(),
-                                           [&p](const ScenarioParticipant& s) { return s.name == p.name; });
+                                           [&p](const scenario::ScenarioParticipant& s) { return s.name == p.name; });
             places_.push_back(used != ctx_.scenario->participants.end()
                                   ? std::optional<std::size_t>(static_cast<std::size_t>(used - ctx_.scenario->participants.begin()))
                                   : std::nullopt);
@@ -73,9 +73,9 @@ RunScenario::RunScenario(const RunContext& ctx, RunOutput& out, RunControl& cont
 
 RunScenario::~RunScenario() = default;
 
-void RunScenario::note_step(const ScenarioStepRun& step)
+void RunScenario::note_step(const scenario::ScenarioStepRun& step)
 {
-    if (step.status != StepStatus::Running)
+    if (step.status != scenario::StepStatus::Running)
     {
         out_.say("scenario: " + scenario_step_text(step));
     }
@@ -95,7 +95,7 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
 {
     const std::vector<control::PeerInfo> peers = control_.hub().peers();
     const std::vector<control_silkit::LinkInfo> links = transport.links();
-    std::vector<EnginePeer> found(ctx_.scenario->participants.size());
+    std::vector<scenario::EnginePeer> found(ctx_.scenario->participants.size());
     // Per participant of the configuration: the control agent whose samples the scenario gets.
     std::vector<std::string> incarnations(places_.size());
     {
@@ -126,11 +126,11 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
     port_->give_up = cancelled;
     if (!ctx_.plan.timeline.empty())
     {
-        record_ = std::make_shared<TimelineRecord>(*ctx_.scenario);
+        record_ = std::make_shared<scenario::TimelineRecord>(*ctx_.scenario);
     }
-    engine_ = std::make_unique<ScenarioEngine>(*ctx_.scenario, step_,
+    engine_ = std::make_unique<scenario::ScenarioEngine>(*ctx_.scenario, step_,
                                                         *port_,
-                                                        [this](const ScenarioStepRun& step) { note_step(step); }, record_.get());
+                                                        [this](const scenario::ScenarioStepRun& step) { note_step(step); }, record_.get());
     // From here on the scenario gets the samples of these agents, and none that came before.
     samples_.scenario_begins(std::move(incarnations));
     engine_->begin(found);
@@ -206,7 +206,7 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
     }
     if (!engine_)
     {
-        outcome.scenario.result->status = ScenarioStatus::Incomplete;
+        outcome.scenario.result->status = scenario::ScenarioStatus::Incomplete;
         return;
     }
     // Whatever is taken from here on is not the scenario's (below: once more, for a stop_at_ms).
@@ -253,4 +253,4 @@ void RunScenario::end()
     samples_.scenario_ends();
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

@@ -31,7 +31,7 @@
 #include <sys/socket.h>
 #endif
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 namespace {
 
@@ -327,4 +327,4 @@ std::string detail::registry_listen_hint(const std::string& listen, bool written
                           instead + ")";
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

@@ -14,7 +14,7 @@
 #include <string>
 #include <string_view>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// The launcher's own lines: the participant name of its "log" events, the tag of its lines.
 inline constexpr std::string_view kLauncherName = "vehicle_sil_launch";
@@ -49,4 +49,4 @@ inline bool failed_exit(const ParticipantRun& p)
     return p.exit && ended_by_itself(p) && (p.exit->code != 0 || p.exit->signal);
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

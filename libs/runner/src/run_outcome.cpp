@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 EndReason end_reason(const RunOutcome& outcome)
 {
@@ -87,4 +87,4 @@ std::string_view stop_request_name()
 #endif
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

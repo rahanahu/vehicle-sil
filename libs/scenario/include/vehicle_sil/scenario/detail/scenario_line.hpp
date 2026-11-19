@@ -19,7 +19,7 @@
 #include <memory>
 #include <optional>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::scenario::detail {
 
 /// A value as a number: a bool is 0 or 1.
 [[nodiscard]] double number_of(const control::Value& value);
@@ -128,4 +128,4 @@ private:
     std::shared_ptr<const Waveform> overlay_{};
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::scenario::detail
