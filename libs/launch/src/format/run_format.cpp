@@ -152,6 +152,8 @@ std::string format_run_text(const RunReport& report)
         break;
     case SimulationEnd::Ended:
         state = !run.end.controller_state.empty() ? "the simulation ended in state " + run.end.controller_state
+                : !run.scenario.not_observed.empty()
+                    ? "the simulation was stopped before its first step: the scenario was not begun"
                 : run.end.stopped_by_scenario     ? "the simulation ran until the scenario was over (" +
                                                     std::to_string(run.timing.sim_ms) + " ms) and ended"
                                               : "the simulation ran until a participant ended it";

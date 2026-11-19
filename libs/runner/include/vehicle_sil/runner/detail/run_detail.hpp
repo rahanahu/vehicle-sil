@@ -60,7 +60,7 @@ namespace detail {
 [[nodiscard]] std::vector<std::string> participant_arguments(const SimulationConfig& config, const ParticipantConfig& participant,
                                                              const std::string& registry_uri,
                                                              bool stands_still_before_start,
-                                                             bool sample_every_step = false);
+                                                             bool sample_every_step);
 
 /// One line for this system's shell that starts `executable` (as given) with `arguments`: on
 /// Windows for cmd.exe, quoted as the C runtimes read a command line back (an argument in double

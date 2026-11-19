@@ -88,7 +88,9 @@ void RunStartWindow::run(control_silkit::HubTransport& transport, SimulationCont
     {
         scenario_.begin(transport, cancelled);
     }
-    if (ctx_.holds() && !cancelled())
+    // Not for a scenario that was refused: nothing would run after the hold, and its finding is
+    // only told when the run ends. The simulation starts and is stopped at 0 at once.
+    if (ctx_.holds() && !cancelled() && !scenario_.refused())
     {
         // Every participant waits before its step at 0, with its subscriptions connected:
         // what a control client writes now (and is queued) takes effect in the steps at 0.

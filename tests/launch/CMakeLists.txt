@@ -440,6 +440,7 @@ if(TARGET vehicle_sil_launch_test_ecu)
                         the_start_is_limited_before_and_after_the_hold_but_not_in_it
                         the_ecus_wait_as_long_as_the_run_stands_still
                         timeout_counts_the_hold an_interrupt_ends_the_hold a_resume_before_the_window_means_no_hold
+                        a_refused_scenario_does_not_hold
                         the_control_server_is_started_after_the_runs_files_and_before_the_registry
                         what_leaves_run_file_between_the_stages_ends_the_time_commands
                         a_request_for_a_control_server_is_read_before_any_check)

@@ -7,7 +7,8 @@
 //                step, a hold_for_ms between two samples and an expect at the step's time all fail
 //                (the launcher starts the ECU with --sample-every-step), and pass with
 //                samples: as_sent, which the check notes; an ECU that does not follow the argument
-//                is refused before the first step (scenario-not-observed), and runs with as_sent
+//                is refused before the first step (scenario-not-observed), and runs with as_sent;
+//                with samples as far apart as its steps (10 ms and 10 ms) it is not refused
 #include "launch_run_support.hpp"
 
 void scenario_samples(const Options& o)
@@ -91,13 +92,35 @@ void scenario_samples(const Options& o)
     require(contains(lf(refused.standard_error),
                      "\n[vehicle_sil_launch] scenario: not begun: the scenario reads values of Body, which sends them less often than "
                      "every step of its own (scenario-not-observed)\n") &&
-                !contains(lf(refused.standard_error), "scenario: line "),
-            "the line on stderr, and no step's line:\n" + lf(refused.standard_error));
+                !contains(lf(refused.standard_error), "scenario: line ") &&
+                contains(lf(refused.standard_error),
+                         "\n[vehicle_sil_launch] the scenario was not begun: the simulation was stopped before its first step\n") &&
+                !contains(lf(refused.standard_error), "the scenario is over"),
+            "the lines on stderr, and no step's line:\n" + lf(refused.standard_error));
+    // For people: the run's line says that the scenario was not begun, not that it was over.
+    const Captured told = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml"}, dir);
+    expect_code(told, 1, "the same run, for people");
+    require(contains(lf(told.standard_output), "\nrun: the simulation was stopped before its first step: the scenario was not begun\n") &&
+                !contains(lf(told.standard_output), "until the scenario was over") &&
+                contains(lf(told.standard_output), "\nscenario s.yaml: FAILED, 0 of 2 steps passed\n"),
+            "the run's line:\n" + lf(told.standard_output));
     // The same ECU with samples: as_sent runs, and judges as its samples allow.
     write_file(dir / "s.yaml", "vehicle_sil_scenario: 1\nsamples: as_sent\nsteps:\n  - set: { Body.level: 5 }\n" + forms[0].step);
     const Captured allowed = launch(o, run, dir);
     expect_code(allowed, 0, "the same ECU with samples: as_sent");
     require(contains(scenario_json(lf(allowed.standard_output)), "    \"status\": \"passed\",\n"), lf(allowed.standard_output));
+
+    // The limit: an ECU that does not follow the argument and whose code sends its values every
+    // 10 ms, with a step of 10 ms, sends one for every step by itself. It is not refused.
+    write_file(dir / "test-ecu-step-ms", "10\n");
+    write_file(dir / "s.yaml", "vehicle_sil_scenario: 1\nsteps:\n  - set: { Body.level: 5 }\n"
+                               "  - at_ms: 100\n    expect: { Body.healthy: true, Body.level: 5 }\n    hold_for_ms: 50\n");
+    const Captured enough = launch(o, run, dir);
+    expect_code(enough, 0, "an ECU whose own samples are as far apart as its steps");
+    require(contains(scenario_json(lf(enough.standard_output)), "    \"status\": \"passed\",\n") &&
+                !contains(lf(enough.standard_output), "scenario-not-observed") &&
+                contains(lf(enough.standard_error), " --sample-every-step\n"),
+            "it runs and passes:\n" + lf(enough.standard_output) + lf(enough.standard_error));
     fs::remove(dir / "test-ecu-own-sample-period");
     fs::remove(dir / "test-ecu-step-ms");
 }

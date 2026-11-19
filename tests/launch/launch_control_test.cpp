@@ -685,6 +685,56 @@ void an_interrupt_ends_the_hold(const fs::path& ecu, const fs::path& helper, con
             "the run was interrupted after the start" + shown(run));
 }
 
+/// A scenario that the run refuses to begin (its ECU sends the values it reads less often than its
+/// step) does not hold before the first step: nothing would run after the hold, so the run ends at
+/// once with the finding, without a resume. (The launcher's command line refuses a scenario with
+/// --start-paused; a caller of run_file() can ask for both.)
+void a_refused_scenario_does_not_hold(const fs::path& ecu, const fs::path& dir)
+{
+    std::ofstream(dir / "sim.yaml", std::ios::binary)
+        << "vehicle_sil_simulation: 1\nstart_timeout_ms: 5000\nnetworks: []\nparticipants:\n  - name: Engine\n    command: ["
+        << yaml_quote(process::shown_path(ecu)) << "]\n";
+    std::ofstream(dir / "Engine.behaviour", std::ios::binary) << "sample-ms 10 scenario-variables\n";
+    std::ofstream(dir / "test-ecu-step-ms", std::ios::binary) << "1\n";
+    std::ofstream(dir / "test-ecu-own-sample-period", std::ios::binary) << "\n";
+    std::ofstream(dir / "s.yaml", std::ios::binary)
+        << "vehicle_sil_scenario: 1\nsteps:\n  - at_ms: 20\n    expect: { Engine.ticks: { ge: 0 } }\n";
+    launch::StopRequests stops;
+    launch::RunControls controls(stops, true, {}, true);
+    launch::RunRequest asked = sim_of(dir);
+    asked.intent.start_paused = true;
+    asked.intent.scenario = process::utf8_from_path(dir / "s.yaml");
+    asked.host.timeout = 20s; // a run that held would end by this, as a failure of another kind
+    launch::RunObservers watching;
+    launch::RunLent lent;
+    lent.controls = &controls;
+    struct NoServer final : launch::ControlEndpoint
+    {
+        launch::ControlServerInfo start(std::shared_ptr<control::Hub>) override { return {"(test)", false, false}; }
+        void end() override {}
+    } endpoint;
+    lent.control_endpoint = &endpoint;
+    std::string lines;
+    watching.write_line = [&](std::string_view line) { lines += std::string(line) + "\n"; };
+    const launch::RunReport report = launch::run_file(asked, watching, lent, launch::RunLimits{});
+    fs::remove(dir / "test-ecu-step-ms");
+    fs::remove(dir / "test-ecu-own-sample-period");
+    fs::remove(dir / "Engine.behaviour");
+    std::string codes;
+    for (const launch::Finding& f : report.findings)
+    {
+        codes += f.code + " ";
+    }
+    const std::string seen = "\nfindings: " + codes + "\n" + lines;
+    require(lines.find("standing still before the first step") == std::string::npos, "the run did not hold" + seen);
+    require(report.result() == launch::RunResult::Failed && codes.find("scenario-not-observed") != std::string::npos &&
+                codes.find("timeout") == std::string::npos,
+            "the run failed for the scenario, not for a timeout" + seen);
+    require(report.run && report.run->timing.sim_ms == 0 && report.run->scenario.result &&
+                report.run->scenario.result->status == launch::ScenarioStatus::Failed,
+            "it ended at 0 ms with the scenario failed" + seen);
+}
+
 /// A resume before the window: the run does not hold (and runs to stop_at_ms). It comes before
 /// the run has read its configuration, so it waits for the run's time lock and is accepted then.
 void a_resume_before_the_window_means_no_hold(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
@@ -942,6 +992,8 @@ int main(int argc, char** argv)
         {"timeout_counts_the_hold", timeout_counts_the_hold},
         {"an_interrupt_ends_the_hold", an_interrupt_ends_the_hold},
         {"a_resume_before_the_window_means_no_hold", a_resume_before_the_window_means_no_hold},
+        {"a_refused_scenario_does_not_hold",
+         [](const fs::path& ecu, const fs::path&, const fs::path& dir) { a_refused_scenario_does_not_hold(ecu, dir); }},
         {"the_control_server_is_started_after_the_runs_files_and_before_the_registry",
          [](const fs::path& ecu, const fs::path&, const fs::path& dir) {
              the_control_server_is_started_after_the_runs_files_and_before_the_registry(ecu, dir);

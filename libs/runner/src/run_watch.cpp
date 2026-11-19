@@ -223,8 +223,10 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
     WatchTarget target;
     target.wait_until_finished = [&controller](std::chrono::milliseconds timeout) { return controller.wait_until_finished(timeout); };
     target.left_participant = [&controller] { return FailureCheck::left_participant(controller); };
-    target.stop = [&controller, &forScenario](std::string_view reason) {
-        controller.stop(forScenario ? std::string_view("the scenario is over") : reason);
+    target.stop = [this, &controller, &forScenario](std::string_view reason) {
+        controller.stop(!forScenario ? reason
+                        : scenario_.refused() ? std::string_view("the scenario was not begun")
+                                              : std::string_view("the scenario is over"));
     };
     target.abort = [&controller] { controller.abort(); };
     const WatchResult watched = watch_simulation(target, watch);
@@ -290,7 +292,8 @@ int RunWatch::settle(SimulationController& controller, const Watched& over)
             {
                 outcome_.end.controller_state = watched.state ? orch::to_string(*watched.state) : std::string("unknown");
             }
-            out_.say("the scenario is over: the simulation was stopped");
+            out_.say(scenario_.refused() ? "the scenario was not begun: the simulation was stopped before its first step"
+                                         : "the scenario is over: the simulation was stopped");
             break;
         }
         outcome_.end.simulation = SimulationEnd::Interrupted;

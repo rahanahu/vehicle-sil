@@ -2007,22 +2007,22 @@ TEST_CASE(a_participant_is_started_with_its_network_names_after_everything_else)
     const std::string timeout = std::to_string(vehicle_sil::launch::detail::ecu_start_timeout_ms(config, false));
     const std::string own = "[--verbose][--name][Engine][--registry-uri][silkit://127.0.0.1:8500][--start-timeout-ms][" + timeout + "]";
     // Without network_names: what it was.
-    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false)), own + "\n");
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false)), own + "\n");
     // In the file's order and direction (<simulation's name>=<executable's name>), after the
     // launcher's own arguments; a line whose two names are the same is not given.
     p.network_names = {NetworkName{"VehicleCAN", "J1939_CAN", 5}, NetworkName{"Body", "Body", 6},
                        NetworkName{"Body CAN", "CAN_B", 7}};
-    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false)),
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false)),
                own + "[--map-network][VehicleCAN=J1939_CAN][--map-network][Body CAN=CAN_B]\n");
     // describe: false: after its command with the placeholders replaced, and a name that looks
     // like a placeholder stays as it is.
     p.describe = false;
     p.command = {"tools/remote", "--uri", "{registry_uri}", "--as", "{name}"};
     p.network_names = {NetworkName{"{name}", "{registry_uri}", 5}};
-    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false)),
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false)),
                "[--uri][silkit://127.0.0.1:8500][--as][Engine][--map-network][{name}={registry_uri}]\n");
     p.network_names.clear();
-    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false)), "[--uri][silkit://127.0.0.1:8500][--as][Engine]\n");
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false)), "[--uri][silkit://127.0.0.1:8500][--as][Engine]\n");
 }
 
 TEST_CASE(a_participant_is_started_with_its_j1939_nodes_after_its_network_names)
@@ -2047,14 +2047,14 @@ TEST_CASE(a_participant_is_started_with_its_j1939_nodes_after_its_network_names)
     p.j1939_nodes = {J1939NodeEntry{{"VehicleCAN", j1939::NodeOverride{0x00, 0x01, 2, {}, {}}}, 7},
                      J1939NodeEntry{{"VehicleCAN", j1939::NodeOverride{0x21, {}, {}, {}, {}}}, 8},
                      J1939NodeEntry{{"BodyCAN", j1939::NodeOverride{{}, 0xFE, {}, {}, {}}}, 9}};
-    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false)),
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false)),
                own + "[--map-network][VehicleCAN=J1939_CAN][--j1939-node][VehicleCAN=from:0x00,address:0x01,identity_number:2]"
                      "[--j1939-node][BodyCAN=address:254]\n");
     // describe: false: after its command with the placeholders replaced.
     p.describe = false;
     p.command = {"tools/remote", "--uri", "{registry_uri}"};
     p.network_names.clear();
-    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false)),
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false)),
                "[--uri][silkit://127.0.0.1:8500][--j1939-node][VehicleCAN=from:0x00,address:0x01,identity_number:2]"
                "[--j1939-node][BodyCAN=address:254]\n");
 }

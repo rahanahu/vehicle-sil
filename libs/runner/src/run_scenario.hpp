@@ -80,6 +80,11 @@ public:
     /// the outcome who it was (OutcomeScenario::not_observed).
     void begin(control_silkit::HubTransport& transport, const std::function<bool()>& cancelled);
 
+    /// begin() refused to begin the scenario (an ECU sends the values it reads less often than its
+    /// step): the run does not hold before the first step for it, and says so when it stops. The
+    /// window's thread after begin(), the main thread after the controller's start (as engine_).
+    [[nodiscard]] bool refused() const { return !not_observed_.empty(); }
+
     /// The simulation runs: the scenario's thread takes the steps from here. Main thread.
     void start(SimulationController& controller, RunOutcome& outcome);
 
