@@ -678,7 +678,7 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
         add(config::Severity::Note, "ended-by-force",
             "the launcher did not wait for " + config::detail::and_list(forced) + " to end, because it was asked to stop again (or while it "
             "waited for the participants to end): it ended " + (forced.size() == 1 ? "it" : "them") +
-                " by force, with the processes started. This is no error of a run that was stopped that way; whether " +
+                " by force, with the processes started. This is no error: whoever asked chose not to wait; whether " +
                 (forced.size() == 1 ? "it ends" : "they end") + " when asked to is not known from this run (stop once and wait to see)",
             nullptr);
     }

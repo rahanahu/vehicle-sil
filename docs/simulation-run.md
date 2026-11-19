@@ -711,7 +711,7 @@ When the simulation ends (also after an abort and on Ctrl+C), `run` ends the par
 | A participant that you start yourself (manual) | None of the items apply (see "How to stop" in [Starting a participant yourself](simulation-config.md#starting-a-participant-yourself-manual---manual)). |
 | The simulation did not start | Item 1 is skipped and the order starts at item 2 (this is not an error of that participant). |
 | On Windows, `vehicle_sil_launch` has no console | Ctrl+Break cannot be sent, so `run` kills the participant at once instead of item 2 (the message says so). |
-| A second stop request (Ctrl+C or the `stop` command again), or one that comes during item 1 | The waits are skipped: `run` asks the participants to stop at once and kills what does not end. A participant killed this way gives no `did-not-end`. In a run that a `stop` command stopped, the note `ended-by-force` and the `message` of the result name it; the exit code stays 0 (you chose not to wait). |
+| A second stop request (Ctrl+C or the `stop` command again), or one that comes during item 1 | The waits are skipped: `run` asks the participants to stop at once and kills what does not end. A participant killed this way gives no `did-not-end`: whoever asked chose not to wait. The note `ended-by-force` and the `message` of the result name it, whatever asked; it does not change the result or the exit code. |
 
 An ecu_main executable that is asked to stop before the start ends at once (see [ecu-executable.md](ecu-executable.md)).
 
@@ -725,7 +725,7 @@ Another Ctrl+C or `stop` command also cuts this wait short. `run` then writes on
 
 ## Interrupting (Ctrl+C)
 
-On Ctrl+C (SIGINT), SIGTERM or SIGHUP (Windows: Ctrl+C, Ctrl+Break, closing the console), `vehicle_sil_launch` stops the simulation in order (the controller's stop), ends the participants as described in [Stopping a run](#stopping-a-run), records the interruption in the result and exits with code 130. The end of stdin with `--stdin-commands` and a closed stdout with `--events` count the same way: the program that ran the launcher has gone. A run that a command stopped (`{"command":"stop"}`, `Stop` of the Control API) is not an interrupted run: see [How a run ended](#how-a-run-ended-end-ok-message).
+On Ctrl+C (SIGINT), SIGTERM or SIGHUP (Windows: Ctrl+C, Ctrl+Break, closing the console), `vehicle_sil_launch` stops the simulation in order (the controller's stop), ends the participants as described in [Stopping a run](#stopping-a-run), records the interruption in the result and exits with code 130 (also when the interrupt comes only while `run` waits for the participants to end on their own, item 1 of [Stopping a run](#stopping-a-run)). An interrupt that comes later than that changes neither the result nor the exit code (see [How a run ended](#how-a-run-ended-end-ok-message)). The end of stdin with `--stdin-commands` and a closed stdout with `--events` count the same way: the program that ran the launcher has gone. A run that a command stopped (`{"command":"stop"}`, `Stop` of the Control API) is not an interrupted run: see [How a run ended](#how-a-run-ended-end-ok-message).
 
 | When it arrives | What `run` does |
 |---|---|
@@ -1057,8 +1057,8 @@ When the simulation started, the result shows after the participant table whethe
 | `timeline-write` | Error | The `--timeline` file was opened but could not be written after the run |
 | `timeline-limit` | Note | The `--timeline` file dropped older points at its limits |
 | `interrupted` | Note | The run was interrupted (a signal, the end of stdin, a closed stdout) |
-| `stopped` | Note | A command stopped the run (`{"command":"stop"}`, `Stop` of the Control API) |
-| `ended-by-force` | Note | In a run that a command stopped: participants that did not end when asked to were killed without the full wait, because the stop was asked for again (or while `run` waited for the participants to end) |
+| `stopped` | Note | A command stopped the run (`{"command":"stop"}`, `Stop` of the Control API), or cut short the wait for the participants to end after the simulation had ended |
+| `ended-by-force` | Note | Participants that did not end when asked to were killed without the full wait, because a stop or an interrupt was asked for again (or while `run` waited for the participants to end) |
 
 Notes on individual codes:
 
@@ -1103,7 +1103,7 @@ These are the exit codes of `run`. For the full table that includes `check` and 
 | Exit code | Meaning | `result` of `--json` |
 |---|---|---|
 | 0 | The simulation ended normally and every required participant exited with 0 (with `--strict`, also no warnings) | `"passed"` |
-| 0 | A command stopped the run (`{"command":"stop"}`, `Stop` from a Control Server client), and nothing was wrong. A participant that was killed because the stop was asked for twice is not an error here (the note `ended-by-force` names it) | `"stopped"` |
+| 0 | A command stopped the run (`{"command":"stop"}`, `Stop` from a Control Server client) before the simulation ended, or a `{"command":"stop"}` cut short the end of a required participant that was still running after it, and nothing was wrong. A participant that was killed because the stop was asked for twice is not an error here (the note `ended-by-force` names it) | `"stopped"` |
 | 1 | Check errors; nothing was started | `"check_failed"` |
 | 1 | Run errors (a participant failed, the participants did not all join, a participant did not end when stopped, and so on) | `"failed"` |
 | 3 | The configuration file cannot be read (missing file, syntax error, unknown format version, and so on) | `"unreadable"` |
@@ -1113,7 +1113,7 @@ These are the exit codes of `run`. For the full table that includes `check` and 
 | 5 | A command stopped the run before its scenario's end (or before the scenario began), and nothing else was wrong: the scenario has no verdict | `"incomplete"` |
 | 130 | Interrupted: a signal (Ctrl+C, SIGTERM, closing the console), or the program that ran the launcher went away (end of stdin, closed stdout) | `"interrupted"` |
 
-When several apply, the strongest decides, in this order: 4, 3, 130, 1, 5, 0. A run that a signal interrupted exits with 130 even if it also found errors; a run that a command stopped exits with 1 if it found errors (a scenario step that failed, a participant that failed or did not end, a warning with `--strict`). A script that waited for 130 after its own `stop` command must now accept 0 (and 5 for a scenario).
+When several apply, the strongest decides, in this order: 4, 3, 130, 1, 5, 0. A run that a signal interrupted exits with 130 even if it also found errors; a run that a command stopped exits with 1 if it found errors (a scenario step that failed, a participant that failed or did not end, a warning with `--strict`). A `{"command":"stop"}` that comes only after the simulation has ended (while `run` waits for the participants to end) decides the result only if it cuts short the end of a required participant; otherwise the run ends as the simulation did, with 0 or 1. A script that waited for 130 after its own `stop` command must now accept 0 (and 5 for a scenario).
 
 ### How a run ended (`end`, `ok`, `message`)
 
@@ -1123,18 +1123,21 @@ The result says three things about the end, in the JSON of `run --json` and in t
 |---|---|
 | `end` | Why the run ended (the table below). `null` if nothing was started |
 | `ok` | `true` exactly when the exit code is 0 |
-| `message` | One English line for a person that says what the result is. It names what stopped the run by its kind (`by a stop request`, `by a signal`, `because its input closed`, `because its output closed`; the exact name is `interrupted_by`). For a failure, it ends with the whole message of the first error, which can be long |
+| `message` | One English line for a person that says what the result is. It names what stopped the run by its kind (`by a stop request`, `by a signal`, `because its input closed`, `because its output closed`; the exact name is `interrupted_by`). A failure comes first (`The run failed (it was stopped by a stop request): …`), and the line then ends with the whole message of the first error, which can be long. Participants ended by force are named at the end of a line that has no error |
 
 | `end` | Why the run ended | `result` |
 |---|---|---|
 | `"completed"` | It reached an end that was set: `stop_at_ms`, a participant ended the simulation, or the scenario was over | `"passed"`, or `"failed"` if errors were found |
-| `"stopped"` | A command stopped it (`{"command":"stop"}`, `Stop` of the Control API) | `"stopped"`; `"incomplete"` if its scenario did not get to its end; `"failed"` if errors were found |
-| `"interrupted"` | A signal or a console event, the end of stdin, or a closed stdout | `"interrupted"` |
+| `"stopped"` | A command stopped it (`{"command":"stop"}`, `Stop` of the Control API) before the simulation ended, or a `{"command":"stop"}` after the end cut short the end of a required participant | `"stopped"`; `"incomplete"` if its scenario did not get to its end; `"failed"` if errors were found |
+| `"interrupted"` | A signal or a console event, the end of stdin, or a closed stdout, before the simulation ended or while `run` waited for the participants to end on their own | `"interrupted"` |
 | `"failed"` | It could not start or go on: a participant or a bridge failed, `--timeout-ms` passed, the participants did not all join | `"failed"` |
 | `"setup_failed"` | The registry or the controller could not be set up | `"setup_failed"` |
 | `null` | Nothing was started | `"check_failed"`, `"unreadable"`, `"usage"` |
 
 - What asked first decides between `"stopped"` and `"interrupted"`: a Ctrl+C after a `stop` command is still the stop of that command. `interrupted_by` names what asked first.
+- A `{"command":"stop"}` that comes only after the simulation has ended (it reached `stop_at_ms`, a participant ended or failed it, the scenario was over), while `run` waits for the participants to end on their own, cuts that wait short. If a required participant was still running, the stop decided how it ended, and `end` is `"stopped"` (the result `"stopped"`, or `"failed"` with errors). If every required participant had ended by itself and only the wait for the others was cut short, `end` stays as the simulation ended (`"completed"` or `"failed"`), and the result follows from it (`"passed"` or `"failed"`). In both cases `interrupted_by` names the command, and the note `stopped` says that it cut the wait short. `Stop` of the Control API is accepted until `run` has taken the simulation's end and is refused after it; one accepted in the moment between changes nothing.
+- A stop request that comes later still changes neither `end` nor the result, and `interrupted_by` stays `null`: in the moment between the simulation's end and that wait, after `run` has asked the participants to stop (items 2 and 3 of [Stopping a run](#stopping-a-run); a first request there does not even cut the wait short, a second one does), while it waits for the participants you started yourself, or while it closes its own connection. This holds for a signal too: it exits with the result's code, not 130.
+- The stop request, what went wrong while the participants ended, and the result are told apart. What went wrong while they ended is a finding of its own, whatever asked: `did-not-end` (an error) for a participant that `run` waited for in full, `exit-code` (an error) for one that failed by itself, `ended-by-force` (a note, no error) for one killed because the wait was cut short. The result then follows from `end` and the errors, in the order of [Exit codes](#exit-codes).
 - A scenario that a stop or an interrupt cut short is `incomplete`, and the finding `scenario-incomplete` is then a note (it says where the scenario got to). When the run ended for another reason (a participant failed, `--timeout-ms`), the finding is an error, and the exit code is 1.
 - `message` is for showing, not for deciding: decide with `ok`, `result`, `end` and `scenario.status`.
 
@@ -1160,7 +1163,7 @@ One JSON object. The rules (key order, `null`, indentation, line breaks, how ver
 | `strict` | Whether `--strict` was given |
 | `errors`, `warnings`, `notes` | Counts for the check and the run together |
 | `simulation` | How the simulation ended (see the table below). `null` if nothing was started |
-| `interrupted_by` | What asked first to stop the run: a signal or a key (`"SIGINT"`, `"Ctrl+C"` and so on), or `"stop command"`, `"control server stop"`, `"end of input"`, `"output closed"`. Also set when `end` is `"stopped"`. `null` if nothing asked |
+| `interrupted_by` | What asked first to stop the run: a signal or a key (`"SIGINT"`, `"Ctrl+C"` and so on), or `"stop command"`, `"control server stop"`, `"end of input"`, `"output closed"`. Also set when `end` is `"stopped"`, and when a `stop` command came only while `run` waited for the participants to end on their own (then `end` may be how the simulation ended). `null` if nothing asked, or if the first request came later than that wait |
 | `registry_uri` | Where the run's registry listened, as the participants got it: with port 0 in the file, the port it took (`registry_uri` of `check` is as written). `null` if no registry was started |
 | `timing` | How time progressed (see the table below). `null` if nothing was started |
 | `participants[]` | Result per participant (see the table below), in configuration file order, including disabled participants; then the bridges of `--connect` |

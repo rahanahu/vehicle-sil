@@ -321,6 +321,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       stall
       stand_still
       stdin_ending
+      stdin_ending_optional
       stdin_eof
       stdin_killed
       stdin_stop
