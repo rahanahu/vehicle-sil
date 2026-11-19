@@ -13,4 +13,6 @@ add_library(vehicle_sil::control ALIAS vehicle_sil_control)
 set_target_properties(vehicle_sil_control PROPERTIES EXPORT_NAME control)
 target_include_directories(vehicle_sil_control PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(vehicle_sil_control PUBLIC vehicle_sil::sim_base)
+# Hub::write() and the agent's steps record into the profiling trace (docs/internals/trace.md).
+target_link_libraries(vehicle_sil_control PRIVATE vehicle_sil::trace)
 vehicle_sil_target_defaults(vehicle_sil_control)

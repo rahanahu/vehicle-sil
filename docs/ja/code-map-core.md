@@ -47,6 +47,16 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 
 LIN のテストは [バスのページの LIN 単体テスト](code-map-buses.md#lin-単体テスト) と [LIN の結合テスト](code-map-buses.md#linlin_cluster) を参照してください。
 
+### `trace`
+
+`vehicle_sil::trace` の単体テストです。`unit` ラベルも付きます。
+
+- トレースが無効の間は何も記録せず、何も確保しないこと（確保の数を数える専用の実行ファイル）
+- リングが新しい記録を残し、ほかを dropped として数えること
+- ファイルの Chrome Trace Event の形、スレッドごとのリング、`flush()` の後は記録しないこと
+
+`trace.boundary` は、`libs/trace` が SIL Kit のヘッダーを含まないことを確かめます。
+
 ## ディレクトリごとのコードとテスト
 
 ### `libs/core`
@@ -103,6 +113,18 @@ LIN のテストは [バスのページの LIN 単体テスト](code-map-buses.m
 
 - テスト: `--describe` の JSON（`tests/ecu`）とランチャーの JSON（`tests/launch`）を通して
 - `ctest -R`: `^ecu\.`、`^launch`
+
+### `libs/trace`
+
+プロファイリングのトレースです（ターゲット `vehicle_sil::trace`、内部用）。記録は `core`、`control`、`control_silkit`、`runner` にあり、各プロセスは終了時にファイルを書き、ランチャーはスレッドが閉じなかった実行で使う `std::_Exit` の前にも書きます。[internals/trace.md](internals/trace.md) を参照してください。
+
+| 名前 | 場所 |
+|---|---|
+| `Span`、`instant()`、`flow_out()`、`flow_in()`、`start()`、`flush()` | `vehicle_sil/trace/trace.hpp` |
+| 1 回の実行のファイルの要約 | `scripts/trace-report.py` |
+
+- テスト: `tests/trace`。実行全体のファイル: `launch_run.trace_files`（`tests/launch`）。要約: `tests/scripts/test_trace_report.py`
+- `ctest -R`: `^trace\.`、`^launch_run\.trace_files$`、`^scripts\.trace_report$`
 
 ## 依存の向き
 
@@ -170,7 +192,7 @@ flowchart TD
     ethernet_bridge --> eth_link_box
 ```
 
-SIL Kit を使わないのは `sim_base`、`step`、`can`、`eth`、`lin`、`control`、`j1939` とそのコンポーネント、`j1939_codec`、`ecu`、`local`、`testkit`、`spy`、`process`、`eth_link`、`signal`、`json` です。`signal` と `json` はヘッダーだけで、vehicle-sil のほかのライブラリも使いません（図にはありません）。
+SIL Kit を使わないのは `sim_base`、`step`、`can`、`eth`、`lin`、`control`、`j1939` とそのコンポーネント、`j1939_codec`、`ecu`、`local`、`testkit`、`spy`、`process`、`eth_link`、`signal`、`json`、`trace` です。`signal`、`json`、`trace` は vehicle-sil のほかのライブラリも使いません（図にはありません）。`signal` と `json` はヘッダーだけです。
 
 ### 基盤と SIL Kit の実装
 
@@ -203,6 +225,28 @@ flowchart TD
 ```
 
 ## 変更するときに一緒に直すもの
+
+### プロファイリングのトレースの記録
+
+変える場所:
+
+- `libs/core`、`libs/control`、`libs/control_silkit`、`libs/runner` の `trace::Span` と `trace::instant()` の呼び出し
+
+合わせて直すドキュメント:
+
+- [internals/trace.md](internals/trace.md) の「記録」
+
+合わせて直すコード:
+
+- 記録を読む場合は `scripts/trace-report.py`
+
+守ること:
+
+- [internals/trace.md](internals/trace.md) の「変更するときの決まり」: トレースが無効の間は確保、ロック、整形をしない
+
+テスト:
+
+- `tests/scripts/test_trace_report.py`、`launch_run.trace_files`
 
 ### SIL Kit の設定の既定
 

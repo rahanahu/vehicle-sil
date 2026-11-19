@@ -43,3 +43,5 @@ target_link_libraries(vehicle_sil_core PUBLIC vehicle_sil::sim_base)
 # Only src/bind_host.cpp includes vehicle_sil::step's headers (core/bind_host.hpp declares
 # step::Host ahead): its callers link vehicle_sil::step (or vehicle_sil::can) themselves.
 target_link_libraries(vehicle_sil_core PRIVATE vehicle_sil::step)
+# The steps, the hold and the gate record into the profiling trace (docs/internals/trace.md).
+target_link_libraries(vehicle_sil_core PRIVATE vehicle_sil::trace)

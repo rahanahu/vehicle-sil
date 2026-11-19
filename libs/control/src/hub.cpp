@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/control/hub.hpp"
 
+#include "vehicle_sil/trace/trace.hpp"
+
 #include <algorithm>
 #include <stdexcept>
 #include <string_view>
@@ -916,6 +918,8 @@ std::uint64_t Hub::write(OperationRequest request)
     {
         throw std::invalid_argument("Hub::write() needs at least one write");
     }
+    // The profiling trace (docs/internals/trace.md): from the request to the commands sent.
+    trace::Span traceWrite("hub.write", request.at ? to_ns(*request.at) : -1);
     Operation op;
     op.request = std::move(request);
     // Group by peer, keeping the order in which the peers and their writes appear. Done before
@@ -938,6 +942,7 @@ std::uint64_t Hub::write(OperationRequest request)
     std::unique_lock lock(mutex_);
     const auto seq = next_seq_++;
     op.seq = seq;
+    traceWrite.set_arg(seq);
     for (auto& t : op.targets)
     {
         t.command.seq = seq;

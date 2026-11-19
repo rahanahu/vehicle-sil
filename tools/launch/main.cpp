@@ -45,6 +45,7 @@
 #include "vehicle_sil/runner/stop_requests.hpp"
 #include "vehicle_sil/launch/test.hpp"
 #include "vehicle_sil/process/child_process.hpp"
+#include "vehicle_sil/trace/trace.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -373,12 +374,14 @@ void finish_threads()
 
 /// Ends the process with `code` now, when the result has been written: without the destructors of
 /// static objects and without unloading SIL Kit, which a thread of the run still uses
-/// (OutcomeClose::not_closed_ms). Nothing is left to flush: the result and every line on
+/// (OutcomeClose::not_closed_ms). Nothing else is left to flush: the result and every line on
 /// stderr are flushed where they are written, the events by their own thread before the result
-/// counts as written.
+/// counts as written; only the profiling trace, which waits for the process's end, is written here.
 [[noreturn]] void end_process_at_once(int code)
 {
     finish_threads();
+    // The profiling trace, if one is taken (docs/internals/trace.md): atexit does not run.
+    static_cast<void>(vehicle_sil::trace::flush());
 #ifdef _WIN32
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
 #endif

@@ -15,8 +15,9 @@ needs no C++ build:
            part that needs no launcher; CTest runs all of it, as schema.files_and_launcher)
   scripts  scripts/*.py --help, tests/scripts/test_run_gui.py (scripts/run-gui.py),
            tests/scripts/test_job_summary.py (scripts/job_summary.py), tests/scripts/test_check_docs.py
-           (scripts/check-docs.py), tests/scripts/test_verify.py (scripts/verify.py) and
-           tests/scripts/test_hotspots.py (scripts/hotspots.py)
+           (scripts/check-docs.py), tests/scripts/test_verify.py (scripts/verify.py),
+           tests/scripts/test_hotspots.py (scripts/hotspots.py) and tests/scripts/test_trace_report.py
+           (scripts/trace-report.py)
   control  generates the gRPC stubs of the Control API, imports the client and its tests, and runs
            `python -m vehicle_sil_control --help` and the examples of examples/launch_control with
            --help
@@ -221,7 +222,8 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
                     s.run([python, "tests/scripts/test_job_summary.py"]),
                     s.run([python, "tests/scripts/test_check_docs.py"]),
                     s.run([python, "tests/scripts/test_verify.py"]),
-                    s.run([python, "tests/scripts/test_hotspots.py"])])
+                    s.run([python, "tests/scripts/test_hotspots.py"]),
+                    s.run([python, "tests/scripts/test_trace_report.py"])])
 
     def control(s: Step) -> bool:
         if not s.run([python, "-m", "vehicle_sil_control.generate", "--out", str(stubs)]):

@@ -69,6 +69,7 @@ vehicle-sil/
 ├── libs/control/     vehicle_sil::control  Control Agent と Control Server の中核（Hub）、両者の間のメッセージのバイト列の形式。通信と SIL Kit に依存しない
 ├── libs/control_silkit/ vehicle_sil::control_silkit  Agent と Hub の間を SIL Kit の publish/subscribe で運ぶ層（AgentTransport、HubTransport）
 ├── libs/control_grpc/ vehicle_sil::control_grpc  Control API の gRPC の層（クライアント向けの ControlServer。VEHICLE_SIL_BUILD_CONTROL_SERVER のときだけ）
+├── libs/trace/       vehicle_sil::trace  ステップと書き込みのプロファイリングのトレース。VEHICLE_SIL_TRACE のときに取る（標準ライブラリーだけ。内部用）
 ├── proto/            Control API の定義（vehicle_sil/control/v1/control.proto）
 ├── python/vehicle_sil_control/ Control API の Python クライアントと CLI、`vehicle_sil_launch run --control` を子プロセスで動かす助け
 ├── bridges/common/  ブリッジの実行ファイルが共有する run_bridge()（止め方、監視のループ、止める順、終了コード。内部用）
@@ -122,6 +123,7 @@ vehicle-sil/
 | ターゲット | 区分 | 内容 | 主な型と機能 | 詳しいドキュメント |
 |---|---|---|---|---|
 | `vehicle_sil::sim_base`（ヘッダーのみ） | 基盤 | 仮想時間の基本の型と関数と、registry の URI がループバックのアドレスかの判定で、SIL Kit なしで使います。 | `SimTime`、`SimDuration`、`StepInbox`、`periodic()`、`once_at()`、`is_loopback_registry_uri()` | — |
+| `vehicle_sil::trace`（内部用） | — | プロファイリングのトレースです。ステップと書き込みの記録をスレッドごとのリングに持ち、`VEHICLE_SIL_TRACE` にディレクトリーがあれば、プロセスごとに Chrome Trace Event の JSON で書きます。無効のとき、記録 1 つの費用は atomic の読みと分岐です。標準ライブラリーだけを使います。 | `trace::Span`、`trace::instant()`、`trace::flow_out()`、`trace::flow_in()`、`trace::flush()`。要約は `scripts/trace-report.py` | [internals/trace.md](internals/trace.md) |
 | `vehicle_sil::core` | 基盤 | SIL Kit の participant、lifecycle、他参加者の状態、仮想時間のステップを RAII で管理し、プロトコルに依存しません。 | `vehicle_sil::ParticipantRuntime`、`SimulationController`（仮想時間のシミュレーションの開始と停止、一時停止、ステップ実行、速度）、`TickScheduler`、`RealTimePacer`、`vehicle_sil::bind_host()`（`step::Host` を participant のステップにつなぐ）、`sim_base` の型（`SimTime`、`StepInbox`） | [internals/core.md](internals/core.md) |
 | `vehicle_sil::step` | 基盤 | 1 つの参加者のプロトコル処理をステップで実行する仕組みで、バスの種類にも SIL Kit にも依存しません。 | `Member`（ステップの参加者）、`Host`（`Member` を段の順に実行する）、`StepDriver`（仮想時間）、`RealTimeDriver`（実時間）、時計（`SteadyRealTimeClock`、テスト用の `ManualRealTimeClock`）、`TimeDomain`（時間の領域） | [internals/can.md](internals/can.md) のホストと駆動の節 |
 | `vehicle_sil::lin` | 基盤 | LIN の Master と Slave、バスへのインターフェース、プロセス内の仮想 LIN バスで、仮想時間で使い、SIL Kit にも J1939 にも依存しません（ふつうは `Ecu::lin_master()` と `Ecu::lin_slave()` から使います）。 | `vehicle_sil::lin::LinMaster`（スケジュールテーブル、Master が送るフレーム、マスターリクエスト、go-to-sleep と wakeup）、`vehicle_sil::lin::LinSlave`（ステップで設定した値で応答、スレーブレスポンス、Master のフレームの受信、休止と起床）、`LinPort`、`VirtualLinBus`、`LinScheduleTable`、`validate_schedule()` | [internals/lin.md](internals/lin.md) |
@@ -318,6 +320,7 @@ vehicle-sil を変更するときや、仕様と制限を確認するときに�
 | [internals/execution.md](internals/execution.md) | `Ecu`、`Simulation`、`Peer`、`LocalBench` とテストキット（1 ステップの順序、所有と破棄、バスからの切断） |
 | [internals/virtual-time.md](internals/virtual-time.md) | 共通仮想時間: 進み方、実時間との結合、時間ゲート（一時停止、ステップ実行、速度、遅れ）、受信の順序、固定周期 `tick()` の統合 |
 | [internals/control.md](internals/control.md) | Control API の内部: Control Agent、Hub、SIL Kit の上のトランスポート、Control Server、ランチャーの Control Server、シナリオ |
+| [internals/trace.md](internals/trace.md) | プロファイリングのトレース: 取り方、`scripts/trace-report.py` の要約の読み方、記録、時計とほかの道具、費用 |
 | [bridge-contract.md](bridge-contract.md) | ランチャーとすべてのブリッジの取り決め: 引数、`--describe`、デバイスの一覧、終了コード、ブリッジが出す行、デバイスの印、自作のブリッジ |
 | [bridges.md](bridges.md) | Vector XL CAN Bridge: 最初の接続、転送の仕様、バスの監視、スレッド、検証の範囲 |
 | [ethernet-bridge.md](ethernet-bridge.md) | イーサネットのブリッジ: 最初の接続、バックエンド（`tap`、`packet`、`pcap`、`npcap`）と権限、外部のインターフェース、転送、フィルター、ループの防止、統計と監視の行、引数、確認した範囲 |

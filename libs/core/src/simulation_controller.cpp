@@ -3,6 +3,7 @@
 
 #include "deadline_waiter.hpp"
 #include "time_gate.hpp"
+#include "vehicle_sil/trace/trace.hpp"
 
 #include <silkit/experimental/participant/ParticipantExtensions.hpp>
 #include <silkit/experimental/services/orchestration/ISystemController.hpp>
@@ -216,6 +217,7 @@ bool SimulationController::hold_step(SimTime now, SimDuration step)
 void SimulationController::run_gate()
 {
     auto& g = *gate_;
+    trace::set_thread_name("gate");
     std::unique_lock lock(g.mutex);
     while (!g.quit)
     {
@@ -232,8 +234,12 @@ void SimulationController::run_gate()
             continue;
         }
         g.model.released(wall);
+        const auto vt = to_ns(g.model.now());
         lock.unlock(); // release_step() takes the runtime's hold lock, which hold_step() holds while taking ours
-        runtime_->release_step();
+        {
+            const trace::Span traceRelease("gate.release", vt);
+            runtime_->release_step();
+        }
         lock.lock();
     }
 }

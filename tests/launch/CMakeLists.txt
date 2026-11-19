@@ -388,6 +388,17 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}/scenario_guide
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/scenario_guide.cmake)
   set_tests_properties(launch_run.scenario_guide PROPERTIES LABELS "integration;launch" TIMEOUT 300)
+  # The profiling trace of a whole run (docs/internals/trace.md): the files of the launcher and the two
+  # ECUs, written at exit, with their records; scripts/trace-report.py summarises them when there is a
+  # Python.
+  add_test(NAME launch_run.trace_files
+           COMMAND ${CMAKE_COMMAND} -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch>
+                   -DECU_MAIN=$<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
+                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}/trace_files
+                   -DSCRIPT=${PROJECT_SOURCE_DIR}/scripts/trace-report.py
+                   -DPYTHON=${VEHICLE_SIL_J1939_CODEGEN_PYTHON}
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/trace_files.cmake)
+  set_tests_properties(launch_run.trace_files PROPERTIES LABELS "integration;launch" TIMEOUT 300)
   # The example of the docs with a participant started by hand: its registry is at 8500, the port
   # of such a run, which the docs show. Builds in other working trees on this machine take turns.
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher

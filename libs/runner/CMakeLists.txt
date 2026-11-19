@@ -44,6 +44,8 @@ target_link_libraries(vehicle_sil_runner PRIVATE vehicle_sil::ecu)
 # controller's participant. Only the .cpp files and the private headers (src/) include them; the
 # public headers keep them behind RunnerImpl (runner/detail/runner.hpp).
 target_link_libraries(vehicle_sil_runner PRIVATE vehicle_sil::core vehicle_sil::control_silkit)
+# The scenario's ticks and writes record into the profiling trace (docs/internals/trace.md).
+target_link_libraries(vehicle_sil_runner PRIVATE vehicle_sil::trace)
 # This computer's addresses (host_addresses.cpp): GetAdaptersAddresses on Windows.
 if(WIN32)
   target_link_libraries(vehicle_sil_runner PRIVATE iphlpapi ws2_32)

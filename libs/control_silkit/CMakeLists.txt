@@ -10,4 +10,6 @@ add_library(vehicle_sil::control_silkit ALIAS vehicle_sil_control_silkit)
 set_target_properties(vehicle_sil_control_silkit PROPERTIES EXPORT_NAME control_silkit)
 target_include_directories(vehicle_sil_control_silkit PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(vehicle_sil_control_silkit PUBLIC vehicle_sil::control vehicle_sil::core SilKit::SilKit)
+# The commands, answers and steps it carries record into the profiling trace (docs/internals/trace.md).
+target_link_libraries(vehicle_sil_control_silkit PRIVATE vehicle_sil::trace)
 vehicle_sil_target_defaults(vehicle_sil_control_silkit)

@@ -6,6 +6,7 @@
 # classification of other work (it makes git repositories and work trees; not run on Windows).
 # .github/workflows/ci.yml: the job `all checks` waits for every other job.
 # scripts/check-commits.py: the titles and files that CI checks of a pull request (--message, --changed).
+# scripts/trace-report.py: the critical path, the hold and the round trips of made-up traces, and its exit codes.
 if(VEHICLE_SIL_J1939_CODEGEN_PYTHON)
   add_test(NAME scripts.run_gui
            COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_run_gui.py)
@@ -25,6 +26,9 @@ if(VEHICLE_SIL_J1939_CODEGEN_PYTHON)
   add_test(NAME scripts.verify
            COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_verify.py)
   set_tests_properties(scripts.verify PROPERTIES LABELS unit TIMEOUT 120)
+  add_test(NAME scripts.trace_report
+           COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_trace_report.py)
+  set_tests_properties(scripts.trace_report PROPERTIES LABELS unit TIMEOUT 120)
   if(NOT WIN32)
     add_test(NAME scripts.hotspots
              COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_hotspots.py)
