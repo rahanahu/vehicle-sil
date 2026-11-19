@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "run_scenario.hpp"
 
+#include "vehicle_sil/trace/trace.hpp"
+
 #include <silkit/services/orchestration/string_utils.hpp>
 
 #include <algorithm>
@@ -34,6 +36,8 @@ public:
 
     std::uint64_t write(std::vector<control::PeerWrite> writes, SimTime at) override
     {
+        // The profiling trace (docs/internals/trace.md): the whole round trip of one write.
+        trace::Span traceWrite("scenario.write", to_ns(at));
         control::OperationRequest request;
         request.writes = std::move(writes);
         request.at = at;
@@ -42,6 +46,7 @@ public:
         // makes the GUI server's exclusion stop working without an error; control_server.launcher guards it.
         request.client = "scenario";
         const std::uint64_t seq = hub_.write(std::move(request));
+        traceWrite.set_arg(seq);
         // No limit in real time: an agent that is gone is settled by the hub, and a run that
         // ends gives up.
         while (!hub_.wait_queued(seq, std::chrono::milliseconds(20)) && hub_.operation(seq) && !(give_up && give_up()))
@@ -84,7 +89,10 @@ void RunScenario::note_step(const scenario::ScenarioStepRun& step)
 
 void RunScenario::drain()
 {
-    for (auto& [participant, sample] : samples_.take())
+    trace::Span traceDrain("scenario.drain");
+    auto taken = samples_.take();
+    traceDrain.set_arg(taken.size());
+    for (auto& [participant, sample] : taken)
     {
         // RunSamples gives only the samples of the control agents begin() named.
         engine_->sample(*places_[participant], std::move(sample));
@@ -195,6 +203,7 @@ void RunScenario::start(SimulationController& controller, RunOutcome& outcome)
 
 void RunScenario::loop(SimulationController& controller)
 {
+    trace::set_thread_name("scenario");
     try
     {
         while (!quit_.load())
@@ -206,6 +215,8 @@ void RunScenario::loop(SimulationController& controller)
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 continue;
             }
+            trace::instant("scenario.woken", to_ns(*p));
+            const trace::Span traceTick("scenario.tick", to_ns(*p));
             drain();
             if (engine_->tick(*p))
             {

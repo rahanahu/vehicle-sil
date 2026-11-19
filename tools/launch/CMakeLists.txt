@@ -5,6 +5,8 @@ if(NOT TARGET vehicle_sil::launch)
 endif()
 add_executable(vehicle_sil_launch main.cpp)
 target_link_libraries(vehicle_sil_launch PRIVATE vehicle_sil::launch vehicle_sil::process vehicle_sil_cli)
+# end_process_at_once() writes the profiling trace before std::_Exit, which runs no atexit (docs/internals/trace.md).
+target_link_libraries(vehicle_sil_launch PRIVATE vehicle_sil::trace)
 # run --control: the Control Server (gRPC) is in vehicle_sil::launch, which makes it for the run; the
 # tool only knows whether the build has it (the usage error without it, the features of `version`).
 # Only with VEHICLE_SIL_BUILD_CONTROL_SERVER.

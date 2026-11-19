@@ -45,6 +45,7 @@
 #include "vehicle_sil/runner/stop_requests.hpp"
 #include "vehicle_sil/launch/test.hpp"
 #include "vehicle_sil/process/child_process.hpp"
+#include "vehicle_sil/trace/trace.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -373,12 +374,15 @@ void finish_threads()
 
 /// Ends the process with `code` now, when the result has been written: without the destructors of
 /// static objects and without unloading SIL Kit, which a thread of the run still uses
-/// (OutcomeClose::not_closed_ms). Nothing is left to flush: the result and every line on
+/// (OutcomeClose::not_closed_ms). Nothing else is left to flush: the result and every line on
 /// stderr are flushed where they are written, the events by their own thread before the result
-/// counts as written.
+/// counts as written; only the profiling trace, which waits for the process's end, is written here.
 [[noreturn]] void end_process_at_once(int code)
 {
     finish_threads();
+    // The profiling trace, if one is taken (docs/internals/trace.md): atexit does not run. Silent:
+    // nothing may read stderr any more.
+    static_cast<void>(vehicle_sil::trace::flush(vehicle_sil::trace::Errors::Silent));
 #ifdef _WIN32
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
 #endif
@@ -1483,6 +1487,13 @@ int test(const cli::Args& args)
     options.observers.write_line = write_stderr_line;
     options.lent.stops = &g_stops;
     options.observers.interrupt_name = interrupt_name;
+    if (vehicle_sil::trace::enabled())
+    {
+        // One file holds the runs of every scenario, their virtual times from 0 each, and the rings of
+        // the threads of every run stay until the end (docs/internals/trace.md).
+        write_stderr_line("vehicle-sil trace: test runs every scenario in this one process, so its trace mixes them and "
+                          "scripts/trace-report.py refuses it. Trace one scenario with `run --scenario` instead.");
+    }
     const launch::TestReport report = launch::test_file(options);
     if (report.usage)
     {

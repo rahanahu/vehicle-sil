@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/control/agent.hpp"
 
+#include "vehicle_sil/trace/trace.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <exception>
@@ -391,6 +393,8 @@ void Agent::push_result(CommandResult result)
 
 void Agent::on_step_begin(SimTime now)
 {
+    // The profiling trace (docs/internals/trace.md): the commands applied in this step.
+    trace::Span traceBegin("agent.step_begin", to_ns(now));
     if (!completed_.load(std::memory_order_acquire))
     {
         // A driver with a completion function completes the schema before its first step;
@@ -421,6 +425,7 @@ void Agent::on_step_begin(SimTime now)
             if (late && command.late == LatePolicy::Reject)
             {
                 stats_.late.fetch_add(1, std::memory_order_relaxed);
+                trace::instant("agent.late", to_ns(now), command.seq);
                 push_result({command.seq, CommandStatus::Late, std::nullopt, true, "its time had passed", 0U});
                 continue;
             }
@@ -461,8 +466,10 @@ void Agent::on_step_begin(SimTime now)
             std::swap(a, b);
         }
     }
+    traceBegin.set_arg(due_.size());
     for (auto& due : due_)
     {
+        trace::instant("agent.apply", to_ns(now), due.command.seq);
         apply(due.command, now, due.late);
     }
     due_.clear();
@@ -511,6 +518,7 @@ void Agent::apply(Pending& command, SimTime now, bool late)
 
 void Agent::on_step_end(SimTime now)
 {
+    trace::Span traceEnd("agent.step_end", to_ns(now));
     const Snapshot* sampled = nullptr;
     if (!next_sample_ || now >= *next_sample_)
     {
@@ -522,6 +530,7 @@ void Agent::on_step_end(SimTime now)
             next_sample_ = SimTime{} + options_.sample_period * periods;
         }
     }
+    traceEnd.set_arg(sampled != nullptr ? 1 : 0);
     if (step_sink_)
     {
         step_sink_(now, sampled);

@@ -4,6 +4,7 @@
 #include "participant_create.hpp"
 #include "participant_runtime_checks.hpp"
 #include "participant_runtime_probe.hpp"
+#include "vehicle_sil/trace/trace.hpp"
 
 #include <silkit/services/orchestration/all.hpp>
 #include <silkit/services/orchestration/string_utils.hpp>
@@ -180,6 +181,7 @@ ParticipantRuntime::ParticipantRuntime(ParticipantRuntimeOptions options) :
     {
         throw std::invalid_argument("participant_name must not be empty");
     }
+    trace::set_process_name(options_.participant_name);
     // Validate before CreateParticipant(): once handlers that capture `this` are registered, a
     // throwing constructor would destroy members the SIL Kit threads may still use.
     if (options_.virtual_time)
@@ -868,6 +870,10 @@ bool ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nano
 {
     const auto wallStart = pacer_ ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const SimTime time = from_silkit_time(now);
+    // The profiling trace (docs/internals/trace.md): the whole step on SIL Kit's thread, to the
+    // hold's decision; its argument says whether the step was held.
+    trace::Span traceStep("step", now.count());
+    trace::set_thread_name("silkit");
     now_ns_.store(now.count(), std::memory_order_release);
     step_entered_.store(true, std::memory_order_release);
     if (!stop_delivered_.load(std::memory_order_acquire))
@@ -903,6 +909,7 @@ bool ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nano
             else
             {
                 const Running running(handler_running_);
+                const trace::Span traceHandler("step.handler", now.count());
                 ok = run_step_handler(time, duration);
             }
             if (!stop_delivered_.load(std::memory_order_acquire))
@@ -942,6 +949,7 @@ bool ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nano
         hold = false; // a failing hold must not stall the simulation
     }
     held_ = hold;
+    traceStep.set_arg(hold ? 1 : 0);
     return !hold;
 }
 
@@ -991,6 +999,10 @@ void ParticipantRuntime::release_step() noexcept
     if (!std::exchange(held_, false))
     {
         return;
+    }
+    if (trace::enabled())
+    {
+        trace::instant("step.release", now_ns_.load(std::memory_order_acquire));
     }
     try
     {

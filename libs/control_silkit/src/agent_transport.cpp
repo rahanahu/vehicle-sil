@@ -3,6 +3,8 @@
 
 #include "topics.hpp"
 
+#include "vehicle_sil/trace/trace.hpp"
+
 #include <silkit/services/pubsub/all.hpp>
 
 #include <atomic>
@@ -114,6 +116,8 @@ struct AgentTransport::State
     /// The step thread, at the end of a step.
     void on_step(SimTime now, const control::Snapshot* sample)
     {
+        // The profiling trace (docs/internals/trace.md): the step message; 1 with a sample.
+        const trace::Span tracePublish("agent.publish", to_ns(now), sample != nullptr ? 1 : 0);
         const std::lock_guard lock(step_mutex);
         if (step_closed)
         {
@@ -149,6 +153,8 @@ struct AgentTransport::State
     /// SIL Kit's thread, outside the steps.
     void on_command(SilKit::Util::Span<const std::uint8_t> data)
     {
+        // Renamed agent.receive_command below for a command to this agent.
+        trace::Span traceCommand("agent.receive_other");
         const std::lock_guard lock(command_mutex);
         const std::span<const std::uint8_t> bytes(data.data(), data.size());
         // Whom it is for, before anything else is read: every agent receives every command.
@@ -195,6 +201,9 @@ struct AgentTransport::State
             return;
         }
         n_commands.fetch_add(1, std::memory_order_relaxed);
+        traceCommand.set_name("agent.receive_command");
+        traceCommand.set_arg(command.command.seq);
+        trace::flow_in("command", trace::command_flow(command.command.seq, session));
         wire::SubmittedMessage answer;
         answer.session = session;
         answer.seq = command.command.seq;
@@ -207,6 +216,7 @@ struct AgentTransport::State
             answer.result = control::SubmitResult{control::SubmitStatus::Invalid, e.what()};
         }
         wire::encode_submitted(answer, submitted_bytes);
+        trace::flow_out("answer", trace::answer_flow(answer.seq, session));
         submitted->Publish(detail::span_of(submitted_bytes));
     }
 };

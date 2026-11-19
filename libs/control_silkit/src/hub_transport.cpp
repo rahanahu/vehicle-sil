@@ -4,6 +4,7 @@
 #include "topics.hpp"
 
 #include "vehicle_sil/control/wire.hpp"
+#include "vehicle_sil/trace/trace.hpp"
 
 #include <silkit/services/pubsub/all.hpp>
 
@@ -336,6 +337,9 @@ struct HubTransport::State
 
     void on_step(const pubsub::DataMessageEvent& event)
     {
+        // The profiling trace (docs/internals/trace.md): an agent's step message (results, events,
+        // the sample) on SIL Kit's thread.
+        trace::Span traceStep("hub.receive_step", -1, event.data.size());
         const Handling handling(*this, event.data.size());
         if (closed)
         {
@@ -346,6 +350,7 @@ struct HubTransport::State
             n_undecodable.fetch_add(1, std::memory_order_relaxed);
             return;
         }
+        traceStep.set_vt(to_ns(step.time));
         const auto link = find(step.session);
         if (!link)
         {
@@ -470,6 +475,7 @@ struct HubTransport::State
 
     void on_submitted(const pubsub::DataMessageEvent& event)
     {
+        trace::Span traceAnswer("hub.receive_answer");
         const Handling handling(*this, event.data.size());
         if (closed)
         {
@@ -511,6 +517,8 @@ struct HubTransport::State
             return;
         }
         n_messages.fetch_add(1, std::memory_order_relaxed);
+        traceAnswer.set_arg(submitted.seq);
+        trace::flow_in("answer", trace::answer_flow(submitted.seq, submitted.session));
         hub->agent_submitted(link->connection, submitted.seq, submitted.result);
     }
 
@@ -562,10 +570,12 @@ bool HubTransport::State::Link::send(const control::Command& command)
     {
         return false;
     }
+    const trace::Span traceSend("hub.send", command.at ? to_ns(*command.at) : -1, command.seq);
     if (!wire::encode_command(wire::CommandMessage{session, command}, sender->bytes))
     {
         return false; // too large for one message: not sent
     }
+    trace::flow_out("command", trace::command_flow(command.seq, session));
     sender->commands->Publish(detail::span_of(sender->bytes));
     return true;
 }

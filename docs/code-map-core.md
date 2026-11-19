@@ -47,6 +47,16 @@ With an in-process registry, they check:
 
 For LIN tests, see [LIN unit tests](code-map-buses.md#lin-unit-tests) and [LIN integration tests](code-map-buses.md#lin-lin_cluster).
 
+### `trace`
+
+Unit tests of `vehicle_sil::trace`. The `unit` label is also set.
+
+- Nothing is recorded or allocated while the trace is off (an executable of its own counts the allocations)
+- A ring keeps the newest records and counts the others as dropped
+- The file's Chrome Trace Event shape, one ring per thread, nothing recorded after `flush()`
+
+`trace.boundary` checks that `libs/trace` includes no SIL Kit header.
+
 ## Code and tests by directory
 
 ### `libs/core`
@@ -103,6 +113,18 @@ The JSON writer that the output of `--describe` and the JSON of `vehicle_sil_lau
 
 - Tests: through the JSON of `--describe` (`tests/ecu`) and of the launcher (`tests/launch`)
 - `ctest -R`: `^ecu\.`, `^launch`
+
+### `libs/trace`
+
+The profiling trace (target `vehicle_sil::trace`, internal). Its records are in `core`, `control`, `control_silkit` and `runner`; every process writes its file at exit, and the launcher also before `std::_Exit` (a run whose thread did not close). See [internals/trace.md](internals/trace.md).
+
+| Name | Location |
+|---|---|
+| `Span`, `instant()`, `flow_out()`, `flow_in()`, `start()`, `flush()` | `vehicle_sil/trace/trace.hpp` |
+| The summary of a run's files | `scripts/trace-report.py` |
+
+- Tests: `tests/trace`; the files of a whole run: `launch_run.trace_files` (`tests/launch`); the summary: `tests/scripts/test_trace_report.py`
+- `ctest -R`: `^trace\.`, `^launch_run\.trace_files$`, `^scripts\.trace_report$`
 
 ## Dependency direction
 
@@ -170,7 +192,7 @@ flowchart TD
     ethernet_bridge --> eth_link_box
 ```
 
-The targets that do not use SIL Kit are `sim_base`, `step`, `can`, `eth`, `lin`, `control`, `j1939` and its protocol parts, `j1939_codec`, `ecu`, `local`, `testkit`, `spy`, `process`, `eth_link`, `signal` and `json`. `signal` and `json` are header-only and use no other vehicle-sil library either (they are not in the diagram).
+The targets that do not use SIL Kit are `sim_base`, `step`, `can`, `eth`, `lin`, `control`, `j1939` and its protocol parts, `j1939_codec`, `ecu`, `local`, `testkit`, `spy`, `process`, `eth_link`, `signal`, `json` and `trace`. `signal`, `json` and `trace` use no other vehicle-sil library either (they are not in the diagram); `signal` and `json` are header-only.
 
 ### Foundation and SIL Kit implementations
 
@@ -203,6 +225,28 @@ flowchart TD
 ```
 
 ## What to update together
+
+### Records of the profiling trace
+
+Where to change:
+
+- The `trace::Span` and `trace::instant()` calls in `libs/core`, `libs/control`, `libs/control_silkit` and `libs/runner`
+
+Documentation to update:
+
+- "[Records](internals/trace.md#records)" in [internals/trace.md](internals/trace.md)
+
+Code to update with it:
+
+- `scripts/trace-report.py`, when it reads the record
+
+Rules to keep:
+
+- "[Rules for changes](internals/trace.md#rules-for-changes)" in [internals/trace.md](internals/trace.md): nothing allocated, locked or formatted while the trace is off
+
+Tests:
+
+- `tests/scripts/test_trace_report.py`, `launch_run.trace_files`
 
 ### SIL Kit configuration defaults
 
