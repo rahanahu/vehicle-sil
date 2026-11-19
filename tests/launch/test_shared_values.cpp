@@ -26,8 +26,8 @@ using namespace vehicle_sil;
 static_assert(cli::kExitOk == ecu_executable::kExitOk && cli::kExitFailed == ecu_executable::kExitFailed &&
               cli::kExitSetupFailed == ecu_executable::kExitSetupFailed && cli::kExitUsage == ecu_executable::kExitUsage);
 static_assert(launch::kExitInterrupted == ecu_executable::kExitInterrupted);
-static_assert(cli::Args::kMaxMillis == static_cast<std::uint64_t>(launch::kMaxMillis));
-static_assert(launch::kMaxMillis == ecu_executable::kMaxMillis);
+static_assert(cli::Args::kMaxMillis == static_cast<std::uint64_t>(config::kMaxMillis));
+static_assert(config::kMaxMillis == ecu_executable::kMaxMillis);
 
 namespace {
 
@@ -125,20 +125,20 @@ void same(double actual, double expected, const std::string& where, const std::s
 
 TEST_CASE(the_gui_takes_the_launchers_limits)
 {
-    const auto max_millis = static_cast<double>(launch::kMaxMillis);
+    const auto max_millis = static_cast<double>(config::kMaxMillis);
     // The GUI server checks what it passes to the launcher (launcher.py) and tells the pages
     // (api/app's limits).
     const std::string launcher = "gui/server/src/vehicle_sil_gui/launcher.py";
-    same(value_in(launcher, "\nSPEED_MIN =", "\n#"), launch::kMinSpeed, launcher + " SPEED_MIN", "launch::kMinSpeed");
-    same(value_in(launcher, "\nSPEED_MAX =", "\n#"), launch::kMaxSpeed, launcher + " SPEED_MAX", "launch::kMaxSpeed");
+    same(value_in(launcher, "\nSPEED_MIN =", "\n#"), config::kMinSpeed, launcher + " SPEED_MIN", "launch::kMinSpeed");
+    same(value_in(launcher, "\nSPEED_MAX =", "\n#"), config::kMaxSpeed, launcher + " SPEED_MAX", "launch::kMaxSpeed");
     same(value_in(launcher, "\nSTEP_MS_MAX =", "\n#"), max_millis, launcher + " STEP_MS_MAX", "launch::kMaxMillis");
     const std::string variables = "gui/server/src/vehicle_sil_gui/variables.py";
     same(value_in(variables, "\nAT_MS_MAX =", "\n#"), max_millis, variables + " AT_MS_MAX", "launch::kMaxMillis");
     // The client's values before the server's answer, and those it takes from an older server.
     const std::string client = "gui/client/src/client.ts";
     const std::string limits = "export const DEFAULT_LIMITS";
-    same(value_in(client, "speed_min:", ",\n", limits), launch::kMinSpeed, client + " speed_min", "launch::kMinSpeed");
-    same(value_in(client, "speed_max:", ",\n", limits), launch::kMaxSpeed, client + " speed_max", "launch::kMaxSpeed");
+    same(value_in(client, "speed_min:", ",\n", limits), config::kMinSpeed, client + " speed_min", "launch::kMinSpeed");
+    same(value_in(client, "speed_max:", ",\n", limits), config::kMaxSpeed, client + " speed_max", "launch::kMaxSpeed");
     same(value_in(client, "step_ms_max:", ",\n", limits), max_millis, client + " step_ms_max", "launch::kMaxMillis");
     same(value_in(client, "write_at_ms_max:", ",\n", limits), max_millis, client + " write_at_ms_max", "launch::kMaxMillis");
     const std::string protocol = "gui/client/src/protocol/server.ts";
@@ -148,8 +148,8 @@ TEST_CASE(the_gui_takes_the_launchers_limits)
          "launch::kMaxMillis");
     // The speed picker's range before the page has the server's limits.
     const std::string picker = "gui/web/src/app/run/speed-picker.ts";
-    same(value_in(picker, "readonly min = input(", ")"), launch::kMinSpeed, picker + " min", "launch::kMinSpeed");
-    same(value_in(picker, "readonly max = input(", ")"), launch::kMaxSpeed, picker + " max", "launch::kMaxSpeed");
+    same(value_in(picker, "readonly min = input(", ")"), config::kMinSpeed, picker + " min", "launch::kMinSpeed");
+    same(value_in(picker, "readonly max = input(", ")"), config::kMaxSpeed, picker + " max", "launch::kMaxSpeed");
 }
 
 TEST_CASE(the_gui_reads_the_launchers_manual_stays_line)

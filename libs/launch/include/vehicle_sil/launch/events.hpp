@@ -230,7 +230,7 @@ public:
     /// outside[].to_outside and from_outside). Not dropped, unlike "log".
     void outside(const std::string& network, std::uint64_t to_outside, std::uint64_t from_outside) override;
     /// One of the run's findings, with the fields of the results' "findings".
-    void finding(const std::string& file, const Finding& finding) override;
+    void finding(const std::string& file, const config::Finding& finding) override;
     /// The simulation's virtual time as the controller sees it, and how it goes.
     void time(const TimeEvent& time) override;
     /// A command from standard input (`source` "stdin"), its end ("eof"), or a call of a control

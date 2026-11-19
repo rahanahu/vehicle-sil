@@ -29,12 +29,12 @@ enum class CommandKind {
 /// (check and run list what --variant takes).
 [[nodiscard]] std::string
 format_usage_json(CommandKind command, const std::string &file,
-                  const std::vector<Finding> &errors,
+                  const std::vector<config::Finding> &errors,
                   const std::vector<std::string> &variants = {});
 
 /// The same as the report of `run --events`, whose result event says "usage".
 [[nodiscard]] RunReport
-usage_run_report(const std::string &file, const std::vector<Finding> &errors,
+usage_run_report(const std::string &file, const std::vector<config::Finding> &errors,
                  const std::vector<std::string> &variants = {});
 
 /// The JSON of an error of the launcher itself (finding code "internal"), in

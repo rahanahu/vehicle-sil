@@ -82,23 +82,23 @@ inline constexpr std::size_t kMaxListDepth = 64;
 /// list with the code tool-cannot-start (it could not be started, or Windows did not start it
 /// for a DLL), tool-timeout (it did not end within the run's time limit) or tool-bad-output (it
 /// wrote no list that the launcher reads; the message has its line that says why).
-[[nodiscard]] TargetList interpret_list(NetworkKind kind, std::string_view tool, const DescribeRun& run);
+[[nodiscard]] TargetList interpret_list(NetworkKind kind, std::string_view tool, const config::DescribeRun& run);
 
 /// Why `--connect <network>=<value>` cannot connect `network` (of `kind`) at `target`, or empty:
 /// the network's name has '=' or starts with "--" (the command line cannot name it), or
 /// target_problem() of its value (on `os`).
 [[nodiscard]] std::optional<std::string> refused_target(std::string_view network, NetworkKind kind,
-                                                        const ListedTarget& target, Os os = kThisOs);
+                                                        const ListedTarget& target, config::Os os = config::kThisOs);
 
 /// Makes each usable target of `list` that refused_target() refuses unusable, with that reason
 /// (ListedTarget::refused): so the text and the JSON say the same, and a usable target's value is
 /// what --connect takes.
-void refuse_targets(std::string_view network, NetworkKind kind, TargetList& list, Os os = kThisOs);
+void refuse_targets(std::string_view network, NetworkKind kind, TargetList& list, config::Os os = config::kThisOs);
 
 /// Gives each target of the list of `backend` the value that --connect takes: the name the bridge
 /// listed, with "<backend>:" before it unless that is what --connect reads without it (the
 /// default backend, and a name that does not read as "none" or as another backend's prefix).
-void prefix_targets(NetworkKind kind, std::string_view backend, TargetList& list, Os os = kThisOs);
+void prefix_targets(NetworkKind kind, std::string_view backend, TargetList& list, config::Os os = config::kThisOs);
 
 /// One network of the file and where it can be connected.
 struct NetworkConnections
@@ -154,7 +154,7 @@ struct ConnectionsReport
     std::optional<ConnectionsRequest> request{};
     /// Why the file could not be read, the usage errors, or the errors of a file that was read
     /// (as check reports them; the networks listed are those it could read).
-    std::vector<Finding> findings{};
+    std::vector<config::Finding> findings{};
 
     /// A bridge that is there could not make its list (any error but tool-missing), a network's
     /// kind could not be read, or the file has an error.
@@ -172,9 +172,9 @@ struct ConnectionsReport
 /// a bridge that is not found has the failed list tool-missing. Each list goes through
 /// prefix_targets() and refuse_targets(). With `only`, just the networks named in it (no bridge is
 /// asked for the others).
-[[nodiscard]] std::vector<NetworkConnections> connections_of(const SimulationConfig& config,
+[[nodiscard]] std::vector<NetworkConnections> connections_of(const config::SimulationConfig& config,
                                                              const std::optional<std::string>& network,
-                                                             const ConnectTools& tools,
+                                                             const config::ConnectTools& tools,
                                                              const std::vector<std::string>* only = nullptr);
 
 /// Whether each of `requests` (a target that is not none, for a network that `listed` has) can be
@@ -182,10 +182,10 @@ struct ConnectionsReport
 /// read_connect_target() on `os`, so `packet:enp3s0` and `enp3s0` are one target. A request for a
 /// network that `listed` does not have is left out. Pure.
 [[nodiscard]] std::vector<RequestedTarget> check_requested(const std::vector<NetworkConnections>& listed,
-                                                           std::span<const ConnectRequest> requests, Os os = kThisOs);
+                                                           std::span<const config::ConnectRequest> requests, config::Os os = config::kThisOs);
 
 /// The usage error of --network `network` if `config` has no such network, or empty.
-[[nodiscard]] std::optional<Finding> unknown_network(const SimulationConfig& config, std::string_view network);
+[[nodiscard]] std::optional<config::Finding> unknown_network(const config::SimulationConfig& config, std::string_view network);
 
 /// What `connections` gets from the command line.
 struct ConnectionsOptions

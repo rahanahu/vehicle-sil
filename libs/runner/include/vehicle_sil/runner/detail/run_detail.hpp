@@ -37,7 +37,7 @@ namespace detail {
 /// bridge.<network> (role: bridge, required: false, its network's line), with a
 /// ParticipantResult that is NotChecked and has the bridge's executable. Without --connect the copy
 /// is the same as `check`.
-[[nodiscard]] CheckReport with_bridges(const CheckReport& check);
+[[nodiscard]] config::CheckReport with_bridges(const config::CheckReport& check);
 
 /// The --start-timeout-ms the launcher gives an ecu_main executable: longer than the launcher's own
 /// wait for the start, so that the launcher, not the ECU, decides that the start failed and names
@@ -46,7 +46,7 @@ namespace detail {
 /// `stands_still_before_start`, stands still before the first step until a command (--start-paused
 /// with a control server): either may take any time, and the ECU is not Running until it is over.
 /// The launcher's own limits (before and after the wait) still end a start that does not come.
-[[nodiscard]] std::int64_t ecu_start_timeout_ms(const SimulationConfig& config, bool stands_still_before_start);
+[[nodiscard]] std::int64_t ecu_start_timeout_ms(const config::SimulationConfig& config, bool stands_still_before_start);
 
 /// The arguments that run starts the participant with, after its executable; the command to start
 /// it by hand (manual) and the events show the same ones. An ecu_main executable (describe:
@@ -55,7 +55,7 @@ namespace detail {
 /// map_network_arguments() and j1939_node_arguments() of its entry. Any other: its command's
 /// arguments with the placeholders replaced, then the same two (a --map-network or --j1939-node
 /// after what the file wrote, never inside it).
-[[nodiscard]] std::vector<std::string> participant_arguments(const SimulationConfig& config, const ParticipantConfig& participant,
+[[nodiscard]] std::vector<std::string> participant_arguments(const config::SimulationConfig& config, const config::ParticipantConfig& participant,
                                                              const std::string& registry_uri,
                                                              bool stands_still_before_start);
 

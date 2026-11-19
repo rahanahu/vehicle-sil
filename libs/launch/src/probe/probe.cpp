@@ -65,13 +65,13 @@ std::string command_text(const std::vector<std::string>& words)
 
 } // namespace
 
-DescribeRun run_tool(const std::filesystem::path& executable, const std::string& shown,
+config::DescribeRun run_tool(const std::filesystem::path& executable, const std::string& shown,
                      const std::vector<std::string>& arguments, std::chrono::milliseconds timeout,
                      const std::filesystem::path& directory)
 {
     std::vector<std::string> words{shown};
     words.insert(words.end(), arguments.begin(), arguments.end());
-    DescribeRun run;
+    config::DescribeRun run;
     run.command_text = command_text(words);
     run.timeout = timeout;
     try
@@ -312,14 +312,14 @@ std::optional<std::filesystem::path> find_tool(std::string_view name, const std:
     return detail::find_on_path(name);
 }
 
-ConnectTools bridge_tools(const std::filesystem::path& tool_directory, std::chrono::milliseconds timeout)
+config::ConnectTools bridge_tools(const std::filesystem::path& tool_directory, std::chrono::milliseconds timeout)
 {
-    ConnectTools tools;
+    config::ConnectTools tools;
     tools.launcher_dir = tool_directory;
     tools.find = [tool_directory](std::string_view name) { return find_tool(name, tool_directory); };
-    // In the bridge's own directory, not the configuration file's (bridge_working_directory()).
+    // In the bridge's own directory, not the configuration file's (config::bridge_working_directory()).
     tools.describe = [timeout](const std::filesystem::path& tool, const std::vector<std::string>& arguments) {
-        return run_tool(tool, process::utf8_from_path(tool.stem()), arguments, timeout, bridge_working_directory(tool));
+        return run_tool(tool, process::utf8_from_path(tool.stem()), arguments, timeout, config::bridge_working_directory(tool));
     };
     return tools;
 }

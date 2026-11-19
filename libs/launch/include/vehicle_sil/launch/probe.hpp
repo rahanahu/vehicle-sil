@@ -25,7 +25,7 @@ namespace vehicle_sil::launch {
 /// One run of `executable` with `arguments` (process::run_captured(): at most 1 MiB kept of each
 /// output) in `directory` (empty: the launcher's), killed after `timeout`; shown in messages as
 /// `shown` followed by the arguments. A participant's --describe, a bridge's --describe or list.
-[[nodiscard]] DescribeRun run_tool(const std::filesystem::path& executable, const std::string& shown,
+[[nodiscard]] config::DescribeRun run_tool(const std::filesystem::path& executable, const std::string& shown,
                                    const std::vector<std::string>& arguments, std::chrono::milliseconds timeout,
                                    const std::filesystem::path& directory);
 
@@ -87,7 +87,7 @@ namespace detail {
 /// The ConnectTools of this computer: find_tool() in `tool_directory`, and run_tool() of the tool
 /// found, shown by its name without the directory and the extension, in bridge_working_directory(),
 /// with `timeout`.
-[[nodiscard]] ConnectTools bridge_tools(const std::filesystem::path& tool_directory, std::chrono::milliseconds timeout);
+[[nodiscard]] config::ConnectTools bridge_tools(const std::filesystem::path& tool_directory, std::chrono::milliseconds timeout);
 
 /// The ScenarioContext::read_file of the scenario file `scenario`: a path is from the directory
 /// the file is in (a UTF-8 path, also on Windows). A file larger than 16 MiB, a directory and a

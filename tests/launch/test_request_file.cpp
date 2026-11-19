@@ -21,7 +21,8 @@
 namespace {
 
 using namespace vehicle_sil::launch;
-using vehicle_sil::launch::test::check_text;
+using namespace vehicle_sil::config;
+using vehicle_sil::config::test::check_text;
 
 template <typename... Strings>
 std::vector<std::string> list(const Strings&... items)
@@ -547,7 +548,7 @@ TEST_CASE(a_network_of_the_request_files_connect_that_the_configuration_lacks_is
     // In a check: the note, no error, and the network does not lock the time; the same request
     // on the command line is the error connect-network.
     const std::filesystem::path dir = project("unused_network");
-    const vehicle_sil::launch::test::InDirectory there(dir / "project");
+    const vehicle_sil::config::test::InDirectory there(dir / "project");
     const CheckOptions fileOnly{.params_for_many = false, .file_only = true, .fastest_by_default = false};
     RunRequest given;
     given.host.config = "sim.yaml";
@@ -574,7 +575,7 @@ TEST_CASE(the_scenario_of_a_request_file_is_read_from_the_directory_of_the_confi
 {
     const std::filesystem::path dir = project("scenario_base");
     // Standing somewhere else: the configuration is named from here, the scenario from the configuration.
-    const vehicle_sil::launch::test::InDirectory there(dir / "elsewhere");
+    const vehicle_sil::config::test::InDirectory there(dir / "elsewhere");
     RunRequest given;
     given.host.config = "../project/sim.yaml";
     const RequestFile bench = *read_request_file(with("\"scenario\": \"scenarios/drive.yaml\""), "bench.json").file;
@@ -607,7 +608,7 @@ TEST_CASE(the_scenario_of_a_request_file_is_read_from_the_directory_of_the_confi
 TEST_CASE(a_parameter_of_the_request_file_that_its_own_scenario_lacks_is_a_usage_error)
 {
     const std::filesystem::path dir = project("params_own_scenario");
-    const vehicle_sil::launch::test::InDirectory there(dir / "project");
+    const vehicle_sil::config::test::InDirectory there(dir / "project");
     // The scenario has the parameter "level"; the file writes it wrong.
     std::ofstream(dir / "project" / "scenarios" / "drive.yaml", std::ios::binary)
         << "vehicle_sil_scenario: 1\nparams: { level: 1 }\nsteps:\n  - at_ms: 0\n    set: { A.level: \"${level}\" }\n";

@@ -71,7 +71,7 @@ struct TrafficPlan
 /// The plan of a checked configuration, as a run has it (RunPlan::config(), check and members):
 /// `check.participants` in the order of config.participants, and one of `members` for each
 /// participant of `config` (it says which are bridges of --connect).
-[[nodiscard]] TrafficPlan traffic_plan(const SimulationConfig& config, const CheckReport& check,
+[[nodiscard]] TrafficPlan traffic_plan(const config::SimulationConfig& config, const config::CheckReport& check,
                                        const std::vector<RunMember>& members);
 
 /// The latest samples of one participant: enough of them to say, once the run's end E is known,

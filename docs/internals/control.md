@@ -412,7 +412,7 @@ Writes:
 - The converted `Command` is sent only to that incarnation (after a restart, it is dropped).
 - The operation record (`request`) keeps the names and values that the client wrote.
 
-The rules (types, ranges, conflicts) live in one place, `MappedSchema::make()`, and the check (`launch::seen_variables()`) applies the same function to the `--describe` list. To add a kind of mapping, change:
+The rules (types, ranges, conflicts) live in one place, `MappedSchema::make()`, and the check (`config::seen_variables()`) applies the same function to the `--describe` list. To add a kind of mapping, change:
 
 - The members of `VariableMapping`
 - `MappedSchema::make()` and the conversion

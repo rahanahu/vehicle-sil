@@ -27,8 +27,9 @@
 
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
+using namespace vehicle_sil::config;
 using namespace std::chrono_literals;
-using vehicle_sil::launch::test::check_text;
+using vehicle_sil::config::test::check_text;
 using launch::detail::RunSamples;
 using launch::detail::TrafficColumns;
 using launch::detail::TrafficLatest;
@@ -547,7 +548,7 @@ TEST_CASE(a_described_participants_networks_are_under_the_simulations_names)
     CHECK(plan.participants.at(1).in_run && !plan.participants.at(1).described && plan.participants.at(1).on.empty());
     CHECK(!plan.participants.at(2).in_run);
     // A bridge of --connect (the plan's mark) carries the frames of the others: known, on no network of its own.
-    members[1].outside = launch::NetworkOutside{"VehicleCAN", "vehicle_sil_can_bridge", "/t/can", "can0", "bridge.VehicleCAN", std::nullopt};
+    members[1].outside = vehicle_sil::config::NetworkOutside{"VehicleCAN", "vehicle_sil_can_bridge", "/t/can", "can0", "bridge.VehicleCAN", std::nullopt};
     const TrafficPlan connected = launch::detail::traffic_plan(config, check, members);
     CHECK(connected.participants.at(1).described && connected.participants.at(1).on.empty());
     CHECK(connected.participants.at(0).described && !connected.participants.at(0).on.empty());

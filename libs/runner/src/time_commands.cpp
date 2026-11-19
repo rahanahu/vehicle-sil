@@ -474,7 +474,7 @@ std::optional<Decision> TimeCommands::always_refused(Entry entry, Operation oper
     return launch::always_refused(state_->scenario, entry, operation);
 }
 
-void TimeCommands::set_time_lock(const TimeLock& lock)
+void TimeCommands::set_time_lock(const config::TimeLock& lock)
 {
     State& s = *state_;
     const std::lock_guard guard(s.mutex);

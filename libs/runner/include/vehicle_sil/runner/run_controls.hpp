@@ -194,7 +194,7 @@ public:
     /// Whether this run is connected outside the simulation and keeps to real time
     /// (TimeCommands::set_time_lock()): once, right after the configuration has been read. Until
     /// then the time commands wait undecided; this decides them, each with its command event.
-    void set_time_lock(const TimeLock& lock) { time_.set_time_lock(lock); }
+    void set_time_lock(const config::TimeLock& lock) { time_.set_time_lock(lock); }
 
     /// The phase the run entered last; Phase::Checking before it has said any.
     [[nodiscard]] Phase phase() const noexcept { return phase_.load(); }

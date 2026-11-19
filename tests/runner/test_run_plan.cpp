@@ -21,6 +21,7 @@
 namespace {
 
 using namespace vehicle_sil::launch;
+using namespace vehicle_sil::config;
 using Speed = std::optional<double>;
 
 /// The check of a run as plan_run() takes it: the configuration's check, and the scenario that was

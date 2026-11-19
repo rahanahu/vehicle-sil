@@ -33,7 +33,7 @@ using vehicle_sil::json::JsonWriter;
 class TargetReader
 {
 public:
-    explicit TargetReader(const detail::YamlDocument& doc) : tree_(doc.tree()), root_(doc.root()) {}
+    explicit TargetReader(const config::detail::YamlDocument& doc) : tree_(doc.tree()), root_(doc.root()) {}
 
     TargetList read() const
     {
@@ -116,7 +116,7 @@ public:
     }
 
 private:
-    [[noreturn]] static void fail(const std::string& what) { throw DescriptionError(what); }
+    [[noreturn]] static void fail(const std::string& what) { throw config::DescriptionError(what); }
 
     ryml::id_type find(ryml::id_type node, const char* key) const
     {
@@ -131,7 +131,7 @@ private:
 
     std::int64_t integer(ryml::id_type node, const std::string& what) const
     {
-        const std::string value = is_scalar(node) && !tree_.is_val_quoted(node) ? detail::to_string(tree_.val(node)) : "";
+        const std::string value = is_scalar(node) && !tree_.is_val_quoted(node) ? config::detail::to_string(tree_.val(node)) : "";
         std::int64_t out = 0;
         const char* end = value.data() + value.size();
         const auto [ptr, ec] = std::from_chars(value.data(), end, out);
@@ -148,12 +148,12 @@ private:
         {
             fail(what + " is not a string");
         }
-        return detail::to_string(tree_.val(node));
+        return config::detail::to_string(tree_.val(node));
     }
 
     bool boolean(ryml::id_type node, const std::string& what) const
     {
-        const std::string value = is_scalar(node) && !tree_.is_val_quoted(node) ? detail::to_string(tree_.val(node)) : "";
+        const std::string value = is_scalar(node) && !tree_.is_val_quoted(node) ? config::detail::to_string(tree_.val(node)) : "";
         if (value != "true" && value != "false")
         {
             fail(what + " is not true or false");
@@ -185,7 +185,7 @@ void write_node(JsonWriter& w, std::string_view key, const ryml::Tree& tree, rym
         w.begin_object(key);
         for (auto child = tree.first_child(node); child != ryml::NONE; child = tree.next_sibling(child))
         {
-            const std::string name = detail::to_string(tree.key(child));
+            const std::string name = config::detail::to_string(tree.key(child));
             if (!name.empty()) // "" would start an element of an array
             {
                 write_node(w, name, tree, child);
@@ -204,7 +204,7 @@ void write_node(JsonWriter& w, std::string_view key, const ryml::Tree& tree, rym
         w.end_array();
         return;
     }
-    const std::string value = tree.has_val(node) ? detail::to_string(tree.val(node)) : std::string{};
+    const std::string value = tree.has_val(node) ? config::detail::to_string(tree.val(node)) : std::string{};
     if (tree.has_val(node) && tree.is_val_quoted(node))
     {
         w.string(key, value);
@@ -244,7 +244,7 @@ void write_list(JsonWriter& w, std::string_view key, const ryml::Tree& tree, rym
     w.begin_object(key);
     for (auto child = tree.first_child(node); child != ryml::NONE; child = tree.next_sibling(child))
     {
-        const std::string name = detail::to_string(tree.key(child));
+        const std::string name = config::detail::to_string(tree.key(child));
         if (name.empty())
         {
             continue;
@@ -270,7 +270,7 @@ void write_list(JsonWriter& w, std::string_view key, const ryml::Tree& tree, rym
             bool reason = false;
             for (auto member = tree.first_child(item); member != ryml::NONE; member = tree.next_sibling(member))
             {
-                const std::string m = detail::to_string(tree.key(member));
+                const std::string m = config::detail::to_string(tree.key(member));
                 if (m == "value")
                 {
                     // What --connect takes: with the backend's prefix where the target needs one.
@@ -317,7 +317,7 @@ std::string shown(std::string_view text)
     for (std::size_t i = 0; i < text.size(); ++i)
     {
         const auto byte = static_cast<unsigned char>(text[i]);
-        if (const std::size_t control = utf8 ? detail::unicode_control_at(text.substr(i)) : 0; control != 0)
+        if (const std::size_t control = utf8 ? config::detail::unicode_control_at(text.substr(i)) : 0; control != 0)
         {
             // U+0080..U+009F: C2 xx; U+202A..U+202E, U+2066..U+2069: E2 80|81 xx.
             const unsigned code = control == 2 ? static_cast<unsigned char>(text[i + 1])
@@ -367,7 +367,7 @@ std::string last_line(const std::string& text)
 {
     std::istringstream in(text);
     std::string line;
-    detail::LastLine last;
+    config::detail::LastLine last;
     while (std::getline(in, line))
     {
         last.add(line);
@@ -483,26 +483,26 @@ TargetList read_target_list(std::string_view json)
     const auto first = json.find_first_not_of(" \t\r\n");
     if (first == std::string_view::npos)
     {
-        throw DescriptionError("the output is empty");
+        throw config::DescriptionError("the output is empty");
     }
     if (json[first] != '{')
     {
-        throw DescriptionError("the output is not a JSON object");
+        throw config::DescriptionError("the output is not a JSON object");
     }
     try
     {
-        const detail::YamlDocument doc(json);
+        const config::detail::YamlDocument doc(json);
         if (doc.root() != ryml::NONE && depth_of(doc.tree(), doc.root()) > kMaxListDepth)
         {
-            throw DescriptionError("it is nested deeper than " + std::to_string(kMaxListDepth) + " levels");
+            throw config::DescriptionError("it is nested deeper than " + std::to_string(kMaxListDepth) + " levels");
         }
         TargetList out = TargetReader(doc).read();
         out.json = std::string(json);
         return out;
     }
-    catch (const detail::YamlSyntaxError& e)
+    catch (const config::detail::YamlSyntaxError& e)
     {
-        throw DescriptionError("the output is not valid JSON (line " + std::to_string(e.line()) + ": " + e.message() + ")");
+        throw config::DescriptionError("the output is not valid JSON (line " + std::to_string(e.line()) + ": " + e.message() + ")");
     }
 }
 
@@ -531,7 +531,7 @@ TargetList failed_list(std::string_view tool, std::string_view code, std::string
     return out;
 }
 
-TargetList interpret_list(NetworkKind kind, std::string_view tool, const DescribeRun& run)
+TargetList interpret_list(NetworkKind kind, std::string_view tool, const config::DescribeRun& run)
 {
     if (run.start_error)
     {
@@ -545,16 +545,16 @@ TargetList interpret_list(NetworkKind kind, std::string_view tool, const Describ
                            run.command_text + " did not end within " + std::to_string(run.timeout.count()) +
                                " ms, so it was stopped: run that command yourself to see what it waits for");
     }
-    if (const std::string dll = run.signal ? std::string{} : detail::dll_start_failure(*run.exit_code); !dll.empty())
+    if (const std::string dll = run.signal ? std::string{} : config::detail::dll_start_failure(*run.exit_code); !dll.empty())
     {
         // Windows did not start it; its standard error is empty.
-        return failed_list(tool, "tool-cannot-start", run.command_text + " " + dll + ": " + detail::bridge_dll_fix(kind));
+        return failed_list(tool, "tool-cannot-start", run.command_text + " " + dll + ": " + config::detail::bridge_dll_fix(kind));
     }
     try
     {
         return read_target_list(run.standard_output);
     }
-    catch (const DescriptionError& e)
+    catch (const config::DescriptionError& e)
     {
         const std::string line = last_line(run.standard_error);
         return failed_list(tool, "tool-bad-output",
@@ -567,20 +567,20 @@ TargetList interpret_list(NetworkKind kind, std::string_view tool, const Describ
     }
 }
 
-std::optional<std::string> refused_target(std::string_view network, NetworkKind kind, const ListedTarget& target, Os os)
+std::optional<std::string> refused_target(std::string_view network, NetworkKind kind, const ListedTarget& target, config::Os os)
 {
     if (std::optional<std::string> problem = network_problem(network))
     {
         return problem;
     }
-    if (std::optional<std::string> problem = target_problem(kind, target.value, os))
+    if (std::optional<std::string> problem = config::target_problem(kind, target.value, os))
     {
         return "--connect does not take it: " + *problem;
     }
     return std::nullopt;
 }
 
-void refuse_targets(std::string_view network, NetworkKind kind, TargetList& list, Os os)
+void refuse_targets(std::string_view network, NetworkKind kind, TargetList& list, config::Os os)
 {
     for (ListedTarget& target : list.targets)
     {
@@ -597,11 +597,11 @@ void refuse_targets(std::string_view network, NetworkKind kind, TargetList& list
     }
 }
 
-void prefix_targets(NetworkKind kind, std::string_view backend, TargetList& list, Os os)
+void prefix_targets(NetworkKind kind, std::string_view backend, TargetList& list, config::Os os)
 {
     for (ListedTarget& target : list.targets)
     {
-        const ConnectTarget read = read_connect_target(kind, target.value, os);
+        const config::ConnectTarget read = config::read_connect_target(kind, target.value, os);
         if (read.none || read.prefixed || read.backend != backend)
         {
             target.value = std::string(backend) + ":" + target.value;
@@ -609,10 +609,10 @@ void prefix_targets(NetworkKind kind, std::string_view backend, TargetList& list
     }
 }
 
-std::optional<Finding> unknown_network(const SimulationConfig& config, std::string_view network)
+std::optional<config::Finding> unknown_network(const config::SimulationConfig& config, std::string_view network)
 {
     std::vector<std::string> names;
-    for (const NetworkConfig& n : config.networks)
+    for (const config::NetworkConfig& n : config.networks)
     {
         if (n.name == network)
         {
@@ -621,24 +621,24 @@ std::optional<Finding> unknown_network(const SimulationConfig& config, std::stri
         names.push_back(n.name);
     }
     std::string message = "--network names the network '" + std::string(network) + "', which the file does not have";
-    if (const std::string close = detail::closest(network, names); !close.empty())
+    if (const std::string close = config::detail::closest(network, names); !close.empty())
     {
-        message += ": did you mean '" + close + "'? (the networks: " + detail::join(names) + ")";
+        message += ": did you mean '" + close + "'? (the networks: " + config::detail::join(names) + ")";
     }
     else
     {
-        message += names.empty() ? std::string(": the file has no networks") : ": the networks are " + detail::join(names);
+        message += names.empty() ? std::string(": the file has no networks") : ": the networks are " + config::detail::join(names);
     }
-    return Finding{Severity::Error, "usage", std::move(message), 0, "", ""};
+    return config::Finding{config::Severity::Error, "usage", std::move(message), 0, "", ""};
 }
 
-std::vector<NetworkConnections> connections_of(const SimulationConfig& config, const std::optional<std::string>& network,
-                                               const ConnectTools& tools, const std::vector<std::string>* only)
+std::vector<NetworkConnections> connections_of(const config::SimulationConfig& config, const std::optional<std::string>& network,
+                                               const config::ConnectTools& tools, const std::vector<std::string>* only)
 {
     // Each bridge once for each backend: where it is, and its list.
     std::map<std::string, std::pair<std::filesystem::path, TargetList>, std::less<>> asked;
     std::vector<NetworkConnections> out;
-    for (const NetworkConfig& n : config.networks)
+    for (const config::NetworkConfig& n : config.networks)
     {
         if ((network && n.name != *network) ||
             (only && std::find(only->begin(), only->end(), n.name) == only->end()))
@@ -653,15 +653,15 @@ std::vector<NetworkConnections> connections_of(const SimulationConfig& config, c
             continue;
         }
         entry.kind = n.kind;
-        const std::vector<const ConnectBackend*> backends = listed_backends(n.kind, tools.os);
+        const std::vector<const config::ConnectBackend*> backends = config::listed_backends(n.kind, tools.os);
         if (backends.empty())
         {
             // No bridge for the kind (LIN): SIL Kit only.
-            entry.no_bridge = no_bridge_here(n.kind, {}, tools.os).value_or("");
+            entry.no_bridge = config::no_bridge_here(n.kind, {}, tools.os).value_or("");
             out.push_back(std::move(entry));
             continue;
         }
-        for (const ConnectBackend* backend : backends)
+        for (const config::ConnectBackend* backend : backends)
         {
             const std::string tool(backend->tool);
             const std::string key = tool + " " + std::string(backend->name);
@@ -672,7 +672,7 @@ std::vector<NetworkConnections> connections_of(const SimulationConfig& config, c
                 TargetList list =
                     path ? interpret_list(n.kind, tool, tools.describe(*path, list_arguments(n.kind, backend->name)))
                          : failed_list(tool, "tool-missing",
-                                       tool + " is " + tool_not_found(tools.launcher_dir) + ": " + tool_missing_fix(tool));
+                                       tool + " is " + config::tool_not_found(tools.launcher_dir) + ": " + config::tool_missing_fix(tool));
                 it = asked.emplace(key, std::make_pair(path.value_or(std::filesystem::path{}), std::move(list))).first;
             }
             NetworkConnections one = entry;
@@ -690,16 +690,16 @@ std::vector<NetworkConnections> connections_of(const SimulationConfig& config, c
 
 namespace {
 
-RequestedTarget requested_bad(const ConnectRequest& request, std::string code, std::string reason)
+RequestedTarget requested_bad(const config::ConnectRequest& request, std::string code, std::string reason)
 {
     return RequestedTarget{request.network, request.target, false, std::move(code), std::move(reason)};
 }
 
 /// The part of a target that names the device, for comparing two targets of one backend.
-std::string device_name(NetworkKind kind, std::string_view selector, Os os)
+std::string device_name(NetworkKind kind, std::string_view selector, config::Os os)
 {
     std::string out(selector);
-    if (kind == NetworkKind::Ethernet && os == Os::Windows)
+    if (kind == NetworkKind::Ethernet && os == config::Os::Windows)
     {
         for (char& c : out)
         {
@@ -709,7 +709,7 @@ std::string device_name(NetworkKind kind, std::string_view selector, Os os)
     return out;
 }
 
-RequestedTarget check_one(const std::vector<NetworkConnections>& entries, const ConnectRequest& request, Os os)
+RequestedTarget check_one(const std::vector<NetworkConnections>& entries, const config::ConnectRequest& request, config::Os os)
 {
     const std::string what = request.network + "=" + request.target;
     const NetworkConnections& first = entries.front();
@@ -721,17 +721,17 @@ RequestedTarget check_one(const std::vector<NetworkConnections>& entries, const 
                                  "(vehicle_sil_launch check says what is wrong)");
     }
     const NetworkKind kind = *first.kind;
-    if (const std::optional<std::string> none = no_bridge_here(kind, {}, os); none && listed_backends(kind, os).empty())
+    if (const std::optional<std::string> none = config::no_bridge_here(kind, {}, os); none && config::listed_backends(kind, os).empty())
     {
         return requested_bad(request, "target-bad",
                              "no target can be connected for " + request.network + " (" + *none +
                                  "): take it out of the request file, or give none");
     }
-    if (const std::optional<std::string> problem = target_problem(kind, request.target, os))
+    if (const std::optional<std::string> problem = config::target_problem(kind, request.target, os))
     {
         return requested_bad(request, "target-bad", *problem + ": fix the target of " + request.network + " in the request file");
     }
-    const ConnectTarget wanted = read_connect_target(kind, request.target, os);
+    const config::ConnectTarget wanted = config::read_connect_target(kind, request.target, os);
     const NetworkConnections* entry = nullptr;
     std::string listed;
     for (const NetworkConnections& one : entries)
@@ -761,7 +761,7 @@ RequestedTarget check_one(const std::vector<NetworkConnections>& entries, const 
     const std::string name = device_name(kind, wanted.selector, os);
     for (const ListedTarget& target : list.targets)
     {
-        const ConnectTarget read = read_connect_target(kind, target.value, os);
+        const config::ConnectTarget read = config::read_connect_target(kind, target.value, os);
         if (read.backend != wanted.backend || device_name(kind, read.selector, os) != name)
         {
             continue;
@@ -783,12 +783,12 @@ RequestedTarget check_one(const std::vector<NetworkConnections>& entries, const 
 } // namespace
 
 std::vector<RequestedTarget> check_requested(const std::vector<NetworkConnections>& listed,
-                                             std::span<const ConnectRequest> requests, Os os)
+                                             std::span<const config::ConnectRequest> requests, config::Os os)
 {
     std::vector<RequestedTarget> out;
-    for (const ConnectRequest& request : requests)
+    for (const config::ConnectRequest& request : requests)
     {
-        if (request.target == kNoTarget)
+        if (request.target == config::kNoTarget)
         {
             continue;
         }
@@ -811,11 +811,11 @@ ConnectionsReport list_connections(const std::filesystem::path& path, const std:
     std::string text;
     if (const std::string problem = read_config_file(path, text); !problem.empty())
     {
-        report.findings.push_back(Finding{Severity::Error, "file", problem, 0, "", ""});
+        report.findings.push_back(config::Finding{config::Severity::Error, "file", problem, 0, "", ""});
         return report;
     }
     // No variant: every variant has the networks of the common part.
-    ConfigRead read = read_config(text, {});
+    config::ConfigRead read = config::read_config(text, {});
     if (!read.config)
     {
         report.findings = std::move(read.findings);
@@ -824,32 +824,32 @@ ConnectionsReport list_connections(const std::filesystem::path& path, const std:
     report.readable = true;
     if (options.network)
     {
-        if (std::optional<Finding> unknown = unknown_network(*read.config, *options.network))
+        if (std::optional<config::Finding> unknown = unknown_network(*read.config, *options.network))
         {
             report.usage = true;
             report.findings.push_back(std::move(*unknown));
             return report;
         }
     }
-    const ConnectTools tools = bridge_tools(options.tool_directory, options.list_timeout);
-    std::vector<ConnectRequest> requested;
+    const config::ConnectTools tools = bridge_tools(options.tool_directory, options.list_timeout);
+    std::vector<config::ConnectRequest> requested;
     std::vector<std::string> only;
     if (options.request)
     {
         // Only the file's own "connect" counts (no --connect here), cut to this configuration.
         std::vector<std::string> from_file;
-        const std::vector<ConnectRequest> merged = merge_connect({}, options.request->intent.connect, &from_file);
-        RequestOrigin origin;
+        const std::vector<config::ConnectRequest> merged = merge_connect({}, options.request->intent.connect, &from_file);
+        config::RequestOrigin origin;
         origin.file = options.request->shown;
         origin.connected = std::move(from_file);
-        ConfigConnect counted = connect_for_config(*read.config, merged, origin);
+        config::ConfigConnect counted = config::connect_for_config(*read.config, merged, origin);
         requested = std::move(counted.connect);
-        for (Finding& note : counted.notes)
+        for (config::Finding& note : counted.notes)
         {
             report.findings.push_back(std::move(note));
         }
         // The bridges of the networks the file connects only: no other bridge is started.
-        for (const ConnectRequest& r : requested)
+        for (const config::ConnectRequest& r : requested)
         {
             only.push_back(r.network);
         }
@@ -866,13 +866,13 @@ ConnectionsReport list_connections(const std::filesystem::path& path, const std:
     report.per_network = connections_of(*read.config, options.network, tools, options.request ? &only : nullptr);
     if (options.request)
     {
-        std::erase_if(requested, [&](const ConnectRequest& r) { return options.network && r.network != *options.network; });
+        std::erase_if(requested, [&](const config::ConnectRequest& r) { return options.network && r.network != *options.network; });
         report.request = ConnectionsRequest{options.request->shown, check_requested(report.per_network, requested)};
     }
     // The file's errors, as check reports them: a network with an error may be missing above.
-    for (Finding& finding : read.findings)
+    for (config::Finding& finding : read.findings)
     {
-        if (finding.severity == Severity::Error)
+        if (finding.severity == config::Severity::Error)
         {
             report.findings.push_back(std::move(finding));
         }
@@ -888,7 +888,7 @@ bool ConnectionsReport::incomplete() const
                            return !n.kind ||
                                   (n.list && !n.list->error_code.empty() && n.list->error_code != "tool-missing");
                        }) ||
-           std::any_of(findings.begin(), findings.end(), [](const Finding& f) { return f.severity == Severity::Error; });
+           std::any_of(findings.begin(), findings.end(), [](const config::Finding& f) { return f.severity == config::Severity::Error; });
 }
 
 bool ConnectionsReport::request_unusable() const
@@ -1013,7 +1013,7 @@ std::string format_connections_text(const ConnectionsReport& report)
     {
         // The file's errors: what check says of it too (and the notes about the request file).
         out += "\n" + detail::findings_text(report.file, report.findings);
-        if (std::any_of(report.findings.begin(), report.findings.end(), [](const Finding& f) { return f.severity == Severity::Error; }))
+        if (std::any_of(report.findings.begin(), report.findings.end(), [](const config::Finding& f) { return f.severity == config::Severity::Error; }))
         {
             out += "the file has errors: the list above has the networks that could be read\n";
         }
@@ -1074,14 +1074,14 @@ std::string format_connections_json(const ConnectionsReport& report)
         {
             try
             {
-                const detail::YamlDocument doc(network.list->json);
+                const config::detail::YamlDocument doc(network.list->json);
                 if (const ryml::id_type root = doc.root(); root != ryml::NONE && doc.tree().is_map(root))
                 {
                     write_list(w, "list", doc.tree(), root, *network.list);
                     written = true;
                 }
             }
-            catch (const detail::YamlSyntaxError&)
+            catch (const config::detail::YamlSyntaxError&)
             {
                 // read_target_list() and failed_list() give JSON only.
             }

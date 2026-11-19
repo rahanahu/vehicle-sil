@@ -25,7 +25,7 @@ namespace orch = SilKit::Services::Orchestration;
     std::vector<std::string> names = controller.required_participants();
     for (std::size_t i = 0; i < ctx.config.participants.size(); ++i)
     {
-        const ParticipantConfig& p = ctx.config.participants[i];
+        const config::ParticipantConfig& p = ctx.config.participants[i];
         if (p.enabled && ctx.plan.members[i].outside)
         {
             names.push_back(p.name);
@@ -37,7 +37,7 @@ namespace orch = SilKit::Services::Orchestration;
         if (has_finished(status))
         {
             const bool manual = std::any_of(ctx.config.participants.begin(), ctx.config.participants.end(),
-                                            [&name](const ParticipantConfig& p) { return p.manual && p.name == name; });
+                                            [&name](const config::ParticipantConfig& p) { return p.manual && p.name == name; });
             return "participant '" + name + "' left the simulation before it started (state " +
                    std::string(orch::to_string(*status.state)) + ")" +
                    (manual ? "; you started it yourself (manual), and it cannot join this run again: to start it "
@@ -117,7 +117,7 @@ void RunStartWindow::run(control_silkit::HubTransport& transport, SimulationCont
             // From here on, the participants have start_timeout_ms to get to their first step
             // (with a participant started by hand: from when those are ready, as before the hold).
             shared_.limit.end_hold(std::chrono::steady_clock::now(), std::chrono::milliseconds(ctx_.config.start_timeout_ms),
-                                   waits_for_manual(ctx_.config));
+                                   config::waits_for_manual(ctx_.config));
         }
     }
 }
@@ -158,7 +158,7 @@ std::string RunStart::start_given_up(SimulationController& controller)
     // With a participant started by hand, a stop request ends the start too: without a limit,
     // it would wait for ever for one that stands still in a debugger. (Without one, the start
     // has its limit and a stop takes effect once it is over, as it always did.)
-    if (waits_for_manual(ctx_.config) && ctx_.interrupts() > 0)
+    if (config::waits_for_manual(ctx_.config) && ctx_.interrupts() > 0)
     {
         return ctx_.stop_text();
     }
@@ -173,7 +173,7 @@ std::string RunStart::start_given_up(SimulationController& controller)
     }
     // With a participant started by hand, the limit begins once every such participant is
     // ready for its first step (not while the run stands still before it).
-    const bool manualReady = waits_for_manual(ctx_.config) && manual_ready(controller);
+    const bool manualReady = config::waits_for_manual(ctx_.config) && manual_ready(controller);
     const StartLimit::Now limit = shared_.limit.take(std::chrono::steady_clock::now(), manualReady);
     if (std::chrono::steady_clock::now() < limit.at)
     {
@@ -181,7 +181,7 @@ std::string RunStart::start_given_up(SimulationController& controller)
     }
     return "the participants did not all get to their first step within " + std::to_string(limit.length.count()) +
            " ms" + (limit.after_hold ? " after the run stopped standing still before it" : "") +
-           (waits_for_manual(ctx_.config) ? " after the participants you start yourself (manual) were ready" : "") +
+           (config::waits_for_manual(ctx_.config) ? " after the participants you start yourself (manual) were ready" : "") +
            " (start_timeout_ms; a participant may hang while it starts): not ready: " + not_ready(controller);
 }
 
@@ -209,7 +209,7 @@ std::string RunStart::not_ready(SimulationController& controller) const
 
 bool RunStart::manual_ready(SimulationController& controller) const
 {
-    return std::all_of(ctx_.config.participants.begin(), ctx_.config.participants.end(), [&controller](const ParticipantConfig& p) {
+    return std::all_of(ctx_.config.participants.begin(), ctx_.config.participants.end(), [&controller](const config::ParticipantConfig& p) {
         if (!p.enabled || !p.required || !p.manual)
         {
             return true;
@@ -242,7 +242,7 @@ bool StrangerWait::look(const std::string& name, State state, std::chrono::stead
 
 void RunStart::tell_strangers(SimulationController& controller)
 {
-    std::vector<std::string> ours{std::string(kControllerName)};
+    std::vector<std::string> ours{std::string(config::kControllerName)};
     std::vector<std::string> waited;
     for (const auto& p : ctx_.config.participants)
     {
@@ -276,7 +276,7 @@ void RunStart::tell_strangers(SimulationController& controller)
             continue;
         }
         strangers_told_.push_back(name);
-        const std::string guess = detail::closest(name, waited);
+        const std::string guess = config::detail::closest(name, waited);
         out_.say("participant '" + name + "' joined the simulation, but this run has no participant of that name" +
                  (guess.empty() ? std::string{} : " (did you mean '" + guess + "'?)") +
                  (state == orch::ParticipantState::Error
@@ -404,12 +404,12 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
     // The participants someone starts by hand have no time limit: they may take any time.
     const auto manual = [this](const std::string& name) {
         return std::any_of(ctx_.config.participants.begin(), ctx_.config.participants.end(),
-                           [&name](const ParticipantConfig& p) { return p.manual && p.name == name; });
+                           [&name](const config::ParticipantConfig& p) { return p.manual && p.name == name; });
     };
     bool saidWaiting = false;
     // A run that waits for a participant started by hand: --timeout-ms counts from here (an
     // automatic run with manual: true in its file must end too).
-    if (waits_for_manual(ctx_.config) && ctx_.plan.timeout)
+    if (config::waits_for_manual(ctx_.config) && ctx_.plan.timeout)
     {
         shared_.manual_wait_began_ns.store(std::chrono::steady_clock::now().time_since_epoch().count());
         outcome_.start.timeout_from_wait = true;
@@ -487,7 +487,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
         // once: the others would wait for it until the limit.
         // With a participant started by hand, none until every such participant is ready for its
         // first step (it may stand in a debugger before), then start_timeout_ms (start_given_up()).
-        if (waits_for_manual(ctx_.config))
+        if (config::waits_for_manual(ctx_.config))
         {
             shared_.limit.set_once_manual_ready(std::chrono::milliseconds(ctx_.config.start_timeout_ms));
         }
@@ -504,7 +504,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
     {
         // A stop request and --timeout-ms end the start of a run with a participant started by
         // hand as they end the wait above.
-        if (waits_for_manual(ctx_.config) && ctx_.interrupts() > 0)
+        if (config::waits_for_manual(ctx_.config) && ctx_.interrupts() > 0)
         {
             interrupted_before_start();
             return false;

@@ -18,7 +18,7 @@ std::string scenario_step_text(const ScenarioStepRun& step)
     // The time as the result's table of the steps says it (check_words.hpp: millis_text(), as
     // scenario_text() writes it).
     return "line " + std::to_string(step.line) + ": " + step.text + ": " + step_result_text(step.status) +
-           (step.at ? " at " + millis_text(to_ns(*step.at)) + " ms" : std::string{}) +
+           (step.at ? " at " + config::detail::millis_text(to_ns(*step.at)) + " ms" : std::string{}) +
            (step.status == StepStatus::Failed || step.status == StepStatus::Skipped ? " (" + step.message + ")" : std::string{});
 }
 
@@ -60,7 +60,7 @@ RunScenario::RunScenario(const RunContext& ctx, RunOutput& out, RunControl& cont
 {
     if (ctx_.scenario != nullptr)
     {
-        for (const ParticipantConfig& p : ctx_.config.participants)
+        for (const config::ParticipantConfig& p : ctx_.config.participants)
         {
             const auto used = std::find_if(ctx_.scenario->participants.begin(), ctx_.scenario->participants.end(),
                                            [&p](const ScenarioParticipant& s) { return s.name == p.name; });

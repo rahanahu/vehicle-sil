@@ -136,7 +136,7 @@ private:
     /// What the plan says the participant `index` connects (RunPlan::members: fixed before the run,
     /// read without the lock); null if it is not a bridge of --connect. The bridge's state below
     /// (`outside_`, `states_`, at the same index) is what changes while it runs.
-    [[nodiscard]] const NetworkOutside* outside_of(std::size_t index) const;
+    [[nodiscard]] const config::NetworkOutside* outside_of(std::size_t index) const;
     /// The event "outside" of the bridge `index` (run --events). Under the lock. Only for a bridge.
     void write_outside(std::size_t index, const OutsideCounts& counts) const;
     /// Tells RunControls the state of the bridges at `now` (RunState::outside), if it differs from
@@ -151,7 +151,7 @@ private:
     const RunContext& ctx_;
     std::mutex mutex_;
     std::vector<std::unique_ptr<std::ofstream>> logs_; ///< per participant; guarded by mutex_ once the participants run
-    std::vector<LastLine> last_lines_;                 ///< per participant (only a bridge's is used); guarded by mutex_
+    std::vector<config::detail::LastLine> last_lines_;                 ///< per participant (only a bridge's is used); guarded by mutex_
     std::vector<OutsideNote> outside_; ///< per participant (only a bridge's is used); guarded by mutex_
     /// Per participant: the bridge's link line and counts added up (only a bridge's is used); guarded by mutex_
     std::vector<OutsideState> states_;

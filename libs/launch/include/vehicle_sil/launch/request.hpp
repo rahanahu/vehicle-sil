@@ -33,7 +33,7 @@ struct RunIntent
     /// The variant of the file to run; empty: the file's own. (test takes its variants apart.)
     std::optional<std::string> variant{};
     /// The parameters of the scenario, each once (ParamSource::CommandLine, or RequestFile).
-    std::vector<ParamValue> params{};
+    std::vector<config::ParamValue> params{};
     /// The scenario file as the user named it; not set: none. Set but empty is a value that no
     /// reader accepts, which validate_request() does not see: it is the reader's to refuse. From
     /// the working directory; one of a request file (RunRequest::origin has "scenario") from the
@@ -43,8 +43,8 @@ struct RunIntent
     std::vector<std::string> enable{};
     std::vector<std::string> manual{};
     /// The networks connected outside the simulation, each once.
-    std::vector<ConnectRequest> connect{};
-    TimePolicy time_policy = TimePolicy::Realtime;
+    std::vector<config::ConnectRequest> connect{};
+    config::TimePolicy time_policy = config::TimePolicy::Realtime;
     /// The speed replaces the file's (the inner empty: as fast as possible); the outer empty: the
     /// file's speed counts.
     std::optional<std::optional<double>> speed{};
@@ -93,7 +93,7 @@ struct RunRequest
     RunIntent intent{};
     RunHost host{};
     /// What of `intent` a request file gave (with_request_file()); nothing: all of it is the caller's.
-    RequestOrigin origin{};
+    config::RequestOrigin origin{};
 };
 
 /// The command the request is for: the rules differ in which fields the command has.
@@ -115,7 +115,7 @@ enum class RequestCommand
 /// scenario (they wait for a run that has one); --param does. That a paused start needs commands is a
 /// rule of Run and Test only: a check starts nothing (and only a request file can ask a check
 /// for a paused start).
-[[nodiscard]] std::vector<Finding> validate_request(const RunRequest& request, RequestCommand command);
+[[nodiscard]] std::vector<config::Finding> validate_request(const RunRequest& request, RequestCommand command);
 
 /// The version of the request file (its "vehicle_sil_run_request").
 inline constexpr int kRunRequestFormat = 1;
@@ -139,7 +139,7 @@ struct RequestFileRead
     std::optional<RequestFile> file{};
     /// What is wrong with the text, every error at once: code "usage", `file` and `line` say where,
     /// and the message starts with them ("bench.json, line 3: ...").
-    std::vector<Finding> findings{};
+    std::vector<config::Finding> findings{};
 };
 
 /// Reads the text of a request file named `shown`: a JSON object with "vehicle_sil_run_request": 1
@@ -156,8 +156,8 @@ struct RequestFileRead
 /// the command line takes the file's away (the argument stays, as without a file), and "none" in
 /// the file is as if the network was not written. `from_file`, if given, gets the networks taken
 /// from `file`.
-[[nodiscard]] std::vector<ConnectRequest> merge_connect(std::span<const ConnectRequest> arguments,
-                                                        std::span<const ConnectRequest> file,
+[[nodiscard]] std::vector<config::ConnectRequest> merge_connect(std::span<const config::ConnectRequest> arguments,
+                                                        std::span<const config::ConnectRequest> file,
                                                         std::vector<std::string>* from_file = nullptr);
 
 /// `arguments` (the request as the command line gave it) with what `file` adds: an argument wins,

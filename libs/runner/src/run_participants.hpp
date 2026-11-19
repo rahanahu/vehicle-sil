@@ -95,7 +95,7 @@ public:
 
 private:
     /// A participant someone starts by hand: the lines (or the event) with where and how to start it.
-    void show_manual(const ParticipantConfig& p, const std::filesystem::path& executable,
+    void show_manual(const config::ParticipantConfig& p, const std::filesystem::path& executable,
                      const std::vector<std::string>& arguments, const std::filesystem::path& workDir);
     [[nodiscard]] bool any_running(bool required_only);
     /// Waits up to `timeout` until `done()`; stops waiting once more than `interrupts_allowed`

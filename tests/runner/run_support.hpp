@@ -47,8 +47,8 @@ namespace vehicle_sil::launch::test::run_support {
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
-using vehicle_sil::launch::test::check_text;
-using vehicle_sil::launch::test::lines;
+using vehicle_sil::config::test::check_text;
+using vehicle_sil::config::test::lines;
 using vehicle_sil::process::ExitStatus;
 
 const std::string kStop(stop_request_name());

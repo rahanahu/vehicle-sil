@@ -327,7 +327,7 @@ struct RunOutcome
     OutcomeControl control{};
     OutcomeScenario scenario{};
     OutcomeClose close{};
-    RunTiming timing{};
+    config::RunTiming timing{};
     /// In the order of the configuration, then the bridges that run started for --connect.
     std::vector<ParticipantRun> participants{};
     /// --connect: the networks connected to a real bus, in the order of the file's networks.
@@ -340,7 +340,7 @@ struct RunOutcome
     std::optional<TimeChange> time_changed{};
     /// CheckReport::time_lock of the run: whether it kept to real time, and what connected it
     /// outside the simulation.
-    TimeLock time_lock{};
+    config::TimeLock time_lock{};
     /// The participants of the file that ran in real time (detail::real_time_peers()).
     std::vector<std::string> real_time_peers{};
     /// What went over the networks; empty if the simulation did not start.
@@ -349,7 +349,7 @@ struct RunOutcome
 
 /// Judges a run: the errors (they fail it), warnings and notes, each about the participant (with
 /// its line) or the simulation, in sort_findings() order.
-[[nodiscard]] std::vector<Finding> assess_run(const RunOutcome& outcome);
+[[nodiscard]] std::vector<config::Finding> assess_run(const RunOutcome& outcome);
 
 /// Why a run ended, whatever was found in it.
 enum class EndReason
@@ -381,7 +381,7 @@ namespace detail {
 /// ended: whatever happens to them from here on, assess_run() of the final outcome has each of
 /// these unchanged. (Left out: a participant that failed while its process still runs, whose
 /// finding says how the process ended.) What run --events writes before the participants end.
-[[nodiscard]] std::vector<Finding> settled_findings(const RunOutcome& outcome);
+[[nodiscard]] std::vector<config::Finding> settled_findings(const RunOutcome& outcome);
 } // namespace detail
 
 } // namespace vehicle_sil::launch

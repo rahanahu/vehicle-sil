@@ -540,7 +540,7 @@ std::string format_timeline_json(const TimelineInput& input)
     write_series(w, input);
     write_lines(w, input);
     w.begin_array("findings");
-    for (const Finding& finding : input.findings)
+    for (const config::Finding& finding : input.findings)
     {
         bool codeOnly = false;
         if (!timeline_takes_finding(finding.code, codeOnly))

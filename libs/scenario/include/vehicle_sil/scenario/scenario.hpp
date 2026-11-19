@@ -296,7 +296,7 @@ struct ScenarioContext
     /// configuration's (with the variant's), then the command line's. They replace the scenario's
     /// defaults. One of ParamSource::CommandLine that the scenario neither declares nor uses is an
     /// error (a typing error would otherwise change nothing, silently).
-    std::vector<ParamValue> params{};
+    std::vector<config::ParamValue> params{};
     /// The command line's parameters are for many scenarios (vehicle_sil_launch test): one that
     /// this scenario neither declares nor uses is left alone (no ScenarioRead::usage_errors). The
     /// caller says it if no scenario has it (unused_test_params()).
@@ -323,7 +323,7 @@ struct ScenarioRead
     std::size_t steps = 0;
     /// The parameters the scenario declares ("params") or uses ("${name}"), each with the value in
     /// effect and where it comes from; in the order of "params", then of first use.
-    std::vector<ParamValue> params{};
+    std::vector<config::ParamValue> params{};
     /// Its "only" (the variants it is for), if written and readable.
     std::optional<std::vector<std::string>> only{};
     /// The scenario is not for the chosen variant (`only` does not list it): an error
@@ -339,11 +339,11 @@ struct ScenarioRead
     /// or a wave that is not checked (ScenarioStep::expect_skipped), and a warning
     /// ("scenario-nothing-checked") if every step that checks is skipped, in the order of the file
     /// (Finding::file is not set).
-    std::vector<Finding> findings;
+    std::vector<config::Finding> findings;
     /// What is wrong with the command line, known only with the scenario (code "usage"): a
     /// parameter given from the command line (ParamSource::CommandLine) that the scenario neither
     /// declares nor uses. Looked for only when the text has no error of its parameters.
-    std::vector<Finding> usage_errors{};
+    std::vector<config::Finding> usage_errors{};
     /// The names of the request file's params (ParamSource::RequestFile) that the scenario neither
     /// declares nor uses, when ScenarioContext::request_file is empty: left alone, for the caller
     /// to note.

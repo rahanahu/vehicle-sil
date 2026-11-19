@@ -178,7 +178,7 @@ public:
     /// before anything of it starts (run_file(): from the check, before --describe). Tells
     /// OnChange if the run is connected outside (the lock changes what is taken), then decides the commands that waited for it, in their order (see above). The
     /// first call is the run's for good: a later one changes nothing.
-    void set_time_lock(const TimeLock& lock);
+    void set_time_lock(const config::TimeLock& lock);
 
     /// The run's part. attach(): from now on the commands go to `controller` (its time gate,
     /// made with `step_ms`); std::logic_error before set_time_lock(). First it is given the speed

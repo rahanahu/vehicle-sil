@@ -62,7 +62,7 @@ struct RunReport
     /// Empty if nothing was started because of the check (or the command line).
     std::optional<RunOutcome> run{};
     /// assess_run() of `run`.
-    std::vector<Finding> findings{};
+    std::vector<config::Finding> findings{};
     bool strict = false;
     bool usage = false;
     /// run --control: the run's control server, ended (no call of a client is open, none comes

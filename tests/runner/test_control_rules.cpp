@@ -34,7 +34,8 @@ namespace {
 
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
-using vehicle_sil::launch::test::check_text;
+using namespace vehicle_sil::config;
+using vehicle_sil::config::test::check_text;
 
 constexpr Operation kAllOperations[] = {Operation::Pause, Operation::Resume, Operation::Step, Operation::RunUntil,
                                         Operation::Speed, Operation::Stop,   Operation::Write, Operation::Unknown};

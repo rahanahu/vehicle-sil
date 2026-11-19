@@ -31,8 +31,8 @@ struct RunContext
 {
     /// The plan's configuration and check (RunPlan::config(), RunPlan::check), named here because
     /// every part reads them.
-    const SimulationConfig& config;
-    const CheckReport& check;
+    const config::SimulationConfig& config;
+    const config::CheckReport& check;
     const RunPlan& plan;
     /// The Runner's copy of the caller's functions (run_events.hpp says of each which thread calls it and
     /// what it may do); none of them is in the RunPlan.

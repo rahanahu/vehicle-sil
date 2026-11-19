@@ -174,7 +174,7 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
     check.file_only = false;
     // The controls get the time lock as soon as the configuration has been read, before any
     // --describe: the time commands that came until then wait for it, and are decided there.
-    report.check = check_file(request, check, [&controls](const TimeLock& lock) { controls.set_time_lock(lock); });
+    report.check = check_file(request, check, [&controls](const config::TimeLock& lock) { controls.set_time_lock(lock); });
     event([&report](EventStream& e) { e.check(report.check); });
     if (!report.check.config)
     {

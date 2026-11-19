@@ -119,7 +119,7 @@ void Reader::read()
     std::map<std::string, std::size_t> seen;
     for (auto child = tree_.first_child(root); child != ryml::NONE; child = tree_.next_sibling(child))
     {
-        const std::string key = detail::to_string(tree_.key(child));
+        const std::string key = config::detail::to_string(tree_.key(child));
         if (!first_occurrence(seen, key, child))
         {
             continue;
@@ -159,7 +159,7 @@ void Reader::read()
             }
             else
             {
-                scenario_.name = detail::to_string(tree_.val(child));
+                scenario_.name = config::detail::to_string(tree_.val(child));
                 out_.name = scenario_.name;
             }
         }
@@ -225,7 +225,7 @@ void Reader::read()
         error("missing-key", 0,
               "the file has no steps: add steps, a list of what to do in order (set, ramp, wave, dither, wait_until, expect)");
     }
-    if (std::none_of(out_.findings.begin(), out_.findings.end(), [](const Finding& f) { return f.severity == Severity::Error; }))
+    if (std::none_of(out_.findings.begin(), out_.findings.end(), [](const config::Finding& f) { return f.severity == config::Severity::Error; }))
     {
         out_.scenario = std::move(scenario_);
     }
@@ -235,12 +235,12 @@ void Reader::take_params(ryml::id_type node)
 {
     if (node != ryml::NONE)
     {
-        for (ParamValue& param : read_params(node, "", ParamSource::Scenario))
+        for (config::ParamValue& param : read_params(node, "", config::ParamSource::Scenario))
         {
             params_.push_back(Known{std::move(param), true, false});
         }
     }
-    for (const ParamValue& param : context_.params)
+    for (const config::ParamValue& param : context_.params)
     {
         const auto same = std::find_if(params_.begin(), params_.end(), [&param](const Known& k) { return k.value.name == param.name; });
         if (same == params_.end())
@@ -259,7 +259,7 @@ bool Reader::resolve_params(ryml::id_type node)
     bool ok = true;
     if (tree_.has_key(node))
     {
-        const std::string key = detail::to_string(tree_.key(node));
+        const std::string key = config::detail::to_string(tree_.key(node));
         if (key.find("${") != std::string::npos)
         {
             error("scenario-param", doc_.line(node),
@@ -270,13 +270,13 @@ bool Reader::resolve_params(ryml::id_type node)
     }
     if (is_scalar(node))
     {
-        const std::string text = is_null(node) ? std::string{} : detail::to_string(tree_.val(node));
+        const std::string text = is_null(node) ? std::string{} : config::detail::to_string(tree_.val(node));
         if (text.find("${") == std::string::npos)
         {
             return ok;
         }
         const std::string name = text.size() > 3 && text.rfind("${", 0) == 0 && text.back() == '}' ? text.substr(2, text.size() - 3) : std::string{};
-        if (!is_param_name(name))
+        if (!config::is_param_name(name))
         {
             error("scenario-param", doc_.line(node),
                   "'" + text + "': a parameter is written ${name} (letters, digits and _) and is the whole value: it "
@@ -294,7 +294,7 @@ bool Reader::resolve_params(ryml::id_type node)
                 {
                     names.push_back(k.value.name);
                 }
-                const std::string guess = detail::closest(name, names);
+                const std::string guess = config::detail::closest(name, names);
                 error("scenario-param", doc_.line(node),
                       "${" + name + "} has no value" + (guess.empty() ? "" : " (did you mean ${" + guess + "}?)") +
                           ": give it a default in the scenario (params: { " + name + ": <value> }), or a value in the "
@@ -329,34 +329,34 @@ void Reader::check_given_params()
     }
     for (const Known& k : params_)
     {
-        if (k.value.source == ParamSource::RequestFile && !k.declared && !k.used)
+        if (k.value.source == config::ParamSource::RequestFile && !k.declared && !k.used)
         {
             if (context_.request_file.empty())
             {
                 out_.unused_request_params.push_back(k.value.name);
                 continue;
             }
-            const std::string guess = detail::closest(k.value.name, names);
+            const std::string guess = config::detail::closest(k.value.name, names);
             // The file's mistake, and the file is for this scenario: a usage error like --param.
-            out_.usage_errors.push_back(Finding{
-                Severity::Error, "usage",
+            out_.usage_errors.push_back(config::Finding{
+                config::Severity::Error, "usage",
                   "params " + k.value.name + " in " + context_.request_file + ": the scenario has no parameter " +
                       k.value.name + (guess.empty() ? "" : " (did you mean " + guess + "?)") + ": " +
                       (names.empty() ? std::string("it uses none (a step uses one as ${name})")
-                                     : "its parameters are " + join(names)) +
+                                     : "its parameters are " + config::detail::join(names)) +
                       "; remove it from params in " + context_.request_file + " or correct the name",
                 0, "", ""});
         }
-        if (k.value.source == ParamSource::CommandLine && !k.declared && !k.used)
+        if (k.value.source == config::ParamSource::CommandLine && !k.declared && !k.used)
         {
-            const std::string guess = detail::closest(k.value.name, names);
+            const std::string guess = config::detail::closest(k.value.name, names);
             // The command line's mistake, not the file's: a usage error like --disable <no such name>.
-            out_.usage_errors.push_back(Finding{
-                Severity::Error, "usage",
+            out_.usage_errors.push_back(config::Finding{
+                config::Severity::Error, "usage",
                   "--param " + k.value.name + "=" + k.value.text + ": the scenario has no parameter " + k.value.name +
                       (guess.empty() ? "" : " (did you mean " + guess + "?)") + ": " +
                       (names.empty() ? std::string("it uses none (a step uses one as ${name})")
-                                     : "its parameters are " + join(names)) +
+                                     : "its parameters are " + config::detail::join(names)) +
                       "; remove the option or correct the name",
                 0, "", ""});
         }
@@ -389,23 +389,23 @@ void Reader::check_something_is_checked()
     const std::string what =
         unchecked == 0 ? (one ? "its only step that checks (expect or wait_until, line " + lines.front() + ") is skipped"
                               : "all its " + std::to_string(lines.size()) + " steps that check (expect or wait_until, lines " +
-                                    join(lines) + ") are skipped")
+                                    config::detail::join(lines) + ") are skipped")
         : one ? "its only check (an expect beside a ramp or a wave, line " + lines.front() + ") is not checked"
               : "all its " + std::to_string(lines.size()) + " checks (expect, wait_until, or an expect beside a ramp or a wave; lines " +
-                    join(lines) + ") are " + (unchecked == lines.size() ? "not checked" : "skipped or not checked");
-    add(Severity::Warning, "scenario-nothing-checked", 0,
+                    config::detail::join(lines) + ") are " + (unchecked == lines.size() ? "not checked" : "skipped or not checked");
+    add(config::Severity::Warning, "scenario-nothing-checked", 0,
         "the scenario checks nothing " + where + ": " + what + ", so it passes whatever the ECUs do (the notes say why " +
             (unchecked == 0 ? "each is skipped). " : "for each). ") +
             (context_.variant.empty()
                  ? std::string("If the configuration has what the steps look at under other names, map them in the participant's variables "
                                "(docs/simulation-config.md); else do not run this scenario with it")
                  : "If the scenario is not for this variant, list the variants it is for in the scenario (only: [" +
-                       (others.empty() ? std::string("<variant>") : join(others)) +
+                       (others.empty() ? std::string("<variant>") : config::detail::join(others)) +
                        "]); if it is, map what the steps look at to what the variant has (variables in the variant, "
                        "docs/simulation-config.md)"));
 }
 
-const ParamValue* Reader::param_at(ryml::id_type node) const
+const config::ParamValue* Reader::param_at(ryml::id_type node) const
 {
     const auto it = substituted_.find(node);
     return it == substituted_.end() ? nullptr : &params_[it->second].value;
@@ -413,37 +413,37 @@ const ParamValue* Reader::param_at(ryml::id_type node) const
 
 std::string Reader::text_of(ryml::id_type node) const
 {
-    const ParamValue* param = param_at(node);
-    return param != nullptr ? param->text : detail::to_string(tree_.val(node));
+    const config::ParamValue* param = param_at(node);
+    return param != nullptr ? param->text : config::detail::to_string(tree_.val(node));
 }
 
 bool Reader::quoted(ryml::id_type node) const
 {
-    const ParamValue* param = param_at(node);
+    const config::ParamValue* param = param_at(node);
     return param != nullptr ? param->quoted : is_scalar(node) && tree_.is_val_quoted(node);
 }
 
 bool Reader::plain_integer(ryml::id_type node, std::int64_t& value) const
 {
-    const ParamValue* param = param_at(node);
-    return param != nullptr ? !param->quoted && read_integer(param->text, value) : YamlReader::plain_integer(node, value);
+    const config::ParamValue* param = param_at(node);
+    return param != nullptr ? !param->quoted && read_integer(param->text, value) : config::detail::YamlReader::plain_integer(node, value);
 }
 
 bool Reader::plain_number(ryml::id_type node, double& value) const
 {
-    const ParamValue* param = param_at(node);
-    return param != nullptr ? !param->quoted && read_number(param->text, value) : YamlReader::plain_number(node, value);
+    const config::ParamValue* param = param_at(node);
+    return param != nullptr ? !param->quoted && read_number(param->text, value) : config::detail::YamlReader::plain_number(node, value);
 }
 
 std::string Reader::shown_value(ryml::id_type node) const
 {
-    const ParamValue* param = param_at(node);
+    const config::ParamValue* param = param_at(node);
     if (param == nullptr)
     {
-        return YamlReader::shown_value(node);
+        return config::detail::YamlReader::shown_value(node);
     }
     return (param->quoted ? "the text \"" + param->text + "\"" : "'" + param->text + "'") + " (the parameter " + param->name +
-           ", from " + param_source_text(param->source) + ")";
+           ", from " + config::param_source_text(param->source) + ")";
 }
 
 void Reader::read_only(ryml::id_type node)
@@ -465,7 +465,7 @@ void Reader::read_only(ryml::id_type node)
             error("value", doc_.line(item), "only must list variants by name (only: [small, medium]), not " + shown_value(item));
             return;
         }
-        const std::string name = detail::to_string(tree_.val(item));
+        const std::string name = config::detail::to_string(tree_.val(item));
         if (std::find(names.begin(), names.end(), name) == names.end())
         {
             names.push_back(name);
@@ -475,7 +475,7 @@ void Reader::read_only(ryml::id_type node)
     if (context_.variants.empty())
     {
         error("scenario-variant", line,
-              "only names " + join(names) + ", but the configuration defines no variants: remove only, or add variants "
+              "only names " + config::detail::join(names) + ", but the configuration defines no variants: remove only, or add variants "
               "to the configuration (docs/simulation-config.md)");
         return;
     }
@@ -483,11 +483,11 @@ void Reader::read_only(ryml::id_type node)
     {
         if (std::find(context_.variants.begin(), context_.variants.end(), name) == context_.variants.end())
         {
-            const std::string guess = detail::closest(name, context_.variants);
+            const std::string guess = config::detail::closest(name, context_.variants);
             error("scenario-variant", line,
                   "only names the variant '" + name + "', which the configuration does not define" +
                       (guess.empty() ? "" : " (did you mean '" + guess + "'?)") + "; its variants are " +
-                      join(context_.variants));
+                      config::detail::join(context_.variants));
         }
     }
     if (!context_.variant.empty() && std::find(names.begin(), names.end(), context_.variant) == names.end())
@@ -498,8 +498,8 @@ void Reader::read_only(ryml::id_type node)
             options.push_back("--variant " + name);
         }
         error("scenario-variant", line,
-              "the scenario is only for the variant" + std::string(names.size() == 1 ? " " : "s ") + join(names) +
-                  " (its only), not for " + context_.variant + ": run it with " + detail::or_list(options) + ", or add " +
+              "the scenario is only for the variant" + std::string(names.size() == 1 ? " " : "s ") + config::detail::join(names) +
+                  " (its only), not for " + context_.variant + ": run it with " + config::detail::or_list(options) + ", or add " +
                   context_.variant + " to only");
         out_.not_for_variant = true;
     }
@@ -515,11 +515,11 @@ std::optional<std::int64_t> Reader::millis(ryml::id_type node, const std::string
                   (quoted(node) ? ": write the number without quotes" : ""));
         return std::nullopt;
     }
-    if (value < least || value > kMaxMillis)
+    if (value < least || value > config::kMaxMillis)
     {
         error("value", doc_.line(node),
               key + " is " + std::to_string(value) + ", but it must be from " + std::to_string(least) + " to " +
-                  std::to_string(kMaxMillis) + " (" + meaning + ")");
+                  std::to_string(config::kMaxMillis) + " (" + meaning + ")");
         return std::nullopt;
     }
     return value;
@@ -546,7 +546,7 @@ void Reader::read_step(ryml::id_type node)
     const std::size_t line = doc_.line(node);
     if (!tree_.is_map(node))
     {
-        error("value", line, "a step must be a mapping with one of " + join(kActionKeys) + ", not " + shown_value(node));
+        error("value", line, "a step must be a mapping with one of " + config::detail::join(kActionKeys) + ", not " + shown_value(node));
         end_known_ = false; // what it would have been is not known
         return;
     }
@@ -559,7 +559,7 @@ void Reader::read_step(ryml::id_type node)
     std::map<std::string, ryml::id_type> nodes;
     for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
     {
-        const std::string key = detail::to_string(tree_.key(child));
+        const std::string key = config::detail::to_string(tree_.key(child));
         if (!first_occurrence(seen, key, child))
         {
             continue;
@@ -588,8 +588,8 @@ void Reader::read_step(ryml::id_type node)
     if (actions.size() != 1)
     {
         error("value", line,
-              actions.empty() ? "the step does nothing: give it one of " + join(kActionKeys)
-                              : "the step has " + join(actions) + ": a step does one thing; make a step of each");
+              actions.empty() ? "the step does nothing: give it one of " + config::detail::join(kActionKeys)
+                              : "the step has " + config::detail::join(actions) + ": a step does one thing; make a step of each");
         end_known_ = false;
         return;
     }
@@ -752,7 +752,7 @@ void Reader::read_step(ryml::id_type node)
         skipped_checks_.push_back(line);
         unchecked_lines_.insert(line);
         ++out_.unchecked_expects;
-        add(Severity::Note, "scenario-step-skipped", step.line,
+        add(config::Severity::Note, "scenario-step-skipped", step.line,
             "the " + std::string(step_kind_name(step.kind)) + " runs; its expect is not checked (" + step.text +
                 "): " + step.expect_skipped);
     }
@@ -769,12 +769,12 @@ void Reader::read_step(ryml::id_type node)
     }
     // The latest this step can end: the times must stay within what a time can hold.
     latest_ms_ = (time ? *time : latest_ms_ + step.after_ms) + length + step.within_ms.value_or(0);
-    if (latest_ms_ > kMaxMillis && !too_long_)
+    if (latest_ms_ > config::kMaxMillis && !too_long_)
     {
         too_long_ = true;
         error("scenario-time", line,
               "the scenario can last " + std::to_string(latest_ms_) + " ms up to the end of this step, more than the longest "
-              "time (" + std::to_string(kMaxMillis) + " ms): shorten the times (after_ms, over_ms, for_ms, hold_for_ms, the "
+              "time (" + std::to_string(config::kMaxMillis) + " ms): shorten the times (after_ms, over_ms, for_ms, hold_for_ms, the "
               "timeouts) of the steps up to here");
     }
     if (step.waits() || step.kind == StepKind::WaitUntil)
@@ -804,7 +804,7 @@ void Reader::skip(ScenarioStep& step)
     step.overlays.clear();
     step.conditions.clear();
     ++out_.skipped;
-    add(Severity::Note, "scenario-step-skipped", step.line,
+    add(config::Severity::Note, "scenario-step-skipped", step.line,
         "the step is skipped (" + step.text + "): " + step.skipped +
             "; the other steps run, also those that would need what this one does");
 }
@@ -836,13 +836,13 @@ std::string Reader::skip_reason() const
     if (!leftOut.empty())
     {
         // Not "take it in (--enable)": that would run a simulation that is none of the variants.
-        out = (leftOut.size() == 1 ? "participant " + leftOut.front() + " is" : "the participants " + join(leftOut) + " are") +
+        out = (leftOut.size() == 1 ? "participant " + leftOut.front() + " is" : "the participants " + config::detail::join(leftOut) + " are") +
               " not in the variant " + context_.variant + " (enabled: false in that variant)";
     }
     if (!names.empty())
     {
-        out += (out.empty() ? "" : "; ") + join(names) + (one ? " is absent: participant " : " are absent: ") +
-               (one ? owners.front() + " does not have it" : "the participants " + join(owners) + " do not have them") +
+        out += (out.empty() ? "" : "; ") + config::detail::join(names) + (one ? " is absent: participant " : " are absent: ") +
+               (one ? owners.front() + " does not have it" : "the participants " + config::detail::join(owners) + " do not have them") +
                (context_.variant.empty() ? " in this configuration" : " in the variant " + context_.variant) +
                " (absent: true in " + (one ? "its" : "their") + " variables)";
     }
@@ -860,7 +860,7 @@ void Reader::read_set(ryml::id_type node, ScenarioStep& step, const std::optiona
     std::map<std::string, std::size_t> seen;
     for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
     {
-        if (!first_occurrence(seen, detail::to_string(tree_.key(child)), child, "set: "))
+        if (!first_occurrence(seen, config::detail::to_string(tree_.key(child)), child, "set: "))
         {
             continue;
         }
@@ -885,7 +885,7 @@ std::int64_t Reader::skipped_over_ms(ryml::id_type node)
     }
     for (auto part = tree_.first_child(node); part != ryml::NONE; part = tree_.next_sibling(part))
     {
-        if (detail::to_string(tree_.key(part)) == "over_ms")
+        if (config::detail::to_string(tree_.key(part)) == "over_ms")
         {
             return millis(part, "over_ms", 1, "milliseconds of virtual time the ramp takes").value_or(0);
         }
@@ -905,7 +905,7 @@ std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, const std
     std::map<std::string, std::size_t> seen;
     for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
     {
-        const std::string name = detail::to_string(tree_.key(child));
+        const std::string name = config::detail::to_string(tree_.key(child));
         if (!first_occurrence(seen, name, child, "ramp: "))
         {
             continue;
@@ -943,7 +943,7 @@ std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, const std
         std::map<std::string, std::size_t> keys;
         for (auto part = tree_.first_child(child); part != ryml::NONE; part = tree_.next_sibling(part))
         {
-            const std::string key = detail::to_string(tree_.key(part));
+            const std::string key = config::detail::to_string(tree_.key(part));
             if (!first_occurrence(keys, key, part, "ramp of " + name + ": "))
             {
                 continue;
@@ -1039,7 +1039,7 @@ void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, const std::
     std::map<std::string, std::size_t> seen;
     for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
     {
-        const std::string name = detail::to_string(tree_.key(child));
+        const std::string name = config::detail::to_string(tree_.key(child));
         if (!first_occurrence(seen, name, child, action + ": "))
         {
             continue;
@@ -1061,7 +1061,7 @@ void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, const std::
             std::map<std::string, std::size_t> keys;
             for (auto part = tree_.first_child(child); part != ryml::NONE; part = tree_.next_sibling(part))
             {
-                const std::string key = detail::to_string(tree_.key(part));
+                const std::string key = config::detail::to_string(tree_.key(part));
                 if (!first_occurrence(keys, key, part, name + ": "))
                 {
                     continue;
@@ -1120,7 +1120,7 @@ void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, const std::
             if (good && condition.all.empty())
             {
                 error("value", doc_.line(child),
-                      name + ": nothing to compare with: give one of " + join(kCompareKeys) + ", or the value itself");
+                      name + ": nothing to compare with: give one of " + config::detail::join(kCompareKeys) + ", or the value itself");
                 good = false;
             }
         }
@@ -1322,29 +1322,29 @@ ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog
     ScenarioRead out;
     if (text.substr(0, 2) == "\xFF\xFE" || text.substr(0, 2) == "\xFE\xFF" || text.find('\0') != std::string_view::npos)
     {
-        out.findings.push_back(Finding{Severity::Error, "encoding",
+        out.findings.push_back(config::Finding{config::Severity::Error, "encoding",
                                        "the file is not UTF-8 text (it looks like UTF-16, or has NUL bytes): save it as UTF-8", 0,
                                        "", ""});
         return out;
     }
     try
     {
-        const detail::YamlDocument doc(text);
+        const config::detail::YamlDocument doc(text);
         if (doc.empty())
         {
-            out.findings.push_back(Finding{Severity::Error, "not-a-scenario",
+            out.findings.push_back(config::Finding{config::Severity::Error, "not-a-scenario",
                                            std::string("the file is empty: write vehicle_sil_scenario: 1 and steps (") + kDocs + ")",
                                            0, "", ""});
             return out;
         }
         Reader(doc, catalog, context, out).read();
     }
-    catch (const detail::YamlSyntaxError& e)
+    catch (const config::detail::YamlSyntaxError& e)
     {
         out.findings.clear();
         // "{ ge: ${idle_rpm} }" is what one writes first, and YAML does not take it.
         const bool param = e.context().find("${") != std::string::npos;
-        out.findings.push_back(Finding{Severity::Error, "syntax",
+        out.findings.push_back(config::Finding{config::Severity::Error, "syntax",
                                        "syntax error: " + e.message() +
                                            (param ? ": inside { ... } or [ ... ], write a parameter in quotes (\"${name}\")" : ""),
                                        e.line(), "", "", e.context()});

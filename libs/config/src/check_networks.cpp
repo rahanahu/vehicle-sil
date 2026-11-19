@@ -15,7 +15,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::config {
 
 std::vector<SeenNetwork> seen_networks(const ParticipantConfig& participant, const ReportedEcu& ecu)
 {
@@ -103,4 +103,4 @@ std::vector<std::size_t> unmatched_j1939_entries(const ParticipantConfig& partic
     return out;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::config

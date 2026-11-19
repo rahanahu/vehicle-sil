@@ -17,7 +17,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::config::detail {
 
 /// "A, B, C".
 inline std::string join(const std::vector<std::string>& items)
@@ -195,4 +195,4 @@ inline std::string millis_text(std::int64_t ns)
     return speed_text(static_cast<double>(ns) / static_cast<double>(kNanosPerMilli));
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::config::detail

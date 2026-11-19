@@ -83,7 +83,7 @@ inline Scenario read(const std::string& text, const ScenarioCatalog& c = catalog
     ScenarioRead r = read_scenario(text, c);
     if (!r.scenario)
     {
-        throw unit::Failure("the scenario has errors:\n" + lines(r.findings));
+        throw unit::Failure("the scenario has errors:\n" + config::test::lines(r.findings));
     }
     return *r.scenario;
 }

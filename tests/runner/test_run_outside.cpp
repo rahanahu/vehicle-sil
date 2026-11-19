@@ -23,7 +23,7 @@ using namespace vehicle_sil::launch;
 using launch::detail::OutsideCounts;
 using launch::detail::OutsideNote;
 using launch::detail::read_outside_counts;
-using vehicle_sil::launch::test::check_text;
+using vehicle_sil::config::test::check_text;
 
 namespace {
 
@@ -138,12 +138,12 @@ TEST_CASE(is_link_line_takes_the_link_lines_of_the_bridges)
 
 TEST_CASE(without_tag_takes_off_a_word_in_brackets)
 {
-    check_text(std::string(launch::detail::without_tag("[eth-bridge] stats a=1")), "stats a=1");
-    check_text(std::string(launch::detail::without_tag("[bridge] FAIL")), "FAIL");
+    check_text(std::string(vehicle_sil::config::detail::without_tag("[eth-bridge] stats a=1")), "stats a=1");
+    check_text(std::string(vehicle_sil::config::detail::without_tag("[bridge] FAIL")), "FAIL");
     // Not a tag: a space in it, nothing in it, no space after it.
-    check_text(std::string(launch::detail::without_tag("[not a tag] FAIL")), "[not a tag] FAIL");
-    check_text(std::string(launch::detail::without_tag("[] FAIL")), "[] FAIL");
-    check_text(std::string(launch::detail::without_tag("[bridge]FAIL")), "[bridge]FAIL");
+    check_text(std::string(vehicle_sil::config::detail::without_tag("[not a tag] FAIL")), "[not a tag] FAIL");
+    check_text(std::string(vehicle_sil::config::detail::without_tag("[] FAIL")), "[] FAIL");
+    check_text(std::string(vehicle_sil::config::detail::without_tag("[bridge]FAIL")), "[bridge]FAIL");
 }
 
 namespace {

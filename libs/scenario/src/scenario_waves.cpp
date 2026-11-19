@@ -34,7 +34,7 @@ std::optional<Reader::Parts> Reader::parts_of(ryml::id_type node, const std::str
     std::map<std::string, std::size_t> seen;
     for (auto part = tree_.first_child(node); part != ryml::NONE; part = tree_.next_sibling(part))
     {
-        const std::string key = detail::to_string(tree_.key(part));
+        const std::string key = config::detail::to_string(tree_.key(part));
         if (!first_occurrence(seen, key, part, what + ": "))
         {
             continue;
@@ -87,7 +87,7 @@ std::optional<std::string> Reader::choice(ryml::id_type node, const std::string&
     const std::string text = is_scalar(node) && !is_null(node) ? text_of(node) : std::string{};
     if (std::find(options.begin(), options.end(), text) == options.end())
     {
-        error("value", doc_.line(node), label + " must be " + detail::or_list(options) + ", not " + shown_value(node));
+        error("value", doc_.line(node), label + " must be " + config::detail::or_list(options) + ", not " + shown_value(node));
         return std::nullopt;
     }
     return text;
@@ -159,7 +159,7 @@ std::optional<detail::Periodic> Reader::periodic_of(const Parts& parts, const st
     else if (hasFrequency)
     {
         // A period of a whole number of nanoseconds, at least 1 and within the longest time.
-        const double least = 1e3 / static_cast<double>(kMaxMillis);
+        const double least = 1e3 / static_cast<double>(config::kMaxMillis);
         if (const auto hz = measure(parts.at("frequency_hz"), "frequency_hz of " + what, least, false, 1e9, "periods per second of virtual time"))
         {
             out.period = SimDuration{std::llround(1e9 / *hz)};
@@ -203,7 +203,7 @@ std::optional<SimDuration> Reader::sampling(std::size_t variable, const std::str
     const ScenarioParticipant& p = scenario_.participants[scenario_.variables[variable].participant];
     if (p.step <= SimDuration::zero())
     {
-        add(Severity::Note, "scenario-wave-not-checked", line,
+        add(config::Severity::Note, "scenario-wave-not-checked", line,
             "whether participant '" + p.name + "' can see " + what + " as it is written is not checked: the participant's step "
             "is not known",
             p.name);
@@ -249,7 +249,7 @@ bool Reader::check_period(std::size_t variable, const std::string& what, std::si
                                       : "Make the period " + span_text(2 * *step) + " or more";
     if (period < 2 * *step)
     {
-        add(Severity::Warning, "scenario-wave-undersampled", line,
+        add(config::Severity::Warning, "scenario-wave-undersampled", line,
             what + " has a period of " + span_text(period) + ", but " + takes_inputs(variable) +
                 ": with fewer than two values per period the ECU sees a slower shape or a constant, not this one. " + longer +
                 as_it_is_,
@@ -273,7 +273,7 @@ bool Reader::check_period(std::size_t variable, const std::string& what, std::si
             if (high - low <= kSameValue)
             {
                 const std::string shape = what.substr(0, what.find(" of "));
-                add(Severity::Warning, "scenario-wave-undersampled", line,
+                add(config::Severity::Warning, "scenario-wave-undersampled", line,
                     what + " has a period of " + span_text(period) + ", and " + takes_inputs(variable) + ": at each of those times " +
                         shape + " is at " + (std::fabs(low) <= kSameValue ? "its middle" : "the same value") +
                         ", so the ECU sees a constant, not " + shape + ". " + longer + as_it_is_,
@@ -281,7 +281,7 @@ bool Reader::check_period(std::size_t variable, const std::string& what, std::si
                 return true;
             }
         }
-        add(Severity::Note, "scenario-wave-coarse", line,
+        add(config::Severity::Note, "scenario-wave-coarse", line,
             what + " has a period of " + span_text(period) + ", and " + takes_inputs(variable) + ": the ECU sees " +
                 rounded_text(static_cast<double>(period.count()) / static_cast<double>(step->count())) +
                 " values per period, so it can miss the highest and the lowest. A period of " +
@@ -302,7 +302,7 @@ void Reader::check_square(std::size_t variable, const std::string& what, std::si
     const std::int64_t period = periodic.period.count();
     if (period % step != 0)
     {
-        add(Severity::Warning, "scenario-wave-duty", line,
+        add(config::Severity::Warning, "scenario-wave-duty", line,
             what + " has a period of " + span_text(periodic.period) + ", which is not a multiple of " + step_of(variable) +
                 ": the ECU sees high and low times that change from period to period. Make the period a multiple of " +
                 span_text(SimDuration{step}) + as_it_is_,
@@ -315,7 +315,7 @@ void Reader::check_square(std::size_t variable, const std::string& what, std::si
     const std::int64_t seen = high > first ? (high - first + step - 1) / step * step : 0;
     if (seen != high)
     {
-        add(Severity::Warning, "scenario-wave-duty", line,
+        add(config::Severity::Warning, "scenario-wave-duty", line,
             what + " is high for " + span_text(SimDuration{high}) + " of each period of " + span_text(periodic.period) + " (duty " +
                 number_text(duty) + " %), but " + takes_inputs(variable) + ": the ECU sees it high for " +
                 span_text(SimDuration{seen}) + " of each period (" +
@@ -331,7 +331,7 @@ void Reader::check_span(std::size_t variable, const std::string& what, std::size
     const auto step = sampling(variable, what, line, quiet);
     if (step && span < *step)
     {
-        add(Severity::Warning, "scenario-wave-undersampled", line,
+        add(config::Severity::Warning, "scenario-wave-undersampled", line,
             what + " " + is + " " + step_of(variable) + ": " + sees + ". " + make + as_it_is_, owner_of(variable));
     }
 }
@@ -389,7 +389,7 @@ void Reader::check_pulse(std::size_t variable, const std::string& what, std::siz
                "and never otherwise; when this step begins is not known before the run";
         break;
     }
-    add(Severity::Warning, "scenario-wave-undersampled", line,
+    add(config::Severity::Warning, "scenario-wave-undersampled", line,
         what + " is " + span_text(width) + " wide, shorter than " + step_of(variable) + ": " + sees + ". Make width_ms " +
             whole_ms(*step) + " or more" + as_it_is_,
         owner_of(variable));
@@ -407,7 +407,7 @@ std::int64_t Reader::skipped_wave_ms(ryml::id_type node)
         {
             for (auto part = tree_.first_child(of); part != ryml::NONE; part = tree_.next_sibling(part))
             {
-                if (detail::to_string(tree_.key(part)) == key)
+                if (config::detail::to_string(tree_.key(part)) == key)
                 {
                     return part;
                 }
@@ -417,7 +417,7 @@ std::int64_t Reader::skipped_wave_ms(ryml::id_type node)
     };
     const auto whole = [&](ryml::id_type of) {
         std::int64_t value = 0;
-        return of != ryml::NONE && plain_integer(of, value) && value >= 0 && value <= kMaxMillis ? value : std::int64_t{0};
+        return of != ryml::NONE && plain_integer(of, value) && value >= 0 && value <= config::kMaxMillis ? value : std::int64_t{0};
     };
     if (const auto forMs = child(node, "for_ms"); forMs != ryml::NONE)
     {
@@ -431,7 +431,7 @@ std::int64_t Reader::skipped_wave_ms(ryml::id_type node)
     {
         const std::int64_t bounces = whole(child(chatter, "bounces"));
         const std::int64_t interval = whole(child(chatter, "interval_ms"));
-        length = bounces <= kMaxBounces && interval <= kMaxMillis / (2 * kMaxBounces) ? 2 * bounces * interval : 0;
+        length = bounces <= kMaxBounces && interval <= config::kMaxMillis / (2 * kMaxBounces) ? 2 * bounces * interval : 0;
     }
     else if (const auto points = child(node, "points"); points != ryml::NONE && tree_.is_seq(points) && tree_.has_children(points))
     {
@@ -475,7 +475,7 @@ std::int64_t Reader::read_wave(ryml::id_type node, ScenarioStep& step, const std
     std::map<std::string, std::size_t> seen;
     for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
     {
-        if (!first_occurrence(seen, detail::to_string(tree_.key(child)), child, "wave: "))
+        if (!first_occurrence(seen, config::detail::to_string(tree_.key(child)), child, "wave: "))
         {
             continue;
         }
@@ -875,10 +875,10 @@ bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Part
                           " (how often it falls back before it rests), not " + shown_value(parts->at("bounces")));
                 good = false;
             }
-            else if (interval && *interval > kMaxMillis / (2 * bounces))
+            else if (interval && *interval > config::kMaxMillis / (2 * bounces))
             {
                 error("value", doc_.line(parts->at("bounces")),
-                      what + " lasts 2 x bounces x interval_ms, more than the longest time (" + std::to_string(kMaxMillis) + " ms): lower them");
+                      what + " lasts 2 x bounces x interval_ms, more than the longest time (" + std::to_string(config::kMaxMillis) + " ms): lower them");
                 good = false;
             }
             else if (interval)
@@ -952,8 +952,8 @@ std::optional<ScenarioMotion> Reader::read_wave_of(ryml::id_type node, std::size
     if (shapes.size() != 1)
     {
         error("value", line,
-              shapes.empty() ? "wave of " + name + " names no shape: give it one of " + join(kWaveShapes)
-                             : "wave of " + name + " has " + join(shapes) + ": a variable takes one shape in a step; make a step of each");
+              shapes.empty() ? "wave of " + name + " names no shape: give it one of " + config::detail::join(kWaveShapes)
+                             : "wave of " + name + " has " + config::detail::join(shapes) + ": a variable takes one shape in a step; make a step of each");
         return std::nullopt;
     }
     const std::string& shape = shapes.front();
@@ -1077,7 +1077,7 @@ void Reader::check_chirp(std::size_t variable, const std::string& what, std::siz
     const auto hz_at = [&](std::int64_t count) { return rounded_text(1e9 / static_cast<double>(count * step->count())); };
     if (steps < 2.0)
     {
-        add(Severity::Warning, "scenario-wave-undersampled", line,
+        add(config::Severity::Warning, "scenario-wave-undersampled", line,
             what + " goes up to " + number_text(top_hz) + " Hz (a period of " + rounded_text(period / 1e6) + " ms), but " +
                 takes_inputs(variable) + ": above " + hz_at(2) +
                 " Hz (two steps per period) the ECU sees a slower shape, not the sweep. Keep from_hz and to_hz at " + hz_at(2) +
@@ -1086,7 +1086,7 @@ void Reader::check_chirp(std::size_t variable, const std::string& what, std::siz
     }
     else if (steps < static_cast<double>(kSmoothSteps))
     {
-        add(Severity::Note, "scenario-wave-coarse", line,
+        add(config::Severity::Note, "scenario-wave-coarse", line,
             what + " goes up to " + number_text(top_hz) + " Hz (a period of " + rounded_text(period / 1e6) + " ms), and " +
                 takes_inputs(variable) + ": at that frequency the ECU sees " + rounded_text(steps) +
                 " values per period, so it can miss the highest and the lowest. Up to " + hz_at(kSmoothSteps) + " Hz it gets " +
@@ -1284,7 +1284,7 @@ std::optional<std::int64_t> Reader::cell_ms(const std::string& cell, bool second
         return std::nullopt;
     }
     ms = whole;
-    if (whole < 0 || whole > static_cast<double>(kMaxMillis))
+    if (whole < 0 || whole > static_cast<double>(config::kMaxMillis))
     {
         return std::nullopt;
     }
@@ -1436,12 +1436,12 @@ bool Reader::file_points(ryml::id_type body, std::size_t v, const std::string& w
         {
             shown.push_back(detail::shown_cell(table.columns[i]));
         }
-        const std::string guess = detail::closest(wanted, table.columns);
+        const std::string guess = config::detail::closest(wanted, table.columns);
         error("scenario-points-file", doc_.line(parts->at(key)),
               what + ": " + *path + " has no column " + detail::shown_cell(wanted) + " on its first line (line " +
                   std::to_string(table.header_line) + ")" +
                   (guess.empty() ? std::string{} : ": did you mean " + detail::shown_cell(guess) + "?") + "; its columns are " +
-                  join(shown) + (table.columns.size() > shown.size() ? " and " + std::to_string(table.columns.size() - shown.size()) + " more" : ""));
+                  config::detail::join(shown) + (table.columns.size() > shown.size() ? " and " + std::to_string(table.columns.size() - shown.size()) + " more" : ""));
         return std::nullopt;
     };
     const auto valueColumn = column(*valueName, "value");
@@ -1475,7 +1475,7 @@ bool Reader::file_points(ryml::id_type body, std::size_t v, const std::string& w
                                        (seconds || timeName ? "" : " (the times are in the first column unless time names another)")
                   : std::round(ms) != ms
                       ? pre + " is " + number_text(ms) + " ms: the times of points are whole milliseconds; round them in the file"
-                      : pre + " is " + number_text(ms) + " ms, but it must be from 0 to " + std::to_string(kMaxMillis) +
+                      : pre + " is " + number_text(ms) + " ms, but it must be from 0 to " + std::to_string(config::kMaxMillis) +
                             " (milliseconds of virtual time since the step began)");
             return false;
         }
@@ -1522,7 +1522,7 @@ void Reader::check_held_points(std::size_t variable, const std::string& what, st
                                  (last ? ", where they end" : "") + ", and " + takes_inputs(variable) + ": ";
         if (seen == Seen::No && written == SimDuration::zero() && ends == SimDuration::zero())
         {
-            add(Severity::Warning, "scenario-wave-undersampled", line,
+            add(config::Severity::Warning, "scenario-wave-undersampled", line,
                 head + span + "the wave writes a value every " + span_text(*step) + " from the step's beginning, and none of those "
                 "times is in that span, so the value of " + names[i] + " is never applied" + fix,
                 owner_of(variable));
@@ -1530,7 +1530,7 @@ void Reader::check_held_points(std::size_t variable, const std::string& what, st
         }
         if (seen == Seen::No)
         {
-            add(Severity::Warning, "scenario-wave-undersampled", line,
+            add(config::Severity::Warning, "scenario-wave-undersampled", line,
                 head + span + "this step begins at " + std::to_string(*time) + " ms, and none of the ECU's steps is from " +
                     span_text(written) + " (when the value of " + names[i] + " is written) until the points end (" +
                     span_text(ends) + "), so that value is never applied" + fix,
@@ -1545,7 +1545,7 @@ void Reader::check_held_points(std::size_t variable, const std::string& what, st
     }
     if (!unknown.empty())
     {
-        add(Severity::Warning, "scenario-wave-undersampled", line, unknown, owner_of(variable));
+        add(config::Severity::Warning, "scenario-wave-undersampled", line, unknown, owner_of(variable));
     }
 }
 

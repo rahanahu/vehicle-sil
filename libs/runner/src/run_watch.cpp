@@ -75,7 +75,7 @@ std::string StandStill::stopping(std::int64_t now_ms, std::chrono::steady_clock:
 void RunWatch::note_timing(SimulationController& controller)
 {
     const TimeState s = controller.time_state();
-    RunTiming& t = outcome_.timing;
+    config::RunTiming& t = outcome_.timing;
     t.speed = s.speed;
     t.sim_ms = sim_ms(controller, s);
     t.paused_ms = std::chrono::duration_cast<std::chrono::milliseconds>(s.paused_for).count();

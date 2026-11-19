@@ -110,7 +110,7 @@ private:
     bool last_paused_ = false;
     std::optional<double> last_speed_{};
     std::deque<std::pair<std::chrono::steady_clock::time_point, std::int64_t>> samples_; ///< (wall, sim_ms)
-    std::vector<Finding> published_; ///< the findings written
+    std::vector<config::Finding> published_; ///< the findings written
     PacingWatch pacing_;             ///< for the state's `pacing`
 };
 

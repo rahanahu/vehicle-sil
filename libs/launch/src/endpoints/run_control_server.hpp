@@ -18,7 +18,7 @@ struct ControlServerOfRun
 {
     std::shared_ptr<ControlEndpoint> server; ///< null if `findings` is not empty
     /// What is wrong with the request, as a usage error (code "usage"): the first thing found.
-    std::vector<Finding> findings{};
+    std::vector<config::Finding> findings{};
 };
 
 /// Reads and checks what `asked` names, in this order: the form of the address, TLS with both of

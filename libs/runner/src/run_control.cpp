@@ -16,7 +16,7 @@ const std::shared_ptr<control::Hub>& RunControl::shared_hub()
         // Before any agent connects: the hub shows every client (the scenario, the control server)
         // the variables through the participants' variable maps.
         maps_set_ = true;
-        for (const ParticipantConfig& p : ctx_.config.participants)
+        for (const config::ParticipantConfig& p : ctx_.config.participants)
         {
             if (p.enabled && !p.variables.empty())
             {
@@ -34,7 +34,7 @@ ControlLink RunControl::described_link(std::size_t i) const
     {
         return ControlLink::None;
     }
-    const SeenEcu seen(ctx_.config.participants[i], *ecu);
+    const config::SeenEcu seen(ctx_.config.participants[i], *ecu);
     if (!seen.has_variables())
     {
         return ControlLink::None;
@@ -56,7 +56,7 @@ bool RunControl::offers_control(std::size_t i) const
     {
         return false;
     }
-    const SeenEcu seen(ctx_.config.participants[i], *ecu);
+    const config::SeenEcu seen(ctx_.config.participants[i], *ecu);
     if (!seen.control())
     {
         return false;
@@ -70,7 +70,7 @@ std::vector<std::string> RunControl::expected_agents() const
     std::vector<std::string> names;
     for (std::size_t i = 0; i < ctx_.config.participants.size(); ++i)
     {
-        const ParticipantConfig& p = ctx_.config.participants[i];
+        const config::ParticipantConfig& p = ctx_.config.participants[i];
         // Also an optional one whose variables the scenario uses.
         const bool used = ctx_.scenario != nullptr &&
                           std::any_of(ctx_.scenario->participants.begin(), ctx_.scenario->participants.end(),
@@ -165,7 +165,7 @@ void RunControl::note_links(RunOutcome& outcome, const std::optional<ControlStar
         else if (described == ControlLink::VersionMismatch)
         {
             run.control = ControlLink::VersionMismatch;
-            run.control_version = SeenEcu(ctx_.config.participants[i], *ctx_.check.participants[i].ecu).control()->wire_version;
+            run.control_version = config::SeenEcu(ctx_.config.participants[i], *ctx_.check.participants[i].ecu).control()->wire_version;
             run.control_version_described = true;
         }
         else if (described == ControlLink::NotOffered)

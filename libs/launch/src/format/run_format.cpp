@@ -19,8 +19,8 @@ namespace vehicle_sil::launch {
 namespace {
 
 using detail::hex_code;
-using detail::kNanosPerMilli;
-using detail::millis_text;
+using config::detail::kNanosPerMilli;
+using config::detail::millis_text;
 
 /// The cell of the participants' table.
 std::string ending_cell(const ParticipantRun& p)
@@ -101,14 +101,14 @@ const char* result_name(RunResult result)
 
 } // namespace
 
-std::string detail::timing_text(const RunTiming& timing)
+std::string detail::timing_text(const config::RunTiming& timing)
 {
     if (!timing.speed && timing.paced_steps == 0)
     {
         return {};
     }
     const auto actual = timing.actual_speed();
-    std::string out = "time: speed " + speed_text(timing.speed) + ", ran at " + (actual ? speed_text(actual) : std::string("-")) +
+    std::string out = "time: speed " + config::speed_text(timing.speed) + ", ran at " + (actual ? config::speed_text(actual) : std::string("-")) +
                       " times real time; " + std::to_string(timing.late_steps) + " of " +
                       std::to_string(timing.paced_steps) + " paced steps more than " +
                       std::to_string(timing.late_tolerance_ms) + " ms late (the latest by " +
@@ -224,7 +224,7 @@ namespace {
 /// A virtual time in milliseconds for people ("300", "2.5").
 std::string sim_millis_text(SimTime t)
 {
-    return millis_text(to_ns(t));
+    return config::detail::millis_text(to_ns(t));
 }
 
 } // namespace
@@ -435,7 +435,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
     }
     if (report.run)
     {
-        const RunTiming& t = report.run->timing;
+        const config::RunTiming& t = report.run->timing;
         w.begin_object("timing");
         if (t.speed)
         {
@@ -446,7 +446,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
             w.string("speed", "max");
         }
         const auto millis = [](const std::optional<std::int64_t>& ns) {
-            return ns ? std::optional<double>(static_cast<double>(*ns) / static_cast<double>(kNanosPerMilli)) : std::nullopt;
+            return ns ? std::optional<double>(static_cast<double>(*ns) / static_cast<double>(config::detail::kNanosPerMilli)) : std::nullopt;
         };
         w.integer("time_step_ms", t.time_step_ms);
         w.real("ecu_step_ms", millis(t.ecu_step_ns));
@@ -634,7 +634,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
                 {
                     w.null("virtual_time");
                 }
-                w.real("at_ms", p.at ? std::optional<double>(static_cast<double>(to_ns(*p.at)) / static_cast<double>(kNanosPerMilli))
+                w.real("at_ms", p.at ? std::optional<double>(static_cast<double>(to_ns(*p.at)) / static_cast<double>(config::detail::kNanosPerMilli))
                                      : std::nullopt);
                 number("frames_sent", p.frames_sent);
                 number("frames_received", p.frames_received);
@@ -663,7 +663,7 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
 void detail::write_scenario_step_members(vehicle_sil::json::JsonWriter& w, const ScenarioStepRun& step)
 {
     const auto time = [&w](std::string_view key, const std::optional<SimTime>& t) {
-        w.real(key, t ? std::optional<double>(static_cast<double>(to_ns(*t)) / static_cast<double>(kNanosPerMilli)) : std::nullopt);
+        w.real(key, t ? std::optional<double>(static_cast<double>(to_ns(*t)) / static_cast<double>(config::detail::kNanosPerMilli)) : std::nullopt);
     };
     w.integer("index", static_cast<std::int64_t>(step.index));
     w.integer("line", static_cast<std::int64_t>(step.line));
@@ -705,7 +705,7 @@ void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_v
     }
     w.string("status", scenario_status_name(scenario.status));
     w.real("over_at_ms", scenario.over_at ? std::optional<double>(static_cast<double>(to_ns(*scenario.over_at)) /
-                                                                  static_cast<double>(kNanosPerMilli))
+                                                                  static_cast<double>(config::detail::kNanosPerMilli))
                                           : std::nullopt);
     if (scenario.skipped() > 0)
     {
@@ -741,7 +741,7 @@ void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_v
 std::string format_internal_error_json(bool run, const std::string& message)
 {
     Checked check;
-    check.findings.push_back(Finding{Severity::Error, "internal", message, 0, "", ""});
+    check.findings.push_back(config::Finding{config::Severity::Error, "internal", message, 0, "", ""});
     if (!run)
     {
         return format_json(check);

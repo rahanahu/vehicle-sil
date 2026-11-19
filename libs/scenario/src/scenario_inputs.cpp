@@ -156,9 +156,9 @@ void Reader::check_dithers()
                     }
                 }
                 others = "; so on " + std::to_string(outside.size() - 1) + " other value" + (outside.size() > 2 ? "s" : "") + " (line" +
-                         (where.size() > 1 ? "s " : " ") + join(where) + ")";
+                         (where.size() > 1 ? "s " : " ") + config::detail::join(where) + ")";
             }
-            add(Severity::Warning, "scenario-dither-range", dither.line,
+            add(config::Severity::Warning, "scenario-dither-range", dither.line,
                 "the dither of " + var.text + " may take it out of its range (" + range + "): on the " + number_text(first.value) +
                     " of line " + std::to_string(first.line) + ", the values written go " + (dither.about ? "about " : "") + "from " +
                     number_text(as_written(first.value - dither.reach, dither.variable)) + " to " +
@@ -175,7 +175,7 @@ void Reader::check_dithers()
             // more" where a value under the dither is so near an end that 0.5 leaves the range.
             const auto end = std::find_if(under[i].begin(), under[i].end(),
                                           [&](const Base& base) { return reaches_outside(base.value, 0.5, dither.variable); });
-            add(Severity::Warning, "scenario-wave-undersampled", dither.line,
+            add(config::Severity::Warning, "scenario-wave-undersampled", dither.line,
                 "the " + dither.shape + " dither of " + var.text + " has an amplitude of " + number_text(*dither.swing) + ", but " +
                     var.text +
                     " is an integer: on a whole value every sum is rounded back to that value, so the ECU sees no dither there (only "
@@ -193,7 +193,7 @@ void Reader::check_dithers()
         if (placed_.count(input.variable) == 0)
         {
             const std::string& name = scenario_.variables[input.variable].text;
-            add(Severity::Warning, "scenario-dither-unused", input.line,
+            add(config::Severity::Warning, "scenario-dither-unused", input.line,
                 "the dither of " + name + " is never written: no step that runs puts a value on " + name +
                     " (set, ramp or wave), and a dither is added to what the steps put; add a set of " + name +
                     ", or remove the entry",
@@ -203,7 +203,7 @@ void Reader::check_dithers()
     if (findings_.size() > before)
     {
         // Among the findings of the steps, which are in the order of the file.
-        std::stable_sort(findings_.begin(), findings_.end(), [](const Finding& x, const Finding& y) { return x.line < y.line; });
+        std::stable_sort(findings_.begin(), findings_.end(), [](const config::Finding& x, const config::Finding& y) { return x.line < y.line; });
     }
     // The list of the lines is for a scenario with a dither: another one's output for people is
     // as it was, and its JSON has the lists empty. It has the inputs that a dither is ever put on or taken off: what is under
@@ -240,7 +240,7 @@ void Reader::read_inputs(ryml::id_type node)
     std::map<std::string, std::size_t> seen;
     for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
     {
-        const std::string name = detail::to_string(tree_.key(child));
+        const std::string name = config::detail::to_string(tree_.key(child));
         if (!first_occurrence(seen, name, child, "inputs: "))
         {
             continue;
@@ -277,7 +277,7 @@ void Reader::read_inputs(ryml::id_type node)
             if (!absent_.empty())
             {
                 // As a step that uses the variable: not in this configuration, and said.
-                add(Severity::Note, "scenario-input-skipped", doc_.line(child),
+                add(config::Severity::Note, "scenario-input-skipped", doc_.line(child),
                     "the dither of " + name + " is not used: " + skip_reason() +
                         "; the steps that write " + name + " are skipped too");
             }
@@ -307,7 +307,7 @@ void Reader::read_dither(ryml::id_type node, ScenarioStep& step, bool quiet)
     std::map<std::string, std::size_t> seen;
     for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
     {
-        if (!first_occurrence(seen, detail::to_string(tree_.key(child)), child, "dither: "))
+        if (!first_occurrence(seen, config::detail::to_string(tree_.key(child)), child, "dither: "))
         {
             continue;
         }
@@ -352,7 +352,7 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
             out.text = name + " none";
             return good ? std::optional<ScenarioOverlay>(std::move(out)) : std::nullopt;
         }
-        if (const ParamValue* param = param_at(node))
+        if (const config::ParamValue* param = param_at(node))
         {
             error("value", line,
                   what + " is the parameter " + param->name + ": a parameter cannot stand for none or for a shape; write " +
@@ -371,7 +371,7 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
     std::map<std::string, std::size_t> seen;
     for (auto part = tree_.first_child(node); part != ryml::NONE; part = tree_.next_sibling(part))
     {
-        const std::string key = detail::to_string(tree_.key(part));
+        const std::string key = config::detail::to_string(tree_.key(part));
         if (!first_occurrence(seen, key, part, "dither of " + name + ": "))
         {
             continue;
@@ -411,8 +411,8 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
         if (good || shapes.size() > 1)
         {
             error("value", line,
-                  shapes.empty() ? what + " names no shape: give it one of " + join(kDitherShapes)
-                                 : what + " has " + join(shapes) + ": an input has one dither; keep one of them");
+                  shapes.empty() ? what + " names no shape: give it one of " + config::detail::join(kDitherShapes)
+                                 : what + " has " + config::detail::join(shapes) + ": an input has one dither; keep one of them");
         }
         return std::nullopt;
     }
@@ -422,7 +422,7 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
     {
         for (auto part = tree_.first_child(body); part != ryml::NONE; part = tree_.next_sibling(part))
         {
-            const std::string key = detail::to_string(tree_.key(part));
+            const std::string key = config::detail::to_string(tree_.key(part));
             if (key == "low" || key == "high")
             {
                 error("value", doc_.line(part),

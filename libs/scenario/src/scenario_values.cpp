@@ -87,7 +87,7 @@ std::string Reader::written(ryml::id_type node, double value) const
 
 std::optional<std::size_t> Reader::variable(ryml::id_type node)
 {
-    const std::string text = detail::to_string(tree_.key(node));
+    const std::string text = config::detail::to_string(tree_.key(node));
     const std::size_t line = doc_.line(node);
     if (const auto known = variable_index_.find(text); known != variable_index_.end())
     {
@@ -121,10 +121,10 @@ std::optional<std::size_t> Reader::variable(ryml::id_type node)
         {
             names.push_back(c.name);
         }
-        const std::string guess = detail::closest(participant, names);
+        const std::string guess = config::detail::closest(participant, names);
         error("scenario-variable", line,
               "'" + text + "': the configuration has no participant '" + participant + "' (the name ends at the first '.'): " +
-                  (guess.empty() ? "its participants are " + (names.empty() ? std::string("none") : join(names))
+                  (guess.empty() ? "its participants are " + (names.empty() ? std::string("none") : config::detail::join(names))
                                  : "did you mean '" + guess + "." + name + "'?"));
         return std::nullopt;
     }
@@ -160,11 +160,11 @@ std::optional<std::size_t> Reader::variable(ryml::id_type node)
         {
             names.push_back(i.name);
         }
-        const std::string guess = detail::closest(name, names);
+        const std::string guess = config::detail::closest(name, names);
         error("scenario-variable", line,
               "'" + text + "': participant '" + participant + "' has no variable '" + name + "': " +
                   (guess.empty() ? (names.empty() ? std::string("it declares none")
-                                                  : "its variables are " + join(names))
+                                                  : "its variables are " + config::detail::join(names))
                                  : "did you mean '" + participant + "." + guess + "'?") +
                   " (vehicle_sil_launch check --json lists the variables)",
               participant);
@@ -284,7 +284,7 @@ std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t v
                 names.push_back(e.name);
             }
             const std::string hint = hex_hint(node, v.type);
-            const std::string guess = number || !hint.empty() ? std::string{} : detail::closest(text, names);
+            const std::string guess = number || !hint.empty() ? std::string{} : config::detail::closest(text, names);
             error("scenario-value", line,
                   pre + " must be one of its items, by name or by value, not " + shown_value(node) +
                       (hint.empty() ? std::string(": ") : hint + "; ") +

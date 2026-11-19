@@ -26,7 +26,7 @@
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
 using namespace std::chrono_literals;
-using vehicle_sil::launch::test::check_text;
+using vehicle_sil::config::test::check_text;
 using launch::detail::RunSamples;
 using launch::detail::TrafficColumns;
 using launch::detail::TrafficLatest;

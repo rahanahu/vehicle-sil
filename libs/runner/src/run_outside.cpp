@@ -24,20 +24,20 @@ namespace vehicle_sil::launch::detail {
 bool is_link_line(std::string_view line)
 {
     constexpr std::string_view kWord = "link ";
-    return without_tag(line).substr(0, kWord.size()) == kWord;
+    return config::detail::without_tag(line).substr(0, kWord.size()) == kWord;
 }
 
 bool is_shared_warning(std::string_view line)
 {
     constexpr std::string_view kWord = "warning: ";
-    const std::string_view rest = without_tag(line);
+    const std::string_view rest = config::detail::without_tag(line);
     return rest.substr(0, kWord.size()) == kWord && rest.find(" is also used by ") != std::string_view::npos &&
            rest.find(" vehicle-sil bridge") != std::string_view::npos;
 }
 
 std::optional<std::map<std::string, std::uint64_t>> read_outside_stats(std::string_view tool, std::string_view line)
 {
-    if (!is_bridge_tool(tool))
+    if (!config::is_bridge_tool(tool))
     {
         return std::nullopt;
     }
@@ -45,7 +45,7 @@ std::optional<std::map<std::string, std::uint64_t>> read_outside_stats(std::stri
     {
         line.remove_suffix(1);
     }
-    std::string_view rest = without_tag(line);
+    std::string_view rest = config::detail::without_tag(line);
     constexpr std::string_view kWord = "stats";
     if (rest.substr(0, kWord.size()) != kWord)
     {
@@ -113,7 +113,7 @@ std::optional<OutsideLinkLine> read_outside_link_line(std::string_view line)
     {
         line.remove_suffix(1);
     }
-    std::string_view rest = without_tag(line);
+    std::string_view rest = config::detail::without_tag(line);
     rest.remove_prefix(std::string_view("link").size());
     OutsideLinkLine out;
     while (!rest.empty())

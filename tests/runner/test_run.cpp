@@ -44,8 +44,9 @@
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
-using vehicle_sil::launch::test::check_text;
-using vehicle_sil::launch::test::lines;
+using namespace vehicle_sil::config;
+using vehicle_sil::config::test::check_text;
+using vehicle_sil::config::test::lines;
 using vehicle_sil::process::ExitStatus;
 using namespace vehicle_sil::launch::test::run_support;
 
@@ -599,24 +600,24 @@ namespace {
 
 /// A check of `config` in which each participant described itself with the step of the same place
 /// in `steps_us` (microseconds; 0: an ECU in real time, without a step; -1: not described).
-launch::CheckReport described(const launch::SimulationConfig& config, const std::vector<std::int64_t>& steps_us)
+vehicle_sil::config::CheckReport described(const vehicle_sil::config::SimulationConfig& config, const std::vector<std::int64_t>& steps_us)
 {
-    launch::CheckReport check;
+    vehicle_sil::config::CheckReport check;
     check.config = config;
     for (std::size_t i = 0; i < config.participants.size(); ++i)
     {
-        launch::ParticipantResult r;
+        vehicle_sil::config::ParticipantResult r;
         if (!config.participants[i].enabled)
         {
-            r.status = launch::ParticipantStatus::Disabled;
+            r.status = vehicle_sil::config::ParticipantStatus::Disabled;
         }
         else if (steps_us[i] < 0)
         {
-            r.status = launch::ParticipantStatus::NotChecked;
+            r.status = vehicle_sil::config::ParticipantStatus::NotChecked;
         }
         else
         {
-            r.status = launch::ParticipantStatus::Described;
+            r.status = vehicle_sil::config::ParticipantStatus::Described;
             r.ecu.emplace();
             r.ecu->description.name = config.participants[i].name;
             if (steps_us[i] > 0)
@@ -629,15 +630,15 @@ launch::CheckReport described(const launch::SimulationConfig& config, const std:
     return check;
 }
 
-launch::SimulationConfig config_of(std::size_t participants, std::optional<std::int64_t> stop_at_ms = std::nullopt,
+vehicle_sil::config::SimulationConfig config_of(std::size_t participants, std::optional<std::int64_t> stop_at_ms = std::nullopt,
                                    std::optional<std::int64_t> time_step_ms = std::nullopt)
 {
-    launch::SimulationConfig config;
+    vehicle_sil::config::SimulationConfig config;
     config.stop_at_ms = stop_at_ms;
     config.time_step_ms = time_step_ms;
     for (std::size_t i = 0; i < participants; ++i)
     {
-        launch::ParticipantConfig p;
+        vehicle_sil::config::ParticipantConfig p;
         p.name = "Ecu" + std::to_string(i);
         config.participants.push_back(p);
     }
@@ -653,9 +654,9 @@ struct Plan
     friend bool operator==(const Plan&, const Plan&) = default;
 };
 
-Plan plan(const launch::SimulationConfig& config, const std::vector<std::int64_t>& steps_us, std::optional<double> speed)
+Plan plan(const vehicle_sil::config::SimulationConfig& config, const std::vector<std::int64_t>& steps_us, std::optional<double> speed)
 {
-    const RunTiming t = launch::detail::plan_time_step(config, described(config, steps_us), speed);
+    const RunTiming t = vehicle_sil::config::detail::plan_time_step(config, described(config, steps_us), speed);
     CHECK(t.time_step_written == config.time_step_ms.has_value());
     const auto us = [](const std::optional<std::int64_t>& ns) { return ns ? std::optional<std::int64_t>(*ns / 1000) : std::nullopt; };
     return Plan{t.time_step_ms, us(t.ecu_step_ns), us(t.step_delay_ns), t.fine_step_ms};
@@ -690,7 +691,7 @@ TEST_CASE(with_a_speed_the_controller_steps_as_finely_as_the_ecus_need)
     CHECK(plan(config_of(2), {-1, 10000}, 1.0) == (Plan{1, std::nullopt, std::nullopt, 1}));
     CHECK(plan(config_of(2), {-1, 10000}, max) == (Plan{10, std::nullopt, std::nullopt, 1}));
     // A disabled participant does not count, described or not.
-    launch::SimulationConfig disabled = config_of(2);
+    vehicle_sil::config::SimulationConfig disabled = config_of(2);
     disabled.participants[0].enabled = false;
     CHECK(plan(disabled, {-1, 10000}, 1.0) == (Plan{10, 10000, 0, 10}));
     // A step that is no whole number of milliseconds: 1 ms, and what is left is told.
@@ -705,20 +706,20 @@ TEST_CASE(with_a_speed_the_controller_steps_as_finely_as_the_ecus_need)
 
 TEST_CASE(the_participants_in_real_time_are_the_described_ecus_and_test_participants_without_a_step)
 {
-    launch::SimulationConfig config = config_of(7);
-    config.participants[1].role = launch::ParticipantRole::Test;
-    config.participants[3].role = launch::ParticipantRole::Bridge; // a bridge locks the time: not one of them
+    vehicle_sil::config::SimulationConfig config = config_of(7);
+    config.participants[1].role = vehicle_sil::config::ParticipantRole::Test;
+    config.participants[3].role = vehicle_sil::config::ParticipantRole::Bridge; // a bridge locks the time: not one of them
     config.participants[4].enabled = false;
-    config.participants[5].role = launch::ParticipantRole::Bridge; // as is a bridge of --connect (with_bridges())
+    config.participants[5].role = vehicle_sil::config::ParticipantRole::Bridge; // as is a bridge of --connect (with_bridges())
     // Ecu0 and Ecu1 (a test participant) describe no step; Ecu2 has one; Ecu6 is not described.
     const std::vector<std::string> peers =
-        launch::detail::real_time_peers(config, described(config, {0, 0, 10'000, 0, 0, 0, -1}));
+        vehicle_sil::config::detail::real_time_peers(config, described(config, {0, 0, 10'000, 0, 0, 0, -1}));
     CHECK((peers == std::vector<std::string>{"Ecu0", "Ecu1"}));
-    CHECK(launch::detail::real_time_peers(config, described(config, {10'000, 5'000, 10'000, 0, 0, 0, -1})).empty());
+    CHECK(vehicle_sil::config::detail::real_time_peers(config, described(config, {10'000, 5'000, 10'000, 0, 0, 0, -1})).empty());
     // A check that has fewer results than the file has participants (it stopped early): no reach beyond.
-    launch::CheckReport cut = described(config, {0, 0, 0, 0, 0, 0, 0});
+    vehicle_sil::config::CheckReport cut = described(config, {0, 0, 0, 0, 0, 0, 0});
     cut.participants.resize(1);
-    CHECK((launch::detail::real_time_peers(config, cut) == std::vector<std::string>{"Ecu0"}));
+    CHECK((vehicle_sil::config::detail::real_time_peers(config, cut) == std::vector<std::string>{"Ecu0"}));
 }
 
 TEST_CASE(what_ends_just_as_an_interrupt_comes_has_ended)
@@ -1294,7 +1295,7 @@ TEST_CASE(with_bridges_adds_a_participant_for_each_connected_network_after_those
 TEST_CASE(the_line_of_a_bridge_that_says_why_it_ended)
 {
     const auto failure = [](std::initializer_list<const char*> lines) {
-        launch::detail::LastLine last;
+        vehicle_sil::config::detail::LastLine last;
         for (const char* line : lines)
         {
             last.add(line);

@@ -13,14 +13,14 @@ namespace vehicle_sil::launch {
 
 namespace {
 
-Finding internal_finding(const std::string &message) {
-  return Finding{Severity::Error, "internal", message, 0, "", ""};
+config::Finding internal_finding(const std::string &message) {
+  return config::Finding{config::Severity::Error, "internal", message, 0, "", ""};
 }
 
 } // namespace
 
 RunReport usage_run_report(const std::string &file,
-                           const std::vector<Finding> &errors,
+                           const std::vector<config::Finding> &errors,
                            const std::vector<std::string> &variants) {
   RunReport report;
   report.check.file = file;
@@ -32,7 +32,7 @@ RunReport usage_run_report(const std::string &file,
 }
 
 std::string format_usage_json(CommandKind command, const std::string &file,
-                              const std::vector<Finding> &errors,
+                              const std::vector<config::Finding> &errors,
                               const std::vector<std::string> &variants) {
   switch (command) {
   case CommandKind::Connections: {

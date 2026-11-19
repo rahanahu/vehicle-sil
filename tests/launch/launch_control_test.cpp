@@ -630,7 +630,7 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
 /// (start_timeout_ms + stop_timeout_ms + 10 s), then resumes: the run passes.
 void the_ecus_wait_as_long_as_the_run_stands_still(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
 {
-    launch::SimulationConfig limits;
+    config::SimulationConfig limits;
     limits.start_timeout_ms = 2000;
     limits.stop_timeout_ms = 1000;
     const std::chrono::milliseconds without_hold{launch::detail::ecu_start_timeout_ms(limits, false)};
@@ -897,8 +897,8 @@ void a_request_for_a_control_server_is_read_before_any_check(const fs::path& dir
         const launch::RunReport report = launch::run_file(asked, watching, lent);
         require(report.check.usage && !report.check.config && !report.run && report.check.findings.size() == 1,
                 "a wrong address is a usage error of the run, and nothing ran");
-        const launch::Finding& finding = report.check.findings[0];
-        require(finding.code == "usage" && finding.severity == launch::Severity::Error &&
+        const config::Finding& finding = report.check.findings[0];
+        require(finding.code == "usage" && finding.severity == config::Severity::Error &&
                     finding.message == "--control must be <port> (on 127.0.0.1; 0: any free port), <host>:<port> (a port from "
                                        "0 to 65535) or unix:<path>, not 'not an address'",
                 "the finding says what an address is: " + finding.message);

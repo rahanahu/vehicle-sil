@@ -663,7 +663,7 @@ void EventStream::outside(const std::string& network, std::uint64_t to_outside, 
          }));
 }
 
-void EventStream::finding(const std::string& file, const Finding& finding)
+void EventStream::finding(const std::string& file, const config::Finding& finding)
 {
     emit("finding", object([&](Writer& w) { detail::write_finding_members(w, file, finding); }));
 }

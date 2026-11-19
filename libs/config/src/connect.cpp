@@ -13,7 +13,7 @@
 #include <cstdint>
 #include <cstdio>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::config {
 
 namespace {
 
@@ -439,4 +439,4 @@ std::string tool_missing_fix(std::string_view tool)
     return std::string(how) + " and put it next to vehicle_sil_launch, or its directory on PATH";
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::config

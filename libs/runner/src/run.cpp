@@ -193,7 +193,7 @@ namespace detail {
 
 namespace {
 
-std::vector<std::string> participant_names(const SimulationConfig& config)
+std::vector<std::string> participant_names(const config::SimulationConfig& config)
 {
     std::vector<std::string> names;
     for (const auto& p : config.participants)
@@ -296,7 +296,7 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
         connection->registry = SilKit::Vendor::Vector::CreateSilKitRegistry(
             SilKit::Config::ParticipantConfigurationFromString(std::string(default_registry_configuration())));
         // A participant started by hand gets a command that stays the same from run to run.
-        const bool fixed = !ctx_.config.registry_uri && waits_for_manual(ctx_.config);
+        const bool fixed = !ctx_.config.registry_uri && config::waits_for_manual(ctx_.config);
         const std::string listen =
             ctx_.config.registry_uri.value_or(fixed ? std::string(kManualRegistryUri) : std::string("silkit://127.0.0.1:0"));
         try
@@ -322,7 +322,7 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
                                                   listen.substr(listen.rfind(':') + 1)));
         }
         SimulationControllerOptions c;
-        c.participant_name = std::string(kControllerName);
+        c.participant_name = std::string(config::kControllerName);
         c.registry_uri = uri;
         // A registry that other computers may reach: they must reach the controller too.
         c.listen_on_network = !is_loopback_registry_uri(listen);

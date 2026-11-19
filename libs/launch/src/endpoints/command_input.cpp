@@ -32,7 +32,7 @@ std::optional<Command> parse_command(std::string_view line)
     }
     try
     {
-        const detail::YamlDocument doc(line);
+        const config::detail::YamlDocument doc(line);
         const ryml::Tree& tree = doc.tree();
         const auto root = doc.root();
         if (root == ryml::NONE || !tree.is_map(root))
@@ -49,14 +49,14 @@ std::optional<Command> parse_command(std::string_view line)
             out.reason = reason::kInvalidCommand;
             return out;
         }
-        out.name = detail::to_string(tree.val(node));
+        out.name = config::detail::to_string(tree.val(node));
         const auto scalar = [&](const char* key) -> std::optional<std::pair<std::string, bool>> {
             const auto n = tree.find_child(root, ryml::to_csubstr(key));
             if (n == ryml::NONE || !tree.has_val(n) || tree.is_container(n))
             {
                 return std::nullopt;
             }
-            return std::pair{detail::to_string(tree.val(n)), tree.is_val_quoted(n)};
+            return std::pair{config::detail::to_string(tree.val(n)), tree.is_val_quoted(n)};
         };
         // The sender's number, before the arguments: a refusal for them says it too.
         if (tree.find_child(root, ryml::csubstr("id", 2)) != ryml::NONE)
@@ -81,10 +81,10 @@ std::optional<Command> parse_command(std::string_view line)
             std::int64_t value = 0;
             const char* end = ms ? ms->first.data() + ms->first.size() : nullptr;
             if (!ms || ms->second || ms->first.empty() || std::from_chars(ms->first.data(), end, value).ptr != end ||
-                value < 1 || value > kMaxMillis)
+                value < 1 || value > config::kMaxMillis)
             {
                 out.message = "step needs \"ms\", a whole number of milliseconds of virtual time from 1 to " +
-                              std::to_string(kMaxMillis) + ", such as {\"command\":\"step\",\"ms\":100}";
+                              std::to_string(config::kMaxMillis) + ", such as {\"command\":\"step\",\"ms\":100}";
                 out.reason = reason::kInvalidArgument;
                 return out;
             }
@@ -96,11 +96,11 @@ std::optional<Command> parse_command(std::string_view line)
             std::int64_t value = 0;
             const char* end = at ? at->first.data() + at->first.size() : nullptr;
             if (!at || at->second || at->first.empty() || std::from_chars(at->first.data(), end, value).ptr != end ||
-                value < 0 || value > kMaxMillis)
+                value < 0 || value > config::kMaxMillis)
             {
                 out.message = "run_until needs \"at_ms\", the virtual time to stand still at, a whole number of "
                               "milliseconds from 0 to " +
-                              std::to_string(kMaxMillis) + ", such as {\"command\":\"run_until\",\"at_ms\":5000}";
+                              std::to_string(config::kMaxMillis) + ", such as {\"command\":\"run_until\",\"at_ms\":5000}";
                 out.reason = reason::kInvalidArgument;
                 return out;
             }
@@ -109,7 +109,7 @@ std::optional<Command> parse_command(std::string_view line)
         else if (*out.name == "speed")
         {
             const auto value = scalar("value");
-            if (!value || value->second != (value->first == "max") || !parse_speed(value->first, out.speed))
+            if (!value || value->second != (value->first == "max") || !config::parse_speed(value->first, out.speed))
             {
                 out.message = "speed needs \"value\", a number of simulation seconds per wall-clock second from 0.000001 "
                               "to 1000000 or \"max\", such as {\"command\":\"speed\",\"value\":1}";
@@ -118,7 +118,7 @@ std::optional<Command> parse_command(std::string_view line)
             }
         }
     }
-    catch (const detail::YamlSyntaxError&)
+    catch (const config::detail::YamlSyntaxError&)
     {
         out.message = "the line is not valid JSON: " + kExpected;
         out.reason = reason::kInvalidCommand;

@@ -825,7 +825,7 @@ int finish_events(launch::EventStream& events, const launch::RunReport& report, 
 /// "usage") on stdout, with --events the result event, so that a program that reads it gets an
 /// answer. `file`: the configuration file if the arguments name one, else "" (null in the JSON).
 /// `variants`: the variants the file defines, if it was read (the JSON lists what --variant takes).
-int usage_error(const std::vector<launch::Finding>& errors, bool json, launch::CommandKind command, const std::string& file,
+int usage_error(const std::vector<config::Finding>& errors, bool json, launch::CommandKind command, const std::string& file,
                 launch::EventStream* events, const std::vector<std::string>& variants = {})
 {
     for (const auto& error : errors)
@@ -849,7 +849,7 @@ int usage_error(const std::vector<launch::Finding>& errors, bool json, launch::C
 
 int usage_error(const std::string& message, bool json, launch::CommandKind command, const std::string& file, launch::EventStream* events)
 {
-    return usage_error({launch::Finding{launch::Severity::Error, "usage", message, 0, "", ""}}, json, command, file, events);
+    return usage_error({config::Finding{config::Severity::Error, "usage", message, 0, "", ""}}, json, command, file, events);
 }
 
 /// The arguments that are no option or an option's value (as cli::Args reads them), for a usage
@@ -885,7 +885,7 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
 /// What is wrong with the file of --request: every error of it, for usage_error().
 struct RequestFileError
 {
-    std::vector<launch::Finding> findings;
+    std::vector<config::Finding> findings;
 };
 
 /// --request <file>: the request file, which the arguments are laid over. Without the option
@@ -929,7 +929,7 @@ RequestArgument read_request_argument(const cli::Args& args)
     std::string text;
     if (const std::string problem = launch::read_request_file_text(process::path_from_utf8(name), text); !problem.empty())
     {
-        launch::Finding finding{launch::Severity::Error, "usage", "--request " + name + ": " + problem, 0, "", ""};
+        config::Finding finding{config::Severity::Error, "usage", "--request " + name + ": " + problem, 0, "", ""};
         finding.file = name;
         throw RequestFileError{{std::move(finding)}};
     }
@@ -954,7 +954,7 @@ void require_valid(const launch::RunRequest& request, launch::RequestCommand com
     {
         return;
     }
-    const std::vector<launch::Finding> findings = launch::validate_request(request, command);
+    const std::vector<config::Finding> findings = launch::validate_request(request, command);
     if (!findings.empty())
     {
         throw cli::UsageError(findings.front().message);
@@ -971,7 +971,7 @@ launch::RunRequest whole_request(const launch::RunRequest& arguments, launch::Re
         return arguments; // judged as the arguments were read (require_valid())
     }
     launch::RunRequest request = asked.over(arguments);
-    const std::vector<launch::Finding> findings = launch::validate_request(request, command);
+    const std::vector<config::Finding> findings = launch::validate_request(request, command);
     if (!findings.empty())
     {
         throw cli::UsageError(findings.front().message);
@@ -1024,16 +1024,16 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
     {
         // <name>=<value>; the value is the rest, also with a '=' in it, also empty.
         const auto equals = given.find('=');
-        launch::ParamValue param;
+        config::ParamValue param;
         param.name = given.substr(0, equals);
-        param.source = launch::ParamSource::CommandLine;
-        if (equals == std::string::npos || !launch::is_param_name(param.name))
+        param.source = config::ParamSource::CommandLine;
+        if (equals == std::string::npos || !config::is_param_name(param.name))
         {
             throw cli::UsageError("--param " + given + ": write --param <name>=<value> (the name as the scenario has it in "
                                   "${<name>}: letters, digits and _), e.g. --param idle_rpm=650");
         }
         param.text = given.substr(equals + 1);
-        for (const launch::ParamValue& before : intent.params)
+        for (const config::ParamValue& before : intent.params)
         {
             if (before.name == param.name)
             {
@@ -1051,14 +1051,14 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
     require_valid(request, command, asked);
     for (const std::string& given : args.all("connect"))
     {
-        std::optional<launch::ConnectRequest> connect = launch::parse_connect(given);
+        std::optional<config::ConnectRequest> connect = config::parse_connect(given);
         if (!connect)
         {
             throw cli::UsageError("--connect " + given +
                                   ": write --connect <network>=<target>, the network as the file names it, e.g. --connect "
                                   "\"ETH_EXT=vEthernet (A)\" (none as the target: SIL Kit only)");
         }
-        for (const launch::ConnectRequest& before : intent.connect)
+        for (const config::ConnectRequest& before : intent.connect)
         {
             if (before.network == connect->network)
             {
@@ -1074,7 +1074,7 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
     }
     if (args.has("time-policy"))
     {
-        const std::optional<launch::TimePolicy> policy = launch::time_policy_named(args.str("time-policy", ""));
+        const std::optional<config::TimePolicy> policy = config::time_policy_named(args.str("time-policy", ""));
         if (!policy)
         {
             throw cli::UsageError("--time-policy must be realtime (a run that is connected outside the simulation goes at "
@@ -1203,7 +1203,7 @@ int run(const cli::Args& args, launch::EventStream* events)
     if (args.has("speed"))
     {
         std::optional<double> speed;
-        if (!launch::parse_speed(args.str("speed", ""), speed))
+        if (!config::parse_speed(args.str("speed", ""), speed))
         {
             throw cli::UsageError("--speed must be a number of simulation seconds per wall-clock second from 0.000001 to "
                                   "1000000 (1: real time, 2: twice as fast) or max (as fast as possible), not '" +

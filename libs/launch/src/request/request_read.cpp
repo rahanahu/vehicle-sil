@@ -20,10 +20,10 @@ const std::vector<std::string> kKeys{"vehicle_sil_run_request", "variant", "para
                                      "manual",                  "connect", "time_policy", "speed",        "start_paused",
                                      "strict"};
 
-class Reader : private detail::YamlReader
+class Reader : private config::detail::YamlReader
 {
 public:
-    Reader(const detail::YamlDocument& doc, std::vector<Finding>& findings) : YamlReader(doc, findings) {}
+    Reader(const config::detail::YamlDocument& doc, std::vector<config::Finding>& findings) : config::detail::YamlReader(doc, findings) {}
 
     RequestFile read()
     {
@@ -34,7 +34,7 @@ public:
         std::map<std::string, std::size_t> seen;
         for (auto child = tree_.first_child(root); child != ryml::NONE; child = tree_.next_sibling(child))
         {
-            const std::string key = detail::to_string(tree_.key(child));
+            const std::string key = config::detail::to_string(tree_.key(child));
             if (!first_occurrence(seen, key, child))
             {
                 continue;
@@ -73,8 +73,8 @@ public:
             }
             else if (key == "params")
             {
-                intent.params = read_params(child, "", ParamSource::RequestFile);
-                for (ParamValue& param : intent.params)
+                intent.params = read_params(child, "", config::ParamSource::RequestFile);
+                for (config::ParamValue& param : intent.params)
                 {
                     param.line = 0; // a line of the configuration file, which this is not
                 }
@@ -97,8 +97,8 @@ public:
             }
             else if (key == "time_policy")
             {
-                const std::optional<TimePolicy> policy =
-                    quoted(child) ? time_policy_named(detail::to_string(tree_.val(child))) : std::nullopt;
+                const std::optional<config::TimePolicy> policy =
+                    quoted(child) ? config::time_policy_named(config::detail::to_string(tree_.val(child))) : std::nullopt;
                 if (policy)
                 {
                     intent.time_policy = *policy;
@@ -114,9 +114,9 @@ public:
             else if (key == "speed")
             {
                 // A number, or the text "max".
-                const std::string written = is_scalar(child) && !is_null(child) ? detail::to_string(tree_.val(child)) : "";
+                const std::string written = is_scalar(child) && !is_null(child) ? config::detail::to_string(tree_.val(child)) : "";
                 std::optional<double> speed;
-                if (is_scalar(child) && !is_null(child) && parse_speed(written, speed) && quoted(child) == !speed)
+                if (is_scalar(child) && !is_null(child) && config::parse_speed(written, speed) && quoted(child) == !speed)
                 {
                     intent.speed.emplace(speed);
                 }
@@ -158,7 +158,7 @@ private:
     /// A text that is not empty; "" with an error.
     std::string text(ryml::id_type node, const std::string& key, const std::string& meaning)
     {
-        std::string out = quoted(node) ? detail::to_string(tree_.val(node)) : std::string{};
+        std::string out = quoted(node) ? config::detail::to_string(tree_.val(node)) : std::string{};
         if (out.empty())
         {
             error("value", doc_.line(node), key + " must be " + meaning + " as a text, not " + shown_value(node));
@@ -168,7 +168,7 @@ private:
 
     bool flag(ryml::id_type node, const std::string& key)
     {
-        const std::string written = is_scalar(node) && !quoted(node) && !is_null(node) ? detail::to_string(tree_.val(node)) : "";
+        const std::string written = is_scalar(node) && !quoted(node) && !is_null(node) ? config::detail::to_string(tree_.val(node)) : "";
         if (written != "true" && written != "false")
         {
             error("value", doc_.line(node), key + " must be true or false, not " + shown_value(node));
@@ -194,13 +194,13 @@ private:
                       key + " must be a list of participant names, each a text; one of them is " + shown_value(child));
                 continue;
             }
-            out.push_back(detail::to_string(tree_.val(child)));
+            out.push_back(config::detail::to_string(tree_.val(child)));
         }
         return out;
     }
 
     /// "connect": { "<network>": "<target>" }.
-    void connect(ryml::id_type node, std::vector<ConnectRequest>& out)
+    void connect(ryml::id_type node, std::vector<config::ConnectRequest>& out)
     {
         if (!tree_.is_map(node))
         {
@@ -213,7 +213,7 @@ private:
         std::map<std::string, std::size_t> seen;
         for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
         {
-            const std::string network = detail::to_string(tree_.key(child));
+            const std::string network = config::detail::to_string(tree_.key(child));
             if (!first_occurrence(seen, network, child, "connect: "))
             {
                 continue;
@@ -225,9 +225,9 @@ private:
                           " as a text (\"CAN1\": \"physical:1\"; \"none\": SIL Kit only), not " + shown_value(child));
                 continue;
             }
-            ConnectRequest& request = out.emplace_back();
+            config::ConnectRequest& request = out.emplace_back();
             request.network = network;
-            request.target = detail::to_string(tree_.val(child));
+            request.target = config::detail::to_string(tree_.val(child));
         }
     }
 
@@ -253,7 +253,7 @@ private:
 RequestFileRead read_request_file(std::string_view text, std::string_view shown)
 {
     RequestFileRead out;
-    std::vector<Finding> found;
+    std::vector<config::Finding> found;
     std::string_view content = text;
     if (content.substr(0, 3) == "\xEF\xBB\xBF")
     {
@@ -262,7 +262,7 @@ RequestFileRead read_request_file(std::string_view text, std::string_view shown)
     const auto first = content.find_first_not_of(" \t\r\n");
     if (first == std::string_view::npos || content[first] != '{')
     {
-        found.push_back(Finding{Severity::Error, "value",
+        found.push_back(config::Finding{config::Severity::Error, "value",
                                 std::string(first == std::string_view::npos ? "the file is empty" : "this is not a JSON object") +
                                     ": a request file is { \"vehicle_sil_run_request\": " + std::to_string(kRunRequestFormat) +
                                     ", ... } with what to run (docs/simulation-run.md; schema/run-request.schema.json)",
@@ -272,7 +272,7 @@ RequestFileRead read_request_file(std::string_view text, std::string_view shown)
     {
         try
         {
-            const detail::YamlDocument doc(text);
+            const config::detail::YamlDocument doc(text);
             RequestFile file = Reader(doc, found).read();
             if (found.empty())
             {
@@ -280,13 +280,13 @@ RequestFileRead read_request_file(std::string_view text, std::string_view shown)
                 out.file = std::move(file);
             }
         }
-        catch (const detail::YamlSyntaxError& e)
+        catch (const config::detail::YamlSyntaxError& e)
         {
-            found.push_back(Finding{Severity::Error, "syntax", "syntax error: " + e.message(), e.line(), "", "", e.context()});
+            found.push_back(config::Finding{config::Severity::Error, "syntax", "syntax error: " + e.message(), e.line(), "", "", e.context()});
         }
     }
     // A usage error of the command: it is said before any file of the simulation is read.
-    for (Finding& finding : found)
+    for (config::Finding& finding : found)
     {
         finding.code = "usage";
         finding.file = std::string(shown);

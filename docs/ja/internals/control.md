@@ -412,7 +412,7 @@ Peer ごとの状態は Sent → Queued（Agent が積んだ）→ Applied、Lat
 - 直した `Command` は、その incarnation にだけ送信します（再起動なら捨てます）。
 - 操作の記録（`request`）は、クライアントが書いた名前と値のままです。
 
-ルール（型、範囲、衝突）は `MappedSchema::make()` の 1 か所にあり、照合（`launch::seen_variables()`）も同じ関数を `--describe` の一覧に掛けます。対応の形を追加するときは、次を直します。
+ルール（型、範囲、衝突）は `MappedSchema::make()` の 1 か所にあり、照合（`config::seen_variables()`）も同じ関数を `--describe` の一覧に掛けます。対応の形を追加するときは、次を直します。
 
 - `VariableMapping` のメンバー
 - `MappedSchema::make()` と変換

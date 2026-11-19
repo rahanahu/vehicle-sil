@@ -14,7 +14,7 @@
 
 namespace vehicle_sil::launch {
 
-std::int64_t detail::ecu_start_timeout_ms(const SimulationConfig& config, bool stands_still_before_start)
+std::int64_t detail::ecu_start_timeout_ms(const config::SimulationConfig& config, bool stands_still_before_start)
 {
     // The launcher waits start_timeout_ms for the start and then stops the participants within
     // stop_timeout_ms; the ECU must not give up first (it would end, and the launcher would name it
@@ -22,11 +22,11 @@ std::int64_t detail::ecu_start_timeout_ms(const SimulationConfig& config, bool s
     // A start that waits for someone to start a participant by hand may take any time, and so may
     // one that stands still before the first step until a control client's command: the ECUs are
     // not Running before it, and a limit of theirs would end the run while it stands still.
-    if (waits_for_manual(config) || stands_still_before_start)
+    if (config::waits_for_manual(config) || stands_still_before_start)
     {
-        return kMaxMillis;
+        return config::kMaxMillis;
     }
-    return std::min(config.start_timeout_ms + config.stop_timeout_ms + 10000, kMaxMillis);
+    return std::min(config.start_timeout_ms + config.stop_timeout_ms + 10000, config::kMaxMillis);
 }
 
 detail::StopRequest detail::record_stop_request(ParticipantRun& run, bool sent, const std::optional<process::ExitStatus>& status)
@@ -132,7 +132,7 @@ std::string command_text(const std::filesystem::path& executable, const std::vec
 
 } // namespace
 
-std::vector<std::string> participant_arguments(const SimulationConfig& config, const ParticipantConfig& participant,
+std::vector<std::string> participant_arguments(const config::SimulationConfig& config, const config::ParticipantConfig& participant,
                                                const std::string& registry_uri, bool stands_still_before_start)
 {
     const std::vector<std::string> rest(participant.command.begin() + (participant.command.empty() ? 0 : 1),
@@ -140,18 +140,18 @@ std::vector<std::string> participant_arguments(const SimulationConfig& config, c
     std::vector<std::string> arguments;
     if (participant.describe)
     {
-        arguments = expand_placeholders(rest, "", "");
+        arguments = config::expand_placeholders(rest, "", "");
         arguments.insert(arguments.end(), {"--name", participant.name, "--registry-uri", registry_uri, "--start-timeout-ms",
                                            std::to_string(ecu_start_timeout_ms(config, stands_still_before_start))});
     }
     else
     {
-        arguments = expand_placeholders(rest, registry_uri, participant.name);
+        arguments = config::expand_placeholders(rest, registry_uri, participant.name);
     }
     // After the placeholders are replaced: a network's name with "{name}" in it stays as it is.
-    const std::vector<std::string> renames = map_network_arguments(participant);
+    const std::vector<std::string> renames = config::map_network_arguments(participant);
     arguments.insert(arguments.end(), renames.begin(), renames.end());
-    const std::vector<std::string> nodes = j1939_node_arguments(participant);
+    const std::vector<std::string> nodes = config::j1939_node_arguments(participant);
     arguments.insert(arguments.end(), nodes.begin(), nodes.end());
     return arguments;
 }
@@ -174,9 +174,9 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
     const auto workDir = without_dots(std::filesystem::absolute(base_));
     for (std::size_t i = 0; i < ctx_.config.participants.size(); ++i)
     {
-        const ParticipantConfig& p = ctx_.config.participants[i];
+        const config::ParticipantConfig& p = ctx_.config.participants[i];
         ParticipantRun& run = outcome_.participants[i];
-        const std::optional<NetworkOutside>& outside = ctx_.plan.members[i].outside;
+        const std::optional<config::NetworkOutside>& outside = ctx_.plan.members[i].outside;
         const bool bridge = outside.has_value();
         if (bridge != (which == Which::Bridges))
         {
@@ -192,7 +192,7 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
         std::vector<std::string> arguments;
         if (bridge)
         {
-            arguments = bridge_run_arguments(*outside, uri, ctx_.config.start_timeout_ms);
+            arguments = config::bridge_run_arguments(*outside, uri, ctx_.config.start_timeout_ms);
         }
         else
         {
@@ -208,12 +208,12 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
         process::ProcessOptions options;
         // A bridge in its own directory (bridge_working_directory()), a participant of the file in
         // the configuration file's.
-        options.working_directory = bridge ? bridge_working_directory(executable) : workDir;
+        options.working_directory = bridge ? config::bridge_working_directory(executable) : workDir;
         options.on_line = [this, i](process::Stream, std::string_view line) { out_.on_line(i, line); };
         // Always, so that the value decides and not one that the launcher inherited: "1" if other
         // computers may reach the registry, although these participants connect to it at a loopback
         // address (uri_for_participants()), so that they do not listen on loopback only; else "0".
-        options.environment.emplace_back(kListenOnNetworkVariable, listen_variable_value(ctx_.config));
+        options.environment.emplace_back(kListenOnNetworkVariable, config::listen_variable_value(ctx_.config));
         try
         {
             // Its lines wait (RunOutput::on_line() takes the output's lock) until its "started" event is out.
@@ -239,7 +239,7 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
     return true;
 }
 
-void RunParticipants::show_manual(const ParticipantConfig& p, const std::filesystem::path& executable,
+void RunParticipants::show_manual(const config::ParticipantConfig& p, const std::filesystem::path& executable,
                                   const std::vector<std::string>& arguments, const std::filesystem::path& workDir)
 {
     std::filesystem::path native = executable;
@@ -250,9 +250,9 @@ void RunParticipants::show_manual(const ParticipantConfig& p, const std::filesys
     // As run gives the participants it starts; only if it is 1 (0 is what a participant does
     // without it), so that the command stays as it was for a simulation on this computer.
     std::vector<std::pair<std::string, std::string>> environment;
-    if (registry_on_network(ctx_.config))
+    if (config::registry_on_network(ctx_.config))
     {
-        environment.emplace_back(kListenOnNetworkVariable, listen_variable_value(ctx_.config));
+        environment.emplace_back(kListenOnNetworkVariable, config::listen_variable_value(ctx_.config));
     }
     const auto held = out_.hold();
     out_.event([&](RunEvents& e) {

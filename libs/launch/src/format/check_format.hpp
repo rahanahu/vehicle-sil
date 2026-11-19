@@ -22,30 +22,30 @@ namespace vehicle_sil::launch::detail {
 
 /// format_text() without its last line: the tables and the findings. `scenario`: the line of the
 /// scenario of --scenario, its parameters and its lines; null for none.
-[[nodiscard]] std::string check_text_body(const CheckReport& report, const ScenarioCheck* scenario);
+[[nodiscard]] std::string check_text_body(const config::CheckReport& report, const ScenarioCheck* scenario);
 /// Each finding as "<severity>: <file>[:<line>]: <message> [<code>]" (the detail indented below;
 /// the code last, as GCC puts its [-W...] option, so that "error:" stays at the start), then an
 /// empty line; "" for none.
-[[nodiscard]] std::string findings_text(const std::string& file, const std::vector<Finding>& findings);
+[[nodiscard]] std::string findings_text(const std::string& file, const std::vector<config::Finding>& findings);
 /// "<n> errors, <n> warnings, <n> notes".
 [[nodiscard]] std::string count_summary(std::size_t errors, std::size_t warnings, std::size_t notes);
 /// Columns of the width of their longest cell, two spaces apart.
 [[nodiscard]] std::string table_text(const std::vector<std::vector<std::string>>& rows);
-[[nodiscard]] const char* severity_text(Severity severity);
+[[nodiscard]] const char* severity_text(config::Severity severity);
 /// format_json()'s object, as the member `key` of the object `w` is in ("" at the top). `scenario`:
 /// the member "scenario"; null for none.
-void write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const CheckReport& report,
+void write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const config::CheckReport& report,
                       const ScenarioCheck* scenario);
 /// The array "networks" of a participant's "reported": what its executable described, under the
 /// executable's names (check_networks.cpp).
 void write_reported_networks(vehicle_sil::json::JsonWriter& w, const EcuDescription& ecu);
 /// An array `key` of parameters: each with "name", "value" (as a scenario reads it: true or false,
 /// a number, or a text) and "from" (param_source_name()).
-void write_params_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::vector<ParamValue>& params);
+void write_params_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::vector<config::ParamValue>& params);
 /// The array "findings".
-void write_findings_json(vehicle_sil::json::JsonWriter& w, const std::string& file, const std::vector<Finding>& findings);
+void write_findings_json(vehicle_sil::json::JsonWriter& w, const std::string& file, const std::vector<config::Finding>& findings);
 /// The members of one finding of "findings" (severity, code, file, ...), into the object `w` is in.
-void write_finding_members(vehicle_sil::json::JsonWriter& w, const std::string& file, const Finding& finding);
+void write_finding_members(vehicle_sil::json::JsonWriter& w, const std::string& file, const config::Finding& finding);
 
 /// The result's traffic, for people: the line "traffic: ..." (per network of the configuration
 /// how many counted participants sent and how many received, or "nothing sent", or "not

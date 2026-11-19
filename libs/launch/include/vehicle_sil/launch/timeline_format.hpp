@@ -27,7 +27,7 @@ struct TimelineInput
     std::string file;      ///< the configuration file, as the user named it
     std::string variant{}; ///< the chosen variant, or ""
     /// The scenario's parameters with the values in effect (ScenarioRead::params).
-    std::vector<ParamValue> params{};
+    std::vector<config::ParamValue> params{};
     std::int64_t time_step_ms = 0; ///< the time step of the launcher's controller
     const Scenario* scenario = nullptr;
     const ScenarioRun* run = nullptr;
@@ -38,7 +38,7 @@ struct TimelineInput
     const TimelineRecord* record = nullptr;
     /// The findings of the check and of the run; the file takes those of the scenario
     /// (timeline_takes_finding()).
-    std::vector<Finding> findings{};
+    std::vector<config::Finding> findings{};
 };
 
 /// Whether a timeline file has the finding with this code: whole if it is about the scenario

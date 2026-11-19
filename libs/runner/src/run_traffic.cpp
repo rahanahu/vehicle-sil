@@ -135,10 +135,10 @@ TrafficSchema traffic_schema(const control::PeerInfo& peer)
     return out;
 }
 
-TrafficPlan traffic_plan(const SimulationConfig& config, const CheckReport& check, const std::vector<RunMember>& members)
+TrafficPlan traffic_plan(const config::SimulationConfig& config, const config::CheckReport& check, const std::vector<RunMember>& members)
 {
     TrafficPlan plan;
-    for (const NetworkConfig& network : config.networks)
+    for (const config::NetworkConfig& network : config.networks)
     {
         if (network.valid)
         {
@@ -147,7 +147,7 @@ TrafficPlan traffic_plan(const SimulationConfig& config, const CheckReport& chec
     }
     for (std::size_t i = 0; i < config.participants.size(); ++i)
     {
-        const ParticipantConfig& p = config.participants[i];
+        const config::ParticipantConfig& p = config.participants[i];
         TrafficPlan::Participant who;
         who.name = p.name;
         who.in_run = p.enabled;
@@ -160,7 +160,7 @@ TrafficPlan traffic_plan(const SimulationConfig& config, const CheckReport& chec
         else if (p.describe && i < check.participants.size() && check.participants[i].ecu)
         {
             who.described = true;
-            for (const SeenNetwork& seen : SeenEcu(p, *check.participants[i].ecu).seen_networks())
+            for (const config::SeenNetwork& seen : config::SeenEcu(p, *check.participants[i].ecu).seen_networks())
             {
                 who.on.push_back(seen.network.name);
             }

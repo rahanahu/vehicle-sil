@@ -463,7 +463,7 @@ ControlServerOfRun make_control_server_of_run(const ControlHost& asked, RunContr
     }
     catch (const Refused& refused)
     {
-        out.findings.push_back(Finding{Severity::Error, "usage", refused.message, 0, "", ""});
+        out.findings.push_back(config::Finding{config::Severity::Error, "usage", refused.message, 0, "", ""});
     }
     return out;
 }

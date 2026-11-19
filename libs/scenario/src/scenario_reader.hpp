@@ -57,18 +57,18 @@ inline constexpr const char* kAsItIs = "; to run it as it is without this messag
 // The same for a dither that "inputs" declares.
 inline constexpr const char* kAsItIsInput = "; to run it as it is without this message, add undersampled: ok to the input's entry in inputs";
 
-using detail::join;
+using config::detail::join;
 
 std::string number_text(double value);
 const char* type_name(control::ValueType type);
 double as_number(const control::Value& value);
 std::string items_text(const std::vector<control::EnumItem>& items);
 
-class Reader : detail::YamlReader
+class Reader : config::detail::YamlReader
 {
 public:
-    Reader(const detail::YamlDocument& doc, const ScenarioCatalog& catalog, const ScenarioContext& context, ScenarioRead& out) :
-      YamlReader(doc, out.findings), catalog_(catalog), context_(context), out_(out)
+    Reader(const config::detail::YamlDocument& doc, const ScenarioCatalog& catalog, const ScenarioContext& context, ScenarioRead& out) :
+      config::detail::YamlReader(doc, out.findings), catalog_(catalog), context_(context), out_(out)
     {
     }
 
@@ -80,7 +80,7 @@ private:
     /// A parameter that has a value: from the scenario's "params" (`declared`) or from outside.
     struct Known
     {
-        ParamValue value;
+        config::ParamValue value;
         bool declared = false;
         bool used = false; ///< a step has "${name}"
     };
@@ -102,7 +102,7 @@ private:
     void check_something_is_checked();
 
     /// The parameter whose value stands at `node`, or null.
-    const ParamValue* param_at(ryml::id_type node) const;
+    const config::ParamValue* param_at(ryml::id_type node) const;
 
     // What the steps' values are read with: a "${name}" reads as its parameter's value.
     std::string text_of(ryml::id_type node) const;

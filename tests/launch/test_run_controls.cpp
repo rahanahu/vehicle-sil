@@ -466,7 +466,7 @@ TEST_CASE(a_run_until_of_stdin_is_refused_by_the_time_lock_and_the_state_says_so
         until.at_ms = 5000;
         // Before the lock is known it waits; the lock then refuses it.
         CHECK(controls.time().apply(until, "stdin").pending);
-        vehicle_sil::launch::TimeLock lock;
+        vehicle_sil::config::TimeLock lock;
         lock.locked = true;
         lock.connected = {"CAN1"};
         controls.set_time_lock(lock);
@@ -605,7 +605,7 @@ TEST_CASE(a_run_decides_the_time_commands_that_came_before_it_with_its_time_lock
     {
         // The same file with --time-policy free, and one without a bridge: taken, in their order.
         RunRequest free;
-        free.intent.time_policy = vehicle_sil::launch::TimePolicy::Free;
+        free.intent.time_policy = vehicle_sil::config::TimePolicy::Free;
         Answers answers;
         const auto report = run(config_file("bridged.yaml", engine + gateway), free, answers);
         CHECK(!report.check.time_lock.locked);

@@ -116,7 +116,7 @@ public:
     /// outside[].to_outside and from_outside).
     virtual void outside(const std::string& network, std::uint64_t to_outside, std::uint64_t from_outside) = 0;
     /// One of the run's findings (`file`: the configuration file).
-    virtual void finding(const std::string& file, const Finding& finding) = 0;
+    virtual void finding(const std::string& file, const config::Finding& finding) = 0;
     /// The simulation's virtual time as the controller sees it, and how it goes.
     virtual void time(const TimeEvent& time) = 0;
     /// How many things told but "log" have not got out yet (short, no wait). The run does not

@@ -25,7 +25,7 @@ inline constexpr int kCheckFormat = 1;
 /// counts, the exit code and the order stay one: `scenario` only says what was read. A run, a test
 /// and the outputs read it from here; the checks of the configuration take the CheckReport part.
 /// Copying it into a CheckReport drops the scenario: take a result of check_file() as a Checked.
-struct Checked : CheckReport
+struct Checked : config::CheckReport
 {
     /// --scenario: the scenario file that was read and checked.
     std::optional<ScenarioCheck> scenario{};
@@ -52,7 +52,7 @@ namespace detail {
 
 /// The process exit code of `check` (the table of the exit codes is in one place, exit_codes.hpp):
 /// 4 the command line was wrong, 3 the file was not read, 1 it did not pass, 0 it passed.
-[[nodiscard]] int check_exit_code(const CheckReport& report);
+[[nodiscard]] int check_exit_code(const config::CheckReport& report);
 
 /// How a check is made, beside what is asked for (RunRequest): what its caller is, not what the
 /// user wants.
@@ -89,6 +89,6 @@ struct CheckOptions
 /// executable is looked for or run; not at all if the configuration could not be read. A run
 /// gives its controls the lock there (run_file()), so that they know it before anything starts.
 [[nodiscard]] Checked check_file(const RunRequest& request, const CheckOptions& options = {},
-                                   const std::function<void(const TimeLock& lock)>& on_time_lock = {});
+                                   const std::function<void(const config::TimeLock& lock)>& on_time_lock = {});
 
 } // namespace vehicle_sil::launch
