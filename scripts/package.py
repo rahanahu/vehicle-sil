@@ -434,7 +434,7 @@ exit /b 2
 
 SOCKETCAN_ROW = ("| `bin/vehicle_sil_socketcan_bridge` | the SocketCAN bridge between a SIL Kit CAN network and a CAN interface of this "
                  "computer (a CAN adapter, or a virtual one such as `vcan0`); it needs no privileges and sets nothing on the "
-                 "interface: `--interface <name>`, `--list-channels` (the launcher does not start it from `--connect` yet) |\n")
+                 "interface: `vehicle_sil_launch run --connect <network>=<interface>` starts it from here (`--interface <name>`, `--list-channels` by hand) |\n")
 
 README = """# vehicle-sil {version} tools ({platform})
 

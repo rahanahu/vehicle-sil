@@ -7,7 +7,7 @@
 | 接続する相手 | `--backend` | OS | インストールするもの | 確認した範囲 |
 |---|---|---|---|---|
 | 同じ PC の OS のネットワークスタックと、TAP デバイスを開くソフト | `tap` | Linux | なし | ネットワーク名前空間の中で、本物のカーネルに対する自動テスト |
-| ネットワークのインターフェース（NIC、veth）の先の機器 | `packet` | Linux | なし | veth の対での自動テスト（物理 NIC は未確認） |
+| ネットワークのインターフェース（NIC、veth）の先の機器 | `packet` | Linux | なし | veth の対での自動テスト。手での確認は、物理の USB アダプター 1 つ（ASIX AX88772、100 Mbit/s）で、LAN のスイッチを通って同じ PC のもう 1 つの NIC まで: 両向きのフレーム、最初の `link` の行が `up`、ケーブルの抜き差し（link が down と up になり、実行は続く）、アダプターを抜く（`connect-lost`）、2 つの実行で使う（共有を知らせる）。ケーブルの先の機器や 2 台目の PC、多いトラフィックでは未確認 |
 | `packet` と同じ | `pcap` | Linux | libpcap | veth の対と本物の libpcap での自動テスト（物理 NIC は未確認） |
 | ネットワークのアダプターの先の機器 | `npcap` | Windows | Npcap | 本物の Npcap では、仮想マシンの仮想 NIC と、LAN につないだ USB のアダプター 1 つでの手動の確認だけ |
 
@@ -20,7 +20,7 @@ Vector XL の CAN のブリッジは [bridges.md](bridges.md) にあります。
 
 ## 最初の接続
 
-Linux で、PC の中の TAP デバイスに接続する手順です。先に作った自分が所有者の TAP デバイスなら、外部のライブラリも、実行時の権限も不要です。ランチャーを使うなら、自分で registry を起こす必要はありません。手順 1 の後に、`vehicle_sil_launch connections simulation.yaml` でこの PC のインターフェースを見て、`vehicle_sil_launch run --connect ETH1=tap:vsil0 simulation.yaml` が registry とブリッジを起動します（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。以降の手順はブリッジを手で起動するもので、`vehicle_sil_ethernet_bridge` と `sil-kit-registry`（SIL Kit のリリース、またはソースからのビルドの `_deps` の下にあります） には `PATH` が通っているものとします。
+Linux で、PC の中の TAP デバイスに接続する手順です。先に作った自分が所有者の TAP デバイスなら、外部のライブラリも、実行時の権限も不要です。ランチャーを使うなら、自分で registry を起こす必要はありません。手順 1 の後に、`vehicle_sil_launch connections simulation.yaml` でこの PC のインターフェースを見て、`vehicle_sil_launch run --connect ETH1=tap:vsil0 simulation.yaml` が registry とブリッジを起動します（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。使う構成は `stop_at_ms` のないものにします（プロジェクトのテンプレートでは `simulation.live.yaml`。`simulation.yaml` は短い時間で止まります）。。以降の手順はブリッジを手で起動するもので、`vehicle_sil_ethernet_bridge` と `sil-kit-registry`（SIL Kit のリリース、またはソースからのビルドの `_deps` の下にあります） には `PATH` が通っているものとします。
 
 | 手順 | すること | 確認 |
 |---|---|---|
