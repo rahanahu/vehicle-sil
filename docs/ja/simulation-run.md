@@ -664,6 +664,8 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `params` | 名前ごとです。`--param <name>=<value>` は、そのパラメーターのファイルの値を置き換えます。ほかは残り、照合の JSON の `from` は `request_file` です。 |
 | `disable`、`enable`、`manual` | ファイルの名前と引数の名前を合わせます。同じ名前で食い違うとき（ファイルの `disable` と `--enable`、ファイルの `enable` や `manual` と `--disable`、ファイルの `disable` と `--manual`）は、引数が勝ちます。 |
 
+ファイルの `scenario` と、`params` のパラメーターを外す引数はありません（`--scenario` と `--param` は置き換えるだけです）。それらのない実行には、それらを書いていない要求ファイルを使います。
+
 要求ファイルが引数と違うところ:
 
 | 場合 | 引数 | 要求ファイル |

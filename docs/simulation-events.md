@@ -229,7 +229,7 @@ Several threads of the launcher write `state`, so do not rely on the exact place
 
 A `step` or a `run_until` ends with the simulation paused at the `at_ms` of its `command` event. Reaching that time writes nothing by itself: the launcher's next look writes the `time` event with that `sim_ms`, then the `state` with `paused` `true` and that time in `paused_at_ms`. To send a command once the simulation is there, wait until the latest `state` has `paused` `true` and `paused_at_ms` at (or after) the `at_ms`. A `state` can say so before the `time` event of that time is written (the command's own `state`, if the simulation was already there). A command sent as soon as the `time` event comes can be decided before that `state` is written; the next `state` then shows what the command did.
 
-A stop request by a signal (Ctrl+C) that arrives before the simulation runs appears in the next `state` (the one of the next phase).
+A stop request by a signal (Ctrl+C) that arrives while the simulation does not run (before it runs, or after it has ended) appears in the next `state` (the one of the next phase).
 
 A `state` of a run with `--control` (pretty-printed here; it is one line in the output):
 
@@ -566,6 +566,7 @@ The launcher reads stdin only with `--stdin-commands`. Without it, stdin is not 
 | `step` | The `at_ms` of the `command` event is the virtual time at which the simulation pauses after the step. To know that the step has arrived, wait until the latest `state` has `paused` `true` and that time (or a later one) in `paused_at_ms`, instead of adding `ms` to a time you read earlier. A later `pause`, `resume`, `run_until` or `step`, or the end of the run, changes where the simulation pauses. |
 | `step` | Sent while a previous `step` or a `run_until` is in progress, it counts from the time at which that one pauses. |
 | `step` | Sent after a `pause` was accepted and before the simulation has paused, it counts from the time step in progress: the `pause` has ended the `run_until` or `step` that was in progress, whether or not a time step was waiting to keep the speed at that moment. |
+| `step` | Sent after a client's `pause` with a time ([Control API](control-api.md), `at_ms`) that the simulation has not reached yet, it counts from that time (the `at_ms` of that `pause`'s `command` event). |
 | `run_until` | Works while running and while paused. If the simulation is paused at or after the time, it stays paused and nothing happens. If the time has passed while it runs, it pauses at the next time step. The `at_ms` of the `command` event is the time asked for, rounded up to a multiple of the time step; for a time that has passed, it is not the time at which the simulation pauses (wait until the latest `state` has `paused` `true` and a `paused_at_ms`, and read that, instead of waiting for `at_ms`). |
 | `speed` | A pause stays in effect. |
 | EOF | If a stop request (`stop`, a signal, a closed stdout) has already arrived, does nothing (it does not count as a second one and no `command` event is written). |

@@ -378,7 +378,7 @@ These 4 finding codes appear only when the scenario runs:
 | `scenario-failed` | The condition of an `expect` did not hold. | Look at the value and the time on the `error:` line, then fix the ECU or the scenario. |
 | `scenario-timeout` | The condition of a `wait_until` did not hold within `timeout_ms`. | Find out why the precondition is not met, or increase `timeout_ms`. |
 | `scenario-out-of-time` | The run reached `stop_at_ms` of the configuration file before the scenario ended. | Increase `stop_at_ms`, or remove it. The simulation also stops when the scenario ends. |
-| `scenario-incomplete` | The run ended in the middle of the scenario: an ECU ended abnormally, or the run was ended by Ctrl+C or `--timeout-ms`. | Fix the error reported with it first. |
+| `scenario-incomplete` | The run ended in the middle of the scenario: an ECU ended abnormally, the run was ended by Ctrl+C or `--timeout-ms`, or a stop (a `stop` on stdin, or `Stop` of the Control API) cut the scenario short (exit code 5). | Fix the error reported with it first. |
 
 For the rules of the result, see "Results" in [scenario.md](../scenario.md#results).
 
