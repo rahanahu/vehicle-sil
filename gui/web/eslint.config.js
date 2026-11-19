@@ -38,6 +38,40 @@ const PORTABLE_PARTS = {
     'widgets/ and core/ are copied into other Angular apps: they must not import the pages (run/, variables/) or the app shell',
 };
 
+const FRONT_DOOR_MESSAGE =
+  'Do not read this low-level session field in a screen: it copies a rule of the launcher. Take "may I do this, and if not why" from the front door (`controls`, `status`). If you only show it, add this file to DISPLAY_ONLY_FILES in eslint.config.js with the reason in the PR.';
+
+/** The low-level session fields a screen must not read (`launcher.running` is added separately; `launcherRunning` is run-session's alias of it). */
+const LOW_LEVEL_FIELDS = ['stopRequests', 'runOutcome', 'features', 'launcherRunning'];
+
+/** The same reads in TypeScript (ESTree) and in templates (Angular expression AST). */
+const FRONT_DOOR_TS = [
+  ...LOW_LEVEL_FIELDS.map((n) => `MemberExpression[property.name='${n}']`),
+  "MemberExpression[property.name='running'][object.property.name='launcher']",
+  "MemberExpression[property.name='running'][object.name='launcher']",
+].map((selector) => ({ selector, message: FRONT_DOOR_MESSAGE }));
+
+const FRONT_DOOR_HTML = [
+  ...LOW_LEVEL_FIELDS.flatMap((n) => [
+    `PropertyRead[name='${n}']`,
+    `SafePropertyRead[name='${n}']`,
+  ]),
+  "PropertyRead[name='running'][receiver.name='launcher']",
+  "SafePropertyRead[name='running'][receiver.name='launcher']",
+].map((selector) => ({ selector, message: FRONT_DOOR_MESSAGE }));
+
+// Display only: these files read the fields to show something the front door has no value for
+// (the stopped-scenario distinction, a launcher still running after the result, the number of
+// stop requests, the paused band). Do not make another alias of these fields outside these files
+// (an alias must be added to LOW_LEVEL_FIELDS too). A new file that needs one of these is added here with a reason in the PR.
+const DISPLAY_ONLY_FILES = [
+  'src/app/run/run-status.ts',
+  'src/app/run/run-session.ts',
+  'src/app/core/session/simulation-time.ts',
+  'src/app/run/run-page.ts',
+  'src/app/run/run-page.html',
+];
+
 module.exports = defineConfig([
   {
     files: ['**/*.ts'],
@@ -88,6 +122,12 @@ module.exports = defineConfig([
     rules: {
       'no-restricted-imports': ['error', { patterns: [CLIENT_SOURCES, PUBLIC_ENTRY_ONLY] }],
     },
+  },
+  {
+    // A screen takes its decisions from the front door, not from the launcher's low-level fields
+    files: ['src/**/*.ts'],
+    ignores: ['src/**/*.spec.ts', ...DISPLAY_ONLY_FILES],
+    rules: { 'no-restricted-syntax': ['error', ...FRONT_DOOR_TS] },
   },
   {
     // The widgets (widgets/) and the wrappers (core/) do not depend on the screens (run/, variables/) or the app shell,
@@ -197,6 +237,19 @@ module.exports = defineConfig([
         },
       ],
       // テンプレートが読むのは signal。Observable は toSignal で signal にしてから読む（async パイプを使わない）
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "BindingPipe[name='async']",
+          message: 'async パイプを使わない。toSignal で signal にして読む。',
+        },
+        ...FRONT_DOOR_HTML,
+      ],
+    },
+  },
+  {
+    files: DISPLAY_ONLY_FILES.filter((f) => f.endsWith('.html')),
+    rules: {
       'no-restricted-syntax': [
         'error',
         {
