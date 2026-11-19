@@ -1471,6 +1471,122 @@ describe('the front door', () => {
       expect(rig.front.status.get().problem).toBeNull();
     });
 
+    describe('the text of a configuration file', () => {
+      const example = async (name: string) =>
+        (await httpExamples()).find((e) => e.name === name)!.response;
+
+      it('reads the saved text, the start-up file by default, and leaves a refusal out of the problem', async () => {
+        const rig = await open();
+        const config = await example('config');
+        const read = rig.front.readConfig('connect.yaml');
+        const sent = rig.http.expectOne('api/config?file=connect.yaml');
+        sent.flush(config);
+        expect(await read).toMatchObject({ text: expect.any(String), stamp: expect.any(String) });
+        // The app example has no start-up file
+        await expect(rig.front.readConfig()).rejects.toMatchObject({ code: 'no-file' });
+        rig.http.expectNone('api/config?file=connect.yaml');
+        const refused = rig.front.readConfig('x.yaml').catch((e: unknown) => e as ActionError);
+        rig.http
+          .expectOne('api/config?file=x.yaml')
+          .flush(
+            { error: { code: 'config-too-large', message: 'too large.', detail: null } },
+            { status: 413, statusText: 'Payload Too Large' },
+          );
+        expect(await refused).toMatchObject({ code: 'config-too-large', outcome: 'refused' });
+        expect(rig.front.status.get().problem).toBeNull();
+      });
+
+      it('checks a text with the text in the body, and refuses a field that a text does not take', async () => {
+        const rig = await open();
+        const check = rig.front.check(
+          { variant: 'v', strict: true },
+          { file: 'connect.yaml', text: 'vehicle_sil_simulation: 1\n' },
+        );
+        const request = rig.http.expectOne('api/check');
+        expect(request.request.body).toEqual({
+          file: 'connect.yaml',
+          text: 'vehicle_sil_simulation: 1\n',
+          variant: 'v',
+          strict: true,
+        });
+        request.flush(await example('check-text'));
+        expect((await check).findings).toBeDefined();
+        await expect(
+          rig.front.check({ disable: ['A'] }, { file: 'connect.yaml', text: '' }),
+        ).rejects.toMatchObject({ code: 'unknown-field', outcome: 'refused' });
+        rig.http.expectNone('api/check');
+      });
+
+      it('does not share a check of a text with the check of the page, in either order', async () => {
+        const rig = await open();
+        const file = { file: 'connect.yaml' };
+        const passed = await example('check-connect');
+        const page = rig.front.check({}, file);
+        const going = rig.http.expectOne('api/check');
+        const text = rig.front.check({}, { ...file, text: 'a: 1\n' });
+        const again = rig.front.check({}, { ...file, text: 'a: 1\n' });
+        expect(text).not.toBe(page);
+        expect(again).not.toBe(text);
+        // The page's check asked while the texts wait is its own, not theirs
+        const pageAfter = rig.front.check({}, { ...file, fresh: true });
+        expect(pageAfter).not.toBe(text);
+        expect(rig.front.check({}, { ...file, fresh: true })).toBe(pageAfter);
+        rig.http.expectNone('api/check');
+        going.flush(passed);
+        await page;
+        const second = await vi.waitFor(() => rig.http.expectOne('api/check'));
+        expect(second.request.body).toMatchObject({ text: 'a: 1\n' });
+        second.flush(await example('check-text'));
+        await text;
+        const third = await vi.waitFor(() => rig.http.expectOne('api/check'));
+        expect(third.request.body).toMatchObject({ text: 'a: 1\n' });
+        third.flush(await example('check-text'));
+        await again;
+        const last = await vi.waitFor(() => rig.http.expectOne('api/check'));
+        expect(last.request.body).toEqual({ file: 'connect.yaml', disable: [] });
+        last.flush(passed);
+        await pageAfter;
+      });
+
+      it("keeps the failure of a check of a text out of the problem, with the server's code", async () => {
+        const rig = await open();
+        const failed = rig.front
+          .check({}, { file: 'connect.yaml', text: 'x' })
+          .catch((e: unknown) => e as ActionError);
+        rig.http
+          .expectOne('api/check')
+          .flush(
+            { error: { code: 'text-too-large', message: 'shorten it.', detail: null } },
+            { status: 413, statusText: 'Payload Too Large' },
+          );
+        expect(await failed).toMatchObject({ code: 'text-too-large', message: 'shorten it.' });
+        expect(rig.front.status.get().problem).toBeNull();
+      });
+
+      it('describes again the saved file, and the answer is not the page check', async () => {
+        const rig = await open();
+        const file = { file: 'connect.yaml' };
+        const page = rig.front.check({}, file);
+        const going = rig.http.expectOne('api/check');
+        const described = rig.front.describeAgain({ ...file, variant: 'v' });
+        rig.http.expectNone('api/describe');
+        going.flush(await example('check-connect'));
+        await page;
+        const sent = await vi.waitFor(() => rig.http.expectOne('api/describe'));
+        expect(sent.request.body).toEqual({ file: 'connect.yaml', variant: 'v' });
+        sent.flush(await example('describe'));
+        expect((await described).findings).toBeDefined();
+        // Not shared: the page check asked now is a new one
+        void rig.front.check({}, file);
+        rig.http.expectOne('api/check');
+        await expect(rig.front.describeAgain()).rejects.toMatchObject({ code: 'no-file' });
+        expect(rig.front.status.get().problem).toBeNull();
+        const refused = rig.front.describeAgain(file).catch((e: unknown) => e as ActionError);
+        rig.front.close();
+        expect(await refused).toMatchObject({ code: 'closed' });
+      });
+    });
+
     const row = (more: Record<string, unknown> = {}) => ({
       network: 'ETH_EXT',
       target: 'fake0',

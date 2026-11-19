@@ -218,6 +218,8 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
       });
     },
     check: (intent, checkOptions) => actions.check(intent, checkOptions),
+    readConfig: (file) => actions.readConfig(file),
+    describeAgain: (describeOptions) => actions.describeAgain(describeOptions),
     run: {
       start: (intent, startOptions) => actions.start(intent, startOptions),
       stop: () => actions.stop(),
