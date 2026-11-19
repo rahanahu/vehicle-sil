@@ -229,7 +229,7 @@ void encode_step(std::uint64_t session, SimTime time, bool final, std::span<cons
 [[nodiscard]] Error decode_submitted(std::span<const std::uint8_t> bytes, SubmittedMessage& out);
 [[nodiscard]] Error decode_step(std::span<const std::uint8_t> bytes, StepMessage& out);
 /// The session of a command, probe, ready or last-word-received message of kVersion, without
-/// decoding the rest (an agent looks at it first: every agent receives every command), and the
+/// decoding the rest (an agent looks at it first: it also receives the commands of other agents), and the
 /// revision it was written in. Empty for anything else, also for a message of another version.
 struct Addressed
 {

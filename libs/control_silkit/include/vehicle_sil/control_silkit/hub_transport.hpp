@@ -91,7 +91,8 @@ struct HelloReport
 };
 
 /// Connects the control agents of the simulation (AgentTransport, each on its ECU's participant)
-/// to a hub, through subscribers and one publisher on `runtime`'s participant.
+/// to a hub, through subscribers and the publishers of the commands (one per group of agents, and
+/// one without a group) on `runtime`'s participant.
 ///
 /// - An agent becomes a peer of the hub when its hello arrives (control::Hub::agent_connected();
 ///   PeerHello::incarnation is the session number of its transport). A hello of another version
@@ -114,7 +115,10 @@ struct HelloReport
 ///   still at P, the hub has every result and sample of the agents' steps that start before P.
 ///   What their steps at P itself produce may or may not have arrived: it does arrive while the
 ///   simulation stands still. Nothing of a later step arrives before the simulation goes on.
-/// - Commands (the hub's AgentLink::send()) are published from the calling thread.
+/// - Commands (the hub's AgentLink::send()) are published from the calling thread, on the
+///   publisher of the agent's group (a hash of its participant's name): they reach the agents of
+///   that group, not every agent. An agent's probes and commands take the same publisher, so a
+///   command follows the probe that was answered, and the commands keep their order.
 /// - An agent's connection ends with its last word (AgentTransport's destructor), when its
 ///   participant's lifecycle goes to Error (a failed step, or a lost connection: the process
 ///   ended), and when this transport is destroyed. The commands still open for it then become

@@ -1333,6 +1333,7 @@ struct RawAgent
     std::atomic<bool> answers{false};
     std::atomic<int> probes{0};
     std::atomic<int> last_word_answers{0}; ///< received for its session; it takes no other notice of them
+    std::atomic<int> others{0};            ///< probes and commands for another session that reached it
     /// Called for each of them before it is counted, on the participant's SIL Kit thread (set
     /// before the first can come): what a test wants to see at the moment the answer arrives.
     std::function<void()> on_last_word_answer;
@@ -1341,7 +1342,9 @@ struct RawAgent
     pubsub::IDataPublisher* step_out = nullptr;
     pubsub::IDataPublisher* submitted_out = nullptr;
 
-    RawAgent(std::string agent_name, const std::string& uri, std::uint64_t agent_session) :
+    /// `grouped`: it subscribes to the commands of its name's group, as an AgentTransport does
+    /// (else to the commands of every group).
+    RawAgent(std::string agent_name, const std::string& uri, std::uint64_t agent_session, bool grouped = false) :
       name(std::move(agent_name)), session(agent_session)
     {
         // A process started anew under the name of one that has just gone: the registry may refuse
@@ -1353,9 +1356,16 @@ struct RawAgent
         hello_out = participant->CreateDataPublisher(topics::kHelloTopic, topics::spec(topics::kHelloTopic), 1);
         step_out = participant->CreateDataPublisher(topics::kStepTopic, topics::spec(topics::kStepTopic), 0);
         submitted_out = participant->CreateDataPublisher(topics::kSubmittedTopic, topics::spec(topics::kSubmittedTopic), 0);
-        participant->CreateDataSubscriber(topics::kCommandTopic, topics::spec(topics::kCommandTopic),
+        participant->CreateDataSubscriber(topics::kCommandTopic,
+                                          grouped ? topics::command_spec(topics::command_group(name))
+                                                  : topics::spec(topics::kCommandTopic),
                                           [this](pubsub::IDataSubscriber*, const pubsub::DataMessageEvent& event) {
                                               const auto to = wire::addressed({event.data.data(), event.data.size()});
+                                              if (to && to->session != session &&
+                                                  (to->kind == wire::Kind::Probe || to->kind == wire::Kind::Command))
+                                              {
+                                                  ++others;
+                                              }
                                               if (to && to->kind == wire::Kind::Probe && to->session == session)
                                               {
                                                   ++probes;
@@ -1969,6 +1979,106 @@ TEST_CASE(an_agent_does_not_answer_what_is_written_to_it_in_another_version)
     // In its own version: answered.
     CHECK(eventually([&] { return hub.probe("A").has_value(); }, 30s));
     a.end();
+}
+
+/// The first of `prefix`0, `prefix`1, ... whose group of commands is `group` (`same`), or is not.
+std::string name_in_group(const std::string& prefix, std::size_t group, bool same)
+{
+    for (int i = 0;; ++i)
+    {
+        std::string name = prefix + std::to_string(i);
+        if ((topics::command_group(name) == group) == same)
+        {
+            return name;
+        }
+    }
+}
+
+// The group is part of what a hub and an agent of different builds (and machines) must agree on:
+// a change of the hash would make them miss each other's commands.
+TEST_CASE(the_group_of_a_participant_is_a_fixed_hash_of_its_name)
+{
+    CHECK_EQ(topics::command_group("A"), std::size_t{12});
+    CHECK_EQ(topics::command_group("B"), std::size_t{5});
+    CHECK_EQ(topics::command_group("Engine"), std::size_t{27});
+    CHECK_EQ(topics::command_group("ECU1"), std::size_t{15});
+    CHECK_EQ(topics::command_group(""), std::size_t{2166136261U % topics::kCommandGroups});
+}
+
+// A probe or a command goes to the agents of its target's group only. Agents of one group still
+// receive each other's and drop them; the commands of one agent arrive in the order written.
+TEST_CASE(a_command_reaches_the_agents_of_its_group_only_and_in_the_order_written)
+{
+    const InProcessRegistry registry;
+    HubSide side(registry.uri, {"Unused"});
+    auto& hub = side.hub;
+    const std::string a_name = "A";
+    const std::size_t group = topics::command_group(a_name);
+    RawAgent a(a_name, registry.uri, 101, true);
+    RawAgent b(name_in_group("B", group, false), registry.uri, 102, true); // another group
+    RawAgent c(name_in_group("C", group, true), registry.uri, 103, true);  // the group of A
+    for (RawAgent* agent : {&a, &b, &c})
+    {
+        agent->answers.store(true);
+        agent->hello(3);
+    }
+    side.wait_ready({a.name, b.name, c.name});
+    constexpr int kWrites = 30;
+    std::map<std::string, std::vector<std::uint64_t>> written;
+    for (int i = 1; i <= kWrites; ++i)
+    {
+        for (RawAgent* agent : {&a, &b, &c})
+        {
+            const std::uint64_t seq = hub.write(OperationRequest{{{agent->name, "v1", Value{std::int64_t{i}}}}});
+            check_status(*hub.operation(seq), agent->name, TargetStatus::Sent);
+            written[agent->name].push_back(seq);
+        }
+    }
+    for (RawAgent* agent : {&a, &b, &c})
+    {
+        CHECK(eventually([&] { return agent->commands_so_far().size() == kWrites; }, 30s));
+        std::vector<std::uint64_t> arrived;
+        for (const auto& bytes : agent->commands_so_far())
+        {
+            wire::CommandMessage command;
+            CHECK(!wire::decode_command(bytes, command));
+            arrived.push_back(command.command.seq);
+        }
+        CHECK(arrived == written[agent->name]);
+    }
+    // B heard nothing of A and C (not even their probes); A and C heard each other's commands.
+    CHECK_EQ(b.others.load(), 0);
+    CHECK(a.others.load() >= kWrites);
+    CHECK(c.others.load() >= kWrites);
+}
+
+// The same with the agents' own transports: an ECU of another group never sees a command for A,
+// one of A's group sees and ignores each.
+TEST_CASE(an_agent_transport_receives_the_commands_of_its_group_only)
+{
+    const InProcessRegistry registry;
+    HubSide side(registry.uri, {"Unused"});
+    auto& hub = side.hub;
+    const std::size_t group = topics::command_group("A");
+    TestEcu a("A", registry.uri, EcuOptions{.virtual_time = false});
+    TestEcu other(name_in_group("Other", group, false), registry.uri, EcuOptions{.virtual_time = false});
+    TestEcu same(name_in_group("Same", group, true), registry.uri, EcuOptions{.virtual_time = false});
+    for (TestEcu* ecu : {&a, &other, &same})
+    {
+        ecu->peer->start(30s);
+    }
+    side.wait_ready({a.name, other.name, same.name});
+    const auto same_before = same.transport->stats().ignored;
+    constexpr int kWrites = 5;
+    for (int i = 1; i <= kWrites; ++i)
+    {
+        const std::uint64_t seq = hub.write(OperationRequest{{{"A", "cmd", Value{std::int64_t{i}}}}});
+        check_status(settled(hub.wait_done(seq, scaled_timeout(30s)), seq, "a write to A"), "A", TargetStatus::Applied);
+    }
+    CHECK_EQ(a.transport->stats().commands, std::uint64_t{kWrites});
+    CHECK(eventually([&] { return same.transport->stats().ignored >= same_before + kWrites; }, 30s));
+    CHECK_EQ(other.transport->stats().ignored, std::uint64_t{0});
+    CHECK_EQ(other.transport->stats().commands, std::uint64_t{0});
 }
 
 // Which write a refusal is about travels as a number; the reason is never read for it.

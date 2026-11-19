@@ -371,6 +371,7 @@ simulation-run.md に書いてあるランチャーの出力:
 - 待ちを長くする変更や、なくす変更は、ECU の終わりの遅れと、実行の終わりの結果（Cancelled か Unknown か）を変えます。
 - 値と結果は、ステップのスレッドから、値を読んだ直後に送信します。別のスレッドに渡すと、順序の保証がなくなります（`HubTransportStats::late_messages` が数えます）。
 - 利用状態は、遅れてつながった Hub のために、ステップの時刻で 1 秒ごとに送り直します（`agent_transport.cpp` の `kAvailabilityResend`。`control_silkit.the_availability_is_said_again_each_second_of_step_time`、`control_silkit.a_hub_that_comes_late_gets_the_availability_the_ecu_has_now`）。
+- コマンドは Agent のグループの発行者で送信し（`topics.hpp` の `command_group()` と `kCommandGroups`）、問い合わせも同じ発行者で送信します。ハッシュかグループの数を変えると、ビルドの違う Hub と Agent が互いのコマンドを受け取れなくなります（`control_silkit.the_group_of_a_participant_is_a_fixed_hash_of_its_name`、`control_silkit.a_command_reaches_the_agents_of_its_group_only_and_in_the_order_written`）。
 - Hub の側の受信のハンドラーには、待つものと重い処理を追加しません。シミュレーション全体が待つことになります。
 
 テスト:

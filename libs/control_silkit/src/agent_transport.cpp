@@ -157,7 +157,8 @@ struct AgentTransport::State
         trace::Span traceCommand("agent.receive_other");
         const std::lock_guard lock(command_mutex);
         const std::span<const std::uint8_t> bytes(data.data(), data.size());
-        // Whom it is for, before anything else is read: every agent receives every command.
+        // Whom it is for, before anything else is read: the agents of a group receive each
+        // other's commands (detail::command_group()).
         const auto to = wire::addressed(bytes);
         if (command_closed)
         {
@@ -288,7 +289,8 @@ AgentTransport::AgentTransport(control::Agent& agent, ParticipantRuntime& runtim
         const std::lock_guard lock(state->command_mutex);
         state->command_closed = true; // until the constructor is through
     }
-    participant.CreateDataSubscriber(detail::kCommandTopic, detail::spec(detail::kCommandTopic),
+    // The commands of this participant's group only (and what the hub sends to every agent).
+    participant.CreateDataSubscriber(detail::kCommandTopic, detail::command_spec(detail::command_group(runtime.name())),
                                      [state](pubsub::IDataSubscriber*, const pubsub::DataMessageEvent& event) {
                                          state->on_command(event.data);
                                      });
