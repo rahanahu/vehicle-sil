@@ -199,7 +199,7 @@ This is the lower door of the library, `createClient`, which the front door is b
 import { createClient, takeToken } from '@vehicle-sil/gui-client';
 
 // A screen opened from the URL the server printed (http://127.0.0.1:<port>/#token=<token>): take #token= from the URL and remove it.
-// A Node tool takes baseUrl and the token out of that URL itself and passes them (examples/gui_client).
+// A Node tool takes baseUrl and the token out of that URL itself and passes them (examples/gui_client, in a clone of the repository).
 const client = createClient({
   baseUrl: new URL('/', location.href).href,
   token: takeToken(window),
@@ -285,6 +285,7 @@ const stop = watch([client.status, client.controls], (status, controls) => {
 });
 
 try {
+  await client.time.pause(); // a step needs a paused run (or start it paused: `run.start({ start_paused: true })`)
   await client.time.step(100); // resolves when time has arrived and the run is paused again
 } catch (error) {
   if (error instanceof ActionError) console.log(error.code, error.message, error.outcome);
@@ -294,7 +295,7 @@ try {
 | Name                                                               | What it is                                                                                                                                                                                                                                                                  |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `status`                                                           | The one state to show: `link`, `run`, `file`, `result` and `problem` (below). Discrete values only                                                                                                                                                                          |
-| `clock`                                                            | `sim_ms`, `speed`, `actual_speed` and `pacing` (`not-paced`, `on-time` or `late`). It changes often, so it is apart from `status`                                                                                                                                           |
+| `clock`                                                            | `sim_ms` (`null` before a run), `speed`, `actual_speed` and `pacing` (`not-paced`, `on-time` or `late`). It changes often, so it is apart from `status`                                                                                                                     |
 | `controls`                                                         | Whether each operation can be used now: `start`, `stop`, `force_stop`, `pause`, `resume`, `step` (with `min_ms` and `max_ms`), `run_until`, `speed` (with `min`, `max` and `fastest`: whether `'max'` is accepted besides the numbers), and `save`                          |
 | `scenario`                                                         | The scenario of the current (or last) run: `file`, `name`, `status`, `steps`, `timeline_url`; `null` for a run without one                                                                                                                                                  |
 | `outside`                                                          | The networks that the run's `connect` connected to a real bus ("Connecting a network outside" below)                                                                                                                                                                        |
@@ -635,7 +636,7 @@ The `kind` of a `WriteError`:
 - `onAccepted` (a function that receives `{session, seq}`) is called once, when the server has received the write and returned the operation number. This is before the result. It is not called when the write is rejected or no response comes.
 - Use `onAccepted` to show "accepted, waiting to be applied", and to know when you may send the next write. Writes through `bind` use it: a next value that comes before the server has received the previous write is kept instead of sent, and only the last value is sent once the server has it.
 - `timeoutMs` (default `WRITE_TIMEOUT_MS`) counts from the HTTP response. `Infinity` sets no time limit (the write waits until the run changes or `close()` is called). Values above 2^31-1 ms (about 24.8 days) are capped there. Non-numbers and values of 0 or less mean the default.
-- A write is applied in the step at the given virtual time (`atMs`; if omitted, the next step), so it does not complete while the simulation is paused. To write while paused, wait for `queued` in `client.variables.operations` before you advance (`examples/gui_client/variables.mjs`).
+- A write is applied in the step at the given virtual time (`atMs`; if omitted, the next step), so it does not complete while the simulation is paused. To write while paused, wait for `queued` in `client.variables.operations` before you advance (`examples/gui_client/variables.mjs`, in a clone of the repository).
 - `client.variables.operations` lists recent operations, including writes from other clients, but not a scenario's own writes.
 
 ### Write before the first step

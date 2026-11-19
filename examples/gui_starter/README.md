@@ -18,7 +18,7 @@ Pass this directory to the GUI server with `--web`.
 
 | Use | Command |
 |---|---|
-| Prebuilt tools | `vehicle-sil-gui --web <tools>/gui_starter simulation.yaml` |
+| Prebuilt tools | `vehicle-sil-gui --web <tools>/gui_starter simulation.live.yaml` |
 | Repository | Build the library files once, then start the server (the commands below). |
 
 In the repository, run this from the root:
@@ -26,7 +26,7 @@ In the repository, run this from the root:
 ```sh
 (cd gui/web && npm ci && npm run build:client)    # build/gui-client/: the files that the server serves under /vsil/
 uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch \
-  --web examples/gui_starter build/<preset>/examples/ecu_main/simulation.yaml
+  --web examples/gui_starter build/<preset>/examples/ecu_main/simulation.live.yaml
 ```
 
 ### Verify the screen
@@ -134,6 +134,7 @@ try {
   await front.time.step(100); // resolves when 100 ms of simulated time have passed and the run is paused again
   await written;
   await front.time.resume();
+  await front.time.pause(); // pause again when you like; `resume()` goes on
 } catch (error) {
   if (error instanceof ActionError) console.log(error.code, error.message, error.outcome);
   else throw error;
@@ -143,6 +144,7 @@ try {
 }
 ```
 
+- `front.clock` has `sim_ms`, the virtual time in ms; it is `null` before a run (the type is `number | null`), so check for `null` before you show it.
 - To play a scenario, choose one of the scenario files next to the start-up file (`scenarios()` takes `{ file }` for another configuration file; give the same `file` to `run.start`) and wait for the end of the run. A run with a scenario refuses writes (`scenario-running`), so this example writes nothing:
 
 ```ts
