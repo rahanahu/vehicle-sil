@@ -224,6 +224,15 @@ TEST_CASE(wire_hello_that_cannot_be_announced_is_refused_when_encoded)
     hello.max_pending = wire::kMaxPending;
     CHECK(wire::encode_hello(hello, bytes, why));
 
+    // An availability that is none of the three states (a hub would refuse the whole hello).
+    hello = sample_hello();
+    hello.schema[0].availability = Availability::Inactive;
+    CHECK(wire::encode_hello(hello, bytes, why));
+    hello.schema[0].availability = static_cast<Availability>(3);
+    CHECK(!wire::encode_hello(hello, bytes, why));
+    CHECK(bytes.empty());
+    CHECK(why.find("availability of variable '" + hello.schema[0].name + "' is 3") != std::string::npos);
+
     // A schema whose description is larger than a hello may be.
     hello = sample_hello();
     hello.schema.assign(5, hello.schema.front());

@@ -196,7 +196,8 @@ struct Header
 /// Each encoder replaces `out` and writes the message in kVersion and kRevision.
 /// false (`out` empty, `why` says what to do): the hello would exceed kMaxHelloBytes, its
 /// participant name or a variable's name is empty or longer than kMaxNameBytes, it has more than
-/// kMaxVariables variables, or max_pending is not within 1..kMaxPending.
+/// kMaxVariables variables, max_pending is not within 1..kMaxPending, or a variable's availability
+/// is none of Unknown, Active and Inactive.
 [[nodiscard]] bool encode_hello(const Hello& hello, Bytes& out, std::string& why);
 /// false (`out` empty): the command would exceed kMaxMessageBytes.
 [[nodiscard]] bool encode_command(const CommandMessage& message, Bytes& out);

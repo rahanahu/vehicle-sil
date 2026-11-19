@@ -332,6 +332,7 @@ If `forget_peer()` removes a disconnected peer, its unsettled operations become 
 - The Hub sends one `Command` per peer, with that number as `seq`.
 - The Hub checks only that the peer is connected, that the variable exists and is writable, and that the peer has fewer unfinished operations than `max_pending` (received in the hello; if not, Busy).
 - The Agent decides the type, the range and the step that applies the write.
+- The Hub counts a peer's unfinished operations by looking only at the operations that are not finished, so the cost does not grow with the finished operations it keeps (`max_operations`).
 
 For each peer, the state goes from Sent to Queued (the Agent queued it), then to one of Applied, Late, Rejected and Cancelled. It can also be Disconnected, Invalid, Busy or Unknown. Every state except Sent, Queued and Disconnected is final and never changes.
 

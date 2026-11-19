@@ -18,7 +18,7 @@
 
 | テスト | 内容 |
 |---|---|
-| `launch.*` | 設定ファイルの読み込みと照合のルール、人向けと JSON の出力（プロセスを起動しない） |
+| `launch.*` | 設定ファイルの読み込みと照合のルール、人向けと JSON の出力（プロセスを起動しない）。この名前を 4 つの試験の実行ファイルが持つ: `tests/config`、`tests/scenario`、`tests/runner`（それぞれ自分のライブラリだけをリンクし、ディレクトリの名前を 2 つめのラベルに持つ: `-L config`、`-L scenario`、`-L runner`）と `tests/launch`（残り） |
 | `launch_cli.*` | `vehicle_sil_launch check` を実行ファイルとして動かす |
 | `launch_run.*` | `vehicle_sil_launch run` を実行ファイルとして動かす |
 | `config.*` | `libs/config` の境界（ヘッダーとソースが何を include してよいか） |
@@ -93,8 +93,8 @@
 | 設定ファイルとシナリオの読み取りの共通の部分 | `config/detail/yaml_reader.hpp` |
 | 時間の固定と計画した速さ、`detail::plan_time_step()`（コントローラーの既定のステップ）、`detail::coarse_time_step()`、`RunTiming::actual_speed()` | `src/time_plan.cpp` |
 
-- 試験: `tests/launch`（ルールと読み取り）、`tests/config`（境界）
-- `ctest -R`: `^launch\.`（ルール）、`^config\.`（境界）
+- 試験: `tests/config`（ルールと読み取り。ランチャーのライブラリ、core、SIL Kit なしでリンクする。境界）、`tests/launch`（照合の出力と、participant の実行ファイルの確認。この計算機のファイルを見る）
+- `ctest -R`: `^launch\.`（ルール。`tests/config` の分は `-L config`）、`^config\.`（境界）
 
 ### `libs/scenario`
 
@@ -111,8 +111,8 @@
 
 読み手、エンジン、タイムラインのファイルは [code-map-scenario.md](code-map-scenario.md) に並べています。`scenario_catalog()` は `src/scenario_check.cpp` です。
 
-- 試験: `tests/launch`（読み手とエンジン）、`tests/scenario`（境界）
-- `ctest -R`: `^launch\.`（読み手とエンジン）、`^scenario\.`（境界）
+- 試験: `tests/scenario`（読み手とエンジン。ランチャーのライブラリ、core、SIL Kit なしでリンクする。境界）、`tests/launch`（ランチャーが書く timeline ファイル、`test_scenario_timeline.cpp`）
+- `ctest -R`: `^launch\.`（読み手とエンジン。`tests/scenario` の分は `-L scenario`）、`^scenario\.`（境界）
 
 ### `libs/runner`
 
@@ -147,8 +147,8 @@
 
 `run` を分担するクラスの役割と、どのスレッドがどの状態をどのロックで扱うかは、`run.cpp` の先頭のコメントと、各 `run_*.hpp` のクラスのコメントにあります。
 
-- 試験: `tests/launch`（実行の部品）、`tests/runner`（境界）
-- `ctest -R`: `^launch\.`、`^launch_run\.`（部品と実行）、`^runner\.`（境界）
+- 試験: `tests/runner`（ランチャーのライブラリなしで試せる実行の部品: 判定、終了の順、トラフィック、操作の規則、計画。境界）、`tests/launch`（イベントの流れと報告を伴う実行。`test_run.cpp`、`test_run_controls.cpp`、`test_events.cpp`）
+- `ctest -R`: `^launch\.`、`^launch_run\.`（部品と実行。`tests/runner` の分は `-L runner`）、`^runner\.`（境界）
 
 ### `libs/launch`、`tools/launch`
 
@@ -402,7 +402,7 @@
 
 テスト:
 
-- `^launch\.`（`test_config.cpp`、`test_check.cpp`、`test_run.cpp`）
+- `^launch\.`（`tests/config/test_config.cpp`、`tests/config/test_check.cpp`、`tests/runner/test_run.cpp`）
 - `launch_run.network_names`: 名前の違う ECU が 1 つのバスで通信する、機種で対応が替わる、`manual` のコマンドとイベント、`--map-network` を受け取れない実行ファイル
 - `schema.files_and_launcher`
 
@@ -435,7 +435,7 @@
 
 テスト:
 
-- `^launch\.`（`test_config.cpp`、`test_check.cpp`、`test_run.cpp`、`test_j1939_nodes_match.cpp`）
+- `^launch\.`（`tests/config/test_config.cpp`、`tests/config/test_check.cpp`、`tests/runner/test_run.cpp`、`tests/config/test_j1939_nodes_match.cpp`）
 - `launch_run.j1939_nodes`: 同じ ECU の 2 つが行で通信する、行がないと照合が書く行を言う、機種で行が替わる、`manual` のコマンドとイベント、`describe: false` の participant、`--j1939-node` を受け取れない実行ファイル
 - `schema.files_and_launcher`
 
@@ -471,7 +471,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 
 テスト:
 
-- `^launch\.`（`test_events.cpp`）
+- `^launch\.`（`tests/launch/test_events.cpp`）
 - `launch_run.events_stalled`、`events_slow`、`events_nonblocking`
 
 ### `run` の時間
@@ -576,7 +576,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 
 テスト:
 
-- `launch.the_numbers_are_those_of_the_last_step_*`、`launch.when_the_samples_come_*`、`launch.only_a_few_samples_are_kept_*`、`launch.a_flood_while_nobody_looks_*`、`launch.a_network_says_whether_*`、`launch.every_network_of_the_file_*`、`launch.a_participant_that_is_not_counted_says_why`（`tests/launch/test_traffic.cpp`）
+- `launch.the_numbers_are_those_of_the_last_step_*`、`launch.when_the_samples_come_*`、`launch.only_a_few_samples_are_kept_*`、`launch.a_flood_while_nobody_looks_*`、`launch.a_network_says_whether_*`、`launch.every_network_of_the_file_*`、`launch.a_participant_that_is_not_counted_says_why`（`tests/runner/test_traffic.cpp`）
 - `launch.the_text_for_people`、`launch.the_json_report`
 - `launch_run.traffic`: 例の 2 つの ECU で実行ごとに同じ出力、`network_names` で分かれたバスとそろえたバス、変数を宣言しない ECU、数えない participant、誰がいるかわからないネットワーク
 - `^launch_run\.scenario`、`control_server.launcher`

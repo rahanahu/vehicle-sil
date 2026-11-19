@@ -51,7 +51,7 @@ if(bad)
                       "Read them through seen_networks() (vehicle_sil/config/check.hpp), which gives each network "
                       "under its name in the simulation (the participant's network_names and j1939_nodes applied) "
                       "and keeps the executable's name and the nodes' values in its code beside it. Only ${allowed} may read the member itself. For a new rule or "
-                      "output, add a case with a renamed network to tests/launch/test_check.cpp.")
+                      "output, add a case with a renamed network to tests/config/test_check.cpp.")
 endif()
 if(reads EQUAL 0)
   message(FATAL_ERROR "VehicleSilCheckDescribedNetworks.cmake: no source under ${ROOT}/${DIR} reads the networks of "

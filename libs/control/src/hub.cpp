@@ -324,6 +324,7 @@ void Hub::target_changed(Operation& op)
     if (!op.finished && result.done())
     {
         op.finished = true;
+        open_.erase(op.seq);
         finished_.push_back(op.seq);
     }
 }
@@ -357,9 +358,10 @@ Hub::Target* Hub::find_target(const std::string& participant, const std::string&
 std::size_t Hub::open_targets(const std::string& participant) const
 {
     std::size_t n = 0;
-    for (const auto& [seq, op] : operations_)
+    for (const auto seq : open_)
     {
-        if (op.finished)
+        const auto& op = operations_.at(seq);
+        if (op.finished) // never true while open_ holds exactly the unfinished ones; keeps the predicate as it was
         {
             continue;
         }
@@ -1032,7 +1034,19 @@ std::uint64_t Hub::write(OperationRequest request)
             t.result.reason = std::move(why);
         }
     }
-    auto [it, inserted] = operations_.emplace(seq, std::move(op));
+    // Into open_ first: if the second insert threw after the first, the operation would be
+    // missing from the count.
+    open_.insert(seq);
+    std::map<std::uint64_t, Operation>::iterator it;
+    try
+    {
+        it = operations_.emplace(seq, std::move(op)).first;
+    }
+    catch (...)
+    {
+        open_.erase(seq);
+        throw;
+    }
     target_changed(it->second);
     forget_finished();
     for (const auto& peer : to_flush)
