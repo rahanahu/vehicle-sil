@@ -172,20 +172,49 @@ TEST_CASE(commands_are_compared_in_every_variant)
                   "participant 'Engine': command differs (variant 'big')"));
     CHECK(changed(compare(with(kVariants, "small: {}", "small:\n    participants:\n      Brake: { enabled: false }"), kVariants),
                   "participant 'Brake': enabled differs (variant 'small')"));
-    // In the common part: each variant that does not write its own differs too.
+    // In the common part: each variant that does not write its own differs too, said once with
+    // the places, so that the note has room for the other differences.
     CHECK(changed(compare(with(kVariants, "[brake_ecu]", "[brake_ecu, -v]"), kVariants),
-                  "participant 'Brake': command differs (the common part); participant 'Brake': command differs (variant "
-                  "'small'); participant 'Brake': command differs (variant 'big')"));
+                  "participant 'Brake': command differs (the common part, variant 'small' and variant 'big')"));
     // A variant's command over a common one that changed: that variant runs the same.
     CHECK(changed(compare(with(kVariants, "[engine/engine_ecu]", "[engine/engine_other]"), kVariants),
-                  "participant 'Engine': command differs (the common part); participant 'Engine': command differs "
-                  "(variant 'small')"));
+                  "participant 'Engine': command differs (the common part and variant 'small')"));
+    // Another difference in one place is said apart.
+    CHECK(changed(compare(with(with(kVariants, "[brake_ecu]", "[brake_ecu, -v]"), "small: {}",
+                               "small:\n    participants:\n      Brake: { enabled: false }"),
+                          kVariants),
+                  "participant 'Brake': command differs (the common part and variant 'big'); participant 'Brake': command "
+                  "and enabled differ (variant 'small')"));
     // The names of the variants.
     CHECK(changed(compare(with(kVariants, "small: {}", "small: {}\n  medium: {}"), kVariants), "variant 'medium' is new"));
     CHECK(changed(compare(with(kVariants, "small: {}", "tiny: {}"), kVariants),
                   "variant 'tiny' is new; variant 'small' was removed"));
     // A variant added, with the common part as it is.
     CHECK(changed(compare(kVariants, with(kVariants, "  small: {}\n", "")), "variant 'small' is new"));
+}
+
+TEST_CASE(commands_compare_what_run_adds_for_an_executable_that_is_not_ecu_main)
+{
+    // describe: false: run adds --map-network and --j1939-node to any executable, which reads them
+    // as it reads any argument.
+    const std::string tool = std::string(kBase) + "  - name: Tool\n    command: [tool, \"{registry_uri}\"]\n    describe: false\n";
+    CHECK(changed(compare(tool + "    network_names: { CAN1: anything }\n", tool),
+                  "participant 'Tool': the arguments that run adds differ"));
+    CHECK(changed(compare(tool + "    j1939_nodes:\n      - { network: CAN1, address: 0x20 }\n", tool),
+                  "participant 'Tool': the arguments that run adds differ"));
+    CHECK(changed(compare(with(tool + "    network_names: { CAN1: anything }\n", "[tool,", "[other,"), tool),
+                  "participant 'Tool': command and the arguments that run adds differ"));
+    // A line that renames nothing adds nothing.
+    CHECK(compare(tool + "    network_names: { CAN1: CAN1 }\n", tool).result == CommandsCompared::Same);
+    // In a variant too.
+    const std::string withVariant = tool + "variants:\n  small: {}\n";
+    CHECK(changed(compare(with(withVariant, "small: {}", "small:\n    participants:\n      Tool: { network_names: { CAN1: x } }"),
+                          withVariant),
+                  "participant 'Tool': the arguments that run adds differ (variant 'small')"));
+    // An ecu_main executable (describe: true) reads them in their fixed form: editing them is what a
+    // screen of the networks does, and the commands stay the same.
+    CHECK(compare(with(kBase, "[brake_ecu]\n", "[brake_ecu]\n    network_names: { CAN1: J1939_CAN }\n"), kBase).result ==
+          CommandsCompared::Same);
 }
 
 TEST_CASE(commands_that_differ_much_are_counted)

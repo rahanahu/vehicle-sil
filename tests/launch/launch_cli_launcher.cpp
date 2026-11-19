@@ -33,8 +33,8 @@
 //               command or executable, a file that is missing, broken or of another version, a file that
 //               cannot be written; --text-from-stdin (the text as of a file, CRLF, too large, NUL); run
 //               and test refuse the three (exit 4)
-//   compare     check --compare-commands: "commands" of the JSON (same, changed, null without the option
-//               and for a file that cannot be read), the notes, with --text-from-stdin and --descriptions
+//   compare     check --compare-commands: "commands" of the JSON (same, changed, not_compared for a file
+//               that cannot be read, null without the option), the notes, with --text-from-stdin and --descriptions
 //               (nothing starts), the text for people; run and test refuse it (exit 4)
 #include "launcher_support.hpp"
 #include "test_timeout_scale.hpp"
@@ -1930,10 +1930,10 @@ void compare(const Options& o)
     std::string withoutKey = same.standard_output;
     replace_all(withoutKey, "\"commands\": \"same\",", "\"commands\": null,");
     expect_text(withoutKey, plain.standard_output, "check --compare-commands <the same file> (but for commands)");
-    // A file that cannot be read: null and the note; a note does not fail the check.
+    // A file that cannot be read: not_compared and the note; a note does not fail the check.
     const Captured missing = launch(o, {"check", "--json", "--compare-commands", shown_path(dir / "missing.yaml"), file});
     expect_code(missing, 0, "check --compare-commands <a missing file>");
-    require(commands_of(missing.standard_output) == "null," &&
+    require(commands_of(missing.standard_output) == "\"not_compared\"," &&
                 count_of(missing.standard_output, "\"code\": \"commands-not-compared\"") == 1 &&
                 contains(missing.standard_output, "missing.yaml: the file does not exist: check the path"),
             "check --compare-commands <a missing file>:\n" + missing.standard_output);
@@ -1964,7 +1964,7 @@ void compare(const Options& o)
     const Captured unread =
         launch_with_input(o, {"check", "--json", "--text-from-stdin", "--descriptions", none, "--compare-commands", file, file},
                           broken);
-    require(commands_of(unread.standard_output) == "null," &&
+    require(commands_of(unread.standard_output) == "\"not_compared\"," &&
                 count_of(unread.standard_output, "\"code\": \"commands-not-compared\"") == 1,
             "a participant without a command (stdin):\n" + unread.standard_output);
     require(starts() == 0, "check --descriptions --compare-commands started " + std::to_string(starts()) + " processes");

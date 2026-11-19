@@ -88,24 +88,27 @@
 
 | 比べるもの | 比べないもの |
 |---|---|
-| 共通の部分と、それに重ねた各機種（`--variant` で選んだものに限らず、すべての機種）での、各 participant の `command`（配列の全体）、`describe`、`manual`、`enabled` | `networks`（`external` を含む）、`network_names`、`j1939_nodes`、`variables`、`role`、`required`、`step_ms` |
+| 共通の部分と、それに重ねた各機種（`--variant` で選んだものに限らず、すべての機種）での、各 participant の `command`（配列の全体）、`describe`、`manual`、`enabled` | `networks`（`kind` と `external` を含む）、`variables`、`role`、`required`、`step_ms` |
+| `describe: false` の participant では、その `network_names` と `j1939_nodes` のために `run` が引数に足すもの（`--map-network`、`--j1939-node`）も | ecu_main の participant（`describe: true`）の `network_names` と `j1939_nodes` |
 | participant の名前と機種の名前（順は比べません） | `params`、`stop_at_ms`、待ち時間、`time_step_ms`、`speed`、`late_tolerance_ms` |
 | `registry_uri` | コメント、キーの順、コマンドが指すファイルや実行ファイル |
 
 | `commands` | いつ | 注記 |
 |---|---|---|
 | `"same"` | 比べるものがすべて同じ | なし |
-| `"changed"` | 比べるものに違いがある | `commands-changed` が最初の 3 つの違いを挙げ、残りを数えます。 |
-| `null` | 比べていない: `--compare-commands` がない、または下のどれか | `commands-not-compared` が理由を言います（選択肢がないときは出ません）。 |
+| `"changed"` | 比べるものに違いがある | `commands-changed` が最初の 3 つの違いを挙げ、残りを数えます。いくつかの場所（共通の部分と、それを使う機種）にある同じ違いは、場所を並べて 1 つにします。 |
+| `"not_compared"` | `--compare-commands` があり、下のどれか | `commands-not-compared` が理由を言います。 |
+| `null` | `--compare-commands` がない、または照合が引数のエラーで止まった | なし |
 
-次のときは、同じとみなさず、比べません。
+`--compare-commands` があっても、次のときは、同じとみなさず、比べません（`"not_compared"`）。
 
 - `<file>` を読めない（設定ファイルを読めないときと同じ場合）、または照合している構成を読めない。
 - どちらかの `registry_uri`、`participants`、`variants` に誤りがある（比べない participant のキーの誤り、たとえば `manual: maybe` や、2 回書いたキーも含みます）。
 - どちらかに、共通の部分か機種のどれかで誤りのある participant がある（たとえば、ファイルにないネットワークを書いた `network_names` の行）。
-- 照合が引数のエラーで止まる（`result` が `"usage"`。引数のエラーだけを出し、注記は出しません）。
 
-ほかの所（たとえば `networks`）の誤りでは、比べるのをやめません。コマンドは書いたとおりに比べます。`<file>` が別のディレクトリにあると、同じ相対パスが別の実行ファイルを指すことがあります。`<file>` は、書いたとおり作業ディレクトリから読みます。`run --json` の出力の照合と、イベント `check` の `commands` は `null` です。実行は何も比べません。
+照合が引数のエラーで止まると（`result` が `"usage"`）、`--compare-commands` があってもなくても、`commands` は `null` で、注記は出しません。引数のエラーは単独で出し、コマンドラインの引数のエラーは選択肢を読む前に書くからです。
+
+`commands` は、比べるものが同じかだけを言い、`result` とは別です。ほかの所（たとえば `networks`）の誤りでは比べるのをやめないので、照合が失敗する構成でも `"same"` になりえます。`"same"` で保存する読む側は、そのような構成を保存してはいけないなら `result` も見ます。表にない、ランチャーが participant の引数に足すもの（`--name`、`--registry-uri`、`--start-timeout-ms`、ecu_main の participant の `--map-network` と `--j1939-node`）は比べません。`--connect` で起動するブリッジ（`networks` の `kind` と `external`、つなぐ先で決まる）も比べません。コマンドは書いたとおりに比べます。`<file>` が別のディレクトリにあると、同じ相対パスが別の実行ファイルを指すことがあります。`<file>` は、書いたとおり作業ディレクトリから読みます。`run --json` の出力の照合と、イベント `check` の `commands` は `null` です。実行は何も比べません。
 
 ### 指摘のコード
 
@@ -176,7 +179,7 @@
 | `not-described` | 注記 | `--descriptions` のとき: `describe: true` の participant に、今の `command` と実行ファイルに合う保存した `--describe` の出力がありません（コマンドを変えた、実行ファイルを作り直した、保存していない）。コマンドで渡すファイル、ライブラリ、環境変数は比べません（[保存した説明](#保存した説明--write-descriptions--descriptions)）。 | `--descriptions` なしで照合します。`--write-descriptions` を付けると、出力を保存し直します。 |
 | `descriptions-not-used` | 注記 | `--descriptions` のとき: ファイルが読めない、保存した説明のファイルでない、別の vehicle-sil の版が書いた、のどれかです。どの participant も照合しません。 | `--descriptions` なしで照合します。`--write-descriptions` を付けると、出力を保存し直します。 |
 | `commands-changed` | 注記 | `--compare-commands` のとき: 実行されるコマンドが、そのファイルと違います（[実行されるコマンドを比べる](#実行されるコマンドを比べる--compare-commands)）。文が最初の違いを挙げます。 | 対応は不要です。 |
-| `commands-not-compared` | 注記 | `--compare-commands` のとき: コマンドを比べられませんでした。ファイルを読めないか、どちらかの構成の比べるものに誤りがあります。`commands` は `null` です。 | 文が挙げるものを直して、もう一度照合します。 |
+| `commands-not-compared` | 注記 | `--compare-commands` のとき: コマンドを比べられませんでした。ファイルを読めないか、どちらかの構成の比べるものに誤りがあります。`commands` は `"not_compared"` です。 | 文が挙げるものを直して、もう一度照合します。 |
 | `descriptions-write` | エラー | `--write-descriptions` のファイルを書けません（ディレクトリがない、権限がない、ディスクがいっぱい。Windows では、ほかのプログラムが開いていることがあります）。ほかの結果には影響しません。 | あるディレクトリの、書けるファイルを指定します。 |
 | `participant-disabled` | 注記 | 無効にした participant です（`enabled: false`、`--disable`。照合も起動もしない）。 | 対応は不要です。 |
 | `participant-manual` | 注記 | 自分で起動する participant です（`manual: true`、`--manual`。`run` は起動せず、コマンドを表示して待つ）。 | `run` が表示するコマンドで起動します。 |
@@ -422,7 +425,7 @@ failed: 3 errors, 1 warning, 0 notes
 | `variants` | 設定ファイルにある機種の名前の配列。機種を書いた設定ファイルのときだけあります |
 | `params` | 共通の `params` に、選んだ機種の `params` を重ねたもの。設定ファイルに `params` があるときだけあります |
 | `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` | 設定ファイルの値 |
-| `commands` | `--compare-commands` のとき: `"same"`、`"changed"`、`null`（比べていない、または `--compare-commands` がない。[実行されるコマンドを比べる](#実行されるコマンドを比べる--compare-commands)） |
+| `commands` | `--compare-commands` のとき: `"same"`、`"changed"`、`"not_compared"`。ないときと引数のエラーのときは `null`（[実行されるコマンドを比べる](#実行されるコマンドを比べる--compare-commands)） |
 | `participants[]` | participant の配列（設定ファイルの順） |
 | `networks[]` | ネットワークの配列（設定ファイルの順） |
 | `findings[]` | 指摘の配列（人向けと同じ順） |

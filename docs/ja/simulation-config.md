@@ -958,7 +958,7 @@ vehicle_sil_launch version [--json]
 | `--text-from-stdin` | `check` だけ | 構成の文を `<file>` からでなく標準入力から読みます。`<file>` は名前として使います。相対パスと要求ファイルの `scenario` はそのディレクトリから読み、指摘と JSON はその名前を書きます。ファイルはなくてもかまいません。 |
 | `--write-descriptions <file>` | `check` だけ | 読めた participant の `--describe` の出力を、`--descriptions` のために `<file>` に書きます（[simulation-check.md](simulation-check.md#保存した説明--write-descriptions--descriptions) の「保存した説明（`--write-descriptions`、`--descriptions`）」）。 |
 | `--descriptions <file>` | `check` だけ | プロセスを起動しません。各 participant の `--describe` の出力を、コマンドと実行ファイルが保存したときのままなら `<file>` から取ります。それ以外の participant は照合しません（[simulation-check.md](simulation-check.md#保存した説明--write-descriptions--descriptions) の同じ節）。 |
-| `--compare-commands <file>` | `check` だけ | 実行されるコマンド（すべての機種での各 participant の `command`、`describe`、`manual`、`enabled`、participant、機種、`registry_uri`）を、設定ファイル `<file>` のものと比べ、`--json` の `commands` に `"same"`、`"changed"`、`null`（比べていない）を書きます（[simulation-check.md](simulation-check.md#実行されるコマンドを比べる--compare-commands) の「実行されるコマンドを比べる（`--compare-commands`）」）。 |
+| `--compare-commands <file>` | `check` だけ | 実行されるコマンド（すべての機種での各 participant の `command`、`describe`、`manual`、`enabled` と、`describe: false` の participant の `network_names`・`j1939_nodes` のために `run` が足すもの。participant、機種、`registry_uri`）を、設定ファイル `<file>` のものと比べ、`--json` の `commands` に `"same"`、`"changed"`、`"not_compared"` を書きます（[simulation-check.md](simulation-check.md#実行されるコマンドを比べる--compare-commands) の「実行されるコマンドを比べる（`--compare-commands`）」）。 |
 | `--disable <name>` | | participant `<name>` を無効にします（`enabled: false` と同じ。繰り返せます）。 |
 | `--enable <name>` | | participant `<name>` を有効に戻します（`enabled: true` と同じ。繰り返せます）。 |
 | `--manual <name>` | | participant `<name>` を自分で起動します（`manual: true` と同じ。繰り返せます）。 |
@@ -1001,7 +1001,7 @@ vehicle_sil_launch version [--json]
 | `--descriptions` | 保存したものと比べるのは、participant の名前、`command`、実行ファイルだけです。コマンドで渡すファイル、ライブラリ、環境変数が変わっても気づきません。使える出力がなければ、何も比べずに通ります。 |
 | `--descriptions`、`--write-descriptions` | 一緒に使えます（ファイルから取った出力を書き直します）。`--text-from-stdin` とも一緒に使えます。 |
 | `--compare-commands` | `<file>` は読むだけで（書いたとおり作業ディレクトリから）、この選択肢はプロセスを起動しません。`--text-from-stdin` なら文とファイルを比べます。`--descriptions` も一緒なら、照合はプロセスを起動しません。 |
-| `--compare-commands` | 比べるものに誤りのある構成は、同じとも違うともせず、比べません（`null`）。 |
+| `--compare-commands` | 比べるものに誤りのある構成は、同じとも違うともせず、比べません（`"not_compared"`）。`"same"` は `result` と別です。照合が失敗する構成でも `"same"` になりえます。 |
 
 Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。
 

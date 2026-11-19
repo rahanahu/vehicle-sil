@@ -170,6 +170,7 @@ void compare_commands_with(Checked& report, std::string_view text, const std::st
     std::string other_text;
     if (const std::string problem = read_config_file(process::path_from_utf8(other), other_text); !problem.empty())
     {
+        report.commands = config::CommandsCompared::NotCompared;
         report.findings.push_back(config::commands_not_compared(other, problem));
         return;
     }
@@ -217,8 +218,8 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         report.findings.push_back(config::Finding{config::Severity::Error, "file", problem, 0, "", ""});
         if (!host.compare_commands.empty())
         {
-            report.findings.push_back(
-                config::commands_not_compared(host.compare_commands, "the configuration being checked cannot be read: see the errors"));
+            report.commands = config::CommandsCompared::NotCompared;
+            report.findings.push_back(config::commands_not_compared(host.compare_commands, config::kCheckedTextUnreadable));
         }
         return report;
     }

@@ -332,7 +332,7 @@ TEST_CASE(a_check_reads_every_field_of_the_request_that_is_the_checks)
     CHECK(saved.outside.size() == 1 && saved.outside.at(0).tool_path.empty());
     // The file to compare the commands with: the same, another, one that is missing; also for a
     // check that only reads the file, and with the variant of the request (every variant counts).
-    CHECK(none.commands == CommandsCompared::NotCompared && codes(none, "commands-").empty());
+    CHECK(none.commands == CommandsCompared::NotAsked && codes(none, "commands-").empty());
     r = of_file("sim.yaml");
     r.host.compare_commands = "sim.yaml";
     const Checked same = check_file(r);
@@ -352,7 +352,7 @@ TEST_CASE(a_check_reads_every_field_of_the_request_that_is_the_checks)
     // A check that stops at a usage error compares nothing, and says only the usage error.
     r.intent.variant.reset();
     const Checked usage = check_file(r);
-    CHECK(usage.usage && usage.commands == CommandsCompared::NotCompared && codes(usage, "commands-").empty());
+    CHECK(usage.usage && usage.commands == CommandsCompared::NotAsked && codes(usage, "commands-").empty());
     // A configuration file that cannot be read.
     r = of_file("missing.yaml");
     r.host.compare_commands = "sim.yaml";

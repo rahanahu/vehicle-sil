@@ -742,9 +742,11 @@ TEST_CASE(the_json_report_says_whether_the_commands_are_the_same)
     CHECK(commands() == "\"same\",");
     r.commands = CommandsCompared::Changed;
     CHECK(commands() == "\"changed\",");
+    r.commands = CommandsCompared::NotCompared;
+    CHECK(commands() == "\"not_compared\",");
     // The text for people has the note only.
     const std::string text = format_text(r);
-    r.commands = CommandsCompared::NotCompared;
+    r.commands = CommandsCompared::NotAsked;
     CHECK(format_text(r) == text);
 }
 

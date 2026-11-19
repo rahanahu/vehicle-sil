@@ -151,6 +151,9 @@ std::vector<std::string> variant_names(const SimulationConfig& config)
     return names;
 }
 
+/// What the note calls the arguments that run adds of network_names and j1939_nodes.
+constexpr const char* kAddedArguments = "the arguments that run adds";
+
 /// What of `ours` runs otherwise than `theirs`, in the order of check.hpp.
 std::vector<std::string> keys_that_differ(const ParticipantConfig& ours, const ParticipantConfig& theirs)
 {
@@ -171,8 +174,23 @@ std::vector<std::string> keys_that_differ(const ParticipantConfig& ours, const P
     {
         keys.emplace_back("enabled");
     }
+    // What run adds for network_names and j1939_nodes goes to any executable of describe: false,
+    // which reads it as it reads any argument; an ecu_main executable reads it in its fixed form.
+    if ((!ours.describe || !theirs.describe) &&
+        (map_network_arguments(ours) != map_network_arguments(theirs) ||
+         j1939_node_arguments(ours) != j1939_node_arguments(theirs)))
+    {
+        keys.emplace_back(kAddedArguments);
+    }
     return keys;
 }
+
+/// One difference of a participant, and where (the common part, the variants) it is.
+struct ParticipantDifference
+{
+    std::string what; ///< "participant 'X': command differs"
+    std::vector<std::string> places{};
+};
 
 /// How many differences the note names; the rest are counted.
 constexpr std::size_t kShownDifferences = 3;
@@ -202,8 +220,7 @@ Finding commands_not_compared(std::string_view other_file, std::string_view why)
 CommandsComparison compare_commands(std::string_view text, std::string_view other_text, std::string_view other_file)
 {
     CommandsComparison out;
-    const Side ours = read_side(text, Wording{"the configuration being checked",
-                                              "the configuration being checked cannot be read: see the errors",
+    const Side ours = read_side(text, Wording{"the configuration being checked", std::string(kCheckedTextUnreadable),
                                               "see the errors, and correct them"});
     if (!ours.problem.empty())
     {
@@ -227,7 +244,8 @@ CommandsComparison compare_commands(std::string_view text, std::string_view othe
     }
     added_and_removed(participant_names(ourCommon), participant_names(theirCommon), "participant", differences);
     added_and_removed(variant_names(ourCommon), variant_names(theirCommon), "variant", differences);
-    const bool hasVariants = !ourCommon.variants.empty() || !theirCommon.variants.empty();
+    // The same difference in several places (a common command that no variant writes) is said once.
+    std::vector<ParticipantDifference> ofParticipants;
     for (const View& view : ours.views)
     {
         const View* other = find_view(theirs.views, view.variant);
@@ -235,8 +253,7 @@ CommandsComparison compare_commands(std::string_view text, std::string_view othe
         {
             continue; // a new variant: said above
         }
-        const std::string where = view.variant.empty() ? (hasVariants ? " (the common part)" : "")
-                                                       : " (variant '" + view.variant + "')";
+        const std::string place = view.variant.empty() ? "the common part" : "variant '" + view.variant + "'";
         for (const ParticipantConfig& p : view.config.participants)
         {
             const ParticipantConfig* before = find_participant(other->config, p.name);
@@ -244,12 +261,28 @@ CommandsComparison compare_commands(std::string_view text, std::string_view othe
             {
                 continue; // a new participant: said above
             }
-            if (const std::vector<std::string> keys = keys_that_differ(p, *before); !keys.empty())
+            const std::vector<std::string> keys = keys_that_differ(p, *before);
+            if (keys.empty())
             {
-                differences.push_back("participant '" + p.name + "': " + and_list(keys) +
-                                      (keys.size() == 1 ? " differs" : " differ") + where);
+                continue;
             }
+            const bool one = keys.size() == 1 && keys.front() != kAddedArguments;
+            const std::string what = "participant '" + p.name + "': " + and_list(keys) + (one ? " differs" : " differ");
+            auto same = std::find_if(ofParticipants.begin(), ofParticipants.end(),
+                                     [&what](const ParticipantDifference& d) { return d.what == what; });
+            if (same == ofParticipants.end())
+            {
+                ParticipantDifference& added = ofParticipants.emplace_back();
+                added.what = what;
+                same = ofParticipants.end() - 1;
+            }
+            same->places.push_back(place);
         }
+    }
+    const bool hasVariants = !ourCommon.variants.empty() || !theirCommon.variants.empty();
+    for (const ParticipantDifference& d : ofParticipants)
+    {
+        differences.push_back(d.what + (hasVariants ? " (" + and_list(d.places) + ")" : std::string{}));
     }
     if (differences.empty())
     {

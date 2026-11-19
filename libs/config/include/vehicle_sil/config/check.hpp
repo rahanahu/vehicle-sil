@@ -315,7 +315,8 @@ struct ConfigConnect
 /// (compare_commands()).
 enum class CommandsCompared
 {
-    NotCompared, ///< no --compare-commands, or they could not be compared (a note says why)
+    NotAsked,    ///< no --compare-commands (and a check that stopped at a usage error)
+    NotCompared, ///< asked, but they could not be compared (the note commands-not-compared says why)
     Same,
     Changed, ///< the note commands-changed says what differs
 };
@@ -331,14 +332,21 @@ struct CommandsComparison
 /// Compares what runs of the configuration `text` (the one being checked) with that of `other_text`
 /// (the configuration file `other_file`, as the user named it, for the messages). What runs: for
 /// the common part and for each variant laid over it (detail::apply_variant()), each participant's
-/// command (the whole list), describe, manual and enabled; the names of the participants and of the
-/// variants; registry_uri. Nothing else counts (networks, network_names, variables, params, ...).
+/// command (the whole list), describe, manual and enabled, and for a participant with describe:
+/// false also what run adds to its arguments for network_names and j1939_nodes
+/// (map_network_arguments(), j1939_node_arguments()); the names of the participants and of the
+/// variants; registry_uri. Nothing else counts (networks, variables, params, an ecu_main
+/// participant's network_names and j1939_nodes, ...). A difference in several places is said once,
+/// with the places.
 /// Not compared (never Same) if a text cannot be read as a configuration, has an error in what is
 /// compared (ConfigRead::command_parts_with_errors), or has a participant that is not valid in the
 /// common part or in a variant (ParticipantConfig::valid): what does not read is not taken as the
 /// same. Pure: no file is read.
 [[nodiscard]] CommandsComparison compare_commands(std::string_view text, std::string_view other_text,
                                                   std::string_view other_file);
+
+/// Why the commands are not compared when the configuration being checked cannot be read.
+inline constexpr std::string_view kCheckedTextUnreadable = "the configuration being checked cannot be read: see the errors";
 
 /// The note commands-not-compared: the commands are not compared with `other_file` because of `why`
 /// (what is wrong and how to fix it).
@@ -367,8 +375,8 @@ struct CheckReport
     /// ConfigRead::override_errors, and the scenario's ScenarioRead::usage_errors); `config` is
     /// then empty.
     bool usage = false;
-    /// check --compare-commands (check_file()): what compare_commands() found; NotCompared without it.
-    CommandsCompared commands = CommandsCompared::NotCompared;
+    /// check --compare-commands (check_file()): what compare_commands() found; NotAsked without it.
+    CommandsCompared commands = CommandsCompared::NotAsked;
 
     [[nodiscard]] std::size_t errors() const;
     [[nodiscard]] std::size_t warnings() const;
