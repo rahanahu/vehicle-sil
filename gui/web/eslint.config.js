@@ -41,8 +41,8 @@ const PORTABLE_PARTS = {
 const FRONT_DOOR_MESSAGE =
   'Do not read this low-level session field in a screen: it copies a rule of the launcher. Take "may I do this, and if not why" from the front door (`controls`, `status`). If you only show it, add this file to DISPLAY_ONLY_FILES in eslint.config.js with the reason in the PR.';
 
-/** The low-level session fields a screen must not read (`launcher.running` is added separately). */
-const LOW_LEVEL_FIELDS = ['stopRequests', 'runOutcome', 'features'];
+/** The low-level session fields a screen must not read (`launcher.running` is added separately; `launcherRunning` is run-session's alias of it). */
+const LOW_LEVEL_FIELDS = ['stopRequests', 'runOutcome', 'features', 'launcherRunning'];
 
 /** The same reads in TypeScript (ESTree) and in templates (Angular expression AST). */
 const FRONT_DOOR_TS = [
@@ -62,7 +62,8 @@ const FRONT_DOOR_HTML = [
 
 // Display only: these files read the fields to show something the front door has no value for
 // (the stopped-scenario distinction, a launcher still running after the result, the number of
-// stop requests, the paused band). A new file that needs one of these is added here with a reason in the PR.
+// stop requests, the paused band). Do not make another alias of these fields outside these files
+// (an alias must be added to LOW_LEVEL_FIELDS too). A new file that needs one of these is added here with a reason in the PR.
 const DISPLAY_ONLY_FILES = [
   'src/app/run/run-status.ts',
   'src/app/run/run-session.ts',

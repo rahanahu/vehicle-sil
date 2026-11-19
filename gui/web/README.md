@@ -222,7 +222,7 @@ Follow the style of current Angular (22). `npm run lint` stops whatever is an er
 - No zone.js (zoneless). Change detection stays OnPush (the default).
 - Do not build on experimental or developer-preview APIs. Use the stable alternatives.
 - Write guards, interceptors and resolvers as functions. Take route parameters with `input()` (`withComponentInputBinding`).
-- A screen does not read the session fields `stopRequests`, `runOutcome`, `features` or `launcher.running` (in TypeScript or in a template). It takes "may I do this, and if not why" from the front door (`controls`, `status`). The few files that only display one of them are listed in `eslint.config.js`.
+- A screen does not read the session fields `stopRequests`, `runOutcome`, `features`, `launcher.running` or its alias `launcherRunning` (in TypeScript or in a template). It takes "may I do this, and if not why" from the front door (`controls`, `status`). The few files that only display one of them are listed in `eslint.config.js`.
 
 ### Where state lives
 
