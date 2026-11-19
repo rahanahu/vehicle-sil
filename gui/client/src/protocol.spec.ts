@@ -436,8 +436,8 @@ describe('the readers refuse what they cannot read', () => {
   });
 
   it('refuses a format version it does not know', () => {
-    expect(() => readServerMessage({ type: 'hello', vehicle_sil_gui: 2 })).toThrow(
-      /vehicle_sil_gui: expected format version 1/,
+    expect(() => readServerMessage({ type: 'hello', vehicle_sil_gui: 3 })).toThrow(
+      /vehicle_sil_gui: expected format version 2/,
     );
   });
 

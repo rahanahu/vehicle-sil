@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::scenario {
 
 namespace detail {
 
@@ -184,4 +184,4 @@ std::string shown_cell(const std::string& cell)
 
 } // namespace detail
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::scenario

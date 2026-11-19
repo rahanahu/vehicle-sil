@@ -17,7 +17,7 @@
 #include <numeric>
 #include <system_error>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::config {
 
 namespace {
 
@@ -3001,4 +3001,4 @@ std::vector<std::string> expand_placeholders(const std::vector<std::string>& arg
     return out;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::config

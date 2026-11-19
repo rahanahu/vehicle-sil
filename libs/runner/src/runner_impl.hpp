@@ -36,7 +36,7 @@
 #include <optional>
 #include <string>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// What a run has of SIL Kit, with its hub (run_connection.hpp).
 using RunConnection = ConnectionOf<control::Hub, SilKit::Vendor::Vector::ISilKitRegistry, SimulationController,
@@ -101,4 +101,4 @@ private:
     RunParticipants participants_;
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

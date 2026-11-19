@@ -17,7 +17,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::scenario::detail {
 
 /// What repeats: its period and where in it the shape begins.
 struct Periodic
@@ -62,4 +62,4 @@ struct Periodic
 /// after 0.
 [[nodiscard]] std::shared_ptr<const Waveform> points_shape(std::vector<signal::Point> points, bool hold);
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::scenario::detail

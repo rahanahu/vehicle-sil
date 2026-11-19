@@ -18,7 +18,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 /// What the start window found: who answered, and every link as it was then.
 struct ControlStart
@@ -91,4 +91,4 @@ private:
     bool maps_set_ = false;                   ///< the first hub() gave the hub the participants' variable maps
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

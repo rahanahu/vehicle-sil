@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 namespace {
 
@@ -24,7 +24,7 @@ void RunNotes::publish_findings(const RunOutcome& outcome, bool final)
     {
         return;
     }
-    for (const Finding& f : final ? assess_run(outcome) : detail::settled_findings(outcome))
+    for (const config::Finding& f : final ? assess_run(outcome) : detail::settled_findings(outcome))
     {
         if (std::find(published_.begin(), published_.end(), f) == published_.end())
         {
@@ -41,7 +41,7 @@ void RunNotes::note_failed(const RunOutcome& outcome, const std::string& name, s
         return;
     }
     std::string message;
-    for (const Finding& f : detail::settled_findings(outcome))
+    for (const config::Finding& f : detail::settled_findings(outcome))
     {
         if (f.participant == name && (f.code == "participant-failed" || f.code == "ended-before-start"))
         {
@@ -153,4 +153,4 @@ void RunNotes::note_time(SimulationController& controller, TimeNote note)
     last_time_wall_ = wall;
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

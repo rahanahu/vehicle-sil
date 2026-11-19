@@ -12,7 +12,7 @@
 #include <filesystem>
 #include <set>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 std::string detail::log_name(const std::string& name)
 {
@@ -94,9 +94,9 @@ RunOutput::RunOutput(const RunContext& ctx) : ctx_(ctx)
     last_statistics_.resize(ctx.config.participants.size());
 }
 
-const NetworkOutside* RunOutput::outside_of(std::size_t index) const
+const config::NetworkOutside* RunOutput::outside_of(std::size_t index) const
 {
-    const std::optional<NetworkOutside>& outside = ctx_.plan.members[index].outside;
+    const std::optional<config::NetworkOutside>& outside = ctx_.plan.members[index].outside;
     return outside ? &*outside : nullptr;
 }
 
@@ -171,7 +171,7 @@ void RunOutput::on_line(std::size_t index, std::string_view line)
     {
         *logs_[index] << line << '\n' << std::flush;
     }
-    if (const NetworkOutside* outside = outside_of(index); outside != nullptr)
+    if (const config::NetworkOutside* outside = outside_of(index); outside != nullptr)
     {
         last_lines_[index].add(line);
         // The launcher's to read while the bridge runs: the event "outside" and the result show its
@@ -229,7 +229,7 @@ void RunOutput::tell_outside(std::chrono::steady_clock::time_point now)
     std::vector<RunState::Outside> all;
     for (std::size_t i = 0; i < states_.size(); ++i)
     {
-        const NetworkOutside* outside = outside_of(i);
+        const config::NetworkOutside* outside = outside_of(i);
         if (outside == nullptr)
         {
             continue;
@@ -251,7 +251,7 @@ void RunOutput::tell_outside(std::chrono::steady_clock::time_point now)
 
 void RunOutput::say_link_change(std::size_t index, const std::string& what, std::chrono::steady_clock::time_point now)
 {
-    const NetworkOutside& outside = *outside_of(index);
+    const config::NetworkOutside& outside = *outside_of(index);
     char seconds[32];
     std::snprintf(seconds, sizeof seconds, "%.2f", std::chrono::duration<double>(now - began_).count());
     say_held("outside: " + outside.network + " -> " + outside.target + ": " + what + " at " + seconds + " s");
@@ -370,4 +370,4 @@ std::optional<OutsideCounts> RunOutput::take_counts(std::size_t index)
 
 } // namespace detail
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

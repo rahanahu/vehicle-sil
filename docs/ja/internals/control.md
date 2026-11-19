@@ -66,7 +66,7 @@ flowchart LR
 
 - 開始はランチャーが決めます（必須の participant がそろったとき。`--start-paused` では `Resume`、`Step`、`RunUntil` で始まります）。
 - リセットはありません。やり直すには、プロセスを起動し直します。
-- CAN/LIN のチャネルと Vector のデバイスは選べません（[bridges.md](../bridges.md) の「引数」）。
+- 実行中は、Control API でネットワークのつなぎ先を変えられません。実行の前に、`--connect`、要求ファイルの `connect`、GUI のどれかで決めます（simulation-run.md の「[バスを外につなぐ](../simulation-run.md#バスを外につなぐ--connect)」）。構成ファイルは、同じファイルを完全 SIL と外部接続の両方で使うために、あえて先を持ちません。LIN のブリッジはありません。
 
 ## 設計の方針
 
@@ -412,7 +412,7 @@ Peer ごとの状態は Sent → Queued（Agent が積んだ）→ Applied、Lat
 - 直した `Command` は、その incarnation にだけ送信します（再起動なら捨てます）。
 - 操作の記録（`request`）は、クライアントが書いた名前と値のままです。
 
-ルール（型、範囲、衝突）は `MappedSchema::make()` の 1 か所にあり、照合（`launch::seen_variables()`）も同じ関数を `--describe` の一覧に掛けます。対応の形を追加するときは、次を直します。
+ルール（型、範囲、衝突）は `MappedSchema::make()` の 1 か所にあり、照合（`config::seen_variables()`）も同じ関数を `--describe` の一覧に掛けます。対応の形を追加するときは、次を直します。
 
 - `VariableMapping` のメンバー
 - `MappedSchema::make()` と変換
@@ -868,7 +868,7 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 
 ### 時間の操作の経路
 
-- `TimeControl` の実装は、`launch::TimeCommands` に渡すだけです。
+- `TimeControl` の実装は、`runner::TimeCommands` に渡すだけです。
 - 標準入力のコマンドと同じ `apply()` を、`source` を `control_server` にして呼びます。
 - `apply()` は 1 つのミューテックスの中で、受け付けるかを決め、`command` のイベントを書き、ゲートに渡すので、標準入力と gRPC のコマンドは 1 列に並び、イベントの順が反映された順になります。
 - ルールも同じです（`step` は一時停止中だけ、など）。

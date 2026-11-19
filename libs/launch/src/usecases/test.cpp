@@ -31,7 +31,7 @@ namespace {
 /// The largest scenario file read for its parameters (as the check's limit).
 constexpr std::uintmax_t kMaxScenarioBytes = std::uintmax_t{16} << 20;
 
-Finding usage(std::string message) { return Finding{Severity::Error, "usage", std::move(message), 0, "", ""}; }
+config::Finding usage(std::string message) { return config::Finding{config::Severity::Error, "usage", std::move(message), 0, "", ""}; }
 
 /// true if `name` ends in .yaml, .yml or .json (ASCII letters of either case).
 bool is_scenario_name(std::string_view name)
@@ -91,12 +91,12 @@ const char* result_name(TestResult result)
 /// more there are.
 std::string failure_reason(const RunReport& report)
 {
-    const Severity severity = report.errors() > 0 ? Severity::Error : Severity::Warning;
-    const Finding* first = nullptr;
+    const config::Severity severity = report.errors() > 0 ? config::Severity::Error : config::Severity::Warning;
+    const config::Finding* first = nullptr;
     std::size_t count = 0;
-    for (const std::vector<Finding>* findings : {&report.check.findings, &report.findings})
+    for (const std::vector<config::Finding>* findings : {&report.check.findings, &report.findings})
     {
-        for (const Finding& finding : *findings)
+        for (const config::Finding& finding : *findings)
         {
             if (finding.severity == severity)
             {
@@ -107,26 +107,26 @@ std::string failure_reason(const RunReport& report)
     }
     if (first == nullptr)
     {
-        return report.run && report.run->end.simulation != SimulationEnd::Ended && report.run->end.simulation != SimulationEnd::ReachedStopAt
+        return report.run && report.run->end.simulation != runner::SimulationEnd::Ended && report.run->end.simulation != runner::SimulationEnd::ReachedStopAt
                    ? "the simulation did not run to its end"
                    : "";
     }
-    const char* kind = severity == Severity::Error ? "error" : "warning";
+    const char* kind = severity == config::Severity::Error ? "error" : "warning";
     return (!first->file.empty() && first->line > 0 ? "line " + std::to_string(first->line) + ": " : std::string{}) + first->message +
-           (severity == Severity::Warning ? " (a warning, and --strict fails on it)" : "") +
+           (severity == config::Severity::Warning ? " (a warning, and --strict fails on it)" : "") +
            (count > 1 ? " (and " + std::to_string(count - 1) + " more " + kind + (count == 2 ? "" : "s") + ")" : std::string{});
 }
 
 /// What became of one run.
 void judge(TestRun& run, RunReport report)
 {
-    const std::optional<ScenarioCheck>& scenario = report.check.scenario;
+    const std::optional<scenario::ScenarioCheck>& scenario = report.check.scenario;
     // Not for this variant, and nothing else is wrong: skipped. (The error that says so is one
     // finding; any other error is of the file or of the scenario, and fails the run.)
     if (scenario && scenario->not_for_variant && report.check.errors() == 1)
     {
         run.result = TestRunResult::Skipped;
-        run.reason = "the scenario is only for " + detail::and_list(scenario->only.value_or(std::vector<std::string>{})) + " (its only)";
+        run.reason = "the scenario is only for " + config::detail::and_list(scenario->only.value_or(std::vector<std::string>{})) + " (its only)";
         return;
     }
     switch (report.result())
@@ -171,8 +171,8 @@ void judge(TestRun& run, RunReport report)
 /// that far: its run says what is wrong with it, and the parameter may be in it. `configured`:
 /// the parameters the configuration gives a value (in any of the variants that run), so that a
 /// scenario's parameter without a default of its own is found too.
-std::vector<Finding> unused_params(const std::vector<TestScenario>& scenarios, const std::vector<ParamValue>& configured,
-                                   const std::vector<ParamValue>& given)
+std::vector<config::Finding> unused_params(const std::vector<TestScenario>& scenarios, const std::vector<config::ParamValue>& configured,
+                                   const std::vector<config::ParamValue>& given)
 {
     if (given.empty())
     {
@@ -194,21 +194,21 @@ std::vector<Finding> unused_params(const std::vector<TestScenario>& scenarios, c
             return {};
         }
         const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-        ScenarioContext context;
+        scenario::ScenarioContext context;
         context.params = configured;
         context.params.insert(context.params.end(), given.begin(), given.end());
         context.params_for_many = true;
         context.read_file = files_beside(path);
         // Without the participants: the errors about the variables are not looked at.
-        const ScenarioRead read = read_scenario(text, {}, context);
-        for (const Finding& finding : read.findings)
+        const scenario::ScenarioRead read = scenario::read_scenario(text, {}, context);
+        for (const config::Finding& finding : read.findings)
         {
             if (finding.code == "syntax" || finding.code == "not-a-scenario" || finding.code == "unsupported-yaml")
             {
                 return {};
             }
         }
-        for (const ParamValue& param : read.params)
+        for (const config::ParamValue& param : read.params)
         {
             if (std::find(names.begin(), names.end(), param.name) == names.end())
             {
@@ -216,19 +216,19 @@ std::vector<Finding> unused_params(const std::vector<TestScenario>& scenarios, c
             }
         }
     }
-    std::vector<Finding> errors;
-    for (const ParamValue& param : given)
+    std::vector<config::Finding> errors;
+    for (const config::ParamValue& param : given)
     {
         if (std::find(names.begin(), names.end(), param.name) != names.end())
         {
             continue;
         }
-        const std::string guess = detail::closest(param.name, names);
+        const std::string guess = config::detail::closest(param.name, names);
         const std::string which = scenarios.size() == 1 ? "the scenario has" : "none of the " + std::to_string(scenarios.size()) + " scenarios has";
         errors.push_back(usage("--param " + param.name + "=" + param.text + ": " + which + " a parameter " + param.name +
                                (guess.empty() ? "" : " (did you mean " + guess + "?)") + ": " +
                                (names.empty() ? std::string("they use none (a step uses one as ${name})")
-                                              : "their parameters are " + detail::join(names)) +
+                                              : "their parameters are " + config::detail::join(names)) +
                                "; remove the option or correct the name"));
     }
     return errors;
@@ -238,12 +238,12 @@ std::vector<Finding> unused_params(const std::vector<TestScenario>& scenarios, c
 /// would run: a usage error each. test starts every run by itself, and each run would wait for a
 /// person (without --timeout-ms: for ever). `configs`: the variant ("" without variants) and its
 /// configuration, after --disable and --enable.
-std::vector<Finding> manual_participants(const std::vector<std::pair<std::string, const SimulationConfig*>>& configs)
+std::vector<config::Finding> manual_participants(const std::vector<std::pair<std::string, const config::SimulationConfig*>>& configs)
 {
     std::vector<std::pair<std::string, std::vector<std::string>>> found; // the participant, the variants it is manual in
     for (const auto& [variant, config] : configs)
     {
-        for (const ParticipantConfig& p : config->participants)
+        for (const config::ParticipantConfig& p : config->participants)
         {
             if (!p.enabled || !p.manual)
             {
@@ -257,13 +257,13 @@ std::vector<Finding> manual_participants(const std::vector<std::pair<std::string
             }
         }
     }
-    std::vector<Finding> errors;
+    std::vector<config::Finding> errors;
     for (const auto& [name, variants] : found)
     {
         errors.push_back(usage("participant '" + name + "' is manual (manual: true in the file" +
                                (variants.empty() ? std::string{}
                                                  : std::string(variants.size() == 1 ? ", in the variant " : ", in the variants ") +
-                                                       detail::and_list(variants)) +
+                                                       config::detail::and_list(variants)) +
                                "): someone starts it by hand, and test starts every run by itself, so each run would wait "
                                "for it: leave it out with --disable " + name +
                                " (a scenario with a step that uses its variables then fails its check), or run one scenario "
@@ -300,15 +300,15 @@ std::string run_alone(const TestReport& report, const TestRun& run)
     // With the time lock the run goes at speed 1, and run refuses --speed max.
     const bool locked = run.run && run.run->check.time_lock.locked;
     std::string out = "vehicle_sil_launch run " + shell_word(report.file) + (locked ? "" : " --speed max") +
-                      (report.given.time_policy == TimePolicy::Free ? " --time-policy free" : "") +
+                      (report.given.time_policy == config::TimePolicy::Free ? " --time-policy free" : "") +
                       (run.variant.empty() ? std::string{} : " --variant " + shell_word(run.variant)) + " --scenario " +
                       shell_word(run.scenario);
     if (run.run && run.run->check.scenario)
     {
-        const std::vector<ParamValue>& has = run.run->check.scenario->params;
-        for (const ParamValue& param : report.given.params)
+        const std::vector<config::ParamValue>& has = run.run->check.scenario->params;
+        for (const config::ParamValue& param : report.given.params)
         {
-            if (std::any_of(has.begin(), has.end(), [&param](const ParamValue& one) { return one.name == param.name; }))
+            if (std::any_of(has.begin(), has.end(), [&param](const config::ParamValue& one) { return one.name == param.name; }))
             {
                 out += " --param " + shell_word(param.name + "=" + param.text);
             }
@@ -337,7 +337,7 @@ std::string run_alone(const TestReport& report, const TestRun& run)
 /// "variant small" / "variants small and medium".
 std::string variants_text(const std::vector<std::string>& variants)
 {
-    return (variants.size() == 1 ? "variant " : "variants ") + detail::and_list(variants);
+    return (variants.size() == 1 ? "variant " : "variants ") + config::detail::and_list(variants);
 }
 
 } // namespace
@@ -429,9 +429,9 @@ std::size_t TestReport::ran() const
     return count(TestRunResult::Passed) + count(TestRunResult::Failed) + count(TestRunResult::Interrupted);
 }
 
-std::vector<Finding> TestReport::remarks() const
+std::vector<config::Finding> TestReport::remarks() const
 {
-    std::vector<Finding> out;
+    std::vector<config::Finding> out;
     if (usage || unreadable || interrupted)
     {
         return out;
@@ -445,7 +445,7 @@ std::vector<Finding> TestReport::remarks() const
                                                               (std::prev(first)->variant.empty()
                                                                    ? std::string{}
                                                                    : " (variant " + std::prev(first)->variant + ")");
-        out.push_back(Finding{Severity::Error, "test-runs-left",
+        out.push_back(config::Finding{config::Severity::Error, "test-runs-left",
                               std::to_string(left) + " of " + std::to_string(runs.size()) + (left == 1 ? " runs was" : " runs were") +
                                   " not run: the launcher's connection to the simulation did not close" + after +
                                   ", and the launcher ends its process rather than start another simulation in it. Run the "
@@ -455,20 +455,20 @@ std::vector<Finding> TestReport::remarks() const
     }
     // The runs that the time lock set to speed 1: the table has their results only, and a test is
     // as fast as possible otherwise. Said once, with the note of the first of them.
-    const auto speed_set = [](const TestRun& run) -> const Finding* {
+    const auto speed_set = [](const TestRun& run) -> const config::Finding* {
         if (!run.run)
         {
             return nullptr;
         }
-        const std::vector<Finding>& found = run.run->check.findings;
-        const auto note = std::find_if(found.begin(), found.end(), [](const Finding& f) { return f.code == "outside-speed-set"; });
+        const std::vector<config::Finding>& found = run.run->check.findings;
+        const auto note = std::find_if(found.begin(), found.end(), [](const config::Finding& f) { return f.code == "outside-speed-set"; });
         return note == found.end() ? nullptr : &*note;
     };
     if (const auto first = std::find_if(runs.begin(), runs.end(), [&](const TestRun& run) { return speed_set(run) != nullptr; });
         first != runs.end())
     {
         const auto slowed = static_cast<std::size_t>(std::count_if(first, runs.end(), [&](const TestRun& run) { return speed_set(run) != nullptr; }));
-        out.push_back(Finding{Severity::Note, "test-speed-set",
+        out.push_back(config::Finding{config::Severity::Note, "test-speed-set",
                               std::to_string(slowed) + " of " + std::to_string(runs.size()) + " runs" +
                                   " went at speed 1 (real time), not as fast as possible: each takes as long as its scenario "
                                   "does in real time (mind --timeout-ms and the time limit of what runs the test). The first "
@@ -486,7 +486,7 @@ std::vector<Finding> TestReport::remarks() const
                   " (the only of each scenario" + (given.variants.empty() ? "" : "; --variant chose what runs") +
                   "). Run a variant the scenarios are for, or correct their only";
         }
-        out.push_back(Finding{Severity::Warning, "test-nothing-run",
+        out.push_back(config::Finding{config::Severity::Warning, "test-nothing-run",
                               "nothing was run: " + why + ". The test checked nothing" +
                                   (strict ? ", and --strict fails on that" : ": it passes (--strict would fail on that)"),
                               0, "", ""});
@@ -535,7 +535,7 @@ TestReport test_file(const TestOptions& options)
     {
         report.scenarios.push_back(scenario.shown);
     }
-    const auto refuse = [&report](std::vector<Finding> errors) {
+    const auto refuse = [&report](std::vector<config::Finding> errors) {
         report.usage = true;
         report.findings = std::move(errors);
         return report;
@@ -592,7 +592,7 @@ TestReport test_file(const TestOptions& options)
             return refuse(std::move(chosen.back().findings));
         }
     }
-    std::vector<std::pair<std::string, const SimulationConfig*>> configs;
+    std::vector<std::pair<std::string, const config::SimulationConfig*>> configs;
     if (!hasVariants && file.config)
     {
         configs.emplace_back(std::string{}, &*file.config);
@@ -610,7 +610,7 @@ TestReport test_file(const TestOptions& options)
     }
     if (!intent.params.empty())
     {
-        std::vector<ParamValue> configured;
+        std::vector<config::ParamValue> configured;
         for (const auto& [variant, config] : configs)
         {
             configured.insert(configured.end(), config->params.begin(), config->params.end());
@@ -631,7 +631,7 @@ TestReport test_file(const TestOptions& options)
     const auto say = [&options](const std::string& text) {
         if (options.observers.write_line)
         {
-            options.observers.write_line(std::string(detail::kLauncherTag) + text);
+            options.observers.write_line(std::string(runner::detail::kLauncherTag) + text);
         }
     };
     const auto interrupted = [&options] { return options.lent.stops != nullptr && options.lent.stops->count() > 0; };
@@ -796,8 +796,8 @@ std::string format_test_json(const TestReport& report)
         w.end_object();
     }
     w.end_array();
-    std::vector<Finding> findings = report.findings;
-    for (Finding& remark : report.remarks())
+    std::vector<config::Finding> findings = report.findings;
+    for (config::Finding& remark : report.remarks())
     {
         findings.push_back(std::move(remark));
     }

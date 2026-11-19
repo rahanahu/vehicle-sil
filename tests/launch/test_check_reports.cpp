@@ -25,9 +25,11 @@
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
-using vehicle_sil::launch::test::check_text;
-using vehicle_sil::launch::test::lines;
-using namespace vehicle_sil::launch::test::check_setup;
+using namespace vehicle_sil::scenario;
+using namespace vehicle_sil::config;
+using vehicle_sil::config::test::check_text;
+using vehicle_sil::config::test::lines;
+using namespace vehicle_sil::config::test::check_setup;
 
 TEST_CASE(variables_that_are_not_offered_are_a_note_and_another_version_of_the_messages_a_warning)
 {
@@ -801,7 +803,7 @@ TEST_CASE(check_file_neither_looks_for_nor_runs_a_disabled_executable)
     std::ofstream(file) << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
                            "  - name: Engine\n    command: [missing/engine]\n"
                            "  - name: Ghost\n    command: [missing/ghost]\n    enabled: false\n";
-    const vehicle_sil::launch::test::InDirectory there(dir); // the files by their names
+    const vehicle_sil::config::test::InDirectory there(dir); // the files by their names
     RunRequest plain;
     plain.host.config = "sim.yaml";
     const Checked r = check_file(plain);

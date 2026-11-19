@@ -24,6 +24,8 @@
 namespace {
 
 using namespace vehicle_sil::launch;
+using namespace vehicle_sil::runner;
+using namespace vehicle_sil::config;
 using namespace std::chrono_literals;
 
 constexpr const char* kParamNeedsScenario = "--param sets a parameter of a scenario: give --scenario <file> too, or leave "
@@ -227,7 +229,7 @@ TEST_CASE(a_check_reads_every_field_of_the_request_that_is_the_checks)
     // One field changes at a time from the request of the file alone: the check differs in what
     // that field is for. (Its executables are missing: nothing is run.)
     const std::filesystem::path dir = request_files("check-fields");
-    const vehicle_sil::launch::test::InDirectory there(dir);
+    const vehicle_sil::config::test::InDirectory there(dir);
     const CheckOptions file_only{.params_for_many = false, .file_only = true, .fastest_by_default = false};
     const Checked none = check_file(of_file("sim.yaml"));
     CHECK(none.file == "sim.yaml" && none.config.has_value());
@@ -484,7 +486,7 @@ TEST_CASE(a_plan_takes_every_field_of_the_request_that_the_run_reads)
 TEST_CASE(the_check_of_a_run_is_the_check_of_its_request)
 {
     const std::filesystem::path dir = request_files("check-of-run");
-    const vehicle_sil::launch::test::InDirectory there(dir);
+    const vehicle_sil::config::test::InDirectory there(dir);
     RunRequest r = of_file("variants.yaml");
     r.intent.strict = true;
     r.intent.variant = "summer";

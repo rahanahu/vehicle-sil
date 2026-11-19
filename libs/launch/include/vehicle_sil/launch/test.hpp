@@ -36,7 +36,7 @@ struct ScenarioList
     std::vector<TestScenario> scenarios{};
     /// What is wrong with the command line (code "usage"): a path that does not exist, a directory
     /// without scenario files or one that cannot be listed.
-    std::vector<Finding> errors{};
+    std::vector<config::Finding> errors{};
 };
 
 /// The scenario files of `--scenarios` (each of `given` as written, UTF-8), in the order given. A
@@ -87,12 +87,12 @@ enum class TestResult
 struct TestArguments
 {
     std::vector<std::string> variants{}; ///< --variant, as given; empty: every variant
-    std::vector<ParamValue> params{};    ///< --param
+    std::vector<config::ParamValue> params{};    ///< --param
     std::vector<std::string> disable{};  ///< --disable
     std::vector<std::string> enable{};   ///< --enable
     std::optional<std::chrono::milliseconds> timeout{};          ///< --timeout-ms
     std::optional<std::chrono::milliseconds> describe_timeout{}; ///< --describe-timeout-ms, if not the default
-    TimePolicy time_policy = TimePolicy::Realtime;               ///< --time-policy
+    config::TimePolicy time_policy = config::TimePolicy::Realtime;               ///< --time-policy
 };
 
 /// The result of `vehicle_sil_launch test`.
@@ -108,7 +108,7 @@ struct TestReport
     /// Every variant with every scenario, in the order they run: variant by variant.
     std::vector<TestRun> runs{};
     /// Why nothing was run (`usage`, `unreadable`); empty otherwise.
-    std::vector<Finding> findings{};
+    std::vector<config::Finding> findings{};
     bool usage = false;
     bool unreadable = false;
     bool interrupted = false;
@@ -126,7 +126,7 @@ struct TestReport
     /// checked; --strict fails on it.
     /// A note "test-speed-set": the time lock set runs to speed 1 (their note outside-speed-set),
     /// so the test is not as fast as possible; once, with the note of the first of them.
-    [[nodiscard]] std::vector<Finding> remarks() const;
+    [[nodiscard]] std::vector<config::Finding> remarks() const;
     [[nodiscard]] TestResult result() const;
     /// 0 passed; 1 failed; 3 unreadable; 4 usage; kExitInterrupted.
     [[nodiscard]] int exit_code() const;
@@ -139,12 +139,12 @@ struct TestOptions
     /// scenario are set for each run.
     RunRequest request{};
     /// For every run: where the lines go, and the name of an interrupt.
-    RunObservers observers{};
+    runner::RunObservers observers{};
     /// For every run: the interrupts (RunLent::stops). Its controls must be null (test_file()
     /// throws std::invalid_argument otherwise): each run makes its own (RunControls serves one run).
     RunLent lent{};
     /// For every run: the waits that only tests shorten.
-    RunLimits limits{};
+    runner::RunLimits limits{};
     /// CheckOptions::fastest_by_default of every run: RunIntent::speed of `request` is the test's
     /// default, not a speed the user asked for.
     bool fastest_by_default = false;

@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <utility>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::scenario::detail {
 
 double number_of(const control::Value& value)
 {
@@ -149,4 +149,4 @@ std::optional<control::Value> Line::written_value(SimTime t) const
     return at ? std::optional<control::Value>(written(*at, t)) : std::nullopt;
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::scenario::detail

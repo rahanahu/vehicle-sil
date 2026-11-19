@@ -5,7 +5,7 @@
 #include <chrono>
 #include <utility>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::runner::detail {
 
 RunSamples::RunSamples(std::vector<std::string> names, TrafficPlan plan) :
   names_(std::move(names)), plan_(std::move(plan)), kept_(names_.size())
@@ -126,4 +126,4 @@ RunTraffic RunSamples::finish(std::int64_t end_ms)
     return traffic;
 }
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::runner::detail

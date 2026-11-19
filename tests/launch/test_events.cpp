@@ -29,7 +29,9 @@
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
-using vehicle_sil::launch::test::check_text;
+using namespace vehicle_sil::runner;
+using namespace vehicle_sil::config;
+using vehicle_sil::config::test::check_text;
 
 namespace {
 

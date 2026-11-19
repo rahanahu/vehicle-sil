@@ -21,7 +21,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::config {
 
 /// The version of the configuration format (its "vehicle_sil_simulation" key).
 inline constexpr int kSimulationFormat = 1;
@@ -500,4 +500,4 @@ namespace detail {
 [[nodiscard]] std::string closest(std::string_view word, const std::vector<std::string>& candidates);
 } // namespace detail
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::config

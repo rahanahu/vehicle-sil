@@ -15,17 +15,17 @@ namespace vehicle_sil::launch {
 
 namespace {
 
-std::size_t count(const std::vector<Finding>& findings, Severity severity)
+std::size_t count(const std::vector<config::Finding>& findings, config::Severity severity)
 {
     return static_cast<std::size_t>(
-        std::count_if(findings.begin(), findings.end(), [severity](const Finding& f) { return f.severity == severity; }));
+        std::count_if(findings.begin(), findings.end(), [severity](const config::Finding& f) { return f.severity == severity; }));
 }
 
 } // namespace
 
-std::size_t RunReport::errors() const { return check.errors() + count(findings, Severity::Error); }
-std::size_t RunReport::warnings() const { return check.warnings() + count(findings, Severity::Warning); }
-std::size_t RunReport::notes() const { return check.notes() + count(findings, Severity::Note); }
+std::size_t RunReport::errors() const { return check.errors() + count(findings, config::Severity::Error); }
+std::size_t RunReport::warnings() const { return check.warnings() + count(findings, config::Severity::Warning); }
+std::size_t RunReport::notes() const { return check.notes() + count(findings, config::Severity::Note); }
 
 // The order of the results, strongest first: usage, what cannot be read or set up, an interrupt,
 // a failure, a scenario that a stop cut short, a stop, a pass. The exit codes are in exit_codes.hpp.
@@ -43,24 +43,24 @@ RunResult RunReport::result() const
     {
         return RunResult::CheckFailed;
     }
-    const EndReason end = end_reason(*run);
-    if (end == EndReason::SetupFailed)
+    const runner::EndReason end = runner::end_reason(*run);
+    if (end == runner::EndReason::SetupFailed)
     {
         return RunResult::SetupFailed;
     }
-    if (end == EndReason::Interrupted)
+    if (end == runner::EndReason::Interrupted)
     {
         return RunResult::Interrupted;
     }
-    if (end == EndReason::Failed || errors() > 0 || (strict && warnings() > 0))
+    if (end == runner::EndReason::Failed || errors() > 0 || (strict && warnings() > 0))
     {
         return RunResult::Failed;
     }
-    if (end == EndReason::Stopped)
+    if (end == runner::EndReason::Stopped)
     {
         // A scenario that did not pass and did not fail has no verdict: it did not begin, or the
         // stop came before its end.
-        const bool cutShort = run->scenario.result && run->scenario.result->status != ScenarioStatus::Passed;
+        const bool cutShort = run->scenario.result && run->scenario.result->status != scenario::ScenarioStatus::Passed;
         return cutShort ? RunResult::Incomplete : RunResult::Stopped;
     }
     return RunResult::Passed;
@@ -73,11 +73,11 @@ bool RunReport::ok() const { return meaning_of(result()).ok; }
 namespace {
 
 /// The message of the first finding of `severity`, the check's before the run's; "" if none.
-std::string first_message(const RunReport& report, Severity severity)
+std::string first_message(const RunReport& report, config::Severity severity)
 {
-    for (const std::vector<Finding>* findings : {&report.check.findings, &report.findings})
+    for (const std::vector<config::Finding>* findings : {&report.check.findings, &report.findings})
     {
-        const auto found = std::find_if(findings->begin(), findings->end(), [severity](const Finding& f) { return f.severity == severity; });
+        const auto found = std::find_if(findings->begin(), findings->end(), [severity](const config::Finding& f) { return f.severity == severity; });
         if (found != findings->end())
         {
             return found->message;
@@ -89,10 +89,10 @@ std::string first_message(const RunReport& report, Severity severity)
 /// `lead`, then the first error (or, for --strict, the first warning) if there is one.
 std::string with_first_problem(const RunReport& report, std::string lead)
 {
-    std::string problem = first_message(report, Severity::Error);
+    std::string problem = first_message(report, config::Severity::Error);
     if (problem.empty() && report.strict)
     {
-        problem = first_message(report, Severity::Warning);
+        problem = first_message(report, config::Severity::Warning);
         if (!problem.empty())
         {
             problem = "a warning counts as an error with --strict: " + problem;
@@ -107,13 +107,13 @@ std::string with_first_problem(const RunReport& report, std::string lead)
 // also after a stop that the person asked for.
 std::string RunReport::message() const
 {
-    const ScenarioRun* scenario = run && run->scenario.result ? &*run->scenario.result : nullptr;
+    const scenario::ScenarioRun* scenario = run && run->scenario.result ? &*run->scenario.result : nullptr;
     const std::string by = run ? run->end.stop_phrase() : std::string{};
     // The operator did not wait for them: no error, but said.
-    const std::vector<std::string> forced = run ? ended_by_force(*run) : std::vector<std::string>{};
+    const std::vector<std::string> forced = run ? runner::ended_by_force(*run) : std::vector<std::string>{};
     const std::string force =
         forced.empty() ? std::string{}
-                       : "; " + detail::and_list(forced) + (forced.size() == 1 ? " was" : " were") + " ended by force, without waiting";
+                       : "; " + config::detail::and_list(forced) + (forced.size() == 1 ? " was" : " were") + " ended by force, without waiting";
     switch (result())
     {
     case RunResult::Passed:
@@ -126,7 +126,7 @@ std::string RunReport::message() const
         return "The run was stopped " + by + " before the scenario reached its end, so the scenario has no verdict" + force;
     case RunResult::Interrupted: return "The run was interrupted " + by;
     case RunResult::Failed:
-        return with_first_problem(*this, end_reason(*run) == EndReason::Stopped ? "The run was stopped " + by + " and failed"
+        return with_first_problem(*this, runner::end_reason(*run) == runner::EndReason::Stopped ? "The run was stopped " + by + " and failed"
                                                                                   : "The run failed");
     case RunResult::SetupFailed: return with_first_problem(*this, "The run failed before anything was started");
     case RunResult::CheckFailed: return with_first_problem(*this, "Nothing was started, because the check failed");

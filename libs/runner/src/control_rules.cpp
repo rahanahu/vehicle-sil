@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <initializer_list>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::runner {
 
 const char* operation_name(Operation operation)
 {
@@ -166,7 +166,7 @@ constexpr std::array<Rule, 10> kRules{{
     {reason::kOutOfRange,
      [](const Query& q) {
          return q.is(Operation::Speed) && q.arguments != nullptr && q.arguments->speed &&
-                !(*q.arguments->speed >= kMinSpeed && *q.arguments->speed <= kMaxSpeed);
+                !(*q.arguments->speed >= config::kMinSpeed && *q.arguments->speed <= config::kMaxSpeed);
      },
      [](const Query&) {
          return std::string(
@@ -175,16 +175,16 @@ constexpr std::array<Rule, 10> kRules{{
     {reason::kOutOfRange,
      [](const Query& q) {
          return q.is(Operation::Step) && q.arguments != nullptr &&
-                !(q.arguments->ms.value_or(1) >= 1 && q.arguments->ms.value_or(1) <= kMaxMillis);
+                !(q.arguments->ms.value_or(1) >= 1 && q.arguments->ms.value_or(1) <= config::kMaxMillis);
      },
-     [](const Query&) { return "step needs a time from 1 to " + std::to_string(kMaxMillis) + " ms"; }},
+     [](const Query&) { return "step needs a time from 1 to " + std::to_string(config::kMaxMillis) + " ms"; }},
     {reason::kMissingArgument,
      [](const Query& q) { return q.is(Operation::RunUntil) && q.arguments != nullptr && !q.arguments->at_ms; },
      [](const Query&) { return std::string("run_until needs the time to stand still at"); }},
     {reason::kOutOfRange,
-     [](const Query& q) { return q.at_ms() != nullptr && !(*q.at_ms() >= 0 && *q.at_ms() <= kMaxMillis); },
+     [](const Query& q) { return q.at_ms() != nullptr && !(*q.at_ms() >= 0 && *q.at_ms() <= config::kMaxMillis); },
      [](const Query& q) {
-         return q.name_text() + " at a time needs a time from 0 to " + std::to_string(kMaxMillis) + " ms";
+         return q.name_text() + " at a time needs a time from 0 to " + std::to_string(config::kMaxMillis) + " ms";
      }},
     {reason::kNotSetUp,
      [](const Query& q) {
@@ -239,12 +239,12 @@ Allowed allowed(const ControlSituation& situation, Entry entry, Operation operat
     }
     if (operation == Operation::Step)
     {
-        out.range = ArgumentRange{1, static_cast<double>(kMaxMillis)};
+        out.range = ArgumentRange{1, static_cast<double>(config::kMaxMillis)};
     }
     else if (operation == Operation::Speed)
     {
         // Locked: only the speed of 1 is taken (the row outside-real-time).
-        out.range = situation.time_locked ? ArgumentRange{1, 1} : ArgumentRange{kMinSpeed, kMaxSpeed};
+        out.range = situation.time_locked ? ArgumentRange{1, 1} : ArgumentRange{config::kMinSpeed, config::kMaxSpeed};
     }
     return out;
 }
@@ -275,4 +275,4 @@ std::optional<Decision> always_refused(bool scenario, Entry entry, Operation ope
     return first;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::runner

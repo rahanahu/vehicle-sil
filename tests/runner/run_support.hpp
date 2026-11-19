@@ -42,13 +42,13 @@
 #include <csignal>
 #endif
 
-namespace vehicle_sil::launch::test::run_support {
+namespace vehicle_sil::runner::test::run_support {
 
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
-using namespace vehicle_sil::launch;
-using vehicle_sil::launch::test::check_text;
-using vehicle_sil::launch::test::lines;
+using namespace vehicle_sil::runner;
+using vehicle_sil::config::test::check_text;
+using vehicle_sil::config::test::lines;
 using vehicle_sil::process::ExitStatus;
 
 const std::string kStop(stop_request_name());
@@ -107,7 +107,7 @@ inline ParticipantRun stopped_bridge(int code)
 }
 
 /// A run that `by` (of `kind`) stopped while the simulation ran.
-inline RunOutcome stopped_run(std::string by, vehicle_sil::launch::StopKind kind)
+inline RunOutcome stopped_run(std::string by, vehicle_sil::runner::StopKind kind)
 {
     RunOutcome o = passed_run();
     o.end.simulation = SimulationEnd::Interrupted;
@@ -116,4 +116,4 @@ inline RunOutcome stopped_run(std::string by, vehicle_sil::launch::StopKind kind
     return o;
 }
 
-} // namespace vehicle_sil::launch::test::run_support
+} // namespace vehicle_sil::runner::test::run_support

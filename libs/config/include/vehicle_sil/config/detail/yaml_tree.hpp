@@ -12,7 +12,7 @@
 #include <string>
 #include <string_view>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::config::detail {
 
 /// A syntax error, with its line (from 1; 0 if unknown).
 class YamlSyntaxError : public std::runtime_error
@@ -159,4 +159,4 @@ private:
     bool empty_ = false;
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::config::detail

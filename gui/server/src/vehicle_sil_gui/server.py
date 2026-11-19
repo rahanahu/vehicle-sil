@@ -43,7 +43,7 @@ from .timelines import (KEPT as TIMELINES_KEPT, PAGE_FILES, Timelines, api_path,
                         written_whole)
 from .variables import AT_MS_MAX, Limits as VariableLimits, Rejected, Variables, Watch, check_watch
 
-PROTOCOL = 1  # vehicle_sil_gui: the version of the shapes in gui/protocol
+PROTOCOL = 2  # vehicle_sil_gui: the version of the shapes in gui/protocol
 MAX_BODY = 64 * 1024
 MAX_TEXT = 1024 * 1024  # the text of a configuration file: `text` of api/check (as UTF-8), GET api/config
 # The body of api/check: a text of MAX_TEXT in JSON (an escape such as \u3042 takes twice the UTF-8 bytes of the

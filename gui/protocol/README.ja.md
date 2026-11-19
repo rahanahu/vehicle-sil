@@ -17,7 +17,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の API の、公開す
 
 ## バージョンと互換性
 
-API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバーは `GET api/app` のレスポンス、WebSocket の `hello`、`--json` で起動したときの 1 行に書きます。
+API のバージョンは `vehicle_sil_gui`（今は 2）です。サーバーは `GET api/app` のレスポンス、WebSocket の `hello`、`--json` で起動したときの 1 行に書きます。
 
 | 変更 | バージョン | 読む側がすること |
 |---|---|---|
@@ -81,7 +81,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | `GET api/app` | サーバーとランチャーの情報、変数を読み書きできるか、上限 | `app.json` |
 | `GET api/configs` | root の下の `.yaml` / `.yml` の一覧 | `configs.json` |
 | `GET api/config?file=<configuration file>` | ファイルの文と、そのバイト列の SHA-256: `{file, text, stamp}`（下の「構成ファイルの文」） | `config.json` |
-| `POST api/check` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/check` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
 | `POST api/check` `{file, text, variant, strict}` | ファイルの保存していない文の照合。プロセスを起動しない。レスポンスは上と同じ | `check-text.json` |
 | `POST api/describe` `{file, variant}` | `{file, variant, exit_code, check}`: 保存したファイルを照合し、実行ファイルの説明を取り直す（文の照合のため） | `describe.json` |
 | `POST api/run` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{session}`（始めた実行の要約）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |

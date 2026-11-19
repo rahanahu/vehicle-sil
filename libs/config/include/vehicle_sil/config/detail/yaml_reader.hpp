@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch::detail {
+namespace vehicle_sil::config::detail {
 
 class YamlReader
 {
@@ -235,4 +235,4 @@ protected:
     std::vector<Finding>& findings_;
 };
 
-} // namespace vehicle_sil::launch::detail
+} // namespace vehicle_sil::config::detail

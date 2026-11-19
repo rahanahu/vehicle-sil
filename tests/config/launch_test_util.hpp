@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace vehicle_sil::launch::test {
+namespace vehicle_sil::config::test {
 
 /// "E 12 code: message", "W 0 code: message" or "N 3 code: message" (error, warning, note), one
 /// line each; the detail indented below.
@@ -69,4 +69,4 @@ inline void check_text(const std::string& actual, const std::string& expected, c
     }
 }
 
-} // namespace vehicle_sil::launch::test
+} // namespace vehicle_sil::config::test

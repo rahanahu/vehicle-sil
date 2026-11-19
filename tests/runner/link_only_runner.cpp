@@ -12,7 +12,7 @@
 
 int main(int argc, char**)
 {
-    using namespace vehicle_sil::launch;
+    using namespace vehicle_sil::runner;
     if (argc > 100) // never: only the references matter
     {
         RunOutcome outcome;

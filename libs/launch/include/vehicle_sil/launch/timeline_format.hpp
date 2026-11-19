@@ -14,9 +14,11 @@
 #include <string>
 #include <vector>
 
-namespace vehicle_sil::launch {
-
+namespace vehicle_sil::scenario {
 struct ScenarioRun;
+} // namespace vehicle_sil::scenario
+
+namespace vehicle_sil::launch {
 
 /// The version of the timeline file (its "vehicle_sil_timeline" key).
 inline constexpr int kTimelineFormat = 1;
@@ -27,18 +29,18 @@ struct TimelineInput
     std::string file;      ///< the configuration file, as the user named it
     std::string variant{}; ///< the chosen variant, or ""
     /// The scenario's parameters with the values in effect (ScenarioRead::params).
-    std::vector<ParamValue> params{};
+    std::vector<config::ParamValue> params{};
     std::int64_t time_step_ms = 0; ///< the time step of the launcher's controller
-    const Scenario* scenario = nullptr;
-    const ScenarioRun* run = nullptr;
+    const scenario::Scenario* scenario = nullptr;
+    const scenario::ScenarioRun* run = nullptr;
     /// What the scenario's participants describe: the unit, the range and the causality of the
     /// variables. May be null (then they are left out).
-    const ScenarioCatalog* catalog = nullptr;
+    const scenario::ScenarioCatalog* catalog = nullptr;
     /// Null if the scenario never began: no series.
-    const TimelineRecord* record = nullptr;
+    const scenario::TimelineRecord* record = nullptr;
     /// The findings of the check and of the run; the file takes those of the scenario
     /// (timeline_takes_finding()).
-    std::vector<Finding> findings{};
+    std::vector<config::Finding> findings{};
 };
 
 /// Whether a timeline file has the finding with this code: whole if it is about the scenario

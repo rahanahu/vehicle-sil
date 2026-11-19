@@ -244,7 +244,7 @@ vehicle-sil-gui [options] [<configuration file>]
 | `--launcher <path>` | The path of `vehicle_sil_launch` (a path that ends in `.py` is run with this Python) |
 | `--web <dir>` | Serve your own screen: its build output directory (must contain `index.html`). Default: the sample screens (see "[Files served with `--web`](#files-served-with---web)") |
 | `--dev-origin <origin>` | Also accept requests from the screen's development server (`ng serve`, Vite and others; only of the form `http://127.0.0.1:<port>`) (see "[Use a development server](#use-a-development-server)") |
-| `--json` | Print `{"vehicle_sil_gui": 1, "url": ..., "port": ...}` on one line instead of the URL (when a tool starts the GUI) |
+| `--json` | Print `{"vehicle_sil_gui": 2, "url": ..., "port": ...}` on one line instead of the URL (when a tool starts the GUI) |
 | `--stop-timeout <seconds>` | On exit, how long to wait for a running simulation to stop (default 10). After that, the launcher is stopped |
 | `--check-timeout <seconds>` | The time limit of a check (including `--describe` of each ECU) (default 120). After that, the check is stopped |
 | `--silent-after <seconds>` | If the running launcher prints nothing (not even a heartbeat) for longer than this, notify the screen (default 5; 1 or more) |

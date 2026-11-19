@@ -54,7 +54,7 @@ import {
  * read a hello or an api/app of another version (their fields may mean something else). When to raise the version:
  * "Versioning and compatibility" in gui/protocol/README.md.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 // --- GUI server: common --------------------------------------------------------------------------
 

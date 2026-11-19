@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::scenario {
 
 enum class StepStatus
 {
@@ -418,4 +418,4 @@ private:
     std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> left_;
 };
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::scenario

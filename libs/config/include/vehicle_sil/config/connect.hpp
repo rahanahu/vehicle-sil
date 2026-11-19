@@ -15,7 +15,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::config {
 
 /// One --connect <network>=<target>.
 struct ConnectRequest
@@ -165,4 +165,4 @@ namespace detail {
 /// the docs say how) and put it where the launcher looks.
 [[nodiscard]] std::string tool_missing_fix(std::string_view tool);
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::config

@@ -25,15 +25,16 @@
 
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
+using namespace vehicle_sil::runner;
 using namespace std::chrono_literals;
-using vehicle_sil::launch::test::check_text;
-using launch::detail::RunSamples;
-using launch::detail::TrafficColumns;
-using launch::detail::TrafficLatest;
-using launch::detail::TrafficSeen;
-using launch::detail::TrafficPlan;
-using launch::detail::TrafficSchema;
-using namespace vehicle_sil::launch::test::traffic_support;
+using vehicle_sil::config::test::check_text;
+using vehicle_sil::runner::detail::RunSamples;
+using vehicle_sil::runner::detail::TrafficColumns;
+using vehicle_sil::runner::detail::TrafficLatest;
+using vehicle_sil::runner::detail::TrafficSeen;
+using vehicle_sil::runner::detail::TrafficPlan;
+using vehicle_sil::runner::detail::TrafficSchema;
+using namespace vehicle_sil::runner::test::traffic_support;
 
 TEST_CASE(the_traffic_for_people_is_a_line_and_a_table)
 {
@@ -95,8 +96,8 @@ TEST_CASE(the_traffic_for_people_is_a_line_and_a_table)
     // A participant of the run that the launcher knows on no network: counted in every network's
     // parentheses, and one row of its own with the reason. One that its counters place on
     // another network: a row in each network it may be on as well.
-    using launch::TrafficUnplaced;
-    using launch::TrafficUnplacedReason;
+    using vehicle_sil::runner::TrafficUnplaced;
+    using vehicle_sil::runner::TrafficUnplacedReason;
     const TrafficUnplaced bridge{"Bridge", TrafficUnplacedReason::NoControlLink};
     const TrafficUnplaced tool{"Tool", TrafficUnplacedReason::NoCounters};
     const TrafficUnplaced gateway{"Gateway", TrafficUnplacedReason::NoCounters};
