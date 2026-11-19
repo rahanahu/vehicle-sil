@@ -385,6 +385,14 @@ TEST_CASE(saved_descriptions_that_cannot_be_used_say_why)
     CHECK(other.entries.empty() && other.problem == "vehicle-sil 0.0.1-other wrote the file, and this vehicle_sil_launch is " +
                                                         std::string(vehicle_sil::version()) +
                                                         " (only the same version reads it)");
+    // Another version may write another form: the version is what is said.
+    std::ofstream(dir / "later.json", std::ios::binary)
+        << "{\"vehicle_sil_descriptions\": 2, \"vehicle_sil\": \"0.0.2-other\", \"entries\": {}}";
+    CHECK(read_saved_descriptions(dir / "later.json").problem.rfind("vehicle-sil 0.0.2-other wrote the file", 0) == 0);
+    std::ofstream(dir / "form.json", std::ios::binary)
+        << "{\"vehicle_sil_descriptions\": 2, \"vehicle_sil\": \"" << vehicle_sil::version() << "\", \"participants\": []}";
+    CHECK(read_saved_descriptions(dir / "form.json").problem ==
+          "the file is not one that check --write-descriptions wrote (it is not of the form 1)");
     // A file that cannot be written: what is wrong, and nothing left behind.
     CHECK(!write_saved_descriptions(dir / "missing" / "saved.json", {}).empty());
     CHECK(!std::filesystem::exists(dir / "missing"));

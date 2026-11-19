@@ -280,9 +280,11 @@ struct ConnectTools
 /// another name or network); the bridge's --describe runs only if nothing else is wrong with the
 /// request and every enabled participant was described. (What a connection outside means for the
 /// time is not judged here: time_lock_findings() in time_plan.hpp.) Without `tools` no tool is
-/// looked for or run, and the MAC addresses are not compared (connect-filter): only the requests'
-/// form and names, and, if `results` has one for each participant (check --descriptions; empty
-/// when only the file is read), which networks the described ECUs join (connect-shared-loop).
+/// looked for or run (no connect-tool-missing or connect-tool-failed). What needs the participants'
+/// descriptions (connect-filter, the MAC addresses in the bridge's arguments, connect-shared-loop)
+/// is judged if `results` has one for each participant, with or without `tools` (check
+/// --descriptions); `results` is empty when only the file is read, and then only the requests'
+/// form and names are checked.
 /// NetworkOutside::arguments is empty for a network with an error here; check_file() also empties
 /// it for one with an error of check_participants() (connect-loop).
 struct ConnectCheck

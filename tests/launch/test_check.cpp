@@ -1845,9 +1845,9 @@ TEST_CASE(a_disabled_participant_is_a_note_and_the_rules_are_about_the_rest)
 TEST_CASE(a_participant_without_a_saved_description_is_a_note_and_holds_back_the_rules_that_need_every_description)
 {
     const std::string note = "N 9 not-described: participant 'Dashboard': not described: the saved descriptions "
-                             "(--descriptions) have no --describe output for its command and executable as they are now, so "
-                             "vehicle_sil_launch cannot compare its name, step and networks with this file: check without "
-                             "--descriptions to describe it\n";
+                             "(--descriptions) have no usable --describe output for it (one is used only for the same "
+                             "command and executable), so vehicle_sil_launch cannot compare its name, step and networks "
+                             "with this file: check without --descriptions to describe it\n";
     Setup s = good_pair();
     s.results[1] = ParticipantResult{ParticipantStatus::NotDescribed, std::nullopt};
     // Its networks are not known: Engine alone on J1939_CAN is not said (as for a failed --describe).
@@ -3178,6 +3178,36 @@ TEST_CASE(check_connections_finds_the_bridges_and_asks_them_describe)
                "bridge.CAN1\n");
 }
 
+TEST_CASE(check_connections_without_tools_judges_the_descriptions_it_is_given)
+{
+    // check --descriptions: no tool, but every participant's (saved) description. The bridge's
+    // command is the one a run gives it, connect-filter is said, and nothing is looked for.
+    Setup s = connect_setup();
+    const ConnectCheck saved = check_connections(s.config, s.results, {{"ETH", "eth0"}}, nullptr);
+    check_text(lines(saved.findings), "");
+    CHECK(saved.outside.size() == 1 && saved.outside.at(0).tool_path.empty() && saved.outside.at(0).arguments &&
+          outside_text(saved).find(" --interface eth0 --src-mac 02:00:00:00:00:01\n") != std::string::npos);
+    FakeTools fake;
+    fake.os = kThisOs;
+    const ConnectTools tools = fake.tools();
+    const ConnectCheck ran = check_connections(s.config, s.results, {{"ETH", "eth0"}}, &tools);
+    CHECK(ran.outside.size() == 1 && ran.outside.at(0).arguments == saved.outside.at(0).arguments); // as a run gets it
+    // Without results (only the file read): only the form and the names, as before.
+    const ConnectCheck file_only = check_connections(s.config, {}, {{"ETH", "eth0"}}, nullptr);
+    CHECK(file_only.outside.size() == 1 && outside_text(file_only).find("--src-mac") == std::string::npos);
+    // A participant without a saved description: what passes is not known, so there is no command.
+    Setup unknown = connect_setup();
+    unknown.results[1] = ParticipantResult{ParticipantStatus::NotDescribed, std::nullopt};
+    const ConnectCheck none = check_connections(unknown.config, unknown.results, {{"ETH", "eth0"}}, nullptr);
+    check_text(lines(none.findings), "");
+    CHECK(none.outside.size() == 1 && !none.outside.at(0).arguments);
+    // An ECU on the network without a MAC address: connect-filter, as with the tools.
+    Setup nomac = connect_setup();
+    nomac.results[0].ecu->description.networks.at(0).mac.reset();
+    CHECK(lines(check_connections(nomac.config, nomac.results, {{"ETH", "eth0"}}, nullptr).findings)
+              .rfind("E 3 connect-filter: ", 0) == 0);
+}
+
 TEST_CASE(check_connections_takes_the_backend_of_a_target_and_refuses_one_the_os_does_not_have)
 {
     const Setup s = connect_setup();
@@ -3741,15 +3771,18 @@ TEST_CASE(a_shared_target_fails_the_check_with_strict_only)
     CHECK(!r.passed());
 }
 
-TEST_CASE(check_connections_without_tools_reads_only_the_requests)
+TEST_CASE(check_connections_without_tools_looks_for_and_runs_nothing)
 {
+    // No connect-tool-missing although the tool is missing, and nothing runs. The descriptions it is
+    // given still count (check --descriptions): Display has no MAC address on ETH.
     Setup s = connect_setup();
     s.described(participant("Display", 16), ecu("Display", 10ms, {on_ethernet("ETH", std::nullopt)}));
     FakeTools fake;
     fake.missing = {"vehicle_sil_ethernet_bridge"};
-    check_text(connect_lines(s, {{"ETH", "eth0"}, {"BODY", "x"}}, fake, false),
-               "E 7 connect-kind: network 'BODY': it is lin: there is no bridge for LIN, so it runs on SIL Kit only: leave "
-               "--connect BODY out (or give BODY=none)\n");
+    const std::string text = connect_lines(s, {{"ETH", "eth0"}, {"BODY", "x"}}, fake, false);
+    CHECK(text.rfind("E 3 connect-filter: network 'ETH': ", 0) == 0 && text.find("connect-tool-missing") == std::string::npos);
+    CHECK(text.find("\nE 7 connect-kind: network 'BODY': it is lin: there is no bridge for LIN, so it runs on SIL Kit only: "
+                    "leave --connect BODY out (or give BODY=none)\n") != std::string::npos);
     CHECK(fake.runs.empty());
 }
 

@@ -305,6 +305,10 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         std::vector<std::string> arguments =
             expand_placeholders(std::vector<std::string>(p.command.begin() + 1, p.command.end()), "", "");
         arguments.insert(arguments.end(), {"--describe", "--name", p.name});
+        // --write-descriptions: the executable as it was before --describe ran, so that one built
+        // again meanwhile does not get the output of the one before.
+        const std::optional<ExecutableStamp> before =
+            host.write_descriptions.empty() ? std::nullopt : executable_stamp(executable);
         const std::optional<DescribeRun> run = executables.describe(p, executable, arguments);
         if (!run)
         {
@@ -322,16 +326,13 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         {
             result.status = ParticipantStatus::Described;
             result.ecu = std::move(outcome.ecu);
-            if (!host.write_descriptions.empty())
+            if (before && before == executable_stamp(executable))
             {
-                if (std::optional<ExecutableStamp> stamp = executable_stamp(executable))
-                {
-                    SavedDescription& saved = described.emplace_back();
-                    saved.name = p.name;
-                    saved.command = p.command;
-                    saved.executable = std::move(*stamp);
-                    saved.output = run->standard_output;
-                }
+                SavedDescription& saved = described.emplace_back();
+                saved.name = p.name;
+                saved.command = p.command;
+                saved.executable = *before;
+                saved.output = run->standard_output;
             }
         }
         report.participants.push_back(std::move(result));

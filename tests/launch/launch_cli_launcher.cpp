@@ -1739,6 +1739,16 @@ void descriptions(const Options& o)
         require(!contains(run.standard_output, "\"tool_path\": \"/") && !contains(run.standard_output, "connect-tool"),
                 "check --descriptions looked for the bridge:\n" + run.standard_output);
     }
+    // The bridge's command is the one a run gives it (with the ECUs' MAC addresses), and none while
+    // a participant is not described.
+    const std::string mac = "          \"--src-mac\",\n          \"02:00:00:00:00:01,02:00:00:00:00:02\"\n";
+    const Captured withMacs = launch(o, {"check", "--json", "--descriptions", saved, "--connect", "ETH=eth0", file});
+    require(contains(withMacs.standard_output, mac), "check --descriptions --connect: no --src-mac of both ECUs:\n" +
+                                                         withMacs.standard_output);
+    const Captured unknown =
+        launch(o, {"check", "--json", "--descriptions", shown_path(dir / "none.json"), "--connect", "ETH=eth0", file});
+    require(contains(unknown.standard_output, "        \"command\": null\n") && !contains(unknown.standard_output, "--src-mac"),
+            "check --descriptions <missing file> --connect: a command for the bridge:\n" + unknown.standard_output);
     // The same report as the check that saved them; written again, the same file.
     const Captured replayed =
         launch(o, {"check", "--json", "--descriptions", saved, "--write-descriptions", shown_path(dir / "again.json"), file});
@@ -1824,6 +1834,14 @@ void descriptions(const Options& o)
     expect_text(shown_as(piped.standard_output, dir / "stdin.yaml", shown_path(dir / "crlf.yaml")), from_file.standard_output,
                 "check --text-from-stdin (as the file)");
     require(!fs::exists(dir / "stdin.yaml"), "check --text-from-stdin made the file it names");
+    // Ctrl+Z (0x1A) is a byte like any other: stdin read as text on Windows would end there.
+    std::string ctrlZ = text;
+    ctrlZ.insert(ctrlZ.find("participants:\n"), "# \x1A\n");
+    write_file(dir / "ctrl-z.yaml", ctrlZ);
+    const Captured ctrlZFile = launch(o, {"check", "--json", shown_path(dir / "ctrl-z.yaml")});
+    piped = launch_with_input(o, {"check", "--json", "--text-from-stdin", shown_path(dir / "ctrl-z.yaml")}, ctrlZ);
+    expect_code(piped, *ctrlZFile.exit_code, "check --text-from-stdin with 0x1A");
+    expect_text(piped.standard_output, ctrlZFile.standard_output, "check --text-from-stdin with 0x1A (as the file)");
     // With the saved descriptions too: what the screen of a configuration that is being edited does.
     fs::remove(mark);
     piped = launch_with_input(o, {"check", "--json", "--text-from-stdin", "--descriptions", saved, file}, text);

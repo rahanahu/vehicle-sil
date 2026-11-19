@@ -969,9 +969,9 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
     if (result.status == ParticipantStatus::NotDescribed)
     {
         rules.add(Severity::Note, "not-described", p.line,
-            prefix + "not described: the saved descriptions (--descriptions) have no --describe output for its "
-                     "command and executable as they are now, so vehicle_sil_launch cannot compare its name, step and "
-                     "networks with this file: check without --descriptions to describe it",
+            prefix + "not described: the saved descriptions (--descriptions) have no usable --describe output for "
+                     "it (one is used only for the same command and executable), so vehicle_sil_launch cannot compare "
+                     "its name, step and networks with this file: check without --descriptions to describe it",
             p.name, "");
         return;
     }

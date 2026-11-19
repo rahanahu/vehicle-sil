@@ -68,12 +68,14 @@ With `--connect`, after stage 3 the check also looks for the bridge of each conn
 
 | Item | Rule |
 |---|---|
-| Which output is taken | The one saved for the same participant name and the same `command`, if the executable still has the same path, size and time of change. Otherwise the participant's `status` is `"not_described"`, with the note `not-described`. An executable that was built again is such a change. |
+| Which output is taken | The one saved for the same participant name and the same `command`, if the executable still has the same path, size and time of change. Otherwise the participant's `status` is `"not_described"`, with the note `not-described`. An executable that was built again is such a change. Nothing else is compared: a file that the command names (for example `--silkit-config`), a library or DLL that the executable loads, the environment and the working directory can change its output unnoticed; check without `--descriptions` after changing them. |
 | Rules that need every description | Not said while a participant is `not_described`, as while the `--describe` of one fails (for example, that only one ECU is on a network). |
-| `--connect`, and `connect` of a request file | Checked for the form of each request and the network names only. No bridge is looked for or run, and the Ethernet addresses are not compared (no `connect-tool-missing`, `connect-tool-failed` or `connect-filter`). |
-| The file does not exist | Nothing is saved yet: every `describe: true` participant is `not_described`, with no other finding. |
+| `--connect`, and `connect` of a request file | No bridge is looked for or run (no `connect-tool-missing` or `connect-tool-failed`). The rest is checked from the saved descriptions as from new ones: `connect-filter`, and the bridge's command in `networks[].outside` with the ECUs' Ethernet addresses (`null` while a participant is `not_described`). |
+| The file does not exist | Nothing is saved yet: every `describe: true` participant is `not_described`, each with the note `not-described`, and there is no other finding about the file. |
 | The file cannot be used | It cannot be read, it is not such a file, or another vehicle-sil version wrote it: every `describe: true` participant is `not_described`, and the note `descriptions-not-used` says why. |
 | What the file holds | Only the `vehicle_sil_launch` of the same vehicle-sil version reads it. Its form is not part of the interface and may change. |
+| Nothing compared | A note does not fail the check: with no file, or with every participant `not_described`, the check compares no description and still passes (exit code 0). Look at `participants[].status` before you take such a result as a check of the executables. |
+| Paths | The files of `--descriptions` and `--write-descriptions` are from the working directory, as given (not from the directory of the configuration file). |
 | Writing | The file is replaced through a new file beside it, so it never holds half a write. If it cannot be written, the error `descriptions-write` fails the check; the rest of the report is as without the option. If the configuration file cannot be read, nothing is written. |
 | Together | `--descriptions` and `--write-descriptions` can be given together (the outputs taken from the file are written again), and both with `--text-from-stdin`. |
 
@@ -90,7 +92,7 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `encoding` | Error (unreadable) | The file is not UTF-8 (UTF-16, or it contains NUL). | Save the file as UTF-8. |
 | `unsupported-yaml` | Error (unreadable for anchors and aliases) | The file has anchors and aliases, or a second document (`---`). | Write the values out in full, and delete the second and later documents or move them to other files. |
 | `format-version` | Error (unreadable for an unknown version) | `vehicle_sil_simulation` is not 1. | Write `vehicle_sil_simulation: 1`, or use a vehicle-sil that can read the format of that file. |
-| `file` | Error (unreadable) | The file does not exist, is a directory, is not a regular file, is too large or cannot be opened. | Check the path and the file. |
+| `file` | Error (unreadable) | The file does not exist, is a directory, is not a regular file, is too large or cannot be opened. With `--text-from-stdin`: the text on stdin is larger than 16 MiB, or stdin cannot be read. | Check the path and the file. |
 | `missing-key` | Error | A required key is missing. | Add the key named in the finding message. |
 | `unknown-key` | Error | There is an unknown key. | Correct the key name (the finding message gives a close name and the list of valid keys). |
 | `duplicate-key` | Error | The same key appears twice. | Delete one of them. |
@@ -145,7 +147,7 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `outside-speed-set` | Note | The run is connected outside the simulation and keeps real time: it goes at speed 1, not at the file's `speed` (also without a speed: as fast as possible). | Nothing to fix. For another speed, see `outside-real-time`. |
 | `outside-not-real-time` | Note | With `--time-policy free`: the run is connected outside the simulation, and its speed is not 1 (`--speed`, or else the file's; without a speed, as fast as possible) or `--start-paused` is given. The bridge still carries frames both ways. | To run in real time, leave `--time-policy free` out. |
 | `not-checked` | Note | A `describe: false` participant (not checked). | No action needed. |
-| `not-described` | Note | With `--descriptions`: a `describe: true` participant that has no saved `--describe` output for its `command` and its executable as they are now (the command changed, the executable was built again, or nothing was saved for it). | Check without `--descriptions`, and with `--write-descriptions` to save the outputs again. |
+| `not-described` | Note | With `--descriptions`: a `describe: true` participant that has no saved `--describe` output for its `command` and its executable as they are now (the command changed, the executable was built again, or nothing was saved for it). Files that the command names, libraries and the environment are not compared (see [Saved descriptions](#saved-descriptions---write-descriptions---descriptions)). | Check without `--descriptions`, and with `--write-descriptions` to save the outputs again. |
 | `descriptions-not-used` | Note | With `--descriptions`: the file cannot be read, is not a file of saved descriptions, or another vehicle-sil version wrote it. No participant is described. | Check without `--descriptions`, and with `--write-descriptions` to save the outputs again. |
 | `descriptions-write` | Error | The file of `--write-descriptions` cannot be written (its directory does not exist, no permission, a full disk; on Windows, another program may have it open). The rest of the report is not affected. | Name a file in a directory that exists and can be written. |
 | `participant-disabled` | Note | A disabled participant (`enabled: false`, `--disable`; neither checked nor started). | No action needed. |

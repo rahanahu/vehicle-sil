@@ -49,14 +49,15 @@ public:
         {
             throw NotSaved(std::string("it has no ") + kFormatKey);
         }
-        if (integer(find(root_, kFormatKey), kFormatKey) != kFormat)
-        {
-            throw NotSaved(std::string("it is not of the form ") + std::to_string(kFormat));
-        }
+        // The version first: another version may write another form (and says so).
         written_by = text(child(root_, "vehicle_sil"), "vehicle_sil");
         if (written_by != vehicle_sil::version())
         {
             return {};
+        }
+        if (integer(find(root_, kFormatKey), kFormatKey) != kFormat)
+        {
+            throw NotSaved(std::string("it is not of the form ") + std::to_string(kFormat));
         }
         const ryml::id_type list = child(root_, "participants");
         if (!tree_.is_seq(list))
@@ -212,16 +213,35 @@ SavedDescriptions read_saved_descriptions(const std::filesystem::path& file)
 {
     SavedDescriptions out;
     std::error_code ec;
-    if (!std::filesystem::exists(file, ec) && !ec)
+    const auto unreadable = [&out](const std::error_code& why) {
+        out.problem = "the file cannot be read (" + why.message() + ")";
+        return out;
+    };
+    const bool there = std::filesystem::exists(file, ec);
+    if (ec)
+    {
+        return unreadable(ec); // a directory on the way that may not be entered, say
+    }
+    if (!there)
     {
         return out; // nothing saved yet
     }
-    if (!std::filesystem::is_regular_file(file, ec))
+    const bool regular = std::filesystem::is_regular_file(file, ec);
+    if (ec)
+    {
+        return unreadable(ec);
+    }
+    if (!regular)
     {
         out.problem = "the file is not a regular file";
         return out;
     }
-    if (std::filesystem::file_size(file, ec) > kMaxBytes)
+    const std::uintmax_t size = std::filesystem::file_size(file, ec);
+    if (ec)
+    {
+        return unreadable(ec);
+    }
+    if (size > kMaxBytes)
     {
         out.problem = "the file is larger than " + std::to_string(kMaxBytes >> 20) + " MiB";
         return out;

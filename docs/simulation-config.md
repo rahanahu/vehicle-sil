@@ -997,7 +997,8 @@ Notes on individual options:
 | `--request` | `scenario` in the file is from the directory of the configuration file, not from the working directory. |
 | `--time-policy` | `test` runs each scenario at speed 1 when the file has an enabled `role: bridge` participant; `--time-policy free` runs them as fast as possible all the same. |
 | `--text-from-stdin` | The rules of a configuration file apply to the text (see [File format](#file-format)): UTF-8 with an optional BOM, no UTF-16 or NUL, at most 16 MiB. It is read as bytes, on Windows too, so CRLF line ends and the line numbers are as in a file. |
-| `--descriptions` | `--connect` and `connect` of a request file are checked for their form and network names only: no bridge is looked for or run. |
+| `--descriptions` | `--connect` and `connect` of a request file: no bridge is looked for or run; the rest is checked from the saved descriptions. |
+| `--descriptions` | Only the participant's name, its `command` and its executable are compared with what was saved: a changed file that the command names, library or environment goes unnoticed. With no usable output the check compares nothing and still passes. |
 | `--descriptions`, `--write-descriptions` | Can be given together (the outputs taken from the file are written again), and with `--text-from-stdin`. |
 
 On Windows, the arguments are read as UTF-8 from the wide-character command line, so paths with non-ASCII characters work.

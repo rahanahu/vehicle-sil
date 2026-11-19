@@ -68,12 +68,14 @@
 
 | 項目 | ルール |
 |---|---|
-| どの出力を使うか | participant の名前と `command` が同じで、実行ファイルのパス・大きさ・更新時刻が今も同じものです。なければ、その participant の `status` は `"not_described"` で、注記 `not-described` が出ます。実行ファイルを作り直したときもここに入ります。 |
+| どの出力を使うか | participant の名前と `command` が同じで、実行ファイルのパス・大きさ・更新時刻が今も同じものです。なければ、その participant の `status` は `"not_described"` で、注記 `not-described` が出ます。実行ファイルを作り直したときもここに入ります。ほかは比べません。コマンドで渡すファイル（`--silkit-config` など）、実行ファイルが読むライブラリや DLL、環境変数、作業ディレクトリが変わっても、出力が変わったことに気づきません。それらを変えたら `--descriptions` なしで照合します。 |
 | すべての説明が要るルール | `not_described` の participant がいる間は出しません。`--describe` が失敗した participant がいるときと同じです（たとえば、ネットワークに ECU が 1 つだけ、という指摘）。 |
-| `--connect` と、要求ファイルの `connect` | 要求の形とネットワークの名前だけを照合します。ブリッジを探さず、起動もせず、イーサネットのアドレスも比べません（`connect-tool-missing`、`connect-tool-failed`、`connect-filter` は出ません）。 |
-| ファイルがない | まだ何も保存していない、とみなします。`describe: true` の participant はすべて `not_described` で、ほかの指摘は出ません。 |
+| `--connect` と、要求ファイルの `connect` | ブリッジを探さず、起動もしません（`connect-tool-missing`、`connect-tool-failed` は出ません）。ほかは、保存した説明で、新しい説明と同じに照合します。`connect-filter` が出ます。`networks[].outside` のブリッジのコマンドには ECU のイーサネットのアドレスが入ります（`not_described` の participant がいる間は `null`）。 |
+| ファイルがない | まだ何も保存していない、とみなします。`describe: true` の participant はすべて `not_described` で、それぞれに注記 `not-described` が出ます。ファイルについての指摘は出ません。 |
 | ファイルが使えない | 読めない、保存した説明のファイルでない、別の vehicle-sil の版が書いた、のどれかです。`describe: true` の participant はすべて `not_described` で、注記 `descriptions-not-used` が理由を言います。 |
 | ファイルの中身 | 同じ vehicle-sil の版の `vehicle_sil_launch` だけが読みます。形はインターフェースではなく、変わることがあります。 |
+| 何も比べないとき | 注記は照合を失敗にしません。ファイルがないときや、participant がすべて `not_described` のときは、説明を 1 つも比べずに通ります（終了コード 0）。実行ファイルを照合した結果として読む前に、`participants[].status` を見ます。 |
+| パス | `--descriptions` と `--write-descriptions` のファイルは、書いたとおり作業ディレクトリから読みます（設定ファイルのディレクトリからではありません）。 |
 | 書き方 | 隣に新しいファイルを書いてから置き換えるので、書きかけのファイルは残りません。書けないときはエラー `descriptions-write` で照合が失敗します。ほかの結果は、この選択肢がないときと同じです。設定ファイルが読めないときは何も書きません。 |
 | 一緒に使う | `--descriptions` と `--write-descriptions` は一緒に使えます（ファイルから取った出力を書き直します）。どちらも `--text-from-stdin` と一緒に使えます。 |
 
@@ -90,7 +92,7 @@
 | `encoding` | エラー（読めない） | UTF-8 でないファイルです（UTF-16、NUL を含む）。 | UTF-8 で保存します。 |
 | `unsupported-yaml` | エラー（アンカーとエイリアスは読めない） | アンカーとエイリアスか、2 つ目の文書（`---`）があります。 | 値を書き下し、2 つ目以降の文書は削除するか別のファイルにします。 |
 | `format-version` | エラー（知らないバージョンは読めない） | `vehicle_sil_simulation` が 1 ではありません。 | `vehicle_sil_simulation: 1` と書くか、そのファイルの形式を読める vehicle-sil を使います。 |
-| `file` | エラー（読めない） | ファイルがない、ディレクトリ、通常のファイルでない、大きすぎる、開けない、のどれかです。 | パスとファイルを確認します。 |
+| `file` | エラー（読めない） | ファイルがない、ディレクトリ、通常のファイルでない、大きすぎる、開けない、のどれかです。`--text-from-stdin` のときは、標準入力の文が 16 MiB を超えるか、標準入力を読めません。 | パスとファイルを確認します。 |
 | `missing-key` | エラー | 必須のキーがありません。 | 指摘の文にあるキーを追加します。 |
 | `unknown-key` | エラー | 知らないキーがあります。 | キーの名前を直します（指摘の文に、近い名前と書けるキーの一覧があります）。 |
 | `duplicate-key` | エラー | 同じキーが 2 回あります。 | 片方を削除します。 |
@@ -145,7 +147,7 @@
 | `outside-speed-set` | 注記 | 実行がシミュレーションの外につながっていて、実時間を保ちます。ファイルの `speed`（速さがない、つまり最速のときも）でなく、速さ 1 で動きます。 | 直すものはありません。ほかの速さにするには `outside-real-time` を見ます。 |
 | `outside-not-real-time` | 注記 | `--time-policy free` のとき: 実行がシミュレーションの外につながっていて、速さが 1 でない（`--speed`、なければファイルの値。速さがなければ最速）か、`--start-paused` が付いています。ブリッジは両方向にフレームを運び続けます。 | 実時間で動かすなら、`--time-policy free` を外します。 |
 | `not-checked` | 注記 | `describe: false` の participant です（照合していない）。 | 対応は不要です。 |
-| `not-described` | 注記 | `--descriptions` のとき: `describe: true` の participant に、今の `command` と実行ファイルに合う保存した `--describe` の出力がありません（コマンドを変えた、実行ファイルを作り直した、保存していない）。 | `--descriptions` なしで照合します。`--write-descriptions` を付けると、出力を保存し直します。 |
+| `not-described` | 注記 | `--descriptions` のとき: `describe: true` の participant に、今の `command` と実行ファイルに合う保存した `--describe` の出力がありません（コマンドを変えた、実行ファイルを作り直した、保存していない）。コマンドで渡すファイル、ライブラリ、環境変数は比べません（[保存した説明](#保存した説明--write-descriptions--descriptions)）。 | `--descriptions` なしで照合します。`--write-descriptions` を付けると、出力を保存し直します。 |
 | `descriptions-not-used` | 注記 | `--descriptions` のとき: ファイルが読めない、保存した説明のファイルでない、別の vehicle-sil の版が書いた、のどれかです。どの participant も照合しません。 | `--descriptions` なしで照合します。`--write-descriptions` を付けると、出力を保存し直します。 |
 | `descriptions-write` | エラー | `--write-descriptions` のファイルを書けません（ディレクトリがない、権限がない、ディスクがいっぱい。Windows では、ほかのプログラムが開いていることがあります）。ほかの結果には影響しません。 | あるディレクトリの、書けるファイルを指定します。 |
 | `participant-disabled` | 注記 | 無効にした participant です（`enabled: false`、`--disable`。照合も起動もしない）。 | 対応は不要です。 |

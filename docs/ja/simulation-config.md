@@ -995,7 +995,8 @@ vehicle_sil_launch version [--json]
 | `--request` | ファイルの `scenario` は、作業ディレクトリからでなく、設定ファイルのディレクトリから読みます。 |
 | `--time-policy` | ファイルに有効な `role: bridge` の participant がいるとき、`test` は各シナリオを速さ 1 で実行します。`--time-policy free` を付ければ、それでも最速で実行します。 |
 | `--text-from-stdin` | 文には設定ファイルのルールが当たります（[ファイルの形式](#ファイルの形式)）。UTF-8（先頭の BOM は可）で、UTF-16 と NUL は読まず、16 MiB までです。Windows でもバイトのまま読むので、CRLF の改行と行番号はファイルと同じです。 |
-| `--descriptions` | `--connect` と要求ファイルの `connect` は、形とネットワークの名前だけを照合します。ブリッジを探さず、起動もしません。 |
+| `--descriptions` | `--connect` と要求ファイルの `connect`: ブリッジを探さず、起動もしません。ほかは保存した説明で照合します。 |
+| `--descriptions` | 保存したものと比べるのは、participant の名前、`command`、実行ファイルだけです。コマンドで渡すファイル、ライブラリ、環境変数が変わっても気づきません。使える出力がなければ、何も比べずに通ります。 |
 | `--descriptions`、`--write-descriptions` | 一緒に使えます（ファイルから取った出力を書き直します）。`--text-from-stdin` とも一緒に使えます。 |
 
 Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。
