@@ -17,7 +17,7 @@ The public specification of the HTTP and WebSocket API of the GUI server (`gui/s
 
 ## Versioning and compatibility
 
-The API version is `vehicle_sil_gui` (currently 1). The server writes it in the response of `GET api/app`, in the WebSocket `hello`, and in the line it prints when started with `--json`.
+The API version is `vehicle_sil_gui` (currently 2). The server writes it in the response of `GET api/app`, in the WebSocket `hello`, and in the line it prints when started with `--json`.
 
 | Change | Version | What a reader does |
 |---|---|---|
@@ -80,7 +80,7 @@ Every `api/` request has these conditions:
 |---|---|---|
 | `GET api/app` | Information on the server and the launcher, whether variables can be read and written, limits | `app.json` |
 | `GET api/configs` | The `.yaml` / `.yml` files under the root | `configs.json` |
-| `POST api/check` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/check` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
 | `POST api/run` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{session}` (the summary of the run it started), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `run-connect.json`, `error-check-failed.json` |
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: where that network can be connected on this computer ("Connecting a network outside" below) | `connections.json` |
 | `POST api/stop` `{force}` | `{session}` (the current summary; `null` if there is no run) | `stop*.json` |

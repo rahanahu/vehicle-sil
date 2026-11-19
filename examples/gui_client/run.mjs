@@ -11,7 +11,7 @@
 //
 // Exit codes: 0 the result is passed, 1 failed (check errors, a failed run, a server error, a timeout), 2 usage error.
 
-const PROTOCOL = 1; // the API version this client reads (vehicle_sil_gui in api/app and hello)
+const PROTOCOL = 2; // the API version this client reads (vehicle_sil_gui in api/app and hello)
 
 function usage(message) {
   console.error(`run.mjs: ${message}`);

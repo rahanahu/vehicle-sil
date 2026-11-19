@@ -87,7 +87,7 @@
 | `--describe` の JSON を読む | `src/describe_read.cpp` |
 | シミュレーションから見た ECU（`SeenEcu`）: 実行ファイルの自己申告に、participant の項目を当てたもの。照合、`run`、シナリオは、自己申告（名前、ステップ、ネットワーク、変数、制御の口、features）をこれからだけ読む | `config/detail/seen_ecu.hpp`、`src/seen_ecu.cpp`（`seen_variables()` も） |
 | 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で、J1939 のノードを `j1939_nodes` を当てた値で渡す（`seen_networks()`） | `src/check_networks.cpp` |
-| 照合のルール（ネットワークは種類ごとの関数） | `src/check_rules.cpp` |
+| ファイルと説明を照らすルール（ネットワークは種類ごとの関数）。ファイルだけで分かる誤り（`duplicate-name`、キー、値の形）は、読むときに `src/config.cpp` で見つける | `src/check_rules.cpp` |
 | `--connect` の照合（`check_connections()`: 要求、見つけたブリッジとその `--describe`）。シミュレーション全体が要るルール（ブリッジをネットワークの participant に数える、`connect-loop`）は `check_rules.cpp` | `src/check_connect.cpp` |
 | `--connect` の形とブリッジの引数。`find_tool()`（ランチャーの隣、次に `PATH`）と、それが `find_executable()` と共有する `PATH` の探索（`detail::find_on_path()`）は `libs/launch/src/probe/probe.cpp` | `src/connect.cpp` |
 | 設定ファイルとシナリオの読み取りの共通の部分 | `config/detail/yaml_reader.hpp` |
