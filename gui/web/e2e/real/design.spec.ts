@@ -3,7 +3,7 @@
 // 作った一時ディレクトリ）に試験の中で書く。
 // 環境変数 VEHICLE_SIL_GUI_SHOTS にディレクトリを書くと、できあがった画面（幅 1024）も撮る。
 import { expect, test } from '@playwright/test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { guiToken } from '../support/gui-server';
 import { RUN_TIMEOUT } from '../support/run-page';
@@ -69,7 +69,7 @@ test('designs two Ethernet networks for two ECUs and passes the check', async ({
 
   // 3 本つなぐ
   const connect = async (participant: string, channel: string, network: string) => {
-    await page.getByTestId(`connect-${participant}-${channel}`).click();
+    await page.getByTestId(`network-${participant}-${channel}`).click();
     await page.getByRole('option', { name: network, exact: true }).click();
   };
   await connect('ECU_A', 'eth0', 'ETH_AB');
@@ -85,6 +85,15 @@ test('designs two Ethernet networks for two ECUs and passes the check', async ({
   await expect(page.getByTestId('network-ETH_AB')).toContainText('ECU_A, ECU_B');
   await expect(area).toHaveValue(/ETH_EXT: eth1/);
   await expect(area).toHaveValue(/# two ECUs/);
+
+  // 保存すると、ファイルの中身が変わる（実行されるコマンドは変わらない編集なので、既定で保存できる）
+  const saved = join(process.env['VEHICLE_SIL_GUI_E2E_ROOT'] ?? '', 'design-ab.yaml');
+  expect(readFileSync(saved, 'utf8')).not.toContain('ETH_EXT');
+  await expect(page.getByTestId('save')).toBeEnabled();
+  await page.getByTestId('save').click();
+  await expect(page.getByTestId('saved')).toBeVisible({ timeout: RUN_TIMEOUT });
+  expect(readFileSync(saved, 'utf8')).toContain('ETH_EXT: eth1');
+  expect(readFileSync(saved, 'utf8')).toContain('# two ECUs');
 
   // ダウンロードできる
   const download = page.waitForEvent('download');

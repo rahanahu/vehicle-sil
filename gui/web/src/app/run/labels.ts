@@ -299,7 +299,7 @@ export function failureLine(
 }
 
 const isTimeOperation = (op: OperationName): boolean =>
-  op !== 'start' && op !== 'stop' && op !== 'force_stop';
+  op !== 'start' && op !== 'stop' && op !== 'force_stop' && op !== 'save';
 
 /** 理由の code の、画面の言葉（表になければ null）。 */
 function screenText(op: OperationName, reason: { code: string; message: string }): string | null {

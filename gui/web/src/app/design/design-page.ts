@@ -14,10 +14,12 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
-import { MatSelectModule } from '@angular/material/select';
-import { CheckResult, Finding, errorMessage } from '@vehicle-sil/gui-client';
+import { MatSelectChange, MatSelectModule } from '@angular/material/select';
+import { ActionError, CheckResult, Finding, errorMessage } from '@vehicle-sil/gui-client';
 import { AuthToken } from '../core/auth/auth-token';
 import { GUI_FRONT } from '../core/session/gui-client';
+import { RunCommands } from '../core/session/run-commands';
+import { ServerConnection } from '../core/session/server-connection';
 import { ServerInfo } from '../core/session/server-info';
 import { FindingsList } from '../run/findings-list';
 import { checkOutcomeLabel, checkStatusLabel } from '../run/labels';
@@ -26,6 +28,7 @@ import {
   DesignerModel,
   addNetwork,
   open,
+  participantNames,
   removeNetwork,
   text,
   view,
@@ -83,6 +86,9 @@ export class DesignPage {
   protected readonly auth = inject(AuthToken);
   private readonly info = inject(ServerInfo);
   private readonly front = inject(GUI_FRONT);
+  private readonly commands = inject(RunCommands);
+  /** この画面を開いている間、WebSocket をつなぐ（保存の可否 `controls.save` は、サーバーの知らせで決まる）。 */
+  private readonly connection = inject(ServerConnection);
   private readonly document = inject(DOCUMENT);
 
   protected readonly kinds = KINDS;
@@ -111,6 +117,12 @@ export class DesignPage {
   protected readonly loadedText = computed(() =>
     this.loaded.hasValue() ? this.loaded.value().text : null,
   );
+
+  /** 読んだときのファイルの stamp（保存のとき、ファイルが外で変わっていないことの確かめに送る）。保存したら、返る stamp にする。 */
+  protected readonly stamp = linkedSignal<string | null, string | null>({
+    source: () => (this.loaded.hasValue() ? this.loaded.value().stamp : null),
+    computation: (source) => source,
+  });
 
   /** いま編集している文。ファイルを読んだら、その文になる。 */
   protected readonly draft = linkedSignal<string | null, string | null>({
@@ -165,6 +177,37 @@ export class DesignPage {
   /** 答えが、いまの文のものか（直した直後は、まだ前の文の答え）。 */
   protected readonly upToDate = computed(
     () => this.answer()?.sent === this.draft() && !this.check.isLoading(),
+  );
+  /** 照合の答えを待っている（照合が失敗した後は、待っていない）。 */
+  protected readonly checking = computed(() => !this.upToDate() && !this.checkError());
+
+  /** 保存できるか（サーバーの `controls.save`）と、できない理由、注意。 */
+  protected readonly saveControl = computed(() => this.commands.controls().save);
+  protected readonly saving = signal(false);
+  protected readonly saveProblem = signal<{ message: string; findings: string[] } | null>(null);
+  protected readonly savedNote = signal(false);
+
+  /** 保存してあるファイルの共通の部分の participant。「ECU を読み直す」で申告を読み直せるのは、これだけ。 */
+  private readonly savedNames = computed(() => {
+    const saved = this.loadedText();
+    return saved === null ? new Set<string>() : participantNames(open(saved));
+  });
+  /** 「ECU を読み直す」の後も申告を読めなかった participant（保存してから、でないと照合できない）。 */
+  private readonly stuck = linkedSignal<string | null, ReadonlySet<string>>({
+    source: () => this.file(),
+    computation: () => new Set<string>(),
+  });
+  /** 申告を読んでいない participant のうち、保存した構成にいて、読み直せるもの。 */
+  protected readonly rereadable = computed(() =>
+    (this.design()?.notDescribed ?? []).filter(
+      (name) => this.savedNames().has(name) && !this.stuck().has(name),
+    ),
+  );
+  /** 申告を読んでいない participant のうち、読み直しても読めないもの（文で足した、`command` を変えた）。 */
+  protected readonly unsaved = computed(() =>
+    (this.design()?.notDescribed ?? []).filter(
+      (name) => !this.savedNames().has(name) || this.stuck().has(name),
+    ),
   );
 
   /** 表: 答えを送った文と、その答えから作る。 */
@@ -222,8 +265,25 @@ export class DesignPage {
     });
   }
 
-  protected selectFile(file: string): void {
-    this.chosen.set(file);
+  /** 直した文を捨てるなら、利用者に確かめる（保存はダウンロードだけなので、捨てると戻せない）。 */
+  private discardOk(): boolean {
+    if (!this.changed()) return true;
+    const ask = this.document.defaultView?.confirm;
+    return ask
+      ? ask.call(
+          this.document.defaultView,
+          $localize`直した文は、ダウンロードしていなければ消えます。捨てますか。`,
+        )
+      : true;
+  }
+
+  protected selectFile(change: MatSelectChange): void {
+    if (change.value === this.file()) return;
+    if (!this.discardOk()) {
+      change.source.value = this.file();
+      return;
+    }
+    this.chosen.set(change.value);
   }
 
   protected selectVariant(name: string | null): void {
@@ -235,19 +295,20 @@ export class DesignPage {
   }
 
   /** 文を、表の操作で書き換える。書き換えられなければ（共通の部分にいない participant など）、理由を出す。 */
-  private edit(change: (model: DesignerModel) => void): void {
+  private edit(change: (model: DesignerModel) => void): boolean {
     const draft = this.draft();
-    if (draft === null) return;
+    if (draft === null) return false;
     const model = open(draft);
-    if (!model.editable) return;
+    if (!model.editable) return false;
     try {
       change(model);
     } catch (error) {
       this.editProblem.set(errorMessage(error));
-      return;
+      return false;
     }
     this.editProblem.set(null);
     this.draft.set(text(model));
+    return true;
   }
 
   protected add(): void {
@@ -261,8 +322,11 @@ export class DesignPage {
     this.edit((m) => removeNetwork(m, name));
   }
 
-  protected connect(participant: string, channel: ChannelView, network: string): void {
-    this.edit((m) => wire(m, participant, channel.from, network));
+  /** 選択を表の操作にする。書けなかったら、選択を元に戻す（表は文から作るので、選択だけが先へ進まないように）。 */
+  protected connect(participant: string, channel: ChannelView, change: MatSelectChange): void {
+    if (!this.edit((m) => wire(m, participant, channel.from, change.value))) {
+      change.source.value = channel.network;
+    }
   }
 
   /** つなぐ先の選択肢: すべてのネットワーク（種類で絞らない）。実行ファイルの名前のままと、宣言のない現在の先も出す。 */
@@ -285,13 +349,52 @@ export class DesignPage {
       .map((f) => f.code);
   }
 
+  /**
+   * いまの文を、読んだファイルへ保存する（`saveConfig`）。保存できたら、stamp を覚え、ファイルを読み直して照合する
+   * （保存した participant は「ECU を読み直す」で読めるようになる）。失敗は理由の文で出す。
+   */
+  protected async save(): Promise<void> {
+    const file = this.file();
+    const draft = this.draft();
+    if (file === null || draft === null || this.saving() || !this.saveControl().ok) return;
+    this.saving.set(true);
+    this.saveProblem.set(null);
+    this.savedNote.set(false);
+    try {
+      const saved = await this.front.saveConfig({ file, text: draft, stamp: this.stamp() });
+      this.stamp.set(saved.stamp);
+      this.savedNote.set(true);
+      this.stuck.set(new Set());
+      this.reloads.update((n) => n + 1);
+      this.again.update((n) => n + 1);
+    } catch (error) {
+      if (!(error instanceof ActionError)) throw error;
+      if (
+        error.code === 'config-changed' &&
+        this.document.defaultView?.confirm(
+          $localize`ファイルが、この画面で読んだ後に外で変わりました。読み直しますか（直した文は消えます）。`,
+        )
+      ) {
+        this.reloads.update((n) => n + 1);
+        return;
+      }
+      this.saveProblem.set({
+        message: error.message,
+        findings: error.findings.map((f) => f.message),
+      });
+    } finally {
+      this.saving.set(false);
+    }
+  }
+
   /** 入力欄の、いまの文字。 */
   protected valueOf(event: Event): string {
     return (event.target as HTMLInputElement | HTMLTextAreaElement).value;
   }
 
   protected typed(value: string): void {
-    this.draft.set(value);
+    // 文の欄は改行を LF で返す。読んだファイルが CRLF なら、CRLF に戻す
+    this.draft.set(this.loadedText()?.includes('\r\n') ? value.replace(/\r?\n/g, '\r\n') : value);
   }
 
   protected revert(): void {
@@ -299,7 +402,7 @@ export class DesignPage {
   }
 
   protected reload(): void {
-    this.reloads.update((n) => n + 1);
+    if (this.discardOk()) this.reloads.update((n) => n + 1);
   }
 
   /** 文の欄の、その行を選ぶ。 */
@@ -307,7 +410,7 @@ export class DesignPage {
     const area = this.editor()?.nativeElement;
     const draft = this.draft();
     if (!area || draft === null) return;
-    const rows = draft.split('\n');
+    const rows = draft.split(/\r?\n/);
     const start = rows.slice(0, line - 1).reduce((n, r) => n + r.length + 1, 0);
     area.focus();
     area.setSelectionRange(start, start + (rows[line - 1]?.length ?? 0));
@@ -320,10 +423,18 @@ export class DesignPage {
     this.describing.set(true);
     this.describeProblem.set(null);
     try {
-      await this.front.describeAgain({
+      const answer = await this.front.describeAgain({
         file,
         ...(this.variant() !== null ? { variant: this.variant() as string } : {}),
       });
+      // 読み直しても申告を読めなかった participant は、保存してからでないと照合できない
+      this.stuck.set(
+        new Set(
+          answer.participants
+            .filter((p) => p.status === 'not_described' && p.name !== null)
+            .map((p) => p.name as string),
+        ),
+      );
       this.again.update((n) => n + 1);
     } catch (error) {
       this.describeProblem.set(errorMessage(error));

@@ -1,5 +1,15 @@
 import { CheckResult } from '@vehicle-sil/gui-client';
-import { Document, LineCounter, YAMLMap, isMap, isSeq, parseDocument } from 'yaml';
+import {
+  Document,
+  LineCounter,
+  Scalar,
+  YAMLMap,
+  YAMLSeq,
+  isMap,
+  isSeq,
+  parse,
+  parseDocument,
+} from 'yaml';
 
 /*
  * Designer の編集の論理。Angular に依らない関数だけで、入力は 2 つ: 構成ファイルの YAML の文と、その文の照合の答え
@@ -17,6 +27,36 @@ export interface DesignerModel {
   readonly errors: readonly { message: string; line: number | null }[];
   /** JSON の構成（先頭が `{`）。ランチャーは JSON として読むので、表で書き換えない。 */
   readonly json: boolean;
+  /** 元の文の書式（書き出しで保つ）。 */
+  readonly style: { eol: '\n' | '\r\n'; indent: number; indentSeq: boolean };
+}
+
+/** 元の文の、改行、字下げの幅、`- ` を鍵と同じ列に書くか。読み取れなければ 2 と字下げあり。 */
+function styleOf(source: string): DesignerModel['style'] {
+  const eol = source.includes('\r\n') ? '\r\n' : '\n';
+  const lines = source.split(/\r?\n/);
+  const isKey = (line: string) => /^\s*[^\s#-][^#]*:\s*(#.*)?$/.test(line);
+  const lead = (line: string) => line.length - line.trimStart().length;
+  let indent = 2;
+  let indentSeq = true;
+  let seenMap = false;
+  let seenSeq = false;
+  for (let i = 0; i + 1 < lines.length && !(seenMap && seenSeq); i++) {
+    if (!isKey(lines[i])) continue;
+    const next = lines[i + 1];
+    const step = lead(next) - lead(lines[i]);
+    if (/^\s*- /.test(next)) {
+      if (!seenSeq) {
+        indentSeq = step > 0;
+        if (step > 0 && !seenMap) indent = Math.min(step, 8);
+      }
+      seenSeq = true;
+    } else if (step > 0 && next.trim() !== '' && !next.trimStart().startsWith('#')) {
+      if (!seenMap && !(seenSeq && indentSeq)) indent = Math.min(step, 8);
+      seenMap = true;
+    }
+  }
+  return { eol, indent, indentSeq };
 }
 
 /** 文を開く。読めない文でも開く（`errors` に出る。表の編集は止まる）。 */
@@ -26,17 +66,39 @@ export function open(text: string): DesignerModel {
     .trimStart()
     .startsWith('{');
   const lineCounter = new LineCounter();
-  const doc = parseDocument(text, { lineCounter, keepSourceTokens: false });
+  // failsafe: every plain value stays the text that was written (the launcher has no types: `007` and `0x1F` are text)
+  const doc = parseDocument(text, { lineCounter, keepSourceTokens: false, schema: 'failsafe' });
   const errors = doc.errors.map((e) => ({
     message: e.message.split('\n')[0],
     line: e.linePos?.[0].line ?? null,
   }));
-  return { doc, lineCounter, json, errors, editable: !json && errors.length === 0 };
+  return {
+    doc,
+    lineCounter,
+    json,
+    errors,
+    editable: !json && errors.length === 0,
+    style: styleOf(text),
+  };
 }
 
-/** 書き出す。エイリアスは書かない（ランチャーはアンカーとエイリアスを読まない）。長い行を折り返さない（手で書いた形を保つ）。 */
+/**
+ * 書き出す。エイリアスは書かない（ランチャーはアンカーとエイリアスを読まない）。長い行を折り返さない。元の文の字下げの
+ * 幅、`- ` の列、改行（CRLF）を保つ。保てないもの: 行末のコメントの揃え、続く空行（1 行になる）、`>-` の折り返し。
+ */
 export function text(model: DesignerModel): string {
-  return model.doc.toString({ flowCollectionPadding: false, lineWidth: 0 });
+  const out = model.doc.toString({
+    flowCollectionPadding: false,
+    lineWidth: 0,
+    indent: model.style.indent,
+    indentSeq: model.style.indentSeq,
+  });
+  return model.style.eol === '\r\n' ? out.replace(/\r?\n/g, '\r\n') : out;
+}
+
+/** 共通の部分の `participants` の名前（保存した文と比べるのに使う）。 */
+export function participantNames(model: DesignerModel): Set<string> {
+  return commonNames(model);
 }
 
 // --- 見る ---------------------------------------------------------------------------------------------
@@ -205,12 +267,28 @@ export function view(model: DesignerModel, check: CheckResult): DesignerView {
 
 // --- 書き換える（共通の部分だけ。variant の中は書き換えない） --------------------------------------------------
 
-const NODE = { aliasDuplicateObjects: false } as const;
+/**
+ * 新しく書く文字列の節。core schema で文字列以外に読める綴り（`123`、`true`、`~` など）は二重引用符にする
+ * （failsafe で書き出すと素で書かれ、次に読むときに別の値になる）。
+ */
+function stringNode(value: string): Scalar<string> {
+  const node = new Scalar(value);
+  let plain: boolean;
+  try {
+    plain = typeof parse(value) === 'string';
+  } catch {
+    plain = false;
+  }
+  if (!plain) node.type = Scalar.QUOTE_DOUBLE;
+  return node;
+}
 
 /** 共通の部分の participant の文の木の節（なければ、表では書けない、という誤り）。 */
-function participantNode(model: DesignerModel, name: string) {
+function participantNode(model: DesignerModel, name: string): YAMLMap {
   const seq = model.doc.get('participants', true);
-  const node = isSeq(seq) ? seq.items.find((p) => isMap(p) && p.get('name') === name) : undefined;
+  const node = isSeq(seq)
+    ? seq.items.find((p) => isMap(p) && String(p.get('name')) === name)
+    : undefined;
   if (!isMap(node)) {
     throw new Error(
       `participant ${name} is not in the common part of the file: edit it in the text`,
@@ -223,23 +301,26 @@ function participantNode(model: DesignerModel, name: string) {
 export function addNetwork(model: DesignerModel, name: string, kind: string): void {
   let networks = model.doc.get('networks', true);
   if (!isSeq(networks)) {
-    networks = model.doc.createNode([], NODE);
+    networks = new YAMLSeq(model.doc.schema);
     model.doc.set('networks', networks);
   }
   if (isSeq(networks)) {
     networks.flow = false;
-    networks.add(model.doc.createNode({ name, kind }, NODE));
+    const entry = new YAMLMap(model.doc.schema);
+    entry.set(new Scalar('name'), stringNode(name));
+    entry.set(new Scalar('kind'), stringNode(kind));
+    networks.add(entry);
   }
 }
 
 /**
  * ネットワークを消す。共通の部分の participant の `network_names` で、これを鍵にする行も消す（残すと次の照合が
- * 誤りにする）。variant の中の行は消さない（照合が言う）。
+ * 誤りにする）。variant の中の行と、`j1939_nodes` の `network` は消さない（照合が言う。文で直す）。
  */
 export function removeNetwork(model: DesignerModel, name: string): void {
   const networks = model.doc.get('networks', true);
   if (isSeq(networks)) {
-    const index = networks.items.findIndex((n) => isMap(n) && n.get('name') === name);
+    const index = networks.items.findIndex((n) => isMap(n) && String(n.get('name')) === name);
     if (index >= 0) networks.items.splice(index, 1);
   }
   const participants = model.doc.get('participants', true);
@@ -253,10 +334,16 @@ export function removeNetwork(model: DesignerModel, name: string): void {
   }
 }
 
+const valueOf = (pair: { value: unknown }): string => {
+  const value = pair.value as { value?: unknown } | null;
+  return String(value?.value ?? value ?? '');
+};
+
 /**
  * `participant` の実行ファイルのネットワーク `from` を、シミュレーションのネットワーク `network` につなぐ。共通の部分の
  * `network_names` に `network: from` を書く。同じ名前なら行は要らない（ランチャーは実行ファイルの名前のままにする）ので、
- * 消す。`network` が、この participant の別の口の行の鍵なら、その行を置き換える（照合が言う）。
+ * 消す。`network` が、この participant の別の口の行の鍵なら、書かずに誤りを投げる（`network_names` は鍵が 1 つの
+ * 写像で、上書きすると別の口のつなぎ方が黙って消えるため）。
  */
 export function wire(
   model: DesignerModel,
@@ -267,19 +354,27 @@ export function wire(
   const node = participantNode(model, participant);
   const existing = node.get('network_names', true);
   let map: YAMLMap | null = isMap(existing) ? existing : null;
+  if (map && network !== from) {
+    const taken = map.items.find(
+      (pair) => String((pair.key as { value?: unknown }).value ?? pair.key) === network,
+    );
+    if (taken && valueOf(taken) !== from) {
+      throw new Error(
+        `${network} is already the name that ${valueOf(taken)} of ${participant} is connected to: ` +
+          `a network takes one port of a participant. Connect ${valueOf(taken)} to another network first`,
+      );
+    }
+  }
   if (map) {
-    const old = map.items.find((pair) => {
-      const value = pair.value as { value?: unknown } | null;
-      return String(value?.value ?? value) === from;
-    });
+    const old = map.items.find((pair) => valueOf(pair) === from);
     if (old) map.delete(old.key);
   }
   if (network !== from) {
     if (!map) {
-      map = model.doc.createNode({}, NODE) as YAMLMap;
-      node.set('network_names', map);
+      map = new YAMLMap(model.doc.schema);
+      node.set(new Scalar('network_names'), map);
     }
-    map.set(network, from);
+    map.set(stringNode(network), stringNode(from));
   }
   if (map && map.items.length === 0) node.delete('network_names');
 }

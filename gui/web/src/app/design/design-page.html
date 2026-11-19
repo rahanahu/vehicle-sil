@@ -18,7 +18,7 @@
             <mat-label i18n>構成ファイル</mat-label>
             <mat-select
               [value]="file()"
-              (valueChange)="selectFile($event)"
+              (selectionChange)="selectFile($event)"
               data-testid="design-file"
             >
               @for (config of configs.value().files; track config.path) {
@@ -62,7 +62,7 @@
         </p>
       }
       <p class="hint" i18n>
-        ここで直すのは、この画面に開いている文です。ファイルは変わりません。直した文は「ダウンロード」で保存してください。
+        ここで直すのは、この画面に開いている文です。「保存」を押すまで、ファイルは変わりません（「ダウンロード」で、ファイルとして受け取ることもできます）。
       </p>
     </mat-card-content>
   </mat-card>
@@ -72,20 +72,45 @@
       @if (d.notDescribed.length > 0) {
         <div class="alert" role="alert" data-testid="not-described">
           <p i18n>
-            照合していない participant が {{ d.notDescribed.length }} 個あります（{{
+            申告を読んでいない participant が {{ d.notDescribed.length }} 個あります（{{
               d.notDescribed.join('、')
             }}）。チャネルが分からないので、結果が「通った」でも、つなぎ方はまだ確かめていません。
           </p>
-          <button
-            matButton="tonal"
-            type="button"
-            [disabled]="describing()"
-            (click)="describeAgain()"
-            data-testid="describe-again"
-            i18n
-          >
-            ECU を読み直す
-          </button>
+          @if (rereadable().length > 0) {
+            <p data-testid="reread-names" i18n>
+              保存したファイルにいる participant（{{ rereadable().join('、') }}）は、ECU
+              を読み直すと照合できます。
+            </p>
+            <button
+              matButton="tonal"
+              type="button"
+              [disabled]="describing()"
+              (click)="describeAgain()"
+              data-testid="describe-again"
+              i18n
+            >
+              ECU を読み直す
+            </button>
+          }
+          @if (unsaved().length > 0) {
+            <p data-testid="save-first-names">
+              <ng-container i18n
+                >{{
+                  unsaved().join('、')
+                }}
+                は、保存したファイルにないか、読み直しても読めませんでした。文で足した participant
+                や、変えた command は、ファイルに保存するまで照合できません。</ng-container
+              >
+              @if (saveControl().ok) {
+                <ng-container i18n>「保存」を押すと、保存して照合し直します。</ng-container>
+              } @else {
+                <ng-container i18n
+                  >この GUI
+                  サーバーでは保存できないので、「ダウンロード」して、ファイルを置いてください。</ng-container
+                >
+              }
+            </p>
+          }
         </div>
       }
     }
@@ -102,7 +127,7 @@
         @if (outcome(); as label) {
           <p data-testid="design-outcome" [attr.data-result]="answer()?.result?.result">
             {{ label }}
-            @if (!upToDate()) {
+            @if (checking()) {
               <span class="hint" i18n>（照合しています）</span>
             }
           </p>
@@ -225,8 +250,8 @@
             </button>
           </div>
           <p class="hint" i18n>
-            ネットワークの名前は変えられません（消して足してください）。外につなぐ先の
-            <code>external</code> は、下の文の欄に書きます。
+            ネットワークの名前は変えられません（消して足してください）。外につないだときのふるまい（<code>external</code>）は下の文の欄に書きます。つなぐ先は実行を始めるときに選びます。ネットワークを消しても、それを指す
+            j1939_nodes の項目と variant の中の行は残ります（照合が言うので、文で直します）。
           </p>
         </mat-card-content>
       </mat-card>
@@ -276,12 +301,12 @@
                       </span>
                     } @else {
                       <mat-form-field subscriptSizing="dynamic">
-                        <mat-label i18n>つなぐネットワーク</mat-label>
+                        <mat-label i18n>入るネットワーク</mat-label>
                         <mat-select
                           [value]="channel.network"
-                          (valueChange)="connect(p.name, channel, $event)"
+                          (selectionChange)="connect(p.name, channel, $event)"
                           [disabled]="!editable() || !p.inCommon"
-                          [attr.data-testid]="'connect-' + p.name + '-' + channel.from"
+                          [attr.data-testid]="'network-' + p.name + '-' + channel.from"
                         >
                           @for (option of options(channel); track option.value) {
                             <mat-option [value]="option.value">
@@ -344,6 +369,16 @@
           data-testid="design-text"
         ></textarea>
         <div class="bar">
+          <button
+            matButton="filled"
+            type="button"
+            [disabled]="!saveControl().ok || saving() || !changed()"
+            (click)="save()"
+            data-testid="save"
+            i18n
+          >
+            保存
+          </button>
           <button matButton="tonal" type="button" (click)="download()" data-testid="download" i18n>
             ダウンロード
           </button>
@@ -358,10 +393,33 @@
             ファイルの内容に戻す
           </button>
         </div>
+        @if (!saveControl().ok) {
+          <p class="hint" data-testid="save-reason">
+            <ng-container i18n>保存できません:</ng-container>
+            <span lang="en">{{ saveControl().reason?.message }}</span>
+          </p>
+        } @else if (saveControl().caution; as caution) {
+          <p class="hint" data-testid="save-caution">
+            <ng-container i18n>注意:</ng-container>
+            <span lang="en">{{ caution.message }}</span>
+          </p>
+        }
+        @if (savedNote()) {
+          <p class="hint" role="status" data-testid="saved" i18n>保存しました。</p>
+        }
+        @if (saveProblem(); as problem) {
+          <p class="error" role="alert" data-testid="save-problem">
+            <ng-container i18n>保存できませんでした:</ng-container>
+            <span lang="en">{{ problem.message }}</span>
+          </p>
+          @for (message of problem.findings; track $index) {
+            <p class="error" lang="en">{{ message }}</p>
+          }
+        }
         <p class="hint" i18n>
           表で書き換えるのは、共通の部分の <code>networks</code> と
           <code>network_names</code> だけです。それ以外（<code>command</code>、<code>variants</code>
-          など）は、ここで直します。手で書いたところとコメントは残ります。
+          など）は、ここで直します。コメントと、表が触らない値の綴りは残ります。字下げの幅と改行も元のとおりです。行末のコメントの揃えと続く空行は、整えられることがあります。
         </p>
       </mat-card-content>
     </mat-card>

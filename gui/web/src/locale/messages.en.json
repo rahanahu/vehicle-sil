@@ -82,17 +82,33 @@
       "source": "構成ファイルを読めませんでした:",
       "target": "Cannot read the configuration file:"
     },
-    "4370554684368152236": {
-      "source": " ここで直すのは、この画面に開いている文です。ファイルは変わりません。直した文は「ダウンロード」で保存してください。 ",
-      "target": " You edit the text open on this screen. The file does not change. Save the edited text with Download. "
+    "7164617033296054934": {
+      "source": " ここで直すのは、この画面に開いている文です。「保存」を押すまで、ファイルは変わりません（「ダウンロード」で、ファイルとして受け取ることもできます）。 ",
+      "target": " You edit the text open on this screen. The file does not change until you press Save (Download gives you the text as a file). "
     },
-    "1542385076351333610": {
-      "source": " 照合していない participant が {$INTERPOLATION} 個あります（{$INTERPOLATION_1}）。チャネルが分からないので、結果が「通った」でも、つなぎ方はまだ確かめていません。 ",
-      "target": " {$INTERPOLATION} participants were not compared ({$INTERPOLATION_1}). Their channels are unknown, so even if the check passed, the connections are not verified yet. "
+    "5264943725947502211": {
+      "source": " 申告を読んでいない participant が {$INTERPOLATION} 個あります（{$INTERPOLATION_1}）。チャネルが分からないので、結果が「通った」でも、つなぎ方はまだ確かめていません。 ",
+      "target": " {$INTERPOLATION} participants were not described ({$INTERPOLATION_1}). Their channels are unknown, so even if the check passed, the connections are not verified yet. "
+    },
+    "5934713126962903373": {
+      "source": " 保存したファイルにいる participant（{$INTERPOLATION}）は、ECU を読み直すと照合できます。 ",
+      "target": " The participants in the saved file ({$INTERPOLATION}) can be checked after you describe the ECUs again. "
     },
     "380767905724484324": {
       "source": " ECU を読み直す ",
       "target": " Describe the ECUs again "
+    },
+    "6590523932491470912": {
+      "source": "{$INTERPOLATION} は、保存したファイルにないか、読み直しても読めませんでした。文で足した participant や、変えた command は、ファイルに保存するまで照合できません。",
+      "target": "{$INTERPOLATION} are not in the saved file, or could not be described even after reading again. A participant you added in the text, or whose command you changed, cannot be checked until you save the file."
+    },
+    "1741097445009664830": {
+      "source": "「保存」を押すと、保存して照合し直します。",
+      "target": "Press Save to save it and check again."
+    },
+    "1097090833802825029": {
+      "source": "この GUI サーバーでは保存できないので、「ダウンロード」して、ファイルを置いてください。",
+      "target": "This GUI server does not save, so download the text and put the file in place."
     },
     "7548676693464643643": {
       "source": "ECU を読み直せませんでした:",
@@ -166,9 +182,9 @@
       "source": " 足す ",
       "target": " Add "
     },
-    "4460433843235548995": {
-      "source": " ネットワークの名前は変えられません（消して足してください）。外につなぐ先の {$START_TAG_CODE}external{$CLOSE_TAG_CODE} は、下の文の欄に書きます。 ",
-      "target": " A network cannot be renamed (remove it and add it again). Write {$START_TAG_CODE}external{$CLOSE_TAG_CODE}, the way to connect it outside, in the text below. "
+    "2184449536016308732": {
+      "source": " ネットワークの名前は変えられません（消して足してください）。外につないだときのふるまい（{$START_TAG_CODE}external{$CLOSE_TAG_CODE}）は下の文の欄に書きます。つなぐ先は実行を始めるときに選びます。ネットワークを消しても、それを指す j1939_nodes の項目と variant の中の行は残ります（照合が言うので、文で直します）。 ",
+      "target": " A network cannot be renamed (remove it and add it again). Write {$START_TAG_CODE}external{$CLOSE_TAG_CODE}, how the network behaves when it is connected outside, in the text below. Where to connect it is chosen when a run starts. Removing a network keeps the j1939_nodes entries and the lines of variants that name it: the check reports them, so edit them in the text. "
     },
     "6737720035542127809": {
       "source": "participant のチャネル",
@@ -190,9 +206,9 @@
       "source": "が上書きする（文の欄で直す）:",
       "target": "overrides this (edit it in the text):"
     },
-    "8395211339102159854": {
-      "source": "つなぐネットワーク",
-      "target": "Connect to network"
+    "4559159834072709623": {
+      "source": "入るネットワーク",
+      "target": "Network"
     },
     "5070952201149440593": {
       "source": "（名前のまま）",
@@ -222,6 +238,10 @@
       "source": "YAML",
       "target": "YAML"
     },
+    "2723673763126499592": {
+      "source": " 保存 ",
+      "target": " Save "
+    },
     "8577998398972315352": {
       "source": " ダウンロード ",
       "target": " Download "
@@ -230,9 +250,33 @@
       "source": " ファイルの内容に戻す ",
       "target": " Revert to the file "
     },
-    "3706639012545304834": {
-      "source": " 表で書き換えるのは、共通の部分の {$START_TAG_CODE}networks{$CLOSE_TAG_CODE} と {$START_TAG_CODE}network_names{$CLOSE_TAG_CODE} だけです。それ以外（{$START_TAG_CODE}command{$CLOSE_TAG_CODE}、{$START_TAG_CODE}variants{$CLOSE_TAG_CODE} など）は、ここで直します。手で書いたところとコメントは残ります。 ",
-      "target": " The tables write only {$START_TAG_CODE}networks{$CLOSE_TAG_CODE} and {$START_TAG_CODE}network_names{$CLOSE_TAG_CODE} of the common part. Edit everything else ({$START_TAG_CODE}command{$CLOSE_TAG_CODE}, {$START_TAG_CODE}variants{$CLOSE_TAG_CODE} and so on) here. What you wrote by hand and the comments are kept. "
+    "578578727726381205": {
+      "source": "保存できません:",
+      "target": "Cannot save:"
+    },
+    "6081127796714668656": {
+      "source": "注意:",
+      "target": "Note:"
+    },
+    "7142206097703485730": {
+      "source": "保存しました。",
+      "target": "Saved."
+    },
+    "31965280858752881": {
+      "source": "保存できませんでした:",
+      "target": "Could not save:"
+    },
+    "78104505772156248": {
+      "source": " 表で書き換えるのは、共通の部分の {$START_TAG_CODE}networks{$CLOSE_TAG_CODE} と {$START_TAG_CODE}network_names{$CLOSE_TAG_CODE} だけです。それ以外（{$START_TAG_CODE}command{$CLOSE_TAG_CODE}、{$START_TAG_CODE}variants{$CLOSE_TAG_CODE} など）は、ここで直します。コメントと、表が触らない値の綴りは残ります。字下げの幅と改行も元のとおりです。行末のコメントの揃えと続く空行は、整えられることがあります。 ",
+      "target": " The tables write only {$START_TAG_CODE}networks{$CLOSE_TAG_CODE} and {$START_TAG_CODE}network_names{$CLOSE_TAG_CODE} of the common part. Edit everything else ({$START_TAG_CODE}command{$CLOSE_TAG_CODE}, {$START_TAG_CODE}variants{$CLOSE_TAG_CODE} and so on) here. Comments and the spelling of values the tables do not touch are kept, and so are the indentation width and the line ends. The alignment of comments at the end of a line and runs of blank lines may be tidied. "
+    },
+    "8642530009194031206": {
+      "source": "直した文は、ダウンロードしていなければ消えます。捨てますか。",
+      "target": "Edits that you have not downloaded will be lost. Discard them?"
+    },
+    "1194111179635876924": {
+      "source": "ファイルが、この画面で読んだ後に外で変わりました。読み直しますか（直した文は消えます）。",
+      "target": "The file changed outside after this screen read it. Read it again? Your edits will be lost."
     },
     "8542080435534198197": {
       "source": "実行",

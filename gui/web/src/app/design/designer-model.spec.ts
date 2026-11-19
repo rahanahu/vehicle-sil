@@ -165,13 +165,104 @@ describe('designer model', () => {
     expect(b.network_names).toEqual({ ETH_Y: 'eth1' });
   });
 
+  it('does not overwrite the line of another port of the participant', () => {
+    const m = open(START);
+    wire(m, 'ECU_B', 'eth0', 'ETH_AB');
+    wire(m, 'ECU_B', 'eth1', 'ETH_EXT');
+    const before = text(m);
+    expect(() => wire(m, 'ECU_B', 'eth0', 'ETH_EXT')).toThrow(
+      /ETH_EXT is already the name that eth1/,
+    );
+    expect(text(m)).toBe(before);
+    // the same line again is not a conflict
+    wire(m, 'ECU_B', 'eth1', 'ETH_EXT');
+    expect(text(m)).toBe(before);
+  });
+
+  it('keeps the spelling of every plain value that the table did not touch', () => {
+    const values = [
+      '007',
+      '+12',
+      '0x1F',
+      '1E3',
+      '1e3',
+      '.5',
+      '100.',
+      '0x8000000000000001',
+      '18446744073709551615',
+      '~',
+      'true',
+      'null',
+    ];
+    const source = `vehicle_sil_simulation: 1
+networks:
+  - name: 1
+    kind: ethernet
+participants:
+  - name: 123
+    command: [./ecu, ${values.join(', ')}]
+  - name: ECU_B
+    command: [./b, --id, 007]
+`;
+    const m = open(source);
+    addNetwork(m, 'ETH_AB', 'ethernet');
+    wire(m, '123', 'eth0', 'ETH_AB');
+    removeNetwork(m, '1');
+    const out = text(m);
+    expect(out).toContain(`command: [./ecu, ${values.join(', ')}]`);
+    expect(out).toContain('command: [./b, --id, 007]');
+    expect(out).toContain('- name: 123');
+    expect(out).not.toContain('name: 1\n');
+    expect(tree(out)['networks']).toEqual([{ name: 'ETH_AB', kind: 'ethernet' }]);
+  });
+
+  it('quotes a new name that the launcher would read as something other than text', () => {
+    const m = open(START);
+    addNetwork(m, '123', 'ethernet');
+    addNetwork(m, 'true', 'ethernet');
+    wire(m, 'ECU_A', 'eth0', '0x1F');
+    const out = text(m);
+    expect(out).toContain('name: "123"');
+    expect(out).toContain('name: "true"');
+    expect(out).toContain('"0x1F": eth0');
+    expect(tree(out)['networks']).toEqual([
+      { name: '123', kind: 'ethernet' },
+      { name: 'true', kind: 'ethernet' },
+    ]);
+  });
+
+  it('keeps the line ends and the indentation of the text', () => {
+    const crlf = START.replace(/\n/g, '\r\n');
+    const m = open(crlf);
+    wire(m, 'ECU_A', 'eth0', 'ETH_AB');
+    const out = text(m);
+    expect(out.replace(/\r\n/g, '')).not.toContain('\n');
+    expect(out).toContain('\r\n');
+
+    // a text whose sequences are flush with their key, and one whose maps use 4 spaces
+    const flush = open(
+      'vehicle_sil_simulation: 1\nparticipants:\n- name: ECU_A\n  command: [./a]\n',
+    );
+    wire(flush, 'ECU_A', 'eth0', 'ETH_AB');
+    expect(text(flush)).toContain(
+      'participants:\n- name: ECU_A\n  command: [./a]\n  network_names:\n    ETH_AB: eth0',
+    );
+    const four = open(
+      'vehicle_sil_simulation: 1\nparticipants:\n    - name: ECU_A\n      command: [./a]\n',
+    );
+    wire(four, 'ECU_A', 'eth0', 'ETH_AB');
+    expect(text(four)).toContain(
+      'participants:\n    - name: ECU_A\n      command: [./a]\n      network_names:\n          ETH_AB: eth0',
+    );
+  });
+
   it('refuses to write for a participant that the common part does not have', () => {
     const m = open(START);
     expect(() => wire(m, 'Ghost', 'eth0', 'ETH_AB')).toThrow(/common part/);
   });
 
   it('removing a network also removes the lines of the common part that name it, not those of a variant', () => {
-    const source = `${START}variants:\n  other:\n    participants:\n      - name: ECU_A\n        network_names:\n          ETH_AB: eth0\n`;
+    const source = `${START}variants:\n  other:\n    participants:\n      ECU_A:\n        network_names:\n          ETH_AB: eth0\n`;
     const m = open(source);
     addNetwork(m, 'ETH_AB', 'ethernet');
     wire(m, 'ECU_A', 'eth0', 'ETH_AB');
@@ -196,7 +287,7 @@ variants:
   plain: {}
   ext2:
     participants:
-      - name: ECU_B
+      ECU_B:
         network_names:
           ETH_EXT: eth1
 `;
