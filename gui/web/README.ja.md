@@ -113,22 +113,23 @@ e2e のテストは、GUI サーバーを自分で起動し、終わったら止
 
 ## ディレクトリ
 
-| パス                                     | 内容                                                                      |
-| ---------------------------------------- | ------------------------------------------------------------------------- |
-| `src/app/app.*`                          | シェル（ツールバー、ナビゲーション、中身の領域）                          |
-| `src/app/app.routes.ts`、`navigation.ts` | ルートと、ナビゲーションの項目                                            |
-| `src/app/core/`                          | 画面をまたいで使うもの（下の「`core/`」）                                 |
-| `src/app/core/session/`                  | クライアントのライブラリの Angular のラッパー（下の「`core/session/`」）  |
-| `src/app/run/`                           | 実行の画面（`''`）（下の「`run/`」）                                      |
-| `src/app/widgets/`                       | 変数のコンポーネントとダッシュボード（下の「`widgets/`」）                |
-| `src/app/variables/`                     | 変数の画面（`variables`）。自動のダッシュボードと絞り込み                 |
-| `src/app/not-found/`                     | 見つからないルートの画面                                                  |
-| `src/app/testing/`                       | テスト用の画面（`/_test/layout`）                                         |
-| `src/theme.scss`、`src/styles.css`       | Material のテーマ（明暗）、レイアウトの寸法（CSS のカスタムプロパティ）   |
-| `src/main.ts`、`src/start.ts`            | 起動                                                                      |
-| `src/locale/`                            | 翻訳ファイル（`messages.<language>.json`）。ビルドで `locale/` に置かれる |
-| `public/`                                | そのまま配信するファイル（アイコン）                                      |
-| `e2e/`                                   | Playwright のテスト（下の「`e2e/`」）                                     |
+| パス                                     | 内容                                                                                                                                 |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/app/app.*`                          | シェル（ツールバー、ナビゲーション、中身の領域）                                                                                     |
+| `src/app/app.routes.ts`、`navigation.ts` | ルートと、ナビゲーションの項目                                                                                                       |
+| `src/app/core/`                          | 画面をまたいで使うもの（下の「`core/`」）                                                                                            |
+| `src/app/core/session/`                  | クライアントのライブラリの Angular のラッパー（下の「`core/session/`」）                                                             |
+| `src/app/run/`                           | 実行の画面（`''`）（下の「`run/`」）                                                                                                 |
+| `src/app/widgets/`                       | 変数のコンポーネントとダッシュボード（下の「`widgets/`」）                                                                           |
+| `src/app/variables/`                     | 変数の画面（`variables`）。自動のダッシュボードと絞り込み                                                                            |
+| `src/app/design/`                        | ネットワークの設計の画面（`design`）。編集の論理は `designer-model.ts`（`yaml` を使う。経路は遅延読み込み）、画面は `design-page.ts` |
+| `src/app/not-found/`                     | 見つからないルートの画面                                                                                                             |
+| `src/app/testing/`                       | テスト用の画面（`/_test/layout`）                                                                                                    |
+| `src/theme.scss`、`src/styles.css`       | Material のテーマ（明暗）、レイアウトの寸法（CSS のカスタムプロパティ）                                                              |
+| `src/main.ts`、`src/start.ts`            | 起動                                                                                                                                 |
+| `src/locale/`                            | 翻訳ファイル（`messages.<language>.json`）。ビルドで `locale/` に置かれる                                                            |
+| `public/`                                | そのまま配信するファイル（アイコン）                                                                                                 |
+| `e2e/`                                   | Playwright のテスト（下の「`e2e/`」）                                                                                                |
 
 - `src/main.ts` が言語を決めて翻訳を読み込み、それから `src/start.ts`（アプリ）を読み込みます。
 - `src/app/testing/` の画面は、レイアウトの e2e が使います。ナビゲーションには表示しません。単体テスト用のヘルパー（偽の WebSocket と HTTP、`gui/protocol/examples/` を読む関数）は、`@vehicle-sil/gui-client/testing` にあります。
@@ -182,22 +183,23 @@ e2e のテストは、GUI サーバーを自分で起動し、終わったら止
 
 ### `e2e/`
 
-| ファイル                                         | 内容                                                            |
-| ------------------------------------------------ | --------------------------------------------------------------- |
-| `app.spec.ts`                                    | 配信とルーティング                                              |
-| `run.spec.ts`                                    | 実行の画面                                                      |
-| `before-start.spec.ts`                           | 最初のステップの前                                              |
-| `manual.spec.ts`                                 | 自分で起動する participant                                      |
-| `connect.spec.ts`                                | ネットワークを外につなぐ                                        |
-| `scenario.spec.ts`                               | シナリオ                                                        |
-| `starter.spec.ts`                                | 画面のテンプレート `examples/gui_starter` を `--web` で配信する |
-| `i18n.spec.ts`                                   | 英語の画面と言語の切り替え                                      |
-| `layout.spec.ts`、`support/layout.ts`            | レイアウト                                                      |
-| `support/gui-server.ts`                          | GUI サーバーの起動                                              |
-| `support/run-page.ts`                            | 実行の画面の操作                                                |
-| `variables.spec.ts`、`support/variables-page.ts` | 変数の画面                                                      |
-| `shots.spec.ts`                                  | スクリーンショット                                              |
-| `real/`                                          | 本物のランチャーで実行するテスト（`playwright.real.config.ts`） |
+| ファイル                                         | 内容                                                                                                                                           |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app.spec.ts`                                    | 配信とルーティング                                                                                                                             |
+| `run.spec.ts`                                    | 実行の画面                                                                                                                                     |
+| `before-start.spec.ts`                           | 最初のステップの前                                                                                                                             |
+| `manual.spec.ts`                                 | 自分で起動する participant                                                                                                                     |
+| `connect.spec.ts`                                | ネットワークを外につなぐ                                                                                                                       |
+| `scenario.spec.ts`                               | シナリオ                                                                                                                                       |
+| `starter.spec.ts`                                | 画面のテンプレート `examples/gui_starter` を `--web` で配信する                                                                                |
+| `i18n.spec.ts`                                   | 英語の画面と言語の切り替え                                                                                                                     |
+| `layout.spec.ts`、`support/layout.ts`            | レイアウト                                                                                                                                     |
+| `support/gui-server.ts`                          | GUI サーバーの起動                                                                                                                             |
+| `support/run-page.ts`                            | 実行の画面の操作                                                                                                                               |
+| `variables.spec.ts`、`support/variables-page.ts` | 変数の画面                                                                                                                                     |
+| `shots.spec.ts`                                  | スクリーンショット                                                                                                                             |
+| `real/`                                          | 本物のランチャーで実行するテスト（`playwright.real.config.ts`）                                                                                |
+|                                                  | `real/design.spec.ts` はネットワークの設計の画面を、本物のランチャーと、`--describe` にだけ答える ECU（`support/describe-only-ecu.mjs`）で通す |
 
 ## URL と CSP
 

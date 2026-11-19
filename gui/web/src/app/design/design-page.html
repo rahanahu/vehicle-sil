@@ -1,0 +1,369 @@
+<h1 i18n>ネットワークの設計</h1>
+
+@if (!auth.token()) {
+  <mat-card appearance="outlined" data-testid="no-token">
+    <mat-card-content>
+      <p i18n>
+        この画面は、GUI サーバーが起動したときに表示した URL（<code>#token=</code>
+        の付いたもの）から開いてください。
+      </p>
+    </mat-card-content>
+  </mat-card>
+} @else {
+  <mat-card appearance="outlined">
+    <mat-card-content>
+      @if (configs.hasValue()) {
+        <div class="bar">
+          <mat-form-field subscriptSizing="dynamic">
+            <mat-label i18n>構成ファイル</mat-label>
+            <mat-select
+              [value]="file()"
+              (valueChange)="selectFile($event)"
+              data-testid="design-file"
+            >
+              @for (config of configs.value().files; track config.path) {
+                <mat-option [value]="config.path">{{ config.path }}</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+          @if (design(); as d) {
+            @if (d.variants.length > 0) {
+              <mat-form-field subscriptSizing="dynamic">
+                <mat-label i18n>variant</mat-label>
+                <mat-select
+                  [value]="variant()"
+                  (valueChange)="selectVariant($event)"
+                  data-testid="design-variant"
+                >
+                  <mat-option [value]="null" i18n>選ばない</mat-option>
+                  @for (name of d.variants; track name) {
+                    <mat-option [value]="name">{{ name }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+            }
+          }
+          <button matButton type="button" (click)="reload()" data-testid="design-reload" i18n>
+            ファイルを読み直す
+          </button>
+        </div>
+        @if (configs.value().files.length === 0) {
+          <p class="hint" i18n>選べる構成ファイル（.yaml、.yml）がありません。</p>
+        }
+      } @else if (configs.error()) {
+        <p class="error" role="alert" i18n>構成ファイルの一覧を取得できませんでした。</p>
+      } @else {
+        <p class="hint" i18n>一覧を取得しています。</p>
+      }
+      @if (loaded.error(); as error) {
+        <p class="error" role="alert" data-testid="design-load-error">
+          <ng-container i18n>構成ファイルを読めませんでした:</ng-container>
+          <span lang="en">{{ error.message }}</span>
+        </p>
+      }
+      <p class="hint" i18n>
+        ここで直すのは、この画面に開いている文です。ファイルは変わりません。直した文は「ダウンロード」で保存してください。
+      </p>
+    </mat-card-content>
+  </mat-card>
+
+  @if (draft() !== null) {
+    @if (design(); as d) {
+      @if (d.notDescribed.length > 0) {
+        <div class="alert" role="alert" data-testid="not-described">
+          <p i18n>
+            照合していない participant が {{ d.notDescribed.length }} 個あります（{{
+              d.notDescribed.join('、')
+            }}）。チャネルが分からないので、結果が「通った」でも、つなぎ方はまだ確かめていません。
+          </p>
+          <button
+            matButton="tonal"
+            type="button"
+            [disabled]="describing()"
+            (click)="describeAgain()"
+            data-testid="describe-again"
+            i18n
+          >
+            ECU を読み直す
+          </button>
+        </div>
+      }
+    }
+    @if (describeProblem(); as problem) {
+      <p class="error" role="alert" data-testid="describe-problem">
+        <ng-container i18n>ECU を読み直せませんでした:</ng-container>
+        <span lang="en">{{ problem }}</span>
+      </p>
+    }
+
+    <mat-card appearance="outlined">
+      <mat-card-content>
+        <h2 i18n>照合の結果</h2>
+        @if (outcome(); as label) {
+          <p data-testid="design-outcome" [attr.data-result]="answer()?.result?.result">
+            {{ label }}
+            @if (!upToDate()) {
+              <span class="hint" i18n>（照合しています）</span>
+            }
+          </p>
+        } @else if (!checkError()) {
+          <p class="hint" i18n>照合しています。</p>
+        }
+        @if (checkError(); as message) {
+          <p class="error" role="alert" data-testid="design-check-error">
+            <ng-container i18n>照合できませんでした:</ng-container>
+            <span lang="en">{{ message }}</span>
+          </p>
+        }
+        <div data-testid="design-findings">
+          <app-findings-list [findings]="findings()" />
+        </div>
+        @if (lines().length > 0) {
+          <p class="bar">
+            <ng-container i18n>文の行へ:</ng-container>
+            @for (line of lines(); track line) {
+              <button matButton type="button" (click)="goToLine(line)" i18n>{{ line }} 行目</button>
+            }
+          </p>
+        }
+      </mat-card-content>
+    </mat-card>
+
+    @if (json()) {
+      <p class="hint" data-testid="design-json" i18n>
+        この構成は JSON なので、表では直せません。下の文の欄で直してください。
+      </p>
+    }
+    @for (error of parseErrors(); track $index) {
+      <p class="error" role="alert" data-testid="design-parse-error">
+        <ng-container i18n>文を YAML として読めません（表は止めてあります）:</ng-container>
+        <span lang="en">{{ error.message }}</span>
+        @if (error.line !== null) {
+          <button matButton type="button" (click)="goToLine(error.line)" i18n>
+            {{ error.line }} 行目
+          </button>
+        }
+      </p>
+    }
+    @if (editProblem(); as problem) {
+      <p class="error" role="alert" data-testid="design-edit-problem">
+        <ng-container i18n>表では書けませんでした:</ng-container>
+        <span lang="en">{{ problem }}</span>
+      </p>
+    }
+
+    @if (design(); as d) {
+      <mat-card appearance="outlined">
+        <mat-card-content>
+          <h2 i18n>ネットワーク</h2>
+          <ul class="rows" data-testid="design-networks">
+            @for (network of d.networks; track network.name) {
+              <li class="row" [attr.data-testid]="'network-' + network.name">
+                <span class="name">{{ network.name }}</span>
+                <span>{{ network.kind }}</span>
+                <span>
+                  @if (network.participants.length > 0) {
+                    {{ network.participants.join(', ') }}
+                  } @else {
+                    <ng-container i18n>つながっている participant はありません</ng-container>
+                  }
+                </span>
+                @if (codesOf({ network: network.name }); as codes) {
+                  @if (codes.length > 0) {
+                    <span class="codes" data-testid="row-findings">{{ codes.join(', ') }}</span>
+                  }
+                }
+                <button
+                  matButton
+                  type="button"
+                  [disabled]="!editable()"
+                  (click)="remove(network.name)"
+                  [attr.data-testid]="'network-remove-' + network.name"
+                  i18n
+                >
+                  消す
+                </button>
+              </li>
+            } @empty {
+              <li class="hint" i18n>ネットワークはまだありません。</li>
+            }
+          </ul>
+          <div class="add">
+            <mat-form-field subscriptSizing="dynamic">
+              <mat-label i18n>名前</mat-label>
+              <input
+                matInput
+                [value]="newName()"
+                (input)="newName.set(valueOf($event))"
+                (keydown.enter)="add()"
+                [disabled]="!editable()"
+                data-testid="network-name"
+              />
+            </mat-form-field>
+            <mat-form-field subscriptSizing="dynamic">
+              <mat-label i18n>種類</mat-label>
+              <mat-select
+                [value]="newKind()"
+                (valueChange)="newKind.set($event)"
+                [disabled]="!editable()"
+                data-testid="network-kind"
+              >
+                @for (kind of kinds; track kind) {
+                  <mat-option [value]="kind">{{ kind }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+            <button
+              matButton="tonal"
+              type="button"
+              [disabled]="!editable() || newName().trim() === ''"
+              (click)="add()"
+              data-testid="network-add"
+              i18n
+            >
+              足す
+            </button>
+          </div>
+          <p class="hint" i18n>
+            ネットワークの名前は変えられません（消して足してください）。外につなぐ先の
+            <code>external</code> は、下の文の欄に書きます。
+          </p>
+        </mat-card-content>
+      </mat-card>
+
+      <mat-card appearance="outlined">
+        <mat-card-content>
+          <h2 i18n>participant のチャネル</h2>
+          @for (p of d.participants; track p.name) {
+            <section class="participant" [attr.data-testid]="'participant-' + p.name">
+              <div class="row">
+                <span class="name">{{ p.name }}</span>
+                <span>
+                  @if (p.describeOff) {
+                    <ng-container i18n>describe: false（申告を読まない）</ng-container>
+                  } @else {
+                    {{ statusLabel(p.status) }}
+                  }
+                </span>
+                @if (codesOf({ participant: p.name }); as codes) {
+                  @if (codes.length > 0) {
+                    <span class="codes" data-testid="row-findings">{{ codes.join(', ') }}</span>
+                  }
+                }
+              </div>
+              @if (p.known) {
+                @for (channel of p.channels; track channel.from) {
+                  <div
+                    class="channel"
+                    [attr.data-testid]="'channel-' + p.name + '-' + channel.from"
+                  >
+                    <code>{{ channel.from }}</code>
+                    <span>{{ channel.uses.join(', ') }}</span>
+                    <span>
+                      <ng-container i18n>MAC:</ng-container>
+                      @if (channel.mac !== null) {
+                        {{ channel.mac }}
+                      } @else {
+                        <ng-container i18n>報告なし</ng-container>
+                      }
+                    </span>
+                    @if (channel.overriddenBy !== null) {
+                      <span data-testid="overridden">
+                        <ng-container i18n>variant</ng-container>
+                        {{ channel.overriddenBy }}
+                        <ng-container i18n>が上書きする（文の欄で直す）:</ng-container>
+                        <code>{{ channel.network }}</code>
+                      </span>
+                    } @else {
+                      <mat-form-field subscriptSizing="dynamic">
+                        <mat-label i18n>つなぐネットワーク</mat-label>
+                        <mat-select
+                          [value]="channel.network"
+                          (valueChange)="connect(p.name, channel, $event)"
+                          [disabled]="!editable() || !p.inCommon"
+                          [attr.data-testid]="'connect-' + p.name + '-' + channel.from"
+                        >
+                          @for (option of options(channel); track option.value) {
+                            <mat-option [value]="option.value">
+                              {{ option.value }}
+                              @if (option.asIs) {
+                                <ng-container i18n>（名前のまま）</ng-container>
+                              }
+                            </mat-option>
+                          }
+                        </mat-select>
+                      </mat-form-field>
+                    }
+                  </div>
+                } @empty {
+                  <p class="hint" i18n>この participant は、ネットワークを申告していません。</p>
+                }
+              } @else {
+                <p class="hint" data-testid="channels-unknown" i18n>
+                  チャネルが分かりません（申告を読んでいません）。写像は文の欄で書いてください。
+                </p>
+              }
+              @if (!p.known && p.mapLines.length > 0) {
+                <ul class="rows">
+                  @for (line of p.mapLines; track $index) {
+                    <li>
+                      <code>{{ line.name }}: {{ line.from }}</code>
+                      @if (line.line !== null) {
+                        <button matButton type="button" (click)="goToLine(line.line)" i18n>
+                          {{ line.line }} 行目
+                        </button>
+                      }
+                    </li>
+                  }
+                </ul>
+              }
+              @if (!p.inCommon) {
+                <p class="hint" i18n>
+                  この participant は構成ファイルの共通の部分にいないので、表では直せません。
+                </p>
+              }
+            </section>
+          } @empty {
+            <p class="hint" i18n>participant がありません。</p>
+          }
+        </mat-card-content>
+      </mat-card>
+    }
+
+    <mat-card appearance="outlined">
+      <mat-card-content>
+        <h2 i18n>文</h2>
+        <textarea
+          #editor
+          class="editor"
+          spellcheck="false"
+          aria-label="YAML"
+          i18n-aria-label
+          [value]="draft()"
+          (input)="typed(valueOf($event))"
+          data-testid="design-text"
+        ></textarea>
+        <div class="bar">
+          <button matButton="tonal" type="button" (click)="download()" data-testid="download" i18n>
+            ダウンロード
+          </button>
+          <button
+            matButton
+            type="button"
+            [disabled]="!changed()"
+            (click)="revert()"
+            data-testid="design-revert"
+            i18n
+          >
+            ファイルの内容に戻す
+          </button>
+        </div>
+        <p class="hint" i18n>
+          表で書き換えるのは、共通の部分の <code>networks</code> と
+          <code>network_names</code> だけです。それ以外（<code>command</code>、<code>variants</code>
+          など）は、ここで直します。手で書いたところとコメントは残ります。
+        </p>
+      </mat-card-content>
+    </mat-card>
+  }
+}

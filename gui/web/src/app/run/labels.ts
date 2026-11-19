@@ -42,6 +42,7 @@ export const phaseLabel = (phase: Phase): string => label(PHASES, phase);
 const CHECK_STATUSES: Record<string, string> = {
   described: $localize`照合した`,
   not_checked: $localize`照合していない`,
+  not_described: $localize`申告を読んでいない`,
   failed: $localize`照合できない`,
   skipped: $localize`飛ばした`,
   disabled: $localize`外した`,
