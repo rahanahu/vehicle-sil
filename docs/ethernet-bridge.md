@@ -7,7 +7,7 @@
 | Connects to | `--backend` | OS | What to install | Verified |
 |---|---|---|---|---|
 | The network stack of the same computer's OS, and programs that open the TAP device | `tap` | Linux | Nothing | Automated tests against the real kernel in a network namespace |
-| Devices beyond a network interface (NIC, veth) | `packet` | Linux | Nothing | Automated tests on a veth pair (physical NICs not verified) |
+| Devices beyond a network interface (NIC, veth) | `packet` | Linux | Nothing | Automated tests on a veth pair. By hand on one physical USB adapter (ASIX AX88772, 100 Mbit/s) on a LAN, through a switch to another NIC of the same computer: frames both ways, the first link line `up`, the cable pulled and put back (link down and up, the run goes on), the adapter pulled out (`connect-lost`), and two runs on it (sharing told). Not with a device or a second computer on the cable, or with high traffic |
 | Same as `packet` | `pcap` | Linux | libpcap | Automated tests on a veth pair with the real libpcap (physical NICs not verified) |
 | Devices beyond a network adapter | `npcap` | Windows | Npcap | With the real Npcap, only manual checks: on the virtual NIC of a virtual machine, and on one physical USB adapter on a LAN |
 
