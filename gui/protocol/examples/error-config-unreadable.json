@@ -1,0 +1,15 @@
+{
+  "description": "A configuration file that is not UTF-8 text.",
+  "request": {
+    "method": "GET",
+    "path": "api/config?file=latin1.yaml"
+  },
+  "status": 422,
+  "response": {
+    "error": {
+      "code": "config-unreadable",
+      "message": "latin1.yaml is not UTF-8 text (byte 31 is not UTF-8): save it as UTF-8 without NUL characters, the encoding that the launcher reads",
+      "detail": null
+    }
+  }
+}

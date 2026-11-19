@@ -56,6 +56,11 @@
 //   request                 declares the input "request" (a bool that always reads false; its setter
 //                           counts every write, whatever its value) and the output "requests" (the
 //                           writes counted so far)
+//   glitch <t>              declares the output "healthy": true, but false in the one step of the ECU
+//                           that begins at <t> ms (with a step of 1 ms, shorter than the 10 ms between
+//                           two samples of an ECU that sends them as its code says)
+//   sample-ms <n>           its code asks for a sample of its variables every <n> ms
+//                           (Ecu::set_agent_options(); the first word of the behaviour)
 //   talk <network>          has the raw CAN network <network> (the name in its code) and sends one frame
 //                           there in every 10 ms step (may be given for several networks)
 //   hear <network>          has the raw CAN network <network> and writes "<name>.heard" in its working
@@ -70,6 +75,9 @@
 // by spaces) are executables of a vehicle-sil before --map-network: their --describe has no
 // "features" (and the raw CAN network "OLD_CAN"), and started for a run they write
 // "<name>.started" and end with exit code 4, as for an argument they do not know.
+// With the file "test-ecu-own-sample-period" in its working directory, the ECUs started there do
+// not follow --sample-every-step (the argument is taken away before ecu_main sees it; their
+// --describe still says that they take it): an executable whose control agent is not ecu_main's.
 // With the file "test-ecu-no-control" in its working directory, the ECUs started there run with
 // --no-control (their --describe still has the variables): an executable that describes
 // variables and never offers them.
@@ -227,6 +235,20 @@ public:
                 ecu.output("level_changed_at_ms", &level_changed_at_);
                 ecu.agent().output_enum("mode_now", [this] { return mode_; }, modes);
                 ecu.output("pulse", &pulse_);
+            }
+            else if (word == "sample-ms")
+            {
+                long long period = 0;
+                in >> period;
+                ecu.set_agent_options({.sample_period = std::chrono::milliseconds(period)});
+            }
+            else if (word == "glitch")
+            {
+                in >> glitch_at_;
+                ecu.output("healthy", &healthy_);
+                ecu.on_step([this](vehicle_sil::SimTime now) {
+                    healthy_ = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() != glitch_at_;
+                });
             }
             else if (word == "talk")
             {
@@ -444,6 +466,8 @@ private:
     std::int64_t level_changed_at_ = -1;
     std::int64_t mode_ = 0;
     bool pulse_ = false;
+    long long glitch_at_ = -1;
+    bool healthy_ = true;
     std::int64_t requests_ = 0;
     bool nvm_report_ = false;
     std::int64_t nvm_profile_ = 1;
@@ -521,6 +545,10 @@ int main(int argc, char** argv)
     if (std::ifstream("test-ecu-no-control") && !describe)
     {
         args.push_back(no_control);
+    }
+    if (std::ifstream("test-ecu-own-sample-period"))
+    {
+        std::erase_if(args, [](const char* arg) { return std::string(arg) == "--sample-every-step"; });
     }
 #ifdef _WIN32
     SetConsoleCtrlHandler(on_stop, TRUE);

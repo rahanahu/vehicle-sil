@@ -55,6 +55,7 @@ The last word that `last_word_wait` waits on tells the launcher about cancelled 
 | `--silkit-config <file>` | With `--registry-uri`, passes a SIL Kit participant configuration file (YAML or JSON) to this participant (see [Passing a SIL Kit configuration file](#passing-a-sil-kit-configuration-file---silkit-config)). |
 | `--map-network <simulation name>=<executable name>` | Only with `--registry-uri`. Connects the network that the ECU's code created as `<executable name>` to the SIL Kit network `<simulation name>` (see [Renaming networks](#renaming-networks---map-network)). |
 | `--j1939-node <network>=<settings>` | Only with `--registry-uri`. Changes the address and NAME fields of a J1939 node of the ECU for this run (see [Changing J1939 node addresses and NAMEs](#changing-j1939-node-addresses-and-names---j1939-node)). |
+| `--sample-every-step` | Only with `--registry-uri`. Sends the values of the ECU's variables after every ECU step, whatever the code's `sample_period` is (see [Exposing variables](#exposing-variables---registry-uri)). |
 | `--local --run-for-ms <ms>` | Runs this ECU alone on in-process virtual buses for `<ms>` milliseconds of virtual time (an integer of 1 or more). |
 | `--name <name>` | Participant name used instead of `EcuMainOptions::name` (ASCII or UTF-8). |
 | `--help` (`-h`) | Writes the usage to stdout and exits with 0. |
@@ -106,7 +107,7 @@ The following give exit code 4. The ECU starts nothing and writes the usage to s
 | An argument given twice | `--map-network` and `--j1939-node` are exceptions (see [Renaming networks](#renaming-networks---map-network) and [Changing J1939 node addresses and NAMEs](#changing-j1939-node-addresses-and-names---j1939-node)). |
 | An error in the value of `--map-network` | See [Renaming networks](#renaming-networks---map-network). |
 | An error in the value of `--j1939-node`, or 2 of them that clash | See [Changing J1939 node addresses and NAMEs](#changing-j1939-node-addresses-and-names---j1939-node). |
-| `--map-network` or `--j1939-node` without `--registry-uri` | |
+| `--map-network`, `--j1939-node` or `--sample-every-step` without `--registry-uri` | |
 | `--local` without `--run-for-ms`, or `--run-for-ms` without `--local` | |
 | `--start-timeout-ms` without `--registry-uri` | |
 | A `--run-for-ms` or `--start-timeout-ms` that is not an integer, is 0 or exceeds 10^12 | |
@@ -164,6 +165,7 @@ When the ECU joins with `--registry-uri`, it exposes its variables to the simula
 | Dependencies | Neither gRPC nor Protocol Buffers is needed (ECU executables depend on neither). |
 | When it sends | Values and the results of writes are sent within the step, right after the values are read. |
 | How often it sends | At the Agent's `sample_period` (default 10 ms; `Ecu::set_agent_options()`), without thinning out. |
+| `--sample-every-step` | The ECU sends after every ECU step (`sample_period` 0), whatever `Ecu::set_agent_options()` says in the code; the other options of the code stay. `vehicle_sil_launch run --scenario` gives it to the ECUs whose values the scenario reads, so that a condition sees every ECU step (see "How often the ECUs send their values" in [scenario.md](scenario.md#how-often-the-ecus-send-their-values-samples)). Do not write it in `command`. In your own `main()`, `Ecu::sample_every_step()` does the same (call it before the first `input()`, `output()` or `agent()`). |
 | Availability of variables | For variables declared with `VariableOptions::availability`: sent when the application changes it (`Ecu::set_availability()`), and again once a second of simulation time (see "Availability of a variable" in [control-api.md](control-api.md#availability-of-a-variable)). |
 | `control` in `--describe` | Reports in `control` that the ECU exposes its variables (`Ecu::describe()` itself does not report it; `ecu_main` adds it). |
 | ECUs the launcher waits for | `vehicle_sil_launch run` waits only for ECUs that report in `control` that they expose their variables. |
@@ -499,7 +501,7 @@ A reader rejects an unknown version and ignores unknown keys. An unknown value o
 | `control.transport` | The transport. Currently only `"silkit"` (SIL Kit publish/subscribe) |
 | `control.wire_version` | The message format version (an integer) |
 | `control.wire_revision` | The revision of that format the executable writes (an integer). A launcher of another revision of the same version reads and writes the variables as usual; the check notes an older executable (`control-link-revision`), because what later revisions added does not arrive from it (revision 1: the availability of the variables) |
-| `features` | Array of the names (strings) of the arguments and behaviors that this executable accepts from the program that starts it. `"map-network"`: it accepts `--map-network`. `"j1939-node"`: it accepts `--j1939-node`. An `ecu_main` executable writes the same list whatever its arguments |
+| `features` | Array of the names (strings) of the arguments and behaviors that this executable accepts from the program that starts it. `"map-network"`: it accepts `--map-network`. `"j1939-node"`: it accepts `--j1939-node`. `"sample-every-step"`: it accepts `--sample-every-step`. An `ecu_main` executable writes the same list whatever its arguments |
 
 How to read JSON in which a key is missing:
 
@@ -583,7 +585,8 @@ Example: the output of `vehicle_sil_engine_ecu --describe`. The CTest test `ecu_
   },
   "features": [
     "map-network",
-    "j1939-node"
+    "j1939-node",
+    "sample-every-step"
   ]
 }
 ```

@@ -28,6 +28,7 @@ struct CommandLine
     bool describe = false;
     bool local = false;
     bool no_control = false;
+    bool sample_every_step = false; ///< --sample-every-step
     std::optional<std::string> registry_uri;
     std::optional<std::string> name;
     std::optional<std::string> silkit_config;

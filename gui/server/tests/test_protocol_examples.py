@@ -44,6 +44,7 @@ EXAMPLES = {
     "scenarios", "check-scenario", "error-scenario-not-listed", "ws-scenario", "recording", "error-scenario-running",
     "check-manual", "ws-manual", "ws-allowed", "connections", "check-connect", "run-connect",
     "error-target-not-listed", "error-unknown-network", "ws-availability",
+    "config", "check-text", "describe", "error-text-too-large", "error-config-too-large", "error-config-unreadable",
 }
 
 
@@ -95,7 +96,7 @@ SHOWN = {
     "error-check-timeout": 504, "error-launcher-output": 502, "error-launcher-unusable": 503,
     "error-launcher-start": 502, "error-shutting-down": 503, "error-too-many-connections": 503,
     "error-not-running": 409, "error-unknown-variable": 400, "error-variables-not-ready": 409,
-    "error-unknown-network": 400,
+    "error-unknown-network": 400, "error-text-too-large": 413, "error-config-too-large": 413,
 }
 
 
@@ -308,9 +309,9 @@ def test_http_examples(tmp_path: Path) -> None:
                                         content_type="application/x-www-form-urlencoded")
             check_example("error-unsupported-media-type", http("A body that is not JSON (a form).", "POST",
                                                                "api/check", "file=simulation.yaml", status, body), gui)
-            status, body = await c.post("api/check", raw=b'{"file": "' + b"x" * 70_000 + b'"}')
-            check_example("error-too-large", http("A body larger than 64 KiB.", "POST", "api/check",
-                                                  "(70 kB)", status, body), gui)
+            status, body = await c.post("api/run", raw=b'{"file": "' + b"x" * 70_000 + b'"}')
+            check_example("error-too-large", http("A body larger than 64 KiB (of api/check: 6 MiB + 64 KiB).", "POST",
+                                                  "api/run", "(70 kB)", status, body), gui)
             status, body = await c.get("api/nothing")
             check_example("error-not-found", http("No such API.", "GET", "api/nothing", None, status, body), gui)
             async with c.http.request("OPTIONS", f"{gui.base}/api/run", headers=gui.headers()) as r:
@@ -401,6 +402,44 @@ def test_connect_examples(tmp_path: Path) -> None:
             check_example("run-connect", http("Start a run with ETH_EXT connected to a listed target.", "POST",
                                               "api/run", req, status, body), gui, tools)
             await sock.until(is_ended)
+        run_async(talk, gui)
+
+
+def test_config_text_examples(tmp_path: Path) -> None:
+    """The text of a configuration file, the check of an unsaved text, and describing the executables again. The
+    launcher is text_launcher.py (the check of the saved file, played; the options of saved descriptions)."""
+    root = tmp_path / "root"
+    shutil.copytree(CONFIGS, root)
+    (root / "latin1.yaml").write_bytes("vehicle_sil_simulation: 1\n# caf\u00e9\n".encode("latin-1"))
+    (root / "large.yaml").write_bytes(b"vehicle_sil_simulation: 1\n" + b"#" * (1024 * 1024))
+    paths = {str(root): "/path/to/root"}
+    with gui_server(tmp_path, root=root, launcher=REPLAY.parent / "text_launcher.py") as gui:
+        async def talk(c: Client) -> None:
+            path = "api/config?file=simulation.yaml"
+            status, body = await c.get(path)
+            check_example("config", http("The text of a configuration file as it is saved, and the SHA-256 of its "
+                                         "bytes.", "GET", path, None, status, body), gui, paths)
+            # An edit that the check does not show (the stand-in plays the saved file's check)
+            req = {"file": "simulation.yaml", "text": body["text"] + "# edited on the screen, not saved yet\n"}
+            status, body = await c.post("api/check", req)
+            check_example("check-text", http(
+                "A check of an unsaved text of simulation.yaml: no process is started (the launcher takes each "
+                "executable's --describe output from what the check of the saved file saved).", "POST", "api/check",
+                req, status, body), gui, paths)
+            req = {"file": "simulation.yaml"}
+            status, body = await c.post("api/describe", req)
+            check_example("describe", http("Describe the executables of the saved file again, for the next checks "
+                                           "of its text.", "POST", "api/describe", req, status, body), gui, paths)
+            req = {"file": "simulation.yaml", "text": "#" * (1024 * 1024 + 1)}
+            status, body = await c.post("api/check", req)
+            check_example("error-text-too-large", http("A text larger than 1 MiB as UTF-8.", "POST", "api/check",
+                                                       {**req, "text": "(1 MiB + 1 byte)"}, status, body), gui, paths)
+            for name, file, text in (("error-config-too-large", "large.yaml", "A file larger than 1 MiB."),
+                                     ("error-config-unreadable", "latin1.yaml",
+                                      "A configuration file that is not UTF-8 text.")):
+                path = f"api/config?file={file}"
+                status, body = await c.get(path)
+                check_example(name, http(text, "GET", path, None, status, body), gui, paths)
         run_async(talk, gui)
 
 

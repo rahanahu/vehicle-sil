@@ -252,7 +252,7 @@ What you can and cannot write in `command`:
 
 | What you write | Handling |
 |---|---|
-| Arguments of `ecu_main` (`--describe`, `--name`, `--registry-uri`, `--local`, `--run-for-ms`, `--start-timeout-ms`, `--map-network`, `--j1939-node`, `--help`, `-h`, also in the form `--name=X`) | Not allowed (the error `launcher-argument`). Write `--map-network` in `network_names` (see [Matching network names](#matching-network-names-network_names)) and `--j1939-node` in `j1939_nodes` (see [Matching J1939 addresses and NAMEs](#matching-j1939-addresses-and-names-j1939_nodes)). |
+| Arguments of `ecu_main` (`--describe`, `--name`, `--registry-uri`, `--local`, `--run-for-ms`, `--start-timeout-ms`, `--map-network`, `--j1939-node`, `--sample-every-step`, `--help`, `-h`, also in the form `--name=X`) | Not allowed (the error `launcher-argument`). Write `--map-network` in `network_names` (see [Matching network names](#matching-network-names-network_names)) and `--j1939-node` in `j1939_nodes` (see [Matching J1939 addresses and NAMEs](#matching-j1939-addresses-and-names-j1939_nodes)). |
 | `--no-control` | Allowed. The ECU does not expose its variables. |
 | `--silkit-config <file>` | Allowed. Passes a SIL Kit configuration file to the ECU. |
 | `required: false` | Not allowed (the error `not-required-ecu`), except with `role: bridge`. |

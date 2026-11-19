@@ -15,7 +15,7 @@ from conftest import CONFIGS, Client, Gui, gui_server, run_async, wait_until
 
 API = [("GET", "api/app"), ("GET", "api/configs"), ("GET", "api/session"), ("POST", "api/check"),
        ("POST", "api/run"), ("POST", "api/stop"), ("POST", "api/time"), ("GET", "api/dashboard"),
-       ("GET", "api/scenarios"), ("GET", "api/recording")]
+       ("GET", "api/scenarios"), ("GET", "api/recording"), ("GET", "api/config"), ("POST", "api/describe")]
 
 
 async def request(c: Client, method: str, path: str, headers: dict, body: bytes = b"{}") -> aiohttp.ClientResponse:
@@ -99,8 +99,8 @@ def test_post_bodies_must_be_json(gui: Gui) -> None:
         assert status == 400 and body["error"]["code"] == "invalid-json"
         status, body = await c.post("api/check", raw=b"[1]")
         assert status == 400 and body["error"]["code"] == "invalid-json"
-        status, body = await c.post("api/check", raw=b'{"file": "' + b"x" * 100_000 + b'"}')
-        assert status == 413
+        status, body = await c.post("api/run", raw=b'{"file": "' + b"x" * 100_000 + b'"}')
+        assert status == 413  # api/check takes more (the text of a configuration): test_config_text.py
     run_async(main, gui)
 
 

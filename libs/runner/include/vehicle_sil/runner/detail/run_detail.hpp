@@ -54,10 +54,13 @@ namespace detail {
 /// --start-timeout-ms (ecu_start_timeout_ms() with `stands_still_before_start`), then
 /// map_network_arguments() and j1939_node_arguments() of its entry. Any other: its command's
 /// arguments with the placeholders replaced, then the same two (a --map-network or --j1939-node
-/// after what the file wrote, never inside it).
+/// after what the file wrote, never inside it). Last, with `sample_every_step`
+/// (RunMember::sample_every_step: a scenario reads the participant's values and its executable
+/// says that it takes the argument), --sample-every-step.
 [[nodiscard]] std::vector<std::string> participant_arguments(const config::SimulationConfig& config, const config::ParticipantConfig& participant,
                                                              const std::string& registry_uri,
-                                                             bool stands_still_before_start);
+                                                             bool stands_still_before_start,
+                                                             bool sample_every_step);
 
 /// One line for this system's shell that starts `executable` (as given) with `arguments`: on
 /// Windows for cmd.exe, quoted as the C runtimes read a command line back (an argument in double

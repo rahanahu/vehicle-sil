@@ -391,7 +391,7 @@ Where to change:
 Rules:
 
 - The check rules, the tables and `networks` in the JSON read the reported networks only through `seen_networks()` (`libs/config/src/check_networks.cpp`, the only function that applies the map), which `SeenEcu::seen_networks()` (`libs/config/include/vehicle_sil/config/detail/seen_ecu.hpp`) calls. A rule that reads `description.networks` itself sees a renamed network under the executable's name. `launch.described_networks_are_read_in_one_place` (`cmake/VehicleSilCheckDescribedNetworks.cmake`) reads the lines with `.networks`, `->networks` and `::networks` in `libs/launch` and `tools/launch` to confirm this. Only `config.networks` of the configuration is not counted, so a member named `networks` in another struct makes the test fail: give it another name. When you add a rule or an output, add the case of a renamed network to `tests/launch/test_check.cpp`.
-- `detail::participant_arguments()` (`libs/runner/src/run_participants.cpp`) is the one place that builds the arguments of `run`. The start, the command of `manual` and the `participant` event use the same list (`--map-network` comes last; with `describe: false`, after the placeholders are replaced).
+- `detail::participant_arguments()` (`libs/runner/src/run_participants.cpp`) is the one place that builds the arguments of `run`. The start, the command of `manual` and the `participant` event use the same list (`--map-network` and `--j1939-node` come after the rest; with `describe: false`, after the placeholders are replaced; then `--sample-every-step` for a participant whose values the run's scenario reads, `RunMember::sample_every_step`).
 
 Documentation to update:
 

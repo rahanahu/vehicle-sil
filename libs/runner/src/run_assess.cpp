@@ -731,6 +731,25 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
                 add_scenario(step.code, step.text + ": " + step.message, step.line);
             }
         }
+        for (const ScenarioNotObserved& coarse : outcome.scenario.not_observed)
+        {
+            // Not a step's failure: nothing was judged. Named so that it is told apart from a
+            // condition that was false ("scenario-failed").
+            out.push_back(config::Finding{
+                config::Severity::Error, "scenario-not-observed",
+                "the scenario was not begun: it reads values of participant '" + coarse.participant +
+                    "' and judges with every step of the ECU, and '" + coarse.participant + "' sends its values every " +
+                    millis_text(coarse.sample_period.count()) + " ms (its sample_period) while its step is " +
+                    millis_text(coarse.step.count()) + " ms, so a condition would not see what a variable does between two samples. " +
+                    (coarse.asked ? "It was started with --sample-every-step and did not follow it: an executable that makes its "
+                                    "own control agent instead of using the one of ecu_main() must set "
+                                    "AgentOptions::sample_period to 0 itself. Change the executable so"
+                                  : "Its executable does not take --sample-every-step (no \"sample-every-step\" in the features "
+                                    "of its --describe), so the launcher could not ask for more. Build the executable again "
+                                    "with this vehicle-sil") +
+                    ", or write samples: as_sent at the top of the scenario to judge with the values as the ECU sends them",
+                0, coarse.participant, "", "", scenario.file});
+        }
         if (scenario.status == scenario::ScenarioStatus::Incomplete)
         {
             const auto reached = std::find_if(scenario.steps.rbegin(), scenario.steps.rend(), [](const scenario::ScenarioStepRun& step) {

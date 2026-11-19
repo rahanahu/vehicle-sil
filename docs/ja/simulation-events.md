@@ -671,7 +671,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "state",
     "time-policy",
     "stdin-run-until",
-    "request"
+    "request",
+    "scenario-samples"
   ]
 }
 ```
@@ -733,6 +734,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `time-policy` | `check`、`run`、`test` の `--time-policy`。シミュレーションの外につながる実行は、`free` を選ばなければ実時間を保ちます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」） |
 | `stdin-run-until` | 標準入力の `run_until`（[標準入力のコマンド](#標準入力のコマンドrun---stdin-commands)を見てください） |
 | `request` | `check` と `run` の `--request <file>`。何を走らせるかを要求ファイルから読みます（[simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」） |
+| `scenario-samples` | シナリオの最上位のキー `samples` と、シナリオが値を読む ECU のステップごとのサンプル（[scenario.md](scenario.md#ecu-が値を送る頻度samples) の「ECU が値を送る頻度」） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 | `scenario-time` | シナリオの実行中に、Control Server のクライアントが時間を動かせる（Control Server を持つビルドだけ） |
@@ -759,6 +761,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `state` | イベント `state`、イベント `command` の `reason` と `id`、標準入力のコマンドの `id` |
 | `time-policy` | `--time-policy`、照合の JSON の `time_lock`、指摘 `outside-real-time`、`outside-speed-set`、`outside-not-real-time`、`outside-time-changed`、`unsynchronized-time-changed`、断ったコマンドと `allowed` の理由 `outside-real-time`、注意 `outside-not-real-time`（この機能の前は、警告 `connect-not-real-time`、`connect-start-paused`、`connect-time-changed` で、`--connect` のある実行はファイルの速さで動き、時間のコマンドをすべて受け付けました） |
 | `request` | `--request`、指摘 `connect-network-unused` と `request-params-unused`、照合と結果の JSON でパラメーターの `from` が `request_file` になること |
+| `scenario-samples` | シナリオの `samples`、実行ファイルに渡す `--sample-every-step`、指摘 `scenario-samples-*` と `scenario-not-observed` |
 | `control-server` | イベント `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは書けません。書く呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します。`scenario-time` のあるビルドでは、時刻を動かす呼び出し（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`）を、シナリオの実行中も、標準入力の同じコマンドと同じように受け付けます。シナリオの結果は変わりません。`scenario-control` だけのビルドは、これらも同じ理由で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。

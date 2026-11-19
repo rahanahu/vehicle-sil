@@ -55,6 +55,7 @@ int main(int argc, char** argv)
 | `--silkit-config <file>` | `--registry-uri` のとき、この participant に SIL Kit の設定ファイル（YAML か JSON）を渡します（[SIL Kit の設定ファイルを渡す](#sil-kit-の設定ファイルを渡す--silkit-config)）。 |
 | `--map-network <シミュレーションの名前>=<実行ファイルの名前>` | `--registry-uri` のときだけ使えます。ECU のコードが `<実行ファイルの名前>` で作ったネットワークを、SIL Kit のネットワーク `<シミュレーションの名前>` につなぎます（[ネットワークの名前を替える](#ネットワークの名前を替える--map-network)）。 |
 | `--j1939-node <ネットワーク>=<設定>` | `--registry-uri` のときだけ使えます。この実行で、ECU の J1939 のノードのアドレスと NAME の欄を替えます（[J1939 のノードのアドレスと NAME を替える](#j1939-のノードのアドレスと-name-を替える--j1939-node)）。 |
+| `--sample-every-step` | `--registry-uri` のときだけ。コードの `sample_period` にかかわらず、ECU のステップごとに変数の値を送信します（[変数を公開する](#変数を公開する--registry-uri)）。 |
 | `--local --run-for-ms <ms>` | この ECU だけを、プロセス内の仮想バスの上で、仮想時間で `<ms>` ミリ秒（1 以上の整数）動かします。 |
 | `--name <name>` | `EcuMainOptions::name` の代わりの participant 名です（ASCII か UTF-8）。 |
 | `--help`（`-h`） | 使い方を標準出力に書いて、0 で終了します。 |
@@ -106,7 +107,7 @@ int main(int argc, char** argv)
 | 同じ引数の 2 回目 | `--map-network` と `--j1939-node` は別です（[ネットワークの名前を替える](#ネットワークの名前を替える--map-network)、[J1939 のノードのアドレスと NAME を替える](#j1939-のノードのアドレスと-name-を替える--j1939-node)）。 |
 | `--map-network` の値のエラー | [ネットワークの名前を替える](#ネットワークの名前を替える--map-network) にあります。 |
 | `--j1939-node` の値のエラー、ぶつかる 2 つの `--j1939-node` | [J1939 のノードのアドレスと NAME を替える](#j1939-のノードのアドレスと-name-を替える--j1939-node) にあります。 |
-| `--registry-uri` のない `--map-network` か `--j1939-node` | |
+| `--registry-uri` のない `--map-network`、`--j1939-node`、`--sample-every-step` | |
 | `--run-for-ms` のない `--local`、`--local` のない `--run-for-ms` | |
 | `--registry-uri` のない `--start-timeout-ms` | |
 | 整数でない、0 の、または 10^12 を超える `--run-for-ms` と `--start-timeout-ms` | |
@@ -164,6 +165,7 @@ ECU は、`--registry-uri` で参加するとき、何も書かなくても、�
 | 依存するライブラリ | gRPC も Protocol Buffers も必要ありません（ECU の実行ファイルは、どちらにも依存しません）。 |
 | 送信する時点 | 値と書き込みの結果は、ステップの中で、値を読んだ直後に送信します。 |
 | 送信する頻度 | Agent の `sample_period`（既定 10 ms。`Ecu::set_agent_options()`）で、間引きはしません。 |
+| `--sample-every-step` | コードの `Ecu::set_agent_options()` の指定にかかわらず、ECU のステップごとに送信します（`sample_period` が 0）。コードのほかのオプションはそのままです。`vehicle_sil_launch run --scenario` が、シナリオが値を読む ECU に付けます。条件が ECU のステップを全部見るためです（[scenario.md](scenario.md#ecu-が値を送る頻度samples) の「ECU が値を送る頻度」）。`command` には書きません。自分の `main()` では、`Ecu::sample_every_step()` が同じことをします（最初の `input()`、`output()`、`agent()` の前に呼びます）。 |
 | 変数の利用状態 | `VariableOptions::availability` を付けて宣言した変数について、アプリケーションが変えたとき（`Ecu::set_availability()`）と、シミュレーション時間の 1 秒ごとに送信します（[control-api.md](control-api.md) の「変数の利用状態」）。 |
 | `--describe` の `control` | 公開することを `control` に出力します（`Ecu::describe()` 自体は出力せず、`ecu_main` が追加します）。 |
 | ランチャーが待つ ECU | `vehicle_sil_launch run` は、`control` で公開すると出力した ECU だけを待ちます。 |
@@ -499,7 +501,7 @@ engine_ecu --registry-uri silkit://localhost:8500 --name Engine2 --j1939-node J1
 | `control.transport` | トランスポート。今は `"silkit"`（SIL Kit の publish/subscribe）だけ |
 | `control.wire_version` | メッセージの形式のバージョン（整数） |
 | `control.wire_revision` | 実行ファイルが書く、その形式の改訂番号（整数）。同じバージョンで改訂の違うランチャーも、変数をふつうに読み書きします。古い実行ファイルからは後の改訂で足したもの（改訂 1: 変数の利用状態）が届かないので、check が注記します（`control-link-revision`） |
-| `features` | この実行ファイルが、起動する側から受け取れる引数や動きの名前の配列（文字列）。`"map-network"` は `--map-network` を、`"j1939-node"` は `--j1939-node` を受け取ります。`ecu_main` の実行ファイルは、どの引数で呼んでも同じ一覧を出します |
+| `features` | この実行ファイルが、起動する側から受け取れる引数や動きの名前の配列（文字列）。`"map-network"` は `--map-network` を、`"j1939-node"` は `--j1939-node` を、`"sample-every-step"` は `--sample-every-step` を受け取ります。`ecu_main` の実行ファイルは、どの引数で呼んでも同じ一覧を出します |
 
 キーのない JSON の読み方は次のとおりです。
 
@@ -583,7 +585,8 @@ engine_ecu --registry-uri silkit://localhost:8500 --name Engine2 --j1939-node J1
   },
   "features": [
     "map-network",
-    "j1939-node"
+    "j1939-node",
+    "sample-every-step"
   ]
 }
 ```

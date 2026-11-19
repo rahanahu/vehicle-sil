@@ -242,10 +242,24 @@ struct ScenarioLineText
 /// "text", "after_wait", "first_write".
 [[nodiscard]] const char* line_time_source_name(ScenarioLineText::TimeSource source);
 
+/// The scenario's "samples": how often the ECUs whose values it reads must send them.
+enum class ScenarioSamples
+{
+    /// Every step of the ECU (the default): the run asks those ECUs for it and does not begin with
+    /// one that sends less often ("scenario-not-observed").
+    EveryStep,
+    /// As each ECU sends them (its AgentOptions::sample_period): nothing is asked or refused, and
+    /// a condition does not see what a variable does between two samples.
+    AsSent,
+};
+/// "every_step", "as_sent".
+[[nodiscard]] const char* scenario_samples_name(ScenarioSamples samples);
+
 /// A scenario that was read and checked against the participants: it can run as it is.
 struct Scenario
 {
     std::string name; ///< its "name", or ""
+    ScenarioSamples samples = ScenarioSamples::EveryStep; ///< its "samples"
     std::vector<ScenarioParticipant> participants{};
     std::vector<ScenarioVariable> variables{};
     /// The dithers the file declares (its "inputs"), in the order of the file: each is on its
@@ -360,6 +374,13 @@ struct ScenarioRead
 /// CSV file, read once per path).
 [[nodiscard]] ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog,
                                          const ScenarioContext& context = {});
+
+/// Per participant of `scenario` (Scenario::participants): whether a step that runs reads a value
+/// its ECU sends: a condition (expect, wait_until, the expect beside a ramp or a wave) names one of
+/// its variables, or a ramp or a wave of one of its variables takes its base from the variable's
+/// value (no from, no around). The one place that says which ECUs a scenario needs samples of in
+/// every step: the check's warning, the argument the run gives them, and what the run refuses.
+[[nodiscard]] std::vector<bool> participants_read(const Scenario& scenario);
 
 /// The dithers that the scenario's "inputs" declare, as lines of the list (kind "dither", no
 /// step, TimeSource::FirstWrite, no end).
