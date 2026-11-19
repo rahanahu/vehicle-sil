@@ -13,19 +13,21 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <system_error>
 #include <utility>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 namespace vehicle_sil::launch {
 
-namespace {
-
-/// The command as shown in messages, on one line: an argument that is empty or has white space,
-/// quotes or control characters in quotes, the control characters as \n, \t, \r or \xNN.
-std::string command_text(const std::vector<std::string>& words)
+std::string detail::command_text(const std::vector<std::string>& words)
 {
     static constexpr char kHex[] = "0123456789ABCDEF";
     std::string out;
@@ -63,8 +65,6 @@ std::string command_text(const std::vector<std::string>& words)
     return out;
 }
 
-} // namespace
-
 DescribeRun run_tool(const std::filesystem::path& executable, const std::string& shown,
                      const std::vector<std::string>& arguments, std::chrono::milliseconds timeout,
                      const std::filesystem::path& directory)
@@ -72,7 +72,7 @@ DescribeRun run_tool(const std::filesystem::path& executable, const std::string&
     std::vector<std::string> words{shown};
     words.insert(words.end(), arguments.begin(), arguments.end());
     DescribeRun run;
-    run.command_text = command_text(words);
+    run.command_text = detail::command_text(words);
     run.timeout = timeout;
     try
     {
@@ -129,6 +129,39 @@ std::string read_config_file(const std::filesystem::path& path, std::string& tex
         return "cannot open the file: check its permissions";
     }
     text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    return {};
+}
+
+std::string read_config_stdin(std::string& text)
+{
+#ifdef _WIN32
+    // As bytes: the text mode would take the '\r' of "\r\n" away and end at a Ctrl+Z.
+    static_cast<void>(_setmode(_fileno(stdin), _O_BINARY));
+#endif
+    text.clear();
+    char buffer[1 << 16];
+    for (;;)
+    {
+        const std::size_t got = std::fread(buffer, 1, sizeof buffer, stdin);
+        text.append(buffer, got);
+        if (text.size() > kMaxConfigBytes)
+        {
+            // Not read to its end: whatever writes it gets a broken pipe.
+            text.clear();
+            return "the text on standard input (--text-from-stdin) is larger than " +
+                   std::to_string(kMaxConfigBytes >> 20) + " MiB, too large for a configuration";
+        }
+        if (got < sizeof buffer)
+        {
+            break;
+        }
+    }
+    if (std::ferror(stdin) != 0)
+    {
+        text.clear();
+        return "cannot read the standard input (--text-from-stdin): give the configuration's text on it, or leave "
+               "--text-from-stdin out to read the file";
+    }
     return {};
 }
 
@@ -322,6 +355,14 @@ ConnectTools bridge_tools(const std::filesystem::path& tool_directory, std::chro
         return run_tool(tool, process::utf8_from_path(tool.stem()), arguments, timeout, bridge_working_directory(tool));
     };
     return tools;
+}
+
+DescribeSource describe_by_running(std::chrono::milliseconds timeout, const std::filesystem::path& directory)
+{
+    return [timeout, directory](const ParticipantConfig& participant, const std::filesystem::path& executable,
+                                const std::vector<std::string>& arguments) -> std::optional<DescribeRun> {
+        return run_tool(executable, participant.command.front(), arguments, timeout, directory);
+    };
 }
 
 std::function<std::optional<std::string>(const std::string&, std::string&)> files_beside(const std::filesystem::path& scenario)

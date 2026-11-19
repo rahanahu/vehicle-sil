@@ -256,7 +256,7 @@ flowchart TB
 |---|---|---|
 | `usecases/` | `check_file()`, `list_connections()`, `run_file()`, `run_tests()`: probe, then the rules, then the plan, then the runner, then the output | (no limit) |
 | `request/` | `RunRequest`, reading a request file, the rules about fields that do not go together | `runner`, `scenario`, `process`, SIL Kit, any other part, the headers of the use cases |
-| `probe/` | Looking at the computer (files, environment, the tools it starts); returns values | `runner`, SIL Kit, the outputs, the endpoints, the use cases |
+| `probe/` | Looking at the computer (files, environment, the tools it starts); returns values. Also the file of saved descriptions that `check --write-descriptions` writes | `runner`, SIL Kit, the outputs, the endpoints, the use cases |
 | `format/` | The outputs of check, run, test, events, timeline and connections (JSON and text), the table of exit codes | `probe.hpp`, SIL Kit, `control_grpc`, the endpoints, the use cases |
 | `endpoints/` | The commands on standard input and the Control Server, as calls on the run's controls | `probe.hpp`, the outputs of check, run and timeline (`*_format.hpp`) |
 

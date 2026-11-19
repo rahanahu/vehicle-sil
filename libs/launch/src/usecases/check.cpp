@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 //
 // check_file(): the steps of the check. Reads the configuration (config.cpp), runs --describe of
-// each enabled participant and reads its output (describe_read.cpp), compares the descriptions
-// with the file (check_rules.cpp), reads the scenario (scenario.cpp). What it needs from the
-// computer (the files, the executables and their output, the environment) it gets from probe.cpp,
-// in the order of the steps. The outputs are in check_format.cpp; the counts of the report in
+// each enabled participant (or takes its saved output: --descriptions) and reads its output
+// (describe_read.cpp), compares the descriptions with the file (check_rules.cpp), reads the
+// scenario (scenario.cpp). What it needs from the computer (the files, the executables and their
+// output, the environment) it gets from probe.cpp, in the order of the steps; the executables only
+// through Executables. The outputs are in check_format.cpp; the counts of the report in
 // check_report.cpp.
 #include "format/exit_codes.hpp"
 
@@ -20,6 +21,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -52,6 +54,30 @@ void drop_unusable_commands(CheckReport& report)
             outside.arguments.reset();
         }
     }
+}
+
+/// What the check asks of executables: each participant's --describe, and the bridges of --connect
+/// (looked for and asked --describe). Made once, from the request: with saved descriptions
+/// (RunHost::descriptions) neither run_tool() nor bridge_tools() is called to make it, so such a
+/// check has nothing that could start a process.
+struct Executables
+{
+    DescribeSource describe;
+    /// Empty: --connect is checked for its form and its names only (check_connections() without tools).
+    std::optional<ConnectTools> bridges;
+    /// RunHost::descriptions could not be used: why (the note descriptions-not-used).
+    std::string unusable{};
+};
+
+Executables executables_for(const RunHost& host, const std::filesystem::path& directory)
+{
+    if (host.descriptions.empty())
+    {
+        return Executables{describe_by_running(host.describe_timeout, directory),
+                           bridge_tools(host.tool_directory, host.describe_timeout), {}};
+    }
+    SavedDescriptions saved = read_saved_descriptions(process::path_from_utf8(host.descriptions));
+    return Executables{describe_from_saved(std::move(saved.entries)), std::nullopt, std::move(saved.problem)};
 }
 
 } // namespace
@@ -165,7 +191,8 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         return report;
     }
     std::string text;
-    if (const std::string problem = read_config_file(path, text); !problem.empty())
+    if (const std::string problem = host.config_from_stdin ? read_config_stdin(text) : read_config_file(path, text);
+        !problem.empty())
     {
         report.findings.push_back(Finding{Severity::Error, "file", problem, 0, "", ""});
         return report;
@@ -221,6 +248,18 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         report.findings.push_back(std::move(*ignored));
     }
     const std::filesystem::path base = path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
+    // As vehicle_sil_launch run starts them: in the directory of the configuration file.
+    const Executables executables = executables_for(host, std::filesystem::absolute(base));
+    if (!executables.unusable.empty())
+    {
+        report.findings.push_back(Finding{Severity::Note, "descriptions-not-used",
+                                          "the saved descriptions (--descriptions) are not used: " + executables.unusable +
+                                              "; no participant is described: check without --descriptions to describe "
+                                              "them, with --write-descriptions to save them again",
+                                          0, "", ""});
+    }
+    // What --write-descriptions saves: each output that was read.
+    std::vector<SavedDescription> described;
     for (const ParticipantConfig& p : report.config->participants)
     {
         ParticipantResult result;
@@ -266,10 +305,18 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         std::vector<std::string> arguments =
             expand_placeholders(std::vector<std::string>(p.command.begin() + 1, p.command.end()), "", "");
         arguments.insert(arguments.end(), {"--describe", "--name", p.name});
-        // As vehicle_sil_launch run starts it: in the directory of the configuration file.
-        const DescribeRun run =
-            run_tool(executable, p.command.front(), arguments, host.describe_timeout, std::filesystem::absolute(base));
-        DescribeOutcome outcome = interpret_describe(p, run);
+        // --write-descriptions: the executable as it was before --describe ran, so that one built
+        // again meanwhile does not get the output of the one before.
+        const std::optional<ExecutableStamp> before =
+            host.write_descriptions.empty() ? std::nullopt : executable_stamp(executable);
+        const std::optional<DescribeRun> run = executables.describe(p, executable, arguments);
+        if (!run)
+        {
+            result.status = ParticipantStatus::NotDescribed;
+            report.participants.push_back(std::move(result));
+            continue;
+        }
+        DescribeOutcome outcome = interpret_describe(p, *run);
         if (outcome.error)
         {
             report.findings.push_back(std::move(*outcome.error));
@@ -279,13 +326,35 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         {
             result.status = ParticipantStatus::Described;
             result.ecu = std::move(outcome.ecu);
+            if (before && before == executable_stamp(executable))
+            {
+                SavedDescription& saved = described.emplace_back();
+                saved.name = p.name;
+                saved.command = p.command;
+                saved.executable = *before;
+                saved.output = run->standard_output;
+            }
         }
         report.participants.push_back(std::move(result));
     }
+    if (!host.write_descriptions.empty())
+    {
+        if (const std::string problem =
+                write_saved_descriptions(process::path_from_utf8(host.write_descriptions), described);
+            !problem.empty())
+        {
+            report.findings.push_back(Finding{Severity::Error, "descriptions-write",
+                                              "cannot write the descriptions to " + host.write_descriptions +
+                                                  " (--write-descriptions): " + problem +
+                                                  "; the rest of this check is not affected: name a file in a directory "
+                                                  "that exists and may be written",
+                                              0, "", ""});
+        }
+    }
     if (!connect.empty())
     {
-        const ConnectTools tools = bridge_tools(host.tool_directory, host.describe_timeout);
-        ConnectCheck checked = check_connections(*report.config, report.participants, connect, &tools);
+        ConnectCheck checked = check_connections(*report.config, report.participants, connect,
+                                                 executables.bridges ? &*executables.bridges : nullptr);
         report.findings.insert(report.findings.end(), checked.findings.begin(), checked.findings.end());
         report.outside = std::move(checked.outside);
     }
