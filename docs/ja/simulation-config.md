@@ -53,7 +53,7 @@ vehicle_sil_launch run simulation.yaml
 | 1 つのファイルの設定の数 | 1 つです（`---` で続けた 2 つ目の文書はエラーです）。 |
 | アンカーとエイリアス（`&name`、`*name`、`<<`） | 使えないので、値は書き下してください（ファイルを読めないエラーにします）。 |
 | 大きさ | 16 MiB を超えるファイルは読みません。 |
-| ファイルの種類 | 通常のファイルでないもの（デバイスやパイプ）は読みません。 |
+| ファイルの種類 | 通常のファイルでないもの（デバイスやパイプ）は読みません。例外は `check --text-from-stdin` で、文を標準入力から、この表のほかのルールで読みます（[引数](#引数)）。 |
 
 例: [examples/ecu_main/simulation.yaml](../../examples/ecu_main/simulation.yaml)（CMake が実行ファイルの横、`build/<preset>/examples/ecu_main/` にコピーします）。
 
@@ -901,8 +901,9 @@ variants:
 ```text
 vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
-                         [--time-policy realtime|free] [--request <file>] [--disable <name>]...
-                         [--enable <name>]... [--manual <name>]... [--] <file>
+                         [--time-policy realtime|free] [--request <file>]
+                         [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]
+                         [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
@@ -953,6 +954,9 @@ vehicle_sil_launch version [--json]
 | `--time-policy realtime\|free` | | シミュレーションの外につながる実行の時間です。`realtime`（既定）は速さ 1 に保ち、`free` は速さと時間の操作を利用者に任せます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。 |
 | `--request <file>` | `check`、`run`、`connections` | 何を走らせるかを要求ファイル（JSON）から読みます。欄ごとに、引数がファイルに勝ちます。`connections` が読むのは `connect` だけで、その先がこの PC で使えるかを答えます（[simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）。 |
 | `--network <name>` | `connections` だけ | ネットワーク `<name>` だけを出します。 |
+| `--text-from-stdin` | `check` だけ | 構成の文を `<file>` からでなく標準入力から読みます。`<file>` は名前として使います。相対パスと要求ファイルの `scenario` はそのディレクトリから読み、指摘と JSON はその名前を書きます。ファイルはなくてもかまいません。 |
+| `--write-descriptions <file>` | `check` だけ | 読めた participant の `--describe` の出力を、`--descriptions` のために `<file>` に書きます（[simulation-check.md](simulation-check.md#保存した説明--write-descriptions--descriptions) の「保存した説明（`--write-descriptions`、`--descriptions`）」）。 |
+| `--descriptions <file>` | `check` だけ | プロセスを起動しません。各 participant の `--describe` の出力を、コマンドと実行ファイルが保存したときのままなら `<file>` から取ります。それ以外の participant は照合しません（[simulation-check.md](simulation-check.md#保存した説明--write-descriptions--descriptions) の同じ節）。 |
 | `--disable <name>` | | participant `<name>` を無効にします（`enabled: false` と同じ。繰り返せます）。 |
 | `--enable <name>` | | participant `<name>` を有効に戻します（`enabled: true` と同じ。繰り返せます）。 |
 | `--manual <name>` | | participant `<name>` を自分で起動します（`manual: true` と同じ。繰り返せます）。 |
@@ -990,6 +994,10 @@ vehicle_sil_launch version [--json]
 | `--request` | 読むのは指定したファイルだけです。ランチャーが探すことはありません。 |
 | `--request` | ファイルの `scenario` は、作業ディレクトリからでなく、設定ファイルのディレクトリから読みます。 |
 | `--time-policy` | ファイルに有効な `role: bridge` の participant がいるとき、`test` は各シナリオを速さ 1 で実行します。`--time-policy free` を付ければ、それでも最速で実行します。 |
+| `--text-from-stdin` | 文には設定ファイルのルールが当たります（[ファイルの形式](#ファイルの形式)）。UTF-8（先頭の BOM は可）で、UTF-16 と NUL は読まず、16 MiB までです。Windows でもバイトのまま読むので、CRLF の改行と行番号はファイルと同じです。 |
+| `--descriptions` | `--connect` と要求ファイルの `connect`: ブリッジを探さず、起動もしません。ほかは保存した説明で照合します。 |
+| `--descriptions` | 保存したものと比べるのは、participant の名前、`command`、実行ファイルだけです。コマンドで渡すファイル、ライブラリ、環境変数が変わっても気づきません。使える出力がなければ、何も比べずに通ります。 |
+| `--descriptions`、`--write-descriptions` | 一緒に使えます（ファイルから取った出力を書き直します）。`--text-from-stdin` とも一緒に使えます。 |
 
 Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。
 
@@ -1016,6 +1024,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | 1 | `test` では、失敗した組が 1 つ以上ある、中断されていないのに実行しなかった組がある、`--strict` で実行した組が 1 つもない、のどれかです。 |
 | 1 | `--scenario` のシナリオのファイルがないときは、`check` でも `run` でも 1 です（設定ファイルがないときの 3 とは違います）。 |
 | 1 | `connections` では、この PC にあるブリッジが一覧を作れなかったか、ファイルに誤りがあるか、`--request` で要求ファイルの先が使えません（ないブリッジは誤りではありません）。 |
+| 1 | `check --write-descriptions` では、ファイルを書けないときも 1 です（エラー `descriptions-write`）。 |
 | 3 | 設定ファイルがない、文法のエラー、知らない形式のバージョンなどです。 |
 | 3 | `run` で registry や controller を用意できないときも 3 です。 |
 | 3 | 結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です。 |
@@ -1036,6 +1045,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | `check` | `--events`、`--stdin-commands` |
 | `check` | `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、`--control` と `--control-*` |
 | `run` | `--json` と `--events` を一緒に付ける |
+| `run` | `--text-from-stdin`、`--descriptions`、`--write-descriptions`（`check` だけのもの） |
 | `run` | `--events` なしの `--events-stall-ms` と、範囲の外の値 |
 | `run` | `--stdin-commands` も `--control` もない `--start-paused` |
 | `run` | 数でも `max` でもない `--speed` |
@@ -1054,6 +1064,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | 機種とパラメーター | 形の違う `--param`、`--scenario` なしの `--param`、シナリオにない名前の `--param` |
 | `test` | `--scenarios` がない、`--scenarios` のパスがない、シナリオのファイルがないディレクトリ |
 | `test` | `test` に付けた `run` だけの引数と `--scenario` |
+| `test` | `--text-from-stdin`、`--descriptions`、`--write-descriptions`（`check` だけのもの） |
 | `test` | `test` に渡した設定ファイルの、有効で `manual: true` の participant |
 
 ## 関連するドキュメント

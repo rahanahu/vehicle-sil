@@ -720,6 +720,20 @@ TEST_CASE(the_json_report_shows_the_seen_variables_and_the_map_of_an_entry_that_
     CHECK(format_json(r).find("variable_map") == std::string::npos);
 }
 
+TEST_CASE(the_reports_show_a_participant_without_a_saved_description)
+{
+    Setup s = good_pair();
+    s.results[1] = ParticipantResult{ParticipantStatus::NotDescribed, std::nullopt};
+    Checked r;
+    r.file = "sim.yaml";
+    r.config = s.config;
+    r.participants = s.results;
+    r.findings = check_participants(s.config, s.results, "1.0.0");
+    CHECK(format_text(r).find("Dashboard    -      not described (see the notes)\n") != std::string::npos);
+    CHECK(format_json(r).find("      \"step_ms\": null,\n      \"status\": \"not_described\",\n      \"reported\": null,\n") !=
+          std::string::npos);
+}
+
 TEST_CASE(the_reports_show_a_disabled_participant)
 {
     const Setup s = without_dashboard();

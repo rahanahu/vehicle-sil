@@ -6,13 +6,16 @@
 // those values into findings (config.hpp, check.hpp, connect.hpp, scenario.hpp) do not include
 // this header; check_file(), list_connections() and run_tests() call both. One look is still on the
 // rules' side: bridge_working_directory() (connect.cpp) makes a relative directory absolute.
-// Internal.
+// Where check_file() takes the participants' --describe outputs from is one value (DescribeSource):
+// a run of each, or the outputs that an earlier check saved (saved_descriptions.cpp), which starts
+// no process. Internal.
 #pragma once
 
 #include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/config/config.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -32,6 +35,11 @@ namespace vehicle_sil::launch {
 /// Reads the configuration file `path` into `text`: "" if it was read, else what is wrong with it
 /// (the message of the finding "file": it does not exist, is a directory or too large, ...).
 [[nodiscard]] std::string read_config_file(const std::filesystem::path& path, std::string& text);
+
+/// Reads the text of a configuration from standard input (check --text-from-stdin) into `text`, up
+/// to its end, as bytes (on Windows too: "\r\n" stays): "" if it was read, else what is wrong (the
+/// message of the finding "file": more than a configuration file may have, or it cannot be read).
+[[nodiscard]] std::string read_config_stdin(std::string& text);
 
 /// Reads the scenario file `path` into `text`: "" if it was read, else what is wrong with it (the
 /// message of the scenario's finding "file").
@@ -68,6 +76,10 @@ struct FoundExecutable
 [[nodiscard]] std::filesystem::file_status executable_status(const std::filesystem::path& path);
 
 namespace detail {
+/// The command as messages show it, on one line (DescribeRun::command_text): an argument that is
+/// empty or has white space, quotes or control characters in quotes, the control characters as
+/// \n, \t, \r or \xNN.
+[[nodiscard]] std::string command_text(const std::vector<std::string>& words);
 /// `path` is a regular file that can be run (POSIX: one with an execute permission).
 [[nodiscard]] bool is_runnable_file(const std::filesystem::path& path);
 /// The first directory of PATH that has `name` as a runnable file (resolve_executable(): on
@@ -94,5 +106,69 @@ namespace detail {
 /// file that cannot be opened are problems.
 [[nodiscard]] std::function<std::optional<std::string>(const std::string&, std::string&)>
 files_beside(const std::filesystem::path& scenario);
+
+// --- the participants' --describe: run, or saved ---
+
+/// Where check_file() takes a participant's --describe output from: given the participant, its
+/// executable (find_executable()) and the arguments after command[0] (with --describe --name
+/// <name>), the run of it, or nothing if there is none (ParticipantStatus::NotDescribed). The
+/// check asks it nothing else of the executables.
+using DescribeSource =
+    std::function<std::optional<config::DescribeRun>(const config::ParticipantConfig& participant, const std::filesystem::path& executable,
+                                             const std::vector<std::string>& arguments)>;
+
+/// The DescribeSource that runs each executable (run_tool()) in `directory`, killed after `timeout`.
+[[nodiscard]] DescribeSource describe_by_running(std::chrono::milliseconds timeout, const std::filesystem::path& directory);
+
+/// What the file system has at an executable, to tell later whether it is the one that described
+/// itself: its absolute path (symbolic links resolved where they exist), size and time of its last
+/// change.
+struct ExecutableStamp
+{
+    std::string path; ///< UTF-8
+    std::uintmax_t size = 0;
+    /// The time of the last change in the file system's own unit; compared, never shown.
+    std::int64_t modified = 0;
+
+    friend bool operator==(const ExecutableStamp&, const ExecutableStamp&) = default;
+};
+
+/// The stamp of `executable`; empty if the file system cannot tell its size or time.
+[[nodiscard]] std::optional<ExecutableStamp> executable_stamp(const std::filesystem::path& executable);
+
+/// One participant's --describe output as check --write-descriptions saved it.
+struct SavedDescription
+{
+    std::string name;
+    /// Its command as the configuration wrote it (ParticipantConfig::command: placeholders not expanded).
+    std::vector<std::string> command{};
+    ExecutableStamp executable{};
+    /// What --describe wrote on standard output.
+    std::string output{};
+};
+
+/// A file of saved descriptions, as read.
+struct SavedDescriptions
+{
+    std::vector<SavedDescription> entries{};
+    /// The file is there but cannot be used: why (it cannot be read, it is no such file, another
+    /// vehicle-sil wrote it). Empty: it was read, or it does not exist (then there are no entries).
+    std::string problem{};
+};
+
+/// Reads the file that write_saved_descriptions() wrote. Its form is this launcher's own: a file of
+/// another vehicle-sil version is not used (SavedDescriptions::problem).
+[[nodiscard]] SavedDescriptions read_saved_descriptions(const std::filesystem::path& file);
+
+/// Writes `entries` to `file` in place of what it had: first to a new file beside it, then renamed
+/// over it, so that a check that ends half way leaves the file as it was. "" if it was written, else
+/// what went wrong.
+[[nodiscard]] std::string write_saved_descriptions(const std::filesystem::path& file,
+                                                   const std::vector<SavedDescription>& entries);
+
+/// The DescribeSource that starts no process: the output of the entry of `saved` with the
+/// participant's name and command whose executable has the same stamp now (executable_stamp());
+/// nothing if there is none.
+[[nodiscard]] DescribeSource describe_from_saved(std::vector<SavedDescription> saved);
 
 } // namespace vehicle_sil::launch

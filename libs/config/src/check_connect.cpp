@@ -448,7 +448,10 @@ ConnectCheck check_connections(const SimulationConfig& config, const std::vector
         // false: what passes is not known (a participant without a description), so there is no
         // command to give the bridge, and its --describe is not run.
         bool passKnown = true;
-        const bool described = tools != nullptr && results.size() == config.participants.size();
+        // With or without tools: the saved descriptions of check --descriptions count as well. Only
+        // the file read (no tools, no results): nothing is known, also of a file without participants.
+        const bool described =
+            (tools != nullptr || !results.empty()) && results.size() == config.participants.size();
         if (described && network->kind == NetworkKind::Ethernet &&
             !(network->external && (network->external->all_frames || !network->external->ethertypes.empty())))
         {

@@ -86,6 +86,16 @@ struct RunHost
     std::optional<ControlHost> control{};
     /// The time commands are read from standard input.
     bool stdin_commands = false;
+    /// check --text-from-stdin: the configuration's text is read from standard input; `config`
+    /// only says where it is (its relative paths, a request file's scenario) and names it in the
+    /// findings, and need not exist.
+    bool config_from_stdin = false;
+    /// check --descriptions: the file of saved --describe outputs (check --write-descriptions)
+    /// that the check takes them from; it then starts no process. Empty: each executable is run.
+    std::string descriptions{};
+    /// check --write-descriptions: the file that the --describe outputs the check read are
+    /// written to; empty: none.
+    std::string write_descriptions{};
 };
 
 struct RunRequest
@@ -115,6 +125,7 @@ enum class RequestCommand
 /// scenario (they wait for a run that has one); --param does. That a paused start needs commands is a
 /// rule of Run and Test only: a check starts nothing (and only a request file can ask a check
 /// for a paused start).
+/// RunHost::config_from_stdin, descriptions and write_descriptions are for Check only.
 [[nodiscard]] std::vector<config::Finding> validate_request(const RunRequest& request, RequestCommand command);
 
 /// The version of the request file (its "vehicle_sil_run_request").
