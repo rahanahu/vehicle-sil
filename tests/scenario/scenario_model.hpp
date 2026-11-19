@@ -137,6 +137,8 @@ public:
     std::optional<SimDuration> ends_after;
     /// "Body.level=5 for 130 applied at 130", in the order applied.
     std::vector<std::string> log;
+    /// Per settle() of the engine: how many writes it waited for.
+    std::vector<std::size_t> settles;
     ScenarioEngine* engine = nullptr;
     const Scenario* scenario = nullptr;
     /// What the engine notes for a timeline, if set (run()).
@@ -145,6 +147,12 @@ public:
     /// (its status and reason, and failed_write if it is about one write; empty: it takes the
     /// command as ever).
     std::function<std::optional<control::TargetResult>(const std::string& peer, SimTime at)> refuse;
+    /// What `refuse` answers is the hub's own refusal (no link, no room): known when write()
+    /// returns, not only after settle().
+    bool refused_by_hub = false;
+    /// The results of the writes for this time are forgotten by the time the engine has waited
+    /// (as a hub that keeps too few).
+    std::optional<SimTime> forgets{};
 
     World()
     {
@@ -212,8 +220,36 @@ public:
             }
             command->writes.emplace_back(w.name, w.value);
         }
-        visible_[ticket] = op;
+        // What the agents answered is known once the engine has waited (settle()); until then
+        // every target is on its way, as in the hub.
+        control::OperationResult sent = op;
+        for (auto& target : sent.targets)
+        {
+            const bool known = refused_by_hub && control::is_final(target.status) && target.status != control::TargetStatus::Applied;
+            if (!known)
+            {
+                target = control::TargetResult{target.peer, control::TargetStatus::Sent, std::nullopt, false, ""};
+            }
+        }
+        visible_[ticket] = std::move(sent);
+        times_[ticket] = time;
+        unsettled_.emplace_back(ticket, std::move(op));
         return ticket;
+    }
+
+    void settle() override
+    {
+        settles.push_back(unsettled_.size());
+        for (auto& [ticket, op] : unsettled_)
+        {
+            if (forgets && times_[ticket] == *forgets)
+            {
+                visible_.erase(ticket);
+                continue;
+            }
+            visible_[ticket] = std::move(op);
+        }
+        unsettled_.clear();
     }
 
     std::optional<control::OperationResult> result(std::uint64_t ticket) override
@@ -443,6 +479,8 @@ private:
 
     std::uint64_t tickets_ = 0;
     std::map<std::uint64_t, control::OperationResult> visible_;
+    std::vector<std::pair<std::uint64_t, control::OperationResult>> unsettled_; ///< in the order written
+    std::map<std::uint64_t, SimTime> times_;                                     ///< of each write
     std::vector<Produced> produced_;
 };
 

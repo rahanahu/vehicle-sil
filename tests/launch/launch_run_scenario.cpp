@@ -23,7 +23,8 @@
 //   scenario_disconnect  the example scenario that takes the engine off the bus (ecu.connected):
 //                the dashboard sees the speed stop and come back, at the same times at any speed
 //   scenario_each_write  the same value written by two steps of a scenario, at one time and at two
-//                times: the ECU's setter is called once for each step
+//                times: the ECU's setter is called once for each step; 200 writes for one time to
+//                one ECU: all taken, and applied in the order of the steps
 //   ethernet     the example of examples/ethernet: two ECU executables on an Ethernet network; the
 //                check shows their MAC addresses, and the example scenario passes with the same
 //                result at any speed (frames, acknowledgements, ecu.connected)
@@ -216,6 +217,23 @@ void scenario_each_write(const Options& o)
     require(contains(scenario, "\"status\": \"passed\"") && !contains(scenario, "\"status\": \"failed\""),
             "each set reaches the setter once:\n" + scenario);
     log("CHECK the same value written by four steps: four setter calls -> ok");
+
+    // 200 writes to one ECU for one time: the launcher sends them without waiting for each and
+    // then waits once. Each is taken (fewer than the agent's 256 commands in flight), each reaches
+    // the setter, and they take effect in the order of the steps: the last level stays.
+    std::string many = "vehicle_sil_scenario: 1\nname: many writes at once\nsteps:\n";
+    for (int i = 1; i <= 200; ++i)
+    {
+        many += "  - set: { Body.request: true, Body.level: " + std::to_string(20 + i % 70) + " }\n";
+    }
+    many += "  - at_ms: 20\n    expect: { Body.requests: 200, Body.level: 80 }\n";
+    const fs::path at_once = scenario_ecus(o, "", many, "request");
+    const Captured all = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, at_once);
+    expect_code(all, 0, "a scenario with 200 writes for one time");
+    const std::string result = scenario_json(lf(all.standard_output));
+    require(contains(result, "\"status\": \"passed\"") && !contains(result, "\"status\": \"failed\""),
+            "200 writes for one time, all taken and applied in order:\n" + result);
+    log("CHECK 200 writes for one time to one ECU: all taken, in the order of the steps -> ok");
 }
 
 void scenario_wave(const Options& o)

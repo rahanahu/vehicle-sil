@@ -49,8 +49,8 @@ On Windows, set the variable in the shell in the same way before you start the l
 | its step (with the hold) | The critical participant's time from its step's start to its completion |
 | sync (its completion to next start) | From that completion to the first start of the next step: SIL Kit's time synchronization messages and the wake-up of the threads |
 | slowest ECU step | The longest step handler among the ECUs (without the launcher) |
-| launcher hold | For held steps, with and without writes: the launcher's step, the scenario thread's wake-up, the scenario's writes, the rest of its tick (samples, judging, the engine), and the gate thread's wake-up until the release |
-| write round trip | For each write, through the ECU that answered last (a write may go to several): the hub up to the send, the send (encoding and publishing), the way to the ECU's handler, the handler, the way back, the hub's handler, the scenario thread's wake-up. It also gives the share of commands that arrived while the ECU was in a step |
+| launcher hold | For held steps, with and without writes: the launcher's step, the scenario thread's wake-up, the scenario's writes (handed to the hub without waiting), its one wait for the agents' answers to them (settle), the rest of its tick (samples, judging, the engine), and the gate thread's wake-up until the release |
+| write round trip | For each write, through the ECU that answered last (a write may go to several): the hub up to the send, the send (encoding and publishing), the way to the ECU's handler, the handler, the way back, the hub's handler, the wait for the answers to the other writes of its tick, the scenario thread's wake-up after the last answer. It also gives the share of commands that arrived while the ECU was in a step |
 | clock offset from the launcher | An estimate of each ECU's clock offset, from the four times of each round trip (see [Clocks and other tools](#clocks-and-other-tools)) |
 
 The exit code is 0 when it summarized the directory, 1 when there was nothing to summarize (no file, a file that is not whole, too few steps; the message says what to do), and 2 on a usage error.
@@ -72,7 +72,8 @@ Each record has the steady clock's time, the virtual time of its step (`vt`, ns;
 | `scenario.woken` | instant | The scenario thread finds a held step | the step | |
 | `scenario.tick` | span | The scenario's work in a held step, up to the guard of the next | the step | |
 | `scenario.drain` | span | The samples handed to the scenario | | samples |
-| `scenario.write` | span | One write of the scenario, until every agent has queued it | write time | seq |
+| `scenario.write` | span | One write of the scenario handed to the hub (and sent), without waiting for the agents | write time | seq |
+| `scenario.settle` | span | The scenario waits once until every agent has queued or refused the writes it handed out in the tick | | writes |
 | `hub.write` | span | `Hub::write()`: checks, then the commands sent | write time | seq |
 | `hub.send` | span | The command encoded and published to one agent (start of a `command` arrow) | write time | seq |
 | `hub.receive_step` | span | An agent's step message (results, events, the sample) received by the hub | the agent's step | bytes |

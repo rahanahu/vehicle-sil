@@ -6,6 +6,11 @@
 #include <silkit/services/orchestration/string_utils.hpp>
 
 #include <algorithm>
+#include <cstdint>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace vehicle_sil::runner::detail {
 
@@ -27,16 +32,27 @@ std::string scenario_step_text(const scenario::ScenarioStepRun& step)
 } // namespace
 
 /// The engine's way to the ECUs: the hub, and a wait until each agent has answered.
+///
+/// write() only hands the request to the hub, so the writes of a tick go out one after the other
+/// and their round trips overlap; settle() then waits for all of them. The order of the writes to
+/// one agent is kept: the hub numbers each write (seq, increasing), sends the commands of a peer
+/// in that order through one sender (Hub::flush()), and an agent applies the commands due in one
+/// step in the order of their times, and of their numbers for one time (Agent::on_step_begin()).
+/// settle() runs before the step is released, so every command is there before that step.
+///
+/// No limit of its own on how many writes are open: an agent's room (max_pending) counts every
+/// command that is queued and not yet applied, and the writes of a tick are all queued before
+/// any step at their times runs, whether they are waited for one by one or together.
 class RunScenario::HubPort final : public scenario::ScenarioPort
 {
 public:
     explicit HubPort(control::Hub& hub) : hub_(hub) {}
-    /// Ends the wait of write() (the run is ending). Set while no write runs.
+    /// Ends the wait of settle() (the run is ending). Set while no write runs.
     std::function<bool()> give_up{};
 
     std::uint64_t write(std::vector<control::PeerWrite> writes, SimTime at) override
     {
-        // The profiling trace (docs/internals/trace.md): the whole round trip of one write.
+        // The profiling trace (docs/internals/trace.md): the write handed to the hub and sent.
         trace::Span traceWrite("scenario.write", to_ns(at));
         control::OperationRequest request;
         request.writes = std::move(writes);
@@ -47,17 +63,49 @@ public:
         request.client = "scenario";
         const std::uint64_t seq = hub_.write(std::move(request));
         traceWrite.set_arg(seq);
-        // No limit in real time: an agent that is gone is settled by the hub, and a run that
-        // ends gives up.
-        while (!hub_.wait_queued(seq, std::chrono::milliseconds(20)) && hub_.operation(seq) && !(give_up && give_up()))
-        {
-        }
+        open_.push_back(seq);
         return seq;
+    }
+    void settle() override
+    {
+        trace::Span traceSettle("scenario.settle", -1, open_.size());
+        const std::vector<std::uint64_t> open = std::exchange(open_, {});
+        // No limit in real time: an agent that is gone is settled by the hub, and a run that
+        // ends gives up (then the rest is not waited for either).
+        for (const std::uint64_t seq : open)
+        {
+            while (!hub_.wait_queued(seq, std::chrono::milliseconds(20)) && hub_.operation(seq))
+            {
+                if (give_up && give_up())
+                {
+                    return;
+                }
+            }
+        }
+        // What the engine relies on: every write is queued or refused before the step is
+        // released. A target still on its way is an error of this wait, not of the scenario.
+        for (const std::uint64_t seq : open)
+        {
+            if (const auto op = hub_.operation(seq))
+            {
+                for (const control::TargetResult& target : op->targets)
+                {
+                    if (target.status == control::TargetStatus::Sent)
+                    {
+                        throw std::logic_error("the scenario's write " + std::to_string(seq) + " was still on its way to participant '" +
+                                               target.peer +
+                                               "' after the wait for the agents: this is an error of vehicle_sil_launch");
+                    }
+                }
+            }
+        }
     }
     std::optional<control::OperationResult> result(std::uint64_t ticket) override { return hub_.operation(ticket); }
 
 private:
     control::Hub& hub_;
+    /// Handed out since the last settle(), in the order sent.
+    std::vector<std::uint64_t> open_{};
 };
 
 RunScenario::RunScenario(const RunContext& ctx, RunOutput& out, RunControl& control, RunSamples& samples) :

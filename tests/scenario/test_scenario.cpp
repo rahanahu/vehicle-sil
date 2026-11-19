@@ -216,6 +216,132 @@ TEST_CASE(scenario_writes_take_effect_in_the_step_of_their_time_however_the_step
     }
 }
 
+TEST_CASE(scenario_writes_of_a_tick_all_go_out_before_the_engine_waits_once)
+{
+    // Three writes for 50 ms, two to Body and one to Door, go out at the controller's step 40 ms;
+    // the engine waits once for all of them (the model tells nothing of the agents' answers
+    // before). The two to Body take effect in the order of their steps.
+    const std::string file = kHead + "  - set: { Body.level: 5, Door.level: 1 }\n"
+                                     "  - at_ms: 50\n"
+                                     "    set: { Body.level: 7 }\n"
+                                     "  - set: { Door.level: 2 }\n"
+                                     "  - set: { Body.level: 8 }\n"
+                                     "  - at_ms: 60\n"
+                                     "    expect: { Body.level: 8, Door.level: 2 }\n";
+    World world;
+    const ScenarioRun run = world.run(read(file));
+    CHECK(run.status == ScenarioStatus::Passed);
+    CHECK(world.settles == std::vector<std::size_t>({1, 3}));
+    check_text(joined(world.log), "Body.level=5 for 0 applied at 0\n"
+                                  "Door.level=1 for 0 applied at 0\n"
+                                  "Body.level=7 for 50 applied at 50\n"
+                                  "Body.level=8 for 50 applied at 50\n"
+                                  "Door.level=2 for 50 applied at 50\n");
+}
+
+TEST_CASE(scenario_write_refused_at_once_fails_the_first_refused_in_the_order_sent)
+{
+    const std::string file = kHead + "  - set: { Body.level: 5, Door.level: 1 }\n"
+                                     "  - at_ms: 50\n"
+                                     "    set: { Body.level: 7 }\n"
+                                     "  - set: { Door.level: 2 }\n"
+                                     "  - set: { Body.level: 8 }\n"
+                                     "  - at_ms: 60\n"
+                                     "    expect: { Body.level: 8, Door.level: 2 }\n";
+    const auto refusing = [](std::vector<std::string> peers) {
+        return [peers](const std::string& peer, SimTime at) -> std::optional<control::TargetResult> {
+            if (at == SimTime{} + 50ms && std::find(peers.begin(), peers.end(), peer) != peers.end())
+            {
+                return control::TargetResult{peer, control::TargetStatus::Busy, std::nullopt, false, "the peer has too many commands in flight"};
+            }
+            return std::nullopt;
+        };
+    };
+    // Door refuses its write for 50 ms. The engine learns it once the three writes of the tick
+    // have gone out, and fails Door's step as it would have failed had it waited for each write:
+    // the step after it is not run, though its write went out to Body.
+    {
+        World world;
+        world.refuse = refusing({"Door"});
+        check_text(text_of(world.run(read(file))),
+                   "failed over=40\n"
+                   "3 passed start=0 at=0 end=0\n"
+                   "4 unfinished start=50 at=- end=-\n"
+                   "6 failed start=50 at=50 end=50 scenario-write: the write for 50 ms was not taken by participant 'Door': the "
+                   "ECU's agent had too many commands waiting (the peer has too many commands in flight)\n"
+                   "7 not_run start=- at=- end=-\n"
+                   "8 not_run start=- at=- end=-\n");
+        CHECK(world.settles == std::vector<std::size_t>({1, 3}));
+        CHECK(std::any_of(world.ecus[0].queue.begin(), world.ecus[0].queue.end(), [](const ModelEcu::Command& c) {
+            return c.at == SimTime{} + 50ms && c.writes.size() == 1 && c.writes[0].first == "level" &&
+                   std::get<std::int64_t>(c.writes[0].second) == 8;
+        }));
+    }
+    // The hub refuses Door's write itself (no room): that is known at once, the engine sends
+    // nothing after it, and the step fails the same way.
+    {
+        World world;
+        world.refuse = refusing({"Door"});
+        world.refused_by_hub = true;
+        check_text(text_of(world.run(read(file))),
+                   "failed over=40\n"
+                   "3 passed start=0 at=0 end=0\n"
+                   "4 unfinished start=50 at=- end=-\n"
+                   "6 failed start=50 at=50 end=50 scenario-write: the write for 50 ms was not taken by participant 'Door': the "
+                   "ECU's agent had too many commands waiting (the peer has too many commands in flight)\n"
+                   "7 not_run start=- at=- end=-\n"
+                   "8 not_run start=- at=- end=-\n");
+        CHECK(world.settles == std::vector<std::size_t>({1, 2}));
+        CHECK(std::none_of(world.ecus[0].queue.begin(), world.ecus[0].queue.end(), [](const ModelEcu::Command& c) {
+            return c.at == SimTime{} + 50ms && c.writes.size() == 1 && std::get<std::int64_t>(c.writes[0].second) == 8;
+        }));
+    }
+    // The result of a write is not known any more when the engine looks (cannot happen with the
+    // hub's memory): the step of the first such write fails, as when it is judged.
+    {
+        World world;
+        world.forgets = SimTime{} + 50ms;
+        check_text(text_of(world.run(read(file))),
+                   "failed over=40\n"
+                   "3 passed start=0 at=0 end=0\n"
+                   "4 failed start=50 at=50 end=50 scenario-write: the result of the write for 50 ms is not known any more: this "
+                   "is an error of vehicle_sil_launch\n"
+                   "6 not_run start=- at=- end=-\n"
+                   "7 not_run start=- at=- end=-\n"
+                   "8 not_run start=- at=- end=-\n");
+    }
+    // Body refuses too: the first refused write in the order sent is Body's of the step before.
+    {
+        World world;
+        world.refuse = refusing({"Body", "Door"});
+        check_text(text_of(world.run(read(file))),
+                   "failed over=40\n"
+                   "3 passed start=0 at=0 end=0\n"
+                   "4 failed start=50 at=50 end=50 scenario-write: the write for 50 ms was not taken by participant 'Body': the "
+                   "ECU's agent had too many commands waiting (the peer has too many commands in flight)\n"
+                   "6 not_run start=- at=- end=-\n"
+                   "7 not_run start=- at=- end=-\n"
+                   "8 not_run start=- at=- end=-\n");
+    }
+    // A ramp that finds no base fails at its first write; a write sent before it in the same
+    // tick and refused at once comes first.
+    {
+        World world;
+        world.refuse = [](const std::string& peer, SimTime) -> std::optional<control::TargetResult> {
+            return peer == "Door" ? std::optional<control::TargetResult>(control::TargetResult{
+                                        peer, control::TargetStatus::Invalid, std::nullopt, false, "level: the simulation has ended"})
+                                  : std::nullopt;
+        };
+        check_text(text_of(world.run(read(kHead + "  - set: { Door.level: 1 }\n"
+                                                  "  - ramp: { Body.level: { to: 10, over_ms: 100 } }\n"))),
+                   "failed over=0\n"
+                   "3 failed start=0 at=0 end=0 scenario-write: the write for 0 ms was not taken by participant 'Door': the ECU's "
+                   "agent refused it (level: the simulation has ended)\n"
+                   "4 not_run start=- at=- end=-\n");
+        CHECK(world.settles == std::vector<std::size_t>({1}));
+    }
+}
+
 TEST_CASE(scenario_result_is_the_same_whenever_the_samples_and_results_of_a_step_arrive)
 {
     const std::string file = kHead + "  - set: { Body.level: 20, Door.mode: on }\n"                      // 3
