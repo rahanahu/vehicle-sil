@@ -545,7 +545,7 @@ networks:
 
 | Key | Kind | Value | If omitted |
 |---|---|---|---|
-| `bitrate` | `can` | The bit rate to set on the channel (bit/s, an integer from 1 to 1000000). The tool that connects the network may take a narrower range (Vector XL: from 15000). | The channel's setting is kept |
+| `bitrate` | `can` | The bit rate of the channel (bit/s, an integer from 1 to 1000000). The tool that connects the network may take a narrower range (Vector XL: from 15000). Vector XL sets it on the channel (it needs init access to the channel); SocketCAN never sets it and stops if the interface runs at another rate. | The channel's setting is kept |
 | `ethertypes` | `ethernet` | The EtherTypes of the frames that pass between the network and the outside: a list of one or more, each once (`0x88b5`, `34997`, or `"0x88b5"` in quotes; JSON has no hexadecimal numbers) | Without `ethertypes` and `all_frames`, the frames of the MAC addresses that the ECUs on the network report pass |
 | `all_frames` | `ethernet` | `true`: every frame passes. Not together with `ethertypes` | `false` |
 

@@ -16,7 +16,7 @@
 
 ## 最初の接続
 
-ランチャーを使うなら、自分で registry を起こす必要はありません。`vehicle_sil_launch connections simulation.yaml` でこの PC のチャネルを見て、`vehicle_sil_launch run --connect J1939_CAN1=virtual:1 simulation.yaml` が registry とブリッジを起動します（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。以降は、ブリッジを手で起動して Vector Virtual CAN の 1 番目のチャネルに接続する手順で、Windows でだけ動きます。手順 3 には `sil-kit-registry`（SIL Kit のリリース、またはソースからのビルドの `_deps` の下にあります） が要ります。
+ランチャーを使うなら、自分で registry を起こす必要はありません。`vehicle_sil_launch connections simulation.yaml` でこの PC のチャネルを見て、`vehicle_sil_launch run --connect J1939_CAN1=virtual:1 simulation.yaml` が registry とブリッジを起動します（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。使う構成は `stop_at_ms` のないものにします（プロジェクトのテンプレートでは `simulation.live.yaml`。`simulation.yaml` は短い時間で止まります）。。以降は、ブリッジを手で起動して Vector Virtual CAN の 1 番目のチャネルに接続する手順で、Windows でだけ動きます。手順 3 には `sil-kit-registry`（SIL Kit のリリース、またはソースからのビルドの `_deps` の下にあります） が要ります。
 
 | 手順 | すること | 確認 |
 |---|---|---|
