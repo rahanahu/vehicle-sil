@@ -33,6 +33,9 @@
 //               command or executable, a file that is missing, broken or of another version, a file that
 //               cannot be written; --text-from-stdin (the text as of a file, CRLF, too large, NUL); run
 //               and test refuse the three (exit 4)
+//   compare     check --compare-commands: "commands" of the JSON (same, changed, not_compared for a file
+//               that cannot be read, null without the option), the notes, with --text-from-stdin and --descriptions
+//               (nothing starts), the text for people; run and test refuse it (exit 4)
 #include "launcher_support.hpp"
 #include "test_timeout_scale.hpp"
 
@@ -1877,6 +1880,122 @@ void descriptions(const Options& o)
     log("CHECK run and test refuse --text-from-stdin, --descriptions and --write-descriptions -> ok");
 }
 
+/// The value of the top-level "commands" of the JSON of check (its text up to the end of the line).
+std::string commands_of(const std::string& json)
+{
+    const std::string key = "\n  \"commands\": ";
+    const auto at = json.find(key);
+    require(at != std::string::npos, "the JSON of check has no \"commands\":\n" + json);
+    const auto from = at + key.size();
+    return json.substr(from, json.find('\n', from) - from);
+}
+
+void compare(const Options& o)
+{
+    const fs::path dir = o.work_dir;
+    // Every start of a copy of the helper adds a line to this file (process_helper.cpp).
+    const fs::path mark = dir / "started.txt";
+    set_environment("VEHICLE_SIL_HELPER_MARK", vehicle_sil::process::utf8_from_path(mark));
+    const auto starts = [&] { return fs::exists(mark) ? count_of(read_file(mark), "started\n") : std::size_t{0}; };
+    const std::string can = "{\"name\": \"CAN1\", \"kind\": \"can\", \"use\": \"raw\", \"nodes\": []}";
+    for (const std::string name : {"Engine", "Dashboard"})
+    {
+        write_file(dir / (name + ".json"),
+                   "{\"vehicle_sil_ecu\": 1, \"name\": \"" + name + "\", \"step_ns\": 1000000, \"networks\": [" + can + "]}");
+    }
+    const std::string helper = yaml_quote(shown_path(o.helper));
+    const std::string text = "vehicle_sil_simulation: 1\n"
+                             "networks:\n"
+                             "  - name: CAN1\n"
+                             "    kind: can\n"
+                             "participants:\n"
+                             "  - name: Engine\n"
+                             "    command: [" + helper + ", --out-file, Engine.json]\n"
+                             "  - name: Dashboard\n"
+                             "    command: [" + helper + ", --out-file, Dashboard.json]\n";
+    const fs::path config = dir / "sim.yaml";
+    write_file(config, text);
+    const std::string file = shown_path(config);
+    const std::string none = shown_path(dir / "none.json");
+
+    // Without the option: null, and nothing said.
+    const Captured plain = launch(o, {"check", "--json", file});
+    expect_code(plain, 0, "check --json");
+    require(commands_of(plain.standard_output) == "null," && !contains(plain.standard_output, "\"code\": \"commands-"),
+            "check --json without --compare-commands:\n" + plain.standard_output);
+    // The file with itself: the same, and the rest of the report as without the option.
+    const Captured same = launch(o, {"check", "--json", "--compare-commands", file, file});
+    expect_code(same, 0, "check --compare-commands <the same file>");
+    require(commands_of(same.standard_output) == "\"same\",", "check --compare-commands <the same file>:\n" + same.standard_output);
+    std::string withoutKey = same.standard_output;
+    replace_all(withoutKey, "\"commands\": \"same\",", "\"commands\": null,");
+    expect_text(withoutKey, plain.standard_output, "check --compare-commands <the same file> (but for commands)");
+    // A file that cannot be read: not_compared and the note; a note does not fail the check.
+    const Captured missing = launch(o, {"check", "--json", "--compare-commands", shown_path(dir / "missing.yaml"), file});
+    expect_code(missing, 0, "check --compare-commands <a missing file>");
+    require(commands_of(missing.standard_output) == "\"not_compared\"," &&
+                count_of(missing.standard_output, "\"code\": \"commands-not-compared\"") == 1 &&
+                contains(missing.standard_output, "missing.yaml: the file does not exist: check the path"),
+            "check --compare-commands <a missing file>:\n" + missing.standard_output);
+    log("CHECK --compare-commands: null without it, the same file, a missing file -> ok");
+
+    // What a screen that edits the file does: the text from stdin, the saved descriptions (none
+    // here), the file on disk to compare with. Nothing starts.
+    fs::remove(mark);
+    std::string networks = text;
+    replace_all(networks, "    kind: can\n", "    kind: can\n  - name: CAN2\n    kind: can\n");
+    const Captured edited =
+        launch_with_input(o, {"check", "--json", "--text-from-stdin", "--descriptions", none, "--compare-commands", file, file},
+                          networks);
+    require(commands_of(edited.standard_output) == "\"same\",", "a network added (stdin):\n" + edited.standard_output);
+    std::string command = text;
+    replace_all(command, "--out-file, Dashboard.json]", "--out-file, Dashboard.json, --verbose]");
+    const Captured changed =
+        launch_with_input(o, {"check", "--json", "--text-from-stdin", "--descriptions", none, "--compare-commands", file, file},
+                          command);
+    require(commands_of(changed.standard_output) == "\"changed\"," &&
+                count_of(changed.standard_output, "\"code\": \"commands-changed\"") == 1 &&
+                contains(changed.standard_output,
+                         "\"message\": " +
+                             json_string("the commands that run differ from " + file + ": participant 'Dashboard': command differs")),
+            "a command changed (stdin):\n" + changed.standard_output);
+    std::string broken = text;
+    replace_all(broken, "    command: [" + helper + ", --out-file, Dashboard.json]\n", "");
+    const Captured unread =
+        launch_with_input(o, {"check", "--json", "--text-from-stdin", "--descriptions", none, "--compare-commands", file, file},
+                          broken);
+    require(commands_of(unread.standard_output) == "\"not_compared\"," &&
+                count_of(unread.standard_output, "\"code\": \"commands-not-compared\"") == 1,
+            "a participant without a command (stdin):\n" + unread.standard_output);
+    require(starts() == 0, "check --descriptions --compare-commands started " + std::to_string(starts()) + " processes");
+    // For people: the note.
+    write_file(dir / "changed.yaml", command);
+    const Captured people = launch(o, {"check", "--descriptions", none, "--compare-commands", file, shown_path(dir / "changed.yaml")});
+    expect_code(people, 0, "check --compare-commands (text)");
+    require(contains(people.standard_output, "note: " + shown_path(dir / "changed.yaml") +
+                                                 ": the commands that run differ from " + file +
+                                                 ": participant 'Dashboard': command differs [commands-changed]\n"),
+            "check --compare-commands (text):\n" + people.standard_output);
+    require(starts() == 0, "check --descriptions --compare-commands started a process");
+    log("CHECK --compare-commands with --text-from-stdin and --descriptions: same, changed, not compared, nothing starts -> ok");
+
+    // Only check takes it, and with a file.
+    fs::create_directories(dir / "scenarios");
+    for (const auto& [args, message] : std::vector<std::pair<std::vector<std::string>, std::string>>{
+             {{"run", "--compare-commands", file, file}, "--compare-commands is for check"},
+             {{"test", file, "--compare-commands", file, "--scenarios", shown_path(dir / "scenarios")},
+              "--compare-commands is for check"},
+             {{"check", "--compare-commands", "", file}, "--compare-commands needs a file"}})
+    {
+        const Captured refused = launch(o, args);
+        expect_code(refused, 4, args.front() + " " + args.at(1));
+        require(contains(refused.standard_error, "error: " + message), args.front() + " " + args.at(1) + ":\n" +
+                                                                         refused.standard_error);
+    }
+    require(starts() == 0, "run or test started a process with a usage error");
+    log("CHECK run and test refuse --compare-commands -> ok");
+}
+
 int main(int argc, char** argv)
 {
     set_log_tag("launch-cli");
@@ -1926,6 +2045,10 @@ int main(int argc, char** argv)
         else if (o.scenario == "descriptions")
         {
             descriptions(o);
+        }
+        else if (o.scenario == "compare")
+        {
+            compare(o);
         }
         else
         {

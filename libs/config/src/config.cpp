@@ -261,6 +261,10 @@ class Reader : detail::YamlReader
 public:
     Reader(const detail::YamlDocument& doc, std::vector<Finding>& findings) : YamlReader(doc, findings) {}
 
+    /// The keys of what decides the commands that run whose text has an error (ConfigRead::
+    /// command_parts_with_errors), after read().
+    [[nodiscard]] const std::vector<std::string>& command_parts_with_errors() const { return command_parts_with_errors_; }
+
     /// Empty if the file is not a configuration of a known version (the finding says why).
     std::optional<SimulationConfig> read()
     {
@@ -306,6 +310,7 @@ public:
             const std::string key = detail::to_string(tree_.key(child));
             if (!first_occurrence(seen, key, child, ""))
             {
+                note_command_part(key, findings_.size() - 1); // the error duplicate-key: which one is meant is not known
                 continue;
             }
             if (key == "variants")
@@ -352,7 +357,9 @@ public:
             }
             else if (key == "registry_uri")
             {
+                const std::size_t before = findings_.size();
                 config.registry_uri = registry_uri(child);
+                note_command_part(key, before);
                 if (config.registry_uri && !is_loopback_registry_uri(*config.registry_uri))
                 {
                     note("registry-on-network", doc_.line(child),
@@ -389,7 +396,9 @@ public:
             {
                 hasParticipants = true;
                 participantsLine = doc_.line(child);
+                const std::size_t before = findings_.size();
                 read_participants(child, config);
+                note_command_part(key, before);
             }
             else
             {
@@ -424,7 +433,9 @@ public:
         config.participants_line = participantsLine;
         if (variantsNode != ryml::NONE)
         {
+            const std::size_t before = findings_.size();
             read_variants(variantsNode, config);
+            note_command_part("variants", before);
         }
         check_network_names(config);
         check_j1939_nodes(config);
@@ -1923,6 +1934,22 @@ private:
     /// The prefix of each of config.participants in the messages ("participant 'Engine': ").
     std::vector<std::string> participant_prefixes_{};
 
+    /// See command_parts_with_errors().
+    std::vector<std::string> command_parts_with_errors_{};
+
+    /// Records `key` in command_parts_with_errors_ if it is one of kCommandParts and an error was
+    /// reported since `before` (an index of findings_), each key once.
+    void note_command_part(const std::string& key, std::size_t before)
+    {
+        if (std::find(std::begin(kCommandParts), std::end(kCommandParts), key) != std::end(kCommandParts) &&
+            any_error_since(before) &&
+            std::find(command_parts_with_errors_.begin(), command_parts_with_errors_.end(), key) ==
+                command_parts_with_errors_.end())
+        {
+            command_parts_with_errors_.push_back(key);
+        }
+    }
+
     // --- a participant's variable map ---
 
     void read_variables(ryml::id_type node, const std::string& prefix, const std::string& who, ParticipantConfig& participant)
@@ -2394,9 +2421,9 @@ std::vector<Finding> apply_overrides(SimulationConfig& config, const EnabledOver
     return errors;
 }
 
-/// Lays `variant` over the common part of `config`: every key a variant may write (see
-/// kVariantParticipantKeys).
-void apply_variant(SimulationConfig& config, const VariantConfig& variant)
+} // namespace
+
+void detail::apply_variant(SimulationConfig& config, const VariantConfig& variant)
 {
     config.variant = variant.name;
     for (const VariantParticipant& change : variant.participants)
@@ -2452,6 +2479,8 @@ void apply_variant(SimulationConfig& config, const VariantConfig& variant)
     }
 }
 
+namespace {
+
 /// Applies --variant to `config` and returns its usage errors. A file that defines variants needs
 /// one of them: no --variant and a name that is none of them are errors whatever else is wrong
 /// with the text (checking the common part alone would be a check of no variant). A --variant
@@ -2476,7 +2505,7 @@ std::vector<Finding> choose_variant(SimulationConfig& config, const std::optiona
                                      [&variant](const VariantConfig& v) { return v.name == *variant; });
     if (chosen != config.variants.end())
     {
-        apply_variant(config, *chosen);
+        detail::apply_variant(config, *chosen);
         return {};
     }
     if (names.empty())
@@ -2853,7 +2882,9 @@ ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides)
                                            0, "", ""});
             return out;
         }
-        out.config = Reader(doc, out.findings).read();
+        Reader reader(doc, out.findings);
+        out.config = reader.read();
+        out.command_parts_with_errors = reader.command_parts_with_errors();
         if (out.config)
         {
             const bool textHasErrors = std::any_of(out.findings.begin(), out.findings.end(),

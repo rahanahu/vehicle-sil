@@ -251,6 +251,7 @@
           "start_timeout_ms": 30000,
           "stop_timeout_ms": 10000,
           "registry_uri": null,
+          "commands": null,
           "participants": [
             {
               "name": "Engine",
@@ -886,11 +887,12 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "log",
+        "event": "control_link",
         "seq": 20,
         "t_ms": 200,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
+        "name": "Engine",
+        "state": "connected",
+        "variables": 4
       }
     },
     {
@@ -900,7 +902,7 @@
         "event": "control_link",
         "seq": 21,
         "t_ms": 210,
-        "name": "Engine",
+        "name": "Dashboard",
         "state": "connected",
         "variables": 4
       }
@@ -912,18 +914,6 @@
         "event": "control_link",
         "seq": 22,
         "t_ms": 220,
-        "name": "Dashboard",
-        "state": "connected",
-        "variables": 4
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "control_link",
-        "seq": 23,
-        "t_ms": 230,
         "name": "Logger",
         "state": "none"
       }
@@ -933,8 +923,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 24,
-        "t_ms": 240,
+        "seq": 23,
+        "t_ms": 230,
         "phase": "running"
       }
     },
@@ -943,8 +933,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 25,
-        "t_ms": 250,
+        "seq": 24,
+        "t_ms": 240,
         "rev": 5,
         "phase": "running",
         "paused": false,
@@ -1013,8 +1003,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 26,
-        "t_ms": 260,
+        "seq": 25,
+        "t_ms": 250,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -1024,8 +1014,8 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 27,
-        "t_ms": 270,
+        "seq": 26,
+        "t_ms": 260,
         "sim_ms": 0,
         "actual_speed": null,
         "late_steps": 0,
@@ -1039,8 +1029,8 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 28,
-        "t_ms": 280,
+        "seq": 27,
+        "t_ms": 270,
         "severity": "note",
         "message": "a finding with only a severity and a message"
       }
@@ -1050,8 +1040,8 @@
       "session": 1,
       "event": {
         "event": "registry",
-        "seq": 29,
-        "t_ms": 290,
+        "seq": 28,
+        "t_ms": 280,
         "uri": null
       }
     },
@@ -1060,8 +1050,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 30,
-        "t_ms": 300,
+        "seq": 29,
+        "t_ms": 290,
         "name": "Engine",
         "state": "joined",
         "signal": 9,
@@ -1075,7 +1065,18 @@
         "event": "log",
         "source": "vehicle_sil_launch",
         "line": "a log event without t_ms",
-        "seq": 31
+        "seq": 30
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 31,
+        "t_ms": 310,
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -1582,6 +1583,7 @@
             "start_timeout_ms": 30000,
             "stop_timeout_ms": 10000,
             "registry_uri": null,
+            "commands": null,
             "participants": [
               {
                 "name": "Engine",
@@ -1883,6 +1885,7 @@
           "start_timeout_ms": 30000,
           "stop_timeout_ms": 10000,
           "registry_uri": null,
+          "commands": null,
           "participants": [
             {
               "name": "Engine",
@@ -2436,6 +2439,7 @@
             "start_timeout_ms": 30000,
             "stop_timeout_ms": 10000,
             "registry_uri": null,
+            "commands": null,
             "participants": [
               {
                 "name": "Engine",

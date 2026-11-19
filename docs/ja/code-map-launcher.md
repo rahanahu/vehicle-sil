@@ -36,6 +36,7 @@
 - `launch_cli.request`: 要求ファイルを付けた `check --request` と `run --request`。引数と同じ結果になる、引数が勝つ、ファイルのシナリオは設定ファイルの隣から読む、指定していないファイルは読まない、ファイルの間違いは使い方の誤りになる。
 - `launch_cli.connections`: 同じブリッジで `connections`。`--connect` の行と、それを `check` が受けること、`--json`（ブリッジの一覧をそのまま渡す。LIN は一覧なし）、`--network`、一覧を作れないブリッジ（`library-missing`、`driver-missing`）とブリッジがないとき（`tool-missing`。終了コード 1）、コマンドライン（終了コード 4）と読めないファイル（終了コード 3）。ほかは `launch.connections_*`（`test_connections.cpp`）がプロセスなしで確かめます: 引用、一覧の読み、ランチャーが作る一覧、各ブリッジに 1 回だけ聞くこと、文と JSON の全体
 - `launch_cli.descriptions`: `check --write-descriptions` と `check --descriptions`。保存した説明があれば何も起動しないこと（起動のたびに `VEHICLE_SIL_HELPER_MARK` に印を残すヘルパーの写しを、participant、`role: bridge`、`--connect` と要求ファイルの `connect` のブリッジに置く）、保存した照合と同じ報告、コマンドや実行ファイルが変わったとき、ない・壊れた・別の版のファイル、書けないファイル。`check --text-from-stdin`（同じ文のファイルと同じ、CRLF、大きすぎる、NUL）。`run` と `test` が 3 つを断ること
+- `launch_cli.compare`: `check --compare-commands`。JSON の `commands`（`same`、`changed`、読めないファイルの `not_compared`、選択肢がないときの `null`）と注記、`--text-from-stdin` と `--descriptions` と一緒（何も起動しない）、人向けの出力。`run` と `test` は受けない。比べるものと比べないものは、プロセスなしで `launch.commands_*`（`tests/config/test_compare_commands.cpp`）が見る
 
 `launch_run.*` が確認すること:
 
@@ -88,6 +89,7 @@
 | シミュレーションから見た ECU（`SeenEcu`）: 実行ファイルの自己申告に、participant の項目を当てたもの。照合、`run`、シナリオは、自己申告（名前、ステップ、ネットワーク、変数、制御の口、features）をこれからだけ読む | `config/detail/seen_ecu.hpp`、`src/seen_ecu.cpp`（`seen_variables()` も） |
 | 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で、J1939 のノードを `j1939_nodes` を当てた値で渡す（`seen_networks()`） | `src/check_networks.cpp` |
 | ファイルと説明を照らすルール（ネットワークは種類ごとの関数）。ファイルだけで分かる誤り（`duplicate-name`、キー、値の形）は、読むときに `src/config.cpp` で見つける | `src/check_rules.cpp` |
+| 2 つの構成が同じコマンドを実行するか（`compare_commands()`、`check --compare-commands`）。機種を共通の部分に重ねるのは `config.cpp` の `detail::apply_variant()` | `src/compare_commands.cpp` |
 | `--connect` の照合（`check_connections()`: 要求、見つけたブリッジとその `--describe`）。シミュレーション全体が要るルール（ブリッジをネットワークの participant に数える、`connect-loop`）は `check_rules.cpp` | `src/check_connect.cpp` |
 | `--connect` の形とブリッジの引数。`find_tool()`（ランチャーの隣、次に `PATH`）と、それが `find_executable()` と共有する `PATH` の探索（`detail::find_on_path()`）は `libs/launch/src/probe/probe.cpp` | `src/connect.cpp` |
 | 設定ファイルとシナリオの読み取りの共通の部分 | `config/detail/yaml_reader.hpp` |

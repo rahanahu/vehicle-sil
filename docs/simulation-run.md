@@ -1373,6 +1373,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
     "start_timeout_ms": 30000,
     "stop_timeout_ms": 10000,
     "registry_uri": null,
+    "commands": null,
     "participants": [
       {
         "name": "Engine",

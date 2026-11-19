@@ -646,6 +646,8 @@ TEST_CASE(the_json_report)
     // The check's JSON inside, indented one level, and the end.
     CHECK(json.find("  \"check\": {\n    \"vehicle_sil_check\": 1,\n") != std::string::npos);
     CHECK(json.ends_with("  }\n}\n"));
+    // check --compare-commands is the check's alone: a run's check compares nothing.
+    CHECK(json.find("    \"commands\": null,\n") != std::string::npos);
 #ifndef _WIN32
     o.participants[1] = participant("Brake", 7);
     o.participants[1].ending = Ending::Exited;

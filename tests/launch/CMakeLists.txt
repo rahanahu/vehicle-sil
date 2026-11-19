@@ -179,6 +179,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     PREFIX launch_cli LABELS integration launch TIMEOUT 120
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/cli
     SCENARIOS
+      compare
       connect
       connections
       describe

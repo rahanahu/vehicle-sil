@@ -1,9 +1,11 @@
 {"vehicle_sil_recording": 1, "case": "check-simulation-scenario-paused", "about": "the check of a request file with a scenario and start_paused (the launcher refuses the two together)", "shape": ["check", "--json", "--scenario", "<scenario>", "--start-paused", "--", "<file>"], "config": "simulation.yaml", "config_sha256": "c8bf88cb74bb62562a94a60bc814273c432e9e1abcbc369325a8618847b02df6", "scenario": "scenarios/throttle.yaml", "scenario_sha256": "bc8ce24e6bacca1f262f9a3ad7e26c3b3a032d9f708105efa66f404551e5289e"}
-{"print": {"vehicle_sil_check": 1, "vehicle_sil": "0.1.0", "file": "<file>", "result": "usage", "strict": false, "errors": 1, "warnings": 0, "notes": 0, "stop_at_ms": null, "start_timeout_ms": null, "stop_timeout_ms": null, "registry_uri": null, "participants": [], "networks": [], "time_lock": null, "findings": [{"severity": "error", "code": "usage", "file": "<file>", "line": null, "participant": null, "network": null, "message": "scenario in <root>/.request.json cannot be used with start_paused in <root>/.request.json: the scenario writes its values for 0 before the first step and runs by itself; pause and step it with --stdin-commands or from a Control Server client (--control) if needed", "detail": null}]}}
+{"print": {"vehicle_sil_check": 1, "vehicle_sil": "0.1.0", "file": "<file>", "result": "usage", "strict": false, "errors": 1, "warnings": 0, "notes": 0, "stop_at_ms": null, "start_timeout_ms": null, "stop_timeout_ms": null, "registry_uri": null, "commands": null, "participants": [], "networks": [], "time_lock": null, "findings": [{"severity": "error", "code": "usage", "file": "<file>", "line": null, "participant": null, "network": null, "message": "scenario in <root>/.request.json cannot be used with start_paused in <root>/.request.json: the scenario writes its values for 0 before the first step and runs by itself; pause and step it with --stdin-commands or from a Control Server client (--control) if needed", "detail": null}]}}
 {"err": "error: scenario in <root>/.request.json cannot be used with start_paused in <root>/.request.json: the scenario writes its values for 0 before the first step and runs by itself; pause and step it with --stdin-commands or from a Control Server client (--control) if needed"}
 {"err": "usage: vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]"}
 {"err": "                                [--describe-timeout-ms <ms>] [--connect <network>=<target>]..."}
 {"err": "                                [--time-policy realtime|free] [--request <file>]"}
+{"err": "                                [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]"}
+{"err": "                                [--compare-commands <file>]"}
 {"err": "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>"}
 {"err": "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]"}
 {"err": "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>"}
@@ -85,10 +87,24 @@
 {"err": "                              with --start-paused and --control, from when it stands still before the start);"}
 {"err": "                              test: each run"}
 {"err": "  --describe-timeout-ms <ms>  how long one executable may take for --describe (default 10000)"}
+{"err": "  --text-from-stdin           check: read the configuration's text from stdin, not from <file>; <file> still"}
+{"err": "                              says where it is (its relative paths are from its directory) and names it in"}
+{"err": "                              the findings, and need not exist"}
+{"err": "  --write-descriptions <file> check: write each participant's --describe output that the check read to <file>,"}
+{"err": "                              for --descriptions (only the same vehicle_sil_launch reads it)"}
+{"err": "  --descriptions <file>       check: start no process: take each participant's --describe output from <file>"}
+{"err": "                              (check --write-descriptions) if its command and executable are as they were;"}
+{"err": "                              any other participant is not described. --connect: only its form and names"}
+{"err": "  --compare-commands <file>   check: say in \"commands\" of --json whether the commands that run (each"}
+{"err": "                              participant's command, describe, manual and enabled in every variant, the"}
+{"err": "                              participants, the variants, registry_uri) are the same as in <file>; it only"}
+{"err": "                              reads <file>"}
 {"err": "  --connect <network>=<target> connect the network <network> of <file> to a real bus at <target>: an"}
-{"err": "                              Ethernet adapter, or virtual:<n> or physical:<n> for a CAN channel (connections"}
-{"err": "                              <file> lists those of this computer); none: SIL Kit only. check finds the"}
-{"err": "                              network's bridge (next to vehicle_sil_launch or on PATH) and asks it --describe;"}
+{"err": "                              Ethernet adapter (or tap:<device>), a SocketCAN interface (can0, vcan0 or"}
+{"err": "                              socketcan:<name>), or virtual:<n> or physical:<n> for a Vector XL channel"}
+{"err": "                              (connections <file> lists those of this computer, as lines to copy); none:"}
+{"err": "                              SIL Kit only. check finds the network's bridge (next to vehicle_sil_launch or"}
+{"err": "                              on PATH) and asks it --describe;"}
 {"err": "                              run starts it before the other participants (as bridge.<network>) and fails if"}
 {"err": "                              it ends. Repeatable, each network once"}
 {"err": "  --time-policy realtime|free the time of a run that is connected outside the simulation (by --connect, or by"}

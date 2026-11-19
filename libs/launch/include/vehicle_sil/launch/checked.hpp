@@ -86,7 +86,9 @@ struct CheckOptions
 /// (RunHost::descriptions: then it starts no process at all: a participant without a saved output
 /// is ParticipantStatus::NotDescribed, and --connect is checked for its form and names only) and
 /// the file to save them to (RunHost::write_descriptions; an error descriptions-write if it cannot
-/// be written, after the participants were described). What only a run has (the logs, the
+/// be written, after the participants were described), and the file to compare the commands with
+/// (RunHost::compare_commands: CheckReport::commands, read and compared once the configuration is
+/// read, before anything is looked for). What only a run has (the logs, the
 /// timeline, the time limit, the control server, the commands of standard input) it does not read.
 ///
 /// `on_time_lock`, if given, is called once with Checked::time_lock as soon as the

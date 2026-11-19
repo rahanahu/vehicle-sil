@@ -19,6 +19,8 @@ const PASSED_THROUGH: readonly string[] = [
   'check result: vehicle_sil',
   'check result: strict',
   'check result: registry_uri',
+  // check --compare-commands: "same", "changed" or null (always null in a run); screens read it from raw
+  'check result: commands',
   'check result: start_timeout_ms',
   'check result: stop_timeout_ms',
   'check result: participants[].command',

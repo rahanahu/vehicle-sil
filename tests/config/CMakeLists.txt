@@ -9,6 +9,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_config_tests
   PREFIX launch LABELS unit launch config TIMEOUT 60
   SOURCES
     test_check.cpp
+    test_compare_commands.cpp
     test_config.cpp
     test_connect.cpp
     test_j1939_nodes_match.cpp

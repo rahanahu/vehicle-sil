@@ -147,6 +147,17 @@ TEST_CASE(the_text_from_stdin_and_the_saved_descriptions_are_for_check_only)
     CHECK(messages(r, RequestCommand::Test) == refused);
 }
 
+TEST_CASE(the_file_to_compare_the_commands_with_is_for_check_only)
+{
+    RunRequest r;
+    r.host.compare_commands = "saved.yaml";
+    CHECK(messages(r, RequestCommand::Check).empty());
+    const auto refused = list("--compare-commands is for check: leave it out, and compare the commands with "
+                              "vehicle_sil_launch check --compare-commands <file>");
+    CHECK(messages(r, RequestCommand::Run) == refused);
+    CHECK(messages(r, RequestCommand::Test) == refused);
+}
+
 TEST_CASE(the_rules_are_reported_in_the_order_of_the_checks)
 {
     RunRequest r = with_params();
@@ -319,6 +330,37 @@ TEST_CASE(a_check_reads_every_field_of_the_request_that_is_the_checks)
     const Checked saved = check_file(r);
     CHECK(codes(saved, "connect-tool-missing").empty() && codes(saved, "descriptions-").empty());
     CHECK(saved.outside.size() == 1 && saved.outside.at(0).tool_path.empty());
+    // The file to compare the commands with: the same, another, one that is missing; also for a
+    // check that only reads the file, and with the variant of the request (every variant counts).
+    CHECK(none.commands == CommandsCompared::NotAsked && codes(none, "commands-").empty());
+    r = of_file("sim.yaml");
+    r.host.compare_commands = "sim.yaml";
+    const Checked same = check_file(r);
+    CHECK(same.commands == CommandsCompared::Same && codes(same, "commands-").empty());
+    CHECK(codes(same, "") == codes(none, ""));
+    CHECK(check_file(r, file_only).commands == CommandsCompared::Same);
+    r.host.compare_commands = "variants.yaml";
+    CHECK(check_file(r).commands == CommandsCompared::Changed && codes(check_file(r), "commands-") == "commands-changed ");
+    r.host.compare_commands = "missing.yaml";
+    const Checked missing = check_file(r);
+    CHECK(missing.commands == CommandsCompared::NotCompared && codes(missing, "commands-") == "commands-not-compared ");
+    CHECK(says(missing, "the commands that run are not compared with missing.yaml: the file does not exist: check the path"));
+    r = of_file("variants.yaml");
+    r.intent.variant = "winter";
+    r.host.compare_commands = "variants.yaml";
+    CHECK(check_file(r).commands == CommandsCompared::Same);
+    // A check that stops at a usage error compares nothing, and says only the usage error.
+    r.intent.variant.reset();
+    const Checked usage = check_file(r);
+    CHECK(usage.usage && usage.commands == CommandsCompared::NotAsked && codes(usage, "commands-").empty());
+    // A configuration file that cannot be read.
+    r = of_file("missing.yaml");
+    r.host.compare_commands = "sim.yaml";
+    const Checked unreadable = check_file(r);
+    CHECK(!unreadable.config && unreadable.commands == CommandsCompared::NotCompared &&
+          codes(unreadable, "commands-") == "commands-not-compared " &&
+          says(unreadable, "the commands that run are not compared with sim.yaml: the configuration being checked cannot be "
+                           "read: see the errors"));
 }
 
 namespace {
