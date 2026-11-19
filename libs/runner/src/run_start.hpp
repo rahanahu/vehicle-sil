@@ -139,11 +139,11 @@ public:
     [[nodiscard]] bool hold_timed_out() const { return shared_.hold_timed_out.load(); }
 
 private:
-    /// --strict: waits (up to kOutsideFirstLineWait) for the first link line of each of `bridges`, then
-    /// looks at whether one shares its device with a bridge that is not this run's. true: one does,
-    /// the run is not to start (the outcome's bridge says so, and so does a line). Also true if the
-    /// run was interrupted meanwhile.
-    [[nodiscard]] bool stopped_for_shared_device(const std::vector<std::size_t>& bridges);
+    /// Waits (up to kOutsideFirstLineWait) for the first link line of each of `bridges`, then looks at
+    /// whether one shares its device with a bridge that is not this run's, and says so. With `strict`,
+    /// true: one does, the run is not to start (the outcome's bridge says so, and so does a line).
+    /// Also true if the run was interrupted meanwhile. Without `strict` it only says it.
+    [[nodiscard]] bool stopped_for_shared_device(const std::vector<std::size_t>& bridges, bool strict);
     /// The give_up of the start: a required participant has left, or the start's limit has passed
     /// (the participants that hold it up named).
     [[nodiscard]] std::string start_given_up(SimulationController& controller);
