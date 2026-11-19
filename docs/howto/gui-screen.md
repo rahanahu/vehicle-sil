@@ -331,7 +331,7 @@ document.querySelector('#save').addEventListener('click', () => {
 ## What to read next
 
 - Add a display, a button or a rule of your own with a script: `main.js` of the template, and "The front door (`connect()`)" in [gui/client/README.md](../../gui/client/README.md#the-front-door-connect). The script uses the same connection as the parts.
-- Build with TypeScript and a framework (React, Vue, Angular and others; the parts are custom elements, so any template can contain them): "A project with a framework" in [examples/gui_starter/README.md](../../examples/gui_starter/README.md#a-project-with-a-framework)
+- Build with TypeScript and a framework (React, Vue, Angular and others; the parts are custom elements, so any template can contain them): "A project with a framework" in [examples/gui_starter/README.md](../../examples/gui_starter/README.md#a-project-with-a-framework) (it has a whole run through the front door and an Angular signal)
 - Show the timeline of a scenario run on your screen (one script and one tag, in any framework): "Putting a timeline on your own screen" in [gui.md](../gui.md#putting-a-timeline-on-your-own-screen)
 - Look up the served files, the CSP, the development server and the rules to follow: "Reference for your own screen" in [gui.md](../gui.md#reference-for-your-own-screen)
 - Keep the sample screens and add a part to them: "Custom panels" in [gui.md](../gui.md#custom-panels)

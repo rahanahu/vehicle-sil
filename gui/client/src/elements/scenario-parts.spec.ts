@@ -24,7 +24,7 @@ describe('<vsil-scenario-select>', () => {
   it('lists the scenarios of the status file and writes the choice to the page intent', async () => {
     const front = fakeFront();
     const part = await mount('vsil-scenario-select', front);
-    expect(front.spies.scenarios).toHaveBeenCalledWith('simulation.yaml');
+    expect(front.spies.scenarios).toHaveBeenCalledWith({ file: 'simulation.yaml' });
     const select = part.querySelector('select')!;
     expect([...select.options].map((o) => o.textContent)).toEqual(['(no scenario)', 'a.yaml']);
     select.value = 'scenarios/a.yaml';
@@ -38,16 +38,10 @@ describe('<vsil-scenario-select>', () => {
   it('reads the list again when the file changes, and is empty without a file', async () => {
     const front = fakeFront();
     const part = await mount('vsil-scenario-select', front);
-    front.spies.scenarios.mockResolvedValue({
-      file: 'b.yaml',
-      directory: 's',
-      found: true,
-      scenarios: [],
-      truncated: false,
-    });
+    front.spies.scenarios.mockResolvedValue([]);
     front.cells.status.patch({ file: 'b.yaml' });
     await settle();
-    expect(front.spies.scenarios).toHaveBeenLastCalledWith('b.yaml');
+    expect(front.spies.scenarios).toHaveBeenLastCalledWith({ file: 'b.yaml' });
     expect(part.querySelectorAll('option')).toHaveLength(1);
     front.cells.status.patch({ file: null });
     await settle();

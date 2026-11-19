@@ -215,7 +215,7 @@ GUI に自分のコードを足す道は 3 つあります。サンプルの画�
 |---|---|---|---|
 | 部品だけ | HTML と CSS。`<vsil-run-controls>`、`<vsil-slider variable="Engine.engine.throttle">`、`<vsil-value>` のような要素 | 開始と停止、時間の操作、状態、値、スライダー、書き込むボタン、次の実行のシナリオとその結果、実行の時間の軸。スクリプトもビルドも要りません | ガイド [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) |
 | 自分のスクリプト | `connect()`、`watch`、`client.variable()` と、操作（Promise）を呼ぶスクリプト | 部品にないもの。自分の表示やボタン、ルール。部品と同じ接続を使うので、断られた開始、停止、時間の操作は `<vsil-status>` に出て、断られた変数の書き込みは、その変数を出している部品の所に出ます | 画面のテンプレートの `main.js` と、[gui/client/README.md](../../gui/client/README.ja.md#正面の口connect) の「正面の口（`connect()`）」 |
-| フレームワークのプロジェクト | ビルドのあるプロジェクトと、ライブラリのパッケージ（`.tgz`） | React、Vue、Svelte、Angular などのテンプレートの中の、同じ部品とライブラリ（部品は custom element です） | [examples/gui_starter/README.md](../../examples/gui_starter/README.ja.md#フレームワークのプロジェクト) の「フレームワークのプロジェクト」 |
+| フレームワークのプロジェクト | ビルドのあるプロジェクトと、ライブラリのパッケージ（`.tgz`） | React、Vue、Svelte、Angular などのテンプレートの中の、同じ部品とライブラリ（部品は custom element です） | [examples/gui_starter/README.md](../../examples/gui_starter/README.ja.md#フレームワークのプロジェクト) の「フレームワークのプロジェクト」（パッケージ、正面の口だけでの実行の一巡、Angular の signal） |
 
 最初の 2 つの層では、部品とライブラリを GUI サーバー（`/vsil/`）から読むので、コピーするものはありません。フレームワークのプロジェクトはパッケージを使います。サンプルの画面（`gui/web` の Angular のアプリ）のコンポーネントを再利用することは、想定していません。部品を使ってください。
 
@@ -443,7 +443,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 - シナリオは止めた状態では開始できません（「止めた状態で始める」は押せなくなります）。
 - 一時停止、ステップ実行、速度の変更、停止は、シナリオのない実行と同じです（シナリオの結果は変わりません）。GUI はこれらをランチャーの標準入力のコマンドで送ります。Control Server のクライアントの時間の呼び出しも、同じ答えになります。
 - ランチャーに Control Server があれば（`features` に `control-server`）、「変数」の画面で値を見られます（書き込むコンポーネントは押せず、「シナリオの実行中は書けません」と表示されます）。Control Server のないランチャーでは、シナリオの実行を含めてどの実行にも変数はなく、「変数」の画面はほかの実行と同じく理由を表示します。
-- サーバーの API は `GET api/scenarios?file=<configuration file>` と、`api/check`、`api/run` の `scenario`（[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「シナリオ」）、ライブラリでは `client.scenarios(file)` と、`check` と `run.start` の `scenario`、セッションのコピーの `scenario` です。
+- サーバーの API は `GET api/scenarios?file=<configuration file>` と、`api/check`、`api/run` の `scenario`（[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「シナリオ」）、ライブラリでは `front.scenarios({ file })`（その下の 1 回の呼び出しが `client.low.scenarios(file)`）と、`check` と `run.start` の `scenario`、セッションのコピーの `scenario` です。
 
 ### シナリオの実行の時間の軸
 
@@ -933,7 +933,7 @@ sections:
 
 ### `--web` で配信するファイル
 
-`--web` に渡すのは、画面のビルドの出力のディレクトリ（`dist/` など）です。`--web` を指定しなければ、サンプルの画面を配信します。
+`--web` に渡すのは、画面のビルドの出力のディレクトリ（Angular のビルドなら `dist/<project>/browser`。ほかのツールは名前が違います）です。`--web` を指定しなければ、サンプルの画面を配信します。
 
 | 渡したディレクトリ | 動作 |
 |---|---|

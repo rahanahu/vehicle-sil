@@ -117,6 +117,62 @@ try {
 }
 ```
 
-- `npm run pack:client` は、この例を、作ったパッケージの型で検査します（`nodenext` と `bundler` の両方のモジュール解決で）。
-- どの状態も `Readable` です。`get()` と `subscribe(fn)` を持つ、読み取り専用の値です。自分のフレームワークの状態（React の `useSyncExternalStore`、Vue の `ref`、Svelte のストア、Angular の signal など）にするには、`subscribe` で変換します。
+- `npm run pack:client` は、この例と、以下のほかの `ts` の例（Angular を import するものを除く）を、作ったパッケージの型で検査します（`nodenext` と `bundler` の両方のモジュール解決で）。型だけを検査し、呼び出しは実行しません。
+- 正面の口だけで、画面は、実行の開始、一時停止、ステップ、再開、停止、入力の書き込み、出力の読み取りができます（どの呼び出しも `connect()` の操作です）。一時停止中の書き込みは、次のステップで適用されます。そのため、例は、書き込みを待たずに送り、ステップしてから、書き込みを待ちます。`until` は `status` がある状態になるのを待ちます:
+
+```ts
+import { ActionError, connect, until } from '@vehicle-sil/gui-client';
+
+const front = await connect();
+let unsubscribe = () => {};
+try {
+  await front.run.start({ start_paused: true }); // サーバーが開始を受けたときに解決します。実行が立ち上がったときではありません
+  await until(front.status, (status) => status.run === 'paused', { timeout_ms: 30_000 });
+  unsubscribe = front.variable('Engine.engine.speed').subscribe((view) => console.log(view.text, view.unit)); // 値は購読している間に届きます
+  const written = front.variable('Engine.engine.throttle').write(60); // まだ待たない: 一時停止中の実行は、次のステップで適用します
+  written.catch(() => undefined); // ステップが先に失敗しても、未処理の拒否になりません。下の `await written` は投げます
+  await front.time.step(100); // 100 ms 進んで、再び一時停止したときに解決します
+  await written;
+  await front.time.resume();
+} catch (error) {
+  if (error instanceof ActionError) console.log(error.code, error.message, error.outcome);
+  else throw error;
+} finally {
+  unsubscribe();
+  await front.run.stop().catch(() => undefined); // 実行を残しません
+}
+```
+
+- シナリオを再生するには、起動時のファイルの隣のシナリオから 1 つ選び（別の設定ファイルには `scenarios()` に `{ file }` を渡し、`run.start` にも同じ `file` を渡します）、実行の終わりを待ちます。シナリオのある実行は書き込みを断る（`scenario-running`）ので、この例は何も書きません:
+
+```ts
+import { connect, until } from '@vehicle-sil/gui-client';
+
+const front = await connect();
+const [scenario] = await front.scenarios(); // なければ一覧は空です
+if (scenario) {
+  await front.run.start({ scenario: scenario.path }); // 解決したとき、`status` はこの実行を示しています（前に終わった実行ではありません）
+  const status = await until(front.status, (s) => s.run === 'ended' || s.run === 'crashed', {
+    timeout_ms: 600_000,
+  });
+  console.log(status.result?.ok, status.result?.message);
+}
+```
+
+- `Readable` を Angular の signal にするには、注入コンテキストで購読し、コンポーネントが消えるとき（`DestroyRef`）に購読をやめます。
+
+```ts
+import { DestroyRef, inject, signal } from '@angular/core';
+import type { Readable } from '@vehicle-sil/gui-client';
+
+/** `Readable` に追従する Angular の signal です（注入コンテキストで呼びます）。 */
+export function readableSignal<T>(readable: Readable<T>) {
+  const destroyRef = inject(DestroyRef); // 先に取ります。注入コンテキストの外では投げるので、購読の前に分かります
+  const state = signal(readable.get());
+  destroyRef.onDestroy(readable.subscribe((value) => state.set(value)));
+  return state.asReadonly();
+}
+```
+
+- どの状態も `Readable` です。`get()` と `subscribe(fn)` を持つ、読み取り専用の値です。自分のフレームワークの状態（React の `useSyncExternalStore`、Vue の `ref`、Svelte のストア、Angular の signal など）にするには、`subscribe` で変換します（上の signal が一例です。パッケージ自体にフレームワークのコードはありません）。
 - 開発サーバー（Vite など）で、接続したまま開発するには、[docs/gui.md](../../docs/ja/gui.md#開発サーバーを使う) の「開発サーバーを使う」を見てください。

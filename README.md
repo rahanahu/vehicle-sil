@@ -61,7 +61,7 @@ These commands need a build. First build as described in "[Quick start](#quick-s
 | `vehicle_sil_launch check simulation.yaml` | Has each ECU print its own configuration and checks the configuration file against it. | Each ECU with `--describe` only. No simulation runs. |
 | `vehicle_sil_launch run simulation.yaml` | Runs the simulation until `stop_at_ms`. | The SIL Kit registry and every ECU. It ends them when the run is over. |
 | `vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml` | Sets and checks values as the steps of the scenario say. | The same processes. The exit code is 0 if every step passes. |
-| `vehicle-sil-gui simulation.live.yaml` | Runs the same 2 ECUs until you stop them, with a configuration file that has no time limit (next to `simulation.yaml`). You watch and change values in a browser. | The GUI server. Click **Start** in the GUI to start the simulation. In "Quick start", `scripts/run-gui.py` runs this command for you. |
+| `vehicle-sil-gui simulation.live.yaml` | Runs the same 2 ECUs until you stop them, with a configuration file that has no time limit (next to `simulation.yaml`). You watch and change values in a browser. | The GUI server. Click **Start** in the GUI to start the simulation. In "Quick start", `scripts/run-gui.py` runs this command for you (in a clone of this repository only: a prebuilt tools archive has no such script). |
 
 The `check` output:
 
