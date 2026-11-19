@@ -45,6 +45,7 @@ EXAMPLES = {
     "check-manual", "ws-manual", "ws-allowed", "connections", "check-connect", "run-connect",
     "error-target-not-listed", "error-unknown-network", "ws-availability",
     "config", "check-text", "describe", "error-text-too-large", "error-config-too-large", "error-config-unreadable",
+    "save-config", "error-commands-changed", "error-config-changed", "error-save-disabled",
 }
 
 
@@ -97,6 +98,7 @@ SHOWN = {
     "error-launcher-start": 502, "error-shutting-down": 503, "error-too-many-connections": 503,
     "error-not-running": 409, "error-unknown-variable": 400, "error-variables-not-ready": 409,
     "error-unknown-network": 400, "error-text-too-large": 413, "error-config-too-large": 413,
+    "error-config-changed": 409, "error-save-disabled": 403,
 }
 
 
@@ -440,7 +442,35 @@ def test_config_text_examples(tmp_path: Path) -> None:
                 path = f"api/config?file={file}"
                 status, body = await c.get(path)
                 check_example(name, http(text, "GET", path, None, status, body), gui, paths)
+            # Saving: read, edit, save with the stamp that was read
+            status, body = await c.get("api/config?file=simulation.yaml")
+            read = body
+            req = {"file": "simulation.yaml", "text": read["text"] + "# saved from the screen\n", "stamp": read["stamp"]}
+            status, body = await c.post("api/config", req)
+            check_example("save-config", http(
+                "Save an edited text of simulation.yaml with the stamp that GET api/config gave: the launcher's check "
+                "says that it runs the same commands as the saved file, so it is saved by default. The answer has the "
+                "stamp of what was saved.", "POST", "api/config", req, status, body), gui, paths)
+            stamp = body["stamp"]
+            text = req["text"].replace("[engine/vehicle_sil_engine_ecu]", "[engine/vehicle_sil_engine_ecu, --verbose]")
+            req = {"file": "simulation.yaml", "text": text, "stamp": stamp}
+            status, body = await c.post("api/config", req)
+            check_example("error-commands-changed", http(
+                "An edit that changes the commands that run, to a server started without --allow-command-changes: "
+                "the message has the launcher's finding, and detail is its check (result, commands, findings).",
+                "POST", "api/config", req, status, body), gui, paths)
+            req = {**req, "stamp": read["stamp"]}
+            status, body = await c.post("api/config", req)
+            check_example("error-config-changed", http("A stamp that is no longer the file's.", "POST",
+                                                       "api/config", req, status, body), gui, paths)
         run_async(talk, gui)
+    with gui_server(tmp_path, root=root, launcher=REPLAY.parent / "text_launcher.py", args=("--no-save",)) as gui:
+        async def talk_no_save(c: Client) -> None:
+            req = {"file": "simulation.yaml", "text": "vehicle_sil_simulation: 1\n", "stamp": "0" * 64}
+            status, body = await c.post("api/config", req)
+            check_example("error-save-disabled", http("A server started with --no-save.", "POST", "api/config",
+                                                      req, status, body), gui, paths)
+        run_async(talk_no_save, gui)
 
 
 def test_errors_of_the_launcher_and_of_load(tmp_path: Path) -> None:

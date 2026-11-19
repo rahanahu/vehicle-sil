@@ -57,6 +57,12 @@ class Descriptions:
             _remove(self._files[key])
             self._files[key] = self._new_path()
 
+    def forget(self, file: str) -> None:
+        """The file was saved (POST api/config): its descriptions, of every variant, are made again before the next
+        check of a text, also where its stamp would not change (a coarse modification time, the same size)."""
+        for key in [k for k in self._stamps if k[0] == file]:
+            del self._stamps[key]
+
     def _new_path(self) -> Path:
         assert self.directory is not None
         return self.directory / f"{secrets.token_hex(8)}.json"

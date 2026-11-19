@@ -477,6 +477,12 @@
           "ok": false,
           "reason": "not-running",
           "message": "no simulation is running: there is nothing to stop"
+        },
+        "save": {
+          "ok": true,
+          "reason": null,
+          "message": null,
+          "caution": null
         }
       },
       "result": {

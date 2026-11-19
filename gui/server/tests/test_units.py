@@ -108,16 +108,17 @@ def test_allowed_says_what_this_server_takes() -> None:
     def reasons() -> dict:
         return {k: v["reason"] for k, v in s.summary()["allowed"].items() if k != "rev"}
 
-    assert reasons() == {"start": "already-running", "stop": None, "force": None}
+    assert reasons() == {"start": "already-running", "stop": None, "force": None, "save": None}
     assert s.summary()["allowed"]["stop"] == ok and s.allowed()["start"]["message"].startswith("a simulation is running")
     s.request_stop(False)
-    assert reasons() == {"start": "already-running", "stop": "already-stopping", "force": None}
+    assert reasons() == {"start": "already-running", "stop": "already-stopping", "force": None, "save": None}
     s.request_stop(True)
-    assert reasons() == {"start": "already-running", "stop": "already-stopping", "force": "already-forced"}
+    assert reasons() == {"start": "already-running", "stop": "already-stopping", "force": "already-forced",
+                         "save": None}
     s.launcher_exited(0)
     assert reasons()["stop"] == reasons()["force"] == "not-running" and reasons()["start"] == "already-running"
     s.ended()
-    assert reasons() == {"start": None, "stop": "not-running", "force": "not-running"}
+    assert reasons() == {"start": None, "stop": "not-running", "force": "not-running", "save": None}
     # the server's own facts: the first that holds wins, in this order
     for facts, start, stop in (
             (Facts(launcher_usable=False, launcher_message="no launcher"), "launcher-unusable", "not-running"),
@@ -125,6 +126,11 @@ def test_allowed_says_what_this_server_takes() -> None:
             (Facts(closing=True, starting=True), "shutting-down", "shutting-down")):
         s.facts = lambda facts=facts: facts
         assert (reasons()["start"], reasons()["stop"]) == (start, stop), facts
+    assert reasons()["save"] == "shutting-down"
+    s.facts = lambda: Facts(save=False)
+    assert reasons()["save"] == "save-disabled" and s.allowed()["save"]["caution"] is None
+    s.facts = lambda: Facts(command_changes_allowed=True)
+    assert reasons()["save"] is None and s.allowed()["save"]["caution"]["code"] == "command-changes-allowed"
     s = new_session()  # running
     s.facts = lambda: Facts(starting=True)
     assert reasons()["start"] == "already-running"  # the run just registered, its start not yet answered

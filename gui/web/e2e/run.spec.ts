@@ -417,6 +417,7 @@ test('a click meant for stop as the run ends does not start a new run', async ({
         start: { ok: true, reason: null, message: null },
         stop: { ok: false, reason: 'not-running', message: 'no simulation is running' },
         force: { ok: false, reason: 'not-running', message: 'no simulation is running' },
+        save: { ok: true, reason: null, message: null, caution: null },
       },
     }),
   );

@@ -1,0 +1,34 @@
+{
+  "description": "An edit that changes the commands that run, to a server started without --allow-command-changes: the message has the launcher's finding, and detail is its check (result, commands, findings).",
+  "request": {
+    "method": "POST",
+    "path": "api/config",
+    "body": {
+      "file": "simulation.yaml",
+      "text": "# A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it\n# (recordings/, made by record_launcher.py: record again after changing this file).\nvehicle_sil_simulation: 1\nstop_at_ms: 1000\nnetworks:\n  - name: J1939_CAN\n    kind: can\nparticipants:\n  - name: Engine\n    command: [engine/vehicle_sil_engine_ecu, --verbose]\n  - name: Dashboard\n    command: [dashboard/vehicle_sil_dashboard_ecu]\n  - name: Logger\n    command: [logger/can_logger, \"{registry_uri}\"]\n    describe: false\n    required: false\n# saved from the screen\n",
+      "stamp": "60ef07c99d1e662caca918cc0dab9b01663861c54c5909039ddf12990fea0860"
+    }
+  },
+  "status": 403,
+  "response": {
+    "error": {
+      "code": "commands-changed",
+      "message": "the GUI server saves only an edit that keeps the commands that run (the commands that run differ from simulation.yaml: participant 'Engine': command differs): make this edit in a text editor, or start the GUI with --allow-command-changes",
+      "detail": {
+        "result": "passed",
+        "commands": "changed",
+        "findings": [
+          {
+            "severity": "note",
+            "code": "commands-changed",
+            "message": "the commands that run differ from simulation.yaml: participant 'Engine': command differs",
+            "file": null,
+            "line": null,
+            "participant": null,
+            "key": null
+          }
+        ]
+      }
+    }
+  }
+}

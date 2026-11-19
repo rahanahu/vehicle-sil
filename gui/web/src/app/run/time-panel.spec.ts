@@ -120,6 +120,7 @@ describe('TimePanel: why an operation cannot be used', () => {
     step: { ...no('outside-real-time', `${REAL_TIME}: step is refused`), min_ms: 5, max_ms: 1000 },
     run_until: no('outside-real-time', `${REAL_TIME}: run_until is refused`),
     speed: { ...yes, min: 1, max: 1, fastest: false },
+    save: yes,
   });
   let fixture: ComponentFixture<TimePanel>;
   const controls = signal<FrontControls>(realTime());

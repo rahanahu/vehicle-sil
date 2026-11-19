@@ -10,7 +10,9 @@ import {
   readDashboardResponse,
   readLauncherEvent,
   readRecording,
+  readSavedConfig,
   readScenarioList,
+  readServerAllowed,
   readServerMessage,
   readSessionResponse,
   readTimeResponse,
@@ -25,6 +27,7 @@ const READERS: Record<string, (value: unknown) => unknown> = {
   'GET api/config': readConfigText,
   'POST api/check': readCheckResponse,
   'POST api/describe': readCheckResponse,
+  'POST api/config': readSavedConfig,
   'POST api/connections': readConnections,
   'POST api/run': readSessionResponse,
   'POST api/stop': readSessionResponse,
@@ -128,6 +131,13 @@ describe('the readers accept every example of gui/protocol', () => {
       ok: true,
       reason: null,
       message: null,
+    });
+    // and whether it saves a configuration file (save has a caution besides)
+    expect(hello?.type === 'hello' && hello.allowed?.save).toEqual({
+      ok: true,
+      reason: null,
+      message: null,
+      caution: null,
     });
     // the allowed message carries the same shape, and its rev goes up with each change
     const own = examples
@@ -385,6 +395,16 @@ describe('the readers refuse what they cannot read', () => {
     message: 'm',
     detail: null,
   };
+
+  it('refuses an allowed without save, or a save without caution', () => {
+    const item = { ok: true, reason: null, message: null };
+    const allowed = { rev: 1, start: item, stop: item, force: item };
+    expect(() =>
+      readServerAllowed({ ...allowed, save: { ...item, caution: null } }, 'a'),
+    ).not.toThrow();
+    expect(() => readServerAllowed(allowed, 'a')).toThrow(ProtocolError);
+    expect(() => readServerAllowed({ ...allowed, save: item }, 'a')).toThrow(ProtocolError);
+  });
 
   it('ignores unknown fields and unknown events', () => {
     expect(readLauncherEvent({ ...finding, colour: 'blue' }, 'e')).toMatchObject({

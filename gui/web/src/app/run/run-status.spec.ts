@@ -89,6 +89,7 @@ class Host {
       step: { ...idle, min_ms: 1, max_ms: 1000 },
       run_until: idle,
       speed: { ...idle, min: 0.1, max: 10, fastest: true },
+      save: yes,
     };
   });
   /** 正面の口の `status` を、この試験で直に決める（null: セッションの写しから組み立てる）。 */

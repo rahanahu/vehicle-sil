@@ -470,6 +470,12 @@
           "ok": false,
           "reason": "already-forced",
           "message": "the stop was already forced: wait for the run to end"
+        },
+        "save": {
+          "ok": true,
+          "reason": null,
+          "message": null,
+          "caution": null
         }
       },
       "result": null,

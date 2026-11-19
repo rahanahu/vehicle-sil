@@ -42,7 +42,8 @@ GUI サーバーはランチャーのオプションを組み立てません。�
 | 照合や開始の欄、その形と大きさ、書き出す要求ファイル（新しい一時ファイル。POSIX ではモード 0600。ランチャーが終わったら削除） | `gui/server/src/vehicle_sil_gui/launcher.py` の `INTENT_FIELDS`、`check_*()`、`write_request_file()`、`check_command()`、`run_command()` |
 | サーバーが `connect` について持つ唯一のルール: `none` 以外の対象は、そのファイルのそのネットワークの直近の `POST api/connections` が使えると挙げたときだけ渡す（そうでなければ `target-not-listed`） | `gui/server/src/vehicle_sil_gui/server.py` の `_check_targets()` と `post_connections()`、`launcher.py` の `connections_command()` |
 | 構成の保存していない文の照合（`POST api/check` の `text`。プロセスを起動しない）、それが使う説明（保存したファイルの照合が、ファイルと variant ごとに一時ディレクトリに作る）、`POST api/describe` と `GET api/config` | `server.py` の `_check_text()`、`_text_check_locked()`、`_describe_locked()`、`post_describe()`、`get_config()`、`descriptions.py` の `Descriptions`、`launcher.py` の `text_check_command()` と `describe_command()` |
-| テスト | `gui/server/tests/test_connect.py`、`test_config_text.py`、`test_units.py`、`test_runs.py`、`test_protocol_examples.py` |
+| 文の保存（`POST api/config`）: 本文、新しいファイルを作れる場所、ランチャーの `check --compare-commands` の `commands` による判断（サーバーは YAML を比べない）、隣のファイルからの置き換え。`--no-save`、`--allow-command-changes`、`allowed.save` | `config_save.py`（純粋な関数と置き換え）、`server.py` の `post_config()` と `_save_locked()`、`launcher.py` の `save_check_command()`、`allowed.py` の `allowed_save()`、`cli.py` の選択肢 |
+| テスト | `gui/server/tests/test_connect.py`、`test_config_text.py`、`test_config_save.py`、`test_units.py`、`test_runs.py`、`test_protocol_examples.py` |
 
 ランチャーのルール（どの名前があるか、どの欄が一緒に成り立つか、時間の方針が何を意味するか）をサーバーに写さないでください。ランチャーに足し、照合に報告させます。欄を足すときは「[要求の欄と要求ファイル](code-map-launcher.md#要求の欄と要求ファイル)」に従います。
 

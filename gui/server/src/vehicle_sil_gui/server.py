@@ -17,24 +17,29 @@ import logging
 import secrets
 import time
 from collections.abc import Awaitable, Callable
+from typing import TypeVar
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import __version__, control, dashboard, process
-from .allowed import Facts, Numbered, allowed as allowed_of, allowed_start
+from .allowed import Facts, Numbered, allowed as allowed_of, allowed_save, allowed_start
 from .hub import Client, Hub, Outgoing, encode
 from .launcher import (CONNECTIONS_FIELDS, DESCRIBE_FIELDS, DESCRIPTIONS_NAME, NO_CONNECTION, REQUEST_FIELDS,
                        FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, TEXT_FIELDS, InvalidRequest, Launcher,
                        check_command, check_connect, check_disable, check_enable, check_fields, check_manual,
                        check_network, check_params, check_speed, check_strict, check_time_command, check_time_policy,
                        check_variant, command_line, connections_command, describe_command, hide_request,
-                       hide_request_in_line, run_command, text_check_command, write_request_file)
+                       hide_request_in_line, run_command, save_check_command, text_check_command,
+                       write_request_file)
 from . import client_files
+from .config_save import (check_text, check_unchanged, decide, existing_file, new_file, replace_file, save_request,
+                          stamp_of)
 from .descriptions import Descriptions
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .recording import Recording
+from .refusal import Refused
 from .scenarios import list_scenarios, relative_to_config, resolve_scenario
 from .session import SILENT_AFTER_S, Limits, Session
 from .source import Source
@@ -45,9 +50,10 @@ from .variables import AT_MS_MAX, Limits as VariableLimits, Rejected, Variables,
 
 PROTOCOL = 2  # vehicle_sil_gui: the version of the shapes in gui/protocol
 MAX_BODY = 64 * 1024
-MAX_TEXT = 1024 * 1024  # the text of a configuration file: `text` of api/check (as UTF-8), GET api/config
-# The body of api/check: a text of MAX_TEXT in JSON however it is escaped (\u0001 takes 6 bytes for 1 byte of UTF-8,
-# the most), and the rest of the body.
+# The text of a configuration file: `text` of api/check and of POST api/config (as UTF-8), the file of GET api/config
+MAX_TEXT = 1024 * 1024
+# The body of api/check and of POST api/config: a text of MAX_TEXT in JSON however it is escaped (\u0001 takes 6 bytes
+# for 1 byte of UTF-8, the most), and the rest of the body.
 MAX_TEXT_BODY = 6 * MAX_TEXT + MAX_BODY
 MAX_WS_MESSAGE = 256 * 1024  # a watch that names many variables
 MAX_SOCKETS = 32  # authenticated WebSocket connections
@@ -92,6 +98,7 @@ COMMON_HEADERS = {
 }
 
 log = logging.getLogger("vehicle_sil_gui")
+T = TypeVar("T")
 
 
 def remember(cache: dict, key: object, value: object) -> None:
@@ -150,14 +157,6 @@ def _read_at_most(path: Path, size: int) -> bytes:
         return f.read(size)
 
 
-class Refused(Exception):
-    """A request that is refused with an HTTP error (status, code, message, detail)."""
-
-    def __init__(self, status: int, code: str, message: str, detail: object = None):
-        super().__init__(message)
-        self.status, self.code, self.detail = status, code, detail
-
-
 def _unreadable(relative: str, e: OSError) -> Exception:
     """The refusal of a configuration file that the OS did not let the server read."""
     if isinstance(e, FileNotFoundError):
@@ -200,6 +199,9 @@ class Options:
     # (address, token) -> the source of a run's variables; None: the launcher's control server over gRPC
     # (control.GrpcSource). The tests put a stand-in here.
     source: Callable[[str, str], Source] | None = None
+    save: bool = True  # POST api/config saves a text (not --no-save)
+    # It also saves a text that changes the commands that run, and makes new files (--allow-command-changes)
+    command_changes_allowed: bool = False
 
 
 @dataclass(eq=False)
@@ -284,7 +286,8 @@ class GuiServer:
         """What `allowed` needs of the server itself (the launcher is as the last probe found it)."""
         usable = self.launcher.usable
         return Facts(closing=self._closing, starting=self._starting, launcher_usable=usable,
-                     launcher_message="" if usable else "; ".join(p["message"] for p in self.launcher.problems))
+                     launcher_message="" if usable else "; ".join(p["message"] for p in self.launcher.problems),
+                     save=self.o.save, command_changes_allowed=self.o.command_changes_allowed)
 
     def allowed(self) -> dict:
         """The `allowed` of the run the screens see; with no run, what the server accepts (start)."""
@@ -302,11 +305,12 @@ class GuiServer:
     # ------------------------------------------------------------ the application
 
     def app(self) -> web.Application:
-        # MAX_BODY for every body (see _body), but api/check's
+        # MAX_BODY for every body (see _body), but those of api/check and POST api/config
         app = web.Application(client_max_size=MAX_TEXT_BODY, middlewares=[self._headers, self._guard])
         app.router.add_get("/api/app", self.get_app)
         app.router.add_get("/api/configs", self.get_configs)
         app.router.add_get("/api/config", self.get_config)
+        app.router.add_post("/api/config", self.post_config)
         app.router.add_post("/api/check", self.post_check)
         app.router.add_post("/api/describe", self.post_describe)
         app.router.add_post("/api/connections", self.post_connections)
@@ -467,6 +471,87 @@ class GuiServer:
             return self._refusal(e)
         return web.json_response({"file": config.relative, "text": text,
                                   "stamp": hashlib.sha256(data).hexdigest()})
+
+    async def post_config(self, request: web.Request) -> web.Response:
+        """Saves the text of a configuration file (config_save.py): an existing configuration file with the stamp the
+        screen read, or a new file (stamp null) only with --allow-command-changes. The launcher's check of the text
+        says whether it can be read, and whether it runs the same commands as the saved file (only then is it saved
+        by default); this server compares no YAML."""
+        try:
+            self._not_closing()
+            save = allowed_save(self.facts())
+            if not save["ok"]:
+                raise Refused(403, save["reason"], save["message"])
+            body = await self._body(request, max_size=MAX_TEXT_BODY)
+            relative, data, stamp = save_request(body, MAX_TEXT)
+            name = "/".join(self.root.parts(relative))
+            if stamp is None and not self.o.command_changes_allowed:
+                raise Refused(403, "commands-changed",
+                              f"{name} would be a new file (stamp is null), so there is no saved file to compare "
+                              "its commands with; the GUI server makes new files only when it was started with "
+                              "--allow-command-changes: create the file in a text editor, or start the GUI with "
+                              "--allow-command-changes")
+            config = await self._save_target(relative, stamp)  # refused here before it waits in the queue
+            check_text(config.relative, data)
+            await self._usable()
+            await self._in_check_queue(lambda: self._save_locked(config, data, stamp))
+        except (PathRejected, InvalidRequest, Refused) as e:
+            return self._refusal(e)
+        return web.json_response({"file": config.relative, "stamp": stamp_of(data)})
+
+    async def _save_locked(self, config: ConfigFile, data: bytes, stamp: str | None) -> None:
+        """In one turn of the queue of the checks: the file is as the screen read it; the launcher checks the text as
+        that file's with the saved descriptions (no process starts) and compares its commands with the saved file;
+        the file is looked at once more (it may have changed meanwhile: a guard against most races, not all), then
+        replaced. The file is resolved once more here, in the queue: the launcher compares with that real file and the
+        server writes that real file (a link that changed while the save waited leads to 409 config-changed). What the
+        server kept of the old content is dropped."""
+        again = await self._save_target(config.relative, stamp)
+        if again.absolute != config.absolute:
+            raise Refused(409, "config-changed", f"{config.relative} leads to another file than when the save was "
+                                                 "sent (a symbolic link changed): read it again and save again")
+        await self._unchanged(config, stamp)
+        descriptions = await asyncio.to_thread(self.descriptions.path_of, (config.relative, None))
+        request = self._make_request({})
+        real = config.absolute.relative_to(self.root.root).as_posix()  # what --compare-commands reads: no link
+        try:
+            argv = save_check_command(self.launcher, config.relative, request, descriptions,
+                                      real if stamp is not None else None)
+            _, result = await self._launcher_check(argv, request, descriptions, data)
+        finally:
+            control.remove(request)
+        decide(config.relative, result, self.o.command_changes_allowed)
+        await self._unchanged(config, stamp)
+        try:
+            await asyncio.to_thread(replace_file, config.absolute, data, stamp is None)
+        except FileExistsError:
+            raise Refused(409, "config-changed", f"{config.relative} was made by another program while the save "
+                                                 "waited: read it (GET api/config) and save it with its stamp, or "
+                                                 "choose another name") from None
+        except OSError as e:
+            raise Refused(409, "config-busy",
+                          f"{config.relative} could not be replaced ({e.strerror or e}): another program may have it "
+                          "open, or this user may not write it or its directory; close that program or fix the "
+                          "permissions, then save again") from None
+        self.descriptions.forget(config.relative)
+        for kept in (self._names, self._targets):
+            for key in [k for k in kept if k[0] == config.relative]:
+                del kept[key]
+
+    async def _save_target(self, relative: object, stamp: str | None) -> ConfigFile:
+        """The file a save writes: a new file (stamp None) or an existing configuration file (config_save.py)."""
+        try:
+            return await asyncio.to_thread(new_file if stamp is None else existing_file, self.root, relative)
+        except PathRejected:
+            raise
+        except OSError as e:
+            raise _unreadable(str(relative), e) from None
+
+    async def _unchanged(self, config: ConfigFile, stamp: str | None) -> None:
+        try:
+            await asyncio.to_thread(check_unchanged, config, stamp, MAX_TEXT)
+        except OSError as e:
+            raise _unreadable(config.relative, e) from None
 
     async def _configuration(self, relative: object) -> ConfigFile:
         """The configuration file whose content is read or checked for the screen (ConfigRoot.configuration)."""
@@ -1025,8 +1110,8 @@ class GuiServer:
         self._check_targets(relative, intent.get("connect", {}), network_names(result))
         return code, result
 
-    async def _in_check_queue(self, work: Callable[[], Awaitable[tuple[int, dict]]]) -> tuple[int, dict]:
-        """One check (or list) at a time: the others wait (MAX_CHECK_WAITING of them, check_timeout_s each)."""
+    async def _in_check_queue(self, work: Callable[[], Awaitable[T]]) -> T:
+        """One check (or list, or save) at a time: the others wait (MAX_CHECK_WAITING of them, check_timeout_s each)."""
         self._not_closing()
         if self._check_waiting >= MAX_CHECK_WAITING:
             raise Refused(503, "check-busy", f"{MAX_CHECK_WAITING} checks are already waiting for the one that "

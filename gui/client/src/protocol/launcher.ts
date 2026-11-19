@@ -919,11 +919,20 @@ export function readCommandFields(f: Fields, path: string, u?: Unreadable): Comm
   };
 }
 
-/** A reason with an English sentence: the `caution` of an operation the launcher accepts with a warning. */
+/**
+ * A reason with an English sentence: the `caution` of an operation that is accepted with a warning (of the launcher's
+ * `allowed`, and of the GUI server's `allowed.save`).
+ */
 export interface Caution {
   code: string;
   message: string;
 }
+
+/** Reads a `caution` object (`{code, message}`). */
+export const readCaution: Reader<Caution> = (value, path) => {
+  const c = object(value, path);
+  return { code: field(c, path, 'code', string), message: field(c, path, 'message', string) };
+};
 
 /**
  * Whether the launcher accepts one operation now (an entry of `allowed` in the `state` event). `ok` says "it would
@@ -946,18 +955,7 @@ const readLauncherAllowedItem: Reader<LauncherAllowedItem> = (value, path) => {
     ok: field(f, path, 'ok', boolean),
     reason: field(f, path, 'reason', soft(nullable(string), null)),
     message: field(f, path, 'message', soft(nullable(string), null)),
-    caution: field(
-      f,
-      path,
-      'caution',
-      soft(
-        nullable((v, p): Caution => {
-          const c = object(v, p);
-          return { code: field(c, p, 'code', string), message: field(c, p, 'message', string) };
-        }),
-        null,
-      ),
-    ),
+    caution: field(f, path, 'caution', soft(nullable(readCaution), null)),
   });
 };
 

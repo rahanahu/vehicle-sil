@@ -25,6 +25,15 @@ What the tests ask for:
   must hide the name);
 - a text with the line "# stand-in: fail": no check object, and a line on standard error that names that file.
 - `strict` of the request is taken out before the recording is chosen (none is recorded with --strict).
+
+The check of a text that POST api/config would save (check --text-from-stdin with --compare-commands, or of a file
+that is not there yet) plays no recording (the saved file changes in those tests): it is a check object made up from
+the text. Its result is passed, or unreadable with the line "# stand-in: unreadable text". With --compare-commands its
+`commands` is "changed" when a `command:` line of a participant differs from the file's, or with the line "# stand-in:
+commands changed"; "not_compared" ("# stand-in: commands not compared"); null ("# stand-in: commands null"); else
+"same". The launcher's notes commands-changed and commands-not-compared come with them. Without the option, null.
+With the line "# stand-in: the file changes during the check", it adds the line "# changed by another program" to the
+file of --compare-commands before it answers (another program saved the file while the launcher checked).
 """
 
 from __future__ import annotations
@@ -39,7 +48,9 @@ import time
 from pathlib import Path
 
 REPLAY = Path(__file__).resolve().parent / "replay_launcher.py"
-OPTIONS = ("--descriptions", "--write-descriptions")
+OPTIONS = ("--descriptions", "--write-descriptions", "--compare-commands")
+COMMANDS = {"# stand-in: commands changed": "changed", "# stand-in: commands not compared": "not_compared",
+            "# stand-in: commands null": None}
 
 
 def log(entry: dict) -> None:
@@ -56,6 +67,45 @@ def fabricated(result: str, participants: list | None = None) -> str:
                                        "file": None, "line": None, "participant": None, "key": None}]
     return json.dumps({"vehicle_sil_check": 1, "result": result, "errors": errors, "warnings": 0, "notes": 0,
                        "participants": participants or [], "findings": findings}, indent=2)
+
+
+def command_lines(text: str) -> dict[str, str]:
+    """participant name -> its `command:` line, of a configuration written as the tests' configurations are."""
+    out, name = {}, ""
+    for line in text.splitlines():
+        if line.strip().startswith("- name:"):
+            name = line.split(":", 1)[1].strip()
+        elif line.strip().startswith("command:"):
+            out[name] = line.strip()
+    return out
+
+
+def save_check(text: str, compare: str | None) -> int:
+    """The check of a text that would be saved (see the module's text)."""
+    lines = text.splitlines()
+    result = "unreadable" if "# stand-in: unreadable text" in lines else "passed"
+    check = json.loads(fabricated(result))
+    commands = None
+    if compare is not None and "# stand-in: the file changes during the check" in lines:
+        with open(compare, "a", encoding="utf-8", newline="") as f:
+            f.write("# changed by another program\n")
+    if compare is not None:
+        ours, theirs = command_lines(text), command_lines(Path(compare).read_text(encoding="utf-8"))
+        differ = [n for n in ours if theirs.get(n, ours[n]) != ours[n]]
+        commands = next((COMMANDS[line] for line in lines if line in COMMANDS), "changed" if differ else "same")
+        if commands == "changed":
+            message = (f"the commands that run differ from {compare}: participant '{(differ or ['Engine'])[0]}': "
+                       "command differs")
+        else:
+            message = f"the commands that run are not compared with {compare}: stand-in"
+        if commands in ("changed", "not_compared"):
+            check["findings"].append({"severity": "note", "code": f"commands-{commands.replace('_', '-')}",
+                                      "message": message, "file": None, "line": None, "participant": None,
+                                      "key": None})
+            check["notes"] = 1
+    check["commands"] = commands
+    print(json.dumps(check, indent=2))
+    return 0 if result == "passed" else 3
 
 
 def main(argv: list[str]) -> int:
@@ -81,6 +131,8 @@ def main(argv: list[str]) -> int:
         return 4
     config = Path(argv[end + 1]) if end + 1 < len(argv) else None
     marks = set(config.read_text(encoding="utf-8").splitlines()) if config is not None and config.is_file() else set()
+    if from_stdin and ("--compare-commands" in options or config is None or not config.is_file()):
+        return save_check(text or "", options.get("--compare-commands"))
     if "# stand-in: describe hangs" in marks and "--write-descriptions" in options:
         time.sleep(600)
     if marks & {"# stand-in: unreadable", "# stand-in: describe hangs"}:

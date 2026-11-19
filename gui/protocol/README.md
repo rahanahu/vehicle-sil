@@ -84,6 +84,7 @@ Every `api/` request has these conditions:
 | `POST api/check` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
 | `POST api/check` `{file, text, variant, strict}` | The check of an unsaved text of the file, which starts no process; the same response as above | `check-text.json` |
 | `POST api/describe` `{file, variant}` | `{file, variant, exit_code, check}`: a check of the saved file that describes its executables again, for the checks of its text | `describe.json` |
+| `POST api/config` `{file, text, stamp}` | `{file, stamp}`: saves the text as the file, by default only an edit that keeps the commands that run ("Saving a text (`POST api/config`)" below) | `save-config.json`, `error-commands-changed.json` |
 | `POST api/run` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{session}` (the summary of the run it started), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `run-connect.json`, `error-check-failed.json` |
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: where that network can be connected on this computer ("Connecting a network outside" below) | `connections.json` |
 | `POST api/stop` `{force}` | `{session}` (the current summary; `null` if there is no run) | `stop*.json` |
@@ -99,7 +100,7 @@ Every `api/` request has these conditions:
 - Each file in `api/configs` has `path` (relative to the root, separated by `/`), `modified`, `size` and `simulation` (whether it starts with `vehicle_sil_simulation`). The list as a whole has `truncated`.
 - `check` in the `api/check` response is the result of `check --json` as is. The response is 200 even if the check fails.
 - For `api/write`, see "ECU variables" below; for `api/scenarios` and `scenario`, "Scenarios"; for `api/recording`, "Recording actions (`api/recording`)"; for `api/timeline`, "Timeline of a scenario run (`api/timeline`)"; for `api/dashboard`, "Dashboard files". The `file` of `api/dashboard` goes through the same checks as for `api/check` (`invalid-path`, `outside-root`, `not-a-configuration`, `file-not-found`).
-- Once the server has begun to shut down, `api/run`, `api/check`, `api/describe`, `api/connections` and `api/write` return 503 `shutting-down`.
+- Once the server has begun to shut down, `api/run`, `api/check`, `api/describe`, `POST api/config`, `api/connections` and `api/write` return 503 `shutting-down`.
 
 ### `disable` and `manual`
 
@@ -156,6 +157,20 @@ For a screen that edits a configuration file and checks it before it is saved.
 - **Describing again**: `POST api/describe {file, variant}` (`file` as for `api/config`) checks the saved file and saves its descriptions again (after an executable was built again, say). The response is `{file, variant, exit_code, check}` with that check (`variant` is `null` when none was given). Example: `describe.json`.
 - **What the server keeps of the saved file**: the names that `disable` and `manual` may take and the lists of `api/connections` are those of the saved file; a check of a text neither uses nor changes them. `api/check` without `text` and `api/run` save no descriptions.
 - Both go through the queue of the checks, as `api/check` does (`check-busy`, `check-timeout`).
+
+### Saving a text (`POST api/config`)
+
+`POST api/config {file, text, stamp}` writes `text` as the content of `file`. Whether an edit may be saved is the launcher's rule: the server has it check the text with `check --compare-commands` against the saved file ("Comparing the commands that run" in [docs/simulation-check.md](../../docs/simulation-check.md#comparing-the-commands-that-run---compare-commands)) and reads only `commands` and `result` of that check; it compares no YAML itself. By default it saves only an edit whose `commands` is `"same"`: the networks, the mapping of the networks, `external` and the other keys that the launcher does not compare. The options of the server change that: with `--no-save` nothing is saved; with `--allow-command-changes`, an edit that changes the commands that run, and a new file, are saved too (then whoever has the token can run any command as the user of the server: see "Security" in [docs/gui.md](../../docs/gui.md#security)). `allowed.save` says which applies ("What the server accepts (`allowed`)" below).
+
+The body has exactly these 3 fields (another field is 400 `invalid-field`). `text` is at most 1 MiB as UTF-8 (413 `text-too-large`; the body may be as large as that of `api/check`). `stamp` is the `stamp` that `GET api/config` gave for the file, or `null` for a new file. The server goes through these steps in order and stops at the first refusal:
+
+1. With `--no-save`: 403 `save-disabled`.
+2. Where. With a `stamp`, `file` is an existing configuration file, as for `api/config` (400 `not-a-configuration`, 404 `file-not-found`, ...). With `stamp` `null` and no `--allow-command-changes`: 403 `commands-changed` (a new file has no saved file to compare with). With `--allow-command-changes`, a new file must end in `.yaml` or `.yml`; its directory must exist (404 `file-not-found`); a file that is there already is 409 `config-changed`. Both an existing file and a new one must be where `api/configs` lists configuration files: under the root also after following links (400 `outside-root`), through no linked directory (a file that is a link is fine), with no part that starts with `.`, at most 6 directories below the root, not a dashboard file (`*.dashboard.yaml`) and not in a directory named `scenarios`, by the name sent or after following links (400 `not-a-configuration`). `text` must have no NUL character and must have `vehicle_sil_simulation` in its first 4096 bytes (422 `config-unreadable`). So the server writes only configuration files that `api/configs` lists and that `api/config` reads again.
+3. The stamp: the SHA-256 of the file's bytes now differs from `stamp`: 409 `config-changed`. Read the file again, make the edit on that text and save with the new stamp.
+4. The launcher checks the text as the content of `file` with `--text-from-stdin` and the saved descriptions, so no process starts, and with `--compare-commands <file>` (not for a new file). A text whose `result` is `unreadable` or `usage` is 422 `config-unreadable`, whatever the options. Without `--allow-command-changes`, `commands` other than `"same"` (`"changed"`, `"not_compared"`, `null`) is 403 `commands-changed`: what cannot be compared is not saved. The message has the launcher's finding (`commands-changed`, `commands-not-compared`), and `detail` holds `{result, commands, findings}` of that check. An error elsewhere in the text (`result` `failed`) does not stop a save.
+5. The file is resolved once more (a symbolic link that now leads to another file is 409 `config-changed`; the launcher of step 4 compared with that resolved file) and the stamp is compared once more, then the server writes the text as UTF-8 bytes, as it is (a BOM, CRLF and a last line without a line end stay as sent), to a new file in the same directory whose name starts with `.vehicle-sil-gui-save-` (never listed), and puts that file in the place of `file`. An existing file keeps its mode; a symbolic link keeps pointing to the file, which gets the new content. A file that cannot be replaced (another program has it open on Windows, the file is read-only for this user, the directory cannot be written) is 409 `config-busy`, and the new file is removed. A new file never replaces a file that another program made after step 2 (409 `config-changed`): it is put in place with a hard link, or, on a file system without them, an empty file is made first and fails when one is there. On POSIX, the directory is synced after the replacement.
+
+The response is `{file, stamp}`, with the stamp of the saved content. A save takes one turn of the queue of the checks (503 `check-busy` as for a check). What the server kept of the old content is dropped: its descriptions are made again before the next check of its text, so the executables of the saved file describe themselves then (with `--allow-command-changes`, a new command runs with `--describe` at that point), and a `connect` needs a new list of `api/connections`. The second comparison of the stamp narrows the time in which another program can change the file between the check and the replacement; it does not close it. Examples: `save-config.json`, `error-commands-changed.json`.
 
 ### Stop (`api/stop`)
 
@@ -215,6 +230,8 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 403 | `forbidden-host` | `Host` is not `127.0.0.1:<port>` |
 | 403 | `forbidden-origin` | `Origin` is not the server's own (`POST` and WebSocket need `Origin`) |
 | 403 | `cors-not-allowed` | `OPTIONS` (CORS is not allowed) |
+| 403 | `save-disabled` | `POST api/config`: the server was started with `--no-save` |
+| 403 | `commands-changed` | `POST api/config`: the edit changes the commands that run, they could not be compared, or the file is new, and the server was started without `--allow-command-changes` (`detail` holds `{result, commands, findings}` of the launcher's check, or `null` for a new file). Example: `error-commands-changed.json` |
 | 404 | `file-not-found` | `file` is not under the root |
 | 404 | `not-found` | No such API or screen file |
 | 404 | `no-timeline` | `api/timeline/<session id>`: the server has no timeline file of that run (see "Timeline of a scenario run (`api/timeline`)") |
@@ -225,18 +242,20 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 409 | `not-running` | `api/time`, `api/write`: no run is running |
 | 409 | `scenario-running` | `api/write`: the running run is running a scenario (not written, so that the scenario result does not change). Example: `error-scenario-running.json` |
 | 409 | `session-changed` | `api/write`: `session` differs from the id of the running run (a write sent while the run changed). Nothing is written. Example: `error-session-changed.json` |
+| 409 | `config-changed` | `POST api/config`: the file's content no longer has `stamp`, or a new file (`stamp` `null`) is there already |
+| 409 | `config-busy` | `POST api/config`: the file could not be replaced (the message says why) |
 | 409 | `variables-not-ready` | `api/write`: the variable feature is not `ready` (the message includes `variables.reason` of the summary) |
-| 413 | `too-large` | The body exceeds 64 KiB (of `api/check`: 6 MiB + 64 KiB) |
-| 413 | `text-too-large` | `api/check`: `text` exceeds 1 MiB as UTF-8 |
+| 413 | `too-large` | The body exceeds 64 KiB (of `api/check` and `POST api/config`: 6 MiB + 64 KiB) |
+| 413 | `text-too-large` | `api/check`, `POST api/config`: `text` exceeds 1 MiB as UTF-8 |
 | 413 | `config-too-large` | `api/config`: the file exceeds 1 MiB |
 | 415 | `unsupported-media-type` | There is a body, but not `Content-Type: application/json` |
-| 422 | `config-unreadable` | `api/config`: the file is not UTF-8 text (a NUL byte, bytes that are not UTF-8) or cannot be read (also `text` of `api/check` and `api/describe`: cannot be read). Example: `error-config-unreadable.json` |
+| 422 | `config-unreadable` | `api/config`: the file is not UTF-8 text (a NUL byte, bytes that are not UTF-8) or cannot be read (also `text` of `api/check` and `api/describe`: cannot be read). `POST api/config`: the launcher cannot read the text as a configuration (`detail` holds `{result, commands, findings}`), or the text has no `vehicle_sil_simulation` in its first 4096 bytes. Example: `error-config-unreadable.json` |
 | 500 | `internal` | A server bug (no example; if it happens, look at stderr) |
 | 502 | `launcher-start` | The launcher cannot be started |
 | 502 | `launcher-output` | `check --json` did not write a check result, or `connections --json` no list |
 | 502 | `write-failed` | `api/write`: the write did not reach the Control Server (disconnected) |
 | 503 | `launcher-unusable` | The launcher cannot be used (the reason is in `launcher.problems` of `api/app`) |
-| 503 | `check-busy` | Too many checks (and lists of `api/connections`) waiting, or waiting too long |
+| 503 | `check-busy` | Too many checks (and lists of `api/connections`, and saves) waiting, or waiting too long |
 | 503 | `write-busy` | `api/write`: an earlier write is waiting for the Control Server's response and this one did not get its turn (not sent) |
 | 503 | `shutting-down` | The server is shutting down |
 | 503 | `too-many-connections` | WebSocket connection limit (handshake response) |
@@ -244,7 +263,7 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 504 | `check-timeout` | The check (or the list of `api/connections`) did not finish within the time limit (it was stopped) |
 | 504 | `write-timeout` | `api/write`: the Control Server did not answer in time (`limits.write_timeout_s`). It may have received the write (do not resend) |
 
-- `api/check` and `api/run` take the same fields: `file`, `$schema`, `vehicle_sil_run_request`, `scenario`, `variant`, `params`, `disable`, `enable`, `manual`, `strict`, `connect`, `time_policy`, `speed` and `start_paused`. With `text`, `api/check` takes only `file`, `$schema`, `vehicle_sil_run_request`, `variant`, `strict` and `text`. `api/describe` takes `file` and `variant`. `api/connections` takes `file` and `network`. Any other field (a misspelled one, or a key of the launcher's side) and any `null` give 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
+- `api/check` and `api/run` take the same fields: `file`, `$schema`, `vehicle_sil_run_request`, `scenario`, `variant`, `params`, `disable`, `enable`, `manual`, `strict`, `connect`, `time_policy`, `speed` and `start_paused`. With `text`, `api/check` takes only `file`, `$schema`, `vehicle_sil_run_request`, `variant`, `strict` and `text`. `api/describe` takes `file` and `variant`. `POST api/config` takes `file`, `text` and `stamp` (`stamp` is required, and may be `null`). `api/connections` takes `file` and `network`. Any other field (a misspelled one, or a key of the launcher's side) and any `null` give 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
 - Fields covered by `invalid-field`: `speed`, `start_paused`, `variant`, `params`, `enable`, `strict`, `connect`, `time_policy`, `network`, `force`, `disable`, `manual` (also the same name twice), `command`, `ms` and `value` of `api/time`, `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
 - Case of `unsupported`: `api/write` sent when the launcher lacks `control-server`. (The server requires `time-commands`, `stdin-run-until`, `state`, `speed`, `start-paused`, `scenario` and `manual-participants` when it starts, so `api/time` has no such case.)
 
@@ -252,7 +271,7 @@ The example files. The GUI server's tests check the other codes.
 
 | File | Contents |
 |---|---|
-| `error-already-running.json`, `error-check-failed.json`, `error-config-unreadable.json`, `error-not-writable.json`, `error-scenario-not-listed.json`, `error-scenario-running.json`, `error-session-changed.json`, `error-target-not-listed.json` | HTTP errors |
+| `error-already-running.json`, `error-check-failed.json`, `error-commands-changed.json`, `error-config-unreadable.json`, `error-not-writable.json`, `error-scenario-not-listed.json`, `error-scenario-running.json`, `error-session-changed.json`, `error-target-not-listed.json` | HTTP errors |
 | `error-invalid-watch.json` | WebSocket `error` |
 | `stop.json`, `stop-force.json`, `stop-ended.json` | Stop responses |
 | `time.json` | Time command response |
@@ -398,7 +417,7 @@ Notifications from the server.
 | `findings`, `findings_omitted` | `finding` events (without `event`, `seq` and `t_ms`), and the number not kept because the limit was exceeded |
 | `last_command` | The last `command` event without `event` and `t_ms` (`null` if none) |
 | `launcher_state` | The last `state` event of the launcher without `event` and `t_ms` (what the launcher accepts now; `null` if none yet). Only the last is kept |
-| `allowed` | What this server accepts now: `{start, stop, force}` ("What the server accepts (`allowed`)" below) |
+| `allowed` | What this server accepts now: `{start, stop, force, save}` ("What the server accepts (`allowed`)" below) |
 | `result` | `result` of the `result` event (`null` if none) |
 | `variables` | The state of the ECU variable feature, the variables of each participant, recent operations ("ECU variables" below) |
 | `log` | `{kept, dropped}` per source: the number of lines the server keeps and the number it dropped |
@@ -429,7 +448,7 @@ If the launcher exits without writing `result`, the summary has `launcher.runnin
 
 ## What the server accepts (`allowed`)
 
-`allowed` is `{rev, start, stop, force}`. Each of the last three is `{ok, reason, message}`: `ok` says whether the server would take the request now, `reason` is a code (`null` when `ok`), and `message` is one English sentence for a person (`null` when `ok`). It is in `session` (the summary), in the `allowed` message, and, so that it is also there when there is no run, at the top of `hello` and of the answer of `api/session`. A screen can enable a button from `ok` and show `message`, without a table of its own. `api/run` that is sent anyway answers with the same code as the error of `start` (409 `already-running` and `starting`, 503 `shutting-down` and `launcher-unusable`). `api/stop` does not answer with an error: it always answers 200 with the summary (and does nothing when `stop` or `force` has a reason), so the reasons of `stop` and `force` are only in `allowed`.
+`allowed` is `{rev, start, stop, force, save}`. Each of the last four is `{ok, reason, message}`, and `save` also has `caution`: `ok` says whether the server would take the request now, `reason` is a code (`null` when `ok`), and `message` is one English sentence for a person (`null` when `ok`). It is in `session` (the summary), in the `allowed` message, and, so that it is also there when there is no run, at the top of `hello` and of the answer of `api/session`. A screen can enable a button from `ok` and show `message`, without a table of its own. `api/run` that is sent anyway answers with the same code as the error of `start` (409 `already-running` and `starting`, 503 `shutting-down` and `launcher-unusable`). `api/stop` does not answer with an error: it always answers 200 with the summary (and does nothing when `stop` or `force` has a reason), so the reasons of `stop` and `force` are only in `allowed`. `POST api/config` sent anyway answers 403 `save-disabled` or 503 `shutting-down`.
 
 | Field | `reason` | When |
 |---|---|---|
@@ -442,6 +461,10 @@ If the launcher exits without writing `result`, the summary has `launcher.runnin
 | | `already-stopping` | A stop was already asked for (`stop` is `requested` or `forced`) |
 | `force` | `shutting-down`, `not-running` | As for `stop` |
 | | `already-forced` | The stop was already forced |
+| `save` | `shutting-down` | The server is ending |
+| | `save-disabled` | The server was started with `--no-save` |
+
+- `caution` of `save` is `null`, or `{code, message}` when the server saves but there is something to know first (the same shape as `caution` of the launcher's `allowed`). Its one code is `command-changes-allowed`: the server was started with `--allow-command-changes`, so it saves an edit that changes the commands that run, and new files. A screen shows the message near its save button. Whether one edit is saved is decided per request (`POST api/config`), not in `allowed`.
 
 - Only the first reason that holds is given, in the order of the table. While a run is starting, `stop` and `force` are `ok`: the request waits and applies when the launcher has started ("Stop (`api/stop`)").
 - What the launcher accepts (pause, step, speed, writes) is not here: it is `allowed` of `launcher_state`, as the launcher wrote it. `ok` there means the launcher would accept the command, not that it would change anything (a `pause` is `ok` while paused).
@@ -777,8 +800,8 @@ What the server keeps is limited; whatever exceeds a limit is counted and report
 
 | What | Limit | When exceeded |
 |---|---|---|
-| The body of a request | 64 KiB; of `api/check`, 6 MiB + 64 KiB (room for a text of 1 MiB however JSON escapes it: `\u0001` takes 6 bytes) | 413 `too-large` |
-| `text` of `api/check` | 1 MiB as UTF-8 | 413 `text-too-large` |
+| The body of a request | 64 KiB; of `api/check` and `POST api/config`, 6 MiB + 64 KiB (room for a text of 1 MiB however JSON escapes it: `\u0001` takes 6 bytes) | 413 `too-large` |
+| `text` of `api/check` and of `POST api/config` | 1 MiB as UTF-8 | 413 `text-too-large` |
 | The file that `api/config` reads | 1 MiB | 413 `config-too-large` |
 
 ### Log limits
