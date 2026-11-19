@@ -36,7 +36,7 @@ import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
 
-VERSION = "0.1.0"
+VERSION = "0.2.0-rc.1"
 URL = "https://github.com/rahanahu/vehicle-sil/releases/download/v{version}/{name}"
 RELEASE_PAGE = "https://github.com/rahanahu/vehicle-sil/releases/tag/v{version}"
 ARCHIVES = {  # platform: the archive's name on the release

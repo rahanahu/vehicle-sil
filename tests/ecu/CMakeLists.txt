@@ -4,7 +4,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_ecu_tests
   PREFIX ecu LABELS unit ecu TIMEOUT 60
   SOURCES test_describe_json.cpp test_j1939_node_argument.cpp
   LINK vehicle_sil::ecu)
-target_compile_definitions(vehicle_sil_ecu_tests PRIVATE VEHICLE_SIL_TEST_PROJECT_VERSION="${vehicle_sil_VERSION}")
+target_compile_definitions(vehicle_sil_ecu_tests PRIVATE VEHICLE_SIL_TEST_PROJECT_VERSION="${VEHICLE_SIL_VERSION_FULL}")
 
 # vehicle_sil::ecu, and the headers of vehicle_sil::simulation (simulation.hpp, ecu_main.hpp),
 # include no SIL Kit header, also through the vehicle-sil headers they include.

@@ -340,7 +340,7 @@ A request contains these 4 items:
 
 The example request:
 
-> The dashboard ECU connects to the J1939 network under the name `VehicleCAN`. The agreed name is `J1939_CAN`, and the engine ECU uses it. With different names, the 2 ECUs end up on separate buses and the dashboard ECU cannot receive the engine speed, unless every configuration file maps the name. Could you change `ecu.j1939("VehicleCAN")` in the code to `ecu.j1939("J1939_CAN")` and rebuild with vehicle-sil 0.1.0? Before you deliver it, verify that `networks[].name` in the `--describe` output is `J1939_CAN`. Here is the `check` finding: (the `error:` line from step 3)
+> The dashboard ECU connects to the J1939 network under the name `VehicleCAN`. The agreed name is `J1939_CAN`, and the engine ECU uses it. With different names, the 2 ECUs end up on separate buses and the dashboard ECU cannot receive the engine speed, unless every configuration file maps the name. Could you change `ecu.j1939("VehicleCAN")` in the code to `ecu.j1939("J1939_CAN")` and rebuild with vehicle-sil (the version that `vehicle_sil_launch version` prints)? Before you deliver it, verify that `networks[].name` in the `--describe` output is `J1939_CAN`. Here is the `check` finding: (the `error:` line from step 3)
 
 When you receive the rebuilt executable, replace the old one and run `check` again. In the example, the rebuilt dashboard ECU is in `../ecu_main/dashboard/`, so `simulation.fixed.yaml` changes the `command` of `Dashboard` to this line:
 

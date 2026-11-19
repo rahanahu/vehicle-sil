@@ -90,12 +90,13 @@ Each one links `vehicle_sil_cli` (`tools/common`, header-only) privately.
 
 Where to change:
 
-- `project(... VERSION)` in the root `CMakeLists.txt`
+- `project(... VERSION)` in the root `CMakeLists.txt` (numbers only), and `VEHICLE_SIL_VERSION_PRERELEASE` next to it: `rc.<n>`, `beta.<n>` or `alpha.<n>` for a pre-release, `""` for a release.
+- Together they make the full version (`0.2.0-rc.1`, the SemVer form), `VEHICLE_SIL_VERSION_FULL`. The executables report it, and every place below names it. The tag is `v<full version>`; a tag with a pre-release part makes a pre-release on GitHub.
 
 [CHANGELOG.md](../CHANGELOG.md) lists the places to update with it:
 
-- `pyproject.toml`, `gui/server/pyproject.toml`
-- `__version__` in `python/vehicle_sil_control/__init__.py`
+- `pyproject.toml`, `gui/server/pyproject.toml` (`uv lock` then writes the PEP 440 form, `0.2.0rc1`, in `uv.lock`)
+- `__version__` in `python/vehicle_sil_control/__init__.py` and in `gui/server/src/vehicle_sil_gui/__init__.py`
 - `template/get_tools.py`
 - `GIT_TAG` in `template/CMakeLists.txt`
 - The version in `template/README.md`
