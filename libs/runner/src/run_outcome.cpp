@@ -5,6 +5,7 @@
 // control link and of the stop request.
 #include "vehicle_sil/runner/run_outcome.hpp"
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -20,8 +21,22 @@ EndReason end_reason(const RunOutcome& outcome)
     if (!outcome.end.interrupted_by.empty())
     {
         // What asked first decides, whatever came after it (a Ctrl+C after a stop command is
-        // still the operator's stop).
-        return outcome.end.interrupted_kind == StopKind::Operator ? EndReason::Stopped : EndReason::Interrupted;
+        // still the operator's stop). An interrupt that was noted does; an operator's stop if it
+        // ended the simulation (or the run before the start), or if it came while the launcher
+        // waited for the participants to end and cut short the end of a required one (the stop
+        // decided how that one ended). One that cut short only the wait for the others leaves
+        // the simulation's own end.
+        if (outcome.end.interrupted_kind != StopKind::Operator)
+        {
+            return EndReason::Interrupted;
+        }
+        const bool cutRequired = std::any_of(outcome.participants.begin(), outcome.participants.end(), [](const ParticipantRun& p) {
+            return p.required && p.end_cut_short && (p.ending == Ending::Stopped || p.ending == Ending::Killed);
+        });
+        if (!outcome.end.interrupted_while_ending || cutRequired)
+        {
+            return EndReason::Stopped;
+        }
     }
     const bool ended = outcome.end.simulation == SimulationEnd::ReachedStopAt || outcome.end.simulation == SimulationEnd::Ended;
     return ended ? EndReason::Completed : EndReason::Failed;
@@ -30,16 +45,13 @@ EndReason end_reason(const RunOutcome& outcome)
 std::vector<std::string> ended_by_force(const RunOutcome& outcome)
 {
     std::vector<std::string> names;
-    if (end_reason(outcome) != EndReason::Stopped)
-    {
-        return names;
-    }
     const bool ran = outcome.end.simulation != SimulationEnd::NotStarted;
     for (const ParticipantRun& p : outcome.participants)
     {
-        // Not one that the launcher could not ask to stop, and not one it waited for in full (the
-        // finding did-not-end says that).
-        if (p.ending == Ending::Killed && !p.stop_request_failed && !(p.stopped_after_end && ran))
+        // Whatever asked (a stop, a signal, a supervisor that went away): only one whose wait a
+        // stop request cut short. Not one that the launcher could not ask to stop, and not one it
+        // waited for in full (the finding did-not-end says that).
+        if (p.ending == Ending::Killed && p.end_cut_short && !p.stop_request_failed && !(p.stopped_after_end && ran))
         {
             names.push_back(p.name);
         }

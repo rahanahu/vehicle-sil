@@ -623,11 +623,11 @@ In a run with `--control` and `--start-paused` that pauses before the step at ti
 
 A `command` event is written before what the command causes (such as `phase` `stopping`).
 
-A run stopped by `{"command":"stop"}` or by `Stop` from a Control Server client is not an interrupted run: `result` is `"stopped"` and the exit code is 0 (the note `stopped`), or `"incomplete"` and 5 if a scenario was stopped before its end. The end of stdin counts as an interrupt (`"interrupted"`, 130): the program that wrote the commands has gone. See "How a run ended" in [simulation-run.md](simulation-run.md#how-a-run-ended-end-ok-message).
+A run stopped by `{"command":"stop"}` or by `Stop` from a Control Server client is not an interrupted run: `result` is `"stopped"` and the exit code is 0 (the note `stopped`), or `"incomplete"` and 5 if a scenario was stopped before its end. A stop that comes only after the simulation has ended (while the participants end) changes `end` and `result` only if it cuts short the end of a required participant; otherwise they are as the simulation ended. The end of stdin counts as an interrupt (`"interrupted"`, 130): the program that wrote the commands has gone. See "How a run ended" in [simulation-run.md](simulation-run.md#how-a-run-ended-end-ok-message).
 
 | Stopped by | `interrupted_by` | `end` |
 |---|---|---|
-| `{"command":"stop"}` | `"stop command"` | `"stopped"` |
+| `{"command":"stop"}` | `"stop command"` | `"stopped"` (before the simulation ended; afterwards as described in [How a run ended](simulation-run.md#how-a-run-ended-end-ok-message)) |
 | End of stdin | `"end of input"` | `"interrupted"` |
 | `Stop` from a Control Server client | `"control server stop"` | `"stopped"` |
 

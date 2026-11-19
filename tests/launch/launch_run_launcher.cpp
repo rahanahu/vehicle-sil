@@ -126,6 +126,7 @@ int main(int argc, char** argv)
             {"stall", stall},
             {"stand_still", stand_still},
             {"stdin_ending", stdin_ending},
+            {"stdin_ending_optional", stdin_ending_optional},
             {"stdin_eof", stdin_eof},
             {"stdin_killed", stdin_killed},
             {"stdin_stop", stdin_stop},
