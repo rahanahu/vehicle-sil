@@ -420,6 +420,14 @@ def text_check_command(launcher: Launcher, file: str, request: Path, description
                               "--request", str(request), "--", file]
 
 
+def save_check_command(launcher: Launcher, file: str, request: Path, descriptions: Path, compare: bool) -> list[str]:
+    """The check of a text that POST api/config would save as `file`: text_check_command's, which starts no process,
+    and with compare also check --compare-commands `file` (the saved file, from the root as the working directory),
+    which says in `commands` whether the text runs the same commands. A new file has nothing to compare with."""
+    argv = text_check_command(launcher, file, request, descriptions)
+    return argv[:-2] + ["--compare-commands", file, "--", file] if compare else argv
+
+
 def describe_command(launcher: Launcher, file: str, request: Path, descriptions: Path) -> list[str]:
     """The check of the file as it is saved, which starts each executable with --describe, as every check does, and
     saves their output in `descriptions` for text_check_command."""

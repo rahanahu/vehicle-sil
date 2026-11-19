@@ -29,6 +29,12 @@
           "ok": false,
           "reason": "not-running",
           "message": "no simulation is running: there is nothing to stop"
+        },
+        "save": {
+          "ok": true,
+          "reason": null,
+          "message": null,
+          "caution": null
         }
       },
       "replay": null
@@ -57,6 +63,12 @@
           "ok": true,
           "reason": null,
           "message": null
+        },
+        "save": {
+          "ok": true,
+          "reason": null,
+          "message": null,
+          "caution": null
         }
       }
     },
@@ -79,6 +91,12 @@
           "ok": false,
           "reason": "not-running",
           "message": "no simulation is running: there is nothing to stop"
+        },
+        "save": {
+          "ok": true,
+          "reason": null,
+          "message": null,
+          "caution": null
         }
       }
     }

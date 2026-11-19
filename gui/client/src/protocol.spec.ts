@@ -10,6 +10,7 @@ import {
   readDashboardResponse,
   readLauncherEvent,
   readRecording,
+  readSavedConfig,
   readScenarioList,
   readServerMessage,
   readSessionResponse,
@@ -25,6 +26,7 @@ const READERS: Record<string, (value: unknown) => unknown> = {
   'GET api/config': readConfigText,
   'POST api/check': readCheckResponse,
   'POST api/describe': readCheckResponse,
+  'POST api/config': readSavedConfig,
   'POST api/connections': readConnections,
   'POST api/run': readSessionResponse,
   'POST api/stop': readSessionResponse,
@@ -128,6 +130,13 @@ describe('the readers accept every example of gui/protocol', () => {
       ok: true,
       reason: null,
       message: null,
+    });
+    // and whether it saves a configuration file (save has a caution besides)
+    expect(hello?.type === 'hello' && hello.allowed?.save).toEqual({
+      ok: true,
+      reason: null,
+      message: null,
+      caution: null,
     });
     // the allowed message carries the same shape, and its rev goes up with each change
     const own = examples

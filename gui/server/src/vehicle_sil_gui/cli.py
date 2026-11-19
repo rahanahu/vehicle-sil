@@ -46,6 +46,11 @@ The ECUs' variables are read from the launcher's control server (a launcher with
 the server is started on a free port of 127.0.0.1 with a token made for each run). They need grpcio and protobuf
 in this Python; without them, or with --no-variables, everything else works.
 
+The screen can save the text of a configuration file (POST api/config) when the launcher's check says that the edit
+keeps the commands that run (the networks, the mapping, external: the work of a network editor). --no-save saves
+nothing. --allow-command-changes also saves an edit that changes the commands, and new files: then whoever has the
+token in the URL can run any command as this user (also the code of a --web screen and of its panels).
+
 examples:
   vehicle-sil-gui examples/simulation.yaml          # root: the file's directory
   vehicle-sil-gui --root examples --no-browser --json
@@ -81,6 +86,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--no-variables", action="store_true",
                    help="do not start the launcher's control server (run --control): the screen then shows no "
                         "variables of the ECUs, and --start-paused stands still after the first step, not before it")
+    p.add_argument("--no-save", action="store_true",
+                   help="the screen saves no configuration file (POST api/config is refused with save-disabled)")
+    p.add_argument("--allow-command-changes", action="store_true",
+                   help="the screen also saves an edit that changes the commands that run, and new files: whoever "
+                        "has the token can then run any command as this user (not with --no-save)")
     p.add_argument("--version", action="version", version=f"vehicle-sil-gui {__version__}")
     return p.parse_args(argv)
 
@@ -116,6 +126,9 @@ def main(argv: list[str] | None = None) -> int:
         return usage_error("--check-timeout must be more than 0 seconds")
     if not args.silent_after >= 1:
         return usage_error("--silent-after must be 1 second or more (the launcher writes a heartbeat every second)")
+    if args.no_save and args.allow_command_changes:
+        return usage_error("--no-save and --allow-command-changes cannot be used together: --no-save saves nothing; "
+                           "leave out one of them")
     web_dir = Path(args.web) if args.web is not None else find_web_dir()
     if args.web is not None and (problem := check_web_dir(web_dir)):
         return usage_error(problem)
@@ -160,7 +173,8 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
     server = GuiServer(Options(root=root, launcher=launcher, port=port, token=token, initial_file=initial,
                                dev_origin=args.dev_origin, web_dir=web_dir, stop_timeout_s=args.stop_timeout,
                                check_timeout_s=args.check_timeout, silent_after_s=args.silent_after,
-                               variables=not args.no_variables))
+                               variables=not args.no_variables, save=not args.no_save,
+                               command_changes_allowed=args.allow_command_changes))
     runner = web.AppRunner(server.app(), access_log=None, handle_signals=False, shutdown_timeout=RUNNER_SHUTDOWN_S)
     await runner.setup()
     stop = asyncio.Event()
@@ -180,6 +194,10 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
             if dev_url:
                 print(f"vehicle-sil-gui: through the development server: {dev_url}", file=sys.stderr)
             print("vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server", file=sys.stderr)
+        if args.allow_command_changes:
+            print("vehicle-sil-gui: --allow-command-changes: the screen can save edits that change the commands that "
+                  "run, and new files, so whoever has the token in the URL can run any command as this user",
+                  file=sys.stderr)
         if not args.no_browser:
             page = open_browser(dev_url or url)
             asyncio.get_running_loop().call_later(BROWSER_PAGE_S, remove, page)

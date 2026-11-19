@@ -232,10 +232,14 @@ function linkReason(link: Link, s: Snapshot): Reason | null {
 const busyReason = (name: string) =>
   reason('busy', `the previous ${name} has not been answered yet: wait for it`);
 
-/** An entry of the GUI server's `allowed`, passed on. */
-function fromServer(item: ServerAllowedItem, fallback: string): Control {
+/** An entry of the GUI server's `allowed`, passed on (with its caution, if it has one). */
+function fromServer(
+  item: ServerAllowedItem,
+  fallback: string,
+  caution: Reason | null = null,
+): Control {
   return item.ok
-    ? control(true)
+    ? control(true, null, caution)
     : control(false, reason(item.reason ?? 'refused', item.message ?? fallback));
 }
 
@@ -346,6 +350,15 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
   const speedMax = numberOf(speedItem, 'max') ?? s.limits.speed_max;
   const runUntil = timeControl('run_until', 'run until');
 
+  // save: the GUI server owns it (`allowed.save`); the client adds the connection. Unknown until the server says: open,
+  // as start is (the server refuses what it does not save)
+  const serverSave = s.allowed?.save;
+  let save: Control;
+  if (down) save = control(false, down);
+  else if (serverSave)
+    save = fromServer(serverSave, 'the server does not save now', serverSave.caution);
+  else save = control(true);
+
   const controls: FrontControls = {
     start,
     stop,
@@ -365,6 +378,7 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
       // The launcher's promise (docs/simulation-events.md, `allowed`): "max" is accepted unless min equals max
       fastest: speedMin !== speedMax,
     },
+    save,
   };
   return { controls, write: timeControl('write', 'write') };
 }
