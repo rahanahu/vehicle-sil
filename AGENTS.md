@@ -74,7 +74,19 @@ Write the title in the [Conventional Commits](https://www.conventionalcommits.or
 4. You put important design constraints into the documentation.
 5. The documentation matches the actual code.
 
-Do not rewrite existing commit history. Ignore settings alone do not untrack a tracked file, so do not delete, move or untrack tracked files without permission.
+Ignore settings alone do not untrack a tracked file: untrack it in a commit (`git rm --cached`).
+
+### What to protect, and delegation
+
+Ordinary changes to the product go through a pull request and its review and need no separate approval: adding, changing, deleting, moving, renaming, splitting or merging tracked files, refactoring included. Git keeps them, the pull request shows them, and they can be undone.
+
+Ask the owner first, or do not do it, when a step would:
+
+- discard or overwrite someone else's work: uncommitted changes, another worktree, a branch that is not merged;
+- delete or overwrite data that Git does not hold, such as local records, machine images and backups;
+- be irreversible or reach outside: rewriting pushed history, force-pushing a branch that others use, pushing to `main` without a pull request, publishing a tag or a release, opening issues or pull requests upstream.
+
+An agent that the owner gave a task may hand parts of it to other agents. The task description is the delegation: within it, the other agent has the same authority, and no more. An agent stops and reports to whoever gave it the task when a step falls outside the task or would do one of the things above.
 
 ## Agent skills
 
