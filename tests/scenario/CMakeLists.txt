@@ -1,7 +1,20 @@
-# vehicle_sil_scenario: the boundary of the library. Its unit tests are in tests/launch.
+# vehicle_sil_scenario: the boundary of the library, and its unit tests (the test names keep the prefix
+# launch.: the executable links the scenario and the configuration, without the launcher's library, core and SIL Kit).
 if(NOT TARGET vehicle_sil::scenario)
   return()
 endif()
+
+vehicle_sil_add_harness_tests(vehicle_sil_scenario_tests
+  REGISTRATION launch.registration.vehicle_sil_scenario_tests
+  PREFIX launch LABELS unit launch scenario TIMEOUT 60
+  SOURCES
+    test_scenario.cpp
+    test_scenario_line.cpp
+  LINK vehicle_sil::scenario vehicle_sil::config
+       vehicle_sil::process # the files of the scenario's tests (test_scenario.cpp)
+       vehicle_sil::signal) # the shapes of a scenario (test_scenario_line.cpp: scenario_shapes.hpp)
+target_include_directories(vehicle_sil_scenario_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${PROJECT_SOURCE_DIR}/tests/config)
 
 # The scenario is pure: it includes no SIL Kit header and, of the core headers, only those of
 # vehicle_sil::sim_base, directly or through the headers it includes. The library does not link

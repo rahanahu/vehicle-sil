@@ -18,7 +18,7 @@ For scenario, timeline or batch changes, see the [scenario change checklists](co
 
 | Test | Details |
 |---|---|
-| `launch.*` | Loading of configuration files, the check rules, human-readable and JSON output (starts no processes) |
+| `launch.*` | Loading of configuration files, the check rules, human-readable and JSON output (starts no processes). Four test executables carry the name: `tests/config`, `tests/scenario` and `tests/runner` (each links only its own library, and has its name as a second label: `-L config`, `-L scenario`, `-L runner`) and `tests/launch` (the rest) |
 | `launch_cli.*` | Runs `vehicle_sil_launch check` as an executable |
 | `launch_run.*` | Runs `vehicle_sil_launch run` as an executable |
 | `config.*` | The boundary of `libs/config` (what its headers and sources may include) |
@@ -92,8 +92,8 @@ Implementation:
 | Code shared by the readers of configuration files and scenarios | `config/detail/yaml_reader.hpp` |
 | The time lock and the planned speed, `detail::plan_time_step()` (the default time step of the controller), `detail::coarse_time_step()` and `RunTiming::actual_speed()` | `src/time_plan.cpp` |
 
-- Tests: `tests/launch` (the rules and the readers), `tests/config` (the boundary)
-- `ctest -R`: `^launch\.` (the rules), `^config\.` (the boundary)
+- Tests: `tests/config` (the rules and the readers, linked without the launcher's library, core and SIL Kit; the boundary), `tests/launch` (the outputs of the check and the executables of a participant, which look at the files of the machine)
+- `ctest -R`: `^launch\.` (the rules; `-L config` for the part in `tests/config`), `^config\.` (the boundary)
 
 ### `libs/scenario`
 
@@ -110,8 +110,8 @@ Public headers:
 
 The files of the reader, the engine and the timeline are listed in [code-map-scenario.md](code-map-scenario.md). `scenario_catalog()` is in `src/scenario_check.cpp`.
 
-- Tests: `tests/launch` (the reader and the engine), `tests/scenario` (the boundary)
-- `ctest -R`: `^launch\.` (the reader and the engine), `^scenario\.` (the boundary)
+- Tests: `tests/scenario` (the reader and the engine, linked without the launcher's library, core and SIL Kit; the boundary), `tests/launch` (the timeline file as the launcher writes it, `test_scenario_timeline.cpp`)
+- `ctest -R`: `^launch\.` (the reader and the engine; `-L scenario` for the part in `tests/scenario`), `^scenario\.` (the boundary)
 
 ### `libs/runner`
 
@@ -146,8 +146,8 @@ Implementation:
 
 The comment at the top of `run.cpp` and the class comments in each `run_*.hpp` describe the role of each class that shares the work of `run`, and which thread handles which state under which lock.
 
-- Tests: `tests/launch` (the run's parts), `tests/runner` (the boundary)
-- `ctest -R`: `^launch\.`, `^launch_run\.` (the parts and the run), `^runner\.` (the boundary)
+- Tests: `tests/runner` (the run's parts that need no launcher's library: the judgement, the close, the traffic, the rules of the controls, the plan; the boundary), `tests/launch` (the run with the event stream and the report, `test_run.cpp`, `test_run_controls.cpp`, `test_events.cpp`)
+- `ctest -R`: `^launch\.`, `^launch_run\.` (the parts and the run; `-L runner` for the part in `tests/runner`), `^runner\.` (the boundary)
 
 ### `libs/launch`, `tools/launch`
 
@@ -400,7 +400,7 @@ Documentation to update:
 
 Tests:
 
-- `^launch\.` (`test_config.cpp`, `test_check.cpp`, `test_run.cpp`)
+- `^launch\.` (`tests/config/test_config.cpp`, `tests/config/test_check.cpp`, `tests/runner/test_run.cpp`)
 - `launch_run.network_names`: ECUs with different names communicate on one bus, a variant changes the map, the command of `manual` and the event, an executable that cannot take `--map-network`
 - `schema.files_and_launcher`
 
@@ -433,7 +433,7 @@ Documentation to update:
 
 Tests:
 
-- `^launch\.` (`test_config.cpp`, `test_check.cpp`, `test_run.cpp`, `test_j1939_nodes_match.cpp`)
+- `^launch\.` (`tests/config/test_config.cpp`, `tests/config/test_check.cpp`, `tests/runner/test_run.cpp`, `tests/config/test_j1939_nodes_match.cpp`)
 - `launch_run.j1939_nodes`: 2 copies of one ECU communicate with an entry, the check says which entry to write without one, a variant changes the entry, the command of `manual` and the event, a `describe: false` participant, an executable that cannot take `--j1939-node`
 - `schema.files_and_launcher`
 
@@ -469,7 +469,7 @@ Rules:
 
 Tests:
 
-- `^launch\.` (`test_events.cpp`)
+- `^launch\.` (`tests/launch/test_events.cpp`)
 - `launch_run.events_stalled`, `events_slow`, `events_nonblocking`
 
 ### Timing of `run`
@@ -574,7 +574,7 @@ Rules:
 
 Tests:
 
-- `launch.the_numbers_are_those_of_the_last_step_*`, `launch.when_the_samples_come_*`, `launch.only_a_few_samples_are_kept_*`, `launch.a_flood_while_nobody_looks_*`, `launch.a_network_says_whether_*`, `launch.every_network_of_the_file_*`, `launch.a_participant_that_is_not_counted_says_why` (`tests/launch/test_traffic.cpp`)
+- `launch.the_numbers_are_those_of_the_last_step_*`, `launch.when_the_samples_come_*`, `launch.only_a_few_samples_are_kept_*`, `launch.a_flood_while_nobody_looks_*`, `launch.a_network_says_whether_*`, `launch.every_network_of_the_file_*`, `launch.a_participant_that_is_not_counted_says_why` (`tests/runner/test_traffic.cpp`)
 - `launch.the_text_for_people`, `launch.the_json_report`
 - `launch_run.traffic`: the same output in every run with the 2 ECUs of the example, buses split and joined with `network_names`, an ECU that declares no variables, participants that are not counted, a network on which nobody is known to be
 - `^launch_run\.scenario`, `control_server.launcher`

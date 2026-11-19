@@ -17,7 +17,7 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 
 ### Naming and registration
 
-A test is named `<prefix>.<name>`. The prefix is `PREFIX` in `tests/<area>/CMakeLists.txt`.
+A test is named `<prefix>.<name>`. The prefix is `PREFIX` in `tests/<area>/CMakeLists.txt`. Several areas can share a prefix: `launch.*` is in `tests/config`, `tests/scenario`, `tests/runner` and `tests/launch` (one test executable each; the first three also have the label of their directory, `config`, `scenario` or `runner`), so that the test of a layer links only that layer.
 
 | Kind of test | Name | Registration |
 |---|---|---|
@@ -150,7 +150,7 @@ ctest --preset linux-gcc-release -L fetchcontent
 For every label:
 
 - The log of each process stays under `build/<preset>/tests/`, in `integration/<scenario>/`, `virtual_time/<scenario>/`, `lin_cluster/<scenario>/` and `vector_xl/integration/<scenario>/`. When a test fails, the launcher prints all the logs.
-- The `<label>.registration` test of each test executable detects test cases that are not registered (it compares the executable's `--list` with the registered names).
+- The `<label>.registration` test of each test executable detects test cases that are not registered (it compares the executable's `--list` with the registered names). Where one prefix is shared by executables of several directories, the test is `launch.registration` for `tests/launch` and `launch.registration.<target>` for the others.
 - In a cross build, if you set `CMAKE_CROSSCOMPILING_EMULATOR` (for example `wine`), `ctest` runs the test executables with it (the `registration` tests included). Make the Windows DLLs (the MinGW runtime libraries) findable, for example by placing them next to the executables.
 - The test presets run 8 tests in parallel. On a computer with fewer CPUs, `scripts/verify.py` runs as many as there are CPUs.
 - Tests that measure wall-clock duration (`virtual_time.*`, `core.virtual_time_*`, the LIN speed tests) run alone.
@@ -161,7 +161,7 @@ Set on the tests of command-line parsing and of writing to stdout and stderr (`u
 
 | Also set on | Details |
 |---|---|
-| `core`, `lin`, `step`, `can`, `can_bridge`, `eth`, `j1939`, `peer`, `testkit`, `ecu`, `simulation`, `control`, `control_server`, `launch`, `process`, `vector_xl` | Unit tests and boundary checks |
+| `core`, `lin`, `step`, `can`, `can_bridge`, `eth`, `j1939`, `peer`, `testkit`, `ecu`, `simulation`, `control`, `control_server`, `launch`, `config`, `scenario`, `runner`, `process`, `vector_xl` | Unit tests and boundary checks |
 | `template.get_tools` | Tests the template's `get_tools.py`, and `template` and `version` of `scripts/package.py`, with locally built archives |
 | `param_service.demo` | The only example run that has it |
 
