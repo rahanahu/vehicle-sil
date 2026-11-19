@@ -662,7 +662,6 @@ Writes during a scenario have the `reason` `scenario-running`.
 | Lateness at a set speed | If the simulation falls behind real time, it does not try to catch up later. |
 | Operations that do not exist | Reset, starting and restarting participants, and selecting CAN or LIN channels. |
 | Runs the server covers | One run of that launcher only. The server closes when the run ends. |
-| `status` of a peer (`Peer.failed` and `error` in Python, `FAILED` in the CLI) | Always empty. ECU Agents do not send it. |
 | Value subscriptions | Latest value only. A newer value that arrives before the client reads replaces the older one. |
 
 - When a run at a set speed falls behind, it keeps going at the set speed, shifted back by the lateness (see "How lateness is measured" in [internals/virtual-time.md](internals/virtual-time.md#how-lateness-is-measured)).

@@ -259,7 +259,7 @@ Monitoring covers the networks and nodes that exist when the schema is fixed (by
 
 In the last case the schema stays open, so variables declared after the call that threw are also ECU variables in `describe()`.
 
-Step failures are not reported here (no step runs after a failure). Read `Peer::failed()` and `error()` (thread-safe) on the transport side.
+Step failures are not reported here (no step runs after a failure). A participant's failure reaches clients through the simulation monitoring, not through the Agent.
 
 ## Control Server core (`vehicle_sil::control::Hub`)
 
@@ -268,10 +268,9 @@ The Hub is the part of the Control Server that does not depend on how it communi
 ### Calls from the transport
 
 - For each connection, the transport calls `agent_connected(hello, link)` and receives a `ConnectionId`.
-- From then on, it passes what it receives from the Agent (`agent_submitted`, `agent_result`, `agent_values`, `agent_availability`, `agent_events`, `agent_status`) and the disconnection (`agent_disconnected`) with that ID.
+- From then on, it passes what it receives from the Agent (`agent_submitted`, `agent_result`, `agent_values`, `agent_availability`, `agent_events`) and the disconnection (`agent_disconnected`) with that ID.
 - The `hello` is built after the Agent is attached to the `Peer` with `attach()` (so that the monitoring outputs are in the schema).
-- `agent_status` receives `Peer::failed()` and `error()` (step failures do not arrive through the monitoring outputs).
-- The SIL Kit transport does not call `agent_status` (it remains in the Hub's API). The `status` of a peer that clients see is therefore always empty, and the simulation monitoring (`SimulationMonitor`) reports participant failures.
+- A participant's failure does not reach the clients through the peer: the simulation monitoring (`SimulationMonitor`) reports it, and the Agent's disconnection announces the peer as disconnected.
 - `agent_connected()` needs a non-empty name, a link and a `max_pending` greater than 0.
 
 ### `AgentLink::send()`

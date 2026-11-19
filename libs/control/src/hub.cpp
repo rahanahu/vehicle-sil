@@ -462,7 +462,6 @@ ConnectionId Hub::agent_connected(PeerHello hello, std::shared_ptr<AgentLink> li
                     "the peer restarted");
         entry.latest.reset();
         for_subscribers(hello.participant, [&](Subscription& s) { s.drop_values(hello.participant); });
-        entry.info.status = PeerStatus{};
     }
     else if (!inserted && hello.open_seqs)
     {
@@ -834,27 +833,6 @@ void Hub::agent_events(ConnectionId id, const std::vector<Event>& events)
             }
         }
     });
-}
-
-void Hub::agent_status(ConnectionId id, PeerStatus status)
-{
-    const std::lock_guard lock(mutex_);
-    const auto* c = connection(id);
-    if (c == nullptr)
-    {
-        return;
-    }
-    auto it = peers_.find(c->participant);
-    if (it == peers_.end() || it->second.connection != id)
-    {
-        return;
-    }
-    if (it->second.info.status.failed == status.failed && it->second.info.status.error == status.error)
-    {
-        return;
-    }
-    it->second.info.status = std::move(status);
-    announce_peer(it->second);
 }
 
 std::vector<PeerInfo> Hub::peers() const
