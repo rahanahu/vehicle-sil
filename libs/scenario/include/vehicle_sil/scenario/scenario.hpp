@@ -378,7 +378,8 @@ struct ScenarioRead
 /// Per participant of `scenario` (Scenario::participants): whether a step that runs reads a value
 /// its ECU sends: a condition (expect, wait_until, the expect beside a ramp or a wave) names one of
 /// its variables, or a ramp or a wave of one of its variables takes its base from the variable's
-/// value (no from, no around). The one place that says which ECUs a scenario needs samples of in
+/// value (no from, no around) and no earlier step of the scenario has put a value on that
+/// variable (a skipped step has not). The one place that says which ECUs a scenario needs samples of in
 /// every step: the check's warning, the argument the run gives them, and what the run refuses.
 [[nodiscard]] std::vector<bool> participants_read(const Scenario& scenario);
 
