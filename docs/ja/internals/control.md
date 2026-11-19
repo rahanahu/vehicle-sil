@@ -332,6 +332,7 @@ Agent は、participant 名（空は不可）と、起動ごとの ID（incarnat
 - Peer ごとにまとめた `Command`（その番号を `seq` に持つ）を送信します。
 - Hub が確認するのは、Peer が接続していること、変数があって書けること、その Peer の未完了の操作が `max_pending`（hello で受け取る）より少ないこと（多ければ Busy）だけです。
 - 型、範囲、反映するステップは Agent が決めます。
+- Peer の未完了の操作の数は、終わっていない操作だけを見て数えます。そのため、保持している終わった操作（`max_operations`）の数で費用は増えません。
 
 Peer ごとの状態は Sent → Queued（Agent が積んだ）→ Applied、Late、Rejected、Cancelled のどれか、または Disconnected、Invalid、Busy、Unknown です。Sent、Queued、Disconnected 以外は確定で、二度と変わりません。
 

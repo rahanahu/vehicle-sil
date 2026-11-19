@@ -1,7 +1,30 @@
-# vehicle_sil_runner: the boundary of the library. Its unit tests are in tests/launch.
+# vehicle_sil_runner: the boundary of the library, and its unit tests (the test names keep the prefix
+# launch.: the executable links the runner, without the launcher's library).
 if(NOT TARGET vehicle_sil::runner)
   return()
 endif()
+
+vehicle_sil_add_harness_tests(vehicle_sil_runner_tests
+  REGISTRATION launch.registration.vehicle_sil_runner_tests
+  PREFIX launch LABELS unit launch runner TIMEOUT 60
+  SOURCES
+    test_control_rules.cpp
+    test_run.cpp
+    test_run_controls.cpp
+    test_run_outside.cpp
+    test_run_plan.cpp
+    test_stop_requests.cpp
+    test_traffic.cpp
+  LINK vehicle_sil::runner vehicle_sil::core # core: the time commands with a controller (test_control_rules.cpp)
+       vehicle_sil::control # the hub that the run's samples come from (test_traffic.cpp)
+       vehicle_sil::control_silkit # the hub's transport of a real connection (test_run.cpp)
+       vehicle_sil::process # the participants' processes that a run ends (test_run.cpp)
+       # the statistics lines as the bridges print them, which a run reads (test_run_outside.cpp)
+       vehicle_sil::ethernet_bridge_core vehicle_sil::can_bridge_core)
+# libs/runner/src: the run's private headers that the tests read (run_pacing.hpp, run_notes.hpp,
+# run_connection.hpp).
+target_include_directories(vehicle_sil_runner_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/config
+                           ${PROJECT_SOURCE_DIR}/libs/runner/src)
 
 # The public headers of the runner (vehicle_sil/runner/, detail/ among them) include no SIL Kit
 # header and no header of core's runtime, directly or through the headers they include: the SIL Kit

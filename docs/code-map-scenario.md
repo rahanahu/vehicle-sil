@@ -145,7 +145,7 @@ Tests:
 
 - `^launch\.scenario_`: with a fake ECU model, the result is the same when the receive order changes
 - `launch.scenario_wave_*`: waveform values, values after the waveform ends, findings
-- `launch.scenario_line_*` (`tests/launch/test_scenario_line.cpp`): the input lines alone
+- `launch.scenario_line_*` (`tests/scenario/test_scenario_line.cpp`): the input lines alone
 - `launch.scenario_dither_*`, `launch.timeline_has_the_dithers_*` (the reference is `tests/launch/timeline/dither.yaml`)
 - `launch.scenario_expect_beside_*`: the interval of an `expect` beside `ramp` and `wave`, the order in which steps are decided, skipping only the `expect` by variant
 - `^signal\.`

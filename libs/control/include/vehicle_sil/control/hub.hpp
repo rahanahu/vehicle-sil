@@ -18,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <variant>
 #include <vector>
@@ -487,6 +488,11 @@ private:
     std::map<ConnectionId, Connection> connections_;
     std::map<std::uint64_t, Operation> operations_;
     std::deque<std::uint64_t> finished_; ///< finished operations, oldest first
+    /// The seq of every operation in operations_ that is not finished, so that counting a peer's
+    /// commands in flight does not walk the finished ones kept for operation(). Added only after
+    /// write() inserts an operation, removed only where target_changed() finishes it; an operation
+    /// leaves operations_ (forget_finished()) only once finished.
+    std::set<std::uint64_t> open_;
     std::vector<std::weak_ptr<Subscription>> subscriptions_;
     ValuesTap values_tap_;
     std::map<std::string, VariableMap, std::less<>> variable_maps_;

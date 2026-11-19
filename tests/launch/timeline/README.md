@@ -2,7 +2,7 @@
 
 Each `<name>.yaml` here is a scenario, and `<name>.timeline.json` the timeline file
 (`run --scenario --timeline`, [docs/simulation-run.md](../../../docs/simulation-run.md)) that the scenario's
-engine writes for it when it runs against the model ECUs of `tests/launch/test_scenario.cpp`. The test
+engine writes for it when it runs against the model ECUs of `tests/scenario/scenario_model.hpp` (the test is `tests/launch/test_scenario_timeline.cpp`). The test
 `launch.timeline_files_are_the_references` compares them, so a change of the engine or of the file's form
 shows as a difference of these files.
 

@@ -17,7 +17,7 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 
 ### 名前と登録
 
-テストの名前は `<接頭辞>.<名前>` です。接頭辞は `tests/<領域>/CMakeLists.txt` の `PREFIX` です。
+テストの名前は `<接頭辞>.<名前>` です。接頭辞は `tests/<領域>/CMakeLists.txt` の `PREFIX` です。接頭辞を複数の領域が共有することがあります。`launch.*` は `tests/config`、`tests/scenario`、`tests/runner`、`tests/launch` にあり（実行ファイルは各 1 つ。前の 3 つはディレクトリのラベル `config`、`scenario`、`runner` も持ちます）、層ごとの試験がその層だけをリンクするようにしてあります。
 
 | テストの種類 | 名前 | 登録の方法 |
 |---|---|---|
@@ -150,7 +150,7 @@ ctest --preset linux-gcc-release -L fetchcontent
 どのラベルにも共通すること:
 
 - 各プロセスのログは `build/<preset>/tests/` の下の `integration/<シナリオ>/`、`virtual_time/<シナリオ>/`、`lin_cluster/<シナリオ>/`、`vector_xl/integration/<シナリオ>/` に残ります。失敗したときは、ランチャーがすべてのログを出力します。
-- テストケースの登録漏れは、テストの実行ファイルごとの `<ラベル>.registration` テストが検出します（実行ファイルの `--list` と登録した名前を比べます）。
+- テストケースの登録漏れは、テストの実行ファイルごとの `<ラベル>.registration` テストが検出します（実行ファイルの `--list` と登録した名前を比べます）。接頭辞を複数のディレクトリの実行ファイルが共有するときは、`tests/launch` のものが `launch.registration`、ほかが `launch.registration.<ターゲット>` です。
 - クロスビルドでは、`CMAKE_CROSSCOMPILING_EMULATOR`（たとえば `wine`）を指定すると、`ctest` がテストの実行ファイルをそれで動かします（`registration` テストも含みます）。Windows の DLL（MinGW の実行時ライブラリ）は、実行ファイルの隣に置くなどして見つかるようにしてください。
 - テストプリセットは 8 並列で実行します。`scripts/verify.py` は、CPU がそれより少ない PC では CPU の数だけ並べます。
 - 壁時計の所要時間を測るテスト（`virtual_time.*`、`core.virtual_time_*`、LIN の速度のテスト）は単独で実行されます。
@@ -161,7 +161,7 @@ ctest --preset linux-gcc-release -L fetchcontent
 
 | ほかに付くもの | 内容 |
 |---|---|
-| `core`、`lin`、`step`、`can`、`can_bridge`、`eth`、`j1939`、`peer`、`testkit`、`ecu`、`simulation`、`control`、`control_server`、`launch`、`process`、`vector_xl` | 単体テストと境界の検査 |
+| `core`、`lin`、`step`、`can`、`can_bridge`、`eth`、`j1939`、`peer`、`testkit`、`ecu`、`simulation`、`control`、`control_server`、`launch`、`config`、`scenario`、`runner`、`process`、`vector_xl` | 単体テストと境界の検査 |
 | `template.get_tools` | テンプレートの `get_tools.py` と、`scripts/package.py` の `template`、`version` を、手元で作ったアーカイブで確認する |
 | `param_service.demo` | サンプルの実行のうち、これにだけ付く |
 

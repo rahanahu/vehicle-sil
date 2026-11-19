@@ -7,37 +7,33 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
   PREFIX launch LABELS unit launch TIMEOUT 60
   SOURCES
     test_batch.cpp
-    test_check.cpp
-    test_config.cpp
-    test_connect.cpp
+    test_check_reports.cpp
+    test_config_executables.cpp
+    test_connect_tool.cpp
     test_connections.cpp
-    test_control_rules.cpp
     test_events.cpp
-    test_j1939_nodes_match.cpp
     test_request.cpp
     test_request_file.cpp
     test_run.cpp
     test_run_controls.cpp
-    test_run_plan.cpp
-    test_run_outside.cpp
-    test_scenario.cpp
-    test_scenario_line.cpp
     test_scenario_samples.cpp
+    test_scenario_timeline.cpp
     test_shared_values.cpp
-    test_stop_requests.cpp
     test_traffic.cpp
   LINK vehicle_sil::launch vehicle_sil::core # core: the time commands with a controller (test_events.cpp)
        vehicle_sil::control # the hub that the run's samples come from (test_traffic.cpp)
        vehicle_sil::control_silkit # the hub's transport of a real connection (test_run.cpp)
        vehicle_sil_cli # the other tools' exit codes and durations (test_shared_values.cpp)
-       vehicle_sil::signal # the shapes as the launcher makes them (test_scenario_line.cpp: scenario_shapes.hpp)
-       vehicle_sil::j1939 # the network that applies j1939_nodes too (test_j1939_nodes_match.cpp)
-       # the statistics lines as the bridges print them, which run reads (test_run_outside.cpp)
-       vehicle_sil::ethernet_bridge_core vehicle_sil::can_bridge_core)
+       vehicle_sil::signal # the shapes of a scenario's timeline (test_scenario_timeline.cpp)
+       vehicle_sil::j1939) # the networks that the check's reports show (test_check_reports.cpp)
+# The tests of the units below the launcher's library are in tests/config, tests/scenario and tests/runner, with
+# the same test names (launch.<test>): the helpers that both sides use are headers there
+# (launch_test_util.hpp, check_setup.hpp, scenario_model.hpp, run_support.hpp and the other *_support.hpp).
 # libs/runner/src: the run's private headers that the tests read (run_pacing.hpp, run_notes.hpp,
 # run_connection.hpp). libs/launch/src: the outputs' private header (format/check_format.hpp).
-target_include_directories(vehicle_sil_launch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/libs/launch/src
-                           ${PROJECT_SOURCE_DIR}/libs/runner/src)
+target_include_directories(vehicle_sil_launch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/config
+                           ${PROJECT_SOURCE_DIR}/tests/scenario ${PROJECT_SOURCE_DIR}/tests/runner
+                           ${PROJECT_SOURCE_DIR}/libs/launch/src ${PROJECT_SOURCE_DIR}/libs/runner/src)
 target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}/scratch"
                            # test_shared_values.cpp reads the GUI's sources.
                            VEHICLE_SIL_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

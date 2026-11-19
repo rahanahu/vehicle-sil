@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 //
-// The controls of a run (launch::RunControls) by themselves: what they are made of, the phase they
-// keep and tell, the state they put together and when they tell it, and the controls a run makes
-// for itself when it is given none (run_file() on a file that cannot be read: nothing starts).
-// Whether a run keeps up with its speed (PacingWatch), as written. And when a run gives its
-// controls the time lock: the time commands that came before run_file() are decided with it.
+// The controls of a run (RunControls) with what only the launcher's library has: the event stream
+// (EventStream) that tells the phase and the state, the controls a run makes for itself when it
+// is given none (run_file() on a file that cannot be read: nothing starts), and the time lock.
+// The controls by themselves are in tests/runner/test_run_controls.cpp.
 
+#include "run_controls_support.hpp"
 #include "test_harness.hpp"
 #include "silkit_test_util.hpp"
 
@@ -30,6 +30,9 @@
 #include <string_view>
 #include <type_traits>
 #include <vector>
+
+
+using namespace vehicle_sil::launch::test::run_controls_support;
 
 namespace {
 
@@ -106,41 +109,6 @@ struct Written
 
 } // namespace
 
-TEST_CASE(run_controls_lend_the_stop_requests_they_were_made_with)
-{
-    StopRequests stops;
-    RunControls controls(stops);
-    CHECK(&controls.stops() == &stops);
-    stops.request(2);
-    CHECK_EQ(controls.stops().count(), 1);
-    controls.stops().request(15);
-    CHECK_EQ(stops.count(), 2);
-    CHECK_EQ(stops.first(), 2);
-}
-
-TEST_CASE(run_controls_keep_the_phase_before_they_tell_it)
-{
-    StopRequests stops;
-    std::vector<Phase> told;
-    RunControls* made = nullptr;
-    RunControls::Observers observers;
-    observers.on_phase = [&](Phase phase) {
-        told.push_back(phase);
-        CHECK(made->phase() == phase); // phase() has it when the observer hears of it
-    };
-    RunControls controls(stops, false, std::move(observers), false);
-    made = &controls;
-    CHECK(controls.phase() == Phase::Checking);
-    CHECK(told.empty());
-    for (const Phase phase : {Phase::Checking, Phase::Starting, Phase::Waiting, Phase::Running, Phase::Stopping, Phase::Ended})
-    {
-        controls.set_phase(phase);
-        CHECK(controls.phase() == phase);
-    }
-    CHECK((told == std::vector<Phase>{Phase::Checking, Phase::Starting, Phase::Waiting, Phase::Running, Phase::Stopping,
-                                     Phase::Ended}));
-}
-
 TEST_CASE(run_controls_without_observers_keep_the_phase)
 {
     StopRequests stops;
@@ -173,17 +141,6 @@ TEST_CASE(run_controls_hand_the_time_commands_their_observer_and_the_start_pause
     CHECK(running.time().hold_before_start(give_up, 1ms) == TimeCommands::Hold::None);
     // A stop is no affair of the time commands: nothing here asks for one.
     CHECK_EQ(stops.count(), 0);
-}
-
-TEST_CASE(phase_names_are_those_of_the_phase_events)
-{
-    using vehicle_sil::launch::phase_name;
-    CHECK(std::string(phase_name(Phase::Checking)) == "checking");
-    CHECK(std::string(phase_name(Phase::Starting)) == "starting");
-    CHECK(std::string(phase_name(Phase::Waiting)) == "waiting");
-    CHECK(std::string(phase_name(Phase::Running)) == "running");
-    CHECK(std::string(phase_name(Phase::Stopping)) == "stopping");
-    CHECK(std::string(phase_name(Phase::Ended)) == "ended");
 }
 
 namespace {
@@ -360,35 +317,6 @@ TEST_CASE(a_run_that_makes_its_own_controls_says_whether_it_plays_a_scenario)
     CHECK(!written.has("\"scenario\":false"));
 }
 
-namespace {
-
-/// Controls whose states are kept as they are told; of a run with a control server unless
-/// `control_server` says otherwise.
-struct Told
-{
-    explicit Told(bool start_paused = false, bool scenario = false, bool control_server = true) :
-      controls(stops, start_paused, observers(), scenario)
-    {
-        controls.set_control_server(control_server);
-        // A run that is not connected outside: no state is told for it, and the commands are
-        // decided as they come.
-        controls.set_time_lock({});
-    }
-
-    RunControls::Observers observers()
-    {
-        RunControls::Observers out;
-        out.on_state = [this](const RunState& s) { states.push_back(s); };
-        return out;
-    }
-
-    StopRequests stops;
-    std::vector<RunState> states;
-    RunControls controls;
-};
-
-} // namespace
-
 TEST_CASE(the_state_is_told_when_it_differs_from_the_last_and_rev_counts_each_one)
 {
     Told t;
@@ -433,18 +361,6 @@ TEST_CASE(the_state_is_told_when_it_differs_from_the_last_and_rev_counts_each_on
     }
     // state() is the same state, with the rev told last.
     CHECK(t.controls.state() == t.states.back());
-}
-
-TEST_CASE(the_state_names_the_first_stop_request_as_it_is_told_to)
-{
-    Told t;
-    t.controls.set_stop_name([] { return std::string("SIGTERM"); });
-    t.controls.publish();
-    CHECK(t.states.back().stopped_by.empty()); // nothing has asked
-    CHECK_EQ(t.states.back().stop_requests, 0);
-    t.stops.request(15);
-    t.controls.publish();
-    CHECK(t.states.back().stopped_by == "SIGTERM");
 }
 
 TEST_CASE(the_state_says_what_is_taken_before_during_and_after_the_simulation)
@@ -530,75 +446,6 @@ TEST_CASE(the_state_says_what_is_taken_before_during_and_after_the_simulation)
     CHECK_EQ(t.states.size(), attached + 1);
 }
 
-TEST_CASE(the_state_of_a_run_with_a_scenario_refuses_what_only_a_control_server_has)
-{
-    Told t(false, true);
-    t.controls.publish();
-    const RunState s = t.states.back();
-    CHECK(s.scenario);
-    // Standard input's commands are taken, the run_until among them; the write is a control server's.
-    CHECK(s.allowed.pause.ok && s.allowed.resume.ok && s.allowed.speed.ok && s.allowed.stop.ok);
-    CHECK(!s.allowed.write.ok && s.allowed.write.reason == "scenario-running");
-    CHECK(s.allowed.run_until == t.controls.allowed(Operation::RunUntil, Entry::Stdin));
-    // A control server's clients get the same answers to the time commands (a write is refused them).
-    CHECK(s.allowed.run_until == t.controls.allowed(Operation::RunUntil, Entry::ControlServer));
-    CHECK(s.allowed.pause == t.controls.allowed(Operation::Pause, Entry::ControlServer));
-    // The same answers as the rules give those entries.
-    CHECK(s.allowed.write == t.controls.allowed(Operation::Write, Entry::ControlServer));
-    CHECK(s.allowed.pause == t.controls.allowed(Operation::Pause, Entry::Stdin));
-}
-
-TEST_CASE(the_state_of_a_run_without_a_control_server_refuses_what_only_a_control_server_has)
-{
-    // Whether a scenario plays or not, and wherever the run stands: nothing can send a write, and
-    // the state says so with one reason. What standard input takes (the run_until too) is as with
-    // a control server.
-    for (const bool scenario : {false, true})
-    {
-        Told t(false, scenario, false);
-        Told with(false, scenario, true);
-        const auto check = [&t, &with] {
-            t.controls.publish();
-            with.controls.publish();
-            const RunState s = t.states.back();
-            CHECK(!s.allowed.write.ok);
-            CHECK(s.allowed.write.reason == "no-control-server");
-            CHECK(s.allowed.write.message.find("write a variable") != std::string::npos);
-            CHECK(!s.allowed.write.range && !s.allowed.write.caution);
-            CHECK(s.allowed.write.message.find("write a variable") != std::string::npos);
-            const RunState& other = with.states.back();
-            CHECK(s.allowed.pause == other.allowed.pause && s.allowed.resume == other.allowed.resume &&
-                  s.allowed.step == other.allowed.step && s.allowed.run_until == other.allowed.run_until &&
-                  s.allowed.speed == other.allowed.speed &&
-                  s.allowed.stop == other.allowed.stop);
-            // The rules themselves answer as before: the state alone knows that the entry is not there.
-            CHECK(other.allowed.write == t.controls.allowed(Operation::Write, Entry::ControlServer));
-        };
-        check();
-        vehicle_sil::unit::InProcessRegistry registry;
-        vehicle_sil::SimulationControllerOptions options;
-        options.registry_uri = registry.uri;
-        options.required_participants = {"NeverJoins"};
-        options.time_control = vehicle_sil::TimeControlOptions{.step = std::chrono::milliseconds(10)};
-        vehicle_sil::SimulationController controller(options);
-        vehicle_sil::unit::InProcessRegistry other_registry;
-        options.registry_uri = other_registry.uri;
-        vehicle_sil::SimulationController other(options);
-        t.controls.time().attach(controller, 10, std::optional<double>(1.0));
-        with.controls.time().attach(other, 10, std::optional<double>(1.0));
-        t.controls.set_phase(Phase::Running);
-        with.controls.set_phase(Phase::Running);
-        check();
-        t.controls.time().detach();
-        with.controls.time().detach();
-        check();
-    }
-    // Controls that were told nothing have none.
-    StopRequests stops;
-    RunControls plain(stops);
-    CHECK(plain.state().allowed.write.reason == "no-control-server");
-}
-
 TEST_CASE(a_run_until_of_stdin_is_refused_by_the_time_lock_and_the_state_says_so)
 {
     // With and without a control server: the state's run_until is standard input's answer, so
@@ -635,33 +482,6 @@ TEST_CASE(a_run_until_of_stdin_is_refused_by_the_time_lock_and_the_state_says_so
         CHECK(late.message.find("keeps to real time") != std::string::npos);
         CHECK_EQ(answers.size(), std::size_t{2});
     }
-}
-
-TEST_CASE(the_state_says_the_hold_while_it_lasts)
-{
-    Told t(true);
-    t.controls.publish();
-    CHECK(t.states.back().paused); // it will stand still at 0
-    CHECK(!t.states.back().paused_at_ms); // and does not yet
-    CHECK(!t.states.back().holding);
-    std::vector<bool> during;
-    int asked = 0;
-    const auto give_up = [&] {
-        during.push_back(t.controls.state().holding);
-        return ++asked >= 2;
-    };
-    CHECK(t.controls.time().hold_before_start(give_up, 1ms) == TimeCommands::Hold::GaveUp);
-    CHECK((during == std::vector<bool>{true, true}));
-    // Told when it began and when it ended.
-    std::vector<bool> holding;
-    for (const RunState& s : t.states)
-    {
-        holding.push_back(s.holding);
-    }
-    CHECK((holding == std::vector<bool>{false, true, false}));
-    // While it holds it stands still at 0; before and after, it is to stand still and does not yet.
-    CHECK(t.states.at(1).paused && t.states.at(1).paused_at_ms == std::optional<std::int64_t>{0});
-    CHECK(t.states.at(2).paused && !t.states.at(2).paused_at_ms);
 }
 
 TEST_CASE(a_command_of_a_source_that_is_no_entry_is_refused_and_changes_nothing)
@@ -712,35 +532,6 @@ TEST_CASE(the_state_event_follows_the_command_event_of_the_command_that_made_it)
     }
     // The phase, then its state; the command, then the state it made; a refused command makes none.
     CHECK((order == std::vector<std::string>{"phase", "state 1", "command", "state 2", "command"}));
-}
-
-TEST_CASE(the_pacing_is_late_until_five_seconds_have_passed_without_a_late_step)
-{
-    using vehicle_sil::launch::detail::PacingWatch;
-    using Clock = std::chrono::steady_clock;
-    const Clock::time_point t0{};
-    PacingWatch w;
-    // Going at a speed, nothing late: on time.
-    CHECK(w.look(t0, true, false, 0) == Pacing::OnTime);
-    // The step that has not begun is too late: late, and for 5 s after the last such look.
-    CHECK(w.look(t0 + 1s, true, true, 0) == Pacing::Late);
-    CHECK(w.look(t0 + 2s, true, false, 0) == Pacing::Late);
-    CHECK(w.look(t0 + 5999ms, true, false, 0) == Pacing::Late);
-    CHECK(w.look(t0 + 6s, true, false, 0) == Pacing::OnTime);
-    // A step that was late since the last look: late for 5 s from that look.
-    CHECK(w.look(t0 + 10s, true, false, 1) == Pacing::Late);
-    CHECK(w.look(t0 + 14s, true, false, 1) == Pacing::Late);
-    CHECK(w.look(t0 + 14500ms, true, false, 2) == Pacing::Late); // another: 5 s from here
-    CHECK(w.look(t0 + 19s, true, false, 2) == Pacing::Late);
-    CHECK(w.look(t0 + 19500ms, true, false, 2) == Pacing::OnTime);
-    // Nothing to keep up with (standing still, as fast as possible) forgets what was late; a step
-    // counted meanwhile is not held against the time after.
-    CHECK(w.look(t0 + 20s, true, true, 2) == Pacing::Late);
-    CHECK(w.look(t0 + 21s, false, false, 3) == Pacing::NotPaced);
-    CHECK(w.look(t0 + 22s, true, false, 3) == Pacing::OnTime);
-    CHECK(std::string(vehicle_sil::launch::pacing_name(Pacing::NotPaced)) == "not-paced");
-    CHECK(std::string(vehicle_sil::launch::pacing_name(Pacing::OnTime)) == "on-time");
-    CHECK(std::string(vehicle_sil::launch::pacing_name(Pacing::Late)) == "late");
 }
 
 namespace {
@@ -856,30 +647,4 @@ TEST_CASE(a_test_refuses_controls_because_every_run_needs_its_own)
     options.lent.controls = &controls;
     const std::string text = refusal([&] { static_cast<void>(vehicle_sil::launch::test_file(options)); });
     CHECK(text.find("TestOptions::lent.controls") != std::string::npos);
-}
-
-TEST_CASE(run_controls_tell_the_state_of_the_bridges_once_for_each_change)
-{
-    StopRequests stops;
-    std::vector<RunState> told;
-    RunControls::Observers observers;
-    observers.on_state = [&](const RunState& state) { told.push_back(state); };
-    RunControls controls(stops, false, std::move(observers), false);
-    CHECK(controls.state().outside.empty());
-    RunState::Outside bridge;
-    bridge.network = "CAN";
-    bridge.target = "can0";
-    bridge.participant = "bridge.CAN";
-    controls.set_outside({bridge});
-    CHECK_EQ(told.size(), std::size_t{1});
-    CHECK(told.back().outside.size() == 1 && told.back().outside.front() == bridge && told.back().outside.front().condition == "ok");
-    // The same again tells nothing; a change does, and state() has it.
-    controls.set_outside({bridge});
-    controls.publish();
-    CHECK_EQ(told.size(), std::size_t{1});
-    bridge.condition = "interrupted";
-    bridge.reasons = {"bus-off"};
-    controls.set_outside({bridge});
-    CHECK_EQ(told.size(), std::size_t{2});
-    CHECK(told.back().rev == 2 && controls.state().outside.front().reasons == std::vector<std::string>({"bus-off"}));
 }

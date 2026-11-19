@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=../../../schema/scenario.schema.json
 # A scenario of the timeline references (see README.md here): the engine runs it against the model
-# ECUs of tests/launch/test_scenario.cpp, not against real ones.
+# ECUs of tests/scenario/scenario_model.hpp, not against real ones.
 # Dithers: a triangle on an integer through a set, a ramp between two steps of its ECU and its
 # end; a noise on a real that is set later; a dither that is taken off, and one that a step puts
 # at the time of a set. Door.level has a dither and is never written: it has no line.

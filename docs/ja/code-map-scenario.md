@@ -145,7 +145,7 @@
 
 - `^launch\.scenario_`: 偽の ECU のモデルで、受信の順を変えても結果が同じ
 - `launch.scenario_wave_*`: 波形の値、終わった後の値、指摘
-- `launch.scenario_line_*`（`tests/launch/test_scenario_line.cpp`）: 線だけのテスト
+- `launch.scenario_line_*`（`tests/scenario/test_scenario_line.cpp`）: 線だけのテスト
 - `launch.scenario_dither_*`、`launch.timeline_has_the_dithers_*`（基準は `tests/launch/timeline/dither.yaml`）
 - `launch.scenario_expect_beside_*`: `ramp` と `wave` の横の `expect` の区間、手順が決まる順、機種で `expect` だけスキップすること
 - `^signal\.`
