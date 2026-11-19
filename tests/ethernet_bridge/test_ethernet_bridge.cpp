@@ -290,7 +290,7 @@ struct TwoBridges
     std::optional<EthernetBridge> b1;
     std::optional<EthernetBridge> b2;
 
-    TwoBridges(bool echo, bool guard1 = true, bool guard2 = true)
+    TwoBridges(bool echo, bool guard1 = true, bool guard2 = true, bool activate1 = true)
     {
         link1.set_echo_own(echo);
         link2.set_echo_own(echo);
@@ -304,7 +304,10 @@ struct TwoBridges
         b2.emplace(c2, link2, o2);
         b1->start();
         b2->start();
-        b1->start_controller();
+        if (activate1)
+        {
+            b1->start_controller();
+        }
         b2->start_controller();
     }
 
@@ -840,6 +843,38 @@ TEST_CASE(bridge_activates_the_controller_at_communication_ready_and_forwards_in
     CHECK(!silkit2.active());
     early.start();
     CHECK(silkit2.active());
+}
+
+TEST_CASE(two_bridges_one_never_activated_do_not_loop_a_frame_from_outside)
+{
+    // Bridge 1 is started but its controller is never activated: it still learns the outside
+    // address, so the copy bridge 2 passes into SIL Kit is dropped there instead of sent out again.
+    TwoBridges t(false, true, true, false);
+    t.segment.send(make_frame(kBroadcast, kOutside, kExperimental));
+    CHECK(t.quiet());
+    CHECK(t.b1->statistics().loop_suspected + t.b2->statistics().loop_suspected >= 1);
+    CHECK_EQ(t.b1->statistics().ext_to_silkit, std::uint64_t{0});
+}
+
+TEST_CASE(bridge_learns_outside_sources_before_the_controller_is_activated)
+{
+    FakeSegment segment;
+    FakeLink link(segment, "eth-test");
+    FakeEthernetController silkit;
+    EthernetBridge bridge(silkit, link);
+    bridge.start();
+    segment.send(make_frame(kBroadcast, kOutside, kExperimental));
+    CHECK(eventually([&] { return segment.idle(); }, 5000ms));
+    const auto sent_out = segment.transmitted().size();
+    // The same address now comes from SIL Kit: dropped, counted, warned once.
+    silkit.deliver(make_frame(kBroadcast, kOutside, kExperimental));
+    silkit.deliver(make_frame(kBroadcast, kOutside, kExperimental));
+    CHECK_EQ(segment.transmitted().size(), sent_out);
+    CHECK_EQ(bridge.statistics().loop_suspected, std::uint64_t{2});
+    CHECK_EQ(bridge.take_warnings().size(), std::size_t{1});
+    CHECK_EQ(silkit.sent_count(), std::size_t{0});
+    CHECK_EQ(bridge.statistics().ext_to_silkit, std::uint64_t{0});
+    CHECK_EQ(bridge.statistics().ext_from_devices, std::uint64_t{0});
 }
 
 TEST_CASE(bridge_stop_removes_the_handlers_and_ends_forwarding)

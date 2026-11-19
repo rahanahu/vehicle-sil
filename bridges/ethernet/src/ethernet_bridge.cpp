@@ -455,8 +455,7 @@ void EthernetBridge::on_external_event(const eth_link::LinkEvent& event)
 
 void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame, bool checksum_incomplete, bool sent_here)
 {
-    // Before the controller is activated, SIL Kit refuses what it is given (ControllerInactive).
-    if (!running_.load() || !controller_started_.load())
+    if (!running_.load())
     {
         return;
     }
@@ -504,6 +503,13 @@ void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame, bool
         {
             mac_unguarded_.fetch_add(1);
         }
+    }
+    // The table above learns from the start(): a bridge that is not ready yet must not send back
+    // what another bridge passed in. Before the controller is activated SIL Kit refuses what it is
+    // given (ControllerInactive), so the frame goes no further and is not counted below.
+    if (!controller_started_.load())
+    {
+        return;
     }
     // From a device outside: not sent by this computer (as the link tells, or from an address of
     // its adapters), not from the SIL Kit side (the table let it through; without the table, not
