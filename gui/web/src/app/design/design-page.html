@@ -95,11 +95,9 @@
           @if (unsaved().length > 0) {
             <p data-testid="save-first-names">
               <ng-container i18n
-                >{{
-                  unsaved().join('、')
-                }}
-                は、保存したファイルにないか、読み直しても読めませんでした。文で足した participant
-                や、変えた command は、ファイルに保存するまで照合できません。</ng-container
+                >{{ unsaved().join('、') }} は、保存した構成と違います（文で足した、command
+                を変えた、など）。読み直しでは照合できず、保存してから照合できます。既定では、command
+                を変える編集は保存できません。</ng-container
               >
               @if (saveControl().ok) {
                 <ng-container i18n>「保存」を押すと、保存して照合し直します。</ng-container>
@@ -393,15 +391,14 @@
             ファイルの内容に戻す
           </button>
         </div>
-        @if (!saveControl().ok) {
-          <p class="hint" data-testid="save-reason">
-            <ng-container i18n>保存できません:</ng-container>
-            <span lang="en">{{ saveControl().reason?.message }}</span>
-          </p>
-        } @else if (saveControl().caution; as caution) {
-          <p class="hint" data-testid="save-caution">
-            <ng-container i18n>注意:</ng-container>
-            <span lang="en">{{ caution.message }}</span>
+        @if (saveLine(); as line) {
+          <p class="hint" [attr.data-testid]="saveControl().ok ? 'save-caution' : 'save-reason'">
+            @if (saveControl().ok) {
+              <ng-container i18n>注意:</ng-container>
+            } @else {
+              <ng-container i18n>保存できません:</ng-container>
+            }
+            <span [attr.lang]="line.english ? 'en' : null">{{ line.text }}</span>
           </p>
         }
         @if (savedNote()) {

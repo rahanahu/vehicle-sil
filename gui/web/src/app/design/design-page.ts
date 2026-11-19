@@ -22,7 +22,7 @@ import { RunCommands } from '../core/session/run-commands';
 import { ServerConnection } from '../core/session/server-connection';
 import { ServerInfo } from '../core/session/server-info';
 import { FindingsList } from '../run/findings-list';
-import { checkOutcomeLabel, checkStatusLabel } from '../run/labels';
+import { checkOutcomeLabel, checkStatusLabel, controlLine } from '../run/labels';
 import {
   ChannelView,
   DesignerModel,
@@ -124,13 +124,19 @@ export class DesignPage {
     computation: (source) => source,
   });
 
+  /** 読んだ（または保存した）ファイルの文。変更の印は、これと今の文の差。保存したら、送った文になる。 */
+  protected readonly readText = linkedSignal<string | null, string | null>({
+    source: () => this.loadedText(),
+    computation: (source) => source,
+  });
+
   /** いま編集している文。ファイルを読んだら、その文になる。 */
   protected readonly draft = linkedSignal<string | null, string | null>({
     source: () => this.loadedText(),
     computation: (source) => source,
   });
   protected readonly changed = computed(
-    () => this.draft() !== null && this.draft() !== this.loadedText(),
+    () => this.draft() !== null && this.draft() !== this.readText(),
   );
 
   /** 照合する variant（なければ null）。ファイルを替えたら選び直す。 */
@@ -185,11 +191,15 @@ export class DesignPage {
   protected readonly saveControl = computed(() => this.commands.controls().save);
   protected readonly saving = signal(false);
   protected readonly saveProblem = signal<{ message: string; findings: string[] } | null>(null);
-  protected readonly savedNote = signal(false);
+  private readonly justSaved = signal(false);
+  /** 「保存しました」: 保存した文のまま（次の編集で消える）。 */
+  protected readonly savedNote = computed(() => this.justSaved() && !this.changed());
+  /** 保存できない理由と注意の 1 行（実行の画面の操作の理由と同じ作り方。持ち主の英語の文のときは `english`）。 */
+  protected readonly saveLine = computed(() => controlLine('save', this.saveControl()));
 
   /** 保存してあるファイルの共通の部分の participant。「ECU を読み直す」で申告を読み直せるのは、これだけ。 */
   private readonly savedNames = computed(() => {
-    const saved = this.loadedText();
+    const saved = this.readText();
     return saved === null ? new Set<string>() : participantNames(open(saved));
   });
   /** 「ECU を読み直す」の後も申告を読めなかった participant（保存してから、でないと照合できない）。 */
@@ -262,6 +272,7 @@ export class DesignPage {
       this.file();
       this.editProblem.set(null);
       this.describeProblem.set(null);
+      this.justSaved.set(false);
     });
   }
 
@@ -359,13 +370,14 @@ export class DesignPage {
     if (file === null || draft === null || this.saving() || !this.saveControl().ok) return;
     this.saving.set(true);
     this.saveProblem.set(null);
-    this.savedNote.set(false);
+    this.justSaved.set(false);
     try {
       const saved = await this.front.saveConfig({ file, text: draft, stamp: this.stamp() });
+      // 送った文を「読んだ文」にする（返事を待つ間に直した分は残る）。読み直さないので、画面は消えない
       this.stamp.set(saved.stamp);
-      this.savedNote.set(true);
+      this.readText.set(draft);
+      this.justSaved.set(true);
       this.stuck.set(new Set());
-      this.reloads.update((n) => n + 1);
       this.again.update((n) => n + 1);
     } catch (error) {
       if (!(error instanceof ActionError)) throw error;
@@ -394,15 +406,17 @@ export class DesignPage {
 
   protected typed(value: string): void {
     // 文の欄は改行を LF で返す。読んだファイルが CRLF なら、CRLF に戻す
-    this.draft.set(this.loadedText()?.includes('\r\n') ? value.replace(/\r?\n/g, '\r\n') : value);
+    this.draft.set(this.readText()?.includes('\r\n') ? value.replace(/\r?\n/g, '\r\n') : value);
   }
 
   protected revert(): void {
-    this.draft.set(this.loadedText());
+    this.draft.set(this.readText());
   }
 
   protected reload(): void {
-    if (this.discardOk()) this.reloads.update((n) => n + 1);
+    if (!this.discardOk()) return;
+    this.justSaved.set(false);
+    this.reloads.update((n) => n + 1);
   }
 
   /** 文の欄の、その行を選ぶ。 */
@@ -422,19 +436,15 @@ export class DesignPage {
     if (file === null || this.describing()) return;
     this.describing.set(true);
     this.describeProblem.set(null);
+    const pressed = this.design()?.notDescribed ?? [];
     try {
-      const answer = await this.front.describeAgain({
+      await this.front.describeAgain({
         file,
         ...(this.variant() !== null ? { variant: this.variant() as string } : {}),
       });
-      // 読み直しても申告を読めなかった participant は、保存してからでないと照合できない
-      this.stuck.set(
-        new Set(
-          answer.participants
-            .filter((p) => p.status === 'not_described' && p.name !== null)
-            .map((p) => p.name as string),
-        ),
-      );
+      // 押した時点で申告を読んでいなかった participant は、読み直しでは直らない側にする（文で足した、`command` を変えた
+      // ものは、保存した構成と違う）。読み直しで直ったものは、次の照合で「読んでいない」から抜ける
+      this.stuck.set(new Set(pressed));
       this.again.update((n) => n + 1);
     } catch (error) {
       this.describeProblem.set(errorMessage(error));

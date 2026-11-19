@@ -98,9 +98,9 @@
       "source": " ECU を読み直す ",
       "target": " Describe the ECUs again "
     },
-    "6590523932491470912": {
-      "source": "{$INTERPOLATION} は、保存したファイルにないか、読み直しても読めませんでした。文で足した participant や、変えた command は、ファイルに保存するまで照合できません。",
-      "target": "{$INTERPOLATION} are not in the saved file, or could not be described even after reading again. A participant you added in the text, or whose command you changed, cannot be checked until you save the file."
+    "934404666573275390": {
+      "source": "{$INTERPOLATION} は、保存した構成と違います（文で足した、command を変えた、など）。読み直しでは照合できず、保存してから照合できます。既定では、command を変える編集は保存できません。",
+      "target": "{$INTERPOLATION} differ from the saved configuration (added in the text, command changed, and so on). Describing again cannot check them; they can be checked after you save. By default, an edit that changes a command cannot be saved."
     },
     "1741097445009664830": {
       "source": "「保存」を押すと、保存して照合し直します。",
@@ -250,13 +250,13 @@
       "source": " ファイルの内容に戻す ",
       "target": " Revert to the file "
     },
-    "578578727726381205": {
-      "source": "保存できません:",
-      "target": "Cannot save:"
-    },
     "6081127796714668656": {
       "source": "注意:",
       "target": "Note:"
+    },
+    "578578727726381205": {
+      "source": "保存できません:",
+      "target": "Cannot save:"
     },
     "7142206097703485730": {
       "source": "保存しました。",

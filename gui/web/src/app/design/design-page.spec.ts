@@ -207,22 +207,66 @@ describe('DesignPage', () => {
     TestBed.tick();
   }
 
-  it('saves the text with the stamp that it read, and reads the file again', async () => {
+  it('saves the text with the stamp that it read, and keeps what was typed while it waited', async () => {
     const fixture = await openWith();
     const stamp = (response('config') as { stamp: string }).stamp;
     await editAndSave(fixture);
     const saved = http.expectOne((r) => r.method === 'POST' && r.url === 'api/config');
     expect(saved.request.body).toMatchObject({ file: 'bad-lines.yaml', stamp });
     expect((saved.request.body as { text: string }).text).toContain('name: ETH_AB');
+    // typed while the answer was awaited
+    const area = element(fixture).querySelector(
+      '[data-testid="design-text"]',
+    ) as HTMLTextAreaElement;
+    area.value = `${area.value}# typed while saving\n`;
+    area.dispatchEvent(new Event('input'));
+    TestBed.tick();
     saved.flush({ file: 'bad-lines.yaml', stamp: 'f'.repeat(64) });
     await sleep(100);
     TestBed.tick();
+    http.expectNone((r) => r.method === 'GET' && r.url.startsWith('api/config?'));
+    expect(area.value).toContain('# typed while saving');
+    // the edit after the save is a change again, so the note of the save is gone
+    expect(text(fixture, 'saved')).toBe('');
+  });
+
+  it('says that it saved, until the next edit', async () => {
+    const fixture = await openWith();
+    await editAndSave(fixture);
     http
-      .expectOne((r) => r.method === 'GET' && r.url.startsWith('api/config?'))
-      .flush(response('config'));
+      .expectOne((r) => r.method === 'POST' && r.url === 'api/config')
+      .flush({ file: 'bad-lines.yaml', stamp: 'f'.repeat(64) });
     await sleep(100);
     TestBed.tick();
     expect(text(fixture, 'saved')).not.toBe('');
+    const area = element(fixture).querySelector(
+      '[data-testid="design-text"]',
+    ) as HTMLTextAreaElement;
+    area.value = `${area.value}# more\n`;
+    area.dispatchEvent(new Event('input'));
+    TestBed.tick();
+    expect(text(fixture, 'saved')).toBe('');
+  });
+
+  it('does not offer describing again for a participant of the saved file that describing again did not fix', async () => {
+    const stuckCheck = (check: Record<string, unknown>) => {
+      (check['participants'] as { status: string }[])[0].status = 'not_described';
+    };
+    const fixture = await openWith(stuckCheck);
+    const name = (response('check-text') as { check: { participants: { name: string }[] } }).check
+      .participants[0].name;
+    expect(text(fixture, 'reread-names')).toContain(name);
+    (element(fixture).querySelector('[data-testid="describe-again"]') as HTMLButtonElement).click();
+    TestBed.tick();
+    http.expectOne('api/describe').flush(response('describe'));
+    await sleep(DESIGN_CHECK_DELAY_MS + 100);
+    TestBed.tick();
+    const body = response('check-text') as { check: Record<string, unknown> };
+    stuckCheck(body.check);
+    http.expectOne('api/check').flush(body);
+    await settle();
+    expect(text(fixture, 'save-first-names')).toContain(name);
+    expect(element(fixture).querySelector('[data-testid="describe-again"]')).toBeNull();
   });
 
   it("says why a save was refused, with the launcher's finding", async () => {
