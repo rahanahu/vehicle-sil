@@ -219,7 +219,9 @@ const readScenarioResult = (value: unknown, path: string, u?: Unreadable): Scena
   });
 };
 
-export type CheckStatus = Open<'described' | 'not_checked' | 'failed' | 'skipped' | 'disabled'>;
+export type CheckStatus = Open<
+  'described' | 'not_described' | 'not_checked' | 'failed' | 'skipped' | 'disabled'
+>;
 
 /** What a participant is for (`role` in the configuration file, "Test participants and bridges" in docs/simulation-config.md). */
 export type ParticipantRole = Open<'ecu' | 'test' | 'bridge'>;

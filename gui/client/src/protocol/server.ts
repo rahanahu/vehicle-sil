@@ -253,6 +253,31 @@ export interface CheckRequest {
   time_policy?: string;
 }
 
+/**
+ * Body of POST api/check with `text`: the text of `file` that is not saved yet. The check takes only the
+ * configuration (`variant`, `strict`), not the choices of a run, so there is no `disable` or `scenario` here.
+ */
+export interface CheckTextRequest {
+  /** Path relative to root: the file whose content `text` is (it must exist; its directory is where paths start). */
+  file: string;
+  /** The format of the request file: 1, or left out. */
+  vehicle_sil_run_request?: 1;
+  /** The content of the file as the screen has it (at most 1 MiB as UTF-8). */
+  text: string;
+  /** The variant of the configuration file. */
+  variant?: string;
+  /** true: fail on warnings too. */
+  strict?: boolean;
+}
+
+/** Body of POST api/describe: the saved file and the variant whose participants are described again. */
+export interface DescribeRequest {
+  /** Path relative to root. */
+  file: string;
+  /** The variant of the configuration file (left out: none). */
+  variant?: string;
+}
+
 /** Body of POST api/connections: the configuration file and one of its networks (one the user opened). */
 export interface ConnectionsRequest {
   /** Path relative to root. */

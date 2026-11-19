@@ -27,7 +27,7 @@ import {
   sameData,
   statusOf,
 } from './front-compose';
-import { FrontActions, actionError } from './front-actions';
+import { FrontActions, actionError, noFileError } from './front-actions';
 import { entriesOf, outsideRows } from './front-outside';
 import { makeVariable, refOf } from './front-variable';
 import { ErrorSink, Readable, derived } from './values';
@@ -205,13 +205,7 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
     connections: ({ network }, listOptions = {}) => {
       const file = listOptions.file ?? initialFile();
       if (file === null) {
-        return Promise.reject(
-          new ActionError(
-            'no-file',
-            'no configuration file was given and the server has none to start with: pass { file } (a path from client.low.configs())',
-            'refused',
-          ),
-        );
+        return Promise.reject(noFileError());
       }
       return low.connections({ file, network }).then(entriesOf, (error: unknown) => {
         throw actionError(error);
@@ -236,6 +230,8 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
       );
     },
     check: (intent, checkOptions) => actions.check(intent, checkOptions),
+    readConfig: (readOptions) => actions.readConfig(readOptions),
+    describeAgain: (describeOptions) => actions.describeAgain(describeOptions),
     run: {
       start: (intent, startOptions) => actions.start(intent, startOptions),
       stop: () => actions.stop(),

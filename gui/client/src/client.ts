@@ -4,6 +4,9 @@ import {
   AppInfo,
   AuthMessage,
   CheckRequest,
+  CheckTextRequest,
+  ConfigText,
+  DescribeRequest,
   CheckResult,
   ConfigList,
   Connections,
@@ -15,6 +18,7 @@ import {
   readAppInfo,
   readCheckResponse,
   readConfigList,
+  readConfigText,
   readConnections,
   readDashboardResponse,
   readRecording,
@@ -125,9 +129,20 @@ export interface GuiClient {
   /**
    * `POST api/check`: checks a configuration file (a failed check still gets a successful answer; its result is then
    * not passed). Waits twice the server's check limit (limits.check_timeout_s; waiting its turn, then checking) plus
-   * the default HTTP timeout.
+   * the default HTTP timeout. A check of a `text` may first describe the saved file in the same turn (the server does
+   * it when it has no saved descriptions); the second limit covers that.
    */
-  check(request: CheckRequest): Promise<CheckResult>;
+  check(request: CheckRequest | CheckTextRequest): Promise<CheckResult>;
+  /**
+   * `GET api/config`: the text of a configuration file as it is saved, with the SHA-256 of its bytes (`stamp`).
+   * Rejects with an HttpError (`not-a-configuration`, `config-too-large`, `config-unreadable`, ...).
+   */
+  config(file: string): Promise<ConfigText>;
+  /**
+   * `POST api/describe`: checks the saved file and saves its participants' descriptions again (after an executable
+   * was built again), and returns that check. Waits in the queue of the checks, as long as `check`.
+   */
+  describe(request: DescribeRequest): Promise<CheckResult>;
   /**
    * `POST api/connections`: where one network of a configuration file can be connected on the computer of the GUI
    * server. It starts that network's bridge to list (on Windows, Npcap may ask to raise the rights), so ask only when
@@ -306,6 +321,18 @@ export function buildClient(options: ClientOptions): ClientParts {
     },
     loadApp: () => call({ method: 'GET', path: 'api/app' }, readAppInfo, (info) => app.set(info)),
     configs: () => call({ method: 'GET', path: 'api/configs' }, readConfigList),
+    config: (file) =>
+      call({ method: 'GET', path: `api/config?file=${encodeURIComponent(file)}` }, readConfigText),
+    describe: (body) =>
+      call(
+        {
+          method: 'POST',
+          path: 'api/describe',
+          body,
+          timeoutMs: longRequestMs(limits.get()),
+        },
+        readCheckResponse,
+      ),
     dashboard: (file) =>
       call(
         { method: 'GET', path: `api/dashboard?file=${encodeURIComponent(file)}` },

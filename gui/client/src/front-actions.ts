@@ -8,7 +8,14 @@ import type { FrontControls, Intent, OperationName, RunState } from './front-typ
 import { ActionError } from './front-types';
 import type { Snapshot } from './front-compose';
 import { linkOf, standsAt } from './front-compose';
-import type { CheckResult, LauncherEvent, RunRequest, ServerMessage } from './protocol';
+import type {
+  CheckResult,
+  CheckTextRequest,
+  ConfigText,
+  LauncherEvent,
+  RunRequest,
+  ServerMessage,
+} from './protocol';
 import { ErrorSink, Readable, Writable } from './values';
 
 /** The time operations. */
@@ -85,8 +92,11 @@ const closedCheck = () =>
 
 /** A check that waits for its turn or is on its way. */
 interface QueuedCheck {
-  /** The request as JSON: a check of the same request shares this one. */
-  key: string;
+  /**
+   * The request as JSON: a check of the same request shares this one. `describe:` and the request as JSON: a describe
+   * of the same file and variant. null: a check of a text, which nothing shares.
+   */
+  key: string | null;
   /** The signal of each caller (null: one that cannot abort). */
   callers: (AbortSignal | null)[];
   promise: Promise<CheckResult>;
@@ -115,6 +125,17 @@ const INTENT_FIELDS = new Set([
   'connect',
   'time_policy',
 ]);
+
+/** The fields of an `Intent` that a check of a text takes. */
+const TEXT_INTENT_FIELDS = new Set(['vehicle_sil_run_request', 'variant', 'strict']);
+
+/** The refusal when there is no file to use. */
+export const noFileError = (): ActionError =>
+  new ActionError(
+    'no-file',
+    'no configuration file was given and the server has none to start with: pass { file } (a path from client.low.configs())',
+    'refused',
+  );
 
 export class FrontActions {
   private readonly busyValue: Writable<ReadonlySet<OperationName>>;
@@ -171,24 +192,63 @@ export class FrontActions {
    */
   check(
     intent: Intent = {},
-    options: { file?: string; signal?: AbortSignal; fresh?: boolean } = {},
+    options: { file?: string; text?: string; signal?: AbortSignal; fresh?: boolean } = {},
   ): Promise<CheckResult> {
-    const request = this.requestOf(intent, options);
+    const request =
+      options.text === undefined
+        ? this.requestOf(intent, options)
+        : this.textRequestOf(intent, options.file, options.text);
     if (request instanceof ActionError) return Promise.reject(request);
     if (this.disposed) return Promise.reject(closedCheck());
     const signal = options.signal ?? null;
     if (signal?.aborted) return Promise.reject(signal.reason as Error);
-    const key = JSON.stringify(request);
-    const going = this.checks.find(
-      (c) => c.key === key && !(options.fresh && c === this.checks[0]),
-    );
+    // A check of a text takes its place in the line but shares nothing: its key is null, which no other check has
+    const key = options.text === undefined ? JSON.stringify(request) : null;
+    const going =
+      key === null
+        ? undefined
+        : this.checks.find((c) => c.key === key && !(options.fresh && c === this.checks[0]));
     if (going) {
       going.callers.push(signal);
       return going.promise;
     }
-    const callers = [signal];
+    return this.enqueue(key, [signal], () => this.src.low.check(request));
+  }
+
+  /** Reads a configuration file as it is saved. Its failure is the caller's: it is not kept for `status.problem`. */
+  readConfig(options: { file?: string } = {}): Promise<ConfigText> {
+    const named = options.file ?? this.src.initialFile();
+    if (named === null) return Promise.reject(noFileError());
+    return this.src.low.config(named).catch((error: unknown) => {
+      throw actionError(error);
+    });
+  }
+
+  /** Describes the participants of the saved file again. It waits in the line of the checks; it shares only with a describe of the same file and variant. */
+  describeAgain(options: { file?: string; variant?: string } = {}): Promise<CheckResult> {
+    const file = options.file ?? this.src.initialFile();
+    if (file === null) return Promise.reject(noFileError());
+    if (this.disposed) return Promise.reject(closedCheck());
+    const request = {
+      file,
+      ...(options.variant !== undefined ? { variant: options.variant } : {}),
+    };
+    // A describe of the same file and variant that waits or is on its way is shared (pressing again does not start
+    // every executable once more). Its answer is the caller's alone: it does not go through `record()`.
+    const key = `describe:${JSON.stringify(request)}`;
+    const going = this.checks.find((c) => c.key === key);
+    if (going) return going.promise;
+    return this.enqueue(key, [null], () => this.src.low.describe(request));
+  }
+
+  /** The line of the checks: one is sent after the answer to the one before. `key` null: nothing is shared. */
+  private enqueue(
+    key: string | null,
+    callers: (AbortSignal | null)[],
+    run: () => Promise<CheckResult>,
+  ): Promise<CheckResult> {
     const send = () =>
-      this.src.low.check(request).catch((error: unknown) => {
+      run().catch((error: unknown) => {
         throw actionError(error);
       });
     const before = this.checks.at(-1)?.done;
@@ -215,13 +275,7 @@ export class FrontActions {
   /** The body of api/run and api/check for `intent`, or why it cannot be sent. */
   private requestOf(intent: Intent, options: { file?: string }): RunRequest | ActionError {
     const file = options.file ?? this.src.initialFile();
-    if (file === null) {
-      return new ActionError(
-        'no-file',
-        'no configuration file was given and the server has none to start with: pass { file } (a path from client.low.configs())',
-        'refused',
-      );
-    }
+    if (file === null) return noFileError();
     // A field the client does not know (a misspelt `scenaro` from plain JavaScript) would be dropped and the run
     // started without it: refuse it instead.
     const unknown = Object.keys(intent).filter((k) => !INTENT_FIELDS.has(k));
@@ -249,6 +303,33 @@ export class FrontActions {
       ...(intent.strict ? { strict: true } : {}),
       ...(intent.connect ? { connect: intent.connect } : {}),
       ...(intent.time_policy !== undefined ? { time_policy: intent.time_policy } : {}),
+    };
+  }
+
+  /** The body of api/check for a text: the server takes only the configuration (`variant`, `strict`), not a run's choices. */
+  private textRequestOf(
+    intent: Intent,
+    fileOption: string | undefined,
+    text: string,
+  ): CheckTextRequest | ActionError {
+    const file = fileOption ?? this.src.initialFile();
+    if (file === null) return noFileError();
+    const unknown = Object.keys(intent).filter((k) => !TEXT_INTENT_FIELDS.has(k));
+    if (unknown.length > 0) {
+      return new ActionError(
+        'unknown-field',
+        `the intent of a check of a text has ${unknown.join(', ')}, which it does not take: a text is checked as the configuration, so the fields are ${[...TEXT_INTENT_FIELDS].join(', ')}`,
+        'refused',
+      );
+    }
+    return {
+      file,
+      text,
+      ...(intent.vehicle_sil_run_request
+        ? { vehicle_sil_run_request: intent.vehicle_sil_run_request }
+        : {}),
+      ...(intent.variant !== undefined ? { variant: intent.variant } : {}),
+      ...(intent.strict ? { strict: true } : {}),
     };
   }
 
