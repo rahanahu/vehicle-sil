@@ -12,7 +12,7 @@
     {
       "type": "hello",
       "vehicle_sil_gui": 2,
-      "version": "0.1.0",
+      "version": "0.2.0-rc.1",
       "instance": "0123456789abcdef",
       "session": {
         "id": 1,
