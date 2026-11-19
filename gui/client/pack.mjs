@@ -1,4 +1,5 @@
-// Makes the client library a .tgz that npm can install (not published to npm; it ships with the release).
+// Makes the client library a .tgz that npm can install. It ships with the release, and .github/workflows/publish-npm.yml
+// puts that same file on the npm registry when the release is published.
 // Run `npm run pack:client` in gui/web (it borrows esbuild and TypeScript from gui/web/node_modules; no new dependency).
 //
 //   node ../client/pack.mjs [--out <dir>] [--version <x.y.z>]
@@ -270,6 +271,12 @@ async function main() {
     description:
       'Client library of the vehicle-sil GUI server: connection, run and time control, ECU variables. No dependencies; browser and Node.',
     license: 'MIT',
+    // npm checks it against the repository that published the package (provenance of trusted publishing).
+    repository: {
+      type: 'git',
+      url: 'git+https://github.com/rahanahu/vehicle-sil.git',
+      directory: 'gui/client',
+    },
     type: 'module',
     exports: {
       '.': { types: './types/index.d.ts', default: './dist/index.js' },

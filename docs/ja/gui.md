@@ -941,11 +941,11 @@ sections:
 |---|---|---|
 | 1 つにまとめたファイル（`vehicle-sil-gui-client.mjs`） | `client/` | `npm run build:client`（`build/gui-client/vehicle-sil-gui-client.mjs` ができます） |
 | 部品（`vehicle-sil-gui-elements.mjs`。上のファイルを import します） | `client/` | `npm run build:client`（`build/gui-client/vehicle-sil-gui-elements.mjs` ができます） |
-| npm のパッケージ（`vehicle-sil-gui-client-<version>.tgz`） | `client/`（リリースのページにも同じファイルがあります） | `npm run pack:client`（`build/gui-client/vehicle-sil-gui-client-<version>.tgz` ができます） |
+| npm のパッケージ（`vehicle-sil-gui-client-<version>.tgz`） | `client/`（リリースのページと npm のレジストリにも同じファイルがあります） | `npm run pack:client`（`build/gui-client/vehicle-sil-gui-client-<version>.tgz` ができます） |
 
 - **GUI サーバーから**: サーバーは、1 つにまとめたファイルと部品を `/vsil/vehicle-sil-gui-client.mjs` と `/vsil/vehicle-sil-gui-elements.mjs` で配ります。ビルドなしの画面は、写さずに使えます（`<script type="module" src="/vsil/vehicle-sil-gui-elements.mjs">`、`import { connect } from '/vsil/vehicle-sil-gui-client.mjs'`）。2 つとも `/vsil/` から読むか、2 つとも写しを読むかのどちらかにして、片方ずつは使いません。部品は client ライブラリをファイル名で import するので、写しが 2 つあると接続が 2 本になります。「[`vsil/` で配るファイル](#vsil-で配るファイル)」を見てください。
 - **1 つにまとめたファイル**: 画面の外で動かすツール（Node 22 以上）や、GUI サーバーが配信しない画面のためのものです。部品（これを `./vehicle-sil-gui-client.mjs` という名前で import します）と同じディレクトリに置いて、相対パスで import します。
-- **パッケージ**: 自分のプロジェクトで `npm install <that .tgz>` をすると、`@vehicle-sil/gui-client` として import できます（`npm install <its URL>` でもインストールできます）。npm のレジストリには公開していません。
+- **パッケージ**: 自分のプロジェクトで、GUI サーバーと同じ版を `npm install @vehicle-sil/gui-client@<version>` でインストールすると、`@vehicle-sil/gui-client` として import できます。`npm install <that .tgz>` や `npm install <its URL>` でもインストールできます。npm のレジストリでは、dist-tag の `latest` が最新のリリース、`next` が最新のプレリリースで（正式版の後は `next` が `latest` より古いので、版は番号で指定します）、どちらもリリースに添付したファイルと同じです。
   - 中身は、1 つにまとめた ESM（`dist/index.js`）、型（`types/`）、`exports` を書いた `package.json`、README、LICENSE で、依存はありません。バージョンは GUI サーバーと同じです。
   - 型は、ブラウザの型（`lib` の `DOM`。`WebSocket` など）を使います。
   - `npm run pack:client` は、作ったパッケージをインストールした形で Node から import し、画面のテンプレートの README の TypeScript の例を、型の解決 `nodenext` と `bundler` で型の検査に通してから終わります。

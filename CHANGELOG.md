@@ -137,6 +137,7 @@ A release candidate of 0.2.0: real buses connected from the launcher (`run --con
 
 ### Changed
 
+- **The GUI client library is on the npm registry**: publishing a release puts its `vehicle-sil-gui-client-<version>.tgz`, unchanged, on npm as `@vehicle-sil/gui-client` (dist-tag `latest`, or `next` for a pre-release such as this one), with npm's trusted publishing and provenance. Install it with `npm install @vehicle-sil/gui-client@<version>`, the version of your GUI server; the `.tgz` of the release still works.
 - **Messages of refused commands** (the launcher's `allowed` and command answers, the GUI server's 409 and 400 answers, the client's reasons) say what is happening and what cannot be done, without naming API calls or command-line options; the reason codes are unchanged. The 409 `scenario-running` answer of `POST api/write` carries the launcher's sentence (#238, #287).
 - **`single-participant`** is a note, not a warning, for a network that has `external` when the run does not connect it, so `--strict` no longer fails on a one-ECU network meant for an outside bus (#268).
 - **The screen template `gui_starter`** is built from the parts and loads the library from the GUI server (the tools archive's `gui_starter/` carries no copy); the guide for a screen of your own is rewritten around the parts, and the browser GUI starter and the client README use the keep-running configuration (#228, #323).

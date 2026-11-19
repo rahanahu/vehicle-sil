@@ -96,12 +96,13 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 
 ### フレームワークのプロジェクト
 
-ライブラリは、型つきの npm のパッケージ（`.tgz`）としても配っています（部品も入っています）。自分のプロジェクトで `npm install <その .tgz>` をして、`@vehicle-sil/gui-client` として import します。依存はありません。
+ライブラリは、型つきの npm のパッケージ（`.tgz`）としても配っています（部品も入っています）。自分のプロジェクトで、GUI サーバーと同じ版を `npm install @vehicle-sil/gui-client@<version>`（または `npm install <その .tgz>`）でインストールして、`@vehicle-sil/gui-client` として import します。依存はありません。
 
 | 入手元 | 場所 |
 |---|---|
 | ビルド済みのツール | `<tools>/client/vehicle-sil-gui-client-<version>.tgz` |
 | Releases のページ | 同じファイル |
+| npm のレジストリ | 同じファイル（`@vehicle-sil/gui-client`） |
 | リポジトリ | `gui/web` で `npm run pack:client` を実行します。`build/gui-client/vehicle-sil-gui-client-<version>.tgz` ができます。 |
 
 ```ts

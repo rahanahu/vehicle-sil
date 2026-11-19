@@ -173,7 +173,7 @@ With this approach you do not build the repository. The [releases page](https://
 |---|---|
 | Template | A starting-point ECU project with the same 2 ECUs as the example above, configuration files and a scenario (the same as [template/](template/)). |
 | Prebuilt tools | `vehicle_sil_launch`, the Ethernet bridge `vehicle_sil_ethernet_bridge` (Linux and Windows), the SocketCAN bridge `vehicle_sil_socketcan_bridge` (Linux only), the browser GUI and the Python client, in one archive per OS. |
-| GUI client | The npm package `vehicle-sil-gui-client-<version>.tgz` for your own screen (see [gui/client](gui/client/README.md)). The prebuilt tools contain the same file. |
+| GUI client | The npm package `vehicle-sil-gui-client-<version>.tgz` for your own screen (see [gui/client](gui/client/README.md)). The prebuilt tools contain the same file, and the npm registry has it as `@vehicle-sil/gui-client`. |
 | `SHA256SUMS` | The SHA-256 checksums of the other assets. |
 
 Use the assets of one release together. The launcher refuses an ECU executable only when its `--describe` output has another format (`vehicle_sil_ecu`). If the message format of the variables differs, the simulation runs but the launcher warns (`control-link-version`) and cannot read or write that ECU's variables (a scenario that uses one gets the check error `scenario-variable`). If only the vehicle-sil version differs, it notes `version-mismatch`. The GUI client refuses a GUI server that speaks another version of the GUI protocol, and the Python Control API client refuses a launcher of another vehicle-sil release.

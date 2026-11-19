@@ -96,12 +96,13 @@ To connect a `can` or `ethernet` network of your configuration file to a real bu
 
 ### A project with a framework
 
-The library comes as a typed npm package (`.tgz`) with the parts. Run `npm install <that .tgz>` in your project, then import it as `@vehicle-sil/gui-client`. It has no dependencies.
+The library comes as a typed npm package (`.tgz`) with the parts. Run `npm install @vehicle-sil/gui-client@<version>` in your project, with the version of your GUI server (or `npm install <that .tgz>`), then import it as `@vehicle-sil/gui-client`. It has no dependencies.
 
 | Source | Location |
 |---|---|
 | Prebuilt tools | `<tools>/client/vehicle-sil-gui-client-<version>.tgz` |
 | Releases page | The same file |
+| npm registry | The same file, as `@vehicle-sil/gui-client` |
 | Repository | Run `npm run pack:client` in `gui/web`. It creates `build/gui-client/vehicle-sil-gui-client-<version>.tgz`. |
 
 ```ts

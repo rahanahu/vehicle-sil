@@ -20,14 +20,14 @@ The library handles the connection (token, reconnection), the session copy (a co
 
 ## Installing and importing
 
-The library is TypeScript source with no dependencies. It is not published to the npm registry.
+The library is TypeScript source with no dependencies. Each release publishes it on the npm registry as `@vehicle-sil/gui-client` (the dist-tag `latest` is the newest release, `next` the newest pre-release) and attaches the same package to the release as `vehicle-sil-gui-client-<version>.tgz`. Install the version of your GUI server: the client refuses a server that speaks another version of the GUI protocol.
 
-| Use                                             | How to get it                                                                                            | Import                                                       |
-| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| A page that the GUI server serves (`--web`)     | Nothing to copy: the server serves the files (below)                                                     | `import { connect } from '/vsil/vehicle-sil-gui-client.mjs'` |
-| Plain JavaScript, outside such a page           | Put `vehicle-sil-gui-client.mjs`, the library bundled into one ESM file, next to your script             | `import { connect } from './vehicle-sil-gui-client.mjs'`     |
-| TypeScript and any framework                    | Get the package `vehicle-sil-gui-client-<version>.tgz` and run `npm install <that .tgz>` in your project | `import { connect } from '@vehicle-sil/gui-client'`          |
-| A TypeScript app in this repository (`gui/web`) | Point the entry point names to `src/` with `paths` in `tsconfig.json`                                    | `import { createClient } from '@vehicle-sil/gui-client'`     |
+| Use                                             | How to get it                                                                                               | Import                                                       |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| A page that the GUI server serves (`--web`)     | Nothing to copy: the server serves the files (below)                                                        | `import { connect } from '/vsil/vehicle-sil-gui-client.mjs'` |
+| Plain JavaScript, outside such a page           | Put `vehicle-sil-gui-client.mjs`, the library bundled into one ESM file, next to your script                | `import { connect } from './vehicle-sil-gui-client.mjs'`     |
+| TypeScript and any framework                    | Run `npm install @vehicle-sil/gui-client@<version>` in your project (or `npm install <the release's .tgz>`) | `import { connect } from '@vehicle-sil/gui-client'`          |
+| A TypeScript app in this repository (`gui/web`) | Point the entry point names to `src/` with `paths` in `tsconfig.json`                                       | `import { createClient } from '@vehicle-sil/gui-client'`     |
 
 Where to find the 3 files:
 

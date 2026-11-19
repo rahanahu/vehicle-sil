@@ -153,7 +153,7 @@ UCRT64 シェルの外（PowerShell など）から実行するときは、`C:\m
 
 Vector XL の CAN のブリッジはアーカイブに入っていません。Vector の XL Driver Library がないとビルドできないためです（[bridges.md](bridges.md) の「ビルド」）。
 
-ブラウザの GUI に自分の画面を作るときは、リリースのページの `vehicle-sil-gui-client-<version>.tgz` を `npm install <その URL かファイル>` でインストールします。クライアントのライブラリを `@vehicle-sil/gui-client` として使えます（[gui.md](gui.md) の「自分の画面を作る」）。同じファイルが、ツールのアーカイブの `client/` にも入っています。
+ブラウザの GUI に自分の画面を作るときは、同じ版のクライアントのライブラリを `npm install @vehicle-sil/gui-client@<version>`（npm のレジストリから）でインストールするか、リリースのページの `vehicle-sil-gui-client-<version>.tgz` を `npm install <その URL かファイル>` でインストールします。クライアントのライブラリを `@vehicle-sil/gui-client` として使えます（[gui.md](gui.md) の「自分の画面を作る」）。同じファイルが、ツールのアーカイブの `client/` にも入っています。
 
 アーカイブは `scripts/package.py` が作ります。
 
@@ -163,7 +163,7 @@ Vector XL の CAN のブリッジはアーカイブに入っていません。Ve
 | `verify` | アーカイブを、利用者の手順で確認します。 |
 | `template` | テンプレートのアーカイブを作ります。 |
 
-引数は `scripts/package.py --help` で表示します。タグ `v<version>` を push すると、GitHub Actions が両方の OS でアーカイブを作って確認し、リリースの下書きに添付します。
+引数は `scripts/package.py --help` で表示します。タグ `v<version>` を push すると、GitHub Actions が両方の OS でアーカイブを作って確認し、リリースの下書きに添付します。下書きを公開すると、GitHub Actions がそのクライアントのライブラリのパッケージを npm のレジストリに公開します（[code-map-build.md](code-map-build.md) の「npm へのクライアントのライブラリの公開」）。
 
 ## 外部プロジェクトから使う（FetchContent）
 
