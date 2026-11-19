@@ -285,14 +285,14 @@ struct OutcomeControl
 struct OutcomeScenario
 {
     /// What became of the scenario (ScenarioStatus::NotRun if the simulation did not start).
-    std::optional<ScenarioRun> result{};
+    std::optional<scenario::ScenarioRun> result{};
     /// The scenario's thread failed unexpectedly: why (the scenario is Incomplete).
     std::string error{};
     /// The timeline file as the user named it (RunHost::timeline), once it was opened; ""
     /// without one.
     std::string timeline{};
     /// What the scenario's engine noted for the timeline; null if the scenario did not begin.
-    std::shared_ptr<const TimelineRecord> timeline_record{};
+    std::shared_ptr<const scenario::TimelineRecord> timeline_record{};
     /// The timeline file could be opened, but not written when the run was over: why (finding
     /// "timeline-write"; the scenario's result stands). (A record that dropped points at its
     /// limits is the note "timeline-limit".)

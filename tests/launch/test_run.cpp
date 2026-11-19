@@ -47,6 +47,7 @@
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
+using namespace vehicle_sil::scenario;
 using namespace vehicle_sil::config;
 using vehicle_sil::config::test::check_text;
 using vehicle_sil::config::test::lines;
@@ -1429,17 +1430,17 @@ namespace {
 /// `o` with a scenario of one step in `status` (made in place: no struct is built and moved).
 RunOutcome with_scenario(RunOutcome o, ScenarioStatus status)
 {
-    vehicle_sil::launch::ScenarioRun& scenario = o.scenario.result.emplace();
+    vehicle_sil::scenario::ScenarioRun& scenario = o.scenario.result.emplace();
     scenario.file = "s.yaml";
     scenario.status = status;
-    vehicle_sil::launch::ScenarioStepRun& step = scenario.steps.emplace_back();
+    vehicle_sil::scenario::ScenarioStepRun& step = scenario.steps.emplace_back();
     step.index = 1;
     step.line = 4;
     step.text = "expect Body.level == 1";
-    step.status = status == ScenarioStatus::Passed       ? vehicle_sil::launch::StepStatus::Passed
-                  : status == ScenarioStatus::Failed     ? vehicle_sil::launch::StepStatus::Failed
-                  : status == ScenarioStatus::Incomplete ? vehicle_sil::launch::StepStatus::Unfinished
-                                                         : vehicle_sil::launch::StepStatus::NotRun;
+    step.status = status == ScenarioStatus::Passed       ? vehicle_sil::scenario::StepStatus::Passed
+                  : status == ScenarioStatus::Failed     ? vehicle_sil::scenario::StepStatus::Failed
+                  : status == ScenarioStatus::Incomplete ? vehicle_sil::scenario::StepStatus::Unfinished
+                                                         : vehicle_sil::scenario::StepStatus::NotRun;
     if (status == ScenarioStatus::Failed)
     {
         step.code = "scenario-expect";

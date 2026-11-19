@@ -28,7 +28,7 @@
 #include <system_error>
 #include <utility>
 
-namespace vehicle_sil::launch::scenario_reader {
+namespace vehicle_sil::scenario::reader {
 
 // kTopKeys is what the message of an unknown key shows; the reader takes each key in a branch of its own. A key with
 // a new branch must be added here too, or the JSON Schema (schema/) and its test (tests/schema), which compare with
@@ -460,4 +460,4 @@ private:
     bool too_long_ = false; ///< said once
 };
 
-} // namespace vehicle_sil::launch::scenario_reader
+} // namespace vehicle_sil::scenario::reader

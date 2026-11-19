@@ -107,7 +107,7 @@ public:
     virtual void control_link(const std::string& name, std::string_view state, std::optional<std::size_t> variables,
                               std::optional<int> version) = 0;
     /// run --scenario: a step of the scenario began (StepStatus::Running) or was decided.
-    virtual void scenario_step(const ScenarioStepRun& step) = 0;
+    virtual void scenario_step(const scenario::ScenarioStepRun& step) = 0;
     /// One line of a participant's output (`source`: its name) or of the launcher
     /// ("vehicle_sil_launch"), as the text output shows it but without "[<source>] ". The only
     /// thing told here that an implementation may drop.

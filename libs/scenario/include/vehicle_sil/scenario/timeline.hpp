@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::scenario {
 
 /// How many points a timeline keeps. Beyond a limit the older points go and the newer ones stay
 /// (the end of the run, where a failure is, keeps every point). Counted are the points that can
@@ -239,4 +239,4 @@ private:
     std::uint64_t next_serial_ = 0;
 };
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::scenario

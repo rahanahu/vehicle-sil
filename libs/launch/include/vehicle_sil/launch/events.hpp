@@ -221,7 +221,7 @@ public:
                       std::optional<int> version) override;
     /// "scenario_step" (run --scenario): a step of the scenario began ("status": "running") or was
     /// decided ("passed", "failed"), with the members of the result's "scenario"."steps".
-    void scenario_step(const ScenarioStepRun& step) override;
+    void scenario_step(const scenario::ScenarioStepRun& step) override;
     /// One line of a participant's output (`source`: its name) or of the launcher
     /// ("vehicle_sil_launch"), as the text output shows it but without "[<source>] ". The only
     /// event that may be dropped (see above).

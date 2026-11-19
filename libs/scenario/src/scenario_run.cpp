@@ -11,7 +11,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::scenario {
 
 namespace {
 
@@ -1426,4 +1426,4 @@ void ScenarioEngine::observe(SimTime p)
     }
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::scenario

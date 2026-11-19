@@ -21,6 +21,7 @@
 namespace {
 
 using namespace vehicle_sil::launch;
+using namespace vehicle_sil::scenario;
 using namespace vehicle_sil::config;
 using Speed = std::optional<double>;
 

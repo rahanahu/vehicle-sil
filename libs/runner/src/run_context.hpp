@@ -42,7 +42,7 @@ struct RunContext
     /// Null: nothing is told this way, and the lines go to RunObservers::write_line.
     RunEvents* events;
     /// run --scenario: the scenario the check read (RunPlan::scenario()); null without one.
-    const Scenario* scenario;
+    const scenario::Scenario* scenario;
     /// The run's controls: RunLent::controls, or the run's own (on RunLent::stops).
     RunControls& controls;
     /// The time commands of `controls`.

@@ -114,7 +114,7 @@ bool is_on(const config::ParticipantConfig& participant, const config::Participa
 }
 
 /// " (1 skipped, 1 expect not checked)", or "" if the run skips nothing.
-std::string scenario_counts_text(const ScenarioCheck& scenario)
+std::string scenario_counts_text(const scenario::ScenarioCheck& scenario)
 {
     std::vector<std::string> parts;
     if (scenario.skipped > 0)
@@ -159,7 +159,7 @@ const char* status_name(config::ParticipantStatus status)
 
 } // namespace
 
-std::string detail::check_text_body(const config::CheckReport& report, const ScenarioCheck* scenario)
+std::string detail::check_text_body(const config::CheckReport& report, const scenario::ScenarioCheck* scenario)
 {
     std::string out;
     if (report.config)
@@ -259,8 +259,8 @@ std::string detail::check_text_body(const config::CheckReport& report, const Sce
     return out;
 }
 
-void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const std::vector<ScenarioLineText>& inputs,
-                                       const std::vector<ScenarioLineText>& lines)
+void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const std::vector<scenario::ScenarioLineText>& inputs,
+                                       const std::vector<scenario::ScenarioLineText>& lines)
 {
     const auto number = [&w](std::string_view key, const std::optional<std::int64_t>& n) {
         if (n)
@@ -273,7 +273,7 @@ void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const s
         }
     };
     // As a line of a timeline file has it: its type, and the keys of the text with their values.
-    const auto shape = [&w](const std::optional<ScenarioShapeText>& described) {
+    const auto shape = [&w](const std::optional<scenario::ScenarioShapeText>& described) {
         if (!described)
         {
             w.null("shape");
@@ -303,7 +303,7 @@ void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const s
         w.end_object();
     };
     w.begin_array("inputs");
-    for (const ScenarioLineText& input : inputs)
+    for (const scenario::ScenarioLineText& input : inputs)
     {
         w.begin_object();
         w.string("variable", input.variable);
@@ -316,7 +316,7 @@ void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const s
     }
     w.end_array();
     w.begin_array("lines");
-    for (const ScenarioLineText& line : lines)
+    for (const scenario::ScenarioLineText& line : lines)
     {
         w.begin_object();
         w.string("variable", line.variable);
@@ -325,8 +325,8 @@ void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const s
         number("step", line.step ? std::optional<std::int64_t>(static_cast<std::int64_t>(*line.step)) : std::nullopt);
         number("from_ms", line.from_ms);
         number("to_ms", line.to_ms);
-        w.string("time_source", line_time_source_name(line.time_source));
-        number("after_line", line.time_source == ScenarioLineText::TimeSource::AfterWait
+        w.string("time_source", scenario::line_time_source_name(line.time_source));
+        number("after_line", line.time_source == scenario::ScenarioLineText::TimeSource::AfterWait
                                  ? std::optional<std::int64_t>(static_cast<std::int64_t>(line.after_wait))
                                  : std::nullopt);
         shape(line.shape);
@@ -336,10 +336,10 @@ void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const s
     w.end_array();
 }
 
-std::string detail::scenario_lines_text(const std::vector<ScenarioLineText>& lines)
+std::string detail::scenario_lines_text(const std::vector<scenario::ScenarioLineText>& lines)
 {
     std::vector<std::vector<std::string>> rows{{"input", "from", "to", "what", "line"}};
-    for (const ScenarioLineText& line : lines)
+    for (const scenario::ScenarioLineText& line : lines)
     {
         // A time that the text does not give ("?": after a step that waits; "first write": a
         // declared dither begins with the first write of its input), and no end ("-").
@@ -347,10 +347,10 @@ std::string detail::scenario_lines_text(const std::vector<ScenarioLineText>& lin
         const bool dither = line.kind == "dither";
         // (The text without the variable, which has its own column.)
         const std::string what = line.text.rfind(line.variable + " ", 0) == 0 ? line.text.substr(line.variable.size() + 1) : line.text;
-        rows.push_back({line.variable, line.time_source == ScenarioLineText::TimeSource::FirstWrite ? "first write" : ms(line.from_ms),
+        rows.push_back({line.variable, line.time_source == scenario::ScenarioLineText::TimeSource::FirstWrite ? "first write" : ms(line.from_ms),
                         dither ? "-" : ms(line.to_ms),
                         line.kind + " " + what +
-                            (line.time_source == ScenarioLineText::TimeSource::AfterWait
+                            (line.time_source == scenario::ScenarioLineText::TimeSource::AfterWait
                                  ? " (after the wait of line " + std::to_string(line.after_wait) + ")"
                                  : ""),
                         std::to_string(line.line)});
@@ -395,7 +395,7 @@ const char* detail::severity_text(config::Severity severity) { return severity_n
 
 namespace {
 
-std::string text_of(const config::CheckReport& report, const ScenarioCheck* scenario)
+std::string text_of(const config::CheckReport& report, const scenario::ScenarioCheck* scenario)
 {
     std::string out = detail::check_text_body(report, scenario);
     const std::string counts = count_text(report.errors(), "error", "errors") + ", " +
@@ -503,7 +503,7 @@ void detail::write_findings_json(vehicle_sil::json::JsonWriter& w, const std::st
 
 namespace {
 
-std::string json_of(const config::CheckReport& report, const ScenarioCheck* scenario)
+std::string json_of(const config::CheckReport& report, const scenario::ScenarioCheck* scenario)
 {
     vehicle_sil::json::JsonWriter w;
     detail::write_check_json(w, {}, report, scenario);
@@ -517,7 +517,7 @@ std::string json_of(const config::CheckReport& report, const ScenarioCheck* scen
 std::string format_json(const Checked& checked) { return json_of(checked, detail::scenario_of(checked)); }
 
 void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view member, const config::CheckReport& report,
-                              const ScenarioCheck* scenario)
+                              const scenario::ScenarioCheck* scenario)
 {
     const auto optional_text = [&w](std::string_view key, const std::string& value) {
         if (value.empty())
@@ -872,7 +872,7 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
         if (scenario->scenario)
         {
             // Empty for a scenario without a dither (Scenario::has_dither).
-            detail::write_scenario_lines_json(w, scenario_inputs_text(*scenario->scenario), scenario->scenario->lines);
+            detail::write_scenario_lines_json(w, scenario::scenario_inputs_text(*scenario->scenario), scenario->scenario->lines);
         }
         else
         {

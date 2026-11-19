@@ -555,7 +555,7 @@ void EventStream::control_link(const std::string& name, std::string_view state, 
          }));
 }
 
-void EventStream::scenario_step(const ScenarioStepRun& step)
+void EventStream::scenario_step(const scenario::ScenarioStepRun& step)
 {
     emit("scenario_step", object([&](Writer& w) { detail::write_scenario_step_members(w, step); }));
 }

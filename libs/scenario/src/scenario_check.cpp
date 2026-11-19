@@ -8,7 +8,7 @@
 #include <memory>
 #include <utility>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::scenario {
 
 ScenarioCatalog scenario_catalog(const config::CheckReport& check)
 {
@@ -77,4 +77,4 @@ ScenarioCatalog scenario_catalog(const config::CheckReport& check)
     return out;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::scenario

@@ -320,17 +320,17 @@ std::string detail::traffic_text(const RunTraffic& traffic)
     return "traffic: " + line + " (steps before " + std::to_string(traffic.before_ms) + " ms)\n\n" + detail::table_text(rows);
 }
 
-std::string detail::scenario_text(const ScenarioRun& scenario)
+std::string detail::scenario_text(const scenario::ScenarioRun& scenario)
 {
     const auto passed = static_cast<std::size_t>(std::count_if(
-        scenario.steps.begin(), scenario.steps.end(), [](const ScenarioStepRun& step) { return step.status == StepStatus::Passed; }));
+        scenario.steps.begin(), scenario.steps.end(), [](const scenario::ScenarioStepRun& step) { return step.status == scenario::StepStatus::Passed; }));
     std::string state;
     switch (scenario.status)
     {
-    case ScenarioStatus::NotRun: state = "not run"; break;
-    case ScenarioStatus::Passed: state = "passed"; break;
-    case ScenarioStatus::Failed: state = "FAILED"; break;
-    case ScenarioStatus::Incomplete: state = "incomplete"; break;
+    case scenario::ScenarioStatus::NotRun: state = "not run"; break;
+    case scenario::ScenarioStatus::Passed: state = "passed"; break;
+    case scenario::ScenarioStatus::Failed: state = "FAILED"; break;
+    case scenario::ScenarioStatus::Incomplete: state = "incomplete"; break;
     }
     std::string out = "scenario " + scenario.file + (scenario.name.empty() ? "" : " (" + scenario.name + ")") + ": " + state +
                       ", " + std::to_string(passed) + " of " + std::to_string(scenario.steps.size()) + " steps passed" +
@@ -341,17 +341,17 @@ std::string detail::scenario_text(const ScenarioRun& scenario)
                            : std::string{}) +
                       "\n\n";
     std::vector<std::vector<std::string>> rows{{"line", "step", "result", "at"}};
-    for (const ScenarioStepRun& step : scenario.steps)
+    for (const scenario::ScenarioStepRun& step : scenario.steps)
     {
-        rows.push_back({std::to_string(step.line), step.text, step_result_text(step.status),
+        rows.push_back({std::to_string(step.line), step.text, scenario::step_result_text(step.status),
                         step.at ? sim_millis_text(*step.at) + " ms" : "-"});
     }
     out += detail::table_text(rows);
     // Why, for the steps that were skipped and the expects that were not checked: the table has no
     // room for it.
-    for (const ScenarioStepRun& step : scenario.steps)
+    for (const scenario::ScenarioStepRun& step : scenario.steps)
     {
-        if (step.status == StepStatus::Skipped)
+        if (step.status == scenario::StepStatus::Skipped)
         {
             out += "line " + std::to_string(step.line) + " skipped: " + step.message + "\n";
         }
@@ -660,20 +660,20 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
     w.end_object();
 }
 
-void detail::write_scenario_step_members(vehicle_sil::json::JsonWriter& w, const ScenarioStepRun& step)
+void detail::write_scenario_step_members(vehicle_sil::json::JsonWriter& w, const scenario::ScenarioStepRun& step)
 {
     const auto time = [&w](std::string_view key, const std::optional<SimTime>& t) {
         w.real(key, t ? std::optional<double>(static_cast<double>(to_ns(*t)) / static_cast<double>(config::detail::kNanosPerMilli)) : std::nullopt);
     };
     w.integer("index", static_cast<std::int64_t>(step.index));
     w.integer("line", static_cast<std::int64_t>(step.line));
-    w.string("kind", step_kind_name(step.kind));
+    w.string("kind", scenario::step_kind_name(step.kind));
     w.string("text", step.text);
-    w.string("status", step_status_name(step.status));
+    w.string("status", scenario::step_status_name(step.status));
     time("start_ms", step.start);
     time("at_ms", step.at);
     time("end_ms", step.end);
-    if (step.status == StepStatus::Failed || step.status == StepStatus::Skipped)
+    if (step.status == scenario::StepStatus::Failed || step.status == scenario::StepStatus::Skipped)
     {
         w.string("code", step.code);
         w.string("message", step.message);
@@ -690,7 +690,7 @@ void detail::write_scenario_step_members(vehicle_sil::json::JsonWriter& w, const
     }
 }
 
-void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const ScenarioRun& scenario,
+void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const scenario::ScenarioRun& scenario,
                                  const std::string& timeline)
 {
     w.begin_object(key);
@@ -703,7 +703,7 @@ void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_v
     {
         w.string("name", scenario.name);
     }
-    w.string("status", scenario_status_name(scenario.status));
+    w.string("status", scenario::scenario_status_name(scenario.status));
     w.real("over_at_ms", scenario.over_at ? std::optional<double>(static_cast<double>(to_ns(*scenario.over_at)) /
                                                                   static_cast<double>(config::detail::kNanosPerMilli))
                                           : std::nullopt);
@@ -718,7 +718,7 @@ void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_v
         w.integer("unchecked_expects", static_cast<std::int64_t>(scenario.unchecked_expects()));
     }
     w.begin_array("steps");
-    for (const ScenarioStepRun& step : scenario.steps)
+    for (const scenario::ScenarioStepRun& step : scenario.steps)
     {
         w.begin_object();
         write_scenario_step_members(w, step);

@@ -4,7 +4,7 @@
 // file), and what the ECU's step makes of them.
 #include "scenario_reader.hpp"
 
-namespace vehicle_sil::launch::scenario_reader {
+namespace vehicle_sil::scenario::reader {
 
 namespace {
 
@@ -1549,4 +1549,4 @@ void Reader::check_held_points(std::size_t variable, const std::string& what, st
     }
 }
 
-} // namespace vehicle_sil::launch::scenario_reader
+} // namespace vehicle_sil::scenario::reader

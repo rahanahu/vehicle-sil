@@ -13,7 +13,7 @@
 
 namespace vehicle_sil::launch {
 
-RunPlan plan_run(const config::CheckReport& check, const ScenarioCheck* scenario, std::filesystem::path base,
+RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck* scenario, std::filesystem::path base,
                  const RunChoices& choices, const RunLimits& limits, bool control_server)
 {
     if (!check.config)
@@ -68,9 +68,9 @@ RunOutcome planned_outcome(const RunPlan& plan)
     outcome.end.stop_at_ms = config.stop_at_ms;
     outcome.time_lock = check.time_lock;
     outcome.real_time_peers = config::detail::real_time_peers(config, check);
-    if (const Scenario* scenario = plan.scenario(); scenario != nullptr)
+    if (const scenario::Scenario* scenario = plan.scenario(); scenario != nullptr)
     {
-        outcome.scenario.result = scenario_not_run(*scenario);
+        outcome.scenario.result = scenario::scenario_not_run(*scenario);
         outcome.scenario.result->file = plan.scenario_check->file;
     }
     outcome.timing = plan.timing;

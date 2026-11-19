@@ -74,7 +74,7 @@ std::vector<std::string> RunControl::expected_agents() const
         // Also an optional one whose variables the scenario uses.
         const bool used = ctx_.scenario != nullptr &&
                           std::any_of(ctx_.scenario->participants.begin(), ctx_.scenario->participants.end(),
-                                      [&p](const ScenarioParticipant& s) { return s.name == p.name; });
+                                      [&p](const scenario::ScenarioParticipant& s) { return s.name == p.name; });
         // Also one without variables: its agent has what the launcher reads besides (the counters
         // of its networks), and whether its link is in the result must not depend on when its
         // hello came.

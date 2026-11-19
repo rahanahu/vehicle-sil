@@ -60,7 +60,7 @@ RunResult RunReport::result() const
     {
         // A scenario that did not pass and did not fail has no verdict: it did not begin, or the
         // stop came before its end.
-        const bool cutShort = run->scenario.result && run->scenario.result->status != ScenarioStatus::Passed;
+        const bool cutShort = run->scenario.result && run->scenario.result->status != scenario::ScenarioStatus::Passed;
         return cutShort ? RunResult::Incomplete : RunResult::Stopped;
     }
     return RunResult::Passed;
@@ -107,7 +107,7 @@ std::string with_first_problem(const RunReport& report, std::string lead)
 // also after a stop that the person asked for.
 std::string RunReport::message() const
 {
-    const ScenarioRun* scenario = run && run->scenario.result ? &*run->scenario.result : nullptr;
+    const scenario::ScenarioRun* scenario = run && run->scenario.result ? &*run->scenario.result : nullptr;
     const std::string by = run ? run->end.stop_phrase() : std::string{};
     // The operator did not wait for them: no error, but said.
     const std::vector<std::string> forced = run ? ended_by_force(*run) : std::vector<std::string>{};

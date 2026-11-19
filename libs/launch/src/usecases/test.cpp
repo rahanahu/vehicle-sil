@@ -120,7 +120,7 @@ std::string failure_reason(const RunReport& report)
 /// What became of one run.
 void judge(TestRun& run, RunReport report)
 {
-    const std::optional<ScenarioCheck>& scenario = report.check.scenario;
+    const std::optional<scenario::ScenarioCheck>& scenario = report.check.scenario;
     // Not for this variant, and nothing else is wrong: skipped. (The error that says so is one
     // finding; any other error is of the file or of the scenario, and fails the run.)
     if (scenario && scenario->not_for_variant && report.check.errors() == 1)
@@ -194,13 +194,13 @@ std::vector<config::Finding> unused_params(const std::vector<TestScenario>& scen
             return {};
         }
         const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-        ScenarioContext context;
+        scenario::ScenarioContext context;
         context.params = configured;
         context.params.insert(context.params.end(), given.begin(), given.end());
         context.params_for_many = true;
         context.read_file = files_beside(path);
         // Without the participants: the errors about the variables are not looked at.
-        const ScenarioRead read = read_scenario(text, {}, context);
+        const scenario::ScenarioRead read = scenario::read_scenario(text, {}, context);
         for (const config::Finding& finding : read.findings)
         {
             if (finding.code == "syntax" || finding.code == "not-a-scenario" || finding.code == "unsupported-yaml")

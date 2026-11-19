@@ -82,7 +82,7 @@ namespace {
                                                        bool params_for_many,
                                                        const config::RequestOrigin& origin)
 {
-    ScenarioCheck check;
+    scenario::ScenarioCheck check;
     check.file = named;
     const auto add = [&](config::Finding finding) {
         finding.file = check.file;
@@ -97,7 +97,7 @@ namespace {
     }
     else
     {
-        ScenarioContext context;
+        scenario::ScenarioContext context;
         context.variant = report.config->variant;
         context.variants = report.variants;
         context.params = report.config->params;
@@ -108,7 +108,7 @@ namespace {
             context.request_file = origin.file; // the file's own scenario: its params must fit it
         }
         context.read_file = files_beside(path);
-        ScenarioRead read = read_scenario(text, scenario_catalog(report), context);
+        scenario::ScenarioRead read = scenario::read_scenario(text, scenario::scenario_catalog(report), context);
         check.name = std::move(read.name);
         check.steps = read.steps;
         check.scenario = std::move(read.scenario);

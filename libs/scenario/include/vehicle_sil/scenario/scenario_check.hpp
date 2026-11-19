@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::scenario {
 
 /// The scenario that was checked with the configuration (--scenario).
 struct ScenarioCheck
@@ -39,4 +39,4 @@ struct ScenarioCheck
 /// each participant as a scenario can use it, from its entry and what its executable described.
 [[nodiscard]] ScenarioCatalog scenario_catalog(const config::CheckReport& check);
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::scenario

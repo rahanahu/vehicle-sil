@@ -3,7 +3,7 @@
 // The scenario's reader (scenario_reader.hpp): variables and their values, hexadecimal included.
 #include "scenario_reader.hpp"
 
-namespace vehicle_sil::launch::scenario_reader {
+namespace vehicle_sil::scenario::reader {
 
 ScenarioShapeText::Value Reader::shape_value(ryml::id_type node, std::size_t variable) const
 {
@@ -349,4 +349,4 @@ bool Reader::writable(std::size_t variable, std::size_t line, const std::optiona
     return true;
 }
 
-} // namespace vehicle_sil::launch::scenario_reader
+} // namespace vehicle_sil::scenario::reader

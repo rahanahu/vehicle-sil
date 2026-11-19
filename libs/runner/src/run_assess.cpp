@@ -720,24 +720,24 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
     }
     if (outcome.scenario.result)
     {
-        const ScenarioRun& scenario = *outcome.scenario.result;
+        const scenario::ScenarioRun& scenario = *outcome.scenario.result;
         const auto add_scenario = [&](std::string code, std::string message, std::size_t line, config::Severity severity = config::Severity::Error) {
             out.push_back(config::Finding{severity, std::move(code), std::move(message), line, "", "", "", scenario.file});
         };
-        for (const ScenarioStepRun& step : scenario.steps)
+        for (const scenario::ScenarioStepRun& step : scenario.steps)
         {
-            if (step.status == StepStatus::Failed)
+            if (step.status == scenario::StepStatus::Failed)
             {
                 add_scenario(step.code, step.text + ": " + step.message, step.line);
             }
         }
-        if (scenario.status == ScenarioStatus::Incomplete)
+        if (scenario.status == scenario::ScenarioStatus::Incomplete)
         {
-            const auto reached = std::find_if(scenario.steps.rbegin(), scenario.steps.rend(), [](const ScenarioStepRun& step) {
-                return step.status != StepStatus::NotRun;
+            const auto reached = std::find_if(scenario.steps.rbegin(), scenario.steps.rend(), [](const scenario::ScenarioStepRun& step) {
+                return step.status != scenario::StepStatus::NotRun;
             });
             const auto passed = static_cast<std::size_t>(std::count_if(
-                scenario.steps.begin(), scenario.steps.end(), [](const ScenarioStepRun& step) { return step.status == StepStatus::Passed; }));
+                scenario.steps.begin(), scenario.steps.end(), [](const scenario::ScenarioStepRun& step) { return step.status == scenario::StepStatus::Passed; }));
             const EndReason end = end_reason(outcome);
             // The stop ended the simulation (one that came while the participants were ending did not).
             const bool cutShort = (end == EndReason::Stopped || end == EndReason::Interrupted) &&
@@ -746,7 +746,7 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
                          "the scenario did not get to its end: the simulation ended at " + std::to_string(outcome.timing.sim_ms) +
                              " ms when " + std::to_string(passed) + " of " + std::to_string(scenario.steps.size()) +
                              " steps had passed" +
-                             (reached != scenario.steps.rend() && reached->status == StepStatus::Unfinished
+                             (reached != scenario.steps.rend() && reached->status == scenario::StepStatus::Unfinished
                                   ? " and the step at line " + std::to_string(reached->line) + " (" + reached->text + ") was not decided yet"
                                   : std::string{}) +
                              (!outcome.scenario.error.empty()

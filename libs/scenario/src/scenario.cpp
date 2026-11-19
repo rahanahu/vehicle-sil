@@ -18,7 +18,7 @@
 #include <system_error>
 #include <utility>
 
-namespace vehicle_sil::launch::scenario_reader {
+namespace vehicle_sil::scenario::reader {
 
 namespace {
 
@@ -1222,14 +1222,14 @@ std::string Reader::step_text(const ScenarioStep& step) const
     return out;
 }
 
-} // namespace vehicle_sil::launch::scenario_reader
+} // namespace vehicle_sil::scenario::reader
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::scenario {
 
-using scenario_reader::as_number;
-using scenario_reader::kDocs;
-using scenario_reader::number_text;
-using scenario_reader::Reader;
+using reader::as_number;
+using reader::kDocs;
+using reader::number_text;
+using reader::Reader;
 
 const char* step_kind_name(StepKind kind)
 {
@@ -1352,4 +1352,4 @@ ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog
     return out;
 }
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::scenario

@@ -24,7 +24,7 @@
 #include <variant>
 #include <vector>
 
-namespace vehicle_sil::launch {
+namespace vehicle_sil::scenario {
 
 /// The version of the scenario format (its "vehicle_sil_scenario" key).
 inline constexpr int kScenarioFormat = 1;
@@ -371,4 +371,4 @@ struct ScenarioRead
 /// Whether `value` meets `comparison` (numbers are compared as numbers, whatever their types).
 [[nodiscard]] bool holds(const ScenarioComparison& comparison, const control::Value& value);
 
-} // namespace vehicle_sil::launch
+} // namespace vehicle_sil::scenario

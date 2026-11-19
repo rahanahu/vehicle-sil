@@ -28,13 +28,13 @@ inline constexpr int kCheckFormat = 1;
 struct Checked : config::CheckReport
 {
     /// --scenario: the scenario file that was read and checked.
-    std::optional<ScenarioCheck> scenario{};
+    std::optional<scenario::ScenarioCheck> scenario{};
 };
 
 namespace detail {
 /// The scenario of a check, or null without --scenario: what the outputs' pieces take
 /// (check_format.hpp).
-[[nodiscard]] inline const ScenarioCheck* scenario_of(const Checked& checked)
+[[nodiscard]] inline const scenario::ScenarioCheck* scenario_of(const Checked& checked)
 {
     return checked.scenario ? &*checked.scenario : nullptr;
 }

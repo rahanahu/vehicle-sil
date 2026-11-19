@@ -4,7 +4,7 @@
 // inputs as the text says it.
 #include "scenario_reader.hpp"
 
-namespace vehicle_sil::launch::scenario_reader {
+namespace vehicle_sil::scenario::reader {
 
 void Reader::note_base(std::size_t variable, double value, std::size_t line, bool stays)
 {
@@ -468,4 +468,4 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
     return out;
 }
 
-} // namespace vehicle_sil::launch::scenario_reader
+} // namespace vehicle_sil::scenario::reader

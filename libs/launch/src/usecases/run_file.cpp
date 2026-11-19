@@ -242,7 +242,7 @@ RunReport run_file(const RunRequest& request, const RunObservers& observers, con
         // scenario's result and the record its engine filled); the Runner only writes the text
         // to the file it opened before anything started. The file has the scenario's findings
         // of the check and of the run.
-        const ScenarioCatalog catalog = scenario_catalog(report.check);
+        const scenario::ScenarioCatalog catalog = scenario::scenario_catalog(report.check);
         TimelineInput input;
         input.file = report.check.file;
         input.variant = runner.plan().config().variant;

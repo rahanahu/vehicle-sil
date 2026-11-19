@@ -340,9 +340,9 @@ std::function<std::optional<std::string>(const std::string&, std::string&)> file
             problem = "is not a regular file: name the CSV file";
             return std::nullopt;
         }
-        if (std::filesystem::file_size(path, ec) > detail::kMaxCsvBytes)
+        if (std::filesystem::file_size(path, ec) > scenario::detail::kMaxCsvBytes)
         {
-            problem = "is larger than " + std::to_string(detail::kMaxCsvBytes >> 20) +
+            problem = "is larger than " + std::to_string(scenario::detail::kMaxCsvBytes >> 20) +
                       " MiB, too large for points: keep fewer points, or split it into steps of their own";
             return std::nullopt;
         }
