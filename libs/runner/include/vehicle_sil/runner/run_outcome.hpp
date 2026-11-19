@@ -232,7 +232,7 @@ struct OutcomeEnd
     /// or "" if nothing did.
     std::string interrupted_by{};
     /// The kind of what asked first (stop_kind() of the first stop request's source); set with
-    /// interrupted_by. It decides between EndReason::Stopped and EndReason::Interrupted.
+    /// interrupted_by. It decides between EndReason::Stopped and EndReason::Interrupted (end_reason()).
     std::optional<StopKind> interrupted_kind{};
     /// What asked, in words for people, by its kind: "by a stop request" (an operator), "because
     /// its input closed" or "because its output closed" (the supervisor went away), else "by a
@@ -250,8 +250,8 @@ struct OutcomeEnd
     {
         return interrupted_kind == StopKind::Operator ? "stopped " + stop_phrase() : "interrupted (" + interrupted_by + ")";
     }
-    /// The interrupt came after the simulation had ended, while the launcher waited for the
-    /// participants to end.
+    /// The first stop request came after the simulation had ended, while the launcher waited for
+    /// the participants to end: an operator's stop then does not decide end_reason().
     bool interrupted_while_ending = false;
     /// The simulation did not end within --timeout-ms of wall-clock time: the launcher aborted it.
     bool timed_out = false;
@@ -371,22 +371,25 @@ struct RunOutcome
 enum class EndReason
 {
     Completed,   ///< it reached an end that was set: stop_at_ms, a participant ended it, the scenario was over
-    Stopped,     ///< an operator stopped it (the stop command, the control server's Stop)
+    Stopped,     ///< an operator stopped it (the stop command, the control server's Stop) before the simulation ended
     Interrupted, ///< a signal or a console event, or the program that ran the launcher went away
     Failed,      ///< it could not start or go on: a participant or a bridge failed, a time limit passed
     SetupFailed, ///< the registry or the controller could not be set up
 };
 
-/// Why `outcome` ended. Pure. The order: a set-up that failed; then what asked first to stop
-/// (an operator: Stopped; anything else: Interrupted), whatever came after it; then how far the
-/// simulation got. A run whose scenario was over is Completed.
+/// Why `outcome` ended. Pure. The order: a set-up that failed; then what asked first to stop,
+/// whatever came after it: anything but an operator, Interrupted, at any time; an operator,
+/// Stopped, unless its stop came only while the launcher waited for the participants to end (it
+/// cut that wait short, and did not end the simulation); then how far the simulation got. A run
+/// whose scenario was over is Completed.
 [[nodiscard]] EndReason end_reason(const RunOutcome& outcome);
 
-/// The participants that the launcher ended by force in a run that an operator stopped, without
-/// having waited for them in full: the stop request was repeated, or came while the launcher
-/// waited for them to end. They did not end when asked to (not those the launcher could not ask),
-/// and are no error of such a run (the operator chose not to wait); the note "ended-by-force" and
-/// the result's message name them. Empty for any other run.
+/// The participants that the launcher ended by force, without having waited for them in full,
+/// because it was asked to stop (by anything: an operator, a signal, a supervisor that went
+/// away): the request was repeated, or came while the launcher waited for them to end. They did
+/// not end when asked to (not those the launcher could not ask), and are no error (whoever asked
+/// chose not to wait), whatever the result; the note "ended-by-force" and the result's message
+/// name them. Empty for a run that nothing asked to stop.
 [[nodiscard]] std::vector<std::string> ended_by_force(const RunOutcome& outcome);
 
 /// "completed", "stopped", "interrupted", "failed" or "setup_failed": the member "end" of the result.

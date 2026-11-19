@@ -1420,11 +1420,25 @@ TEST_CASE(why_a_run_ended_is_decided_by_the_setup_then_by_what_asked_first_then_
     CHECK(end_reason(stopped_run("SIGINT", StopKind::Signal)) == EndReason::Interrupted);
     CHECK(end_reason(stopped_run("end of input", StopKind::Supervisor)) == EndReason::Interrupted);
     CHECK(end_reason(stopped_run("output closed", StopKind::Supervisor)) == EndReason::Interrupted);
-    // What asked first decides, also when the simulation had ended or failed before it.
+    // An operator's stop that came only while the participants were ending did not end the
+    // simulation: its own end stays (failed, or completed).
     RunOutcome late = stopped_run("stop command", StopKind::Operator);
     late.end.simulation = SimulationEnd::Aborted;
     late.end.interrupted_while_ending = true;
-    CHECK(end_reason(late) == EndReason::Stopped);
+    CHECK(end_reason(late) == EndReason::Failed);
+    late.end.simulation = SimulationEnd::ReachedStopAt;
+    CHECK(end_reason(late) == EndReason::Completed);
+    late.end.simulation = SimulationEnd::Ended;
+    late.end.stopped_by_scenario = true;
+    CHECK(end_reason(late) == EndReason::Completed);
+    // An interrupt decides at any time, also while the participants were ending.
+    RunOutcome lateSignal = late;
+    lateSignal.end.interrupted_by = "SIGINT";
+    lateSignal.end.interrupted_kind = StopKind::Signal;
+    CHECK(end_reason(lateSignal) == EndReason::Interrupted);
+    lateSignal.end.interrupted_by = "output closed";
+    lateSignal.end.interrupted_kind = StopKind::Supervisor;
+    CHECK(end_reason(lateSignal) == EndReason::Interrupted);
     // A set-up that failed is stronger than a stop.
     late.setup.error = "no registry";
     CHECK(end_reason(late) == EndReason::SetupFailed);

@@ -526,11 +526,11 @@ TEST_CASE(the_json_report)
                "  \"result\": \"interrupted\",\n"
                "  \"end\": \"interrupted\",\n"
                "  \"ok\": false,\n"
-               "  \"message\": \"The run was interrupted by a signal\",\n"
+               "  \"message\": \"The run was interrupted by a signal; Brake was ended by force, without waiting\",\n"
                "  \"strict\": false,\n"
                "  \"errors\": 0,\n"
                "  \"warnings\": 1,\n"
-               "  \"notes\": 1,\n"
+               "  \"notes\": 2,\n"
                "  \"simulation\": \"interrupted\",\n"
                "  \"interrupted_by\": \"SIGINT\",\n"
                "  \"registry_uri\": \"silkit://127.0.0.1:41234\",\n"
@@ -640,6 +640,18 @@ TEST_CASE(the_json_report)
                "      \"participant\": null,\n"
                "      \"network\": null,\n"
                "      \"message\": \"interrupted (SIGINT): the launcher stopped the simulation and the participants\",\n"
+               "      \"detail\": null\n"
+               "    },\n"
+               "    {\n"
+               "      \"severity\": \"note\",\n"
+               "      \"code\": \"ended-by-force\",\n"
+               "      \"file\": \"sim.yaml\",\n"
+               "      \"line\": null,\n"
+               "      \"participant\": null,\n"
+               "      \"network\": null,\n"
+               "      \"message\": \"the launcher did not wait for Brake to end, because it was asked to stop again (or while it "
+               "waited for the participants to end): it ended it by force, with the processes started. This is no error of a run "
+               "that was stopped that way; whether it ends when asked to is not known from this run (stop once and wait to see)\",\n"
                "      \"detail\": null\n"
                "    }\n"
                "  ],\n");
@@ -1517,20 +1529,40 @@ TEST_CASE(each_result_has_its_exit_code_its_ok_and_a_message)
     // An operator stopped it, and something is wrong: failed.
     const RunReport failedCheck = report_of(with_scenario(stopped_run("stop command", StopKind::Operator), ScenarioStatus::Failed));
     check_meaning(failedCheck, {RunResult::Failed, 1, false, "\"stopped\""}, "stopped after a failed step");
-    check_text(failedCheck.message(), "The run was stopped by a stop request and failed: expect Body.level == 1: it was 0");
+    check_text(failedCheck.message(), "The run failed (it was stopped by a stop request): expect Body.level == 1: it was 0");
     RunOutcome warned = stopped_run("stop command", StopKind::Operator);
     warned.participants[0].left_processes = true;
     check_meaning(report_of(warned), {RunResult::Stopped, 0, true, "\"stopped\""}, "stopped with a warning");
     check_meaning(report_of(warned, true), {RunResult::Failed, 1, false, "\"stopped\""}, "stopped with a warning, --strict");
-    CHECK(report_of(warned, true).message().starts_with("The run was stopped by a stop request and failed: a warning counts as an error with --strict: "));
-    // A stop while the participants were ending did not cut the scenario short: the finding stays an error.
+    CHECK(report_of(warned, true).message().starts_with("The run failed (it was stopped by a stop request): a warning counts as an error with --strict: "));
+    // A stop while the participants were ending did not end the simulation: the run ended as the
+    // simulation did, and the stop is a note. It did not cut the scenario short: the finding stays an error.
     RunOutcome late = with_scenario(passed_run(), ScenarioStatus::Incomplete);
     late.end.simulation = SimulationEnd::Ended;
     late.end.interrupted_by = "stop command";
     late.end.interrupted_kind = StopKind::Operator;
     late.end.interrupted_while_ending = true;
-    check_meaning(report_of(late), {RunResult::Failed, 1, false, "\"stopped\""}, "stopped while ending");
+    check_meaning(report_of(late), {RunResult::Failed, 1, false, "\"completed\""}, "stopped while ending");
     CHECK(lines(report_of(late).findings).find("E 4 scenario-incomplete: ") != std::string::npos);
+    CHECK(report_of(late).message().starts_with("The run failed: the scenario did not get to its end"));
+    // ... after the simulation had reached its end without errors: passed, not stopped.
+    RunOutcome lateAfterPass = with_scenario(passed_run(), ScenarioStatus::Passed);
+    lateAfterPass.end.interrupted_by = "stop command";
+    lateAfterPass.end.interrupted_kind = StopKind::Operator;
+    lateAfterPass.end.interrupted_while_ending = true;
+    check_meaning(report_of(lateAfterPass), {RunResult::Passed, 0, true, "\"completed\""}, "stopped while ending, after a pass");
+    check_text(report_of(lateAfterPass).message(), "The run reached its end without errors, and the scenario passed");
+    check_text(lines(report_of(lateAfterPass).findings),
+               "N 0 stopped: stopped by a stop request: the launcher stopped the participants instead of waiting for them to end\n");
+    CHECK(format_run_json(report_of(lateAfterPass)).find("  \"simulation\": \"reached_stop_at\",\n  \"interrupted_by\": \"stop command\",\n") !=
+          std::string::npos);
+    // ... after a participant had failed it: failed, and the message does not say that the stop failed it.
+    RunOutcome lateAfterAbort = lateAfterPass;
+    lateAfterAbort.scenario = passed_run().scenario;
+    lateAfterAbort.end.simulation = SimulationEnd::Aborted;
+    lateAfterAbort.end.failed_participant = "Engine";
+    check_meaning(report_of(lateAfterAbort), {RunResult::Failed, 1, false, "\"failed\""}, "stopped while ending, after an abort");
+    CHECK(report_of(lateAfterAbort).message().starts_with("The run failed: participant 'Engine': it failed while the simulation was running"));
     // A signal, or the supervisor went away: interrupted, whatever else is wrong.
     for (const auto& [by, kind] : {std::pair{"SIGINT", StopKind::Signal}, std::pair{"end of input", StopKind::Supervisor},
                                    std::pair{"output closed", StopKind::Supervisor}})
@@ -1582,7 +1614,7 @@ TEST_CASE(each_result_has_its_exit_code_its_ok_and_a_message)
     check_text(usage.message(), "Nothing was started, because the command line is wrong: unknown option --x");
 }
 
-TEST_CASE(a_participant_ended_by_force_in_a_stopped_run_is_no_error_but_is_said)
+TEST_CASE(a_participant_ended_by_force_after_a_stop_request_is_no_error_but_is_said)
 {
     using vehicle_sil::runner::ended_by_force;
     using vehicle_sil::runner::StopKind;
@@ -1621,12 +1653,29 @@ TEST_CASE(a_participant_ended_by_force_in_a_stopped_run_is_no_error_but_is_said)
     unasked.participants[0].stop_request_failed = true;
     CHECK(ended_by_force(unasked).empty());
     check_text(report_of(unasked).message(), "The run was stopped by a stop request without errors");
-    // Not for an interrupt: its result is no success anyway, and its output is as it was.
+    // Whatever asked: an interrupt's result is no success, but who was ended by force is said all the same.
     RunOutcome signal = stopped_run("SIGINT", StopKind::Signal);
     signal.participants[0].ending = Ending::Killed;
     signal.participants[0].exit.reset();
-    CHECK(ended_by_force(signal).empty());
-    check_text(lines(report_of(signal).findings), "N 0 interrupted: interrupted (SIGINT): the launcher stopped the simulation and the participants\n");
+    CHECK(ended_by_force(signal) == std::vector<std::string>{"Engine"});
+    check_meaning(report_of(signal), {RunResult::Interrupted, 130, false, "\"interrupted\""}, "interrupted, ended by force");
+    check_text(report_of(signal).message(), "The run was interrupted by a signal; Engine was ended by force, without waiting");
+    CHECK(lines(report_of(signal).findings).starts_with("N 0 interrupted: interrupted (SIGINT): the launcher stopped the simulation and the participants\n"
+                                                        "N 0 ended-by-force: the launcher did not wait for Engine to end"));
+    // A stop that came only while the participants were ending, after the simulation had reached
+    // its end: the run passed, and the message says who was ended by force.
+    RunOutcome late = o;
+    late.end.simulation = SimulationEnd::ReachedStopAt;
+    late.end.interrupted_while_ending = true;
+    check_meaning(report_of(late), {RunResult::Passed, 0, true, "\"completed\""}, "ended by force after the end");
+    check_text(report_of(late).message(), "The run reached its end; Engine was ended by force, without waiting");
+    check_text(report_of(with_scenario(late, ScenarioStatus::Passed)).message(),
+               "The run reached its end, and the scenario passed; Engine was ended by force, without waiting");
+    // Nothing asked to stop: nobody is named (a kill of the launcher's own waits is did-not-end).
+    RunOutcome unstopped = passed_run();
+    unstopped.participants[0].ending = Ending::Killed;
+    unstopped.participants[0].exit.reset();
+    CHECK(ended_by_force(unstopped).empty());
 }
 
 TEST_CASE(what_asked_to_stop_is_said_in_words_by_its_kind)
@@ -1645,5 +1694,5 @@ TEST_CASE(what_asked_to_stop_is_said_in_words_by_its_kind)
     RunOutcome stuck = stopped_run("stop command", StopKind::Operator);
     stuck.end.controller_state = "Error";
     check_meaning(report_of(stuck), {RunResult::Failed, 1, false, "\"stopped\""}, "stopped, not shut down");
-    CHECK(report_of(stuck).message().starts_with("The run was stopped by a stop request and failed: the simulation ended in state Error"));
+    CHECK(report_of(stuck).message().starts_with("The run failed (it was stopped by a stop request): the simulation ended in state Error"));
 }

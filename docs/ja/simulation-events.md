@@ -609,7 +609,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 `command` のイベントは、そのコマンドで起きること（`phase` の `stopping` など）より前に書きます。
 
-`{"command":"stop"}` か、Control Server のクライアントの `Stop` で止めた実行は、中断ではありません。`result` は `"stopped"`、終了コードは 0 です（注記 `stopped`）。シナリオが終わる前に止めたときは、`"incomplete"` と 5 です。標準入力の終わりは中断に数えます（`"interrupted"`、130）。コマンドを書いていたプログラムがいなくなったためです。[simulation-run.md](simulation-run.md#実行の終わり方endokmessage) の「実行の終わり方」を見てください。
+`{"command":"stop"}` か、Control Server のクライアントの `Stop` で止めた実行は、中断ではありません。`result` は `"stopped"`、終了コードは 0 です（注記 `stopped`）。シナリオが終わる前に止めたときは、`"incomplete"` と 5 です。シミュレーションが終わった後（participant が終わる間）に来た停止は、`end` も `result` も変えません。シミュレーションの終わり方のとおりです。標準入力の終わりは中断に数えます（`"interrupted"`、130）。コマンドを書いていたプログラムがいなくなったためです。[simulation-run.md](simulation-run.md#実行の終わり方endokmessage) の「実行の終わり方」を見てください。
 
 | 止めたもの | `interrupted_by` | `end` |
 |---|---|---|

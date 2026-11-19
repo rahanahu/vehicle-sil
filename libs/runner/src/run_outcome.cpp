@@ -20,8 +20,17 @@ EndReason end_reason(const RunOutcome& outcome)
     if (!outcome.end.interrupted_by.empty())
     {
         // What asked first decides, whatever came after it (a Ctrl+C after a stop command is
-        // still the operator's stop).
-        return outcome.end.interrupted_kind == StopKind::Operator ? EndReason::Stopped : EndReason::Interrupted;
+        // still the operator's stop). An interrupt does at any time; an operator's stop only if it
+        // ended the simulation (or the run before the start): one that came while the launcher
+        // waited for the participants to end cut that wait short, and the simulation's own end stays.
+        if (outcome.end.interrupted_kind != StopKind::Operator)
+        {
+            return EndReason::Interrupted;
+        }
+        if (!outcome.end.interrupted_while_ending)
+        {
+            return EndReason::Stopped;
+        }
     }
     const bool ended = outcome.end.simulation == SimulationEnd::ReachedStopAt || outcome.end.simulation == SimulationEnd::Ended;
     return ended ? EndReason::Completed : EndReason::Failed;
@@ -30,7 +39,9 @@ EndReason end_reason(const RunOutcome& outcome)
 std::vector<std::string> ended_by_force(const RunOutcome& outcome)
 {
     std::vector<std::string> names;
-    if (end_reason(outcome) != EndReason::Stopped)
+    // Whatever asked (a stop, a signal, a supervisor that went away) and whenever: only a stop
+    // request makes the launcher skip a wait.
+    if (outcome.end.interrupted_by.empty())
     {
         return names;
     }

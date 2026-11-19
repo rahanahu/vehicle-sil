@@ -461,10 +461,11 @@ void stdin_ending(const Options& o)
     live.write("{\"command\":\"stop\"}\n");
     const auto [status, lines] = live.finish();
     const bool gone = all_gone(dir, {"Stuck.pid"}, 30s);
-    // The operator's stop, also after the simulation had reached its end.
+    // The stop came after the simulation had reached its end: it only cut the wait short, and the
+    // run ended as the simulation did (Stuck, asked to stop, ended: no error).
     require(status.has_value() && status->code == 0, "the launcher ends with 0 when stopped while it waits, not " + code_text(status));
-    require(contains(lines.back(), "\"result\":\"stopped\",\"end\":\"stopped\",\"ok\":true,") &&
-                contains(lines.back(), "\"simulation\":\"reached_stop_at\""),
+    require(contains(lines.back(), "\"result\":\"passed\",\"end\":\"completed\",\"ok\":true,") &&
+                contains(lines.back(), "\"simulation\":\"reached_stop_at\",\"interrupted_by\":\"stop command\""),
             "the result:\n" + lines.back());
     require(events_with(lines, {"\"name\":\"Stuck\"", "\"state\":\"stop_requested\""}).size() == 1 ||
                 !can_request_stop(),
