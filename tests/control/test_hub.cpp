@@ -401,11 +401,6 @@ TEST_CASE(control_hub_subscriptions_keep_the_latest_and_bound_the_rest)
     CHECK(seen.has_value());
     CHECK_EQ(seen->seq, seq);
     CHECK(seen->targets.at(0).status == TargetStatus::Applied);
-    // Peer status changes reach subscribers.
-    hub.agent_status(body.connection, PeerStatus{true, "boom"});
-    updates = only_body->poll(0, 0ms);
-    CHECK_EQ(updates.size(), std::size_t{1});
-    CHECK(std::get<PeerUpdate>(updates[0]).peer.status.failed);
     // close() wakes a waiting poll.
     std::thread closer([&] {
         std::this_thread::sleep_for(20ms);

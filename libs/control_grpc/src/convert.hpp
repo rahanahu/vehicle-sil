@@ -175,8 +175,6 @@ inline void to_proto(const PeerInfo& in, v1::PeerInfo& out)
             v->set_source(in.sources[i]);
         }
     }
-    out.mutable_status()->set_failed(in.status.failed);
-    out.mutable_status()->set_error(in.status.error);
     out.set_virtual_time(in.virtual_time);
 }
 

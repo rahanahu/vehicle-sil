@@ -97,9 +97,8 @@ def main(argv=None) -> int:
             if args.command == "peers":
                 for peer in c.peers():
                     state = ("connected" if peer.connected else "disconnected") if peer.has_agent else "no agent"
-                    failed = f", FAILED: {peer.error}" if peer.failed else ""
                     sim = f"\tSIL Kit: {peer.simulation_state}" if peer.simulation_state else ""
-                    print(f"{peer.participant}\t{state}{failed}\t{len(peer.schema)} variables{sim}")
+                    print(f"{peer.participant}\t{state}\t{len(peer.schema)} variables{sim}")
             elif args.command == "show":
                 peer = c.peer(args.peer)
                 values = c.values(args.peer)
@@ -146,8 +145,7 @@ def main(argv=None) -> int:
                 n = 0
                 for u in c.watch(peers=args.peer, values=not args.no_values):
                     if isinstance(u, Peer):
-                        print(f"peer {u.participant} {'connected' if u.connected else 'disconnected'}"
-                              + (f" FAILED {u.error}" if u.failed else ""))
+                        print(f"peer {u.participant} {'connected' if u.connected else 'disconnected'}")
                     elif isinstance(u, Values):
                         print(f"values {u.peer} {_fmt_ms(u.time)} " + " ".join(f"{k}={v}" for k, v in u.values.items()))
                     elif isinstance(u, EventInfo):

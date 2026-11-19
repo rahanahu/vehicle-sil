@@ -117,18 +117,12 @@ message PingReply {
   string server_version = 2;
 }
 
-// What a peer's agent reported about its participant.
-message PeerStatus {
-  bool failed = 1;
-  string error = 2;
-}
-
 message PeerInfo {
+  reserved 5; // was `status`, which no agent ever filled
   string participant = 1;
   string incarnation = 2;
   bool connected = 3; // its agent is connected
   repeated VariableInfo schema = 4;
-  PeerStatus status = 5;
   bool has_agent = 6;          // an agent has connected for it (else it is known from SIL Kit only)
   string simulation_state = 7; // its SIL Kit lifecycle state as the server sees it ("" if unknown)
   // Its agent runs on the simulation's time (its steps are those of the time synchronisation, as

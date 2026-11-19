@@ -63,13 +63,6 @@ struct PeerHello
     bool virtual_time = true;
 };
 
-/// What the transport learns about a peer outside its steps (Peer::failed(), Peer::error()).
-struct PeerStatus
-{
-    bool failed = false;
-    std::string error;
-};
-
 struct PeerInfo
 {
     std::string participant;
@@ -78,7 +71,6 @@ struct PeerInfo
     /// Its variables as the clients see them: what its agent announced, under the names and with
     /// the types, ranges and units that the peer's variable map gives (Hub::set_variable_map()).
     std::vector<VariableInfo> schema;
-    PeerStatus status;
     bool virtual_time = true; ///< PeerHello::virtual_time of its incarnation
     /// With a variable map: for each variable of `schema`, the name its agent announced it under
     /// if a mapping applies to it, else "". Empty without a map.
@@ -369,7 +361,6 @@ public:
     /// seen schema has the same variables in the same order.
     void agent_availability(ConnectionId connection, std::uint64_t version, std::vector<Availability> states);
     void agent_events(ConnectionId connection, const std::vector<Event>& events);
-    void agent_status(ConnectionId connection, PeerStatus status);
 
     // ---- client side ----------------------------------------------------------------------
 

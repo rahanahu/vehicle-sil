@@ -664,7 +664,6 @@ python -m vehicle_sil_control stop
 | 速度を指定したときの遅れ | シミュレーションが実時間に遅れても、後から追いつこうとはしません。 |
 | ない操作 | リセット、participant の起動と再起動、CAN/LIN のチャネルの選択はありません。 |
 | サーバーが扱う実行 | そのランチャーの 1 回の実行だけで、実行が終わると閉じます。 |
-| Peer の `status`（Python の `Peer.failed` と `error`、CLI の `FAILED`） | いつも空です（ECU の Agent はこれを送信しません）。 |
 | 値の購読 | 最新値です（読む前に来た新しい値で置き換えます）。 |
 
 - 速度を指定して遅れたときは、遅れた分だけ後ろにずれたまま、指定の速度で進みます（[internals/virtual-time.md](internals/virtual-time.md#遅れの測り方) の「遅れの測り方」）。

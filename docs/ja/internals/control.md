@@ -268,10 +268,9 @@ Control Server の、通信の方式によらない部分です。接続した A
 ### トランスポートからの呼び出し
 
 - トランスポートは、接続ごとに `agent_connected(hello, link)` を呼んで `ConnectionId` を受け取ります。
-- 以後、Agent から受信したもの（`agent_submitted`、`agent_result`、`agent_values`、`agent_availability`、`agent_events`、`agent_status`）と切断（`agent_disconnected`）を、その ID で渡します。
+- 以後、Agent から受信したもの（`agent_submitted`、`agent_result`、`agent_values`、`agent_availability`、`agent_events`）と切断（`agent_disconnected`）を、その ID で渡します。
 - `hello` は、Agent を Peer に `attach()` した後で作ります（監視の出力がスキーマに入るため）。
-- `agent_status` には `Peer::failed()` と `error()` を渡します（ステップの失敗は、監視の出力では届かないため）。
-- SIL Kit のトランスポートは `agent_status` を呼ばない（Hub の API としては残っている）ので、クライアントに見える Peer の `status` はいつも空で、participant の失敗はシミュレーションの監視（`SimulationMonitor`）が通知します。
+- participant の失敗は Peer を通してはクライアントに届きません。シミュレーションの監視（`SimulationMonitor`）が通知し、Agent の切断では Peer が切断として通知されます。
 - `agent_connected()` には、空でない名前、リンク、0 より大きい `max_pending` が必要です。
 
 ### `AgentLink::send()`
