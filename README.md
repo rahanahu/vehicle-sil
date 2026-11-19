@@ -137,7 +137,7 @@ In the browser GUI, moving the throttle slider changes the engine speed.
 | CMake | 3.21 or later (3.28 or later to build gRPC) | Configuring and building |
 | Ninja, Git | Any | Building, and fetching SIL Kit |
 | [uv](https://docs.astral.sh/uv/) | Any | Installing the Python (3.11 or later) and the packages that the build and the GUI use |
-| Node.js, npm | 24.15 or later 24, or 26; 11.12 or later | Building the web front end of the GUI |
+| Node.js, npm | 24.x (24.15 or later) or 26.x; 11.12 or later | Building the web front end of the GUI |
 
 The commands below build the repository, run the example above and start the GUI. The first configure and build download and compile SIL Kit (and gRPC, if your computer does not have it). This needs a network connection and takes from a few minutes to more than 10 minutes. The commands are for Linux. For Windows, other presets and running the tests, see [docs/build.md](docs/build.md).
 
