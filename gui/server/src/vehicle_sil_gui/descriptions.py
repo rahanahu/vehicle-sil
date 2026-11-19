@@ -35,7 +35,7 @@ class Descriptions:
         is the launcher's to write (it may not be there)."""
         if self.directory is None:
             self.directory = Path(tempfile.mkdtemp(prefix="vehicle-sil-gui-descriptions-"))
-        path = self._files.pop(key, None) or self.directory / f"{secrets.token_hex(8)}.json"
+        path = self._files.pop(key, None) or self._new_path()
         self._files[key] = path  # the newest
         while len(self._files) > KEPT:
             old_key = next(iter(self._files))
@@ -49,10 +49,17 @@ class Descriptions:
 
     def made(self, key: Key, stamp: tuple, usable: bool) -> None:
         """The check that writes the descriptions has ended (stamp: of the file before it). usable: it read the
-        file; otherwise what an earlier check wrote is removed, so that the text is checked with no description."""
+        file; otherwise the key gets a new path where no file is, so that the text is checked with no description
+        even when what an earlier check wrote cannot be removed (Windows: another program has it open; it goes with
+        the directory at the end)."""
         self._stamps[key] = stamp
         if not usable and key in self._files:
             _remove(self._files[key])
+            self._files[key] = self._new_path()
+
+    def _new_path(self) -> Path:
+        assert self.directory is not None
+        return self.directory / f"{secrets.token_hex(8)}.json"
 
     def remove_all(self) -> None:
         self._files.clear()

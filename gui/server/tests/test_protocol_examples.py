@@ -310,7 +310,7 @@ def test_http_examples(tmp_path: Path) -> None:
             check_example("error-unsupported-media-type", http("A body that is not JSON (a form).", "POST",
                                                                "api/check", "file=simulation.yaml", status, body), gui)
             status, body = await c.post("api/run", raw=b'{"file": "' + b"x" * 70_000 + b'"}')
-            check_example("error-too-large", http("A body larger than 64 KiB (of api/check: 2 MiB 64 KiB).", "POST",
+            check_example("error-too-large", http("A body larger than 64 KiB (of api/check: 6 MiB + 64 KiB).", "POST",
                                                   "api/run", "(70 kB)", status, body), gui)
             status, body = await c.get("api/nothing")
             check_example("error-not-found", http("No such API.", "GET", "api/nothing", None, status, body), gui)
@@ -410,8 +410,8 @@ def test_config_text_examples(tmp_path: Path) -> None:
     launcher is text_launcher.py (the check of the saved file, played; the options of saved descriptions)."""
     root = tmp_path / "root"
     shutil.copytree(CONFIGS, root)
-    (root / "utf16.yaml").write_bytes("vehicle_sil_simulation: 1\n".encode("utf-16"))
-    (root / "large.yaml").write_bytes(b"#" * (1024 * 1024 + 1))
+    (root / "latin1.yaml").write_bytes("vehicle_sil_simulation: 1\n# caf\u00e9\n".encode("latin-1"))
+    (root / "large.yaml").write_bytes(b"vehicle_sil_simulation: 1\n" + b"#" * (1024 * 1024))
     paths = {str(root): "/path/to/root"}
     with gui_server(tmp_path, root=root, launcher=REPLAY.parent / "text_launcher.py") as gui:
         async def talk(c: Client) -> None:
@@ -435,7 +435,8 @@ def test_config_text_examples(tmp_path: Path) -> None:
             check_example("error-text-too-large", http("A text larger than 1 MiB as UTF-8.", "POST", "api/check",
                                                        {**req, "text": "(1 MiB + 1 byte)"}, status, body), gui, paths)
             for name, file, text in (("error-config-too-large", "large.yaml", "A file larger than 1 MiB."),
-                                     ("error-config-unreadable", "utf16.yaml", "A file that is not UTF-8 text.")):
+                                     ("error-config-unreadable", "latin1.yaml",
+                                      "A configuration file that is not UTF-8 text.")):
                 path = f"api/config?file={file}"
                 status, body = await c.get(path)
                 check_example(name, http(text, "GET", path, None, status, body), gui, paths)

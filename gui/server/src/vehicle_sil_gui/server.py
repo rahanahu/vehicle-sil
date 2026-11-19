@@ -46,9 +46,9 @@ from .variables import AT_MS_MAX, Limits as VariableLimits, Rejected, Variables,
 PROTOCOL = 2  # vehicle_sil_gui: the version of the shapes in gui/protocol
 MAX_BODY = 64 * 1024
 MAX_TEXT = 1024 * 1024  # the text of a configuration file: `text` of api/check (as UTF-8), GET api/config
-# The body of api/check: a text of MAX_TEXT in JSON (an escape such as \u3042 takes twice the UTF-8 bytes of the
-# character), and the rest of the body.
-MAX_TEXT_BODY = 2 * MAX_TEXT + MAX_BODY
+# The body of api/check: a text of MAX_TEXT in JSON however it is escaped (\u0001 takes 6 bytes for 1 byte of UTF-8,
+# the most), and the rest of the body.
+MAX_TEXT_BODY = 6 * MAX_TEXT + MAX_BODY
 MAX_WS_MESSAGE = 256 * 1024  # a watch that names many variables
 MAX_SOCKETS = 32  # authenticated WebSocket connections
 MAX_UNAUTHENTICATED = 16  # connections waiting for their auth; when full, the oldest is closed for a new one
@@ -158,11 +158,19 @@ class Refused(Exception):
         self.status, self.code, self.detail = status, code, detail
 
 
+def _unreadable(relative: str, e: OSError) -> Exception:
+    """The refusal of a configuration file that the OS did not let the server read."""
+    if isinstance(e, FileNotFoundError):
+        return PathRejected("file-not-found", f"{relative!r} is not there any more: choose one that GET api/configs "
+                                              "lists")
+    return Refused(422, "config-unreadable", f"{relative} cannot be read ({e.strerror or e}): check that this user "
+                                             "can read it")
+
+
 def _utf8_text(relative: str, data: bytes) -> str:
-    """The bytes of a configuration file as text; Refused (422 config-unreadable) when they are not UTF-8 text."""
-    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
-        why = "it is UTF-16"
-    elif b"\0" in data:
+    """The bytes of a configuration file as text; Refused (422 config-unreadable) when they are not UTF-8 text (a
+    UTF-16 file is not a configuration file: ConfigRoot.configuration finds no marker in it)."""
+    if b"\0" in data:
         why = f"it has a NUL byte at byte {data.index(0)}"
     else:
         try:
@@ -445,15 +453,11 @@ class GuiServer:
         """The text of a configuration file, with the SHA-256 of its bytes (stamp). The text is the bytes read as
         UTF-8, as they are (a BOM and the line ends too)."""
         try:
-            config = self.root.resolve(request.query.get("file"))
+            config = await self._configuration(request.query.get("file"))
             try:
                 data = await asyncio.to_thread(_read_at_most, config.absolute, MAX_TEXT + 1)
-            except FileNotFoundError:
-                raise PathRejected("file-not-found", f"{config.relative!r} is not there any more: choose one that "
-                                                     "GET api/configs lists") from None
             except OSError as e:
-                raise Refused(422, "config-unreadable", f"{config.relative} cannot be read ({e.strerror or e}): "
-                                                        "check that this user can read it") from None
+                raise _unreadable(config.relative, e) from None
             if len(data) > MAX_TEXT:
                 raise Refused(413, "config-too-large",
                               f"{config.relative} is larger than {MAX_TEXT} bytes (1 MiB), the most that the GUI "
@@ -463,6 +467,15 @@ class GuiServer:
             return self._refusal(e)
         return web.json_response({"file": config.relative, "text": text,
                                   "stamp": hashlib.sha256(data).hexdigest()})
+
+    async def _configuration(self, relative: object) -> ConfigFile:
+        """The configuration file whose content is read or checked for the screen (ConfigRoot.configuration)."""
+        try:
+            return await asyncio.to_thread(self.root.configuration, relative)
+        except PathRejected:
+            raise
+        except OSError as e:
+            raise _unreadable(str(relative), e) from None
 
     async def get_session(self, request: web.Request) -> web.Response:
         # The same encoding as the WebSocket: strict JSON (never a bare NaN or Infinity), or a 500.
@@ -631,9 +644,9 @@ class GuiServer:
         try:
             self._not_closing()
             body = await self._body(request, max_size=MAX_TEXT_BODY)
-            check_fields("api/check", body, (*REQUEST_FIELDS, "text"))
             if "text" in body:
                 return await self._check_text(body)
+            check_fields("api/check", body, (*REQUEST_FIELDS, "text"))
             config = self.root.resolve(body.get("file"))
             await self._usable()
             scenario = self._scenario(config, body)
@@ -652,9 +665,10 @@ class GuiServer:
         others = sorted(k for k in body if k not in TEXT_FIELDS)
         if others:
             raise InvalidRequest("invalid-field", f"api/check takes no {', '.join(repr(k) for k in others)} together "
-                                                  "with text: a check of unsaved text checks the configuration only, "
-                                                  f"with {', '.join(TEXT_FIELDS)}; leave the others out")
-        config = self.root.resolve(body.get("file"))
+                                                  "with text: a check of unsaved text checks the configuration only; "
+                                                  f"the fields it takes with text are {', '.join(TEXT_FIELDS)}")
+        check_fields("api/check", body, TEXT_FIELDS)
+        config = await self._configuration(body.get("file"))
         text = body["text"]
         if not isinstance(text, str):
             raise InvalidRequest("invalid-field", "text must be the text of the configuration file (a string), or "
@@ -684,7 +698,7 @@ class GuiServer:
             self._not_closing()
             body = await self._body(request)
             check_fields("api/describe", body, DESCRIBE_FIELDS)
-            config = self.root.resolve(body.get("file"))
+            config = await self._configuration(body.get("file"))
             variant = check_variant(body.get("variant"))
             await self._usable()
             code, result = await self._in_check_queue(lambda: self._describe_locked(config.relative, variant))
@@ -1043,7 +1057,9 @@ class GuiServer:
     async def _describe_locked(self, relative: str, variant: str | None) -> tuple[int, dict]:
         """The check of the saved file (with its variant only) that saves each executable's --describe output in the
         descriptions of (file, variant), for the checks of its text. A check that could not read the file (or its
-        variant) leaves no descriptions: the text is then checked with none."""
+        variant) leaves no descriptions: the text is then checked with none. So does a check that ended in an error
+        (check-timeout, launcher-output, launcher-start), which is raised: it is not run again for the text before
+        the file changes or api/describe asks for it."""
         key = (relative, variant)
         stamp = self._stamp(relative)
         path = await asyncio.to_thread(self.descriptions.path_of, key)
@@ -1051,6 +1067,10 @@ class GuiServer:
         request = self._make_request(intent)
         try:
             code, result = await self._run_check(relative, intent, request, stamp, descriptions=path)
+        except Refused as e:
+            if e.code != "shutting-down":
+                self.descriptions.made(key, stamp, False)
+            raise
         finally:
             control.remove(request)
         self.descriptions.made(key, stamp, result.get("result") not in ("usage", "unreadable"))
@@ -1062,7 +1082,11 @@ class GuiServer:
         of the checks."""
         key = (relative, intent.get("variant"))
         if self.descriptions.made_from(key) != self._stamp(relative):
-            await self._describe_locked(*key)
+            try:
+                await self._describe_locked(*key)
+            except Refused as e:  # the text is checked with no descriptions; api/describe says what went wrong
+                if e.code == "shutting-down":
+                    raise
         path = await asyncio.to_thread(self.descriptions.path_of, key)
         request = self._make_request(intent)
         try:

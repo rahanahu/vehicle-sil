@@ -17,8 +17,9 @@ request file's keys, or null), "descriptions" (with --descriptions: whether that
 What the tests ask for:
 - the variant "only-in-text": the check of the saved file is a usage error (it has no such variant), as the real
   launcher's; the check of a text plays the saved file's check without a variant (as if the text had that variant);
-- a saved file with the line "# stand-in: unreadable": its check says that it cannot be read, and the check of a
-  text has no participant (no recording is of that file);
+- a saved file with the line "# stand-in: unreadable": its check says that it cannot be read; with the line
+  "# stand-in: describe hangs", check --write-descriptions does not end (a --describe that hangs). The check of a
+  text of such a file has no participant (no recording is of that file);
 - a text with the line "# stand-in: rename": its participants are named FromText (a text with other participants);
 - a text with the line "# stand-in: name the descriptions": a note that names the --descriptions file (the GUI server
   must hide the name);
@@ -34,6 +35,7 @@ import runpy
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 REPLAY = Path(__file__).resolve().parent / "replay_launcher.py"
@@ -78,8 +80,10 @@ def main(argv: list[str]) -> int:
         print(fabricated("usage"))
         return 4
     config = Path(argv[end + 1]) if end + 1 < len(argv) else None
-    if config is not None and config.is_file() and \
-            "# stand-in: unreadable" in config.read_text(encoding="utf-8").splitlines():
+    marks = set(config.read_text(encoding="utf-8").splitlines()) if config is not None and config.is_file() else set()
+    if "# stand-in: describe hangs" in marks and "--write-descriptions" in options:
+        time.sleep(600)
+    if marks & {"# stand-in: unreadable", "# stand-in: describe hangs"}:
         print(fabricated("passed" if from_stdin else "unreadable"))
         return 0 if from_stdin else 1
     if "# stand-in: fail" in (text or "").splitlines():
