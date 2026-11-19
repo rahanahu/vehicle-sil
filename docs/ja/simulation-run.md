@@ -376,6 +376,7 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 | CAN | `silkit_to_ext` | `ext_from_devices`: バスのほかのノードから来たフレーム |
 
 - 数は結果（`outside[]`。人向けの結果の `outside:` の行、例えば `outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT): 152 frames out, 3 from devices`）と、`--events` なら実行中の `outside` イベントに出ます（[simulation-events.md](simulation-events.md#つないだネットワークの数outside) の「つないだネットワークの数（`outside`）」）。`--events` があってもなくても同じ数です。
+- 普段の LAN のように、ほかの機器が同じ線にいると、`from_outside` にはその機器のフレーム（ARP など、ブリッジの絞り込みがシミュレーションに入れないもの）も数えられます。シミュレーションに入った数は、ブリッジの最後の統計の行の `ext_to_silkit` です。その場合、相手の機器が答えなくても `connect-nothing-received` は出ません。
 - ブリッジが動いている間に `run` が読んだ統計の行は、ブリッジの行（`[bridge.<network>] ...`）にも `log` イベントにも出しません。ブリッジが終わったら、`run` は最後に読んだ 1 行を、ブリッジの行として 1 回だけ出します。全部の数が載ったブリッジの報告です（例えば、絞り込みで ECU に渡さなかったフレーム `filtered_from_ext`、止めるときに捨てたフレーム `ext_tx_unsent`）。ブリッジが止まるときに書いた行か、それを書かずに終わらされたなら、動いている間の最後の行です。ブリッジの `--log-dir` のファイルには全部の行があります。`run` が読めない行（例えば、これらのキーのない別の版のブリッジの行）は、ふつうの行として出します。
 - 数は最後に読めた行のものです。最後の行を書かずに終わらされたブリッジ（ランチャーが止まるよう頼めなかった Windows）は、動いている間の最後の行の数になります。1 行も読めなければ、どちらも `null` です。
 
@@ -434,7 +435,7 @@ outside: CAN1 -> can0: also used by another vehicle-sil bridge (process 4321) at
 
 | いつ | `--strict` なし | `--strict` あり |
 |---|---|---|
-| ブリッジが起きた時点で、デバイスが共有されている | 実行は続きます | `run` は ECU を起こさずに実行を終わらせます。誤り `outside-device-shared`、結果は `failed`。各ブリッジの最初のリンクの行（ブリッジのライフサイクルの前に出ます）を 2 秒まで待ちます（`kOutsideFirstLineWait`）。その間に書かなかったブリッジは、何も共有していないものとして扱います |
+| ブリッジが起きた時点で、デバイスが共有されている | 実行は続きます。ECU を起こす前に、ブリッジの最初のリンクの行から `run` が言います（ログの行と `outside` の状態。待ち方は `--strict` と同じ） | `run` は ECU を起こさずに実行を終わらせます。誤り `outside-device-shared`、結果は `failed`。各ブリッジの最初のリンクの行（ブリッジのライフサイクルの前に出ます）を 2 秒まで待ちます（`kOutsideFirstLineWait`）。その間に書かなかったブリッジは、何も共有していないものとして扱います |
 | シミュレーションの実行中に始まった | 実行は続きます | 3 秒続いたら（`kOutsideSharedAfter`）、ブリッジが終わったときと同じに、`run` がシミュレーションを中断します。誤り `outside-device-shared`。別の実行が起こして、3 秒以内にまたいなくなったブリッジでは止まりません。ECU の前にやめる実行が、もう一方を巻き添えにしないためです |
 | 終わりに | 警告 `outside-device-shared`。プロセス ID と、最初に見つけた時刻 | 同じ警告で、`--strict` はそれを失敗にします。`run` が止めたときは誤り |
 
