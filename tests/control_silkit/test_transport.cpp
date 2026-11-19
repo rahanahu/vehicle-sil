@@ -2010,7 +2010,8 @@ TEST_CASE(the_write_a_refusal_is_about_travels_as_a_number_and_the_reason_is_not
 namespace {
 
 /// A participant that only listens to the step messages and notes the parts of the availability
-/// of `name`'s session (it never asks whether the agent receives commands).
+/// of `name`'s session, and the time of its first and last step message (it never asks whether
+/// the agent receives commands).
 struct AvailabilityListener
 {
     struct Part
@@ -2020,8 +2021,9 @@ struct AvailabilityListener
         std::vector<Availability> states;
     };
     std::mutex mutex;
-    std::optional<std::uint64_t> session; ///< guarded by mutex: from the hello
-    std::vector<Part> parts;              ///< guarded by mutex
+    std::optional<std::uint64_t> session;         ///< guarded by mutex: from the hello
+    std::vector<Part> parts;                      ///< guarded by mutex
+    std::optional<SimTime> first_step, last_step; ///< guarded by mutex
     std::unique_ptr<SilKit::IParticipant> participant;
 
     AvailabilityListener(const std::string& uri, const std::string& name)
@@ -2042,13 +2044,21 @@ struct AvailabilityListener
         participant->CreateDataSubscriber(topics::kStepTopic, topics::spec(topics::kStepTopic),
                                           [this](pubsub::IDataSubscriber*, const pubsub::DataMessageEvent& event) {
                                               wire::StepMessage step;
-                                              if (wire::decode_step({event.data.data(), event.data.size()}, step) ||
-                                                  !step.has_availability)
+                                              if (wire::decode_step({event.data.data(), event.data.size()}, step))
                                               {
                                                   return;
                                               }
                                               const std::lock_guard lock(mutex);
-                                              if (session == step.session)
+                                              if (session != step.session)
+                                              {
+                                                  return;
+                                              }
+                                              if (!first_step)
+                                              {
+                                                  first_step = step.time;
+                                              }
+                                              last_step = step.time;
+                                              if (step.has_availability)
                                               {
                                                   parts.push_back({step.time, step.availability.version, step.availability.states});
                                               }
@@ -2060,6 +2070,13 @@ struct AvailabilityListener
     {
         const std::lock_guard lock(mutex);
         return parts;
+    }
+
+    /// The step time from the first step message heard to the last.
+    [[nodiscard]] SimDuration heard_for()
+    {
+        const std::lock_guard lock(mutex);
+        return first_step ? *last_step - *first_step : SimDuration::zero();
     }
 };
 
@@ -2091,6 +2108,27 @@ TEST_CASE(the_availability_is_said_again_each_second_of_step_time)
         CHECK(parts[i].time - parts[i - 1].time >= 1s);
     }
     real.end();
+}
+
+// An agent none of whose variables reports its availability sends no part of it: not at the
+// start, not when a probe is answered, and not each second of step time. (A hub drops such a
+// part, so only the step messages themselves show it.)
+TEST_CASE(an_agent_without_a_variable_that_reports_sends_no_availability)
+{
+    const InProcessRegistry registry;
+    TestEcu silent("Silent", registry.uri, EcuOptions{.virtual_time = false});
+    AvailabilityListener listener(registry.uri, "Silent");
+    silent.peer->start(30s);
+    HubSide side(registry.uri, {"A"}, 10ms, false); // probes the agent
+    TestEcu a("A", registry.uri);
+    start_together(*side.controller, {a.peer.get()});
+    side.wait_ready({"Silent"}); // the probe was answered
+    const SimDuration before = listener.heard_for();
+    CHECK(eventually([&] { return listener.heard_for() > before + 2s; }, 30s));
+    CHECK(listener.so_far().empty());
+    side.controller->stop("done");
+    silent.end();
+    a.end();
 }
 
 // A hub that comes after the ECU changed the availability of a variable gets the state it has now.
