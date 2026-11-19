@@ -4,6 +4,7 @@ import type { GuiClient } from './client';
 import type {
   CheckResult,
   ConfigText,
+  SavedConfig,
   Finding,
   OutsideState,
   RunEnd,
@@ -98,6 +99,12 @@ export interface FrontControls {
   run_until: Control;
   /** `fastest`: whether the speed `'max'` is accepted besides the numbers from `min` to `max`. */
   speed: Control & { min: number; max: number; fastest: boolean };
+  /**
+   * `saveConfig()`, from the GUI server's `allowed.save` (`save-disabled`: started with `--no-save`). `caution`
+   * `command-changes-allowed`: the server also saves edits that change the commands that run, and new files; show it
+   * near the save button. Whether one edit is saved is the server's answer to it, not this.
+   */
+  save: Control;
 }
 
 /** The operations that have a control. */
@@ -341,6 +348,16 @@ export interface Front {
    * `check-timeout`, ...); a failure is not put into `status.problem`.
    */
   describeAgain(options?: { file?: string; variant?: string }): Promise<CheckResult>;
+  /**
+   * Saves `text` as the content of `file` (`POST api/config`), with the `stamp` that `readConfig()` gave (null: a new
+   * file), and resolves with the stamp of the saved content. By default the server saves only an edit that keeps the
+   * commands that run, as the launcher's check of the text says (`controls.save` tells what applies). `file` defaults
+   * to the start-up file (`no-file` if there is none). Rejects with an ActionError: `save-disabled`,
+   * `commands-changed` (`findings` are the launcher's; also a new file, `stamp` null, to a server started without
+   * `--allow-command-changes`), `config-changed` (read the file again and make the edit on
+   * that text), `config-busy`, `config-unreadable`, `text-too-large`, ...; a failure is not put into `status.problem`.
+   */
+  saveConfig(options: { file?: string; text: string; stamp: string | null }): Promise<SavedConfig>;
   /** A variable by `"Peer.variable"` (cut at the first dot) or `{peer, name}` (for a peer whose name has a dot). */
   variable(ref: string | VariableRef): FrontVariable;
   /** Disconnects and fails what is waiting. A connection that `connect()` shares is made again by the next `connect()`. */

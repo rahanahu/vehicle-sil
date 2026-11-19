@@ -100,6 +100,7 @@ const serverAllowed = (rev: number, start: object, stop: object = ok) => ({
   start,
   stop,
   force: stop,
+  save: { ok: true, reason: null, message: null, caution: null },
 });
 const startOk = { ok: true, reason: null, message: null };
 const notRunning = {
@@ -1573,6 +1574,90 @@ describe('the front door', () => {
           );
         expect(await refused).toMatchObject({ code: 'config-too-large', outcome: 'refused' });
         expect(rig.front.status.get().problem).toBeNull();
+      });
+
+      it('saves a text with its stamp, the start-up file by default, and leaves a refusal out of the problem', async () => {
+        const rig = await open();
+        const saving = rig.front.saveConfig({
+          file: 'simulation.yaml',
+          text: 'vehicle_sil_simulation: 1\r\n',
+          stamp: 'a'.repeat(64),
+        });
+        const sent = rig.http.expectOne('api/config');
+        expect(sent.request.method).toBe('POST');
+        expect(sent.request.body).toEqual({
+          file: 'simulation.yaml',
+          text: 'vehicle_sil_simulation: 1\r\n',
+          stamp: 'a'.repeat(64),
+        });
+        const saved = await example('save-config');
+        sent.flush(saved);
+        expect(await saving).toEqual(saved);
+        // A new file: stamp null is sent as it is
+        const making = rig.front.saveConfig({ file: 'new.yaml', text: '', stamp: null });
+        const create = rig.http.expectOne('api/config');
+        expect(create.request.body).toEqual({ file: 'new.yaml', text: '', stamp: null });
+        create.flush({ file: 'new.yaml', stamp: 'b'.repeat(64) });
+        expect(await making).toEqual({ file: 'new.yaml', stamp: 'b'.repeat(64) });
+        // The app example has no start-up file
+        await expect(rig.front.saveConfig({ text: '', stamp: null })).rejects.toMatchObject({
+          code: 'no-file',
+        });
+        rig.http.expectNone('api/config');
+        // The server's refusal, with the launcher's findings
+        const refusal = (await httpExamples()).find((e) => e.name === 'error-commands-changed')!;
+        const refused = rig.front
+          .saveConfig({ file: 'simulation.yaml', text: 'x', stamp: 'a'.repeat(64) })
+          .then(
+            () => null,
+            (e: unknown) => e as ActionError,
+          );
+        rig.http
+          .expectOne('api/config')
+          .flush(refusal.response, { status: refusal.status, statusText: 'Forbidden' });
+        const error = await refused;
+        expect(error).toMatchObject({ code: 'commands-changed', outcome: 'refused' });
+        expect(error?.findings.map((f) => f.code)).toEqual(['commands-changed']);
+        expect(rig.front.status.get().problem).toBeNull();
+      });
+
+      it("carries the server's allowed.save, with its caution, in controls.save", async () => {
+        const rig = await open();
+        const caution = {
+          code: 'command-changes-allowed',
+          message: 'the GUI server was started with --allow-command-changes',
+        };
+        const hello = (save: object) => ({
+          type: 'hello',
+          vehicle_sil_gui: 2,
+          version: '0.1.0',
+          instance: 'x',
+          session: null,
+          allowed: { ...serverAllowed(1, startOk, notRunning), save },
+          replay: null,
+        });
+        await rig.deliver(hello({ ...startOk, caution }), {
+          type: 'synced',
+          session: null,
+          last_seq: null,
+        });
+        expect(rig.front.controls.get().save).toEqual({ ok: true, reason: null, caution });
+        const disabled = {
+          ok: false,
+          reason: 'save-disabled',
+          message: 'the GUI server was started with --no-save',
+          caution: null,
+        };
+        await rig.deliver({
+          type: 'allowed',
+          session: null,
+          allowed: { ...serverAllowed(2, startOk, notRunning), save: disabled },
+        });
+        expect(rig.front.controls.get().save).toEqual({
+          ok: false,
+          reason: { code: 'save-disabled', message: disabled.message },
+          caution: null,
+        });
       });
 
       it('checks a text with the text in the body, and refuses a field that a text does not take', async () => {

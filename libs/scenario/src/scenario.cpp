@@ -1344,6 +1344,10 @@ const char* scenario_samples_name(ScenarioSamples samples)
 std::vector<bool> participants_read(const Scenario& scenario)
 {
     std::vector<bool> out(scenario.participants.size(), false);
+    // Per variable: an earlier step of the scenario puts a value on it (set, ramp, wave), which is
+    // where a motion without a base starts, so that no sample is read. A step the run skips has
+    // no writes or motions here, so it does not count.
+    std::vector<bool> put(scenario.variables.size(), false);
     const auto reads = [&](std::size_t variable) { out[scenario.variables[variable].participant] = true; };
     for (const ScenarioStep& step : scenario.steps)
     {
@@ -1353,10 +1357,19 @@ std::vector<bool> participants_read(const Scenario& scenario)
         }
         for (const ScenarioMotion& motion : step.motions)
         {
-            if (!motion.base && motion.shape && motion.shape->uses_base())
+            if (!motion.base && motion.shape && motion.shape->uses_base() && !put[motion.variable])
             {
                 reads(motion.variable);
             }
+        }
+        // After the step: the motions of one step begin together, so none starts from another's.
+        for (const ScenarioWrite& write : step.writes)
+        {
+            put[write.variable] = true;
+        }
+        for (const ScenarioMotion& motion : step.motions)
+        {
+            put[motion.variable] = true;
         }
     }
     return out;

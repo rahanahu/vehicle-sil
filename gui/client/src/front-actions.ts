@@ -13,6 +13,7 @@ import type {
   CheckTextRequest,
   ConfigText,
   LauncherEvent,
+  SavedConfig,
   RunRequest,
   ServerMessage,
 } from './protocol';
@@ -222,6 +223,17 @@ export class FrontActions {
     return this.src.low.config(named).catch((error: unknown) => {
       throw actionError(error);
     });
+  }
+
+  /** Saves a text as a configuration file. Its failure is the caller's: it is not kept for `status.problem`. */
+  saveConfig(options: { file?: string; text: string; stamp: string | null }): Promise<SavedConfig> {
+    const file = options.file ?? this.src.initialFile();
+    if (file === null) return Promise.reject(noFileError());
+    return this.src.low
+      .saveConfig({ file, text: options.text, stamp: options.stamp })
+      .catch((error: unknown) => {
+        throw actionError(error);
+      });
   }
 
   /** Describes the participants of the saved file again. It waits in the line of the checks; it shares only with a describe of the same file and variant. */

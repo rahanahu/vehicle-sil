@@ -13,6 +13,8 @@ import {
   ConnectionsRequest,
   DashboardResponse,
   Recording,
+  SaveConfigRequest,
+  SavedConfig,
   ScenarioList,
   SessionSummary,
   readAppInfo,
@@ -23,6 +25,7 @@ import {
   readDashboardResponse,
   readRecording,
   readScenarioList,
+  readSavedConfig,
   readSessionAllowed,
   readSessionResponse,
 } from './protocol';
@@ -143,6 +146,13 @@ export interface GuiClient {
    * was built again), and returns that check. Waits in the queue of the checks, as long as `check`.
    */
   describe(request: DescribeRequest): Promise<CheckResult>;
+  /**
+   * `POST api/config`: saves a text as a configuration file, with the `stamp` it was read with (null: a new file).
+   * Rejects with an HttpError (`save-disabled`, `commands-changed` (also a new file to a server started without
+   * `--allow-command-changes`), `config-changed`, `config-busy`,
+   * `config-unreadable`, `text-too-large`, ...). Waits in the queue of the checks, as long as `check`.
+   */
+  saveConfig(request: SaveConfigRequest): Promise<SavedConfig>;
   /**
    * `POST api/connections`: where one network of a configuration file can be connected on the computer of the GUI
    * server. It starts that network's bridge to list (on Windows, Npcap may ask to raise the rights), so ask only when
@@ -332,6 +342,11 @@ export function buildClient(options: ClientOptions): ClientParts {
           timeoutMs: longRequestMs(limits.get()),
         },
         readCheckResponse,
+      ),
+    saveConfig: (body) =>
+      call(
+        { method: 'POST', path: 'api/config', body, timeoutMs: longRequestMs(limits.get()) },
+        readSavedConfig,
       ),
     dashboard: (file) =>
       call(

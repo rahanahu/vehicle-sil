@@ -160,6 +160,39 @@ TEST_CASE(scenario_reads_the_participants_of_its_conditions_and_of_the_bases_it_
     check_text(readers(read(check, kHead + "  - expect: { Body.speed: 0, Door.speed: 0 }\n")), "Body,Door");
 }
 
+TEST_CASE(a_motion_that_starts_from_a_value_the_scenario_wrote_reads_no_sample)
+{
+    const Checked check = checked(kTakes, kTakes);
+    const std::string ramp = "  - ramp: { Door.level: { to: 5, over_ms: 50 } }\n";
+    // The variable was written before: a set, a ramp, a wave.
+    check_text(readers(read(check, kHead + "  - set: { Door.level: 1 }\n" + ramp)), "");
+    check_text(readers(read(check, kHead + "  - ramp: { Door.level: { from: 1, to: 5, over_ms: 50 } }\n" + ramp)), "");
+    check_text(readers(read(check, kHead + "  - wave: { Door.level: { triangle: { amplitude: 5, period_ms: 100 }, around: 50, for_ms: 300 } }\n" + ramp)),
+               "");
+    // Not written yet: the first one reads, the next starts from what the first wrote.
+    check_text(readers(read(check, kHead + ramp + ramp)), "Door");
+    // Another variable, or the same step: the sample is read.
+    check_text(readers(read(check, kHead + "  - set: { Body.level: 1 }\n" + ramp)), "Door");
+    check_text(readers(read(check, kHead + "  - ramp: { Door.level: { to: 5, over_ms: 50 }, Body.level: { to: 5, over_ms: 50 } }\n")), "Door,Body");
+    // A condition always reads, whatever was written.
+    check_text(readers(read(check, kHead + "  - set: { Door.level: 1 }\n  - expect: { Door.level: 1 }\n")), "Door");
+    // A step the run skips writes nothing: the ramp after it starts from the sample.
+    ScenarioCatalog absent = scenario_catalog(check);
+    for (auto& participant : absent)
+    {
+        if (participant.name == "Body")
+        {
+            participant.not_in_variant = true;
+        }
+    }
+    ScenarioContext context;
+    context.variant = "small";
+    const ScenarioRead r = read_scenario(kHead + "  - set: { Body.level: 1, Door.level: 2 }\n" + ramp, absent, context);
+    CHECK(r.scenario.has_value());
+    CHECK(!r.scenario->steps[0].skipped.empty());
+    check_text(readers(*r.scenario), "Door");
+}
+
 TEST_CASE(the_run_asks_the_ecus_a_scenario_reads_for_a_sample_in_every_step)
 {
     const std::string reads_both = kHead + "  - set: { Body.level: 1 }\n  - expect: { Body.speed: 0, Door.speed: 0 }\n";
@@ -267,4 +300,27 @@ TEST_CASE(a_scenario_that_was_not_begun_for_its_samples_is_a_failure_with_its_ow
                "AgentOptions::sample_period to 0 itself. Change the executable so" + fix);
     CHECK(found.size() == 2 && found[0].participant == "Body" && found[0].file == "s.yaml" && found[0].severity == Severity::Error);
     CHECK(std::string(scenario_status_name(outcome.scenario.result->status)) == "failed");
+}
+
+// A run cannot read or write the variables of an ECU that offers another version (or transport)
+// of the control messages: a scenario that uses them is refused by the check, not at its first
+// set in the run. One that does not use that ECU still reads.
+TEST_CASE(a_scenario_cannot_use_an_ecu_that_offers_another_version_of_the_control_messages)
+{
+    Checked check = checked(kTakes, kTakes);
+    check.participants[0].ecu->description.control = ControlOffer{"silkit", 1, 1};
+    check.participants[1].ecu->description.control = ControlOffer{"other", 2, 1};
+    const ScenarioRead r =
+        read_scenario(kHead + "  - set: { Body.level: 1 }\n  - set: { Door.level: 2 }\n", scenario_catalog(check));
+    CHECK(!r.scenario);
+    const std::string found = lines(r.findings);
+    CHECK(found.find("E 3 scenario-variable: 'Body.level': participant 'Body' offers its variables as silkit messages of "
+                     "version 1, and this vehicle_sil_launch speaks version 2, so a run cannot read or write them: the "
+                     "ECU is of an older vehicle-sil; build it again") != std::string::npos);
+    CHECK(found.find("E 4 scenario-variable: 'Door.level': participant 'Door' offers its variables over the transport "
+                     "other, and vehicle_sil_launch run reads and writes variables over silkit only") != std::string::npos);
+
+    Checked door_only = checked(kTakes, kTakes);
+    door_only.participants[0].ecu->description.control = ControlOffer{"silkit", 1, 1};
+    static_cast<void>(read(door_only, kHead + "  - set: { Door.level: 2 }\n"));
 }

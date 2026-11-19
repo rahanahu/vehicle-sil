@@ -101,7 +101,13 @@ describe('SessionFeed', () => {
     socket.send({
       type: 'allowed',
       session: null,
-      allowed: { rev: 99, ...allowed, stop: allowed.start, force: allowed.start },
+      allowed: {
+        rev: 99,
+        ...allowed,
+        stop: allowed.start,
+        force: allowed.start,
+        save: { ...allowed.start, caution: null },
+      },
     });
     socket.send({ type: 'a-message-of-a-later-version', session: 1 });
     vi.advanceTimersByTime(BATCH_MS);

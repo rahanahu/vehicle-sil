@@ -3,7 +3,9 @@
 // scenario_catalog(): the participants of a checked configuration as a scenario can use them.
 #include "vehicle_sil/scenario/scenario_check.hpp"
 
+#include "vehicle_sil/config/detail/check_words.hpp"
 #include "vehicle_sil/config/detail/seen_ecu.hpp"
+#include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/ecu/executable.hpp"
 
 #include <algorithm>
@@ -69,6 +71,21 @@ ScenarioCatalog scenario_catalog(const config::CheckReport& check)
             {
                 c.unusable = "does not offer its variables to the simulation (--no-control, or an executable of an earlier "
                              "vehicle-sil): build it with this vehicle-sil and run it without --no-control";
+            }
+            // As the check's control-link-version: a run cannot read or write such variables, so a
+            // scenario that uses them would fail at its first set or condition.
+            else if (d.has_variables() && d.control()->transport != "silkit")
+            {
+                c.unusable = "offers its variables over the transport " + d.control()->transport +
+                             ", and vehicle_sil_launch run reads and writes variables over silkit only: make the "
+                             "executable offer them over silkit (as ecu_main does)";
+            }
+            else if (d.has_variables() && d.control()->wire_version != static_cast<int>(control::wire::kVersion))
+            {
+                c.unusable = "offers its variables as silkit messages of version " +
+                             std::to_string(d.control()->wire_version) + ", and this vehicle_sil_launch speaks version " +
+                             std::to_string(control::wire::kVersion) + ", so a run cannot read or write them: " +
+                             config::detail::control_version_fix(d.control()->wire_version);
             }
             else
             {

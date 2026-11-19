@@ -56,6 +56,12 @@
           "ok": true,
           "reason": null,
           "message": null
+        },
+        "save": {
+          "ok": true,
+          "reason": null,
+          "message": null,
+          "caution": null
         }
       },
       "result": null,

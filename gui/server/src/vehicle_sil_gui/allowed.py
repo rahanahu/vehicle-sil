@@ -1,9 +1,11 @@
-"""What this server accepts of a screen now: `allowed.start`, `allowed.stop` and `allowed.force` of the summary.
+"""What this server accepts of a screen now: `allowed.start`, `allowed.stop`, `allowed.force` and `allowed.save` of the
+summary.
 
 `rev` goes up with each change. Each is {"ok", "reason", "message"}: ok says whether the server would take the request (POST api/run, POST api/stop
 and POST api/stop with force), reason is a code that stays the same (null when ok) and message is one English
 sentence for a person (null when ok). The codes of start are those POST api/run answers with (409 or 503); POST api/stop always answers 200, so the
-reasons of stop and force are only here.
+reasons of stop and force are only here. save (POST api/config) also has caution: null, or {"code", "message"} when
+the server takes the request but there is something to know first (the same shape as the launcher's `caution`).
 
 Only what the server knows is decided here: whether the launcher can be used, whether a run is starting, running
 or ending, and how many stop requests it has taken. What the launcher accepts (pause, step, speed, writes) comes
@@ -22,6 +24,8 @@ class Facts:
     starting: bool = False  # a launcher is being started for POST api/run
     launcher_usable: bool = True  # the launcher the server found can be used
     launcher_message: str = ""  # why not, when it cannot
+    save: bool = True  # POST api/config saves (not --no-save)
+    command_changes_allowed: bool = False  # it also saves what changes the commands that run (--allow-command-changes)
 
 
 def _answer(reason: str | None = None, message: str | None = None) -> dict:
@@ -71,6 +75,25 @@ def allowed_force(facts: Facts, stoppable: bool, stop: str) -> dict:
     return _answer()
 
 
+def allowed_save(facts: Facts) -> dict:
+    """POST api/config. Which texts it saves (the commands that run stay the same) is decided per request, from the
+    launcher's check of the text: not here."""
+    if facts.closing:
+        answer = _answer("shutting-down", "the GUI server is stopping: it saves no file")
+    elif not facts.save:
+        answer = _answer("save-disabled", "the GUI server was started with --no-save: it saves no configuration "
+                                          "file; save the text in a text editor, or start the GUI without --no-save")
+    else:
+        answer = _answer()
+    caution = None
+    if answer["ok"] and facts.command_changes_allowed:
+        caution = {"code": "command-changes-allowed",
+                   "message": "the GUI server was started with --allow-command-changes: it saves an edit that changes "
+                              "the commands that run, and new files, so whoever has its token can run any command as "
+                              "this user"}
+    return {**answer, "caution": caution}
+
+
 class Numbered:
     """Gives `allowed` a number (`rev`) that goes up whenever what it says changes, so that a reader who gets it from
     several places (hello, api/session, the summary, the `allowed` message) keeps the one with the larger number.
@@ -89,4 +112,4 @@ class Numbered:
 
 def allowed(facts: Facts, running: bool, stoppable: bool, stop: str) -> dict:
     return {"start": allowed_start(facts, running), "stop": allowed_stop(facts, stoppable, stop),
-            "force": allowed_force(facts, stoppable, stop)}
+            "force": allowed_force(facts, stoppable, stop), "save": allowed_save(facts)}

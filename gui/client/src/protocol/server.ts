@@ -37,6 +37,8 @@ import {
   SummaryCommand,
   SummaryState,
   TimeReport,
+  Caution,
+  readCaution,
   readCheckResult,
   readCommandFields,
   readControlLink,
@@ -413,6 +415,37 @@ export const readConfigText = (value: unknown): ConfigText => {
   };
 };
 
+/**
+ * Body of POST api/config: saves `text` as `file`. By default the server saves only an edit whose commands that run
+ * stay the same (the launcher's `check --compare-commands` says `"same"`); `allowed.save` says what applies.
+ */
+export interface SaveConfigRequest {
+  /** Path relative to root. */
+  file: string;
+  /** The whole content of the file (at most 1 MiB as UTF-8). Written as it is: a BOM and the line ends stay. */
+  text: string;
+  /** The `stamp` of GET api/config for the file as it was read, or null for a new file. */
+  stamp: string | null;
+}
+
+/** Answer of POST api/config: the file that was saved and the stamp of its new content. */
+export interface SavedConfig {
+  /** Path relative to root. */
+  file: string;
+  /** SHA-256 of the bytes that were saved (the stamp to send with the next save). */
+  stamp: string;
+}
+
+/** Reads the answer of POST api/config. */
+export const readSavedConfig = (value: unknown): SavedConfig => {
+  const path = 'saved';
+  const f = object(value, path);
+  return {
+    file: field(f, path, 'file', string),
+    stamp: field(f, path, 'stamp', string),
+  };
+};
+
 /** Takes the launcher's check result out of the answer to POST api/check (and POST api/describe). */
 export const readCheckResponse = (value: unknown): CheckResult =>
   field(object(value, 'response'), 'response', 'check', readCheckResult);
@@ -757,10 +790,17 @@ export interface ServerAllowedItem {
   message: string | null;
 }
 
+/** `save` of `allowed`: also `caution`, `{code, message}` when the server saves but there is something to know first. */
+export interface ServerSaveItem extends ServerAllowedItem {
+  /** `command-changes-allowed`: the server also saves edits that change the commands that run, and new files. */
+  caution: Caution | null;
+}
+
 /**
  * What this server accepts now (`allowed` of the summary, of `hello` and of `api/session`). start: reasons
  * shutting-down, starting, already-running, launcher-unusable. stop and force: shutting-down, not-running,
- * already-stopping (stop), already-forced (force). What the launcher accepts is `launcher_state.allowed`.
+ * already-stopping (stop), already-forced (force). save: shutting-down, save-disabled. What the launcher accepts is
+ * `launcher_state.allowed`.
  */
 export interface ServerAllowed {
   /**
@@ -772,6 +812,8 @@ export interface ServerAllowed {
   start: ServerAllowedItem;
   stop: ServerAllowedItem;
   force: ServerAllowedItem;
+  /** POST api/config. */
+  save: ServerSaveItem;
 }
 
 const readServerAllowedItem: Reader<ServerAllowedItem> = (value, path) => {
@@ -783,6 +825,11 @@ const readServerAllowedItem: Reader<ServerAllowedItem> = (value, path) => {
   };
 };
 
+const readServerSaveItem: Reader<ServerSaveItem> = (value, path) => ({
+  ...readServerAllowedItem(value, path),
+  caution: field(object(value, path), path, 'caution', nullable(readCaution)),
+});
+
 export const readServerAllowed: Reader<ServerAllowed> = (value, path) => {
   const f = object(value, path);
   return {
@@ -790,6 +837,7 @@ export const readServerAllowed: Reader<ServerAllowed> = (value, path) => {
     start: field(f, path, 'start', readServerAllowedItem),
     stop: field(f, path, 'stop', readServerAllowedItem),
     force: field(f, path, 'force', readServerAllowedItem),
+    save: field(f, path, 'save', readServerSaveItem),
   };
 };
 

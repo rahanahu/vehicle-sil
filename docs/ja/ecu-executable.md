@@ -367,7 +367,7 @@ engine_ecu --registry-uri silkit://localhost:8500 --name Engine2 --j1939-node J1
 |---|---|
 | `main()` を `ecu_main()` で作ります。 | `check` がその ECU を照合できません。 |
 | 設定ファイルを書く人と決めた名前（ネットワーク名など）を使い、渡す前に `--describe` で確認します。 | `check` の指摘になります（[simulation-check.md](simulation-check.md)）。 |
-| `vehicle_sil_launch` と同じバージョンの vehicle-sil でビルドします。 | 注記 `version-mismatch` が出ます。変数を読み書きするメッセージの形式のバージョンも違えば（たとえば vehicle-sil 0.1.0 でビルドした ECU と新しい `vehicle_sil_launch`、またはその逆）、シミュレーションは動きますが、その ECU の変数を読み書きできず、照合が警告 `control-link-version` を出します。 |
+| `vehicle_sil_launch` と同じバージョンの vehicle-sil でビルドします。 | 注記 `version-mismatch` が出ます。変数を読み書きするメッセージの形式のバージョンも違えば（たとえば vehicle-sil 0.1.0 でビルドした ECU と新しい `vehicle_sil_launch`、またはその逆）、シミュレーションは動きますが、その ECU の変数を読み書きできず、照合が警告 `control-link-version` を出します。その変数を使うシナリオは照合の誤り（`scenario-variable`）です。 |
 | ECU が自分で起動したプロセスは、ECU が終わるときに終了させます。 | 警告 `left-processes` が出ます（[simulation-run.md](simulation-run.md) の「止め方」）。 |
 | 標準出力と標準エラーは UTF-8 で出力します。 | `vehicle_sil_launch run` は、UTF-8 でないバイトを `?` と表示します。 |
 | 変数の名前に、次の表の接頭辞を使いません。 | ECU が終了コード 3 で終わります。 |
