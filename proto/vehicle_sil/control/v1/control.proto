@@ -119,6 +119,7 @@ message PingReply {
 
 message PeerInfo {
   reserved 5; // was `status`, which no agent ever filled
+  reserved "status";
   string participant = 1;
   string incarnation = 2;
   bool connected = 3; // its agent is connected

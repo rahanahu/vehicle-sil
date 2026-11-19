@@ -259,7 +259,7 @@ Monitoring covers the networks and nodes that exist when the schema is fixed (by
 
 In the last case the schema stays open, so variables declared after the call that threw are also ECU variables in `describe()`.
 
-Step failures are not reported here (no step runs after a failure). Read `Peer::failed()` and `error()` (thread-safe) on the transport side.
+Step failures are not reported here (no step runs after a failure). A participant's failure reaches clients through the simulation monitoring, not through the Agent.
 
 ## Control Server core (`vehicle_sil::control::Hub`)
 

@@ -215,7 +215,8 @@ def _variable(v) -> Variable:
 
 
 def _peer(p) -> Peer:
-    return Peer(p.participant, p.incarnation, p.connected, [_variable(v) for v in p.schema], p.has_agent, p.simulation_state, p.virtual_time)
+    return Peer(p.participant, p.incarnation, p.connected, [_variable(v) for v in p.schema], p.has_agent,
+                p.simulation_state, p.virtual_time)
 
 
 def _value(v) -> Number:
