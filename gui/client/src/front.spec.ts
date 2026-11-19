@@ -184,7 +184,7 @@ describe('the front door', () => {
     }
   });
 
-  async function open(): Promise<Rig> {
+  async function open(appAnswer: unknown = app): Promise<Rig> {
     const fake = new FakeWebSockets();
     const http = new FakeHttp();
     const promise = connect({
@@ -197,7 +197,7 @@ describe('the front door', () => {
         throw error;
       },
     });
-    http.expectOne('api/app').flush(app);
+    http.expectOne('api/app').flush(appAnswer);
     const front = await promise;
     const socket = fake.last();
     socket.open();
@@ -1249,15 +1249,18 @@ describe('the front door', () => {
       expect(await list).toEqual([{ path: 'scenarios/a.yaml', name: 'a.yaml' }]);
     });
 
-    it('asks for the file of the status when none is given, and rejects without one', async () => {
-      const rig = await open();
-      // The app example has no start-up file and no run: the status file is null
-      expect(rig.front.status.get().file).toBeNull();
-      await expect(rig.front.scenarios()).rejects.toMatchObject({
+    it('asks for the start-up file when none is given (as run.start does), and rejects without one', async () => {
+      const rig = await open({ ...(app as object), initial_file: 'start.yaml' });
+      const list = rig.front.scenarios();
+      rig.http.expectOne('api/scenarios?file=start.yaml').flush(answer('start.yaml'));
+      expect(await list).toHaveLength(1);
+      // The app example has no start-up file
+      const bare = await open();
+      await expect(bare.front.scenarios()).rejects.toMatchObject({
         code: 'no-file',
         outcome: 'refused',
       });
-      rig.http.expectNone('api/scenarios');
+      bare.http.expectNone('api/scenarios');
     });
 
     it("rejects with the server's code as an ActionError", async () => {

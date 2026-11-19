@@ -300,8 +300,8 @@ export interface Front {
    */
   connections(request: { network: string }, options?: { file?: string }): Promise<ConnectEntry[]>;
   /**
-   * The scenario files next to `file` (default: the file of `status`, which is the start-up file until a run names
-   * another), as the list that `client.low.scenarios(file)` gives, without its directory. Give `path` of an entry as
+   * The scenario files next to `file` (default: the start-up file, as for `run.start` and `connections()`; pass the same
+   * `file` to this and to `run.start` when a run uses another file), as the list that `client.low.scenarios(file)` gives, without its directory. Give `path` of an entry as
    * `intent.scenario`. Rejects with an ActionError (`no-file` when there is no file to ask for, and the server's code
    * otherwise).
    */

@@ -218,7 +218,7 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
       });
     },
     scenarios: (listOptions = {}) => {
-      const file = listOptions.file ?? status.get().file;
+      const file = listOptions.file ?? initialFile();
       if (file === null) {
         return Promise.reject(
           new ActionError(
