@@ -301,3 +301,26 @@ TEST_CASE(a_scenario_that_was_not_begun_for_its_samples_is_a_failure_with_its_ow
     CHECK(found.size() == 2 && found[0].participant == "Body" && found[0].file == "s.yaml" && found[0].severity == Severity::Error);
     CHECK(std::string(scenario_status_name(outcome.scenario.result->status)) == "failed");
 }
+
+// A run cannot read or write the variables of an ECU that offers another version (or transport)
+// of the control messages: a scenario that uses them is refused by the check, not at its first
+// set in the run. One that does not use that ECU still reads.
+TEST_CASE(a_scenario_cannot_use_an_ecu_that_offers_another_version_of_the_control_messages)
+{
+    Checked check = checked(kTakes, kTakes);
+    check.participants[0].ecu->description.control = ControlOffer{"silkit", 1, 1};
+    check.participants[1].ecu->description.control = ControlOffer{"other", 2, 1};
+    const ScenarioRead r =
+        read_scenario(kHead + "  - set: { Body.level: 1 }\n  - set: { Door.level: 2 }\n", scenario_catalog(check));
+    CHECK(!r.scenario);
+    const std::string found = lines(r.findings);
+    CHECK(found.find("E 3 scenario-variable: 'Body.level': participant 'Body' offers its variables as silkit messages of "
+                     "version 1, and this vehicle_sil_launch speaks version 2, so a run cannot read or write them: the "
+                     "ECU is of an older vehicle-sil; build it again") != std::string::npos);
+    CHECK(found.find("E 4 scenario-variable: 'Door.level': participant 'Door' offers its variables over the transport "
+                     "other, and vehicle_sil_launch run reads and writes variables over silkit only") != std::string::npos);
+
+    Checked door_only = checked(kTakes, kTakes);
+    door_only.participants[0].ecu->description.control = ControlOffer{"silkit", 1, 1};
+    static_cast<void>(read(door_only, kHead + "  - set: { Door.level: 2 }\n"));
+}
