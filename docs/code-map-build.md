@@ -118,21 +118,27 @@ Tests:
 `.github/workflows/publish-npm.yml` puts `@vehicle-sil/gui-client` on the npm registry when a person publishes a release (the event "release published"). Publishing the release is the approval to publish to npm; the tag push, the draft and the rehearsal of `release.yml` publish nothing to npm. To retry (when that run failed), run the workflow by hand from `main` (Actions > publish-npm > Run workflow) with the tag of the published release; it refuses a draft and another branch.
 
 - It publishes the release's `vehicle-sil-gui-client-<version>.tgz` as it is, without building it again. First it checks that the tag is `v<version>`, the release is published and its pre-release mark agrees with the version, `release.yml` uploaded the file and `SHA256SUMS` (`github-actions[bot]`), the file's SHA-256 is the one in `SHA256SUMS`, and the `package.json` in it has the name, the version and this repository as `repository.url` (`gui/client/pack.mjs` writes it; npm compares it with the repository that publishes).
-- The dist-tag is `latest` for a version without a pre-release part and `next` for one with it (`0.2.0-rc.1`). A release of an older line after a newer one (0.1.x after 0.2.0) would move `latest` back: move it with `npm dist-tag add` by hand.
+- The dist-tag is `latest` for a version without a pre-release part and `next` for one with it (`0.2.0-rc.1`). `next` stays on the last pre-release, so after the release it is older than `latest`. A release of an older line after a newer one (0.1.x after 0.2.0) would move `latest` back: move it with `npm dist-tag add` by hand.
 - It uses npm's trusted publishing (OIDC) and keeps no npm token. Only the `publish` job has `id-token: write`, in the GitHub environment `npm`. npm attaches provenance. It needs a GitHub-hosted runner, npm 11.5.1 or later and Node.js 22.14.0 or later; the job checks the versions.
 - Run again, or with the version already on npm: the same file (`dist.integrity`) succeeds without publishing, another file fails. npm never takes a version twice, even after it is unpublished.
 
-The package's owner sets once, on npmjs.com, in the package's Settings, under "Trusted publishing" (GitHub Actions):
+npm's trusted publishing checks only the repository, the workflow's file name and the environment, not the branch or tag, and a workflow file can be changed on any branch. The repository settings below keep the approval with the person who publishes the release. Set them once, in this order, before the workflow first runs (a job that names the environment `npm` creates it without protection if it does not exist):
 
-| Field | Value |
-|---|---|
-| Organization or user | `rahanahu` |
-| Repository | `vehicle-sil` |
-| Workflow filename | `publish-npm.yml` |
-| Environment name | `npm` |
-| Allowed actions | `npm publish` |
+1. In the repository's Settings > Environments, create `npm` and limit its deployment branches and tags to `main` and the tags `v*` (the event runs on the tag, a run by hand on `main`).
+2. In Settings > Rules > Rulesets, add a tag ruleset for `refs/tags/v*` that restricts creations, updates and deletions, with only the repository's administrators in the bypass list. With it, only they can make a ref that the environment accepts outside `main`, so the environment needs no reviewers.
+3. On npmjs.com, in the package's Settings > Trusted publishing (GitHub Actions), add:
 
-Change these together with the workflow's file name, the repository or the environment: npm accepts the OIDC token only when they match. After the first publish with it, "Publishing access" can require two-factor authentication and disallow tokens; this does not stop trusted publishing. In the repository's Settings > Environments > `npm`, limit the deployment branches and tags to `main` and the tags `v*` (the event runs on the tag, a run by hand on `main`); no reviewers are needed, because publishing the release is the approval.
+   | Field | Value |
+   |---|---|
+   | Organization or user | `rahanahu` |
+   | Repository | `vehicle-sil` |
+   | Workflow filename | `publish-npm.yml` |
+   | Environment name | `npm` |
+   | Allowed actions | `npm publish` |
+
+4. After the first publish with it, set the package's Settings > Publishing access to require two-factor authentication and disallow tokens; this does not stop trusted publishing.
+
+Change these together with the workflow's file name, the repository or the environment: npm accepts the OIDC token only when they match, and a trusted publisher cannot be edited (delete it and add it again).
 
 ### `VEHICLE_SIL_STATIC`
 

@@ -73,7 +73,7 @@ jobs:
           # The release as it is now (the event may be old on a re-run, and a run by hand names only the tag).
           if ! state=$(gh release view "$TAG" --json tagName,isDraft,isPrerelease \
               --jq '"\(.tagName) draft=\(.isDraft) prerelease=\(.isPrerelease)"'); then
-            echo "::error::there is no release $TAG"
+            echo "::error::there is no published release $TAG (a draft is not visible here: publish it first)"
             exit 1
           fi
           if [ "$state" != "$TAG draft=false prerelease=$want_prerelease" ]; then
@@ -81,7 +81,6 @@ jobs:
                  "pre-release=$want_prerelease as its version says (fix the release's \"Set as a pre-release\" box)"
             exit 1
           fi
-          gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq .ref > /dev/null
           {
             echo "version=$version"
             echo "dist-tag=$dist_tag"
@@ -114,13 +113,16 @@ jobs:
             echo "::error::$FILE does not match its line in SHA256SUMS (or has none): not published"
             exit 1
           fi
-          echo "$line" | sha256sum --check --strict -
           python3 -I - "$FILE" "$PACKAGE" "$VERSION" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" <<'EOF'
           import json, sys, tarfile
           path, name, version, repository = sys.argv[1:]
-          with tarfile.open(path, "r:gz") as tar:
-              manifest = json.load(tar.extractfile("package/package.json"))
-          url = (manifest.get("repository") or {}).get("url", "")
+          try:
+              with tarfile.open(path, "r:gz") as tar:
+                  manifest = json.load(tar.extractfile("package/package.json"))
+          except (OSError, KeyError, ValueError) as error:
+              sys.exit(f"::error::{path} has no readable package/package.json: {error}")
+          repo = manifest.get("repository")
+          url = repo.get("url", "") if isinstance(repo, dict) else str(repo or "")
           problems = [f"{key} is {got!r}, expected {want!r}" for key, got, want in [
               ("name", manifest.get("name"), name),
               ("version", manifest.get("version"), version),
