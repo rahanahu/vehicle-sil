@@ -264,22 +264,21 @@ A finer time step means more time synchronizations. That is why the default at m
 
 ### How fast a run can go
 
-Estimate the speed before you build the ECUs, and check it after. The real time of 1 time step is roughly the sum of three parts.
+Estimate the speed before you build the ECUs, and check it after. The real time that 1 second of virtual time takes is roughly the sum of three parts.
 
 | Part | What it depends on |
 |---|---|
-| Base cost | Time synchronization. It grows with the number of participants and with how fine the time step is. |
-| Computation of the slowest ECU | The step that ECU runs in this time step. ECUs compute in parallel, so only the slowest one is added. |
-| Scenario writes | The writes of this time step (see below). |
+| Base cost | Time synchronization. It grows with the number of participants and with smaller ECU steps and time steps. |
+| Computation of the slowest ECU | At each ECU step, the computation of the ECU that takes longest in that step, added up over the steps of 1 second. ECUs compute in parallel, so only the slowest one of each step is added. |
+| Scenario writes | The writes of the scenario in that second (see below). |
 
-The speed you can reach is roughly the time step ÷ the real time of 1 time step. Speed 1 needs the real time of 1 time step to stay below the time step.
+The speed you can reach is roughly 1 second ÷ that real time. Speed 1 needs it to stay below 1 second.
 
-To measure the base cost, run the same number of participants with the same time step, using light ECUs (for example the ECU of the template), at `--speed max` and without a scenario. From `timing` in the JSON result (`run --json`), divide `wall_ms` by the number of time steps (`sim_ms` ÷ the time step). The time step ÷ that value is the speed this configuration can reach. Once the real ECUs exist, run the same configuration at `--speed max`. The `actual_speed` of that run is the highest speed this computer can be set to for that configuration. Trust the measurement over the estimate.
+To measure the base cost, run the same number of participants with the same step sizes, using light ECUs (for example the ECU of the template), at `--speed max` and without a scenario. From `timing` in the JSON result (`run --json`), the real time of 1 second of virtual time is `wall_ms` ÷ `sim_ms` × 1000 ms. Once the real ECUs exist, run the same configuration at `--speed max`. The `actual_speed` of that run is the highest speed this computer can be set to for that configuration. Trust the measurement over the estimate.
 
 With many participants, the CPU can enter a power-saving state while it waits for the other ECUs, and the time to leave that state, or the difference between kinds of cores (performance and efficiency cores), can make the real time 10 to 50 percent longer than the estimate. It depends on the power settings of the PC and the OS (use a high-performance profile). This is a property of the computer, and it is the same where you really use the simulation. Check the speed on the PC you will use.
 
-Scenario writes of one time step are sent together, and the run waits once for the ECUs to receive them. A time step with more writes, or with more ECUs that receive them, takes longer. An ECU that a condition (`expect` and similar) reads sends its values at every time step. If the speed is not enough, write less often, or reduce the ECUs that conditions read.
-
+The scenario's writes for one time are sent together, and the run waits once for the ECUs to receive them. A time with more writes, or with more ECUs that receive them, takes longer. An ECU that a condition (`expect` and similar) reads sends its values at every one of its steps. If the speed is not enough, write less often, or reduce the ECUs that conditions read.
 
 ### Lateness warnings and what to do
 
