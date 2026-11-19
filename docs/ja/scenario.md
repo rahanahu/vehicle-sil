@@ -906,7 +906,7 @@ failed: 5 errors, 0 warnings, 0 notes
 |---|---|---|
 | `file`、`encoding`、`syntax`、`not-a-scenario`、`format-version`、`unsupported-yaml` | エラー | ファイルが読めない、シナリオでない、バージョンが違う、アンカーや 2 つ目のドキュメントがある。 |
 | `unknown-key`、`duplicate-key`、`missing-key`、`value` | エラー | キーと値の形のエラー（1 つの手順に 2 つの動作、`wait_until` に `timeout_ms` がない、`near` に `tolerance` がない、など）。 |
-| `scenario-variable` | エラー | 変数が `<participant>.<変数名>` でない、participant か変数がない、participant を使えない（無効にしている、`describe: false`、実時間で動く、変数を出していない）。 |
+| `scenario-variable` | エラー | 変数が `<participant>.<変数名>` でない、participant か変数がない、participant を使えない（無効にしている、`describe: false`、実時間で動く、変数を出していない、変数を出すメッセージの版か運び方がこの `vehicle_sil_launch` と違う。古い vehicle-sil でビルドした ECU など）。 |
 | `scenario-not-writable` | エラー | 出力に書いている。Parameter を時刻 0 の `set` 以外で書いている。 |
 | `scenario-value` | エラー | 値が型、範囲、enum の項目に合わない。`ramp` や大小の比較を、数でない変数に使っている。`wave` の波形が変数の型に合わない、`around` ± `amplitude` が範囲の外。`dither` を bool か enum の変数に書いている。 |
 | `scenario-param` | エラー | `${name}` に値がない。`${...}` がキーや変数名、値の一部にある（シナリオにない名前の `--param` は、引数のエラー `usage`）。 |
