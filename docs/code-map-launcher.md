@@ -87,7 +87,7 @@ Implementation:
 | Reading the `--describe` JSON | `src/describe_read.cpp` |
 | An ECU as the simulation sees it (`SeenEcu`): what its executable described, with the participant's entry applied. The check, `run` and the scenario read a description only through it (its name, step, networks, variables, control offer, features) | `config/detail/seen_ecu.hpp`, `src/seen_ecu.cpp` (with `seen_variables()`) |
 | The reported networks under the names after `network_names` of the configuration file, with the J1939 nodes after `j1939_nodes` (`seen_networks()`) | `src/check_networks.cpp` |
-| The check rules (one function per network kind) | `src/check_rules.cpp` |
+| The check rules that compare the file with the descriptions (one function per network kind). The errors that the file alone shows (`duplicate-name`, keys, value forms) are found while it is read, in `src/config.cpp` | `src/check_rules.cpp` |
 | The check of `--connect` (`check_connections()`: the requests, the bridges found and their `--describe`); the rules that need the whole simulation (the bridge as a participant of its network, `connect-loop`) are in `check_rules.cpp` | `src/check_connect.cpp` |
 | The forms of `--connect` and the bridges' arguments. `find_tool()` (next to the launcher, then `PATH`) and the search of `PATH` that it shares with `find_executable()` (`detail::find_on_path()`) are in `libs/launch/src/probe/probe.cpp` | `src/connect.cpp` |
 | Code shared by the readers of configuration files and scenarios | `config/detail/yaml_reader.hpp` |

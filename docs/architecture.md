@@ -257,7 +257,7 @@ flowchart TB
 | `usecases/` | `check_file()`, `list_connections()`, `run_file()`, `run_tests()`: probe, then the rules, then the plan, then the runner, then the output | (no limit) |
 | `request/` | `RunRequest`, reading a request file, the rules about fields that do not go together | `runner`, `scenario`, `process`, SIL Kit, any other part, the headers of the use cases |
 | `probe/` | Looking at the computer (files, environment, the tools it starts); returns values. Also the file of saved descriptions that `check --write-descriptions` writes | `runner`, SIL Kit, the outputs, the endpoints, the use cases |
-| `format/` | The outputs of check, run, test, events, timeline and connections (JSON and text), the table of exit codes | `probe.hpp`, SIL Kit, `control_grpc`, the endpoints, the use cases |
+| `format/` | The outputs of check, run, test, events, timeline and connections (JSON and text), the table of exit codes | `probe.hpp`, SIL Kit, `control_grpc`, the endpoints, the sources of the use cases (it reads their result types from `run.hpp`, `test.hpp` and `connections.hpp`, which it formats) |
 | `endpoints/` | The commands on standard input and the Control Server, as calls on the run's controls | `probe.hpp`, the outputs of check, run and timeline (`*_format.hpp`) |
 
 - `endpoints/` may read the configuration's value types and its YAML reader (`config/detail/`): the commands on standard input are YAML or JSON, and `parse_command()` in `command_input.cpp` reads them there, not in `format/` (which writes). The Control Server uses the run's controller and SIL Kit's types, because it stops the simulation and checks failures; only the Control Server's file does, and only with `VEHICLE_SIL_BUILD_CONTROL_SERVER`.
