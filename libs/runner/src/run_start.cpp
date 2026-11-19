@@ -287,7 +287,7 @@ void RunStart::tell_strangers(SimulationController& controller)
     }
 }
 
-bool RunStart::stopped_for_shared_device(const std::vector<std::size_t>& bridges)
+bool RunStart::stopped_for_shared_device(const std::vector<std::size_t>& bridges, bool strict)
 {
     // The first link line comes before the bridge's lifecycle starts, so it is read by now, but the
     // thread that reads the bridge's output may be a moment behind.
@@ -300,7 +300,10 @@ bool RunStart::stopped_for_shared_device(const std::vector<std::size_t>& bridges
         return true;
     }
     // A bridge that did not write its line (another version) says nothing of sharing: not shared.
-    const auto stop = out_.outside_shared(std::chrono::steady_clock::now(), participants_.own_bridges(), std::chrono::milliseconds(0));
+    // Without --strict this only says it (state and finding start at the first line, not when the
+    // participants have joined); the run goes on.
+    const auto stop = out_.outside_shared(std::chrono::steady_clock::now(), participants_.own_bridges(),
+                                          strict ? std::optional<std::chrono::milliseconds>(std::chrono::milliseconds(0)) : std::nullopt);
     if (!stop)
     {
         return false;
@@ -385,7 +388,7 @@ bool RunStart::wait_for_bridges(SimulationController& controller)
     {
         // The "joined" of a bridge whose state came between the two looks of the last round.
         notes_.note_joined(controller, outcome_);
-        return !ctx_.plan.strict || !stopped_for_shared_device(bridges);
+        return !stopped_for_shared_device(bridges, ctx_.plan.strict);
     }
     const ParticipantRun& run = outcome_.participants[failed];
     outcome_.end.failed_participant = run.name;
