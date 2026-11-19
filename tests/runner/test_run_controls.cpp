@@ -26,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <thread>
 #include <vector>
 
 
@@ -74,6 +75,112 @@ TEST_CASE(run_controls_keep_the_phase_before_they_tell_it)
     }
     CHECK((told == std::vector<Phase>{Phase::Checking, Phase::Starting, Phase::Waiting, Phase::Running, Phase::Stopping,
                                      Phase::Ended}));
+}
+
+namespace {
+
+/// What the controls tell, in the order they tell it: "phase <name>", "command <name> <accepted or
+/// reason>", "state <phase> <allowed.pause: ok or reason>".
+struct Sequence
+{
+    std::vector<std::string> told;
+
+    RunControls::Observers observers()
+    {
+        RunControls::Observers out;
+        out.on_phase = [this](Phase phase) { told.push_back(std::string("phase ") + vehicle_sil::runner::phase_name(phase)); };
+        out.on_command = [this](const Command& c, std::string_view) {
+            told.push_back("command " + c.name.value_or("") + " " + (c.accepted ? std::string("accepted") : c.reason));
+        };
+        out.on_state = [this](const RunState& s) {
+            told.push_back(std::string("state ") + vehicle_sil::runner::phase_name(s.phase) + " " +
+                           (s.allowed.pause.ok ? std::string("ok") : s.allowed.pause.reason));
+        };
+        return out;
+    }
+};
+
+Command named(const std::string& name)
+{
+    Command c;
+    c.name = name;
+    c.accepted = true;
+    return c;
+}
+
+} // namespace
+
+TEST_CASE(the_phase_ended_ends_the_time_commands_before_it_is_told_whatever_came_before)
+{
+    // The configuration could not be read: no time lock, and the commands still wait.
+    Sequence unread;
+    StopRequests stops;
+    RunControls waiting(stops, false, unread.observers(), false);
+    waiting.set_phase(Phase::Checking);
+    CHECK(waiting.time().apply(named("pause"), "stdin").pending);
+    CHECK(waiting.time().apply(named("resume"), "control_server").pending);
+    waiting.set_phase(Phase::Ended);
+    CHECK((unread.told == std::vector<std::string>{"phase checking", "state checking ok", "state checking not-running",
+                                                   "command pause not-running", "command resume not-running",
+                                                   "phase ended", "state ended not-running"}));
+    // The check failed: the lock came and decided the commands; the end is the same.
+    Sequence failed;
+    RunControls decided(stops, false, failed.observers(), false);
+    decided.set_phase(Phase::Checking);
+    CHECK(decided.time().apply(named("pause"), "stdin").pending);
+    decided.set_time_lock({});
+    decided.set_phase(Phase::Ended);
+    CHECK((failed.told == std::vector<std::string>{"phase checking", "state checking ok", "command pause accepted",
+                                                   "state checking ok", // paused now
+                                                   "state checking not-running", "phase ended", "state ended not-running"}));
+    // After the end, every time command is refused; a second end tells only its phase.
+    for (RunControls* controls : {&waiting, &decided})
+    {
+        const Command late = controls->time().apply(named("pause"), "stdin");
+        CHECK(!late.accepted && late.reason == "not-running");
+        CHECK(controls->allowed(Operation::Resume, Entry::ControlServer).reason == "not-running");
+    }
+    const std::size_t before = failed.told.size();
+    decided.set_phase(Phase::Ended);
+    CHECK((std::vector<std::string>(failed.told.begin() + static_cast<std::ptrdiff_t>(before), failed.told.end()) ==
+           std::vector<std::string>{"phase ended"}));
+}
+
+TEST_CASE(a_command_that_races_the_end_comes_before_the_phase_or_after_its_state)
+{
+    // A command applied on another thread while the run enters the phase ended (here: started by
+    // the phase's observer, which then takes its time) waits for the phase, its event and its
+    // state: the last state still follows the phase event.
+    Sequence seq;
+    StopRequests stops;
+    std::thread racer;
+    RunControls::Observers observers = seq.observers();
+    RunControls* made = nullptr;
+    observers.on_phase = [&seq, &racer, &made](Phase phase) {
+        seq.told.push_back(std::string("phase ") + vehicle_sil::runner::phase_name(phase));
+        if (phase == Phase::Ended)
+        {
+            racer = std::thread([&made] { static_cast<void>(made->time().apply(named("pause"), "stdin")); });
+            std::this_thread::sleep_for(50ms); // time enough for the racer, if nothing held it back
+        }
+    };
+    RunControls controls(stops, false, std::move(observers), false);
+    made = &controls;
+    controls.set_time_lock({});
+    controls.set_phase(Phase::Checking);
+    controls.set_phase(Phase::Ended);
+    racer.join();
+    CHECK((seq.told == std::vector<std::string>{"phase checking", "state checking ok", "state checking not-running",
+                                                "phase ended", "state ended not-running", "command pause not-running"}));
+}
+
+TEST_CASE(run_controls_keep_whether_the_run_has_a_control_server)
+{
+    StopRequests stops;
+    RunControls controls(stops);
+    CHECK(!controls.control_server());
+    controls.set_control_server(true);
+    CHECK(controls.control_server());
 }
 
 TEST_CASE(phase_names_are_those_of_the_phase_events)

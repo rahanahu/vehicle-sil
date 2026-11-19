@@ -43,13 +43,15 @@ struct OwnControls
         return out;
     }
 
-    OwnControls(runner::StopRequests* stops, const RunIntent& intent, const runner::RunObservers& given, EventStream* events) :
+    OwnControls(runner::StopRequests* stops, const RunIntent& intent, const runner::RunObservers& given, EventStream* events,
+                bool control_server) :
       controls(stops != nullptr ? *stops : none, intent.start_paused, observers(events), intent.scenario.has_value())
     {
         if (given.interrupt_name)
         {
             controls.set_stop_name(given.interrupt_name);
         }
+        controls.set_control_server(control_server);
     }
 
     runner::StopRequests none; ///< without RunLent::stops: nothing ever asks
@@ -80,6 +82,8 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
           "caller's controls, whose rules also say what a client may do during a scenario; make a RunControls for "
           "this run (with RunControls::set_control_server(true)) and lend it, or leave `control` empty.");
     }
+    // The run has a control server: its own, made from the request, or the caller's.
+    const bool control_server = request.host.control.has_value() || lent.control_endpoint != nullptr;
     if (lent.controls != nullptr)
     {
         if (lent.stops != nullptr && lent.stops != &lent.controls->stops())
@@ -122,6 +126,19 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
               "); make the RunControls with RunIntent::start_paused and RunIntent::scenario.has_value()" +
               (may_leave_null ? ", or leave `controls` null." : "."));
         }
+        if (lent.controls->control_server() != control_server)
+        {
+            throw std::invalid_argument(
+              control_server
+                ? "RunLent::controls say that the run has no control server (RunControls::set_control_server()), but "
+                  "the request has one (RunHost::control or RunLent::control_endpoint): the state would refuse every "
+                  "write with no-control-server while the server's clients can write; call "
+                  "RunControls::set_control_server(true) before the run."
+                : "RunLent::controls say that the run has a control server (RunControls::set_control_server(true)), "
+                  "but the request has none (neither RunHost::control nor RunLent::control_endpoint): the state would "
+                  "offer writes that nothing can send; call RunControls::set_control_server(false), or leave "
+                  "`controls` null.");
+        }
     }
     const auto event = [&lent](auto emit) {
         if (lent.events != nullptr)
@@ -132,7 +149,8 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     // The controls of this run: the caller's, or its own. Declared before the Runner, which
     // borrows them: they outlive it.
     const std::unique_ptr<OwnControls> own =
-        lent.controls == nullptr ? std::make_unique<OwnControls>(lent.stops, request.intent, observers, lent.events) : nullptr;
+        lent.controls == nullptr ? std::make_unique<OwnControls>(lent.stops, request.intent, observers, lent.events, control_server)
+                              : nullptr;
     runner::RunControls& controls = own ? own->controls : *lent.controls;
     RunReport report;
     report.strict = request.intent.strict;
@@ -168,6 +186,30 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     } end_own_server{own_server.get()};
     ControlEndpoint* const server_of_run = lent.control_endpoint != nullptr ? lent.control_endpoint : own_server.get();
     controls.set_phase(runner::Phase::Checking);
+    // Whatever leaves run_file() by an exception from here on (an internal error of the launcher),
+    // the run ends as every run does before the caller writes the result: the time commands are
+    // refused (each that waited with its command event), then the phase `ended`. Declared before
+    // the Runner, so this comes after the Runner has gone (its participants have ended), and
+    // before the control server ends.
+    const struct EndOnException
+    {
+        runner::RunControls& controls;
+        ~EndOnException()
+        {
+            if (controls.phase() == runner::Phase::Ended)
+            {
+                return; // every way out that returns has ended the run
+            }
+            try
+            {
+                controls.set_phase(runner::Phase::Ended);
+            }
+            catch (...)
+            {
+                // The exception that leaves run_file() is the one to report; nothing more is told.
+            }
+        }
+    } end_on_exception{controls};
     // The check judges the time by what this run does (its speed and --start-paused, which it
     // reads in the request). A run reads the whole, whatever the caller's options say.
     CheckOptions check = check_options;
@@ -176,15 +218,11 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     // --describe: the time commands that came until then wait for it, and are decided there.
     report.check = check_file(request, check, [&controls](const config::TimeLock& lock) { controls.set_time_lock(lock); });
     event([&report](EventStream& e) { e.check(report.check); });
-    if (!report.check.config)
-    {
-        // No lock was given, and nothing starts: the time commands that waited for it are refused
-        // (each with its command event), as every command is from here on.
-        controls.end_without_time_lock();
-        return report;
-    }
     if (!report.check.passed())
     {
+        // Nothing starts: the run ends as every run does. The phase `ended` refuses the time
+        // commands from here on, also those that still wait for a lock that never came (the
+        // configuration could not be read), each with its command event.
         controls.set_phase(runner::Phase::Ended);
         return report;
     }
@@ -213,26 +251,18 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     // The control server between the Runner's two stages: after the run's files are open, before
     // the registry listens. The Runner does not know the server; it is told what became of it.
     runner::detail::ControlServerStart server;
-    try
+    // What else leaves here (not a std::exception of the server's start) leaves run_file():
+    // end_on_exception ends the run.
+    if (const std::shared_ptr<control::Hub> hub = runner.prepare(); hub && server_of_run != nullptr)
     {
-        if (const std::shared_ptr<control::Hub> hub = runner.prepare(); hub && server_of_run != nullptr)
+        try
         {
-            try
-            {
-                server.listening = server_of_run->start(hub);
-            }
-            catch (const std::exception& e)
-            {
-                server.error = e.what();
-            }
+            server.listening = server_of_run->start(hub);
         }
-    }
-    catch (...)
-    {
-        // What leaves here does not reach run(), whose guard ends the time commands: they end
-        // with the run also then (they are refused from now on), as for every other way out.
-        controls.time().detach();
-        throw;
+        catch (const std::exception& e)
+        {
+            server.error = e.what();
+        }
     }
     report.run = runner.run(server);
     report.findings = runner::assess_run(*report.run);

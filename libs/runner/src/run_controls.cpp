@@ -59,24 +59,23 @@ RunControls::RunControls(StopRequests& stops, bool start_paused) : RunControls(s
 
 void RunControls::set_phase(Phase phase)
 {
-    phase_.store(phase);
-    if (on_phase_)
+    if (phase == Phase::Ended)
     {
-        on_phase_(phase);
+        // The one end of every run: the time commands end before the phase is told (the state
+        // that says so, then the refusals of what still waited), also when nothing started.
+        time_.detach();
     }
-    publish();
-}
-
-void RunControls::end_without_time_lock()
-{
-    phase_.store(Phase::Ended);
-    if (on_phase_)
-    {
-        on_phase_(Phase::Ended);
-    }
-    // Tells the state (the phase with it), then the commands that waited.
-    time_.detach();
-    publish();
+    // The phase, its event and the state it makes, as one step under TimeCommands' mutex: a
+    // command that another thread applies meanwhile is answered before the phase event or after
+    // the state, never in between (the state of a phase follows its phase event).
+    time_.look([this, phase](const TimeFacts& facts) {
+        phase_.store(phase);
+        if (on_phase_)
+        {
+            on_phase_(phase);
+        }
+        tell(facts);
+    });
 }
 
 RunState RunControls::compose(const TimeFacts& facts) const

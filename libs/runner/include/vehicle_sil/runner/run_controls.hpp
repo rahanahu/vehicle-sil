@@ -131,12 +131,13 @@ struct RunState
 /// set_outside() takes TimeCommands' mutex too, and its caller (RunOutput) holds its own mutex then:
 /// RunOutput's mutex, then TimeCommands' (see run.cpp, "The locks"). Nothing under TimeCommands'
 /// mutex calls RunOutput, so the reverse order never happens.
-/// set_phase() calls `on_phase` with no lock, then publish(). `on_command` is called under
-/// TimeCommands' mutex (TimeCommands::OnCommand).
+/// set_phase() stores the phase, calls `on_phase` and tells the state under TimeCommands' mutex,
+/// as one step (a command of another thread comes before or after all three). `on_command` is
+/// called under the same mutex (TimeCommands::OnCommand).
 ///
 /// What takes TimeCommands' mutex here (allowed(), publish(), state(), set_phase()) must not be
 /// called from what runs under it: the observers `on_command` and `on_state`, the `accepted` of
-/// TimeCommands::apply(), the `f` of TimeCommands::inspect() and look(), on_detach. Such a call
+/// TimeCommands::apply(), the `f` of TimeCommands::inspect() and look(), on_detach, and `on_phase`. Such a call
 /// would wait for itself. Nor from a signal handler.
 class RunControls
 {
@@ -148,7 +149,8 @@ public:
         /// the command events).
         TimeCommands::OnCommand on_command{};
         /// Each phase the run enters, on the run's thread, after phase() has it (the writer of the
-        /// phase events). Must not call set_phase().
+        /// phase events), under TimeCommands' mutex: short, must not wait, must not call this
+        /// object or its time commands (it may start a thread that does).
         std::function<void(Phase phase)> on_phase{};
         /// Each state that differs from the one told last (the writer of the state events), under
         /// TimeCommands' mutex: short, must not wait, must not call this object or its time
@@ -199,26 +201,25 @@ public:
     /// The phase the run entered last; Phase::Checking before it has said any.
     [[nodiscard]] Phase phase() const noexcept { return phase_.load(); }
     /// The run enters `phase`: phase() has it from now on, then Observers::on_phase is called,
-    /// then publish().
+    /// then the state is told, all under TimeCommands' mutex. Phase::Ended first ends the time commands (TimeCommands::detach(), which
+    /// does nothing more if the run has done it): a state says that no time command is taken, and
+    /// each command that still waits for the time lock is refused with its command event, before
+    /// the phase is told. So every run ends the same way, whether its simulation ran, did not
+    /// start, or the run did not get past its check (docs/simulation-events.md).
     void set_phase(Phase phase);
-
-    /// The run ends before it could give the time lock (its configuration could not be read, so
-    /// nothing starts): as set_phase(Phase::Ended), with the time commands detached before the
-    /// state is told. The commands that waited for the lock are refused there, each with its
-    /// command event, and one state tells both the end and that no time command is taken any
-    /// more. The run's alone, as set_phase().
-    void end_without_time_lock();
 
     /// How the first stop request is called in the state (RunState::stopped_by): as the result's
     /// interrupted_by (RunObservers::interrupt_name). Without it: "interrupt". Called while the
     /// state is put together, under TimeCommands' mutex: short, no wait. Set before the run and
     /// before any other thread uses this object.
     void set_stop_name(std::function<std::string()> name) { stop_name_ = std::move(name); }
-    /// Whether the run has a control server (RunHost::control), for the state: without
-    /// one, RunState::allowed refuses what only a control server's client can send (write).
-    /// Not given: none. It changes no rule and no command's answer. Set before the run and
-    /// before any other thread uses this object.
+    /// Whether the run has a control server (RunHost::control, or RunLent::control_endpoint), for
+    /// the state: without one, RunState::allowed refuses what only a control server's client can
+    /// send (write). Not given: none. It changes no rule and no command's answer. Set before the
+    /// run and before any other thread uses this object; run_file() refuses lent controls whose
+    /// control_server() differs from the request.
     void set_control_server(bool present) noexcept { control_server_ = present; }
+    [[nodiscard]] bool control_server() const noexcept { return control_server_; }
     /// The run's alone: whether it keeps up with its speed, as its watch saw it last. publish()
     /// tells it.
     void set_pacing(Pacing pacing) noexcept { pacing_.store(pacing); }

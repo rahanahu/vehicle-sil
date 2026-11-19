@@ -858,7 +858,7 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 
 - 実行の Server（`launch::ControlEndpoint`）は、`run_file()` が作り、起動し、終えます。破棄は、呼ぶ側が結果の後に行います。呼ぶ側は、Server が要ることと場所を要求に書くだけです（`RunHost::control`: アドレスと、TLS、資格情報、監査ログのファイルの名前）。
 - `run_file()` は、照合の前、段階 `checking` を伝える前に Server を作ります。要求が指すものを、次の順に読んで調べます: アドレスの形、TLS の 2 つのファイルがそろうか、証明書、鍵、資格情報、ループバックでないアドレスには TLS と資格情報、監査ログ。最初に見つかった誤りが、実行の usage の誤りになります（`CheckReport::usage`、code が `usage` の指摘 1 つ）。何も照合せず、実行は段階を伝えず、イベントも書きません。
-- Server の時間の操作は、呼ぶ側の操作盤（`RunLent::controls`。必ず渡します）の時間のコマンドに届き、クライアントの Stop は、その停止の要求に、操作者の停止として届きます。
+- Server の時間の操作は、呼ぶ側の操作盤（`RunLent::controls`。必ず渡し、`RunControls::set_control_server(true)` で Server があると伝えます。違うことを言う操作盤は、呼ぶ側が Server を貸すときも含め、`run_file()` が断ります）の時間のコマンドに届き、クライアントの Stop は、その停止の要求に、操作者の停止として届きます。
 - `run_file()` は 1 回の実行を 2 つの段（`Runner::prepare()`、次に `Runner::run()`）で進め、その間に main のスレッドで Server を起動します。照合が通り、実行のファイル（ログ、タイムライン）を開いた後で、registry より前です。実行そのものは Server を呼びません。`run_file()` が Server の待ち受け先を実行に伝え、実行がイベント `control_server` とその行を書きます。
 - Hub は実行が作り、`run_file()` が `std::shared_ptr` で `ControlEndpoint::start()` に渡します。Server がそれを持ち続けるので、Hub は実行と Server の両方が手放すまで生きています。
 - 始まる前に中断された実行と、ファイルを開けなかった実行は、Server を起動しません。

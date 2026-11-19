@@ -260,10 +260,10 @@ void events_usage(const Options& o)
     const Captured name = launch(o, {"run", "--events", "--disable", "Nobody", "sim.yaml"}, sim);
     expect_code(name, 4, "run --events --disable Nobody");
     const std::vector<std::string> states = events_with(check_events(name.standard_output), {"\"event\":\"state\""});
-    // The state at the check and at the end, each after its phase (the first is not written if
-    // the second came before the writer got to it): nothing was set up, nothing was asked to stop.
-    require(!states.empty() && states.size() <= 2 && (states.size() == 1 || contains(states[0], "\"rev\":1,\"phase\":\"checking\",")) &&
-                contains(states.back(), "\"rev\":2,\"phase\":\"ended\",\"paused\":false,\"paused_at_ms\":null,\"holding\":false,\"speed\":null,"
+    // The states at the check, when the time commands end and at the end (one is not written if
+    // the next came before the writer got to it): nothing was set up, nothing was asked to stop.
+    require(!states.empty() && states.size() <= 3 && (states.size() == 1 || contains(states[0], "\"phase\":\"checking\",")) &&
+                contains(states.back(), "\"rev\":3,\"phase\":\"ended\",\"paused\":false,\"paused_at_ms\":null,\"holding\":false,\"speed\":null,"
                                         "\"pacing\":\"not-paced\",\"stop\":{\"requests\":0,\"by\":null},\"scenario\":false,") &&
                 contains(states.back(), "\"outside\":[]}"),
             "a state after each phase of a run that ends at its check:\n" + name.standard_output);
@@ -273,6 +273,36 @@ void events_usage(const Options& o)
                 contains(found[4], "\"event\":\"result\"") && contains(found[4], "\"result\":\"usage\"") &&
                 contains(found[4], "Nobody"),
             "hello, checking, check, ended and the result of a usage error the check finds:\n" + name.standard_output);
+
+    // Whatever kept the run from starting, it ends as every run does: the phase ended, then the
+    // state that says so and takes no time command any more (the third state the run told: the
+    // first at the check, the second when the time commands ended), then the result.
+    const fs::path failing = dir / "not_started";
+    fs::create_directories(failing);
+    write_file(failing / "sim.yaml", "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                                     "  - name: Engine\n    command: [no-such-ecu]\n");
+    for (const auto& [run, what] : std::vector<std::pair<Captured, std::string>>{
+             {missing, "a file that cannot be read"},
+             {name, "a usage error the check finds"},
+             {launch(o, {"run", "--events", "sim.yaml"}, failing), "a check that fails"}})
+    {
+        std::vector<std::string> tail;
+        for (const std::string& line : check_events(run.standard_output))
+        {
+            if (value_of(line, "event") != "heartbeat")
+            {
+                tail.push_back(line);
+            }
+        }
+        require(tail.size() >= 3, what + ": the events\n" + run.standard_output);
+        const std::size_t n = tail.size();
+        require(value_of(tail[n - 3], "event") == "phase" && contains(tail[n - 3], "\"phase\":\"ended\"") &&
+                    value_of(tail[n - 2], "event") == "state" && contains(tail[n - 2], "\"rev\":3,\"phase\":\"ended\",") &&
+                    contains(tail[n - 2], "\"pause\":{\"ok\":false,\"reason\":\"not-running\",") &&
+                    contains(tail[n - 2], "\"step\":{\"ok\":false,\"reason\":\"not-running\",") &&
+                    value_of(tail[n - 1], "event") == "result",
+                what + ": the phase ended, the state of the end, then the result:\n" + run.standard_output);
+    }
 }
 
 /// Two ECUs that run until they are stopped (no stop_at_ms), with their process IDs in files.

@@ -522,6 +522,7 @@ HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& di
     launch::RunLent lent;
     vehicle_sil::runner::RunLimits limits;
     asked.intent.start_paused = start_paused;
+    controls.set_control_server(true); // the endpoint below is the run's control server
     lent.controls = &controls;
     asked.host.timeout = timeout;
     watching.interrupt_name = [] { return std::string("SIGINT"); };
@@ -701,6 +702,7 @@ void a_refused_scenario_does_not_hold(const fs::path& ecu, const fs::path& dir)
         << "vehicle_sil_scenario: 1\nsteps:\n  - at_ms: 20\n    expect: { Engine.ticks: { ge: 0 } }\n";
     runner::StopRequests stops;
     runner::RunControls controls(stops, true, {}, true);
+    controls.set_control_server(true); // the endpoint below is the run's control server
     launch::RunRequest asked = sim_of(dir);
     asked.intent.start_paused = true;
     asked.intent.scenario = process::utf8_from_path(dir / "s.yaml");
@@ -876,7 +878,8 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
 }
 
 /// What a control server's start throws that run_file() does not make a finding of leaves
-/// run_file(), and the time commands have ended by then: they refuse a command, as after a run.
+/// run_file(), and the run has ended by then as every run does: the phase is ended, and the time
+/// commands refuse a command, as after a run.
 void what_leaves_run_file_between_the_stages_ends_the_time_commands(const fs::path& ecu, const fs::path& dir)
 {
     std::ofstream(dir / "sim.yaml", std::ios::binary)
@@ -885,6 +888,7 @@ void what_leaves_run_file_between_the_stages_ends_the_time_commands(const fs::pa
     fs::remove(dir / "Engine.behaviour");
     vehicle_sil::runner::StopRequests stops;
     vehicle_sil::runner::RunControls controls(stops, true);
+    controls.set_control_server(true); // the endpoint below is the run's control server
     require(controls.time().apply(resume_command(), "control_server").pending,
             "a command before the run waits for the time lock");
     CountingEndpoint endpoint;
@@ -907,6 +911,8 @@ void what_leaves_run_file_between_the_stages_ends_the_time_commands(const fs::pa
         thrown = true;
     }
     require(thrown && endpoint.starts == 1, "what the start threw left run_file()");
+    require(controls.phase() == vehicle_sil::runner::Phase::Ended,
+            "the run ended as every run does: the phase is ended before the caller writes the result");
     require(!controls.time().apply(resume_command(), "control_server").accepted,
             "the time commands ended with the run: a command after it is refused");
 }
@@ -940,6 +946,7 @@ void a_request_for_a_control_server_is_read_before_any_check(const fs::path& dir
     observers.on_state = [&told](const vehicle_sil::runner::RunState&) { ++told; };
     observers.on_command = [&told](const vehicle_sil::runner::Command&, std::string_view) { ++told; };
     vehicle_sil::runner::RunControls controls(stops, false, std::move(observers), false);
+    controls.set_control_server(true);
     launch::RunLent lent;
     lent.controls = &controls;
     try

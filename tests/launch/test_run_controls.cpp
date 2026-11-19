@@ -19,6 +19,7 @@
 #include "vehicle_sil/launch/test.hpp"
 #include "vehicle_sil/process/paths.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -302,6 +303,68 @@ TEST_CASE(a_run_refuses_controls_made_for_another_request)
     CHECK(held.start_paused() && !held.scenario());
     CHECK(run(paused, held).empty());
     CHECK(!run(plain_request, held).empty());
+}
+
+TEST_CASE(a_run_refuses_controls_that_say_otherwise_of_its_control_server)
+{
+    vehicle_sil::runner::StopRequests stops;
+    const RunRequest plain_request = request_of("no-such-directory/sim.yaml");
+    RunRequest served = plain_request;
+    served.host.control = vehicle_sil::launch::ControlHost{};
+    struct Endpoint final : vehicle_sil::launch::ControlEndpoint
+    {
+        vehicle_sil::runner::ControlServerInfo start(std::shared_ptr<vehicle_sil::control::Hub>) override { return {}; }
+        void end() override {}
+    } endpoint;
+    const auto run = [](const RunRequest& asked, vehicle_sil::runner::RunControls& controls,
+                        vehicle_sil::launch::ControlEndpoint* lent_endpoint) {
+        RunLent lent;
+        lent.controls = &controls;
+        lent.control_endpoint = lent_endpoint;
+        return refusal([&] { static_cast<void>(vehicle_sil::launch::run_file(asked, {}, lent)); });
+    };
+    // The run has a control server (its own, or the caller's), and the controls were not told:
+    // the state would refuse every write that the server's clients can send.
+    vehicle_sil::runner::RunControls without(stops);
+    const std::string text = run(served, without, nullptr);
+    CHECK(text.find("say that the run has no control server") != std::string::npos);
+    CHECK(text.find("the request has one (RunHost::control or RunLent::control_endpoint)") != std::string::npos);
+    CHECK(text.ends_with("call RunControls::set_control_server(true) before the run."));
+    CHECK(run(plain_request, without, &endpoint) == text);
+    // The controls say there is one, and the run has none: the state would offer writes.
+    vehicle_sil::runner::RunControls with(stops);
+    with.set_control_server(true);
+    const std::string none_text = run(plain_request, with, nullptr);
+    CHECK(none_text.find("say that the run has a control server") != std::string::npos);
+    CHECK(none_text.find("the request has none") != std::string::npos);
+    CHECK(none_text.ends_with("call RunControls::set_control_server(false), or leave `controls` null."));
+    // Controls that agree are taken (the file cannot be read: nothing starts).
+    vehicle_sil::runner::RunControls agreeing(stops);
+    agreeing.set_control_server(true);
+    CHECK(run(plain_request, agreeing, &endpoint).empty());
+    vehicle_sil::runner::RunControls plain(stops);
+    CHECK(run(plain_request, plain, nullptr).empty());
+}
+
+TEST_CASE(a_run_that_makes_its_own_controls_tells_them_of_a_lent_control_server)
+{
+    // Without the caller's controls, a control server that the caller lends is the run's: the
+    // state does not refuse a write for want of one.
+    struct Endpoint final : vehicle_sil::launch::ControlEndpoint
+    {
+        vehicle_sil::runner::ControlServerInfo start(std::shared_ptr<vehicle_sil::control::Hub>) override { return {}; }
+        void end() override {}
+    } endpoint;
+    for (const bool lend : {false, true})
+    {
+        Written written;
+        RunLent lent;
+        lent.events = written.stream.get();
+        lent.control_endpoint = lend ? &endpoint : nullptr;
+        static_cast<void>(vehicle_sil::launch::run_file(request_of("no-such-directory/sim.yaml"), {}, lent));
+        CHECK(written.has("\"event\":\"state\""));
+        CHECK(written.has("\"reason\":\"no-control-server\"") == !lend);
+    }
 }
 
 TEST_CASE(a_run_that_makes_its_own_controls_says_whether_it_plays_a_scenario)
@@ -597,10 +660,9 @@ TEST_CASE(a_run_decides_the_time_commands_that_came_before_it_with_its_time_lock
         CHECK(report.check.config.has_value());
         CHECK(report.check.time_lock.locked);
         CHECK((answers.commands == std::vector<std::string>{"pause outside-real-time", "speed outside-real-time", "resume accepted"}));
-        // The states: the first before the file is read; from the lock on, no pause.
-        CHECK(answers.pause.size() >= 2);
-        CHECK(answers.pause.front() == "ok");
-        CHECK(answers.pause.back() == "outside-real-time");
+        // The states: the first before the file is read; from the lock on, no pause; from the
+        // end on (the check failed), no time command.
+        CHECK((answers.pause == std::vector<std::string>{"ok", "outside-real-time", "not-running", "not-running"}));
     }
     {
         // The same file with --time-policy free, and one without a bridge: taken, in their order.
@@ -613,9 +675,12 @@ TEST_CASE(a_run_decides_the_time_commands_that_came_before_it_with_its_time_lock
         Answers plain;
         static_cast<void>(run(config_file("plain.yaml", engine), RunRequest{}, plain));
         CHECK((plain.commands == std::vector<std::string>{"pause accepted", "speed accepted", "resume accepted"}));
-        for (const std::string& pause : plain.pause)
+        // Taken until the run ends (its check failed): then the state when the time commands
+        // end, and the one of the phase ended.
+        CHECK(plain.pause.size() >= 3);
+        for (std::size_t i = 0; i < plain.pause.size(); ++i)
         {
-            CHECK(pause == "ok");
+            CHECK(plain.pause[i] == (i + 2 < plain.pause.size() ? "ok" : "not-running"));
         }
     }
     {
@@ -636,6 +701,66 @@ TEST_CASE(a_run_decides_the_time_commands_that_came_before_it_with_its_time_lock
         CHECK(!answers.pause.empty());
         CHECK(answers.pause.back() == "not-running");
     }
+}
+
+TEST_CASE(a_run_that_does_not_start_ends_the_same_way_whatever_kept_it_from_starting)
+{
+    const std::string engine = "  - name: Engine\n    command: [no-such-engine]\n";
+    /// What the controls told in run_file() of `file` (a pause came before it), in order:
+    /// "phase <name>", "command <name> <accepted or reason>", "state <phase> <allowed.pause>"; then
+    /// what a pause after the run is answered.
+    const auto run = [](const std::string& file, RunRequest asked) {
+        std::vector<std::string> told;
+        vehicle_sil::runner::RunControls::Observers observers;
+        observers.on_phase = [&told](Phase phase) { told.push_back(std::string("phase ") + vehicle_sil::runner::phase_name(phase)); };
+        observers.on_command = [&told](const Command& c, std::string_view) {
+            told.push_back("command " + c.name.value_or("") + " " + (c.accepted ? std::string("accepted") : c.reason));
+        };
+        observers.on_state = [&told](const RunState& s) {
+            told.push_back(std::string("state ") + vehicle_sil::runner::phase_name(s.phase) + " " +
+                           (s.allowed.pause.ok ? std::string("ok") : s.allowed.pause.reason));
+        };
+        StopRequests stops;
+        RunControls controls(stops, false, std::move(observers), false);
+        CHECK(controls.time().apply(command("pause"), "stdin").pending);
+        RunLent lent;
+        lent.controls = &controls;
+        asked.host.config = file;
+        const auto report = vehicle_sil::launch::run_file(asked, {}, lent);
+        CHECK(!report.run.has_value());
+        const Command late = controls.time().apply(command("resume"), "stdin");
+        told.push_back("after " + (late.accepted ? std::string("accepted") : late.reason));
+        return told;
+    };
+    const std::string plain = vehicle_sil::process::utf8_from_path(config_file("plain.yaml", engine));
+    RunRequest unknown_name;
+    unknown_name.intent.disable = {"NoSuchParticipant"};
+    // The file cannot be read; the check failed; a name of --disable that the file does not have
+    // (a usage error found by reading the file).
+    const std::vector<std::vector<std::string>> runs = {run("no-such-directory/sim.yaml", RunRequest{}),
+                                                        run(plain, RunRequest{}), run(plain, unknown_name)};
+    // The pause waits for the time lock, which comes only with a configuration: refused at the
+    // end when the file cannot be read or the arguments do not fit it; decided by the lock when
+    // the check reads the file and then fails.
+    const std::vector<bool> waited = {true, false, true};
+    for (std::size_t i = 0; i < runs.size(); ++i)
+    {
+        const std::vector<std::string>& told = runs[i];
+        // The end: a state that takes no time command, the refusals of what still waited, the
+        // phase, the last state; nothing is taken after it.
+        const auto end = std::find(told.begin(), told.end(), "state checking not-running");
+        CHECK(end != told.end());
+        std::vector<std::string> expected = {"state checking not-running"};
+        if (waited[i])
+        {
+            expected.push_back("command pause not-running");
+        }
+        expected.insert(expected.end(), {"phase ended", "state ended not-running", "command resume not-running", "after not-running"});
+        CHECK((std::vector<std::string>(end, told.end()) == expected));
+        // The pause was answered once.
+        CHECK(std::count_if(told.begin(), told.end(), [](const std::string& t) { return t.starts_with("command pause"); }) == 1);
+    }
+    CHECK(std::find(runs[1].begin(), runs[1].end(), "command pause accepted") != runs[1].end());
 }
 
 TEST_CASE(a_test_refuses_controls_because_every_run_needs_its_own)
