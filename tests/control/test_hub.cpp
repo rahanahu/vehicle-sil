@@ -1341,6 +1341,7 @@ std::size_t in_flight(Hub& hub, std::vector<std::uint64_t>& open, const std::str
     for (const auto seq : open)
     {
         const auto op = hub.operation(seq);
+        CHECK(op.has_value()); // an operation that was not done is never forgotten
         if (!op || op->done())
         {
             continue;
@@ -1368,12 +1369,15 @@ bool is_connected(Hub& hub, const std::string& peer)
 }
 
 /// Writes four commands to Engine (its limit), so that the next one is turned away.
-void fill_to_the_limit(Hub& hub)
+std::vector<std::uint64_t> fill_to_the_limit(Hub& hub)
 {
+    std::vector<std::uint64_t> seqs;
     for (int i = 0; i < 4; ++i)
     {
-        CHECK(status_of(hub, hub.write(req({{"Engine", "level", 1.0 + i}}, at(1s))), "Engine") == TargetStatus::Sent);
+        seqs.push_back(hub.write(req({{"Engine", "level", 1.0 + i}}, at(1s))));
+        CHECK(status_of(hub, seqs.back(), "Engine") == TargetStatus::Sent);
     }
+    return seqs;
 }
 
 TargetStatus next_write(Hub& hub)
@@ -1404,8 +1408,31 @@ TEST_CASE(control_hub_busy_decision_equals_the_count_of_open_targets_in_any_sequ
     std::size_t busy = 0, not_busy = 0;
     const auto roll = [&](std::uint64_t n) { return static_cast<std::size_t>(rng() % n); };
 
+    // A reconnect of the same process: half of them list what the agent still holds (a random
+    // part of this peer's operations that are open), the others do not list.
+    const auto reconnect = [&](FakePeer& p) {
+        p.link->up = true;
+        if (roll(2) == 0)
+        {
+            p.connect();
+            return;
+        }
+        std::vector<std::uint64_t> held;
+        for (const auto seq : open)
+        {
+            const auto op = hub.operation(seq);
+            const bool mine = op && std::any_of(op->targets.begin(), op->targets.end(), [&](const TargetResult& t) { return t.peer == p.name; });
+            if (mine && roll(2) == 0)
+            {
+                held.push_back(seq);
+            }
+        }
+        p.connect(std::move(held));
+    };
+
     for (int iteration = 0; iteration < 4000; ++iteration)
     {
+        static_cast<void>(in_flight(hub, open, "Engine")); // looks at every open operation once per step
         const auto which = roll(2);
         auto& peer = *peers[which];
         const auto action = roll(14);
@@ -1413,14 +1440,12 @@ TEST_CASE(control_hub_busy_decision_equals_the_count_of_open_targets_in_any_sequ
         {
             const bool bad = roll(8) == 0;
             std::vector<PeerWrite> writes;
-            std::vector<bool> valid;
             for (std::size_t i = 0; i < 2; ++i)
             {
                 if (i == which || roll(4) == 0)
                 {
                     const bool lamp = roll(2) == 0;
                     writes.push_back({names[i], lamp ? "lamp" : "level", lamp ? Value{true} : Value{bad ? 500.0 : 50.0}});
-                    valid.push_back(lamp || !bad);
                 }
             }
             std::vector<std::size_t> before;
@@ -1442,7 +1467,7 @@ TEST_CASE(control_hub_busy_decision_equals_the_count_of_open_targets_in_any_sequ
                     CHECK(before[i] >= 4);
                     ++busy;
                 }
-                else if (connected[i] && valid[i])
+                else if (connected[i])
                 {
                     CHECK(before[i] < 4); // nothing else turns it away
                     ++not_busy;
@@ -1463,8 +1488,7 @@ TEST_CASE(control_hub_busy_decision_equals_the_count_of_open_targets_in_any_sequ
             hub.agent_disconnected(peer.connection);
             if (roll(2) == 0)
             {
-                peer.link->up = true;
-                peer.connect();
+                reconnect(peer);
             }
         }
         else if (action == 11) // a restart: another incarnation
@@ -1477,8 +1501,7 @@ TEST_CASE(control_hub_busy_decision_equals_the_count_of_open_targets_in_any_sequ
             hub.agent_ended(peer.connection, "ended in the test");
             if (roll(2) == 0)
             {
-                peer.link->up = true;
-                peer.connect();
+                reconnect(peer);
             }
         }
         else // the peer is forgotten, and perhaps comes back
@@ -1487,8 +1510,7 @@ TEST_CASE(control_hub_busy_decision_equals_the_count_of_open_targets_in_any_sequ
             hub.forget_peer(peer.name);
             if (roll(2) == 0)
             {
-                peer.link->up = true;
-                peer.connect();
+                reconnect(peer);
             }
         }
     }
@@ -1504,7 +1526,7 @@ TEST_CASE(control_hub_open_commands_free_up_on_every_way_an_operation_ends)
         Hub hub;
         FakePeer engine("Engine", "e1", hub);
         engine.connect();
-        fill_to_the_limit(hub);
+        static_cast<void>(fill_to_the_limit(hub));
         CHECK(next_write(hub) == TargetStatus::Busy);
         for (int i = 0; i < 5; ++i)
         {
@@ -1517,7 +1539,7 @@ TEST_CASE(control_hub_open_commands_free_up_on_every_way_an_operation_ends)
         Hub hub;
         FakePeer engine("Engine", "e1", hub, 1);
         engine.connect();
-        fill_to_the_limit(hub);
+        static_cast<void>(fill_to_the_limit(hub));
         CHECK(next_write(hub) == TargetStatus::Busy);
         engine.pump();
         CHECK(next_write(hub) == TargetStatus::Sent); // three of the four were refused by the agent
@@ -1530,7 +1552,7 @@ TEST_CASE(control_hub_open_commands_free_up_on_every_way_an_operation_ends)
         Hub hub;
         FakePeer engine("Engine", "e1", hub);
         engine.connect();
-        fill_to_the_limit(hub);
+        static_cast<void>(fill_to_the_limit(hub));
         engine.pump();
         hub.agent_disconnected(engine.connection);
         engine.connect();
@@ -1546,7 +1568,7 @@ TEST_CASE(control_hub_open_commands_free_up_on_every_way_an_operation_ends)
         Hub hub;
         FakePeer engine("Engine", "e1", hub);
         engine.connect();
-        fill_to_the_limit(hub);
+        static_cast<void>(fill_to_the_limit(hub));
         engine.pump();
         CHECK(next_write(hub) == TargetStatus::Busy);
         FakePeer restarted("Engine", "e2", hub);
@@ -1558,7 +1580,7 @@ TEST_CASE(control_hub_open_commands_free_up_on_every_way_an_operation_ends)
         Hub hub;
         FakePeer engine("Engine", "e1", hub);
         engine.connect();
-        fill_to_the_limit(hub);
+        static_cast<void>(fill_to_the_limit(hub));
         engine.pump();
         CHECK(next_write(hub) == TargetStatus::Busy);
         hub.agent_ended(engine.connection, "ended in the test");
@@ -1570,9 +1592,13 @@ TEST_CASE(control_hub_open_commands_free_up_on_every_way_an_operation_ends)
         Hub hub;
         FakePeer engine("Engine", "e1", hub);
         engine.connect();
-        fill_to_the_limit(hub);
-        CHECK(next_write(hub) == TargetStatus::Busy);
+        const auto seqs = fill_to_the_limit(hub);
+        engine.pump();
         hub.agent_disconnected(engine.connection);
+        for (const auto seq : seqs)
+        {
+            CHECK(status_of(hub, seq, "Engine") == TargetStatus::Disconnected); // still open
+        }
         CHECK(hub.forget_peer("Engine"));
         engine.connect();
         CHECK(next_write(hub) == TargetStatus::Sent);
