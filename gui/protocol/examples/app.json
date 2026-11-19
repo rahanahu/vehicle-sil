@@ -6,7 +6,7 @@
   },
   "status": 200,
   "response": {
-    "vehicle_sil_gui": 1,
+    "vehicle_sil_gui": 2,
     "version": "0.1.0",
     "instance": "0123456789abcdef",
     "root": "/path/to/root",
@@ -53,6 +53,7 @@
           "time-policy",
           "stdin-run-until",
           "request",
+          "scenario-samples",
           "scenario-control",
           "scenario-time"
         ]

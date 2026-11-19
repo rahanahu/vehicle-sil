@@ -54,7 +54,7 @@ import {
  * read a hello or an api/app of another version (their fields may mean something else). When to raise the version:
  * "Versioning and compatibility" in gui/protocol/README.md.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 // --- GUI server: common --------------------------------------------------------------------------
 
@@ -367,7 +367,28 @@ export const readRecording = (value: unknown): Recording | null => {
   };
 };
 
-/** Takes the launcher's check result out of the answer to POST api/check. */
+/** Answer of GET api/config: the text of a configuration file as it is saved. */
+export interface ConfigText {
+  /** Path relative to root. */
+  file: string;
+  /** The file's bytes read as UTF-8, as they are (a BOM and the line ends too). */
+  text: string;
+  /** SHA-256 of the file's bytes (64 lowercase hexadecimal digits). */
+  stamp: string;
+}
+
+/** Reads the answer of GET api/config. */
+export const readConfigText = (value: unknown): ConfigText => {
+  const path = 'config';
+  const f = object(value, path);
+  return {
+    file: field(f, path, 'file', string),
+    text: field(f, path, 'text', string),
+    stamp: field(f, path, 'stamp', string),
+  };
+};
+
+/** Takes the launcher's check result out of the answer to POST api/check (and POST api/describe). */
 export const readCheckResponse = (value: unknown): CheckResult =>
   field(object(value, 'response'), 'response', 'check', readCheckResult);
 

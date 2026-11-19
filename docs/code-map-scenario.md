@@ -87,6 +87,9 @@ Where to change:
 | Reading `points` from a CSV file | `read_csv()` in `libs/scenario/src/scenario_csv.cpp` splits the file into cells. `files_beside()` in `libs/launch/src/probe/probe.cpp` reads it from the scenario file's directory. `path_problem()`, `file_points()` and `cell_value()` in `scenario_waves.cpp` check the path and convert the cells |
 | Waveform calculation | `signal/waveform.hpp` in `libs/signal` |
 | Integration into the launcher | `RunScenario` in `libs/runner/src/run_scenario.cpp` (`begin()`, `loop()`, `finish()`) |
+| The samples a scenario judges with (`samples`): which participants a scenario reads | `participants_read()` in `libs/scenario/src/scenario.cpp` |
+| The check's findings `scenario-samples-*`, and which participants the run starts with `--sample-every-step` | `scenario_samples_findings()` and `sample_every_step_participants()` in `libs/scenario/src/scenario_check.cpp`; the plan keeps the answer in `RunMember::sample_every_step` |
+| Refusing a scenario whose ECU sends less often than its step (`scenario-not-observed`) | `RunScenario::begin()`; the finding is written in `libs/runner/src/run_assess.cpp` |
 | The time gate's guard | `SimulationController::guard_from()` and `wait_guarded()` |
 | The tap that receives every sample | `control::Hub::set_values_tap()` |
 | The run's tap, from which the scenario takes its samples | `RunSamples` in `libs/runner/src/run_samples.cpp` |
@@ -154,6 +157,8 @@ Tests:
 - `launch_run.scenario_time_commands_same`: the reference for "the judgement depends on virtual time alone". One scenario (writes for 0 ms, a wave with an `expect`, `within_ms`, `hold_for_ms`, `wait_until`, a ramp) is run untouched and then with `pause`, `resume`, `step`, `run_until` and `speed` from stdin, at real times that differ from run to run and at the very times the scenario writes and decides at. The `scenario` of the result, the `scenario_step` events and the timeline file must be the same, byte for byte.
 - `launch_run.scenario_paused_timeout`: a scenario's run left paused until `--timeout-ms`: the run fails (`timeout`), the scenario is `incomplete`.
 - `launch_run.scenario_failures`
+- `launch_run.scenario_samples`: a value that is wrong for one ECU step between 2 samples of the ECU's own period fails a hold and an `expect`, and passes with `samples: as_sent`; an ECU that does not follow `--sample-every-step` is refused before the first step
+- `tests/launch/test_scenario_samples.cpp`: the key `samples`, which participants a scenario reads, the check's findings, the plan and the arguments, the finding `scenario-not-observed`
 - `core.time_gate_model_the_guard_*`, `core.virtual_time_gate_guard_*`
 - `control.control_hub_tap_*`
 

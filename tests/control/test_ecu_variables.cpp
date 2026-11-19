@@ -385,6 +385,37 @@ TEST_CASE(ecu_variables_call_the_setter_for_every_write_of_the_same_value)
     }
 }
 
+TEST_CASE(ecu_sample_every_step_wins_over_the_agent_options_of_the_set_up)
+{
+    double x = 0.0;
+    Simulation sim;
+    // Whoever starts the ECU asks before the set-up; what the set-up says of sample_period then
+    // does not count, and its other options do.
+    Ecu& asked = sim.add_ecu("Pump", 1ms);
+    asked.sample_every_step();
+    asked.set_agent_options({.max_pending = 7, .sample_period = 50ms});
+    asked.input("pump.x", &x);
+    CHECK(asked.agent().options().sample_period == SimDuration::zero());
+    CHECK(asked.agent().options().max_pending == 7);
+    // Also when the set-up spoke first, and when it says nothing.
+    Ecu& later = sim.add_ecu("Valve", 1ms);
+    later.set_agent_options({.sample_period = 50ms});
+    later.sample_every_step();
+    CHECK(later.agent().options().sample_period == SimDuration::zero());
+    Ecu& plain = sim.add_ecu("Fan", 1ms);
+    plain.sample_every_step();
+    CHECK(plain.agent().options().sample_period == SimDuration::zero());
+    // Not asked: the set-up's value, or the default.
+    Ecu& own = sim.add_ecu("Lamp", 1ms);
+    own.set_agent_options({.sample_period = 50ms});
+    CHECK(own.agent().options().sample_period == 50ms);
+    // Only before the agent is made, as set_agent_options().
+    CHECK(throws_with<std::logic_error>([&] { own.sample_every_step(); }, "\"Lamp\""));
+    CHECK(throws_with<std::logic_error>([&] { own.sample_every_step(); }, "sample_every_step() after the control agent was made"));
+    sim.run_for(3ms);
+    CHECK(throws<std::logic_error>([&] { asked.sample_every_step(); }));
+}
+
 TEST_CASE(ecu_variables_set_up_errors_name_the_ecu)
 {
     double x = 0.0;

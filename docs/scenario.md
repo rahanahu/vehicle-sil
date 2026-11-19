@@ -140,6 +140,7 @@ How the format grows:
 |---|---|---|
 | `vehicle_sil_scenario` | Yes | The format version: `1`. |
 | `name` | No | The name of the scenario. The output shows it. |
+| `samples` | No | How often the ECUs whose values the scenario reads send them: `every_step` (the default) or `as_sent`. See [How often the ECUs send their values](#how-often-the-ecus-send-their-values-samples). |
 | `only` | No | The list of variants on which this scenario runs (`only: [small, medium]`). Without it, the scenario runs on every variant. See [Limiting a scenario to variants](#limiting-a-scenario-to-variants-only). |
 | `params` | No | Default values of parameters (name → value). Use a parameter by writing `${name}` where a step takes a value. See [Parameters](#parameters-params-name). |
 | `inputs` | No | Declarations per input (variable → `{ dither: <waveform> }`). Overlays a fine dither on the input from the start of the scenario. See [Overlaying a dither](#overlaying-a-dither-dither). |
@@ -257,7 +258,9 @@ The controller's time step is `time_step_ms` in the configuration file. If it is
 
 ## Values that conditions see
 
-Every `sample_period` of its Agent (10 ms of virtual time by default), an ECU sends one set of the values of all its variables at the end of an ECU step: a sample. The time of a sample is the time at which that ECU step started. Conditions look at these samples.
+An ECU sends one set of the values of all its variables at the end of an ECU step: a sample. The time of a sample is the time at which that ECU step started. Conditions look at these samples.
+
+In a run with a scenario, every ECU whose values the scenario reads sends a sample after every ECU step (see [How often the ECUs send their values](#how-often-the-ecus-send-their-values-samples)). A value therefore stays what the last sample says until the ECU's next step, and a condition sees every value that a variable has at the end of an ECU step.
 
 | Condition | Samples it looks at |
 |---|---|
@@ -266,21 +269,40 @@ Every `sample_period` of its Agent (10 ms of virtual time by default), an ECU se
 | `hold_for_ms` | The same samples. If any one of them does not satisfy the condition, the step fails at that sample's time. |
 | `expect` beside `ramp` and `wave` | See [Checking values during a ramp or wave](#checking-values-during-a-ramp-or-wave). |
 
-- Changes finer than `sample_period` are invisible. A value that changes and changes back between 2 samples never reaches the conditions.
+- A value that changes and changes back within one ECU step is invisible: the values are read at the end of the step. The step size of the ECU is the finest that a scenario can judge.
+- An ECU must send its samples within its steps, as an `ecu_main` executable does. If an executable with its own Control API transport sends from another thread, a sample can arrive after the launcher has judged its time; that sample is not judged, and the run gets the warning `control-link-late-values`.
 - No condition holds for a variable that has no sample yet (the finding says `it had no value yet (no sample of its ECU had arrived)`).
 - An `expect` at time 0 does not fail for lack of a sample: it looks at the sample of the ECU step that starts at 0 ms (`its sample of 0 ms`), which already shows the writes at time 0.
 - A missing sample fails a step at time 0 when a `ramp` without `from` or a `wave` without `around` moves a variable that the scenario has not written yet (`scenario-write`). Writes at time 0 are handed over before the first simulation step, so there is no sample yet to take the start value from (see [Writes](#writes)).
 
+### How often the ECUs send their values (`samples`)
+
+How often an ECU sends a sample is the `sample_period` of its Agent (10 ms of virtual time by default; the ECU's code can change it). That is enough for a screen that shows the values, but not for a verdict: with samples further apart than the ECU steps, a condition does not see what a variable does between 2 samples. The top-level key `samples` says what the scenario judges with.
+
+| `samples` | What the run does |
+|---|---|
+| `every_step` (the default) | The launcher starts every ECU whose values the scenario reads with `--sample-every-step`, so it sends a sample after every ECU step, whatever its code says (see "Exposing variables (`--registry-uri`)" in [ecu-executable.md](ecu-executable.md#exposing-variables---registry-uri)). If such an ECU still sends its samples less often than its step, the scenario is not begun and the run fails with `scenario-not-observed`. |
+| `as_sent` | Nothing is asked and nothing is refused: the scenario judges with the samples as each ECU sends them. The check adds the note `scenario-samples-as-sent`. |
+
+- The scenario reads the values of an ECU when a condition (`expect`, `wait_until`, an `expect` beside `ramp` or `wave`) names one of its variables, or when a `ramp` without `from` or a `wave` without `around` starts from the value of one of them. Skipped steps do not count.
+- An ECU that the scenario only writes to, and every ECU in a run without a scenario, keeps its `sample_period`. What a screen or a Control API client receives from the other ECUs does not change.
+- An executable can be asked only if its `--describe` lists `sample-every-step` in `features` (every `ecu_main` executable of this vehicle-sil does). For one that does not, the check gives the warning `scenario-samples-unsupported`, and the launcher starts it without the argument. The run still passes the start if the ECU sends a sample at least once per ECU step by itself (an ECU with a step of 10 ms or more and the default `sample_period`, or one whose code sets `sample_period` to 0).
+- Use `as_sent` for a participant that cannot send a sample of every step (an executable that is not built with `ecu_main`, or one built with an earlier vehicle-sil that you cannot build again), or when the samples cost too much. What a scenario with `as_sent` does not see: an `expect` at one point reads a value up to one `sample_period` old, a value that changes and changes back between 2 samples never reaches the conditions, and a `hold_for_ms` that contains no sample passes on the value at its start.
+- The cost: samples of every step are more work for the launcher when the ECU's step is shorter than its `sample_period` (a step of 1 ms sends 10 times the samples of the default). Only the ECUs whose values the scenario reads pay it. A scenario whose conditions read variables of every ECU costs as much as if every ECU sent every step.
+- A timeline file (`--timeline`) gets one point per sample. In a long scenario (minutes of virtual time with a step of 1 ms), the series reach the limits of the file and the older points are dropped (the note `timeline-limit`). The verdict does not depend on it.
+
 ### `expect` at the same time as `set`
 
-Whether the sample of time T contains the value of a `set` at time T depends on whether the ECU step that starts at T takes a sample. The ECU step that takes a sample is the first one at or after each multiple of `sample_period`. By default, that is an ECU step that starts at a multiple of 10 ms.
+With a sample of every ECU step, the ECU step that starts at time T takes a sample, so an `expect` right after a `set`, at the same time T, sees the value after the `set`.
 
-| ECU step that starts at T | `expect` right after the `set`, at the same time |
+With `samples: as_sent`, it depends on whether the ECU step that starts at T takes a sample. The ECU step that takes a sample is the first one at or after each multiple of `sample_period`. By default, that is an ECU step that starts at a multiple of 10 ms.
+
+| ECU step that starts at T (`samples: as_sent`) | `expect` right after the `set`, at the same time |
 |---|---|
 | Takes a sample (example: `at_ms: 100`) | Sees the value after the `set`. |
 | Does not take a sample (example: the 105 ms step of an ECU with a 5 ms step size) | Sees the previous sample (the value before the `set`) and fails. |
 
-To check that a value was applied, use `expect` with `within_ms`; it holds on the next sample. The launcher does not know the ECU's `sample_period`, so the check cannot detect this failure.
+To check that a value was applied in such a scenario, use `expect` with `within_ms`; it holds on the next sample.
 
 ### Participants with a variable map (`variables`)
 
@@ -726,6 +748,7 @@ The result of the scenario (`status` in JSON) is decided as follows:
 |---|---|---|
 | All steps passed | `passed` | The launcher stops the simulation at that controller step, and the run passes (exit code 0 if there are no other errors). |
 | One step failed | `failed` | The launcher stops the simulation, and the run fails (exit code 1). |
+| An ECU whose values the scenario reads sends them less often than its step (`samples: every_step`) | `failed` | The scenario is not begun: every step stays `not_run`, the launcher stops the simulation before its first step, and the run fails (exit code 1) with the finding `scenario-not-observed`. |
 | `stop_at_ms` was reached first | `failed` | The first step whose result is not decided fails (`scenario-out-of-time`). |
 | The `stop` command, or `Stop` of the Control API | `incomplete` | The run is `incomplete` (exit code 5) if nothing else is wrong: the scenario has no verdict. |
 | Ctrl+C or another interrupt, a participant failure, `--timeout-ms` | `incomplete` | These take precedence over the scenario. The rules of [simulation-run.md](simulation-run.md) apply unchanged (130 for an interrupt, 1 for a failure). |
@@ -832,6 +855,7 @@ All of them are errors.
 | `scenario-write` | A write of `set`, `ramp` or `wave` was not applied (a `wave` tried to write a value out of range, for example), or there is no start value for a `ramp` or no center value for a `wave`. |
 | `scenario-out-of-time` | The run stopped at `stop_at_ms` before the result was decided. |
 | `scenario-incomplete` | The simulation ended for another reason before the scenario was over. |
+| `scenario-not-observed` | The scenario was not begun: an ECU whose values it reads sends them less often than its step, so a condition would not see what a variable does between 2 samples. No condition was judged; this is not a condition that was false (`scenario-failed`). The message names the participant, its `sample_period` and its step. Build the executable again with this vehicle-sil, or write `samples: as_sent` (see [How often the ECUs send their values](#how-often-the-ecus-send-their-values-samples)). |
 
 ## Check (`check --scenario`, start of `run --scenario`)
 
@@ -894,6 +918,8 @@ The check lists every error; it does not stop at the first one. The exit code is
 | `scenario-dither-unused` | Warning | An input with a `dither` declared in `inputs` gets no value from any step that runs (no `set`, `ramp` or `wave`; skipped steps do not count), so the dither is never written. |
 | `scenario-input-skipped` | Note | An input declared in `inputs` is a variable with `absent: true` or a variable of a participant that the variant disables, so the declaration is not used. |
 | `scenario-points-file` | Error | The CSV file of `points` (see [Reading points from a CSV file](#reading-points-from-a-csv-file)) is not under the scenario's directory, does not exist, cannot be read, is empty or is not UTF-8, a row has a different number of cells than there are columns, or there are too many rows. The `value` or `time` column does not exist or its name appears twice. |
+| `scenario-samples-unsupported` | Warning | The scenario reads the values of a participant whose executable does not say that it accepts `--sample-every-step` (no `sample-every-step` in the `features` of its `--describe`), so the run cannot ask it for a sample of every step. Not given for a participant without a description. See [How often the ECUs send their values](#how-often-the-ecus-send-their-values-samples). |
+| `scenario-samples-as-sent` | Note | The scenario has `samples: as_sent` and reads a value: it judges with the samples as each ECU sends them. |
 | `scenario-nothing-checked` | Warning | Every checking step (`expect`, `wait_until`, and `expect` beside `ramp` and `wave`) is skipped, so the scenario checks nothing. |
 | `scenario-step-skipped` | Note | The step uses a variable with `absent: true` or a variable of a participant that the variant disables, so it is skipped in the run. If only the `expect` beside a `ramp` or `wave` uses it, only that `expect` is skipped. |
 
@@ -1142,6 +1168,7 @@ When you use another version of `vehicle_sil_launch`, check `features` in the ou
 | `features` name | Feature | Without it |
 |---|---|---|
 | `scenario` | `check --scenario` and `run --scenario` | Scenarios cannot be used. |
+| `scenario-samples` | The top-level key `samples`, and a sample of every ECU step for the ECUs whose values a scenario reads | `samples` is an unknown-key error, and a scenario judges with the samples as each ECU sends them. |
 | `scenario-wave` | The `wave` step | `wave` is an unknown-key error. |
 | `scenario-motion-expect` | `expect` beside `ramp` and `wave` | An error that the step has 2 actions. |
 | `scenario-points-file` | `points` from a CSV file | An error in the shape of `points`. |

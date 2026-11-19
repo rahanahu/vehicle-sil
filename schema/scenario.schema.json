@@ -16,6 +16,12 @@
       "description": "What the scenario is about. Shown in the output.",
       "examples": ["throttle step"]
     },
+    "samples": {
+      "enum": ["every_step", "as_sent"],
+      "default": "every_step",
+      "description": "How often the ECUs whose values the scenario reads send them. every_step (the default): after every step of the ECU; the run asks those ECUs for it and does not begin the scenario with one that sends less often (scenario-not-observed). as_sent: as often as each ECU sends them by itself; a condition then does not see what a variable does between two samples.",
+      "examples": ["as_sent"]
+    },
     "only": {
       "type": "array",
       "minItems": 1,

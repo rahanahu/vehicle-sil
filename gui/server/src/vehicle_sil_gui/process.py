@@ -35,15 +35,30 @@ async def start(argv: Sequence[str], cwd: str | os.PathLike | None, stdin: bool 
 
 async def run_to_end(argv: Sequence[str], cwd: str | os.PathLike | None, timeout_s: float,
                      max_output: int = 64 * 1024 * 1024,
-                     track: set[asyncio.subprocess.Process] | None = None) -> tuple[int, bytes, bytes]:
-    """Runs a command with an empty standard input; (exit code, stdout, stderr). On timeout the tree is
-    killed and TimeoutError raised. Output beyond max_output bytes is dropped (the end of stderr is kept).
-    The end is the process's exit, not the end of its output: what it started may keep the output open, so
-    the rest is read for at most OUTPUT_GRACE_S. The process is in `track` while it runs."""
-    proc = await start(argv, cwd, stdin=False)
+                     track: set[asyncio.subprocess.Process] | None = None,
+                     stdin: bytes | None = None) -> tuple[int, bytes, bytes]:
+    """Runs a command; (exit code, stdout, stderr). Its standard input is empty, or `stdin` followed by its end
+    (written while the output is read, so that a large input and a large output do not wait for each other; a
+    child that does not read all of it is not waited for). On timeout the tree is killed and TimeoutError raised.
+    Output beyond max_output bytes is dropped (the end of stderr is kept). The end is the process's exit, not the
+    end of its output: what it started may keep the output open, so the rest is read for at most OUTPUT_GRACE_S.
+    The process is in `track` while it runs."""
+    proc = await start(argv, cwd, stdin=stdin is not None)
     if track is not None:
         track.add(proc)
     out, err = bytearray(), bytearray()
+
+    async def feed(data: bytes) -> None:
+        try:
+            proc.stdin.write(data)
+            await proc.stdin.drain()
+        except (OSError, ValueError):  # the child ended or closed its input without reading all of it
+            pass
+        finally:
+            try:
+                proc.stdin.close()
+            except (OSError, ValueError):
+                pass
 
     async def collect(stream: asyncio.StreamReader, data: bytearray, keep_end: bool) -> None:
         try:
@@ -58,6 +73,7 @@ async def run_to_end(argv: Sequence[str], cwd: str | os.PathLike | None, timeout
             pass
 
     readers = asyncio.gather(collect(proc.stdout, out, False), collect(proc.stderr, err, True))
+    feeder = asyncio.ensure_future(feed(stdin)) if stdin is not None else None
     try:
         try:
             async with asyncio.timeout(timeout_s):
@@ -78,6 +94,9 @@ async def run_to_end(argv: Sequence[str], cwd: str | os.PathLike | None, timeout
         raise
     finally:
         readers.cancel()
+        if feeder is not None:
+            feeder.cancel()
+            await asyncio.gather(feeder, return_exceptions=True)
         await asyncio.gather(readers, return_exceptions=True)
         close_pipes(proc)
         if track is not None:

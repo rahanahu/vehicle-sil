@@ -88,7 +88,7 @@
 | `--describe` の JSON を読む | `src/describe_read.cpp` |
 | シミュレーションから見た ECU（`SeenEcu`）: 実行ファイルの自己申告に、participant の項目を当てたもの。照合、`run`、シナリオは、自己申告（名前、ステップ、ネットワーク、変数、制御の口、features）をこれからだけ読む | `config/detail/seen_ecu.hpp`、`src/seen_ecu.cpp`（`seen_variables()` も） |
 | 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で、J1939 のノードを `j1939_nodes` を当てた値で渡す（`seen_networks()`） | `src/check_networks.cpp` |
-| 照合のルール（ネットワークは種類ごとの関数） | `src/check_rules.cpp` |
+| ファイルと説明を照らすルール（ネットワークは種類ごとの関数）。ファイルだけで分かる誤り（`duplicate-name`、キー、値の形）は、読むときに `src/config.cpp` で見つける | `src/check_rules.cpp` |
 | 2 つの構成が同じコマンドを実行するか（`compare_commands()`、`check --compare-commands`）。機種を共通の部分に重ねるのは `config.cpp` の `detail::apply_variant()` | `src/compare_commands.cpp` |
 | `--connect` の照合（`check_connections()`: 要求、見つけたブリッジとその `--describe`）。シミュレーション全体が要るルール（ブリッジをネットワークの participant に数える、`connect-loop`）は `check_rules.cpp` | `src/check_connect.cpp` |
 | `--connect` の形とブリッジの引数。`find_tool()`（ランチャーの隣、次に `PATH`）と、それが `find_executable()` と共有する `PATH` の探索（`detail::find_on_path()`）は `libs/launch/src/probe/probe.cpp` | `src/connect.cpp` |
@@ -393,7 +393,7 @@
 守ること:
 
 - 照合のルール、表、JSON の `networks` は、自己申告のネットワークを `seen_networks()`（`libs/config/src/check_networks.cpp`。対応を当てるただ 1 つの関数。`SeenEcu::seen_networks()`（`libs/config/include/vehicle_sil/config/detail/seen_ecu.hpp`）が呼ぶ）からだけ読みます。`description.networks` を自分で読むルールは、名前を替えたネットワークを実行ファイルの名前で見てしまいます。`launch.described_networks_are_read_in_one_place`（`cmake/VehicleSilCheckDescribedNetworks.cmake`）が、`libs/launch` と `tools/launch` の `.networks`、`->networks`、`::networks` の行を読んで確認します。設定の `config.networks` だけは数えないので、ほかの構造体のメンバーに `networks` という名前を付けると落ちます。別の名前にします。ルールや出力を追加したら、名前を替えたネットワークの場合を `tests/launch/test_check.cpp` に追加します。
-- `run` の引数は `detail::participant_arguments()`（`libs/runner/src/run_participants.cpp`）の 1 か所で作ります。起動、`manual` のコマンド、イベント `participant` が同じ列を使います（`--map-network` は最後。`describe: false` ではプレースホルダーを置き換えた後）。
+- `run` の引数は `detail::participant_arguments()`（`libs/runner/src/run_participants.cpp`）の 1 か所で作ります。起動、`manual` のコマンド、イベント `participant` が同じ列を使います（`--map-network` と `--j1939-node` はほかの後。`describe: false` ではプレースホルダーを置き換えた後。その後に、実行のシナリオが値を読む participant には `--sample-every-step`。`RunMember::sample_every_step`）。
 
 合わせて直すドキュメント:
 

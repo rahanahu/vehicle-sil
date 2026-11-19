@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace vehicle_sil::scenario {
@@ -38,5 +39,23 @@ struct ScenarioCheck
 /// The catalog of a checked configuration, for read_scenario() (CheckReport::config must be set):
 /// each participant as a scenario can use it, from its entry and what its executable described.
 [[nodiscard]] ScenarioCatalog scenario_catalog(const config::CheckReport& check);
+
+/// Per participant of the checked configuration: whether the run gives its executable
+/// --sample-every-step (ecu_executable::kSampleEveryStepArgument). True where `scenario` asks for
+/// a sample in every step (its samples is every_step), reads a value of the participant
+/// (participants_read()) and the participant's --describe says that it takes the argument. An
+/// executable that does not say so is started without it (it would not know the argument); the
+/// check warns of it (scenario_samples_findings()) and the run refuses it if it sends its values
+/// less often than its step.
+[[nodiscard]] std::vector<bool> sample_every_step_participants(const config::CheckReport& check, const Scenario& scenario);
+
+/// What the check says about the samples `scenario` judges with (Finding::file is not set):
+/// - "scenario-samples-unsupported" (warning) for each participant whose values the scenario reads
+///   and whose --describe does not say that it takes --sample-every-step. Only for a participant
+///   that was described: without a description nothing says what the executable takes, and the
+///   run finds out at its start ("scenario-not-observed").
+/// - "scenario-samples-as-sent" (note) for a scenario with samples: as_sent that reads a value.
+[[nodiscard]] std::vector<config::Finding> scenario_samples_findings(const config::CheckReport& check, const Scenario& scenario,
+                                                             std::string_view launcher_version);
 
 } // namespace vehicle_sil::scenario

@@ -86,6 +86,32 @@ class ConfigRoot:
             raise PathRejected("not-a-configuration", f"{relative!r} is not a regular file")
         return ConfigFile("/".join(parts), absolute)
 
+    def configuration(self, relative: object) -> ConfigFile:
+        """A path from the screen whose content the server reads or checks for it (GET api/config, the text of
+        POST api/check, POST api/describe): as resolve, and also a simulation configuration as the listing tells
+        one, so that no other YAML file under the root is read for the screen. Refused (not-a-configuration): a part
+        that starts with '.', also after following links (the listing does not enter such a directory), and a file
+        without MARKER in its first MARKER_BYTES. Reads the file's start: an OSError other than a missing file is
+        the caller's."""
+        config = self.resolve(relative)
+        inside = config.absolute.relative_to(self.root).parts
+        if any(p.startswith(".") for p in (*config.relative.split("/"), *inside)):
+            raise PathRejected("not-a-configuration", f"{config.relative!r} has a part that starts with '.', which "
+                                                      "GET api/configs leaves out: the screen reads only the "
+                                                      "configuration files that it lists")
+        try:
+            with open(config.absolute, "rb") as f:
+                head = f.read(MARKER_BYTES)
+        except FileNotFoundError:
+            raise PathRejected("file-not-found", f"{config.relative!r} is not there any more: choose one that GET "
+                                                 "api/configs lists") from None
+        if MARKER not in head:
+            raise PathRejected("not-a-configuration",
+                               f"{config.relative!r} is not a simulation configuration: it has no "
+                               f"{MARKER.decode()} in its first {MARKER_BYTES} bytes (GET api/configs lists it with "
+                               "simulation: false); a file saved as UTF-16 has none either: save it as UTF-8")
+        return config
+
     def relative(self, path: Path) -> str:
         """The root-relative name of a file under the root (raises PathRejected otherwise)."""
         absolute = path.resolve(strict=True)

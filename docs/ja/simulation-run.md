@@ -180,7 +180,7 @@ SIL Kit が participant を接続する順序から、hello はこの待ちが�
 
 ### 通信量と認証
 
-値は間引きません。ECU は Agent の `sample_period`（既定 10 ms の仮想時間）ごとに全変数を送信します。ECU が多く、変数が多く、速く動かすほど、量が増えます。重いときは、ECU の `sample_period` を大きくします。
+値は間引きません。ECU は Agent の `sample_period`（既定 10 ms の仮想時間）ごとに全変数を送信します。ECU が多く、変数が多く、速く動かすほど、量が増えます。重いときは、ECU の `sample_period` を大きくします。シナリオつきの実行では、シナリオが値を読む ECU は、`sample_period` にかかわらず、ECU のステップごとに送信します（[scenario.md](scenario.md#ecu-が値を送る頻度samples) の「ECU が値を送る頻度」）。
 
 ECU と `vehicle_sil_launch` の間に認証はありません。registry に参加できる者は、ECU の変数に書けます（バスにフレームを送信できるのと同じです）。registry は既定で 127.0.0.1 だけで待ち受けます。
 
@@ -376,6 +376,7 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 | CAN | `silkit_to_ext` | `ext_from_devices`: バスのほかのノードから来たフレーム |
 
 - 数は結果（`outside[]`。人向けの結果の `outside:` の行、例えば `outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT): 152 frames out, 3 from devices`）と、`--events` なら実行中の `outside` イベントに出ます（[simulation-events.md](simulation-events.md#つないだネットワークの数outside) の「つないだネットワークの数（`outside`）」）。`--events` があってもなくても同じ数です。
+- 普段の LAN のように、ほかの機器が同じ線にいると、`from_outside` にはその機器のフレーム（ARP など、ブリッジの絞り込みがシミュレーションに入れないもの）も数えられます。シミュレーションに入った数は、ブリッジの最後の統計の行の `ext_to_silkit` です。その場合、相手の機器が答えなくても `connect-nothing-received` は出ません。
 - ブリッジが動いている間に `run` が読んだ統計の行は、ブリッジの行（`[bridge.<network>] ...`）にも `log` イベントにも出しません。ブリッジが終わったら、`run` は最後に読んだ 1 行を、ブリッジの行として 1 回だけ出します。全部の数が載ったブリッジの報告です（例えば、絞り込みで ECU に渡さなかったフレーム `filtered_from_ext`、止めるときに捨てたフレーム `ext_tx_unsent`）。ブリッジが止まるときに書いた行か、それを書かずに終わらされたなら、動いている間の最後の行です。ブリッジの `--log-dir` のファイルには全部の行があります。`run` が読めない行（例えば、これらのキーのない別の版のブリッジの行）は、ふつうの行として出します。
 - 数は最後に読めた行のものです。最後の行を書かずに終わらされたブリッジ（ランチャーが止まるよう頼めなかった Windows）は、動いている間の最後の行の数になります。1 行も読めなければ、どちらも `null` です。
 
@@ -434,7 +435,7 @@ outside: CAN1 -> can0: also used by another vehicle-sil bridge (process 4321) at
 
 | いつ | `--strict` なし | `--strict` あり |
 |---|---|---|
-| ブリッジが起きた時点で、デバイスが共有されている | 実行は続きます | `run` は ECU を起こさずに実行を終わらせます。誤り `outside-device-shared`、結果は `failed`。各ブリッジの最初のリンクの行（ブリッジのライフサイクルの前に出ます）を 2 秒まで待ちます（`kOutsideFirstLineWait`）。その間に書かなかったブリッジは、何も共有していないものとして扱います |
+| ブリッジが起きた時点で、デバイスが共有されている | 実行は続きます。ECU を起こす前に、ブリッジの最初のリンクの行から `run` が言います（ログの行と `outside` の状態。待ち方は `--strict` と同じ） | `run` は ECU を起こさずに実行を終わらせます。誤り `outside-device-shared`、結果は `failed`。各ブリッジの最初のリンクの行（ブリッジのライフサイクルの前に出ます）を 2 秒まで待ちます（`kOutsideFirstLineWait`）。その間に書かなかったブリッジは、何も共有していないものとして扱います |
 | シミュレーションの実行中に始まった | 実行は続きます | 3 秒続いたら（`kOutsideSharedAfter`）、ブリッジが終わったときと同じに、`run` がシミュレーションを中断します。誤り `outside-device-shared`。別の実行が起こして、3 秒以内にまたいなくなったブリッジでは止まりません。ECU の前にやめる実行が、もう一方を巻き添えにしないためです |
 | 終わりに | 警告 `outside-device-shared`。プロセス ID と、最初に見つけた時刻 | 同じ警告で、`--strict` はそれを失敗にします。`run` が止めたときは誤り |
 
@@ -1032,6 +1033,7 @@ passed: 0 errors, 1 warning, 1 note
 | `before-start` | エラー | 開始を待っている間にする処理が失敗した |
 | `behind-real-time` | 警告 | 速度を合わせたタイムステップのうち、遅れが `late_tolerance_ms` を超えたものがあった |
 | `coarse-time-step` | 警告 | 速度の指定があり、controller のタイムステップが ECU のステップより粗い |
+| `scenario-not-observed` | エラー | シナリオを始めなかった。シナリオが値を読む ECU が、ステップより粗い頻度で値を送信している |
 | `timeline-write` | エラー | `--timeline` のファイルを、実行の後に書けなかった（開けたが、書き込みが失敗した） |
 | `timeline-limit` | 注記 | `--timeline` のファイルが、上限で古い側の点を捨てた |
 | `interrupted` | 注記 | 中断された（シグナル、標準入力の終わり、閉じた標準出力） |
@@ -1049,6 +1051,7 @@ passed: 0 errors, 1 warning, 1 note
 | `control-link-dropped` | 受け付けなかった hello、読めなかったメッセージ、知っている ECU やその変数に合わなかったメッセージの数を書きます。 |
 | `control-link-version` | `--describe` の出力のバージョンが違うときは、照合の同じ `code` の指摘で、実行では繰り返しません。 |
 | `control-link-late-values` | ステップの外から送信しています（自作の通信の側のエラー）。 |
+| `scenario-not-observed` | シナリオの手順は 1 つも動かず、`scenario.status` は `failed` です。指摘の文に、participant、その `sample_period` とステップ、直し方があります（[scenario.md](scenario.md#ecu-が値を送る頻度samples) の「ECU が値を送る頻度」）。 |
 | `variable-map-not-applied` | どれが、なぜ合わないかを書きます。 |
 | `before-start` | 処理は、`run` を関数として呼ぶ側が渡すものです（内部用）。 |
 | `behind-real-time` | 遅れたタイムステップの数、最大の遅れ、ずれの合計、全体の実際の速度、止まったまま終わったならそのときの遅れを書きます。外につながっていて実時間を保つ実行では、つながっている相手は待たないので、遅れた分だけ相手とずれたことも書きます。 |

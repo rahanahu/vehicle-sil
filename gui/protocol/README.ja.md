@@ -17,7 +17,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の API の、公開す
 
 ## バージョンと互換性
 
-API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバーは `GET api/app` のレスポンス、WebSocket の `hello`、`--json` で起動したときの 1 行に書きます。
+API のバージョンは `vehicle_sil_gui`（今は 2）です。サーバーは `GET api/app` のレスポンス、WebSocket の `hello`、`--json` で起動したときの 1 行に書きます。
 
 | 変更 | バージョン | 読む側がすること |
 |---|---|---|
@@ -80,7 +80,10 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 |---|---|---|
 | `GET api/app` | サーバーとランチャーの情報、変数を読み書きできるか、上限 | `app.json` |
 | `GET api/configs` | root の下の `.yaml` / `.yml` の一覧 | `configs.json` |
-| `POST api/check` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `GET api/config?file=<configuration file>` | ファイルの文と、そのバイト列の SHA-256: `{file, text, stamp}`（下の「構成ファイルの文」） | `config.json` |
+| `POST api/check` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/check` `{file, text, variant, strict}` | ファイルの保存していない文の照合。プロセスを起動しない。レスポンスは上と同じ | `check-text.json` |
+| `POST api/describe` `{file, variant}` | `{file, variant, exit_code, check}`: 保存したファイルを照合し、実行ファイルの説明を取り直す（文の照合のため） | `describe.json` |
 | `POST api/run` `{file, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{session}`（始めた実行の要約）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: そのネットワークを、このコンピューターでどこにつなげるか（下の「ネットワークを外につなぐ」） | `connections.json` |
 | `POST api/stop` `{force}` | `{session}`（今の要約。実行がなければ `null`） | `stop*.json` |
@@ -96,7 +99,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 - `api/configs` の各ファイルは、`path`（root からの相対で `/` 区切り）、`modified`、`size`、`simulation`（先頭に `vehicle_sil_simulation` があるか）を持ちます。一覧の全体に `truncated` があります。
 - `api/check` の `check` は `check --json` の結果そのままです。照合が失敗しても 200 です。
 - `api/write` は下の「ECU の変数」、`api/scenarios` と `scenario` は下の「シナリオ」、`api/recording` は下の「操作の記録（`api/recording`）」、`api/timeline` は下の「シナリオの実行の時間の軸（`api/timeline`）」、`api/dashboard` は下の「ダッシュボードのファイル」にあります。`api/dashboard` の `file` は `api/check` と同じ検査を通ります（`invalid-path`、`outside-root`、`not-a-configuration`、`file-not-found`）。
-- サーバーが終了を始めたら、`api/run`、`api/check`、`api/connections`、`api/write` は 503 `shutting-down` です。
+- サーバーが終了を始めたら、`api/run`、`api/check`、`api/describe`、`api/connections`、`api/write` は 503 `shutting-down` です。
 
 ### `disable` と `manual`
 
@@ -139,9 +142,20 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 
 - **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけている間は 409 `starting`、動いている間は 409 `already-running` です。レスポンスの要約を、画面はその場で手元の状態に反映します（後から届く `session` も同じ内容です）。
 - **照合のあとの開始**: `api/run` は、まず実行を成す内容（実行と同じ要求ファイル）を、`api/check` と同じ順番で照合します。照合が通らなければ（`result` が `passed` でなければ）実行は始めず、422 `check-failed` を返します。`detail` は `{result, findings}` で、`result` は照合の `result`（`failed`、`unreadable`、`usage`）、`findings` は同じリクエストで `api/check` が返す `findings`（同じオブジェクト）です。警告や注記があるだけで通る照合は、実行を始めます。所見を直してから、もう一度 `api/run` を送ります。何も始める前に断るので、止めるものはありません。例: `error-check-failed.json`。
-- **意図と要求ファイル**: 本文は、`file`（このサーバーのフィールド。root からの相対の構成ファイル）と、ランチャーの要求ファイル（`schema/run-request.schema.json`。[docs/simulation-run.md](../../docs/ja/simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）のキーです。名前と値の形は同じです。`variant`（文字列）、`params`（パラメーター名から文字列、数、真偽への object）、`scenario`、`disable`、`enable`、`manual`（participant 名の配列）、`strict`（真偽）、`connect`（ネットワーク名から先への object）と `time_policy`（文字列）（上の「ネットワークを外につなぐ」）、`speed` と `start_paused`（`api/check` でも。ランチャーの照合が、時間とシナリオの規則に使います）です。`vehicle_sil_run_request` は `1` なら、`$schema` は文字列なら送れます（後者は捨てます）。キーの名前と値の形は要求ファイルと同じで、`file` が加わります。`scenario` は `api/scenarios` の一覧の名前で、構成ファイルのディレクトリからのパスではありません。サーバーは、各値の形（本文は 64 KiB まで）、パス（`file`、`api/scenarios` の一覧と照らす `scenario`）だけを調べ、意図を自分の要求ファイル（この利用者だけが読める。照合か実行が終わったら消す）に書いて、ランチャーに `--request <そのファイル>` を渡します。値がそのファイルで何を意味するか（その variant があるか、`disable` と `manual` を併せてよいか、シナリオにその `params` があるか）は、ランチャーが言います。所見（`api/check`）か 422 `check-failed`（`api/run`）に出ます。要求ファイルについての所見は、そのファイルを「the request」と呼びます（一時ファイルは、読むときにはもうありません）。`disable` と `manual` に使える名前は、その variant の照合の結果のものです。
+- **意図と要求ファイル**: 本文は、`file`（このサーバーのフィールド。root からの相対の構成ファイル）と、ランチャーの要求ファイル（`schema/run-request.schema.json`。[docs/simulation-run.md](../../docs/ja/simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）のキーです。名前と値の形は同じです。`variant`（文字列）、`params`（パラメーター名から文字列、数、真偽への object）、`scenario`、`disable`、`enable`、`manual`（participant 名の配列）、`strict`（真偽）、`connect`（ネットワーク名から先への object）と `time_policy`（文字列）（上の「ネットワークを外につなぐ」）、`speed` と `start_paused`（`api/check` でも。ランチャーの照合が、時間とシナリオの規則に使います）です。`vehicle_sil_run_request` は `1` なら、`$schema` は文字列なら送れます（後者は捨てます）。キーの名前と値の形は要求ファイルと同じで、`file` が加わります。`scenario` は `api/scenarios` の一覧の名前で、構成ファイルのディレクトリからのパスではありません。サーバーは、各値の形（本文は 64 KiB まで。`api/check` は 6 MiB + 64 KiB まで）、パス（`file`、`api/scenarios` の一覧と照らす `scenario`）だけを調べ、意図を自分の要求ファイル（この利用者だけが読める。照合か実行が終わったら消す）に書いて、ランチャーに `--request <そのファイル>` を渡します。値がそのファイルで何を意味するか（その variant があるか、`disable` と `manual` を併せてよいか、シナリオにその `params` があるか）は、ランチャーが言います。所見（`api/check`）か 422 `check-failed`（`api/run`）に出ます。要求ファイルについての所見は、そのファイルを「the request」と呼びます（一時ファイルは、読むときにはもうありません）。`disable` と `manual` に使える名前は、その variant の照合の結果のものです。
 - **選ばないことは、キーを書かないこと。** `null` は断ります（400 `invalid-field`）。実行をする側のキー（`control`、`timeline`、`log_dir` など）は知らないフィールドです（400 `invalid-field`）。サーバーが決めます。送る `scenario` は、`api/scenarios` が返す `path`（root からの相対）です。サーバーは、要求ファイルが読む基準である構成ファイルのディレクトリからの相対に直して書きます。`request` の feature がないランチャーは使えません（`api/app` の `launcher.problems` に出ます）。
 - **照合**: 同時の `api/check` は拒否せず、順に 1 つずつ実行します。待っているリクエストが多すぎるか、待ちが照合の時間の上限（`api/app` の `limits.check_timeout_s`）を過ぎたら 503 `check-busy` です。`api/run` も同じ順番で照合します。
+
+### 構成ファイルの文（`api/config`、`api/check` の `text`、`api/describe`）
+
+構成ファイルを編集し、保存する前に照合する画面のためのものです。
+
+- **読む**: `GET api/config?file=<configuration file>` は `{file, text, stamp}` を返します。`text` はファイルのバイト列を UTF-8 として読んだそのままです。BOM は先頭に残り、改行（CRLF、改行のない最後の行）も変えません。`stamp` はそのバイト列の SHA-256（小文字の 16 進数 64 桁）です。`file` は `api/check` と同じ検査を通り、さらに `api/configs` が言う構成ファイルでなければなりません。`.` で始まる部分のあるパス（リンクをたどった先も）と、先頭の 4096 バイトに `vehicle_sil_simulation` のないファイル（UTF-16 のファイルを含む）は 400 `not-a-configuration` で、根の下のほかの YAML のファイルを画面のために読むことはありません。1 MiB を超えるファイルは 413 `config-too-large`、UTF-8 の文でないファイル（NUL のバイト、UTF-8 でないバイト列）と読めないファイルは 422 `config-unreadable` です。例: `config.json`。
+- **文を照合する**: `text`（文字列）のある `api/check` は、その文を `file` の中身として照合します。文の中の相対パスは `file` のディレクトリから、所見は `file` の名前で出ます。`file` は、`api/config` と同じく、root の下にある構成ファイルです。`text` があるとき、本文が受けるのは `file`、`variant`、`strict`（と `$schema`、`vehicle_sil_run_request`）だけです。ほかのフィールドは 400 `invalid-field` です。文の照合は構成を照合するもので、実行の選択を照合するものではないからです。レスポンスの形は `text` がないときと同じです（`disable` と `manual` は `[]`、`scenario` は `null`）。`text` は UTF-8 で 1 MiB までです（413 `text-too-large`）。例: `check-text.json`。
+- **プロセスは起動しない**: ランチャーは `--text-from-stdin` と `--descriptions` で文を照合します（[docs/simulation-check.md](../../docs/ja/simulation-check.md#保存した説明--write-descriptions--descriptions) の「保存した説明」）。各 participant の `--describe` の出力は、サーバーが保存したファイルの照合から取っておいた説明から取ります。participant の `command` と実行ファイルがそのときのままなら使い、そうでない participant は `not_described` です。サーバーは説明を `file` と `variant` ごとに自分の一時ディレクトリに持ちます（終わるときに消します。どのレスポンスにも名前は出ません）。説明がないとき、または説明を作った後に保存したファイルが変わったときは、先に保存したファイルを（その `variant` だけで）照合します。この照合は、実行の画面の照合と同じく、各実行ファイルを `--describe` で起動します。2 つの照合は、照合の順番の 1 回分で行います。その照合がファイルやその variant を読めないとき（`unreadable`、`usage`。文にだけある variant など）と、エラーで終わったとき（`check-timeout`、`launcher-output`、`launcher-start`）は、説明なしで文を照合し、ファイルが変わるか `api/describe` が頼むまで、文のために保存したファイルを照合し直しません（何が起きたかは `api/describe` の答えで分かります）。保存した説明のない participant は `not_described` で、全員がそうでも照合は `passed` のままです。どれを比べなかったかは `participants[].status` で分かり、`api/describe` で説明を取り直します（文にだけある participant は、先にファイルを保存します）。
+- **説明を取り直す**: `POST api/describe {file, variant}`（`file` は `api/config` と同じ）は保存したファイルを照合し、説明を保存し直します（実行ファイルを作り直した後など）。レスポンスは、その照合の `{file, variant, exit_code, check}` です（`variant` は、指定がなければ `null`）。例: `describe.json`。
+- **サーバーが保存したファイルについて覚えること**: `disable` と `manual` に使える名前と、`api/connections` の一覧は、保存したファイルのものです。文の照合は、これらを使わず、変えません。`text` のない `api/check` と `api/run` は説明を保存しません。
+- どちらも、`api/check` と同じ照合の順番を通ります（`check-busy`、`check-timeout`）。
 
 ### 停止（`api/stop`）
 
@@ -188,7 +202,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 400 | `invalid-field` | フィールドの型か範囲が違う、または `api/check` か `api/run` の本文に、そのリクエストが受けないフィールドがある（対象は表の下） |
 | 400 | `invalid-path` | `file` が root からの相対パスの文字列でない（空、長すぎる、`\`、NUL、`:`、対のないサロゲート） |
 | 400 | `outside-root` | 絶対パス、`..`、root の外へのシンボリックリンク |
-| 400 | `not-a-configuration` | `.yaml` / `.yml` の通常のファイルでない |
+| 400 | `not-a-configuration` | `.yaml` / `.yml` の通常のファイルでない。`api/config`、`api/check` の `text`、`api/describe` では、`.` で始まる部分のあるパスと、先頭の 4096 バイトに `vehicle_sil_simulation` のないファイルも |
 | 400 | `unknown-participant` | `disable` か `manual` の名前が照合の結果にない |
 | 400 | `unknown-network` | `api/connections`: ファイルにそのネットワークがない（ランチャーの使い方の誤り。`detail` に `{network, findings}`） |
 | 400 | `target-not-listed` | ファイルにあるネットワークの `connect` の先（`none` 以外）が、そのファイルのそのネットワークの直近の一覧で使えるものでない、またはその後にファイルが変わった（`detail` に `{network, target}`。上の「ネットワークを外につなぐ」）。例: `error-target-not-listed.json` |
@@ -212,8 +226,11 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 409 | `scenario-running` | `api/write`: 動いている実行がシナリオを実行している（シナリオの結果を変えないため、書かない）。例 `error-scenario-running.json` |
 | 409 | `session-changed` | `api/write`: `session` が、動いている実行の id と違う（実行が替わる間に送った書き込み）。何も書いていない。例 `error-session-changed.json` |
 | 409 | `variables-not-ready` | `api/write`: 変数の機能の状態が `ready` でない（文言に、要約の `variables.reason`） |
-| 413 | `too-large` | 本文が 64 KiB を超える |
+| 413 | `too-large` | 本文が 64 KiB を超える（`api/check` は 6 MiB + 64 KiB） |
+| 413 | `text-too-large` | `api/check`: `text` が UTF-8 で 1 MiB を超える |
+| 413 | `config-too-large` | `api/config`: ファイルが 1 MiB を超える |
 | 415 | `unsupported-media-type` | 本文があるのに `Content-Type: application/json` でない |
+| 422 | `config-unreadable` | `api/config`: ファイルが UTF-8 の文でない（NUL のバイト、UTF-8 でないバイト列）か、読めない（`api/check` の `text` と `api/describe` でも、読めないとき）。例: `error-config-unreadable.json` |
 | 500 | `internal` | サーバーの不具合（例はない。起きたら標準エラーを見る） |
 | 502 | `launcher-start` | ランチャーを起動できない |
 | 502 | `launcher-output` | `check --json` が照合の結果を、または `connections --json` が一覧を書かなかった |
@@ -227,7 +244,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 504 | `check-timeout` | 照合（または `api/connections` の一覧）が時間の上限までに終わらなかった（止めた） |
 | 504 | `write-timeout` | `api/write`: Control Server が時間内（`limits.write_timeout_s`）に応答しなかった。受け取られたかもしれない（送り直さない） |
 
-- `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`。`api/connections` は `file` と `network` を受けます。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
+- `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`。`text` があるとき、`api/check` が受けるのは `file`、`$schema`、`vehicle_sil_run_request`、`variant`、`strict`、`text` だけです。`api/describe` は `file` と `variant` を受けます。`api/connections` は `file` と `network` を受けます。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
 - `invalid-field` の対象: `speed`、`start_paused`、`variant`、`params`、`enable`、`strict`、`connect`、`time_policy`、`network`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`value`、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
 - `unsupported` の対象: `control-server` を持たないのに `api/write` を送った。（サーバーは起動時に `time-commands`、`stdin-run-until`、`state`、`speed`、`start-paused`、`scenario`、`manual-participants` を必須として確かめるので、`api/time` にこの場合はありません。）
 
@@ -235,7 +252,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 
 | ファイル | 内容 |
 |---|---|
-| `error-already-running.json`、`error-check-failed.json`、`error-not-writable.json`、`error-scenario-not-listed.json`、`error-scenario-running.json`、`error-session-changed.json`、`error-target-not-listed.json` | HTTP のエラー |
+| `error-already-running.json`、`error-check-failed.json`、`error-config-unreadable.json`、`error-not-writable.json`、`error-scenario-not-listed.json`、`error-scenario-running.json`、`error-session-changed.json`、`error-target-not-listed.json` | HTTP のエラー |
 | `error-invalid-watch.json` | WebSocket の `error` |
 | `stop.json`、`stop-force.json`、`stop-ended.json` | 停止のレスポンス |
 | `time.json` | 時間のコマンドのレスポンス |
@@ -755,6 +772,14 @@ YAML に入れないものは次のとおりです。必要なものは、書き
 ## 上限
 
 サーバーが覚える量には上限があり、超えた分は数えて通知します。
+
+### リクエストの本文と文
+
+| 対象 | 上限 | 超えたとき |
+|---|---|---|
+| リクエストの本文 | 64 KiB。`api/check` は 6 MiB + 64 KiB（1 MiB の文を JSON がどうエスケープしても入る分。`\u0001` は 6 バイト） | 413 `too-large` |
+| `api/check` の `text` | UTF-8 で 1 MiB | 413 `text-too-large` |
+| `api/config` が読むファイル | 1 MiB | 413 `config-too-large` |
 
 ### ログ
 

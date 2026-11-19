@@ -73,8 +73,17 @@ public:
     void prepare(std::chrono::milliseconds step) { step_ = step; }
 
     /// In the start window (its thread): who is there, then the writes for 0. `cancelled` ends
-    /// the wait of a write while the window lasts.
+    /// the wait of a write while the window lasts. A scenario that judges with every step
+    /// (ScenarioSamples::EveryStep) does not begin if a participant whose values it reads sends
+    /// them less often than its step (its hello's sample_period against the step of its
+    /// --describe): no engine is made, start() says that the scenario is over, and finish() gives
+    /// the outcome who it was (OutcomeScenario::not_observed).
     void begin(control_silkit::HubTransport& transport, const std::function<bool()>& cancelled);
+
+    /// begin() refused to begin the scenario (an ECU sends the values it reads less often than its
+    /// step): the run does not hold before the first step for it, and says so when it stops. The
+    /// window's thread after begin(), the main thread after the controller's start (as engine_).
+    [[nodiscard]] bool refused() const { return !not_observed_.empty(); }
 
     /// The simulation runs: the scenario's thread takes the steps from here. Main thread.
     void start(SimulationController& controller, RunOutcome& outcome);
@@ -110,6 +119,8 @@ private:
     /// engine_ is: the engine fills it; finish() gives it to the outcome.
     std::shared_ptr<scenario::TimelineRecord> record_;
     std::unique_ptr<scenario::ScenarioEngine> engine_; ///< the window's thread, then the scenario's, then main
+    /// begin() found these and made no engine (the scenario does not begin). Touched as engine_ is.
+    std::vector<ScenarioNotObserved> not_observed_;
     std::thread thread_;
     std::atomic<bool> quit_{false}; ///< main: the simulation is over
     std::atomic<bool> over_{false}; ///< the scenario's thread: the scenario is over, stop the simulation

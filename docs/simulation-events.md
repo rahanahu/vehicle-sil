@@ -671,7 +671,8 @@ A run with a scenario (`--scenario`) accepts the time commands from both. They d
     "state",
     "time-policy",
     "stdin-run-until",
-    "request"
+    "request",
+    "scenario-samples"
   ]
 }
 ```
@@ -733,6 +734,7 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 | `time-policy` | `--time-policy` of `check`, `run` and `test`: a run that is connected outside the simulation keeps real time unless `free` is chosen (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)) |
 | `stdin-run-until` | `run_until` on stdin (see [Stdin commands](#stdin-commands-run---stdin-commands)) |
 | `request` | `--request <file>` of `check` and `run`: what to run, from a request file (see "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request)) |
+| `scenario-samples` | The top-level key `samples` of a scenario, and a sample of every ECU step for the ECUs whose values a scenario reads (see "How often the ECUs send their values" in [scenario.md](scenario.md#how-often-the-ecus-send-their-values-samples)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 | `scenario-time` | Control Server clients can move time while a scenario runs (only in builds with the Control Server) |
@@ -759,6 +761,7 @@ Each name indicates that the following are present:
 | `state` | The event `state`, `reason` and `id` in the event `command`, and `id` in the stdin commands |
 | `time-policy` | `--time-policy`, `time_lock` in the check JSON, the findings `outside-real-time`, `outside-speed-set`, `outside-not-real-time`, `outside-time-changed` and `unsynchronized-time-changed`, the reason `outside-real-time` of a refused command and of `allowed`, and the caution `outside-not-real-time` (before this feature: the warnings `connect-not-real-time`, `connect-start-paused` and `connect-time-changed`, and a run with `--connect` went at the file's speed and accepted every time command) |
 | `request` | `--request`, the findings `connect-network-unused` and `request-params-unused`, and `request_file` as the `from` of a parameter in the check and result JSON |
+| `scenario-samples` | `samples` of a scenario, `--sample-every-step` passed to executables, and the findings `scenario-samples-*` and `scenario-not-observed` |
 | `control-server` | The event `control_server`, `"control_server"` as the `source` of `command` and its `at_ms`, `--control-credentials`, `--control-tls-cert`, `--control-tls-key`, `--control-audit-log`, `"control server stop"` as `interrupted_by`, and pausing before the step at time 0 with `--start-paused` |
 
 In a build with `scenario-control`, clients cannot write while a scenario runs: calls that write are rejected with `FAILED_PRECONDITION` (reason `scenario-running`). In a build with `scenario-time`, calls that move time (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) are accepted during a scenario, as the same commands from stdin are, and do not change the result of the scenario; a build with `scenario-control` alone rejects them with the same reason (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).

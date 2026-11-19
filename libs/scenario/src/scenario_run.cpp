@@ -1273,7 +1273,7 @@ void ScenarioEngine::close(Watch& watch, SimTime t)
         {
             fail(index, t, "scenario-failed",
                  "not checked during the " + std::string(step_kind_name(step.kind)) + " (" + during(index, watch) + "): no sample of " +
-                     unseen + " in that time (its ECU sends one every sample_period); make the " + step_kind_name(step.kind) +
+                     unseen + " in that time (its ECU sends one after each of its steps; with samples: as_sent, every sample_period); make the " + step_kind_name(step.kind) +
                      " longer, or check in an expect step with within_ms after it",
                  std::move(notSeen));
             return;

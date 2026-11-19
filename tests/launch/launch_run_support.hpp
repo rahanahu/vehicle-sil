@@ -567,6 +567,7 @@ void connect_bus_off_lost(const Options& o);
 void connect_lost_kill(const Options& o);
 void connect_lost_exit0(const Options& o);
 void connect_dies_while_waiting(const Options& o);
+void connect_dies_while_held(const Options& o);
 void connect_request(const Options& o);
 void connect_speed(const Options& o);
 void connect_time_changed(const Options& o);
@@ -638,6 +639,7 @@ void scenario_disconnect(const Options& o);
 void ethernet(const Options& o);
 void scenario_expect_beside(const Options& o);
 void scenario_failures(const Options& o);
+void scenario_samples(const Options& o);
 
 // launch_run_scenario_time.cpp
 void scenario_time_commands_same(const Options& o);

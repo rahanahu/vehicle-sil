@@ -487,7 +487,7 @@ scenario scenarios/engine_speed.yaml (the dashboard receives the engine speed): 
 
 line  step                                                             result  at
 6     set Engine.engine.throttle = 50                                  ok      0 ms
-8     expect Dashboard.dashboard.engine_speed ge 1700 (within 600 ms)  ok      410 ms
+8     expect Dashboard.dashboard.engine_speed ge 1700 (within 600 ms)  ok      405 ms
 ```
 
 With `simulation.two-buses.yaml`, the same scenario fails at the `expect` step and the run ends with exit code 1. Here is the same part of its output:

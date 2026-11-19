@@ -257,7 +257,7 @@ flowchart TB
 | `usecases/` | `check_file()`、`list_connections()`、`run_file()`、`run_tests()`: 調べ役、規則、計画、runner、出力の順 | （制限なし） |
 | `request/` | `RunRequest`、要求ファイルの読み取り、一緒に使えない欄の規則 | `runner`、`scenario`、`process`、SIL Kit、ほかの部分、利用場面のヘッダー |
 | `probe/` | 計算機を調べること（ファイル、環境、起動する道具）。結果は値で返す。`check --write-descriptions` が書く、保存した説明のファイルも | `runner`、SIL Kit、出力、受け口、利用場面 |
-| `format/` | check、run、test、events、timeline、connections の出力（JSON とテキスト）、終了コードの表 | `probe.hpp`、SIL Kit、`control_grpc`、受け口、利用場面 |
+| `format/` | check、run、test、events、timeline、connections の出力（JSON とテキスト）、終了コードの表 | `probe.hpp`、SIL Kit、`control_grpc`、受け口、利用場面のソース（書き出す結果の型は `run.hpp`、`test.hpp`、`connections.hpp` から読む） |
 | `endpoints/` | stdin の命令と Control Server を、実行の操作盤への呼び出しにすること | `probe.hpp`、check、run、timeline の出力（`*_format.hpp`） |
 
 - `endpoints/` は、構成の値型と YAML の読み手（`config/detail/`）を読んでかまいません。stdin の命令は YAML か JSON で、`command_input.cpp` の `parse_command()` がそこで読みます（書く側の `format/` には置きません）。Control Server は、シミュレーションを止め、失敗を調べるので、実行のコントローラーと SIL Kit の型を使います。使うのは Control Server のファイルだけで、`VEHICLE_SIL_BUILD_CONTROL_SERVER` のときだけです。

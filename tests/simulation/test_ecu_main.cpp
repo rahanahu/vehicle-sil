@@ -164,7 +164,7 @@ vehicle_sil::EcuDescription offered(vehicle_sil::EcuDescription description)
 {
     description.control = vehicle_sil::ControlOffer{"silkit", vehicle_sil::control::wire::kVersion,
                                                      vehicle_sil::control::wire::kRevision};
-    description.features = {"map-network", "j1939-node"};
+    description.features = {"map-network", "j1939-node", "sample-every-step"};
     return description;
 }
 
@@ -275,6 +275,9 @@ TEST_CASE(ecu_main_help_writes_the_usage_to_stdout)
                                     "and NAME\n") &&
                     contains(r.out, "(e.g. VehicleCAN=from:0x00,address:0x01,identity_number:2)\n"),
                 "the usage has --j1939-node", r);
+        require(contains(r.out, "                      [--sample-every-step]\n") &&
+                    contains(r.out, "  --sample-every-step     with --registry-uri: send the values of the ECU's variables after every\n"),
+                "the usage has --sample-every-step", r);
         CHECK_EQ(probe.made, 0);
     }
 }
@@ -330,6 +333,14 @@ TEST_CASE(ecu_main_refuses_bad_command_lines)
          "--silkit-config needs a path that is not empty (e.g. --silkit-config engine.silkit.yaml)"},
         {{"--silkit-config=a.yaml", "--describe"},
          "unknown argument \"--silkit-config=a.yaml\" (write the value after a space: --silkit-config a.yaml)"},
+        {{"--describe", "--sample-every-step"},
+         "--sample-every-step is for --registry-uri: --describe runs nothing, so there are no values to sample; leave "
+         "--sample-every-step out"},
+        {{"--local", "--run-for-ms", "10", "--sample-every-step"},
+         "--sample-every-step is for --registry-uri: --local runs the ECU alone, and nothing reads its variables from "
+         "outside; leave --sample-every-step out"},
+        {{"--registry-uri", "silkit://localhost:8500", "--sample-every-step", "--sample-every-step"},
+         "\"--sample-every-step\" is given twice; give it once"},
         {{"--local", "--run-for-ms", "10", "--silkit-config", "a.yaml"},
          "--silkit-config is for --registry-uri: --local runs the ECU on local virtual buses, without SIL Kit; leave "
          "--silkit-config out"},
@@ -483,9 +494,10 @@ TEST_CASE(ecu_main_describe_writes_the_json_of_the_ecu)
     CHECK_EQ(probe.made, 1);
     CHECK_EQ(probe.steps, 0); // nothing ran
     require(contains(r.out, "\"name\": \"Engine\",\n  \"step_ns\": 10000000,\n"), "name and step", r);
-    // The executable says that it takes --map-network and --j1939-node, last and whatever else is
-    // given.
-    const std::string features = "  \"features\": [\n    \"map-network\",\n    \"j1939-node\"\n  ]\n}\n";
+    // The executable says that it takes --map-network, --j1939-node and --sample-every-step, last
+    // and whatever else is given.
+    const std::string features =
+        "  \"features\": [\n    \"map-network\",\n    \"j1939-node\",\n    \"sample-every-step\"\n  ]\n}\n";
     require(r.out.size() > features.size() && r.out.compare(r.out.size() - features.size(), features.size(), features) == 0,
             "the features", r);
     const Result quiet = call({"--describe", "--no-control", "--name", "Other"});

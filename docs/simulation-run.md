@@ -180,7 +180,7 @@ A participant that joins after the start (`required: false`, a real-time `Peer` 
 
 ### Traffic and authentication
 
-Values are not thinned out. An ECU sends all its variables every `sample_period` of its Agent (default: 10 ms of virtual time). The traffic grows with more ECUs, more variables and a higher speed. If the load is too high, increase the ECU's `sample_period`.
+Values are not thinned out. An ECU sends all its variables every `sample_period` of its Agent (default: 10 ms of virtual time). The traffic grows with more ECUs, more variables and a higher speed. If the load is too high, increase the ECU's `sample_period`. In a run with a scenario, the ECUs whose values the scenario reads send after every ECU step instead, whatever their `sample_period` (see "How often the ECUs send their values" in [scenario.md](scenario.md#how-often-the-ecus-send-their-values-samples)).
 
 There is no authentication between the ECUs and `vehicle_sil_launch`. Anyone who can join the registry can write ECU variables, in the same way as they can send frames on the bus. By default, the registry listens only on 127.0.0.1.
 
@@ -376,6 +376,7 @@ A real-time participant of your own does not stop either while the simulation is
 | CAN | `silkit_to_ext` | `ext_from_devices`: frames that came from other nodes on the bus |
 
 - The counts are in the result (`outside[]`; `outside:` lines of the human-readable result, such as `outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT): 152 frames out, 3 from devices`) and, with `--events`, in the event `outside` while the run goes (see "Counts of a connected network (`outside`)" in [simulation-events.md](simulation-events.md#counts-of-a-connected-network-outside)). They are the same with and without `--events`.
+- On a wire that other devices share, as on an ordinary LAN, `from_outside` also counts the frames of those devices that the bridge's filter does not let into the simulation (ARP, for example). The number that entered the simulation is `ext_to_silkit` in the bridge's last statistics line. Then `connect-nothing-received` does not appear even if the device you meant does not answer.
 - The statistics lines that `run` reads while the bridge runs are not shown as lines of the bridge (`[bridge.<network>] ...`) or as `log` events. When the bridge has ended, `run` shows the last one it read, once, as a line of the bridge: the bridge's report with every count, such as the frames that the filter kept from the ECUs (`filtered_from_ext`) or that were dropped at the stop (`ext_tx_unsent`). It is the line the bridge wrote when it stopped, or its last line while it ran if it was ended without one. The `--log-dir` file of the bridge has every line. A line that `run` cannot read (for example, of a bridge of another version without these keys) is shown as usual.
 - The counts are those of the last line read. A bridge that was ended without its last line (on Windows, where the launcher could not ask it to stop) has the counts of its last line while it ran. Without any line read, both are `null`.
 
@@ -434,7 +435,7 @@ The bridge's own warning about it (`warning: ... is also used by another vehicle
 
 | When | Without `--strict` | With `--strict` |
 |---|---|---|
-| The device is shared when the bridges have started | The run goes on | `run` starts no ECU and ends the run: the error `outside-device-shared`, result `failed`. It waits up to 2 s (`kOutsideFirstLineWait`) for the first link line of each bridge, which comes before the bridge's lifecycle; a bridge that has not written it by then is taken as one that shares nothing |
+| The device is shared when the bridges have started | The run goes on. `run` says it (the log line and the state `outside`) before it starts the ECUs, from the first link line of the bridge, with the same wait as `--strict` | `run` starts no ECU and ends the run: the error `outside-device-shared`, result `failed`. It waits up to 2 s (`kOutsideFirstLineWait`) for the first link line of each bridge, which comes before the bridge's lifecycle; a bridge that has not written it by then is taken as one that shares nothing |
 | It begins while the simulation runs | The run goes on | When it has lasted 3 s (`kOutsideSharedAfter`), `run` aborts the simulation as for a bridge that ended: the error `outside-device-shared`. A bridge that another run started and that is gone again within 3 s does not stop this run, so one run that stops before its ECUs start does not take the other down |
 | At the end | The warning `outside-device-shared`: the process IDs, when it was first seen | The same warning, and `--strict` fails on it; the error where `run` stopped the run |
 
@@ -1032,6 +1033,7 @@ When the simulation started, the result shows after the participant table whethe
 | `before-start` | Error | An action to perform while waiting for the start failed |
 | `behind-real-time` | Warning | Some of the paced time steps were later than `late_tolerance_ms` |
 | `coarse-time-step` | Warning | A speed is set, and the controller's time step is coarser than the ECU steps |
+| `scenario-not-observed` | Error | The scenario was not begun: an ECU whose values it reads sends them less often than its step |
 | `timeline-write` | Error | The `--timeline` file was opened but could not be written after the run |
 | `timeline-limit` | Note | The `--timeline` file dropped older points at its limits |
 | `interrupted` | Note | The run was interrupted (a signal, the end of stdin, a closed stdout) |
@@ -1049,6 +1051,7 @@ Notes on individual codes:
 | `control-link-dropped` | Gives the numbers of rejected hellos, of unreadable messages, and of messages that matched no known ECU or none of its variables. |
 | `control-link-version` | When the version in the `--describe` output differs, it is a check finding with the same `code`, and the run does not repeat it. |
 | `control-link-late-values` | The ECU sends from outside its step (an error in hand-written communication code). |
+| `scenario-not-observed` | No step of the scenario ran, and `scenario.status` is `failed`. The message names the participant, its `sample_period` and its step, and says how to fix it (see "How often the ECUs send their values" in [scenario.md](scenario.md#how-often-the-ecus-send-their-values-samples)). |
 | `variable-map-not-applied` | Says which entries do not match, and why. |
 | `before-start` | The action is supplied by the code that calls `run` as a function (internal use). |
 | `behind-real-time` | Gives the number of late time steps, the largest lateness, the total slip, the overall actual speed and, if the run ended while standing still, the lateness at that moment. In a run that keeps real time because it is connected outside, it also says that what is connected does not wait: the run was that far off from it. |

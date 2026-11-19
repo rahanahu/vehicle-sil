@@ -157,6 +157,14 @@ namespace {
         {
             add(std::move(finding));
         }
+        if (check.scenario)
+        {
+            // What the run will judge with: how often the ECUs it reads send their values.
+            for (config::Finding& finding : scenario::scenario_samples_findings(report, *check.scenario, version()))
+            {
+                add(std::move(finding));
+            }
+        }
     }
     report.scenario = std::move(check);
     return {};

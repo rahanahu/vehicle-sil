@@ -34,7 +34,7 @@ namespace vehicle_sil::scenario::reader {
 // a new branch must be added here too, or the JSON Schema (schema/) and its test (tests/schema), which compare with
 // the list in the message, pass without the key. (The keys of a step are taken from kStepKeys itself.)
 
-inline const std::vector<std::string> kTopKeys = {"vehicle_sil_scenario", "name", "only", "params", "inputs", "steps"};
+inline const std::vector<std::string> kTopKeys = {"vehicle_sil_scenario", "name", "samples", "only", "params", "inputs", "steps"};
 inline const std::vector<std::string> kStepKeys = {"at_ms",      "after_ms", "set",       "ramp",        "wave",         "dither",
                                                    "wait_until", "timeout_ms", "expect",  "within_ms",   "hold_for_ms", "undersampled"};
 inline const std::vector<std::string> kActionKeys = {"set", "ramp", "wave", "dither", "wait_until", "expect"};

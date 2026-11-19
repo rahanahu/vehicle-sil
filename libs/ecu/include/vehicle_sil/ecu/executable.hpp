@@ -19,8 +19,8 @@ inline constexpr std::int64_t kMaxMillis = 1'000'000'000'000;
 /// a command of the configuration must not have them. An ECU executable takes each of them.
 inline constexpr std::string_view kLauncherArguments[] = {"--describe",    "--name",       "--registry-uri",
                                                           "--local",       "--run-for-ms", "--start-timeout-ms",
-                                                          "--map-network", "--j1939-node", "--help",
-                                                          "-h"};
+                                                          "--map-network", "--j1939-node", "--sample-every-step",
+                                                          "--help",        "-h"};
 
 /// The argument that renames the networks of an ECU executable for one run (with --registry-uri,
 /// any number of times): `--map-network <simulation's name>=<executable's name>`, split at the
@@ -38,6 +38,14 @@ inline constexpr std::string_view kFeatureMapNetwork = "map-network";
 /// kFeatureJ1939Node in "features".
 inline constexpr std::string_view kJ1939NodeArgument = "--j1939-node";
 inline constexpr std::string_view kFeatureJ1939Node = "j1939-node";
+
+/// The argument that makes an ECU executable sample its variables in every step of the ECU for
+/// one run (with --registry-uri; no value), whatever its code says (AgentOptions::sample_period):
+/// the launcher gives it to the ECUs whose values a scenario reads, so that a condition sees every
+/// step. An executable that takes it says so in its --describe: kFeatureSampleEveryStep in
+/// "features".
+inline constexpr std::string_view kSampleEveryStepArgument = "--sample-every-step";
+inline constexpr std::string_view kFeatureSampleEveryStep = "sample-every-step";
 
 /// The exit codes of an ECU executable (the same as those of the other tools of vehicle-sil).
 inline constexpr int kExitOk = 0;

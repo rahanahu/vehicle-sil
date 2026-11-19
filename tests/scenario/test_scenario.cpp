@@ -87,7 +87,7 @@ TEST_CASE(scenario_file_errors_say_the_line_what_is_wrong_and_how_to_fix_it)
                "E 1 format-version: vehicle_sil_scenario is 2, but this vehicle_sil_launch reads format 1 only: use the "
                "vehicle-sil that the file was written for\n");
     check_text(errors("steps:\n  - set: { Body.level: 1 }\nstep: 1\n"),
-               "E 3 unknown-key: unknown key 'step': did you mean 'steps'? (the keys here: vehicle_sil_scenario, name, only, params, inputs, steps)\n"
+               "E 3 unknown-key: unknown key 'step': did you mean 'steps'? (the keys here: vehicle_sil_scenario, name, samples, only, params, inputs, steps)\n"
                "E 0 missing-key: the file has no vehicle_sil_scenario (the format version): add vehicle_sil_scenario: 1\n");
     check_text(errors(kHead + "  - sets: { Body.level: 1 }\n"),
                "E 3 unknown-key: unknown key 'sets': did you mean 'set'? (the keys here: at_ms, after_ms, set, ramp, wave, dither, wait_until, "
@@ -1942,7 +1942,7 @@ TEST_CASE(scenario_expect_beside_a_ramp_between_the_steps_of_its_ecu_looks_from_
                           [](World& w) { w.ecus[1].step = 30ms; }),
                "failed over=90\n"
                "3 failed start=61 at=80 end=71 scenario-failed: not checked during the ramp (from 61 ms to 80 ms, where its end "
-               "(71 ms) takes effect): no sample of Door.level in that time (its ECU sends one every sample_period); make the "
+               "(71 ms) takes effect): no sample of Door.level in that time (its ECU sends one after each of its steps; with samples: as_sent, every sample_period); make the "
                "ramp longer, or check in an expect step with within_ms after it\n");
 }
 

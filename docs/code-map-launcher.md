@@ -88,7 +88,7 @@ Implementation:
 | Reading the `--describe` JSON | `src/describe_read.cpp` |
 | An ECU as the simulation sees it (`SeenEcu`): what its executable described, with the participant's entry applied. The check, `run` and the scenario read a description only through it (its name, step, networks, variables, control offer, features) | `config/detail/seen_ecu.hpp`, `src/seen_ecu.cpp` (with `seen_variables()`) |
 | The reported networks under the names after `network_names` of the configuration file, with the J1939 nodes after `j1939_nodes` (`seen_networks()`) | `src/check_networks.cpp` |
-| The check rules (one function per network kind) | `src/check_rules.cpp` |
+| The check rules that compare the file with the descriptions (one function per network kind). The errors that the file alone shows (`duplicate-name`, keys, value forms) are found while it is read, in `src/config.cpp` | `src/check_rules.cpp` |
 | Whether two configurations run the same commands (`compare_commands()`, `check --compare-commands`); it lays the variants over the common part with `detail::apply_variant()` of `config.cpp` | `src/compare_commands.cpp` |
 | The check of `--connect` (`check_connections()`: the requests, the bridges found and their `--describe`); the rules that need the whole simulation (the bridge as a participant of its network, `connect-loop`) are in `check_rules.cpp` | `src/check_connect.cpp` |
 | The forms of `--connect` and the bridges' arguments. `find_tool()` (next to the launcher, then `PATH`) and the search of `PATH` that it shares with `find_executable()` (`detail::find_on_path()`) are in `libs/launch/src/probe/probe.cpp` | `src/connect.cpp` |
@@ -393,7 +393,7 @@ Where to change:
 Rules:
 
 - The check rules, the tables and `networks` in the JSON read the reported networks only through `seen_networks()` (`libs/config/src/check_networks.cpp`, the only function that applies the map), which `SeenEcu::seen_networks()` (`libs/config/include/vehicle_sil/config/detail/seen_ecu.hpp`) calls. A rule that reads `description.networks` itself sees a renamed network under the executable's name. `launch.described_networks_are_read_in_one_place` (`cmake/VehicleSilCheckDescribedNetworks.cmake`) reads the lines with `.networks`, `->networks` and `::networks` in `libs/launch` and `tools/launch` to confirm this. Only `config.networks` of the configuration is not counted, so a member named `networks` in another struct makes the test fail: give it another name. When you add a rule or an output, add the case of a renamed network to `tests/launch/test_check.cpp`.
-- `detail::participant_arguments()` (`libs/runner/src/run_participants.cpp`) is the one place that builds the arguments of `run`. The start, the command of `manual` and the `participant` event use the same list (`--map-network` comes last; with `describe: false`, after the placeholders are replaced).
+- `detail::participant_arguments()` (`libs/runner/src/run_participants.cpp`) is the one place that builds the arguments of `run`. The start, the command of `manual` and the `participant` event use the same list (`--map-network` and `--j1939-node` come after the rest; with `describe: false`, after the placeholders are replaced; then `--sample-every-step` for a participant whose values the run's scenario reads, `RunMember::sample_every_step`).
 
 Documentation to update:
 

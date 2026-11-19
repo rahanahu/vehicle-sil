@@ -29,6 +29,10 @@
 //                               from outside): connect-lost as well.
 //   connect_dies_while_waiting  the bridge ends while the run waits for a participant started by
 //                               hand: connect-failed, the simulation does not start.
+//   connect_dies_while_held     the bridge ends while the run stands still before its first step
+//                               (--start-paused with --control; skipped without the control
+//                               server): connect-failed, the simulation does not start, and not
+//                               the finding timeout (the hold saw the bridge end).
 //   connect_speed               --speed 2 over the file's speed 1, and --start-paused: the error
 //                               outside-real-time, and nothing starts; with --time-policy free the
 //                               note outside-not-real-time, and it runs (with --strict too). A
@@ -533,6 +537,36 @@ void connect_dies_while_waiting(const Options& base)
             "the simulation did not start:\n" + out_of(lines));
 }
 
+void connect_dies_while_held(const Options& base)
+{
+    const Options o = connect_options(base);
+    const fs::path dir = connect_dir(o, "dies_while_held", "", "");
+    // The run holds before its first step only with a control server (--start-paused alone pauses
+    // at the step at 0, once the simulation has started).
+    if (!contains(launch(o, {"version", "--json"}, dir).standard_output, "\"control-server\""))
+    {
+        throw Skip("this vehicle_sil_launch is built without the control server, and --start-paused holds before the "
+                   "first step only with --control (the preset linux-gcc-control builds it)");
+    }
+    // Long enough not to end the hold before the bridge does; a run that missed the bridge would
+    // end with the finding timeout after it, not wait for ever.
+    const std::string timeout = std::to_string(scaled_timeout(60s).count());
+    Live live(o, dir, {"run", "--events", "--control", "0", "--start-paused", "--time-policy", "free", "--timeout-ms", timeout,
+                       "--connect", "ETH_EXT=fake0", "sim.yaml"});
+    const long pid = started_pid(live.wait_for({"\"name\":\"bridge.ETH_EXT\"", "\"state\":\"started\""}));
+    live.wait_for({"\"event\":\"log\"", "standing still before the first step"});
+    end_process(pid, true);
+    const auto [status, lines] = live.finish();
+    require(status && status->code == 1, "exit code " + code_text(status) + "\n" + out_of(lines));
+    require(contains(finding_in(lines, "connect-failed"), "bridge.ETH_EXT ended before the simulation started") &&
+                contains(finding_in(lines, "connect-failed"), "so the simulation was not started"),
+            "the finding connect-failed:\n" + out_of(lines));
+    // The bridge ended the hold, not --timeout-ms.
+    require(finding_in(lines, "timeout").empty(), "no finding timeout:\n" + out_of(lines));
+    require(events_with(lines, {"\"phase\":\"running\""}).empty() && contains(lines.back(), "\"simulation\":\"not_started\""),
+            "the simulation did not start:\n" + out_of(lines));
+}
+
 void connect_speed(const Options& base)
 {
     const Options o = connect_options(base);
@@ -1024,6 +1058,13 @@ void connect_device_shared(const Options& base)
         require(index_of(lines, {"\"event\":\"log\"", "outside: CAN -> virtual:1: also used by another vehicle-sil bridge" + who_text(outside.id()) +
                                                      " at "}) < lines.size(),
                 "the launcher said it when it found it:\n" + out_of(lines));
+        // It is said once, and before the ECUs start (the first link line of the bridge tells it), not
+        // only when the run is already going.
+        const std::vector<std::string> said = events_with(lines, {"\"event\":\"log\"", "outside: CAN -> virtual:1: also used by another vehicle-sil bridge"});
+        require(said.size() == 1, "the launcher said it once:\n" + out_of(lines));
+        require(index_of(lines, {"\"event\":\"log\"", "outside: CAN -> virtual:1: also used by another vehicle-sil bridge"}) <
+                    index_of(lines, {"\"name\":\"Talker\"", "\"state\":\"started\""}),
+                "the launcher said it before the ECUs started:\n" + out_of(lines));
         // The bridge's own warning and its link line are for the launcher: not shown; the log keeps them.
         require(!bridge_wrote(lines, "CAN", "is also used by") && !bridge_wrote(lines, "CAN", "] link "),
                 "the bridge's warning about the device is not shown:\n" + out_of(lines));
@@ -1032,6 +1073,20 @@ void connect_device_shared(const Options& base)
         require(contains(lines.back(), "\"simulation\":\"reached_stop_at\"") && contains(lines.back(), "\"result\":\"passed\""),
                 "the run went to its end:\n" + lines.back());
         require(outside.running(), "the bridge outside the run was not touched");
+    }
+    // A manual participant that has not come: the run waits for it, and has said it by then (from
+    // the bridge's first link line, not only when the run is going), once.
+    {
+        const fs::path dir = connect_dir(o, "device_shared_manual", "stop_at_ms: 2500\n", talker(o) + "  - name: Late\n    command: [" + ecu(o) + "]\n",
+                                         {{"Talker", "talk CAN"}});
+        Live live(o, dir, {"run", "--events", "--manual", "Late", "--speed", "1", "--connect", "CAN=virtual:1", "sim.yaml"});
+        live.wait_for({"\"event\":\"log\"", "outside: CAN -> virtual:1: also used by another vehicle-sil bridge" + who_text(outside.id())});
+        const long pid = started_pid(live.wait_for({"\"name\":\"bridge.CAN\"", "\"state\":\"started\""}));
+        end_process(pid, true);
+        const auto [status, lines] = live.finish();
+        require(status && status->code == 1, "exit code " + code_text(status) + "\n" + out_of(lines));
+        require(events_with(lines, {"\"event\":\"log\"", "outside: CAN -> virtual:1: also used by another vehicle-sil bridge"}).size() == 1,
+                "the launcher said it once:\n" + out_of(lines));
     }
     // --strict: an error, and the ECUs are not started.
     const fs::path dir = connect_dir(o, "device_shared_strict", "stop_at_ms: 2500\n", talker(o), {{"Talker", "talk CAN"}});

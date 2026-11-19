@@ -331,6 +331,11 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
                 static_cast<void>(silkit_configuration(*c.silkit_config, name, {}));
             }
         }
+        if (c.sample_every_step)
+        {
+            // Before the set-up makes the agent: the argument wins over the code's set_agent_options().
+            ecu->sample_every_step();
+        }
         set_up(*ecu);
         // Every ECU has a control agent, with the input ecu.connected (made now if the set-up
         // declared no variable).
@@ -413,7 +418,8 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
         }
         // What this executable takes from whoever starts it (the same for every way to call it).
         description.features = {std::string(ecu_executable::kFeatureMapNetwork),
-                                 std::string(ecu_executable::kFeatureJ1939Node)};
+                                 std::string(ecu_executable::kFeatureJ1939Node),
+                                 std::string(ecu_executable::kFeatureSampleEveryStep)};
         if (!describe_out->write(to_json(description)))
         {
             return fail(name, kExitSetupFailed, "could not write the description to stdout (is it closed?)");

@@ -272,6 +272,12 @@ public:
     /// afterwards, and once the run has started). std::invalid_argument for bad options
     /// (control::Agent::check_options(), with the ECU named); the options stay as they were.
     void set_agent_options(control::AgentOptions options);
+    /// Makes this ECU's agent sample the values in every step (AgentOptions::sample_period 0),
+    /// whatever set_agent_options() says before or after (its other options stay). For whoever
+    /// starts the ECU, not for its author: ecu_main() calls it for --sample-every-step, which
+    /// vehicle_sil_launch gives the ECUs whose values a scenario reads. Before the agent is made,
+    /// as set_agent_options() (std::logic_error afterwards, and once the run has started).
+    void sample_every_step();
     /// This ECU's control agent, made on first use (input() and output() use it too). Use it to
     /// connect a transport (control_silkit::AgentTransport, which completes the schema: declare the
     /// variables first; the networks and nodes of a Peer that exist then are the ones its
@@ -427,6 +433,17 @@ public:
         }
         options_ = options;
     }
+    /// Ecu::sample_every_step(): the agent is made with sample_period 0, whatever set_options()
+    /// says. std::logic_error once the agent is made.
+    void sample_every_step()
+    {
+        if (agent_)
+        {
+            throw std::logic_error(who_ + "sample_every_step() after the control agent was made: call it before the "
+                                          "first input(), output() or agent()");
+        }
+        every_step_ = true;
+    }
     /// The agent, made now if there is none (std::invalid_argument for bad options, with `who`
     /// in front; then none is kept).
     control::Agent& get()
@@ -436,7 +453,12 @@ public:
             std::unique_ptr<control::Agent> agent;
             try
             {
-                agent = std::make_unique<control::Agent>(options_);
+                control::AgentOptions options = options_;
+                if (every_step_)
+                {
+                    options.sample_period = SimDuration::zero(); // the one who starts the ECU wins over its author
+                }
+                agent = std::make_unique<control::Agent>(options);
             }
             catch (const std::invalid_argument& e)
             {
@@ -606,6 +628,7 @@ private:
     std::string who_;
     std::function<void(control::Agent&)> bind_;
     control::AgentOptions options_{};
+    bool every_step_ = false; ///< sample_every_step(): sample_period is 0 whatever options_ says
     /// Before agent_: the agent's input refers to it.
     BusConnection connection_;
     std::unique_ptr<control::Agent> agent_;
@@ -699,6 +722,12 @@ inline void Ecu::set_agent_options(control::AgentOptions options)
 {
     require_not_started("set_agent_options()");
     ecu_agent().set_options(options);
+}
+
+inline void Ecu::sample_every_step()
+{
+    require_not_started("sample_every_step()");
+    ecu_agent().sample_every_step();
 }
 
 inline void Ecu::declare(const std::string& name, const std::function<void(control::Agent&)>& add)
