@@ -1231,6 +1231,51 @@ describe('the front door', () => {
     });
   });
 
+  describe('listing the scenarios', () => {
+    const answer = (file: string) => ({
+      file,
+      directory: 'scenarios',
+      found: true,
+      scenarios: [{ path: 'scenarios/a.yaml', name: 'a.yaml' }],
+      truncated: false,
+    });
+
+    it('lists the scenarios of the file that is given, as the entries of the list', async () => {
+      const rig = await open();
+      const list = rig.front.scenarios({ file: 'sim.yaml' });
+      const request = rig.http.expectOne('api/scenarios?file=sim.yaml');
+      expect(request.request.method).toBe('GET');
+      request.flush(answer('sim.yaml'));
+      expect(await list).toEqual([{ path: 'scenarios/a.yaml', name: 'a.yaml' }]);
+    });
+
+    it('asks for the file of the status when none is given, and rejects without one', async () => {
+      const rig = await open();
+      // The app example has no start-up file and no run: the status file is null
+      expect(rig.front.status.get().file).toBeNull();
+      await expect(rig.front.scenarios()).rejects.toMatchObject({
+        code: 'no-file',
+        outcome: 'refused',
+      });
+      rig.http.expectNone('api/scenarios');
+    });
+
+    it("rejects with the server's code as an ActionError", async () => {
+      const rig = await open();
+      const list = rig.front
+        .scenarios({ file: 'gone.yaml' })
+        .catch((e: unknown) => e as ActionError);
+      rig.http
+        .expectOne('api/scenarios?file=gone.yaml')
+        .flush(
+          { error: { code: 'unknown-file', message: 'no such file.', detail: null } },
+          { status: 404, statusText: 'Not Found' },
+        );
+      expect(await list).toBeInstanceOf(ActionError);
+      expect(await list).toMatchObject({ code: 'unknown-file' });
+    });
+  });
+
   describe('connecting outside', () => {
     /** The answer of api/connections with `networks` as the launcher's list of that network. */
     const listed = (networks: unknown[], more: Record<string, unknown> = {}) => ({

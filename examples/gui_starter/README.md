@@ -118,5 +118,44 @@ try {
 ```
 
 - `npm run pack:client` type-checks this example against the types of the package it built, with both `nodenext` and `bundler` module resolution.
-- Every state is a `Readable`: a read-only value with `get()` and `subscribe(fn)`. To turn it into your framework's state (React `useSyncExternalStore`, a Vue `ref`, a Svelte store, an Angular signal and so on), convert it with `subscribe`.
+- Through the front door only, a screen chooses a scenario, starts, pauses, steps, resumes and stops a run, and reads an output and writes an input (every call is an operation of `connect()`; `scenarios()` takes `{ file }` for another configuration file than the start-up file):
+
+```ts
+import { ActionError, connect } from '@vehicle-sil/gui-client';
+
+const front = await connect();
+try {
+  // Choose a scenario among the files next to the start-up file (the list is empty if there are none).
+  const [scenario] = await front.scenarios();
+  await front.run.start(scenario ? { scenario: scenario.path } : {});
+  await front.time.pause();
+  await front.time.step(100); // resolves when 100 ms of simulated time have passed and the run is paused again
+  const speed = front.variable('Engine.engine.speed');
+  const unsubscribe = speed.subscribe((view) => console.log(view.text, view.unit)); // values arrive while you subscribe
+  await front.variable('Engine.engine.throttle').write(60); // an input of an ECU
+  await front.time.resume();
+  unsubscribe();
+  await front.run.stop();
+} catch (error) {
+  if (error instanceof ActionError) console.log(error.code, error.message, error.outcome);
+  else throw error;
+}
+```
+
+- To turn a `Readable` into an Angular signal, subscribe in an injection context and unsubscribe when the component goes (`DestroyRef`):
+
+```ts
+import { DestroyRef, inject, signal } from '@angular/core';
+import type { Readable } from '@vehicle-sil/gui-client';
+
+/** An Angular signal that follows a `Readable` (call it in an injection context). */
+export function readableSignal<T>(readable: Readable<T>) {
+  const state = signal(readable.get());
+  const unsubscribe = readable.subscribe((value) => state.set(value));
+  inject(DestroyRef).onDestroy(unsubscribe);
+  return state.asReadonly();
+}
+```
+
+- Every state is a `Readable`: a read-only value with `get()` and `subscribe(fn)`. To turn it into your framework's state (React `useSyncExternalStore`, a Vue `ref`, a Svelte store, an Angular signal and so on), convert it with `subscribe` (the signal above is an example; the package itself has no framework code).
 - To develop on a development server (Vite and others) while connected, see "Use a development server" in [docs/gui.md](../../docs/gui.md#use-a-development-server).

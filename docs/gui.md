@@ -207,7 +207,7 @@ For your own screen, use as many of these 3 layers as you need. Each layer keeps
 |---|---|---|---|
 | Parts only | HTML and CSS: elements such as `<vsil-run-controls>`, `<vsil-slider variable="Engine.engine.throttle">` and `<vsil-value>` | Start and stop, time control, status, values, sliders, buttons that write, the scenario of the next run and its result, and the timeline of the run. No script and no build | The guide [Build your own screen for the browser GUI](howto/gui-screen.md) |
 | A script of your own | A script that calls `connect()`, `watch`, `client.variable()` and the operations (Promises) | What the parts do not have: a display or a button of your own, a rule. It uses the connection of the parts: a refused start, stop or time operation shows in `<vsil-status>`, and a refused write of a variable next to the part that shows it | `main.js` of the screen template, and "The front door (`connect()`)" in [gui/client/README.md](../gui/client/README.md#the-front-door-connect) |
-| A project with a framework | A project with a build, and the library package (`.tgz`) | The same parts and library in the templates of React, Vue, Svelte, Angular and others (the parts are custom elements) | "A project with a framework" in [examples/gui_starter/README.md](../examples/gui_starter/README.md#a-project-with-a-framework) |
+| A project with a framework | A project with a build, and the library package (`.tgz`) | The same parts and library in the templates of React, Vue, Svelte, Angular and others (the parts are custom elements) | "A project with a framework" in [examples/gui_starter/README.md](../examples/gui_starter/README.md#a-project-with-a-framework) (the package, a whole run through the front door, an Angular signal) |
 
 The parts and the library come from the GUI server (`/vsil/`) in the first 2 layers, so there is nothing to copy; a project with a framework uses the package. The sample screens' own widgets (the Angular app in `gui/web`) are not offered for reuse: use the parts.
 
@@ -434,7 +434,7 @@ Select and run a scenario ([scenario.md](scenario.md); a file that sets ECU vari
 - A scenario cannot start paused (**Start paused** is disabled).
 - Pause, step, speed changes and stop work as in a run without a scenario (the scenario result does not change). The GUI sends them as commands on the launcher's stdin; a Control Server client's time calls get the same answers.
 - If the launcher has a Control Server (`control-server` in `features`), the Variables screen shows the values (writing widgets are disabled and show "Cannot write while a scenario runs (view only)"). With a launcher without a Control Server, no run has variables, a scenario run included, and the Variables screen shows the reason as for any run.
-- The server API is `GET api/scenarios?file=<configuration file>` and `scenario` of `api/check` and `api/run` (see "Scenarios" in [gui/protocol/README.md](../gui/protocol/README.md#scenarios)); in the library, `client.scenarios(file)`, `scenario` of `check` and `run.start`, and `scenario` of the session copy.
+- The server API is `GET api/scenarios?file=<configuration file>` and `scenario` of `api/check` and `api/run` (see "Scenarios" in [gui/protocol/README.md](../gui/protocol/README.md#scenarios)); in the library, `front.scenarios({ file })` (`client.low.scenarios(file)` is the one-shot call under it), `scenario` of `check` and `run.start`, and `scenario` of the session copy.
 
 ### Timeline of a scenario run
 
@@ -924,7 +924,7 @@ The rules that apply to your own screen served with `--web`. For the steps to bu
 
 ### Files served with `--web`
 
-`--web` takes the build output directory of your screen (`dist/` or similar). Without `--web`, the server serves the sample screens.
+`--web` takes the build output directory of your screen (for an Angular build, the folder `dist/<project>/browser`; other tools name it differently). Without `--web`, the server serves the sample screens.
 
 | Directory given | What happens |
 |---|---|

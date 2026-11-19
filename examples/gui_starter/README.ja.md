@@ -118,5 +118,44 @@ try {
 ```
 
 - `npm run pack:client` は、この例を、作ったパッケージの型で検査します（`nodenext` と `bundler` の両方のモジュール解決で）。
-- どの状態も `Readable` です。`get()` と `subscribe(fn)` を持つ、読み取り専用の値です。自分のフレームワークの状態（React の `useSyncExternalStore`、Vue の `ref`、Svelte のストア、Angular の signal など）にするには、`subscribe` で変換します。
+- 画面は、正面の口だけで、シナリオを選び、実行を開始・一時停止・ステップ・再開・停止し、出力を読み、入力を書けます（どの呼び出しも `connect()` の操作です。起動時のファイルと別の設定ファイルには、`scenarios()` に `{ file }` を渡します）。
+
+```ts
+import { ActionError, connect } from '@vehicle-sil/gui-client';
+
+const front = await connect();
+try {
+  // 起動時のファイルの隣のシナリオから 1 つ選びます（なければ一覧は空です）。
+  const [scenario] = await front.scenarios();
+  await front.run.start(scenario ? { scenario: scenario.path } : {});
+  await front.time.pause();
+  await front.time.step(100); // 100 ms 進んで、再び一時停止したときに解決します
+  const speed = front.variable('Engine.engine.speed');
+  const unsubscribe = speed.subscribe((view) => console.log(view.text, view.unit)); // 値は購読している間に届きます
+  await front.variable('Engine.engine.throttle').write(60); // ECU の入力
+  await front.time.resume();
+  unsubscribe();
+  await front.run.stop();
+} catch (error) {
+  if (error instanceof ActionError) console.log(error.code, error.message, error.outcome);
+  else throw error;
+}
+```
+
+- `Readable` を Angular の signal にするには、注入コンテキストで購読し、コンポーネントが消えるとき（`DestroyRef`）に購読をやめます。
+
+```ts
+import { DestroyRef, inject, signal } from '@angular/core';
+import type { Readable } from '@vehicle-sil/gui-client';
+
+/** `Readable` に追従する Angular の signal です（注入コンテキストで呼びます）。 */
+export function readableSignal<T>(readable: Readable<T>) {
+  const state = signal(readable.get());
+  const unsubscribe = readable.subscribe((value) => state.set(value));
+  inject(DestroyRef).onDestroy(unsubscribe);
+  return state.asReadonly();
+}
+```
+
+- どの状態も `Readable` です。`get()` と `subscribe(fn)` を持つ、読み取り専用の値です。自分のフレームワークの状態（React の `useSyncExternalStore`、Vue の `ref`、Svelte のストア、Angular の signal など）にするには、`subscribe` で変換します（上の signal が一例です。パッケージ自体にフレームワークのコードはありません）。
 - 開発サーバー（Vite など）で、接続したまま開発するには、[docs/gui.md](../../docs/ja/gui.md#開発サーバーを使う) の「開発サーバーを使う」を見てください。

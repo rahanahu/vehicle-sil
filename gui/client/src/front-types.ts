@@ -6,6 +6,7 @@ import type {
   Finding,
   OutsideState,
   RunEnd,
+  ScenarioFile,
   ScenarioStatus,
   ScenarioStep,
 } from './protocol';
@@ -140,6 +141,10 @@ export interface Intent {
   disable?: string[];
   enable?: string[];
   manual?: string[];
+  /**
+   * A `path` of `scenarios()` (relative to the root of the GUI server, as the list gives it; the server turns it into
+   * the path the request file needs, which is relative to the configuration file's directory). Do not compose it.
+   */
   scenario?: string;
   variant?: string;
   params?: Record<string, string | number | boolean>;
@@ -294,6 +299,13 @@ export interface Front {
    * `unknown-network`, ...).
    */
   connections(request: { network: string }, options?: { file?: string }): Promise<ConnectEntry[]>;
+  /**
+   * The scenario files next to `file` (default: the file of `status`, which is the start-up file until a run names
+   * another), as the list that `client.low.scenarios(file)` gives, without its directory. Give `path` of an entry as
+   * `intent.scenario`. Rejects with an ActionError (`no-file` when there is no file to ask for, and the server's code
+   * otherwise).
+   */
+  scenarios(options?: { file?: string }): Promise<ScenarioFile[]>;
   /**
    * Checks what `intent` would start, without starting it (`POST api/check`), and returns the launcher's check result
    * (`findings`; `time_lock` and `networks[].outside` are in `raw`). Rejects with an ActionError (`target-not-listed`,
