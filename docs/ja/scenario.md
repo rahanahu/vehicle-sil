@@ -284,7 +284,7 @@ ECU がサンプルを送信する頻度は、Agent の `sample_period` です�
 | `every_step`（既定） | ランチャーが、シナリオが値を読む ECU を `--sample-every-step` を付けて起動します。その ECU は、コードの指定にかかわらず、ECU のステップごとにサンプルを送信します（[ecu-executable.md](ecu-executable.md#変数を公開する--registry-uri) の「変数を公開する（`--registry-uri`）」）。それでもステップより粗い頻度で送信する ECU があれば、シナリオを始めずに、実行は `scenario-not-observed` で失敗します。 |
 | `as_sent` | 何も頼まず、何も断りません。シナリオは、それぞれの ECU が送信するままのサンプルで判定します。照合に注記 `scenario-samples-as-sent` が出ます。 |
 
-- シナリオが ECU の値を読むのは、条件（`expect`、`wait_until`、`ramp` と `wave` の横の `expect`）にその ECU の変数があるときと、`from` のない `ramp` か `around` のない `wave` が、その ECU の変数の値から始まるときです。スキップする手順は数えません。
+- シナリオが ECU の値を読むのは、条件（`expect`、`wait_until`、`ramp` と `wave` の横の `expect`）にその ECU の変数があるときと、`from` のない `ramp` か `around` のない `wave` が、その ECU の変数のうち、先の手順がまだ書いていないものの値から始まるときです。スキップする手順は数えません。
 - シナリオが書くだけの ECU と、シナリオのない実行の ECU は、`sample_period` のままです。ほかの ECU から画面や Control API のクライアントが受信するものは変わりません。
 - 頼めるのは、`--describe` の `features` に `sample-every-step` がある実行ファイルだけです（この vehicle-sil の `ecu_main` の実行ファイルには、すべてあります）。ない実行ファイルには、照合が警告 `scenario-samples-unsupported` を出し、ランチャーはこの引数を付けずに起動します。その ECU が、自分で ECU のステップごとに 1 回以上サンプルを送信していれば（ステップが 10 ms 以上で `sample_period` が既定の ECU、コードで `sample_period` を 0 にした ECU）、実行はそのまま始まります。
 - `as_sent` は、ステップごとのサンプルを送信できない participant（`ecu_main` で作っていない実行ファイル、作り直せない以前の vehicle-sil の実行ファイル）のときと、サンプルの負荷が大きすぎるときに使います。`as_sent` のシナリオから見えないもの: その時点の `expect` は、最大で `sample_period` だけ古い値を読みます。サンプルとサンプルの間に変わって戻った値は、条件に現れません。サンプルを 1 つも含まない `hold_for_ms` は、始まりの値だけで成功します。

@@ -160,6 +160,39 @@ TEST_CASE(scenario_reads_the_participants_of_its_conditions_and_of_the_bases_it_
     check_text(readers(read(check, kHead + "  - expect: { Body.speed: 0, Door.speed: 0 }\n")), "Body,Door");
 }
 
+TEST_CASE(a_motion_that_starts_from_a_value_the_scenario_wrote_reads_no_sample)
+{
+    const Checked check = checked(kTakes, kTakes);
+    const std::string ramp = "  - ramp: { Door.level: { to: 5, over_ms: 50 } }\n";
+    // The variable was written before: a set, a ramp, a wave.
+    check_text(readers(read(check, kHead + "  - set: { Door.level: 1 }\n" + ramp)), "");
+    check_text(readers(read(check, kHead + "  - ramp: { Door.level: { from: 1, to: 5, over_ms: 50 } }\n" + ramp)), "");
+    check_text(readers(read(check, kHead + "  - wave: { Door.level: { triangle: { amplitude: 5, period_ms: 100 }, around: 50, for_ms: 300 } }\n" + ramp)),
+               "");
+    // Not written yet: the first one reads, the next starts from what the first wrote.
+    check_text(readers(read(check, kHead + ramp + ramp)), "Door");
+    // Another variable, or the same step: the sample is read.
+    check_text(readers(read(check, kHead + "  - set: { Body.level: 1 }\n" + ramp)), "Door");
+    check_text(readers(read(check, kHead + "  - ramp: { Door.level: { to: 5, over_ms: 50 }, Body.level: { to: 5, over_ms: 50 } }\n")), "Door,Body");
+    // A condition always reads, whatever was written.
+    check_text(readers(read(check, kHead + "  - set: { Door.level: 1 }\n  - expect: { Door.level: 1 }\n")), "Door");
+    // A step the run skips writes nothing: the ramp after it starts from the sample.
+    ScenarioCatalog absent = scenario_catalog(check);
+    for (auto& participant : absent)
+    {
+        if (participant.name == "Body")
+        {
+            participant.not_in_variant = true;
+        }
+    }
+    ScenarioContext context;
+    context.variant = "small";
+    const ScenarioRead r = read_scenario(kHead + "  - set: { Body.level: 1, Door.level: 2 }\n" + ramp, absent, context);
+    CHECK(r.scenario.has_value());
+    CHECK(!r.scenario->steps[0].skipped.empty());
+    check_text(readers(*r.scenario), "Door");
+}
+
 TEST_CASE(the_run_asks_the_ecus_a_scenario_reads_for_a_sample_in_every_step)
 {
     const std::string reads_both = kHead + "  - set: { Body.level: 1 }\n  - expect: { Body.speed: 0, Door.speed: 0 }\n";
