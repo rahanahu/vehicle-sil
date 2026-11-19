@@ -170,6 +170,12 @@ REQUEST_VERSION_KEY = "vehicle_sil_run_request"
 INTENT_FIELDS = ("scenario", "variant", "params", "disable", "enable", "manual", "strict", "connect", "time_policy")
 # `$schema` is the editor's key of a request file: read and dropped, as the launcher does.
 REQUEST_FIELDS = ("file", "$schema", REQUEST_VERSION_KEY, *INTENT_FIELDS, "speed", "start_paused")
+# POST api/check with `text` (the unsaved text of the file, checked as that file): the configuration only, so of the
+# intent only what chooses which configuration is checked. A scenario, the participants to leave out or start by
+# hand, the connections and the time are choices of a run, which a run makes from the saved file.
+TEXT_FIELDS = ("file", "$schema", REQUEST_VERSION_KEY, "variant", "strict", "text")
+# POST api/describe: the file and its variant, whose executables are described again.
+DESCRIBE_FIELDS = ("file", "variant")
 # POST api/connections: the configuration file and the one network to list (the one the user opened).
 CONNECTIONS_FIELDS = ("file", "network")
 # The target of `connect` that keeps a network on SIL Kit only: it needs no list.
@@ -406,6 +412,21 @@ def check_command(launcher: Launcher, file: str, request: Path) -> list[str]:
     return launcher.prefix + ["check", "--json", "--request", str(request), "--", file]
 
 
+def text_check_command(launcher: Launcher, file: str, request: Path, descriptions: Path) -> list[str]:
+    """The check of a text that the caller writes to the launcher's standard input, as if it were the file's (the
+    paths in it are from the file's directory). It starts no process: each participant's description is the one
+    saved in `descriptions` for its command and executable as they are now (a file that is not there: none)."""
+    return launcher.prefix + ["check", "--json", "--text-from-stdin", "--descriptions", str(descriptions),
+                              "--request", str(request), "--", file]
+
+
+def describe_command(launcher: Launcher, file: str, request: Path, descriptions: Path) -> list[str]:
+    """The check of the file as it is saved, which starts each executable with --describe, as every check does, and
+    saves their output in `descriptions` for text_check_command."""
+    return launcher.prefix + ["check", "--json", "--write-descriptions", str(descriptions),
+                              "--request", str(request), "--", file]
+
+
 def connections_command(launcher: Launcher, file: str, network: str) -> list[str]:
     """Where one network of the file can be connected on this computer: only the bridge of that network is asked
     (no other one is started, and so no Npcap prompt comes for a network that the user did not open)."""
@@ -427,19 +448,21 @@ def run_command(launcher: Launcher, file: str, request: Path, control_credential
 
 
 REQUEST_NAME = "the request"
+DESCRIPTIONS_NAME = "the saved descriptions"
 
 
-def hide_request(value: object, path: Path) -> object:
+def hide_request(value: object, path: Path, said: str = REQUEST_NAME) -> object:
     """The launcher's words with the name of this server's own request file (a temporary file that nobody can open)
     said as "the request": in every text, "<file>, line N" too, and the `line` of a finding that was about the file.
-    value: a text, or what json.loads made of the launcher's output."""
+    value: a text, or what json.loads made of the launcher's output. said: another name for another such file (the
+    saved descriptions)."""
     name = str(path)
     if isinstance(value, str):
-        return re.sub(re.escape(name) + r"(?:, line \d+)?", REQUEST_NAME, value)
+        return re.sub(re.escape(name) + r"(?:, line \d+)?", said, value)
     if isinstance(value, list):
-        return [hide_request(v, path) for v in value]
+        return [hide_request(v, path, said) for v in value]
     if isinstance(value, dict):
-        out = {k: hide_request(v, path) for k, v in value.items()}
+        out = {k: hide_request(v, path, said) for k, v in value.items()}
         if value.get("file") == name and "line" in out:
             out["line"] = None
         return out

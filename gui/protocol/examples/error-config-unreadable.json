@@ -1,0 +1,15 @@
+{
+  "description": "A file that is not UTF-8 text.",
+  "request": {
+    "method": "GET",
+    "path": "api/config?file=utf16.yaml"
+  },
+  "status": 422,
+  "response": {
+    "error": {
+      "code": "config-unreadable",
+      "message": "utf16.yaml is not UTF-8 text (it is UTF-16): save it as UTF-8 without NUL characters, the encoding that the launcher reads",
+      "detail": null
+    }
+  }
+}
