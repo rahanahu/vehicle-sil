@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=../../../schema/scenario.schema.json
 # A scenario of the timeline references (see README.md here): the engine runs it against the model
-# ECUs of tests/launch/test_scenario.cpp, not against real ones. Its points are in points_file.csv.
+# ECUs of tests/scenario/scenario_model.hpp, not against real ones. Its points are in points_file.csv.
 vehicle_sil_scenario: 1
 name: points from a file, and a ramp from where they end
 steps:

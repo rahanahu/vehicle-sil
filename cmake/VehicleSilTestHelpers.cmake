@@ -86,9 +86,11 @@ endfunction()
 #   vehicle_sil_add_harness_tests(<target>
 #     PREFIX <prefix> LABELS <label>... TIMEOUT <seconds>
 #     SOURCES <file>... LINK <target>...
-#     [RUN_SERIAL <regex>])   # tests whose name matches run alone (wall-clock sensitive)
+#     [RUN_SERIAL <regex>]    # tests whose name matches run alone (wall-clock sensitive)
+#     [REGISTRATION <name>])  # the name of the check below, when one prefix is shared by targets of
+#                             # several directories (a directory cannot see the tests of another)
 function(vehicle_sil_add_harness_tests target)
-  cmake_parse_arguments(ARG "" "PREFIX;TIMEOUT;RUN_SERIAL" "LABELS;SOURCES;LINK" ${ARGN})
+  cmake_parse_arguments(ARG "" "PREFIX;TIMEOUT;RUN_SERIAL;REGISTRATION" "LABELS;SOURCES;LINK" ${ARGN})
   _vehicle_sil_scaled_ctest_timeout(timeout ${ARG_TIMEOUT})
   add_executable(${target} ${ARG_SOURCES})
   target_link_libraries(${target} PRIVATE vehicle_sil_test_main ${ARG_LINK})
@@ -119,7 +121,9 @@ function(vehicle_sil_add_harness_tests target)
   # others' <PREFIX>.registration.<target>.
   list(JOIN names "|" expected)
   set(registration ${ARG_PREFIX}.registration)
-  if(TEST ${registration})
+  if(ARG_REGISTRATION)
+    set(registration ${ARG_REGISTRATION})
+  elseif(TEST ${registration})
     set(registration ${ARG_PREFIX}.registration.${target})
   endif()
   add_test(NAME ${registration}

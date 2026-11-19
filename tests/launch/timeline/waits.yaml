@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=../../../schema/scenario.schema.json
 # A scenario of the timeline references (see README.md here): the engine runs it against the model
-# ECUs of tests/launch/test_scenario.cpp, not against real ones.
+# ECUs of tests/scenario/scenario_model.hpp, not against real ones.
 vehicle_sil_scenario: 1
 name: steps that wait, passing
 steps:
