@@ -628,10 +628,7 @@ def test_a_launcher_in_the_current_directory_is_not_taken_from_path(tmp_path: Pa
     planted = here / "vehicle_sil_launch"
     planted.write_text(f"#!{sys.executable}\n" + REPLAY.read_text())
     planted.chmod(0o755)
-    from vehicle_sil_gui import __version__
-    # The copy is outside the source tree, so it cannot read the GUI's version itself: give it the same one.
-    env = {"PATH": os.pathsep.join([".", os.environ.get("PATH", "")]), "VEHICLE_SIL_LAUNCH": "",
-           "REPLAY_VERSION": __version__}
+    env = {"PATH": os.pathsep.join([".", os.environ.get("PATH", "")]), "VEHICLE_SIL_LAUNCH": ""}
     with gui_server(tmp_path, launcher=None, env=env, cwd=here, expect_start=False) as gui:
         assert gui.proc.returncode == 2 and "current directory" in gui.stderr_text()
     with gui_server(tmp_path, launcher=planted, env=env, cwd=here) as gui:
