@@ -262,6 +262,25 @@ If you set `time_step_ms`, that value is used. With a set speed, if ECU steps do
 
 A finer time step means more time synchronizations. That is why the default at maximum speed stays 10 ms.
 
+### How fast a run can go
+
+Estimate the speed before you build the ECUs, and check it after. The real time of 1 time step is roughly the sum of three parts.
+
+| Part | What it depends on |
+|---|---|
+| Base cost | Time synchronization. It grows with the number of participants and with how fine the time step is. |
+| Computation of the slowest ECU | The step that ECU runs in this time step. ECUs compute in parallel, so only the slowest one is added. |
+| Scenario writes | The writes of this time step (see below). |
+
+The speed you can reach is roughly the time step ÷ the real time of 1 time step. Speed 1 needs the real time of 1 time step to stay below the time step.
+
+To measure the base cost, run the same number of participants with the same time step, using light ECUs (for example the ECU of the template), at `--speed max` and without a scenario. From `timing` in the JSON result (`run --json`), divide `wall_ms` by the number of time steps (`sim_ms` ÷ the time step). The time step ÷ that value is the speed this configuration can reach. Once the real ECUs exist, run the same configuration at `--speed max`. The `actual_speed` of that run is the highest speed this computer can be set to for that configuration. Trust the measurement over the estimate.
+
+With many participants, the CPU can enter a power-saving state while it waits for the other ECUs, and the time to leave that state, or the difference between kinds of cores (performance and efficiency cores), can make the real time 10 to 50 percent longer than the estimate. It depends on the power settings of the PC and the OS (use a high-performance profile). This is a property of the computer, and it is the same where you really use the simulation. Check the speed on the PC you will use.
+
+Scenario writes of one time step are sent together, and the run waits once for the ECUs to receive them. A time step with more writes, or with more ECUs that receive them, takes longer. An ECU that a condition (`expect` and similar) reads sends its values at every time step. If the speed is not enough, write less often, or reduce the ECUs that conditions read.
+
+
 ### Lateness warnings and what to do
 
 If there is even 1 late time step, the warning `behind-real-time` is reported (a failure with `--strict`). The counts are in `timing` of the result, in the `time:` line of the human-readable output and in the `time` events of `--events`.
@@ -272,7 +291,7 @@ When the run falls behind, lower the speed or look for the cause.
 |---|---|
 | An ECU has a heavy computation in one step | Make that step lighter (a larger step size does not reduce lateness if a single step is heavy). |
 | Many ECUs with small steps cause many synchronizations | Increase the ECU step sizes and `time_step_ms`. |
-| You do not know which participant is slow | Disable the ECUs one at a time (`--disable`) and compare. |
+| You do not know which participant is slow | Disable the ECUs one at a time (`--disable`) and compare. To see whether the speed is reachable at all, see [How fast a run can go](#how-fast-a-run-can-go). |
 
 `vehicle_sil_launch` does not know which participant is slow, because SIL Kit does not tell the controller how long each participant's step took.
 
