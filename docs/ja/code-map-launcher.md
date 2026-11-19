@@ -391,7 +391,7 @@
 守ること:
 
 - 照合のルール、表、JSON の `networks` は、自己申告のネットワークを `seen_networks()`（`libs/config/src/check_networks.cpp`。対応を当てるただ 1 つの関数。`SeenEcu::seen_networks()`（`libs/config/include/vehicle_sil/config/detail/seen_ecu.hpp`）が呼ぶ）からだけ読みます。`description.networks` を自分で読むルールは、名前を替えたネットワークを実行ファイルの名前で見てしまいます。`launch.described_networks_are_read_in_one_place`（`cmake/VehicleSilCheckDescribedNetworks.cmake`）が、`libs/launch` と `tools/launch` の `.networks`、`->networks`、`::networks` の行を読んで確認します。設定の `config.networks` だけは数えないので、ほかの構造体のメンバーに `networks` という名前を付けると落ちます。別の名前にします。ルールや出力を追加したら、名前を替えたネットワークの場合を `tests/launch/test_check.cpp` に追加します。
-- `run` の引数は `detail::participant_arguments()`（`libs/runner/src/run_participants.cpp`）の 1 か所で作ります。起動、`manual` のコマンド、イベント `participant` が同じ列を使います（`--map-network` は最後。`describe: false` ではプレースホルダーを置き換えた後）。
+- `run` の引数は `detail::participant_arguments()`（`libs/runner/src/run_participants.cpp`）の 1 か所で作ります。起動、`manual` のコマンド、イベント `participant` が同じ列を使います（`--map-network` と `--j1939-node` はほかの後。`describe: false` ではプレースホルダーを置き換えた後。その後に、実行のシナリオが値を読む participant には `--sample-every-step`。`RunMember::sample_every_step`）。
 
 合わせて直すドキュメント:
 

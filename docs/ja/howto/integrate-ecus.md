@@ -487,7 +487,7 @@ scenario scenarios/engine_speed.yaml (the dashboard receives the engine speed): 
 
 line  step                                                             result  at
 6     set Engine.engine.throttle = 50                                  ok      0 ms
-8     expect Dashboard.dashboard.engine_speed ge 1700 (within 600 ms)  ok      410 ms
+8     expect Dashboard.dashboard.engine_speed ge 1700 (within 600 ms)  ok      405 ms
 ```
 
 同じシナリオを `simulation.two-buses.yaml` で実行すると、`expect` が失敗して、終了コード 1 で終わります。次も、出力の同じところを抜き出したものです。

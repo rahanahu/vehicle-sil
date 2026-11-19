@@ -77,6 +77,10 @@ struct RunMember
     /// waited for, and stops the run when it ends. Empty for a participant of the file, also one
     /// whose role in the file is bridge.
     std::optional<config::NetworkOutside> outside{};
+    /// run --scenario: the run gives the participant's executable --sample-every-step, because the
+    /// scenario reads its values and judges with every step (sample_every_step_participants()).
+    /// What the scenario and the description say, not a choice of the caller.
+    bool sample_every_step = false;
 };
 
 /// One run as it is settled before anything starts: a value, made by plan_run() and never written

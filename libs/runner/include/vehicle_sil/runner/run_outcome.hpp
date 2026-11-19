@@ -281,11 +281,27 @@ struct OutcomeControl
     std::uint64_t unknown = 0;
 };
 
+/// A participant whose values the scenario reads and that sends them less often than its step,
+/// in a scenario that judges with every step (ScenarioSamples::EveryStep): found before the first
+/// step, and the scenario did not begin (finding "scenario-not-observed").
+struct ScenarioNotObserved
+{
+    std::string participant;
+    SimDuration sample_period{}; ///< what its hello said (AgentOptions::sample_period)
+    SimDuration step{};          ///< its step, as its --describe said it (ScenarioParticipant::step)
+    /// It was started with --sample-every-step (RunMember::sample_every_step) and sends less often
+    /// all the same; false: its executable does not say that it takes the argument.
+    bool asked = false;
+};
+
 /// run --scenario and --timeline: what became of the scenario and of its timeline file.
 struct OutcomeScenario
 {
     /// What became of the scenario (ScenarioStatus::NotRun if the simulation did not start).
     std::optional<scenario::ScenarioRun> result{};
+    /// Why the scenario did not begin although the simulation started: these participants' values
+    /// cannot be judged with every step. The scenario is then Failed with no step run.
+    std::vector<ScenarioNotObserved> not_observed{};
     /// The scenario's thread failed unexpectedly: why (the scenario is Incomplete).
     std::string error{};
     /// The timeline file as the user named it (RunHost::timeline), once it was opened; ""

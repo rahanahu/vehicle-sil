@@ -59,6 +59,11 @@ struct EcuMainOptions
 ///                             parse_j1939_node_argument()). They apply in add_node(); --describe
 ///                             keeps the code's values and says that the executable takes it
 ///                             ("j1939-node" in "features"). On Windows the value must be ASCII
+///     --sample-every-step     with --registry-uri: the ECU's agent samples the values in every
+///                             step (Ecu::sample_every_step(): AgentOptions::sample_period 0,
+///                             whatever the set-up's set_agent_options() says; an agent that a
+///                             transport of the application holds follows it too). --describe says
+///                             that the executable takes it ("sample-every-step" in "features")
 ///     --local --run-for-ms <ms>  runs this ECU alone on the local virtual buses for <ms> of
 ///                             virtual time (a check of the ECU by itself)
 ///     --name <name>           the participant name instead of EcuMainOptions::name (ASCII or

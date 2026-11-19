@@ -565,9 +565,9 @@ void scenario_disconnect(const Options& o)
         return scenario_json(lf(r.standard_output));
     };
     const std::string fastest = run({}, "as fast as possible");
-    require(contains(fastest, "\"status\": \"passed\"") && contains(fastest, "\"over_at_ms\": 615,"),
-            "the scenario passes, and is over at 615 ms:\n" + fastest);
-    for (const auto& [line, at] : std::vector<std::pair<int, int>>{{9, 300}, {11, 510}, {13, 520}, {14, 610}})
+    require(contains(fastest, "\"status\": \"passed\"") && contains(fastest, "\"over_at_ms\": 610,"),
+            "the scenario passes, and is over at 610 ms:\n" + fastest);
+    for (const auto& [line, at] : std::vector<std::pair<int, int>>{{9, 300}, {11, 505}, {13, 520}, {14, 605}})
     {
         const std::string expected = "\"at_ms\": " + std::to_string(at) + ",";
         const auto step = fastest.find("\"line\": " + std::to_string(line) + ",");

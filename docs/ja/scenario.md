@@ -140,6 +140,7 @@ YAML です（`{` で始まれば JSON）。設定ファイルとは別のファ
 |---|---|---|
 | `vehicle_sil_scenario` | はい | 形式のバージョンで、`1` です。 |
 | `name` | いいえ | シナリオの名前です（出力に表示されます）。 |
+| `samples` | いいえ | シナリオが値を読む ECU が、値を送る頻度です。`every_step`（既定）か `as_sent`。[ECU が値を送る頻度](#ecu-が値を送る頻度samples)にあります。 |
 | `only` | いいえ | このシナリオを実行する機種の名前の並びです（`only: [small, medium]`。書かなければ、どの機種でも実行します。[機種を限定する](#機種を限定するonly)）。 |
 | `params` | いいえ | パラメーターの既定の値（名前 → 値）です（手順の値の位置に `${name}` と書いて使います。[パラメーター](#パラメーターparamsname)）。 |
 | `inputs` | いいえ | 入力ごとの宣言（変数 → `{ dither: <波形> }`）です。シナリオの始めから、その入力に細かい揺れを重ねます（[細かい揺れを重ねる](#細かい揺れを重ねるdither)）。 |
@@ -257,7 +258,9 @@ controller のタイムステップは、設定ファイルの `time_step_ms` �
 
 ## 値の見え方
 
-ECU は、Agent の `sample_period`（既定は仮想時間の 10 ms）ごとに、ステップの終わりの全変数の値を 1 組（サンプル）送信します。サンプルの時刻は、そのステップが始まった時刻です。条件が見るのは、このサンプルです。
+ECU は、ステップの終わりの全変数の値を 1 組（サンプル）送信します。サンプルの時刻は、そのステップが始まった時刻です。条件が見るのは、このサンプルです。
+
+シナリオつきの実行では、シナリオが値を読む ECU は、ECU のステップごとにサンプルを送信します（[ECU が値を送る頻度](#ecu-が値を送る頻度samples)）。そのため、値は、その ECU の次のステップまで、最後のサンプルのとおりです。条件は、ECU のステップの終わりの値を全部見ます。
 
 | 条件 | 見るサンプル |
 |---|---|
@@ -266,21 +269,40 @@ ECU は、Agent の `sample_period`（既定は仮想時間の 10 ms）ごとに
 | `hold_for_ms` | 同じサンプルの全部で、1 つでも成り立たなければ、そのサンプルの時刻で失敗です。 |
 | `ramp`、`wave` の横の `expect` | [動かしている間ずっと確認する](#動かしている間ずっと確認する)にあります。 |
 
-- `sample_period` より細かい変化は見えません。サンプルとサンプルの間に変わって戻った値は、条件に現れません。
+- ECU の 1 つのステップの中で変わって戻った値は見えません。値はステップの終わりに読むからです。シナリオが判定できる細かさは、ECU のステップまでです。
+- ECU は、`ecu_main` の実行ファイルのように、サンプルをステップの中で送信する必要があります。Control API の通信を自作した実行ファイルが別のスレッドから送信すると、ランチャーがその時刻を判定した後にサンプルが届くことがあります。そのサンプルは判定に入らず、実行に警告 `control-link-late-values` が出ます。
 - サンプルが 1 つもない変数は、どの条件も成り立ちません（指摘の文は `it had no value yet (no sample of its ECU had arrived)`）。
 - 時刻 0 の `expect` は、サンプルがないことでは失敗しません。0 ms に始まるステップのサンプルを見ます（`its sample of 0 ms`）。このサンプルには、時刻 0 の書き込みがもう反映されています。
 - サンプルがなくて失敗するのは、時刻 0 に、シナリオがまだ書いていない変数を、`from` のない `ramp` か `around` のない `wave` で動かすときです（`scenario-write`）。時刻 0 の書き込みは最初のステップの前に渡すので、始まりの値にするサンプルがまだありません（[書き込み](#書き込み)）。
 
+### ECU が値を送る頻度（`samples`）
+
+ECU がサンプルを送信する頻度は、Agent の `sample_period` です（既定は仮想時間の 10 ms。ECU のコードで変えられます）。値を表示する画面にはこれで足りますが、判定には足りません。サンプルの間隔が ECU のステップより長いと、サンプルとサンプルの間の変数の動きが、条件から見えないからです。シナリオが何で判定するかは、最上位のキー `samples` で決めます。
+
+| `samples` | 実行がすること |
+|---|---|
+| `every_step`（既定） | ランチャーが、シナリオが値を読む ECU を `--sample-every-step` を付けて起動します。その ECU は、コードの指定にかかわらず、ECU のステップごとにサンプルを送信します（[ecu-executable.md](ecu-executable.md#変数を公開する--registry-uri) の「変数を公開する（`--registry-uri`）」）。それでもステップより粗い頻度で送信する ECU があれば、シナリオを始めずに、実行は `scenario-not-observed` で失敗します。 |
+| `as_sent` | 何も頼まず、何も断りません。シナリオは、それぞれの ECU が送信するままのサンプルで判定します。照合に注記 `scenario-samples-as-sent` が出ます。 |
+
+- シナリオが ECU の値を読むのは、条件（`expect`、`wait_until`、`ramp` と `wave` の横の `expect`）にその ECU の変数があるときと、`from` のない `ramp` か `around` のない `wave` が、その ECU の変数の値から始まるときです。スキップする手順は数えません。
+- シナリオが書くだけの ECU と、シナリオのない実行の ECU は、`sample_period` のままです。ほかの ECU から画面や Control API のクライアントが受信するものは変わりません。
+- 頼めるのは、`--describe` の `features` に `sample-every-step` がある実行ファイルだけです（この vehicle-sil の `ecu_main` の実行ファイルには、すべてあります）。ない実行ファイルには、照合が警告 `scenario-samples-unsupported` を出し、ランチャーはこの引数を付けずに起動します。その ECU が、自分で ECU のステップごとに 1 回以上サンプルを送信していれば（ステップが 10 ms 以上で `sample_period` が既定の ECU、コードで `sample_period` を 0 にした ECU）、実行はそのまま始まります。
+- `as_sent` は、ステップごとのサンプルを送信できない participant（`ecu_main` で作っていない実行ファイル、作り直せない以前の vehicle-sil の実行ファイル）のときと、サンプルの負荷が大きすぎるときに使います。`as_sent` のシナリオから見えないもの: その時点の `expect` は、最大で `sample_period` だけ古い値を読みます。サンプルとサンプルの間に変わって戻った値は、条件に現れません。サンプルを 1 つも含まない `hold_for_ms` は、始まりの値だけで成功します。
+- 負荷: ECU のステップが `sample_period` より短いと、ステップごとのサンプルの分だけランチャーの仕事が増えます（ステップが 1 ms なら、既定の 10 倍のサンプル）。増えるのは、シナリオが値を読む ECU の分だけです。条件が全部の ECU の変数を読むシナリオでは、全部の ECU がステップごとに送信するのと同じ負荷になります。
+- タイムラインのファイル（`--timeline`）には、サンプルごとに 1 点が入ります。長いシナリオ（ステップ 1 ms で仮想時間の数分）では、系列がファイルの上限に達し、古い側の点が捨てられます（注記 `timeline-limit`）。判定は変わりません。
+
 ### `set` と同じ時刻の `expect`
 
-時刻 T の `set` の値が T のサンプルに入っているかは、T に始まるステップがサンプルを取るかで決まります。サンプルを取るのは、`sample_period` の倍数の時刻以後の、最初のステップです。既定では、10 ms の倍数の時刻に始まるステップです。
+ステップごとのサンプルがあれば、時刻 T に始まるステップがサンプルを取るので、`set` の直後の、同じ時刻 T の `expect` は、`set` の後の値を見ます。
 
-| T に始まるステップ | `set` の直後の、同じ時刻の `expect` |
+`samples: as_sent` では、T に始まるステップがサンプルを取るかで決まります。サンプルを取るのは、`sample_period` の倍数の時刻以後の、最初のステップです。既定では、10 ms の倍数の時刻に始まるステップです。
+
+| T に始まるステップ（`samples: as_sent`） | `set` の直後の、同じ時刻の `expect` |
 |---|---|
 | サンプルを取る（例: `at_ms: 100`） | `set` の後の値を見ます。 |
 | サンプルを取らない（例: ステップが 5 ms の ECU の 105 ms のステップ） | 前のサンプル（`set` の前の値）を見て、失敗します。 |
 
-値が反映されたことを確認するには、`within_ms` を付けた `expect` を使います（次のサンプルで成り立ちます）。ランチャーは ECU の `sample_period` を知らないので、この失敗は照合ではわかりません。
+このようなシナリオで、値が反映されたことを確認するには、`within_ms` を付けた `expect` を使います（次のサンプルで成り立ちます）。
 
 ### 対応表（`variables`）のある participant
 
@@ -726,6 +748,7 @@ steps:
 |---|---|---|
 | 全部の手順が成功した | `passed` | ランチャーがその controller のステップでシミュレーションを止め、成功します（ほかにエラーがなければ終了コード 0）。 |
 | 手順が 1 つ失敗した | `failed` | ランチャーがシミュレーションを止め、失敗します（終了コード 1）。 |
+| シナリオが値を読む ECU が、ステップより粗い頻度で値を送信している（`samples: every_step`） | `failed` | シナリオを始めません。手順は全部 `not_run` のままで、ランチャーは最初のステップの前にシミュレーションを止め、実行は指摘 `scenario-not-observed` で失敗します（終了コード 1）。 |
 | `stop_at_ms` に先に達した | `failed` | 結果が決まっていない最初の手順が失敗です（`scenario-out-of-time`）。 |
 | `stop` のコマンド、Control API の `Stop` | `incomplete` | ほかに問題がなければ、実行は `incomplete`（終了コード 5）です。シナリオの判定はありません。 |
 | Ctrl+C などの中断、participant の失敗、`--timeout-ms` | `incomplete` | シナリオより優先で、[simulation-run.md](simulation-run.md) のルールのままです（中断は 130、失敗は 1）。 |
@@ -832,6 +855,7 @@ error: s.yaml:4: wait_until Body.ticks ge 10; Body.level eq 6 (timeout 100 ms): 
 | `scenario-write` | `set`、`ramp`、`wave` の書き込みが反映されなかった（`wave` が範囲の外の値を書こうとした、など）。または、`ramp` の始まりの値や `wave` の中心の値がない。 |
 | `scenario-out-of-time` | `stop_at_ms` で止まったとき、まだ結果が決まっていなかった。 |
 | `scenario-incomplete` | シナリオが終わる前に、ほかの理由でシミュレーションが終わった。 |
+| `scenario-not-observed` | シナリオを始めなかった。シナリオが値を読む ECU が、ステップより粗い頻度で値を送信していて、サンプルとサンプルの間の変数の動きが条件から見えない。条件は 1 つも判定していない（条件が成り立たなかった `scenario-failed` とは違う）。指摘の文に、participant、その `sample_period` とステップがある。実行ファイルをこの vehicle-sil で作り直すか、`samples: as_sent` を書く（[ECU が値を送る頻度](#ecu-が値を送る頻度samples)）。 |
 
 ## 照合（`check --scenario`、`run --scenario` の最初）
 
@@ -894,6 +918,8 @@ failed: 5 errors, 0 warnings, 0 notes
 | `scenario-dither-unused` | 警告 | `inputs` に `dither` を宣言した入力に、実行する手順が 1 つも値を置かない（`set`、`ramp`、`wave` がない。スキップする手順は数えない）。揺れは 1 度も書かれない。 |
 | `scenario-input-skipped` | 注記 | `inputs` に宣言した入力が、`absent: true` の変数か、機種が外した participant の変数なので、その宣言を使わない。 |
 | `scenario-points-file` | エラー | `points` の CSV ファイル（[点を CSV ファイルから読む](#点を-csv-ファイルから読む)）のパスが、シナリオのディレクトリの下を指していない。ファイルがない、読めない、空、UTF-8 でない、行のセルの数が列の数と違う、行が多すぎる。`value` や `time` の列がない、名前が 2 つある。 |
+| `scenario-samples-unsupported` | 警告 | シナリオが値を読む participant の実行ファイルが、`--sample-every-step` を受け取ると言っていない（`--describe` の `features` に `sample-every-step` がない）。実行は、ステップごとのサンプルを頼めない。説明（`--describe` の結果）のない participant には出さない。[ECU が値を送る頻度](#ecu-が値を送る頻度samples)にあります。 |
+| `scenario-samples-as-sent` | 注記 | シナリオに `samples: as_sent` があり、値を読む。それぞれの ECU が送信するままのサンプルで判定する。 |
 | `scenario-nothing-checked` | 警告 | 確認する手順（`expect`、`wait_until`、`ramp` と `wave` の横の `expect`）を全部スキップするので、シナリオが何も確認しない。 |
 | `scenario-step-skipped` | 注記 | 手順が `absent: true` の変数か、機種が無効にした participant の変数を使うので、実行でスキップする。`ramp` と `wave` の横の `expect` だけが使うときは、その `expect` だけをスキップする。 |
 
@@ -1142,6 +1168,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `features` の名前 | 使える機能 | ないランチャーでは |
 |---|---|---|
 | `scenario` | `check --scenario` と `run --scenario` | シナリオを使えません。 |
+| `scenario-samples` | 最上位のキー `samples` と、シナリオが値を読む ECU のステップごとのサンプル | `samples` は、知らないキーのエラーです。シナリオは、それぞれの ECU が送信するままのサンプルで判定します。 |
 | `scenario-wave` | 手順 `wave` | `wave` は、知らないキーのエラーです。 |
 | `scenario-motion-expect` | `ramp` と `wave` の横の `expect` | 手順が 2 つの動作をする、というエラーです。 |
 | `scenario-points-file` | CSV ファイルの `points` | `points` の形のエラーです。 |

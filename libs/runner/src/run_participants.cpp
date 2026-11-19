@@ -133,7 +133,8 @@ std::string command_text(const std::filesystem::path& executable, const std::vec
 } // namespace
 
 std::vector<std::string> participant_arguments(const config::SimulationConfig& config, const config::ParticipantConfig& participant,
-                                               const std::string& registry_uri, bool stands_still_before_start)
+                                               const std::string& registry_uri, bool stands_still_before_start,
+                                               bool sample_every_step)
 {
     const std::vector<std::string> rest(participant.command.begin() + (participant.command.empty() ? 0 : 1),
                                         participant.command.end());
@@ -153,6 +154,10 @@ std::vector<std::string> participant_arguments(const config::SimulationConfig& c
     arguments.insert(arguments.end(), renames.begin(), renames.end());
     const std::vector<std::string> nodes = config::j1939_node_arguments(participant);
     arguments.insert(arguments.end(), nodes.begin(), nodes.end());
+    if (sample_every_step)
+    {
+        arguments.emplace_back(ecu_executable::kSampleEveryStepArgument);
+    }
     return arguments;
 }
 
@@ -196,7 +201,7 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
         }
         else
         {
-            arguments = participant_arguments(ctx_.config, p, uri, ctx_.holds());
+            arguments = participant_arguments(ctx_.config, p, uri, ctx_.holds(), ctx_.plan.members[i].sample_every_step);
         }
         const std::filesystem::path executable = without_dots(std::filesystem::absolute(ctx_.check.participants[i].executable));
         if (p.manual)
