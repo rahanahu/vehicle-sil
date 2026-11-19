@@ -43,17 +43,23 @@ class Trace:
     def __init__(self, files: list[Path]):
         self.processes: dict[int, dict] = {}
         self.events: list[dict] = []
-        for f in files:
+        for i, f in enumerate(files):
             obj = json.loads(f.read_text(encoding="utf-8"))
             meta = obj.get("otherData", {})
-            pid = meta["pid"]
-            self.processes[pid] = {"name": meta["process"], "file": f.name, "dropped": meta.get("dropped", 0)}
-            self.events += obj.get("traceEvents", [])
+            # A process is its file: files of several hosts may share a pid (the key then moves it).
+            key = meta["pid"] if meta["pid"] not in self.processes else meta["pid"] + (i + 1) * 10**9
+            self.processes[key] = {"name": meta["process"], "file": f.name, "dropped": meta.get("dropped", 0)}
+            events = obj.get("traceEvents", [])
+            if key != meta["pid"]:
+                events = [{**e, "pid": key} for e in events]
+            self.events += events
         names = [p["name"] for p in self.processes.values()]
         for pid, p in self.processes.items():
             p["label"] = p["name"] if names.count(p["name"]) == 1 else f"{p['name']}-{pid}"
         self.spans: dict[tuple[int, str], list[tuple[int, int, int, int, int]]] = defaultdict(list)
         self.instants: dict[tuple[int, str], list[tuple[int, int, int]]] = defaultdict(list)
+        # Arrows by id: (pid, tid, ns) of their start ('s') and end ('f').
+        self.flows: dict[int, dict[str, tuple[int, int, int]]] = defaultdict(dict)
         for e in self.events:
             ph = e.get("ph")
             if ph == "X":
@@ -64,13 +70,27 @@ class Trace:
             elif ph == "i":
                 args = e.get("args", {})
                 self.instants[(e["pid"], e["name"])].append((ns(e["ts"]), args.get("vt", -1), args.get("arg", 0)))
+            elif ph in ("s", "f"):
+                self.flows[e["id"]][ph] = (e["pid"], e["tid"], ns(e["ts"]))
         for v in self.spans.values():
             v.sort()
+        self.by_thread: dict[tuple[int, str, int], list] = defaultdict(list)
+        for (pid, name), v in self.spans.items():
+            for span in v:
+                self.by_thread[(pid, name, span[4])].append(span)
         for v in self.instants.values():
             v.sort()
 
     def label(self, pid: int) -> str:
         return self.processes[pid]["label"]
+
+    def enclosing(self, pid: int, name: str, at: tuple[int, int, int] | None):
+        """The span `name` of `pid` on the thread of `at` (pid, tid, ns) that contains its time."""
+        if at is None or at[0] != pid:
+            return None
+        spans = self.by_thread.get((pid, name, at[1]), [])
+        i = bisect.bisect_right(spans, (at[2], float("inf"))) - 1
+        return spans[i] if i >= 0 and spans[i][1] >= at[2] else None
 
 
 def ns(us: float) -> int:
@@ -106,6 +126,13 @@ def analyse(t: Trace, skip_ms: float) -> dict:
     complete: dict[int, dict[int, int]] = {}
     held: set[int] = set()
     for pid in parts:
+        last_vt = -1
+        for _, _, vt, _, _ in t.spans[(pid, "step")]:
+            if vt < last_vt:
+                raise ValueError(f"the file of {t.label(pid)} holds more than one run (its steps start again at "
+                                 f"{vt / 1e6:g} ms after {last_vt / 1e6:g} ms): trace one run per process "
+                                 "(run, not test) into an empty directory")
+            last_vt = vt
         st, ln, co = {}, {}, {}
         for s, e, vt, arg, _ in t.spans[(pid, "step")]:
             st[vt], ln[vt] = s, e - s
@@ -207,15 +234,21 @@ def analyse_hold(t: Trace, launcher: int, vts, start, length, released, held, pe
 
 
 def analyse_writes(t: Trace, launcher: int, ecus: list[int], window: tuple[int, int]) -> dict:
-    by_seq: dict[int, dict] = defaultdict(lambda: defaultdict(list))
-    for name in ("scenario.write", "hub.write", "hub.send", "hub.receive_answer"):
-        for s, e, _, seq, _ in t.spans.get((launcher, name), []):
-            by_seq[seq][name].append((s, e))
-    ecu_steps = {}
-    for p in ecus:
-        for s, e, _, seq, _ in t.spans.get((p, "agent.receive_command"), []):
-            by_seq[seq]["agent.receive_command"].append((s, e, p))
-        ecu_steps[p] = [(s, e) for s, e, _, _, _ in t.spans[(p, "step")]]
+    """Each write's round trip, per agent: the command's arrow (hub.send -> agent.receive_command) and the answer's
+    (agent.receive_command -> hub.receive_answer) have ids of their own for each agent of a write. A write to several
+    agents is taken by the agent whose answer came last."""
+    writes = {seq: (s, e) for s, e, _, seq, _ in t.spans.get((launcher, "scenario.write"), [])}
+    targets: dict[int, list] = defaultdict(list)
+    for fid, ends in t.flows.items():
+        if fid % 2:
+            continue
+        send = t.enclosing(launcher, "hub.send", ends.get("s"))
+        p = ends["f"][0] if "f" in ends else None
+        command = t.enclosing(p, "agent.receive_command", ends.get("f")) if p in ecus else None
+        answer = t.enclosing(launcher, "hub.receive_answer", t.flows.get(fid + 1, {}).get("f"))
+        if send and command and answer:
+            targets[send[3]].append((send, command, answer, p))
+    ecu_steps = {p: [(s, e) for s, e, _, _, _ in t.spans[(p, "step")]] for p in ecus}
 
     def in_step(p, a, b):
         steps = ecu_steps[p]
@@ -225,22 +258,18 @@ def analyse_writes(t: Trace, launcher: int, ecus: list[int], window: tuple[int, 
     parts = defaultdict(list)
     offsets = defaultdict(list)
     n = more_targets = during_step = 0
-    for seq, d in by_seq.items():
-        if not d.get("scenario.write") or not window[0] <= d["scenario.write"][0][0] <= window[1]:
+    for seq, (ws, we) in writes.items():
+        if not window[0] <= ws <= window[1] or not targets.get(seq):
             continue
-        if not all(len(d.get(k, [])) == 1 for k in ("hub.send", "hub.receive_answer", "agent.receive_command")):
-            more_targets += 1
-            continue
-        (ws, we), = d["scenario.write"]
-        (ss, se), = d["hub.send"]
-        (cs, ce, p), = d["agent.receive_command"]
-        (bs, be), = d["hub.receive_answer"]
         n += 1
+        more_targets += len(targets[seq]) > 1
+        for (_, se, *_), (cs, ce, *_), (bs, *_), p in targets[seq]:
+            offsets[p].append(((cs - se) + (ce - bs)) / 2)
+        (ss, se, *_), (cs, ce, *_), (bs, be, *_), p = max(targets[seq], key=lambda x: x[2][1])
         during_step += in_step(p, se, cs)
         for k, v in (("total", we - ws), ("hub to send", ss - ws), ("send", se - ss), ("to the ECU", cs - se),
                      ("ECU handler", ce - cs), ("back", bs - ce), ("hub handler", be - bs), ("scenario wake", we - be)):
             parts[k].append(v)
-        offsets[p].append(((cs - se) + (ce - bs)) / 2)
     out = {"write_round_trip": {"n": n, "with_more_targets": more_targets,
                                 "share_arriving_during_an_ecu_step": round(during_step / n, 3) if n else None,
                                 **{k: stat(v) for k, v in parts.items()}}}
@@ -286,7 +315,8 @@ def summary(d: dict) -> list[str]:
                 row(label, h[k], 4)
     w = d.get("write_round_trip")
     if w and w["n"]:
-        lines.append(f"  write round trip ({w['n']} writes to one ECU, {w['with_more_targets']} to more left out; "
+        lines.append(f"  write round trip ({w['n']} writes, {w['with_more_targets']} of them to several ECUs, taken by "
+                     f"the last to answer; "
                      f"{100 * w['share_arriving_during_an_ecu_step']:.1f}% arrived during the ECU's step)")
         for k in ("total", "hub to send", "send", "to the ECU", "ECU handler", "back", "hub handler", "scenario wake"):
             row(k, w[k], 4)

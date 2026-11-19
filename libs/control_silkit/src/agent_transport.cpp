@@ -203,7 +203,7 @@ struct AgentTransport::State
         n_commands.fetch_add(1, std::memory_order_relaxed);
         traceCommand.set_name("agent.receive_command");
         traceCommand.set_arg(command.command.seq);
-        trace::flow_in("command", trace::command_flow(command.command.seq));
+        trace::flow_in("command", trace::command_flow(command.command.seq, session));
         wire::SubmittedMessage answer;
         answer.session = session;
         answer.seq = command.command.seq;
@@ -216,7 +216,7 @@ struct AgentTransport::State
             answer.result = control::SubmitResult{control::SubmitStatus::Invalid, e.what()};
         }
         wire::encode_submitted(answer, submitted_bytes);
-        trace::flow_out("answer", trace::answer_flow(answer.seq));
+        trace::flow_out("answer", trace::answer_flow(answer.seq, session));
         submitted->Publish(detail::span_of(submitted_bytes));
     }
 };

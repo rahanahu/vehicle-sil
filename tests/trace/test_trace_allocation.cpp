@@ -20,8 +20,8 @@ TEST_CASE(a_trace_that_is_off_allocates_nothing)
         trace::Span span("off", i, 1);
         span.set_arg(2);
         trace::instant("off", i, 3);
-        trace::flow_out("off", trace::command_flow(4));
-        trace::flow_in("off", trace::answer_flow(4));
+        trace::flow_out("off", trace::command_flow(4, 5));
+        trace::flow_in("off", trace::answer_flow(4, 5));
         trace::set_thread_name("off");
     }
     trace::set_process_name("off");

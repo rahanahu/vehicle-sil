@@ -32,6 +32,28 @@ def span(pid, tid, name, start, end, vt=-1, arg=0):
             "args": {"vt": vt, "arg": arg}}
 
 
+def flow(ph, pid, tid, name, time, fid):
+    e = {"pid": pid, "tid": tid, "name": name, "ts": time / 1000, "ph": ph, "cat": "flow", "id": fid}
+    return {**e, "bp": "e"} if ph == "f" else e
+
+
+def command_flow(seq, session):
+    """As vehicle_sil::trace::command_flow()."""
+    return (((seq << 20) ^ (session & 0xFFFFF)) & ((1 << 52) - 1)) * 2
+
+
+def round_trip(launcher, ecu, pid, session, seq, t, later=0):
+    """One agent's part of write `seq` (its times as in made_up_run(), its answer `later` ns later)."""
+    c = command_flow(seq, session)
+    launcher.append(span(100, 3, "hub.send", t + 12_000, t + 13_000, -1, seq))
+    launcher.append(flow("s", 100, 3, "command", t + 12_500, c))
+    ecu.append(span(pid, 2, "agent.receive_command", t + 18_000 + later, t + 19_000 + later, -1, seq))
+    ecu.append(flow("f", pid, 2, "command", t + 18_100 + later, c))
+    ecu.append(flow("s", pid, 2, "answer", t + 18_900 + later, c + 1))
+    launcher.append(span(100, 1, "hub.receive_answer", t + 24_000 + later, t + 25_000 + later, -1, seq))
+    launcher.append(flow("f", 100, 1, "answer", t + 24_100 + later, c + 1))
+
+
 def instant(pid, tid, name, time, vt=-1, arg=0):
     return {"pid": pid, "tid": tid, "name": name, "ts": time / 1000, "ph": "i", "s": "t", "args": {"vt": vt, "arg": arg}}
 
@@ -51,9 +73,7 @@ def made_up_run() -> tuple[list[dict], list[dict]]:
         launcher.append(span(100, 3, "scenario.tick", t + 6_000, t + 40_000, vt))
         if k % 2 == 0:
             launcher.append(span(100, 3, "scenario.write", t + 10_000, t + 30_000, vt, k))
-            launcher.append(span(100, 3, "hub.send", t + 12_000, t + 13_000, vt, k))
-            ecu.append(span(200, 2, "agent.receive_command", t + 18_000, t + 19_000, -1, k))
-            launcher.append(span(100, 1, "hub.receive_answer", t + 24_000, t + 25_000, -1, k))
+            round_trip(launcher, ecu, 200, 7, k, t)
         launcher.append(span(100, 4, "gate.release", t + 45_000, t + 51_000, vt))
         launcher.append(instant(100, 4, "step.release", t + 50_000, vt))
     return launcher, ecu
@@ -114,6 +134,43 @@ class TraceReportTest(unittest.TestCase):
         self.assertEqual(w["share_arriving_during_an_ecu_step"], 0)
         self.assertEqual(d["clock_offset_from_launcher_us"], {"Engine": 0.0})
         self.assertIn(f"details: {self.details}", out)
+
+    def test_a_write_to_two_ecus_is_taken_by_the_last_answer(self):
+        launcher, ecu = made_up_run()
+        other = [span(300, 2, "step", e["ts"] * 1000, e["ts"] * 1000 + 5_000, e["args"]["vt"])
+                 for e in ecu if e["name"] == "step"]
+        t = 1_000_000_000 + 4 * PERIOD  # step 4 writes to both: the second ECU answers 2 us later
+        round_trip(launcher, other, 300, 9, 4, t, later=2_000)
+        write_trace(self.dir, 100, "vehicle_sil_launch", launcher)
+        write_trace(self.dir, 200, "Engine", ecu)
+        write_trace(self.dir, 300, "Dashboard", other)
+        code, _, err = run(str(self.dir), "--skip-ms", "0", "--json", str(self.details))
+        self.assertEqual(code, 0, err)
+        w = json.loads(self.details.read_text(encoding="utf-8"))["write_round_trip"]
+        self.assertEqual((w["n"], w["with_more_targets"]), (7, 1))
+        self.assertEqual(w["to the ECU"]["p99_us"], 7.0)   # the later answer of the write of step 4
+        self.assertEqual(w["to the ECU"]["p50_us"], 5.0)
+
+    def test_files_of_several_hosts_with_one_pid(self):
+        launcher, ecu = made_up_run()
+        write_trace(self.dir, 100, "vehicle_sil_launch", launcher)
+        write_trace(self.dir, 200, "Engine", ecu)
+        ecu_on_another_host = [{**e, "pid": 100} for e in ecu]
+        path = self.dir / "trace-Engine-100.json"
+        path.write_text(json.dumps({"otherData": {"vehicle_sil_trace": 1, "pid": 100, "process": "Engine"},
+                                    "traceEvents": ecu_on_another_host}), encoding="utf-8")
+        (self.dir / "trace-Engine-200.json").unlink()
+        code, out, err = run(str(self.dir), "--skip-ms", "0", "--json", str(self.details))
+        self.assertEqual(code, 0, err)
+        self.assertIn("2 processes (launcher: vehicle_sil_launch; ECUs: Engine)", out)
+
+    def test_several_runs_in_one_file(self):
+        launcher, ecu = made_up_run()
+        again = [{**e, "ts": e["ts"] + 10_000} for e in ecu]  # a second run, 10 ms later, from 0 again
+        write_trace(self.dir, 200, "Engine", ecu + again)
+        code, out, err = run(str(self.dir), "--json", str(self.details), "--skip-ms", "0")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("the file of Engine holds more than one run (its steps start again at 0 ms after 19 ms)", err)
 
     def test_merged_file_holds_every_process(self):
         launcher, ecu = made_up_run()

@@ -234,7 +234,7 @@ void SimulationController::run_gate()
             continue;
         }
         g.model.released(wall);
-        const auto vt = to_ns(g.model.now());
+        const std::int64_t vt = trace::enabled() ? to_ns(g.model.now()) : -1;
         lock.unlock(); // release_step() takes the runtime's hold lock, which hold_step() holds while taking ours
         {
             const trace::Span traceRelease("gate.release", vt);

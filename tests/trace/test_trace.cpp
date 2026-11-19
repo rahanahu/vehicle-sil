@@ -9,9 +9,12 @@
 
 #include "vehicle_sil/trace/trace.hpp"
 
+#include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <chrono>
 #include <map>
 #include <optional>
 #include <random>
@@ -122,10 +125,10 @@ TEST_CASE(the_file_has_the_chrome_trace_event_shape)
     trace::set_thread_name("main \"thread\"");
     {
         trace::Span span("work", 5'000'000, 7);
-        trace::flow_out("command", trace::command_flow(3));
+        trace::flow_out("command", trace::command_flow(3, 5));
         span.set_arg(8);
     }
-    trace::flow_in("command", trace::command_flow(3));
+    trace::flow_in("command", trace::command_flow(3, 5));
     trace::instant("mark", -1, 2);
     const auto path = trace::flush();
     CHECK(path.has_value());
@@ -144,8 +147,9 @@ TEST_CASE(the_file_has_the_chrome_trace_event_shape)
                                                 "\"ph\":\"X\",\"dur\":[0-9]+\\.[0-9]{3},\"args\":\\{\"vt\":5000000,\"arg\":8\\}\\},?")));
     const auto flows = events_named(text, "command");
     CHECK_EQ(flows.size(), std::size_t{2});
-    CHECK(flows[0].find("\"ph\":\"s\",\"cat\":\"flow\",\"id\":6}") != std::string::npos);
-    CHECK(flows[1].find("\"ph\":\"f\",\"bp\":\"e\",\"cat\":\"flow\",\"id\":6}") != std::string::npos);
+    const std::string id = std::to_string(trace::command_flow(3, 5));
+    CHECK(flows[0].find("\"ph\":\"s\",\"cat\":\"flow\",\"id\":" + id + "}") != std::string::npos);
+    CHECK(flows[1].find("\"ph\":\"f\",\"bp\":\"e\",\"cat\":\"flow\",\"id\":" + id + "}") != std::string::npos);
     const auto marks = events_named(text, "mark");
     CHECK_EQ(marks.size(), std::size_t{1});
     CHECK(marks[0].find("\"ph\":\"i\",\"s\":\"t\",\"args\":{\"vt\":-1,\"arg\":2}}") != std::string::npos);
@@ -230,4 +234,71 @@ TEST_CASE(a_directory_that_cannot_be_written_gives_no_file)
     CHECK(trace::start(dir.path / "a file" / "below"));
     trace::instant("lost");
     CHECK(!trace::flush()); // says why on stderr
+}
+
+TEST_CASE(flow_ids_tell_the_agents_of_one_write_apart)
+{
+    static_assert(trace::command_flow(3, 5) != trace::command_flow(3, 6));
+    static_assert(trace::command_flow(3, 5) != trace::command_flow(4, 5));
+    static_assert(trace::answer_flow(3, 5) == trace::command_flow(3, 5) + 1);
+    static_assert(trace::command_flow(3, 5) % 2 == 0);
+    // Below 2^53 (a viewer may read the ids as doubles), also for the largest seq and session.
+    CHECK(trace::answer_flow(~std::uint64_t{0}, ~std::uint64_t{0}) < (std::uint64_t{1} << 53));
+}
+
+TEST_CASE(a_flush_while_threads_record)
+{
+    // The launcher writes its file while a SIL Kit thread may still record: the file must still be
+    // whole, and (under ThreadSanitizer) the rings must be read without a data race.
+    TempDir dir;
+    CHECK(trace::start(dir.path, 64));
+    std::atomic<bool> stop{false};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 3; ++t)
+    {
+        threads.emplace_back([&stop] {
+            trace::set_thread_name("busy");
+            for (std::uint64_t i = 0; !stop.load(std::memory_order_relaxed); ++i)
+            {
+                const trace::Span span("busy", static_cast<std::int64_t>(i), i);
+                trace::instant("tick", -1, i);
+            }
+        });
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto path = trace::flush();
+    stop.store(true);
+    for (auto& t : threads)
+    {
+        t.join();
+    }
+    CHECK(path.has_value());
+    const std::string text = read(*path);
+    CHECK(text.size() > 4 && text.substr(text.size() - 4) == "\n]}\n");
+    CHECK(!events_named(text, "busy").empty());
+}
+
+TEST_CASE(started_by_the_environment)
+{
+    // Registered once as is (no VEHICLE_SIL_TRACE: off) and, by tests/trace/CMakeLists.txt, with a
+    // relative VEHICLE_SIL_TRACE and a VEHICLE_SIL_TRACE_EVENTS out of range (TRACE_EXPECT_EVENTS: the
+    // number of records that must be used).
+    const char* directory = std::getenv("VEHICLE_SIL_TRACE");
+    if (directory == nullptr)
+    {
+        CHECK(!trace::enabled());
+        return;
+    }
+    CHECK(trace::enabled());
+    // Made absolute, for the processes this one starts.
+    CHECK(fs::path(directory).is_absolute());
+    CHECK(fs::path(directory) == fs::current_path() / "relative" / "trace");
+    trace::instant("from the environment");
+    const auto path = trace::flush();
+    CHECK(path.has_value());
+    CHECK(path->parent_path() == fs::path(directory));
+    const std::string text = read(*path);
+    CHECK(text.find(std::string("\"events_per_thread\":") + std::getenv("TRACE_EXPECT_EVENTS") + ",") != std::string::npos);
+    std::error_code ec;
+    fs::remove_all(fs::current_path() / "relative", ec);
 }

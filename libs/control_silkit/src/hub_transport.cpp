@@ -518,7 +518,7 @@ struct HubTransport::State
         }
         n_messages.fetch_add(1, std::memory_order_relaxed);
         traceAnswer.set_arg(submitted.seq);
-        trace::flow_in("answer", trace::answer_flow(submitted.seq));
+        trace::flow_in("answer", trace::answer_flow(submitted.seq, submitted.session));
         hub->agent_submitted(link->connection, submitted.seq, submitted.result);
     }
 
@@ -575,7 +575,7 @@ bool HubTransport::State::Link::send(const control::Command& command)
     {
         return false; // too large for one message: not sent
     }
-    trace::flow_out("command", trace::command_flow(command.seq));
+    trace::flow_out("command", trace::command_flow(command.seq, session));
     sender->commands->Publish(detail::span_of(sender->bytes));
     return true;
 }

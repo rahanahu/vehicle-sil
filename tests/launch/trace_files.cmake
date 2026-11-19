@@ -15,10 +15,13 @@ endforeach()
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}")
 set(trace "${WORK}/trace")
+# A relative directory, from a current directory that is not the configuration file's (the launcher starts the
+# ECUs there): every process must write to the same directory.
 execute_process(
-  COMMAND ${CMAKE_COMMAND} -E env "VEHICLE_SIL_TRACE=${trace}"
+  COMMAND ${CMAKE_COMMAND} -E env "VEHICLE_SIL_TRACE=trace"
           "${LAUNCH}" run "${ECU_MAIN}/simulation.yaml" --scenario "${ECU_MAIN}/scenarios/throttle_step.yaml"
           --speed max --log-dir "${WORK}/logs"
+  WORKING_DIRECTORY "${WORK}"
   RESULT_VARIABLE code OUTPUT_VARIABLE out ERROR_VARIABLE err)
 if(NOT code EQUAL 0)
   message(FATAL_ERROR "vehicle_sil_launch run exited with ${code}:\n${out}\n${err}")
@@ -27,8 +30,11 @@ endif()
 file(GLOB files "${trace}/trace-*.json")
 list(LENGTH files n)
 if(NOT n EQUAL 3)
+  file(GLOB_RECURSE elsewhere "${ECU_MAIN}/trace-*.json")
   message(FATAL_ERROR "expected 3 trace files (the launcher's SimulationController, Engine, Dashboard) in ${trace}, found ${n}: ${files}\n"
-                      "A process that ends without atexit must call trace::flush() first")
+                      "Files under ${ECU_MAIN}: ${elsewhere}\n"
+                      "A relative VEHICLE_SIL_TRACE must reach the ECUs as an absolute path; a process that ends without "
+                      "atexit must call trace::flush() first")
 endif()
 
 # <name>'s file holds every record named in the remaining arguments.

@@ -27,7 +27,12 @@ namespace vehicle_sil::trace {
 namespace detail {
 
 /// Whether records are taken. Constant-initialised, so it is false before any constructor runs.
-extern std::atomic<bool> g_enabled;
+/// A cache line of its own: every place that records reads it, and nothing else shares the line.
+struct alignas(64) Enabled
+{
+    std::atomic<bool> on{false};
+};
+extern Enabled g_enabled;
 
 enum class Kind : std::uint8_t
 {
@@ -47,7 +52,7 @@ void name_thread(const char* name) noexcept;
 /// Whether records are taken.
 inline bool enabled() noexcept
 {
-    return detail::g_enabled.load(std::memory_order_relaxed);
+    return detail::g_enabled.on.load(std::memory_order_relaxed);
 }
 
 /// Starts taking records, to be written to `directory` (made at flush() if it does not exist).
@@ -56,11 +61,19 @@ inline bool enabled() noexcept
 /// environment's, or a test's).
 bool start(const std::filesystem::path& directory, std::uint64_t events_per_thread = 1U << 18);
 
+/// Whether flush() says on stderr that the file could not be written.
+enum class Errors
+{
+    ToStderr,
+    Silent, ///< for a process that ends while nothing may read its stderr any more
+};
+
 /// Writes the file of this process and stops taking records; later calls do nothing. Returns the
 /// file's path, or nothing when the trace was not started, no thread recorded anything (no file is
-/// written), or the file could not be written (then it says so on stderr). Runs at exit by itself; a process that ends without running atexit
-/// (std::_Exit) calls it first. Threads that still record meanwhile may leave a torn record.
-std::optional<std::filesystem::path> flush();
+/// written), or the file could not be written. Runs at exit by itself; a process that ends without
+/// running atexit (std::_Exit) calls it first. A record that a thread writes meanwhile may come out
+/// mixed with the older record of its slot.
+std::optional<std::filesystem::path> flush(Errors errors = Errors::ToStderr);
 
 /// The process's name in the file name and in the trace (the first one given counts).
 void set_process_name(std::string_view name);
@@ -100,15 +113,16 @@ inline void flow_in(const char* name, std::uint64_t id) noexcept
     }
 }
 
-/// The ids of the arrows of one write's round trip, from its seq: the command (hub to agent) and
-/// the answer (agent to hub).
-constexpr std::uint64_t command_flow(std::uint64_t seq) noexcept
+/// The ids of the arrows of one write's round trip to one agent, from the write's seq and the
+/// agent's session (a write to several agents has one seq): the command (hub to agent) and the
+/// answer (agent to hub). Below 2^53, so that a viewer that reads JSON numbers as doubles keeps them.
+constexpr std::uint64_t command_flow(std::uint64_t seq, std::uint64_t session) noexcept
 {
-    return seq * 2;
+    return (((seq << 20) ^ (session & 0xFFFFF)) & ((std::uint64_t{1} << 52) - 1)) * 2;
 }
-constexpr std::uint64_t answer_flow(std::uint64_t seq) noexcept
+constexpr std::uint64_t answer_flow(std::uint64_t seq, std::uint64_t session) noexcept
 {
-    return seq * 2 + 1;
+    return command_flow(seq, session) + 1;
 }
 
 /// One record of the time from its construction to its destruction.

@@ -31,7 +31,7 @@ namespace vehicle_sil::trace {
 
 namespace detail {
 
-std::atomic<bool> g_enabled{false};
+Enabled g_enabled;
 
 } // namespace detail
 
@@ -83,9 +83,11 @@ struct Tracer
     std::int64_t start_ns = 0;
 };
 
-constexpr std::uint64_t kMaxCapacity = std::uint64_t{1} << 26; // 3 GB of records per thread
+constexpr std::uint64_t kDefaultCapacity = std::uint64_t{1} << 18; // 12 MB of records per thread
+constexpr std::uint64_t kMaxCapacity = std::uint64_t{1} << 24;     // 768 MB of records per thread
 
 std::mutex g_start_mutex;
+std::atomic<bool> g_allocation_failed{false};
 /// Set once by start() and never freed, so that a record during the end of the process finds it.
 std::atomic<Tracer*> g_tracer{nullptr};
 thread_local Buffer* t_buffer = nullptr;
@@ -135,7 +137,15 @@ Buffer* thread_buffer() noexcept
     }
     catch (const std::bad_alloc&)
     {
-        return nullptr; // this thread records nothing
+        // This thread records nothing. Said once per process (the thread may record again).
+        if (!g_allocation_failed.exchange(true))
+        {
+            std::fprintf(stderr,
+                         "vehicle-sil trace: no memory for a ring of %llu records; a thread of this process records nothing. "
+                         "Lower VEHICLE_SIL_TRACE_EVENTS.\n",
+                         static_cast<unsigned long long>(tracer->capacity));
+        }
+        return nullptr;
     }
     return t_buffer;
 }
@@ -188,12 +198,10 @@ void write_us(std::FILE* f, std::int64_t ns)
 
 void write_record(std::FILE* f, unsigned long pid, std::uint64_t tid, Record& r)
 {
+    // A slot that its thread overwrites meanwhile may mix two records; every field is still one
+    // that a record had (a literal name, a kind).
     const char* name = get(r.name);
     const std::uint64_t kind = get(r.kind);
-    if (name == nullptr || kind > static_cast<std::uint64_t>(detail::Kind::FlowIn))
-    {
-        return; // torn by a thread that still records
-    }
     const std::int64_t start = get(r.start);
     std::fprintf(f, ",\n{\"pid\":%lu,\"tid\":%llu,\"name\":", pid, static_cast<unsigned long long>(tid));
     write_string(f, name);
@@ -230,7 +238,7 @@ std::FILE* open_for_writing(const std::filesystem::path& path)
 }
 
 /// Writes the file; the tracer's mutex is held.
-std::optional<std::filesystem::path> write_file(Tracer& tracer)
+std::optional<std::filesystem::path> write_file(Tracer& tracer, Errors errors)
 {
     const unsigned long pid = current_pid();
     const std::string process = file_name_part(tracer.process_name);
@@ -241,6 +249,10 @@ std::optional<std::filesystem::path> write_file(Tracer& tracer)
     if (f == nullptr)
     {
         const int error = errno;
+        if (errors == Errors::Silent)
+        {
+            return std::nullopt;
+        }
         std::fprintf(stderr, "vehicle-sil trace: cannot write %s: %s. Set VEHICLE_SIL_TRACE to a directory this process can write to.\n",
                      path.string().c_str(), std::strerror(error));
         return std::nullopt;
@@ -286,6 +298,10 @@ std::optional<std::filesystem::path> write_file(Tracer& tracer)
     const bool failed = std::ferror(f) != 0;
     if (std::fclose(f) != 0 || failed)
     {
+        if (errors == Errors::Silent)
+        {
+            return std::nullopt;
+        }
         std::fprintf(stderr, "vehicle-sil trace: writing %s failed (is the disk full?); the file is incomplete.\n",
                      path.string().c_str());
         return std::nullopt;
@@ -309,25 +325,45 @@ bool start_from_environment()
         return false;
     }
 #endif
-    std::uint64_t events = std::uint64_t{1} << 18;
+    std::uint64_t events = kDefaultCapacity;
     if (const char* text = std::getenv("VEHICLE_SIL_TRACE_EVENTS"); text != nullptr && *text != '\0')
     {
         char* end = nullptr;
         errno = 0;
-        const unsigned long long value = std::strtoull(text, &end, 10);
-        if (errno != 0 || end == text || *end != '\0' || value == 0)
+        // strtoull() takes "-1" as the largest number: only digits count.
+        const bool digits = *text >= '0' && *text <= '9';
+        const unsigned long long value = digits ? std::strtoull(text, &end, 10) : 0;
+        if (!digits || errno != 0 || *end != '\0' || value == 0 || value > kMaxCapacity)
         {
             std::fprintf(stderr,
-                         "vehicle-sil trace: VEHICLE_SIL_TRACE_EVENTS=%s is not a number of records per thread; using %llu. "
-                         "Set it to a whole number such as 1048576, or unset it.\n",
-                         text, static_cast<unsigned long long>(events));
+                         "vehicle-sil trace: VEHICLE_SIL_TRACE_EVENTS=%s is not a number of records per thread from 1 to %llu; "
+                         "using %llu. Set it to a whole number such as 1048576, or unset it.\n",
+                         text, static_cast<unsigned long long>(kMaxCapacity), static_cast<unsigned long long>(events));
         }
         else
         {
             events = value;
         }
     }
-    return start(std::filesystem::path(directory), events);
+    // A relative directory is the one of this process's current directory, also for the processes it
+    // starts (the launcher starts the ECUs in the configuration file's directory): they inherit the
+    // absolute path.
+    std::error_code ec;
+    std::filesystem::path absolute = std::filesystem::absolute(std::filesystem::path(directory), ec);
+    if (ec)
+    {
+        absolute = std::filesystem::path(directory);
+    }
+    else
+    {
+#ifdef _WIN32
+        _wputenv_s(L"VEHICLE_SIL_TRACE", absolute.c_str());
+        SetEnvironmentVariableW(L"VEHICLE_SIL_TRACE", absolute.c_str());
+#else
+        ::setenv("VEHICLE_SIL_TRACE", absolute.c_str(), 1);
+#endif
+    }
+    return start(absolute, events);
 }
 
 void flush_at_exit()
@@ -391,11 +427,11 @@ bool start(const std::filesystem::path& directory, std::uint64_t events_per_thre
     tracer->start_ns = detail::now_ns();
     g_tracer.store(tracer, std::memory_order_release);
     std::atexit(flush_at_exit);
-    detail::g_enabled.store(true, std::memory_order_release);
+    detail::g_enabled.on.store(true, std::memory_order_release);
     return true;
 }
 
-std::optional<std::filesystem::path> flush()
+std::optional<std::filesystem::path> flush(Errors errors)
 {
     Tracer* tracer = g_tracer.load(std::memory_order_acquire);
     if (tracer == nullptr)
@@ -408,17 +444,21 @@ std::optional<std::filesystem::path> flush()
         return std::nullopt;
     }
     tracer->flushed = true;
-    detail::g_enabled.store(false, std::memory_order_relaxed);
+    detail::g_enabled.on.store(false, std::memory_order_relaxed);
     if (tracer->buffers.empty())
     {
         return std::nullopt; // no thread recorded (an ECU asked only for --describe, say): no file
     }
     try
     {
-        return write_file(*tracer);
+        return write_file(*tracer, errors);
     }
     catch (const std::exception& e)
     {
+        if (errors == Errors::Silent)
+        {
+            return std::nullopt;
+        }
         std::fprintf(stderr, "vehicle-sil trace: the file was not written: %s\n", e.what());
         return std::nullopt;
     }

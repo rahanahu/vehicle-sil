@@ -5,6 +5,20 @@ vehicle_sil_add_harness_tests(vehicle_sil_trace_tests
   SOURCES test_trace.cpp
   LINK vehicle_sil::trace)
 
+# The trace started by the environment: a relative directory becomes absolute (and is passed on so),
+# and a VEHICLE_SIL_TRACE_EVENTS that is not a number from 1 to 2^24 gives the default.
+foreach(_events_case "-1;262144" "16777217;262144" "x;262144" "1000;1024")
+  list(GET _events_case 0 _events)
+  list(GET _events_case 1 _expected)
+  string(MAKE_C_IDENTIFIER "${_events}" _name)
+  set(_test trace.started_by_the_environment.events_${_name})
+  file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/${_test})
+  add_test(NAME ${_test} COMMAND vehicle_sil_trace_tests started_by_the_environment
+           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/${_test})
+  set_tests_properties(${_test} PROPERTIES LABELS "unit;trace" TIMEOUT 60
+                       ENVIRONMENT "VEHICLE_SIL_TRACE=relative/trace;VEHICLE_SIL_TRACE_EVENTS=${_events};TRACE_EXPECT_EVENTS=${_expected}")
+endforeach()
+
 # Counts every allocation of the process (unit/allocation_counter.hpp): its own binary.
 vehicle_sil_add_harness_tests(vehicle_sil_trace_allocation_tests
   PREFIX trace LABELS unit trace TIMEOUT 60

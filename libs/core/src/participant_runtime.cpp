@@ -1000,7 +1000,10 @@ void ParticipantRuntime::release_step() noexcept
     {
         return;
     }
-    trace::instant("step.release", now_ns_.load(std::memory_order_acquire));
+    if (trace::enabled())
+    {
+        trace::instant("step.release", now_ns_.load(std::memory_order_acquire));
+    }
     try
     {
         time_sync_->CompleteSimulationStep(); // queues the completion on the SIL Kit thread
