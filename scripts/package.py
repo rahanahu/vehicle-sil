@@ -229,7 +229,7 @@ def run_steps(tag: str, steps: list[tuple[str, object]]) -> bool:
 
 
 # The pre-release part of a version: SemVer's form, which PEP 440 also takes in pyproject.toml (rc.1 is rc1 there).
-PRERELEASE = r"(?:alpha|beta|rc)\.\d+"
+PRERELEASE = r"(?:rc|beta|alpha)\.(?:0|[1-9][0-9]*)"  # SemVer: no leading zero in a number
 # A version as the template's README names it, with its pre-release part; not the 0.2.0 inside 0.2.0-rc.1.
 VERSION_IN_TEXT = re.compile(rf"(?<![\d.])\d+\.\d+\.\d+(?:-{PRERELEASE})?(?!\d|\.\d|-{PRERELEASE})")
 

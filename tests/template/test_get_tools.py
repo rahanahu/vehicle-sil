@@ -356,6 +356,7 @@ def test_prerelease(tmp: Path) -> None:
         (project + 'set(VEHICLE_SIL_VERSION_PRERELEASE "")\n', "0.2.0"),
         (project + 'set(VEHICLE_SIL_VERSION_PRERELEASE "rc1")\n', 'is "rc1": write rc.<n>, beta.<n> or alpha.<n>'),
         (project + 'set(VEHICLE_SIL_VERSION_PRERELEASE "dev")\n', 'is "dev": write rc.<n>'),
+        (project + 'set(VEHICLE_SIL_VERSION_PRERELEASE "rc.01")\n', 'is "rc.01": write rc.<n>'),  # SemVer
         (project, 'no set(VEHICLE_SIL_VERSION_PRERELEASE "...")'),
     ]
     root = package.ROOT
