@@ -5,7 +5,7 @@ import { MatCardModule } from '@angular/material/card';
 import { CheckResult, Finding, ParticipantView } from '@vehicle-sil/gui-client';
 import { MeasurePipe } from '../core/format/measure-pipe';
 import { CheckPanel } from '../run/check-panel';
-import { FindingsList } from '../run/findings-list';
+import { FindingsList } from '../widgets/findings-list';
 import { ParticipantStatus } from '../run/participant-status';
 
 /** 実行の画面の部品に渡す、長い名前と長い文。 */

@@ -180,6 +180,7 @@ The variable widgets are: value display, number input, slider, switch, lamp, cho
 | `panel-host.ts`       | Hosts custom panels                                                                       |
 | `check-labels.ts`     | The words for a check's outcome, status and findings (used by the Run and Design screens) |
 | `control-labels.ts`   | The words for why an operation is not possible now (used by the Run and Design screens)   |
+| `findings-list.ts`    | The list of findings (used by the Run and Design screens)                                 |
 
 The code in this directory uses only the wrapper's public API (the same way you add a widget yourself; see "The Variables screen and widgets" in docs/gui.md).
 

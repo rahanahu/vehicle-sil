@@ -23,7 +23,7 @@ import { ServerConnection } from '../core/session/server-connection';
 import { ServerInfo } from '../core/session/server-info';
 import { checkOutcomeLabel, checkStatusLabel } from '../widgets/check-labels';
 import { controlLine } from '../widgets/control-labels';
-import { FindingsList } from '../run/findings-list';
+import { FindingsList } from '../widgets/findings-list';
 import {
   ChannelView,
   DesignerModel,
