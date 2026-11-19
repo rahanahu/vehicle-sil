@@ -324,6 +324,7 @@ void Hub::target_changed(Operation& op)
     if (!op.finished && result.done())
     {
         op.finished = true;
+        open_.erase(op.seq);
         finished_.push_back(op.seq);
     }
 }
@@ -357,8 +358,9 @@ Hub::Target* Hub::find_target(const std::string& participant, const std::string&
 std::size_t Hub::open_targets(const std::string& participant) const
 {
     std::size_t n = 0;
-    for (const auto& [seq, op] : operations_)
+    for (const auto seq : open_)
     {
+        const auto& op = operations_.at(seq);
         if (op.finished)
         {
             continue;
@@ -1033,6 +1035,7 @@ std::uint64_t Hub::write(OperationRequest request)
         }
     }
     auto [it, inserted] = operations_.emplace(seq, std::move(op));
+    open_.insert(seq);
     target_changed(it->second);
     forget_finished();
     for (const auto& peer : to_flush)
