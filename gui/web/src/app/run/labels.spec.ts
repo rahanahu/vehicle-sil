@@ -1,5 +1,6 @@
 import { OperationName } from '@vehicle-sil/gui-client';
-import { failureLine, reasonText, simulationLabel } from './labels';
+import { reasonText } from '../widgets/control-labels';
+import { failureLine, simulationLabel } from './labels';
 
 describe('simulationLabel', () => {
   it('says the scenario ended only when it was over (passed or failed)', () => {

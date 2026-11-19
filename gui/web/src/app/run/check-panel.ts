@@ -1,8 +1,8 @@
 import { Component, computed, input, model } from '@angular/core';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { CheckResult } from '@vehicle-sil/gui-client';
-import { FindingsList } from './findings-list';
-import { checkOutcomeLabel, checkStatusLabel } from './labels';
+import { FindingsList } from '../widgets/findings-list';
+import { checkOutcomeLabel, checkStatusLabel } from '../widgets/check-labels';
 
 /** participant の行。 */
 interface Row {

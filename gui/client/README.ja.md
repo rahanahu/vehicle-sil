@@ -199,7 +199,7 @@ GUI サーバーは、2 つの `.mjs` のファイルも、トークンなしで
 import { createClient, takeToken } from '@vehicle-sil/gui-client';
 
 // サーバーが表示した URL（http://127.0.0.1:<port>/#token=<token>）から開いた画面: URL の #token= を受け取って消す。
-// Node のツールでは、baseUrl とトークンを、その URL から自分で取り出して渡す（examples/gui_client）。
+// Node のツールでは、baseUrl とトークンを、その URL から自分で取り出して渡す（リポジトリのクローンにある examples/gui_client）。
 const client = createClient({
   baseUrl: new URL('/', location.href).href,
   token: takeToken(window),
@@ -285,6 +285,7 @@ const stop = watch([client.status, client.controls], (status, controls) => {
 });
 
 try {
+  await client.time.pause(); // step は止まっている実行に使う（または `run.start({ start_paused: true })` で止めて始める）
   await client.time.step(100); // 時刻が着いて、実行がまた一時停止したときに解決する
 } catch (error) {
   if (error instanceof ActionError) console.log(error.code, error.message, error.outcome);
@@ -294,7 +295,7 @@ try {
 | 名前                                                               | 内容                                                                                                                                                                                                                                                           |
 | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `status`                                                           | 見せる状態 1 つ: `link`、`run`、`file`、`result`、`problem`（下）。離散の値だけです                                                                                                                                                                            |
-| `clock`                                                            | `sim_ms`、`speed`、`actual_speed`、`pacing`（`not-paced`、`on-time`、`late`）。よく変わるので `status` と分けています                                                                                                                                          |
+| `clock`                                                            | `sim_ms`（実行の前は `null`）、`speed`、`actual_speed`、`pacing`（`not-paced`、`on-time`、`late`）。よく変わるので `status` と分けています                                                                                                                     |
 | `controls`                                                         | 操作ごとの、いま使えるか: `start`、`stop`、`force_stop`、`pause`、`resume`、`step`（`min_ms` と `max_ms` つき）、`run_until`、`speed`（`min`、`max`、`fastest`（数のほかに `'max'` を受けるか）つき）、`save`                                                  |
 | `scenario`                                                         | いまの（か最後の）実行のシナリオ: `file`、`name`、`status`、`steps`、`timeline_url`。シナリオのない実行では `null`                                                                                                                                             |
 | `outside`                                                          | 実行の `connect` が実機のバスにつないだネットワーク（下の「ネットワークを外につなぐ」）                                                                                                                                                                        |
@@ -637,7 +638,7 @@ watch.close();
 - `onAccepted`（`{session, seq}` を受け取る関数）は、サーバーが書き込みを受け取って操作の番号を返したときに 1 回呼ばれます。結果より前です。拒否されたとき、レスポンスがなかったときは呼ばれません。
 - `onAccepted` は、「受け付けた、反映を待っている」を見せる、次の書き込みを送ってよいと知る、のに使います。`bind` の書き込みは、これを使って、受け取られる前の次の値を送らずに覚えておき、受け取られたら最後の値だけを送ります。
 - `timeoutMs`（既定 `WRITE_TIMEOUT_MS`）は、HTTP のレスポンスが来てから数えます。`Infinity` は時間で切りません（実行が替わるか `close()` するまで待ちます）。2^31-1 ms（約 24.8 日）より長い値は、そこに丸めます。数でない値と 0 以下は既定の時間です。
-- 書き込みは、指定した仮想時間（`atMs`。省くと次のステップ）のステップで反映されるので、止まっている間は確定しません。止めて書くときは、`client.variables.operations` で `queued` を見てから進めます（`examples/gui_client/variables.mjs`）。
+- 書き込みは、指定した仮想時間（`atMs`。省くと次のステップ）のステップで反映されるので、止まっている間は確定しません。止めて書くときは、`client.variables.operations` で `queued` を見てから進めます（リポジトリのクローンにある `examples/gui_client/variables.mjs`）。
 - 最近の操作（ほかのクライアントの書き込みも。シナリオ自身の書き込みは除く）は `client.variables.operations` で読めます。
 
 ### 最初のステップの前に書く

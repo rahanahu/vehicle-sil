@@ -6,7 +6,8 @@ import { Speed } from '@vehicle-sil/gui-client';
 import { MeasurePipe } from '../core/format/measure-pipe';
 import { numberText } from '../core/format/number-text';
 import { SimulationTime } from '../core/session/simulation-time';
-import { controlLine, failureLine, latenessText, reasonLine, speedLabel } from './labels';
+import { controlLine, reasonLine } from '../widgets/control-labels';
+import { failureLine, latenessText, speedLabel } from './labels';
 import { SpeedPicker } from './speed-picker';
 
 /**

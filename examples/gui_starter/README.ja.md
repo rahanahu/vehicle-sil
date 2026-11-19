@@ -18,7 +18,7 @@ GUI サーバー（`vehicle-sil-gui`）に配信させる自分の画面です�
 
 | 使うもの | コマンド |
 |---|---|
-| ビルド済みのツール | `vehicle-sil-gui --web <tools>/gui_starter simulation.yaml` |
+| ビルド済みのツール | `vehicle-sil-gui --web <tools>/gui_starter simulation.live.yaml` |
 | リポジトリ | ライブラリのファイルを 1 回ビルドしてから、サーバーを起動します（下のコマンド）。 |
 
 リポジトリでは、ルートで次を実行します。
@@ -26,7 +26,7 @@ GUI サーバー（`vehicle-sil-gui`）に配信させる自分の画面です�
 ```sh
 (cd gui/web && npm ci && npm run build:client)    # build/gui-client/ に、サーバーが /vsil/ で配るファイルができます
 uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch \
-  --web examples/gui_starter build/<preset>/examples/ecu_main/simulation.yaml
+  --web examples/gui_starter build/<preset>/examples/ecu_main/simulation.live.yaml
 ```
 
 ### 確認
@@ -134,6 +134,7 @@ try {
   await front.time.step(100); // 100 ms 進んで、再び一時停止したときに解決します
   await written;
   await front.time.resume();
+  await front.time.pause(); // 好きなときにまた一時停止できます。`resume()` で続けます
 } catch (error) {
   if (error instanceof ActionError) console.log(error.code, error.message, error.outcome);
   else throw error;
@@ -143,6 +144,7 @@ try {
 }
 ```
 
+- `front.clock` の `sim_ms` は仮想時間（ms）で、実行の前は `null` です（型は `number | null`）。表示する前に `null` を確かめます。
 - シナリオを再生するには、起動時のファイルの隣のシナリオから 1 つ選び（別の設定ファイルには `scenarios()` に `{ file }` を渡し、`run.start` にも同じ `file` を渡します）、実行の終わりを待ちます。シナリオのある実行は書き込みを断る（`scenario-running`）ので、この例は何も書きません:
 
 ```ts

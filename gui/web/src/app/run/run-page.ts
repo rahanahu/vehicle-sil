@@ -23,7 +23,7 @@ import { LanguageChoice } from '../core/i18n/language-choice';
 import { ServerInfo } from '../core/session/server-info';
 import { SimulationTime } from '../core/session/simulation-time';
 import { CheckPanel } from './check-panel';
-import { FindingsList } from './findings-list';
+import { FindingsList } from '../widgets/findings-list';
 import { cutShort, failureLine, resultTone } from './labels';
 import { STDERR_CODE, launcherStderr } from './launcher-stderr';
 import { LogView } from './log-view';
