@@ -8,6 +8,7 @@ This is the reference for `vehicle_sil_launch check <file>`: the order in which 
 |---|---|
 | What is checked, and in which order | [Check order](#check-order) |
 | Checking without starting the executables | [Saved descriptions](#saved-descriptions---write-descriptions---descriptions) |
+| Whether an edit changes the commands that run | [Comparing the commands that run](#comparing-the-commands-that-run---compare-commands) |
 | What each finding code means and how to fix it | [Finding codes](#finding-codes) |
 | The severity when J1939 addresses overlap | [Overlapping J1939 addresses](#overlapping-j1939-addresses) |
 | How to read the human-readable output | [Human-readable](#human-readable) |
@@ -81,6 +82,31 @@ With `--connect`, after stage 3 the check also looks for the bridge of each conn
 
 `run` always runs the `--describe` of each participant again, so `run` and `test` refuse these options (exit code 4).
 
+### Comparing the commands that run (`--compare-commands`)
+
+`check --compare-commands <file>` compares what the configuration being checked runs with what the configuration file `<file>` runs, and writes the result in `commands` of `--json`. A tool that edits a configuration uses it to tell an edit of the networks from an edit that changes the commands, for example with `--text-from-stdin` for the edited text and the file on disk as `<file>`. It only reads `<file>`, and starts no process of its own: with `--descriptions`, the check starts none.
+
+| Compared | Not compared |
+|---|---|
+| For the common part and for each variant laid over it (every variant, whatever `--variant` chooses): each participant's `command` (the whole list), `describe`, `manual` and `enabled` | `networks` (with `external`), `network_names`, `j1939_nodes`, `variables`, `role`, `required`, `step_ms` |
+| The names of the participants, and of the variants (not their order) | `params`, `stop_at_ms`, the timeouts, `time_step_ms`, `speed`, `late_tolerance_ms` |
+| `registry_uri` | Comments, the order of the keys, the files and executables that the commands name |
+
+| `commands` | When | Note |
+|---|---|---|
+| `"same"` | Everything compared is the same. | None |
+| `"changed"` | Something compared differs. | `commands-changed` names the first 3 differences and counts the rest. |
+| `null` | Not compared: no `--compare-commands`, or one of the cases below. | `commands-not-compared` says why (none without the option). |
+
+The two configurations are not compared, rather than taken as the same, when:
+
+- `<file>` cannot be read (as a configuration file cannot), or the configuration being checked cannot be read;
+- either has an error in `registry_uri`, `participants` or `variants` (also in a key of a participant that is not compared, such as `manual: maybe`, and a key written twice);
+- either has a participant with an error in the common part or in a variant (for example a `network_names` line with a network that the file does not have);
+- the check stops at a usage error (`result` `"usage"`; the usage error stands alone, with no note).
+
+An error elsewhere (in `networks`, say) does not stop the comparison. A command is compared as written: with `<file>` in another directory, the same relative path may name another executable. `<file>` is from the working directory, as given. The check in the output of `run --json` and in the event `check` has `commands` `null`: a run compares nothing.
+
 ### Finding codes
 
 Each rule has a fixed name (the code; `code` in JSON) that the output shows. A severity marked "(unreadable)" is an error that makes the configuration file unreadable and gives exit code 3. The finding message itself says how to fix the problem; use this table to look up what a code means. The finding codes of scenarios (`--scenario`) are in [scenario.md](scenario.md), except for the one in the table below.
@@ -149,6 +175,8 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `not-checked` | Note | A `describe: false` participant (not checked). | No action needed. |
 | `not-described` | Note | With `--descriptions`: a `describe: true` participant that has no saved `--describe` output for its `command` and its executable as they are now (the command changed, the executable was built again, or nothing was saved for it). Files that the command names, libraries and the environment are not compared (see [Saved descriptions](#saved-descriptions---write-descriptions---descriptions)). | Check without `--descriptions`, and with `--write-descriptions` to save the outputs again. |
 | `descriptions-not-used` | Note | With `--descriptions`: the file cannot be read, is not a file of saved descriptions, or another vehicle-sil version wrote it. No participant is described. | Check without `--descriptions`, and with `--write-descriptions` to save the outputs again. |
+| `commands-changed` | Note | With `--compare-commands`: the commands that run differ from those of the file (see [Comparing the commands that run](#comparing-the-commands-that-run---compare-commands)). The message names the first differences. | No action is required. |
+| `commands-not-compared` | Note | With `--compare-commands`: the commands could not be compared. The file cannot be read, or one of the configurations has an error in what is compared. `commands` is `null`. | Correct what the message names, and check again. |
 | `descriptions-write` | Error | The file of `--write-descriptions` cannot be written (its directory does not exist, no permission, a full disk; on Windows, another program may have it open). The rest of the report is not affected. | Name a file in a directory that exists and can be written. |
 | `participant-disabled` | Note | A disabled participant (`enabled: false`, `--disable`; neither checked nor started). | No action needed. |
 | `participant-manual` | Note | A participant that you start yourself (`manual: true`, `--manual`; `run` does not start it, but prints the command and waits). | Start it with the command that `run` prints. |
@@ -394,6 +422,7 @@ Top-level keys:
 | `variants` | Array of the variant names in the configuration file. Present only for a configuration file with variants |
 | `params` | The common `params`, overridden by the `params` of the selected variant. Present only when the configuration file has `params` |
 | `stop_at_ms`, `start_timeout_ms`, `stop_timeout_ms`, `registry_uri` | Values from the configuration file |
+| `commands` | With `--compare-commands`: `"same"`, `"changed"`, or `null` (not compared, or no `--compare-commands`; see [Comparing the commands that run](#comparing-the-commands-that-run---compare-commands)) |
 | `participants[]` | Array of participants (in the order of the configuration file) |
 | `networks[]` | Array of networks (in the order of the configuration file) |
 | `findings[]` | Array of findings (in the same order as the human-readable output) |
@@ -521,6 +550,7 @@ participants:
   "start_timeout_ms": 30000,
   "stop_timeout_ms": 10000,
   "registry_uri": null,
+  "commands": null,
   "participants": [
     {
       "name": "Engine",

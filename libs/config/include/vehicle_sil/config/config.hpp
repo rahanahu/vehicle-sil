@@ -449,6 +449,10 @@ struct EnabledOverrides
 /// listen_variable_value(): run does not pass it on.
 [[nodiscard]] std::optional<Finding> inherited_listen_variable(const SimulationConfig& config, const char* inherited);
 
+/// The top-level keys of a configuration that say which commands run, and how they reach the
+/// registry: what compare_commands() (check.hpp) compares.
+inline constexpr std::string_view kCommandParts[] = {"registry_uri", "participants", "variants"};
+
 /// What read_config() found.
 struct ConfigRead
 {
@@ -465,6 +469,10 @@ struct ConfigRead
     /// and a --variant that is none of the file's variants (always; the message lists them), a
     /// --variant for a file without variants (only if the text has no error).
     std::vector<Finding> override_errors{};
+    /// The keys of kCommandParts whose text has an error (in `findings`; also a key written twice),
+    /// each once, in the order they were read: what they say is then not known for sure, and
+    /// compare_commands() does not compare the text.
+    std::vector<std::string> command_parts_with_errors{};
 };
 
 /// The overrides' usage errors that do not need the file: each name given to both --disable and
@@ -494,6 +502,9 @@ struct ConfigRead
                                                            std::string_view registry_uri, std::string_view name);
 
 namespace detail {
+/// Lays `variant` over the common part `config` as --variant does (read_config()): every key a
+/// variant may write (kVariantParticipantKeys in config.cpp), and SimulationConfig::variant.
+void apply_variant(SimulationConfig& config, const VariantConfig& variant);
 /// The number of single-character edits between `a` and `b` (for "did you mean").
 [[nodiscard]] std::size_t edit_distance(std::string_view a, std::string_view b);
 /// The candidate closest to `word` if it is close enough to be a typing error, or "".

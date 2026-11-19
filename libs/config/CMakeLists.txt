@@ -12,6 +12,7 @@ add_library(vehicle_sil_config STATIC
   src/check_networks.cpp
   src/check_report.cpp
   src/check_rules.cpp
+  src/compare_commands.cpp
   src/config.cpp
   src/connect.cpp
   src/describe_read.cpp

@@ -90,6 +90,7 @@ constexpr const char* kUsage =
     "                                [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
     "                                [--time-policy realtime|free] [--request <file>]\n"
     "                                [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]\n"
+    "                                [--compare-commands <file>]\n"
     "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]\n"
     "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
@@ -179,6 +180,10 @@ constexpr const char* kUsage =
     "  --descriptions <file>       check: start no process: take each participant's --describe output from <file>\n"
     "                              (check --write-descriptions) if its command and executable are as they were;\n"
     "                              any other participant is not described. --connect: only its form and names\n"
+    "  --compare-commands <file>   check: say in \"commands\" of --json whether the commands that run (each\n"
+    "                              participant's command, describe, manual and enabled in every variant, the\n"
+    "                              participants, the variants, registry_uri) are the same as in <file>; it only\n"
+    "                              reads <file>\n"
     "  --connect <network>=<target> connect the network <network> of <file> to a real bus at <target>: an\n"
     "                              Ethernet adapter (or tap:<device>), a SocketCAN interface (can0, vcan0 or\n"
     "                              socketcan:<name>), or virtual:<n> or physical:<n> for a Vector XL channel\n"
@@ -884,7 +889,7 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
                  a == "--disable" || a == "--enable" || a == "--manual" || a == "--speed" || a == "--scenario" || a == "--control" ||
                  a == "--variant" || a == "--param" || a == "--scenarios" || a == "--timeline" || a == "--connect" ||
                  a == "--network" || a == "--time-policy" || a == "--request" || a == "--descriptions" ||
-                 a == "--write-descriptions" || a == "--control-credentials" ||
+                 a == "--write-descriptions" || a == "--compare-commands" || a == "--control-credentials" ||
                  a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log")
         {
             ++i;
@@ -1105,6 +1110,7 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
     host.config_from_stdin = args.flag("text-from-stdin");
     host.descriptions = args.str("descriptions", "");
     host.write_descriptions = args.str("write-descriptions", "");
+    host.compare_commands = args.str("compare-commands", "");
     require_valid(request, command, asked);
     for (const std::string option : {"descriptions", "write-descriptions"})
     {
@@ -1112,6 +1118,10 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
         {
             throw cli::UsageError("--" + option + " needs a file: --" + option + " <file>.json");
         }
+    }
+    if (args.has("compare-commands") && host.compare_commands.empty())
+    {
+        throw cli::UsageError("--compare-commands needs a file: --compare-commands <configuration file>");
     }
     host.config = positionals[1];
     return request;
@@ -1600,13 +1610,14 @@ int main(int argc, char** argv)
             : isTest ? cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline",
-                                "time-policy", "request", "descriptions", "write-descriptions"},
+                                "time-policy", "request", "descriptions", "write-descriptions", "compare-commands"},
                                {"json", "strict", "events", "stdin-commands", "start-paused", "fail-fast", "text-from-stdin"},
                                {"disable", "enable", "manual", "param", "variant", "scenarios", "connect"})
                    : cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "variant",
-                                "timeline", "time-policy", "request", "descriptions", "write-descriptions"},
+                                "timeline", "time-policy", "request", "descriptions", "write-descriptions",
+                                "compare-commands"},
                                {"json", "strict", "events", "stdin-commands", "start-paused", "text-from-stdin"},
                                {"disable", "enable", "manual", "param", "connect"});
         if (args.positionals().empty())

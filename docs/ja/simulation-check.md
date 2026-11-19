@@ -8,6 +8,7 @@
 |---|---|
 | 何を、どの順に照合するか | [照合の順序](#照合の順序) |
 | 実行ファイルを起動せずに照合する | [保存した説明](#保存した説明--write-descriptions--descriptions) |
+| 編集で、実行されるコマンドが変わるか | [実行されるコマンドを比べる](#実行されるコマンドを比べる--compare-commands) |
 | 指摘のコードの意味と直し方 | [指摘のコード](#指摘のコード) |
 | J1939 のアドレスが重なったときの重大度 | [J1939 のアドレスの重なり](#j1939-のアドレスの重なり) |
 | 人が読む出力の読み方 | [人向け](#人向け) |
@@ -81,6 +82,31 @@
 
 `run` は、毎回すべての participant の `--describe` をやり直します。そのため `run` と `test` は、これらの選択肢を受けません（終了コード 4）。
 
+### 実行されるコマンドを比べる（`--compare-commands`）
+
+`check --compare-commands <file>` は、照合している構成が実行するものと、設定ファイル `<file>` が実行するものを比べ、結果を `--json` の `commands` に書きます。構成を編集する道具が、ネットワークの編集とコマンドを変える編集を見分けるのに使います。たとえば、編集した文を `--text-from-stdin` で渡し、ディスクのファイルを `<file>` にします。`<file>` は読むだけで、この選択肢はプロセスを起動しません。`--descriptions` と一緒なら、照合はプロセスを 1 つも起動しません。
+
+| 比べるもの | 比べないもの |
+|---|---|
+| 共通の部分と、それに重ねた各機種（`--variant` で選んだものに限らず、すべての機種）での、各 participant の `command`（配列の全体）、`describe`、`manual`、`enabled` | `networks`（`external` を含む）、`network_names`、`j1939_nodes`、`variables`、`role`、`required`、`step_ms` |
+| participant の名前と機種の名前（順は比べません） | `params`、`stop_at_ms`、待ち時間、`time_step_ms`、`speed`、`late_tolerance_ms` |
+| `registry_uri` | コメント、キーの順、コマンドが指すファイルや実行ファイル |
+
+| `commands` | いつ | 注記 |
+|---|---|---|
+| `"same"` | 比べるものがすべて同じ | なし |
+| `"changed"` | 比べるものに違いがある | `commands-changed` が最初の 3 つの違いを挙げ、残りを数えます。 |
+| `null` | 比べていない: `--compare-commands` がない、または下のどれか | `commands-not-compared` が理由を言います（選択肢がないときは出ません）。 |
+
+次のときは、同じとみなさず、比べません。
+
+- `<file>` を読めない（設定ファイルを読めないときと同じ場合）、または照合している構成を読めない。
+- どちらかの `registry_uri`、`participants`、`variants` に誤りがある（比べない participant のキーの誤り、たとえば `manual: maybe` や、2 回書いたキーも含みます）。
+- どちらかに、共通の部分か機種のどれかで誤りのある participant がある（たとえば、ファイルにないネットワークを書いた `network_names` の行）。
+- 照合が引数のエラーで止まる（`result` が `"usage"`。引数のエラーだけを出し、注記は出しません）。
+
+ほかの所（たとえば `networks`）の誤りでは、比べるのをやめません。コマンドは書いたとおりに比べます。`<file>` が別のディレクトリにあると、同じ相対パスが別の実行ファイルを指すことがあります。`<file>` は、書いたとおり作業ディレクトリから読みます。`run --json` の出力の照合と、イベント `check` の `commands` は `null` です。実行は何も比べません。
+
 ### 指摘のコード
 
 各ルールには、出力に表示する固定の名前（コード。JSON では `code`）があります。重大度の「（読めない）」は、設定ファイルを読めないエラーで、終了コードが 3 になります。直し方は指摘の文にも入っているので、この表は、コードから意味を調べるのに使います。シナリオ（`--scenario`）の指摘のコードは、下の表の 1 つを除いて、[scenario.md](scenario.md) にあります。
@@ -149,6 +175,8 @@
 | `not-checked` | 注記 | `describe: false` の participant です（照合していない）。 | 対応は不要です。 |
 | `not-described` | 注記 | `--descriptions` のとき: `describe: true` の participant に、今の `command` と実行ファイルに合う保存した `--describe` の出力がありません（コマンドを変えた、実行ファイルを作り直した、保存していない）。コマンドで渡すファイル、ライブラリ、環境変数は比べません（[保存した説明](#保存した説明--write-descriptions--descriptions)）。 | `--descriptions` なしで照合します。`--write-descriptions` を付けると、出力を保存し直します。 |
 | `descriptions-not-used` | 注記 | `--descriptions` のとき: ファイルが読めない、保存した説明のファイルでない、別の vehicle-sil の版が書いた、のどれかです。どの participant も照合しません。 | `--descriptions` なしで照合します。`--write-descriptions` を付けると、出力を保存し直します。 |
+| `commands-changed` | 注記 | `--compare-commands` のとき: 実行されるコマンドが、そのファイルと違います（[実行されるコマンドを比べる](#実行されるコマンドを比べる--compare-commands)）。文が最初の違いを挙げます。 | 対応は不要です。 |
+| `commands-not-compared` | 注記 | `--compare-commands` のとき: コマンドを比べられませんでした。ファイルを読めないか、どちらかの構成の比べるものに誤りがあります。`commands` は `null` です。 | 文が挙げるものを直して、もう一度照合します。 |
 | `descriptions-write` | エラー | `--write-descriptions` のファイルを書けません（ディレクトリがない、権限がない、ディスクがいっぱい。Windows では、ほかのプログラムが開いていることがあります）。ほかの結果には影響しません。 | あるディレクトリの、書けるファイルを指定します。 |
 | `participant-disabled` | 注記 | 無効にした participant です（`enabled: false`、`--disable`。照合も起動もしない）。 | 対応は不要です。 |
 | `participant-manual` | 注記 | 自分で起動する participant です（`manual: true`、`--manual`。`run` は起動せず、コマンドを表示して待つ）。 | `run` が表示するコマンドで起動します。 |
@@ -394,6 +422,7 @@ failed: 3 errors, 1 warning, 0 notes
 | `variants` | 設定ファイルにある機種の名前の配列。機種を書いた設定ファイルのときだけあります |
 | `params` | 共通の `params` に、選んだ機種の `params` を重ねたもの。設定ファイルに `params` があるときだけあります |
 | `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` | 設定ファイルの値 |
+| `commands` | `--compare-commands` のとき: `"same"`、`"changed"`、`null`（比べていない、または `--compare-commands` がない。[実行されるコマンドを比べる](#実行されるコマンドを比べる--compare-commands)） |
 | `participants[]` | participant の配列（設定ファイルの順） |
 | `networks[]` | ネットワークの配列（設定ファイルの順） |
 | `findings[]` | 指摘の配列（人向けと同じ順） |
@@ -521,6 +550,7 @@ participants:
   "start_timeout_ms": 30000,
   "stop_timeout_ms": 10000,
   "registry_uri": null,
+  "commands": null,
   "participants": [
     {
       "name": "Engine",

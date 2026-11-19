@@ -560,6 +560,10 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
     optional_integer("stop_timeout_ms",
                      report.config ? std::optional<std::int64_t>(report.config->stop_timeout_ms) : std::nullopt);
     optional_text("registry_uri", report.config ? report.config->registry_uri.value_or("") : std::string{});
+    // check --compare-commands; null in a run's check, which compares nothing.
+    optional_text("commands", report.commands == config::CommandsCompared::Same      ? "same"
+                              : report.commands == config::CommandsCompared::Changed ? "changed"
+                                                                                     : "");
     if (!report.variants.empty())
     {
         // Only for a file with variants: the chosen one (null with result "usage") and all of them.

@@ -59,6 +59,7 @@
           "start_timeout_ms": 30000,
           "stop_timeout_ms": 10000,
           "registry_uri": null,
+          "commands": null,
           "participants": [
             {
               "name": "Engine",
@@ -606,6 +607,7 @@
             "start_timeout_ms": 30000,
             "stop_timeout_ms": 10000,
             "registry_uri": null,
+            "commands": null,
             "participants": [
               {
                 "name": "Engine",
@@ -923,10 +925,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 20,
-        "t_ms": 200,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
+        "seq": 25,
+        "t_ms": 250,
+        "source": "vehicle_sil_launch",
+        "line": "simulation running"
       }
     },
     {

@@ -397,8 +397,8 @@
         },
         "stop": "requested",
         "phase": "running",
-        "last_seq": 32,
-        "last_t_ms": 320,
+        "last_seq": 33,
+        "last_t_ms": 330,
         "time": {
           "event": "time",
           "seq": 32,
@@ -423,6 +423,7 @@
           "start_timeout_ms": 30000,
           "stop_timeout_ms": 10000,
           "registry_uri": null,
+          "commands": null,
           "participants": [
             {
               "name": "Engine",
@@ -736,8 +737,8 @@
           "id": null
         },
         "launcher_state": {
-          "seq": 29,
-          "rev": 7,
+          "seq": 33,
+          "rev": 8,
           "phase": "running",
           "paused": true,
           "paused_at_ms": 200,
@@ -1021,8 +1022,8 @@
         },
         "stop": "requested",
         "phase": "ended",
-        "last_seq": 45,
-        "last_t_ms": 450,
+        "last_seq": 47,
+        "last_t_ms": 470,
         "time": {
           "event": "time",
           "seq": 32,
@@ -1047,6 +1048,7 @@
           "start_timeout_ms": 30000,
           "stop_timeout_ms": 10000,
           "registry_uri": null,
+          "commands": null,
           "participants": [
             {
               "name": "Engine",
@@ -1364,7 +1366,7 @@
         ],
         "findings_omitted": 0,
         "last_command": {
-          "seq": 33,
+          "seq": 34,
           "command": "stop",
           "source": "stdin",
           "accepted": true,
@@ -1373,8 +1375,8 @@
           "id": null
         },
         "launcher_state": {
-          "seq": 44,
-          "rev": 11,
+          "seq": 46,
+          "rev": 12,
           "phase": "ended",
           "paused": false,
           "paused_at_ms": null,
@@ -1602,6 +1604,7 @@
             "start_timeout_ms": 30000,
             "stop_timeout_ms": 10000,
             "registry_uri": null,
+            "commands": null,
             "participants": [
               {
                 "name": "Engine",

@@ -905,6 +905,7 @@ vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <fil
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                          [--time-policy realtime|free] [--request <file>]
                          [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]
+                         [--compare-commands <file>]
                          [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
@@ -959,6 +960,7 @@ The usage above shows which commands accept each option. The Condition column of
 | `--text-from-stdin` | `check` only | Reads the text of the configuration from stdin instead of from `<file>`. `<file>` still names it: its relative paths and the `scenario` of a request file are from its directory, and the findings and the JSON name it. The file need not exist. |
 | `--write-descriptions <file>` | `check` only | Writes the `--describe` output of each participant whose output was read to `<file>`, for `--descriptions` (see "Saved descriptions (`--write-descriptions`, `--descriptions`)" in [simulation-check.md](simulation-check.md#saved-descriptions---write-descriptions---descriptions)). |
 | `--descriptions <file>` | `check` only | Starts no process: takes each participant's `--describe` output from `<file>`, if its command and its executable are as they were when the output was saved; any other participant is not described (see the same section of [simulation-check.md](simulation-check.md#saved-descriptions---write-descriptions---descriptions)). |
+| `--compare-commands <file>` | `check` only | Compares the commands that run (each participant's `command`, `describe`, `manual` and `enabled` in every variant, the participants, the variants, `registry_uri`) with those of the configuration file `<file>`, and writes `"same"`, `"changed"` or `null` (not compared) in `commands` of `--json` (see "Comparing the commands that run (`--compare-commands`)" in [simulation-check.md](simulation-check.md#comparing-the-commands-that-run---compare-commands)). |
 | `--disable <name>` | | Disables participant `<name>` (same as `enabled: false`; can be repeated). |
 | `--enable <name>` | | Enables participant `<name>` again (same as `enabled: true`; can be repeated). |
 | `--manual <name>` | | You start participant `<name>` yourself (same as `manual: true`; can be repeated). |
@@ -1000,6 +1002,8 @@ Notes on individual options:
 | `--descriptions` | `--connect` and `connect` of a request file: no bridge is looked for or run; the rest is checked from the saved descriptions. |
 | `--descriptions` | Only the participant's name, its `command` and its executable are compared with what was saved: a changed file that the command names, library or environment goes unnoticed. With no usable output the check compares nothing and still passes. |
 | `--descriptions`, `--write-descriptions` | Can be given together (the outputs taken from the file are written again), and with `--text-from-stdin`. |
+| `--compare-commands` | Only reads `<file>` (from the working directory, as given) and starts no process of its own. With `--text-from-stdin`, compares the text with the file; with `--descriptions` too, the check starts no process. |
+| `--compare-commands` | A configuration with an error in what is compared is not compared (`null`), not taken as the same or as changed. |
 
 On Windows, the arguments are read as UTF-8 from the wide-character command line, so paths with non-ASCII characters work.
 
@@ -1047,7 +1051,7 @@ The following give exit code 4:
 | `check` | `--events`, `--stdin-commands` |
 | `check` | `--log-dir`, `--timeout-ms`, `--speed`, `--start-paused`, `--control` and `--control-*` |
 | `run` | `--json` and `--events` together |
-| `run` | `--text-from-stdin`, `--descriptions`, `--write-descriptions` (they are for `check`) |
+| `run` | `--text-from-stdin`, `--descriptions`, `--write-descriptions`, `--compare-commands` (they are for `check`) |
 | `run` | `--events-stall-ms` without `--events`, or with a value out of range |
 | `run` | `--start-paused` with neither `--stdin-commands` nor `--control` |
 | `run` | `--speed` that is neither a number nor `max` |
@@ -1066,7 +1070,7 @@ The following give exit code 4:
 | Variants and parameters | A malformed `--param`, `--param` without `--scenario`, or `--param` with a name that is not in the scenario |
 | `test` | No `--scenarios`, a `--scenarios` path that does not exist, or a directory with no scenario files |
 | `test` | Options for `run` only, and `--scenario`, given to `test` |
-| `test` | `--text-from-stdin`, `--descriptions`, `--write-descriptions` (they are for `check`) |
+| `test` | `--text-from-stdin`, `--descriptions`, `--write-descriptions`, `--compare-commands` (they are for `check`) |
 | `test` | An enabled participant with `manual: true` in the configuration file given to `test` |
 
 ## See also

@@ -1370,6 +1370,7 @@ passed: 0 errors, 1 warning, 1 note
     "start_timeout_ms": 30000,
     "stop_timeout_ms": 10000,
     "registry_uri": null,
+    "commands": null,
     "participants": [
       {
         "name": "Engine",

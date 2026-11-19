@@ -70,8 +70,8 @@ std::vector<config::Finding> validate_request(const RunRequest& request, Request
                             ": the scenario writes its values for 0 before the first step and runs by itself; pause "
                             "and step it with --stdin-commands or from a Control Server client (--control) if needed"));
     }
-    // What a check reads instead of the file and of the executables: a run and a test read both
-    // themselves, as they start them.
+    // What a check reads instead of the file and of the executables (a run and a test read both
+    // themselves, as they start them), and the file it compares the commands with.
     if (command != RequestCommand::Check)
     {
         if (host.config_from_stdin)
@@ -88,6 +88,11 @@ std::vector<config::Finding> validate_request(const RunRequest& request, Request
         {
             out.push_back(usage("--write-descriptions is for check: leave it out, and write the descriptions with "
                                 "vehicle_sil_launch check --write-descriptions <file>"));
+        }
+        if (!host.compare_commands.empty())
+        {
+            out.push_back(usage("--compare-commands is for check: leave it out, and compare the commands with "
+                                "vehicle_sil_launch check --compare-commands <file>"));
         }
     }
     // A check starts nothing: it has neither of the two options, and nothing waits.

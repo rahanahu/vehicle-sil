@@ -23,6 +23,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -161,6 +162,25 @@ namespace {
     return {};
 }
 
+/// check --compare-commands: compares what runs of `text` with what runs of the configuration file
+/// `other` (read as the configuration file is, from the working directory): CheckReport::commands
+/// and its note.
+void compare_commands_with(Checked& report, std::string_view text, const std::string& other)
+{
+    std::string other_text;
+    if (const std::string problem = read_config_file(process::path_from_utf8(other), other_text); !problem.empty())
+    {
+        report.findings.push_back(config::commands_not_compared(other, problem));
+        return;
+    }
+    config::CommandsComparison compared = config::compare_commands(text, other_text, other);
+    report.commands = compared.result;
+    if (compared.note)
+    {
+        report.findings.push_back(std::move(*compared.note));
+    }
+}
+
 } // namespace
 
 Checked check_file(const RunRequest& request, const CheckOptions& options,
@@ -195,6 +215,11 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         !problem.empty())
     {
         report.findings.push_back(config::Finding{config::Severity::Error, "file", problem, 0, "", ""});
+        if (!host.compare_commands.empty())
+        {
+            report.findings.push_back(
+                config::commands_not_compared(host.compare_commands, "the configuration being checked cannot be read: see the errors"));
+        }
         return report;
     }
     config::ConfigRead read = config::read_config(text, overrides);
@@ -213,6 +238,11 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     }
     report.findings = std::move(read.findings);
     report.config = std::move(read.config);
+    // It only reads: also for file_only, and whatever the rest of the check finds.
+    if (!host.compare_commands.empty())
+    {
+        compare_commands_with(report, text, host.compare_commands);
+    }
     if (report.config)
     {
         config::ConfigConnect counted = config::connect_for_config(*report.config, intent.connect, request.origin);

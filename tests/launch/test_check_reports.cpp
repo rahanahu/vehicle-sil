@@ -270,6 +270,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
   "start_timeout_ms": 30000,
   "stop_timeout_ms": 10000,
   "registry_uri": null,
+  "commands": null,
   "participants": [
     {
       "name": "Engine",
@@ -509,6 +510,7 @@ TEST_CASE(the_json_report_of_a_file_that_cannot_be_read)
   "start_timeout_ms": null,
   "stop_timeout_ms": null,
   "registry_uri": null,
+  "commands": null,
   "participants": [],
   "networks": [],
   "time_lock": null,
@@ -546,6 +548,7 @@ TEST_CASE(the_json_report_of_a_wrong_command_line)
   "start_timeout_ms": null,
   "stop_timeout_ms": null,
   "registry_uri": null,
+  "commands": null,
   "participants": [],
   "networks": [],
   "time_lock": null,
@@ -718,6 +721,31 @@ TEST_CASE(the_json_report_shows_the_seen_variables_and_the_map_of_an_entry_that_
     // An entry without variables has no "variable_map" (the key says that the entry has a map).
     r.config->participants[0].variables.clear();
     CHECK(format_json(r).find("variable_map") == std::string::npos);
+}
+
+TEST_CASE(the_json_report_says_whether_the_commands_are_the_same)
+{
+    Checked r = mixed_report();
+    const auto commands = [&r] {
+        const std::string json = format_json(r);
+        const std::string key = "\n  \"registry_uri\": null,\n  \"commands\": ";
+        const auto at = json.find(key);
+        if (at == std::string::npos)
+        {
+            return std::string("(none)");
+        }
+        const auto from = at + key.size();
+        return json.substr(from, json.find('\n', from) - from);
+    };
+    CHECK(commands() == "null,");
+    r.commands = CommandsCompared::Same;
+    CHECK(commands() == "\"same\",");
+    r.commands = CommandsCompared::Changed;
+    CHECK(commands() == "\"changed\",");
+    // The text for people has the note only.
+    const std::string text = format_text(r);
+    r.commands = CommandsCompared::NotCompared;
+    CHECK(format_text(r) == text);
 }
 
 TEST_CASE(the_reports_show_a_participant_without_a_saved_description)

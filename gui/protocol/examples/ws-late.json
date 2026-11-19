@@ -251,6 +251,7 @@
           "start_timeout_ms": 30000,
           "stop_timeout_ms": 10000,
           "registry_uri": null,
+          "commands": null,
           "participants": [
             {
               "name": "Engine",
@@ -1030,6 +1031,7 @@
           "start_timeout_ms": 30000,
           "stop_timeout_ms": 10000,
           "registry_uri": null,
+          "commands": null,
           "participants": [
             {
               "name": "Engine",
@@ -1473,7 +1475,7 @@
         "event": "time",
         "seq": 31,
         "t_ms": 310,
-        "sim_ms": 605,
+        "sim_ms": 610,
         "actual_speed": 1.5,
         "late_steps": 1,
         "max_late_ms": 200,
@@ -1488,7 +1490,7 @@
         "event": "time",
         "seq": 32,
         "t_ms": 320,
-        "sim_ms": 705,
+        "sim_ms": 710,
         "actual_speed": 1.5,
         "late_steps": 1,
         "max_late_ms": 200,
@@ -1503,7 +1505,7 @@
         "event": "time",
         "seq": 33,
         "t_ms": 330,
-        "sim_ms": 805,
+        "sim_ms": 810,
         "actual_speed": 1.5,
         "late_steps": 1,
         "max_late_ms": 200,
@@ -1518,7 +1520,7 @@
         "event": "time",
         "seq": 34,
         "t_ms": 340,
-        "sim_ms": 905,
+        "sim_ms": 910,
         "actual_speed": 1.5,
         "late_steps": 1,
         "max_late_ms": 200,
@@ -2150,6 +2152,7 @@
             "start_timeout_ms": 30000,
             "stop_timeout_ms": 10000,
             "registry_uri": null,
+            "commands": null,
             "participants": [
               {
                 "name": "Engine",
@@ -2420,6 +2423,7 @@
           "start_timeout_ms": 30000,
           "stop_timeout_ms": 10000,
           "registry_uri": null,
+          "commands": null,
           "participants": [
             {
               "name": "Engine",
@@ -2940,6 +2944,7 @@
             "start_timeout_ms": 30000,
             "stop_timeout_ms": 10000,
             "registry_uri": null,
+            "commands": null,
             "participants": [
               {
                 "name": "Engine",

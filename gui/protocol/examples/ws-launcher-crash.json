@@ -251,6 +251,7 @@
           "start_timeout_ms": 30000,
           "stop_timeout_ms": 10000,
           "registry_uri": null,
+          "commands": null,
           "participants": [
             {
               "name": "Engine",
@@ -1004,6 +1005,17 @@
         "event": "log",
         "seq": 25,
         "t_ms": 250,
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 26,
+        "t_ms": 260,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -1013,25 +1025,14 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 26,
-        "t_ms": 260,
+        "seq": 27,
+        "t_ms": 270,
         "sim_ms": 0,
         "actual_speed": null,
         "late_steps": 0,
         "max_late_ms": 0,
         "slipped_ms": 0,
         "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 27,
-        "t_ms": 270,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -1086,8 +1087,8 @@
         "last_t_ms": 280,
         "time": {
           "event": "time",
-          "seq": 26,
-          "t_ms": 260,
+          "seq": 27,
+          "t_ms": 270,
           "sim_ms": 0,
           "actual_speed": null,
           "late_steps": 0,
@@ -1108,6 +1109,7 @@
           "start_timeout_ms": 30000,
           "stop_timeout_ms": 10000,
           "registry_uri": null,
+          "commands": null,
           "participants": [
             {
               "name": "Engine",

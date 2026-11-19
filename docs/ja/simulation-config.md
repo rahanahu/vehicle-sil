@@ -903,6 +903,7 @@ vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <fil
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                          [--time-policy realtime|free] [--request <file>]
                          [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]
+                         [--compare-commands <file>]
                          [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
@@ -957,6 +958,7 @@ vehicle_sil_launch version [--json]
 | `--text-from-stdin` | `check` だけ | 構成の文を `<file>` からでなく標準入力から読みます。`<file>` は名前として使います。相対パスと要求ファイルの `scenario` はそのディレクトリから読み、指摘と JSON はその名前を書きます。ファイルはなくてもかまいません。 |
 | `--write-descriptions <file>` | `check` だけ | 読めた participant の `--describe` の出力を、`--descriptions` のために `<file>` に書きます（[simulation-check.md](simulation-check.md#保存した説明--write-descriptions--descriptions) の「保存した説明（`--write-descriptions`、`--descriptions`）」）。 |
 | `--descriptions <file>` | `check` だけ | プロセスを起動しません。各 participant の `--describe` の出力を、コマンドと実行ファイルが保存したときのままなら `<file>` から取ります。それ以外の participant は照合しません（[simulation-check.md](simulation-check.md#保存した説明--write-descriptions--descriptions) の同じ節）。 |
+| `--compare-commands <file>` | `check` だけ | 実行されるコマンド（すべての機種での各 participant の `command`、`describe`、`manual`、`enabled`、participant、機種、`registry_uri`）を、設定ファイル `<file>` のものと比べ、`--json` の `commands` に `"same"`、`"changed"`、`null`（比べていない）を書きます（[simulation-check.md](simulation-check.md#実行されるコマンドを比べる--compare-commands) の「実行されるコマンドを比べる（`--compare-commands`）」）。 |
 | `--disable <name>` | | participant `<name>` を無効にします（`enabled: false` と同じ。繰り返せます）。 |
 | `--enable <name>` | | participant `<name>` を有効に戻します（`enabled: true` と同じ。繰り返せます）。 |
 | `--manual <name>` | | participant `<name>` を自分で起動します（`manual: true` と同じ。繰り返せます）。 |
@@ -998,6 +1000,8 @@ vehicle_sil_launch version [--json]
 | `--descriptions` | `--connect` と要求ファイルの `connect`: ブリッジを探さず、起動もしません。ほかは保存した説明で照合します。 |
 | `--descriptions` | 保存したものと比べるのは、participant の名前、`command`、実行ファイルだけです。コマンドで渡すファイル、ライブラリ、環境変数が変わっても気づきません。使える出力がなければ、何も比べずに通ります。 |
 | `--descriptions`、`--write-descriptions` | 一緒に使えます（ファイルから取った出力を書き直します）。`--text-from-stdin` とも一緒に使えます。 |
+| `--compare-commands` | `<file>` は読むだけで（書いたとおり作業ディレクトリから）、この選択肢はプロセスを起動しません。`--text-from-stdin` なら文とファイルを比べます。`--descriptions` も一緒なら、照合はプロセスを起動しません。 |
+| `--compare-commands` | 比べるものに誤りのある構成は、同じとも違うともせず、比べません（`null`）。 |
 
 Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。
 
@@ -1045,7 +1049,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | `check` | `--events`、`--stdin-commands` |
 | `check` | `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、`--control` と `--control-*` |
 | `run` | `--json` と `--events` を一緒に付ける |
-| `run` | `--text-from-stdin`、`--descriptions`、`--write-descriptions`（`check` だけのもの） |
+| `run` | `--text-from-stdin`、`--descriptions`、`--write-descriptions`、`--compare-commands`（`check` だけのもの） |
 | `run` | `--events` なしの `--events-stall-ms` と、範囲の外の値 |
 | `run` | `--stdin-commands` も `--control` もない `--start-paused` |
 | `run` | 数でも `max` でもない `--speed` |
@@ -1064,7 +1068,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | 機種とパラメーター | 形の違う `--param`、`--scenario` なしの `--param`、シナリオにない名前の `--param` |
 | `test` | `--scenarios` がない、`--scenarios` のパスがない、シナリオのファイルがないディレクトリ |
 | `test` | `test` に付けた `run` だけの引数と `--scenario` |
-| `test` | `--text-from-stdin`、`--descriptions`、`--write-descriptions`（`check` だけのもの） |
+| `test` | `--text-from-stdin`、`--descriptions`、`--write-descriptions`、`--compare-commands`（`check` だけのもの） |
 | `test` | `test` に渡した設定ファイルの、有効で `manual: true` の participant |
 
 ## 関連するドキュメント

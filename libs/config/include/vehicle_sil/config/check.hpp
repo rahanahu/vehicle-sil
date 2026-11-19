@@ -311,6 +311,39 @@ struct ConfigConnect
 [[nodiscard]] ConfigConnect connect_for_config(const SimulationConfig& config, std::span<const ConnectRequest> connect,
                                                const RequestOrigin& origin);
 
+/// check --compare-commands: whether the commands that run are the same as in another file
+/// (compare_commands()).
+enum class CommandsCompared
+{
+    NotCompared, ///< no --compare-commands, or they could not be compared (a note says why)
+    Same,
+    Changed, ///< the note commands-changed says what differs
+};
+
+/// What compare_commands() found: the result, and its note (commands-changed or
+/// commands-not-compared; none for Same).
+struct CommandsComparison
+{
+    CommandsCompared result = CommandsCompared::NotCompared;
+    std::optional<Finding> note{};
+};
+
+/// Compares what runs of the configuration `text` (the one being checked) with that of `other_text`
+/// (the configuration file `other_file`, as the user named it, for the messages). What runs: for
+/// the common part and for each variant laid over it (detail::apply_variant()), each participant's
+/// command (the whole list), describe, manual and enabled; the names of the participants and of the
+/// variants; registry_uri. Nothing else counts (networks, network_names, variables, params, ...).
+/// Not compared (never Same) if a text cannot be read as a configuration, has an error in what is
+/// compared (ConfigRead::command_parts_with_errors), or has a participant that is not valid in the
+/// common part or in a variant (ParticipantConfig::valid): what does not read is not taken as the
+/// same. Pure: no file is read.
+[[nodiscard]] CommandsComparison compare_commands(std::string_view text, std::string_view other_text,
+                                                  std::string_view other_file);
+
+/// The note commands-not-compared: the commands are not compared with `other_file` because of `why`
+/// (what is wrong and how to fix it).
+[[nodiscard]] Finding commands_not_compared(std::string_view other_file, std::string_view why);
+
 /// The result of checking one file.
 struct CheckReport
 {
@@ -334,6 +367,8 @@ struct CheckReport
     /// ConfigRead::override_errors, and the scenario's ScenarioRead::usage_errors); `config` is
     /// then empty.
     bool usage = false;
+    /// check --compare-commands (check_file()): what compare_commands() found; NotCompared without it.
+    CommandsCompared commands = CommandsCompared::NotCompared;
 
     [[nodiscard]] std::size_t errors() const;
     [[nodiscard]] std::size_t warnings() const;

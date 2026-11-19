@@ -96,6 +96,9 @@ struct RunHost
     /// check --write-descriptions: the file that the --describe outputs the check read are
     /// written to; empty: none.
     std::string write_descriptions{};
+    /// check --compare-commands: the configuration file whose commands that run the check compares
+    /// with those of `config` (CheckReport::commands); it only reads it. Empty: none.
+    std::string compare_commands{};
 };
 
 struct RunRequest
@@ -125,7 +128,8 @@ enum class RequestCommand
 /// scenario (they wait for a run that has one); --param does. That a paused start needs commands is a
 /// rule of Run and Test only: a check starts nothing (and only a request file can ask a check
 /// for a paused start).
-/// RunHost::config_from_stdin, descriptions and write_descriptions are for Check only.
+/// RunHost::config_from_stdin, descriptions, write_descriptions and compare_commands are for Check
+/// only.
 [[nodiscard]] std::vector<config::Finding> validate_request(const RunRequest& request, RequestCommand command);
 
 /// The version of the request file (its "vehicle_sil_run_request").
