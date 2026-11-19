@@ -246,6 +246,10 @@ jobs:
             echo "error: CHANGELOG.md has no section \"## [$version] - YYYY-MM-DD\" with changes under it: add it in the commit that is tagged $TAG"
             exit 1
           fi
-          gh release create "$TAG" --draft --verify-tag --title "vehicle-sil $version" --notes-file notes.md \
+          # A version with a pre-release part (0.2.0-rc.1) is a pre-release on GitHub, not the latest release.
+          prerelease=()
+          case "$version" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "$TAG" --draft --verify-tag "${prerelease[@]}" --title "vehicle-sil $version" \
+            --notes-file notes.md \
             build/dist/vehicle-sil-tools-* build/dist/vehicle-sil-template-*.zip \
             build/dist/vehicle-sil-gui-client-*.tgz build/dist/SHA256SUMS

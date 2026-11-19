@@ -340,7 +340,7 @@ passed: 0 errors, 0 warnings, 0 notes
 
 例の依頼は、次のようになります。
 
-> 表示の ECU は、J1939 のネットワークに `VehicleCAN` という名前で接続しています。決めた名前は `J1939_CAN` で、エンジンの ECU はこの名前を使っています。名前が違うと、どの設定ファイルにも名前の対応を書かない限り、2 つの ECU は別のバスに分かれ、エンジンの回転数を受信できません。コードの `ecu.j1939("VehicleCAN")` を `ecu.j1939("J1939_CAN")` に変えて、vehicle-sil 0.1.0 でビルドし直してください。渡す前に、`--describe` の `networks[].name` が `J1939_CAN` になっていることを確認してください。`check` の指摘は次のとおりです。（手順 3 の `error:` の行）
+> 表示の ECU は、J1939 のネットワークに `VehicleCAN` という名前で接続しています。決めた名前は `J1939_CAN` で、エンジンの ECU はこの名前を使っています。名前が違うと、どの設定ファイルにも名前の対応を書かない限り、2 つの ECU は別のバスに分かれ、エンジンの回転数を受信できません。コードの `ecu.j1939("VehicleCAN")` を `ecu.j1939("J1939_CAN")` に変えて、vehicle-sil（`vehicle_sil_launch version` が表示するバージョン）でビルドし直してください。渡す前に、`--describe` の `networks[].name` が `J1939_CAN` になっていることを確認してください。`check` の指摘は次のとおりです。（手順 3 の `error:` の行）
 
 作り直した実行ファイルを受け取ったら、置き換えて、もう一度 `check` を実行します。例では、作り直した表示の ECU が `../ecu_main/dashboard/` にあるので、`simulation.fixed.yaml` は `Dashboard` の `command` を次の行に変えてあります。
 
