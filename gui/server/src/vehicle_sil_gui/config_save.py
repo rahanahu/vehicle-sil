@@ -162,8 +162,8 @@ def check_text(relative: str, data: bytes) -> None:
     config-unreadable)."""
     if b"\0" in data:
         raise Refused(422, "config-unreadable",
-                      f"the text for {relative} has a NUL character at byte {data.index(0)}: the GUI server saves no "
-                      "text that it could not read again; take the NUL out")
+                          f"the text for {relative} has a NUL character at byte {data.index(0)}: the GUI server saves "
+                          "no text that it could not read again; take the NUL out")
     if MARKER not in data[:MARKER_BYTES]:
         raise Refused(422, "config-unreadable",
                           f"the text for {relative} has no {MARKER.decode()} in its first {MARKER_BYTES} bytes: the "
@@ -246,7 +246,15 @@ def _put_new(temp: Path, target: Path) -> None:
     except OSError:  # a file system without hard links (FAT, some network shares)
         pass
     os.close(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))  # FileExistsError when it is there
-    os.replace(temp, target)
+    try:
+        os.replace(temp, target)
+    except OSError:
+        # The empty file is this save's own placeholder: leave nothing that blocks the next save.
+        try:
+            target.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def _sync_directory(directory: Path) -> None:
