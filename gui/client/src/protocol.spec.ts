@@ -5,6 +5,7 @@ import {
   readAppInfo,
   readCheckResponse,
   readConfigList,
+  readConfigText,
   readConnections,
   readDashboardResponse,
   readLauncherEvent,
@@ -21,7 +22,9 @@ import {
 const READERS: Record<string, (value: unknown) => unknown> = {
   'GET api/app': readAppInfo,
   'GET api/configs': readConfigList,
+  'GET api/config': readConfigText,
   'POST api/check': readCheckResponse,
+  'POST api/describe': readCheckResponse,
   'POST api/connections': readConnections,
   'POST api/run': readSessionResponse,
   'POST api/stop': readSessionResponse,

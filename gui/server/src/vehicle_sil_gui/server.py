@@ -9,6 +9,7 @@ exited and its output is read, so the end of the server stops all of them, whate
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import itertools
 import json
@@ -24,12 +25,14 @@ from aiohttp import WSCloseCode, WSMsgType, web
 from . import __version__, control, dashboard, process
 from .allowed import Facts, Numbered, allowed as allowed_of, allowed_start
 from .hub import Client, Hub, Outgoing, encode
-from .launcher import (CONNECTIONS_FIELDS, NO_CONNECTION, REQUEST_FIELDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN,
-                       STEP_MS_MAX, InvalidRequest, Launcher, check_command, check_connect, check_disable,
-                       check_enable, check_fields, check_manual, check_network, check_params, check_speed,
-                       check_strict, check_time_command, check_time_policy, check_variant, command_line,
-                       connections_command, hide_request, hide_request_in_line, run_command, write_request_file)
+from .launcher import (CONNECTIONS_FIELDS, DESCRIBE_FIELDS, DESCRIPTIONS_NAME, NO_CONNECTION, REQUEST_FIELDS,
+                       FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, TEXT_FIELDS, InvalidRequest, Launcher,
+                       check_command, check_connect, check_disable, check_enable, check_fields, check_manual,
+                       check_network, check_params, check_speed, check_strict, check_time_command, check_time_policy,
+                       check_variant, command_line, connections_command, describe_command, hide_request,
+                       hide_request_in_line, run_command, text_check_command, write_request_file)
 from . import client_files
+from .descriptions import Descriptions
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .recording import Recording
 from .scenarios import list_scenarios, relative_to_config, resolve_scenario
@@ -42,6 +45,10 @@ from .variables import AT_MS_MAX, Limits as VariableLimits, Rejected, Variables,
 
 PROTOCOL = 2  # vehicle_sil_gui: the version of the shapes in gui/protocol
 MAX_BODY = 64 * 1024
+MAX_TEXT = 1024 * 1024  # the text of a configuration file: `text` of api/check (as UTF-8), GET api/config
+# The body of api/check: a text of MAX_TEXT in JSON however it is escaped (\u0001 takes 6 bytes for 1 byte of UTF-8,
+# the most), and the rest of the body.
+MAX_TEXT_BODY = 6 * MAX_TEXT + MAX_BODY
 MAX_WS_MESSAGE = 256 * 1024  # a watch that names many variables
 MAX_SOCKETS = 32  # authenticated WebSocket connections
 MAX_UNAUTHENTICATED = 16  # connections waiting for their auth; when full, the oldest is closed for a new one
@@ -151,6 +158,29 @@ class Refused(Exception):
         self.status, self.code, self.detail = status, code, detail
 
 
+def _unreadable(relative: str, e: OSError) -> Exception:
+    """The refusal of a configuration file that the OS did not let the server read."""
+    if isinstance(e, FileNotFoundError):
+        return PathRejected("file-not-found", f"{relative!r} is not there any more: choose one that GET api/configs "
+                                              "lists")
+    return Refused(422, "config-unreadable", f"{relative} cannot be read ({e.strerror or e}): check that this user "
+                                             "can read it")
+
+
+def _utf8_text(relative: str, data: bytes) -> str:
+    """The bytes of a configuration file as text; Refused (422 config-unreadable) when they are not UTF-8 text (a
+    UTF-16 file is not a configuration file: ConfigRoot.configuration finds no marker in it)."""
+    if b"\0" in data:
+        why = f"it has a NUL byte at byte {data.index(0)}"
+    else:
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError as e:
+            why = f"byte {e.start} is not UTF-8"
+    raise Refused(422, "config-unreadable", f"{relative} is not UTF-8 text ({why}): save it as UTF-8 without NUL "
+                                            "characters, the encoding that the launcher reads")
+
+
 
 @dataclass
 class Options:
@@ -206,6 +236,7 @@ class GuiServer:
         self.panel_key = secrets.token_urlsafe(18)
         self.static = StaticFiles(options.web_dir)
         self.timelines = Timelines()
+        self.descriptions = Descriptions()
         self.timeline_page = find_page_dir()
         self.client_dir = client_files.find_dir()
         self._client_warned = False  # the files that vsil/ serves are missing: said once on stderr, at the first request
@@ -271,10 +302,13 @@ class GuiServer:
     # ------------------------------------------------------------ the application
 
     def app(self) -> web.Application:
-        app = web.Application(client_max_size=MAX_BODY, middlewares=[self._headers, self._guard])
+        # MAX_BODY for every body (see _body), but api/check's
+        app = web.Application(client_max_size=MAX_TEXT_BODY, middlewares=[self._headers, self._guard])
         app.router.add_get("/api/app", self.get_app)
         app.router.add_get("/api/configs", self.get_configs)
+        app.router.add_get("/api/config", self.get_config)
         app.router.add_post("/api/check", self.post_check)
+        app.router.add_post("/api/describe", self.post_describe)
         app.router.add_post("/api/connections", self.post_connections)
         app.router.add_post("/api/run", self.post_run)
         app.router.add_post("/api/stop", self.post_stop)
@@ -349,11 +383,12 @@ class GuiServer:
         scheme, _, given = value.partition(" ")
         return scheme.lower() == "bearer" and same_secret(given.strip(), self.o.token)
 
-    async def _body(self, request: web.Request, empty_ok: bool = False) -> dict:
+    async def _body(self, request: web.Request, empty_ok: bool = False, max_size: int = MAX_BODY) -> dict:
+        """The JSON object of the body; one larger than max_size bytes is refused (413 too-large)."""
         if empty_ok and not request.body_exists:
             return {}
         try:
-            body = await request.json()
+            body = await request.clone(client_max_size=max_size).json()
         except (ValueError, UnicodeDecodeError, RecursionError):
             raise InvalidRequest("invalid-json", "the body is not JSON") from None
         if not isinstance(body, dict):
@@ -413,6 +448,34 @@ class GuiServer:
     async def get_configs(self, request: web.Request) -> web.Response:
         files, truncated = await asyncio.to_thread(self.root.list)
         return web.json_response({"root": str(self.root.root), "files": files, "truncated": truncated})
+
+    async def get_config(self, request: web.Request) -> web.Response:
+        """The text of a configuration file, with the SHA-256 of its bytes (stamp). The text is the bytes read as
+        UTF-8, as they are (a BOM and the line ends too)."""
+        try:
+            config = await self._configuration(request.query.get("file"))
+            try:
+                data = await asyncio.to_thread(_read_at_most, config.absolute, MAX_TEXT + 1)
+            except OSError as e:
+                raise _unreadable(config.relative, e) from None
+            if len(data) > MAX_TEXT:
+                raise Refused(413, "config-too-large",
+                              f"{config.relative} is larger than {MAX_TEXT} bytes (1 MiB), the most that the GUI "
+                              "server reads: edit it in a text editor")
+            text = _utf8_text(config.relative, data)
+        except (PathRejected, Refused) as e:
+            return self._refusal(e)
+        return web.json_response({"file": config.relative, "text": text,
+                                  "stamp": hashlib.sha256(data).hexdigest()})
+
+    async def _configuration(self, relative: object) -> ConfigFile:
+        """The configuration file whose content is read or checked for the screen (ConfigRoot.configuration)."""
+        try:
+            return await asyncio.to_thread(self.root.configuration, relative)
+        except PathRejected:
+            raise
+        except OSError as e:
+            raise _unreadable(str(relative), e) from None
 
     async def get_session(self, request: web.Request) -> web.Response:
         # The same encoding as the WebSocket: strict JSON (never a bare NaN or Infinity), or a 500.
@@ -580,8 +643,10 @@ class GuiServer:
     async def post_check(self, request: web.Request) -> web.Response:
         try:
             self._not_closing()
-            body = await self._body(request)
-            check_fields("api/check", body, REQUEST_FIELDS)
+            body = await self._body(request, max_size=MAX_TEXT_BODY)
+            if "text" in body:
+                return await self._check_text(body)
+            check_fields("api/check", body, (*REQUEST_FIELDS, "text"))
             config = self.root.resolve(body.get("file"))
             await self._usable()
             scenario = self._scenario(config, body)
@@ -591,6 +656,56 @@ class GuiServer:
             return self._refusal(e)
         return web.json_response({"file": config.relative, "disable": disable, "manual": manual,
                                   "scenario": scenario, "exit_code": code, "check": result})
+
+    async def _check_text(self, body: dict) -> web.Response:
+        """api/check with text: the check of that text as the file's (its relative paths are from the file's
+        directory), which starts no process: the launcher takes each executable's --describe output from the
+        descriptions that the check of the saved file wrote. The names and the targets that the server keeps of the
+        file (participant_names, _check_targets) are of the saved file: this check neither reads nor changes them."""
+        others = sorted(k for k in body if k not in TEXT_FIELDS)
+        if others:
+            raise InvalidRequest("invalid-field", f"api/check takes no {', '.join(repr(k) for k in others)} together "
+                                                  "with text: a check of unsaved text checks the configuration only; "
+                                                  f"the fields it takes with text are {', '.join(TEXT_FIELDS)}")
+        check_fields("api/check", body, TEXT_FIELDS)
+        config = await self._configuration(body.get("file"))
+        text = body["text"]
+        if not isinstance(text, str):
+            raise InvalidRequest("invalid-field", "text must be the text of the configuration file (a string), or "
+                                                  "left out to check the saved file")
+        try:
+            data = text.encode("utf-8")
+        except UnicodeEncodeError:
+            raise InvalidRequest("invalid-field", "text is not valid Unicode (it has a lone surrogate such as "
+                                                  "\\ud800): send the text as UTF-8") from None
+        if len(data) > MAX_TEXT:
+            raise Refused(413, "text-too-large",
+                          f"text is {len(data)} bytes as UTF-8, more than the {MAX_TEXT} (1 MiB) that the GUI server "
+                          "checks: save the file and check it without text")
+        variant, strict = check_variant(body.get("variant")), check_strict(body.get("strict"))
+        await self._usable()
+        intent = {"variant": variant} if variant else {}
+        if strict:
+            intent["strict"] = True
+        code, result = await self._in_check_queue(lambda: self._text_check_locked(config.relative, intent, data))
+        return web.json_response({"file": config.relative, "disable": [], "manual": [], "scenario": None,
+                                  "exit_code": code, "check": result})
+
+    async def post_describe(self, request: web.Request) -> web.Response:
+        """Describes the executables of the saved file again (a check of it that saves their --describe output), for
+        the next checks of its text (api/check with text)."""
+        try:
+            self._not_closing()
+            body = await self._body(request)
+            check_fields("api/describe", body, DESCRIBE_FIELDS)
+            config = await self._configuration(body.get("file"))
+            variant = check_variant(body.get("variant"))
+            await self._usable()
+            code, result = await self._in_check_queue(lambda: self._describe_locked(config.relative, variant))
+        except (PathRejected, InvalidRequest, Refused) as e:
+            return self._refusal(e)
+        return web.json_response({"file": config.relative, "variant": variant, "exit_code": code,
+                                  "check": result})
 
     async def post_connections(self, request: web.Request) -> web.Response:
         """Where one network of the file can be connected on this computer (connections --json --network), in the
@@ -939,6 +1054,47 @@ class GuiServer:
         finally:
             control.remove(request)
 
+    async def _describe_locked(self, relative: str, variant: str | None) -> tuple[int, dict]:
+        """The check of the saved file (with its variant only) that saves each executable's --describe output in the
+        descriptions of (file, variant), for the checks of its text. A check that could not read the file (or its
+        variant) leaves no descriptions: the text is then checked with none. So does a check that ended in an error
+        (check-timeout, launcher-output, launcher-start), which is raised: it is not run again for the text before
+        the file changes or api/describe asks for it."""
+        key = (relative, variant)
+        stamp = self._stamp(relative)
+        path = await asyncio.to_thread(self.descriptions.path_of, key)
+        intent = {"variant": variant} if variant else {}
+        request = self._make_request(intent)
+        try:
+            code, result = await self._run_check(relative, intent, request, stamp, descriptions=path)
+        except Refused as e:
+            if e.code != "shutting-down":
+                self.descriptions.made(key, stamp, False)
+            raise
+        finally:
+            control.remove(request)
+        self.descriptions.made(key, stamp, result.get("result") not in ("usage", "unreadable"))
+        return code, result
+
+    async def _text_check_locked(self, relative: str, intent: dict, text: bytes) -> tuple[int, dict]:
+        """The check of a text as the file's, with the descriptions of (file, variant): made first by a check of the
+        saved file when there are none, or the file has changed since they were made. In the one turn of the queue
+        of the checks."""
+        key = (relative, intent.get("variant"))
+        if self.descriptions.made_from(key) != self._stamp(relative):
+            try:
+                await self._describe_locked(*key)
+            except Refused as e:  # the text is checked with no descriptions; api/describe says what went wrong
+                if e.code == "shutting-down":
+                    raise
+        path = await asyncio.to_thread(self.descriptions.path_of, key)
+        request = self._make_request(intent)
+        try:
+            return await self._launcher_check(text_check_command(self.launcher, relative, request, path), request,
+                                              path, text)
+        finally:
+            control.remove(request)
+
     @staticmethod
     def _make_request(intent: dict) -> Path:
         """The request file of a check or a run; Refused (500 request-file) when no file can be made."""
@@ -949,29 +1105,43 @@ class GuiServer:
                                                f"made in the temporary directory ({e}): free space there, or set "
                                                "TMPDIR to a directory that this user can write") from None
 
-    async def _run_check(self, relative: str, intent: dict, request: Path, stamp: tuple) -> tuple[int, dict]:
-        variant = intent.get("variant")
+    async def _run_check(self, relative: str, intent: dict, request: Path, stamp: tuple,
+                         descriptions: Path | None = None) -> tuple[int, dict]:
+        """A check of the saved file, whose participant names are kept (participant_names). descriptions: the check
+        also saves the --describe output there (describe_command)."""
+        argv = (check_command(self.launcher, relative, request) if descriptions is None else
+                describe_command(self.launcher, relative, request, descriptions))
+        code, result = await self._launcher_check(argv, request, descriptions)
+        names = [p["name"] for p in result["participants"] if isinstance(p, dict) and isinstance(p.get("name"), str)]
+        if names or result.get("result") not in ("usage",):
+            remember(self._names, (relative, intent.get("variant")), (stamp, names))
+        return code, result
+
+    async def _launcher_check(self, argv: list[str], request: Path, descriptions: Path | None = None,
+                              text: bytes | None = None) -> tuple[int, dict]:
+        """check --json with this command line (text: on its standard input); the check object, with the names of
+        this server's own files (the request, the saved descriptions) hidden."""
         try:
-            code, out, err = await process.run_to_end(check_command(self.launcher, relative, request),
-                                                      cwd=self.root.root, timeout_s=self.o.check_timeout_s,
-                                                      track=self._checks)
+            code, out, err = await process.run_to_end(argv, cwd=self.root.root, timeout_s=self.o.check_timeout_s,
+                                                      track=self._checks, stdin=text)
         except TimeoutError:
             raise Refused(504, "check-timeout", f"the check did not end in {self.o.check_timeout_s:g} s (it was "
                                                 "stopped): an ECU's --describe may hang") from None
         except OSError as e:
             raise Refused(502, "launcher-start", f"cannot start {self.launcher.path}: {e}") from None
         self._not_closing()  # stopped by the server's end: not a launcher that misbehaved
+
+        def hidden(value: object) -> object:
+            value = hide_request(value, request)
+            return value if descriptions is None else hide_request(value, descriptions, DESCRIPTIONS_NAME)
         try:
-            result = hide_request(json.loads(out), request)
+            result = hidden(json.loads(out))
         except (ValueError, RecursionError):
             result = None
         if not isinstance(result, dict) or not isinstance(result.get("participants"), list):
-            tail = hide_request(err.decode("utf-8", "replace"), request).strip().splitlines()[-10:]
+            tail = hidden(err.decode("utf-8", "replace")).strip().splitlines()[-10:]
             raise Refused(502, "launcher-output", f"check --json exited with code {code} and did not write the "
                                                   "check object", tail)
-        names = [p["name"] for p in result["participants"] if isinstance(p, dict) and isinstance(p.get("name"), str)]
-        if names or result.get("result") not in ("usage",):
-            remember(self._names, (relative, variant), (stamp, names))
         return code, result
 
     async def _list_targets(self, relative: str, network: str) -> tuple[int, dict]:
@@ -1163,6 +1333,7 @@ class GuiServer:
             self._ticker.cancel()
         await self._close_sockets()
         await asyncio.to_thread(self.timelines.remove_all)
+        await asyncio.to_thread(self.descriptions.remove_all)
 
     def kill_all(self) -> None:
         """The last resort when the end takes longer than it may: every launcher's and check's tree."""
