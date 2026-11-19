@@ -85,7 +85,7 @@ Not run: <CI に任せたもの、実行しなかったものと、その理由>
 | ビルドのファイル（CMake、プリセット、パッチ、`external/`、`.github/`） | さらに `linux-gcc-release`、`linux-gcc-static`、最も古い CMake、ECU プロジェクトのテンプレートを FetchContent でビルドするテスト |
 | `main` への push | 上のすべてと `linux-clang-asan` |
 
-プルリクエストでは、`linux-clang-tsan` の失敗はそのチェックに表示されますが、`all checks` を失敗させません。`main` では失敗させます。`python` は、プルリクエストの題と、コミットが 1 つのときはそのコミットのメッセージ（`scripts/check-commits.py --message`）、`.local/` と `build/` 以下のファイルや `CLAUDE.local.md` が変更に入っていないこと（`--changed`）も確かめます。再実行は古い題を読みます。題を直したら、コミットを push するか、プルリクエストを閉じて開き直します。
+`all checks` は `linux-clang-tsan` を待ちません。プルリクエストでは、その失敗はそのチェックに表示されますが、マージを止めません。`main` では run を失敗させます。`python` は、プルリクエストの題と、コミットが 1 つのときはそのコミットのメッセージ（`scripts/check-commits.py --message`）、`.local/` と `build/` 以下のファイルや `CLAUDE.local.md` が変更に入っていないこと（`--changed`）も確かめます。再実行は古い題を読みます。題を直したら、コミットを push するか、プルリクエストを閉じて開き直します。
 
 ### ポートとロック
 

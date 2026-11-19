@@ -41,7 +41,8 @@ jobs:
   #   timeline element's test when the file is in gui/ or in `gui_reads` below, and linux-gcc-control (the
   #   control server's tests of the guides; 15 to 19 minutes instead of 5) when it is in `control_reads`.
   #   A new test that reads a document outside the directory of its job adds the document to the list.
-  # - Otherwise: linux-gcc-debug, linux-clang-tsan, linux-gcc-control, Windows and python. The presets
+  # - Otherwise: linux-gcc-debug, linux-gcc-control (its GUI server against the real launcher in linux-control-gui),
+  #   linux-tsan (the thread sanitizer), Windows and python. The presets
   #   linux-gcc-release and linux-gcc-static and the oldest CMake are added when the pull request changes how
   #   things are built (the `build` list below). Every check that only one preset makes is in linux-gcc-debug
   #   (two computers, the Ethernet bridge on real interfaces, the GUI's recordings), so the left-out jobs add
@@ -104,9 +105,9 @@ jobs:
             presets='["linux-gcc-debug"]'
             if [ "$control_docs" = true ]; then presets='["linux-gcc-debug", "linux-gcc-control"]'; fi
           elif [ "$full" = true ]; then
-            presets='["linux-gcc-debug", "linux-gcc-release", "linux-gcc-static", "linux-clang-tsan", "linux-gcc-control"]'
+            presets='["linux-gcc-debug", "linux-gcc-release", "linux-gcc-static", "linux-gcc-control"]'
           else
-            presets='["linux-gcc-debug", "linux-clang-tsan", "linux-gcc-control"]'
+            presets='["linux-gcc-debug", "linux-gcc-control"]'
           fi
           # The address sanitizer only after a merge: a pull request is not held for it (the job `all checks` still
           # looks at it, so that a failure on main shows).
@@ -124,16 +125,12 @@ jobs:
     name: linux (${{ matrix.preset }})
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    # In a pull request, a race that only the thread sanitizer finds is reported but does not hold the merge: the
-    # leg's check shows its failure, the job's result (what `all checks` reads) stays a success. On main the leg
-    # counts: the run fails, and release.yml, which wants this workflow's run to have passed, stays shut.
-    continue-on-error: ${{ matrix.preset == 'linux-clang-tsan' && github.event_name == 'pull_request' }}
     strategy:
       fail-fast: false
       matrix:
         # linux-gcc-static: VEHICLE_SIL_STATIC=ON (SIL Kit and the C++ runtime linked into each executable)
-        # linux-clang-tsan: the thread sanitizer; a race in a test or in the product shows only here
         # linux-clang-asan: the address sanitizer (a push to main only)
+        # (the thread sanitizer is the job linux-tsan below)
         # linux-gcc-control: VEHICLE_SIL_BUILD_CONTROL_SERVER=ON (the pinned gRPC built with FetchContent, the
         # control server's tests, and the GUI server against this launcher and its control server)
         preset: ${{ fromJSON(needs.changes.outputs.presets) }}
@@ -144,8 +141,6 @@ jobs:
       CCACHE_MAXSIZE: ${{ (matrix.preset == 'linux-gcc-control' || matrix.preset == 'linux-gcc-release') && '2G' || '1G' }}
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
-      # Empty (not set) for the thread sanitizer: its preset's default factor (4) applies.
-      VEHICLE_SIL_TEST_TIMEOUT_SCALE: ${{ matrix.preset != 'linux-clang-tsan' && '3' || '' }}
       VEHICLE_SIL_LOG_ARTIFACT: logs-${{ matrix.preset }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -169,7 +164,7 @@ jobs:
           libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
       # The sanitizers cannot map their shadow memory when the kernel randomizes addresses with more bits.
       - name: Address space layout for the sanitizers
-        if: matrix.preset == 'linux-clang-tsan' || matrix.preset == 'linux-clang-asan'
+        if: matrix.preset == 'linux-clang-asan'
         run: sudo sysctl -w vm.mmap_rnd_bits=28 && clang++ --version | head -n 1
       # multi_host.two_hosts makes two computers as network namespaces in a user namespace, which Ubuntu's AppArmor
       # does not let a user make by default; with VEHICLE_SIL_REQUIRE_MULTI_HOST=1 the test fails rather than skips.
@@ -246,14 +241,7 @@ jobs:
             echo "::error::schema.files_and_launcher is not registered: CMake found no Python 3.11+ with PyYAML and jsonschema (see 'the tests of the JSON Schemas are skipped' in build/logs/ci-linux-gcc-debug-configure.log), or the launcher and the examples of examples/ecu_main were not built; run uv sync --locked (its dev group has both) before the configure"
             exit 1
           fi
-      # The GUI server against this launcher and its control server (gui/server/tests/test_real_launcher.py records
-      # every case again, those with the control server too, and compares; test_real_variables.py reads and writes
-      # the example ECUs' variables). The screen and its browser tests are in the gui job (without a real launcher).
-      - name: The GUI server against this launcher
-        if: matrix.preset == 'linux-gcc-control'
-        run: >-
-          python3 scripts/verify-gui.py --skip-web --skip-e2e --no-wait --tag ci
-          --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch
+      # (The GUI server against this preset's launcher runs in the job linux-control-gui, at the same time.)
       # Only a run on main saves the compiler cache. A pull request reads the newest one of main; if each push
       # of each pull request saved its own, the repository would go over the size GitHub keeps and the caches
       # of main would be the ones thrown out.
@@ -266,6 +254,116 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: logs-${{ matrix.preset }}
+          path: build/logs
+          retention-days: 14
+
+  # The thread sanitizer (linux-clang-tsan): a race in a test or in the product shows only here. Not in the matrix of
+  # `linux`, so that `all checks` does not wait for it in a pull request: there a race is reported (the job's check
+  # shows its failure) but does not hold the merge, and its result stays a success (continue-on-error). On main it
+  # counts: a failure fails the run, and release.yml, which wants this workflow's run to have passed, stays shut.
+  # `all checks` does not list it (tests/scripts/test_ci_workflow.py knows this one exception).
+  linux-tsan:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    name: linux (linux-clang-tsan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 1G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      # Empty (not set): the preset's default factor (4) applies.
+      VEHICLE_SIL_TEST_TIMEOUT_SCALE: ""
+      VEHICLE_SIL_LOG_ARTIFACT: logs-linux-clang-tsan
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Install Ninja, ccache, ethtool and libpcap
+        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache ethtool libpcap0.8
+      - name: Python environment (PyYAML for the code generator, gRPC for the Python tests)
+        run: uv sync --locked
+      # The sanitizers cannot map their shadow memory when the kernel randomizes addresses with more bits.
+      - name: Address space layout for the sanitizer
+        run: sudo sysctl -w vm.mmap_rnd_bits=28 && clang++ --version | head -n 1
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-linux-clang-tsan-${{ github.sha }}
+          restore-keys: ccache-linux-clang-tsan-
+      - name: Configure, build and test
+        run: python3 scripts/verify.py linux-clang-tsan --tag ci
+      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-linux-clang-tsan-${{ github.sha }}
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logs-linux-clang-tsan
+          path: build/logs
+          retention-days: 14
+
+  # The GUI server against linux-gcc-control's launcher and its control server (gui/server/tests/test_real_launcher.py
+  # records every case again, those with the control server too, and compares; test_real_variables.py reads and
+  # writes the example ECUs' variables). Apart from the leg linux-gcc-control of `linux`, so that it runs at the same
+  # time as that leg's tests: it builds the same preset again (the compiler cache of main makes that short) and
+  # runs no CTest. The screen and its browser tests are in the gui job (without a real launcher).
+  linux-control-gui:
+    needs: changes
+    if: contains(needs.changes.outputs.presets, 'linux-gcc-control')
+    name: linux (linux-gcc-control, GUI server)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      VEHICLE_SIL_LOG_ARTIFACT: logs-linux-control-gui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Install Ninja and ccache
+        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache
+      - name: Python environment (PyYAML for the code generator, gRPC for the Python tests)
+        run: uv sync --locked
+      # As in the leg linux-gcc-control: Ubuntu's gRPC in a pull request, the pinned one with FetchContent on main.
+      - name: gRPC of the distribution (pull requests)
+        if: github.event_name == 'pull_request'
+        run: >-
+          sudo apt-get install -y -q --no-install-recommends
+          libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
+      # The cache that the leg linux-gcc-control saves on main (this job only reads it).
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-linux-gcc-control-${{ github.sha }}
+          restore-keys: ccache-linux-gcc-control-
+      - name: Configure and build
+        run: |
+          mkdir -p build/logs
+          cmake --preset linux-gcc-control -DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON > build/logs/ci-control-gui-configure.log 2>&1 \
+            || { tail -n 40 build/logs/ci-control-gui-configure.log; exit 1; }
+          cmake --build --preset linux-gcc-control > build/logs/ci-control-gui-build.log 2>&1 \
+            || { grep -n -m 20 -E 'error|FAILED' build/logs/ci-control-gui-build.log; exit 1; }
+          tail -n 1 build/logs/ci-control-gui-build.log
+      - name: The GUI server against this launcher
+        run: >-
+          python3 scripts/verify-gui.py --skip-web --skip-e2e --no-wait --tag ci
+          --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logs-linux-control-gui
           path: build/logs
           retention-days: 14
 
@@ -525,13 +623,14 @@ jobs:
   # The one check that main's branch protection requires: it passes when every job above passed or was left
   # out (skipped), and fails on anything else. A new job goes into `needs` (tests/scripts/test_ci_workflow.py
   # checks it). Keep the name.
-  # The thread sanitizer's leg of `linux` does not count in a pull request (continue-on-error there); the
-  # address sanitizer's does, and it runs on main only.
+  # The one exception is linux-tsan (the thread sanitizer): it is not waited for, so that a pull request does not
+  # wait for it; on main its failure fails the run, which release.yml reads. The address sanitizer's leg of `linux`
+  # counts, and it runs on main only.
   # `if: always()` must stay: with `!cancelled()` a cancelled run would leave this job skipped, and a skipped
   # required check counts as passed.
   all-checks:
     name: all checks
-    needs: [changes, linux, linux-oldest-cmake, windows, gui, gui-server, python]
+    needs: [changes, linux, linux-control-gui, linux-oldest-cmake, windows, gui, gui-server, python]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -541,6 +640,7 @@ jobs:
           RESULTS: |
             changes ${{ needs.changes.result }}
             linux ${{ needs.linux.result }}
+            linux-control-gui ${{ needs.linux-control-gui.result }}
             linux-oldest-cmake ${{ needs.linux-oldest-cmake.result }}
             windows ${{ needs.windows.result }}
             gui ${{ needs.gui.result }}

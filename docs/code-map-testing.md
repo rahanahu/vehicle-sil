@@ -85,7 +85,7 @@ The job `all checks` in `.github/workflows/ci.yml` is the check that a merge int
 | Build files (CMake, presets, patches, `external/`, `.github/`) | Also `linux-gcc-release`, `linux-gcc-static`, the oldest CMake and the test that builds the ECU project template with FetchContent |
 | A push to `main` | Everything above, and `linux-clang-asan` |
 
-In a pull request, a failure of `linux-clang-tsan` is shown on its check but does not fail `all checks`; on `main` it does. `python` also checks the title of a pull request and, when it has one commit, that commit's message (`scripts/check-commits.py --message`), and that no file under `.local/` or `build/` and no `CLAUDE.local.md` is in the change (`--changed`). A re-run reads the old title: after you fix it, push a commit or close and reopen the pull request.
+`all checks` does not wait for `linux-clang-tsan`: in a pull request its failure is shown on its check but does not hold the merge; on `main` it fails the run. `python` also checks the title of a pull request and, when it has one commit, that commit's message (`scripts/check-commits.py --message`), and that no file under `.local/` or `build/` and no `CLAUDE.local.md` is in the change (`--changed`). A re-run reads the old title: after you fix it, push a commit or close and reopen the pull request.
 
 ### Ports and locks
 
