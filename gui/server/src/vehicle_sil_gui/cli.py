@@ -68,7 +68,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--dev-origin", help="also accept requests from this development server, "
                                         "http://127.0.0.1:<port> (the proxy of ng serve, Vite and the like)")
     p.add_argument("--json", action="store_true",
-                   help='print {"vehicle_sil_gui": 1, "url": ..., "port": ...} on one line instead of the URL')
+                   help='print {"vehicle_sil_gui": 2, "url": ..., "port": ...} on one line instead of the URL')
     p.add_argument("--stop-timeout", type=float, default=10.0, metavar="SECONDS",
                    help="on exit, how long to wait for a running simulation to stop before the launcher is "
                         "asked to stop with a signal and then killed (default 10)")

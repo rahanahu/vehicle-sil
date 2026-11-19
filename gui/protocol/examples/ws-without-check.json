@@ -10,7 +10,7 @@
   "server": [
     {
       "type": "hello",
-      "vehicle_sil_gui": 1,
+      "vehicle_sil_gui": 2,
       "version": "0.1.0",
       "instance": "0123456789abcdef",
       "session": null,

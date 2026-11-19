@@ -67,7 +67,7 @@ const summary = (id: number, variables?: unknown) => ({
 });
 const hello = (id: number | null, variables?: unknown) => ({
   type: 'hello',
-  vehicle_sil_gui: 1,
+  vehicle_sil_gui: 2,
   version: '0.1.0',
   instance: 'x',
   session: id === null ? null : summary(id, variables),

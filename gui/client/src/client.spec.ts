@@ -232,7 +232,7 @@ describe('createClient', () => {
       fake.last().open();
       fake.last().send({
         type: 'hello',
-        vehicle_sil_gui: 1,
+        vehicle_sil_gui: 2,
         instance: 'i',
         session: null,
         replay: null,
