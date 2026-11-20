@@ -138,10 +138,36 @@ class Normalizer:
         self.paths = {str(REPLAY): "/path/to/vehicle_sil_launch", str(CONFIGS): "/path/to/root",
                       f"127.0.0.1:{gui.port}": "127.0.0.1:8765", **(paths or {})}
         self.token = gui.token
+        self._revisions = None
 
     def __call__(self, value, key=None):
+        if self._revisions is None:
+            # Keep the ordering visible in this example, without gaps from unshown captures.
+            found = {"snapshot_rev": set(), "variables_rev": set()}
+
+            def collect(item, parent=None):
+                if isinstance(item, dict):
+                    if isinstance(item.get("snapshot_rev"), int):
+                        found["snapshot_rev"].add(item["snapshot_rev"])
+                    if ((parent == "variables" and "state" in item and "operations" in item)
+                            or item.get("type") == "availability") and isinstance(item.get("rev"), int):
+                        found["variables_rev"].add(item["rev"])
+                    for child_key, child in item.items():
+                        collect(child, child_key)
+                elif isinstance(item, list):
+                    for child in item:
+                        collect(child, parent)
+
+            collect(value)
+            self._revisions = {name: {n: rank for rank, n in enumerate(sorted(numbers), 1)}
+                               for name, numbers in found.items()}
         if isinstance(value, dict):
             out = {k: self(v, k) for k, v in value.items()}
+            if isinstance(out.get("snapshot_rev"), int):
+                out["snapshot_rev"] = self._revisions["snapshot_rev"][out["snapshot_rev"]]
+            if ((key == "variables" and "state" in out and "operations" in out)
+                    or out.get("type") == "availability") and isinstance(out.get("rev"), int):
+                out["rev"] = self._revisions["variables_rev"][out["rev"]]
             if isinstance(out.get("seq"), int) and "t_ms" in out:
                 out["t_ms"] = out["seq"] * 10
             if isinstance(out.get("last_seq"), int) and "last_t_ms" in out:

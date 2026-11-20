@@ -75,6 +75,7 @@
     {
       "type": "session",
       "session": {
+        "snapshot_rev": 1,
         "id": 1,
         "file": "bad-lines.yaml",
         "disable": [],
@@ -132,6 +133,7 @@
         "log": {},
         "problems": [],
         "problems_omitted": 0,
+        "problem_seq": 0,
         "scenario": null
       }
     },
@@ -139,6 +141,7 @@
       "type": "variables",
       "session": 1,
       "variables": {
+        "rev": 1,
         "state": "off",
         "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
         "peers": [],
@@ -1050,14 +1053,16 @@
       "session": 1,
       "code": "launcher-output",
       "message": "the launcher wrote a line that is not an event (a JSON object with \"event\"): the line is ignored; if it repeats, the launcher and this GUI do not match",
-      "detail": "this line is not JSON"
+      "detail": "this line is not JSON",
+      "problem_seq": 1
     },
     {
       "type": "error",
       "session": 1,
       "code": "launcher-output",
       "message": "the launcher wrote a line that is not an event (a JSON object with \"event\"): the line is ignored; if it repeats, the launcher and this GUI do not match",
-      "detail": "[1, 2, 3]"
+      "detail": "[1, 2, 3]",
+      "problem_seq": 2
     },
     {
       "type": "event",
@@ -1077,7 +1082,8 @@
       "detail": {
         "expected": 28,
         "got": 29
-      }
+      },
+      "problem_seq": 3
     },
     {
       "type": "event",
@@ -1796,6 +1802,7 @@
     {
       "type": "session",
       "session": {
+        "snapshot_rev": 2,
         "id": 1,
         "file": "bad-lines.yaml",
         "disable": [],
@@ -2668,12 +2675,14 @@
           {
             "code": "launcher-output",
             "message": "the launcher wrote a line that is not an event (a JSON object with \"event\"): the line is ignored; if it repeats, the launcher and this GUI do not match",
-            "detail": "this line is not JSON"
+            "detail": "this line is not JSON",
+            "problem_seq": 1
           },
           {
             "code": "launcher-output",
             "message": "the launcher wrote a line that is not an event (a JSON object with \"event\"): the line is ignored; if it repeats, the launcher and this GUI do not match",
-            "detail": "[1, 2, 3]"
+            "detail": "[1, 2, 3]",
+            "problem_seq": 2
           },
           {
             "code": "seq-gap",
@@ -2681,10 +2690,12 @@
             "detail": {
               "expected": 28,
               "got": 29
-            }
+            },
+            "problem_seq": 3
           }
         ],
         "problems_omitted": 0,
+        "problem_seq": 3,
         "scenario": null
       }
     }

@@ -13,6 +13,7 @@
       "version": "0.2.0-rc.1",
       "instance": "0123456789abcdef",
       "session": {
+        "snapshot_rev": 1,
         "id": 1,
         "file": "large-result.yaml",
         "disable": [],
@@ -517,19 +518,23 @@
             "message": "more findings than 1000 (or 1048576 bytes): later ones are shown now, but not kept for a screen opened later",
             "detail": {
               "what": "findings"
-            }
+            },
+            "problem_seq": 1
           },
           {
             "code": "kept-limit",
             "message": "the launcher's result is larger than 4194304 bytes: only its short plain fields are kept for a screen opened later",
             "detail": {
               "what": "result"
-            }
+            },
+            "problem_seq": 2
           }
         ],
         "problems_omitted": 0,
+        "problem_seq": 2,
         "scenario": null,
         "variables": {
+          "rev": 1,
           "state": "off",
           "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
           "peers": [],
