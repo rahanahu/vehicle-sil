@@ -242,7 +242,7 @@ test('the time part steps a paused run, then resumes it and pauses it again', as
   await expect(status).toHaveAttribute('data-run', 'paused', { timeout: RUN_TIMEOUT });
   await expect(status.locator('.vsil-time')).toHaveText(/^0 ms/);
 
-  // A step moves the time on by 25 ms, then the run is paused again (the controller ticks every 5 ms)
+  // A step moves the time on by 25 ms, then the run is paused again (the controller ticks every 1 ms)
   await page.getByTestId('time').getByRole('spinbutton', { name: 'Step (ms)' }).fill('25');
   await button('time', 'Step').click();
   await expect(status.locator('.vsil-time')).toHaveText(/^25 ms/);

@@ -54,6 +54,25 @@ test('a run that passes: phases, participants, logs and the result', async ({ pa
 const pauseButton = (page: Page) => page.getByTestId('pause');
 const resumeButton = (page: Page) => page.getByTestId('resume');
 
+test('the stop time keeps its instructions and describes an error until corrected', async ({
+  page,
+}) => {
+  await choose(page, 'forever.yaml');
+  const input = page.getByTestId('stop-at-ms');
+  const hint = /空欄なら自動停止しません/;
+  const error = /停止時刻は 1 から/;
+  await expect(input).toHaveAccessibleDescription(hint);
+  await input.fill('0');
+  await input.blur();
+  await expect(input).toHaveAttribute('aria-invalid', 'true');
+  await expect(input).toHaveAccessibleDescription(hint);
+  await expect(input).toHaveAccessibleDescription(error);
+  await input.fill('1000');
+  await expect(input).toHaveAttribute('aria-invalid', 'false');
+  await expect(input).toHaveAccessibleDescription(hint);
+  await expect(input).not.toHaveAccessibleDescription(error);
+});
+
 /** 時刻の命令を送り、サーバーの応答を待つ（ランチャーが受けたかは、画面に command と time の事象で届く）。 */
 async function command(page: Page, button: Locator, body: object): Promise<void> {
   const sent = page.waitForRequest((r) => r.url().endsWith('/api/time'));

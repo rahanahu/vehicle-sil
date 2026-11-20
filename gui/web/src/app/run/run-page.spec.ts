@@ -193,16 +193,30 @@ describe('RunPage', () => {
     const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
       '[data-testid="stop-at-ms"]',
     )!;
+    const described = () =>
+      (input.getAttribute('aria-describedby') ?? '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(
+          (id) =>
+            (fixture.nativeElement as HTMLElement).querySelector(`[id="${id}"]`)?.textContent ?? '',
+        );
+    expect(described().some((text) => text.includes('空欄なら自動停止しません'))).toBe(true);
     input.value = '0';
     input.dispatchEvent(new Event('input'));
     input.dispatchEvent(new Event('blur'));
     TestBed.tick();
     expect(disabled(button(fixture, 'start'))).toBe(true);
     expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(described().some((text) => text.includes('空欄なら自動停止しません'))).toBe(true);
+    expect(described().some((text) => text.includes('停止時刻は 1 から'))).toBe(true);
     expect(text(fixture, 'blocked')).toContain('停止時刻');
     input.value = '1003';
     input.dispatchEvent(new Event('input'));
     TestBed.tick();
+    expect(input.getAttribute('aria-invalid')).toBe('false');
+    expect(described().some((text) => text.includes('空欄なら自動停止しません'))).toBe(true);
+    expect(described().some((text) => text.includes('停止時刻は 1 から'))).toBe(false);
     const checked = await checkRequest();
     expect(checked.request.body).toMatchObject({ speed: 1, stop_at_ms: 1003 });
     expect(pageIntent.get().stop_at_ms).toBe(1003);
