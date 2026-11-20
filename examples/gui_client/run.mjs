@@ -16,12 +16,21 @@ const PROTOCOL = 2; // the API version this client reads (vehicle_sil_gui in api
 function usage(message) {
   console.error(`run.mjs: ${message}`);
   console.error(
-    "usage: VEHICLE_SIL_GUI_URL=<url with #token=...> node run.mjs <configuration file> [--timeout <seconds>]",
+    "usage: VEHICLE_SIL_GUI_URL=<url with #token=...> node run.mjs <configuration file> [--timeout <seconds>] [--stop-at-ms <milliseconds>]",
   );
   process.exit(2);
 }
 
 const args = process.argv.slice(2);
+let stopAtMs;
+const stopAt = args.indexOf("--stop-at-ms");
+if (stopAt >= 0) {
+  const value = args[stopAt + 1];
+  stopAtMs = Number(value);
+  if (!value || !Number.isSafeInteger(stopAtMs) || stopAtMs <= 0)
+    usage("--stop-at-ms needs a positive integer of milliseconds");
+  args.splice(stopAt, 2);
+}
 let timeoutS = 120;
 const timeoutAt = args.indexOf("--timeout");
 if (timeoutAt >= 0) {
@@ -167,7 +176,7 @@ async function main() {
   });
   await started;
 
-  const answer = await call("POST", "api/run", { file, disable: [] });
+  const answer = await call("POST", "api/run", { file, disable: [], ...(stopAtMs === undefined ? {} : { stop_at_ms: stopAtMs }) });
   session = answer.session.id;
   console.log(`started: session ${session}`);
   if (ended.has(session)) end(ended.get(session));

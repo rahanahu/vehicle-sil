@@ -6,7 +6,7 @@
 // "which state is this, and what may I press now" work off the screen.
 //
 //   (cd gui/web && npm run build:client)   # builds build/gui-client/vehicle-sil-gui-client.mjs
-//   VEHICLE_SIL_GUI_URL='<URL the server printed (with #token=)>' node examples/gui_client/front.mjs simulation.yaml
+//   VEHICLE_SIL_GUI_URL='<URL the server printed (with #token=)>' node examples/gui_client/front.mjs simulation.yaml --stop-at-ms 1000
 //
 // Pass the URL in the environment variable (on the command line, the token would show in the process list to other
 // users of the computer and stay in the shell history). The URL may also be the first argument. VEHICLE_SIL_GUI_CLIENT
@@ -20,12 +20,21 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 function usage(message) {
   console.error(`front.mjs: ${message}`);
   console.error(
-    "usage: VEHICLE_SIL_GUI_URL=<url with #token=...> node front.mjs <configuration file> [--timeout <seconds>]",
+    "usage: VEHICLE_SIL_GUI_URL=<url with #token=...> node front.mjs <configuration file> [--timeout <seconds>] [--stop-at-ms <milliseconds>]",
   );
   process.exit(2);
 }
 
 const args = process.argv.slice(2);
+let stopAtMs;
+const stopAt = args.indexOf("--stop-at-ms");
+if (stopAt >= 0) {
+  const value = args[stopAt + 1];
+  stopAtMs = Number(value);
+  if (!value || !Number.isSafeInteger(stopAtMs) || stopAtMs <= 0)
+    usage("--stop-at-ms needs a positive integer of milliseconds");
+  args.splice(stopAt, 2);
+}
 let timeoutS = 120;
 const timeoutAt = args.indexOf("--timeout");
 if (timeoutAt >= 0) {
@@ -90,7 +99,7 @@ async function main() {
   const { start } = front.controls.get();
   if (!start.ok) finish(1, `cannot start: ${start.reason.code}: ${start.reason.message}`);
 
-  await front.run.start({}, { file });
+  await front.run.start(stopAtMs === undefined ? {} : { stop_at_ms: stopAtMs }, { file });
   // start() resolves when the server took the request; whether the run began is status.run. Wait for the end of the run
   // (ended, or crashed when the launcher died without a result)
   const status = await until(
