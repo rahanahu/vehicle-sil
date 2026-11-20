@@ -815,6 +815,39 @@ describe('the front door', () => {
       expect(done).toBe(true);
     });
 
+    it('keeps a newer run acknowledgement after a buffered older hello', async () => {
+      const rig = await running();
+      const refresh = rig.front.low.fetchSession();
+      rig.http.expectOne('api/session').flush({ instance: 'x', session: summary({}, 2) });
+      await refresh;
+      const pause = rig.front.time.pause();
+      const id = rig.timeBody().id;
+      await rig.deliver(
+        {
+          type: 'hello',
+          vehicle_sil_gui: 2,
+          version: '0.1.0',
+          instance: 'x',
+          session: summary(),
+          replay: null,
+        },
+        { type: 'synced', session: 1, last_seq: 0 },
+        event(commandEvent(62, 'pause', id), 2),
+      );
+      await expect(pause).resolves.toBeUndefined();
+      expect(rig.front.low.session.session.get()?.id).toBe(2);
+      expect(rig.front.low.connection.state.get()).toBe('closed');
+    });
+
+    it('delivers an acknowledgement buffered before the socket closes', async () => {
+      const rig = await running();
+      const pause = rig.front.time.pause();
+      const id = rig.timeBody().id;
+      rig.socket.send(event(commandEvent(62, 'pause', id)));
+      rig.socket.fail();
+      await expect(pause).resolves.toBeUndefined();
+    });
+
     it('delivers a valid acknowledgement before a malformed message forces a reconnect', async () => {
       const rig = await running();
       const pause = rig.front.time.pause();

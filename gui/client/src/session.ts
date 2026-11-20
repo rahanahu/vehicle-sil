@@ -340,6 +340,8 @@ export class SessionFeed implements ClientSession {
         break;
       }
     }
+    let filtered = this.filterOlderRuns(batch, accepted);
+    if (filtered.staleHello && stop === null) stop = 'lost';
     // Make the requests to the connection before notifying subscribers. Set the stop flag before disconnecting (so a
     // connect() called from within the disconnect notification does not connect)
     if (stop === 'unauthorized' || stop === 'incompatible') {
@@ -352,13 +354,58 @@ export class SessionFeed implements ClientSession {
     }
     if (stop === 'lost') this.connection.restart();
     if (!currentOrigin()) return;
-    this.apply(batch, accepted, currentOrigin, (instance) => {
+    // A close subscriber can synchronously observe a later run on the same server.
+    filtered = this.filterOlderRuns(filtered.batch, filtered.raw);
+    this.apply(filtered.batch, filtered.raw, currentOrigin, (instance) => {
       originInstance = instance;
     });
     if (!currentOrigin()) return;
     if (stop === 'lost' || stop === 'incompatible') this.synced.set(false);
     if (stop === 'unauthorized') this.rejectedValue.set(true);
     if (incompatible !== null) this.incompatibleValue.set(incompatible);
+  }
+
+  /** Keep messages at or after the run already observed over HTTP, within each server instance. */
+  private filterOlderRuns(
+    batch: readonly ServerMessage[],
+    raw: readonly unknown[],
+  ): {
+    batch: ServerMessage[];
+    raw: unknown[];
+    staleHello: boolean;
+  } {
+    let instance = this.instanceId;
+    let floor = this.current.get()?.id ?? null;
+    let staleHello = false;
+    const selected: ServerMessage[] = [];
+    const selectedRaw: unknown[] = [];
+    batch.forEach((message, index) => {
+      if (message.type === 'hello') {
+        const id = message.session?.id ?? null;
+        if (instance === message.instance && floor !== null && (id === null || id < floor)) {
+          // Ask for a fresh snapshot, but keep later messages of the current run, including ACKs.
+          staleHello = true;
+          return;
+        }
+        if (instance !== message.instance) {
+          instance = message.instance;
+          floor = id;
+        } else if (id !== null) floor = id;
+      } else {
+        const id =
+          message.type === 'session'
+            ? message.session.id
+            : 'session' in message && typeof message.session === 'number'
+              ? message.session
+              : null;
+        if (id !== null && floor !== null && id < floor) return;
+        if (message.type === 'session' && (floor === null || message.session.id > floor))
+          floor = message.session.id;
+      }
+      selected.push(message);
+      selectedRaw.push(raw[index]);
+    });
+    return { batch: selected, raw: selectedRaw, staleHello };
   }
 
   private apply(

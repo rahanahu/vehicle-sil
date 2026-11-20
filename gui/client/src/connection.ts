@@ -150,6 +150,7 @@ export class Connection implements ClientConnection {
   private readonly unreadableListeners = new Set<(text: string) => void>();
   private socket: SocketLike | null = null;
   private connectionEpoch = 0;
+  private attemptRevision = 0;
   private wanted = false;
   /** Consecutive drops without a readable notification. */
   private attempts = 0;
@@ -196,6 +197,7 @@ export class Connection implements ClientConnection {
 
   /** Disconnects, without reconnecting. Drops notifications still being batched. */
   close(): void {
+    const revision = ++this.attemptRevision;
     this.wanted = false;
     this.restarts = 0;
     this.attempts = 0;
@@ -206,7 +208,7 @@ export class Connection implements ClientConnection {
     const socket = this.socket;
     this.socket = null;
     socket?.close();
-    this.stateValue.set('closed');
+    if (revision === this.attemptRevision) this.stateValue.set('closed');
   }
 
   /**
@@ -219,14 +221,16 @@ export class Connection implements ClientConnection {
 
   private restartAfter(delayMs: number): void {
     if (!this.wanted) return;
+    const revision = ++this.attemptRevision;
     this.restartAsked = true;
     this.dropPending();
     clearTimeout(this.steadyTimer);
     const socket = this.socket;
     this.socket = null;
     socket?.close();
+    if (revision !== this.attemptRevision) return;
     this.stateValue.set('closed');
-    this.scheduleRetry(delayMs);
+    if (revision === this.attemptRevision) this.scheduleRetry(delayMs);
   }
 
   /**
@@ -278,19 +282,25 @@ export class Connection implements ClientConnection {
   }
 
   private open(): void {
+    const revision = ++this.attemptRevision;
+    const currentAttempt = () => this.wanted && this.attemptRevision === revision;
     try {
-      this.openSocket();
+      this.openSocket(currentAttempt);
     } catch (error) {
+      if (!currentAttempt()) return;
       // A function from the options (the authentication message, the token, SocketFactory) threw: report it, treat the
       // connection as closed and reconnect after a delay (never stop silently)
       this.onError(error);
+      if (!currentAttempt()) return;
       this.socket = null;
       this.lastCloseValue.set({
         code: NOT_OPENED,
         reason: `cannot open the WebSocket: ${error instanceof Error ? error.message : String(error)}`,
       });
+      if (!currentAttempt()) return;
       this.stateValue.set('closed');
-      this.scheduleRetry(backoffMs(++this.attempts, this.options.maxBackoffMs));
+      if (currentAttempt())
+        this.scheduleRetry(backoffMs(++this.attempts, this.options.maxBackoffMs));
     }
   }
 
@@ -299,10 +309,12 @@ export class Connection implements ClientConnection {
     return this.connectionEpoch;
   }
 
-  private openSocket(): void {
+  private openSocket(currentAttempt: () => boolean): void {
     ++this.connectionEpoch;
     const greeting = this.options.greeting();
+    if (!currentAttempt()) return;
     this.stateValue.set('connecting');
+    if (!currentAttempt()) return;
     let opened = false;
     let socket: SocketLike | null = null;
     const current = () => socket !== null && this.socket === socket;
@@ -345,6 +357,10 @@ export class Connection implements ClientConnection {
       },
       close: (code, reason) => {
         if (!current()) return;
+        // Deliver this socket's buffered prefix while it still owns the connection. In particular,
+        // acknowledgements must arrive before closed subscribers can adopt another server.
+        this.flush();
+        if (!current()) return;
         this.socket = null;
         const closedEpoch = this.connectionEpoch;
         clearTimeout(this.steadyTimer);
@@ -358,6 +374,10 @@ export class Connection implements ClientConnection {
       },
     };
     socket = this.options.socket(this.options.url, handlers);
+    if (!currentAttempt()) {
+      socket.close();
+      return;
+    }
     this.socket = socket;
   }
 

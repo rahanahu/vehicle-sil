@@ -459,6 +459,27 @@ describe('variables', () => {
     expect(watch.history(ENGINE)).toEqual([{ sampleMs: 20, value: 8 }]);
   });
 
+  it('ignores buffered notifications from a run older than one already read over HTTP', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(hello(1, ready()));
+    const watch = client.variables.watch([ENGINE], { history: 10 });
+    const refresh = client.fetchSession();
+    http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
+    await refresh;
+    await deliver(
+      { type: 'session', session: summary(1, ready()) },
+      { type: 'variables', session: 1, variables: ready() },
+      values(1, 10, false, engine(10, 4), 1),
+      operation(7, 'applied', true, {}, 1),
+      values(1, 20, false, engine(20, 8), 2),
+    );
+    expect(client.session.session.get()?.id).toBe(2);
+    expect(client.variables.state.get().session).toBe(2);
+    expect(watch.history(ENGINE)).toEqual([{ sampleMs: 20, value: 8 }]);
+    expect(client.variables.operations.get()).toEqual([]);
+    client.close();
+  });
+
   it('keeps values and write results when a session subscriber fetches the same run', async () => {
     const { client, http, deliver } = setup();
     await deliver(hello(1, ready()));
