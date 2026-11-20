@@ -610,6 +610,83 @@ describe('variables', () => {
     client.close();
   });
 
+  it('keeps a newer WebSocket variables snapshot over an older pending HTTP response', async () => {
+    const { client, http, deliver } = setup();
+    const connecting = { ...ready(), state: 'connecting' };
+    await deliver(hello(1, connecting));
+    const old = client.fetchSession();
+    const response = http.expectOne('api/session');
+    await deliver({ type: 'variables', session: 1, variables: ready() });
+    expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
+    response.flush({ instance: 'x', session: summary(1, connecting) });
+    await old;
+    expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
+    client.close();
+  });
+
+  it.each(['old-first', 'new-first'] as const)(
+    'keeps the newer run with overlapping HTTP-only requests (%s)',
+    async (order) => {
+      const http = new FakeHttp();
+      const client = createClient({
+        baseUrl: 'http://127.0.0.1:8765/',
+        token: 'secret',
+        http: http.transport,
+        socket: new FakeWebSockets().factory,
+      });
+      const old = client.fetchSession();
+      const oldRequest = http.expectOne('api/session');
+      const newer = client.fetchSession();
+      const newRequest = http.expectOne('api/session');
+      const answerOld = () =>
+        oldRequest.flush({
+          instance: 'x',
+          session: summary(1, { ...ready(), state: 'connecting' }),
+        });
+      const answerNew = () => newRequest.flush({ instance: 'x', session: summary(2, ready()) });
+      if (order === 'old-first') {
+        answerOld();
+        answerNew();
+      } else {
+        answerNew();
+        answerOld();
+      }
+      await Promise.all([old, newer]);
+      expect(client.session.currentTarget()).toEqual({ instance: 'x', session: 2 });
+      expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
+      expect(client.variables.state.get().peers[0]?.variables[0]?.name).toBe('engine.demand');
+      client.close();
+    },
+  );
+
+  it('does not let an old instance response replace a new instance with the same run id', async () => {
+    const http = new FakeHttp();
+    const client = createClient({
+      baseUrl: 'http://127.0.0.1:8765/',
+      token: 'secret',
+      http: http.transport,
+      socket: new FakeWebSockets().factory,
+    });
+    const initial = client.fetchSession();
+    http.expectOne('api/session').flush({ instance: 'old', session: summary(1, ready()) });
+    await initial;
+    const old = client.fetchSession();
+    const oldRequest = http.expectOne('api/session');
+    const newer = client.fetchSession();
+    http
+      .expectOne('api/session')
+      .flush({ instance: 'new', session: summary(1, ready([], { reason: 'new' })) });
+    oldRequest.flush({ instance: 'old', session: summary(1, { ...ready(), state: 'connecting' }) });
+    await Promise.all([old, newer]);
+    expect(client.session.currentTarget()).toEqual({ instance: 'new', session: 1 });
+    expect(client.variables.state.get()).toMatchObject({
+      session: 1,
+      status: 'ready',
+      reason: 'new',
+    });
+    client.close();
+  });
+
   it('keeps a terminal operation from a hello after a same-run refresh', async () => {
     const { client, http, deliver } = setup();
     await deliver(hello(1, ready()));

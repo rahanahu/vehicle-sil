@@ -411,7 +411,8 @@ export function buildClient(options: ClientOptions): ClientParts {
               resyncFrom,
             );
             if (adoption !== null) {
-              const current = () => variables.snapshotVersion() === snapshotVersion;
+              const current = () =>
+                variables.isSnapshotCurrent(snapshotVersion, adoption.instance, adoption.session);
               if (session.sameRun(adoption)) session.adoptAllowed(readSessionAllowed(outcome.body));
               const sameRun = () => session.sameRun(adoption);
               if (sameRun()) variables.adoptInstance(instance);

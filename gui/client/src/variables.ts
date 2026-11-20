@@ -603,6 +603,7 @@ export interface VariablesLink {
 export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   private instanceId: string | null = null;
   private snapshotVersionValue = 0;
+  private snapshotIdentity: { instance: string | null; session: number } | null = null;
   private readonly stateValue: Writable<VariablesState>;
   private readonly operationsValue: Writable<readonly OperationView[]>;
   private readonly handles = new Set<Handle>();
@@ -685,7 +686,8 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     initialSnapshotVersion = this.snapshotVersionValue,
   ): void {
     let snapshotVersion = initialSnapshotVersion;
-    const snapshotCurrent = () => this.snapshotVersionValue === snapshotVersion;
+    const snapshotCurrent = (session: number) =>
+      this.isSnapshotCurrent(snapshotVersion, this.instanceId, session);
     const touched = new Set<string>();
     let touchedAll = false;
     let operations: OperationView[] | null = null;
@@ -716,7 +718,8 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           this.adoptInstance(message['instance']);
           if (!current()) return;
           if (isObject(summary) && Number.isSafeInteger(summary['id'])) {
-            const applied = this.adoptSummary(summary, current, snapshotCurrent);
+            const id = summary['id'] as number;
+            const applied = this.adoptSummary(summary, current, () => snapshotCurrent(id));
             if (applied !== null && this.snapshotVersionValue === applied)
               snapshotVersion = applied;
           } else {
@@ -764,8 +767,13 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
             if (this.stateValue.get() !== initial) break;
             touchedAll = true;
           }
-          if (snapshotCurrent())
-            this.stateValue.set(readVariables(message['variables'], id as number));
+          if (snapshotCurrent(id as number)) {
+            const version = this.applySnapshot(
+              readVariables(message['variables'], id as number),
+              id as number,
+            );
+            if (this.snapshotVersionValue === version) snapshotVersion = version;
+          }
           break;
         }
         case 'values': {
@@ -831,6 +839,25 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     return this.snapshotVersionValue;
   }
 
+  /** True if no snapshot for this instance and run was adopted since the captured version. */
+  isSnapshotCurrent(version: number, instance: string | null, session: number | null): boolean {
+    const identity = this.snapshotIdentity;
+    return (
+      session === null ||
+      !identity ||
+      identity.instance !== instance ||
+      identity.session !== session ||
+      this.snapshotVersionValue <= version
+    );
+  }
+
+  private applySnapshot(state: VariablesState, session: number): number {
+    const version = ++this.snapshotVersionValue;
+    this.snapshotIdentity = { instance: this.instanceId, session };
+    this.stateValue.set(state);
+    return version;
+  }
+
   /** A reused numeric session on another server is a different run. */
   adoptInstance(value: unknown): void {
     if (typeof value !== 'string' || !value) return;
@@ -879,8 +906,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     let appliedVersion: number | null = null;
     if (applyState && snapshotCurrent() && sameIdentity()) {
       next = readVariables(variables, id);
-      appliedVersion = ++this.snapshotVersionValue;
-      this.stateValue.set(next);
+      appliedVersion = this.applySnapshot(next, id);
     }
     notifyOperations();
     if (
