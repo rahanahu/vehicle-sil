@@ -122,7 +122,11 @@ export class RunStatus {
   private forceHadFocus = false;
 
   private readonly running = computed(() => this.session()?.launcher.running ?? false);
-  private readonly stopRequests = computed(() => this.session()?.stopRequests ?? 0);
+  private readonly stopRequests = computed(() =>
+    this.starting() || this.controls().stop.reason?.code === 'starting'
+      ? 0
+      : (this.session()?.stopRequests ?? 0),
+  );
 
   /** 開始を押せない理由（押せるなら null）: 正面の口の理由を先に、次にこの画面の入力の都合。 */
   protected readonly startBlocked = computed<string | null>(() => {

@@ -200,6 +200,39 @@ describe('RunControl', () => {
     expect(client.session.allowed.get()?.rev).toBe(1);
   });
 
+  it('rejects an old HTTP response delivered synchronously while resetting allowed', async () => {
+    const response = answer('run') as { session: Record<string, unknown> };
+    const allowed = response.session['allowed'] as Record<string, unknown>;
+    const initial = client.fetchSession();
+    http.expectOne('api/session').flush({
+      ...response,
+      allowed: { ...allowed, rev: 999 },
+      session: { ...response.session, allowed: { ...allowed, rev: 999 } },
+    });
+    await initial;
+    const stale = client.fetchSession();
+    const staleRequest = http.expectOne('api/session');
+    const unsubscribe = client.session.allowed.subscribe((value) => {
+      if (!value)
+        staleRequest.flush({
+          ...response,
+          allowed: { ...allowed, rev: 999 },
+          session: { ...response.session, allowed: { ...allowed, rev: 999 } },
+        });
+    });
+    const fresh = client.fetchSession();
+    http.expectOne('api/session').flush({
+      ...response,
+      instance: 'new-instance',
+      allowed: { ...allowed, rev: 1 },
+      session: { ...response.session, allowed: { ...allowed, rev: 1 } },
+    });
+    await Promise.all([stale, fresh]);
+    unsubscribe();
+    expect(client.session.currentInstance()).toBe('new-instance');
+    expect(client.session.allowed.get()?.rev).toBe(1);
+  });
+
   it('resynchronizes an HTTP-only client after the server restarts', async () => {
     const id = seedSession();
     const staleRead = client.fetchSession();
