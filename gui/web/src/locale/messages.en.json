@@ -940,7 +940,7 @@
     },
     "6990660249857497852": {
       "source": "停止時刻（仮想時間 ms、任意）",
-      "target": "Stop at (virtual time in ms, optional)"
+      "target": "Stop at (virtual ms)"
     },
     "4458056399147223793": {
       "source": "空欄なら自動停止しません。1〜1000000000000 ms。",
