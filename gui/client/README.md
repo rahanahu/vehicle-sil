@@ -108,6 +108,8 @@ In the browser, call `takeToken(window)`. It reads `#token=` from the URL, remov
 
 `ClientSession.allowed` is what the GUI server accepts now (`start`, `stop` and `force`, each with `ok`, a `reason` code and a `message`; the larger `rev` wins; `null` until the server says). `SessionView.launcherState` is the launcher's last `state` event (where the run stands and what it accepts; the larger `rev` wins; `null` until one arrives). `launcherAnswer(launcherState, name)` reads what it says of one operation (`write`, `pause`, ...): `reason` (`null` when the launcher accepts it) and `caution`. A launcher that has not said (no `state` yet, or no entry for the operation) does not accept it (`unsupported`). The front door's `controls` and `variables.bind` read the launcher with it.
 
+Server-provided session and variable revisions order snapshots across HTTP and WebSocket; older servers omit them, so cross-transport ordering is best effort. Revisions do not suppress replay, command answers, or terminal operation results.
+
 The `currentTarget()` method returns the current `{session, instance}` pair, or `null` when it is unknown. `currentInstance()` returns the last authenticated server instance even if no run exists, and retains it while disconnected. On reconnect the client requests the retained replay from the beginning, so a restarted server cannot apply a cursor from another instance. An HTTP-only client can refresh its copy with `fetchSession()` after a server restart.
 
 ### Run control

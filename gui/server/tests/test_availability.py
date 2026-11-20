@@ -102,8 +102,10 @@ def test_the_summary_has_each_variables_state_and_a_change_is_told_once() -> Non
         assert told(sent) == []  # not at once: the changes of a short time go together
         await tick(loop, TOLD_TOGETHER_S)
         # Of the peer, every variable that reports, by name.
-        assert told(sent) == [{"type": "availability", "session": 7,
-                               "peers": {"Engine": {"io.lamp": "active", "io.fog": "inactive", "io.out": "inactive"}}}]
+        assert len(told(sent)) == 1 and told(sent)[0]["rev"] > 0
+        assert {k: v for k, v in told(sent)[0].items() if k != "rev"} == {
+            "type": "availability", "session": 7,
+            "peers": {"Engine": {"io.lamp": "active", "io.fog": "inactive", "io.out": "inactive"}}}
         # The control server sends it again now and then: nothing changed, nothing is told.
         v.on_availability("Engine", "a", DECIDED)
         await tick(loop, 1)

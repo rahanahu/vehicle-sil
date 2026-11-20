@@ -252,7 +252,12 @@ export class SessionFeed implements ClientSession {
         ? null
         : previous
       : previous?.id === summary.id
-        ? applySummary(previous, summary, false, this.connection.state.get() === 'open')
+        ? applySummary(
+            previous,
+            summary,
+            false,
+            this.connection.state.get() === 'open' && summary.snapshot_rev == null,
+          )
         : sessionFromSummary(summary);
     const changedInstance = !!identity && identity !== this.instanceId;
     this.instanceId = identity;
@@ -459,7 +464,13 @@ export class SessionFeed implements ClientSession {
           replaying = true;
           const { session: summary, replay } = message;
           // hello is authoritative (a server that restarted may number from the start again)
-          takeAllowed(message.allowed ?? summary?.allowed ?? null, true);
+          const staleSnapshot =
+            !!summary &&
+            instance === message.instance &&
+            session?.id === summary.id &&
+            session.snapshotRev != null &&
+            (summary.snapshot_rev == null || summary.snapshot_rev < session.snapshotRev);
+          takeAllowed(message.allowed ?? summary?.allowed ?? null, !staleSnapshot);
           const resumed =
             summary &&
             instance === message.instance &&
@@ -468,9 +479,11 @@ export class SessionFeed implements ClientSession {
           instance = message.instance;
           session = !summary
             ? null
-            : resumed && session
-              ? applySummary(session, summary, true)
-              : sessionFromSummary(summary);
+            : staleSnapshot && session
+              ? session
+              : resumed && session
+                ? applySummary(session, summary, true)
+                : sessionFromSummary(summary);
           break;
         }
         case 'dropped': {

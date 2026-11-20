@@ -108,6 +108,8 @@ GUI サーバーは、2 つの `.mjs` のファイルも、トークンなしで
 
 `ClientSession.allowed` は、GUI サーバーがいま受けるものです（`start`、`stop`、`force`。それぞれ `ok`、理由のコード `reason`、文 `message`。`rev` の大きい方が勝ちます。サーバーが言うまでは `null`）。`SessionView.launcherState` は、ランチャーの最後の `state` イベントです（実行の状態と、いま受けるもの。`rev` の大きい方が勝ちます。届くまでは `null`）。`launcherAnswer(launcherState, name)` は、1 つの操作（`write`、`pause` など）について、それが言うことを読みます: `reason`（受けるなら `null`）と `caution`。まだ言っていないランチャー（`state` がまだない、その操作の項目がない）は、受けないものとします（`unsupported`）。正面の口の `controls` と `variables.bind` は、これでランチャーを読みます。
 
+サーバーが付ける session と変数の revision は、HTTP と WebSocket の要約の前後関係を示します。旧サーバーには番号がないため、両者の順序は最善を尽くす扱いです。revision によって replay、コマンドの応答、確定済み操作結果は捨てません。
+
 `currentTarget()` は現在の `{session, instance}` を返し、不明なら `null` を返します。`currentInstance()` は実行がなくても直近に認証したサーバーのインスタンスを返し、切断中も保持します。再接続ではサーバーが保持する履歴を先頭から再送してもらい、再起動前のカーソルを別のインスタンスに使いません。HTTP のみの利用者は、サーバー再起動後に `fetchSession()` でコピーを更新できます。
 
 ### 実行の操作

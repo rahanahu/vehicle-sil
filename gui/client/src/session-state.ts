@@ -266,6 +266,8 @@ function withStep(steps: readonly ScenarioStep[], step: ScenarioStep): readonly 
 export interface SessionView {
   /** Session number the server assigned. */
   id: number;
+  /** Server snapshot capture order for this run, null on older servers. */
+  snapshotRev?: number | null;
   /** seq of the last event received (-1 if none). On reconnect, the resend is requested from the next one. */
   lastSeq: number;
   /** The configuration file (relative to root). */
@@ -370,6 +372,7 @@ export function runOutcome(session: SessionView): RunOutcome {
 export function sessionFromSummary(summary: SessionSummary): SessionView {
   const blank: SessionView = {
     id: summary.id,
+    ...(summary.snapshot_rev == null ? {} : { snapshotRev: summary.snapshot_rev }),
     lastSeq: -1,
     file: summary.file,
     disable: summary.disable,
@@ -459,6 +462,9 @@ export function applySummary(
   force = false,
   controlOnly = false,
 ): SessionView {
+  const incomingRev = summary.snapshot_rev ?? null;
+  const currentRev = session.snapshotRev ?? null;
+  if (currentRev !== null && (incomingRev === null || incomingRev < currentRev)) return session;
   const newer = force || (summary.last_seq ?? -1) > session.lastSeq;
   const launcher =
     !force && !session.launcher.running && summary.launcher.running
@@ -469,6 +475,7 @@ export function applySummary(
     session.problems.length + session.problemsOmitted;
   const next: SessionView = {
     ...session,
+    ...(incomingRev === null ? {} : { snapshotRev: incomingRev }),
     launcher,
     stopRequests: Math.max(session.stopRequests, stopRequestsOf(summary.stop)),
     logSources: withSources(session.logSources, Object.keys(summary.log)),

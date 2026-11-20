@@ -581,6 +581,8 @@ const readLogCounts: Reader<LogCounts> = (value, path) => {
  */
 export interface SessionSummary {
   id: number;
+  /** Server capture order within this instance and run; absent on older servers. */
+  snapshot_rev?: number | null;
   /** Path relative to root. */
   file: string;
   disable: string[];
@@ -693,6 +695,9 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
   const timePath = `${path}.time`;
   const summary: Omit<SessionSummary, 'unreadable'> = {
     id: field(f, path, 'id', integer),
+    ...(f['snapshot_rev'] === undefined
+      ? {}
+      : { snapshot_rev: field(f, path, 'snapshot_rev', soft(nullable(integer), null, u)) }),
     state: field(f, path, 'state', string),
     launcher: field(f, path, 'launcher', readSummaryLauncher),
     stop: field(f, path, 'stop', string),
@@ -992,6 +997,8 @@ export interface OperationReport {
 
 /** `variables` of the summary: state of the variable API, variables per participant, recent operations. */
 export interface VariablesSummary {
+  /** Server capture order for variable snapshots and availability deltas; absent on older servers. */
+  rev?: number | null;
   state: Open<'off' | 'connecting' | 'ready' | 'failed' | 'ended'>;
   reason: string | null;
   peers: { name: string; connected: boolean; variables: VariableSummary[] }[];
@@ -1067,6 +1074,9 @@ export const readVariablesSummary = (value: unknown): VariablesSummary =>
 const readVariables: Reader<VariablesSummary> = (value, path) => {
   const f = object(value, path);
   return {
+    ...(f['rev'] === undefined
+      ? {}
+      : { rev: field(f, path, 'rev', optional(nullable(integer), null)) }),
     state: field(f, path, 'state', string),
     reason: field(f, path, 'reason', optional(nullable(string), null)),
     peers: field(
@@ -1382,6 +1392,7 @@ export type ServerMessage =
   | {
       type: 'availability';
       session: number;
+      rev?: number | null;
       peers: Record<string, Record<string, VariableAvailability>>;
     };
 
@@ -1482,6 +1493,9 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
       return {
         type,
         session: field(f, path, 'session', integer),
+        ...(f['rev'] === undefined
+          ? {}
+          : { rev: field(f, path, 'rev', optional(nullable(integer), null)) }),
         peers: field(
           f,
           path,

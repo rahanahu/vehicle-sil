@@ -340,7 +340,7 @@ After authentication, a screen can send variable `watch` and `unwatch` messages 
 | `variables` | `{session, variables}`. The state or list of that run's variable feature (same shape as `variables` in the summary) | `ws-variables.json`, `ws-variables-failed.json` |
 | `values` | `{id, session, sim_ms, paused, peers}`. The last values of the watched variables ("ECU variables" below) | `ws-variables.json` |
 | `operation` | `{session, seq, state, done, peers}`. The result of a write changed ("ECU variables" below). Sent to every connection, never dropped | `ws-variables.json` |
-| `availability` | `{session, peers}`. Whether the ECUs use their variables changed ("ECU variables" below). Sent to every connection | `ws-availability.json` ("Availability" below) |
+| `availability` | `{session, rev, peers}`. Whether the ECUs use their variables changed ("ECU variables" below). Sent to every connection | `ws-availability.json` ("Availability" below) |
 
 The server sends `session` at these times. Connections that asked for `session_without_check` get it without the `check` field.
 
@@ -348,7 +348,7 @@ The server sends `session` at these times. Connections that asked for `session_w
 - When a run ends (`launcher.running` is `false` and `state` is `ended`; after the launcher's last event).
 - When the launcher stops writing anything (when `launcher.silent_s` changes), and when it starts writing again.
 
-The server sends `variables` right after a run starts (immediately after that `session` notification) and whenever it changes.
+The server sends `variables` right after a run starts (immediately after that `session` notification) and whenever it changes. `snapshot_rev` orders session summaries only; it does not order launcher events or `allowed`. Variable summary `rev` and availability `rev` form a separate sequence. A later complete variable snapshot includes the current availability; a delta replaces only its named peers. An older summary never cancels replay, log events, command answers or terminal write results. Older servers omit these fields, so ordering between HTTP and WebSocket snapshots from them is best effort; older clients can ignore the added fields.
 
 The fields of `dropped` (the numbers in `ws-slow-client.json` are examples). A screen shows "N lines dropped here" at that position in that source's log.
 
@@ -408,6 +408,7 @@ Notifications from the server.
 | Field | Contents |
 |---|---|
 | `id` | The run number (from 1 for each server start) |
+| `snapshot_rev` | Capture order of session summaries, increasing within this server instance and run |
 | `file`, `disable`, `manual`, `speed`, `start_paused` | What was requested at the start |
 | `started_at`, `ended_at` | Times (UTC, ISO 8601). `ended_at` is `null` until the run ends |
 | `state` | `running` or `ended` |
@@ -485,10 +486,11 @@ When the launcher has a Control Server (`variables.available` in `api/app`), the
 
 ### State and list (`variables` in the summary, the `variables` notification)
 
-`{"state", "reason", "peers", "peers_omitted", "variables_omitted", "operations", "operations_from_seq", "operations_open_omitted"}`
+`{"rev", "state", "reason", "peers", "peers_omitted", "variables_omitted", "operations", "operations_from_seq", "operations_open_omitted"}`
 
 | Field | Contents |
 |---|---|
+| `rev` | Capture order shared by complete variable snapshots and availability deltas within this server instance and run |
 | `state` | The state of the variable feature (table below). Values may be added |
 | `reason` | The reason for `off`, `connecting` and `failed` (human-readable text, not localized; `null` if none) |
 | `peers` | `[{"name", "connected", "variables": [...]}]`. The participants the Control Server knows (also those without variables) |

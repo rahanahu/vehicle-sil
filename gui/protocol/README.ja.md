@@ -337,7 +337,7 @@ API のバージョンは `vehicle_sil_gui`（今は 2）です。サーバー�
 | `variables` | `{session, variables}`。その実行の変数の機能の状態か一覧（要約の `variables` と同じ形） | `ws-variables.json`、`ws-variables-failed.json` |
 | `values` | `{id, session, sim_ms, paused, peers}`。watch している変数の最後の値（下の「ECU の変数」） | `ws-variables.json` |
 | `operation` | `{session, seq, state, done, peers}`。書き込みの結果が変わった（下の「ECU の変数」）。全部の接続へ送り、落とさない | `ws-variables.json` |
-| `availability` | `{session, peers}`。ECU が変数を使っているかが変わった（下の「ECU の変数」）。全部の接続へ送る | `ws-availability.json`（下の「利用状態」） |
+| `availability` | `{session, rev, peers}`。ECU が変数を使っているかが変わった（下の「ECU の変数」）。全部の接続へ送る | `ws-availability.json`（下の「利用状態」） |
 
 `session` を送るのは、次のときです。`session_without_check` を頼んだ接続には、`check` のフィールドがありません。
 
@@ -345,7 +345,7 @@ API のバージョンは `vehicle_sil_gui`（今は 2）です。サーバー�
 - 実行が終わったとき（`launcher.running` が `false`、`state` が `ended`。ランチャーの最後のイベントの後）。
 - ランチャーが何も書かなくなったとき（`launcher.silent_s` が変わったとき）と、また書き始めたとき。
 
-`variables` を送るのは、実行が始まった直後（その `session` の通知のすぐ後）と、変わったときです。
+`variables` を送るのは、実行が始まった直後（その `session` の通知のすぐ後）と、変わったときです。 `snapshot_rev` は session 要約だけの順序で、ランチャーのイベントや `allowed` の順序とは別です。変数要約の `rev` と利用状態の差分の `rev` は別の共通系列です。後の完全な変数要約には現在の利用状態が入り、差分は指定した participant だけを置き換えます。古い要約でも replay、ログ、コマンドの応答、確定済み書き込み結果は捨てません。旧サーバーにはこれらのフィールドがないため、HTTP と WebSocket の要約間の順序は最善を尽くす扱いです。旧クライアントは追加フィールドを無視できます。
 
 `dropped` のフィールドは次のとおりです（`ws-slow-client.json` の数は例）。画面は、その source のログのその位置に「ここで N 行が落ちた」を表示します。
 
@@ -405,6 +405,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | フィールド | 内容 |
 |---|---|
 | `id` | 実行の番号（サーバーの起動ごとに 1 から） |
+| `snapshot_rev` | 同じサーバーインスタンスと実行の中で増える、session 要約の取得順 |
 | `file`、`disable`、`manual`、`speed`、`start_paused` | 始めたときの指定 |
 | `started_at`、`ended_at` | 時刻（UTC、ISO 8601）。`ended_at` は終わるまで `null` |
 | `state` | `running` か `ended` |
@@ -482,10 +483,11 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 ### 状態と一覧（要約の `variables`、`variables` の通知）
 
-`{"state", "reason", "peers", "peers_omitted", "variables_omitted", "operations", "operations_from_seq", "operations_open_omitted"}`
+`{"rev", "state", "reason", "peers", "peers_omitted", "variables_omitted", "operations", "operations_from_seq", "operations_open_omitted"}`
 
 | フィールド | 内容 |
 |---|---|
+| `rev` | 同じサーバーインスタンスと実行の中で、変数の完全な要約と利用状態の差分に共通する取得順 |
 | `state` | 変数の機能の状態（下の表）。値は増えることがある |
 | `reason` | `off`、`connecting`、`failed` の理由（人向けの英語の文。なければ `null`） |
 | `peers` | `[{"name", "connected", "variables": [...]}]`。Control Server が知っている participant（変数のないものも） |

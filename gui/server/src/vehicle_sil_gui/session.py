@@ -50,7 +50,7 @@ STOP_NONE, STOP_REQUESTED, STOP_FORCED = "none", "requested", "forced"
 # The summary's `variables` of a run without any (variables.Variables.summary makes the others).
 # The fields of a scenario step that the summary keeps (the launcher's scenario_step event and result.scenario.steps[])
 SCENARIO_STEP_FIELDS = ("index", "line", "kind", "text", "status", "start_ms", "at_ms", "end_ms", "code", "message")
-NO_VARIABLES = {"state": "off", "reason": None, "peers": [], "peers_omitted": 0, "variables_omitted": 0,
+NO_VARIABLES = {"rev": 0, "state": "off", "reason": None, "peers": [], "peers_omitted": 0, "variables_omitted": 0,
                 "operations": []}
 
 
@@ -297,6 +297,7 @@ class Session:
         # The ECUs' variables of the run (the schema, the state, the last operations), made by the server's
         # variables.Variables when a summary is asked for. Not in the `session` messages (see message).
         self.variables: Callable[[], dict] | None = None
+        self._snapshot_rev = 0  # order of complete server snapshots within this run
         # The scenario's progress (a run with --scenario): from the check, the scenario_step events, the result.
         self.scenario_name: str | None = None
         self.scenario_step_count: int | None = None
@@ -703,7 +704,9 @@ class Session:
     # ------------------------------------------------------------ output
 
     def summary(self, variables: bool = True) -> dict:
+        self._snapshot_rev += 1
         out = {
+            "snapshot_rev": self._snapshot_rev,
             "id": self.id, "file": self.file, "disable": self.disable, "manual": self.manual, "speed": self.speed,
             "start_paused": self.start_paused, "started_at": self.started_at, "ended_at": self.ended_at,
             "state": self.state,
@@ -712,12 +715,12 @@ class Session:
             "stop": self.stop, "phase": self.phase, "last_seq": self.last_seq, "last_t_ms": self.last_t_ms,
             "time": self.time, "check": self.check, "registry": self.registry,
             "participants": list(self.participants.values()), "participants_omitted": self.participants_omitted,
-            "findings": self.findings, "findings_omitted": self.findings_omitted,
+            "findings": list(self.findings), "findings_omitted": self.findings_omitted,
             "last_command": self.last_command, "launcher_state": self.launcher_state,
             "allowed": self.allowed(), "result": self.result,
             "log": {source: {"kept": log.kept, "dropped": log.dropped + log.launcher_dropped}
                     for source, log in self._logs.items()},
-            "problems": self.problems, "problems_omitted": self.problems_omitted,
+            "problems": list(self.problems), "problems_omitted": self.problems_omitted,
             "scenario": self.scenario_summary(),
         }
         if variables:

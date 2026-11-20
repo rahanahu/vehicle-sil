@@ -890,6 +890,39 @@ describe('the front door', () => {
       unsubscribe();
     });
 
+    it('keeps replayed logs and ACK when a buffered hello has an older snapshot revision', async () => {
+      const rig = await running();
+      const pause = rig.front.time.pause();
+      const id = rig.timeBody().id;
+      const old = summary({
+        snapshot_rev: 1,
+        launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: 5 },
+      });
+      rig.socket.send({
+        type: 'hello',
+        vehicle_sil_gui: 2,
+        version: '0.1.0',
+        instance: 'x',
+        session: old,
+        replay: null,
+      });
+      rig.socket.send(event({ event: 'log', source: 'Engine', line: 'replayed line', t_ms: 90 }));
+      rig.socket.send(event(commandEvent(62, 'pause', id)));
+      rig.socket.send({ type: 'synced', session: 1, last_seq: 99 });
+      const refresh = rig.front.low.fetchSession();
+      rig.http
+        .expectOne('api/session')
+        .flush({ instance: 'x', session: summary({ snapshot_rev: 2 }) });
+      await refresh;
+      await vi.advanceTimersByTimeAsync(BATCH_MS);
+      await expect(pause).resolves.toBeUndefined();
+      expect(rig.front.low.session.session.get()?.launcher.silentSeconds).toBeNull();
+      expect(
+        rig.front.low.session.session.get()?.logs.some((line) => line.line === 'replayed line'),
+      ).toBe(true);
+      expect(rig.front.low.session.ready.get()).toBe(true);
+    });
+
     it('keeps a newer run acknowledgement after a buffered older hello', async () => {
       const rig = await running();
       const refresh = rig.front.low.fetchSession();

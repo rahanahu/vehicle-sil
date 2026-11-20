@@ -396,6 +396,77 @@ describe('SessionFeed', () => {
     });
   });
 
+  it('keeps a newer HTTP launcher snapshot over an older buffered hello and preserves replay', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const launcher = response.session['launcher'] as Record<string, unknown>;
+    socket.send({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 1 },
+      replay: null,
+    });
+    socket.send({ type: 'synced', session: response.session['id'], last_seq: 0 });
+    const refresh = client.fetchSession();
+    http.expectOne('api/session').flush({
+      instance: 'x',
+      session: {
+        ...response.session,
+        snapshot_rev: 2,
+        launcher: { ...launcher, running: false },
+        state: 'ended',
+      },
+    });
+    await refresh;
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.launcher.running).toBe(false);
+    expect(client.session.session.get()?.snapshotRev).toBe(2);
+    expect(client.session.ready.get()).toBe(true);
+  });
+
+  it.each(['old-first', 'new-first'] as const)(
+    'orders overlapping same-run session snapshots by server revision (%s)',
+    async (order) => {
+      const http = new FakeHttp();
+      open(http);
+      const client = clientsLast();
+      const example = (await httpExamples()).find((item) => item.name === 'run');
+      const response = example?.response as { session: Record<string, unknown> };
+      const launcher = response.session['launcher'] as Record<string, unknown>;
+      const old = client.fetchSession();
+      const oldRequest = http.expectOne('api/session');
+      const newer = client.fetchSession();
+      const newRequest = http.expectOne('api/session');
+      const answerOld = () =>
+        oldRequest.flush({ instance: 'x', session: { ...response.session, snapshot_rev: 1 } });
+      const answerNew = () =>
+        newRequest.flush({
+          instance: 'x',
+          session: {
+            ...response.session,
+            snapshot_rev: 2,
+            launcher: { ...launcher, running: false },
+            state: 'ended',
+          },
+        });
+      if (order === 'old-first') {
+        answerOld();
+        answerNew();
+      } else {
+        answerNew();
+        answerOld();
+      }
+      await Promise.all([old, newer]);
+      expect(client.session.session.get()?.launcher.running).toBe(false);
+      expect(client.session.session.get()?.snapshotRev).toBe(2);
+    },
+  );
+
   it('does not apply an old prefix to a new server during restart notification', async () => {
     const http = new FakeHttp();
     const { socket } = open(http);

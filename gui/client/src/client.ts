@@ -411,8 +411,17 @@ export function buildClient(options: ClientOptions): ClientParts {
               resyncFrom,
             );
             if (adoption !== null) {
+              const rawSession = (
+                outcome.body as { session?: { variables?: { rev?: unknown } } } | null
+              )?.session;
+              const rev = rawSession?.variables?.rev;
               const current = () =>
-                variables.isSnapshotCurrent(snapshotVersion, adoption.instance, adoption.session);
+                variables.isSnapshotCurrent(
+                  snapshotVersion,
+                  adoption.instance,
+                  adoption.session,
+                  Number.isSafeInteger(rev) && (rev as number) >= 0 ? (rev as number) : null,
+                );
               if (session.sameRun(adoption)) session.adoptAllowed(readSessionAllowed(outcome.body));
               const sameRun = () => session.sameRun(adoption);
               if (sameRun()) variables.adoptInstance(instance);
