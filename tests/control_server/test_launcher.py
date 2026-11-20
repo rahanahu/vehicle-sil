@@ -333,7 +333,7 @@ class LauncherTest(unittest.TestCase):
             self.assertEqual((snap.time.now, snap.time.paused), (now, True))
             engine, dashboard = snap.values["Engine"], snap.values["Dashboard"]
             last_before = ((now - 1) // step) * step
-            self.assertIn(engine.time, (last_before, now))
+            self.assertIn(engine.time, (last_before, (now // step) * step))
             self.assertIn(dashboard.time, (now - ms(5), now))
             self.assertEqual(engine.values["engine.speed"], engine_speed(engine.time))
 

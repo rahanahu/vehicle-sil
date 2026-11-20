@@ -148,7 +148,7 @@ Both notes mention the environment variable `VEHICLE_SIL_LISTEN_ON_NETWORK=1`. Y
 On the launcher computer, run:
 
 ```sh
-vehicle_sil_launch run simulation.two-pcs.yaml
+vehicle_sil_launch run simulation.two-pcs.yaml --stop-at-ms 1000
 ```
 
 On Windows, the firewall must allow the launcher (see "[Differences on Windows](#differences-on-windows)").

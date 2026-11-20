@@ -148,7 +148,7 @@ passed: 0 errors, 0 warnings, 2 notes
 ランチャーを動かす PC で、次のコマンドを実行します。
 
 ```sh
-vehicle_sil_launch run simulation.two-pcs.yaml
+vehicle_sil_launch run simulation.two-pcs.yaml --stop-at-ms 1000
 ```
 
 Windows では、ファイアウォールの許可が必要です（「Windows で変わること」）。
