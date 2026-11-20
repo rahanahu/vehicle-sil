@@ -52,7 +52,7 @@ type Selection = VariableRef & { type: string; unit: string };
 type Point = { sampleMs: number; value: number | boolean | null };
 type WaveEntry = { key: string; trace: Selection | null; revision: number; actor: string };
 type WaveMessage =
-  | { kind: 'request'; instance: string; session: number; requester: string }
+  | { kind: 'request'; instance: string; session: number | null; requester: string }
   | { kind: 'snapshot'; instance: string; target: string; entries: WaveEntry[] }
   | { kind: 'selection'; instance: string; entries: WaveEntry[] }
   | { kind: 'history'; instance: string; session: number; histories: [string, Point[]][] };
@@ -61,6 +61,7 @@ const locationQuery = new URLSearchParams(location.search);
 const pageToken = takeToken(window);
 const waveStorage = 'vehicle-sil-workbench-waves';
 const waveStorageKey = (instance: string) => `${waveStorage}:${instance}`;
+const waveStorageHead = `${waveStorage}:last-instance`;
 const pinStorage = 'vehicle-sil-workbench-pins';
 function savedArray<T>(text: string | null, valid: (item: unknown) => item is T): T[] {
   try {
@@ -89,6 +90,27 @@ function saveStored(key: string, value: unknown): void {
   } catch {
     // Site data can be disabled: the current tab remains usable without persistence.
   }
+}
+function restoreTraces(instance: string): Selection[] {
+  let traces: Selection[] = [];
+  try {
+    let saved = localStorage.getItem(waveStorageKey(instance));
+    if (saved === null) {
+      const previous = localStorage.getItem(waveStorageHead);
+      saved = previous ? localStorage.getItem(waveStorageKey(previous)) : null;
+      saved ??= localStorage.getItem(waveStorage); // Before instance-scoped storage.
+    }
+    traces = savedArray(saved, isTrace);
+  } catch {
+    // Site data may be unavailable, while the current tab and run still work.
+  }
+  saveStored(waveStorageKey(instance), traces);
+  try {
+    localStorage.setItem(waveStorageHead, instance);
+  } catch {
+    // Persistence is optional.
+  }
+  return traces;
 }
 const refKey = ({ peer, name }: VariableRef) => JSON.stringify([peer, name]);
 const tabNames = [
@@ -121,6 +143,7 @@ export class Workbench {
   readonly controls = signal<FrontControls | null>(null);
   readonly runScenario = signal<FrontScenario | null>(null);
   readonly session = signal<SessionView | null>(null);
+  readonly sessionReady = signal(false);
   readonly variables = signal<VariablesState | null>(null);
   readonly canRecord = signal(false);
   readonly files = signal<string[]>([]);
@@ -170,7 +193,12 @@ export class Workbench {
     this.session();
     return this.front()?.low.session.currentTarget() ?? null;
   });
-  readonly waveInstance = computed(() => this.waveTarget()?.instance ?? null);
+  readonly authenticatedInstance = computed(() => {
+    // Readiness changes after hello even when the server has no session.
+    this.sessionReady();
+    this.session();
+    return this.front()?.low.session.currentInstance() ?? null;
+  });
   readonly waveSession = computed(() => this.waveTarget()?.session ?? null);
   readonly histories = computed(() =>
     this.traces().map((trace, i) => {
@@ -184,9 +212,12 @@ export class Workbench {
   );
   readonly cursorA = signal<number | null>(null);
   readonly cursorB = signal<number | null>(null);
-  readonly peerChoice = linkedSignal(
-    () => this.fixedPeer ?? this.variables()?.peers[0]?.name ?? '',
-  );
+  readonly peerChoice = linkedSignal<string[], string>({
+    source: () => this.variables()?.peers.map((peer) => peer.name) ?? [],
+    computation: (peers, previous) =>
+      this.fixedPeer ??
+      (previous && peers.includes(previous.value) ? previous.value : (peers[0] ?? '')),
+  });
   readonly peer = computed(() =>
     this.variables()?.peers.find((peer) => peer.name === this.peerChoice()),
   );
@@ -306,7 +337,7 @@ export class Workbench {
     if (this.fixedPeer) document.title = `${this.fixedPeer} · vehicle-sil`;
     if (this.detachedWave) document.title = 'Waveforms · vehicle-sil';
     const storage = (event: StorageEvent) => {
-      const instance = this.waveInstance() ?? this.waveInstanceSeen;
+      const instance = this.authenticatedInstance() ?? this.waveInstanceSeen;
       if (instance && event.key === waveStorageKey(instance) && !this.waveChannel) {
         const traces = savedArray(event.newValue, isTrace);
         this.waveEntries.clear();
@@ -326,7 +357,7 @@ export class Workbench {
     if (channel) {
       channel.onmessage = ({ data }: MessageEvent<WaveMessage>) => {
         const target = this.front()?.low.session.currentTarget();
-        const instance = target?.instance ?? this.waveInstanceSeen;
+        const instance = this.front()?.low.session.currentInstance() ?? this.waveInstanceSeen;
         if (!data || !instance || data.instance !== instance) return;
         this.ensureWaveInstance(instance);
         if (data.kind === 'request') {
@@ -370,12 +401,12 @@ export class Workbench {
       this.destroy.onDestroy(() => channel.close());
     }
     effect(() => {
-      const instance = this.waveInstance();
+      const instance = this.authenticatedInstance();
       const session = this.waveSession();
       if (instance) this.ensureWaveInstance(instance);
       this.inheritedHistories.set(new Map());
       this.liveHistories.set([]);
-      if (channel && instance && session != null)
+      if (channel && instance)
         channel.postMessage({
           kind: 'request',
           instance,
@@ -411,6 +442,7 @@ export class Workbench {
         watch(front.controls, (value) => this.controls.set(value)),
         watch(front.scenario, (value) => this.runScenario.set(value)),
         watch(front.low.session.session, (value) => this.session.set(value)),
+        watch(front.low.session.ready, (value) => this.sessionReady.set(value)),
         watch(front.low.variables.state, (value) => this.variables.set(value)),
         watch(front.low.app, (value) => this.canRecord.set(value?.variables?.available === true)),
       ];
@@ -585,8 +617,7 @@ export class Workbench {
   }
 
   private changeTrace(key: string, trace: Selection | null) {
-    const target = this.front()?.low.session.currentTarget();
-    const instance = target?.instance ?? this.waveInstanceSeen;
+    const instance = this.front()?.low.session.currentInstance() ?? this.waveInstanceSeen;
     if (!instance) return;
     this.ensureWaveInstance(instance);
     const entry = { key, trace, revision: ++this.waveRevision, actor: this.waveActor };
@@ -637,7 +668,7 @@ export class Workbench {
     this.waveInstanceSeen = instance;
     this.waveRevision = 0;
     this.waveEntries.clear();
-    const traces = readStored(waveStorageKey(instance), isTrace);
+    const traces = restoreTraces(instance);
     for (const trace of traces) {
       const key = refKey(trace);
       this.waveEntries.set(key, { key, trace, revision: 0, actor: '' });

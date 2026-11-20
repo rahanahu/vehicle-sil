@@ -1,6 +1,7 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { CONFIGS, launchGuiServer, REPLAY_LAUNCHER, REPOSITORY } from './support/gui-server';
 import { RUN_TIMEOUT } from './support/run-page';
@@ -30,7 +31,7 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
     const launcher = process.env['VEHICLE_SIL_WORKBENCH_REAL_LAUNCHER'];
     const examples = process.env['VEHICLE_SIL_WORKBENCH_REAL_EXAMPLES'];
     test.skip(!launcher || !examples || test.info().project.name !== 'static');
-    test.setTimeout(120_000);
+    test.setTimeout(150_000);
     const root = mkdtempSync(join(tmpdir(), 'vehicle-sil-real-workbench-'));
     const config = join(root, 'simulation.yaml');
     writeFileSync(
@@ -56,6 +57,7 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
       port: 0,
       web: join(REPOSITORY, 'build', 'gui-workbench', 'browser'),
     });
+    let restarted: Awaited<ReturnType<typeof launchGuiServer>> | null = null;
     try {
       await page.context().addInitScript((mode) => {
         if (mode === 'blocked') {
@@ -96,6 +98,17 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
               : original.call(this, key);
           };
           localStorage.setItem('vehicle-sil-workbench-pins', '[null,42]');
+        } else if (
+          mode === 'available' &&
+          location.protocol === 'http:' &&
+          !new URLSearchParams(location.search).has('view') &&
+          localStorage.getItem('vehicle-sil-workbench-waves') === null
+        ) {
+          // The previous Workbench stored an unscoped array; migrate it on first use.
+          localStorage.setItem(
+            'vehicle-sil-workbench-waves',
+            JSON.stringify([{ peer: 'Engine', name: 'engine.throttle', type: 'real', unit: '%' }]),
+          );
         }
       }, storage);
       const requestUrls: string[] = [];
@@ -112,6 +125,9 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
       await page.getByRole('button', { name: 'Start', exact: true }).click();
       const peer = page.getByRole('combobox', { name: 'ECU', exact: true });
       await expect(peer.locator('option[value="Engine"]')).toHaveCount(1, { timeout: RUN_TIMEOUT });
+      await expect(peer.locator('option[value="Dashboard"]')).toHaveCount(1, {
+        timeout: RUN_TIMEOUT,
+      });
       await peer.selectOption('Engine');
       const throttle = page.getByRole('spinbutton', { name: 'engine.throttle', exact: true });
       await expect(throttle).toBeEnabled({ timeout: RUN_TIMEOUT });
@@ -151,6 +167,9 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
       await wave.bringToFront();
       const path = wave.getByRole('img', { name: 'engine.speed waveform' }).locator('path.trace');
       await expect(path).toHaveCount(1, { timeout: RUN_TIMEOUT });
+      if (storage === 'available') {
+        await expect(wave.getByRole('img', { name: 'engine.throttle waveform' })).toBeVisible();
+      }
       expect(new URL(wave.url()).hash).toBe('');
       const first = await path.getAttribute('d');
       await ecu.bringToFront();
@@ -257,7 +276,96 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
       });
       await wave.close();
       await ecu.close();
+      if (storage === 'available') {
+        // Restart the server on the same origin. A fresh authenticated instance restores the
+        // selection, while the old tab can only write to its former instance's storage.
+        const oldApp = await page.request.get(new URL('/api/app', server.url).href, {
+          headers: { Authorization: `Bearer ${server.token}` },
+        });
+        const oldInstance = (await oldApp.json()).instance as string;
+        const port = Number(new URL(server.url).port);
+        // Let the browser close its WebSocket first so the server can bind the same port again.
+        await page.close();
+        await server.stop();
+        // The server does not reuse an address still in TCP TIME_WAIT. Wait until the same
+        // origin can be bound again instead of assuming the operating system releases it at once.
+        await expect
+          .poll(
+            () =>
+              new Promise<boolean>((resolve) => {
+                const probe = createServer();
+                probe.once('error', () => resolve(false));
+                probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)));
+              }),
+            { timeout: 80_000, intervals: [1000] },
+          )
+          .toBe(true);
+        restarted = await launchGuiServer({
+          launcher: launcher!,
+          root,
+          config,
+          port,
+          web: join(REPOSITORY, 'build', 'gui-workbench', 'browser'),
+        });
+        const fresh = await page.context().newPage();
+        await fresh.goto(restarted.url);
+        await fresh.getByRole('button', { name: 'Waveforms', exact: true }).click();
+        await expect(fresh.getByRole('img', { name: 'engine.speed waveform' })).toBeVisible({
+          timeout: RUN_TIMEOUT,
+        });
+        await expect(fresh.getByRole('img', { name: 'engine.throttle waveform' })).toBeVisible();
+        await fresh.getByRole('button', { name: 'Start', exact: true }).click();
+        await expect(fresh.getByText('Running', { exact: true }).first()).toBeVisible({
+          timeout: RUN_TIMEOUT,
+        });
+        const newApp = await fresh.request.get(new URL('/api/app', restarted.url).href, {
+          headers: { Authorization: `Bearer ${restarted.token}` },
+        });
+        const newInstance = (await newApp.json()).instance as string;
+        await fresh.evaluate(
+          ({ old, current }) => {
+            localStorage.setItem(`vehicle-sil-workbench-waves:${old}`, '[]');
+            const bus = new BroadcastChannel('vehicle-sil-workbench-waves');
+            bus.postMessage({
+              kind: 'selection',
+              instance: old,
+              entries: [
+                {
+                  key: JSON.stringify(['Engine', 'engine.speed']),
+                  trace: null,
+                  revision: 10000,
+                  actor: 'old',
+                },
+              ],
+            });
+            bus.postMessage({
+              kind: 'selection',
+              instance: current,
+              entries: [
+                {
+                  key: JSON.stringify(['Engine', 'test.barrier']),
+                  trace: { peer: 'Engine', name: 'test.barrier', type: 'real', unit: '' },
+                  revision: 1,
+                  actor: 'test',
+                },
+              ],
+            });
+            bus.close();
+          },
+          { old: oldInstance, current: newInstance },
+        );
+        await expect(fresh.getByRole('img', { name: 'test.barrier waveform' })).toBeVisible({
+          timeout: RUN_TIMEOUT,
+        });
+        await expect(fresh.getByRole('img', { name: 'engine.speed waveform' })).toBeVisible();
+        await fresh.getByRole('button', { name: 'Stop', exact: true }).click();
+        await expect(fresh.getByText('Run ended', { exact: false }).first()).toBeVisible({
+          timeout: RUN_TIMEOUT,
+        });
+        await fresh.close();
+      }
     } finally {
+      if (restarted) await restarted.stop();
       await server.stop();
       rmSync(root, { recursive: true, force: true });
     }
