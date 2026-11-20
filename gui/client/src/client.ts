@@ -247,7 +247,7 @@ export function buildClient(options: ClientOptions): ClientParts {
     () => limits.get(),
   );
   const variables = variablesFeed;
-  session.onInstance((instance, current) => variables.adoptInstance(instance, current));
+  session.onInstance((instance) => variables.adoptInstance(instance));
   const run = new RunControl(session, http, onError, () => longRequestMs(limits.get()));
   const time = new TimeControl(
     session.session,
@@ -411,7 +411,7 @@ export function buildClient(options: ClientOptions): ClientParts {
             if (adoption !== null) {
               const current = () => session.isCurrent(adoption.revision);
               if (session.sameRun(adoption)) session.adoptAllowed(readSessionAllowed(outcome.body));
-              if (current()) variables.adoptInstance(instance, current);
+              if (current()) variables.adoptInstance(instance);
               if (current())
                 variables.adoptSummary(
                   (outcome.body as { session?: unknown } | null)?.session,

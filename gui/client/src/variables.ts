@@ -698,7 +698,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           flush();
           if (!current()) return;
           const summary = message['session'];
-          this.adoptInstance(message['instance'], current);
+          this.adoptInstance(message['instance']);
           if (!current()) return;
           if (isObject(summary) && Number.isSafeInteger(summary['id'])) {
             this.adoptSummary(summary, current);
@@ -726,7 +726,6 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
             this.enter(id as number);
             if (!current()) return;
             if (this.stateValue.get().session !== id) break;
-            this.stateValue.set({ ...NO_VARIABLES, session: id as number });
             touchedAll = true;
           }
           break;
@@ -741,9 +740,11 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
             if (!current()) return;
             const afterFlush = this.stateValue.get().session;
             if (afterFlush !== null && (id as number) < afterFlush) break;
-            this.enter(id as number);
+            // A synchronous read may already have supplied this run's newer variables.
+            if (afterFlush === id) break;
+            const initial = this.enter(id as number);
             if (!current()) return;
-            if (this.stateValue.get().session !== id) break;
+            if (this.stateValue.get() !== initial) break;
             touchedAll = true;
           }
           this.stateValue.set(readVariables(message['variables'], id as number));
@@ -809,17 +810,11 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   }
 
   /** A reused numeric session on another server is a different run. */
-  adoptInstance(value: unknown, current: () => boolean = () => true): void {
+  adoptInstance(value: unknown): void {
     if (typeof value !== 'string' || !value) return;
     const changed = this.instanceId !== null && this.instanceId !== value;
     this.instanceId = value;
-    if (changed) {
-      this.enter(null);
-      if (!current()) return;
-      this.stateValue.set(NO_VARIABLES);
-      if (!current()) return;
-      this.publish(null, current);
-    }
+    if (changed) this.enter(null, true);
   }
 
   /** Applies the variables part of hello and of an HTTP summary (`session`). */
@@ -830,17 +825,14 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     if (existing !== null && id < existing) return;
     const variables = summary['variables'];
     if (id !== this.stateValue.get().session) {
-      this.enter(id);
-      if (!current()) return;
-      if (this.stateValue.get().session !== id) return;
-      this.publish(null, current);
-      if (!current()) return;
-      if (this.stateValue.get().session !== id) return;
-    } else if (variables === undefined) {
-      return; // A summary of the same run without the variables field (a session notification): keep the current state
+      const initial = this.enter(id);
+      if (!current() || this.stateValue.get() !== initial) return;
     }
-    this.stateValue.set(readVariables(variables, id));
-    if (!current()) return;
+    // A summary without variables does not erase a state already obtained from another response.
+    if (variables === undefined) return;
+    const next = readVariables(variables, id);
+    this.stateValue.set(next);
+    if (!current() || this.stateValue.get() !== next) return;
     if (isObject(variables) && Array.isArray(variables['operations'])) {
       let operations = this.operationsValue.get();
       const listed: OperationView[] = [];
@@ -885,15 +877,16 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
    * are dropped with their memory, so they do not keep growing as the variables change from run to run). Writes
    * waiting for the previous run's result are failed, since the result will not come.
    */
-  private enter(session: number | null): void {
-    if (session === this.stateValue.get().session) return;
+  private enter(session: number | null, force = false): VariablesState {
+    if (!force && session === this.stateValue.get().session) return this.stateValue.get();
     // Clear every observable part before notifying any subscriber. A subscriber can synchronously
     // fetch the new run, so it must never observe or revive the previous run's values or schema.
     this.readings.clear();
     this.histories.clear();
     this.historyReserved = 0;
+    const initial = { ...NO_VARIABLES, session };
     const notifyOperations = this.operationsValue.setDeferred([]);
-    const notifyState = this.stateValue.setDeferred({ ...NO_VARIABLES, session });
+    const notifyState = this.stateValue.setDeferred(initial);
     const notifyWatches = [...this.handles].map((handle) => handle.values.setDeferred({}));
     for (const pending of [...this.pending]) {
       if (pending.session !== session) {
@@ -911,6 +904,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     notifyOperations();
     notifyState();
     for (const notify of notifyWatches) notify();
+    return initial;
   }
 
   private takeValues(message: Fields, touched: Set<string>): void {

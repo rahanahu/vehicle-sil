@@ -440,6 +440,59 @@ describe('variables', () => {
     },
   );
 
+  it.each([
+    ['state', 'session'],
+    ['state', 'variables'],
+    ['operations', 'session'],
+    ['operations', 'variables'],
+  ] as const)(
+    'keeps a synchronously fetched ready state when %s notifies during %s',
+    async (source, kind) => {
+      const { client, http, deliver } = setup();
+      await deliver(hello(1, ready([listed(1, 'queued', false)])));
+      let fetched = false;
+      const unsubscribe = client.variables[source].subscribe(() => {
+        if (fetched) return;
+        fetched = true;
+        void client.fetchSession();
+        http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
+      });
+      const message =
+        kind === 'session'
+          ? { type: 'session', session: summary(2) }
+          : { type: 'variables', session: 2, variables: { ...ready(), state: 'connecting' } };
+      await deliver(message, { type: 'session', session: summary(2) });
+      expect(fetched).toBe(true);
+      expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
+      expect(client.variables.state.get().peers[0]?.variables[0]?.name).toBe('engine.demand');
+      unsubscribe();
+      client.close();
+    },
+  );
+
+  it.each(['state', 'operations'] as const)(
+    'keeps a synchronously fetched ready state when instance changes through %s',
+    async (source) => {
+      const { client, http, deliver } = setup();
+      await deliver(hello(1, ready([listed(1, 'queued', false)])));
+      let fetched = false;
+      const unsubscribe = client.variables[source].subscribe(() => {
+        if (fetched) return;
+        fetched = true;
+        void client.fetchSession();
+        http
+          .expectOne('api/session')
+          .flush({ instance: 'new-server', session: summary(2, ready()) });
+      });
+      await deliver({ ...hello(2), instance: 'new-server' });
+      expect(fetched).toBe(true);
+      expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
+      expect(client.variables.state.get().peers[0]?.variables[0]?.name).toBe('engine.demand');
+      unsubscribe();
+      client.close();
+    },
+  );
+
   it('clears readings and history when a new server reuses the session id', async () => {
     const { client, deliver } = setup();
     await deliver(hello(1, ready()));
