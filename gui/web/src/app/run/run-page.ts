@@ -69,6 +69,8 @@ interface RunChoices {
   manual?: string[];
   speed: Speed;
   stopAt?: string;
+  stopAtEdited?: boolean;
+  stopSession?: number | null;
   /** 止めた状態で始めるか（古い持ち越しにはない）。 */
   startPaused?: boolean;
   logSource: string;
@@ -91,6 +93,13 @@ export function readRunChoices(value: unknown): RunChoices | null {
     !speedOk ||
     !(v['startPaused'] === undefined || typeof v['startPaused'] === 'boolean') ||
     !(v['stopAt'] === undefined || typeof v['stopAt'] === 'string') ||
+    !(v['stopAtEdited'] === undefined || typeof v['stopAtEdited'] === 'boolean') ||
+    !(
+      v['stopSession'] === undefined ||
+      v['stopSession'] === null ||
+      typeof v['stopSession'] === 'number'
+    ) ||
+    !(v['stopAtEdited'] === true && typeof v['stopAt'] !== 'string') ||
     !isText(v['logSource'])
   ) {
     return null;
@@ -308,17 +317,35 @@ export class RunPage {
     () => {
       const file = this.selected();
       const session = this.session();
-      const carried = this.carriedFor(session?.id ?? null);
+      const id = session?.file === file ? session.id : null;
+      const carried = this.carriedStopFor(id);
       const sessionStop = session?.file === file ? session.check?.stop_at_ms : undefined;
       return {
         file,
-        id: session?.id ?? null,
+        id,
         value:
-          carried && carried.file === file ? (carried.stopAt ?? '') : String(sessionStop ?? ''),
+          carried && carried.file === file && carried.stopAtEdited
+            ? (carried.stopAt ?? '')
+            : String(sessionStop ?? ''),
       };
     },
     { equal: (a, b) => a.file === b.file && a.id === b.id && a.value === b.value },
   );
+  /** 利用者が編集した空欄と、まだセッションの照合結果を待つ空欄を区別する。 */
+  private readonly stopAtEditSource = computed(
+    () => {
+      const file = this.selected();
+      const session = this.session();
+      const id = session?.file === file ? session.id : null;
+      const carried = this.carriedStopFor(id);
+      return { file, id, edited: !!(carried && carried.file === file && carried.stopAtEdited) };
+    },
+    { equal: (a, b) => a.file === b.file && a.id === b.id && a.edited === b.edited },
+  );
+  protected readonly stopAtEdited = linkedSignal({
+    source: this.stopAtEditSource,
+    computation: ({ edited }) => edited,
+  });
   /** 空欄なら自動停止せず、値があれば仮想時刻の上限にする。 */
   protected readonly stopAt = linkedSignal<
     { file: string | null; id: number | null; value: string },
@@ -329,12 +356,12 @@ export class RunPage {
       previous &&
       previous.source.file === source.file &&
       previous.source.id === source.id &&
-      previous.value !== previous.source.value
+      this.stopAtEdited()
         ? previous.value
         : source.value,
   });
   protected readonly stopAtTouched = linkedSignal({
-    source: () => ({ file: this.selected(), id: this.session()?.id ?? null }),
+    source: this.stopAtEditSource,
     computation: () => false,
   });
   protected readonly stopAtInvalid = computed(() => {
@@ -631,6 +658,8 @@ export class RunPage {
         manual: [...this.manual()],
         speed: this.speed(),
         stopAt: this.stopAt(),
+        stopAtEdited: this.stopAtEdited(),
+        stopSession: this.session()?.file === this.selected() ? (this.session()?.id ?? null) : null,
         startPaused: this.startPaused(),
         logSource: this.logSource(),
       }),
@@ -664,6 +693,14 @@ export class RunPage {
   /** 持ち越した選択。持ち越したときと同じセッションの間だけ使う。 */
   private carriedFor(session: number | null): RunChoices | null {
     return this.carried && this.carried.session === session ? this.carried : null;
+  }
+
+  private carriedStopFor(session: number | null): RunChoices | null {
+    return this.carried &&
+      (this.carried.stopSession === undefined ? this.carried.session : this.carried.stopSession) ===
+        session
+      ? this.carried
+      : null;
   }
 
   protected selectFile(file: string): void {

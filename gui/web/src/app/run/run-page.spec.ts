@@ -480,16 +480,176 @@ describe('RunPage', () => {
     TestBed.tick();
     expect(input.value).toBe('');
     expect(pageIntent.get().stop_at_ms).toBeUndefined();
+    input.value = '321';
+    input.dispatchEvent(new Event('input'));
+    TestBed.tick();
 
     // A summary and its check arrive from another session; its stop belongs only to that file.
     for (const message of server('ws-pass').slice(2)) fake.last().send(message);
     await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
     TestBed.tick();
-    expect(input.value).toBe('');
+    expect(input.value).toBe('321');
+    const otherSession = structuredClone(server('ws-pass')[49]) as { session: { id: number } };
+    otherSession.session.id = 2;
+    fake.last().send(otherSession);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(input.value).toBe('321');
+    expect(pageIntent.get().stop_at_ms).toBe(321);
     page.selectFile('simulation.yaml');
     TestBed.tick();
     expect(input.value).toBe('1000');
     expect(pageIntent.get().stop_at_ms).toBe(1000);
+  });
+
+  it('disables the stop time until the first hello and replay have synchronized', async () => {
+    const fixture = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush(response('app'));
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    TestBed.tick();
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    expect(input.disabled).toBe(true);
+    const messages = server('ws-replay');
+    fake.last().send(messages[0]);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(input.disabled).toBe(true);
+    for (const message of messages.slice(1)) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(input.disabled).toBe(false);
+    expect(input.value).toBe('1000');
+  });
+
+  it('keeps an edited stop time through a reconnect to the same session', async () => {
+    const fixture = await openWithFiles();
+    for (const message of server('ws-pass').slice(2)) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    expect(input.value).toBe('1000');
+    input.value = '123';
+    input.dispatchEvent(new Event('input'));
+    TestBed.tick();
+    const before = fake.last();
+    before.fail();
+    TestBed.tick();
+    expect(input.disabled).toBe(true);
+    await sleep(600);
+    const after = fake.last();
+    expect(after).not.toBe(before);
+    after.open();
+    for (const message of server('ws-replay')) after.send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(input.disabled).toBe(false);
+    expect(input.value).toBe('123');
+    expect(pageIntent.get().stop_at_ms).toBe(123);
+  });
+
+  it('restores an edited stop time for a selected file different from the last session', async () => {
+    sessionStorage.setItem(
+      'vehicle-sil-gui-carry',
+      JSON.stringify({
+        run: {
+          session: 1,
+          chosen: 'forever.yaml',
+          file: 'forever.yaml',
+          disable: [],
+          manual: [],
+          speed: 1,
+          stopAt: '321',
+          stopAtEdited: true,
+          stopSession: null,
+          logSource: '',
+        },
+      }),
+    );
+    const fixture = await openWithFiles();
+    for (const message of server('ws-pass').slice(2)) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    expect(input.value).toBe('321');
+  });
+
+  for (const mode of ['untouched', 'carried-edit', 'edit-now'] as const) {
+    it(`restores a delayed session check after a language change (${mode})`, async () => {
+      sessionStorage.setItem(
+        'vehicle-sil-gui-carry',
+        JSON.stringify({
+          run: {
+            session: 1,
+            chosen: 'simulation.yaml',
+            file: 'simulation.yaml',
+            disable: [],
+            manual: [],
+            speed: 1,
+            stopAt: '',
+            stopAtEdited: mode === 'carried-edit',
+            logSource: '',
+          },
+        }),
+      );
+      const fixture = await openWithFiles();
+      const summary = structuredClone(server('ws-pass')[3]) as {
+        session: { state: string; ended_at: string; launcher: { running: boolean } };
+      };
+      summary.session.state = 'ended';
+      summary.session.ended_at = '2026-01-01T00:00:01Z';
+      summary.session.launcher.running = false;
+      fake.last().send(summary);
+      await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+      TestBed.tick();
+      const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+        '[data-testid="stop-at-ms"]',
+      )!;
+      expect(input.value).toBe('');
+      if (mode === 'edit-now') {
+        input.value = '250';
+        input.dispatchEvent(new Event('input'));
+        TestBed.tick();
+      }
+      fake.last().send(server('ws-pass')[8]);
+      await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+      TestBed.tick();
+      expect(input.value).toBe(mode === 'untouched' ? '1000' : mode === 'edit-now' ? '250' : '');
+    });
+  }
+
+  it('clears the prior stop time when another session starts for the same configuration', async () => {
+    const fixture = await openWithFiles();
+    for (const message of server('ws-pass').slice(2)) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    expect(input.value).toBe('1000');
+    const summary = structuredClone(server('ws-pass')[3]) as { session: { id: number } };
+    summary.session.id = 2;
+    fake.last().send(summary);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(input.value).toBe('');
+    const check = structuredClone(server('ws-pass')[8]) as {
+      session: number;
+      event: { check: { stop_at_ms: number } };
+    };
+    check.session = 2;
+    check.event.check.stop_at_ms = 2000;
+    fake.last().send(check);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(input.value).toBe('2000');
   });
 
   it('checks the speed and the paused start with the rest, and does not start on what the check refuses', async () => {
@@ -616,5 +776,7 @@ describe('readRunChoices', () => {
     expect(readRunChoices({ ...choices, logSource: undefined })).toBeNull();
     expect(readRunChoices({ ...choices, startPaused: 'yes' })).toBeNull();
     expect(readRunChoices({ ...choices, manual: ['A', 1] })).toBeNull();
+    expect(readRunChoices({ ...choices, stopAtEdited: true })).toBeNull();
+    expect(readRunChoices({ ...choices, stopAtEdited: 'yes' })).toBeNull();
   });
 });
