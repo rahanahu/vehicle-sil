@@ -114,7 +114,7 @@ interface Adoption {
  */
 export class SessionFeed implements ClientSession {
   private readonly rawListeners = new Set<
-    (batch: readonly unknown[], current: () => boolean) => void
+    (batch: readonly unknown[], current: () => boolean, snapshotCurrent: () => boolean) => void
   >();
   private instanceId: string | null = null;
   private adoptionRevision = 0;
@@ -198,7 +198,13 @@ export class SessionFeed implements ClientSession {
    * request for the same run (the rest arrives in notifications). A summary of an earlier run never brings back an old
    * run over a new one.
    */
-  onRawMessages(listener: (batch: readonly unknown[], current: () => boolean) => void): () => void {
+  onRawMessages(
+    listener: (
+      batch: readonly unknown[],
+      current: () => boolean,
+      snapshotCurrent: () => boolean,
+    ) => void,
+  ): () => void {
     this.rawListeners.add(listener);
     return () => this.rawListeners.delete(listener);
   }
@@ -537,7 +543,12 @@ export class SessionFeed implements ClientSession {
     if (!sameRun()) return;
     if (stale > 0) this.notify(STALE_EVENTS_NOTICE, stale);
     if (!sameRun()) return;
-    callEach(this.rawListeners, [raw, sameRun], this.onError, sameRun);
+    callEach(
+      this.rawListeners,
+      [raw, sameRun, () => this.isCurrent(revision)],
+      this.onError,
+      sameRun,
+    );
     if (!sameRun()) return;
     callEach(this.messageListeners, [batch], this.onError, sameRun);
   }

@@ -411,10 +411,12 @@ export function buildClient(options: ClientOptions): ClientParts {
             if (adoption !== null) {
               const current = () => session.isCurrent(adoption.revision);
               if (session.sameRun(adoption)) session.adoptAllowed(readSessionAllowed(outcome.body));
-              if (current()) variables.adoptInstance(instance);
-              if (current())
+              const sameRun = () => session.sameRun(adoption);
+              if (sameRun()) variables.adoptInstance(instance);
+              if (sameRun())
                 variables.adoptSummary(
                   (outcome.body as { session?: unknown } | null)?.session,
+                  sameRun,
                   current,
                 );
             }

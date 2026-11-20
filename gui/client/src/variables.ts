@@ -577,7 +577,13 @@ function lost(seq: number, summary: Listed): WriteError | null {
 export interface VariablesLink {
   /** Sends if connected (does nothing otherwise; resume() sends what is needed on connect). */
   send(message: unknown): unknown;
-  onBatch(listener: (batch: readonly unknown[], current?: () => boolean) => void): () => void;
+  onBatch(
+    listener: (
+      batch: readonly unknown[],
+      current?: () => boolean,
+      snapshotCurrent?: () => boolean,
+    ) => void,
+  ): () => void;
 }
 
 /**
@@ -636,7 +642,9 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     this.state = this.stateValue.readonly();
     this.operations = this.operationsValue.readonly();
     this.watchProblem = this.problemValue.readonly();
-    link.onBatch((batch, current) => this.receive(batch, current));
+    link.onBatch((batch, current, snapshotCurrent) =>
+      this.receive(batch, current, snapshotCurrent),
+    );
   }
 
   // --- Connection -----------------------------------------------------------------------------
@@ -670,7 +678,11 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
 
   // --- Notifications --------------------------------------------------------------------------
 
-  private receive(batch: readonly unknown[], current: () => boolean = () => true): void {
+  private receive(
+    batch: readonly unknown[],
+    current: () => boolean = () => true,
+    snapshotCurrent: () => boolean = current,
+  ): void {
     const touched = new Set<string>();
     let touchedAll = false;
     let operations: OperationView[] | null = null;
@@ -701,7 +713,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           this.adoptInstance(message['instance']);
           if (!current()) return;
           if (isObject(summary) && Number.isSafeInteger(summary['id'])) {
-            this.adoptSummary(summary, current);
+            this.adoptSummary(summary, current, snapshotCurrent);
           } else {
             // A later run may already have been adopted during a synchronous session notification.
             if (this.stateValue.get().session !== null) break;
@@ -747,7 +759,8 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
             if (this.stateValue.get() !== initial) break;
             touchedAll = true;
           }
-          this.stateValue.set(readVariables(message['variables'], id as number));
+          if (snapshotCurrent())
+            this.stateValue.set(readVariables(message['variables'], id as number));
           break;
         }
         case 'values': {
@@ -817,34 +830,48 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     if (changed) this.enter(null, true);
   }
 
-  /** Applies the variables part of hello and of an HTTP summary (`session`). */
-  adoptSummary(summary: unknown, current: () => boolean = () => true): void {
-    if (!isObject(summary) || !Number.isSafeInteger(summary['id'])) return;
+  /** Applies a summary: an older snapshot can still carry a terminal write result. */
+  adoptSummary(
+    summary: unknown,
+    current: () => boolean = () => true,
+    snapshotCurrent: () => boolean = current,
+  ): void {
+    if (!isObject(summary) || !Number.isSafeInteger(summary['id']) || !current()) return;
     const id = summary['id'] as number;
     const existing = this.stateValue.get().session;
     if (existing !== null && id < existing) return;
     const variables = summary['variables'];
-    if (id !== this.stateValue.get().session) {
+    let applyState = snapshotCurrent();
+    if (id !== existing) {
       const initial = this.enter(id);
-      if (!current() || this.stateValue.get() !== initial) return;
+      if (!current()) return;
+      if (this.stateValue.get() !== initial) applyState = false;
     }
-    // A summary without variables does not erase a state already obtained from another response.
     if (variables === undefined) return;
-    const next = readVariables(variables, id);
-    this.stateValue.set(next);
-    if (!current() || this.stateValue.get() !== next) return;
+    applyState = applyState && snapshotCurrent();
+    let notifyOperations: () => void = () => undefined;
+    const listed: OperationView[] = [];
     if (isObject(variables) && Array.isArray(variables['operations'])) {
       let operations = this.operationsValue.get();
-      const listed: OperationView[] = [];
       for (const entry of variables['operations']) {
         const operation = readOperation(entry, id);
-        if (operation) {
+        // An older list may add confirmed terminal outcomes but cannot regress pending state.
+        if (operation && (applyState || operation.done)) {
           listed.push(operation);
           operations = this.withOperation(operations, operation);
         }
       }
-      this.setOperations(operations, listed, current);
-      if (!current()) return;
+      notifyOperations = this.prepareOperations(operations, listed, current);
+    }
+    let next: VariablesState | null = null;
+    if (applyState && snapshotCurrent() && current()) {
+      next = readVariables(variables, id);
+      this.stateValue.set(next);
+    }
+    // Deferred notification has its own value-version guard if a subscriber changed the list.
+    notifyOperations();
+    if (!current() || !snapshotCurrent() || !next || this.stateValue.get() !== next) return;
+    if (isObject(variables) && Array.isArray(variables['operations'])) {
       const fromSeq = variables['operations_from_seq'];
       const openOmitted = variables['operations_open_omitted'];
       this.forgetLost(id, {
@@ -1002,7 +1029,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   ): OperationView[] {
     const at = operations.findIndex((o) => o.seq === operation.seq);
     // A settled operation never changes again (an old state arriving late does not set it back)
-    if (at >= 0 && operations[at]?.done && !operation.done) return [...operations];
+    if (at >= 0 && operations[at]?.done) return [...operations];
     const next =
       at >= 0 ? operations.map((o, i) => (i === at ? operation : o)) : [...operations, operation];
     return next.length > OPERATIONS_KEPT ? next.slice(next.length - OPERATIONS_KEPT) : next;
@@ -1018,9 +1045,16 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     fresh: readonly OperationView[] = [],
     current: () => boolean = () => true,
   ): void {
-    if (!current()) return;
-    // Install the observable list and settle its confirmed results before notifying subscribers:
-    // a synchronous run switch must not turn an already-applied write into no-answer.
+    this.prepareOperations(operations, fresh, current)();
+  }
+
+  private prepareOperations(
+    operations: readonly OperationView[],
+    fresh: readonly OperationView[],
+    current: () => boolean,
+  ): () => void {
+    if (!current()) return () => undefined;
+    // Install the observable list and settle confirmed results before any subscriber runs.
     const notify = this.operationsValue.setDeferred(operations);
     for (const pending of [...this.pending]) {
       if (pending.seq === null) continue;
@@ -1029,7 +1063,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
       const operation = fresh.find(mine) ?? operations.find(mine);
       if (operation) this.settle(pending, operation);
     }
-    notify();
+    return notify;
   }
 
   private settle(pending: Pending, outcome: OperationView | WriteError): void {

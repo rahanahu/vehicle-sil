@@ -493,6 +493,92 @@ describe('variables', () => {
     },
   );
 
+  it.each(['state', 'operations'] as const)(
+    'keeps a fresh ready snapshot over an older hello and variables after %s reentry',
+    async (source) => {
+      const { client, http, deliver } = setup();
+      await deliver(hello(1, ready([listed(1, 'queued', false)])));
+      let fetched = false;
+      const unsubscribe = client.variables[source].subscribe(() => {
+        if (fetched) return;
+        fetched = true;
+        void client.fetchSession();
+        http
+          .expectOne('api/session')
+          .flush({ instance: 'new-server', session: summary(2, ready([], { reason: 'fresh' })) });
+      });
+      const old = { ...ready(), state: 'connecting', reason: 'older' };
+      await deliver(
+        { ...hello(2, old), instance: 'new-server' },
+        { type: 'variables', session: 2, variables: old },
+      );
+      expect(fetched).toBe(true);
+      expect(client.variables.state.get()).toMatchObject({
+        session: 2,
+        status: 'ready',
+        reason: 'fresh',
+      });
+      unsubscribe();
+      client.close();
+    },
+  );
+
+  it.each(['session', 'state'] as const)(
+    'settles an applied summary operation despite an older reentrant GET from %s',
+    async (source) => {
+      const { client, http, deliver } = setup();
+      await deliver(hello(1, ready()));
+      const written = client.variables.write({ Engine: { 'engine.demand': 40 } });
+      http.expectOne('api/write').flush({ session_id: 1, operation: 7 });
+      let fetched = false;
+      const readOld = () => {
+        if (fetched) return;
+        fetched = true;
+        void client.fetchSession();
+        http
+          .expectOne('api/session')
+          .flush({ instance: 'x', session: summary(1, ready([], { reason: 'fresh' })) });
+      };
+      const unsubscribe =
+        source === 'session'
+          ? client.session.session.subscribe(readOld)
+          : client.variables.state.subscribe(readOld);
+      const refresh = client.fetchSession();
+      http.expectOne('api/session').flush({
+        instance: 'x',
+        session: summary(1, ready([listed(7, 'applied', true)], { reason: 'older' })),
+      });
+      await refresh;
+      await expect(written).resolves.toMatchObject({ session: 1, seq: 7, state: 'applied' });
+      expect(fetched).toBe(true);
+      expect(client.variables.state.get()).toMatchObject({
+        session: 1,
+        status: 'ready',
+        reason: 'fresh',
+      });
+      unsubscribe();
+      client.close();
+    },
+  );
+
+  it('keeps a terminal operation from a hello after a same-run refresh', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(hello(1, ready()));
+    const written = client.variables.write({ Engine: { 'engine.demand': 40 } });
+    http.expectOne('api/write').flush({ session_id: 1, operation: 7 });
+    let fetched = false;
+    const unsubscribe = client.session.session.subscribe(() => {
+      if (fetched) return;
+      fetched = true;
+      void client.fetchSession();
+      http.expectOne('api/session').flush({ instance: 'x', session: summary(1, ready()) });
+    });
+    await deliver(hello(1, ready([listed(7, 'applied', true)])));
+    await expect(written).resolves.toMatchObject({ session: 1, seq: 7, state: 'applied' });
+    unsubscribe();
+    client.close();
+  });
+
   it('clears readings and history when a new server reuses the session id', async () => {
     const { client, deliver } = setup();
     await deliver(hello(1, ready()));
