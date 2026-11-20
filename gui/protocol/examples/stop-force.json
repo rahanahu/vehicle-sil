@@ -28,13 +28,13 @@
       },
       "stop": "forced",
       "phase": "stopping",
-      "last_seq": 263,
-      "last_t_ms": 2630,
+      "last_seq": 107,
+      "last_t_ms": 1070,
       "time": {
         "event": "time",
-        "seq": 252,
-        "t_ms": 2520,
-        "sim_ms": 109620,
+        "seq": 96,
+        "t_ms": 960,
+        "sim_ms": 31523,
         "actual_speed": 1.5,
         "late_steps": 0,
         "max_late_ms": 0,
@@ -43,7 +43,7 @@
       },
       "check": {
         "vehicle_sil_check": 1,
-        "vehicle_sil": "0.1.0",
+        "vehicle_sil": "0.2.0-rc.1",
         "file": "ignore-stop.yaml",
         "result": "passed",
         "strict": false,
@@ -51,8 +51,9 @@
         "warnings": 0,
         "notes": 1,
         "stop_at_ms": null,
+        "time_step_ms": 1,
         "start_timeout_ms": 30000,
-        "stop_timeout_ms": 600000,
+        "stop_timeout_ms": 10000,
         "registry_uri": null,
         "commands": null,
         "participants": [
@@ -70,7 +71,7 @@
             "step_ms": null,
             "status": "described",
             "reported": {
-              "vehicle_sil": "0.1.0",
+              "vehicle_sil": "0.2.0-rc.1",
               "name": "Engine",
               "step_ns": 10000000,
               "networks": [
@@ -170,7 +171,7 @@
             "step_ms": null,
             "status": "described",
             "reported": {
-              "vehicle_sil": "0.1.0",
+              "vehicle_sil": "0.2.0-rc.1",
               "name": "Dashboard",
               "step_ns": 5000000,
               "networks": [
@@ -321,7 +322,7 @@
             "--registry-uri",
             "silkit://127.0.0.1:8510",
             "--start-timeout-ms",
-            "640000"
+            "50000"
           ],
           "log": null,
           "control_link": {
@@ -342,7 +343,7 @@
             "--registry-uri",
             "silkit://127.0.0.1:8510",
             "--start-timeout-ms",
-            "640000"
+            "50000"
           ],
           "log": null,
           "control_link": {
@@ -382,7 +383,7 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 239,
+        "seq": 91,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -391,7 +392,7 @@
         "id": null
       },
       "launcher_state": {
-        "seq": 257,
+        "seq": 101,
         "rev": 8,
         "phase": "stopping",
         "paused": false,
@@ -485,7 +486,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 220,
+          "kept": 64,
           "dropped": 0
         }
       },

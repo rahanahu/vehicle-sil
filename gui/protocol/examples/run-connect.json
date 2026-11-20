@@ -7,7 +7,8 @@
       "file": "connect.yaml",
       "connect": {
         "ETH_EXT": "fake0"
-      }
+      },
+      "stop_at_ms": 1000
     }
   },
   "status": 200,

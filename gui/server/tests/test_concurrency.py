@@ -217,7 +217,7 @@ def test_the_summary_says_when_the_launcher_has_ended_without_a_result(tmp_path:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "launcher-crash.yaml"})
+            await c.post("api/run", {"file": "launcher-crash.yaml", "stop_at_ms": 1000})
             got = await sock.until(is_ended)
             sessions = [m["session"] for m in got if m["type"] == "session"]
             assert [s["state"] for s in sessions] == ["running", "ended"]  # the start, then the end
