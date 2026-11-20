@@ -389,6 +389,21 @@ void ScenarioEngine::issue()
         if (stop_at_ && time >= *stop_at_)
         {
             // Later relative steps depend on this step; they must not use the previous base.
+            // A suffix of steps already known to be skipped has no work and does not extend a
+            // scenario past its last actual step, even if its nominal time is beyond the stop.
+            const auto first = scenario_.steps.begin() + static_cast<std::ptrdiff_t>(next_);
+            if (std::all_of(first, scenario_.steps.end(), [](const ScenarioStep& s) { return !s.skipped.empty(); }))
+            {
+                // Use the normal skipped path: it records nominal start/end and notifies the
+                // observer, without waiting for these steps to occur in the simulation.
+                while (!over_ && next_ < scenario_.steps.size())
+                {
+                    const std::size_t skipped = next_++;
+                    const ScenarioStep& item = scenario_.steps[skipped];
+                    const SimTime nominal = item.at_ms ? at_ms(*item.at_ms) : *base_ + std::chrono::milliseconds(item.after_ms);
+                    issue_step(skipped, nominal);
+                }
+            }
             break;
         }
         ++next_;
@@ -402,15 +417,15 @@ bool ScenarioEngine::unusable(std::size_t index, SimTime time)
     std::vector<std::pair<std::size_t, bool>> used; // the variable, and whether the step writes it
     for (const auto& w : step.writes)
     {
-        used.emplace_back(w.variable, true);
+        if (applies_before_stop(time, step_of(w.variable), stop_at_)) used.emplace_back(w.variable, true);
     }
     for (const auto& r : step.motions)
     {
-        used.emplace_back(r.variable, true);
+        if (applies_before_stop(time, step_of(r.variable), stop_at_)) used.emplace_back(r.variable, true);
     }
     for (const auto& o : step.overlays)
     {
-        used.emplace_back(o.variable, true);
+        if (applies_before_stop(time, step_of(o.variable), stop_at_)) used.emplace_back(o.variable, true);
     }
     for (const auto& c : step.conditions)
     {

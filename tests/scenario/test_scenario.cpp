@@ -653,6 +653,37 @@ TEST_CASE(scenario_stop_places_only_dithers_that_can_write_before_it)
     CHECK_EQ(door, 0);
 }
 
+TEST_CASE(scenario_stop_checks_only_writes_that_can_apply_before_it)
+{
+    const Scenario scenario = read(kHead + "  - at_ms: 15\n"
+                                           "    set: { Body.level: 5, Door.level: 9 }\n",
+                                   catalog(5ms, 10ms));
+    World limited;
+    limited.tick = 5ms;
+    limited.ecus[0].step = 5ms;
+    limited.ecus.pop_back(); // Door's control link is absent
+    limited.stop_at = at(20ms);
+    const ScenarioRun cut = limited.run(scenario);
+    CHECK(cut.status == ScenarioStatus::Incomplete);
+    CHECK_EQ(limited.ecus[0].level, std::int64_t{5});
+
+    World unlimited;
+    unlimited.tick = 5ms;
+    unlimited.ecus[0].step = 5ms;
+    unlimited.ecus.pop_back();
+    CHECK(unlimited.run(scenario).status == ScenarioStatus::Failed);
+    CHECK(unlimited.log.empty());
+
+    // Read conditions are checked even if the participant has no step before the boundary.
+    const Scenario watch = read(kHead + "  - at_ms: 15\n"
+                                        "    expect: { Door.level: 0 }\n", catalog(5ms, 10ms));
+    World no_link;
+    no_link.tick = 5ms;
+    no_link.ecus.pop_back();
+    no_link.stop_at = at(20ms);
+    CHECK(no_link.run(watch).status == ScenarioStatus::Failed);
+}
+
 TEST_CASE(scenario_ramp_writes_a_line_in_the_steps_of_its_ecu)
 {
     // From what the scenario wrote last (1, in the step before it for the same time: no sample
@@ -1013,6 +1044,51 @@ TEST_CASE(scenario_steps_that_use_an_absent_variable_are_skipped_and_the_others_
     const ScenarioRun cut = stopped.run(*late.scenario);
     CHECK(cut.status == ScenarioStatus::Incomplete);
     CHECK(cut.steps[1].status == StepStatus::Skipped && cut.steps[2].status == StepStatus::NotRun);
+}
+
+TEST_CASE(scenario_stop_does_not_extend_a_passed_run_for_a_skipped_suffix)
+{
+    const Scenario scenario = read(kHead + "  - set: { Body.level: 5 }\n"
+                                           "  - at_ms: 100\n"
+                                           "    set: { Body.boost: 2 }\n"
+                                           "  - after_ms: 20\n"
+                                           "    expect: { Body.boost: 1 }\n", catalog_without_boost());
+    World limited;
+    limited.stop_at = at(40ms);
+    std::vector<ScenarioStepRun> notices;
+    limited.on_step = [&](const ScenarioStepRun& step) {
+        if (step.status == StepStatus::Skipped) notices.push_back(step);
+    };
+    const ScenarioRun cut = limited.run(scenario);
+    CHECK(cut.status == ScenarioStatus::Passed);
+    CHECK(cut.steps[0].status == StepStatus::Passed);
+    CHECK(cut.steps[1].status == StepStatus::Skipped && cut.steps[2].status == StepStatus::Skipped);
+    CHECK(cut.steps[1].start == at(100ms) && cut.steps[1].end == at(100ms));
+    CHECK(cut.steps[2].start == at(120ms) && cut.steps[2].end == at(120ms));
+    CHECK_EQ(notices.size(), std::size_t{2});
+    CHECK(notices[0].start == cut.steps[1].start && notices[0].end == cut.steps[1].end && !notices[0].at);
+    CHECK(notices[1].start == cut.steps[2].start && notices[1].end == cut.steps[2].end && !notices[1].at);
+    CHECK_EQ(limited.ecus[0].level, std::int64_t{5});
+
+    World unlimited;
+    const ScenarioRun all = unlimited.run(scenario);
+    CHECK(all.status == ScenarioStatus::Passed);
+    CHECK(all.steps[1].start == at(100ms) && all.steps[2].start == at(120ms));
+
+    // The known skipped steps are announced even if the earlier write later fails.
+    const Scenario failure = read(kHead + "  - set: { Body.level: 13 }\n"
+                                          "  - at_ms: 100\n"
+                                          "    set: { Body.boost: 2 }\n", catalog_without_boost());
+    World failed;
+    failed.stop_at = at(40ms);
+    std::vector<ScenarioStepRun> failed_notices;
+    failed.on_step = [&](const ScenarioStepRun& step) {
+        if (step.status == StepStatus::Skipped) failed_notices.push_back(step);
+    };
+    const ScenarioRun result = failed.run(failure);
+    CHECK(result.status == ScenarioStatus::Failed);
+    CHECK_EQ(failed_notices.size(), std::size_t{1});
+    CHECK(failed_notices[0].start == at(100ms) && failed_notices[0].end == at(100ms));
 }
 
 /// The errors alone (lines()), without the notes and the warnings.
