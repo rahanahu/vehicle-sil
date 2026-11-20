@@ -66,6 +66,24 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
               },
             });
           }
+          const NativeChannel = BroadcastChannel;
+          const delayed: (() => void)[] = [];
+          const control = window as typeof window & {
+            holdSelections: boolean;
+            releaseSelections: () => void;
+          };
+          control.holdSelections = false;
+          control.releaseSelections = () => {
+            control.holdSelections = false;
+            delayed.splice(0).forEach((send) => send());
+          };
+          window.BroadcastChannel = class extends NativeChannel {
+            override postMessage(message: unknown) {
+              if (control.holdSelections && (message as { kind?: string })?.kind === 'selection') {
+                delayed.push(() => super.postMessage(message));
+              } else super.postMessage(message);
+            }
+          };
         } else if (
           mode === 'corrupt' &&
           location.protocol === 'http:' &&
@@ -139,13 +157,33 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
       await wave.bringToFront();
       await expect.poll(() => path.getAttribute('d'), { timeout: RUN_TIMEOUT }).not.toBe(first);
       if (storage === 'blocked') {
-        // Selections made after opening the child also cross the channel without localStorage.
+        // Deliver the two concurrent updates only after both tabs have made their choice.
+        await page.evaluate(() => {
+          (window as typeof window & { holdSelections: boolean }).holdSelections = true;
+        });
+        await ecu.evaluate(() => {
+          (window as typeof window & { holdSelections: boolean }).holdSelections = true;
+        });
         await page.bringToFront();
         await page.locator('app-io-row').filter({ hasText: 'engine.throttle' }).hover();
         await page.getByRole('button', { name: 'Add engine.throttle to waveforms' }).click();
+        await ecu.bringToFront();
+        await ecu.locator('app-io-row').filter({ hasText: 'ecu.connected' }).hover();
+        await ecu.getByRole('button', { name: 'Add ecu.connected to waveforms' }).click();
+        await Promise.all([
+          page.evaluate(() => {
+            (window as typeof window & { releaseSelections: () => void }).releaseSelections();
+          }),
+          ecu.evaluate(() => {
+            (window as typeof window & { releaseSelections: () => void }).releaseSelections();
+          }),
+        ]);
         await wave.bringToFront();
         const added = wave.getByRole('img', { name: 'engine.throttle waveform' });
         await expect(added).toBeVisible({ timeout: RUN_TIMEOUT });
+        await expect(wave.getByRole('img', { name: 'ecu.connected waveform' })).toBeVisible({
+          timeout: RUN_TIMEOUT,
+        });
         await added.locator('..').getByRole('button', { name: 'Remove' }).click();
         await page.bringToFront();
         await page.getByRole('button', { name: 'Waveforms', exact: true }).click();

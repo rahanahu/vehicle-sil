@@ -50,9 +50,11 @@ type Folder = FileSystemDirectoryHandle & {
 };
 type Selection = VariableRef & { type: string; unit: string };
 type Point = { sampleMs: number; value: number | boolean | null };
+type WaveEntry = { key: string; trace: Selection | null; revision: number; actor: string };
 type WaveMessage =
-  | { kind: 'request'; session: number }
-  | { kind: 'selection'; session: number; traces: Selection[] }
+  | { kind: 'request'; session: number; requester: string }
+  | { kind: 'snapshot'; session: number; target: string; entries: WaveEntry[] }
+  | { kind: 'selection'; session: number; entries: WaveEntry[] }
   | { kind: 'history'; session: number; histories: [string, Point[]][] };
 const locationQuery = new URLSearchParams(location.search);
 // Retain the URL token in memory as well: storage can be unavailable or not copied to a new tab.
@@ -287,13 +289,28 @@ export class Workbench {
 
   private readonly destroy = inject(DestroyRef);
   private waveChannel: BroadcastChannel | null = null;
+  private readonly waveActor = crypto.randomUUID();
+  private waveRevision = 0;
+  private readonly waveEntries = new Map<string, WaveEntry>();
   private listRevision = 0;
 
   constructor() {
+    for (const trace of this.traces()) {
+      const key = refKey(trace);
+      this.waveEntries.set(key, { key, trace, revision: 0, actor: '' });
+    }
     if (this.fixedPeer) document.title = `${this.fixedPeer} · vehicle-sil`;
     if (this.detachedWave) document.title = 'Waveforms · vehicle-sil';
     const storage = (event: StorageEvent) => {
-      if (event.key === waveStorage) this.applyTraces(savedArray(event.newValue, isTrace));
+      if (event.key === waveStorage && (!this.waveChannel || this.sessionId() == null)) {
+        const traces = savedArray(event.newValue, isTrace);
+        this.waveEntries.clear();
+        for (const trace of traces) {
+          const key = refKey(trace);
+          this.waveEntries.set(key, { key, trace, revision: 0, actor: '' });
+        }
+        this.applyTraces(traces);
+      }
       if (event.key === pinStorage) this.pins.set(savedArray(event.newValue, isPin));
     };
     window.addEventListener('storage', storage);
@@ -306,11 +323,12 @@ export class Workbench {
         const session = this.sessionId();
         if (!data || session == null || data.session !== session) return;
         if (data.kind === 'request') {
-          if (this.traces().length) {
+          if (typeof data.requester === 'string' && this.waveEntries.size) {
             channel.postMessage({
-              kind: 'selection',
+              kind: 'snapshot',
               session,
-              traces: this.traces(),
+              target: data.requester,
+              entries: [...this.waveEntries.values()],
             } satisfies WaveMessage);
           }
           const histories = this.traces().map((trace, i): [string, Point[]] => [
@@ -318,8 +336,12 @@ export class Workbench {
             this.histories()[i],
           ]);
           channel.postMessage({ kind: 'history', session, histories } satisfies WaveMessage);
-        } else if (data.kind === 'selection' && Array.isArray(data.traces)) {
-          this.applyTraces(data.traces.filter(isTrace));
+        } else if (
+          (data.kind === 'selection' ||
+            (data.kind === 'snapshot' && data.target === this.waveActor)) &&
+          Array.isArray(data.entries)
+        ) {
+          this.mergeWaveEntries(data.entries);
         } else if (data.kind === 'history') {
           this.inheritedHistories.update((histories) => {
             const result = new Map(histories);
@@ -337,7 +359,11 @@ export class Workbench {
       const session = this.sessionId();
       this.inheritedHistories.set(new Map());
       if (channel && session != null)
-        channel.postMessage({ kind: 'request', session } satisfies WaveMessage);
+        channel.postMessage({
+          kind: 'request',
+          session,
+          requester: this.waveActor,
+        } satisfies WaveMessage);
     });
     effect((cleanup) => {
       const client = this.front();
@@ -533,25 +559,56 @@ export class Workbench {
   addTrace(peer: string, item: VariableInfo) {
     const trace = { peer, name: item.name, type: item.type, unit: item.unit };
     if (this.traces().some((value) => refKey(value) === refKey(trace))) return;
-    this.traces.update((traces) => [...traces, trace]);
-    saveStored(waveStorage, this.traces());
-    this.shareTraces();
+    this.changeTrace(refKey(trace), trace);
   }
 
   removeTrace(trace: Selection) {
-    this.traces.update((traces) => traces.filter((value) => refKey(value) !== refKey(trace)));
-    saveStored(waveStorage, this.traces());
-    this.shareTraces();
+    this.changeTrace(refKey(trace), null);
   }
 
-  private shareTraces() {
+  private changeTrace(key: string, trace: Selection | null) {
+    const entry = { key, trace, revision: ++this.waveRevision, actor: this.waveActor };
+    this.mergeWaveEntries([entry]);
     const session = this.sessionId();
     if (this.waveChannel && session != null)
       this.waveChannel.postMessage({
         kind: 'selection',
         session,
-        traces: this.traces(),
+        entries: [entry],
       } satisfies WaveMessage);
+  }
+
+  private mergeWaveEntries(entries: WaveEntry[]) {
+    let changed = false;
+    for (const entry of entries) {
+      if (
+        !entry ||
+        typeof entry.key !== 'string' ||
+        typeof entry.actor !== 'string' ||
+        !Number.isSafeInteger(entry.revision) ||
+        entry.revision < 0 ||
+        (entry.trace !== null && (!isTrace(entry.trace) || refKey(entry.trace) !== entry.key))
+      )
+        continue;
+      this.waveRevision = Math.max(this.waveRevision, entry.revision);
+      const old = this.waveEntries.get(entry.key);
+      if (
+        !old ||
+        entry.revision > old.revision ||
+        (entry.revision === old.revision && entry.actor > old.actor)
+      ) {
+        this.waveEntries.set(entry.key, entry);
+        changed = true;
+      }
+    }
+    if (changed) {
+      const traces = [...this.waveEntries.values()]
+        .filter((entry) => entry.trace !== null)
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+        .map((entry) => entry.trace!);
+      this.applyTraces(traces);
+      saveStored(waveStorage, traces);
+    }
   }
 
   private applyTraces(traces: Selection[]) {
