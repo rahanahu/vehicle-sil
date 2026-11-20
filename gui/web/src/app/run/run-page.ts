@@ -99,7 +99,7 @@ export function readRunChoices(value: unknown): RunChoices | null {
       v['stopSession'] === null ||
       typeof v['stopSession'] === 'number'
     ) ||
-    !(v['stopAtEdited'] === true && typeof v['stopAt'] !== 'string') ||
+    (v['stopAtEdited'] === true && typeof v['stopAt'] !== 'string') ||
     !isText(v['logSource'])
   ) {
     return null;
