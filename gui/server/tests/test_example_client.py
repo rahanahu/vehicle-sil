@@ -58,7 +58,8 @@ def run_example(name: str, url: str | None, *args: str) -> subprocess.CompletedP
 def test_runs_a_configuration_to_its_end(tmp_path: Path, bundle: Path, example: str, file: str, code: int,
                                          last: str) -> None:
     with gui_server(tmp_path) as gui:
-        out = run_example(example, gui.url, file, "--timeout", "60")
+        out = run_example(example, gui.url, file, "--timeout", "60",
+                          *(["--stop-at-ms", "1000"] if file in {"simulation.yaml", "launcher-crash.yaml"} else []))
     assert out.returncode == code, out.stdout + out.stderr
     assert out.stdout.strip().splitlines()[-1].startswith(last), out.stdout + out.stderr
     assert gui.token not in out.stdout + out.stderr
@@ -73,7 +74,8 @@ def test_runs_a_configuration_to_its_end(tmp_path: Path, bundle: Path, example: 
 def test_front_door_runs_a_configuration_to_its_end(tmp_path: Path, bundle: Path, file: str, code: int,
                                                     last: str) -> None:
     with gui_server(tmp_path) as gui:
-        out = run_example("front.mjs", gui.url, file, "--timeout", "60")
+        out = run_example("front.mjs", gui.url, file, "--timeout", "60",
+                          *(["--stop-at-ms", "1000"] if file in {"simulation.yaml", "launcher-crash.yaml"} else []))
     assert out.returncode == code, out.stdout + out.stderr
     lines = out.stdout.strip().splitlines()
     assert any(line.startswith(last) for line in lines), out.stdout + out.stderr
