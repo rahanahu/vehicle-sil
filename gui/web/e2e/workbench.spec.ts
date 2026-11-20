@@ -59,6 +59,24 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
     });
     let restarted: Awaited<ReturnType<typeof launchGuiServer>> | null = null;
     try {
+      let socket: WebSocketRoute | undefined;
+      let variables:
+        | { session: number; variables: { peers: { name: string }[]; [key: string]: unknown } }
+        | undefined;
+      if (storage === 'blocked') {
+        await page.routeWebSocket(/\/ws$/, (client) => {
+          socket = client;
+          const upstream = client.connectToServer();
+          upstream.onMessage((message) => {
+            if (typeof message === 'string') {
+              const packet = JSON.parse(message);
+              if (packet.type === 'variables' && packet.variables?.peers?.length >= 2)
+                variables = packet;
+            }
+            client.send(message);
+          });
+        });
+      }
       await page.context().addInitScript((mode) => {
         if (mode === 'blocked') {
           for (const key of ['sessionStorage', 'localStorage']) {
@@ -131,6 +149,39 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
       await peer.selectOption('Engine');
       const throttle = page.getByRole('spinbutton', { name: 'engine.throttle', exact: true });
       await expect(throttle).toBeEnabled({ timeout: RUN_TIMEOUT });
+      if (storage === 'blocked') {
+        await expect.poll(() => Boolean(socket && variables)).toBe(true);
+        const complete = variables!;
+        // A new run first reports no peers, then another ECU can appear before the selected one.
+        socket!.send(
+          JSON.stringify({
+            type: 'variables',
+            session: complete.session,
+            variables: { ...complete.variables, state: 'connecting', peers: [] },
+          }),
+        );
+        await expect(page.getByText('0 / 0 signals')).toBeVisible();
+        socket!.send(
+          JSON.stringify({
+            type: 'variables',
+            session: complete.session,
+            variables: {
+              ...complete.variables,
+              peers: complete.variables.peers.filter((p) => p.name === 'Dashboard'),
+            },
+          }),
+        );
+        await expect(peer.locator('option[value="Dashboard"]')).toHaveCount(1);
+        socket!.send(
+          JSON.stringify({
+            type: 'variables',
+            session: complete.session,
+            variables: complete.variables,
+          }),
+        );
+        await expect(peer).toHaveValue('Engine');
+        await expect(throttle).toBeEnabled({ timeout: RUN_TIMEOUT });
+      }
       await page.locator('app-io-row').filter({ hasText: 'engine.speed' }).hover();
       await page.getByRole('button', { name: 'Add engine.speed to waveforms' }).click();
       // Some browsers block sessionStorage or do not copy it into the new tab. The child must
@@ -358,6 +409,35 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
           timeout: RUN_TIMEOUT,
         });
         await expect(fresh.getByRole('img', { name: 'engine.speed waveform' })).toBeVisible();
+        // A late authenticated hello for the already initialized old instance must not move
+        // the storage head back after the new instance has claimed it.
+        const stale = await page.context().newPage();
+        await stale.routeWebSocket(/\/ws$/, (socket) => {
+          const upstream = socket.connectToServer();
+          upstream.onMessage((message) => {
+            if (typeof message !== 'string') return socket.send(message);
+            const packet = JSON.parse(message);
+            socket.send(
+              JSON.stringify(
+                packet.type === 'hello' ? { ...packet, instance: oldInstance } : packet,
+              ),
+            );
+          });
+        });
+        await stale.goto(restarted.url);
+        await expect(stale.getByText('Running', { exact: true }).first()).toBeVisible({
+          timeout: RUN_TIMEOUT,
+        });
+        await stale.getByRole('button', { name: 'Waveforms', exact: true }).click();
+        await expect(stale.getByText('Add signals from ECU I/O to start tracing.')).toBeVisible({
+          timeout: RUN_TIMEOUT,
+        });
+        await expect
+          .poll(() =>
+            fresh.evaluate(() => localStorage.getItem('vehicle-sil-workbench-waves:last-instance')),
+          )
+          .toBe(newInstance);
+        await stale.close();
         await fresh.getByRole('button', { name: 'Stop', exact: true }).click();
         await expect(fresh.getByText('Run ended', { exact: false }).first()).toBeVisible({
           timeout: RUN_TIMEOUT,

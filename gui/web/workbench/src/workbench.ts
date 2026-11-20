@@ -93,10 +93,13 @@ function saveStored(key: string, value: unknown): void {
 }
 function restoreTraces(instance: string): Selection[] {
   let traces: Selection[] = [];
+  let create = false;
+  let previous: string | null = null;
   try {
     let saved = localStorage.getItem(waveStorageKey(instance));
+    previous = localStorage.getItem(waveStorageHead);
     if (saved === null) {
-      const previous = localStorage.getItem(waveStorageHead);
+      create = true;
       saved = previous ? localStorage.getItem(waveStorageKey(previous)) : null;
       saved ??= localStorage.getItem(waveStorage); // Before instance-scoped storage.
     }
@@ -104,9 +107,12 @@ function restoreTraces(instance: string): Selection[] {
   } catch {
     // Site data may be unavailable, while the current tab and run still work.
   }
-  saveStored(waveStorageKey(instance), traces);
+  if (create) saveStored(waveStorageKey(instance), traces);
   try {
-    localStorage.setItem(waveStorageHead, instance);
+    // An already initialized, older instance may be observed late. It must not move the head
+    // back from a newer one. Only the first initialization (or missing head) claims it.
+    if ((create || previous === null) && localStorage.getItem(waveStorageHead) === previous)
+      localStorage.setItem(waveStorageHead, instance);
   } catch {
     // Persistence is optional.
   }
@@ -212,11 +218,25 @@ export class Workbench {
   );
   readonly cursorA = signal<number | null>(null);
   readonly cursorB = signal<number | null>(null);
-  readonly peerChoice = linkedSignal<string[], string>({
-    source: () => this.variables()?.peers.map((peer) => peer.name) ?? [],
-    computation: (peers, previous) =>
-      this.fixedPeer ??
-      (previous && peers.includes(previous.value) ? previous.value : (peers[0] ?? '')),
+  readonly peerChoice = linkedSignal({
+    source: () => ({
+      peers: this.variables()?.peers.map((peer) => peer.name) ?? [],
+      participants: this.session()?.check?.participants,
+    }),
+    computation: ({ peers, participants }, previous: { value: string } | undefined): string => {
+      if (this.fixedPeer) return this.fixedPeer;
+      const selected = previous?.value;
+      if (
+        selected &&
+        (peers.includes(selected) ||
+          !participants ||
+          participants.some(
+            (participant) => participant.name === selected && participant.enabled !== false,
+          ))
+      )
+        return selected;
+      return peers[0] ?? '';
+    },
   });
   readonly peer = computed(() =>
     this.variables()?.peers.find((peer) => peer.name === this.peerChoice()),
