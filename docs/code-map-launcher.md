@@ -285,7 +285,7 @@ Documentation to update:
 
 Code and files to update:
 
-- `examples/ecu_main/simulation.live.yaml` (no `stop_at_ms`, `speed: 1`; the configuration file for working from the GUI): `launch_run.live` confirms that it has the same participants and networks as `simulation.yaml`.
+- `examples/ecu_main/simulation.live.yaml` (the configuration file for working from the GUI; the run chooses the speed and stop time): `launch_run.live` confirms that it has the same participants and networks as `simulation.yaml`.
 - `template.check_and_run` checks the template's file of the same name.
 - `simulation.live.dashboard.yaml` in the build directory is a copy of `simulation.dashboard.yaml` made by CMake.
 - The recordings of launcher output that the GUI tests replay (`gui/server/tests/recordings/`): record them again with `gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch>`.

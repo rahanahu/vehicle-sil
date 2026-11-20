@@ -5,11 +5,11 @@ import { MatInputModule } from '@angular/material/input';
 import { Speed } from '@vehicle-sil/gui-client';
 import { numberText } from '../core/format/number-text';
 
-/** file: 構成ファイルのとおり（ランチャーの既定）、max: 最速、real: 等速、factor: 倍率。 */
-export type SpeedChoice = 'file' | 'max' | 'real' | 'factor';
+/** max: 最速、real: 等速、factor: 倍率。 */
+export type SpeedChoice = 'max' | 'real' | 'factor';
 
 function choiceOf(speed: Speed): SpeedChoice {
-  return speed === null ? 'file' : speed === 'max' ? 'max' : speed === 1 ? 'real' : 'factor';
+  return speed === null || speed === 'max' ? 'max' : speed === 1 ? 'real' : 'factor';
 }
 
 /** 1 つの画面に複数置けるように、要素の id を部品ごとに変える。 */
@@ -21,7 +21,7 @@ function fits(choice: SpeedChoice, speed: Speed): boolean {
 }
 
 /**
- * 速度: 構成のとおり / 最速 / 等速 / 倍率。倍率は打った文字のまま持ち、範囲の中の数のときだけ speed に返す。
+ * 速度: 最速 / 等速 / 倍率。倍率は打った文字のまま持ち、範囲の中の数のときだけ speed に返す。
  * 範囲の外か数でないときは invalid を true にし（開始の理由に出す）、欄を離れたか Enter の後に、欄の下に理由を出す。
  */
 @Component({
@@ -36,9 +36,6 @@ function fits(choice: SpeedChoice, speed: Speed): boolean {
       [disabled]="locked()"
       (change)="choose($event.value)"
     >
-      @if (withFile()) {
-        <mat-button-toggle value="file" i18n>構成のとおり</mat-button-toggle>
-      }
       @for (option of options(); track option.value) {
         <mat-button-toggle
           [value]="option.value"
@@ -128,13 +125,11 @@ export class SpeedPicker {
   readonly max = input(1000000);
   /** 最速を選べるか（実行中は正面の口の `controls.speed.fastest`）。 */
   readonly fastest = input(true);
-  /** 「構成のとおり」を選べるか（始める前だけ。実行中の速さの変更では出さない）。 */
-  readonly withFile = input(true);
   /** 欄の名前。 */
   readonly label = input($localize`速度`);
   /** 変えられないとき（実行中）。 */
   readonly locked = input(false);
-  /** 速度。null は構成ファイルのとおり、'max' は最速、数は倍率（1 が等速）。 */
+  /** 速度。null と 'max' は最速、数は倍率（1 が等速）。 */
   readonly speed = model.required<Speed>();
   /** 倍率の欄が範囲の外か、数でない。 */
   readonly invalid = model(false);
@@ -155,7 +150,7 @@ export class SpeedPicker {
   });
 
   /**
-   * 構成のとおり以外の選択肢と、選べるか（範囲と最速を選べるかから）。選べないものは押せなくする（aria-disabled。
+   * 選択肢と、選べるか（範囲と最速を選べるかから）。選べないものは押せなくする（aria-disabled。
    * Material の並びは Tab で選ばれているものに入り、矢印キーは押せないものを飛ばすので、キーボードでは届かない）。
    * 選べる速さの文は並びの説明（aria-describedby）で、並びに入ると読まれる（切り替えは 1 つずつの説明を持てない）。
    */
@@ -193,7 +188,6 @@ export class SpeedPicker {
     this.choice.set(choice);
     const factor = this.factorOf(this.factorText());
     const speeds: Record<SpeedChoice, Speed> = {
-      file: null,
       max: 'max',
       real: 1,
       factor: factor ?? this.speed(),

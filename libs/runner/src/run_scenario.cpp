@@ -221,7 +221,9 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
     }
     engine_ = std::make_unique<scenario::ScenarioEngine>(*ctx_.scenario, step_,
                                                         *port_,
-                                                        [this](const scenario::ScenarioStepRun& step) { note_step(step); }, record_.get());
+                                                        [this](const scenario::ScenarioStepRun& step) { note_step(step); }, record_.get(),
+                                                        ctx_.plan.stop_at_ms ? std::optional<SimTime>(SimTime{} +
+                                                            std::chrono::milliseconds(*ctx_.plan.stop_at_ms)) : std::nullopt);
     // From here on the scenario gets the samples of these agents, and none that came before.
     samples_.scenario_begins(std::move(incarnations));
     engine_->begin(found);
@@ -318,7 +320,7 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
     if (!engine_->over())
     {
         const bool stoppedAt = !for_scenario && watched.end == WatchEnd::Ended &&
-                               watched.state == orch::ParticipantState::Shutdown && ctx_.config.stop_at_ms &&
+                               watched.state == orch::ParticipantState::Shutdown && ctx_.plan.stop_at_ms &&
                                controller.wall_time_to_stop_at().has_value();
         if (stoppedAt)
         {

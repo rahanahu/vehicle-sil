@@ -168,7 +168,7 @@ Control the simulation from a terminal one command at a time, without writing Py
 In terminal 1, start the simulation paused at time 0, with the Control Server on port 8510:
 
 ```sh
-build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --control 8510 \
+build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --control 8510 --stop-at-ms 1000 \
     build/linux-gcc-control/examples/ecu_main/simulation.yaml
 ```
 
@@ -252,7 +252,7 @@ seq 1794666759502165 Engine: invalid (engine.speed: an output is not writable), 
 running at 500 ms, speed max
 ```
 
-After `resume`, the simulation in terminal 1 runs to `stop_at_ms` (1000 ms) of the configuration file, prints the result table and exits with code 0.
+After `resume`, the simulation in terminal 1 runs to the requested stop time (1000 ms), prints the result table and exits with code 0.
 
 Other CLI commands:
 
@@ -494,7 +494,7 @@ c.sim.resume()
 
 - After `step()` and `run_until()`, wait with `c.sim.wait_paused()` until the simulation is paused, then read values.
 - `step()` works only while the simulation is paused.
-- The time at which `pause()` pauses and the length that `step()` advances are rounded up to a multiple of the time step of `vehicle_sil_launch` (10 ms by default). Because of this, read the time at which the simulation paused from the `now` that `wait_paused()` returns.
+- The time at which `pause()` pauses and the length that `step()` advances are rounded up to a multiple of the time step chosen by `vehicle_sil_launch`. Because of this, read the time at which the simulation paused from the `now` that `wait_paused()` returns.
 - If you change the speed while the simulation is paused, it stays paused.
 - An operation that is not possible at the moment raises `ControlError` (with `code` `FAILED_PRECONDITION`); an argument error gives `INVALID_ARGUMENT`.
 - Only ECUs that run in virtual time pause.
@@ -523,7 +523,7 @@ For how to read the result dict, see "JSON (`run --json`)" in [simulation-run.md
 To control only virtual time, you can use the stdin of `vehicle_sil_launch run`, with neither the Control Server nor Python. You cannot read or write variables this way. Start the launcher with `--stdin-commands` and type one JSON object per line.
 
 ```sh
-build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --stdin-commands \
+build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --stdin-commands --stop-at-ms 1000 \
     build/linux-gcc-control/examples/ecu_main/simulation.yaml
 ```
 

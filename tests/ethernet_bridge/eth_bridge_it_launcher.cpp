@@ -811,7 +811,7 @@ int run_launcher(const Options& options)
     const fs::path scenario = options.workDir / "answers.yaml";
     {
         std::ofstream out(config, std::ios::binary);
-        out << "vehicle_sil_simulation: 1\n"
+        out << "vehicle_sil_simulation: 2\n"
                "stop_at_ms: 60000\n"
                "speed: 1\n"
                "registry_uri: silkit://127.0.0.1:0\n"

@@ -90,7 +90,7 @@
 |---|---|
 | 共通の部分と、それに重ねた各機種（`--variant` で選んだものに限らず、すべての機種）での、各 participant の `command`（配列の全体）、`describe`、`manual`、`enabled` | `networks`（`kind` と `external` を含む）、`variables`、`role`、`required`、`step_ms` |
 | `describe: false` の participant では、その `network_names` と `j1939_nodes` のために `run` が引数に足すもの（`--map-network`、`--j1939-node`）も | ecu_main の participant（`describe: true`）の `network_names` と `j1939_nodes` |
-| participant の名前と機種の名前（順は比べません） | `params`、`stop_at_ms`、待ち時間、`time_step_ms`、`speed`、`late_tolerance_ms` |
+| participant の名前と機種の名前（順は比べません） | `params`、`time_step_ms` |
 | `registry_uri` | コメント、キーの順、コマンドが指すファイルや実行ファイル |
 
 | `commands` | いつ | 注記 |
@@ -117,15 +117,16 @@
 | コード | 重大度 | 意味 | 直し方 |
 |---|---|---|---|
 | `syntax` | エラー（読めない） | YAML または JSON の文法のエラーです。 | 添えられた場所の文法を直します。 |
-| `not-a-configuration` | エラー（読めない） | 空のファイルか、マッピングでないファイルです。 | `vehicle_sil_simulation: 1`、`networks`、`participants` を持つマッピングを書きます。 |
+| `not-a-configuration` | エラー（読めない） | 空のファイルか、マッピングでないファイルです。 | `vehicle_sil_simulation: 2`、`networks`、`participants` を持つマッピングを書きます。 |
 | `encoding` | エラー（読めない） | UTF-8 でないファイルです（UTF-16、NUL を含む）。 | UTF-8 で保存します。 |
 | `unsupported-yaml` | エラー（アンカーとエイリアスは読めない） | アンカーとエイリアスか、2 つ目の文書（`---`）があります。 | 値を書き下し、2 つ目以降の文書は削除するか別のファイルにします。 |
-| `format-version` | エラー（知らないバージョンは読めない） | `vehicle_sil_simulation` が 1 ではありません。 | `vehicle_sil_simulation: 1` と書くか、そのファイルの形式を読める vehicle-sil を使います。 |
+| `format-version` | エラー（知らないバージョンは読めない） | `vehicle_sil_simulation` が 1 ではありません。 | `vehicle_sil_simulation: 2` と書くか、そのファイルの形式を読める vehicle-sil を使います。 |
 | `file` | エラー（読めない） | ファイルがない、ディレクトリ、通常のファイルでない、大きすぎる、開けない、のどれかです。`--text-from-stdin` のときは、標準入力の文が 16 MiB を超えるか、標準入力を読めません。 | パスとファイルを確認します。 |
 | `missing-key` | エラー | 必須のキーがありません。 | 指摘の文にあるキーを追加します。 |
 | `unknown-key` | エラー | 知らないキーがあります。 | キーの名前を直します（指摘の文に、近い名前と書けるキーの一覧があります）。 |
 | `duplicate-key` | エラー | 同じキーが 2 回あります。 | 片方を削除します。 |
-| `value` | エラー | 型または範囲が違う値、使えない名前、実行ファイルのパスのプレースホルダー、`stop_at_ms` の約数でない `time_step_ms` のどれかです。 | 指摘の文に従って、値を直します。 |
+| `value` | エラー | 型または範囲が違う値、使えない名前、実行ファイルのパスのプレースホルダーのどれかです。 | 指摘の文に従って、値を直します。 |
+| `stop-not-on-step` | エラー | Run の停止時刻が固定刻みの倍数ではありません。 | 停止時刻を倍数にするか、固定刻みを省略します。 |
 | `duplicate-name` | エラー | participant 名、またはネットワークの名前が 2 回あります。 | 片方を削除するか、別の名前にします。 |
 | `reserved-name` | エラー | participant 名が `SimulationController` です。 | 別の名前にします。 |
 | `launcher-argument` | エラー | ecu_main の `command` に、`ecu_main` の引数かプレースホルダーがあります。 | それを削除するか、`ecu_main` で作っていない実行ファイルなら `describe: false` を書きます。 |
@@ -349,8 +350,8 @@ passed: 0 errors, 0 warnings, 0 notes
 
 <!-- two-engines.yaml -->
 ```yaml
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
+
 networks:
   - name: J1939_CAN
     kind: can
@@ -427,7 +428,8 @@ failed: 3 errors, 1 warning, 0 notes
 | `variant` | 選んだ機種（`--variant`）。機種を書いた設定ファイル（`variants`）のときだけあります |
 | `variants` | 設定ファイルにある機種の名前の配列。機種を書いた設定ファイルのときだけあります |
 | `params` | 共通の `params` に、選んだ機種の `params` を重ねたもの。設定ファイルに `params` があるときだけあります |
-| `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` | 設定ファイルの値 |
+| `stop_at_ms`、`time_step_ms` | Run が要求した停止時刻と、Describe 後に決めた刻み（仮想ミリ秒） |
+| `start_timeout_ms`、`stop_timeout_ms`、`registry_uri` | ホストの待機上限と、構成の registry URI |
 | `commands` | `--compare-commands` のとき: `"same"`、`"changed"`、`"not_compared"`。ないときと引数のエラーのときは `null`（[実行されるコマンドを比べる](#実行されるコマンドを比べる--compare-commands)） |
 | `participants[]` | participant の配列（設定ファイルの順） |
 | `networks[]` | ネットワークの配列（設定ファイルの順） |
@@ -435,8 +437,7 @@ failed: 3 errors, 1 warning, 0 notes
 
 - `--variant` がない、または名前が違うとき（`result` が `"usage"`）は、`variant` が `null` で、`variants` に選べる名前が出ます。
 - `params` の要素は、`name`、`value`（`true`・`false`、数、文字列）、`from`（`configuration` か `variant`）です。
-- 設定ファイルを読めないときは、`stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` が `null` です。
-- 書いていない `stop_at_ms` と `registry_uri` は `null` で、書いていない `start_timeout_ms` と `stop_timeout_ms` は既定の値です。
+- Run の計画まで進めない場合は、刻みと Run のタイミング設定が `null` です。停止時刻を指定しなかった場合、`stop_at_ms` は `null` です。
 
 `participants[]` の要素のキーは次のとおりです。
 
@@ -531,7 +532,7 @@ failed: 3 errors, 1 warning, 0 notes
 
 <!-- engine-alone.yaml -->
 ```yaml
-vehicle_sil_simulation: 1
+vehicle_sil_simulation: 2
 networks:
   - name: J1939_CAN
     kind: can
@@ -553,6 +554,7 @@ participants:
   "warnings": 1,
   "notes": 0,
   "stop_at_ms": null,
+  "time_step_ms": 10,
   "start_timeout_ms": 30000,
   "stop_timeout_ms": 10000,
   "registry_uri": null,

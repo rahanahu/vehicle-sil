@@ -1,8 +1,8 @@
 # A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it
 # (recordings/, made by record_launcher.py: record again after changing this file).
 # replay-fault: loose-fields
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
+
 networks:
   - name: J1939_CAN
     kind: can

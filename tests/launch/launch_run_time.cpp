@@ -26,7 +26,7 @@
 fs::path one_ecu(const Options& o, const std::string& keys, const std::string& behaviour = "")
 {
     return scenario_dir(o,
-                        "vehicle_sil_simulation: 1\n" + keys +
+                        "vehicle_sil_simulation: 2\n" + keys +
                             "networks: []\n"
                             "participants:\n"
                             "  - name: Engine\n"
@@ -50,7 +50,7 @@ void realtime(const Options& o)
 {
     // Speed 1 (from the file): 1000 ms of virtual time take at least 1 s of wall-clock time. A
     // tolerance of 1 s: nothing that runs is that late (the test ECU's step takes no time).
-    const fs::path dir = one_ecu(o, "stop_at_ms: 1000\nspeed: 1\nlate_tolerance_ms: 1000\n");
+    const fs::path dir = one_ecu(o, "# run-option --stop-at-ms 1000\n# run-option --speed 1\n# run-option --late-tolerance-ms 1000\n");
     Captured run = launch(o, {"run", "--json", "sim.yaml"}, dir);
     expect_code(run, 0, "run at speed 1");
     const std::string& json = run.standard_output;
@@ -95,7 +95,7 @@ void on_time(const Options& o)
     // good on every system. This is a bound on real time, so a machine that stands still for 10 ms
     // fails a run: three runs, and one without a late step is enough (a timer that is too coarse
     // is late in every run).
-    const fs::path dir = one_ecu(o, "stop_at_ms: 1000\n");
+    const fs::path dir = one_ecu(o, "# run-option --stop-at-ms 1000\n");
     std::string seen;
     bool onTime = false;
     for (int i = 0; i < 3 && !onTime; ++i)
@@ -122,7 +122,7 @@ void late(const Options& o)
     // does not catch up. Only lower bounds: a slower machine is later. (Not every step is late: an
     // ECU that goes from one step straight into the next tells the others only after it, so the
     // controller sees every other step one step late, and the one after it on time.)
-    const fs::path dir = one_ecu(o, "stop_at_ms: 300\nspeed: 1\n", "slow-ms 30");
+    const fs::path dir = one_ecu(o, "# run-option --stop-at-ms 300\n# run-option --speed 1\n", "slow-ms 30");
     const Captured run = launch(o, {"run", "--json", "sim.yaml"}, dir);
     expect_code(run, 0, "a run that falls behind real time (a warning)");
     const std::string& json = run.standard_output;
@@ -163,7 +163,7 @@ void late(const Options& o)
             "the time events count the late steps:\n" + strict.standard_output);
     // Last (it writes sim.yaml anew): the tolerance is the file's. As late, but within 100 s: no step is
     // late, nothing slips (the lateness adds up instead), nothing is found.
-    const fs::path tolerant = one_ecu(o, "stop_at_ms: 300\nspeed: 1\nlate_tolerance_ms: 100000\n", "slow-ms 30");
+    const fs::path tolerant = one_ecu(o, "# run-option --stop-at-ms 300\n# run-option --speed 1\n# run-option --late-tolerance-ms 100000\n", "slow-ms 30");
     const Captured within = launch(o, {"run", "--json", "sim.yaml"}, tolerant);
     expect_code(within, 0, "a run within late_tolerance_ms");
     require(json_value(within.standard_output, "late_steps") == "0" && json_number(within.standard_output, "max_late_ms") >= 200 &&
@@ -177,7 +177,7 @@ void stall(const Options& o)
     // that is slow elsewhere too), and the simulation goes on from there: it does not hurry
     // through the 490 ms it lost, so the run takes them longer.
     {
-        const fs::path dir = one_ecu(o, "stop_at_ms: 1000\nspeed: 1\n", "slow-at-ms 300 500");
+        const fs::path dir = one_ecu(o, "# run-option --stop-at-ms 1000\n# run-option --speed 1\n", "slow-at-ms 300 500");
         const Captured run = launch(o, {"run", "--json", "sim.yaml"}, dir);
         expect_code(run, 0, "one slow interval (a warning)");
         const std::string& json = run.standard_output;
@@ -193,7 +193,7 @@ void stall(const Options& o)
     // Only the last interval is slow (the step at 990 ms): the controller's step at stop_at_ms,
     // which nothing holds back, is the late one.
     {
-        const fs::path dir = one_ecu(o, "stop_at_ms: 1000\nspeed: 1\n", "slow-at-ms 990 500");
+        const fs::path dir = one_ecu(o, "# run-option --stop-at-ms 1000\n# run-option --speed 1\n", "slow-at-ms 990 500");
         const Captured run = launch(o, {"run", "--json", "sim.yaml"}, dir);
         expect_code(run, 0, "a slow last interval (a warning)");
         const std::string& json = run.standard_output;
@@ -206,12 +206,12 @@ void stall(const Options& o)
     // measured. (A slow step at 0 would not count: the first step is the base, and the ECU may
     // run its own step at 0 before the controller's.)
     {
-        fs::path dir = one_ecu(o, "stop_at_ms: 10\nspeed: 1\n");
+        fs::path dir = one_ecu(o, "# run-option --stop-at-ms 10\n# run-option --speed 1\n");
         Captured run = launch(o, {"run", "--json", "sim.yaml"}, dir);
         expect_code(run, 0, "a run of one step");
         require(json_value(run.standard_output, "paced_steps") == "1" && json_number(run.standard_output, "wall_ms") >= 9,
                 "a run of one step:\n" + run.standard_output);
-        dir = one_ecu(o, "stop_at_ms: 20\nspeed: 1\n", "slow-at-ms 10 300");
+        dir = one_ecu(o, "# run-option --stop-at-ms 20\n# run-option --speed 1\n", "slow-at-ms 10 300");
         run = launch(o, {"run", "--json", "sim.yaml"}, dir);
         expect_code(run, 0, "a run of two steps (a warning)");
         const std::string& json = run.standard_output;
@@ -228,7 +228,7 @@ void stall(const Options& o)
     // start: the step at 510 ms never begins. While it lasts, the time events say how late it is
     // by now; the result has the stall as a late step and in the time the run took.
     {
-        const fs::path dir = one_ecu(o, "stop_timeout_ms: 300\nspeed: 1\n", "hang-at-ms 500");
+        const fs::path dir = one_ecu(o, "# run-option --participant-stop-timeout-ms 300\n# run-option --speed 1\n", "hang-at-ms 500");
         const Captured events = launch(o, {"run", "--events", "--timeout-ms", "3000", "sim.yaml"}, dir);
         expect_code(events, 1, "a run that ends in a stall");
         const auto lines = check_events(events.standard_output);
@@ -274,8 +274,8 @@ void stand_still(const Options& o)
     // connection, or hangs): after 10 s the launcher says that virtual time does not advance, and
     // what may cause it; when it moves again, it says so. The run passes.
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n"
-                                      "stop_at_ms: 300\n"
+                                      "vehicle_sil_simulation: 2\n"
+                                      "# run-option --stop-at-ms 300\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Auto\n"
@@ -472,7 +472,7 @@ void speed_change(const Options& o)
     // Speed 1 up to 200 ms or a little further, then speed 4: the 800 ms (or a little less) that
     // are left take a quarter of their time, counted from where the change came. Lower bounds:
     // 1000 ms of virtual time never take less than 200 + 800 / 4 ms.
-    const fs::path dir = one_ecu(o, "stop_at_ms: 1000\nspeed: 1\nlate_tolerance_ms: 100000\n");
+    const fs::path dir = one_ecu(o, "# run-option --stop-at-ms 1000\n# run-option --speed 1\n# run-option --late-tolerance-ms 100000\n");
     Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
     // The third time event after the one at 0: 200 ms or more have passed (they are 100 ms apart).
     live.wait_for_count({"\"event\":\"time\""}, 4);
@@ -497,7 +497,7 @@ void speed_change(const Options& o)
 void own_bridge(const Options& o)
 {
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\nstop_at_ms: 200\nspeed: 4\nnetworks: []\nparticipants:\n"
+                                      "vehicle_sil_simulation: 2\n# run-option --stop-at-ms 200\nnetworks: []\nparticipants:\n"
                                       "  - name: Body\n    command: [" + ecu(o) + "]\n"
                                       "  - name: Gateway\n    command: [" + helper(o) + ", --pid-file, gateway.pid]\n"
                                       "    role: bridge\n    describe: false\n    required: false\n",
@@ -513,15 +513,15 @@ void own_bridge(const Options& o)
     std::string out = ran({"run", "--json", "sim.yaml"}, 0, "a run with a role: bridge participant");
     require(contains(out, "\"timing\": {\n    \"speed\": 1,\n") && contains(out, "\"code\": \"outside-speed-set\"") &&
                 contains(out, "participant 'Gateway' is a bridge (role: bridge) to something outside the simulation") &&
-                contains(out, "not at the speed 4 of the file") &&
+                contains(out, "not as fast as possible") &&
                 contains(out, "\"time_lock\": {\n      \"locked\": true,\n      \"because\": [\n        \"Gateway\"\n      ]\n"),
             "the run went at speed 1, and a note says so:\n" + out);
-    out = ran({"run", "--json", "--time-policy", "free", "sim.yaml"}, 0, "the same with --time-policy free");
+    out = ran({"run", "--json", "--speed", "4", "--time-policy", "free", "sim.yaml"}, 0, "the same with --time-policy free");
     require(contains(out, "\"timing\": {\n    \"speed\": 4,\n") && contains(out, "\"code\": \"outside-not-real-time\"") &&
                 !contains(out, "outside-speed-set") &&
                 contains(out, "\"time_lock\": {\n      \"locked\": false,\n      \"because\": [\n        \"Gateway\"\n      ]\n"),
             "--time-policy free: the file's speed, and a note:\n" + out);
-    out = ran({"run", "--json", "--disable", "Gateway", "sim.yaml"}, 0, "the same without the bridge");
+    out = ran({"run", "--json", "--speed", "4", "--disable", "Gateway", "sim.yaml"}, 0, "the same without the bridge");
     require(contains(out, "\"timing\": {\n    \"speed\": 4,\n") && !contains(out, "\"outside-") &&
                 contains(out, "\"time_lock\": {\n      \"locked\": false,\n      \"because\": []\n"),
             "--disable Gateway: nothing connects the run outside:\n" + out);
@@ -539,7 +539,7 @@ void own_bridge(const Options& o)
     write_file(dir / "scn" / "a.yaml", "vehicle_sil_scenario: 1\nsteps:\n  - set: { Body.level: 5 }\n"
                                        "  - wait_until: { Body.level: 6 }\n    timeout_ms: 50\n");
     out = ran({"test", "sim.yaml", "--scenarios", "scn"}, 1, "test with a role: bridge participant");
-    require(contains(out, "run it alone: vehicle_sil_launch run sim.yaml --scenario scn/a.yaml\n") &&
+    require(contains(out, "run it alone: vehicle_sil_launch run sim.yaml --scenario scn/a.yaml --stop-at-ms 200\n") &&
                 contains(out, "note: sim.yaml: 1 of 1 runs went at speed 1 (real time), not as fast as possible: ") &&
                 contains(out, "The first of them (scenario scn/a.yaml) says why: participant 'Gateway' is a bridge") &&
                 contains(out, "pass --time-policy free if ") && contains(out, " [test-speed-set]\n"),
@@ -549,7 +549,7 @@ void own_bridge(const Options& o)
                 contains(out, "not as fast as possible"),
             "test --json at speed 1:\n" + out);
     out = ran({"test", "sim.yaml", "--time-policy", "free", "--scenarios", "scn"}, 1, "test --time-policy free");
-    require(contains(out, "run it alone: vehicle_sil_launch run sim.yaml --speed max --time-policy free --scenario scn/a.yaml\n"),
+    require(contains(out, "run it alone: vehicle_sil_launch run sim.yaml --speed max --time-policy free --scenario scn/a.yaml --stop-at-ms 200\n"),
             "test --time-policy free: as fast as possible:\n" + out);
     require(!contains(out, "test-speed-set"), "test --time-policy free: no note about speed 1:\n" + out);
     out = ran({"test", "sim.yaml", "--time-policy", "free", "--scenarios", "scn", "--json"}, 1, "test --json --time-policy free");
@@ -561,15 +561,14 @@ void own_bridge(const Options& o)
 void step_width(const Options& o)
 {
     const auto step_file = [](const fs::path& dir, const std::string& ms) { write_file(dir / "test-ecu-step-ms", ms + "\n"); };
-    // An ECU that steps every millisecond. As fast as possible, the controller steps every 10 ms
-    // as ever; with a speed, as finely as the ECU, so that every ECU step runs at its real time.
-    fs::path dir = one_ecu(o, "stop_at_ms: 200\n");
+    // An ECU that steps every millisecond: the automatic controller step follows it at any speed.
+    fs::path dir = one_ecu(o, "# run-option --stop-at-ms 200\n");
     step_file(dir, "1");
     Captured run = launch(o, {"run", "--json", "sim.yaml"}, dir);
     expect_code(run, 0, "1 ms steps as fast as possible");
-    require(json_value(run.standard_output, "time_step_ms") == "10" && json_value(run.standard_output, "ecu_step_ms") == "1" &&
-                json_value(run.standard_output, "step_delay_ms") == "9" && contains(run.standard_output, "  \"findings\": [],\n"),
-            "as fast as possible, the controller's step is 10 ms and nothing is found:\n" + run.standard_output);
+    require(json_value(run.standard_output, "time_step_ms") == "1" && json_value(run.standard_output, "ecu_step_ms") == "1" &&
+                json_value(run.standard_output, "step_delay_ms") == "0" && contains(run.standard_output, "  \"findings\": [],\n"),
+            "as fast as possible, the controller's step is 1 ms and nothing is found:\n" + run.standard_output);
     run = launch(o, {"run", "--json", "--speed", "2", "sim.yaml"}, dir);
     expect_code(run, 0, "1 ms steps at speed 2");
     require(json_value(run.standard_output, "time_step_ms") == "1" && json_value(run.standard_output, "ecu_step_ms") == "1" &&
@@ -578,27 +577,26 @@ void step_width(const Options& o)
             "with a speed, the controller steps as finely as the ECU:\n" + run.standard_output);
     // time_step_ms as written stays: 10 ms over 1 ms steps at a speed is a warning that says by
     // how much the ECU's steps run late, and what to write.
-    dir = one_ecu(o, "stop_at_ms: 200\ntime_step_ms: 10\n");
+    dir = one_ecu(o, "# run-option --stop-at-ms 200\ntime_step_ms: 10\n");
     run = launch(o, {"run", "--json", "--speed", "2", "sim.yaml"}, dir);
     expect_code(run, 0, "time_step_ms coarser than the ECU's step (a warning)");
     require(json_value(run.standard_output, "time_step_ms") == "10" && json_value(run.standard_output, "step_delay_ms") == "9" &&
                 json_value(run.standard_output, "paced_steps") == "20",
             "time_step_ms as written:\n" + run.standard_output);
     require(contains(run.standard_output,
-                     "\"code\": \"coarse-time-step\",\n      \"file\": \"sim.yaml\",\n      \"line\": null,\n"
-                     "      \"participant\": null,\n      \"network\": null,\n      \"message\": \"the launcher's controller steps "
+                     "the launcher's controller steps "
                      "every 10 ms "
                      "(time_step_ms), but the ECUs' steps are as small as 1 ms: with a speed, the launcher keeps real time "
                      "only at the controller's steps. An ECU step that starts between two of them runs at the later one, up "
                      "to 9 ms after the real time it stands for (never before it), together with the other steps in between; "
                      "a device attached in real time gets the messages of those steps up to 9 ms late and in a burst. Write "
-                     "time_step_ms: 1 (or leave time_step_ms out: with a speed, the default is that)\""),
+                     "time_step_ms: 1 (or leave time_step_ms out to use the automatic step)\""),
             "the warning:\n" + run.standard_output);
     expect_code(launch(o, {"run", "--strict", "--speed", "2", "sim.yaml"}, dir), 1, "--strict fails on coarse-time-step");
     expect_code(launch(o, {"run", "--strict", "sim.yaml"}, dir), 0, "as fast as possible, a coarse step is nothing to warn of");
     // With the speed in the file too, check knows it before the run, and run reports it once (as
     // the check's); run --speed max has no speed to warn of.
-    dir = one_ecu(o, "stop_at_ms: 200\ntime_step_ms: 10\nspeed: 2\n");
+    dir = one_ecu(o, "# run-option --stop-at-ms 200\ntime_step_ms: 10\n# run-option --speed 2\n");
     step_file(dir, "1");
     const auto warnings = [](const std::string& text) {
         std::size_t n = 0;
@@ -626,7 +624,7 @@ void step_width(const Options& o)
                 "run --strict --speed max of a file with a speed and a coarse time_step_ms");
     // A participant that does not describe itself: with a speed, 1 ms to be safe.
     dir = scenario_dir(o,
-                       "vehicle_sil_simulation: 1\nstop_at_ms: 200\nspeed: 4\nnetworks: []\nparticipants:\n"
+                       "vehicle_sil_simulation: 2\n# run-option --stop-at-ms 200\n# run-option --speed 4\nnetworks: []\nparticipants:\n"
                        "  - name: Engine\n    command: [" + ecu(o) + "]\n"
                        "  - name: Logger\n    command: [" + helper(o) + ", --pid-file, logger.pid]\n"
                        "    describe: false\n    required: false\n",
@@ -786,7 +784,7 @@ void paused_failures(const Options& o)
     // While it stands still, a participant whose process ends fails the run (as while it runs).
     {
         const fs::path dir = scenario_dir(o,
-                                          "vehicle_sil_simulation: 1\n"
+                                          "vehicle_sil_simulation: 2\n"
                                           "networks: []\n"
                                           "participants:\n"
                                           "  - name: Engine\n"
@@ -842,7 +840,7 @@ void paused_failures(const Options& o)
     }
     // start_timeout_ms is for the start: standing still at 0 longer than it is fine.
     {
-        const fs::path dir = one_ecu(o, "stop_at_ms: 100\nstart_timeout_ms: 1000\n");
+        const fs::path dir = one_ecu(o, "# run-option --stop-at-ms 100\n# run-option --participant-start-timeout-ms 1000\n");
         Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
         // The event comes once the simulation stands still: the launcher's count of that time has begun.
         // A little longer than the 2000 ms asked for below all the same (a sleep that returns a moment
@@ -859,7 +857,7 @@ void paused_failures(const Options& o)
 
 void time_usage(const Options& o)
 {
-    const fs::path dir = one_ecu(o, "stop_at_ms: 100\n");
+    const fs::path dir = one_ecu(o, "# run-option --stop-at-ms 100\n");
     Captured run = launch(o, {"run", "--start-paused", "sim.yaml"}, dir);
     expect_code(run, 4, "--start-paused without --stdin-commands");
     require(contains(run.standard_error, "error: --start-paused needs --stdin-commands or --control: without commands nothing "
@@ -891,24 +889,24 @@ void time_usage(const Options& o)
                                          "0.000001 to 1000000 (1: real time, 2: twice as fast) or max (as fast as possible), "
                                          "not 'fast'\n"),
             run.standard_error);
-    for (const std::string option : {"--speed", "--start-paused"})
+    run = launch(o, {"check", "--start-paused", "sim.yaml"}, dir);
+    expect_code(run, 4, "check --start-paused");
+
+    const auto checking = [&](std::vector<std::string> args, const char* step, const char* stop) {
+        const Captured result = launch(o, args, dir);
+        expect_code(result, 0, "check resolves the timing from the run");
+        require(json_value(result.standard_output, "time_step_ms") == step &&
+                    json_value(result.standard_output, "stop_at_ms") == stop, result.standard_output);
+    };
+    checking({"check", "--json", "--stop-at-ms", "1003", "sim.yaml"}, "1", "1003");
+    checking({"check", "--json", "--stop-at-ms", "1003", "--speed", "1", "sim.yaml"}, "1", "1003");
+
+    const fs::path fixed = one_ecu(o, "time_step_ms: 5\n");
+    checking({"check", "--json", "--speed", "1", "sim.yaml"}, "5", "null");
+    for (const std::string command : {"check", "run"})
     {
-        std::vector<std::string> args{"check", option};
-        if (option == "--speed")
-        {
-            args.push_back("1");
-        }
-        args.push_back("sim.yaml");
-        run = launch(o, args, dir);
-        expect_code(run, 4, "check " + option);
-        require(contains(run.standard_error, "error: " + option + " is for run: check starts no participant\n"), run.standard_error);
+        run = launch(o, {command, "--json", "--stop-at-ms", "1003", "sim.yaml"}, fixed);
+        expect_code(run, 1, command + " rejects a stop off the fixed grid");
+        require(contains(run.standard_output, "stop-not-on-step"), run.standard_output);
     }
-    // In the file: an error of the check, nothing is started.
-    const fs::path bad = one_ecu(o, "stop_at_ms: 105\ntime_step_ms: 10\nspeed: 0\n");
-    run = launch(o, {"run", "sim.yaml"}, bad);
-    expect_code(run, 1, "a speed of 0 and a step that does not divide stop_at_ms");
-    require(contains(run.standard_output, "error: sim.yaml:3: stop_at_ms (105) is not a multiple of time_step_ms (10)") &&
-                contains(run.standard_output, "error: sim.yaml:4: speed must be ") &&
-                contains(run.standard_output, "nothing was started"),
-            run.standard_output);
 }

@@ -80,8 +80,7 @@ flowchart LR
 
 <!-- examples/ecu_main/simulation.two-pcs.yaml -->
 ```yaml
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
 registry_uri: silkit://0.0.0.0:8500
 networks:
   - name: J1939_CAN

@@ -18,7 +18,7 @@ namespace {
 
 const std::vector<std::string> kKeys{"vehicle_sil_run_request", "variant", "params",      "scenario",     "disable", "enable",
                                      "manual",                  "connect", "time_policy", "speed",        "start_paused",
-                                     "strict"};
+                                     "strict",                  "stop_at_ms", "late_tolerance_ms"};
 
 class Reader : private config::detail::YamlReader
 {
@@ -135,6 +135,24 @@ public:
             else if (key == "strict")
             {
                 intent.strict = flag(child, key);
+            }
+            else if (key == "stop_at_ms" || key == "late_tolerance_ms")
+            {
+                const std::int64_t min = key == "stop_at_ms" ? 1 : 0;
+                std::int64_t value = 0;
+                if (!plain_integer(child, value) || value < min || value > config::kMaxMillis)
+                {
+                    error("value", doc_.line(child), key + " must be an integer from " + std::to_string(min) +
+                              " to " + std::to_string(config::kMaxMillis) + ", not " + shown_value(child));
+                }
+                else if (key == "stop_at_ms")
+                {
+                    intent.stop_at_ms = value;
+                }
+                else
+                {
+                    intent.late_tolerance_ms = value;
+                }
             }
             if (findings_.size() == before)
             {

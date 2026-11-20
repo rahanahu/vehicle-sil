@@ -287,7 +287,7 @@ public:
 
     /// `scenario`, `port` and `record` (may be null) must outlive the engine. `tick` > 0.
     ScenarioEngine(const Scenario& scenario, SimDuration tick, ScenarioPort& port, OnStep on_step = {},
-                   TimelineRecord* record = nullptr);
+                   TimelineRecord* record = nullptr, std::optional<SimTime> stop_at = {});
     ~ScenarioEngine();
 
     /// `peers` in the order of Scenario::participants.
@@ -381,7 +381,7 @@ private:
     /// The step of the variable's ECU (the controller's, if that is not known).
     [[nodiscard]] SimDuration step_of(std::size_t variable) const;
     void judge(SimTime p);
-    void observe(SimTime p);
+    void observe(SimTime p, bool final_boundary = false);
     void evaluate(Watch& watch, SimTime t);
     void close(Watch& watch, SimTime t);
     void started(std::size_t step);
@@ -417,6 +417,7 @@ private:
 
     const Scenario& scenario_;
     SimDuration tick_;
+    std::optional<SimTime> stop_at_;
     ScenarioPort& port_;
     OnStep on_step_;
     ScenarioRun run_;

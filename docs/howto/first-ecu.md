@@ -45,7 +45,7 @@ export PATH="$PWD/tools/vehicle-sil-tools-<version>-linux-x86_64/bin:$PATH"   # 
 cmake --preset linux             # downloads vehicle-sil and SIL Kit
 cmake --build --preset linux     # the first time only, compiling SIL Kit takes a few minutes
 vehicle_sil_launch check simulation.yaml
-vehicle_sil_launch run simulation.yaml
+vehicle_sil_launch run simulation.yaml --stop-at-ms 1000
 ```
 
 On Windows, 4 things differ:
@@ -123,8 +123,7 @@ The `simulation.yaml` that you passed to `check` and `run` is the configuration 
 #   vehicle_sil_launch check simulation.yaml
 #   vehicle_sil_launch run simulation.yaml [--scenario scenarios/throttle_step.yaml]
 # The paths in command are relative to this file's directory.
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
 networks:
   - name: J1939_CAN
     kind: can
@@ -370,7 +369,7 @@ warning: simulation.yaml:9: network 'J1939_CAN': only Engine is on it, so what i
 Run the 3 ECUs until 1000 ms, the time set in `stop_at_ms`:
 
 ```sh
-vehicle_sil_launch run simulation.yaml
+vehicle_sil_launch run simulation.yaml --stop-at-ms 1000
 ```
 
 ### Verify the run

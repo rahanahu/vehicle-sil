@@ -156,8 +156,10 @@ void judge(TestRun& run, RunReport report)
         run.result = TestRunResult::Interrupted;
         run.reason = report.run && !report.run->end.interrupted_by.empty() ? "by " + report.run->end.interrupted_by : "";
         break;
-    // RunResult::Stopped and RunResult::Incomplete do not happen here (a test takes no stop
-    // command); if one did, it fails like the rest instead of passing silently.
+    case RunResult::Incomplete:
+        run.result = TestRunResult::Failed;
+        run.reason = "the scenario did not finish before the requested stop time";
+        break;
     default:
         run.result = TestRunResult::Failed;
         run.reason = failure_reason(report);
@@ -323,6 +325,14 @@ std::string run_alone(const TestReport& report, const TestRun& run)
         out += " --enable " + shell_word(name);
     }
     out += report.strict ? " --strict" : "";
+    if (report.given.stop_at_ms)
+    {
+        out += " --stop-at-ms " + std::to_string(*report.given.stop_at_ms);
+    }
+    if (report.given.late_tolerance_ms)
+    {
+        out += " --late-tolerance-ms " + std::to_string(*report.given.late_tolerance_ms);
+    }
     if (report.given.timeout)
     {
         out += " --timeout-ms " + std::to_string(report.given.timeout->count());
@@ -526,6 +536,8 @@ TestReport test_file(const TestOptions& options)
     report.given.disable = intent.disable;
     report.given.enable = intent.enable;
     report.given.timeout = host.timeout;
+    report.given.stop_at_ms = intent.stop_at_ms;
+    report.given.late_tolerance_ms = intent.late_tolerance_ms;
     report.given.time_policy = intent.time_policy;
     if (host.describe_timeout != kDescribeTimeout)
     {
@@ -756,6 +768,14 @@ std::string format_test_json(const TestReport& report)
         }
         w.end_array();
     };
+    if (report.given.stop_at_ms)
+    {
+        w.integer("stop_at_ms", *report.given.stop_at_ms);
+    }
+    if (report.given.late_tolerance_ms)
+    {
+        w.integer("late_tolerance_ms", *report.given.late_tolerance_ms);
+    }
     names("variants", report.variants);
     names("scenarios", report.scenarios);
     for (const TestRunResult which : {TestRunResult::Passed, TestRunResult::Failed, TestRunResult::Skipped, TestRunResult::Interrupted,

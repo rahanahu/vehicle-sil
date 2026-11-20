@@ -1,29 +1,14 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "vehicle-sil simulation configuration (simulation.yaml), format 1",
+  "title": "vehicle-sil simulation configuration (simulation.yaml), format 2",
   "description": "The networks and the participants (ECU executables) of one simulation, for vehicle_sil_launch check, run and test. This schema finds unknown keys, missing keys and values of the wrong form while you write. It cannot see the executables: whether the names, the steps, the networks and the variables fit them is what `vehicle_sil_launch check <file>` says, and so is everything else this schema leaves open (a key written twice, names listed twice, combinations of keys, the arguments of a command). The manual is docs/simulation-config.md of vehicle-sil.",
   "type": "object",
   "additionalProperties": false,
   "required": ["vehicle_sil_simulation", "networks", "participants"],
   "properties": {
     "vehicle_sil_simulation": {
-      "const": 1,
-      "description": "The format version. Always 1."
-    },
-    "stop_at_ms": {
-      "$ref": "#/definitions/millis",
-      "description": "The virtual time at which the simulation stops, in milliseconds. Without it, the simulation runs until a participant stops it or until run is stopped (Ctrl+C). With time_step_ms, it must be a multiple of time_step_ms.",
-      "examples": [1000]
-    },
-    "start_timeout_ms": {
-      "$ref": "#/definitions/millis",
-      "description": "How long run waits for the required participants to join, in milliseconds.",
-      "default": 30000
-    },
-    "stop_timeout_ms": {
-      "$ref": "#/definitions/millis",
-      "description": "How long run waits for each participant to end, in milliseconds, at each stage of stopping.",
-      "default": 10000
+      "const": 2,
+      "description": "The format version. Always 2."
     },
     "registry_uri": {
       "type": "string",
@@ -31,22 +16,9 @@
       "description": "Where run starts the registry of the simulation: silkit://<host>:<port>, with a port from 0 to 65535 (0: a free port, chosen when the run starts). Without it, a free port on 127.0.0.1. For participants on other computers too, an address they reach (silkit://0.0.0.0:8500); the simulation then listens on the network, where anyone who reaches this computer can join.",
       "examples": ["silkit://127.0.0.1:8500", "silkit://0.0.0.0:8500"]
     },
-    "speed": {
-      "description": "How fast virtual time passes: simulation seconds per wall-clock second (1: real time, 2: twice as fast, 0.5: half as fast), or max. Without it, as fast as possible. run --speed overrides it.",
-      "oneOf": [
-        { "type": "number", "minimum": 0.000001, "maximum": 1000000 },
-        { "const": "max" }
-      ],
-      "examples": [1, 0.5, "max"]
-    },
     "time_step_ms": {
       "$ref": "#/definitions/millis",
-      "description": "The step of the launcher's controller, in milliseconds of virtual time: how finely the simulation can be paused, stepped and paced. Without it, the launcher chooses one (10 at full speed). stop_at_ms must be a multiple of it."
-    },
-    "late_tolerance_ms": {
-      "$ref": "#/definitions/millis",
-      "description": "How late a step may begin, in wall-clock milliseconds, before it counts as late (when a speed is given).",
-      "default": 10
+      "description": "The step of the launcher's controller, in milliseconds of virtual time: how finely the simulation can be paused, stepped and paced. Without it, the launcher derives it from ECU periods and the run request’s stop_at_ms, when present."
     },
     "networks": {
       "type": "array",

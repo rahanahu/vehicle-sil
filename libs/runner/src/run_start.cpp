@@ -118,7 +118,7 @@ void RunStartWindow::run(control_silkit::HubTransport& transport, SimulationCont
             shared_.hold_ms.store(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count());
             // From here on, the participants have start_timeout_ms to get to their first step
             // (with a participant started by hand: from when those are ready, as before the hold).
-            shared_.limit.end_hold(std::chrono::steady_clock::now(), std::chrono::milliseconds(ctx_.config.start_timeout_ms),
+            shared_.limit.end_hold(std::chrono::steady_clock::now(), std::chrono::milliseconds(ctx_.plan.start_timeout_ms),
                                    config::waits_for_manual(ctx_.config));
         }
     }
@@ -330,7 +330,7 @@ bool RunStart::wait_for_bridges(SimulationController& controller)
     {
         return true;
     }
-    const std::chrono::milliseconds limit(ctx_.config.start_timeout_ms);
+    const std::chrono::milliseconds limit(ctx_.plan.start_timeout_ms);
     // What went wrong, with the bridge it is about.
     std::string why;
     std::size_t failed = 0;
@@ -405,7 +405,7 @@ bool RunStart::wait_for_bridges(SimulationController& controller)
 
 bool RunStart::wait_for_start(SimulationController& controller, control_silkit::HubTransport& transport)
 {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ctx_.config.start_timeout_ms);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ctx_.plan.start_timeout_ms);
     // The participants someone starts by hand have no time limit: they may take any time.
     const auto manual = [this](const std::string& name) {
         return std::any_of(ctx_.config.participants.begin(), ctx_.config.participants.end(),
@@ -477,7 +477,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
                     names += (names.empty() ? "" : ", ") + run.name;
                 }
             }
-            out_.say("the simulation did not start: not joined within " + std::to_string(ctx_.config.start_timeout_ms) +
+            out_.say("the simulation did not start: not joined within " + std::to_string(ctx_.plan.start_timeout_ms) +
                 " ms: " + names);
             return false;
         }
@@ -494,7 +494,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
         // first step (it may stand in a debugger before), then start_timeout_ms (start_given_up()).
         if (config::waits_for_manual(ctx_.config))
         {
-            shared_.limit.set_once_manual_ready(std::chrono::milliseconds(ctx_.config.start_timeout_ms));
+            shared_.limit.set_once_manual_ready(std::chrono::milliseconds(ctx_.plan.start_timeout_ms));
         }
         else
         {

@@ -624,7 +624,7 @@ std::filesystem::path config_file(const std::string& name, const std::string& pa
     const std::filesystem::path dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "run_controls";
     std::filesystem::create_directories(dir);
     const std::filesystem::path file = dir / name;
-    std::ofstream(file, std::ios::binary) << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n" << participants;
+    std::ofstream(file, std::ios::binary) << "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n" << participants;
     return file;
 }
 

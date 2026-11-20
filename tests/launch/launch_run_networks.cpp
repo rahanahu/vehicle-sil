@@ -37,7 +37,7 @@ void traffic(const Options& o)
 {
     // The example: Engine sends, Dashboard only listens. The same output from run to run.
     const fs::path example = example_copy(o);
-    const Captured first = launch(o, {"run", "simulation.yaml"}, example);
+    const Captured first = launch(o, {"run", "simulation.yaml", "--stop-at-ms", "1000"}, example);
     expect_code(first, 0, "run simulation.yaml");
     expect_text(traffic_part(first.standard_output),
                 "traffic: J1939_CAN: 1 participant sent, 1 received (2 counted) (steps before 1000 ms)\n"
@@ -48,13 +48,13 @@ void traffic(const Options& o)
                 "the traffic of the example");
     for (int again = 0; again < 3; ++again)
     {
-        const Captured next = launch(o, {"run", "simulation.yaml"}, example);
+        const Captured next = launch(o, {"run", "simulation.yaml", "--stop-at-ms", "1000"}, example);
         expect_code(next, 0, "run simulation.yaml again");
         expect_text(next.standard_output, first.standard_output, "the output of the example, run again");
     }
     const auto with_names = [](const std::string& more_networks, const std::string& engine, const std::string& dashboard) {
-        return "vehicle_sil_simulation: 1\n"
-               "stop_at_ms: 1000\n"
+        return "vehicle_sil_simulation: 2\n"
+               "# run-option --stop-at-ms 1000\n"
                "networks:\n"
                "  - { name: J1939_CAN, kind: can }\n" +
                more_networks +
@@ -98,7 +98,7 @@ void traffic(const Options& o)
 
     // What a machine reads: delivered where the listener heard, not where the buses are apart.
     const auto delivered = [&](const char* file) {
-        const Captured run = launch(o, {"run", file, "--json"}, example);
+        const Captured run = launch(o, {"run", file, "--json", "--stop-at-ms", "1000"}, example);
         expect_code(run, 0, std::string("run ") + file + " --json");
         const std::string& out = run.standard_output;
         std::string all;
@@ -113,7 +113,7 @@ void traffic(const Options& o)
     expect_text(delivered("renamed.yaml"), "null true ", "delivered on a bus that both call by another name");
 
     // An ECU without a network.
-    const fs::path alone = scenario_dir(o, "vehicle_sil_simulation: 1\nstop_at_ms: 100\nnetworks: []\nparticipants:\n"
+    const fs::path alone = scenario_dir(o, "vehicle_sil_simulation: 2\n# run-option --stop-at-ms 100\nnetworks: []\nparticipants:\n"
                                            "  - name: Engine\n    command: [" + ecu(o) + "]\n");
     const Captured none = launch(o, {"run", "sim.yaml"}, alone);
     expect_code(none, 0, "run without a network");
@@ -129,8 +129,8 @@ void traffic(const Options& o)
     // without --describe that is counted by what its control agent says, and one that is disabled.
     const std::string undescribed = ", --registry-uri, \"{registry_uri}\", --name, \"{name}\"]\n    describe: false\n";
     const fs::path mixed = scenario_dir(o,
-                                        "vehicle_sil_simulation: 1\n"
-                                        "stop_at_ms: 200\n"
+                                        "vehicle_sil_simulation: 2\n"
+                                        "# run-option --stop-at-ms 200\n"
                                         "networks:\n"
                                         "  - { name: BUS, kind: can }\n"
                                         "  - { name: Empty, kind: can }\n"
@@ -224,7 +224,7 @@ void traffic(const Options& o)
     // A network that the participants use, none of them known to the launcher (no --describe, no
     // control agent): it is in the result, not counted. "no network in use" is for a file without one.
     write_file(mixed / "test-ecu-no-control", "");
-    write_file(mixed / "unknown.yaml", "vehicle_sil_simulation: 1\nstop_at_ms: 100\nnetworks:\n  - { name: BUS, kind: can }\n"
+    write_file(mixed / "unknown.yaml", "vehicle_sil_simulation: 2\n# run-option --stop-at-ms 100\nnetworks:\n  - { name: BUS, kind: can }\n"
                                        "participants:\n  - name: Door\n    command: [" + ecu(o) + undescribed +
                                        "  - name: Tool\n    command: [" + ecu(o) + undescribed);
     const Captured unknown = launch(o, {"run", "unknown.yaml"}, mixed);
@@ -243,7 +243,7 @@ void traffic(const Options& o)
     // --describe, no control agent) and that hears the bus as raw CAN: the frames may have
     // arrived, so the result does not say they did not. Without the bridge, it does.
     write_file(mixed / "Bridge.behaviour", "hear BUS\n");
-    write_file(mixed / "bridged.yaml", "vehicle_sil_simulation: 1\nstop_at_ms: 200\nnetworks:\n  - { name: BUS, kind: can }\n"
+    write_file(mixed / "bridged.yaml", "vehicle_sil_simulation: 2\n# run-option --stop-at-ms 200\nnetworks:\n  - { name: BUS, kind: can }\n"
                                        "participants:\n  - name: A\n    command: [" + ecu(o) + "]\n"
                                        "  - name: Bridge\n    command: [" + ecu(o) +
                                        ", --registry-uri, \"{registry_uri}\", --name, \"{name}\", --no-control]\n"
@@ -278,7 +278,7 @@ void traffic(const Options& o)
     // so the result does not say that the sender's frames there did not arrive.
     write_file(mixed / "Sender.behaviour", "j1939 CAN_B 30\n");
     write_file(mixed / "Gateway.behaviour", "j1939 CAN_A 31 hear CAN_B\n");
-    write_file(mixed / "gateway.yaml", "vehicle_sil_simulation: 1\nstop_at_ms: 200\nnetworks:\n  - { name: CAN_A, kind: can }\n"
+    write_file(mixed / "gateway.yaml", "vehicle_sil_simulation: 2\n# run-option --stop-at-ms 200\nnetworks:\n  - { name: CAN_A, kind: can }\n"
                                        "  - { name: CAN_B, kind: can }\n"
                                        "participants:\n  - name: Sender\n    command: [" + ecu(o) + "]\n"
                                        "  - name: Gateway\n    command: [" + ecu(o) + undescribed);
@@ -305,7 +305,7 @@ void traffic(const Options& o)
             "the JSON's traffic with a gateway:\n" + gateway_json.standard_output);
 
     // A run that did not start has none.
-    const fs::path missing = scenario_dir(o, "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    const fs::path missing = scenario_dir(o, "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                              "  - name: Engine\n    command: [" + ecu(o) + "]\n"
                                              "  - name: Quitter\n    command: [" + helper(o) + ", --exit, \"2\", --uri, \"{registry_uri}\"]\n"
                                              "    describe: false\n");
@@ -326,8 +326,8 @@ void network_names(const Options& o)
     // The variant "moved" puts Engine's CAN_B on VehicleCAN instead of "Body CAN" (`moved`: how).
     const auto config_with = [&o, port = free_port()](const std::string& moved) {
     return std::string(
-        "vehicle_sil_simulation: 1\n"                                                    // 1
-        "stop_at_ms: 300\n"                                                              // 2
+        "vehicle_sil_simulation: 2\n"                                                    // 1
+        "# run-option --stop-at-ms 300\n"                                                              // 2
         "registry_uri: silkit://127.0.0.1:") + std::to_string(port) + "\n"               // 3
         "networks:\n"                                                                    // 4
         "  - { name: VehicleCAN, kind: can }\n"                                          // 5
@@ -472,8 +472,8 @@ void network_names(const Options& o)
         // An executable of a vehicle-sil before --map-network: an error of the check, and nothing
         // is started (it would end at once with a usage error, after the others were started).
         const fs::path old = hand_dir(o, "names-old",
-                                      "vehicle_sil_simulation: 1\n"
-                                      "stop_at_ms: 100\n"
+                                      "vehicle_sil_simulation: 2\n"
+                                      "# run-option --stop-at-ms 100\n"
                                       "networks:\n"
                                       "  - { name: VehicleCAN, kind: can }\n"
                                       "participants:\n"
@@ -532,8 +532,8 @@ void j1939_nodes(const Options& o)
     // the variant "moved" gives the second copy others.
     const auto config_with = [&o, port = free_port()](const std::string& entries) {
     return std::string(
-        "vehicle_sil_simulation: 1\n"                                                    // 1
-        "stop_at_ms: 300\n"                                                              // 2
+        "vehicle_sil_simulation: 2\n"                                                    // 1
+        "# run-option --stop-at-ms 300\n"                                                              // 2
         "registry_uri: silkit://127.0.0.1:") + std::to_string(port) + "\n"               // 3
         "networks:\n"                                                                    // 4
         "  - { name: BUS, kind: can }\n"                                                 // 5

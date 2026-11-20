@@ -80,7 +80,7 @@ python3 get_tools.py     # Windows（UCRT64 シェル）: python get_tools.py
 cmake --preset linux             # Windows: cmake --preset windows
 cmake --build --preset linux     # Windows: cmake --build --preset windows
 vehicle_sil_launch check simulation.yaml
-vehicle_sil_launch run simulation.yaml
+vehicle_sil_launch run simulation.yaml --stop-at-ms 1000
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 ```
 
@@ -89,7 +89,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 | `cmake --preset` | vehicle-sil と SIL Kit をダウンロードします。 |
 | `cmake --build` | 2 つの ECU を `bin/` にビルドします（最初の 1 回だけ、SIL Kit のコンパイルに数分かかります）。 |
 | `check` | 各 ECU を `--describe` で起動し、その出力と設定ファイルを照合します。 |
-| `run` | registry と各 ECU を起動して、`stop_at_ms` まで実行します。 |
+| `run` | registry と各 ECU を起動して、指定した停止時刻（1000 ms）まで実行します。 |
 | `run --scenario` | シナリオの手順どおりに値を設定して確認します。 |
 
 ### 確認
@@ -120,7 +120,7 @@ vehicle-sil-gui simulation.live.yaml
 
 ブラウザで、設定ファイルを照合し、シミュレーションを実行し、変数を見て書き込む画面を開きます。終了するときは Ctrl+C を押します。
 
-`simulation.live.yaml` は、同じ 2 つの ECU を、等速で、止めるまで実行する設定ファイルです。`simulation.yaml` は 1000 ms で終わるので、GUI で値を見ながら操作するのには向きません。
+`simulation.live.yaml` は、同じ 2 つの ECU と画面の配置の設定です。GUI で等速を選ぶと、停止するまで値を見ながら操作できます。
 
 ## 入っているファイル
 
@@ -133,7 +133,7 @@ vehicle-sil-gui simulation.live.yaml
 | `simulation.yaml` | 2 つの ECU を 1 つのシミュレーションにする設定ファイルです。 |
 | `scenarios/throttle_step.yaml` | スロットルを踏んで、回転数と表示を確認するシナリオです。 |
 | `simulation.dashboard.yaml` | GUI の「変数」の画面の配置です。 |
-| `simulation.live.yaml`、`simulation.live.dashboard.yaml` | 等速で、止めるまで実行する設定ファイル（`stop_at_ms` なし、`speed: 1`）と、その画面の配置です。 |
+| `simulation.live.yaml`、`simulation.live.dashboard.yaml` | ECU を見ながら操作するための設定ファイルと、その画面の配置です。 |
 | `schema/` | 上の 3 種類の YAML の JSON Schema です。 |
 | `get_tools.py` | ツール（`vehicle_sil_launch` と GUI）を、バージョンと SHA-256 を確認して `tools/` にダウンロードします。 |
 

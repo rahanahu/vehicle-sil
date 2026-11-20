@@ -1580,14 +1580,14 @@ describe('the front door', () => {
         const rig = await open();
         const saving = rig.front.saveConfig({
           file: 'simulation.yaml',
-          text: 'vehicle_sil_simulation: 1\r\n',
+          text: 'vehicle_sil_simulation: 2\r\n',
           stamp: 'a'.repeat(64),
         });
         const sent = rig.http.expectOne('api/config');
         expect(sent.request.method).toBe('POST');
         expect(sent.request.body).toEqual({
           file: 'simulation.yaml',
-          text: 'vehicle_sil_simulation: 1\r\n',
+          text: 'vehicle_sil_simulation: 2\r\n',
           stamp: 'a'.repeat(64),
         });
         const saved = await example('save-config');
@@ -1664,12 +1664,12 @@ describe('the front door', () => {
         const rig = await open();
         const check = rig.front.check(
           { variant: 'v', strict: true, vehicle_sil_run_request: 1 },
-          { file: 'connect.yaml', text: 'vehicle_sil_simulation: 1\n' },
+          { file: 'connect.yaml', text: 'vehicle_sil_simulation: 2\n' },
         );
         const request = rig.http.expectOne('api/check');
         expect(request.request.body).toEqual({
           file: 'connect.yaml',
-          text: 'vehicle_sil_simulation: 1\n',
+          text: 'vehicle_sil_simulation: 2\n',
           vehicle_sil_run_request: 1,
           variant: 'v',
           strict: true,

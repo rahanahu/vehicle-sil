@@ -2,8 +2,8 @@
 # (recordings/, made by record_launcher.py: record again after changing this file).
 # ETH_EXT can be connected outside: record_launcher.py lists it and connects it with the Ethernet bridge on the fake
 # pcap library (its adapter fake0).
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
+
 networks:
   - name: J1939_CAN
     kind: can

@@ -70,7 +70,7 @@ std::string results(const TestReport& report)
 }
 
 /// Two variants of a participant whose executable is missing: every check fails, nothing starts.
-const char* const kConfig = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+const char* const kConfig = "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                             "  - name: Engine\n    command: [missing/engine]\n"
                             "variants:\n  small: {}\n  medium: { params: { depth: 4 } }\n";
 const char* const kPlain = "vehicle_sil_scenario: 1\nparams: { fill: 1 }\nsteps:\n  - set: { Engine.level: \"${fill}\" }\n";
@@ -156,7 +156,7 @@ TEST_CASE(a_test_that_cannot_begin_runs_nothing)
 
     // A participant that someone starts by hand: every run would wait for a person. Refused
     // before the first run, with what to do; left out with --disable, the test runs.
-    write(dir / "manual.yaml", "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    write(dir / "manual.yaml", "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                "  - name: Engine\n    command: [missing/engine]\n"
                                "  - name: Hil\n    command: [missing/hil]\n    manual: true\n"
                                "  - name: Off\n    command: [missing/off]\n    manual: true\n    enabled: false\n");
@@ -185,7 +185,7 @@ TEST_CASE(a_test_that_cannot_begin_runs_nothing)
           enabled.findings[0].message.rfind("participant 'Off' is manual (manual: true in the file): ", 0) == 0);
     options.request.intent.disable.clear();
     options.request.intent.enable.clear();
-    write(dir / "manual-variants.yaml", "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    write(dir / "manual-variants.yaml", "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                         "  - name: Hil\n    command: [missing/hil]\n    manual: true\n"
                                         "variants:\n  small: {}\n  medium: { participants: { Hil: { enabled: false } } }\n"
                                         "  large: {}\n");
@@ -248,7 +248,7 @@ TEST_CASE(a_test_runs_every_variant_with_every_scenario_in_order)
 
 /// A participant with role: bridge (describe: false; its executable is missing, so nothing starts
 /// in any case) beside the file's speed 4: the time lock.
-const char* const kBridged = "vehicle_sil_simulation: 1\nspeed: 4\nnetworks: []\nparticipants:\n"
+const char* const kBridged = "vehicle_sil_simulation: 2\nspeed: 4\nnetworks: []\nparticipants:\n"
                              "  - name: Gateway\n    command: [missing/gateway]\n    role: bridge\n    describe: false\n";
 
 std::string codes_of(const CheckReport& check, std::string_view prefix)

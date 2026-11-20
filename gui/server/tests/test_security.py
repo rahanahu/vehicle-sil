@@ -184,9 +184,9 @@ def test_your_own_screen_is_served_from_its_directory_only(tmp_path: Path) -> No
 def test_paths_outside_the_root_are_refused(tmp_path: Path) -> None:
     root = tmp_path / "root"
     shutil.copytree(CONFIGS, root)
-    (tmp_path / "secret.yaml").write_text("vehicle_sil_simulation: 1\nparticipants:\n  - name: Secret\n")
+    (tmp_path / "secret.yaml").write_text("vehicle_sil_simulation: 2\nparticipants:\n  - name: Secret\n")
     (tmp_path / "secretdir").mkdir()
-    (tmp_path / "secretdir" / "s.yaml").write_text("vehicle_sil_simulation: 1\n")
+    (tmp_path / "secretdir" / "s.yaml").write_text("vehicle_sil_simulation: 2\n")
     (root / "notes.txt").write_text("x")
     symlinks = sys.platform != "win32"
     if symlinks:

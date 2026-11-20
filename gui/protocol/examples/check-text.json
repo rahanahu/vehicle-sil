@@ -5,7 +5,7 @@
     "path": "api/check",
     "body": {
       "file": "simulation.yaml",
-      "text": "# A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it\n# (recordings/, made by record_launcher.py: record again after changing this file).\nvehicle_sil_simulation: 1\nstop_at_ms: 1000\nnetworks:\n  - name: J1939_CAN\n    kind: can\nparticipants:\n  - name: Engine\n    command: [engine/vehicle_sil_engine_ecu]\n  - name: Dashboard\n    command: [dashboard/vehicle_sil_dashboard_ecu]\n  - name: Logger\n    command: [logger/can_logger, \"{registry_uri}\"]\n    describe: false\n    required: false\n# edited on the screen, not saved yet\n"
+      "text": "# A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it\n# (recordings/, made by record_launcher.py: record again after changing this file).\nvehicle_sil_simulation: 2\n\nnetworks:\n  - name: J1939_CAN\n    kind: can\nparticipants:\n  - name: Engine\n    command: [engine/vehicle_sil_engine_ecu]\n  - name: Dashboard\n    command: [dashboard/vehicle_sil_dashboard_ecu]\n  - name: Logger\n    command: [logger/can_logger, \"{registry_uri}\"]\n    describe: false\n    required: false\n# edited on the screen, not saved yet\n"
     }
   },
   "status": 200,

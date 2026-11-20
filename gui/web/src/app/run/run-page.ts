@@ -14,6 +14,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { CheckResult, Intent, Speed, errorMessage } from '@vehicle-sil/gui-client';
 import { pageIntent } from '@vehicle-sil/gui-client/elements';
@@ -67,6 +68,7 @@ interface RunChoices {
   /** 自分で起動する participant（古い持ち越しにはない）。 */
   manual?: string[];
   speed: Speed;
+  stopAt?: string;
   /** 止めた状態で始めるか（古い持ち越しにはない）。 */
   startPaused?: boolean;
   logSource: string;
@@ -88,6 +90,7 @@ export function readRunChoices(value: unknown): RunChoices | null {
     !(v['manual'] === undefined || (Array.isArray(v['manual']) && v['manual'].every(isText))) ||
     !speedOk ||
     !(v['startPaused'] === undefined || typeof v['startPaused'] === 'boolean') ||
+    !(v['stopAt'] === undefined || typeof v['stopAt'] === 'string') ||
     !isText(v['logSource'])
   ) {
     return null;
@@ -130,6 +133,7 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
     MatCardModule,
     MatCheckboxModule,
     MatFormFieldModule,
+    MatInputModule,
     MatSelectModule,
     CheckPanel,
     FindingsList,
@@ -291,14 +295,24 @@ export class RunPage {
     const session = this.session();
     return !!session && session.launcher.running && !session.result;
   });
-  /** 速度。前の実行のもの（なければ構成ファイルのとおり）から始める。 */
+  /** 速度。前の実行のもの（なければ等速）から始める。 */
   protected readonly speed = linkedSignal<Speed>(() => {
     const session = this.session();
     const carried = this.carriedFor(session?.id ?? null);
-    return carried ? carried.speed : (session?.speed ?? null);
+    return (carried ? carried.speed : session?.speed) ?? 1;
   });
   /** 速度の倍率の欄が範囲の外。 */
   protected readonly speedInvalid = signal(false);
+  /** 空欄なら自動停止せず、値があれば仮想時刻の上限にする。 */
+  protected readonly stopAt = signal(this.carried?.stopAt ?? '');
+  protected readonly stopAtTouched = signal(false);
+  protected readonly stopAtInvalid = computed(() => {
+    const value = this.stopAt().trim();
+    return (
+      value !== '' &&
+      (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1_000_000_000_000)
+    );
+  });
   /**
    * 止めた状態で始める（全員がそろったら仮想時間 0 で止まり、再開かステップ送りを待つ）。前の実行からは持ち越さない
    * （別のタブや前の人が止めて始めたことで、気づかずに止まったまま始まらないように）。この画面の中では選んだまま。
@@ -374,11 +388,13 @@ export class RunPage {
       const speed = this.speed();
       const paused = scenario === null && this.startPaused();
       const connect = this.connectToSend();
+      const stopAt = this.stopAt().trim();
       return {
         disable: [...this.disabled()].sort(),
         manual: this.manualToSend(),
         ...(scenario !== null ? { scenario } : {}),
         ...(speed !== null ? { speed } : {}),
+        ...(!this.stopAtInvalid() && stopAt !== '' ? { stop_at_ms: Number(stopAt) } : {}),
         ...(paused ? { start_paused: true } : {}),
         ...(connect !== null ? { connect } : {}),
       };
@@ -445,6 +461,8 @@ export class RunPage {
     if (this.speedInvalid()) {
       return [$localize`速度の倍率が範囲の外です。`];
     }
+    if (this.stopAtInvalid())
+      return [$localize`停止時刻は 1 から 1000000000000 までの整数にしてください。`];
     // 選んだシナリオを送れないうちは始めない（シナリオなしの実行が始まらないように）
     const scenario = this.scenarioChoice();
     if (scenario !== null && this.chosenScenario() === null) {
@@ -581,6 +599,7 @@ export class RunPage {
         disable: [...this.disabled()],
         manual: [...this.manual()],
         speed: this.speed(),
+        stopAt: this.stopAt(),
         startPaused: this.startPaused(),
         logSource: this.logSource(),
       }),
@@ -591,8 +610,8 @@ export class RunPage {
     // 戻り、それを書く
     const own = computed(
       () => {
-        const { disable, manual, scenario, speed, start_paused } = this.intent();
-        return { disable, manual, scenario, speed, start_paused };
+        const { disable, manual, scenario, speed, start_paused, stop_at_ms } = this.intent();
+        return { disable, manual, scenario, speed, start_paused, stop_at_ms };
       },
       { equal: sameIntent },
     );
@@ -606,6 +625,7 @@ export class RunPage {
         scenario: undefined,
         speed: undefined,
         start_paused: undefined,
+        stop_at_ms: undefined,
       }),
     );
   }

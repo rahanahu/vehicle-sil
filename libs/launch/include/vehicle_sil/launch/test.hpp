@@ -90,7 +90,9 @@ struct TestArguments
     std::vector<config::ParamValue> params{};    ///< --param
     std::vector<std::string> disable{};  ///< --disable
     std::vector<std::string> enable{};   ///< --enable
-    std::optional<std::chrono::milliseconds> timeout{};          ///< --timeout-ms
+    std::optional<std::chrono::milliseconds> timeout{};
+    std::optional<std::int64_t> stop_at_ms{};
+    std::optional<std::int64_t> late_tolerance_ms{};          ///< --timeout-ms
     std::optional<std::chrono::milliseconds> describe_timeout{}; ///< --describe-timeout-ms, if not the default
     config::TimePolicy time_policy = config::TimePolicy::Realtime;               ///< --time-policy
 };

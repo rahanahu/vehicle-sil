@@ -40,8 +40,7 @@ Each ECU is a separate executable. Different people can build ECUs separately, a
 The example has 2 ECUs. The engine ECU sets the engine speed from the throttle position and sends it over J1939. The dashboard ECU receives the speed and displays it. This configuration file puts both into one simulation ([examples/ecu_main/simulation.yaml](examples/ecu_main/simulation.yaml), comments removed). Each entry in `participants` is one ECU executable.
 
 ```yaml
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
 networks:
   - name: J1939_CAN
     kind: can
@@ -59,7 +58,7 @@ These commands need a build. First build as described in "[Quick start](#quick-s
 | Command | What it does | What it starts |
 |---|---|---|
 | `vehicle_sil_launch check simulation.yaml` | Has each ECU print its own configuration and checks the configuration file against it. | Each ECU with `--describe` only. No simulation runs. |
-| `vehicle_sil_launch run simulation.yaml` | Runs the simulation until `stop_at_ms`. | The SIL Kit registry and every ECU. It ends them when the run is over. |
+| `vehicle_sil_launch run simulation.yaml --stop-at-ms 1000` | Runs the simulation until `stop_at_ms`. | The SIL Kit registry and every ECU. It ends them when the run is over. |
 | `vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml` | Sets and checks values as the steps of the scenario say. | The same processes. The exit code is 0 if every step passes. |
 | `vehicle-sil-gui simulation.live.yaml` | Runs the same 2 ECUs until you stop them, with a configuration file that has no time limit (next to `simulation.yaml`). You watch and change values in a browser. | The GUI server. Click **Start** in the GUI to start the simulation. In "Quick start", `scripts/run-gui.py` runs this command for you (in a clone of this repository only: a prebuilt tools archive has no such script). |
 

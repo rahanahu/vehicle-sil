@@ -46,7 +46,7 @@ def test_a_saved_scenario_with_names_beyond_ascii_passes_the_real_check(tmp_path
     engine, dashboard = (p.as_posix() for p in executables(EXAMPLES))
     name = "Mot\u00f6r\u00b0\u00b5\u00e9\u4e00"
     (tmp_path / "sim.yaml").write_text(
-        f"vehicle_sil_simulation: 1\nstop_at_ms: 1000\n{NETWORKS}participants:\n"
+        f"vehicle_sil_simulation: 2\nstop_at_ms: 1000\n{NETWORKS}participants:\n"
         f"  - name: {name}\n    command: ['{engine}']\n    step_ms: 10\n"
         f"  - name: Dashboard\n    command: ['{dashboard}']\n    step_ms: 5\n", encoding="utf-8")
     text, steps, _ = scenario_yaml([(0, 1, name, "engine.throttle", 10.0), (20, 2, name, "ecu.connected", True)],

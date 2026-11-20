@@ -1,10 +1,10 @@
 # A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it
 # (recordings/, made by record_launcher.py: record again after changing this file).
 # replay-fault: jitter
-vehicle_sil_simulation: 1
+vehicle_sil_simulation: 2
 # no stop_at_ms: runs until stopped; at the speed of the file, every other step starts 3 ms late (within the
 # tolerance of 10 ms): late_ms comes and goes, and no step is late
-speed: 1
+
 networks:
   - name: J1939_CAN
     kind: can

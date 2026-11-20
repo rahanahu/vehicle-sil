@@ -43,16 +43,21 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
         }
     }
     plan.base = std::move(base);
-    // The file's participants only: a bridge of --connect runs in real time, the gate does not move it.
-    const config::SimulationConfig& config = *check.config;
-    // 1 with the time lock, whatever was asked for (the check refuses another --speed).
-    const std::optional<double> speed = config::planned_speed(plan.check.time_lock, choices.speed, config.speed);
-    // With a scenario the step does not follow the speed: the same steps at every speed.
-    plan.timing = config::detail::plan_time_step(config, check, speed, plan.scenario() != nullptr);
-    plan.timing.speed = speed;
+    plan.stop_at_ms = check.run_timing ? check.stop_at_ms : choices.stop_at_ms;
+    plan.start_timeout_ms = choices.start_timeout_ms;
+    plan.stop_timeout_ms = choices.stop_timeout_ms;
+    if (check.run_timing)
+    {
+        plan.timing = *check.run_timing;
+    }
+    else
+    {
+        plan.timing = config::detail::plan_time_step(*check.config, check, plan.stop_at_ms);
+        plan.timing.speed = config::planned_speed(plan.check.time_lock, choices.speed, {});
+        plan.timing.late_tolerance_ms = choices.late_tolerance_ms;
+    }
     plan.timing.coarse_step_checked = std::any_of(plan.check.findings.begin(), plan.check.findings.end(),
                                                   [](const config::Finding& f) { return f.code == "coarse-time-step"; });
-    plan.timing.late_tolerance_ms = config::late_tolerance_ms(config);
     plan.strict = choices.strict;
     plan.holds_before_start = choices.start_paused && control_server;
     plan.log_dir = choices.log_dir;
@@ -70,10 +75,10 @@ RunOutcome planned_outcome(const RunPlan& plan)
     const config::SimulationConfig& config = plan.config();
     const config::CheckReport& check = plan.check;
     RunOutcome outcome;
-    outcome.start.timeout_ms = config.start_timeout_ms;
-    outcome.end.stop_timeout_ms = config.stop_timeout_ms;
+    outcome.start.timeout_ms = plan.start_timeout_ms;
+    outcome.end.stop_timeout_ms = plan.stop_timeout_ms;
     outcome.start.control_hello_timeout_ms = plan.control_hello_timeout.count();
-    outcome.end.stop_at_ms = config.stop_at_ms;
+    outcome.end.stop_at_ms = plan.stop_at_ms;
     outcome.time_lock = check.time_lock;
     outcome.real_time_peers = config::detail::real_time_peers(config, check);
     if (const scenario::Scenario* scenario = plan.scenario(); scenario != nullptr)

@@ -93,6 +93,9 @@ std::string read_text(const fs::path& path);
 
 std::string lf(std::string text);
 
+/// Add any run options declared in the test fixture as `# run-option --flag value`.
+std::vector<std::string> fixture_run_arguments(const fs::path& dir, const std::vector<std::string>& args);
+
 void write_file(const fs::path& path, const std::string& text);
 
 /// A YAML scalar in single quotes (a path with '\' or spaces as it is).
@@ -219,7 +222,7 @@ std::pair<std::optional<vehicle_sil::process::ExitStatus>, std::string> run_unti
         running = running || line == "[vehicle_sil_launch] simulation running";
         changed.notify_all();
     };
-    vehicle_sil::process::Process launcher(o.launch, args, std::move(options));
+    vehicle_sil::process::Process launcher(o.launch, fixture_run_arguments(dir, args), std::move(options));
     {
         std::unique_lock lock(mutex);
         // Only a last line against a hang: the start takes a second or two.
@@ -260,7 +263,7 @@ public:
             // hold(): the reader of the launcher's output stops here, and its pipes fill.
             changed_.wait(lock, [this] { return !held_; });
         };
-        std::vector<std::string> all = args;
+        std::vector<std::string> all = fixture_run_arguments(dir, args);
         if (detached)
         {
             all.insert(all.begin(), {"--run-detached", shown_path(o.launch)});

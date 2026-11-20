@@ -196,7 +196,7 @@ expect_same("the output of vehicle_sil_launch check simulation.fixed.yaml --disa
 
 # run: both end with exit code 0; only the fixed one carries the engine speed to the dashboard.
 foreach(config simulation.two-buses.yaml simulation.fixed.yaml)
-  run_in_dir(0 "${LAUNCH}" run ${config})
+  run_in_dir(0 "${LAUNCH}" run ${config} --stop-at-ms 1000)
   block_after(expected "integrate ECUs: vehicle_sil_launch run ${config}, from the line \"run:\"")
   tail_from(tail "${output}" "run: ")
   expect_same("the output of vehicle_sil_launch run ${config}, from the line 'run:'," "${tail}" "${expected}")

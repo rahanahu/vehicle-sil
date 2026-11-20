@@ -378,6 +378,12 @@ struct CheckReport
     /// check --compare-commands (check_file()): what compare_commands() found; NotAsked without it.
     CommandsCompared commands = CommandsCompared::NotAsked;
 
+    // Resolved for check/run. A file-only check has no timing.
+    std::optional<RunTiming> run_timing{};
+    std::optional<std::int64_t> stop_at_ms{};
+    std::optional<std::int64_t> start_timeout_ms{};
+    std::optional<std::int64_t> stop_timeout_ms{};
+
     [[nodiscard]] std::size_t errors() const;
     [[nodiscard]] std::size_t warnings() const;
     [[nodiscard]] std::size_t notes() const;

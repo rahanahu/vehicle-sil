@@ -7,7 +7,7 @@
   "status": 200,
   "response": {
     "file": "simulation.yaml",
-    "text": "# A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it\n# (recordings/, made by record_launcher.py: record again after changing this file).\nvehicle_sil_simulation: 1\nstop_at_ms: 1000\nnetworks:\n  - name: J1939_CAN\n    kind: can\nparticipants:\n  - name: Engine\n    command: [engine/vehicle_sil_engine_ecu]\n  - name: Dashboard\n    command: [dashboard/vehicle_sil_dashboard_ecu]\n  - name: Logger\n    command: [logger/can_logger, \"{registry_uri}\"]\n    describe: false\n    required: false\n",
-    "stamp": "c8bf88cb74bb62562a94a60bc814273c432e9e1abcbc369325a8618847b02df6"
+    "text": "# A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it\n# (recordings/, made by record_launcher.py: record again after changing this file).\nvehicle_sil_simulation: 2\n\nnetworks:\n  - name: J1939_CAN\n    kind: can\nparticipants:\n  - name: Engine\n    command: [engine/vehicle_sil_engine_ecu]\n  - name: Dashboard\n    command: [dashboard/vehicle_sil_dashboard_ecu]\n  - name: Logger\n    command: [logger/can_logger, \"{registry_uri}\"]\n    describe: false\n    required: false\n",
+    "stamp": "69fa19546e708c4aa4bb9289490d1dca2f6100b687b288f7b33940e9e491587a"
   }
 }

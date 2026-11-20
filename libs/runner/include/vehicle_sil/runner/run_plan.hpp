@@ -52,8 +52,7 @@ struct RunLimits
 /// The plan, and so the Runner, reads nothing else of the request.
 struct RunChoices
 {
-    /// RunIntent::speed: replaces the file's speed (the inner empty: as fast as possible); the
-    /// outer empty: the file's speed counts.
+    /// RunIntent::speed: omitted or explicitly fastest unless the time lock requires speed 1.
     std::optional<std::optional<double>> speed{};
     /// RunIntent::start_paused: with a control server, the run holds before the first step.
     bool start_paused = false;
@@ -65,6 +64,10 @@ struct RunChoices
     std::string timeline{};
     /// RunHost::timeout: the longest the simulation may run (wall clock); empty: no limit.
     std::optional<std::chrono::milliseconds> timeout{};
+    std::optional<std::int64_t> stop_at_ms{};
+    std::int64_t late_tolerance_ms = config::kDefaultLateToleranceMs;
+    std::int64_t start_timeout_ms = 30000;
+    std::int64_t stop_timeout_ms = 10000;
 };
 
 /// What the plan knows of one participant of the run beside its entry in the configuration: what
@@ -119,6 +122,9 @@ struct RunPlan
     std::chrono::milliseconds outside_lost_after{};
     std::optional<std::chrono::milliseconds> timeout;
     std::chrono::milliseconds control_hello_timeout{};
+    std::optional<std::int64_t> stop_at_ms{};
+    std::int64_t start_timeout_ms = 30000;
+    std::int64_t stop_timeout_ms = 10000;
 
     /// The configuration of `check` (a check that passed has one).
     [[nodiscard]] const config::SimulationConfig& config() const { return *check.config; }
@@ -139,8 +145,8 @@ struct RunPlan
 /// `scenario`: the check's scenario, null for a run without one; from a Checked, pass
 /// detail::scenario_of() (a Checked passed as the CheckReport alone loses it).
 /// The plan has copies of what it reads of `scenario`, `choices` and `limits`: none is kept.
-/// - The speed is planned_speed(): 1 with the time lock, else RunChoices::speed, else the file's.
-/// - With a scenario the step does not follow the speed: the same steps at every speed.
+/// - The speed is planned_speed(): 1 with the time lock, else RunChoices::speed, else fastest.
+/// - The step is independent of speed and whether there is a scenario.
 /// - The bridges are participants at the end of the plan's check, marked in RunPlan::members, and
 ///   do not count for the step: the step is planned from the participants of the file. One whose
 ///   role in the file is bridge is a participant of the file, and counts as any other.

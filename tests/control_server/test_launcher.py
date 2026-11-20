@@ -52,22 +52,22 @@ def setUpModule():
     SCRATCH = pathlib.Path(os.environ["VEHICLE_SIL_LAUNCH_SCRATCH"])
 
 
-def config(name: str, stop_at_ms: int) -> pathlib.Path:
-    """The simulation of examples/ecu_main with another stop_at_ms, in the scratch directory."""
+def config(name: str) -> pathlib.Path:
+    """The simulation of examples/ecu_main in the scratch directory."""
     SCRATCH.mkdir(parents=True, exist_ok=True)
     engine = (EXAMPLE / "engine" / f"vehicle_sil_engine_ecu{EXE}").as_posix()
     dashboard = (EXAMPLE / "dashboard" / f"vehicle_sil_dashboard_ecu{EXE}").as_posix()
     path = SCRATCH / f"{name}.yaml"
-    path.write_text(f"vehicle_sil_simulation: 1\nstop_at_ms: {stop_at_ms}\nnetworks:\n  - name: J1939_CAN\n    kind: can\n"
+    path.write_text(f"vehicle_sil_simulation: 2\nnetworks:\n  - name: J1939_CAN\n    kind: can\n"
                     f"participants:\n  - name: Engine\n    command: ['{engine}']\n    step_ms: 10\n"
                     f"  - name: Dashboard\n    command: ['{dashboard}']\n    step_ms: 5\n")
     return path
 
 
-def bridged_config(name: str, stop_at_ms: int) -> pathlib.Path:
+def bridged_config(name: str) -> pathlib.Path:
     """config() with a participant that is a bridge (role: bridge; here a process that only waits): the run
     is connected outside the simulation, as one with --connect."""
-    path = config(name, stop_at_ms)
+    path = config(name)
     python = pathlib.Path(sys.executable).as_posix()
     with path.open("a") as f:
         f.write(f"  - name: Gateway\n    role: bridge\n    describe: false\n    required: false\n"
@@ -176,7 +176,8 @@ def watch_to_the_end(c: Control):
 
 class LauncherTest(unittest.TestCase):
     def launch(self, name, *, stop_at_ms=1000, start_paused=False, arguments=(), address="0"):
-        return Launch(LAUNCH, config(name, stop_at_ms), start_paused=start_paused, arguments=arguments, address=address)
+        return Launch(LAUNCH, config(name), start_paused=start_paused,
+                      arguments=[*arguments, "--stop-at-ms", str(stop_at_ms)], address=address)
 
     def test_a_write_in_the_hold_and_the_commands_of_both_sources(self):
         with self.launch("hold", start_paused=True) as launch:
@@ -271,7 +272,7 @@ class LauncherTest(unittest.TestCase):
             self.assertGreater(stands["seq"], step["seq"])
 
     def test_a_variable_map_is_what_a_client_sees_and_writes(self):
-        path = config("mapped", 1000)
+        path = config("mapped")
         plain = path.read_text()
         mapped = plain.replace("    step_ms: 10\n",
                                "    step_ms: 10\n    variables:\n"
@@ -279,7 +280,7 @@ class LauncherTest(unittest.TestCase):
                                "      powertrain.krpm: { from: engine.speed, scale: 0.001 }\n")
         self.assertNotEqual(mapped, plain)
         path.write_text(mapped)
-        with Launch(LAUNCH, path, start_paused=True, address="0") as launch:
+        with Launch(LAUNCH, path, start_paused=True, arguments=["--stop-at-ms", "1000"], address="0") as launch:
             with Control(launch.address) as c:
                 self.assertEqual(c.sim.wait_paused(30).now, 0)
                 schema = {v.name: v for v in c.peer("Engine").schema}
@@ -493,7 +494,7 @@ class LauncherTest(unittest.TestCase):
         arguments = ["--control-credentials", str(credentials), "--control-tls-cert", str(TESTDATA / "server.crt"),
                      "--control-tls-key", str(TESTDATA / "server.key"), "--control-audit-log", str(audit)]
         roots = (TESTDATA / "server.crt").read_bytes()
-        with Launch(LAUNCH, config("tls", 1000), start_paused=True, arguments=arguments, address="localhost:0",
+        with Launch(LAUNCH, config("tls"), start_paused=True, arguments=arguments, address="localhost:0",
                     stderr=subprocess.PIPE) as launch:
             server = launch.wait_for_event("control_server")
             self.assertEqual((server["tls"], server["credentials"]), (True, True))
@@ -554,7 +555,7 @@ class LauncherTest(unittest.TestCase):
         # path alone can take most of them (a worktree, a CI runner's workspace).
         with tempfile.TemporaryDirectory(prefix="vsil-") as directory:
             path = pathlib.Path(directory) / "control.sock"
-            with Launch(LAUNCH, config("unix", 1000), start_paused=True, address=f"unix:{path}") as launch:
+            with Launch(LAUNCH, config("unix"), start_paused=True, address=f"unix:{path}") as launch:
                 self.assertEqual(launch.address, f"unix:{path}")
                 with Control(launch.address) as c:
                     self.assertEqual(c.sim.wait_paused(60).now, 0)
@@ -564,7 +565,7 @@ class LauncherTest(unittest.TestCase):
     # --- a scenario and the control server: the clients read and move the time, and do not write ---
 
     def test_a_scenario_gives_the_same_result_with_readers_and_without(self):
-        sim, play = config("scenario_same", 5000), scenario("same", THROTTLE_STEP)
+        sim, play = config("scenario_same"), scenario("same", THROTTLE_STEP)
 
         def played(result):
             """What the scenario's promise is about: each step's times, values and outcome."""
@@ -650,7 +651,7 @@ class LauncherTest(unittest.TestCase):
                 self.assertTrue(seen["throttle"] - {20.0}, seen["throttle"])
 
     def test_a_scenario_gives_the_same_result_when_a_client_moves_the_time(self):
-        sim, play = config("scenario_time", 5000), scenario("time", THROTTLE_STEP)
+        sim, play = config("scenario_time"), scenario("time", THROTTLE_STEP)
         out = self.run_launcher("run", "--json", "--scenario", str(play), str(sim))
         self.assertEqual(out.returncode, 0, out.stdout)
         alone = json.loads(out.stdout)["scenario"]
@@ -788,7 +789,7 @@ class LauncherTest(unittest.TestCase):
         self.assertEqual(operations, [])
 
     def test_a_run_that_is_connected_outside_refuses_what_moves_its_time_away_from_real_time(self):
-        with Launch(LAUNCH, bridged_config("time_locked", 3_600_000)) as launch:
+        with Launch(LAUNCH, bridged_config("time_locked"), arguments=["--stop-at-ms", "3600000"]) as launch:
             with Control(launch.address) as c:
                 launch.wait_for_event("phase", phase="running")
                 wait_until(self, "the engine's values", lambda: c.values("Engine") is not None and c.sim.time().now > ms(50))
@@ -850,7 +851,7 @@ class LauncherTest(unittest.TestCase):
 
     def test_with_the_time_policy_free_a_run_that_is_connected_outside_takes_the_time_commands(self):
         arguments = ["--time-policy", "free", "--speed", "1"]
-        with Launch(LAUNCH, bridged_config("time_free", 3_600_000), arguments=arguments) as launch:
+        with Launch(LAUNCH, bridged_config("time_free"), arguments=[*arguments, "--stop-at-ms", "3600000"]) as launch:
             with Control(launch.address) as c:
                 launch.wait_for_event("phase", phase="running")
                 wait_until(self, "the time goes", lambda: c.sim.time().now > ms(50))
@@ -884,7 +885,7 @@ class LauncherTest(unittest.TestCase):
         return subprocess.run([LAUNCH, *arguments], capture_output=True, text=True, timeout=120)
 
     def test_usage(self):
-        sim = str(config("usage", 1000))
+        sim = str(config("usage"))
         empty = self.credentials("# nothing here\n\n", "empty.txt")
         wrong_order = self.credentials(f"{TOKEN} tester admin\n", "wrong_order.txt")
         agent = self.credentials(f"admin tester {TOKEN}x\nagent ecu {TOKEN} Engine\n", "agent.txt")
@@ -921,7 +922,7 @@ class LauncherTest(unittest.TestCase):
             taken.bind(("127.0.0.1", 0))
             taken.listen()
             port = taken.getsockname()[1]
-            out = self.run_launcher("run", "--json", "--control", str(port), str(config("taken", 1000)))
+            out = self.run_launcher("run", "--json", "--control", str(port), str(config("taken")))
         self.assertEqual(out.returncode, 3, out.stderr)
         result = json.loads(out.stdout)
         self.assertEqual([f["code"] for f in result["findings"]], ["setup"])
@@ -932,7 +933,7 @@ class LauncherTest(unittest.TestCase):
         # which of the two runs a client reaches.
         with self.launch("first_of_two", stop_at_ms=600_000, start_paused=True) as launch:
             port = launch.address.rsplit(":", 1)[1]
-            out = self.run_launcher("run", "--json", "--control", port, str(config("second_of_two", 1000)))
+            out = self.run_launcher("run", "--json", "--control", port, str(config("second_of_two")))
             self.assertEqual(out.returncode, 3, out.stderr)
             result = json.loads(out.stdout)
             self.assertEqual([f["code"] for f in result["findings"]], ["setup"])

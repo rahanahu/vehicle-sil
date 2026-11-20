@@ -37,7 +37,7 @@ void scenario(const Options& o)
 {
     const fs::path docs = o.docs / "scenario.md";
     const fs::path dir = o.example_dir;
-    const std::vector<std::string> args{"run", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml"};
+    const std::vector<std::string> args{"run", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/throttle_step.yaml"};
     const Captured text = launch(o, args, dir);
     expect_code(text, 0, "run simulation.yaml --scenario scenarios/throttle_step.yaml");
     expect_text(text.standard_output,
@@ -112,12 +112,12 @@ void scenario(const Options& o)
                 block_after(docs, "<!-- vehicle_sil_launch check simulation.yaml --scenario throttle_mistakes.yaml -->"),
                 "check simulation.yaml --scenario throttle_mistakes.yaml");
     write_file(copy / "throttle_response.yaml", block_after(docs, "<!-- throttle_response.yaml -->"));
-    const Captured failed = launch(o, {"run", "simulation.yaml", "--scenario", "throttle_response.yaml"}, copy);
+    const Captured failed = launch(o, {"run", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "throttle_response.yaml"}, copy);
     expect_code(failed, 1, "run --scenario throttle_response.yaml");
     expect_text(failed.standard_output,
                 block_after(docs, "<!-- vehicle_sil_launch run simulation.yaml --scenario throttle_response.yaml -->"),
                 "run simulation.yaml --scenario throttle_response.yaml");
-    const Captured failed_json = launch(o, {"run", "simulation.yaml", "--scenario", "throttle_response.yaml", "--json"}, copy);
+    const Captured failed_json = launch(o, {"run", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "throttle_response.yaml", "--json"}, copy);
     expect_code(failed_json, 1, "run --scenario throttle_response.yaml --json");
     expect_text(scenario_json(lf(failed_json.standard_output)),
                 block_after(docs, "<!-- vehicle_sil_launch run simulation.yaml --scenario throttle_response.yaml --json: the scenario -->"),
@@ -167,7 +167,7 @@ void scenario_same(const Options& o)
     expect_text(run(dir, {"--speed", "4"}, "at four times real time"), fastest, "at a speed");
     expect_text(run(dir, {"--speed", "0.5"}, "at half of real time"), fastest, "at half of real time");
     // An ECU whose every step takes 3 ms of real time, and a stop_at_ms beyond the scenario.
-    const fs::path slow = scenario_ecus(o, "stop_at_ms: 2000\n", file, "slow-ms 3");
+    const fs::path slow = scenario_ecus(o, "# run-option --stop-at-ms 2000\n", file, "slow-ms 3");
     expect_text(run(slow, {}, "with a slow ECU"), fastest, "with a slow ECU");
     expect_text(run(slow, {"--speed", "8"}, "with a slow ECU at a speed"), fastest, "with a slow ECU at a speed");
 
@@ -328,14 +328,14 @@ void scenario_wave(const Options& o)
             "the failure of the wave:\n" + why);
 
     // The example with waves (examples/ecu_main/scenarios/throttle_wave.yaml) passes, without a finding.
-    const Captured example = launch(o, {"run", "--strict", "simulation.yaml", "--scenario", "scenarios/throttle_wave.yaml"}, o.example_dir);
+    const Captured example = launch(o, {"run", "--strict", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/throttle_wave.yaml"}, o.example_dir);
     expect_code(example, 0, "run --strict simulation.yaml --scenario scenarios/throttle_wave.yaml");
     require(contains(lf(example.standard_output), "\nscenario scenarios/throttle_wave.yaml (throttle wave): passed, 7 of 7 steps passed\n") &&
                 contains(lf(example.standard_output), "\npassed: 0 errors, 0 warnings, 0 notes"),
             "the example with waves:\n" + lf(example.standard_output));
 
     // The example with points from a CSV file (examples/ecu_main/scenarios/throttle_trace.yaml and .csv) passes, without a finding.
-    const Captured trace = launch(o, {"run", "--strict", "simulation.yaml", "--scenario", "scenarios/throttle_trace.yaml"}, o.example_dir);
+    const Captured trace = launch(o, {"run", "--strict", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/throttle_trace.yaml"}, o.example_dir);
     expect_code(trace, 0, "run --strict simulation.yaml --scenario scenarios/throttle_trace.yaml");
     require(contains(lf(trace.standard_output), "\nscenario scenarios/throttle_trace.yaml (throttle trace): passed, 4 of 4 steps passed\n") &&
                 contains(lf(trace.standard_output), "\npassed: 0 errors, 0 warnings, 0 notes"),
@@ -411,7 +411,7 @@ void scenario_dither(const Options& o)
     // The example with a dither (examples/ecu_main/scenarios/throttle_dither.yaml) passes, without
     // a finding; its timeline has the dither as a line of no step, and the base of every point.
     const fs::path timeline = dir / "throttle_dither.timeline.json";
-    const Captured example = launch(o, {"run", "--strict", "simulation.yaml", "--scenario", "scenarios/throttle_dither.yaml", "--timeline",
+    const Captured example = launch(o, {"run", "--strict", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/throttle_dither.yaml", "--timeline",
                                         timeline.string()},
                                     o.example_dir);
     expect_code(example, 0, "run --strict simulation.yaml --scenario scenarios/throttle_dither.yaml");
@@ -467,12 +467,12 @@ void scenario_dither(const Options& o)
                          "        \"time_source\": \"text\",\n        \"after_line\": null,\n        \"shape\": null,\n"
                          "        \"text\": \"Engine.engine.throttle = 50\"\n"),
             "the inputs and the lines in check --json:\n" + lf(checkedJson.standard_output));
-    const Captured ranJson = launch(o, {"run", "--json", "simulation.yaml", "--scenario", "scenarios/throttle_dither.yaml"}, o.example_dir);
+    const Captured ranJson = launch(o, {"run", "--json", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/throttle_dither.yaml"}, o.example_dir);
     expect_code(ranJson, 0, "run --json --scenario scenarios/throttle_dither.yaml");
     require(contains(scenario_json(lf(ranJson.standard_output)), "    ],\n" + lists),
             "the inputs and the lines in the scenario of run --json:\n" + scenario_json(lf(ranJson.standard_output)));
     // The run's output for people begins with the check's part, and has the same list there.
-    const Captured ran = launch(o, {"run", "simulation.yaml", "--scenario", "scenarios/throttle_dither.yaml"}, o.example_dir);
+    const Captured ran = launch(o, {"run", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/throttle_dither.yaml"}, o.example_dir);
     expect_code(ran, 0, "run --scenario scenarios/throttle_dither.yaml");
     require(contains(lf(ran.standard_output),
                      head + block_after(o.docs / "scenario.md",
@@ -484,9 +484,9 @@ void scenario_dither(const Options& o)
     // compares with docs/scenario.md).
     const std::vector<std::vector<std::string>> without = {
         {"check", "--json", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml"},
-        {"run", "--json", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml"},
-        {"run", "--events", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml"},
-        {"run", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml"},
+        {"run", "--json", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/throttle_step.yaml"},
+        {"run", "--events", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/throttle_step.yaml"},
+        {"run", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/throttle_step.yaml"},
     };
     for (const auto& args : without)
     {
@@ -528,12 +528,9 @@ void live(const Options& o)
         }
         return all;
     };
-    std::string expected = settings("simulation.yaml");
-    const std::string end = "stop_at_ms: 1000\n";
-    require(contains(expected, end), "simulation.yaml has the line stop_at_ms: 1000");
-    expected.replace(expected.find(end), end.size(), "speed: 1\n");
-    expect_text(settings("simulation.live.yaml"), expected,
-                "simulation.live.yaml is simulation.yaml with speed: 1 in the place of stop_at_ms");
+    const std::string base = settings("simulation.yaml");
+    require(!contains(base, "stop_at_ms:"), "workbench examples keep the stop time in the run");
+    require(!contains(settings("simulation.live.yaml"), "speed:"), "live example keeps the speed in the run");
     require(lf(read_text(dir / "simulation.live.dashboard.yaml")) == lf(read_text(dir / "simulation.dashboard.yaml")),
             "simulation.live.dashboard.yaml in the build tree is the copy of simulation.dashboard.yaml");
 
@@ -543,7 +540,7 @@ void live(const Options& o)
             "the check of simulation.live.yaml has no finding:\n" + checked.standard_output);
 
     const auto began = std::chrono::steady_clock::now();
-    Live run(o, dir, {"run", "--events", "--stdin-commands", "simulation.live.yaml"});
+    Live run(o, dir, {"run", "--events", "--stdin-commands", "--speed", "1", "simulation.live.yaml"});
     run.wait_for({"\"phase\":\"running\""});
     // Past the end of simulation.yaml. (Events of the time come at most every 100 ms.)
     std::int64_t reached = 0;
@@ -576,7 +573,7 @@ void scenario_disconnect(const Options& o)
     // Engine off its bus at 300 ms: its last speed is the one of 200 ms, so the dashboard says it is
     // lost after 500 ms (the sample of 510 ms). Back at 520 ms: the speed of 600 ms arrives.
     const auto run = [&](std::vector<std::string> more, const std::string& what) {
-        std::vector<std::string> args{"run", "simulation.yaml", "--scenario", "scenarios/engine_disconnect.yaml", "--json"};
+        std::vector<std::string> args{"run", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/engine_disconnect.yaml", "--json"};
         args.insert(args.end(), more.begin(), more.end());
         const Captured r = launch(o, args, o.example_dir);
         expect_code(r, 0, what);
@@ -615,7 +612,7 @@ void ethernet(const Options& o)
                 "passed: 0 errors, 0 warnings, 0 notes\n",
                 "check of the Ethernet example");
     const auto run = [&](std::vector<std::string> more, const std::string& what) {
-        std::vector<std::string> args{"run", "simulation.yaml", "--scenario", "scenarios/exchange.yaml", "--json"};
+        std::vector<std::string> args{"run", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/exchange.yaml", "--json"};
         args.insert(args.end(), more.begin(), more.end());
         const Captured r = launch(o, args, dir);
         expect_code(r, 0, what);
@@ -660,7 +657,7 @@ void scenario_expect_beside(const Options& o)
             "the failure of the expect beside the ramp:\n" + why);
 
     // Where the variable of the expect is absent, the ramp runs and its expect is not checked.
-    write_file(dir / "sim.yaml", "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    write_file(dir / "sim.yaml", "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                  "  - name: Body\n    command: [" + ecu(o) + "]\n"
                                  "    variables:\n      body.heater: { absent: true }\n"
                                  "  - name: Door\n    command: [" + ecu(o) + "]\n");
@@ -736,19 +733,17 @@ void scenario_failures(const Options& o)
         expect_text(scenario_json(lf(paced.standard_output)), scenario_json(j), "the failed scenario at a speed");
     }
     {
-        // stop_at_ms comes first: the step that could not be decided fails, and says what to do.
-        const fs::path dir = scenario_ecus(o, "stop_at_ms: 100\n",
+        // stop_at_ms ends the run and leaves the pending check undecided.
+        const fs::path dir = scenario_ecus(o, "# run-option --stop-at-ms 100\n",
                                            head + "  - at_ms: 50\n    set: { Body.level: 5 }\n"
                                                   "  - at_ms: 90\n    expect: { Body.level: 5 }\n"
                                                   "  - wait_until: { Body.level: 6 }\n    timeout_ms: 1000\n");
         const Captured run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml"}, dir);
-        expect_code(run, 1, "stop_at_ms before the end of the scenario");
+        expect_code(run, 5, "stop_at_ms before the end of the scenario");
         const std::string out = lf(run.standard_output);
         require(contains(out, "run: the simulation ran to stop_at_ms (100 ms) and ended\n") &&
-                    contains(out, "scenario s.yaml: FAILED, 2 of 3 steps passed\n") &&
-                    contains(out, "error: s.yaml:7: wait_until Body.level eq 6 (timeout 1000 ms): the simulation stopped at 100 ms "
-                                  "(stop_at_ms) before this step was decided (it began at 90 ms): there was not enough time for the "
-                                  "scenario; raise stop_at_ms, or leave it out (the run then ends with the scenario) [scenario-out-of-time]\n"),
+                    contains(out, "scenario s.yaml: incomplete, 2 of 3 steps passed\n") &&
+                    contains(out, "the run reached the requested stop_at_ms [scenario-incomplete]"),
                 "out of time:\n" + out);
     }
     {
@@ -818,7 +813,7 @@ void scenario_failures(const Options& o)
     {
         // An ECU hangs in a step while the scenario writes to it: --timeout-ms ends the run, and
         // the scenario's thread with it.
-        const fs::path dir = scenario_ecus(o, "stop_timeout_ms: 500\n",
+        const fs::path dir = scenario_ecus(o, "# run-option --participant-stop-timeout-ms 500\n",
                                            head + "  - set: { Body.level: 0 }\n"
                                                   "  - ramp: { Body.level: { to: 100, over_ms: 2000 } }\n",
                                            "hang-at-ms 50");

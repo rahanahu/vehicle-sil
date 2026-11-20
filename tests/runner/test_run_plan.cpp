@@ -91,16 +91,9 @@ TEST_CASE(the_plan_has_the_speed_the_run_starts_at_and_the_step_that_goes_with_i
 {
     const Speed max{};
     Given check = checked({1000, 10000});
-    // Nothing asked, nothing written: as fast as possible, in steps of 10 ms.
-    CHECK(timed(check, RunChoices{}) == (Timed{10, max}));
-    // --speed: the ECUs' steps decide the step.
+    CHECK(timed(check, RunChoices{}) == (Timed{1, max}));
     CHECK(timed(check, at_speed(Speed(1.0))) == (Timed{1, 1.0}));
-    // The file's speed, and --speed in its place (also "max").
-    check.report.config->speed = 0.5;
-    CHECK(timed(check, RunChoices{}) == (Timed{1, 0.5}));
     CHECK(timed(check, at_speed(Speed(2.0))) == (Timed{1, 2.0}));
-    CHECK(timed(check, at_speed(max)) == (Timed{10, max}));
-    // With the time lock: 1, whatever was asked for.
     check.report.time_lock.locked = true;
     CHECK(timed(check, at_speed(max)) == (Timed{1, 1.0}));
     CHECK(timed(check, at_speed(Speed(4.0))) == (Timed{1, 1.0}));
@@ -114,11 +107,23 @@ TEST_CASE(with_a_scenario_the_planned_step_is_the_same_at_every_speed)
     CHECK(timed(check, at_speed(max)) == (Timed{1, max}));
     CHECK(timed(check, at_speed(Speed(1.0))) == (Timed{1, 1.0}));
     CHECK(timed(check, at_speed(Speed(8.0))) == (Timed{1, 8.0}));
-    // Without the scenario, the step of a run as fast as possible is the coarse one.
-    CHECK(timed(checked({1000, 10000}), at_speed(max)) == (Timed{10, max}));
+    CHECK(timed(checked({1000, 10000}), at_speed(max)) == (Timed{1, max}));
     const RunPlan plan = plan_run(check.report, check.scenario_check(), "dir", RunChoices{});
     CHECK(plan.scenario() == &*plan.scenario_check->scenario);
     CHECK(plan_run(checked({1000}).report, nullptr, "dir", RunChoices{}).scenario() == nullptr);
+}
+
+TEST_CASE(only_the_run_with_a_stop_time_uses_it_to_resolve_the_step)
+{
+    Given check = checked({5000, 10000});
+    RunChoices limited;
+    limited.stop_at_ms = 1003;
+    const RunPlan run = plan_run(check.report, nullptr, "dir", limited);
+    const RunPlan free = plan_run(check.report, nullptr, "dir", RunChoices{});
+    CHECK(planned_outcome(run).end.stop_at_ms == 1003);
+    CHECK(!planned_outcome(free).end.stop_at_ms);
+    CHECK(run.timing.time_step_ms == 1);
+    CHECK(free.timing.time_step_ms == 5);
 }
 
 TEST_CASE(the_plan_holds_before_the_start_only_for_a_paused_start_with_a_control_server)
@@ -207,10 +212,6 @@ TEST_CASE(the_plan_takes_the_limits_and_the_files_as_given_and_the_outcome_begin
 {
     using namespace std::chrono_literals;
     Given check = with_scenario(checked({10000}));
-    check.report.config->stop_at_ms = 500;
-    check.report.config->start_timeout_ms = 1234;
-    check.report.config->stop_timeout_ms = 2345;
-    check.report.config->late_tolerance_ms = 77;
     RunChoices choices;
     RunLimits limits;
     {
@@ -221,6 +222,10 @@ TEST_CASE(the_plan_takes_the_limits_and_the_files_as_given_and_the_outcome_begin
               plan.timeline.empty() && plan.timeline_shown.empty() && !plan.timing.coarse_step_checked);
         CHECK(!planned_outcome(plan).end.timeout_ms);
     }
+    choices.stop_at_ms = 500;
+    choices.start_timeout_ms = 1234;
+    choices.stop_timeout_ms = 2345;
+    choices.late_tolerance_ms = 77;
     choices.strict = true;
     choices.log_dir = "logs";
     choices.timeline = "out/timeline.json";

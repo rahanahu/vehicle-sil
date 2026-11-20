@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from vehicle_sil_gui import process
+from vehicle_sil_gui.cli import stop_budget
 from vehicle_sil_gui.allowed import Facts
 from vehicle_sil_gui.hub import Client, Hub, encode
 from vehicle_sil_gui.launcher import (InvalidRequest, Launcher, check_command, check_disable, check_enable,
@@ -20,6 +21,12 @@ from vehicle_sil_gui.launcher import (InvalidRequest, Launcher, check_command, c
 from vehicle_sil_gui.paths import ConfigRoot, PathRejected
 from vehicle_sil_gui.session import Limits, Session
 from vehicle_sil_gui.static import StaticFiles
+
+
+def test_stop_budget_covers_launcher_shutdown() -> None:
+    assert stop_budget(1, None) >= 15.003
+    assert stop_budget(10_000, 1) >= 50
+    assert stop_budget(10_000, 100) == 100
 
 
 def line(event: str, seq: int, **fields) -> str:
@@ -687,12 +694,12 @@ def tree(tmp_path: Path) -> Path:
     root = tmp_path / "root"
     (root / "sub" / "deeper").mkdir(parents=True)
     (root / ".hidden").mkdir()
-    (root / "a.yaml").write_text("vehicle_sil_simulation: 1\n")
+    (root / "a.yaml").write_text("vehicle_sil_simulation: 2\n")
     (root / "b.yml").write_text("other: 1\n")
     (root / "notes.txt").write_text("x")
-    (root / "sub" / "deeper" / "c.YAML").write_text("vehicle_sil_simulation: 1\n")
+    (root / "sub" / "deeper" / "c.YAML").write_text("vehicle_sil_simulation: 2\n")
     (root / ".hidden" / "h.yaml").write_text("x")
-    (tmp_path / "outside.yaml").write_text("vehicle_sil_simulation: 1\n")
+    (tmp_path / "outside.yaml").write_text("vehicle_sil_simulation: 2\n")
     (tmp_path / "outdir").mkdir()
     (tmp_path / "outdir" / "o.yaml").write_text("x")
     os.symlink(tmp_path / "outside.yaml", root / "link-out.yaml")
@@ -1012,11 +1019,12 @@ def test_the_intent_becomes_a_request_file_and_the_launchers_arguments(tmp_path:
     with pytest.raises(InvalidRequest):
         check_strict("yes")
     intent = {"variant": "-small", "params": {"gain": 0.5}, "scenario": "scenarios/s.yaml", "disable": ["-x"],
-              "speed": 2.0}
+              "speed": 2.0, "stop_at_ms": 1003}
     assert json.loads(request_text(intent)) == {"vehicle_sil_run_request": 1, **intent}
     request = write_request_file(intent)
     try:
-        assert json.loads(request.read_text(encoding="utf-8"))["variant"] == "-small"
+        body = json.loads(request.read_text(encoding="utf-8"))
+        assert body["variant"] == "-small" and body["stop_at_ms"] == 1003
         if os.name == "posix":
             assert request.stat().st_mode & 0o777 == 0o600  # the other users of this computer cannot read it
     finally:
@@ -1038,6 +1046,7 @@ def test_a_request_field_is_checked_before_anything_is_made_of_it() -> None:
     check_fields("api/run", {"file": "a.yaml", "$schema": "x.json", "vehicle_sil_run_request": 1, "speed": 2},
                  REQUEST_FIELDS)
     check_fields("api/check", {"file": "a.yaml", "speed": 1, "start_paused": True}, REQUEST_FIELDS)
+    check_fields("api/run", {"file": "a.yaml", "stop_at_ms": 1003}, REQUEST_FIELDS)
     check_fields("api/run", {"file": "a.yaml", "connect": {"N": "x"}, "time_policy": "free"}, REQUEST_FIELDS)
     for body, code in (({"connect": None}, "invalid-field"), ({"time_policy": None}, "invalid-field"),
                        ({"variant": None}, "invalid-field"), ({"speed": None}, "invalid-field"),

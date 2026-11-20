@@ -240,7 +240,7 @@ def test_no_new_run_or_check_once_the_server_is_ending(tmp_path: Path) -> None:
             await c.post("api/run", {"file": "ignore-stop.yaml"})
             await sock.until(lambda m: m.get("event", {}).get("event") == "time")
             launchers = children(gui.proc.pid)
-            gui.proc.send_signal(signal.SIGTERM)  # waits up to 3 s for this launcher, which ignores the end
+            gui.proc.send_signal(signal.SIGTERM)  # waits for this launcher, which ignores the end
 
             async def ending() -> bool:  # a file outside the root: refused without starting anything, or 503
                 return (await c.post("api/check", {"file": "../outside.yaml"}))[0] == 503
@@ -250,6 +250,7 @@ def test_no_new_run_or_check_once_the_server_is_ending(tmp_path: Path) -> None:
                 assert status == 503 and reply["error"]["code"] == "shutting-down", (path, reply)
             return launchers
         launchers = run_async(main, gui)
+        gui.proc.send_signal(signal.SIGTERM)  # no need to wait for the escalation in this test
         assert gui.proc.wait(scaled(30)) == 0
         assert wait_until(lambda: not any(alive(p) for p in launchers), 5)
 
@@ -322,7 +323,7 @@ def test_the_end_is_bounded_by_the_stop_timeout(tmp_path: Path) -> None:
         pids = run_async(main, gui)
         s = unauthenticated_websocket(gui.port)
         try:
-            assert stop_and_time(gui.proc) < 1 + 15
+            assert stop_and_time(gui.proc, limit=90) < scaled(55 + 15)
         finally:
             s.close()
         assert wait_until(lambda: not any(alive(p) for p in pids), 5)

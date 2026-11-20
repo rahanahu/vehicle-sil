@@ -27,9 +27,10 @@ from . import __version__, control, dashboard, process
 from .allowed import Facts, Numbered, allowed as allowed_of, allowed_save, allowed_start
 from .hub import Client, Hub, Outgoing, encode
 from .launcher import (CONNECTIONS_FIELDS, DESCRIBE_FIELDS, DESCRIPTIONS_NAME, NO_CONNECTION, REQUEST_FIELDS,
-                       FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, TEXT_FIELDS, InvalidRequest, Launcher,
+                       FEATURE_RUN_STOP_AT, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, TEXT_FIELDS,
+                       InvalidRequest, Launcher,
                        check_command, check_connect, check_disable, check_enable, check_fields, check_manual,
-                       check_network, check_params, check_speed, check_strict, check_time_command, check_time_policy,
+                       check_network, check_params, check_run_millis, check_speed, check_strict, check_time_command, check_time_policy,
                        check_variant, command_line, connections_command, describe_command, hide_request,
                        hide_request_in_line, run_command, save_check_command, text_check_command,
                        write_request_file)
@@ -191,6 +192,8 @@ class Options:
     dev_origin: str | None = None
     web_dir: Path | None = None
     stop_timeout_s: float = 10.0
+    participant_start_timeout_ms: int = 30000
+    participant_stop_timeout_ms: int = 10000
     check_timeout_s: float = CHECK_TIMEOUT_S
     silent_after_s: float = SILENT_AFTER_S
     limits: Limits = field(default_factory=Limits)
@@ -677,6 +680,11 @@ class GuiServer:
         start_paused = body.get("start_paused", False)
         if not isinstance(start_paused, bool):
             raise InvalidRequest("invalid-field", "start_paused must be true or false")
+        stop_at_ms = check_run_millis(body, "stop_at_ms", 1)
+        late_tolerance_ms = check_run_millis(body, "late_tolerance_ms", 0)
+        if (stop_at_ms is not None or late_tolerance_ms is not None) and FEATURE_RUN_STOP_AT not in self.launcher.features:
+            raise Refused(409, "launcher-unsupported",
+                          "the launcher does not support the requested run timing: install one with run-stop-at")
         connect = check_connect(body.get("connect"))
         time_policy = check_time_policy(body.get("time_policy"))
         wanted, wanted_manual = body.get("disable"), body.get("manual")
@@ -686,7 +694,8 @@ class GuiServer:
                   "scenario": relative_to_config(config, scenario) if scenario is not None else None,
                   "disable": disable or None, "enable": enable or None, "manual": manual or None,
                   "strict": strict or None, "speed": speed, "start_paused": start_paused or None,
-                  "connect": connect or None, "time_policy": time_policy}
+                  "connect": connect or None, "time_policy": time_policy, "stop_at_ms": stop_at_ms,
+                  "late_tolerance_ms": late_tolerance_ms}
         return {k: v for k, v in intent.items() if v is not None}, disable, manual
 
     def _check_targets(self, relative: str, connect: dict[str, str], networks: list[str],
@@ -882,7 +891,7 @@ class GuiServer:
             control.remove(credentials)
             control.remove(timeline)
             raise
-        argv = run_command(self.launcher, config.relative, request, credentials, timeline)
+        argv = self._participant_timeouts(run_command(self.launcher, config.relative, request, credentials, timeline))
         try:
             proc = await process.start(argv, cwd=self.root.root)
         except BaseException as e:
@@ -1202,12 +1211,20 @@ class GuiServer:
             remember(self._names, (relative, intent.get("variant")), (stamp, names))
         return code, result
 
+    def _participant_timeouts(self, argv: list[str]) -> list[str]:
+        options = []
+        if self.o.participant_start_timeout_ms != 30000:
+            options += ["--participant-start-timeout-ms", str(self.o.participant_start_timeout_ms)]
+        if self.o.participant_stop_timeout_ms != 10000:
+            options += ["--participant-stop-timeout-ms", str(self.o.participant_stop_timeout_ms)]
+        return argv[:-2] + options + argv[-2:]
+
     async def _launcher_check(self, argv: list[str], request: Path, descriptions: Path | None = None,
                               text: bytes | None = None) -> tuple[int, dict]:
         """check --json with this command line (text: on its standard input); the check object, with the names of
         this server's own files (the request, the saved descriptions) hidden."""
         try:
-            code, out, err = await process.run_to_end(argv, cwd=self.root.root, timeout_s=self.o.check_timeout_s,
+            code, out, err = await process.run_to_end(self._participant_timeouts(argv), cwd=self.root.root, timeout_s=self.o.check_timeout_s,
                                                       track=self._checks, stdin=text)
         except TimeoutError:
             raise Refused(504, "check-timeout", f"the check did not end in {self.o.check_timeout_s:g} s (it was "

@@ -631,11 +631,9 @@ vehicle_sil::config::CheckReport described(const vehicle_sil::config::Simulation
     return check;
 }
 
-vehicle_sil::config::SimulationConfig config_of(std::size_t participants, std::optional<std::int64_t> stop_at_ms = std::nullopt,
-                                   std::optional<std::int64_t> time_step_ms = std::nullopt)
+vehicle_sil::config::SimulationConfig config_of(std::size_t participants, std::optional<std::int64_t> time_step_ms = std::nullopt)
 {
     vehicle_sil::config::SimulationConfig config;
-    config.stop_at_ms = stop_at_ms;
     config.time_step_ms = time_step_ms;
     for (std::size_t i = 0; i < participants; ++i)
     {
@@ -655,9 +653,9 @@ struct Plan
     friend bool operator==(const Plan&, const Plan&) = default;
 };
 
-Plan plan(const vehicle_sil::config::SimulationConfig& config, const std::vector<std::int64_t>& steps_us, std::optional<double> speed)
+Plan plan(const vehicle_sil::config::SimulationConfig& config, const std::vector<std::int64_t>& steps_us, std::optional<std::int64_t> stop_at_ms = std::nullopt)
 {
-    const RunTiming t = vehicle_sil::config::detail::plan_time_step(config, described(config, steps_us), speed);
+    const RunTiming t = vehicle_sil::config::detail::plan_time_step(config, described(config, steps_us), stop_at_ms);
     CHECK(t.time_step_written == config.time_step_ms.has_value());
     const auto us = [](const std::optional<std::int64_t>& ns) { return ns ? std::optional<std::int64_t>(*ns / 1000) : std::nullopt; };
     return Plan{t.time_step_ms, us(t.ecu_step_ns), us(t.step_delay_ns), t.fine_step_ms};
@@ -665,44 +663,38 @@ Plan plan(const vehicle_sil::config::SimulationConfig& config, const std::vector
 
 } // namespace
 
-TEST_CASE(with_a_speed_the_controller_steps_as_finely_as_the_ecus_need)
+TEST_CASE(the_controller_steps_as_finely_as_the_ecus_and_stop_time_need)
 {
-    const std::optional<double> max{};
-    // As fast as possible: 10 ms (or what of it divides stop_at_ms), whatever the ECUs' steps. How
-    // late an ECU step may run under a speed is told all the same: 1 ms steps under 10 ms, 9 ms.
-    CHECK(plan(config_of(2), {1000, 10000}, max) == (Plan{10, 1000, 9000, 1}));
-    CHECK(plan(config_of(2, 1005), {1000, 10000}, max) == (Plan{5, 1000, 4000, 1}));
     // With a speed: the greatest common divisor of 10 ms and the ECUs' steps, so that every ECU
     // step starts at a controller step.
-    CHECK(plan(config_of(2), {1000, 10000}, 1.0) == (Plan{1, 1000, 0, 1}));
-    CHECK(plan(config_of(2), {5000, 10000}, 1.0) == (Plan{5, 5000, 0, 5}));
-    CHECK(plan(config_of(2), {10000, 20000}, 0.5) == (Plan{10, 10000, 0, 10}));
+    CHECK(plan(config_of(2), {1000, 10000}) == (Plan{1, 1000, 0, 1}));
+    CHECK(plan(config_of(2), {5000, 10000}) == (Plan{5, 5000, 0, 5}));
+    CHECK(plan(config_of(2), {10000, 20000}) == (Plan{10, 10000, 0, 10}));
     // Not the smallest step: 4 and 6 ms meet only every 2 ms.
-    CHECK(plan(config_of(2), {4000, 6000}, 1.0) == (Plan{2, 4000, 0, 2}));
+    CHECK(plan(config_of(2), {4000, 6000}) == (Plan{2, 4000, 0, 2}));
     // Larger steps than 10 ms do not make it coarser (pausing and stepping stay as fine).
-    CHECK(plan(config_of(2), {20000, 100000}, 1.0) == (Plan{10, 20000, 0, 10}));
+    CHECK(plan(config_of(2), {20000, 100000}) == (Plan{10, 20000, 0, 10}));
     // And it divides stop_at_ms.
-    CHECK(plan(config_of(1, 1005), {10000}, 1.0) == (Plan{5, 10000, 0, 5}));
-    CHECK(plan(config_of(1, 1001), {5000}, 1.0) == (Plan{1, 5000, 0, 1}));
+    CHECK(plan(config_of(2), {5000, 10000}, 1003) == (Plan{1, 5000, 0, 1}));
+    CHECK(plan(config_of(1), {10000}, 1005) == (Plan{5, 10000, 0, 5}));
+    CHECK(plan(config_of(1), {5000}, 1001) == (Plan{1, 5000, 0, 1}));
     // An ECU in real time has no step and does not count; no ECU with a step: 10 ms.
-    CHECK(plan(config_of(2), {0, 5000}, 1.0) == (Plan{5, 5000, 0, 5}));
-    CHECK(plan(config_of(1), {0}, 1.0) == (Plan{10, std::nullopt, 0, 10}));
+    CHECK(plan(config_of(2), {0, 5000}) == (Plan{5, 5000, 0, 5}));
+    CHECK(plan(config_of(1), {0}) == (Plan{10, std::nullopt, 0, 10}));
     // A participant that does not describe itself (describe: false): 1 ms, to be safe, and what
     // the ECUs' steps are is not known.
-    CHECK(plan(config_of(2), {-1, 10000}, 1.0) == (Plan{1, std::nullopt, std::nullopt, 1}));
-    CHECK(plan(config_of(2), {-1, 10000}, max) == (Plan{10, std::nullopt, std::nullopt, 1}));
+    CHECK(plan(config_of(2), {-1, 10000}) == (Plan{1, std::nullopt, std::nullopt, 1}));
     // A disabled participant does not count, described or not.
     vehicle_sil::config::SimulationConfig disabled = config_of(2);
     disabled.participants[0].enabled = false;
-    CHECK(plan(disabled, {-1, 10000}, 1.0) == (Plan{10, 10000, 0, 10}));
+    CHECK(plan(disabled, {-1, 10000}) == (Plan{10, 10000, 0, 10}));
     // A step that is no whole number of milliseconds: 1 ms, and what is left is told.
-    CHECK(plan(config_of(1), {2500}, 1.0) == (Plan{1, 2500, 500, 1}));
+    CHECK(plan(config_of(1), {2500}) == (Plan{1, 2500, 500, 1}));
     // time_step_ms as written stays, with a speed too: 10 ms over 1 ms steps runs them up to 9 ms
     // late, 10 ms over 15 ms steps up to 5 ms (15 ms waits for 20 ms), 20 ms over 10 ms steps 10 ms.
-    CHECK(plan(config_of(1, std::nullopt, 10), {1000}, 1.0) == (Plan{10, 1000, 9000, 1}));
-    CHECK(plan(config_of(1, std::nullopt, 10), {15000}, 1.0) == (Plan{10, 15000, 5000, 5}));
-    CHECK(plan(config_of(1, std::nullopt, 20), {10000}, 1.0) == (Plan{20, 10000, 10000, 10}));
-    CHECK(plan(config_of(1, std::nullopt, 2), {10000}, 1.0) == (Plan{2, 10000, 0, 10}));
+    CHECK(plan(config_of(1, 10), {15000}) == (Plan{10, 15000, 5000, 5}));
+    CHECK(plan(config_of(1, 20), {10000}) == (Plan{20, 10000, 10000, 10}));
+    CHECK(plan(config_of(1, 2), {10000}) == (Plan{2, 10000, 0, 10}));
 }
 
 TEST_CASE(the_participants_in_real_time_are_the_described_ecus_and_test_participants_without_a_step)
@@ -1076,20 +1068,12 @@ TEST_CASE(a_participant_that_ended_just_before_the_stop_request_ended_by_itself)
 TEST_CASE(the_ecu_waits_for_the_start_longer_than_the_launcher)
 {
     SimulationConfig c;
-    c.start_timeout_ms = 8000;
-    c.stop_timeout_ms = 2000;
-    CHECK_EQ(vehicle_sil::runner::detail::ecu_start_timeout_ms(c, false), std::int64_t{20000});
-    CHECK(vehicle_sil::runner::detail::ecu_start_timeout_ms(c, false) > c.start_timeout_ms + c.stop_timeout_ms);
-    // A run that stands still before the first step (--start-paused with a control server) may
-    // do so for any time: the ECU's limit must not end it.
-    CHECK_EQ(vehicle_sil::runner::detail::ecu_start_timeout_ms(c, true), kMaxMillis);
-    // Never more than ecu_main takes as --start-timeout-ms.
-    c.start_timeout_ms = kMaxMillis;
-    c.stop_timeout_ms = kMaxMillis;
-    CHECK_EQ(vehicle_sil::runner::detail::ecu_start_timeout_ms(c, false), kMaxMillis);
-    c.start_timeout_ms = kMaxMillis - 10000;
-    c.stop_timeout_ms = 1;
-    CHECK_EQ(vehicle_sil::runner::detail::ecu_start_timeout_ms(c, false), kMaxMillis);
+    using vehicle_sil::runner::detail::ecu_start_timeout_ms;
+    CHECK_EQ(ecu_start_timeout_ms({}, false, 8000, 2000), std::int64_t{20000});
+    CHECK(ecu_start_timeout_ms({}, false, 8000, 2000) > 8000 + 2000);
+    CHECK_EQ(ecu_start_timeout_ms({}, true, 8000, 2000), kMaxMillis);
+    CHECK_EQ(ecu_start_timeout_ms({}, false, kMaxMillis, kMaxMillis), kMaxMillis);
+    CHECK_EQ(ecu_start_timeout_ms({}, false, kMaxMillis - 10000, 1), kMaxMillis);
 }
 
 TEST_CASE(a_participant_is_started_with_its_network_names_after_everything_else)
@@ -1104,29 +1088,28 @@ TEST_CASE(a_participant_is_started_with_its_network_names_after_everything_else)
         return out + "\n";
     };
     SimulationConfig config;
-    config.start_timeout_ms = 2000;
     ParticipantConfig p;
     p.name = "Engine";
     p.command = {"engine/engine_ecu", "--verbose"};
-    const std::string timeout = std::to_string(vehicle_sil::runner::detail::ecu_start_timeout_ms(config, false));
+    const std::string timeout = std::to_string(vehicle_sil::runner::detail::ecu_start_timeout_ms({}, false, 2000, 10000));
     const std::string own = "[--verbose][--name][Engine][--registry-uri][silkit://127.0.0.1:8500][--start-timeout-ms][" + timeout + "]";
     // Without network_names: what it was.
-    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false)), own + "\n");
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false, 2000, 10000)), own + "\n");
     // In the file's order and direction (<simulation's name>=<executable's name>), after the
     // launcher's own arguments; a line whose two names are the same is not given.
     p.network_names = {NetworkName{"VehicleCAN", "J1939_CAN", 5}, NetworkName{"Body", "Body", 6},
                        NetworkName{"Body CAN", "CAN_B", 7}};
-    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false)),
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false, 2000, 10000)),
                own + "[--map-network][VehicleCAN=J1939_CAN][--map-network][Body CAN=CAN_B]\n");
     // describe: false: after its command with the placeholders replaced, and a name that looks
     // like a placeholder stays as it is.
     p.describe = false;
     p.command = {"tools/remote", "--uri", "{registry_uri}", "--as", "{name}"};
     p.network_names = {NetworkName{"{name}", "{registry_uri}", 5}};
-    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false)),
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false, 2000, 10000)),
                "[--uri][silkit://127.0.0.1:8500][--as][Engine][--map-network][{name}={registry_uri}]\n");
     p.network_names.clear();
-    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false)), "[--uri][silkit://127.0.0.1:8500][--as][Engine]\n");
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false, false, 2000, 10000)), "[--uri][silkit://127.0.0.1:8500][--as][Engine]\n");
 }
 
 TEST_CASE(a_participant_is_started_with_its_j1939_nodes_after_its_network_names)
@@ -1144,7 +1127,7 @@ TEST_CASE(a_participant_is_started_with_its_j1939_nodes_after_its_network_names)
     ParticipantConfig p;
     p.name = "Engine2";
     p.command = {"engine/engine_ecu"};
-    const std::string timeout = std::to_string(vehicle_sil::runner::detail::ecu_start_timeout_ms(config, false));
+    const std::string timeout = std::to_string(vehicle_sil::runner::detail::ecu_start_timeout_ms({}, false, 30000, 10000));
     const std::string own = "[--name][Engine2][--registry-uri][silkit://127.0.0.1:8500][--start-timeout-ms][" + timeout + "]";
     // After --map-network, in the file's order; an entry that changes nothing is not given.
     p.network_names = {NetworkName{"VehicleCAN", "J1939_CAN", 5}};
@@ -1260,7 +1243,7 @@ TEST_CASE(with_bridges_adds_a_participant_for_each_connected_network_after_those
 {
     CheckReport check;
     check.file = "sim.yaml";
-    check.config = read_config("vehicle_sil_simulation: 1\n"
+    check.config = read_config("vehicle_sil_simulation: 2\n"
                                "networks:\n"
                                "  - { name: ETH, kind: ethernet }\n"
                                "  - { name: CAN1, kind: can }\n"

@@ -1,11 +1,11 @@
 # yaml-language-server: $schema=schema/simulation.schema.json
-# The two ECUs of simulation.yaml, to watch and to touch: the simulation runs as fast as a clock
-# (speed: 1) and has no stop_at_ms, so it runs until you stop it. Here:
-#   vehicle_sil_launch run simulation.live.yaml    # Ctrl+C stops it (the exit code is then 130)
+# The two ECUs of simulation.yaml, ready to watch and operate.
+# The GUI can run them in real time until you stop the run. Here:
+#   vehicle_sil_launch run simulation.live.yaml --speed 1  # Ctrl+C stops it (the exit code is then 130)
 #   vehicle-sil-gui simulation.live.yaml           # the browser GUI: start and stop on the screen
-# simulation.yaml is the one for scenarios and tests: as fast as possible, over at 1000 ms.
-vehicle_sil_simulation: 1
-speed: 1
+# simulation.yaml is the one for scenarios and tests: as fast as possible, use --stop-at-ms 1000 to run for one virtual second.
+vehicle_sil_simulation: 2
+
 networks:
   - name: J1939_CAN
     kind: can

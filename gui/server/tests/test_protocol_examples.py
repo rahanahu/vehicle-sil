@@ -412,8 +412,8 @@ def test_config_text_examples(tmp_path: Path) -> None:
     launcher is text_launcher.py (the check of the saved file, played; the options of saved descriptions)."""
     root = tmp_path / "root"
     shutil.copytree(CONFIGS, root)
-    (root / "latin1.yaml").write_bytes("vehicle_sil_simulation: 1\n# caf\u00e9\n".encode("latin-1"))
-    (root / "large.yaml").write_bytes(b"vehicle_sil_simulation: 1\n" + b"#" * (1024 * 1024))
+    (root / "latin1.yaml").write_bytes("vehicle_sil_simulation: 2\n# caf\u00e9\n".encode("latin-1"))
+    (root / "large.yaml").write_bytes(b"vehicle_sil_simulation: 2\n" + b"#" * (1024 * 1024))
     paths = {str(root): "/path/to/root"}
     with gui_server(tmp_path, root=root, launcher=REPLAY.parent / "text_launcher.py") as gui:
         async def talk(c: Client) -> None:
@@ -466,7 +466,7 @@ def test_config_text_examples(tmp_path: Path) -> None:
         run_async(talk, gui)
     with gui_server(tmp_path, root=root, launcher=REPLAY.parent / "text_launcher.py", args=("--no-save",)) as gui:
         async def talk_no_save(c: Client) -> None:
-            req = {"file": "simulation.yaml", "text": "vehicle_sil_simulation: 1\n", "stamp": "0" * 64}
+            req = {"file": "simulation.yaml", "text": "vehicle_sil_simulation: 2\n", "stamp": "0" * 64}
             status, body = await c.post("api/config", req)
             check_example("error-save-disabled", http("A server started with --no-save.", "POST", "api/config",
                                                       req, status, body), gui, paths)

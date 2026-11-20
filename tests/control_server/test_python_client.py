@@ -56,10 +56,10 @@ class LaunchedTest(unittest.TestCase):
         engine = (example / "engine" / f"vehicle_sil_engine_ecu{EXE}").as_posix()
         dashboard = (example / "dashboard" / f"vehicle_sil_dashboard_ecu{EXE}").as_posix()
         config = scratch / "python_client.yaml"
-        config.write_text("vehicle_sil_simulation: 1\nstop_at_ms: 600000\nnetworks:\n  - name: J1939_CAN\n    kind: can\n"
+        config.write_text("vehicle_sil_simulation: 2\nnetworks:\n  - name: J1939_CAN\n    kind: can\n"
                           f"participants:\n  - name: Engine\n    command: ['{engine}']\n    step_ms: 10\n"
                           f"  - name: Dashboard\n    command: ['{dashboard}']\n    step_ms: 5\n")
-        cls.launch = Launch(os.environ["VEHICLE_SIL_LAUNCH_EXE"], config, start_paused=True)
+        cls.launch = Launch(os.environ["VEHICLE_SIL_LAUNCH_EXE"], config, start_paused=True, arguments=["--stop-at-ms", "600000"])
         cls.addClassCleanup(cls.launch.close)
         cls.address = cls.launch.address
         cls.c = Control(cls.address)

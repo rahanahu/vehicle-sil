@@ -1045,6 +1045,10 @@ class Recorded(Player):
 
 
 def main(argv: list[str]) -> int:
+    if argv[:1] == ["check"] and any(option in argv for option in
+                                     ("--write-descriptions", "--text-from-stdin", "--compare-commands")):
+        from text_launcher import main as check_text
+        return check_text(argv)
     calls = os.environ.get("REPLAY_CALLS")
     if calls:
         with open(calls, "a", encoding="utf-8") as f:

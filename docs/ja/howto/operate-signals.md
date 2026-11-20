@@ -168,7 +168,7 @@ Python を書かずに、端末から 1 つずつ操作します。端末を 2 �
 端末 1 で、Control Server をポート 8510 で開き、時刻 0 で一時停止した状態でシミュレーションを起動します。
 
 ```sh
-build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --control 8510 \
+build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --control 8510 --stop-at-ms 1000 \
     build/linux-gcc-control/examples/ecu_main/simulation.yaml
 ```
 
@@ -252,7 +252,7 @@ seq 1794666759502165 Engine: invalid (engine.speed: an output is not writable), 
 running at 500 ms, speed max
 ```
 
-`resume` の後、端末 1 のシミュレーションは設定ファイルの `stop_at_ms`（1000 ms）まで進み、結果の表を表示して、終了コード 0 で終わります。
+`resume` の後、端末 1 のシミュレーションは指定した停止時刻（1000 ms）まで進み、結果の表を表示して、終了コード 0 で終わります。
 
 CLI のほかのコマンドは、次のとおりです。
 
@@ -494,7 +494,7 @@ c.sim.resume()
 
 - `step()` と `run_until()` の後は、`c.sim.wait_paused()` で一時停止するのを待ってから、値を読みます。
 - `step()` が使えるのは、一時停止している間だけです。
-- `pause()` で一時停止する時刻と、`step()` で進む長さは、`vehicle_sil_launch` のタイムステップ（既定 10 ms）の倍数に切り上げられます。そのため、一時停止した時刻は、`wait_paused()` が返す `now` で読みます。
+- `pause()` で一時停止する時刻と、`step()` で進む長さは、`vehicle_sil_launch` が決めたタイムステップの倍数に切り上げられます。そのため、一時停止した時刻は、`wait_paused()` が返す `now` で読みます。
 - 一時停止している間に速度を変えても、一時停止したままです。
 - 今はできない操作は `ControlError`（`code` が `FAILED_PRECONDITION`）に、引数のエラーは `INVALID_ARGUMENT` になります。
 - 一時停止するのは、仮想時間で動く ECU だけです。
@@ -523,7 +523,7 @@ expect(result["result"] == "passed" and result["simulation"] == "reached_stop_at
 仮想時間の操作だけなら、Control Server も Python も使わずに、`vehicle_sil_launch run` の標準入力からできます。変数の読み書きはできません。`--stdin-commands` を付けて起動し、1 行に 1 つの JSON を入力します。
 
 ```sh
-build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --stdin-commands \
+build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --stdin-commands --stop-at-ms 1000 \
     build/linux-gcc-control/examples/ecu_main/simulation.yaml
 ```
 

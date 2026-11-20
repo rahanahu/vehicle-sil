@@ -366,10 +366,6 @@
       "source": "{$name} を自分で起動する",
       "target": "Start {$name} yourself"
     },
-    "8500979095361014136": {
-      "source": "所見はありません。",
-      "target": "No findings."
-    },
     "1255610003415040995": {
       "source": "待たずに止めますか",
       "target": "Stop without waiting?"
@@ -385,18 +381,6 @@
     "1462265652524498832": {
       "source": " 待たずに止める ",
       "target": " Stop without waiting "
-    },
-    "4407124656831693694": {
-      "source": "誤り",
-      "target": "Error"
-    },
-    "276452183513091886": {
-      "source": "警告",
-      "target": "Warning"
-    },
-    "8685169183318841127": {
-      "source": "注記",
-      "target": "Note"
     },
     "8436857783983636398": {
       "source": "照合",
@@ -417,26 +401,6 @@
     "3446453269909162427": {
       "source": "終了",
       "target": "End"
-    },
-    "6510556546876197055": {
-      "source": "照合した",
-      "target": "Checked"
-    },
-    "5562034637386172728": {
-      "source": "照合していない",
-      "target": "Not checked"
-    },
-    "5707510582628265851": {
-      "source": "申告を読んでいない",
-      "target": "Not described"
-    },
-    "708845366436870643": {
-      "source": "照合できない",
-      "target": "Could not check"
-    },
-    "4264594946253376882": {
-      "source": "飛ばした",
-      "target": "Skipped"
     },
     "6435693854879621379": {
       "source": "外した",
@@ -478,22 +442,6 @@
       "source": "待っている",
       "target": "Waiting"
     },
-    "6202238069693779226": {
-      "source": "通った",
-      "target": "Passed"
-    },
-    "7150011854091514567": {
-      "source": "誤りがある",
-      "target": "Failed"
-    },
-    "8130600690008587170": {
-      "source": "構成ファイルを読めない",
-      "target": "Cannot read the configuration file"
-    },
-    "7595249859235127369": {
-      "source": "引数の誤り",
-      "target": "Usage error"
-    },
     "5561109810048431292": {
       "source": "成功",
       "target": "Passed"
@@ -514,9 +462,17 @@
       "source": "照合の誤りで起動しなかった",
       "target": "Not started (the check failed)"
     },
+    "8130600690008587170": {
+      "source": "構成ファイルを読めない",
+      "target": "Cannot read the configuration file"
+    },
     "7256754669943930147": {
       "source": "準備に失敗した",
       "target": "Setup failed"
+    },
+    "7595249859235127369": {
+      "source": "引数の誤り",
+      "target": "Usage error"
     },
     "7825180317461266234": {
       "source": "stop_at_ms まで動いた",
@@ -561,6 +517,10 @@
     "1124667237206414639": {
       "source": "進行中",
       "target": "In progress"
+    },
+    "6202238069693779226": {
+      "source": "通った",
+      "target": "Passed"
     },
     "4740247778648809579": {
       "source": "途中で終わった",
@@ -614,57 +574,9 @@
       "source": "実時間に遅れました。",
       "target": "Fell behind real time."
     },
-    "9205666988521086765": {
-      "source": "送った命令へのランチャーの答えを待っています。",
-      "target": "Waiting for the launcher to answer the command."
-    },
     "2831722713291175641": {
       "source": "ランチャーが命令（{$command}）に {$seconds} 秒たっても答えません。入力を読んでいないかもしれません。もう一度送れます。",
       "target": "The launcher has not answered the {$command} command in {$seconds} s. It may not be reading its input. You can send the command again."
-    },
-    "3546224380235485503": {
-      "source": "実行中は開始できません。",
-      "target": "Cannot start while a run is in progress."
-    },
-    "1267568114596218673": {
-      "source": "開始の応答を待っています。",
-      "target": "Waiting for a response to Start."
-    },
-    "8919550949935609324": {
-      "source": "サーバーと揃うまで、開始できません。",
-      "target": "Cannot start until the page is in sync with the server."
-    },
-    "2354410522725296762": {
-      "source": "サーバーと揃うまで、操作できません。",
-      "target": "Cannot be used until the page is in sync with the server."
-    },
-    "8999701534865922195": {
-      "source": "サーバーとの接続が切れています。つなぎ直したら、もう一度押してください。",
-      "target": "The connection to the server is down. Press again once it has reconnected."
-    },
-    "8870991040093646901": {
-      "source": "止めるよう頼みました。",
-      "target": "Stop requested."
-    },
-    "5201109295240183808": {
-      "source": "時刻の操作は、実行が動いている間だけできます。",
-      "target": "Time controls are available only while a run is in progress."
-    },
-    "7946498218330436713": {
-      "source": "止める実行はありません。",
-      "target": "There is no run to stop."
-    },
-    "3234026008411750840": {
-      "source": "ステップ送りは、一時停止している間だけできます。",
-      "target": "Stepping is available only while paused."
-    },
-    "8250261857910166731": {
-      "source": "一時停止していません。",
-      "target": "The simulation is not paused."
-    },
-    "555892234646771352": {
-      "source": "すでに一時停止しています。",
-      "target": "The simulation is already paused."
     },
     "7779081102281014893": {
       "source": "変数: つながった",
@@ -1026,6 +938,18 @@
       "source": "シナリオの一覧を取得できませんでした:",
       "target": "Could not get the list of scenarios:"
     },
+    "6990660249857497852": {
+      "source": "停止時刻（仮想時間 ms、任意）",
+      "target": "Stop at (virtual time in ms, optional)"
+    },
+    "4458056399147223793": {
+      "source": "空欄なら自動停止しません。1〜1000000000000 ms。",
+      "target": "Leave blank for no automatic stop. Enter 1–1000000000000 ms."
+    },
+    "729155845314121008": {
+      "source": " 停止時刻は 1 から 1000000000000 までの整数にしてください。 ",
+      "target": " Enter a whole number from 1 to 1000000000000 for the stop time. "
+    },
     "6198959273292437434": {
       "source": "止めた状態で始める（仮想時間 0 で止まり、再開かステップ送りを待つ）",
       "target": "Start paused (hold at virtual time 0 until you resume or step)"
@@ -1141,6 +1065,10 @@
     "2311313022214449144": {
       "source": "速度の倍率が範囲の外です。",
       "target": "The speed factor is out of range."
+    },
+    "4053196939421763623": {
+      "source": "停止時刻は 1 から 1000000000000 までの整数にしてください。",
+      "target": "Enter a whole number from 1 to 1000000000000 for the stop time."
     },
     "5040638888676210622": {
       "source": "シナリオの一覧を読めないので、選んだシナリオで始められません。",
@@ -1333,10 +1261,6 @@
     "6980809203121972625": {
       "source": "{$ms} ms から",
       "target": "from {$ms} ms"
-    },
-    "3190502933620390937": {
-      "source": "構成のとおり",
-      "target": "As configured"
     },
     "1254075052970929264": {
       "source": "倍率",
@@ -1546,9 +1470,97 @@
       "source": "この ECU はバスから外れています（CAN、LIN、イーサネットに送らず、受けません。ステップは動き続けます）。",
       "target": "This ECU is disconnected from the bus (it does not send or receive on CAN, LIN or Ethernet; its steps keep running)."
     },
+    "4407124656831693694": {
+      "source": "誤り",
+      "target": "Error"
+    },
+    "276452183513091886": {
+      "source": "警告",
+      "target": "Warning"
+    },
+    "8685169183318841127": {
+      "source": "注記",
+      "target": "Note"
+    },
+    "6510556546876197055": {
+      "source": "照合した",
+      "target": "Checked"
+    },
+    "5562034637386172728": {
+      "source": "照合していない",
+      "target": "Not checked"
+    },
+    "5707510582628265851": {
+      "source": "申告を読んでいない",
+      "target": "Not described"
+    },
+    "708845366436870643": {
+      "source": "照合できない",
+      "target": "Could not check"
+    },
+    "4264594946253376882": {
+      "source": "飛ばした",
+      "target": "Skipped"
+    },
+    "7150011854091514567": {
+      "source": "誤りがある",
+      "target": "Failed"
+    },
+    "9205666988521086765": {
+      "source": "送った命令へのランチャーの答えを待っています。",
+      "target": "Waiting for the launcher to answer the command."
+    },
+    "3546224380235485503": {
+      "source": "実行中は開始できません。",
+      "target": "Cannot start while a run is in progress."
+    },
+    "1267568114596218673": {
+      "source": "開始の応答を待っています。",
+      "target": "Waiting for a response to Start."
+    },
+    "8919550949935609324": {
+      "source": "サーバーと揃うまで、開始できません。",
+      "target": "Cannot start until the page is in sync with the server."
+    },
+    "2354410522725296762": {
+      "source": "サーバーと揃うまで、操作できません。",
+      "target": "Cannot be used until the page is in sync with the server."
+    },
+    "8999701534865922195": {
+      "source": "サーバーとの接続が切れています。つなぎ直したら、もう一度押してください。",
+      "target": "The connection to the server is down. Press again once it has reconnected."
+    },
+    "8870991040093646901": {
+      "source": "止めるよう頼みました。",
+      "target": "Stop requested."
+    },
+    "5201109295240183808": {
+      "source": "時刻の操作は、実行が動いている間だけできます。",
+      "target": "Time controls are available only while a run is in progress."
+    },
+    "7946498218330436713": {
+      "source": "止める実行はありません。",
+      "target": "There is no run to stop."
+    },
+    "3234026008411750840": {
+      "source": "ステップ送りは、一時停止している間だけできます。",
+      "target": "Stepping is available only while paused."
+    },
+    "8250261857910166731": {
+      "source": "一時停止していません。",
+      "target": "The simulation is not paused."
+    },
+    "555892234646771352": {
+      "source": "すでに一時停止しています。",
+      "target": "The simulation is already paused."
+    },
     "8398221335614319038": {
       "source": "（{$INTERPOLATION} 個）",
       "target": "({$INTERPOLATION})"
+    },
+    "8500979095361014136": {
+      "source": "所見はありません。",
+      "target": "No findings."
     },
     "3965728037100962026": {
       "source": "{$INTERPOLATION}–{$INTERPOLATION_1} s",

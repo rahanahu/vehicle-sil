@@ -122,6 +122,8 @@ const INTENT_FIELDS = new Set([
   'params',
   'speed',
   'start_paused',
+  'stop_at_ms',
+  'late_tolerance_ms',
   'strict',
   'connect',
   'time_policy',
@@ -312,6 +314,10 @@ export class FrontActions {
       ...(intent.params ? { params: intent.params } : {}),
       ...(intent.speed !== undefined ? { speed: intent.speed } : {}),
       ...(intent.start_paused ? { start_paused: true } : {}),
+      ...(intent.stop_at_ms !== undefined ? { stop_at_ms: intent.stop_at_ms } : {}),
+      ...(intent.late_tolerance_ms !== undefined
+        ? { late_tolerance_ms: intent.late_tolerance_ms }
+        : {}),
       ...(intent.strict ? { strict: true } : {}),
       ...(intent.connect ? { connect: intent.connect } : {}),
       ...(intent.time_policy !== undefined ? { time_policy: intent.time_policy } : {}),

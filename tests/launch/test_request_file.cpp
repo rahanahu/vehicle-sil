@@ -147,7 +147,7 @@ TEST_CASE(a_request_file_with_a_mistake_is_refused_with_the_file_and_the_line)
 {
     check_text(errors_of("{\n  \"vehicle_sil_run_request\": 1,\n  \"conect\": {}\n}"),
                "bench.json, line 3: unknown key 'conect': did you mean 'connect'? (the keys here: vehicle_sil_run_request, "
-               "variant, params, scenario, disable, enable, manual, connect, time_policy, speed, start_paused, strict)\n");
+               "variant, params, scenario, disable, enable, manual, connect, time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms)\n");
     // What the caller decides is not in the file.
     CHECK(errors_of(with("\"timeline\": \"t.json\"")).find("unknown key 'timeline'") != std::string::npos);
     CHECK(errors_of(with("\"file\": \"sim.yaml\"")).find("unknown key 'file'") != std::string::npos);
@@ -218,6 +218,19 @@ TEST_CASE(a_request_file_with_a_mistake_is_refused_with_the_file_and_the_line)
     // Every mistake at once.
     const RequestFileRead two = read_request_file(with("\"strict\": 1, \"speed\": \"fast\""), "bench.json");
     CHECK(two.findings.size() == 2);
+}
+
+TEST_CASE(a_request_file_sets_the_stop_and_late_tolerance_independently)
+{
+    const RequestFile file = file_of(with("\"stop_at_ms\": 1003, \"late_tolerance_ms\": 0"));
+    RunRequest cli;
+    cli.intent.stop_at_ms = 1005;
+    const RunRequest merged = with_request_file(cli, file, false);
+    CHECK(merged.intent.stop_at_ms == 1005);
+    CHECK(merged.intent.late_tolerance_ms == 0);
+    CHECK(merged.origin.has("late_tolerance_ms"));
+    CHECK(!errors_of(with("\"stop_at_ms\": 0")).empty());
+    CHECK(!errors_of(with("\"late_tolerance_ms\": 1.5")).empty());
 }
 
 TEST_CASE(an_argument_wins_over_the_request_file_field_by_field)
@@ -403,7 +416,7 @@ TEST_CASE(the_way_out_of_the_time_lock_names_the_request_file_for_the_networks_i
 
 TEST_CASE(a_participant_of_the_request_file_that_the_configuration_lacks_is_an_error_that_names_the_file)
 {
-    const char* const sim = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: A\n    command: [missing/a]\n";
+    const char* const sim = "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: A\n    command: [missing/a]\n";
     const RequestFile bench = *read_request_file(with("\"manual\": [\"Engine\"], \"disable\": [\"A\"]"), "bench.json").file;
     RunRequest given;
     given.intent.enable = {"Motor"};
@@ -487,7 +500,7 @@ TEST_CASE(the_findings_about_the_time_name_the_request_file_for_what_it_gave)
 
 namespace {
 
-const char* const kSim = "vehicle_sil_simulation: 1\nnetworks:\n  - name: ETH1\n    kind: ethernet\nparticipants:\n"
+const char* const kSim = "vehicle_sil_simulation: 2\nnetworks:\n  - name: ETH1\n    kind: ethernet\nparticipants:\n"
                          "  - name: A\n    command: [missing/a]\n    describe: false\n";
 const char* const kDrive = "vehicle_sil_scenario: 1\nsteps:\n  - at_ms: 0\n    set: { A.level: 1 }\n";
 

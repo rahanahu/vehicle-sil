@@ -115,7 +115,12 @@ describe('RunPage', () => {
     const fixture = await openWithFiles();
     // 起動のときのファイルがないので、一覧の最初のファイル
     const first = await checkRequest();
-    expect(first.request.body).toEqual({ file: 'bad-lines.yaml', disable: [], manual: [] });
+    expect(first.request.body).toEqual({
+      file: 'bad-lines.yaml',
+      disable: [],
+      manual: [],
+      speed: 1,
+    });
     expect(first.request.headers.get('Authorization')).toBe('Bearer secret');
     first.flush(response('check-passed'));
     await fixture.whenStable();
@@ -129,6 +134,7 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: ['Dashboard'],
       manual: [],
+      speed: 1,
     });
     again.flush(response('check-disabled'));
     await fixture.whenStable();
@@ -144,6 +150,7 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: ['Dashboard'],
       manual: ['Engine'],
+      speed: 1,
     });
   });
 
@@ -170,12 +177,40 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: [],
       manual: [],
+      speed: 1,
     });
     // 応答の要約をその場で当てる（通知を待たずに、停止が押せて、開始は押せない）
     run.flush(response('run'));
     await fixture.whenStable();
     expect(disabled(button(fixture, 'stop'))).toBe(false);
     expect(disabled(button(fixture, 'start'))).toBe(true);
+  });
+
+  it('checks and starts with the same optional stop time, and rejects invalid input', async () => {
+    const fixture = await openWithFiles();
+    (await checkRequest()).flush(response('check-passed'));
+    await fixture.whenStable();
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    input.value = '0';
+    input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new Event('blur'));
+    TestBed.tick();
+    expect(disabled(button(fixture, 'start'))).toBe(true);
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(text(fixture, 'blocked')).toContain('停止時刻');
+    input.value = '1003';
+    input.dispatchEvent(new Event('input'));
+    TestBed.tick();
+    const checked = await checkRequest();
+    expect(checked.request.body).toMatchObject({ speed: 1, stop_at_ms: 1003 });
+    expect(pageIntent.get().stop_at_ms).toBe(1003);
+    checked.flush(response('check-passed'));
+    await fixture.whenStable();
+    await sleep(10);
+    button(fixture, 'start').click();
+    expect(http.expectOne('api/run').request.body).toMatchObject({ speed: 1, stop_at_ms: 1003 });
   });
 
   it('shows under the status bar why the server refused the start (the problem of the front door)', async () => {
@@ -244,6 +279,7 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: ['Dashboard', 'Engine'],
       manual: [],
+      speed: 1,
     });
     // 応答の前に切り替える: 前の照合の応答が来るまで、次は送らない
     toggle(fixture, 'Engine');
@@ -255,6 +291,7 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: ['Dashboard'],
       manual: [],
+      speed: 1,
     });
     next.flush(response('check-disabled'));
     await fixture.whenStable();
@@ -326,6 +363,7 @@ describe('RunPage', () => {
         file: 'bad-lines.yaml',
         disable: [],
         manual: [],
+        speed: 1,
         connect: { ETH_EXT: 'fake0' },
       });
       again.flush(response('check-passed'));
@@ -338,6 +376,7 @@ describe('RunPage', () => {
         file: 'bad-lines.yaml',
         disable: [],
         manual: [],
+        speed: 1,
         connect: { ETH_EXT: 'fake0' },
       });
     } finally {
@@ -349,7 +388,7 @@ describe('RunPage', () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
     await fixture.whenStable();
-    expect(pageIntent.get()).toEqual({ disable: [], manual: [] });
+    expect(pageIntent.get()).toEqual({ disable: [], manual: [], speed: 1 });
     // 部品のネットワークに先を選んだ: 部品（約 200 ms 後）と画面（CHECK_DELAY_MS 後）が同じ意図を照合する
     pageIntent.update({ connect: { J1939_CAN: 'can0' } });
     TestBed.tick();
@@ -358,6 +397,7 @@ describe('RunPage', () => {
       connect: { J1939_CAN: 'can0' },
       disable: ['Dashboard'],
       manual: [],
+      speed: 1,
     });
     const part = (fixture.nativeElement as HTMLElement).querySelector(
       '[data-testid="connect-J1939_CAN"] vsil-connect',
@@ -370,6 +410,7 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: ['Dashboard'],
       manual: [],
+      speed: 1,
       connect: { J1939_CAN: 'can0' },
     });
     once.flush(response('check-disabled'));
@@ -487,6 +528,7 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: ['Engine'],
       manual: [],
+      speed: 1,
     });
   });
 

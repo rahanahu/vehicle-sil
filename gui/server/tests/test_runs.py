@@ -459,7 +459,7 @@ def test_checks_and_configs(tmp_path: Path) -> None:
     (root / "nested" / "deeper").mkdir(parents=True)
     shutil.copy(CONFIGS / "simulation.yaml", root / "nested" / "deeper" / "n.yml")
     (root / ".git").mkdir()
-    (root / ".git" / "x.yaml").write_text("vehicle_sil_simulation: 1\n")
+    (root / ".git" / "x.yaml").write_text("vehicle_sil_simulation: 2\n")
     with gui_server(tmp_path, root=root, env={"REPLAY_CHECK_DELAY_MS": "700"},
                     args=(str(root / "nested" / "deeper" / "n.yml"),)) as gui:
         async def main(c: Client) -> None:
@@ -508,8 +508,8 @@ def test_a_launcher_that_does_not_stop_is_killed(tmp_path: Path) -> None:
         pids = start_run(gui, "ignore-stop.yaml")
         start = time.monotonic()
         gui.proc.send_signal(signal.SIGTERM)
-        assert gui.proc.wait(scaled(20)) == 0
-        assert time.monotonic() - start < 10
+        assert gui.proc.wait(scaled(90)) == 0
+        assert time.monotonic() - start < scaled(70)
         assert wait_until(lambda: not any(alive(p) for p in pids), 5)
 
 

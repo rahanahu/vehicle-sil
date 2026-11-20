@@ -148,22 +148,11 @@ namespace detail {
 /// describe: false is not known, and not named. A bridge that run adds for --connect has the role
 /// bridge (detail::with_bridges()), so `config` may be the file's or the run's.
 [[nodiscard]] std::vector<std::string> real_time_peers(const SimulationConfig& config, const CheckReport& check);
-/// The step of the launcher's controller for a run at `speed` (empty: as fast as possible; `fine`:
-/// as with a speed, whatever the speed is: a run with a scenario, whose results must not depend on
-/// the speed), and
-/// what it means for the ECUs' steps: RunTiming's time_step_ms, time_step_written, ecu_step_ns,
-/// step_delay_ns and fine_step_ms (the rest is left as it is in the result).
-/// - time_step_ms as written, if it is.
-/// - Without a speed: config::time_step_ms() (kDefaultTimeStepMs or what of it divides stop_at_ms).
-/// - With a speed: the greatest common divisor of kDefaultTimeStepMs, stop_at_ms and the steps of
-///   the enabled ECUs as `check` has them, so that every ECU step starts at a controller step (the
-///   gate keeps real time only there); 1 ms if a participant's step is not known (describe: false)
-///   or the divisor is no whole number of milliseconds.
-/// `config` and `check` are those of the file, before detail::with_bridges(): a bridge that run adds
-/// for --connect has no description, and would be counted as a participant whose step is not known
-/// (the step falls to 1 ms). plan_run() does it so.
+/// The explicit step, or the greatest common divisor of 10 ms, the requested stop time,
+/// and the enabled synchronous ECU periods before bridges are added. Unknown periods or
+/// a non-integral millisecond divisor use 1 ms. A described asynchronous ECU is excluded.
 [[nodiscard]] RunTiming plan_time_step(const SimulationConfig& config, const CheckReport& check,
-                                       const std::optional<double>& speed, bool fine = false);
+                                      std::optional<std::int64_t> stop_at_ms = {});
 
 /// The warning coarse-time-step for `timing` (plan_time_step() with speed set as the run has it),
 /// if it applies: a speed counts (timing.speed, or steps were paced) and an ECU step starts

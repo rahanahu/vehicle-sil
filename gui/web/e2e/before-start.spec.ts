@@ -24,7 +24,11 @@ test('started paused with a control server: it waits before the first step, and 
     await expect(page.getByRole('heading', { level: 1, name: WORDS.ja.run })).toBeVisible();
     await choose(page, 'simulation.yaml');
     await page.getByTestId('start-paused').getByRole('checkbox').check();
+    const request = page.waitForRequest(
+      (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+    );
     const session = await start(page);
+    expect((await request).postDataJSON()).toMatchObject({ speed: 1, start_paused: true });
     // 最初のステップの前: サーバーの要約では、段階は waiting のままで、time はまだない
     await expect
       .poll(

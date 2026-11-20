@@ -1032,7 +1032,7 @@ def verify_command(args: argparse.Namespace) -> int:
         s.run(["cmake", "--build", "--preset", preset], cwd=project)
 
     def simulate(s: Step) -> None:
-        for command in (["check", "simulation.yaml"], ["run", "simulation.yaml"],
+        for command in (["check", "simulation.yaml"], ["run", "--stop-at-ms", "1000", "simulation.yaml"],
                         ["run", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml"]):
             s.run([launch] + command, cwd=project, timeout=300)
 

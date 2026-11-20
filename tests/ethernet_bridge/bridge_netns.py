@@ -889,7 +889,7 @@ def launch(world: World, backend: str = "packet") -> None:
     answering.start()
 
     with open(os.path.join(world.work, "sim.yaml"), "w", encoding="utf-8") as f:
-        f.write("vehicle_sil_simulation: 1\n"
+        f.write("vehicle_sil_simulation: 2\n"
                 "stop_at_ms: 600000\n"
                 "speed: 1\n"
                 "late_tolerance_ms: 60000\n"  # a busy machine: --strict would fail on behind-real-time

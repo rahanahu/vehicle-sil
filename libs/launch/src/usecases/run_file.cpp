@@ -69,6 +69,10 @@ runner::RunChoices run_choices(const RunRequest& request)
     choices.log_dir = request.host.log_dir;
     choices.timeline = request.host.timeline;
     choices.timeout = request.host.timeout;
+    choices.stop_at_ms = request.intent.stop_at_ms;
+    choices.late_tolerance_ms = request.intent.late_tolerance_ms.value_or(config::kDefaultLateToleranceMs);
+    choices.start_timeout_ms = request.host.start_timeout_ms;
+    choices.stop_timeout_ms = request.host.stop_timeout_ms;
     return choices;
 }
 

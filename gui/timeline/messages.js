@@ -212,6 +212,11 @@
     'step.title': ({ index, kind, line, status }) =>
       `Step ${index} (${kind}, line ${line}): ${status}`,
     'step.times': ({ start, decided, end }) => `start ${start}, decided ${decided}, end ${end}`,
+    'step.details': 'Step details',
+    'step.matchOnce': ({ from, to }) =>
+      `All conditions must match together at least once between ${from} and ${to}`,
+    'step.matchAt': ({ from }) => `Must match at ${from}`,
+    'step.matchThroughout': ({ from, to }) => `Must match throughout ${from} to ${to}`,
     'lane.range': ({ min, max }) => `${min} to ${max}`,
     'lane.ecuStep': ({ ms }) => `step ${ms}`,
     'lane.label': ({ name }) => `${name}: values over virtual time`,
@@ -515,6 +520,11 @@
       `手順 ${index}（${kind}、${line} 行）: ${status}`,
     'step.times': ({ start, decided, end }) =>
       `始まり ${start}、決まった ${decided}、終わり ${end}`,
+    'step.details': '手順の詳細',
+    'step.matchOnce': ({ from, to }) =>
+      `${from} から ${to} までにすべての条件が同時に成立すれば成功`,
+    'step.matchAt': ({ from }) => `${from} に成立すること`,
+    'step.matchThroughout': ({ from, to }) => `${from} から ${to} まで成立し続けること`,
     'lane.range': ({ min, max }) => `${min} から ${max}`,
     'lane.ecuStep': ({ ms }) => `刻み ${ms}`,
     'lane.label': ({ name }) => `${name}: 仮想時刻での値`,

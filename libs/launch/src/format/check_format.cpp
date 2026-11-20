@@ -554,11 +554,10 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
     w.integer("errors", static_cast<std::int64_t>(report.errors()));
     w.integer("warnings", static_cast<std::int64_t>(report.warnings()));
     w.integer("notes", static_cast<std::int64_t>(report.notes()));
-    optional_integer("stop_at_ms", report.config ? report.config->stop_at_ms : std::nullopt);
-    optional_integer("start_timeout_ms",
-                     report.config ? std::optional<std::int64_t>(report.config->start_timeout_ms) : std::nullopt);
-    optional_integer("stop_timeout_ms",
-                     report.config ? std::optional<std::int64_t>(report.config->stop_timeout_ms) : std::nullopt);
+    optional_integer("stop_at_ms", report.stop_at_ms);
+    optional_integer("time_step_ms", report.run_timing ? std::optional(report.run_timing->time_step_ms) : std::nullopt);
+    optional_integer("start_timeout_ms", report.start_timeout_ms);
+    optional_integer("stop_timeout_ms", report.stop_timeout_ms);
     optional_text("registry_uri", report.config ? report.config->registry_uri.value_or("") : std::string{});
     // check --compare-commands; null without it (also in a run's check, which compares nothing).
     optional_text("commands", report.commands == config::CommandsCompared::Same          ? "same"

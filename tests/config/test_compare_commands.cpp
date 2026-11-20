@@ -17,7 +17,7 @@ using namespace vehicle_sil::config;
 
 namespace {
 
-constexpr const char* kBase = R"(vehicle_sil_simulation: 1
+constexpr const char* kBase = R"(vehicle_sil_simulation: 2
 networks:
   - name: CAN1
     kind: can
@@ -28,7 +28,7 @@ participants:
     command: [brake_ecu]
 )";
 
-constexpr const char* kVariants = R"(vehicle_sil_simulation: 1
+constexpr const char* kVariants = R"(vehicle_sil_simulation: 2
 networks:
   - name: CAN1
     kind: can
@@ -103,7 +103,7 @@ TEST_CASE(commands_ignore_what_does_not_say_what_runs)
 {
     // Networks, external, network_names, variables, params, the times, the order of the
     // participants and of the keys, comments: none of them is a command that runs.
-    const std::string edited = R"(vehicle_sil_simulation: 1
+    const std::string edited = R"(vehicle_sil_simulation: 2
 # a comment
 stop_at_ms: 1000
 params: { idle_rpm: 800 }

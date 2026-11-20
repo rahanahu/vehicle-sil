@@ -63,7 +63,7 @@ NETWORKS = "networks:\n  - name: J1939_CAN\n    kind: can\n"
 
 def write(directory: Path, examples: Path) -> list[Path]:
     engine, dashboard = (p.as_posix() for p in executables(examples))
-    head = "vehicle_sil_simulation: 1\n"
+    head = "vehicle_sil_simulation: 2\n"
     files = {
         "simulation.yaml": head + "stop_at_ms: 1000\n" + NETWORKS
                            + _participants(engine, dashboard),
@@ -77,7 +77,7 @@ def write(directory: Path, examples: Path) -> list[Path]:
         "not-joined.yaml": head + "stop_at_ms: 1000\nstart_timeout_ms: 2500\n"
                            + NETWORKS + _participants(engine, dashboard)
                            + "  - name: Logger\n    command: [sleep, '100']\n    describe: false\n",
-        "broken.yaml": "vehicle_sil_simulation: 1\nparticipants: [\n",
+        "broken.yaml": "vehicle_sil_simulation: 2\nparticipants: [\n",
         "example.yaml": head + NETWORKS + _participants(engine, dashboard),
         "example.dashboard.yaml": (EXAMPLE / "simulation.dashboard.yaml").read_text(encoding="utf-8"),
         "panels/rpm-bar.js": (EXAMPLE / "panels" / "rpm-bar.js").read_text(encoding="utf-8"),

@@ -40,6 +40,15 @@ const READERS: Record<string, (value: unknown) => unknown> = {
 };
 
 describe('the readers accept every example of gui/protocol', () => {
+  it('keeps the simulation marker when the configuration listing sends it', () => {
+    const files = [
+      { path: 'simulation.yaml', simulation: true },
+      { path: 'scenarios/drive.yaml', simulation: false },
+      { path: 'older.yaml' },
+    ];
+    expect(readConfigList({ files, truncated: false }).files).toEqual(files);
+  });
+
   it('reads the HTTP answers, and the message of every error', async () => {
     const examples = await httpExamples();
     expect(examples.length).toBeGreaterThan(10);

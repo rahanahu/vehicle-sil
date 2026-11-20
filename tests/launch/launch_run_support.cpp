@@ -3,6 +3,8 @@
 // The definitions of the shared code that launch_run_support.hpp declares.
 #include "launch_run_support.hpp"
 
+#include "vehicle_sil/process/paths.hpp"
+
 void require(bool condition, const std::string& what)
 {
     if (!condition)
@@ -135,12 +137,60 @@ void expect_text(const std::string& actual, const std::string& expected, const s
     log("CHECK " + what + " -> ok");
 }
 
+std::vector<std::string> fixture_run_arguments(const fs::path& dir, const std::vector<std::string>& args)
+{
+    if (args.empty() || (args.front() != "check" && args.front() != "run" && args.front() != "test"))
+    {
+        return args;
+    }
+    // These comments are test harness data and have no meaning to the launcher. The fixture is
+    // still valid format 2 YAML. Keep explicit command-line arguments in control of each test.
+    for (const std::string& arg : args)
+    {
+        const fs::path file = dir / vehicle_sil::process::path_from_utf8(arg);
+        if (file.extension() != ".yaml" || !fs::is_regular_file(file))
+        {
+            continue;
+        }
+        const std::string text = read_text(file);
+        if (!contains(text, "vehicle_sil_simulation"))
+        {
+            continue;
+        }
+        std::istringstream lines(text);
+        std::string line;
+        std::vector<std::string> options;
+        while (std::getline(lines, line))
+        {
+            constexpr std::string_view prefix = "# run-option ";
+            if (!line.starts_with(prefix))
+            {
+                continue;
+            }
+            std::istringstream setting(line.substr(prefix.size()));
+            std::string flag;
+            std::string value;
+            if (setting >> flag >> value &&
+                std::none_of(args.begin(), args.end(), [&](const std::string& option) {
+                    return option == flag || option.starts_with(flag + "=");
+                }))
+            {
+                options.insert(options.end(), {flag, value});
+            }
+        }
+        std::vector<std::string> all = args;
+        all.insert(all.begin() + 1, options.begin(), options.end());
+        return all;
+    }
+    return args;
+}
+
 Captured launch(const Options& o, const std::vector<std::string>& args, const fs::path& dir)
 {
     vehicle_sil::process::CaptureOptions options;
     options.timeout = scaled_timeout(240s);
     options.working_directory = dir;
-    return vehicle_sil::process::run_captured(o.launch, args, options);
+    return vehicle_sil::process::run_captured(o.launch, fixture_run_arguments(dir, args), options);
 }
 
 void expect_code(const Captured& run, int code, const std::string& what)
@@ -353,7 +403,7 @@ std::string scenario_json(const std::string& json)
 fs::path scenario_ecus(const Options& o, const std::string& keys, const std::string& scenario, const std::string& body)
 {
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n" + keys +
+                                      "vehicle_sil_simulation: 2\n" + keys +
                                           "networks: []\n"
                                           "participants:\n"
                                           "  - name: Body\n"

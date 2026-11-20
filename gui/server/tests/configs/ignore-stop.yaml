@@ -1,8 +1,8 @@
 # A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it
 # (recordings/, made by record_launcher.py: record again after changing this file).
 # replay-fault: ignore-stop
-vehicle_sil_simulation: 1
-stop_timeout_ms: 600000  # the launcher waits for Logger until a second stop
+vehicle_sil_simulation: 2
+
 # no stop_at_ms: runs until stopped
 networks:
   - name: J1939_CAN

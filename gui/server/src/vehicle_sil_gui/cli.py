@@ -75,9 +75,12 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
                                         "http://127.0.0.1:<port> (the proxy of ng serve, Vite and the like)")
     p.add_argument("--json", action="store_true",
                    help='print {"vehicle_sil_gui": 2, "url": ..., "port": ...} on one line instead of the URL')
-    p.add_argument("--stop-timeout", type=float, default=10.0, metavar="SECONDS",
-                   help="on exit, how long to wait for a running simulation to stop before the launcher is "
-                        "asked to stop with a signal and then killed (default 10)")
+    p.add_argument("--stop-timeout", type=float, metavar="SECONDS",
+                   help="on exit, wait at least this many seconds before signaling the launcher")
+    p.add_argument("--participant-start-timeout-ms", type=int, default=30000,
+                   help="how long the launcher waits for required participants to join")
+    p.add_argument("--participant-stop-timeout-ms", type=int, default=10000,
+                   help="how long the launcher waits for participants per shutdown stage")
     p.add_argument("--check-timeout", type=float, default=CHECK_TIMEOUT_S, metavar="SECONDS",
                    help=f"how long a check (check --json, which runs each ECU's --describe) may take before it "
                         f"is stopped (default {CHECK_TIMEOUT_S:g})")
@@ -122,8 +125,11 @@ def main(argv: list[str] | None = None) -> int:
         return usage_error(f"--port {args.port}: write 0 (a free port) or a port from 1 to 65535")
     if args.port == 80:  # a browser leaves :80 out of Host and Origin, which the checks compare
         return usage_error("--port 80 cannot be used: choose another port, or 0 for a free one")
-    if args.stop_timeout < 0:
+    if args.stop_timeout is not None and args.stop_timeout < 0:
         return usage_error("--stop-timeout must be 0 or more seconds")
+    if not (1 <= args.participant_start_timeout_ms <= 10**12 and
+            1 <= args.participant_stop_timeout_ms <= 10**12):
+        return usage_error("participant timeouts must be integers from 1 to 1000000000000 ms")
     if not args.check_timeout > 0:
         return usage_error("--check-timeout must be more than 0 seconds")
     if not args.silent_after >= 1:
@@ -158,8 +164,17 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_OK
 
 
+def stop_budget(participant_stop_timeout_ms: int, requested: float | None) -> float:
+    # Two child waits and one manual-participant wait precede connection close. The latter
+    # allows the controller's 5 s shutdown and at least 5 s more (run.cpp's kCloseMargin).
+    participant_wait = participant_stop_timeout_ms / 1000
+    normal_stop_budget = 10 + 3 * participant_wait + max(5, participant_wait)
+    return max(requested or 0, normal_stop_budget)
+
+
 async def serve(args: argparse.Namespace, root: Path, initial: str | None, launcher: launcher_module.Launcher,
                 web_dir: Path | None) -> int:
+    stop_timeout_s = stop_budget(args.participant_stop_timeout_ms, args.stop_timeout)
     await launcher.probe()
     if not launcher.usable:
         for p in launcher.problems:
@@ -173,7 +188,9 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
     port = sock.getsockname()[1]
     token = secrets.token_urlsafe(32)
     server = GuiServer(Options(root=root, launcher=launcher, port=port, token=token, initial_file=initial,
-                               dev_origin=args.dev_origin, web_dir=web_dir, stop_timeout_s=args.stop_timeout,
+                               dev_origin=args.dev_origin, web_dir=web_dir, stop_timeout_s=stop_timeout_s,
+                               participant_start_timeout_ms=args.participant_start_timeout_ms,
+                               participant_stop_timeout_ms=args.participant_stop_timeout_ms,
                                check_timeout_s=args.check_timeout, silent_after_s=args.silent_after,
                                variables=not args.no_variables, save=not args.no_save,
                                command_changes_allowed=args.allow_command_changes))
@@ -207,7 +224,7 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
         return EXIT_OK
     finally:
         try:  # each step of the end is bounded; this is the bound of all of them
-            async with asyncio.timeout(args.stop_timeout + END_BUDGET_S):
+            async with asyncio.timeout(stop_timeout_s + END_BUDGET_S):
                 await server.shutdown()
         except TimeoutError:
             server.kill_all()

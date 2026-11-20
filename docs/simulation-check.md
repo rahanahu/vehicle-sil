@@ -90,7 +90,7 @@ With `--connect`, after stage 3 the check also looks for the bridge of each conn
 |---|---|
 | For the common part and for each variant laid over it (every variant, whatever `--variant` chooses): each participant's `command` (the whole list), `describe`, `manual` and `enabled` | `networks` (with `kind` and `external`), `variables`, `role`, `required`, `step_ms` |
 | For a participant with `describe: false`, also what `run` adds to its arguments for its `network_names` and `j1939_nodes` (`--map-network`, `--j1939-node`) | `network_names` and `j1939_nodes` of an ecu_main participant (`describe: true`) |
-| The names of the participants, and of the variants (not their order) | `params`, `stop_at_ms`, the timeouts, `time_step_ms`, `speed`, `late_tolerance_ms` |
+| The names of the participants, and of the variants (not their order) | `params`, `time_step_ms` |
 | `registry_uri` | Comments, the order of the keys, the files and executables that the commands name |
 
 | `commands` | When | Note |
@@ -117,15 +117,16 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | Code | Severity | Meaning | Fix |
 |---|---|---|---|
 | `syntax` | Error (unreadable) | A YAML or JSON syntax error. | Fix the syntax at the place given in the attached text. |
-| `not-a-configuration` | Error (unreadable) | The file is empty or is not a mapping. | Write a mapping with `vehicle_sil_simulation: 1`, `networks` and `participants`. |
+| `not-a-configuration` | Error (unreadable) | The file is empty or is not a mapping. | Write a mapping with `vehicle_sil_simulation: 2`, `networks` and `participants`. |
 | `encoding` | Error (unreadable) | The file is not UTF-8 (UTF-16, or it contains NUL). | Save the file as UTF-8. |
 | `unsupported-yaml` | Error (unreadable for anchors and aliases) | The file has anchors and aliases, or a second document (`---`). | Write the values out in full, and delete the second and later documents or move them to other files. |
-| `format-version` | Error (unreadable for an unknown version) | `vehicle_sil_simulation` is not 1. | Write `vehicle_sil_simulation: 1`, or use a vehicle-sil that can read the format of that file. |
+| `format-version` | Error (unreadable for an unknown version) | `vehicle_sil_simulation` is not 1. | Write `vehicle_sil_simulation: 2`, or use a vehicle-sil that can read the format of that file. |
 | `file` | Error (unreadable) | The file does not exist, is a directory, is not a regular file, is too large or cannot be opened. With `--text-from-stdin`: the text on stdin is larger than 16 MiB, or stdin cannot be read. | Check the path and the file. |
 | `missing-key` | Error | A required key is missing. | Add the key named in the finding message. |
 | `unknown-key` | Error | There is an unknown key. | Correct the key name (the finding message gives a close name and the list of valid keys). |
 | `duplicate-key` | Error | The same key appears twice. | Delete one of them. |
-| `value` | Error | A value of the wrong type or out of range, an invalid name, a placeholder in the executable path, or a `time_step_ms` that does not divide `stop_at_ms`. | Correct the value as the finding message says. |
+| `value` | Error | A value of the wrong type or out of range, an invalid name or a placeholder in the executable path. | Correct the value as the finding message says. |
+| `stop-not-on-step` | Error | The requested stop time falls between fixed controller steps. | Use a stop time on the step grid or omit the fixed step. |
 | `duplicate-name` | Error | A participant name or a network name appears twice. | Delete one of them, or rename it. |
 | `reserved-name` | Error | The participant name is `SimulationController`. | Use another name. |
 | `launcher-argument` | Error | The `command` of an ecu_main executable has an argument of `ecu_main` or a placeholder. | Delete it, or write `describe: false` if the executable is not built with `ecu_main`. |
@@ -349,8 +350,8 @@ An example with errors: it runs two instances of the same ECU, and has a wrong s
 
 <!-- two-engines.yaml -->
 ```yaml
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
+
 networks:
   - name: J1939_CAN
     kind: can
@@ -427,7 +428,8 @@ Top-level keys:
 | `variant` | The selected variant (`--variant`). Present only for a configuration file with variants (`variants`) |
 | `variants` | Array of the variant names in the configuration file. Present only for a configuration file with variants |
 | `params` | The common `params`, overridden by the `params` of the selected variant. Present only when the configuration file has `params` |
-| `stop_at_ms`, `start_timeout_ms`, `stop_timeout_ms`, `registry_uri` | Values from the configuration file |
+| `stop_at_ms`, `time_step_ms` | The requested stop time and the step resolved after Describe (virtual milliseconds) |
+| `start_timeout_ms`, `stop_timeout_ms`, `registry_uri` | The host’s participant timeouts and the configured registry URI |
 | `commands` | With `--compare-commands`: `"same"`, `"changed"` or `"not_compared"`; `null` without it and on a usage error (see [Comparing the commands that run](#comparing-the-commands-that-run---compare-commands)) |
 | `participants[]` | Array of participants (in the order of the configuration file) |
 | `networks[]` | Array of networks (in the order of the configuration file) |
@@ -435,8 +437,7 @@ Top-level keys:
 
 - If `--variant` is missing or names no variant (`result` is `"usage"`), `variant` is `null` and `variants` gives the names you can choose from.
 - Each element of `params` has `name`, `value` (`true`/`false`, a number or a string) and `from` (`configuration` or `variant`).
-- If the configuration file cannot be read, `stop_at_ms`, `start_timeout_ms`, `stop_timeout_ms` and `registry_uri` are `null`.
-- `stop_at_ms` and `registry_uri` are `null` if not written; `start_timeout_ms` and `stop_timeout_ms` have their defaults if not written.
+- If Check cannot resolve a run plan, the run timing fields are `null`. Without a specified stop time, `stop_at_ms` is `null`.
 
 Keys of each element of `participants[]`:
 
@@ -531,7 +532,7 @@ Keys of each element of `networks[]` and `findings[]`:
 
 <!-- engine-alone.yaml -->
 ```yaml
-vehicle_sil_simulation: 1
+vehicle_sil_simulation: 2
 networks:
   - name: J1939_CAN
     kind: can
@@ -553,6 +554,7 @@ participants:
   "warnings": 1,
   "notes": 0,
   "stop_at_ms": null,
+  "time_step_ms": 10,
   "start_timeout_ms": 30000,
   "stop_timeout_ms": 10000,
   "registry_uri": null,

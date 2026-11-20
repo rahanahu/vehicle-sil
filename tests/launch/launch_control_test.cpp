@@ -110,7 +110,7 @@ std::string status_text(const control::OperationResult& operation)
 void one_run(const fs::path& ecu, const fs::path& dir, int round)
 {
     const std::vector<std::string> names{"Engine", "Brake", "Body"};
-    std::string config = "vehicle_sil_simulation: 1\nstop_at_ms: 500\nnetworks: []\nparticipants:\n";
+    std::string config = "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n";
     for (const auto& name : names)
     {
         config += "  - name: " + name + "\n    command: [" + yaml_quote(process::shown_path(ecu)) + "]\n";
@@ -124,6 +124,7 @@ void one_run(const fs::path& ecu, const fs::path& dir, int round)
     std::optional<control::OperationResult> queued;
     std::size_t peers_in_window = 0;
     launch::RunRequest asked = sim_of(dir);
+    asked.intent.stop_at_ms = 500;
     vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
     vehicle_sil::runner::RunLimits limits;
@@ -192,7 +193,7 @@ void one_run(const fs::path& ecu, const fs::path& dir, int round)
 void failing_start(const fs::path& ecu, const fs::path& dir)
 {
     std::ofstream(dir / "sim.yaml", std::ios::binary)
-        << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
+        << "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
                yaml_quote(process::shown_path(ecu)) + "]\n";
     std::ofstream(dir / "Engine.behaviour") << "variables\n";
     launch::RunRequest asked = sim_of(dir);
@@ -223,7 +224,7 @@ void failing_start(const fs::path& ecu, const fs::path& dir)
 void failing_start_with_a_stop(const fs::path& ecu, const fs::path& dir)
 {
     std::ofstream(dir / "sim.yaml", std::ios::binary)
-        << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
+        << "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
                yaml_quote(process::shown_path(ecu)) + "]\n";
     std::ofstream(dir / "Engine.behaviour") << "variables\n";
     vehicle_sil::runner::StopRequests stops;
@@ -252,7 +253,7 @@ void failing_start_with_a_stop(const fs::path& ecu, const fs::path& dir)
 void hello_without_an_answer(const fs::path& ecu, const fs::path& dir)
 {
     std::ofstream(dir / "sim.yaml", std::ios::binary)
-        << "vehicle_sil_simulation: 1\nstop_at_ms: 100\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
+        << "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
                yaml_quote(process::shown_path(ecu)) + "]\n";
     std::ofstream(dir / "Engine.behaviour") << "variables\n";
     // The ECU itself runs with --no-control behind the launcher's back; the hello under its name
@@ -261,6 +262,7 @@ void hello_without_an_answer(const fs::path& ecu, const fs::path& dir)
     namespace topics = control_silkit::detail;
     std::unique_ptr<SilKit::IParticipant> impostor;
     launch::RunRequest asked = sim_of(dir);
+    asked.intent.stop_at_ms = 100;
     vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
     vehicle_sil::runner::RunLimits limits;
@@ -318,12 +320,13 @@ void hello_without_an_answer(const fs::path& ecu, const fs::path& dir)
 void an_ecu_without_variables_is_waited_for(const fs::path& ecu, const fs::path& dir)
 {
     std::ofstream(dir / "sim.yaml", std::ios::binary)
-        << "vehicle_sil_simulation: 1\nstop_at_ms: 100\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
+        << "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
                yaml_quote(process::shown_path(ecu)) + "]\n";
     fs::remove(dir / "Engine.behaviour");
     std::ofstream(dir / "test-ecu-no-control") << "\n";
     std::ofstream(dir / "test-ecu-no-variables") << "\n";
     launch::RunRequest asked = sim_of(dir);
+    asked.intent.stop_at_ms = 100;
     vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
     vehicle_sil::runner::RunLimits limits;
@@ -356,7 +359,7 @@ void an_ecu_without_variables_is_waited_for(const fs::path& ecu, const fs::path&
 void a_late_hello(const fs::path& ecu, const fs::path& dir, bool in_window)
 {
     std::ofstream(dir / "sim.yaml", std::ios::binary)
-        << "vehicle_sil_simulation: 1\nstop_at_ms: 100\nnetworks: []\nparticipants:\n  - name: Body\n    command: [" +
+        << "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: Body\n    command: [" +
                yaml_quote(process::shown_path(ecu)) +
                ", --registry-uri, \"{registry_uri}\", --name, \"{name}\"]\n    describe: false\n"
                "    variables:\n      body.fill: { from: levle }\n      body.gain: gain\n";
@@ -403,6 +406,7 @@ void a_late_hello(const fs::path& ecu, const fs::path& dir, bool in_window)
     bool hello_arrived = false;
     bool marker_arrived = false;
     launch::RunRequest asked = sim_of(dir);
+    asked.intent.stop_at_ms = 100;
     vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
     vehicle_sil::runner::RunLimits limits;
@@ -501,10 +505,10 @@ struct HoldRun
 
 HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& dir, bool stuck, bool start_paused,
                  vehicle_sil::runner::RunControls& controls, std::optional<std::chrono::milliseconds> timeout,
-                 const std::function<void()>& during_hold, const std::string& more_keys = {})
+                 const std::function<void()>& during_hold, std::int64_t stop_timeout_ms = 10000)
 {
     vehicle_sil::runner::TimeCommands& commands = controls.time();
-    std::string config = "vehicle_sil_simulation: 1\nstop_at_ms: 200\nstart_timeout_ms: 2000\n" + more_keys +
+    std::string config = std::string("vehicle_sil_simulation: 2\n") +
                          "networks: []\nparticipants:\n"
                          "  - name: Engine\n    command: [" + yaml_quote(process::shown_path(ecu)) + "]\n";
     if (stuck)
@@ -518,6 +522,10 @@ HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& di
     std::thread holder;
     HoldRun out;
     launch::RunRequest asked = sim_of(dir);
+    asked.intent.stop_at_ms = 200;
+    asked.host.start_timeout_ms = 2000;
+    asked.intent.stop_at_ms = 200;
+    asked.host.stop_timeout_ms = stop_timeout_ms;
     vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
     vehicle_sil::runner::RunLimits limits;
@@ -632,9 +640,7 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
 void the_ecus_wait_as_long_as_the_run_stands_still(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
 {
     config::SimulationConfig limits;
-    limits.start_timeout_ms = 2000;
-    limits.stop_timeout_ms = 1000;
-    const std::chrono::milliseconds without_hold{vehicle_sil::runner::detail::ecu_start_timeout_ms(limits, false)};
+    const std::chrono::milliseconds without_hold{vehicle_sil::runner::detail::ecu_start_timeout_ms({}, false, 2000, 1000)};
     require(without_hold == 13000ms, "the limit of an ECU without the hold is the one this test stands still for");
     vehicle_sil::runner::StopRequests stops;
     vehicle_sil::runner::RunControls controls(stops, true);
@@ -643,7 +649,7 @@ void the_ecus_wait_as_long_as_the_run_stands_still(const fs::path& ecu, const fs
         // The ECU began its wait before the hold: this is longer than its limit would be.
         std::this_thread::sleep_for(without_hold + 1500ms);
         require(commands.apply(resume_command(), "stdin").accepted, "the resume was refused");
-    }, "stop_timeout_ms: 1000\n");
+    }, 1000);
     require(run.held, "the run held before the first step" + shown(run));
     require(run.took >= without_hold, "the run stood still longer than the limit" + shown(run));
     require(run.report.result() == launch::RunResult::Passed && run.report.run &&
@@ -693,7 +699,7 @@ void an_interrupt_ends_the_hold(const fs::path& ecu, const fs::path& helper, con
 void a_refused_scenario_does_not_hold(const fs::path& ecu, const fs::path& dir)
 {
     std::ofstream(dir / "sim.yaml", std::ios::binary)
-        << "vehicle_sil_simulation: 1\nstart_timeout_ms: 5000\nnetworks: []\nparticipants:\n  - name: Engine\n    command: ["
+        << "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: Engine\n    command: ["
         << yaml_quote(process::shown_path(ecu)) << "]\n";
     std::ofstream(dir / "Engine.behaviour", std::ios::binary) << "sample-ms 10 scenario-variables\n";
     std::ofstream(dir / "test-ecu-step-ms", std::ios::binary) << "1\n";
@@ -704,6 +710,7 @@ void a_refused_scenario_does_not_hold(const fs::path& ecu, const fs::path& dir)
     runner::RunControls controls(stops, true, {}, true);
     controls.set_control_server(true); // the endpoint below is the run's control server
     launch::RunRequest asked = sim_of(dir);
+    asked.host.start_timeout_ms = 5000;
     asked.intent.start_paused = true;
     asked.intent.scenario = process::utf8_from_path(dir / "s.yaml");
     asked.host.timeout = 20s; // a run that held would end by this, as a failure of another kind
@@ -788,7 +795,7 @@ struct CountingEndpoint final : launch::ControlEndpoint
 void the_control_server_is_started_after_the_runs_files_and_before_the_registry(const fs::path& ecu, const fs::path& dir)
 {
     std::ofstream(dir / "sim.yaml", std::ios::binary)
-        << "vehicle_sil_simulation: 1\nstop_at_ms: 200\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
+        << "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
                yaml_quote(process::shown_path(ecu)) + "]\n";
     fs::remove(dir / "Engine.behaviour");
     const auto run = [](const launch::RunRequest& asked, const launch::RunLent& lent, std::string& lines) {
@@ -813,6 +820,7 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
             registry_said = lines.find(registry_line) != std::string::npos;
         };
         launch::RunRequest asked = sim_of(dir);
+        asked.intent.stop_at_ms = 200;
         launch::RunLent lent;
         asked.host.log_dir = dir / "logs";
         lent.control_endpoint = &endpoint;
@@ -833,6 +841,7 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
         endpoint.fail = true;
         std::string lines;
         launch::RunRequest asked = sim_of(dir);
+        asked.intent.stop_at_ms = 200;
         launch::RunLent lent;
         lent.control_endpoint = &endpoint;
         const launch::RunReport report = run(asked, lent, lines);
@@ -854,6 +863,7 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
         vehicle_sil::runner::StopRequests stops;
         stops.request(kAnySource);
         launch::RunRequest asked = sim_of(dir);
+        asked.intent.stop_at_ms = 200;
         launch::RunLent lent;
         lent.stops = &stops;
         lent.control_endpoint = &endpoint;
@@ -867,6 +877,7 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
         CountingEndpoint endpoint;
         std::string lines;
         launch::RunRequest asked = sim_of(dir);
+        asked.intent.stop_at_ms = 200;
         launch::RunLent lent;
         asked.host.log_dir = dir / "not-a-directory" / "logs";
         lent.control_endpoint = &endpoint;
@@ -883,7 +894,7 @@ void the_control_server_is_started_after_the_runs_files_and_before_the_registry(
 void what_leaves_run_file_between_the_stages_ends_the_time_commands(const fs::path& ecu, const fs::path& dir)
 {
     std::ofstream(dir / "sim.yaml", std::ios::binary)
-        << "vehicle_sil_simulation: 1\nstop_at_ms: 200\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
+        << "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
                yaml_quote(process::shown_path(ecu)) + "]\n";
     fs::remove(dir / "Engine.behaviour");
     vehicle_sil::runner::StopRequests stops;
@@ -894,6 +905,7 @@ void what_leaves_run_file_between_the_stages_ends_the_time_commands(const fs::pa
     CountingEndpoint endpoint;
     endpoint.fail_with_no_exception_type = true;
     launch::RunRequest asked = sim_of(dir);
+    asked.intent.stop_at_ms = 200;
     vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
     vehicle_sil::runner::RunLimits limits;
@@ -926,6 +938,7 @@ void a_request_for_a_control_server_is_read_before_any_check(const fs::path& dir
     vehicle_sil::runner::RunObservers watching;
     watching.write_line = [](std::string_view) {};
     launch::RunRequest asked = sim_of(dir);
+    asked.intent.stop_at_ms = 200;
     asked.host.control.emplace().listen = "not an address";
     {
         bool refused = false;

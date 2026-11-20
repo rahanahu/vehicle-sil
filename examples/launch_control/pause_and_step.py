@@ -37,7 +37,7 @@ def main() -> int:
         if not ok:
             problems.append(what)
 
-    with Launch(args.launch, args.config, start_paused=True, arguments=["--speed", "0.25"]) as launch:
+    with Launch(args.launch, args.config, start_paused=True, arguments=["--speed", "0.25", "--stop-at-ms", "1000"]) as launch:
         with Control(launch.address) as c:
             c.sim.wait_paused()
             c.sim.resume()
@@ -80,7 +80,7 @@ def main() -> int:
                    f"engine.throttle reads {engine.values['engine.throttle']} in the sample of "
                    f"{engine.time / 1e6:g} ms; engine.speed {engine.values['engine.speed']} rpm")
 
-            # The rest as fast as possible; runs on to stop_at_ms of simulation.yaml.
+            # The rest as fast as possible; runs on to the requested stop time.
             speed = c.sim.set_speed(None)
             expect(speed.speed is None and speed.paused, "the speed is max, and it still stands still")
             c.sim.resume()

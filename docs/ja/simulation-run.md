@@ -90,6 +90,10 @@ participant がシミュレーションから抜けたかどうかは、controll
 
 一時停止している間も、participant の失敗、止める要求、`--timeout-ms` は同じように扱います。
 
+停止時刻を指定したシナリオでは、停止時刻より前のサンプルと適用時刻だけを使います。開始済みの判定は、停止時刻が期限ならそこで結果を確定できます。途中で止まったシナリオは `incomplete`（`run` の終了コード 5）になります。`test` では失敗として集計します。
+
+`--participant-start-timeout-ms`（既定 30000）と `--participant-stop-timeout-ms`（既定 10000）はホスト上の実時間の待機上限です。
+
 ### `start_timeout_ms` の数え方
 
 `start_timeout_ms` は、必須の participant がそろうまでの時間の上限です。
@@ -186,7 +190,7 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 
 ## 速度を指定して動かす（`speed`）
 
-`speed`（設定ファイル）か `run --speed` を指定すると、controller はタイムステップ（`time_step_ms`）ごとに、仮想時間を実時間に合わせます。`speed: 1` では、仮想時間 1000 ms に実時間で 1000 ms 以上かかります。実時間で動く機器と一緒に動かすとき、人が画面を見ながら操作するときに使います。
+要求ファイルの `speed` か `run --speed` を指定すると、controller はタイムステップ（`time_step_ms`）ごとに、仮想時間を実時間に合わせます。`speed: 1` では、仮想時間 1000 ms に実時間で 1000 ms 以上かかります。実時間で動く機器と一緒に動かすとき、人が画面を見ながら操作するときに使います。
 
 合わせるために待つだけなので、いちばん遅い participant より速くはなりません。最速（`max`）では合わせず、遅れも数えません。
 
@@ -242,7 +246,7 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 | 10 ms | 15 ms | 5 ms |
 | 10 ms | タイムステップの倍数 | 0 |
 
-そのため、速度を指定して `time_step_ms` を書かなければ、タイムステップは、10 ms、`stop_at_ms`、ECU のステップ幅の最大公約数になります。ECU のステップ幅は、無効にしていない ECU の `--describe` の出力を照合で読んだものです。
+自動刻みは、10 ms、動作する ECU の実行周期、Run の停止時刻（指定時）の最大公約数です。周期は `--describe` から取得します。速度とシナリオの有無を変えても、同じネットワークと停止時刻であれば刻みは同じです。
 
 | ECU のステップ幅 | タイムステップ |
 |---|---|
@@ -254,13 +258,10 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 
 `time_step_ms` を書いたときは、その値を使います。速度の指定があり、ECU のステップがタイムステップの境目で始まらないときは、警告 `coarse-time-step` を出します。警告には、最大で何 ms 遅れてまとまるかと、何と書けばよいかを書きます。
 
-| 場合 | `coarse-time-step` を出す時点 |
-|---|---|
-| 設定ファイルに `speed` も書いてある | `check` の時点（`run` ではその 1 つだけ） |
-| `run --speed` で速度を変えた | `run` が、変えた速度で判断します。 |
-| 最速で始めて、途中で `speed` のコマンドを受けた | そのとき（タイムステップは始めに決まり、途中で変わりません） |
+`check` と `run` の両方が指定速度で刻みの警告を出します。最大速度で始めた Run も、速度変更でペーシングを始めたときに警告を出します。
 
-タイムステップを細かくすると、時刻同期の回数が増えます。最速のときの既定が 10 ms のままなのは、そのためです。
+ECU が 5 ms と 10 ms で動き、停止時刻を 1003 ms とした場合、自動刻みは 1 ms で、1003 ms で止まります。`time_step_ms: 5` なら、起動前に `stop-not-on-step` になります。
+
 
 ### どの速さまで出せるか
 
@@ -645,7 +646,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 - 欄ごとに、引数がファイルより優先されます（[引数と要求ファイルを一緒に使う](#引数と要求ファイルを一緒に使う)）。
 - ランチャーが読むのは、`--request` で指定したファイルだけです。設定ファイルの隣、作業ディレクトリ、ホームディレクトリ、環境変数から探すことはありません。
 - `check --request` は、`run --request` と同じ要求を照合します（[時間のロック](#外につながる実行の時間--time-policy)に関わる速さと `start_paused` も含みます）。先に照合してから実行します。`run` だけが見る規則が 1 つあります。`start_paused` には `--stdin-commands` か `--control` が要る、という規則です（どちらも `run` だけの引数のため）。
-- `test` は `--request` を受けません（使い方の誤り）。
+- `test` は `stop_at_ms` と `late_tolerance_ms` を含む要求ファイルを受け付けます。それ以外の実行条件を指定すると使い方の誤りになります。停止時刻は各ケースに適用します。
 - ファイルは JSON で書きます。ランチャーはそれより緩い書き方を読めることがありますが、約束しません。スキーマと、このファイルを読むほかのツールは、JSON だけを受けます。
 - ファイルの間違い（知らないキー、2 回書いたキー、型の違う値、`null`、別の版）は、ファイル名と行を示す使い方の誤り（終了コード 4）で、照合も起動もしません。指定しないキーは書きません。
 - JSON Schema は [schema/run-request.schema.json](../../schema/run-request.schema.json) です。`"$schema"` にそのパスを書いたファイルは、エディターが補完と検査をします。
@@ -668,6 +669,8 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `time_policy` | `"realtime"` か `"free"` | `--time-policy` |
 | `speed` | 0.000001 から 1000000 の数か `"max"` | `--speed` |
 | `start_paused` | `true` か `false`。`run` では、続ける手段として `--stdin-commands` か `--control` も要ります。 | `--start-paused` |
+| `stop_at_ms` | 自動停止する仮想時刻（1～10^12 ms の整数）。省略時は自動停止なし。 | `--stop-at-ms` |
+| `late_tolerance_ms` | 実時間の遅延許容値（0～10^12 ms の整数）。既定は 10 ms。 | `--late-tolerance-ms` |
 | `strict` | `true` か `false` | `--strict` |
 
 ### 引数と要求ファイルを一緒に使う
@@ -1292,11 +1295,12 @@ passed: 0 errors, 1 warning, 1 note
   "simulation": "reached_stop_at",
   "interrupted_by": null,
   "registry_uri": "silkit://127.0.0.1:<port>",
+  "stop_at_ms": 1000,
   "timing": {
     "speed": "max",
-    "time_step_ms": 10,
+    "time_step_ms": 5,
     "ecu_step_ms": 5,
-    "step_delay_ms": 5,
+    "step_delay_ms": 0,
     "late_tolerance_ms": 10,
     "sim_ms": 1000,
     "wall_ms": <wall_ms>,
@@ -1393,6 +1397,7 @@ passed: 0 errors, 1 warning, 1 note
     "warnings": 0,
     "notes": 0,
     "stop_at_ms": 1000,
+    "time_step_ms": 5,
     "start_timeout_ms": 30000,
     "stop_timeout_ms": 10000,
     "registry_uri": null,

@@ -377,7 +377,7 @@ void describe(const Options& o)
     const std::string helper = yaml_quote(shown_path(o.helper));
     // The default time limit for these: they end at once, also on a slow machine.
     const fs::path config = o.work_dir / "failing.yaml";
-    write_file(config, "vehicle_sil_simulation: 1\n"
+    write_file(config, "vehicle_sil_simulation: 2\n"
                        "networks: []\n"
                        "participants:\n"
                        "  - name: Usage\n"
@@ -472,7 +472,7 @@ void describe(const Options& o)
 
     // A short time limit only for the one that does not end; also one that writes without end.
     const fs::path slow = o.work_dir / "slow.yaml";
-    write_file(slow, "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    write_file(slow, "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                      "  - name: Slow\n"
                      "    command: [" + helper + ", --err, \"waiting for the bus\\n\", --sleep-ms, \"60000\"]\n"
                      "  - name: Flood\n"
@@ -499,7 +499,7 @@ void describe(const Options& o)
 void strict(const Options& o)
 {
     const fs::path config = o.work_dir / "alone.yaml";
-    write_file(config, "vehicle_sil_simulation: 1\nnetworks:\n  - name: J1939_CAN\n    kind: can\nparticipants:\n"
+    write_file(config, "vehicle_sil_simulation: 2\nnetworks:\n  - name: J1939_CAN\n    kind: can\nparticipants:\n"
                        "  - name: Engine\n    command: " + yaml_quote(shown_path(o.engine)) + "\n    step_ms: 10\n");
     const Captured passed = launch(o, {"check", shown_path(config)});
     expect_code(passed, 0, "check alone.yaml");
@@ -515,7 +515,7 @@ void strict(const Options& o)
             "check alone.yaml --json --strict wrote:\n" + json.standard_output);
     // With a participant that is not checked, the network with one participant is a note:
     // --strict passes.
-    write_file(config, "vehicle_sil_simulation: 1\nnetworks:\n  - name: J1939_CAN\n    kind: can\nparticipants:\n"
+    write_file(config, "vehicle_sil_simulation: 2\nnetworks:\n  - name: J1939_CAN\n    kind: can\nparticipants:\n"
                        "  - name: Engine\n    command: " + yaml_quote(shown_path(o.engine)) + "\n    step_ms: 10\n"
                        "  - name: Logger\n    command: [" + yaml_quote(shown_path(o.helper)) +
                        ", \"{registry_uri}\"]\n    describe: false\n");
@@ -562,7 +562,7 @@ void unreadable(const Options& o)
             "check big.yaml wrote:\n" + huge.standard_output);
 
     const fs::path syntax = o.work_dir / "syntax.yaml";
-    write_file(syntax, "vehicle_sil_simulation: 1\nnetworks: [a\nparticipants: []\n");
+    write_file(syntax, "vehicle_sil_simulation: 2\nnetworks: [a\nparticipants: []\n");
     const Captured bad = launch(o, {"check", shown_path(syntax)});
     expect_code(bad, 3, "check syntax.yaml");
     require(bad.standard_output.rfind("error: " + shown_path(syntax) + ":", 0) == 0 &&
@@ -570,10 +570,10 @@ void unreadable(const Options& o)
             "check syntax.yaml wrote:\n" + bad.standard_output);
 
     const fs::path future = o.work_dir / "future.yaml";
-    write_file(future, "vehicle_sil_simulation: 2\nsomething: new\n");
+    write_file(future, "vehicle_sil_simulation: 3\nsomething: new\n");
     const Captured later = launch(o, {"check", shown_path(future)});
     expect_code(later, 3, "check future.yaml");
-    require(contains(later.standard_output, ":1: vehicle_sil_simulation is 2, but this vehicle_sil_launch reads format 1"),
+    require(contains(later.standard_output, ":1: vehicle_sil_simulation is 3, but this vehicle_sil_launch reads format 2"),
             "check future.yaml wrote:\n" + later.standard_output);
     // A file that cannot be read comes before the names of --disable (exit 3); a name given to
     // both is a usage error all the same (exit 4).
@@ -785,7 +785,7 @@ void request(const Options& o)
     write_file(o.work_dir / "bench" / "wrong.json", "{\n  \"vehicle_sil_run_request\": 1,\n  \"conect\": {}\n}\n");
     const std::string unknown = wrong + ", line 3: unknown key 'conect': did you mean 'connect'? (the keys here: "
                                         "vehicle_sil_run_request, variant, params, scenario, disable, enable, manual, connect, "
-                                        "time_policy, speed, start_paused, strict)";
+                                        "time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms)";
     expect_usage({"check", "--request", wrong, config}, unknown);
     expect_usage({"run", "--json", "--request", wrong, config}, unknown);
     {
@@ -863,10 +863,9 @@ void request(const Options& o)
         require(contains(lf(typed2.standard_error), "error: --manual Nobody: the file has no participant with this name; its participants are "),
                 "check --manual Nobody wrote:\n" + typed2.standard_error);
     }
-    // test takes no request file.
+    // test accepts only the shared timing fields of a request file.
     expect_usage({"test", config, "--request", bench, "--scenarios", shown_path(dir / "scenarios")},
-                 "--request is for check and run: test takes its variants and scenarios itself (--variant, --scenarios); to use "
-                 "the request file, run one scenario with vehicle_sil_launch run --request <file>");
+                 "test --request takes only stop_at_ms and late_tolerance_ms; it selects its own runs");
     // --help has the option.
     const Captured help = launch(o, {"--help"});
     require(contains(help.standard_output, "\n  --request <file>            check, run, connections: what to run, from the request file <file>"),
@@ -878,7 +877,7 @@ void enabled(const Options& o)
 {
     // Ghost's executable does not exist: disabled, it is not looked for (and not run).
     const fs::path config = o.work_dir / "ghost.yaml";
-    write_file(config, "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    write_file(config, "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                        "  - name: Logger\n    command: [" + yaml_quote(shown_path(o.helper)) +
                        ", \"{registry_uri}\"]\n    describe: false\n"
                        "  - name: Ghost\n    command: [missing/ghost]\n    enabled: false\n");
@@ -943,7 +942,7 @@ void enabled(const Options& o)
 
     // A file with an error: its findings first (exit 1); a name it does not have is not said yet.
     const fs::path broken = o.work_dir / "broken.yaml";
-    write_file(broken, "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    write_file(broken, "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                        "  - name: [Logger]\n    command: [" + yaml_quote(shown_path(o.helper)) +
                        ", \"{registry_uri}\"]\n    describe: false\n"
                        "  - name: Ghost\n    command: [missing/ghost]\n    enabled: false\n");
@@ -956,7 +955,7 @@ void enabled(const Options& o)
     // A disabled entry with an error: the error fails the check, the status is disabled, and the
     // network rules still hold (Engine alone on J1939_CAN).
     const fs::path partly = o.work_dir / "partly.yaml";
-    write_file(partly, "vehicle_sil_simulation: 1\nnetworks:\n  - name: J1939_CAN\n    kind: can\nparticipants:\n"
+    write_file(partly, "vehicle_sil_simulation: 2\nnetworks:\n  - name: J1939_CAN\n    kind: can\nparticipants:\n"
                        "  - name: Engine\n    command: " + yaml_quote(shown_path(o.engine)) + "\n    step_ms: 10\n"
                        "  - name: Ghost\n    enabled: false\n");
     const Captured partial = launch(o, {"check", "--json", shown_path(partly)});
@@ -1051,7 +1050,6 @@ std::string runtime_path()
 void time_policy(const Options& o, const std::string& text)
 {
     std::string fast = text;
-    replace_all(fast, "speed: 1\n", "speed: 2\n");
     const fs::path config = o.work_dir / "connect-speed-2.yaml";
     write_file(config, fast);
     const std::string file = shown_path(config);
@@ -1062,28 +1060,28 @@ void time_policy(const Options& o, const std::string& text)
         args.insert(args.end(), policy.begin(), policy.end());
         args.push_back(file);
         const Captured locked = launch(o, args);
-        expect_code(locked, 0, "check --strict --connect of a file with speed: 2");
+        expect_code(locked, 0, "check --strict --connect with the default speed");
         require(contains(locked.standard_output,
                          "\"locked\": true,\n    \"because\": [\n      \"ETH_EXT\",\n      \"J1939_CAN1\"\n    ]") &&
                     contains(locked.standard_output, "\"severity\": \"note\",\n      \"code\": \"outside-speed-set\"") &&
-                    contains(locked.standard_output, "not at the speed 2 of the file") &&
+                    contains(locked.standard_output, "not as fast as possible") &&
                     !contains(locked.standard_output, "outside-not-real-time"),
-                "check --connect of a file with speed: 2 wrote:\n" + locked.standard_output);
+                "check --connect with the default speed wrote:\n" + locked.standard_output);
     }
     // free: not locked, but what would lock is named; a note of its own.
     const Captured free = launch(o, {"check", "--json", "--strict", "--time-policy", "free", "--connect", "ETH_EXT=eth0",
                                       "--connect", "J1939_CAN1=virtual:1", file});
-    expect_code(free, 0, "check --strict --time-policy free --connect of a file with speed: 2");
+    expect_code(free, 0, "check --strict --time-policy free --connect with the default speed");
     require(contains(free.standard_output,
                      "\"locked\": false,\n    \"because\": [\n      \"ETH_EXT\",\n      \"J1939_CAN1\"\n    ]") &&
                 contains(free.standard_output, "\"severity\": \"note\",\n      \"code\": \"outside-not-real-time\"") &&
                 !contains(free.standard_output, "outside-speed-set"),
             "check --time-policy free wrote:\n" + free.standard_output);
     const Captured table = launch(o, {"check", "--connect", "ETH_EXT=eth0", file});
-    expect_code(table, 0, "check --connect of a file with speed: 2 (text)");
-    require(contains(table.standard_output, "the run goes at speed 1 (real time), not at the speed 2 of the file") &&
+    expect_code(table, 0, "check --connect with the default speed (text)");
+    require(contains(table.standard_output, "the run goes at speed 1 (real time), not as fast as possible") &&
                 contains(table.standard_output, "[outside-speed-set]"),
-            "check --connect of a file with speed: 2 wrote:\n" + table.standard_output);
+            "check --connect with the default speed wrote:\n" + table.standard_output);
     // A role: bridge participant locks the time without --connect, also with describe: false;
     // --disable takes it out.
     const fs::path bridged = o.work_dir / "connect-own-bridge.yaml";
@@ -1114,8 +1112,7 @@ void connect(const Options& o)
                "\", \"step_ns\": 1000000, \"networks\": [" + network + "]}']";
     };
     const std::string text =
-        "vehicle_sil_simulation: 1\n"
-        "speed: 1\n"
+        "vehicle_sil_simulation: 2\n"
         "networks:\n"
         "  - name: ETH_EXT\n"
         "    kind: ethernet\n"
@@ -1184,7 +1181,7 @@ void connect(const Options& o)
                                               "      \"J1939_CAN1\"\n"
                                               "    ]\n"
                                               "  },\n") &&
-                    !contains(run.standard_output, "\"outside-"),
+                    contains(run.standard_output, "\"outside-speed-set\""),
                 what + ": the time lock:\n" + run.standard_output);
     };
     {
@@ -1380,9 +1377,8 @@ void connections(const Options& o)
     };
     const fs::path config = o.work_dir / "connections.yaml";
     write_file(config,
-               "vehicle_sil_simulation: 1\n"
-               "speed: 1\n"
-               "networks:\n"
+               "vehicle_sil_simulation: 2\n"
+                      "networks:\n"
                "  - name: ETH_EXT\n"
                "    kind: ethernet\n"
                "  - name: J1939_CAN1\n"
@@ -1693,7 +1689,7 @@ void descriptions(const Options& o)
     write_file(dir / "dashboard.json", description("Dashboard", eth("02:00:00:00:00:02") + ", " + can));
     write_file(dir / "gateway.json", description("Gateway", can));
     const std::string helper = yaml_quote(shown_path(o.helper));
-    const std::string text = "vehicle_sil_simulation: 1\n"
+    const std::string text = "vehicle_sil_simulation: 2\n"
                              "networks:\n"
                              "  - name: ETH\n"
                              "    kind: ethernet\n"
@@ -1856,7 +1852,7 @@ void descriptions(const Options& o)
     expect_code(large, 3, "check --text-from-stdin with more than 16 MiB");
     require(contains(large.standard_output, "the text on standard input (--text-from-stdin) is larger than 16 MiB"),
             "check --text-from-stdin with more than 16 MiB:\n" + large.standard_output);
-    static constexpr char kWithNul[] = "vehicle_sil_simulation: 1\n\0networks: []\n";
+    static constexpr char kWithNul[] = "vehicle_sil_simulation: 2\n\0networks: []\n";
     const Captured nul = launch_with_input(o, {"check", "--json", "--text-from-stdin", file},
                                            std::string(kWithNul, sizeof kWithNul - 1));
     expect_code(nul, 3, "check --text-from-stdin with NUL");
@@ -1904,7 +1900,7 @@ void compare(const Options& o)
                    "{\"vehicle_sil_ecu\": 1, \"name\": \"" + name + "\", \"step_ns\": 1000000, \"networks\": [" + can + "]}");
     }
     const std::string helper = yaml_quote(shown_path(o.helper));
-    const std::string text = "vehicle_sil_simulation: 1\n"
+    const std::string text = "vehicle_sil_simulation: 2\n"
                              "networks:\n"
                              "  - name: CAN1\n"
                              "    kind: can\n"

@@ -334,9 +334,9 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
                 c.required_participants.push_back(p.name);
             }
         }
-        if (ctx_.config.stop_at_ms)
+        if (ctx_.plan.stop_at_ms)
         {
-            c.stop_at = std::chrono::milliseconds(*ctx_.config.stop_at_ms);
+            c.stop_at = std::chrono::milliseconds(*ctx_.plan.stop_at_ms);
         }
         // The time gate, always (also as fast as possible): one way for every run. The step
         // divides stop_at_ms (detail::plan_time_step()), so the simulation stops at stop_at_ms
@@ -348,7 +348,7 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
         // The controller's stop may wait that long by itself for a participant that does not
         // answer; beyond it, stop_timeout_ms as for every other wait of the end, but never
         // less than kCloseMargin: a small stop_timeout_ms must not cut a close that is going on.
-        close_limit_ = c.shutdown_timeout + std::max(std::chrono::milliseconds(ctx_.config.stop_timeout_ms), kCloseMargin);
+        close_limit_ = c.shutdown_timeout + std::max(std::chrono::milliseconds(ctx_.plan.stop_timeout_ms), kCloseMargin);
         connection->controller = std::make_unique<SimulationController>(std::move(c));
         // Before the participants start and before the controller does: SIL Kit connects the
         // publisher of the commands and the subscribers with every participant that starts.

@@ -1768,7 +1768,6 @@ TEST_CASE(check_connections_takes_the_backend_of_a_target_and_refuses_one_the_os
 TEST_CASE(check_connections_without_a_target_connects_nothing)
 {
     Setup s = connect_setup();
-    s.config.speed.reset();
     FakeTools fake;
     const ConnectTools tools = fake.tools();
     const ConnectCheck check = check_connections(s.config, s.results, {{"ETH", "none"}, {"CAN1", "none"}, {"BODY", "none"}}, &tools);
@@ -1956,7 +1955,6 @@ TEST_CASE(check_connections_says_when_a_bridge_is_missing_or_fails)
 TEST_CASE(check_connections_leaves_the_time_to_time_lock_findings)
 {
     Setup s = connect_setup();
-    s.config.speed.reset();
     FakeTools fake;
     check_text(connect_lines(s, {{"ETH", "eth0"}, {"CAN1", "virtual:1"}}, fake), "");
 }

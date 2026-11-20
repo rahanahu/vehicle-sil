@@ -47,6 +47,14 @@ std::vector<config::Finding> validate_request(const RunRequest& request, Request
     const std::string scenario = origin.named("scenario", "--scenario", "scenario");
     const std::string paused = origin.named("start_paused", "--start-paused", "start_paused");
     std::vector<config::Finding> out;
+    if (intent.stop_at_ms && (*intent.stop_at_ms < 1 || *intent.stop_at_ms > config::kMaxMillis))
+    {
+        out.push_back(usage("stop_at_ms must be an integer from 1 to 1000000000000"));
+    }
+    if (intent.late_tolerance_ms && (*intent.late_tolerance_ms < 0 || *intent.late_tolerance_ms > config::kMaxMillis))
+    {
+        out.push_back(usage("late_tolerance_ms must be an integer from 0 to 1000000000000"));
+    }
     // A test takes the scenarios of its own list: a parameter is for each of them.
     // The params of a request file wait for a run with a scenario: one file serves runs with and without.
     const bool typed = std::any_of(intent.params.begin(), intent.params.end(),
@@ -164,6 +172,16 @@ RunRequest with_request_file(const RunRequest& arguments, const RequestFile& fil
     {
         intent.strict = true;
         origin.fields.emplace_back("strict");
+    }
+    if (!given.stop_at_ms && written.stop_at_ms)
+    {
+        intent.stop_at_ms = written.stop_at_ms;
+        origin.fields.emplace_back("stop_at_ms");
+    }
+    if (!given.late_tolerance_ms && written.late_tolerance_ms)
+    {
+        intent.late_tolerance_ms = written.late_tolerance_ms;
+        origin.fields.emplace_back("late_tolerance_ms");
     }
     bool params = false;
     for (const config::ParamValue& param : written.params)

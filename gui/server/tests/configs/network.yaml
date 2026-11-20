@@ -2,8 +2,8 @@
 # (recordings/, made by record_launcher.py: record again after changing this file).
 # The registry on all addresses (not a loopback address): the launcher notes it, and Dashboard, started by the
 # user, is to be started with VEHICLE_SIL_LISTEN_ON_NETWORK=1 in its environment.
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
+
 registry_uri: silkit://0.0.0.0:8501
 networks:
   - name: J1939_CAN

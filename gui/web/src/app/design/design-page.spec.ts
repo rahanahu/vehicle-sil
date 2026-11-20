@@ -96,7 +96,7 @@ describe('DesignPage', () => {
     expect(element(fixture).querySelector('[data-testid="not-described"]')).toBeNull();
     expect(
       (element(fixture).querySelector('[data-testid="design-text"]') as HTMLTextAreaElement).value,
-    ).toContain('vehicle_sil_simulation: 1');
+    ).toContain('vehicle_sil_simulation: 2');
   });
 
   it('says that a passed check did not compare a participant it could not describe, and describes again', async () => {

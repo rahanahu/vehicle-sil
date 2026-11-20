@@ -81,11 +81,11 @@ Every `api/` request has these conditions:
 | `GET api/app` | Information on the server and the launcher, whether variables can be read and written, limits | `app.json` |
 | `GET api/configs` | The `.yaml` / `.yml` files under the root | `configs.json` |
 | `GET api/config?file=<configuration file>` | The text of the file and the SHA-256 of its bytes: `{file, text, stamp}` ("The text of a configuration file" below) | `config.json` |
-| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
 | `POST api/check` `{file, text, variant, strict}` | The check of an unsaved text of the file, which starts no process; the same response as above | `check-text.json` |
 | `POST api/describe` `{file, variant}` | `{file, variant, exit_code, check}`: a check of the saved file that describes its executables again, for the checks of its text | `describe.json` |
 | `POST api/config` `{file, text, stamp}` | `{file, stamp}`: saves the text as the file, by default only an edit that keeps the commands that run ("Saving a text (`POST api/config`)" below) | `save-config.json`, `error-commands-changed.json` |
-| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{session}` (the summary of the run it started), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `run-connect.json`, `error-check-failed.json` |
+| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{session}` (the summary of the run it started), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `run-connect.json`, `error-check-failed.json` |
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: where that network can be connected on this computer ("Connecting a network outside" below) | `connections.json` |
 | `POST api/stop` `{force}` | `{session}` (the current summary; `null` if there is no run) | `stop*.json` |
 | `POST api/time` `{command, ms, value, id}` | `{session_id, command}` (the command sent to the launcher, with its `id` if given) | `time.json` |
@@ -122,7 +122,7 @@ A participant in `manual` is passed to the launcher in its request file; the lau
 Send `speed` (`"max"` or a number) and `start_paused` (`true`) to choose them. Leave the field out to choose nothing: a `null` is refused (400 `invalid-field`), as for every field.
 
 - A numeric `speed` must be from `limits.speed_min` to `limits.speed_max` (the same as the launcher).
-- Without `speed`, the `speed` of the configuration file applies.
+- Without `speed`, the run goes as fast as possible unless the external real-time lock sets speed 1.
 
 ### Connecting a network outside (`connect`, `time_policy`, `api/connections`)
 
@@ -140,6 +140,8 @@ A `can` or `ethernet` network can be connected to a real bus through the launche
 - The launcher's `outside` events and `outside[]` of its `state` event are passed on as they are.
 
 ### Check and start (`api/check`, `api/run`)
+
+The optional integer `stop_at_ms` (1–10^12) gives the virtual stop time. The optional integer `late_tolerance_ms` (0–10^12) gives the wall-clock pacing tolerance. Both fields apply to Check and Start. The server returns HTTP 409 `launcher-unsupported` if either field is sent to a launcher without the `run-stop-at` feature. Check returns the resolved `time_step_ms` after Describe.
 
 - **Start**: of several `api/run` requests sent at the same time, only one starts a run. The others get 409 `starting` while a run is starting, and 409 `already-running` while a run is running. A screen applies the summary in the response to its local state at once (the `session` that arrives later has the same contents).
 - **Start after a check**: `api/run` first checks what the run is made of (the same request file as the run's), in the same queue as `api/check`. If the check does not pass (`result` is not `passed`), no run is started and the response is 422 `check-failed`. Its `detail` is `{result, findings}`: `result` is the check's `result` (`failed`, `unreadable` or `usage`), and `findings` are the `findings` that `api/check` returns for the same request (the same objects). A check that passes with warnings or notes starts the run. Fix the findings, then send `api/run` again; the request is refused before anything is started, so there is nothing to stop. Example: `error-check-failed.json`.
@@ -263,7 +265,7 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 504 | `check-timeout` | The check (or the list of `api/connections`) did not finish within the time limit (it was stopped) |
 | 504 | `write-timeout` | `api/write`: the Control Server did not answer in time (`limits.write_timeout_s`). It may have received the write (do not resend) |
 
-- `api/check` and `api/run` take the same fields: `file`, `$schema`, `vehicle_sil_run_request`, `scenario`, `variant`, `params`, `disable`, `enable`, `manual`, `strict`, `connect`, `time_policy`, `speed` and `start_paused`. With `text`, `api/check` takes only `file`, `$schema`, `vehicle_sil_run_request`, `variant`, `strict` and `text`. `api/describe` takes `file` and `variant`. `POST api/config` takes `file`, `text` and `stamp` (`stamp` is required, and may be `null`). `api/connections` takes `file` and `network`. Any other field (a misspelled one, or a key of the launcher's side) and any `null` give 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
+- `api/check` and `api/run` take the same fields: `file`, `$schema`, `vehicle_sil_run_request`, `scenario`, `variant`, `params`, `disable`, `enable`, `manual`, `strict`, `connect`, `time_policy`, `speed`, `start_paused`, `stop_at_ms` and `late_tolerance_ms`. With `text`, `api/check` takes only `file`, `$schema`, `vehicle_sil_run_request`, `variant`, `strict` and `text`. `api/describe` takes `file` and `variant`. `POST api/config` takes `file`, `text` and `stamp` (`stamp` is required, and may be `null`). `api/connections` takes `file` and `network`. Any other field (a misspelled one, or a key of the launcher's side) and any `null` give 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
 - Fields covered by `invalid-field`: `speed`, `start_paused`, `variant`, `params`, `enable`, `strict`, `connect`, `time_policy`, `network`, `force`, `disable`, `manual` (also the same name twice), `command`, `ms` and `value` of `api/time`, `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
 - Case of `unsupported`: `api/write` sent when the launcher lacks `control-server`. (The server requires `time-commands`, `stdin-run-until`, `state`, `speed`, `start-paused`, `scenario` and `manual-participants` when it starts, so `api/time` has no such case.)
 
@@ -426,7 +428,7 @@ Notifications from the server.
 
 Notes on the fields:
 
-- **What was requested at the start**: `manual` holds only what `api/run` requested (`manual: true` in the configuration file is in `check`). A `speed` of `null` means the configuration file's speed; the current speed is `launcher_state.speed`.
+- **What was requested at the start**: `manual` holds only what `api/run` requested (`manual: true` in the configuration file is in `check`). A `speed` of `null` means no speed was requested; the current speed is `launcher_state.speed`.
 - **`state`**: `ended` means the launcher exited and its output has been read to the end (or cut off with `output-left-open`). In between (up to 2 seconds), `api/session` may show `launcher.running: false` together with `running`.
 - **`launcher`**: `running` tells whether the launcher process is running; it decides whether the run can be stopped. When the launcher exits, `exit_code` is set (if it ended by a signal, `null`, with the signal number in `signal`; POSIX only). `silent_s` is the number of seconds a running launcher has written nothing (updated only past `--silent-after`, at each multiple of it; `null` once it writes).
 - **`time`**: virtual time `sim_ms`, actual speed `actual_speed`, and the lateness figures `late_steps`, `max_late_ms`, `slipped_ms` and `late_ms`. A screen opened midway learns the current time from this; whether the run is paused, where, and the speed set, are in `launcher_state` (`paused`, `paused_at_ms`, `speed`). While the run is paused, `time` can be from before the pause (an earlier `sim_ms` for up to one look of the launcher, and the `actual_speed` and `late_ms` from before it).

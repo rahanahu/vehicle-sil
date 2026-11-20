@@ -126,8 +126,7 @@ def sh(*argv: str) -> None:
 
 
 def config(example_dir: str) -> str:
-    return ("vehicle_sil_simulation: 1\n"
-            "stop_at_ms: 1000\n"
+    return ("vehicle_sil_simulation: 2\n"
             f"registry_uri: silkit://0.0.0.0:{REGISTRY_PORT}\n"
             "networks:\n"
             "  - name: J1939_CAN\n"
@@ -165,7 +164,7 @@ def inner(args: argparse.Namespace) -> None:
     procs: list[Proc] = []
     try:
         # 1. The launcher on a tells a's address; the Dashboard on b joins there; the run passes.
-        a = Proc("a", [launch, "run", "sim.yaml", "--timeout-ms", "60000"], work)
+        a = Proc("a", [launch, "run", "sim.yaml", "--stop-at-ms", "1000", "--timeout-ms", "60000"], work)
         procs.append(a)
         a.wait_for("waiting for Dashboard to join (manual)", 60)
         told = a.wait_for("from other computers, join at ", 1)
@@ -181,7 +180,7 @@ def inner(args: argparse.Namespace) -> None:
 
         # 2. The link cut while the simulation runs (slowly, at speed 0.01): after 10 s the launcher says that
         # virtual time does not advance; once the link is back, that it does again.
-        a = Proc("a", [launch, "run", "sim.yaml", "--speed", "0.01", "--stdin-commands", "--timeout-ms", "120000"], work,
+        a = Proc("a", [launch, "run", "sim.yaml", "--stop-at-ms", "1000", "--speed", "0.01", "--stdin-commands", "--timeout-ms", "120000"], work,
                  stdin=True)
         procs.append(a)
         a.wait_for("waiting for Dashboard to join (manual)", 60)
@@ -205,7 +204,7 @@ def inner(args: argparse.Namespace) -> None:
         print("two_hosts: link back, it went on, stopped", flush=True)
 
         # 3. The Dashboard on b killed while the simulation runs: the run is aborted at once.
-        a = Proc("a", [launch, "run", "sim.yaml", "--speed", "0.01", "--timeout-ms", "120000"], work)
+        a = Proc("a", [launch, "run", "sim.yaml", "--stop-at-ms", "1000", "--speed", "0.01", "--timeout-ms", "120000"], work)
         procs.append(a)
         a.wait_for("waiting for Dashboard to join (manual)", 60)
         b = Proc("b", [dashboard, "--name", "Dashboard", "--registry-uri", uri, "--start-timeout-ms", "60000"], work)

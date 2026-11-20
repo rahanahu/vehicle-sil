@@ -56,6 +56,11 @@ RunResult RunReport::result() const
     {
         return RunResult::Failed;
     }
+    if (run->end.simulation == runner::SimulationEnd::ReachedStopAt && run->scenario.result &&
+        run->scenario.result->status == scenario::ScenarioStatus::Incomplete)
+    {
+        return RunResult::Incomplete;
+    }
     if (end == runner::EndReason::Stopped)
     {
         // A scenario that did not pass and did not fail has no verdict: it did not begin, or the

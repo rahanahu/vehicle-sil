@@ -101,8 +101,8 @@ Put the executables you received under one directory and write `simulation.yaml`
 ```yaml
 # yaml-language-server: $schema=../../schema/simulation.schema.json
 # Two ECUs received from their authors, in one simulation (the guide docs/howto/integrate-ecus.md).
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
+
 networks:
   - name: J1939_CAN
     kind: can

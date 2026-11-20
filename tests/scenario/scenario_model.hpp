@@ -262,7 +262,7 @@ public:
     ScenarioRun run(const Scenario& s, SimDuration limit = 5s)
     {
         scenario = &s;
-        ScenarioEngine e(s, tick, *this, {}, record);
+        ScenarioEngine e(s, tick, *this, {}, record, stop_at);
         engine = &e;
         std::vector<EnginePeer> peers;
         for (const auto& p : s.participants)

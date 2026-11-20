@@ -80,7 +80,7 @@ RunReport report_of(const RunOutcome& outcome, bool strict = false)
 {
     RunReport r;
     r.check.file = "sim.yaml";
-    r.check.config = read_config("vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: Engine\n    command: e\n").config;
+    r.check.config = read_config("vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: Engine\n    command: e\n").config;
     r.check.strict = strict;
     r.strict = strict;
     r.run = outcome;
@@ -534,6 +534,7 @@ TEST_CASE(the_json_report)
                "  \"simulation\": \"interrupted\",\n"
                "  \"interrupted_by\": \"SIGINT\",\n"
                "  \"registry_uri\": \"silkit://127.0.0.1:41234\",\n"
+               "  \"stop_at_ms\": 1000,\n"
                "  \"timing\": {\n"
                "    \"speed\": \"max\",\n"
                "    \"time_step_ms\": 10,\n"
@@ -838,7 +839,7 @@ TEST_CASE(a_controller_step_coarser_than_the_ecus_steps_is_a_warning_when_a_spee
         "burst. Write time_step_ms: 1";
     check_text(lines(assess_run(o)),
                "W 0 coarse-time-step: the launcher's controller steps every 10 ms (time_step_ms), but the ECUs' steps are as "
-               "small as 1 ms" + what + " (or leave time_step_ms out: with a speed, the default is that)\n");
+               "small as 1 ms" + what + " (or leave time_step_ms out to use the automatic step)\n");
     CHECK(report_of(o).result() == RunResult::Passed);
     CHECK(report_of(o, true).result() == RunResult::Failed);
     CHECK(vehicle_sil::runner::detail::settled_findings(o) == assess_run(o));
@@ -846,9 +847,7 @@ TEST_CASE(a_controller_step_coarser_than_the_ecus_steps_is_a_warning_when_a_spee
     // came later: at the end a speed is set, or steps were paced.
     o.timing.time_step_written = false;
     check_text(lines(assess_run(o)),
-               "W 0 coarse-time-step: the launcher's controller steps every 10 ms (the default of a run that starts without "
-               "a speed), but the ECUs' steps are as small as 1 ms" + what +
-                   " (or give the speed from the start, with speed or run --speed: the default is then that)\n");
+               "W 0 coarse-time-step: the launcher's controller steps every 10 ms (the automatic time step), but the ECUs' steps are as small as 1 ms" + what + "\n");
     o.timing.speed.reset();
     o.timing.paced_steps = 3;
     CHECK(lines(assess_run(o)).starts_with("W 0 coarse-time-step: "));
@@ -872,7 +871,7 @@ TEST_CASE(a_controller_step_coarser_than_the_ecus_steps_is_a_warning_when_a_spee
     o.timing.step_delay_ns = 500'000; // 2.5 ms steps under 1 ms
     o.timing.time_step_ms = 1;
     o.timing.fine_step_ms = 1;
-    check_text(lines(assess_run(o)), "");
+    CHECK(lines(assess_run(o)).find("whole-millisecond step cannot align every ECU step") != std::string::npos);
 }
 
 TEST_CASE(a_run_that_ends_before_stop_at_ms_gets_a_note_and_a_timeout_is_an_error)
