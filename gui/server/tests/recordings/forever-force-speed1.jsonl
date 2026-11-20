@@ -29,7 +29,7 @@
 {"gap_ms": 100}
 {"out": {"event": "time", "sim_ms": 100, "actual_speed": null, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"gap_ms": 100}
-{"out": {"event": "time", "sim_ms": 200, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
+{"out": {"event": "time", "sim_ms": 205, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"gap_ms": 100}
 {"out": {"event": "time", "sim_ms": 305, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"gap_ms": 100}
