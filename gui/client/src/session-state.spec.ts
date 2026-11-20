@@ -548,7 +548,7 @@ describe('applyEvents', () => {
       events({ event: 'finding', finding }, { event: 'result', result }),
     );
     expect(session.phase).toBe('ended');
-    expect(session.findings).toEqual([finding]);
+    expect(session.findings).toEqual([{ ...finding, event_seq: 0 }]);
     expect(session.check).toBe(result.check);
     expect(session.participants.map((p) => [p.name, p.state, p.exitCode])).toEqual([
       ['A', 'ended', 0],
@@ -856,6 +856,16 @@ describe('applySummary', () => {
     const late = applySummary(ended, summary({ last_seq: 4, stop: 'requested' }));
     expect(late.launcher.running).toBe(false);
     expect(late.problems.map((p) => p.code)).toEqual(['no-result']);
+  });
+
+  it('keeps identical findings with different event sequences in their real order', () => {
+    const first = { ...finding, event_seq: 1 };
+    const third = { ...finding, event_seq: 3 };
+    let session = sessionFromSummary(summary({ last_seq: 3, findings: [third] }));
+    session = applyEvents(session, eventsFrom(1, [{ event: 'finding', finding: first }]));
+    expect(session.findings.map((item) => item.event_seq)).toEqual([1, 3]);
+    session = applySummary(session, summary({ last_seq: 3, findings: [third] }), true, true);
+    expect(session.findings.map((item) => item.event_seq)).toEqual([1, 3]);
   });
 
   it('merges previously live and disconnected findings without dropping or repeating them', () => {

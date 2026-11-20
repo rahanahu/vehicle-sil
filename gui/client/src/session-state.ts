@@ -435,7 +435,7 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
     ? adopted
     : {
         ...adopted,
-        pendingFindings: { through: summary.last_seq, keys: summary.findings.map(findingKey) },
+        pendingFindings: { through: summary.last_seq, keys: summary.findings.map(findingIdentity) },
       };
 }
 
@@ -687,6 +687,12 @@ function findingKey(finding: Finding): string {
   ]);
 }
 
+function findingIdentity(finding: Finding): string {
+  return finding.event_seq === undefined
+    ? `body:${findingKey(finding)}`
+    : `seq:${finding.event_seq}`;
+}
+
 /** Merge two ordered, potentially incomplete lists without coalescing repeated findings. */
 function mergeFindings(
   current: readonly Finding[],
@@ -694,6 +700,16 @@ function mergeFindings(
 ): readonly Finding[] {
   const a = current.slice(0, MAX_FINDINGS);
   const b = incoming.slice(0, MAX_FINDINGS);
+  if (
+    a.every((finding) => finding.event_seq !== undefined) &&
+    b.every((finding) => finding.event_seq !== undefined)
+  ) {
+    const bySeq = new Map<number, Finding>();
+    for (const finding of [...b, ...a]) bySeq.set(finding.event_seq!, finding);
+    return [...bySeq.values()]
+      .sort((left, right) => left.event_seq! - right.event_seq!)
+      .slice(0, MAX_FINDINGS);
+  }
   const ak = a.map(findingKey);
   const bk = b.map(findingKey);
   const sizes = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
@@ -733,7 +749,9 @@ export function applyEvents(
       next = { ...next, observedSeq: Math.max(next.observedSeq ?? -1, event.seq) };
       const pending = next.pendingFindings;
       if (event.event === 'finding' && pending && event.seq <= pending.through) {
-        const index = pending.keys.indexOf(findingKey(event.finding));
+        const numbered = pending.keys.indexOf(`seq:${event.seq}`);
+        const index =
+          numbered === -1 ? pending.keys.indexOf(`body:${findingKey(event.finding)}`) : numbered;
         if (index !== -1) {
           const keys = [...pending.keys];
           keys.splice(index, 1);
@@ -879,7 +897,10 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
       // text may appear twice)
       return next.findings.length >= MAX_FINDINGS
         ? next
-        : { ...next, findings: [...next.findings, event.finding] };
+        : {
+            ...next,
+            findings: mergeFindings(next.findings, [{ ...event.finding, event_seq: event.seq }]),
+          };
     case 'time':
       return { ...next, simMs: event.sim_ms, timeOmittedFields: [], time: timeView(event) };
     case 'command':

@@ -397,6 +397,7 @@ class Session:
                                              "bytes: only its short plain fields are kept for a screen opened later")
         elif kind == "finding":
             entry = {k: v for k, v in event.items() if k not in ENVELOPE}
+            entry["event_seq"] = event["seq"]
             if len(self.findings) < self.limits.findings and self.findings_bytes + size <= self.limits.findings_bytes:
                 self.findings.append(entry)
                 self.findings_bytes += size

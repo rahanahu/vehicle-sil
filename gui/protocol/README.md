@@ -409,6 +409,7 @@ Notifications from the server.
 |---|---|
 | `id` | The run number (from 1 for each server start) |
 | `snapshot_rev` | Capture order of session summaries, increasing within this server instance and run |
+| `findings[].event_seq` | Launcher event sequence of each retained run finding, unique within this instance and run. Use it to merge summary and live events; older servers omit it and clients can only reconcile them on a best-effort basis |
 | `file`, `disable`, `manual`, `speed`, `start_paused` | What was requested at the start |
 | `started_at`, `ended_at` | Times (UTC, ISO 8601). `ended_at` is `null` until the run ends |
 | `state` | `running` or `ended` |
