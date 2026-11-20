@@ -383,7 +383,8 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "flood finding 0"
+            "message": "flood finding 0",
+            "event_seq": 27
           },
           {
             "severity": "note",
@@ -392,7 +393,8 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "flood finding 1"
+            "message": "flood finding 1",
+            "event_seq": 28
           }
         ],
         "findings_omitted": 39000,

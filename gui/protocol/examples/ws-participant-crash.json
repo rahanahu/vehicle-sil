@@ -2503,7 +2503,8 @@
             "participant": "Dashboard",
             "network": null,
             "message": "participant 'Dashboard': it failed while the simulation was running, and the launcher aborted the simulation: its process exited with code 3; the lines [Dashboard] above show what it wrote",
-            "detail": null
+            "detail": null,
+            "event_seq": 59
           }
         ],
         "findings_omitted": 0,

@@ -1,8 +1,9 @@
 """Capture revisions order complete session and variable views with availability deltas."""
 
 import asyncio
+import json
 
-from vehicle_sil_gui.session import Session
+from vehicle_sil_gui.session import Limits, Session
 from vehicle_sil_gui.source import PeerInfo
 from vehicle_sil_gui.variables import Variables
 
@@ -49,3 +50,13 @@ def test_problem_sequence_is_shared_by_error_and_summary():
     assert (first["problem_seq"], second["problem_seq"]) == (1, 2)
     assert summary["problem_seq"] == 2
     assert [problem["problem_seq"] for problem in summary["problems"]] == [1, 2]
+
+
+def test_retained_findings_carry_their_event_sequence_and_respect_limits():
+    session = Session(1, "sim.yaml", [], None, False, limits=Limits(findings=2))
+    for seq in (1, 2, 3):
+        session.feed_line(json.dumps({"event": "finding", "seq": seq, "t_ms": seq,
+                                      "severity": "warning", "message": "same"}))
+    summary = session.summary()
+    assert [finding["event_seq"] for finding in summary["findings"]] == [1, 2]
+    assert summary["findings_omitted"] == 1

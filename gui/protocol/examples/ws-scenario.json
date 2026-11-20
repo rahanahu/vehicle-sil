@@ -2390,7 +2390,8 @@
             "participant": null,
             "network": null,
             "message": "expect Engine.engine.speed ge 5000: not true at 100 ms: Engine.engine.speed ge 5000, but it was 550 (its sample of 100 ms)",
-            "detail": null
+            "detail": null,
+            "event_seq": 36
           }
         ],
         "findings_omitted": 0,

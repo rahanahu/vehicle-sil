@@ -61,7 +61,7 @@ def test_session_follows_the_events() -> None:
     assert summary["participants"] == [{"name": "B", "state": "disabled"},
                                        {"name": "A", "state": "ended", "pid": 7, "command": ["a"], "log": None,
                                         "exit_code": 3, "signal": None}]
-    assert summary["findings"] == [{"severity": "error", "code": "participant-failed", "message": "m"}]
+    assert summary["findings"] == [{"severity": "error", "code": "participant-failed", "message": "m", "event_seq": 6}]
     assert summary["registry"] == {"uri": "silkit://x"}
     assert summary["last_command"] == {"seq": 9, "command": "stop", "accepted": True}
     assert summary["result"] == {"result": "failed"} and summary["problems"] == []

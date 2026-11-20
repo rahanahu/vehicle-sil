@@ -379,7 +379,8 @@
           "participant": null,
           "network": null,
           "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
-          "detail": null
+          "detail": null,
+          "event_seq": 99
         }
       ],
       "findings_omitted": 0,

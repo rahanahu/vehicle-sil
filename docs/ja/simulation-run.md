@@ -37,7 +37,7 @@
 
 手順 2: registry のアドレスは `registry_uri` で、なければ 127.0.0.1 の空いているポートです。標準エラーの最初の行が、その URI です（`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`）。`--control` を付けたときは、registry より前に Control Server を起動し、`[vehicle_sil_launch] control server at <address>` の行を書きます。
 
-手順 3: シミュレーションが待つ participant（このドキュメントでは「必須の participant」）は、無効にしていない `required: true` のものです。controller はタイムステップ（`time_step_ms` か、その既定値）で時刻同期に参加し、タイムステップの終わりを止めて、速度、一時停止、ステップ実行を決めます。最速のときも同じで、タイムステップごとに同期が 1 回増えます。
+手順 3: シミュレーションが待つ participant（このドキュメントでは「必須の participant」）は、無効にしていない `required: true` のものです。controller はタイムステップ（設定または実行時に決定した `time_step_ms`）で時刻同期に参加し、タイムステップの終わりを止めて、速度、一時停止、ステップ実行を決めます。最速のときも同じで、タイムステップごとに同期が 1 回増えます。
 
 手順 4: `--connect` があると、先につなぐネットワークごとのブリッジを起動し、動き出すのを待ちます（[バスを外につなぐ](#バスを外につなぐ--connect)）。`manual` の participant は起動せず、起動するコマンドを書きます。起動する participant の作業ディレクトリは設定ファイルのあるディレクトリで、標準入力は空です。
 
@@ -1235,10 +1235,10 @@ passed: 0 errors, 1 warning, 1 note
 | キー | 値 |
 |---|---|
 | `speed` | 終わったときの速度（数か `"max"`） |
-| `time_step_ms` | controller のタイムステップ（設定ファイルの値か既定値） |
+| `time_step_ms` | controller のタイムステップ（設定値か実行時に決定した値） |
 | `ecu_step_ms` | ECU のステップ幅の最小（ミリ秒） |
 | `step_delay_ms` | タイムステップが ECU のステップより粗いために、ECU のステップが、その仮想時刻にあたる実時間より遅く動く量の最大（ミリ秒） |
-| `late_tolerance_ms` | 遅れの許容（設定ファイルの値か既定値） |
+| `late_tolerance_ms` | 遅れの許容（`--late-tolerance-ms`、要求ファイル、または既定の 10 ms） |
 | `sim_ms` | 進んだ仮想時間（ミリ秒。最後に始まったタイムステップの時刻） |
 | `wall_ms` | かかった実時間（ミリ秒。一時停止していた時間を含む） |
 | `actual_speed` | 全体の実際の速度（`sim_ms` ÷（`wall_ms` − `paused_ms`）、小数 3 桁） |
