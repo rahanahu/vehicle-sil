@@ -93,6 +93,8 @@ struct TestArguments
     std::optional<std::chrono::milliseconds> timeout{};
     std::optional<std::int64_t> stop_at_ms{};
     std::optional<std::int64_t> late_tolerance_ms{};          ///< --timeout-ms
+    std::optional<std::int64_t> participant_start_timeout_ms{};
+    std::optional<std::int64_t> participant_stop_timeout_ms{};
     std::optional<std::chrono::milliseconds> describe_timeout{}; ///< --describe-timeout-ms, if not the default
     config::TimePolicy time_policy = config::TimePolicy::Realtime;               ///< --time-policy
 };

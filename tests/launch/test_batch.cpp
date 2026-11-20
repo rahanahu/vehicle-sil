@@ -434,6 +434,8 @@ TEST_CASE(the_command_of_one_run_alone_has_the_options_of_the_test)
     report.given.enable = {"Hil"};
     report.given.timeout = std::chrono::milliseconds(60000);
     report.given.describe_timeout = std::chrono::milliseconds(500);
+    report.given.participant_start_timeout_ms = 300;
+    report.given.participant_stop_timeout_ms = 400;
     report.runs = {{"it's", "scn/a b.yaml", TestRunResult::Failed, "why", failed}};
     const std::string text = format_test_text(report);
     const std::string begin = "to see a failed run in full, run it alone: ";
@@ -446,13 +448,15 @@ TEST_CASE(the_command_of_one_run_alone_has_the_options_of_the_test)
     check_text(text.substr(from + begin.size(), text.find('\n', from) - from - begin.size()),
              "vehicle_sil_launch run 'my sims/sim.yaml' --speed max --variant 'it'\\''s' --scenario 'scn/a b.yaml' "
              "--param 'depth=a b' --param fill= --disable Dashboard --disable 'Rear Axle' --enable Hil --strict "
-             "--timeout-ms 60000 --describe-timeout-ms 500");
+             "--participant-start-timeout-ms 300 --participant-stop-timeout-ms 400 --timeout-ms 60000 --describe-timeout-ms 500");
 
     // A scenario that the check did not read: no --param (the run says what is wrong with it).
     report.runs[0].run = RunReport{};
     report.strict = false;
     report.given.timeout.reset();
     report.given.describe_timeout.reset();
+    report.given.participant_start_timeout_ms.reset();
+    report.given.participant_stop_timeout_ms.reset();
     CHECK(format_test_text(report).find("--scenario 'scn/a b.yaml' --disable Dashboard --disable 'Rear Axle' --enable Hil\n") !=
           std::string::npos);
 }

@@ -56,8 +56,8 @@ struct ScenarioStepRun
     std::optional<SimTime> at{};
     /// From where the next step's after_ms counts (Passed, and a step whose end is known before).
     std::optional<SimTime> end{};
-    /// Failed: the code of its finding ("scenario-failed", "scenario-timeout", "scenario-write",
-    /// "scenario-out-of-time") and why, in one line with the times and the values. Skipped:
+    /// Failed: the code of its finding ("scenario-failed", "scenario-timeout", "scenario-write")
+    /// and why, in one line with the times and the values. Skipped:
     /// "scenario-skipped" and why (ScenarioStep::skipped).
     std::string code{};
     std::string message{};
@@ -156,8 +156,8 @@ struct EnginePeer
 ///   It returns true once the scenario is over (passed or failed): the caller stops the
 ///   simulation at P.
 /// - stopped_at(P): instead of tick(P) when the simulation stopped by itself at the step P
-///   (stop_at_ms): what can be decided from the samples before P is decided; then the first step
-///   that is not is failed ("scenario-out-of-time").
+///   (stop_at_ms): what can be decided from the samples before P is decided; an undecided
+///   scenario is Incomplete, with begun steps unfinished and later steps not run.
 /// - cut_short(): the simulation ended otherwise (a stop request, a failed participant, a
 ///   timeout): the scenario is Incomplete.
 ///

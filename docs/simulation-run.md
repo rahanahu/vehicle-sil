@@ -2017,7 +2017,7 @@ Findings for the whole `test` are written after the table, one line each, as `<s
 | 4 | Usage error (nothing was run) |
 | 130 | Interrupted (130 even if a run failed before) |
 
-`test` takes no stop command, so it has no exit code 5: a run of `test` ends before its scenario's end only by a signal (130) or by `--timeout-ms` (1).
+`test` takes no stop command, so it has no exit code 5. A case that reaches its requested virtual stop time before the scenario is decided is incomplete and counts as a failed case (exit 1). A signal interrupts the test (130), and `--timeout-ms` is a wall-clock failure (1).
 
 `skipped` does not count as a failure. Even if every run is `skipped`, the exit code is 0 without `--strict`. The error for a participant with `manual: true` in the configuration file is also 4.
 
