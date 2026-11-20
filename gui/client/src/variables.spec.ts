@@ -402,6 +402,44 @@ describe('variables', () => {
     expect(again.history(ENGINE).length).toBe(3);
   });
 
+  it.each([
+    ['state', false],
+    ['state', true],
+    ['operations', false],
+    ['operations', true],
+  ] as const)(
+    'finishes the new instance reset when %s subscribers fetch the same instance (summary: %s)',
+    async (source, withSummary) => {
+      const { client, deliver, http, socket } = setup();
+      await deliver(hello(1, ready([listed(1, 'queued', false)])));
+      const watch = client.variables.watch([ENGINE], { history: 10 });
+      await deliver(values(1, 10, false, engine(10, 4)));
+      expect(watch.history(ENGINE)).toHaveLength(1);
+      socket().fail();
+      let invoked = false;
+      const unsubscribe = client.variables[source].subscribe(() => {
+        if (invoked) return;
+        invoked = true;
+        void client.fetchSession();
+        http
+          .expectOne('api/session')
+          .flush({ instance: 'new-server', session: withSummary ? summary(1, ready()) : null });
+      });
+      const refreshed = client.fetchSession();
+      http.expectOne('api/session').flush({ instance: 'new-server', session: summary(1, ready()) });
+      await refreshed;
+      unsubscribe();
+      expect(invoked).toBe(true);
+      expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
+      expect(client.variables.state.get().peers[0]?.variables[0]?.name).toBe('engine.demand');
+      expect(client.variables.operations.get()).toEqual([]);
+      expect(watch.value(ENGINE)).toBeUndefined();
+      expect(watch.history(ENGINE)).toEqual([]);
+      expect(watch.values.get()).toEqual({});
+      client.close();
+    },
+  );
+
   it('clears readings and history when a new server reuses the session id', async () => {
     const { client, deliver } = setup();
     await deliver(hello(1, ready()));

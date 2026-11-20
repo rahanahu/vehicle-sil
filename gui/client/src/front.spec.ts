@@ -815,6 +815,23 @@ describe('the front door', () => {
       expect(done).toBe(true);
     });
 
+    it('delivers an acknowledgement when a session subscriber refreshes the same run', async () => {
+      const rig = await running();
+      const pause = rig.front.time.pause();
+      const id = rig.timeBody().id;
+      let invoked = false;
+      const unsubscribe = rig.front.low.session.session.subscribe(() => {
+        if (invoked) return;
+        invoked = true;
+        void rig.front.low.fetchSession();
+        rig.http.expectOne('api/session').flush({ instance: 'x', session: summary() });
+      });
+      await rig.deliver(event(commandEvent(62, 'pause', id)));
+      await expect(pause).resolves.toBeUndefined();
+      expect(invoked).toBe(true);
+      unsubscribe();
+    });
+
     it('sends ids that differ between commands', async () => {
       const rig = await running();
       void rig.front.time.setSpeed(2).catch(() => undefined);
