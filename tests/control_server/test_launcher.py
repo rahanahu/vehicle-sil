@@ -198,16 +198,15 @@ class LauncherTest(unittest.TestCase):
                 self.assertTrue(c.sim.time().running)
                 done = c.wait(seq)
                 self.assertEqual((done.target("Engine").status, done.target("Engine").applied_at), ("applied", 0))
-                # The control server's: rounded up to the controller's steps (10 ms).
+                # The control server's: aligned to the controller's steps (5 ms).
                 # Its answer says where it ends: the time it runs on to, or that it stands there.
                 answer = c.sim.step(ms(45))
-                self.assertTrue(answer.pause_target == ms(150) or (answer.paused and answer.now == ms(150)), answer)
-                self.assertEqual(c.sim.wait_paused().now, ms(150))
+                self.assertTrue(answer.pause_target == ms(145) or (answer.paused and answer.now == ms(145)), answer)
+                self.assertEqual(c.sim.wait_paused().now, ms(145))
                 c.sim.run_until(ms(201))
-                self.assertEqual(c.sim.wait_paused().now, ms(210))
-                # Standing at 210 ms: the sample of the last step before it is there (the engine
-                # samples every 10 ms; the one of its step at 210 may come while it stands).
-                self.assertIn(c.values("Engine").time, (ms(200), ms(210)))
+                self.assertEqual(c.sim.wait_paused().now, ms(205))
+                # Standing at 205 ms: the engine samples every 10 ms.
+                self.assertEqual(c.values("Engine").time, ms(200))
                 c.sim.resume()
                 with self.assertRaises(ControlError) as refused:
                     c.sim.step(ms(10))
@@ -222,8 +221,8 @@ class LauncherTest(unittest.TestCase):
             result = launch.wait()
         self.assertEqual(commands_of(launch), [
             ("step", "stdin", True, 100, 100),  # at_ms: where the step ends
-            ("step", "control_server", True, 50, 150),
-            ("run_until", "control_server", True, None, 210),
+            ("step", "control_server", True, 45, 145),
+            ("run_until", "control_server", True, None, 205),
             ("resume", "control_server", True, None, None),
             ("step", "control_server", False, None, None),
             ("speed", "control_server", False, None, None),
@@ -314,7 +313,7 @@ class LauncherTest(unittest.TestCase):
         self.assertEqual([f for f in findings_of(result) if f[1].startswith("variable-map")], [])
 
     def test_a_snapshot_has_the_time_and_the_values_of_one_moment(self):
-        step = ms(10)  # the engine's step, its sample period and the controller's step
+        step = ms(10)  # the engine's step and sample period; the controller steps at 5 ms
         throttle_at = {0: 20.0}  # the engine's step -> the throttle from then on (20 % as it starts)
 
         def engine_speed(at):
@@ -333,7 +332,8 @@ class LauncherTest(unittest.TestCase):
             self.assertTrue(snap.consistent)
             self.assertEqual((snap.time.now, snap.time.paused), (now, True))
             engine, dashboard = snap.values["Engine"], snap.values["Dashboard"]
-            self.assertIn(engine.time, (now - step, now))
+            last_before = ((now - 1) // step) * step
+            self.assertIn(engine.time, (last_before, (now // step) * step))
             self.assertIn(dashboard.time, (now - ms(5), now))
             self.assertEqual(engine.values["engine.speed"], engine_speed(engine.time))
 
@@ -555,7 +555,8 @@ class LauncherTest(unittest.TestCase):
         # path alone can take most of them (a worktree, a CI runner's workspace).
         with tempfile.TemporaryDirectory(prefix="vsil-") as directory:
             path = pathlib.Path(directory) / "control.sock"
-            with Launch(LAUNCH, config("unix"), start_paused=True, address=f"unix:{path}") as launch:
+            with Launch(LAUNCH, config("unix"), start_paused=True, address=f"unix:{path}",
+                        arguments=["--stop-at-ms", "1000"]) as launch:
                 self.assertEqual(launch.address, f"unix:{path}")
                 with Control(launch.address) as c:
                     self.assertEqual(c.sim.wait_paused(60).now, 0)

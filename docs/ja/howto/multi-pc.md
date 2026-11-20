@@ -81,6 +81,7 @@ flowchart LR
 <!-- examples/ecu_main/simulation.two-pcs.yaml -->
 ```yaml
 vehicle_sil_simulation: 2
+
 registry_uri: silkit://0.0.0.0:8500
 networks:
   - name: J1939_CAN
@@ -147,7 +148,7 @@ passed: 0 errors, 0 warnings, 2 notes
 ランチャーを動かす PC で、次のコマンドを実行します。
 
 ```sh
-vehicle_sil_launch run simulation.two-pcs.yaml
+vehicle_sil_launch run simulation.two-pcs.yaml --stop-at-ms 1000
 ```
 
 Windows では、ファイアウォールの許可が必要です（「Windows で変わること」）。
@@ -409,8 +410,8 @@ GUI サーバーが待ち受けるアドレスと受け付けるリクエスト�
 
 | 実行 | 影響 |
 |---|---|
-| 最速で動かす（`speed` を書かない） | 1 台で動かすより遅くなります。 |
-| 速度を指定する（`speed: 1` など） | 往復の時間が、1 ステップに使える実時間より十分短ければ、影響しません。 |
+| 最速で動かす（`--speed` を指定しない） | 1 台で動かすより遅くなります。 |
+| 速度を指定する（`--speed 1` など） | 往復の時間が、1 ステップに使える実時間より十分短ければ、影響しません。 |
 
 遅れは、結果の `time:` の行に表示されます。
 
