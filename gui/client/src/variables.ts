@@ -685,6 +685,14 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     for (const message of batch) {
       if (!current()) return;
       if (!isObject(message)) continue;
+      const messageSession = message['session'];
+      const existingSession = this.stateValue.get().session;
+      if (
+        typeof messageSession === 'number' &&
+        existingSession !== null &&
+        messageSession < existingSession
+      )
+        continue;
       switch (message['type']) {
         case 'hello': {
           flush();
@@ -695,6 +703,8 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           if (isObject(summary) && Number.isSafeInteger(summary['id'])) {
             this.adoptSummary(summary, current);
           } else {
+            // A later run may already have been adopted during a synchronous session notification.
+            if (this.stateValue.get().session !== null) break;
             this.enter(null);
             if (!current()) return;
             this.stateValue.set({ ...NO_VARIABLES, status: 'off' });
@@ -705,6 +715,8 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         case 'session': {
           const summary = message['session'];
           const id = isObject(summary) ? summary['id'] : null;
+          const existing = this.stateValue.get().session;
+          if (typeof id === 'number' && existing !== null && id < existing) break;
           // Another run started: its variable notification (variables) follows. Unknown until then
           if (Number.isSafeInteger(id) && id !== this.stateValue.get().session) {
             flush();
@@ -719,7 +731,9 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         case 'variables': {
           const id = message['session'];
           if (!Number.isSafeInteger(id)) break;
-          if (id !== this.stateValue.get().session) {
+          const existing = this.stateValue.get().session;
+          if (existing !== null && (id as number) < existing) break;
+          if (id !== existing) {
             flush();
             if (!current()) return;
             this.enter(id as number);
@@ -806,6 +820,8 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   adoptSummary(summary: unknown, current: () => boolean = () => true): void {
     if (!isObject(summary) || !Number.isSafeInteger(summary['id'])) return;
     const id = summary['id'] as number;
+    const existing = this.stateValue.get().session;
+    if (existing !== null && id < existing) return;
     const variables = summary['variables'];
     if (id !== this.stateValue.get().session) {
       this.enter(id);

@@ -480,6 +480,44 @@ describe('variables', () => {
     client.close();
   });
 
+  it.each(['variables', 'empty-hello'] as const)(
+    'keeps a newer run write when an older %s precedes it in the same batch',
+    async (older) => {
+      const { client, http, deliver } = setup();
+      if (older === 'variables') await deliver(hello(1, ready()));
+      let written: Promise<unknown> | null = null;
+      let started = false;
+      const unsubscribe = client.session.session.subscribe((session) => {
+        if (session?.id !== 2 || started) return;
+        started = true;
+        void client.fetchSession();
+        http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
+        written = client.variables.write({ Engine: { 'engine.demand': 40 } });
+        http.expectOne('api/write').flush({ session_id: 2, operation: 7 });
+      });
+      const old =
+        older === 'variables' ? { type: 'variables', session: 1, variables: ready() } : hello(null);
+      await deliver(
+        old,
+        { type: 'session', session: summary(2) },
+        operation(7, 'applied', true, { applied_at_ms: 20 }, 2),
+      );
+      expect(written).not.toBeNull();
+      await expect(written).resolves.toMatchObject({ session: 2, seq: 7, state: 'applied' });
+      expect(client.variables.state.get().session).toBe(2);
+      unsubscribe();
+      client.close();
+    },
+  );
+
+  it('accepts a smaller session id after the server instance changes', async () => {
+    const { client, deliver } = setup();
+    await deliver(hello(9, ready()));
+    await deliver({ ...hello(1, ready()), instance: 'new-server' });
+    expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
+    client.close();
+  });
+
   it('keeps values and write results when a session subscriber fetches the same run', async () => {
     const { client, http, deliver } = setup();
     await deliver(hello(1, ready()));
