@@ -149,6 +149,7 @@ export class Connection implements ClientConnection {
   private readonly batchListeners = new Set<(batch: readonly unknown[]) => void>();
   private readonly unreadableListeners = new Set<(text: string) => void>();
   private socket: SocketLike | null = null;
+  private connectionEpoch = 0;
   private wanted = false;
   /** Consecutive drops without a readable notification. */
   private attempts = 0;
@@ -293,7 +294,13 @@ export class Connection implements ClientConnection {
     }
   }
 
+  /** Identifies the connection that produced a batch; restarting alone does not create the next one. */
+  batchEpoch(): number {
+    return this.connectionEpoch;
+  }
+
   private openSocket(): void {
+    ++this.connectionEpoch;
     const greeting = this.options.greeting();
     this.stateValue.set('connecting');
     let opened = false;
@@ -304,6 +311,7 @@ export class Connection implements ClientConnection {
         if (!current()) return;
         opened = true;
         this.stateValue.set('open');
+        if (!current()) return;
         clearTimeout(this.steadyTimer);
         this.steadyTimer = setTimeout(() => (this.garbled = 0), STEADY_MS);
         for (const message of greeting) socket?.send(JSON.stringify(message));
@@ -325,21 +333,27 @@ export class Connection implements ClientConnection {
           // and is not reset until the connection stays up for STEADY_MS (so a peer that alternates readable and
           // unreadable notifications is not hammered with reconnects either)
           callEach(this.unreadableListeners, [text], this.onError);
+          if (!current()) return;
           this.restartAfter(backoffMs(++this.garbled, this.options.maxBackoffMs));
           return;
         }
         this.attempts = 0;
         if (this.lastCloseValue.get() !== null) this.lastCloseValue.set(null);
+        if (!current()) return;
         this.pending.push(message);
         this.batchTimer ??= setTimeout(() => this.flush(), this.options.batchMs ?? BATCH_MS);
       },
       close: (code, reason) => {
         if (!current()) return;
         this.socket = null;
+        const closedEpoch = this.connectionEpoch;
         clearTimeout(this.steadyTimer);
         if (!opened) this.failureCount.update((n) => n + 1);
+        if (this.connectionEpoch !== closedEpoch) return;
         this.lastCloseValue.set({ code, reason });
+        if (this.connectionEpoch !== closedEpoch) return;
         this.stateValue.set('closed');
+        if (this.connectionEpoch !== closedEpoch) return;
         this.scheduleRetry(backoffMs(++this.attempts, this.options.maxBackoffMs));
       },
     };

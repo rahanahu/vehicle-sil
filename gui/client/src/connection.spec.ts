@@ -76,6 +76,40 @@ describe('Connection', () => {
     expect(fake.sockets).toHaveLength(3);
   });
 
+  it('does not restart a replacement opened by an unreadable-message subscriber', () => {
+    const c = connection();
+    c.connect();
+    const old = fake.last();
+    old.open();
+    c.onUnreadable(() => {
+      c.close();
+      c.connect();
+      fake.last().open();
+    });
+    old.sendText('not JSON');
+    const replacement = fake.last();
+    expect(replacement).not.toBe(old);
+    expect(replacement.closedByClient).toBe(false);
+    expect(c.state.get()).toBe('open');
+  });
+
+  it('does not mark a replacement closed from the previous close notification', () => {
+    const c = connection();
+    c.connect();
+    const old = fake.last();
+    old.open();
+    c.lastClose.subscribe((close) => {
+      if (!close) return;
+      c.close();
+      c.connect();
+      fake.last().open();
+    });
+    old.fail();
+    expect(fake.last()).not.toBe(old);
+    expect(fake.last().closedByClient).toBe(false);
+    expect(c.state.get()).toBe('open');
+  });
+
   it('reconnects with a growing delay and resets it after a message', () => {
     const c = connection();
     c.connect();

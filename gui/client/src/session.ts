@@ -293,6 +293,10 @@ export class SessionFeed implements ClientSession {
 
   /** Reads and applies a batch from the connection. */
   private receive(raw: readonly unknown[]): void {
+    const epoch = this.connection.batchEpoch();
+    let originInstance = this.instanceId;
+    const currentOrigin = () =>
+      this.connection.batchEpoch() === epoch && this.instanceId === originInstance;
     const batch: ServerMessage[] = [];
     const accepted: unknown[] = [];
     let stop: 'unauthorized' | 'incompatible' | 'lost' | null = null;
@@ -305,6 +309,7 @@ export class SessionFeed implements ClientSession {
         this.notify(
           error instanceof ProtocolError ? `unreadable message: ${error.message}` : String(error),
         );
+        if (!currentOrigin()) return;
         const type = (value as { type?: unknown } | null)?.type;
         if (
           type === 'hello' &&
@@ -341,14 +346,27 @@ export class SessionFeed implements ClientSession {
       this.stoppedFlag = true;
       this.connection.close();
     }
+    if (!currentOrigin()) {
+      if (stop === 'unauthorized' || stop === 'incompatible') this.stoppedFlag = false;
+      return;
+    }
     if (stop === 'lost') this.connection.restart();
-    this.apply(batch, accepted);
+    if (!currentOrigin()) return;
+    this.apply(batch, accepted, currentOrigin, (instance) => {
+      originInstance = instance;
+    });
+    if (!currentOrigin()) return;
     if (stop === 'lost' || stop === 'incompatible') this.synced.set(false);
     if (stop === 'unauthorized') this.rejectedValue.set(true);
     if (incompatible !== null) this.incompatibleValue.set(incompatible);
   }
 
-  private apply(batch: readonly ServerMessage[], raw: readonly unknown[]): void {
+  private apply(
+    batch: readonly ServerMessage[],
+    raw: readonly unknown[],
+    currentOrigin: () => boolean,
+    commitOrigin: (instance: string | null) => void,
+  ): void {
     if (batch.length === 0) return;
     const revision = ++this.adoptionRevision;
     const before = this.current.get();
@@ -444,14 +462,17 @@ export class SessionFeed implements ClientSession {
     flush();
     const stale =
       (session?.staleEvents ?? 0) - (before?.id === session?.id ? (before?.staleEvents ?? 0) : 0);
-    if (!this.isCurrent(revision)) return;
+    if (!currentOrigin() || !this.isCurrent(revision)) return;
     this.instanceId = instance;
+    commitOrigin(instance);
     this.stopTarget = session && instance ? { session: session.id, instance } : null;
     // HTTP can synchronously refresh this same run during a notification. It supersedes its own
     // snapshot, but not the ordered WebSocket messages (which include command acknowledgements).
     const sessionId = session?.id ?? null;
     const sameRun = () =>
-      this.instanceId === instance && (this.current.get()?.id ?? null) === sessionId;
+      currentOrigin() &&
+      this.instanceId === instance &&
+      (this.current.get()?.id ?? null) === sessionId;
     const notifySession = this.current.setDeferred(session);
     const notifyAllowed = this.allowedValue.setDeferred(allowedNow);
     const notifySynced = this.synced.setDeferred(synced);

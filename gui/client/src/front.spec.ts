@@ -815,6 +815,17 @@ describe('the front door', () => {
       expect(done).toBe(true);
     });
 
+    it('delivers a valid acknowledgement before a malformed message forces a reconnect', async () => {
+      const rig = await running();
+      const pause = rig.front.time.pause();
+      const id = rig.timeBody().id;
+      await rig.deliver(event(commandEvent(62, 'pause', id)), {
+        type: 'session',
+        session: { id: 'invalid' },
+      });
+      await expect(pause).resolves.toBeUndefined();
+    });
+
     it('delivers an acknowledgement when a session subscriber refreshes the same run', async () => {
       const rig = await running();
       const pause = rig.front.time.pause();
