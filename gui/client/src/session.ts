@@ -466,27 +466,19 @@ export class SessionFeed implements ClientSession {
             session.snapshotRev != null &&
             (summary.snapshot_rev == null || summary.snapshot_rev < session.snapshotRev);
           takeAllowed(message.allowed ?? summary?.allowed ?? null, !staleSnapshot);
-          const resumed =
-            summary &&
-            instance === message.instance &&
-            session?.id === summary.id &&
-            replay?.from_seq != null;
+          const sameRun = summary && instance === message.instance && session?.id === summary.id;
+          const resumed = sameRun && replay?.from_seq != null;
           instance = message.instance;
-          session = !summary
-            ? null
-            : staleSnapshot && session
-              ? resumed
-                ? session
-                : {
-                    ...session,
-                    lastSeq: -1,
-                    logs: [],
-                    logSources: {},
-                    droppedMarks: 0,
-                  }
-              : resumed && session
-                ? applySummary(session, summary, true)
-                : sessionFromSummary(summary);
+          if (!summary) {
+            session = null;
+          } else if (sameRun && session) {
+            const kept = staleSnapshot ? session : applySummary(session, summary, true, true);
+            session = resumed
+              ? kept
+              : { ...kept, lastSeq: -1, logs: [], logSources: {}, droppedMarks: 0 };
+          } else {
+            session = sessionFromSummary(summary);
+          }
           break;
         }
         case 'dropped': {
@@ -510,7 +502,8 @@ export class SessionFeed implements ClientSession {
                   session,
                   message.session,
                   true,
-                  message.session.last_seq !== null && session.lastSeq >= message.session.last_seq,
+                  message.session.last_seq !== null &&
+                    (session.observedSeq ?? session.lastSeq) >= message.session.last_seq,
                 )
               : sessionFromSummary(message.session);
           break;

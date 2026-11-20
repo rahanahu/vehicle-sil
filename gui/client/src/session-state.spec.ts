@@ -610,6 +610,16 @@ describe('applyEvents', () => {
       '1 passed',
       '2 failed',
     ]);
+    const truncated = applySummary(
+      session,
+      summary({
+        scenario: { ...scenario, steps: [step(1, 'passed')], steps_omitted: 1 },
+        last_seq: session.lastSeq,
+      }),
+      true,
+      true,
+    );
+    expect(truncated.scenario?.steps.map((item) => item.index)).toEqual([1, 2]);
     const steps = [step(1, 'passed'), step(2, 'failed'), step(3, 'not_run')];
     const result = {
       ...(summary().result ?? {}),
@@ -961,6 +971,21 @@ describe('addDropped', () => {
 });
 
 describe('addProblem', () => {
+  it('places a delayed omitted diagnostic in its server sequence', () => {
+    const first = { code: 'x', message: 'first', problem_seq: 1 };
+    const third = { code: 'x', message: 'third', problem_seq: 3 };
+    let session = sessionFromSummary(
+      summary({ problems: [first, third], problems_omitted: 1, problem_seq: 3 }),
+    );
+    session = addProblem(session, { code: 'x', message: 'second', problem_seq: 2 });
+    expect(session.problems.map((problem) => problem.message)).toEqual([
+      'first',
+      'second',
+      'third',
+    ]);
+    expect(session.problemsOmitted).toBe(0);
+  });
+
   it('counts the notes over the limit instead of keeping them', () => {
     let session = emptySession();
     for (let i = 0; i < MAX_PROBLEMS + 3; i++) {

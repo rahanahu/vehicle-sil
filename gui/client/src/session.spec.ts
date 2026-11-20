@@ -496,6 +496,123 @@ describe('SessionFeed', () => {
     expect(client.session.session.get()?.result?.message.length).toBe(result.message.length);
   });
 
+  it('deduplicates a buffered finding already in the first HTTP summary', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const id = response.session['id'];
+    const finding = {
+      severity: 'warning',
+      code: 'x',
+      message: 'one',
+      file: null,
+      line: null,
+      participant: null,
+      network: null,
+      detail: null,
+    };
+    socket.send({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 1, findings: [] },
+      replay: null,
+    });
+    socket.send({
+      type: 'event',
+      session: id,
+      event: { event: 'finding', seq: 1, t_ms: 1, ...finding },
+    });
+    socket.send({ type: 'synced', session: id, last_seq: 1 });
+    const refresh = client.fetchSession();
+    http.expectOne('api/session').flush({
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 2, last_seq: 1, findings: [finding] },
+    });
+    await refresh;
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.findings.map((item) => item.message)).toEqual(['one']);
+  });
+
+  it('retains complete large result and check across a same-run full hello replay', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const examples = await httpExamples();
+    const response = examples.find((item) => item.name === 'run')?.response as {
+      session: Record<string, unknown>;
+    };
+    const checked = examples.find((item) => item.name === 'check-passed')?.response as {
+      check: Record<string, unknown>;
+    };
+    const id = response.session['id'];
+    const check = { ...checked.check, padding: 'x'.repeat(4 * 1024 * 1024 + 1) };
+    const result = {
+      vehicle_sil_run: 2,
+      result: 'passed',
+      end: 'completed',
+      ok: true,
+      message: 'x'.repeat(4 * 1024 * 1024 + 1),
+      errors: 0,
+      warnings: 0,
+      notes: 0,
+      participants: [
+        {
+          name: 'Engine',
+          required: true,
+          enabled: true,
+          manual: false,
+          ended: 'exited',
+          exit_code: 0,
+          signal: null,
+        },
+      ],
+      findings: [],
+    };
+    const hello = (session: Record<string, unknown>) => ({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session,
+      replay: { from_seq: null },
+    });
+    socket.send(hello({ ...response.session, snapshot_rev: 1 }));
+    socket.send({ type: 'event', session: id, event: { event: 'check', seq: 1, t_ms: 1, check } });
+    socket.send({
+      type: 'event',
+      session: id,
+      event: { event: 'result', seq: 2, t_ms: 2, result },
+    });
+    socket.send({ type: 'synced', session: id, last_seq: 2 });
+    vi.advanceTimersByTime(BATCH_MS);
+    socket.send(
+      hello({
+        ...response.session,
+        snapshot_rev: 2,
+        last_seq: 2,
+        check: null,
+        result: {
+          vehicle_sil_run: 2,
+          result: 'passed',
+          end: 'completed',
+          ok: true,
+          errors: 0,
+          warnings: 0,
+          notes: 0,
+        },
+      }),
+    );
+    socket.send({ type: 'synced', session: id, last_seq: 2 });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.result?.participants[0]?.name).toBe('Engine');
+    expect(client.session.session.get()?.result?.message.length).toBe(result.message.length);
+    expect(client.session.session.get()?.check?.participants[0]?.name).toBe('Engine');
+  });
+
   it('rebuilds all replayed logs after a stale hello without duplicating gaps', async () => {
     const http = new FakeHttp();
     const { socket } = open(http);
@@ -637,6 +754,24 @@ describe('SessionFeed', () => {
         problems_omitted: 1,
       },
     });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.problems).toHaveLength(101);
+    expect(client.session.session.get()?.problemsOmitted).toBe(0);
+    socket.send({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: {
+        ...response.session,
+        snapshot_rev: 4,
+        problem_seq: 101,
+        problems,
+        problems_omitted: 1,
+      },
+      replay: { from_seq: null },
+    });
+    socket.send({ type: 'synced', session: id, last_seq: 0 });
     vi.advanceTimersByTime(BATCH_MS);
     expect(client.session.session.get()?.problems).toHaveLength(101);
     expect(client.session.session.get()?.problemsOmitted).toBe(0);
