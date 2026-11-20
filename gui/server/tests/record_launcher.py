@@ -910,8 +910,6 @@ def runs() -> list[Case]:
         run_case("jitter", "jitter.yaml", "stopped while it runs at speed 1", RUNNING, ("until", running_time(13)),
                  stop),
         run_case("late", "late.yaml", "stopped while it runs at speed 1", RUNNING, ("until", running_time(13)), stop),
-        run_case("late-speed1", "late.yaml", "stopped while it runs at speed 1", RUNNING,
-                 ("until", running_time(13)), stop, extra=("--speed", "1")),
         run_case("ignore-stop-twice", "ignore-stop.yaml", "Logger does not end when asked: the second stop kills it",
                  RUNNING, ("until", running_time(5)), stop, ("until", event("participant", state="stop_requested",
                                                                            name="Logger")), ("sleep", 0.5), stop,
