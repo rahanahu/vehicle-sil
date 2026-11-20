@@ -222,7 +222,7 @@
               [attr.aria-invalid]="stopAtTouched() && stopAtInvalid()"
               [attr.aria-describedby]="stopAtTouched() && stopAtInvalid() ? 'stop-at-error' : null"
               #stopAtInput
-              (input)="stopAt.set(stopAtInput.value)"
+              (input)="stopAtEdited.set(true); stopAt.set(stopAtInput.value)"
               (blur)="stopAtTouched.set(true)"
             />
             <mat-hint i18n>空欄なら自動停止しません。1〜1000000000000 ms。</mat-hint>
