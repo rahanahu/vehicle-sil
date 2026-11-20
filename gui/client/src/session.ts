@@ -421,6 +421,7 @@ export class SessionFeed implements ClientSession {
     let instance = originalInstance;
     let session = before;
     let events: LauncherEvent[] = [];
+    const notices: string[] = [];
     let applied = false;
     let synced = this.synced.get();
     let allowedNow = this.allowedValue.get();
@@ -496,7 +497,7 @@ export class SessionFeed implements ClientSession {
               skipped === undefined ? { code, message: text } : { code, message: text, skipped },
             );
           } else {
-            this.notify(message.message);
+            notices.push(message.message);
           }
           break;
         case 'resync':
@@ -528,6 +529,10 @@ export class SessionFeed implements ClientSession {
     notifyAllowed();
     notifySynced();
     if (!sameRun()) return;
+    for (const notice of notices) {
+      this.notify(notice);
+      if (!sameRun()) return;
+    }
     if (applied) this.receivedAt.set(Date.now());
     if (!sameRun()) return;
     if (stale > 0) this.notify(STALE_EVENTS_NOTICE, stale);

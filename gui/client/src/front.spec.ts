@@ -815,6 +815,81 @@ describe('the front door', () => {
       expect(done).toBe(true);
     });
 
+    it('delivers ACK and values when a notice subscriber refreshes the same run', async () => {
+      const rig = await running();
+      const ref = { peer: 'Engine', name: 'engine.demand' };
+      const watch = rig.front.low.variables.watch([ref], { history: 10 });
+      const pause = rig.front.time.pause();
+      const id = rig.timeBody().id;
+      let invoked = false;
+      const unsubscribe = rig.front.low.session.notices.subscribe(() => {
+        if (invoked) return;
+        invoked = true;
+        void rig.front.low.fetchSession();
+        rig.http.expectOne('api/session').flush({ instance: 'x', session: summary() });
+      });
+      await rig.deliver(
+        {
+          type: 'error',
+          session: null,
+          code: 'too-many-watches',
+          message: 'too many watches',
+          detail: { id: 1 },
+        },
+        {
+          type: 'values',
+          id: 1,
+          session: 1,
+          sim_ms: 20,
+          paused: false,
+          peers: { Engine: { sample_ms: 20, values: { 'engine.demand': 4 } } },
+        },
+        event(commandEvent(62, 'pause', id)),
+      );
+      await expect(pause).resolves.toBeUndefined();
+      expect(invoked).toBe(true);
+      expect(watch.history(ref)).toEqual([{ sampleMs: 20, value: 4 }]);
+      expect(rig.front.low.variables.watchProblem.get()?.code).toBe('too-many-watches');
+      unsubscribe();
+    });
+
+    it('does not deliver old-run messages when a notice subscriber adopts a newer run', async () => {
+      const rig = await running();
+      const ref = { peer: 'Engine', name: 'engine.demand' };
+      const watch = rig.front.low.variables.watch([ref], { history: 10 });
+      const pause = rig.front.time.pause().catch((error: unknown) => error);
+      const id = rig.timeBody().id;
+      let invoked = false;
+      const unsubscribe = rig.front.low.session.notices.subscribe(() => {
+        if (invoked) return;
+        invoked = true;
+        void rig.front.low.fetchSession();
+        rig.http.expectOne('api/session').flush({ instance: 'x', session: summary({}, 2) });
+      });
+      await rig.deliver(
+        {
+          type: 'error',
+          session: null,
+          code: 'too-many-watches',
+          message: 'too many watches',
+          detail: { id: 1 },
+        },
+        {
+          type: 'values',
+          id: 1,
+          session: 1,
+          sim_ms: 20,
+          paused: false,
+          peers: { Engine: { sample_ms: 20, values: { 'engine.demand': 4 } } },
+        },
+        event(commandEvent(62, 'pause', id)),
+      );
+      expect(await pause).toMatchObject({ code: 'not-running' });
+      expect(rig.front.low.session.session.get()?.id).toBe(2);
+      expect(watch.history(ref)).toEqual([]);
+      unsubscribe();
+    });
+
     it('keeps a newer run acknowledgement after a buffered older hello', async () => {
       const rig = await running();
       const refresh = rig.front.low.fetchSession();
