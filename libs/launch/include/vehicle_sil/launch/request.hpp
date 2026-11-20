@@ -122,6 +122,9 @@ enum class RequestCommand
     Test,
 };
 
+/// Checks the ranges of timing values before any calculation or process is started. Empty on success.
+[[nodiscard]] std::vector<config::Finding> validate_timing(const RunRequest& request);
+
 /// The rules about fields that do not go together, as findings (code "usage"; the message says
 /// which fields and what to do), in the order in which they are checked; empty: none broken.
 /// Each rule looks only at the fields it names, and a field that is not set is no field: a caller

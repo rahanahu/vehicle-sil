@@ -17,6 +17,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -80,6 +81,29 @@ TEST_CASE(an_empty_request_breaks_no_rule)
     {
         CHECK(messages(RunRequest{}, command).empty());
     }
+}
+
+TEST_CASE(direct_check_and_run_refuse_invalid_timing_before_reading_a_file)
+{
+    RunRequest r;
+    r.host.config = "not-a-file.yaml";
+    for (const auto value : {std::int64_t{0}, std::numeric_limits<std::int64_t>::min(), kMaxMillis + 1})
+    {
+        r.intent.stop_at_ms = value;
+        const Checked checked = check_file(r);
+        CHECK(checked.usage && !checked.config && !checked.findings.empty());
+        const RunReport run = run_file(r);
+        CHECK(run.check.usage && !run.run);
+    }
+    r.intent.stop_at_ms.reset();
+    r.intent.late_tolerance_ms = -1;
+    CHECK(check_file(r).usage);
+    r.intent.late_tolerance_ms.reset();
+    r.intent.speed = std::numeric_limits<double>::infinity();
+    CHECK(check_file(r).usage);
+    r.intent.speed.reset();
+    r.host.stop_timeout_ms = 0;
+    CHECK(check_file(r).usage);
 }
 
 TEST_CASE(a_parameter_needs_a_scenario_except_in_a_test)

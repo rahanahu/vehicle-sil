@@ -140,8 +140,9 @@ struct RunPlan
 /// here); `scenario`: run --scenario, the scenario the check read (copied to
 /// RunPlan::scenario_check), or null; `base`: the directory of the file; `control_server`: the run
 /// has one (RunHost::control, or a lent RunLent::control_endpoint). Throws std::invalid_argument for
-/// a check without a configuration (CheckReport::config is empty: the file could not be read, so
-/// there is nothing to run).
+/// a check without a configuration or one that did not pass, invalid timing values, a stop time
+/// off the fixed step, or timing choices that differ from the run that the check resolved. A check
+/// without resolved timing is supported, and the same timing rules are applied before planning.
 /// `scenario`: the check's scenario, null for a run without one; from a Checked, pass
 /// detail::scenario_of() (a Checked passed as the CheckReport alone loses it).
 /// The plan has copies of what it reads of `scenario`, `choices` and `limits`: none is kept.

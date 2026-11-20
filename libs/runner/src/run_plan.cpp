@@ -8,6 +8,7 @@
 #include "vehicle_sil/process/paths.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
@@ -16,10 +17,38 @@ namespace vehicle_sil::runner {
 RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck* scenario, std::filesystem::path base,
                  const RunChoices& choices, const RunLimits& limits, bool control_server)
 {
-    if (!check.config)
+    if (!check.config || !check.passed())
     {
         throw std::invalid_argument("plan_run: the check has no configuration (CheckReport::config is empty); call it only "
                                     "with a check that passed (CheckReport::passed())");
+    }
+    if ((choices.stop_at_ms && (*choices.stop_at_ms < 1 || *choices.stop_at_ms > config::kMaxMillis)) ||
+        choices.late_tolerance_ms < 0 || choices.late_tolerance_ms > config::kMaxMillis ||
+        choices.start_timeout_ms < 1 || choices.start_timeout_ms > config::kMaxMillis ||
+        choices.stop_timeout_ms < 1 || choices.stop_timeout_ms > config::kMaxMillis ||
+        (choices.speed && *choices.speed &&
+         (!std::isfinite(**choices.speed) || **choices.speed < config::kMinSpeed || **choices.speed > config::kMaxSpeed)) ||
+        (check.config->time_step_ms && (*check.config->time_step_ms < 1 || *check.config->time_step_ms > config::kMaxMillis)))
+    {
+        throw std::invalid_argument("plan_run: timing values are outside their allowed ranges");
+    }
+    if (check.config->time_step_ms && choices.stop_at_ms && *choices.stop_at_ms % *check.config->time_step_ms != 0)
+    {
+        throw std::invalid_argument("plan_run: stop_at_ms is not a multiple of time_step_ms");
+    }
+    if (check.run_timing &&
+        (check.stop_at_ms != choices.stop_at_ms || check.checked_speed != choices.speed ||
+         check.checked_start_paused != choices.start_paused ||
+         check.run_timing->late_tolerance_ms != choices.late_tolerance_ms ||
+         check.run_timing->speed != config::planned_speed(check.time_lock, choices.speed, {}) ||
+         check.run_timing->time_step_ms < 1 || check.run_timing->time_step_ms > config::kMaxMillis ||
+         check.start_timeout_ms != choices.start_timeout_ms || check.stop_timeout_ms != choices.stop_timeout_ms))
+    {
+        throw std::invalid_argument("plan_run: timing choices differ from the checked run; check the request again");
+    }
+    if (check.run_timing && choices.stop_at_ms && *choices.stop_at_ms % check.run_timing->time_step_ms != 0)
+    {
+        throw std::invalid_argument("plan_run: checked time step does not divide stop_at_ms");
     }
     RunPlan plan;
     plan.check = detail::with_bridges(check);
@@ -43,7 +72,7 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
         }
     }
     plan.base = std::move(base);
-    plan.stop_at_ms = check.run_timing ? check.stop_at_ms : choices.stop_at_ms;
+    plan.stop_at_ms = choices.stop_at_ms;
     plan.start_timeout_ms = choices.start_timeout_ms;
     plan.stop_timeout_ms = choices.stop_timeout_ms;
     if (check.run_timing)
