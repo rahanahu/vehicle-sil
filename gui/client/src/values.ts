@@ -70,12 +70,15 @@ export class Writable<T> implements Readable<T> {
   }
 
   set(value: T): void {
-    if (this.equal(this.value, value)) return;
+    this.setDeferred(value)();
+  }
+
+  /** Changes the value immediately and returns its notification, for an atomic multi-value update. */
+  setDeferred(value: T): () => void {
+    if (this.equal(this.value, value)) return () => undefined;
     this.value = value;
     const version = ++this.version;
-    // If the value changed again during notification, the remaining subscribers already got the new value: skip the old
-    // one
-    callEach(this.listeners, [value], this.onError, () => this.version === version);
+    return () => callEach(this.listeners, [value], this.onError, () => this.version === version);
   }
 
   update(change: (value: T) => T): void {
