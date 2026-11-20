@@ -553,6 +553,34 @@ describe('RunPage', () => {
     expect(pageIntent.get().stop_at_ms).toBe(123);
   });
 
+  it('restores an edited stop time for a selected file different from the last session', async () => {
+    sessionStorage.setItem(
+      'vehicle-sil-gui-carry',
+      JSON.stringify({
+        run: {
+          session: 1,
+          chosen: 'forever.yaml',
+          file: 'forever.yaml',
+          disable: [],
+          manual: [],
+          speed: 1,
+          stopAt: '321',
+          stopAtEdited: true,
+          stopSession: null,
+          logSource: '',
+        },
+      }),
+    );
+    const fixture = await openWithFiles();
+    for (const message of server('ws-pass').slice(2)) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    expect(input.value).toBe('321');
+  });
+
   for (const mode of ['untouched', 'carried-edit', 'edit-now'] as const) {
     it(`restores a delayed session check after a language change (${mode})`, async () => {
       sessionStorage.setItem(
