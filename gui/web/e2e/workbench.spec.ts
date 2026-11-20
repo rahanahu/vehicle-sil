@@ -184,8 +184,42 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
         await expect(peer).toHaveValue('Engine');
         await expect(throttle).toBeEnabled({ timeout: RUN_TIMEOUT });
       }
+      let releaseHeld: (() => void) | undefined;
+      let heldRequests = 0;
+      if (storage === 'available') {
+        await expect
+          .poll(() =>
+            page.evaluate(() => localStorage.getItem('vehicle-sil-workbench-waves:last-instance')),
+          )
+          .not.toBeNull();
+        const held = new Promise<void>((resolve) => (releaseHeld = resolve));
+        await page.route('**/api/app', async (route) => {
+          heldRequests++;
+          if (heldRequests === 1) await held;
+          await route.continue().catch(() => {});
+        });
+        await page.evaluate(() =>
+          localStorage.setItem('vehicle-sil-workbench-waves:last-instance', 'stale-instance'),
+        );
+      }
       await page.locator('app-io-row').filter({ hasText: 'engine.speed' }).hover();
       await page.getByRole('button', { name: 'Add engine.speed to waveforms' }).click();
+      if (storage === 'available') {
+        await expect.poll(() => heldRequests).toBe(1);
+        await page.locator('app-io-row').filter({ hasText: 'ecu.connected' }).hover();
+        await page.getByRole('button', { name: 'Add ecu.connected to waveforms' }).click();
+        expect(heldRequests).toBe(1);
+        // Another tab must be able to acquire the shared lock even if this response never arrives.
+        const acquired = await page.evaluate(() =>
+          Promise.race([
+            navigator.locks.request('vehicle-sil-workbench-wave-head', () => true),
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8000)),
+          ]),
+        );
+        releaseHeld!();
+        expect(acquired).toBe(true);
+        await page.unroute('**/api/app');
+      }
       // Some browsers block sessionStorage or do not copy it into the new tab. The child must
       // still authenticate when opened during the existing run, without restarting it.
       await page.context().addInitScript(() => {

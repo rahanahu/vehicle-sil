@@ -356,6 +356,8 @@ export class Workbench {
   private readonly waveActor = crypto.randomUUID();
   private waveRevision = 0;
   private waveInstanceSeen: string | null = null;
+  private waveHeadWorking = false;
+  private waveHeadWanted: string | null = null;
   private readonly waveEntries = new Map<string, WaveEntry>();
   private listRevision = 0;
 
@@ -709,28 +711,50 @@ export class Workbench {
     // server under that lock: a late response from an old instance cannot reclaim the head.
     // Without Web Locks, keep the old head rather than risk overwriting a newer one.
     if (!navigator.locks || !pageToken) return;
-    void navigator.locks
-      .request('vehicle-sil-workbench-wave-head', async () => {
-        if (localStorage.getItem(waveStorageHead) === instance) return;
-        const response = await fetch(new URL('/api/app', location.href), {
-          headers: { Authorization: `Bearer ${pageToken}` },
-          cache: 'no-store',
-        });
-        if (!response.ok) return;
-        const app: unknown = await response.json();
-        if (
-          !app ||
-          typeof app !== 'object' ||
-          (app as { instance?: unknown }).instance !== instance ||
-          this.front()?.low.session.currentInstance() !== instance ||
-          localStorage.getItem(waveStorageKey(instance)) === null
-        )
-          return;
-        localStorage.setItem(waveStorageHead, instance);
-      })
-      .catch(() => {
-        /* Storage, locks and the network are optional for the current tab. */
-      });
+    this.waveHeadWanted = instance;
+    if (this.waveHeadWorking) return;
+    this.waveHeadWorking = true;
+    void (async () => {
+      try {
+        while (this.waveHeadWanted) {
+          const wanted = this.waveHeadWanted;
+          this.waveHeadWanted = null;
+          // Bound both the lock wait and the response body; aborting fetch releases the lock.
+          const signal = AbortSignal.timeout(3000);
+          try {
+            await navigator.locks.request(
+              'vehicle-sil-workbench-wave-head',
+              { signal },
+              async () => {
+                if (this.front()?.low.session.currentInstance() !== wanted) return;
+                if (localStorage.getItem(waveStorageHead) === wanted) return;
+                const response = await fetch(new URL('/api/app', location.href), {
+                  headers: { Authorization: `Bearer ${pageToken}` },
+                  cache: 'no-store',
+                  signal,
+                });
+                if (!response.ok) return;
+                const app: unknown = await response.json();
+                if (
+                  signal.aborted ||
+                  !app ||
+                  typeof app !== 'object' ||
+                  (app as { instance?: unknown }).instance !== wanted ||
+                  this.front()?.low.session.currentInstance() !== wanted ||
+                  localStorage.getItem(waveStorageKey(wanted)) === null
+                )
+                  return;
+                localStorage.setItem(waveStorageHead, wanted);
+              },
+            );
+          } catch {
+            // Storage, locks and the network are optional for the current tab.
+          }
+        }
+      } finally {
+        this.waveHeadWorking = false;
+      }
+    })();
   }
 
   private applyTraces(traces: Selection[]) {
