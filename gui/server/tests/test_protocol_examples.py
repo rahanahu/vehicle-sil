@@ -378,7 +378,7 @@ def test_connect_examples(tmp_path: Path) -> None:
     tools = {str(REPLAY.parent): "/path/to/tools"}  # where the stand-in launcher says the bridges are
     with gui_server(tmp_path) as gui:
         async def talk(c: Client) -> None:
-            req = {"file": "connect.yaml", "connect": {"ETH_EXT": "fake0"}}
+            req = {"file": "connect.yaml", "connect": {"ETH_EXT": "fake0"}, "stop_at_ms": 1000}
             status, body = await c.post("api/check", req)
             check_example("error-target-not-listed", http(
                 "A target that the last list of that network (POST api/connections) did not give as usable: here, "
@@ -666,7 +666,7 @@ def test_ws_time_examples(tmp_path: Path) -> None:
             status, body = await c.post("api/time", req)
             check_example("time", http("A time command: passed on to the launcher at once (what it did comes as its "
                                        "command and time events).", "POST", "api/time", req, status, body), gui)
-            await sock.until_stands(30)
+            await sock.until_stands(25)
             await c.post("api/time", {"command": "speed", "value": 1})
             await sock.until_stands(speed=1)
             await c.post("api/time", {"command": "resume"})
@@ -857,7 +857,7 @@ def test_ws_late_example(tmp_path: Path) -> None:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "late.yaml"})
+            await c.post("api/run", {"file": "late.yaml", "speed": 1})
             await sock.until(is_time(late_steps=1, late_ms=0))
             await c.post("api/stop", {})
             await sock.until(is_ended)
