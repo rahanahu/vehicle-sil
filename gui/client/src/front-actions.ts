@@ -7,6 +7,7 @@ import { HttpError, HttpTransport, errorMessage } from './http';
 import type { FrontControls, Intent, OperationName, RunState } from './front-types';
 import { ActionError } from './front-types';
 import type { Snapshot } from './front-compose';
+import type { StopCapture } from './run';
 import { linkOf, standsAt } from './front-compose';
 import type {
   CheckResult,
@@ -35,6 +36,7 @@ export interface Failure {
 export interface ActionSources {
   low: GuiClient;
   http: HttpTransport;
+  captureStop(): StopCapture;
   snapshot(): Snapshot;
   controls(): FrontControls;
   run(): RunState;
@@ -146,7 +148,7 @@ export class FrontActions {
   private readonly waiting = new Map<number, Waiting>();
   private readonly inFlight = new Map<
     'stop' | 'force_stop',
-    { key: string; promise: Promise<void> }
+    { key: object | string; promise: Promise<void> }
   >();
   /** The checks not answered yet, in the order they are sent: the first is on its way, the others wait. */
   private readonly checks: QueuedCheck[] = [];
@@ -373,11 +375,20 @@ export class FrontActions {
   }
 
   stop(): Promise<void> {
-    return this.once('stop', () => this.src.low.run.stop());
+    return this.once('stop', false);
   }
 
-  forceStop(): Promise<void> {
-    return this.once('force_stop', () => this.src.low.run.forceStop());
+  forceStop(target?: { session: number; instance: string }): Promise<void> {
+    const current = this.src.low.session.currentTarget();
+    if (target && (current?.session !== target.session || current.instance !== target.instance))
+      return this.fail(
+        new ActionError('session-changed', 'the confirmed run has changed', 'refused'),
+      );
+    if (this.src.low.run.starting.get())
+      return this.fail(
+        new ActionError('starting', 'wait until the new run can be identified', 'refused'),
+      );
+    return this.once('force_stop', true);
   }
 
   /** Pending stop only affects controls of the run it was sent for. */
@@ -390,14 +401,14 @@ export class FrontActions {
     return busy;
   }
 
-  private stopKey(): string {
-    if (this.src.low.run.starting.get()) return 'starting';
-    return JSON.stringify(this.src.low.session.currentTarget());
+  private stopKey(): object | string {
+    return this.src.captureStop().key;
   }
 
   /** Repeated requests for the same run share one operation. */
-  private once(name: 'stop' | 'force_stop', send: () => Promise<unknown>): Promise<void> {
-    const key = this.stopKey();
+  private once(name: 'stop' | 'force_stop', force: boolean): Promise<void> {
+    const capture = this.src.captureStop();
+    const key = capture.key;
     const running = this.inFlight.get(name);
     if (running?.key === key) return running.promise;
     let resolve!: () => void;
@@ -410,7 +421,7 @@ export class FrontActions {
     this.inFlight.set(name, entry);
     this.failureValue.set(null);
     // The low-level method snapshots the target before any Front busy notification.
-    const operation = send();
+    const operation = capture.send(force);
     if (this.busyValue.get().has(name)) this.busyValue.set(new Set(this.busyValue.get()));
     else this.setBusy(name, true);
     operation.then(

@@ -179,6 +179,27 @@ describe('RunControl', () => {
     }
   });
 
+  it('does not carry the old server allowed revision into an HTTP-only resync', async () => {
+    const response = answer('run') as { session: Record<string, unknown> };
+    const allowed = response.session['allowed'] as Record<string, unknown>;
+    const first = client.fetchSession();
+    http.expectOne('api/session').flush({
+      ...response,
+      allowed: { ...allowed, rev: 999 },
+      session: { ...response.session, allowed: { ...allowed, rev: 999 } },
+    });
+    await first;
+    const second = client.fetchSession();
+    http.expectOne('api/session').flush({
+      ...response,
+      instance: 'new-instance',
+      allowed: { ...allowed, rev: 1 },
+      session: { ...response.session, allowed: { ...allowed, rev: 1 } },
+    });
+    await second;
+    expect(client.session.allowed.get()?.rev).toBe(1);
+  });
+
   it('resynchronizes an HTTP-only client after the server restarts', async () => {
     const id = seedSession();
     const staleRead = client.fetchSession();

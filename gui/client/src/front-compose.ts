@@ -302,7 +302,7 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
   // force_stop: also the server's, and only after a first stop (it is the second step)
   const serverForce = s.allowed?.force;
   let force: Control;
-  if (!s.busy.has('start') && s.allowed?.start.reason === 'starting')
+  if (s.busy.has('start') || s.allowed?.start.reason === 'starting')
     force = control(false, reason('starting', 'wait until the new run can be identified'));
   else if (s.busy.has('force_stop')) force = control(false, busyReason('force stop'));
   else if (serverForce && !serverForce.ok && serverForce.reason !== 'not-running')

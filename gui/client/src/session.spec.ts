@@ -70,6 +70,22 @@ describe('SessionFeed', () => {
     return { run: view(client, http), socket };
   }
 
+  it('exposes the authenticated instance even when no run exists', () => {
+    const { socket } = open();
+    socket.send({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'new-server',
+      session: null,
+      replay: null,
+    });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(clientsLast().session.currentInstance()).toBe('new-server');
+    socket.fail();
+    expect(clientsLast().session.currentInstance()).toBe('new-server');
+  });
+
   it('authenticates first, then follows a whole run', () => {
     const { run, socket } = open();
     expect(socket.greeting).toEqual([

@@ -81,7 +81,7 @@
     [otherFile]="otherFile()"
     (start)="start()"
     (stop)="run.stop()"
-    (forceStop)="run.forceStop()"
+    (forceStop)="run.forceStop($event)"
     (showDetails)="showDetails()"
   >
     @if (timeButtonsShown()) {

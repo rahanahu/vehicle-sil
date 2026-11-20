@@ -25,6 +25,11 @@ interface ActionFailure {
   running: boolean;
 }
 
+export interface StopCapture {
+  readonly key: object | string;
+  readonly send: (force: boolean) => Promise<SessionSummary | null>;
+}
+
 /** Run control and its state (GuiClient.run). */
 export interface ClientRun {
   /** A start was sent and its answer is pending. */
@@ -156,9 +161,20 @@ export class RunControl implements ClientRun {
     return this.requestStop(true);
   }
 
-  private requestStop(force: boolean): Promise<SessionSummary | null> {
+  captureStop(): StopCapture {
     const starting = this.startSending.get() ? this.startOperation : null;
     const target = starting ? null : this.feed.currentTarget();
+    return {
+      key: starting ?? JSON.stringify(target),
+      send: (force) => this.requestStop(force, starting, target),
+    };
+  }
+
+  private requestStop(
+    force: boolean,
+    starting = this.startSending.get() ? this.startOperation : null,
+    target = starting ? null : this.feed.currentTarget(),
+  ): Promise<SessionSummary | null> {
     const session = this.feed.session.get();
     const pending = {
       action: force ? ('force' as const) : ('stop' as const),

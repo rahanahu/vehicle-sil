@@ -89,8 +89,8 @@ export class RunSession {
   }
 
   /** 待たずに止める（participant を強制終了する）。 */
-  forceStop(): void {
-    this.commands.forceStop();
+  forceStop(target?: { session: number; instance: string }): void {
+    this.commands.forceStop(target);
   }
 
   /** 知らせを消す。 */

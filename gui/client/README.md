@@ -100,15 +100,15 @@ In the browser, call `takeToken(window)`. It reads `#token=` from the URL, remov
 
 ### Session copy
 
-| Kind     | Name                                                                                                                                                            |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Type     | `ClientSession` (`session`, `currentTarget`, `ready`, `allowed`, `lastEventAt`, `notices`, `rejected`, `incompatible`, `onMessages`, `report`, `dismissNotice`) |
-| Type     | `Notice`, `SessionView`, `ParticipantView`, `LauncherView`, `LogLine`, `LogSource`, `TimeView`, `CommandView`, `RunOutcome`, `LauncherAnswer`                   |
-| Function | `runOutcome`, `phaseIndex`, `isHolding`, `launcherAnswer`                                                                                                       |
+| Kind     | Name                                                                                                                                                                               |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Type     | `ClientSession` (`session`, `currentTarget`, `currentInstance`, `ready`, `allowed`, `lastEventAt`, `notices`, `rejected`, `incompatible`, `onMessages`, `report`, `dismissNotice`) |
+| Type     | `Notice`, `SessionView`, `ParticipantView`, `LauncherView`, `LogLine`, `LogSource`, `TimeView`, `CommandView`, `RunOutcome`, `LauncherAnswer`                                      |
+| Function | `runOutcome`, `phaseIndex`, `isHolding`, `launcherAnswer`                                                                                                                          |
 
 `ClientSession.allowed` is what the GUI server accepts now (`start`, `stop` and `force`, each with `ok`, a `reason` code and a `message`; the larger `rev` wins; `null` until the server says). `SessionView.launcherState` is the launcher's last `state` event (where the run stands and what it accepts; the larger `rev` wins; `null` until one arrives). `launcherAnswer(launcherState, name)` reads what it says of one operation (`write`, `pause`, ...): `reason` (`null` when the launcher accepts it) and `caution`. A launcher that has not said (no `state` yet, or no entry for the operation) does not accept it (`unsupported`). The front door's `controls` and `variables.bind` read the launcher with it.
 
-The `currentTarget()` method returns the current `{session, instance}` pair, or `null` when it is unknown. On reconnect the client requests the retained replay from the beginning, so a restarted server cannot apply a cursor from another instance. An HTTP-only client can refresh its copy with `fetchSession()` after a server restart.
+The `currentTarget()` method returns the current `{session, instance}` pair, or `null` when it is unknown. `currentInstance()` returns the last authenticated server instance even if no run exists, and retains it while disconnected. On reconnect the client requests the retained replay from the beginning, so a restarted server cannot apply a cursor from another instance. An HTTP-only client can refresh its copy with `fetchSession()` after a server restart.
 
 ### Run control
 
@@ -117,7 +117,7 @@ The `currentTarget()` method returns the current `{session, instance}` pair, or 
 | Type | `ClientRun` (`starting`, `stopping`, `stopWhileStarting`, `error`, `start`, `stop`, `forceStop`) |
 | Type | `StopAction`                                                                                     |
 
-Stop and force stop target the known session and instance. A stop requested during this client’s start waits for its answer; if that answer is lost, the stop is not sent and the error says so. Check the current session before retrying. An old server without targeted stop is rejected; overlapping starts on one client are rejected.
+Stop and force stop target the known session and instance. A confirmation can pass the captured pair to `front.run.forceStop(target)`; the action is refused if the target has changed or a new start is pending. A stop requested during this client’s start waits for its answer; if that answer is lost, the stop is not sent and the error says so. Check the current session before retrying. An old server without targeted stop is rejected; overlapping starts on one client are rejected.
 
 ### Time
 

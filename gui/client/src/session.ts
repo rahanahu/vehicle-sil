@@ -47,6 +47,8 @@ export interface ClientSession {
   readonly session: Readable<SessionView | null>;
   /** Identity of the session suitable for a targeted action. */
   currentTarget(): { session: number; instance: string } | null;
+  /** The last authenticated server instance, even when there is no session. */
+  currentInstance(): string | null;
   /**
    * The session copy matches the server: connected, and hello and the resent events have all arrived. Until then,
    * Start and Stop are disabled so that nobody acts on a stale display. Other features (values and so on) have their
@@ -106,6 +108,7 @@ export interface ClientSession {
  */
 export class SessionFeed implements ClientSession {
   private instanceId: string | null = null;
+  private instanceListener: (instance: string) => void = () => undefined;
   private stopTarget: { session: number; instance: string } | null = null;
   private readonly current: Writable<SessionView | null>;
   private readonly synced: Writable<boolean>;
@@ -185,6 +188,11 @@ export class SessionFeed implements ClientSession {
    * request for the same run (the rest arrives in notifications). A summary of an earlier run never brings back an old
    * run over a new one.
    */
+  /** Called before a new server's session can be published. */
+  onInstance(listener: (instance: string) => void): void {
+    this.instanceListener = listener;
+  }
+
   /** Instance associated with the current session, or null if its origin is not known. */
   currentInstance(): string | null {
     return this.instanceId;
@@ -208,9 +216,12 @@ export class SessionFeed implements ClientSession {
         if (!instance || resyncFrom !== this.instanceId || this.connection.state.get() === 'open')
           return false;
         this.stopTarget = null;
+        this.instanceListener(instance);
+        this.allowedValue.set(null);
         this.instanceId = instance;
         this.current.set(null);
       }
+      if (instance && this.instanceId === null) this.instanceListener(instance);
       if (summary || !this.current.get()) this.instanceId = instance;
     }
     if (!summary) return true;
@@ -341,6 +352,7 @@ export class SessionFeed implements ClientSession {
             this.instanceId === message.instance &&
             session?.id === summary.id &&
             replay?.from_seq != null;
+          if (this.instanceId !== message.instance) this.instanceListener(message.instance);
           this.instanceId = message.instance;
           session = !summary
             ? null
