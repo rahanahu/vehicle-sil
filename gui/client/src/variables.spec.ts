@@ -610,6 +610,144 @@ describe('variables', () => {
     client.close();
   });
 
+  it('rejects a buffered older WebSocket snapshot after a newer HTTP snapshot', async () => {
+    const { client, http, socket, deliver } = setup();
+    await deliver(hello(1, { ...ready(), rev: 1, state: 'connecting' }));
+    socket().send({
+      type: 'variables',
+      session: 1,
+      variables: { ...ready(), rev: 2, state: 'connecting' },
+    });
+    const refresh = client.fetchSession();
+    http
+      .expectOne('api/session')
+      .flush({ instance: 'x', session: summary(1, { ...ready(), rev: 3 }) });
+    await refresh;
+    await vi.advanceTimersByTimeAsync(BATCH_MS);
+    expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
+    client.close();
+  });
+
+  it.each(['old-first', 'new-first'] as const)(
+    'orders overlapping same-run HTTP snapshots by server revision (%s)',
+    async (order) => {
+      const http = new FakeHttp();
+      const client = createClient({
+        baseUrl: 'http://127.0.0.1:8765/',
+        token: 'secret',
+        http: http.transport,
+        socket: new FakeWebSockets().factory,
+      });
+      const old = client.fetchSession();
+      const oldRequest = http.expectOne('api/session');
+      const newer = client.fetchSession();
+      const newRequest = http.expectOne('api/session');
+      const answerOld = () =>
+        oldRequest.flush({
+          instance: 'x',
+          session: summary(1, { ...ready(), rev: 1, state: 'connecting' }),
+        });
+      const answerNew = () =>
+        newRequest.flush({ instance: 'x', session: summary(1, { ...ready(), rev: 2 }) });
+      if (order === 'old-first') {
+        answerOld();
+        answerNew();
+      } else {
+        answerNew();
+        answerOld();
+      }
+      await Promise.all([old, newer]);
+      expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
+      client.close();
+    },
+  );
+
+  it.each(['delta-first', 'snapshot-first'] as const)(
+    'orders availability deltas and HTTP snapshots by server revision (%s)',
+    async (order) => {
+      const { client, http, deliver } = setup();
+      const schema = (availability: string) => ({
+        ...ready(),
+        peers: [
+          {
+            name: 'Engine',
+            connected: true,
+            variables: [{ ...ready().peers[0].variables[0], availability }],
+          },
+        ],
+      });
+      await deliver(hello(1, { ...schema('active'), rev: 1 }));
+      const refresh = client.fetchSession();
+      const request = http.expectOne('api/session');
+      if (order === 'delta-first') {
+        await deliver({
+          type: 'availability',
+          session: 1,
+          rev: 3,
+          peers: { Engine: { 'engine.demand': 'inactive' } },
+        });
+        request.flush({ instance: 'x', session: summary(1, { ...schema('active'), rev: 2 }) });
+      } else {
+        request.flush({ instance: 'x', session: summary(1, { ...schema('inactive'), rev: 3 }) });
+        await deliver({
+          type: 'availability',
+          session: 1,
+          rev: 2,
+          peers: { Engine: { 'engine.demand': 'active' } },
+        });
+      }
+      await refresh;
+      expect(client.variables.state.get().availability.get('Engine')?.get('engine.demand')).toBe(
+        'inactive',
+      );
+      client.close();
+    },
+  );
+
+  it('compares variable revisions only within the same run and instance', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(hello(1, { ...ready(), rev: 100 }));
+    const refresh = client.fetchSession();
+    http
+      .expectOne('api/session')
+      .flush({ instance: 'x', session: summary(2, { ...ready(), rev: 1 }) });
+    await refresh;
+    expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
+    await deliver({ ...hello(1, { ...ready(), rev: 1 }), instance: 'new-instance' });
+    expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
+    client.close();
+  });
+
+  it.each(['hello', 'variables'] as const)(
+    'keeps a newer %s snapshot when enter synchronously reads an older one',
+    async (kind) => {
+      const { client, http, deliver } = setup();
+      await deliver(hello(1, { ...ready(), rev: 1 }));
+      let fetched = false;
+      const unsubscribe = client.variables.state.subscribe((state) => {
+        if (fetched || state.session !== 2 || state.status !== 'unknown') return;
+        fetched = true;
+        void client.fetchSession();
+        http.expectOne('api/session').flush({
+          instance: 'x',
+          session: summary(2, { ...ready(), rev: 1, state: 'connecting' }),
+        });
+      });
+      if (kind === 'hello') {
+        await deliver(hello(2, { ...ready(), rev: 2 }));
+      } else {
+        await deliver(
+          { type: 'variables', session: 2, variables: { ...ready(), rev: 2 } },
+          { type: 'session', session: summary(2) },
+        );
+      }
+      expect(fetched).toBe(true);
+      expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
+      unsubscribe();
+      client.close();
+    },
+  );
+
   it('keeps a newer WebSocket variables snapshot over an older pending HTTP response', async () => {
     const { client, http, deliver } = setup();
     const connecting = { ...ready(), state: 'connecting' };

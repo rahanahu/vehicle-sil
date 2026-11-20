@@ -73,7 +73,9 @@ def test_a_run_that_passes(tmp_path: Path) -> None:
         assert [p["name"] for p in end["check"]["participants"]] == ["Engine", "Dashboard", "Logger"]
         assert all(not alive(pid) for pid in started_pids(got))
         status, body = await c.get("api/session")
-        assert without_variables(body["session"]) == end and body["session"]["variables"]["state"] == "off"
+        assert body["session"]["snapshot_rev"] > end["snapshot_rev"]
+        assert {**without_variables(body["session"]), "snapshot_rev": end["snapshot_rev"]} == end
+        assert body["session"]["variables"]["state"] == "off"
     with gui_server(tmp_path) as gui:
         run_async(main, gui)
 
@@ -424,7 +426,9 @@ def test_reconnecting_replays_the_kept_log(tmp_path: Path) -> None:
             again = await c.ws()
             got = await again.until(is_synced)
             hello = got[0]
-            assert hello["type"] == "hello" and without_variables(hello["session"]) == live[-1]["session"]
+            assert hello["type"] == "hello"
+            assert hello["session"]["snapshot_rev"] > live[-1]["session"]["snapshot_rev"]
+            assert {**without_variables(hello["session"]), "snapshot_rev": live[-1]["session"]["snapshot_rev"]} == live[-1]["session"]
             assert hello["replay"] == {"from_seq": None}
             live_engine = [e for e in events(live, "log") if e["source"] == "Engine"]
             assert got[1] == {"type": "dropped", "session": 1, "reason": "not-kept",

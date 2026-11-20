@@ -75,6 +75,7 @@
     {
       "type": "session",
       "session": {
+        "snapshot_rev": 1,
         "id": 1,
         "file": "participant-crash.yaml",
         "disable": [],
@@ -132,6 +133,7 @@
         "log": {},
         "problems": [],
         "problems_omitted": 0,
+        "problem_seq": 0,
         "scenario": null
       }
     },
@@ -139,6 +141,7 @@
       "type": "variables",
       "session": 1,
       "variables": {
+        "rev": 1,
         "state": "off",
         "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
         "peers": [],
@@ -2127,6 +2130,7 @@
     {
       "type": "session",
       "session": {
+        "snapshot_rev": 2,
         "id": 1,
         "file": "participant-crash.yaml",
         "disable": [],
@@ -3017,6 +3021,7 @@
         },
         "problems": [],
         "problems_omitted": 0,
+        "problem_seq": 0,
         "scenario": null
       }
     }

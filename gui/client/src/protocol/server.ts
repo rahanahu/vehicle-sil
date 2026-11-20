@@ -64,6 +64,8 @@ export const PROTOCOL_VERSION = 2;
  * A server notice (an API error, a WebSocket error, problems of the session). message is shown in English, unchanged.
  */
 export interface ServerProblem {
+  /** Monotonic per-run diagnostic identifier, absent on older servers. */
+  problem_seq?: number;
   code: string;
   message: string;
   /** For launcher-stderr, the number of lines dropped at this point (`detail.skipped`). Other notices lack it. */
@@ -79,6 +81,8 @@ export const readServerProblem: Reader<ServerProblem> = (value, path) => {
     code: field(f, path, 'code', string),
     message: field(f, path, 'message', string),
   };
+  if (Number.isSafeInteger(f['problem_seq']) && (f['problem_seq'] as number) >= 0)
+    problem.problem_seq = f['problem_seq'] as number;
   // The contents of detail differ by code. Take only what is used, and only when its shape fits
   const detail = f['detail'];
   if (typeof detail === 'object' && detail !== null && 'skipped' in detail) {
@@ -581,6 +585,8 @@ const readLogCounts: Reader<LogCounts> = (value, path) => {
  */
 export interface SessionSummary {
   id: number;
+  /** Server capture order within this instance and run; absent on older servers. */
+  snapshot_rev?: number | null;
   /** Path relative to root. */
   file: string;
   disable: string[];
@@ -631,6 +637,8 @@ export interface SessionSummary {
   log: Record<string, LogCounts>;
   problems: ServerProblem[];
   problems_omitted: number;
+  /** Highest diagnostic identifier allocated by the server, including omitted diagnostics. */
+  problem_seq?: number | null;
   /** Progress of the scenario run (`scenario` of `api/run`). null for a run without a scenario. */
   scenario: SummaryScenario | null;
   /**
@@ -693,6 +701,9 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
   const timePath = `${path}.time`;
   const summary: Omit<SessionSummary, 'unreadable'> = {
     id: field(f, path, 'id', integer),
+    ...(f['snapshot_rev'] === undefined
+      ? {}
+      : { snapshot_rev: field(f, path, 'snapshot_rev', soft(nullable(integer), null, u)) }),
     state: field(f, path, 'state', string),
     launcher: field(f, path, 'launcher', readSummaryLauncher),
     stop: field(f, path, 'stop', string),
@@ -779,6 +790,9 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
     log: field(f, path, 'log', soft(partlyRecord(readLogCounts, u), {}, u)),
     problems: field(f, path, 'problems', items(readServerProblem, u)),
     problems_omitted: field(f, path, 'problems_omitted', soft(integer, 0, u)),
+    ...(f['problem_seq'] === undefined
+      ? {}
+      : { problem_seq: field(f, path, 'problem_seq', soft(nullable(integer), null, u)) }),
     scenario: field(
       f,
       path,
@@ -992,6 +1006,8 @@ export interface OperationReport {
 
 /** `variables` of the summary: state of the variable API, variables per participant, recent operations. */
 export interface VariablesSummary {
+  /** Server capture order for variable snapshots and availability deltas; absent on older servers. */
+  rev?: number | null;
   state: Open<'off' | 'connecting' | 'ready' | 'failed' | 'ended'>;
   reason: string | null;
   peers: { name: string; connected: boolean; variables: VariableSummary[] }[];
@@ -1067,6 +1083,9 @@ export const readVariablesSummary = (value: unknown): VariablesSummary =>
 const readVariables: Reader<VariablesSummary> = (value, path) => {
   const f = object(value, path);
   return {
+    ...(f['rev'] === undefined
+      ? {}
+      : { rev: field(f, path, 'rev', optional(nullable(integer), null)) }),
     state: field(f, path, 'state', string),
     reason: field(f, path, 'reason', optional(nullable(string), null)),
     peers: field(
@@ -1382,6 +1401,7 @@ export type ServerMessage =
   | {
       type: 'availability';
       session: number;
+      rev?: number | null;
       peers: Record<string, Record<string, VariableAvailability>>;
     };
 
@@ -1482,6 +1502,9 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
       return {
         type,
         session: field(f, path, 'session', integer),
+        ...(f['rev'] === undefined
+          ? {}
+          : { rev: field(f, path, 'rev', optional(nullable(integer), null)) }),
         peers: field(
           f,
           path,

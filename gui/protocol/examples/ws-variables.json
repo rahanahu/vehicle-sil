@@ -100,6 +100,7 @@
     {
       "type": "session",
       "session": {
+        "snapshot_rev": 1,
         "id": 1,
         "file": "forever.yaml",
         "disable": [
@@ -159,6 +160,7 @@
         "log": {},
         "problems": [],
         "problems_omitted": 0,
+        "problem_seq": 0,
         "scenario": null
       }
     },
@@ -166,6 +168,7 @@
       "type": "variables",
       "session": 1,
       "variables": {
+        "rev": 1,
         "state": "connecting",
         "reason": null,
         "peers": [],
@@ -180,6 +183,7 @@
       "type": "variables",
       "session": 1,
       "variables": {
+        "rev": 2,
         "state": "ready",
         "reason": null,
         "peers": [
@@ -395,6 +399,7 @@
     {
       "type": "session",
       "session": {
+        "snapshot_rev": 2,
         "id": 1,
         "file": "forever.yaml",
         "disable": [
@@ -856,6 +861,7 @@
         },
         "problems": [],
         "problems_omitted": 0,
+        "problem_seq": 0,
         "scenario": null
       }
     },
@@ -863,6 +869,7 @@
       "type": "variables",
       "session": 1,
       "variables": {
+        "rev": 3,
         "state": "ended",
         "reason": null,
         "peers": [
@@ -1027,6 +1034,7 @@
     {
       "type": "session",
       "session": {
+        "snapshot_rev": 3,
         "id": 1,
         "file": "forever.yaml",
         "disable": [
@@ -1903,6 +1911,7 @@
         },
         "problems": [],
         "problems_omitted": 0,
+        "problem_seq": 0,
         "scenario": null
       }
     }

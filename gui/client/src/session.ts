@@ -459,18 +459,26 @@ export class SessionFeed implements ClientSession {
           replaying = true;
           const { session: summary, replay } = message;
           // hello is authoritative (a server that restarted may number from the start again)
-          takeAllowed(message.allowed ?? summary?.allowed ?? null, true);
-          const resumed =
-            summary &&
+          const staleSnapshot =
+            !!summary &&
             instance === message.instance &&
             session?.id === summary.id &&
-            replay?.from_seq != null;
+            session.snapshotRev != null &&
+            (summary.snapshot_rev == null || summary.snapshot_rev < session.snapshotRev);
+          takeAllowed(message.allowed ?? summary?.allowed ?? null, !staleSnapshot);
+          const sameRun = summary && instance === message.instance && session?.id === summary.id;
+          const resumed = sameRun && replay?.from_seq != null;
           instance = message.instance;
-          session = !summary
-            ? null
-            : resumed && session
-              ? applySummary(session, summary, true)
-              : sessionFromSummary(summary);
+          if (!summary) {
+            session = null;
+          } else if (sameRun && session) {
+            const kept = staleSnapshot ? session : applySummary(session, summary, true, true);
+            session = resumed
+              ? kept
+              : { ...kept, lastSeq: -1, logs: [], logSources: {}, droppedMarks: 0 };
+          } else {
+            session = sessionFromSummary(summary);
+          }
           break;
         }
         case 'dropped': {
@@ -490,7 +498,13 @@ export class SessionFeed implements ClientSession {
           // server's state at that point (keep the log)
           session =
             session?.id === message.session.id
-              ? applySummary(session, message.session, true)
+              ? applySummary(
+                  session,
+                  message.session,
+                  true,
+                  message.session.last_seq !== null &&
+                    (session.observedSeq ?? session.lastSeq) >= message.session.last_seq,
+                )
               : sessionFromSummary(message.session);
           break;
         case 'event':
@@ -500,11 +514,13 @@ export class SessionFeed implements ClientSession {
           if (message.code === 'unauthorized') {
             // Reported through rejected (receive disconnects)
           } else if (session && message.session === session.id) {
-            const { code, message: text, skipped } = message;
-            session = addProblem(
-              session,
-              skipped === undefined ? { code, message: text } : { code, message: text, skipped },
-            );
+            const { code, message: text, skipped, problem_seq } = message;
+            session = addProblem(session, {
+              code,
+              message: text,
+              ...(skipped === undefined ? {} : { skipped }),
+              ...(problem_seq === undefined ? {} : { problem_seq }),
+            });
           } else {
             notices.push(message.message);
           }

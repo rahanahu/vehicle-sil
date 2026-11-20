@@ -266,6 +266,16 @@ function withStep(steps: readonly ScenarioStep[], step: ScenarioStep): readonly 
 export interface SessionView {
   /** Session number the server assigned. */
   id: number;
+  /** Server snapshot capture order for this run, null on older servers. */
+  snapshotRev?: number | null;
+  /** Highest diagnostic identifier represented in this view. */
+  problemSeq?: number;
+  /** Highest diagnostic delivered by the ordered WebSocket stream. */
+  problemEventSeq?: number;
+  /** Summary findings awaiting possible earlier buffered live events. */
+  pendingFindings?: { through: number; keys: readonly string[] };
+  /** Highest live or replay event observed, retained across full log replay. */
+  observedSeq?: number;
   /** seq of the last event received (-1 if none). On reconnect, the resend is requested from the next one. */
   lastSeq: number;
   /** The configuration file (relative to root). */
@@ -370,6 +380,7 @@ export function runOutcome(session: SessionView): RunOutcome {
 export function sessionFromSummary(summary: SessionSummary): SessionView {
   const blank: SessionView = {
     id: summary.id,
+    ...(summary.snapshot_rev == null ? {} : { snapshotRev: summary.snapshot_rev }),
     lastSeq: -1,
     file: summary.file,
     disable: summary.disable,
@@ -399,7 +410,13 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
     droppedMarks: 0,
     scenario: null,
   };
-  return applySummary(blank, summary, true);
+  const adopted = applySummary(blank, summary, true);
+  return summary.last_seq == null
+    ? adopted
+    : {
+        ...adopted,
+        pendingFindings: { through: summary.last_seq, keys: summary.findings.map(findingKey) },
+      };
 }
 
 /**
@@ -459,6 +476,9 @@ export function applySummary(
   force = false,
   controlOnly = false,
 ): SessionView {
+  const incomingRev = summary.snapshot_rev ?? null;
+  const currentRev = session.snapshotRev ?? null;
+  if (currentRev !== null && (incomingRev === null || incomingRev < currentRev)) return session;
   const newer = force || (summary.last_seq ?? -1) > session.lastSeq;
   const launcher =
     !force && !session.launcher.running && summary.launcher.running
@@ -467,22 +487,43 @@ export function applySummary(
   const notLess =
     summary.problems.length + summary.problems_omitted >=
     session.problems.length + session.problemsOmitted;
+  const mergedProblems = [...summary.problems];
+  let omitted = summary.problems_omitted;
+  if (summary.problem_seq != null) {
+    const included = new Set(mergedProblems.map((problem) => problem.problem_seq));
+    for (const problem of session.problems) {
+      if (problem.problem_seq === undefined || included.has(problem.problem_seq)) continue;
+      if (mergedProblems.length >= MAX_PROBLEMS) break;
+      mergedProblems.push(problem);
+      if (problem.problem_seq <= summary.problem_seq && omitted > 0) omitted--;
+    }
+  }
+  if (mergedProblems.every((problem) => problem.problem_seq !== undefined))
+    mergedProblems.sort((a, b) => a.problem_seq! - b.problem_seq!);
   const next: SessionView = {
     ...session,
+    ...(incomingRev === null ? {} : { snapshotRev: incomingRev }),
+    ...(summary.problem_seq == null
+      ? {}
+      : { problemSeq: Math.max(session.problemSeq ?? 0, summary.problem_seq) }),
     launcher,
     stopRequests: Math.max(session.stopRequests, stopRequestsOf(summary.stop)),
     logSources: withSources(session.logSources, Object.keys(summary.log)),
-    ...(force || notLess
-      ? { problems: summary.problems, problemsOmitted: summary.problems_omitted }
-      : {}),
+    ...(force || notLess ? { problems: mergedProblems, problemsOmitted: omitted } : {}),
   };
   if (!newer || (!force && controlOnly)) {
     return next;
   }
   const phase = summary.phase ?? next.phase;
   const rank = phaseIndex(phase);
-  const check = summary.check ?? next.check ?? summary.result?.check ?? null;
-  const result = summary.result ?? next.result;
+  const preserveEvents = force && controlOnly;
+  const check =
+    (preserveEvents ? next.check : null) ??
+    summary.check ??
+    next.check ??
+    summary.result?.check ??
+    null;
+  const result = (preserveEvents ? next.result : null) ?? summary.result ?? next.result;
   const known = new Map(session.participants.map((p) => [p.name, p]));
   const participants: readonly ParticipantView[] = summary.participants.map((p) => ({
     name: p.name,
@@ -492,17 +533,42 @@ export function applySummary(
     exitCode: p.exit_code,
     signal: p.signal,
     failure: p.reason,
-    message: p.message,
+    message: p.message ?? (preserveEvents ? (known.get(p.name)?.message ?? null) : null),
     // A stop the launcher asked for is kept even in summaries of later states (ended and so on)
     stopRequested:
       p.stop_requested || p.state === 'stop_requested' || !!known.get(p.name)?.stopRequested,
     omittedFields: p.omitted_fields,
     controlLink: p.control_link ?? known.get(p.name)?.controlLink ?? null,
     manual: p.state === 'manual' || p.command_line !== null || !!known.get(p.name)?.manual,
-    commandLine: p.command_line,
-    workingDirectory: p.working_directory,
-    environment: p.environment ?? {},
+    commandLine:
+      p.command_line ?? (preserveEvents ? (known.get(p.name)?.commandLine ?? null) : null),
+    workingDirectory:
+      p.working_directory ??
+      (preserveEvents ? (known.get(p.name)?.workingDirectory ?? null) : null),
+    environment: p.environment ?? (preserveEvents ? (known.get(p.name)?.environment ?? {}) : {}),
   }));
+  const scenario = summary.scenario ? scenarioView(summary.scenario) : next.scenario;
+  const mergedScenario =
+    preserveEvents && scenario && next.scenario
+      ? {
+          ...scenario,
+          steps: next.scenario.steps.reduce((steps, step) => withStep(steps, step), scenario.steps),
+        }
+      : scenario;
+  if (mergedScenario && scenario && mergedScenario !== scenario) {
+    mergedScenario.stepsOmitted = Math.max(
+      0,
+      scenario.stepsOmitted - (mergedScenario.steps.length - scenario.steps.length),
+    );
+  }
+  const mergedParticipants = preserveEvents
+    ? [
+        ...participants,
+        ...next.participants.filter(
+          (p) => !participants.some((current) => current.name === p.name),
+        ),
+      ]
+    : participants;
   return {
     ...next,
     unreadable: force ? summary.unreadable : union(next.unreadable, summary.unreadable),
@@ -517,13 +583,19 @@ export function applySummary(
       ? commandView(summary.last_command, summary.last_command.seq ?? -1)
       : next.lastCommand,
     launcherState: newerState(next.launcherState, summary.launcher_state ?? null),
-    findings: summary.findings,
+    findings:
+      preserveEvents && next.findings.length >= summary.findings.length
+        ? next.findings
+        : summary.findings,
     result,
     check,
-    scenario: summary.scenario ? scenarioView(summary.scenario) : next.scenario,
+    scenario: mergedScenario,
     // Whether a participant is required or left out is in the check result (as is the order, that of the configuration
     // file). If there is a result, how it ended (stopped or not) comes from the result too
-    participants: withResult(check ? mergeCheck(participants, check) : participants, result),
+    participants: withResult(
+      check ? mergeCheck(mergedParticipants, check) : mergedParticipants,
+      result,
+    ),
   };
 }
 
@@ -554,15 +626,45 @@ function withSources(
  * counted.
  */
 export function addProblem(session: SessionView, problem: ServerProblem): SessionView {
-  if (session.problems.length >= MAX_PROBLEMS) {
-    return { ...session, problemsOmitted: session.problemsOmitted + 1 };
+  const seq = problem.problem_seq;
+  if (seq !== undefined && seq <= (session.problemEventSeq ?? 0)) return session;
+  const updated = seq === undefined ? session : { ...session, problemEventSeq: seq };
+  if (seq !== undefined && session.problems.some((item) => item.problem_seq === seq))
+    return updated;
+  if (updated.problems.length >= MAX_PROBLEMS) {
+    const alreadyCounted = seq !== undefined && seq <= (session.problemSeq ?? 0);
+    return alreadyCounted ? updated : { ...updated, problemsOmitted: updated.problemsOmitted + 1 };
   }
-  return { ...session, problems: [...session.problems, problem] };
+  const alreadyCounted = seq !== undefined && seq <= (session.problemSeq ?? 0);
+  const problems = [...updated.problems, problem];
+  if (problems.every((item) => item.problem_seq !== undefined))
+    problems.sort((a, b) => a.problem_seq! - b.problem_seq!);
+  return {
+    ...updated,
+    problems,
+    problemsOmitted: alreadyCounted
+      ? Math.max(0, updated.problemsOmitted - 1)
+      : updated.problemsOmitted,
+  };
 }
 
 /** Position of the phase (-1 for an unknown phase). */
 export function phaseIndex(phase: Phase | null): number {
   return phase === null ? -1 : (PHASES as readonly string[]).indexOf(phase);
+}
+
+/** The fields common to a finding in a summary and in a live event. */
+function findingKey(finding: Finding): string {
+  return JSON.stringify([
+    finding.severity,
+    finding.code,
+    finding.file,
+    finding.line,
+    finding.participant,
+    finding.network,
+    finding.message,
+    finding.detail,
+  ]);
 }
 
 /**
@@ -580,6 +682,17 @@ export function applyEvents(
   let stale = 0;
   for (const event of events) {
     if (event.seq > next.lastSeq) {
+      next = { ...next, observedSeq: Math.max(next.observedSeq ?? -1, event.seq) };
+      const pending = next.pendingFindings;
+      if (event.event === 'finding' && pending && event.seq <= pending.through) {
+        const index = pending.keys.indexOf(findingKey(event.finding));
+        if (index !== -1) {
+          const keys = [...pending.keys];
+          keys.splice(index, 1);
+          next = { ...next, lastSeq: event.seq, pendingFindings: { ...pending, keys } };
+          continue;
+        }
+      }
       next = applyOne(next, event, logs);
       if (event.unreadable)
         next = { ...next, unreadable: union(next.unreadable, event.unreadable) };

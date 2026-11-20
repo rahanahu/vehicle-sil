@@ -396,6 +396,425 @@ describe('SessionFeed', () => {
     });
   });
 
+  it('keeps a newer HTTP launcher snapshot over an older buffered hello and preserves replay', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const launcher = response.session['launcher'] as Record<string, unknown>;
+    socket.send({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 1 },
+      replay: null,
+    });
+    socket.send({ type: 'synced', session: response.session['id'], last_seq: 0 });
+    const refresh = client.fetchSession();
+    http.expectOne('api/session').flush({
+      instance: 'x',
+      session: {
+        ...response.session,
+        snapshot_rev: 2,
+        launcher: { ...launcher, running: false },
+        state: 'ended',
+      },
+    });
+    await refresh;
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.launcher.running).toBe(false);
+    expect(client.session.session.get()?.snapshotRev).toBe(2);
+    expect(client.session.ready.get()).toBe(true);
+  });
+
+  it('keeps a complete live result when the first HTTP summary arrives before hello', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const id = response.session['id'];
+    const result = {
+      vehicle_sil_run: 2,
+      result: 'passed',
+      end: 'completed',
+      ok: true,
+      message: 'x'.repeat(4 * 1024 * 1024 + 1),
+      errors: 0,
+      warnings: 0,
+      notes: 0,
+      participants: [
+        {
+          name: 'Engine',
+          required: true,
+          enabled: true,
+          manual: false,
+          ended: 'exited',
+          exit_code: 0,
+          signal: null,
+        },
+      ],
+      findings: [],
+    };
+    socket.send({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 1 },
+      replay: null,
+    });
+    socket.send({
+      type: 'event',
+      session: id,
+      event: { event: 'result', seq: 1, t_ms: 1, result },
+    });
+    socket.send({ type: 'synced', session: id, last_seq: 1 });
+    const refresh = client.fetchSession();
+    http.expectOne('api/session').flush({
+      instance: 'x',
+      session: {
+        ...response.session,
+        snapshot_rev: 2,
+        last_seq: 1,
+        result: {
+          vehicle_sil_run: 2,
+          result: 'passed',
+          end: 'completed',
+          ok: true,
+          errors: 0,
+          warnings: 0,
+          notes: 0,
+        },
+      },
+    });
+    await refresh;
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.result?.participants[0]?.name).toBe('Engine');
+    expect(client.session.session.get()?.result?.message.length).toBe(result.message.length);
+  });
+
+  it('deduplicates a buffered finding already in the first HTTP summary', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const id = response.session['id'];
+    const finding = {
+      severity: 'warning',
+      code: 'x',
+      message: 'one',
+      file: null,
+      line: null,
+      participant: null,
+      network: null,
+      detail: null,
+    };
+    socket.send({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 1, findings: [] },
+      replay: null,
+    });
+    socket.send({
+      type: 'event',
+      session: id,
+      event: { event: 'finding', seq: 1, t_ms: 1, ...finding },
+    });
+    socket.send({ type: 'synced', session: id, last_seq: 1 });
+    const refresh = client.fetchSession();
+    http.expectOne('api/session').flush({
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 2, last_seq: 1, findings: [finding] },
+    });
+    await refresh;
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.findings.map((item) => item.message)).toEqual(['one']);
+  });
+
+  it('retains complete large result and check across a same-run full hello replay', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const examples = await httpExamples();
+    const response = examples.find((item) => item.name === 'run')?.response as {
+      session: Record<string, unknown>;
+    };
+    const checked = examples.find((item) => item.name === 'check-passed')?.response as {
+      check: Record<string, unknown>;
+    };
+    const id = response.session['id'];
+    const check = { ...checked.check, padding: 'x'.repeat(4 * 1024 * 1024 + 1) };
+    const result = {
+      vehicle_sil_run: 2,
+      result: 'passed',
+      end: 'completed',
+      ok: true,
+      message: 'x'.repeat(4 * 1024 * 1024 + 1),
+      errors: 0,
+      warnings: 0,
+      notes: 0,
+      participants: [
+        {
+          name: 'Engine',
+          required: true,
+          enabled: true,
+          manual: false,
+          ended: 'exited',
+          exit_code: 0,
+          signal: null,
+        },
+      ],
+      findings: [],
+    };
+    const hello = (session: Record<string, unknown>) => ({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session,
+      replay: { from_seq: null },
+    });
+    socket.send(hello({ ...response.session, snapshot_rev: 1 }));
+    socket.send({ type: 'event', session: id, event: { event: 'check', seq: 1, t_ms: 1, check } });
+    socket.send({
+      type: 'event',
+      session: id,
+      event: { event: 'result', seq: 2, t_ms: 2, result },
+    });
+    socket.send({ type: 'synced', session: id, last_seq: 2 });
+    vi.advanceTimersByTime(BATCH_MS);
+    socket.send(
+      hello({
+        ...response.session,
+        snapshot_rev: 2,
+        last_seq: 2,
+        check: null,
+        result: {
+          vehicle_sil_run: 2,
+          result: 'passed',
+          end: 'completed',
+          ok: true,
+          errors: 0,
+          warnings: 0,
+          notes: 0,
+        },
+      }),
+    );
+    socket.send({ type: 'synced', session: id, last_seq: 2 });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.result?.participants[0]?.name).toBe('Engine');
+    expect(client.session.session.get()?.result?.message.length).toBe(result.message.length);
+    expect(client.session.session.get()?.check?.participants[0]?.name).toBe('Engine');
+  });
+
+  it('rebuilds all replayed logs after a stale hello without duplicating gaps', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const id = response.session['id'];
+    const hello = (rev: number) => ({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: rev },
+      replay: { from_seq: null },
+    });
+    const log = (seq: number) => ({
+      type: 'event',
+      session: id,
+      event: { event: 'log', seq, t_ms: seq, source: 'ECU', line: `line ${seq}` },
+    });
+    const dropped = {
+      type: 'dropped',
+      session: id,
+      reason: 'not-kept',
+      log: { ECU: 1 },
+      at_least: [],
+      events: 0,
+    };
+    socket.send(hello(1));
+    socket.send(dropped);
+    socket.send(log(1));
+    socket.send(log(3));
+    socket.send({ type: 'synced', session: id, last_seq: 3 });
+    vi.advanceTimersByTime(BATCH_MS);
+    const refresh = client.fetchSession();
+    http
+      .expectOne('api/session')
+      .flush({ instance: 'x', session: { ...response.session, snapshot_rev: 3 } });
+    await refresh;
+    socket.send(hello(2));
+    socket.send(dropped);
+    socket.send(log(1));
+    socket.send(log(2));
+    socket.send(log(3));
+    socket.send({ type: 'synced', session: id, last_seq: 3 });
+    vi.advanceTimersByTime(BATCH_MS);
+    const logs = client.session.session.get()?.logs ?? [];
+    expect(logs.filter((line) => !line.gap).map((line) => line.line)).toEqual([
+      'line 1',
+      'line 2',
+      'line 3',
+    ]);
+    expect(logs.filter((line) => line.gap)).toHaveLength(1);
+  });
+
+  it('deduplicates a problem already included in a newer HTTP summary', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const id = response.session['id'];
+    const problem = { code: 'stop-not-delivered', message: 'failed', detail: null, problem_seq: 1 };
+    socket.send({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 1 },
+      replay: null,
+    });
+    vi.advanceTimersByTime(BATCH_MS);
+    const refresh = client.fetchSession();
+    http.expectOne('api/session').flush({
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 2, problem_seq: 1, problems: [problem] },
+    });
+    await refresh;
+    socket.send({ type: 'error', session: id, ...problem });
+    socket.send({ type: 'session', session: { ...response.session, snapshot_rev: 1 } });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(
+      client.session.session.get()?.problems.filter((p) => p.code === problem.code),
+    ).toHaveLength(1);
+  });
+
+  it('keeps diagnostics omitted from a summary when their websocket errors arrive later', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const id = response.session['id'];
+    socket.send({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 1 },
+      replay: null,
+    });
+    vi.advanceTimersByTime(BATCH_MS);
+    const problems = Array.from({ length: 100 }, (_, index) => ({
+      code: 'bad-event',
+      message: `problem ${index + 1}`,
+      detail: null,
+      problem_seq: index + 1,
+    }));
+    const refresh = client.fetchSession();
+    http.expectOne('api/session').flush({
+      instance: 'x',
+      session: {
+        ...response.session,
+        snapshot_rev: 2,
+        problem_seq: 101,
+        problems,
+        problems_omitted: 1,
+      },
+    });
+    await refresh;
+    socket.send({
+      type: 'error',
+      session: id,
+      code: 'bad-event',
+      message: 'problem 101',
+      detail: null,
+      problem_seq: 101,
+    });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.problems).toHaveLength(101);
+    expect(client.session.session.get()?.problemsOmitted).toBe(0);
+    socket.send({
+      type: 'session',
+      session: {
+        ...response.session,
+        snapshot_rev: 3,
+        problem_seq: 101,
+        problems,
+        problems_omitted: 1,
+      },
+    });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.problems).toHaveLength(101);
+    expect(client.session.session.get()?.problemsOmitted).toBe(0);
+    socket.send({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: {
+        ...response.session,
+        snapshot_rev: 4,
+        problem_seq: 101,
+        problems,
+        problems_omitted: 1,
+      },
+      replay: { from_seq: null },
+    });
+    socket.send({ type: 'synced', session: id, last_seq: 0 });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.problems).toHaveLength(101);
+    expect(client.session.session.get()?.problemsOmitted).toBe(0);
+  });
+
+  it.each(['old-first', 'new-first'] as const)(
+    'orders overlapping same-run session snapshots by server revision (%s)',
+    async (order) => {
+      const http = new FakeHttp();
+      open(http);
+      const client = clientsLast();
+      const example = (await httpExamples()).find((item) => item.name === 'run');
+      const response = example?.response as { session: Record<string, unknown> };
+      const launcher = response.session['launcher'] as Record<string, unknown>;
+      const old = client.fetchSession();
+      const oldRequest = http.expectOne('api/session');
+      const newer = client.fetchSession();
+      const newRequest = http.expectOne('api/session');
+      const answerOld = () =>
+        oldRequest.flush({ instance: 'x', session: { ...response.session, snapshot_rev: 1 } });
+      const answerNew = () =>
+        newRequest.flush({
+          instance: 'x',
+          session: {
+            ...response.session,
+            snapshot_rev: 2,
+            launcher: { ...launcher, running: false },
+            state: 'ended',
+          },
+        });
+      if (order === 'old-first') {
+        answerOld();
+        answerNew();
+      } else {
+        answerNew();
+        answerOld();
+      }
+      await Promise.all([old, newer]);
+      expect(client.session.session.get()?.launcher.running).toBe(false);
+      expect(client.session.session.get()?.snapshotRev).toBe(2);
+    },
+  );
+
   it('does not apply an old prefix to a new server during restart notification', async () => {
     const http = new FakeHttp();
     const { socket } = open(http);

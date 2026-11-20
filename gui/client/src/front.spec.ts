@@ -815,6 +815,101 @@ describe('the front door', () => {
       expect(done).toBe(true);
     });
 
+    it('keeps launcher events, logs and command answers when HTTP responds first', async () => {
+      const rig = await running();
+      const pause = rig.front.time.pause();
+      const id = rig.timeBody().id;
+      const finding = { severity: 'error', code: 'x', message: 'one' };
+      rig.socket.send(event({ event: 'finding', ...finding }));
+      rig.socket.send(event(timeEvent(60, 100)));
+      rig.socket.send(event({ event: 'log', t_ms: 61, source: 'ECU', line: 'kept' }));
+      rig.socket.send(event(commandEvent(62, 'pause', id)));
+      const refresh = rig.front.low.fetchSession();
+      rig.http.expectOne('api/session').flush({
+        instance: 'x',
+        session: summary({
+          snapshot_rev: 2,
+          last_seq: lastSeq,
+          time: { sim_ms: 200, actual_speed: 1 },
+          findings: [finding],
+        }),
+      });
+      await refresh;
+      await vi.advanceTimersByTimeAsync(BATCH_MS);
+      await expect(pause).resolves.toBeUndefined();
+      const session = rig.front.low.session.session.get();
+      expect(session?.simMs).toBe(100);
+      expect(session?.findings.map((item) => item.message)).toEqual(['one']);
+      expect(session?.logs.map((line) => line.line)).toContain('kept');
+    });
+
+    it('keeps a large complete result when an HTTP summary was trimmed', async () => {
+      const rig = await running();
+      const result = {
+        vehicle_sil_run: 2,
+        result: 'passed',
+        end: 'completed',
+        ok: true,
+        message: 'x'.repeat(4 * 1024 * 1024 + 1),
+        errors: 0,
+        warnings: 0,
+        notes: 0,
+        participants: [
+          {
+            name: 'Engine',
+            required: true,
+            enabled: true,
+            manual: false,
+            ended: 'exited',
+            exit_code: 0,
+            signal: null,
+          },
+        ],
+        findings: [],
+      };
+      expect(JSON.stringify(result).length).toBeGreaterThan(4 * 1024 * 1024);
+      expect(JSON.stringify(result).length).toBeLessThan(16 * 1024 * 1024);
+      rig.socket.send(event({ event: 'result', t_ms: 70, result }));
+      const refresh = rig.front.low.fetchSession();
+      rig.http.expectOne('api/session').flush({
+        instance: 'x',
+        session: summary({
+          snapshot_rev: 2,
+          last_seq: lastSeq,
+          result: {
+            vehicle_sil_run: 2,
+            result: 'passed',
+            end: 'completed',
+            ok: true,
+            errors: 0,
+            warnings: 0,
+            notes: 0,
+          },
+        }),
+      });
+      await refresh;
+      await vi.advanceTimersByTimeAsync(BATCH_MS);
+      await rig.deliver({
+        type: 'session',
+        session: summary({
+          snapshot_rev: 3,
+          last_seq: lastSeq,
+          result: {
+            vehicle_sil_run: 2,
+            result: 'passed',
+            end: 'completed',
+            ok: true,
+            errors: 0,
+            warnings: 0,
+            notes: 0,
+          },
+        }),
+      });
+      const received = rig.front.low.session.session.get()?.result;
+      expect(received?.participants[0]?.name).toBe('Engine');
+      expect(received?.message.length).toBe(result.message.length);
+    });
+
     it('delivers ACK and values when a notice subscriber refreshes the same run', async () => {
       const rig = await running();
       const ref = { peer: 'Engine', name: 'engine.demand' };
@@ -888,6 +983,39 @@ describe('the front door', () => {
       expect(rig.front.low.session.session.get()?.id).toBe(2);
       expect(watch.history(ref)).toEqual([]);
       unsubscribe();
+    });
+
+    it('keeps replayed logs and ACK when a buffered hello has an older snapshot revision', async () => {
+      const rig = await running();
+      const pause = rig.front.time.pause();
+      const id = rig.timeBody().id;
+      const old = summary({
+        snapshot_rev: 1,
+        launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: 5 },
+      });
+      rig.socket.send({
+        type: 'hello',
+        vehicle_sil_gui: 2,
+        version: '0.1.0',
+        instance: 'x',
+        session: old,
+        replay: null,
+      });
+      rig.socket.send(event({ event: 'log', source: 'Engine', line: 'replayed line', t_ms: 90 }));
+      rig.socket.send(event(commandEvent(62, 'pause', id)));
+      rig.socket.send({ type: 'synced', session: 1, last_seq: 99 });
+      const refresh = rig.front.low.fetchSession();
+      rig.http
+        .expectOne('api/session')
+        .flush({ instance: 'x', session: summary({ snapshot_rev: 2 }) });
+      await refresh;
+      await vi.advanceTimersByTimeAsync(BATCH_MS);
+      await expect(pause).resolves.toBeUndefined();
+      expect(rig.front.low.session.session.get()?.launcher.silentSeconds).toBeNull();
+      expect(
+        rig.front.low.session.session.get()?.logs.some((line) => line.line === 'replayed line'),
+      ).toBe(true);
+      expect(rig.front.low.session.ready.get()).toBe(true);
     });
 
     it('keeps a newer run acknowledgement after a buffered older hello', async () => {

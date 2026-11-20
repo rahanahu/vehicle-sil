@@ -331,13 +331,13 @@ API のバージョンは `vehicle_sil_gui`（今は 2）です。サーバー�
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
 | `session` | `{session}`（要約） | `ws-pass.json`、`ws-without-check.json` |
 | `allowed` | `{session, allowed}`。サーバーが受け付けることが変わり、それを運ぶ `session` が続かない（下の「サーバーが受け付けること（`allowed`）」）。`session` は今の実行の id、なければ `null` | `ws-allowed.json` |
-| `error` | `{session, code, message, detail}`。サーバーが気づいたこと（下の「`error` の `code`」）。要約の `problems` にも残る | `ws-bad-lines.json` |
+| `error` | `{session, code, message, detail, problem_seq?}`。サーバーが気づいたこと（下の「`error` の `code`」）。要約の `problems` にも残る | `ws-bad-lines.json` |
 | `dropped` | `{session, reason, log, at_least, events}`。この画面に送らなかったものの数 | `ws-dropped.json`、`ws-slow-client.json` |
 | `resync` | `{reason, message}`。画面の受信が遅く、落とせない通知まであふれた。すぐ後に `hello` から送り直す | `ws-resync.json` |
 | `variables` | `{session, variables}`。その実行の変数の機能の状態か一覧（要約の `variables` と同じ形） | `ws-variables.json`、`ws-variables-failed.json` |
 | `values` | `{id, session, sim_ms, paused, peers}`。watch している変数の最後の値（下の「ECU の変数」） | `ws-variables.json` |
 | `operation` | `{session, seq, state, done, peers}`。書き込みの結果が変わった（下の「ECU の変数」）。全部の接続へ送り、落とさない | `ws-variables.json` |
-| `availability` | `{session, peers}`。ECU が変数を使っているかが変わった（下の「ECU の変数」）。全部の接続へ送る | `ws-availability.json`（下の「利用状態」） |
+| `availability` | `{session, rev, peers}`。ECU が変数を使っているかが変わった（下の「ECU の変数」）。全部の接続へ送る | `ws-availability.json`（下の「利用状態」） |
 
 `session` を送るのは、次のときです。`session_without_check` を頼んだ接続には、`check` のフィールドがありません。
 
@@ -345,7 +345,7 @@ API のバージョンは `vehicle_sil_gui`（今は 2）です。サーバー�
 - 実行が終わったとき（`launcher.running` が `false`、`state` が `ended`。ランチャーの最後のイベントの後）。
 - ランチャーが何も書かなくなったとき（`launcher.silent_s` が変わったとき）と、また書き始めたとき。
 
-`variables` を送るのは、実行が始まった直後（その `session` の通知のすぐ後）と、変わったときです。
+`variables` を送るのは、実行が始まった直後（その `session` の通知のすぐ後）と、変わったときです。 `snapshot_rev` は session 要約だけの順序で、ランチャーのイベントや `allowed` の順序とは別です。変数要約の `rev` と利用状態の差分の `rev` は別の共通系列です。後の完全な変数要約には現在の利用状態が入り、差分は指定した participant だけを置き換えます。古い要約でも replay、ログ、コマンドの応答、確定済み書き込み結果は捨てません。旧サーバーにはこれらのフィールドがないため、HTTP と WebSocket の要約間の順序は最善を尽くす扱いです。旧クライアントは追加フィールドを無視できます。
 
 `dropped` のフィールドは次のとおりです（`ws-slow-client.json` の数は例）。画面は、その source のログのその位置に「ここで N 行が落ちた」を表示します。
 
@@ -405,6 +405,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | フィールド | 内容 |
 |---|---|
 | `id` | 実行の番号（サーバーの起動ごとに 1 から） |
+| `snapshot_rev` | 同じサーバーインスタンスと実行の中で増える、session 要約の取得順 |
 | `file`、`disable`、`manual`、`speed`、`start_paused` | 始めたときの指定 |
 | `started_at`、`ended_at` | 時刻（UTC、ISO 8601）。`ended_at` は終わるまで `null` |
 | `state` | `running` か `ended` |
@@ -424,7 +425,8 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | `result` | `result` イベントの `result`（なければ `null`） |
 | `variables` | ECU の変数の機能の状態、participant ごとの変数、最近の操作（下の「ECU の変数」） |
 | `log` | source ごとの `{kept, dropped}`: サーバーが覚えている行の数と、落とした行の数 |
-| `problems`、`problems_omitted` | サーバーの通知（`error` と同じ `{code, message, detail}`）を起きた順に並べたものと、上限を超えて覚えていない数 |
+| `problems`、`problems_omitted` | サーバーの通知（`error` と同じ `{code, message, detail, problem_seq}`）を起きた順に並べたものと、上限を超えて覚えていない数 |
+| `problem_seq` | この実行で発生したサーバー診断の最大番号。省略された診断も含む。実行に属する `error` と要約の同じ診断は同じ番号を持ち、重複を除ける。旧サーバーにはない |
 | `scenario` | シナリオの実行（`api/run` の `scenario`）の経過。シナリオのない実行では `null`（下の「シナリオ」） |
 
 フィールドごとの補足です。
@@ -482,10 +484,11 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 ### 状態と一覧（要約の `variables`、`variables` の通知）
 
-`{"state", "reason", "peers", "peers_omitted", "variables_omitted", "operations", "operations_from_seq", "operations_open_omitted"}`
+`{"rev", "state", "reason", "peers", "peers_omitted", "variables_omitted", "operations", "operations_from_seq", "operations_open_omitted"}`
 
 | フィールド | 内容 |
 |---|---|
+| `rev` | 同じサーバーインスタンスと実行の中で、変数の完全な要約と利用状態の差分に共通する取得順 |
 | `state` | 変数の機能の状態（下の表）。値は増えることがある |
 | `reason` | `off`、`connecting`、`failed` の理由（人向けの英語の文。なければ `null`） |
 | `peers` | `[{"name", "connected", "variables": [...]}]`。Control Server が知っている participant（変数のないものも） |
@@ -534,7 +537,7 @@ ECU は、動いている間に、いま変数のそれぞれを使っている�
 | `inactive` | ECU のいまの構成では使っていない |
 
 - 要約の変数の `availability` は、いまの状態です。再接続した後の `hello` の要約には、そのときの状態が入っています。
-- `availability` の通知は `{"type": "availability", "session", "peers": {"<participant>": {"<変数>": "<状態>", ...}}}` です。状態が変わった participant ごとに、利用状態を報告する変数の全部の状態が入り、その participant について前に届いたものを置き換えます。短い間の変化はまとめて送り、変数を watch しているかによらず、全部の接続に送ります。
+- `availability` の通知は `{"type": "availability", "session", "rev", "peers": {"<participant>": {"<変数>": "<状態>", ...}}}` です。状態が変わった participant ごとに、利用状態を報告する変数の全部の状態が入り、その participant について前に届いたものを置き換えます。短い間の変化はまとめて送り、変数を watch しているかによらず、全部の接続に送ります。
 - その変数が載った `variables` の通知（か `hello`）の後に届きます。上限で要約から外した participant と変数は入りません。
 - participant がシミュレーションから抜けても、Control Server との接続が切れても、状態は変わりません。ECU が最後に言ったままです（接続のことは `peers[].connected` と `state` が言います）。participant の新しいプロセスは、変数が宣言した状態から始まります。
 

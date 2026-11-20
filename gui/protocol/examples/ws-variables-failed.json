@@ -11,6 +11,7 @@
       "type": "variables",
       "session": 1,
       "variables": {
+        "rev": 1,
         "state": "connecting",
         "reason": null,
         "peers": [],
@@ -25,6 +26,7 @@
       "type": "variables",
       "session": 1,
       "variables": {
+        "rev": 2,
         "state": "connecting",
         "reason": "the control server at 127.0.0.1:8510 cannot be reached: connecting again",
         "peers": [],
@@ -39,6 +41,7 @@
       "type": "variables",
       "session": 1,
       "variables": {
+        "rev": 3,
         "state": "failed",
         "reason": "the control server at 127.0.0.1:8510 cannot be reached until the run ended",
         "peers": [],

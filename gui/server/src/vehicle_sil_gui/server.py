@@ -1088,11 +1088,12 @@ class GuiServer:
                 proc.stdin.write(b'{"command":"stop"}\n' * commands)
             except (BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
                 delivered = False
-        messages = [session.message()]
+        messages = []
         if not delivered:
             messages = session.problem("stop-not-delivered", "the stop could not be written to the launcher's "
                                                              "input (it is closed): the launcher may be ending; "
-                                                             "if it is not, stop the GUI server", None) + messages
+                                                             "if it is not, stop the GUI server", None)
+        messages.append(session.message())
         self.hub.broadcast(messages)
         return delivered
 

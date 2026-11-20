@@ -11,6 +11,7 @@
       "type": "variables",
       "session": 1,
       "variables": {
+        "rev": 1,
         "state": "connecting",
         "reason": null,
         "peers": [],
@@ -25,6 +26,7 @@
       "type": "variables",
       "session": 1,
       "variables": {
+        "rev": 2,
         "state": "ready",
         "reason": null,
         "peers": [
@@ -173,6 +175,7 @@
     {
       "type": "availability",
       "session": 1,
+      "rev": 3,
       "peers": {
         "Engine": {
           "engine.demand": "inactive",
@@ -222,6 +225,7 @@
       "type": "variables",
       "session": 1,
       "variables": {
+        "rev": 4,
         "state": "ended",
         "reason": null,
         "peers": [

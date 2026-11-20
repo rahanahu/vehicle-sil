@@ -334,13 +334,13 @@ After authentication, a screen can send variable `watch` and `unwatch` messages 
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
 | `session` | `{session}` (the summary) | `ws-pass.json`, `ws-without-check.json` |
 | `allowed` | `{session, allowed}`. What the server accepts changed, and no `session` follows to carry it ("What the server accepts (`allowed`)" below). `session` is the id of the current run, or `null` | `ws-allowed.json` |
-| `error` | `{session, code, message, detail}`. Something the server noticed ("The `code` of `error` messages" below). Also kept in `problems` of the summary | `ws-bad-lines.json` |
+| `error` | `{session, code, message, detail, problem_seq?}`. Something the server noticed ("The `code` of `error` messages" below). Also kept in `problems` of the summary | `ws-bad-lines.json` |
 | `dropped` | `{session, reason, log, at_least, events}`. Counts of what was not sent to this screen | `ws-dropped.json`, `ws-slow-client.json` |
 | `resync` | `{reason, message}`. The screen receives too slowly, and even notifications that must not be dropped overflowed. Right after this, the server sends everything again from `hello` | `ws-resync.json` |
 | `variables` | `{session, variables}`. The state or list of that run's variable feature (same shape as `variables` in the summary) | `ws-variables.json`, `ws-variables-failed.json` |
 | `values` | `{id, session, sim_ms, paused, peers}`. The last values of the watched variables ("ECU variables" below) | `ws-variables.json` |
 | `operation` | `{session, seq, state, done, peers}`. The result of a write changed ("ECU variables" below). Sent to every connection, never dropped | `ws-variables.json` |
-| `availability` | `{session, peers}`. Whether the ECUs use their variables changed ("ECU variables" below). Sent to every connection | `ws-availability.json` ("Availability" below) |
+| `availability` | `{session, rev, peers}`. Whether the ECUs use their variables changed ("ECU variables" below). Sent to every connection | `ws-availability.json` ("Availability" below) |
 
 The server sends `session` at these times. Connections that asked for `session_without_check` get it without the `check` field.
 
@@ -348,7 +348,7 @@ The server sends `session` at these times. Connections that asked for `session_w
 - When a run ends (`launcher.running` is `false` and `state` is `ended`; after the launcher's last event).
 - When the launcher stops writing anything (when `launcher.silent_s` changes), and when it starts writing again.
 
-The server sends `variables` right after a run starts (immediately after that `session` notification) and whenever it changes.
+The server sends `variables` right after a run starts (immediately after that `session` notification) and whenever it changes. `snapshot_rev` orders session summaries only; it does not order launcher events or `allowed`. Variable summary `rev` and availability `rev` form a separate sequence. A later complete variable snapshot includes the current availability; a delta replaces only its named peers. An older summary never cancels replay, log events, command answers or terminal write results. Older servers omit these fields, so ordering between HTTP and WebSocket snapshots from them is best effort; older clients can ignore the added fields.
 
 The fields of `dropped` (the numbers in `ws-slow-client.json` are examples). A screen shows "N lines dropped here" at that position in that source's log.
 
@@ -408,6 +408,7 @@ Notifications from the server.
 | Field | Contents |
 |---|---|
 | `id` | The run number (from 1 for each server start) |
+| `snapshot_rev` | Capture order of session summaries, increasing within this server instance and run |
 | `file`, `disable`, `manual`, `speed`, `start_paused` | What was requested at the start |
 | `started_at`, `ended_at` | Times (UTC, ISO 8601). `ended_at` is `null` until the run ends |
 | `state` | `running` or `ended` |
@@ -427,7 +428,8 @@ Notifications from the server.
 | `result` | `result` of the `result` event (`null` if none) |
 | `variables` | The state of the ECU variable feature, the variables of each participant, recent operations ("ECU variables" below) |
 | `log` | `{kept, dropped}` per source: the number of lines the server keeps and the number it dropped |
-| `problems`, `problems_omitted` | The server's notifications (`{code, message, detail}`, as in `error`) in the order they happened, and the number not kept because the limit was exceeded |
+| `problems`, `problems_omitted` | The server's notifications (`{code, message, detail, problem_seq}`, as in `error`) in the order they happened, and the number not kept because the limit was exceeded |
+| `problem_seq` | Highest server diagnostic sequence in this run, including omitted problems. A session-scoped `error` and its summary entry share the same sequence, allowing deduplication; older servers omit it |
 | `scenario` | The progress of the scenario run (`scenario` of `api/run`). `null` for a run without a scenario ("Scenarios" below) |
 
 Notes on the fields:
@@ -485,10 +487,11 @@ When the launcher has a Control Server (`variables.available` in `api/app`), the
 
 ### State and list (`variables` in the summary, the `variables` notification)
 
-`{"state", "reason", "peers", "peers_omitted", "variables_omitted", "operations", "operations_from_seq", "operations_open_omitted"}`
+`{"rev", "state", "reason", "peers", "peers_omitted", "variables_omitted", "operations", "operations_from_seq", "operations_open_omitted"}`
 
 | Field | Contents |
 |---|---|
+| `rev` | Capture order shared by complete variable snapshots and availability deltas within this server instance and run |
 | `state` | The state of the variable feature (table below). Values may be added |
 | `reason` | The reason for `off`, `connecting` and `failed` (human-readable text, not localized; `null` if none) |
 | `peers` | `[{"name", "connected", "variables": [...]}]`. The participants the Control Server knows (also those without variables) |
@@ -537,7 +540,7 @@ An ECU can say while it runs whether it uses each of its variables now, for exam
 | `inactive` | Not in use in the present set-up of the ECU |
 
 - `availability` of a variable in the summary is its state now. The summary in `hello` after a reconnection has the states of that moment.
-- The `availability` notification is `{"type": "availability", "session", "peers": {"<participant>": {"<variable>": "<state>", ...}}}`. Of each participant whose states changed, it holds the state of every variable that reports its availability, and replaces what came before for that participant. Changes over a short time are sent together, to every connection, whether it watches variables or not.
+- The `availability` notification is `{"type": "availability", "session", "rev", "peers": {"<participant>": {"<variable>": "<state>", ...}}}`. Of each participant whose states changed, it holds the state of every variable that reports its availability, and replaces what came before for that participant. Changes over a short time are sent together, to every connection, whether it watches variables or not.
 - It comes after the `variables` notification (or the `hello`) that lists those variables. Participants and variables that a limit leaves out of the summary are not in it.
 - A participant that leaves the simulation, and a lost connection to the Control Server, do not change the states: they stay what the ECU said last (`peers[].connected` and `state` tell of the connection). A new process of the participant starts from the states its variables declare.
 
