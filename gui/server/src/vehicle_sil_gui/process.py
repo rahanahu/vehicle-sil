@@ -19,6 +19,7 @@ WINDOWS = sys.platform == "win32"
 READ_CHUNK = 64 * 1024
 OUTPUT_GRACE_S = 2.0  # after a child has exited, how long the rest of its output is read
 KILL_WAIT_S = 2.0  # after SIGKILL / taskkill, how long the exit is waited for
+EXIT_POLL_S = 0.01
 
 
 async def start(argv: Sequence[str], cwd: str | os.PathLike | None, stdin: bool = True) -> asyncio.subprocess.Process:
@@ -77,11 +78,14 @@ async def run_to_end(argv: Sequence[str], cwd: str | os.PathLike | None, timeout
     try:
         try:
             async with asyncio.timeout(timeout_s):
-                code = await proc.wait()
+                code = await wait_exit(proc)
         except TimeoutError:
-            kill_tree(proc)
-            await wait_bounded(proc, KILL_WAIT_S)
-            raise
+            # The process may have exited after the last poll but before the deadline.
+            if proc.returncode is None:
+                kill_tree(proc)
+                await wait_bounded(proc, KILL_WAIT_S)
+                raise
+            code = proc.returncode
         kill_tree(proc)  # what it left in its group (POSIX)
         try:
             async with asyncio.timeout(OUTPUT_GRACE_S):
@@ -103,14 +107,25 @@ async def run_to_end(argv: Sequence[str], cwd: str | os.PathLike | None, timeout
             track.discard(proc)
 
 
+async def wait_exit(proc: asyncio.subprocess.Process) -> int:
+    """Wait for process exit independently of EOF on its inherited output pipes.
+
+    On Python 3.11 and 3.12, Process.wait() begun before exit can remain pending until
+    descendants close those pipes. The event loop still updates returncode at process exit.
+    """
+    while proc.returncode is None:
+        await asyncio.sleep(EXIT_POLL_S)
+    return proc.returncode
+
+
 async def wait_bounded(proc: asyncio.subprocess.Process, seconds: float) -> bool:
     """Waits for the process to exit, at most `seconds`; whether it has."""
     try:
         async with asyncio.timeout(seconds):
-            await proc.wait()
+            await wait_exit(proc)
         return True
     except TimeoutError:
-        return False
+        return proc.returncode is not None
 
 
 def close_pipes(proc: asyncio.subprocess.Process) -> None:
