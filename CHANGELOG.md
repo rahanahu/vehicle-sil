@@ -33,6 +33,7 @@ This release includes real buses connected from the launcher (`run --connect`, `
 
 #### ECU and C++ libraries
 
+- **Simulation timing in C++**: `config::SimulationConfig` no longer holds `stop_at_ms`, `speed`, `late_tolerance_ms`, `start_timeout_ms` or `stop_timeout_ms`; `config::time_step_ms()` and `config::late_tolerance_ms()` are removed. For the launcher, pass the stop time, speed and lateness tolerance in `RunRequest::intent`, and participant timeouts in `RunRequest::host`. Direct runner callers pass these choices in `RunChoices`. Read the resolved controller step from `CheckReport::run_timing` after a run check; a file-only check has no resolved timing. The optional explicit `SimulationConfig::time_step_ms` remains.
 - **Reserved variable prefixes**: an ECU can no longer declare a variable whose name starts with `j1939.`, `can.`, `lin.` or `eth.` (as with `peer.` and `ecu.`); `input()`, `output()` and the like throw `std::invalid_argument` (exit code 3 with `ecu_main`, also under `--describe` and `--local`). Rename the variable and the scenarios and settings that use it (#114).
 - **A second J1939 `Observer`** on a `Network`, or a second `TapListener` on a `TapPort` (and so a second `testkit::J1939Events` or `FrameLog` on the same network or tap), throws `std::logic_error` instead of silently replacing the first. Share the first one or remove it with `set_observer(nullptr)` / `set_listener(nullptr)` (#115).
 - **Control library**: `control::Update` has a new alternative, `AvailabilityUpdate`, and `control::wire::encode_step()` takes a new `availability` argument (#247).
@@ -62,7 +63,7 @@ This release includes real buses connected from the launcher (`run --connect`, `
 ### Added
 
 - **Run timing choices**: `check` and `run` accept `--stop-at-ms` and `--late-tolerance-ms`; `test` accepts a stop time for each case. The run request, GUI server API and GUI client accept `stop_at_ms` and `late_tolerance_ms`. The standard GUI offers an optional stop time and starts at real-time speed by default.
-- **Workbench example**: an English-language GUI built with the public GUI client shows ECU inputs and outputs, supports recording and detached views, and provides a network editor. It is built from the repository with `scripts/run-gui.py --workbench`; it is an example, not part of the prebuilt tools archive.
+- **Workbench example**: an English-language GUI built with the public GUI client shows ECU inputs and outputs, supports recording and detached views, and provides a network editor. Build it with npm and start it with `scripts/run-gui.py --workbench`; see the [Workbench README](gui/web/workbench/README.md) for the commands. It is an example and is not part of the prebuilt tools archive.
 - **Targeted GUI stop**: the GUI client binds stop and force-stop requests to the server and session the user selected. A changed server or session is refused instead of stopping a different run; existing untargeted API calls remain available.
 
 #### Connecting to real buses
