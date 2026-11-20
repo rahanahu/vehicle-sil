@@ -396,6 +396,55 @@ describe('SessionFeed', () => {
     });
   });
 
+  it('adopts a timeline published after the last launcher event in HTTP-only use', async () => {
+    const http = new FakeHttp();
+    const client = createClient({
+      baseUrl: 'http://127.0.0.1:1/',
+      token: 'secret',
+      http: http.transport,
+    });
+    clients.push(client);
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const scenario = {
+      file: 's.yaml',
+      name: 's',
+      step_count: 1,
+      steps: [],
+      steps_omitted: 0,
+      status: 'passed',
+      over_at_ms: 1,
+      timeline_url: null,
+    };
+    const first = client.fetchSession();
+    http.expectOne('api/session').flush({
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 1, last_seq: 10, scenario },
+    });
+    await first;
+    expect(client.session.session.get()?.scenario?.timelineUrl).toBeNull();
+    const older = client.fetchSession();
+    const oldRequest = http.expectOne('api/session');
+    const newer = client.fetchSession();
+    const newRequest = http.expectOne('api/session');
+    newRequest.flush({
+      instance: 'x',
+      session: {
+        ...response.session,
+        snapshot_rev: 3,
+        last_seq: 10,
+        scenario: { ...scenario, timeline_url: 'api/timeline/1' },
+      },
+    });
+    await newer;
+    oldRequest.flush({
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 2, last_seq: 10, scenario },
+    });
+    await older;
+    expect(client.session.session.get()?.scenario?.timelineUrl).toBe('api/timeline/1');
+  });
+
   it('keeps a newer HTTP launcher snapshot over an older buffered hello and preserves replay', async () => {
     const http = new FakeHttp();
     const { socket } = open(http);
