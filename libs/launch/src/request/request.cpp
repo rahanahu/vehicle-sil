@@ -66,6 +66,14 @@ std::vector<config::Finding> validate_timing(const RunRequest& request)
     {
         out.push_back(usage("participant stop timeout must be an integer from 1 to 1000000000000 ms"));
     }
+    if (host.timeout && (host.timeout->count() < 1 || host.timeout->count() > config::kMaxMillis))
+    {
+        out.push_back(usage("timeout must be an integer from 1 to 1000000000000 ms"));
+    }
+    if (host.describe_timeout.count() < 1 || host.describe_timeout.count() > config::kMaxMillis)
+    {
+        out.push_back(usage("describe timeout must be an integer from 1 to 1000000000000 ms"));
+    }
     return out;
 }
 

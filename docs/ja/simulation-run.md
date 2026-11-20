@@ -1130,7 +1130,7 @@ passed: 0 errors, 1 warning, 1 note
 
 | `end` | 終わった理由 | `result` |
 |---|---|---|
-| `"completed"` | 決めた終わりに達した。`stop_at_ms`、participant がシミュレーションを終えた、シナリオが終わった | `"passed"`。エラーがあれば `"failed"` |
+| `"completed"` | 決めた終わりに達した。`stop_at_ms`、participant がシミュレーションを終えた、シナリオが終わった | `"passed"`。要求した停止時刻でシナリオが途中終了した場合は `"incomplete"`、エラーがあれば `"failed"` |
 | `"stopped"` | コマンド（`{"command":"stop"}`、Control API の `Stop`）でシミュレーションの終わりより前に止めた。または、終わりの後の `{"command":"stop"}` が必須の participant の終わりを打ち切った | `"stopped"`。シナリオが最後まで進まなかったときは `"incomplete"`。エラーがあれば `"failed"` |
 | `"interrupted"` | シグナルやコンソールのイベント、標準入力の終わり、閉じた標準出力。シミュレーションの終わりより前か、participant が自分で終わるのを待つ間に来たもの | `"interrupted"` |
 | `"failed"` | 始められなかった、または続けられなかった。participant やブリッジの失敗、`--timeout-ms`、participant がそろわなかった | `"failed"` |

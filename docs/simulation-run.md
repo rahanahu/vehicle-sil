@@ -1130,7 +1130,7 @@ The result says three things about the end, in the JSON of `run --json` and in t
 
 | `end` | Why the run ended | `result` |
 |---|---|---|
-| `"completed"` | It reached an end that was set: `stop_at_ms`, a participant ended the simulation, or the scenario was over | `"passed"`, or `"failed"` if errors were found |
+| `"completed"` | It reached an end that was set: `stop_at_ms`, a participant ended the simulation, or the scenario was over | `"passed"`; `"incomplete"` if the requested stop time cut the scenario short; `"failed"` if errors were found |
 | `"stopped"` | A command stopped it (`{"command":"stop"}`, `Stop` of the Control API) before the simulation ended, or a `{"command":"stop"}` after the end cut short the end of a required participant | `"stopped"`; `"incomplete"` if its scenario did not get to its end; `"failed"` if errors were found |
 | `"interrupted"` | A signal or a console event, the end of stdin, or a closed stdout, before the simulation ended or while `run` waited for the participants to end on their own | `"interrupted"` |
 | `"failed"` | It could not start or go on: a participant or a bridge failed, `--timeout-ms` passed, the participants did not all join | `"failed"` |

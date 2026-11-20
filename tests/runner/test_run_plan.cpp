@@ -146,6 +146,20 @@ TEST_CASE(a_plan_refuses_invalid_or_stale_timing)
     CHECK(refused(choices));
     choices.stop_at_ms = 0;
     CHECK(refused(choices));
+    choices.stop_at_ms.reset();
+    for (const auto value : {std::int64_t{0}, std::int64_t{-1}, kMaxMillis + 1,
+                             std::chrono::milliseconds::max().count()})
+    {
+        choices.timeout = std::chrono::milliseconds(value);
+        CHECK(refused(choices));
+    }
+    for (const auto value : {std::int64_t{1}, kMaxMillis})
+    {
+        choices.timeout = std::chrono::milliseconds(value);
+        CHECK(!refused(choices));
+    }
+    choices.timeout.reset();
+    CHECK(!refused(choices));
     choices.stop_at_ms = 1003;
     check.report.config->time_step_ms = 5;
     CHECK(refused(choices)); // A raw report must not produce a plan that stops at 1005.
@@ -249,6 +263,22 @@ TEST_CASE(a_check_without_a_configuration_has_no_plan)
     {
         thrown = std::string(e.what()) == "plan_run: the check has no configuration (CheckReport::config is empty); call it "
                                           "only with a check that passed (CheckReport::passed())";
+    }
+    CHECK(thrown);
+}
+
+TEST_CASE(a_failed_check_reports_that_it_did_not_pass)
+{
+    Given check = checked({10000});
+    check.report.findings.push_back({vehicle_sil::config::Severity::Error, "test", "invalid", 0, "", ""});
+    bool thrown = false;
+    try
+    {
+        static_cast<void>(plan_run(check.report, nullptr, "dir", RunChoices{}));
+    }
+    catch (const std::invalid_argument& e)
+    {
+        thrown = std::string(e.what()) == "plan_run: the check did not pass; call it only with a passing CheckReport";
     }
     CHECK(thrown);
 }
