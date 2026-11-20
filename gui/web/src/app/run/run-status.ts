@@ -113,7 +113,7 @@ export class RunStatus {
 
   readonly start = output();
   readonly stop = output();
-  readonly forceStop = output();
+  readonly forceStop = output<{ session: number; instance: string }>();
   /** 結果（または異常終了）の詳しい表示へ移りたい。 */
   readonly showDetails = output();
 
@@ -431,7 +431,7 @@ export class RunStatus {
         current?.session === target.session &&
         current.instance === target.instance
       )
-        this.forceStop.emit();
+        this.forceStop.emit(target);
       // ボタンが消えていれば（ダイアログの間に実行が終わった）、帯の文へ
       if (!this.canForce()) this.outcomeElement().nativeElement.focus();
     });

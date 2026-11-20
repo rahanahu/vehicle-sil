@@ -402,6 +402,25 @@ describe('variables', () => {
     expect(again.history(ENGINE).length).toBe(3);
   });
 
+  it('clears readings and history when a new server reuses the session id', async () => {
+    const { client, deliver } = setup();
+    await deliver(hello(1, ready()));
+    const watch = client.variables.watch([ENGINE], { history: 10 });
+    await deliver(values(1, 10, false, engine(10, 4)));
+    expect(watch.history(ENGINE)).toHaveLength(1);
+    let historyDuringSessionNotification: unknown = null;
+    const unsubscribe = client.session.session.subscribe(() => {
+      historyDuringSessionNotification = watch.history(ENGINE);
+    });
+    await deliver({ ...hello(1, ready()), instance: 'new-server' });
+    expect(historyDuringSessionNotification).toEqual([]);
+    unsubscribe();
+    expect(watch.history(ENGINE)).toEqual([]);
+    expect(watch.value(ENGINE)).toBeUndefined();
+    await deliver(values(1, 20, false, engine(20, 8)));
+    expect(watch.history(ENGINE)).toEqual([{ sampleMs: 20, value: 8 }]);
+  });
+
   it('resolves a write when the operation is applied, whichever comes first, the answer or the result', async () => {
     const { client, http, deliver } = setup();
     await deliver(hello(1, ready()));

@@ -205,6 +205,7 @@ export interface ClientParts {
   client: GuiClient;
   http: HttpTransport;
   onError: ErrorSink;
+  runControl: RunControl;
 }
 
 /** createClient, and the parts the front door is built from. */
@@ -238,6 +239,7 @@ export function buildClient(options: ClientOptions): ClientParts {
   const session = feed;
   variablesFeed = new VariablesFeed(connection, http, onError, () => limits.get());
   const variables = variablesFeed;
+  session.onInstance((instance) => variables.adoptInstance(instance));
   const run = new RunControl(session, http, onError, () => longRequestMs(limits.get()));
   const time = new TimeControl(
     session.session,
@@ -284,6 +286,7 @@ export function buildClient(options: ClientOptions): ClientParts {
     session: {
       session: session.session,
       currentTarget: () => session.currentTarget(),
+      currentInstance: () => session.currentInstance(),
       ready: session.ready,
       allowed: session.allowed,
       lastEventAt: session.lastEventAt,
@@ -396,6 +399,7 @@ export function buildClient(options: ClientOptions): ClientParts {
             ) {
               session.adoptAllowed(readSessionAllowed(outcome.body));
               // The variable list and state are not part of the summary parser (SessionSummary)
+              variables.adoptInstance(instance);
               variables.adoptSummary((outcome.body as { session?: unknown } | null)?.session);
             }
             resolve(summary);
@@ -406,5 +410,5 @@ export function buildClient(options: ClientOptions): ClientParts {
       );
     },
   };
-  return { client, http, onError };
+  return { client, http, onError, runControl: run };
 }

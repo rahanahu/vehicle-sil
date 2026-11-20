@@ -1155,6 +1155,63 @@ describe('the front door', () => {
       rig.http.expectNone('api/stop-session');
     });
 
+    it('keeps the stop target when clearing a problem synchronously changes the session', async () => {
+      const rig = await running();
+      const invalid = { scenaro: 'x' } as unknown as Parameters<typeof rig.front.run.start>[0];
+      await expect(rig.front.run.start(invalid, { file: 'sim.yaml' })).rejects.toThrow();
+      let switched = false;
+      const unsubscribe = rig.front.status.subscribe((status) => {
+        if (status.problem || switched) return;
+        switched = true;
+        void rig.front.low.fetchSession();
+        rig.http.expectOne('api/session').flush({ instance: 'x', session: summary({}, 2) });
+      });
+      const stop = rig.front.run.stop();
+      const request = rig.http.expectOne('api/stop-session');
+      expect(request.request.body).toMatchObject({ session: 1, instance: 'x' });
+      request.flush({ session: summary({ stop: 'requested' }) });
+      await stop;
+      unsubscribe();
+    });
+
+    it('keeps stops of consecutive starts as separate operations', async () => {
+      const rig = await running();
+      const start1 = rig.front.run.start({}, { file: 'sim.yaml' });
+      const stop1 = rig.front.run.stop();
+      rig.http.expectOne('api/run').flush({ instance: 'x', session: summary({}, 2) });
+      await start1;
+      await rig.turn();
+      const request1 = rig.http.expectOne('api/stop-session');
+      const start2 = rig.front.run.start({}, { file: 'sim.yaml' });
+      const stop2 = rig.front.run.stop();
+      rig.http.expectOne('api/run').flush({ instance: 'x', session: summary({}, 3) });
+      await start2;
+      await rig.turn();
+      const request2 = rig.http.expectOne('api/stop-session');
+      expect(request1.request.body).toMatchObject({ session: 2, instance: 'x' });
+      expect(request2.request.body).toMatchObject({ session: 3, instance: 'x' });
+      request1.flush({ session: summary({ stop: 'requested' }, 2) });
+      request2.flush({ session: summary({ stop: 'requested' }, 3) });
+      await Promise.all([stop1, stop2]);
+    });
+
+    it('does not offer a force stop for the old run while the next run starts', async () => {
+      const rig = await running();
+      await rig.deliver({ type: 'session', session: summary({ stop: 'requested' }) });
+      const start = rig.front.run.start({}, { file: 'sim.yaml' });
+      expect(rig.front.controls.get().force_stop.ok).toBe(false);
+      await expect(rig.front.run.forceStop({ session: 1, instance: 'x' })).rejects.toMatchObject({
+        code: 'starting',
+      });
+      rig.http.expectNone('api/stop-session');
+      rig.http.expectOne('api/run').flush({ instance: 'x', session: summary({}, 2) });
+      await start;
+      await expect(rig.front.run.forceStop({ session: 1, instance: 'x' })).rejects.toMatchObject({
+        code: 'session-changed',
+      });
+      rig.http.expectNone('api/stop-session');
+    });
+
     it('turns force_stop on after a stop has been asked for', async () => {
       const rig = await running();
       const stop = rig.front.run.stop();

@@ -55,8 +55,8 @@ export class RunCommands {
   }
 
   /** 待たずに止める（participant を強制終了する）。 */
-  forceStop(): void {
-    this.send('force_stop', () => this.front.run.forceStop());
+  forceStop(target?: { session: number; instance: string }): void {
+    this.send('force_stop', () => this.front.run.forceStop(target));
   }
 
   private send(op: OperationName, operation: () => Promise<void>): void {

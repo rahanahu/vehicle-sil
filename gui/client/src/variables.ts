@@ -595,6 +595,7 @@ export interface VariablesLink {
  *   so recent operations are kept and matched once the number is known.
  */
 export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
+  private instanceId: string | null = null;
   private readonly stateValue: Writable<VariablesState>;
   private readonly operationsValue: Writable<readonly OperationView[]>;
   private readonly handles = new Set<Handle>();
@@ -687,6 +688,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         case 'hello': {
           flush();
           const summary = message['session'];
+          this.adoptInstance(message['instance']);
           if (isObject(summary) && Number.isSafeInteger(summary['id'])) {
             this.adoptSummary(summary);
           } else {
@@ -775,6 +777,18 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     if (!next) return false;
     this.stateValue.set({ ...state, availability: next });
     return true;
+  }
+
+  /** A reused numeric session on another server is a different run. */
+  adoptInstance(value: unknown): void {
+    if (typeof value !== 'string' || !value) return;
+    const changed = this.instanceId !== null && this.instanceId !== value;
+    this.instanceId = value;
+    if (changed) {
+      this.enter(null);
+      this.stateValue.set(NO_VARIABLES);
+      this.publish(null);
+    }
   }
 
   /** Applies the variables part of hello and of an HTTP summary (`session`). */
