@@ -1,0 +1,671 @@
+<header class="bar">
+  <strong class="brand">vehicle-sil <span>Workbench</span></strong>
+  @if (!fixedPeer && !detachedWave) {
+    <label
+      >Network
+      <select
+        #networkFile
+        [disabled]="live() || configBusy()"
+        (change)="changeNetwork(networkFile)"
+      >
+        @for (file of files(); track file) {
+          <option [value]="file" [selected]="selectedFile() === file">{{ file }}</option>
+        } @empty {
+          <option value="">No networks found</option>
+        }
+      </select>
+    </label>
+    <label
+      >Scenario
+      <select
+        [disabled]="live()"
+        (change)="selectedScenario.set($any($event.target).value); check.set(null)"
+      >
+        <option value="" [selected]="!selectedScenario()">Free run</option>
+        @for (scenario of scenarios(); track scenario.path) {
+          <option [value]="scenario.path" [selected]="selectedScenario() === scenario.path">
+            {{ scenario.name }}
+          </option>
+        }
+      </select>
+    </label>
+    <label
+      >Speed
+      <select
+        #pace
+        [value]="live() && clock()?.speed != null ? clock()?.speed : speed()"
+        [disabled]="live() && !controls()?.speed?.ok"
+        [title]="live() ? (controls()?.speed?.reason?.message ?? '') : ''"
+        (change)="action(() => setSpeed(pace.value))"
+      >
+        @for (factor of ['0.1', '0.5', '1', '2', '5', 'max']; track factor) {
+          <option [value]="factor">{{ factor === 'max' ? 'Fastest' : factor + '×' }}</option>
+        }
+      </select>
+    </label>
+    <label>
+      Stop at (ms)
+      <input
+        class="run-limit"
+        type="text"
+        inputmode="numeric"
+        [disabled]="live()"
+        [attr.aria-invalid]="!validStopAt()"
+        [attr.aria-describedby]="validStopAt() ? null : 'run-limit-error'"
+        [value]="stopAt()"
+        (input)="stopAt.set($any($event.target).value); check.set(null)"
+      />
+    </label>
+    @if (!validStopAt()) {
+      <span id="run-limit-error" role="alert"
+        >Enter a whole number from 1 to 1,000,000,000,000 ms.</span
+      >
+    }
+    @if (!live()) {
+      @if (!selectedScenario()) {
+        <label
+          ><input
+            type="checkbox"
+            [checked]="startPaused()"
+            (change)="startPaused.set($any($event.target).checked); check.set(null)"
+          />
+          Start paused</label
+        >
+      }
+      <button
+        class="primary"
+        [disabled]="!controls()?.start?.ok || !selectedFile() || !validStopAt()"
+        [title]="controls()?.start?.reason?.message ?? ''"
+        (click)="action(() => start(false))"
+      >
+        Start
+      </button>
+      @if (!selectedScenario()) {
+        <button
+          [disabled]="!controls()?.start?.ok || !selectedFile() || !validStopAt() || !canRecord()"
+          (click)="action(() => start(true))"
+        >
+          <span class="record-dot" aria-hidden="true"></span> Record &amp; start
+        </button>
+      }
+    } @else {
+      @if (paused()) {
+        <button [disabled]="!controls()?.resume?.ok" (click)="action(() => front()!.time.resume())">
+          Resume
+        </button>
+        <button
+          [disabled]="!controls()?.step?.ok"
+          [title]="controls()?.step?.reason?.message ?? ''"
+          (click)="action(() => front()!.time.step(controls()!.step.min_ms))"
+        >
+          1 step
+        </button>
+      } @else if (run() === 'running') {
+        <button
+          [disabled]="!controls()?.pause?.ok"
+          [title]="controls()?.pause?.reason?.message ?? ''"
+          (click)="action(() => front()!.time.pause())"
+        >
+          Pause
+        </button>
+      }
+      <button [disabled]="!controls()?.stop?.ok" (click)="action(() => front()!.run.stop())">
+        Stop
+      </button>
+      @if (recordNext() || (recordedRun() !== null && recordedRun() === session()?.id)) {
+        <span id="recording"><span class="record-dot" aria-hidden="true"></span> Recording</span>
+      }
+    }
+  }
+  @if (session(); as current) {
+    <span class="muted">Run #{{ current.id }}</span>
+  }
+  <aside id="clock">
+    @if (clock()?.sim_ms != null) {
+      Sim {{ clock()!.sim_ms! / 1000 | number: '1.3-3' }} s
+    }
+    @if (clock()?.actual_speed != null) {
+      · Actual {{ clock()!.actual_speed | number: '1.2-2' }}×
+    }
+    @if (late() != null) {
+      · <span [class.late]="clock()?.pacing === 'late'">Late {{ late() }} ms</span>
+    }
+  </aside>
+</header>
+<div class="strip">
+  @if (!fixedPeer && !detachedWave) {
+    <nav aria-label="Workbench views">
+      @for (name of tabs; track name) {
+        <button [attr.aria-current]="tab() === name ? 'page' : null" (click)="showTab(name)">
+          {{ name }}
+        </button>
+      }
+    </nav>
+  }
+  <span id="status" role="status">{{ statusText() }}</span>
+</div>
+@if (notice()) {
+  <div id="notice" role="alert">{{ notice() }}</div>
+}
+<main>
+  @switch (tab()) {
+    @case ('ECU I/O') {
+      <section id="io">
+        <div class="tools">
+          <select
+            aria-label="ECU"
+            [disabled]="!!fixedPeer || !variables()?.peers?.length"
+            (change)="peerChoice.set($any($event.target).value)"
+          >
+            @if (fixedPeer && !peer()) {
+              <option>{{ fixedPeer }}</option>
+            }
+            @for (ecu of variables()?.peers; track ecu.name) {
+              <option [value]="ecu.name" [selected]="ecu.name === peerChoice()">
+                {{ ecu.name }}
+              </option>
+            }
+          </select>
+          <input
+            type="search"
+            placeholder="Find a signal"
+            aria-label="Find a signal"
+            [value]="ecuQuery()"
+            (input)="ecuQuery.set($any($event.target).value)"
+          />
+          <label
+            ><input
+              type="checkbox"
+              [checked]="pinnedOnly()"
+              (change)="pinnedOnly.set($any($event.target).checked)"
+            />
+            Pinned only</label
+          >
+          <span class="muted"
+            >{{ rows().length }} / {{ peer()?.variables?.length ?? 0 }} signals</span
+          >
+          @if (!fixedPeer) {
+            <button class="end" [disabled]="!peer()" (click)="detach('ecu', peerChoice())">
+              ↗ Open ECU in new tab
+            </button>
+          }
+        </div>
+        @if (peer(); as ecu) {
+          <div class="signals">
+            @for (group of groups(); track group.key) {
+              <div class="signal-group">
+                <h2>{{ group.title }} · {{ group.count }}</h2>
+                <div class="lanes">
+                  @for (lane of group.lanes; track $index) {
+                    <div class="lane">
+                      @for (item of lane; track item.name) {
+                        <app-io-row
+                          [front]="front()!"
+                          [peer]="ecu.name"
+                          [info]="item"
+                          [pinned]="isPinned(ecu.name, item)"
+                          [running]="run() === 'running'"
+                          (pin)="pin(ecu.name, item)"
+                          (trace)="addTrace(ecu.name, item)"
+                        />
+                      }
+                    </div>
+                  }
+                </div>
+              </div>
+            }
+          </div>
+        } @else {
+          <p class="muted">
+            {{
+              variables()?.reason ||
+                (fixedPeer ? 'Waiting for this ECU.' : 'Start a run to see ECU signals.')
+            }}
+          </p>
+        }
+      </section>
+    }
+    @case ('Waveforms') {
+      <div class="tools">
+        <label
+          >A (ms)
+          <input
+            #a
+            type="number"
+            min="0"
+            [value]="cursorA() ?? ''"
+            (input)="cursorA.set(a.value ? a.valueAsNumber : null)"
+        /></label>
+        <label
+          >B (ms)
+          <input
+            #b
+            type="number"
+            min="0"
+            [value]="cursorB() ?? ''"
+            (input)="cursorB.set(b.value ? b.valueAsNumber : null)"
+        /></label>
+        @if (cursorA() != null && cursorB() != null) {
+          <output>Δ {{ cursorB()! - cursorA()! | number: '1.0-3' }} ms</output>
+        }
+        @if (!detachedWave) {
+          <button class="end" (click)="detach('wave')">↗ Open waveforms in new tab</button>
+        }
+      </div>
+      @for (track of waveTracks(); track track.id; let index = $index) {
+        <section class="track">
+          <header>
+            <strong>{{ track.trace.peer }} · {{ track.trace.name }} {{ track.trace.unit }}</strong>
+            <button (click)="removeTrace(track.trace)">Remove</button>
+          </header>
+          <div class="chart-label">{{ track.max | number: '1.0-3' }}</div>
+          <svg
+            class="chart"
+            viewBox="0 0 1000 114"
+            preserveAspectRatio="none"
+            role="img"
+            [attr.aria-label]="track.trace.name + ' waveform'"
+          >
+            @for (position of [0, 200, 400, 600, 800, 1000]; track position) {
+              <line class="grid-line" [attr.x1]="position" [attr.x2]="position" y1="10" y2="103" />
+            }
+            @if (track.path) {
+              <path
+                class="trace"
+                [class.trace-alt]="index % 2 === 1"
+                [attr.d]="track.path"
+                vector-effect="non-scaling-stroke"
+              />
+            }
+            @for (position of [cursorA(), cursorB()]; track $index) {
+              @if (
+                position != null && position >= waveDomain().start && position <= waveDomain().end
+              ) {
+                <line
+                  class="cursor"
+                  [attr.x1]="waveX(position)"
+                  [attr.x2]="waveX(position)"
+                  y1="10"
+                  y2="103"
+                />
+              }
+            }
+          </svg>
+          <div class="chart-scale">
+            <span>{{ track.min | number: '1.0-3' }} · {{ waveDomain().start }} ms</span
+            ><span>{{ waveDomain().end }} ms</span>
+          </div>
+        </section>
+      } @empty {
+        <p class="muted">Add signals from ECU I/O to start tracing.</p>
+      }
+    }
+    @case ('Scenario') {
+      <h1>Scenario</h1>
+      <div class="tools">
+        <button [disabled]="!selectedFile() || live()" (click)="action(() => refreshScenarios())">
+          Refresh run list
+        </button>
+        <button
+          [disabled]="!selectedFile() || !validStopAt() || live()"
+          (click)="action(() => assess())"
+        >
+          Check run settings
+        </button>
+      </div>
+      <h2>Scenario files</h2>
+      <div class="tools">
+        <button (click)="showTab('Settings')">Scenario folder settings</button>
+        @if (folder() || fallbackFolder()) {
+          <span class="muted">{{ folder()?.name ?? fallbackFolder()?.name }}</span>
+        }
+        <select
+          #folderFile
+          aria-label="Scenario folder files"
+          [disabled]="!folderFiles().length"
+          (change)="action(() => openFolderFile(folderFile.value)); folderFile.value = ''"
+        >
+          <option value="">Folder files</option>
+          @for (name of folderFiles(); track name) {
+            <option [value]="name">{{ name }}</option>
+          }
+        </select>
+        <input
+          #yamlFile
+          type="file"
+          accept=".yml,.yaml"
+          hidden
+          (change)="action(() => openYaml(yamlFile.files?.[0] ?? null)); yamlFile.value = ''"
+        />
+        <button (click)="yamlFile.click()">Open YAML</button>
+        @if (recordedRun() != null && recordedRun() === session()?.id && !live()) {
+          <button (click)="action(() => loadRecording())">Load recording</button>
+        }
+        @if (yamlName()) {
+          <button (click)="action(() => saveYaml())">Save YAML</button>
+        }
+      </div>
+      @if (yamlName()) {
+        <label class="tools"
+          >Filename <input [value]="yamlName()" (input)="yamlName.set($any($event.target).value)"
+        /></label>
+        <textarea
+          aria-label="Scenario YAML"
+          spellcheck="false"
+          [value]="yaml()"
+          (input)="yaml.set($any($event.target).value)"
+        ></textarea>
+      }
+      @if (check(); as checked) {
+        <p>
+          Check: {{ checked.result }} · Time step:
+          {{ checked.time_step_ms == null ? '—' : checked.time_step_ms + ' ms' }} ·
+          {{ checked.scenario?.steps ?? 0 }} scenario steps
+        </p>
+        @for (finding of checked.findings; track $index) {
+          <p>{{ finding.message }}</p>
+        }
+      }
+      @if (runScenario()?.timeline_url; as url) {
+        <vehicle-sil-timeline [attr.src]="url" lang="en" compact hide="help"></vehicle-sil-timeline>
+      }
+    }
+    @case ('Traffic') {
+      <h2>{{ result()?.traffic ? 'Run traffic by network' : 'Configured networks' }}</h2>
+      @if (result()?.traffic; as traffic) {
+        <table>
+          <thead>
+            <tr>
+              <th>Network</th>
+              <th>Kind</th>
+              <th>Senders</th>
+              <th>Receivers</th>
+              <th>Delivered</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (network of traffic.networks; track network.name) {
+              <tr>
+                <td>{{ network.name }}</td>
+                <td>{{ network.kind }}</td>
+                <td>{{ network.senders }}</td>
+                <td>{{ network.receivers }}</td>
+                <td>{{ network.delivered == null ? '—' : network.delivered ? 'Yes' : 'No' }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      } @else {
+        <table>
+          <thead>
+            <tr>
+              <th>Network</th>
+              <th>Kind</th>
+              <th>Participants</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (network of networks(); track $index) {
+              <tr>
+                <td>{{ network.name }}</td>
+                <td>{{ network.kind }}</td>
+                <td>{{ network.participants.join(', ') }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    }
+    @case ('Logs') {
+      <div class="tools">
+        <input
+          type="search"
+          aria-label="Filter logs"
+          placeholder="Filter by source or message"
+          [value]="logQuery()"
+          (input)="logQuery.set($any($event.target).value)"
+        />
+      </div>
+      <div id="log-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Sequence</th>
+              <th>Source</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody id="log-lines">
+            @for (entry of logs(); track entry.key) {
+              <tr>
+                <td>{{ entry.seq }}</td>
+                <td>{{ entry.source }}</td>
+                <td>{{ entry.line }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+    @case ('Results') {
+      @if (result(); as outcome) {
+        <h1 [class.bad]="!outcome.ok" [class.good]="outcome.ok">
+          Run #{{ session()?.id }} · {{ outcome.scenario?.status ?? outcome.result }}
+        </h1>
+        <p>{{ outcome.message }}</p>
+        @if (outcome.timing; as timing) {
+          <p class="muted">
+            Actual {{ timing.actual_speed ?? '—' }}× · Late steps {{ timing.late_steps }} · Total
+            slip {{ timing.slipped_ms }} ms
+          </p>
+        }
+        @if (runScenario()?.timeline_url) {
+          <button (click)="tab.set('Scenario')">Open timeline</button>
+        }
+      } @else {
+        <h1>{{ session() ? 'Run #' + session()!.id : 'No run yet' }}</h1>
+      }
+      @if (runScenario(); as executed) {
+        <table>
+          <thead>
+            <tr>
+              <th>Step</th>
+              <th>Time (ms)</th>
+              <th>Status</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (step of executed.steps; track step.index) {
+              <tr>
+                <td>{{ step.index }}</td>
+                <td>{{ step.at_ms ?? '—' }}</td>
+                <td>{{ step.status }}</td>
+                <td>{{ step.message ?? step.text }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    }
+    @case ('Network Designer') {
+      <h1>Network Designer</h1>
+      <div class="tools">
+        <button [disabled]="!selectedFile() || configBusy()" (click)="action(() => readConfig())">
+          {{ configStamp() ? 'Reload network' : 'Load network' }}
+        </button>
+        <button [disabled]="!configStamp() || configBusy()" (click)="action(() => checkConfig())">
+          Check network
+        </button>
+        <button
+          [disabled]="!configDirty() || configBusy() || !controls()?.save?.ok"
+          (click)="action(() => saveConfig())"
+        >
+          Save network
+        </button>
+        @if (configBusy()) {
+          <span role="status">Working…</span>
+        } @else if (configDirty()) {
+          <span class="muted">Unsaved changes</span>
+        }
+      </div>
+      @if (design(); as model) {
+        @if (!designCurrent() && !configBusy()) {
+          <p class="muted">Check the edited YAML to update the network diagram.</p>
+        }
+        <h2>Buses</h2>
+        <form
+          class="tools"
+          (submit)="$event.preventDefault(); action(() => addBus(busName.value, busKind.value))"
+        >
+          <input #busName aria-label="Bus name" placeholder="Bus name" required />
+          <select #busKind aria-label="Bus type">
+            <option value="can">CAN</option>
+            <option value="lin">LIN</option>
+            <option value="ethernet">Ethernet</option>
+          </select>
+          <button [disabled]="!model.editable || !designCurrent()">Add bus</button>
+        </form>
+        <div class="matrix">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">ECU</th>
+                @for (network of model.networks; track $index) {
+                  <th scope="col">
+                    {{ network.name }} · {{ network.kind }}
+                    <button
+                      type="button"
+                      [attr.aria-label]="'Remove bus ' + network.name"
+                      [disabled]="!model.editable || !designCurrent()"
+                      (click)="action(() => removeBus(network.name))"
+                    >
+                      Remove
+                    </button>
+                  </th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (participant of model.participants; track $index) {
+                <tr>
+                  <th scope="row">{{ participant.name }}</th>
+                  @for (network of model.networks; track $index) {
+                    <td>
+                      {{ network.participants.includes(participant.name) ? 'Connected' : '—' }}
+                    </td>
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <div class="tools">
+          <h2>ECU channels</h2>
+          <button [disabled]="configBusy() || live()" (click)="action(() => refreshChannels())">
+            Refresh ECU channels
+          </button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">ECU</th>
+              <th scope="col">Channel</th>
+              <th scope="col">Connected bus</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (participant of model.participants; track $index) {
+              @for (channel of participant.channels; track channel.from) {
+                <tr>
+                  <th scope="row">{{ participant.name }}</th>
+                  <td>{{ channel.from }} · {{ channel.kinds.join(', ') }}</td>
+                  <td>
+                    <select
+                      #channelBus
+                      [attr.aria-label]="participant.name + ' ' + channel.from + ' bus'"
+                      [disabled]="
+                        !model.editable ||
+                        !designCurrent() ||
+                        !participant.inCommon ||
+                        !!channel.overriddenBy
+                      "
+                      (change)="changeChannel(participant.name, channel, channelBus)"
+                    >
+                      <option [value]="channel.from" [selected]="channel.network === channel.from">
+                        {{ channel.from }} (ECU default)
+                      </option>
+                      @for (network of model.networks; track $index) {
+                        @if (network.name !== channel.from) {
+                          <option
+                            [value]="network.name"
+                            [selected]="channel.network === network.name"
+                          >
+                            {{ network.name }}
+                          </option>
+                        }
+                      }
+                    </select>
+                  </td>
+                </tr>
+              } @empty {
+                <tr>
+                  <th scope="row">{{ participant.name }}</th>
+                  <td colspan="2">No channels reported</td>
+                </tr>
+              }
+            }
+          </tbody>
+        </table>
+      }
+      @if (configStamp()) {
+        <h2>Network YAML</h2>
+        <textarea
+          aria-label="Network YAML"
+          spellcheck="false"
+          [disabled]="configBusy()"
+          [value]="configText()"
+          (input)="configText.set($any($event.target).value)"
+        ></textarea>
+      }
+      @if (configCheck(); as report) {
+        <p>Check: {{ report.result }}</p>
+        @for (finding of report.findings; track $index) {
+          <p>{{ finding.message }}</p>
+        }
+      }
+    }
+    @case ('Settings') {
+      <h1>Settings</h1>
+      <h2>Scenario folder</h2>
+      <p>{{ folder()?.name ?? fallbackFolder()?.name ?? 'No folder selected' }}</p>
+      <div class="tools">
+        @if (canChooseFolder) {
+          <button (click)="action(() => chooseFolder())">Choose folder…</button>
+        }
+        <input
+          #readOnlyFolder
+          type="file"
+          webkitdirectory
+          hidden
+          (change)="
+            action(() => chooseReadOnlyFolder(readOnlyFolder.files)); readOnlyFolder.value = ''
+          "
+        />
+        <button (click)="readOnlyFolder.click()">
+          {{ canChooseFolder ? 'Choose read-only folder…' : 'Choose folder…' }}
+        </button>
+        <button [disabled]="!folder() && !fallbackFolder()" (click)="forgetFolder()">
+          Forget folder
+        </button>
+      </div>
+      <p class="muted">
+        The top Scenario menu lists runnable files in the selected network’s server-side scenarios
+        folder. Open and save local scenario YAML from the Scenario tab.
+      </p>
+      @if (!canChooseFolder || fallbackFolder()) {
+        <p class="muted">This folder is read-only. Save YAML downloads the file.</p>
+      }
+    }
+  }
+</main>

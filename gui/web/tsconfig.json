@@ -20,6 +20,7 @@
       "@vehicle-sil/gui-client/testing": ["../client/src/testing/index.ts"],
       "@vehicle-sil/gui-client/timeline": ["../timeline/vehicle-sil-timeline"],
       "tslib": ["./node_modules/tslib"],
+      "yaml": ["./node_modules/yaml", "./workbench/node_modules/yaml"],
       "vitest/browser": ["./node_modules/vitest/browser/context.d.ts"]
     }
   },

@@ -68,6 +68,7 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 E2E_ERRORS = re.compile(r"✘|^\s+\d+\) |Error:|Timed out|\d+ (failed|flaky)|webServer|WebServer.*(rror|exit)")
 ERROR_LINES = {
     "install": re.compile(r"npm (error|ERR!)|EBADENGINE|ERESOLVE"),
+    "install-workbench": re.compile(r"npm (error|ERR!)|EBADENGINE|ERESOLVE"),
     "format": re.compile(r"\[warn\]|\[error\]"),
     "lint": re.compile(r"^\S.*\.(ts|html)$|^\s+\d+:\d+\s+(error|warning)\s|problems?\s*\(|Error"),
     "test": re.compile(r"\bFAIL\b|×|AssertionError|Error:|^\s+(Test Files|Tests)\s"),
@@ -84,6 +85,7 @@ ERROR_LINES = {
 E2E_SUMMARY = re.compile(r"^\s+\d+ passed")
 SUMMARY_LINES = {
     "install": re.compile(r"^added \d+ packages"),
+    "install-workbench": re.compile(r"^added \d+ packages"),
     "format": re.compile(r"All matched files use Prettier code style"),
     "lint": re.compile(r"All files pass linting"),
     "test": re.compile(r"^\s+Tests\s+\d+"),
@@ -332,6 +334,7 @@ def main() -> int:
     parser.add_argument("--skip-checks", action="store_true",
                         help="do not run the format check, lint, unit tests (gui/web, gui/client and gui/timeline) and "
                         "the i18n step (the build and e2e still run)")
+    parser.add_argument("--workbench", action="store_true", help="build the alternate GUI and run its browser test")
     parser.add_argument("--e2e-grep", metavar="PATTERN", help="run only the e2e tests whose title matches PATTERN")
     parser.add_argument("--e2e-repeat", type=int, default=1, metavar="N", help="run each e2e test N times")
     parser.add_argument("--i18n-only", action="store_true",
@@ -358,6 +361,8 @@ def main() -> int:
         if tool in engines:
             check_engine(tool, path, engines[tool])
     i18n_alone = args.i18n_only or args.i18n_update
+    if args.workbench and i18n_alone:
+        die_usage("--workbench cannot be used with the i18n-only options")
     if not i18n_alone and not args.skip_e2e and shutil.which("uv") is None:
         die_usage("uv is not on PATH; the e2e tests start the GUI server with uv (or pass --skip-e2e)")
     if (args.skip_install or i18n_alone) and not (WEB / "node_modules").is_dir():
@@ -370,15 +375,20 @@ def main() -> int:
         pass
     elif not args.skip_install:
         steps.append(Step("install", [npm, "ci", "--no-fund", "--no-audit"]))
-    if not i18n_alone and not args.skip_checks:
+    if args.workbench:
+        if not args.skip_install:
+            steps.append(Step("install-workbench", [npm, "--prefix", "workbench", "ci", "--no-fund", "--no-audit"]))
+        steps.append(Step("build", [npm, "run", "build:workbench"]))
+    if not i18n_alone and not args.workbench and not args.skip_checks:
         steps += [Step("format", [npm, "run", "format:check"]), Step("lint", [npm, "run", "lint"]),
                   Step("test", [npm, "test"]), Step("client", [npm, "run", "test:client"]),
                   Step("timeline", [npm, "run", "test:timeline"]), Step("i18n", [npm, "run", "i18n:extract"])]
-    if not i18n_alone:
+    if not i18n_alone and not args.workbench:
         steps += [Step("build", [npm, "run", "build"]), Step("bundle", [npm, "run", "build:client"]),
                   Step("package", [npm, "run", "pack:client"])]
     if not i18n_alone and not args.skip_e2e:
-        narrow = (["--grep", args.e2e_grep] if args.e2e_grep else []) + \
+        grep = args.e2e_grep or ("workbench" if args.workbench else None)
+        narrow = (["--grep", grep] if grep else []) + \
             (["--repeat-each", str(args.e2e_repeat)] if args.e2e_repeat > 1 else [])
         extra = ["--", *narrow] if narrow else []
         steps += [Step("e2e", [npm, "run", "e2e", *extra])]
@@ -386,6 +396,8 @@ def main() -> int:
             steps += [Step("e2e-dev", [npm, "run", "e2e:dev", *extra])]
 
     env = {**os.environ, "CI": "1", "NG_CLI_ANALYTICS": "false", "FORCE_COLOR": "0"}
+    if args.workbench:
+        env["VEHICLE_SIL_VERIFY_WORKBENCH"] = "1"
     env.pop("NO_COLOR", None)  # Playwright warns when NO_COLOR and FORCE_COLOR are both set
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     logs = {s.name: LOG_DIR / f"{args.tag}-{s.name}.log" for s in steps}

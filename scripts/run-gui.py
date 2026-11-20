@@ -3,6 +3,7 @@
 
   scripts/run-gui.py              find what the GUI needs, start the GUI server, print the URL to open
   scripts/run-gui.py --dry-run    only say what it found and the command it would run
+  scripts/run-gui.py --workbench  serve the alternate ECU workbench
 
 It builds nothing. It looks for a vehicle_sil_launch with the Control Server under build/ (or takes --launcher),
 the configuration next to it (examples/ecu_main/simulation.live.yaml of that build: no stop_at_ms, speed 1), the
@@ -183,10 +184,16 @@ def plan(args: argparse.Namespace, root: Path = ROOT, probe: Probe = features_of
             problems.append(str(e))
         except Missing as e:
             problems.append(str(e))
-    try:
-        find_web(root)
-    except Missing as e:
-        problems.append(str(e))
+    workbench = root / "build" / "gui-workbench" / "browser"
+    if args.workbench:
+        if not (workbench / "index.html").is_file():
+            problems.append(f"the Workbench is not built ({shown(workbench / 'index.html', root)} is missing). "
+                            "Build it with:\n  npm --prefix gui/web/workbench ci\n  npm --prefix gui/web/workbench run build")
+    else:
+        try:
+            find_web(root)
+        except Missing as e:
+            problems.append(str(e))
     runner = ""
     try:
         runner = uv()
@@ -200,6 +207,8 @@ def plan(args: argparse.Namespace, root: Path = ROOT, probe: Probe = features_of
         raise (Usage if usage else Missing)("\n".join(lines))
     assert launcher is not None and config is not None
     command = [runner, "run", "--project", str(root), "vehicle-sil-gui", "--launcher", str(launcher)]
+    if args.workbench:
+        command += ["--web", str(workbench)]
     if args.port is not None:
         command += ["--port", str(args.port)]
     command += [flag for flag, on in (("--no-browser", args.no_browser), ("--json", args.json)) if on]
@@ -220,6 +229,7 @@ def parse(argv: list[str]) -> argparse.Namespace:
                         f"{(EXAMPLE / CONFIG).as_posix()} of the launcher's build)")
     parser.add_argument("--launcher", metavar="PATH", help="the vehicle_sil_launch to use (default: the newest "
                         "build/*/tools/launch/vehicle_sil_launch that has the Control Server)")
+    parser.add_argument("--workbench", action="store_true", help="serve the alternate ECU I/O Workbench")
     parser.add_argument("--port", type=int, help="the GUI server's port on 127.0.0.1 (default: a free one)")
     parser.add_argument("--no-browser", action="store_true", help="do not open the browser (the URL is still printed)")
     parser.add_argument("--json", action="store_true", help="the GUI server prints the URL as one JSON line "
