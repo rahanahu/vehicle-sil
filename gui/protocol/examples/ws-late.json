@@ -2737,7 +2737,8 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+            "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow",
+            "event_seq": 44
           },
           {
             "severity": "note",
@@ -2747,7 +2748,8 @@
             "participant": null,
             "network": null,
             "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
-            "detail": null
+            "detail": null,
+            "event_seq": 45
           }
         ],
         "findings_omitted": 0,

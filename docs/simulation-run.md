@@ -37,7 +37,7 @@ Stage 1: If the check finds errors (with `--strict`, also warnings), `run` start
 
 Stage 2: The registry address is `registry_uri`, or a free port on 127.0.0.1 if `registry_uri` is not set. The first line on stderr gives that URI (`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`). With `--control`, the Control Server starts before the registry and `run` writes the line `[vehicle_sil_launch] control server at <address>`.
 
-Stage 3: The participants the simulation waits for (called "required participants" on this page) are those with `required: true` that are not disabled. The controller joins time synchronization with the time step (`time_step_ms`, or its default). It holds each time step at its end and decides there on speed, pauses and single-steps. This applies at maximum speed too, which adds one synchronization per time step.
+Stage 3: The participants the simulation waits for (called "required participants" on this page) are those with `required: true` that are not disabled. The controller joins time synchronization with the time step (the configured or resolved `time_step_ms`). It holds each time step at its end and decides there on speed, pauses and single-steps. This applies at maximum speed too, which adds one synchronization per time step.
 
 Stage 4: With `--connect`, `run` first starts the bridge of each connected network and waits until it runs (see [Connecting a bus outside](#connecting-a-bus-outside---connect)). `run` does not start a `manual` participant; it prints the command that starts it. A participant that `run` starts gets the directory of the configuration file as its working directory and an empty stdin.
 
@@ -1235,10 +1235,10 @@ Keys of `timing` (for the definitions of the counts, see [Running at a set speed
 | Key | Value |
 |---|---|
 | `speed` | Speed at the end (a number or `"max"`) |
-| `time_step_ms` | The controller's time step (the value from the configuration file, or the default) |
+| `time_step_ms` | The controller's time step (configured or resolved for the run) |
 | `ecu_step_ms` | The smallest ECU step size (milliseconds) |
 | `step_delay_ms` | The largest amount by which ECU steps run later than the real time that corresponds to their virtual time, because the time step is coarser than the ECU steps (milliseconds) |
-| `late_tolerance_ms` | The lateness tolerance (the value from the configuration file, or the default) |
+| `late_tolerance_ms` | The lateness tolerance (from `--late-tolerance-ms`, the request file, or the 10 ms default) |
 | `sim_ms` | Virtual time reached (milliseconds; the time of the last time step that started) |
 | `wall_ms` | Real time taken (milliseconds, including time spent paused) |
 | `actual_speed` | Overall actual speed (`sim_ms` ÷ (`wall_ms` − `paused_ms`), 3 decimal places) |

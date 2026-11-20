@@ -2475,7 +2475,8 @@
             "line": null,
             "participant": "Engine",
             "network": null,
-            "message": "participant 'Engine': it describes variables (--describe), but its control agent did not say hello before the simulation started, so its variables cannot be read or written in this run"
+            "message": "participant 'Engine': it describes variables (--describe), but its control agent did not say hello before the simulation started, so its variables cannot be read or written in this run",
+            "event_seq": 49
           },
           {
             "severity": "warning",
@@ -2484,7 +2485,8 @@
             "line": null,
             "participant": "Dashboard",
             "network": null,
-            "message": "participant 'Dashboard': its control agent speaks version 1 of the control messages and this launcher version 2, so its variables cannot be read or written in this run: the ECU is of an older vehicle-sil; build it again with the vehicle-sil of this vehicle_sil_launch"
+            "message": "participant 'Dashboard': its control agent speaks version 1 of the control messages and this launcher version 2, so its variables cannot be read or written in this run: the ECU is of an older vehicle-sil; build it again with the vehicle-sil of this vehicle_sil_launch",
+            "event_seq": 50
           }
         ],
         "findings_omitted": 0,

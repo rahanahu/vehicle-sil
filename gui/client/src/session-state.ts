@@ -254,6 +254,43 @@ function scenarioView(summary: SummaryScenario): ScenarioView {
   };
 }
 
+/** Restore a locally received complete string only when the server's value is exactly its shortened form. */
+function fullStepText(incoming: string | null, current: string | null): string | null {
+  if (incoming === null || current === null) return incoming;
+  const cut = /^(.*)\.\.\. \((\d+) more characters\)$/s.exec(incoming);
+  if (!cut) return incoming;
+  const prefix = cut[1];
+  return current.startsWith(prefix) &&
+    Array.from(current).length === Array.from(prefix).length + Number(cut[2])
+    ? current
+    : incoming;
+}
+
+function mergeScenarioStep(current: ScenarioStep, incoming: ScenarioStep): ScenarioStep {
+  return {
+    ...incoming,
+    text: fullStepText(incoming.text, current.text) ?? incoming.text,
+    message: fullStepText(incoming.message, current.message),
+  };
+}
+
+// Positions follow the lifetime of retained step objects; they do not keep discarded steps alive.
+const stepPositions = new WeakMap<ScenarioStep, number>();
+
+/** Merge by index once, preserving sorted output without repeatedly copying the full list. */
+function mergeScenarioSteps(
+  current: readonly ScenarioStep[],
+  incoming: readonly ScenarioStep[],
+  merge: (old: ScenarioStep, next: ScenarioStep) => ScenarioStep = (_old, next) => next,
+): ScenarioStep[] {
+  const steps = new Map(current.map((step) => [step.index, step]));
+  for (const step of incoming) {
+    const old = steps.get(step.index);
+    steps.set(step.index, old ? merge(old, step) : step);
+  }
+  return [...steps.values()].sort((a, b) => a.index - b.index);
+}
+
 /** Applies one step (replacing one with the same index; kept in index order). */
 function withStep(steps: readonly ScenarioStep[], step: ScenarioStep): readonly ScenarioStep[] {
   const i = steps.findIndex((s) => s.index >= step.index);
@@ -268,6 +305,10 @@ export interface SessionView {
   id: number;
   /** Server snapshot capture order for this run, null on older servers. */
   snapshotRev?: number | null;
+  /** Capture order of the last adopted launcher projection, independent of server state. */
+  projectionRev?: number | null;
+  /** Highest launcher event position included in an adopted summary projection. */
+  projectionSeq?: number;
   /** Highest diagnostic identifier represented in this view. */
   problemSeq?: number;
   /** Highest diagnostic delivered by the ordered WebSocket stream. */
@@ -276,6 +317,8 @@ export interface SessionView {
   pendingFindings?: { through: number; keys: readonly string[] };
   /** Highest live or replay event observed, retained across full log replay. */
   observedSeq?: number;
+  /** Last event position for each launcher projection, retained across replay. */
+  eventSeqs?: Readonly<Record<string, number>>;
   /** seq of the last event received (-1 if none). On reconnect, the resend is requested from the next one. */
   lastSeq: number;
   /** The configuration file (relative to root). */
@@ -415,7 +458,7 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
     ? adopted
     : {
         ...adopted,
-        pendingFindings: { through: summary.last_seq, keys: summary.findings.map(findingKey) },
+        pendingFindings: { through: summary.last_seq, keys: summary.findings.map(findingIdentity) },
       };
 }
 
@@ -478,8 +521,15 @@ export function applySummary(
 ): SessionView {
   const incomingRev = summary.snapshot_rev ?? null;
   const currentRev = session.snapshotRev ?? null;
-  if (currentRev !== null && (incomingRev === null || incomingRev < currentRev)) return session;
-  const newer = force || (summary.last_seq ?? -1) > session.lastSeq;
+  const staleControl = currentRev !== null && (incomingRev === null || incomingRev < currentRev);
+  const projectionRev = session.projectionRev ?? null;
+  const staleProjection =
+    projectionRev !== null && (incomingRev === null || incomingRev < projectionRev);
+  if (staleControl && (staleProjection || (!force && controlOnly))) return session;
+  const newer =
+    force ||
+    (summary.last_seq ?? -1) >
+      Math.max(session.lastSeq, session.observedSeq ?? -1, session.projectionSeq ?? -1);
   const launcher =
     !force && !session.launcher.running && summary.launcher.running
       ? session.launcher
@@ -500,23 +550,28 @@ export function applySummary(
   }
   if (mergedProblems.every((problem) => problem.problem_seq !== undefined))
     mergedProblems.sort((a, b) => a.problem_seq! - b.problem_seq!);
-  const next: SessionView = {
-    ...session,
-    ...(incomingRev === null ? {} : { snapshotRev: incomingRev }),
-    ...(summary.problem_seq == null
-      ? {}
-      : { problemSeq: Math.max(session.problemSeq ?? 0, summary.problem_seq) }),
-    launcher,
-    stopRequests: Math.max(session.stopRequests, stopRequestsOf(summary.stop)),
-    logSources: withSources(session.logSources, Object.keys(summary.log)),
-    ...(force || notLess ? { problems: mergedProblems, problemsOmitted: omitted } : {}),
-  };
-  if (!newer || (!force && controlOnly)) {
+  const next: SessionView = staleControl
+    ? session
+    : {
+        ...session,
+        ...(incomingRev === null ? {} : { snapshotRev: incomingRev }),
+        ...(summary.problem_seq == null
+          ? {}
+          : { problemSeq: Math.max(session.problemSeq ?? 0, summary.problem_seq) }),
+        launcher,
+        stopRequests: Math.max(session.stopRequests, stopRequestsOf(summary.stop)),
+        logSources: withSources(session.logSources, Object.keys(summary.log)),
+        ...(force || notLess ? { problems: mergedProblems, problemsOmitted: omitted } : {}),
+      };
+  if (!newer || staleProjection || (!force && controlOnly)) {
     return next;
   }
   const phase = summary.phase ?? next.phase;
   const rank = phaseIndex(phase);
   const preserveEvents = force && controlOnly;
+  const behind = (...kinds: string[]) =>
+    summary.last_seq !== null &&
+    kinds.some((kind) => (session.eventSeqs?.[kind] ?? -1) > summary.last_seq!);
   const check =
     (preserveEvents ? next.check : null) ??
     summary.check ??
@@ -548,13 +603,23 @@ export function applySummary(
     environment: p.environment ?? (preserveEvents ? (known.get(p.name)?.environment ?? {}) : {}),
   }));
   const scenario = summary.scenario ? scenarioView(summary.scenario) : next.scenario;
-  const mergedScenario =
+  let mergedScenario =
     preserveEvents && scenario && next.scenario
       ? {
           ...scenario,
-          steps: next.scenario.steps.reduce((steps, step) => withStep(steps, step), scenario.steps),
+          steps: mergeScenarioSteps(next.scenario.steps, scenario.steps, (old, step) =>
+            summary.last_seq !== null && (stepPositions.get(old) ?? -1) > summary.last_seq
+              ? old
+              : mergeScenarioStep(old, step),
+          ),
         }
       : scenario;
+  if (mergedScenario && result?.scenario) {
+    mergedScenario = {
+      ...mergedScenario,
+      steps: mergeScenarioSteps(mergedScenario.steps, result.scenario.steps),
+    };
+  }
   if (mergedScenario && scenario && mergedScenario !== scenario) {
     mergedScenario.stepsOmitted = Math.max(
       0,
@@ -571,31 +636,39 @@ export function applySummary(
     : participants;
   return {
     ...next,
-    unreadable: force ? summary.unreadable : union(next.unreadable, summary.unreadable),
-    phase,
-    phaseRank: rank >= 0 ? rank : next.phaseRank,
+    ...(incomingRev === null ? {} : { projectionRev: incomingRev }),
+    projectionSeq: Math.max(next.projectionSeq ?? -1, summary.last_seq ?? -1),
+    unreadable:
+      force && !behind('finding', 'result', 'participant')
+        ? summary.unreadable
+        : union(next.unreadable, summary.unreadable),
+    phase: behind('phase', 'result') ? (next.phase ?? phase) : phase,
+    phaseRank: behind('phase', 'result') ? next.phaseRank : rank >= 0 ? rank : next.phaseRank,
     elapsedMs: Math.max(next.elapsedMs, summary.last_t_ms ?? 0),
-    simMs: summary.sim_ms ?? next.simMs,
+    simMs: behind('time') ? (next.simMs ?? summary.sim_ms) : (summary.sim_ms ?? next.simMs),
     timeOmittedFields:
-      summary.sim_ms === null ? next.timeOmittedFields : summary.time_omitted_fields,
-    time: summary.time ? timeView(summary.time) : next.time,
-    lastCommand: summary.last_command
-      ? commandView(summary.last_command, summary.last_command.seq ?? -1)
-      : next.lastCommand,
+      behind('time') || summary.sim_ms === null
+        ? next.timeOmittedFields
+        : summary.time_omitted_fields,
+    time:
+      behind('time') && next.time ? next.time : summary.time ? timeView(summary.time) : next.time,
+    lastCommand:
+      behind('command') && next.lastCommand
+        ? next.lastCommand
+        : summary.last_command
+          ? commandView(summary.last_command, summary.last_command.seq ?? -1)
+          : next.lastCommand,
     launcherState: newerState(next.launcherState, summary.launcher_state ?? null),
-    findings:
-      preserveEvents && next.findings.length >= summary.findings.length
-        ? next.findings
-        : summary.findings,
+    findings: preserveEvents ? mergeFindings(next.findings, summary.findings) : summary.findings,
     result,
     check,
     scenario: mergedScenario,
     // Whether a participant is required or left out is in the check result (as is the order, that of the configuration
     // file). If there is a result, how it ended (stopped or not) comes from the result too
-    participants: withResult(
-      check ? mergeCheck(mergedParticipants, check) : mergedParticipants,
-      result,
-    ),
+    participants:
+      behind('participant', 'result', CONTROL_EVENT) && next.participants.length > 0
+        ? next.participants
+        : withResult(check ? mergeCheck(mergedParticipants, check) : mergedParticipants, result),
   };
 }
 
@@ -667,6 +740,50 @@ function findingKey(finding: Finding): string {
   ]);
 }
 
+function findingIdentity(finding: Finding): string {
+  return finding.event_seq === undefined
+    ? `body:${findingKey(finding)}`
+    : `seq:${finding.event_seq}`;
+}
+
+/** Merge two ordered, potentially incomplete lists without coalescing repeated findings. */
+function mergeFindings(
+  current: readonly Finding[],
+  incoming: readonly Finding[],
+): readonly Finding[] {
+  const a = current.slice(0, MAX_FINDINGS);
+  const b = incoming.slice(0, MAX_FINDINGS);
+  if (
+    a.every((finding) => finding.event_seq !== undefined) &&
+    b.every((finding) => finding.event_seq !== undefined)
+  ) {
+    const bySeq = new Map<number, Finding>();
+    for (const finding of [...b, ...a]) bySeq.set(finding.event_seq!, finding);
+    return [...bySeq.values()]
+      .sort((left, right) => left.event_seq! - right.event_seq!)
+      .slice(0, MAX_FINDINGS);
+  }
+  const ak = a.map(findingKey);
+  const bk = b.map(findingKey);
+  const sizes = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+  for (let i = a.length - 1; i >= 0; --i)
+    for (let j = b.length - 1; j >= 0; --j)
+      sizes[i][j] =
+        ak[i] === bk[j] ? 1 + sizes[i + 1][j + 1] : Math.max(sizes[i + 1][j], sizes[i][j + 1]);
+  const merged: Finding[] = [];
+  let i = 0,
+    j = 0;
+  while ((i < a.length || j < b.length) && merged.length < MAX_FINDINGS) {
+    if (i < a.length && j < b.length && ak[i] === bk[j]) {
+      merged.push(a[i++]);
+      j++;
+    } else if (j === b.length || (i < a.length && sizes[i + 1][j] >= sizes[i][j + 1]))
+      merged.push(a[i++]);
+    else merged.push(b[j++]);
+  }
+  return merged;
+}
+
 /**
  * Applies a batch of events. Events with the same or an earlier seq are not applied (overlap with the resend: what
  * arrived before the reconnect). With countStale (events that are not a resend), those not applied are counted in
@@ -682,10 +799,26 @@ export function applyEvents(
   let stale = 0;
   for (const event of events) {
     if (event.seq > next.lastSeq) {
-      next = { ...next, observedSeq: Math.max(next.observedSeq ?? -1, event.seq) };
+      const tracked = [
+        'time',
+        'phase',
+        'result',
+        'finding',
+        'participant',
+        'command',
+        CONTROL_EVENT,
+      ].includes(event.event);
+      if (event.event === 'scenario_step') stepPositions.set(event.step, event.seq);
+      next = {
+        ...next,
+        observedSeq: Math.max(next.observedSeq ?? -1, event.seq),
+        ...(tracked ? { eventSeqs: { ...next.eventSeqs, [event.event]: event.seq } } : {}),
+      };
       const pending = next.pendingFindings;
       if (event.event === 'finding' && pending && event.seq <= pending.through) {
-        const index = pending.keys.indexOf(findingKey(event.finding));
+        const numbered = pending.keys.indexOf(`seq:${event.seq}`);
+        const index =
+          numbered === -1 ? pending.keys.indexOf(`body:${findingKey(event.finding)}`) : numbered;
         if (index !== -1) {
           const keys = [...pending.keys];
           keys.splice(index, 1);
@@ -831,7 +964,12 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
       // text may appear twice)
       return next.findings.length >= MAX_FINDINGS
         ? next
-        : { ...next, findings: [...next.findings, event.finding] };
+        : {
+            ...next,
+            findings: next.findings.every((finding) => finding.event_seq !== undefined)
+              ? mergeFindings(next.findings, [{ ...event.finding, event_seq: event.seq }])
+              : [...next.findings, { ...event.finding, event_seq: event.seq }],
+          };
     case 'time':
       return { ...next, simMs: event.sim_ms, timeOmittedFields: [], time: timeView(event) };
     case 'command':

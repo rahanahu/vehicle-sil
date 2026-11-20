@@ -406,6 +406,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 |---|---|
 | `id` | 実行の番号（サーバーの起動ごとに 1 から） |
 | `snapshot_rev` | 同じサーバーインスタンスと実行の中で増える、session 要約の取得順 |
+| `findings[].event_seq` | 保持された実行時 finding のランチャーイベント番号。同じインスタンスと実行の中で一意で、要約とライブ通知の照合に使う。旧サーバーにはなく、その場合の照合は最善を尽くす扱い |
 | `file`、`disable`、`manual`、`speed`、`start_paused` | 始めたときの指定 |
 | `started_at`、`ended_at` | 時刻（UTC、ISO 8601）。`ended_at` は終わるまで `null` |
 | `state` | `running` か `ended` |
