@@ -225,6 +225,9 @@ export class SessionFeed implements ClientSession {
       return null;
     const previous = switching ? null : this.current.get();
     if (summary && previous && summary.id < previous.id) return null;
+    // A same-instance null summary preserves the run and must not supersede an in-progress adoption.
+    if (!summary && !switching && (instance === undefined || instance === this.instanceId))
+      return this.adoptionRevision;
     const revision = ++this.adoptionRevision;
     const identity = instance !== undefined && (summary || !previous) ? instance : this.instanceId;
     const next = !summary
@@ -427,24 +430,26 @@ export class SessionFeed implements ClientSession {
     if (!this.isCurrent(revision)) return;
     this.instanceId = instance;
     this.stopTarget = session && instance ? { session: session.id, instance } : null;
+    // HTTP can synchronously refresh this same run during a notification. It supersedes its own
+    // snapshot, but not the ordered WebSocket messages (which include command acknowledgements).
+    const sessionId = session?.id ?? null;
+    const sameRun = () =>
+      this.instanceId === instance && (this.current.get()?.id ?? null) === sessionId;
     const notifySession = this.current.setDeferred(session);
     const notifyAllowed = this.allowedValue.setDeferred(allowedNow);
     const notifySynced = this.synced.setDeferred(synced);
-    if (instance && instance !== originalInstance)
-      this.instanceListener(instance, () => this.isCurrent(revision));
+    if (instance && instance !== originalInstance) this.instanceListener(instance, sameRun);
     notifySession();
     notifyAllowed();
     notifySynced();
-    if (!this.isCurrent(revision)) return;
+    if (!sameRun()) return;
     if (applied) this.receivedAt.set(Date.now());
-    if (!this.isCurrent(revision)) return;
+    if (!sameRun()) return;
     if (stale > 0) this.notify(STALE_EVENTS_NOTICE, stale);
-    if (!this.isCurrent(revision)) return;
-    callEach(this.rawListeners, [raw, () => this.isCurrent(revision)], this.onError, () =>
-      this.isCurrent(revision),
-    );
-    if (!this.isCurrent(revision)) return;
-    callEach(this.messageListeners, [batch], this.onError, () => this.isCurrent(revision));
+    if (!sameRun()) return;
+    callEach(this.rawListeners, [raw, sameRun], this.onError, () => this.isCurrent(revision));
+    if (!sameRun()) return;
+    callEach(this.messageListeners, [batch], this.onError, sameRun);
   }
 
   private notify(message: string, count = 1): void {

@@ -1049,6 +1049,8 @@ def connects() -> list[Case]:
              "connected"),
         Case("check-connect", ["check", "--json", *target, "--", "connect.yaml"],
              "the check with ETH_EXT connected to fake0: the time is locked to real time", tools=True),
+        Case("check-connect-stop", ["check", "--json", "--stop-at-ms", "1000", *target, "--", "connect.yaml"],
+             "the finite check with ETH_EXT connected to fake0", tools=True),
         Case("check-connect-sil-kit-only", ["check", "--json", "--connect", "ETH_EXT=none", "--", "connect.yaml"],
              "the check with ETH_EXT kept on SIL Kit only (none)"),
         Case("check-connect-free", ["check", "--json", "--time-policy", "free", *target, "--", "connect.yaml"],

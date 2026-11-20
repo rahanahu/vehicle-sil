@@ -863,10 +863,14 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
    */
   private enter(session: number | null): void {
     if (session === this.stateValue.get().session) return;
+    // Clear every observable part before notifying any subscriber. A subscriber can synchronously
+    // fetch the new run, so it must never observe or revive the previous run's values or schema.
     this.readings.clear();
     this.histories.clear();
     this.historyReserved = 0;
-    this.operationsValue.set([]);
+    const notifyOperations = this.operationsValue.setDeferred([]);
+    const notifyState = this.stateValue.setDeferred({ ...NO_VARIABLES, session });
+    const notifyWatches = [...this.handles].map((handle) => handle.values.setDeferred({}));
     for (const pending of [...this.pending]) {
       if (pending.session !== session) {
         this.settle(
@@ -880,6 +884,9 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         );
       }
     }
+    notifyOperations();
+    notifyState();
+    for (const notify of notifyWatches) notify();
   }
 
   private takeValues(message: Fields, touched: Set<string>): void {

@@ -15,7 +15,7 @@
     "exit_code": 0,
     "connections": {
       "vehicle_sil_connections": 1,
-      "vehicle_sil": "0.1.0",
+      "vehicle_sil": "0.2.0-rc.1",
       "file": "connect.yaml",
       "result": "listed",
       "networks": [
