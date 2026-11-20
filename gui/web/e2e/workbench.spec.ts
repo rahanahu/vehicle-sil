@@ -186,13 +186,14 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
       }
       let releaseHeld: (() => void) | undefined;
       let heldRequests = 0;
+      let instance: string | null = null;
       if (storage === 'available') {
         await expect
           .poll(() =>
             page.evaluate(() => localStorage.getItem('vehicle-sil-workbench-waves:last-instance')),
           )
           .not.toBeNull();
-        const instance = await page.evaluate(() =>
+        instance = await page.evaluate(() =>
           localStorage.getItem('vehicle-sil-workbench-waves:last-instance'),
         );
         await page.evaluate(async () => {
@@ -223,6 +224,43 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
             { timeout: RUN_TIMEOUT },
           )
           .toBe(instance);
+        for (const rejected of ['unauthorized', 'other-instance'] as const) {
+          let attempts = 0;
+          await page.route('**/api/app', async (route) => {
+            attempts++;
+            await route.fulfill(
+              rejected === 'unauthorized'
+                ? { status: 401, body: '' }
+                : { status: 200, json: { instance: 'different-instance' } },
+            );
+          });
+          await page.evaluate(() =>
+            localStorage.setItem('vehicle-sil-workbench-waves:last-instance', 'stale-instance'),
+          );
+          await page.evaluate(
+            ({ current, name }) => {
+              const bus = new BroadcastChannel('vehicle-sil-workbench-waves');
+              bus.postMessage({
+                kind: 'selection',
+                instance: current,
+                entries: [
+                  {
+                    key: JSON.stringify(['Engine', name]),
+                    trace: { peer: 'Engine', name, type: 'real', unit: '' },
+                    revision: 100,
+                    actor: 'terminal-test',
+                  },
+                ],
+              });
+              bus.close();
+            },
+            { current: instance, name: `test.${rejected}` },
+          );
+          await expect.poll(() => attempts).toBe(1);
+          await page.waitForTimeout(4500);
+          expect(attempts).toBe(1);
+          await page.unroute('**/api/app');
+        }
         const held = new Promise<void>((resolve) => (releaseHeld = resolve));
         await page.route('**/api/app', async (route) => {
           heldRequests++;
@@ -239,8 +277,22 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
       await page.getByRole('button', { name: 'Add engine.speed to waveforms' }).click();
       if (storage === 'available') {
         await expect.poll(() => heldRequests).toBe(1);
-        await page.locator('app-io-row').filter({ hasText: 'ecu.connected' }).hover();
-        await page.getByRole('button', { name: 'Add ecu.connected to waveforms' }).click();
+        await page.evaluate((current) => {
+          const bus = new BroadcastChannel('vehicle-sil-workbench-waves');
+          bus.postMessage({
+            kind: 'selection',
+            instance: current,
+            entries: [
+              {
+                key: JSON.stringify(['Engine', 'test.pending']),
+                trace: { peer: 'Engine', name: 'test.pending', type: 'real', unit: '' },
+                revision: 101,
+                actor: 'terminal-test',
+              },
+            ],
+          });
+          bus.close();
+        }, instance);
         expect(heldRequests).toBe(1);
         // Another tab must be able to acquire the shared lock even if this response never arrives.
         const acquired = await page.evaluate(() =>
@@ -493,14 +545,18 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
         // instance has claimed the head. Its authoritative app recheck must reject the claim.
         const stale = await page.context().newPage();
         let appReplies = 0;
+        let staleSocket: WebSocketRoute | undefined;
+        let currentHello = '';
         stale.on('response', (response) => {
           if (response.url().endsWith('/api/app')) appReplies++;
         });
         await stale.routeWebSocket(/\/ws$/, (socket) => {
+          staleSocket = socket;
           const upstream = socket.connectToServer();
           upstream.onMessage((message) => {
             if (typeof message !== 'string') return socket.send(message);
             const packet = JSON.parse(message);
+            if (packet.type === 'hello') currentHello = message;
             socket.send(
               JSON.stringify(
                 packet.type === 'hello' ? { ...packet, instance: oldInstance } : packet,
@@ -523,6 +579,40 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
         await expect
           .poll(() =>
             fresh.evaluate(() => localStorage.getItem('vehicle-sil-workbench-waves:last-instance')),
+          )
+          .toBe(newInstance);
+        let failures = 0;
+        await stale.route('**/api/app', async (route) => {
+          failures++;
+          await route.fulfill({ status: 503, body: '' });
+        });
+        await stale.evaluate((old) => {
+          localStorage.setItem('vehicle-sil-workbench-waves:last-instance', 'stale-instance');
+          const bus = new BroadcastChannel('vehicle-sil-workbench-waves');
+          bus.postMessage({
+            kind: 'selection',
+            instance: old,
+            entries: [
+              {
+                key: JSON.stringify(['Engine', 'test.old-retry']),
+                trace: { peer: 'Engine', name: 'test.old-retry', type: 'real', unit: '' },
+                revision: 10000,
+                actor: 'retry-test',
+              },
+            ],
+          });
+          bus.close();
+        }, oldInstance);
+        await expect.poll(() => failures, { timeout: RUN_TIMEOUT }).toBeGreaterThanOrEqual(3);
+        await stale.unroute('**/api/app');
+        staleSocket!.send(currentHello);
+        await expect
+          .poll(
+            () =>
+              stale.evaluate(() =>
+                localStorage.getItem('vehicle-sil-workbench-waves:last-instance'),
+              ),
+            { timeout: 2000 },
           )
           .toBe(newInstance);
         await stale.close();

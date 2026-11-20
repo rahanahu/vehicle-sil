@@ -703,6 +703,11 @@ export class Workbench {
 
   private ensureWaveInstance(instance: string) {
     if (this.waveInstanceSeen === instance) return;
+    this.waveHeadWanted = null;
+    if (this.waveHeadTimer !== null) clearTimeout(this.waveHeadTimer);
+    this.waveHeadTimer = null;
+    this.waveHeadDelay = 1000;
+    this.waveHeadAbort?.abort();
     this.waveInstanceSeen = instance;
     this.waveRevision = 0;
     this.waveEntries.clear();
@@ -743,8 +748,16 @@ export class Workbench {
               cache: 'no-store',
               signal,
             });
+            if (response.status === 401 || response.status === 403) return true;
             if (!response.ok) return false;
             const app: unknown = await response.json();
+            if (
+              app &&
+              typeof app === 'object' &&
+              typeof (app as { instance?: unknown }).instance === 'string' &&
+              (app as { instance: string }).instance !== wanted
+            )
+              return true;
             if (
               signal.aborted ||
               !app ||
@@ -766,8 +779,10 @@ export class Workbench {
         this.waveHeadWorking = false;
         if (this.waveHeadWanted === wanted && completed) this.waveHeadWanted = null;
         if (this.waveHeadWanted && !this.waveHeadDestroyed) {
-          const delay = completed ? 0 : this.waveHeadDelay;
-          this.waveHeadDelay = completed ? 1000 : Math.min(this.waveHeadDelay * 2, 30000);
+          const superseded = this.waveHeadWanted !== wanted;
+          const delay = completed || superseded ? 0 : this.waveHeadDelay;
+          this.waveHeadDelay =
+            completed || superseded ? 1000 : Math.min(this.waveHeadDelay * 2, 30000);
           this.waveHeadTimer = setTimeout(() => {
             this.waveHeadTimer = null;
             if (this.waveHeadWanted) this.promoteWaveHead(this.waveHeadWanted);
