@@ -721,8 +721,11 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           if (Number.isSafeInteger(id) && id !== this.stateValue.get().session) {
             flush();
             if (!current()) return;
+            const afterFlush = this.stateValue.get().session;
+            if (afterFlush !== null && (id as number) < afterFlush) break;
             this.enter(id as number);
             if (!current()) return;
+            if (this.stateValue.get().session !== id) break;
             this.stateValue.set({ ...NO_VARIABLES, session: id as number });
             touchedAll = true;
           }
@@ -736,8 +739,11 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           if (id !== existing) {
             flush();
             if (!current()) return;
+            const afterFlush = this.stateValue.get().session;
+            if (afterFlush !== null && (id as number) < afterFlush) break;
             this.enter(id as number);
             if (!current()) return;
+            if (this.stateValue.get().session !== id) break;
             touchedAll = true;
           }
           this.stateValue.set(readVariables(message['variables'], id as number));
@@ -826,8 +832,10 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     if (id !== this.stateValue.get().session) {
       this.enter(id);
       if (!current()) return;
+      if (this.stateValue.get().session !== id) return;
       this.publish(null, current);
       if (!current()) return;
+      if (this.stateValue.get().session !== id) return;
     } else if (variables === undefined) {
       return; // A summary of the same run without the variables field (a session notification): keep the current state
     }
@@ -1016,8 +1024,10 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     fresh: readonly OperationView[] = [],
     current: () => boolean = () => true,
   ): void {
-    this.operationsValue.set(operations);
     if (!current()) return;
+    // Install the observable list and settle its confirmed results before notifying subscribers:
+    // a synchronous run switch must not turn an already-applied write into no-answer.
+    const notify = this.operationsValue.setDeferred(operations);
     for (const pending of [...this.pending]) {
       if (pending.seq === null) continue;
       const mine = (o: OperationView) =>
@@ -1025,6 +1035,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
       const operation = fresh.find(mine) ?? operations.find(mine);
       if (operation) this.settle(pending, operation);
     }
+    notify();
   }
 
   private settle(pending: Pending, outcome: OperationView | WriteError): void {

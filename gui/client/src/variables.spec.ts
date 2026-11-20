@@ -510,6 +510,62 @@ describe('variables', () => {
     },
   );
 
+  it.each(['session', 'variables'] as const)(
+    'does not re-enter an older run after %s flush notifies a subscriber',
+    async (kind) => {
+      const { client, http, deliver } = setup();
+      await deliver(hello(1, ready()));
+      let refreshed = false;
+      const unsubscribe = client.variables.operations.subscribe((operations) => {
+        if (refreshed || operations.length === 0) return;
+        refreshed = true;
+        void client.fetchSession();
+        http.expectOne('api/session').flush({ instance: 'x', session: summary(3, ready()) });
+      });
+      const older =
+        kind === 'session'
+          ? { type: 'session', session: summary(2) }
+          : { type: 'variables', session: 2, variables: ready() };
+      await deliver(operation(7, 'queued', false), older, { type: 'session', session: summary(3) });
+      expect(refreshed).toBe(true);
+      expect(client.session.session.get()?.id).toBe(3);
+      expect(client.variables.state.get()).toMatchObject({ session: 3, status: 'ready' });
+      unsubscribe();
+      client.close();
+    },
+  );
+
+  it.each(['event', 'summary'] as const)(
+    'settles an applied write before its %s operation list notifies a run switch',
+    async (source) => {
+      const { client, http, deliver } = setup();
+      await deliver(hello(1, ready()));
+      const written = client.variables.write({ Engine: { 'engine.demand': 40 } });
+      http.expectOne('api/write').flush({ session_id: 1, operation: 7 });
+      let switched = false;
+      const unsubscribe = client.variables.operations.subscribe((operations) => {
+        if (switched || !operations.some((operation) => operation.done)) return;
+        switched = true;
+        void client.fetchSession();
+        http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
+      });
+      if (source === 'event') {
+        await deliver(operation(7, 'applied', true, { applied_at_ms: 20 }));
+      } else {
+        const refresh = client.fetchSession();
+        http
+          .expectOne('api/session')
+          .flush({ instance: 'x', session: summary(1, ready([listed(7, 'applied', true)])) });
+        await refresh;
+      }
+      await expect(written).resolves.toMatchObject({ session: 1, seq: 7, state: 'applied' });
+      expect(switched).toBe(true);
+      expect(client.variables.state.get().session).toBe(2);
+      unsubscribe();
+      client.close();
+    },
+  );
+
   it('accepts a smaller session id after the server instance changes', async () => {
     const { client, deliver } = setup();
     await deliver(hello(9, ready()));
