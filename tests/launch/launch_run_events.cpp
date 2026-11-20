@@ -521,9 +521,9 @@ void stdin_ending_optional(const Options& o)
     // that wait short; a second one does, and Deaf is ended by force. Every required participant
     // had ended by itself: the run passed, and its message names Deaf.
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n"
-                                      "stop_at_ms: 1000\n"
-                                      "stop_timeout_ms: 600000\n"
+                                      "vehicle_sil_simulation: 2\n"
+                                      "# run-option --stop-at-ms 1000\n"
+                                      "# run-option --participant-stop-timeout-ms 600000\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Engine\n"
