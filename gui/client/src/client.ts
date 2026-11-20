@@ -283,6 +283,7 @@ export function buildClient(options: ClientOptions): ClientParts {
     },
     session: {
       session: session.session,
+      currentTarget: () => session.currentTarget(),
       ready: session.ready,
       allowed: session.allowed,
       lastEventAt: session.lastEventAt,
@@ -379,8 +380,9 @@ export function buildClient(options: ClientOptions): ClientParts {
         },
         readConnections,
       ),
-    fetchSession: () =>
-      new Promise<SessionSummary | null>((resolve, reject) =>
+    fetchSession: () => {
+      const resyncFrom = session.currentInstance();
+      return new Promise<SessionSummary | null>((resolve, reject) =>
         http({ method: 'GET', path: 'api/session' }, (outcome) => {
           if (!outcome.ok) {
             reject(outcome.error);
@@ -388,16 +390,21 @@ export function buildClient(options: ClientOptions): ClientParts {
           }
           try {
             const summary = readSessionResponse(outcome.body);
-            session.adopt(summary);
-            session.adoptAllowed(readSessionAllowed(outcome.body));
-            // The variable list and state are not part of the summary parser (SessionSummary)
-            variables.adoptSummary((outcome.body as { session?: unknown } | null)?.session);
+            const instance = (outcome.body as { instance?: unknown } | null)?.instance;
+            if (
+              session.adopt(summary, typeof instance === 'string' ? instance : null, resyncFrom)
+            ) {
+              session.adoptAllowed(readSessionAllowed(outcome.body));
+              // The variable list and state are not part of the summary parser (SessionSummary)
+              variables.adoptSummary((outcome.body as { session?: unknown } | null)?.session);
+            }
             resolve(summary);
           } catch (error) {
             reject(error);
           }
         }),
-      ),
+      );
+    },
   };
   return { client, http, onError };
 }

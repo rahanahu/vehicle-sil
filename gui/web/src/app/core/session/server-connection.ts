@@ -58,6 +58,11 @@ export class ServerConnection {
     this.client.connect();
   }
 
+  /** 対象付き操作の現在の識別子。 */
+  currentTarget() {
+    return this.client.session.currentTarget();
+  }
+
   /** 知らせを消す。 */
   dismissNotice(id: number): void {
     this.client.session.dismissNotice(id);

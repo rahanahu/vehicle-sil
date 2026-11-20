@@ -155,7 +155,10 @@ describe('createClient', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('outside a browser, sends the server origin itself (the server takes no other)', async () => {
-    const { calls, fetch } = fakeFetch(() => json({ session: null }));
+    const response = (await httpExamples()).find((example) => example.name === 'run')?.response;
+    const { calls, fetch } = fakeFetch(() =>
+      json({ ...(response as object), instance: 'test-instance' }),
+    );
     vi.stubGlobal('fetch', fetch);
     const client = createClient({ baseUrl: 'http://127.0.0.1:8765/', token: 'secret' });
     await client.fetchSession();

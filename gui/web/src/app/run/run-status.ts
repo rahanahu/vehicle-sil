@@ -87,6 +87,7 @@ export class RunStatus {
   private forceDialog: MatDialogRef<ForceStopDialog, boolean> | null = null;
 
   readonly session = input.required<SessionView | null>();
+  readonly currentTarget = input<() => { session: number; instance: string } | null>(() => null);
   /** 実行の状態と結果（正面の口の `status`）。色、結果の文、異常終了かは、ここから決める。 */
   readonly status = input.required<FrontStatus>();
   /** 開始、停止、待たずに止めるを押せるか、押せない理由（正面の口の `controls`）。 */
@@ -418,10 +419,19 @@ export class RunStatus {
 
   protected askForceStop(): void {
     if (!this.forceEnabled() || !this.forceArmed() || this.forceDialog) return;
+    const target = this.currentTarget()();
+    if (!target) return;
     this.forceDialog = this.dialog.open<ForceStopDialog, void, boolean>(ForceStopDialog);
     this.forceDialog.afterClosed().subscribe((confirmed) => {
       this.forceDialog = null;
-      if (confirmed && this.forceEnabled()) this.forceStop.emit();
+      const current = this.currentTarget()();
+      if (
+        confirmed &&
+        this.forceEnabled() &&
+        current?.session === target.session &&
+        current.instance === target.instance
+      )
+        this.forceStop.emit();
       // ボタンが消えていれば（ダイアログの間に実行が終わった）、帯の文へ
       if (!this.canForce()) this.outcomeElement().nativeElement.focus();
     });

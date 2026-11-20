@@ -100,13 +100,15 @@ GUI サーバーは、2 つの `.mjs` のファイルも、トークンなしで
 
 ### セッションのコピー
 
-| 種類 | 名前                                                                                                                                            |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| 型   | `ClientSession`（`session`、`ready`、`allowed`、`lastEventAt`、`notices`、`rejected`、`incompatible`、`onMessages`、`report`、`dismissNotice`） |
-| 型   | `Notice`、`SessionView`、`ParticipantView`、`LauncherView`、`LogLine`、`LogSource`、`TimeView`、`CommandView`、`RunOutcome`、`LauncherAnswer`   |
-| 関数 | `runOutcome`、`phaseIndex`、`isHolding`、`launcherAnswer`                                                                                       |
+| 種類 | 名前                                                                                                                                                             |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 型   | `ClientSession`（`session`、`currentTarget`、`ready`、`allowed`、`lastEventAt`、`notices`、`rejected`、`incompatible`、`onMessages`、`report`、`dismissNotice`） |
+| 型   | `Notice`、`SessionView`、`ParticipantView`、`LauncherView`、`LogLine`、`LogSource`、`TimeView`、`CommandView`、`RunOutcome`、`LauncherAnswer`                    |
+| 関数 | `runOutcome`、`phaseIndex`、`isHolding`、`launcherAnswer`                                                                                                        |
 
 `ClientSession.allowed` は、GUI サーバーがいま受けるものです（`start`、`stop`、`force`。それぞれ `ok`、理由のコード `reason`、文 `message`。`rev` の大きい方が勝ちます。サーバーが言うまでは `null`）。`SessionView.launcherState` は、ランチャーの最後の `state` イベントです（実行の状態と、いま受けるもの。`rev` の大きい方が勝ちます。届くまでは `null`）。`launcherAnswer(launcherState, name)` は、1 つの操作（`write`、`pause` など）について、それが言うことを読みます: `reason`（受けるなら `null`）と `caution`。まだ言っていないランチャー（`state` がまだない、その操作の項目がない）は、受けないものとします（`unsupported`）。正面の口の `controls` と `variables.bind` は、これでランチャーを読みます。
+
+`currentTarget()` は現在の `{session, instance}` を返し、不明なら `null` を返します。再接続ではサーバーが保持する履歴を先頭から再送してもらい、再起動前のカーソルを別のインスタンスに使いません。HTTP のみの利用者は、サーバー再起動後に `fetchSession()` でコピーを更新できます。
 
 ### 実行の操作
 
@@ -114,6 +116,8 @@ GUI サーバーは、2 つの `.mjs` のファイルも、トークンなしで
 | ---- | ------------------------------------------------------------------------------------------------- |
 | 型   | `ClientRun`（`starting`、`stopping`、`stopWhileStarting`、`error`、`start`、`stop`、`forceStop`） |
 | 型   | `StopAction`                                                                                      |
+
+停止と強制停止は、把握しているセッションとインスタンスを対象にします。このクライアントの開始中に停止を頼んだ場合は開始の応答を待ちます。応答が失われた場合は停止を送らず、その旨をエラーで知らせます。再試行する前に現在の実行を確認してください。対象付き停止に対応しない旧サーバーではエラーになり、同じクライアントからの重複した開始も断ります。
 
 ### 時間
 

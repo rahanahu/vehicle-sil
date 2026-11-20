@@ -20,7 +20,7 @@ function view(client: GuiClient, http: FakeHttp) {
     /** Applies the summary of an HTTP answer (in the server's shape), as the answer to GET api/session. */
     adopt: (summary: unknown) => {
       void client.fetchSession().catch(() => undefined);
-      http.expectOne('api/session').flush({ session: summary });
+      http.expectOne('api/session').flush({ instance: '0123456789abcdef', session: summary });
     },
   };
 }
@@ -222,7 +222,7 @@ describe('SessionFeed', () => {
     expect(replayed?.phase).toBe('ended');
   });
 
-  it('asks for the rest after a reconnection, and keeps what it has', () => {
+  it('replays from the beginning after a reconnection, even if a server reused the id', () => {
     const { run, socket } = open();
     const replay = examples.get('ws-replay');
     const half = Math.floor((replay?.server.length ?? 0) / 2);
@@ -241,19 +241,13 @@ describe('SessionFeed', () => {
       {
         type: 'auth',
         token: 'secret',
-        session: before?.id,
-        from_seq: (before?.lastSeq ?? 0) + 1,
         session_without_check: true,
       },
     ]);
     // Even when connected, not in sync until the resend has arrived
     expect(run.ready()).toBe(false);
-    // Only the continuation arrives (the hello summary, and the events from from_seq)
-    again.send({
-      ...(replay?.server[0] as object),
-      replay: { from_seq: (before?.lastSeq ?? 0) + 1, omitted: { log: {}, events: 0 } },
-    });
-    play(again, 'ws-replay', half);
+    // A full replay does not rely on a cursor from the previous server instance.
+    play(again, 'ws-replay');
     const logs = (replay?.server ?? []).filter(
       (message) => (message as { event?: { event: string } }).event?.event === 'log',
     );

@@ -45,6 +45,8 @@ export interface Notice {
 export interface ClientSession {
   /** The current (or last) session. null while the server has none yet. */
   readonly session: Readable<SessionView | null>;
+  /** Identity of the session suitable for a targeted action. */
+  currentTarget(): { session: number; instance: string } | null;
   /**
    * The session copy matches the server: connected, and hello and the resent events have all arrived. Until then,
    * Start and Stop are disabled so that nobody acts on a stale display. Other features (values and so on) have their
@@ -103,6 +105,8 @@ export interface ClientSession {
  *   they happen even if a subscriber throws).
  */
 export class SessionFeed implements ClientSession {
+  private instanceId: string | null = null;
+  private stopTarget: { session: number; instance: string } | null = null;
   private readonly current: Writable<SessionView | null>;
   private readonly synced: Writable<boolean>;
   private readonly allowedValue: Writable<ServerAllowed | null>;
@@ -163,8 +167,9 @@ export class SessionFeed implements ClientSession {
    */
   resumeFields(): Pick<AuthMessage, 'session' | 'from_seq'> {
     this.synced.set(false);
-    const session = this.current.get();
-    return session ? { session: session.id, from_seq: session.lastSeq + 1 } : {};
+    // A replacement server may reuse a session ID, and older servers ignore instance guards.
+    // Request the retained replay from its beginning rather than send a cursor for a different run.
+    return {};
   }
 
   onMessages(listener: (batch: readonly ServerMessage[]) => void): () => void {
@@ -180,19 +185,48 @@ export class SessionFeed implements ClientSession {
    * request for the same run (the rest arrives in notifications). A summary of an earlier run never brings back an old
    * run over a new one.
    */
-  adopt(summary: SessionSummary | null): void {
-    if (!summary) return;
+  /** Instance associated with the current session, or null if its origin is not known. */
+  currentInstance(): string | null {
+    return this.instanceId;
+  }
+
+  currentTarget(): { session: number; instance: string } | null {
+    return this.stopTarget ? { ...this.stopTarget } : null;
+  }
+
+  adopt(
+    summary: SessionSummary | null,
+    instance?: string | null,
+    resyncFrom?: string | null,
+  ): boolean {
+    // An HTTP response may arrive after a reconnect to another server instance. Never attach its
+    // session to the new server, even when that server reused the same numeric session ID.
+    if (instance !== undefined) {
+      if (this.instanceId !== null && instance !== this.instanceId) {
+        // A fresh explicit HTTP read can recover without a WebSocket, but an answer sent before a
+        // later instance was adopted cannot roll it back. Unknown instance is never a resync.
+        if (!instance || resyncFrom !== this.instanceId || this.connection.state.get() === 'open')
+          return false;
+        this.stopTarget = null;
+        this.instanceId = instance;
+        this.current.set(null);
+      }
+      if (summary || !this.current.get()) this.instanceId = instance;
+    }
+    if (!summary) return true;
     const session = this.current.get();
     // A summary of an earlier run (such as the answer to a stop of a run that was just starting) never replaces a newer
     // run
-    if (session && summary.id < session.id) return;
+    if (session && summary.id < session.id) return false;
     const live = this.connection.state.get() === 'open';
-    this.adoptAllowed(summary.allowed ?? null);
-    this.current.set(
+    const next =
       session?.id === summary.id
         ? applySummary(session, summary, false, live)
-        : sessionFromSummary(summary),
-    );
+        : sessionFromSummary(summary);
+    this.stopTarget = this.instanceId ? { session: next.id, instance: this.instanceId } : null;
+    this.current.set(next);
+    this.adoptAllowed(summary.allowed ?? null);
+    return true;
   }
 
   /**
@@ -302,7 +336,12 @@ export class SessionFeed implements ClientSession {
           const { session: summary, replay } = message;
           // hello is authoritative (a server that restarted may number from the start again)
           takeAllowed(message.allowed ?? summary?.allowed ?? null, true);
-          const resumed = summary && session?.id === summary.id && replay?.from_seq != null;
+          const resumed =
+            summary &&
+            this.instanceId === message.instance &&
+            session?.id === summary.id &&
+            replay?.from_seq != null;
+          this.instanceId = message.instance;
           session = !summary
             ? null
             : resumed && session
@@ -356,8 +395,10 @@ export class SessionFeed implements ClientSession {
     flush();
     const stale =
       (session?.staleEvents ?? 0) - (before?.id === session?.id ? (before?.staleEvents ?? 0) : 0);
-    this.allowedValue.set(allowedNow);
+    this.stopTarget =
+      session && this.instanceId ? { session: session.id, instance: this.instanceId } : null;
     this.current.set(session);
+    this.allowedValue.set(allowedNow);
     this.synced.set(synced);
     if (applied) this.receivedAt.set(Date.now());
     if (stale > 0) this.notify(STALE_EVENTS_NOTICE, stale);

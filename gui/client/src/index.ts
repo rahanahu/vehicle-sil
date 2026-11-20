@@ -208,6 +208,7 @@ export type {
   StateReport,
   StopRequest,
   StopRequestBody,
+  StopSessionRequestBody,
   SummaryCommand,
   SummaryLauncher,
   SummaryParticipant,

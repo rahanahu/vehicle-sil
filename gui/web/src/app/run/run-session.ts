@@ -80,6 +80,9 @@ export class RunSession {
     this.commands.start(intent, file);
   }
 
+  /** 確認した停止先が変わっていないか調べる。 */
+  readonly currentTarget = () => this.server.currentTarget();
+
   /** 順に止める（participant の終わりを待つ）。何度頼んでも、待たずに止めることにはならない。 */
   stop(): void {
     this.commands.stop();

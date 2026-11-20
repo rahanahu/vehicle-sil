@@ -77,7 +77,7 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
     session: low.session.session.get(),
     allowed: low.session.allowed.get(),
     limits: low.limits.get(),
-    busy: actions.busy.get(),
+    busy: actions.busyForCurrent(),
   });
 
   const sources: Readable<unknown>[] = [

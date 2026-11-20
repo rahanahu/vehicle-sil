@@ -85,12 +85,13 @@ Every `api/` request has these conditions:
 | `POST api/check` `{file, text, variant, strict}` | The check of an unsaved text of the file, which starts no process; the same response as above | `check-text.json` |
 | `POST api/describe` `{file, variant}` | `{file, variant, exit_code, check}`: a check of the saved file that describes its executables again, for the checks of its text | `describe.json` |
 | `POST api/config` `{file, text, stamp}` | `{file, stamp}`: saves the text as the file, by default only an edit that keeps the commands that run ("Saving a text (`POST api/config`)" below) | `save-config.json`, `error-commands-changed.json` |
-| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{session}` (the summary of the run it started), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `run-connect.json`, `error-check-failed.json` |
+| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{instance, session}` (the summary of the run it started), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `run-connect.json`, `error-check-failed.json` |
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: where that network can be connected on this computer ("Connecting a network outside" below) | `connections.json` |
 | `POST api/stop` `{force}` | `{session}` (the current summary; `null` if there is no run) | `stop*.json` |
+| `POST api/stop-session` `{session, instance, force}` | `{session}` of the targeted run, or 409 `session-changed` | — |
 | `POST api/time` `{command, ms, value, id}` | `{session_id, command}` (the command sent to the launcher, with its `id` if given) | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}` (the operation number; the result arrives as `operation` over WebSocket) | `write.json` |
-| `GET api/session` | `{session, allowed}` (`session` is `null` if none; `allowed` as in "What the server accepts (`allowed`)" below) | `session-*.json` |
+| `GET api/session` | `{instance, session, allowed}` (`session` is `null` if none; `allowed` as in "What the server accepts (`allowed`)" below) | `session-*.json` |
 | `GET api/dashboard?file=<configuration file>` | The dashboard file next to the configuration file: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
 | `GET api/scenarios?file=<configuration file>` | The scenarios in `scenarios` next to the configuration file: `{file, directory, found, scenarios, truncated}` | `scenarios.json` |
 | `GET api/recording` | The applied writes of the current (last) run as scenario YAML: `{recording}` (`null` if there is no run) | `recording.json` |
@@ -178,6 +179,8 @@ The response is `{file, stamp}`, with the stamp of the saved content. A save tak
 
 The body is `{"force": boolean}`. If omitted, it is `false`; a request with no body and no `Content-Type` also means `false`.
 
+To stop a particular run, use `POST api/stop-session` with `{"session": <positive integer>, "instance": <server instance>, "force": <boolean>}` (`force` is optional). `instance` is the identifier in the `api/run` or `api/session` answer or the WebSocket hello. If the instance differs, or another run is current or starting, it returns 409 `session-changed` and sends no stop. The check and the stop are made together, before another request can change the current run. An older server has no such endpoint and answers 404, rather than silently stopping a different run.
+
 | `force` | What it does | If a stop is already requested |
 |---|---|---|
 | `false` | Stops in order (`{"command":"stop"}` on the launcher's stdin) | Nothing |
@@ -185,6 +188,7 @@ The body is `{"force": boolean}`. If omitted, it is `false`; a request with no b
 
 - Both return the current summary instead of 409 when there is no run or the run has ended (calling them again gives the same result).
 - A stop while a run is starting (before `api/run` has responded) is delivered when the launcher has started. The summary in the response belongs to the previous run; the stop appears in `stop` of the summary of the run that started.
+- The GUI Client sends `api/stop-session` with the session ID it knows. It holds a stop requested during its own start until the start answer identifies that session. If no session is known or the start answer is lost or unreadable, it reports that no stop was sent; the run may have started. Inspect the current session before asking to stop again. This prevents a delayed stop from affecting a later run started by another screen.
 - The progress of the stop shows in `stop` of the summary and in the launcher's `command` / `phase` events.
 - A launcher that does not read stdin does not stop this way (stopping the server stops it with a signal).
 
@@ -450,7 +454,7 @@ If the launcher exits without writing `result`, the summary has `launcher.runnin
 
 ## What the server accepts (`allowed`)
 
-`allowed` is `{rev, start, stop, force, save}`. Each of the last four is `{ok, reason, message}`, and `save` also has `caution`: `ok` says whether the server would take the request now, `reason` is a code (`null` when `ok`), and `message` is one English sentence for a person (`null` when `ok`). It is in `session` (the summary), in the `allowed` message, and, so that it is also there when there is no run, at the top of `hello` and of the answer of `api/session`. A screen can enable a button from `ok` and show `message`, without a table of its own. `api/run` that is sent anyway answers with the same code as the error of `start` (409 `already-running` and `starting`, 503 `shutting-down` and `launcher-unusable`). `api/stop` does not answer with an error: it always answers 200 with the summary (and does nothing when `stop` or `force` has a reason), so the reasons of `stop` and `force` are only in `allowed`. `POST api/config` sent anyway answers 403 `save-disabled` or 503 `shutting-down`.
+`allowed` is `{rev, start, stop, force, save}`. Each of the last four is `{ok, reason, message}`, and `save` also has `caution`: `ok` says whether the server would take the request now, `reason` is a code (`null` when `ok`), and `message` is one English sentence for a person (`null` when `ok`). It is in `session` (the summary), in the `allowed` message, and, so that it is also there when there is no run, at the top of `hello` and of the answer of `api/session`. A screen can enable a button from `ok` and show `message`, without a table of its own. `api/run` that is sent anyway answers with the same code as the error of `start` (409 `already-running` and `starting`, 503 `shutting-down` and `launcher-unusable`). `api/stop` answers 200 with the summary (and does nothing when `stop` or `force` has a reason); `api/stop-session` can answer 409 `session-changed`. `POST api/config` sent anyway answers 403 `save-disabled` or 503 `shutting-down`.
 
 | Field | `reason` | When |
 |---|---|---|
