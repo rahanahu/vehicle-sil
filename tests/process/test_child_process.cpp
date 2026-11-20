@@ -97,6 +97,27 @@ TEST_CASE(kills_a_process_that_takes_too_long_and_keeps_what_it_wrote)
     check_text(run.standard_error, "waiting\n", "stderr");
 }
 
+TEST_CASE(keeps_waiting_for_the_exit_status_after_both_outputs_close)
+{
+    const Captured run = run_captured(kHelper, {"--out", "closed\n", "--close-output", "--sleep-ms", "50", "--exit", "7"},
+                                      CaptureOptions{30s});
+    CHECK(run.exit_code == 7);
+    check_text(run.standard_output, "closed\n", "stdout");
+}
+
+TEST_CASE(times_out_a_process_that_stays_alive_after_both_outputs_close)
+{
+    const auto limit = scaled_timeout(300ms);
+    const auto start = std::chrono::steady_clock::now();
+    const Captured run = run_captured(kHelper, {"--err", "closed\n", "--close-output", "--sleep-ms", "60000"},
+                                      CaptureOptions{limit});
+    const auto took = std::chrono::steady_clock::now() - start;
+    CHECK(!run.exit_code);
+    CHECK(took >= limit);
+    CHECK(took < 20s);
+    check_text(run.standard_error, "closed\n", "stderr");
+}
+
 TEST_CASE(keeps_at_most_max_bytes_of_each_stream)
 {
     const Captured run = run_captured(kHelper, {"--fill-out", "5000", "--err", "short"}, CaptureOptions{30s, 1000});
