@@ -932,6 +932,74 @@ describe('applySummary', () => {
     expect(session.findings.map((item) => item.message)).toEqual([f0.message, f1.message]);
   });
 
+  it('does not roll back legacy HTTP after a shorter full log replay', () => {
+    let session = applyEvents(emptySession(), eventsFrom(20, [{ event: 'finding', finding }]));
+    session = { ...session, lastSeq: 3 };
+    session = applySummary(session, summary({ last_seq: 15, findings: [] }));
+    expect(session.findings.map((item) => item.message)).toEqual([finding.message]);
+  });
+
+  it('does not roll back a newer legacy hello projection when delayed HTTP follows', () => {
+    let session = applyEvents(emptySession(), eventsFrom(20, [{ event: 'finding', finding }]));
+    const second = { ...finding, message: 'finding during disconnect' };
+    session = applySummary(
+      session,
+      summary({ last_seq: 30, findings: [finding, second] }),
+      true,
+      true,
+    );
+    session = { ...session, lastSeq: 3 };
+    session = applySummary(session, summary({ last_seq: 25, findings: [finding] }));
+    expect(session.findings.map((item) => item.message)).toEqual([finding.message, second.message]);
+  });
+
+  it('merges a large scenario without tracking each step in the event sequence record', () => {
+    const steps = Array.from({ length: 12000 }, (_, index) => ({
+      index: index + 1,
+      line: null,
+      kind: 'wait_until',
+      text: '',
+      status: 'passed',
+      start_ms: 0,
+      at_ms: 1,
+      end_ms: 1,
+      code: null,
+      message: null,
+    }));
+    const scenario = {
+      file: 's.yaml',
+      name: 'large',
+      step_count: steps.length,
+      steps: steps.slice(0, 1000),
+      steps_omitted: steps.length - 1000,
+      status: 'passed',
+      over_at_ms: 1,
+      timeline_url: null,
+    };
+    const result = {
+      result: 'passed',
+      findings: [],
+      participants: [],
+      check: null,
+      scenario: { file: 's.yaml', name: 'large', status: 'passed', over_at_ms: 1, steps },
+    } as unknown as RunResult;
+    let session = sessionFromSummary(summary({ scenario }));
+    session = applyEvents(
+      session,
+      eventsFrom(1, [{ event: 'scenario_step', step: { ...steps[1000], status: 'running' } }]),
+    );
+    const positions = session.eventSeqs;
+    session = applyEvents(
+      session,
+      eventsFrom(2, [{ event: 'log', source: 'A', line: 'heartbeat' }]),
+    );
+    expect(session.eventSeqs).toBe(positions);
+    session = applySummary(session, summary({ scenario, result, last_seq: 2 }), true, true);
+    expect(session.scenario?.steps).toHaveLength(12000);
+    expect(session.scenario?.steps[1000].status).toBe('passed');
+    expect(Object.keys(session.eventSeqs ?? {})).not.toContain('scenario_step:1001');
+  });
+
   it('takes only the launcher and the stop from an answer when the notifications bring the rest', () => {
     const session = applyEvents(emptySession(), events({ event: 'phase', phase: 'running' }));
     const finding = {

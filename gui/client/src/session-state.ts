@@ -274,6 +274,23 @@ function mergeScenarioStep(current: ScenarioStep, incoming: ScenarioStep): Scena
   };
 }
 
+// Positions follow the lifetime of retained step objects; they do not keep discarded steps alive.
+const stepPositions = new WeakMap<ScenarioStep, number>();
+
+/** Merge by index once, preserving sorted output without repeatedly copying the full list. */
+function mergeScenarioSteps(
+  current: readonly ScenarioStep[],
+  incoming: readonly ScenarioStep[],
+  merge: (old: ScenarioStep, next: ScenarioStep) => ScenarioStep = (_old, next) => next,
+): ScenarioStep[] {
+  const steps = new Map(current.map((step) => [step.index, step]));
+  for (const step of incoming) {
+    const old = steps.get(step.index);
+    steps.set(step.index, old ? merge(old, step) : step);
+  }
+  return [...steps.values()].sort((a, b) => a.index - b.index);
+}
+
 /** Applies one step (replacing one with the same index; kept in index order). */
 function withStep(steps: readonly ScenarioStep[], step: ScenarioStep): readonly ScenarioStep[] {
   const i = steps.findIndex((s) => s.index >= step.index);
@@ -290,6 +307,8 @@ export interface SessionView {
   snapshotRev?: number | null;
   /** Capture order of the last adopted launcher projection, independent of server state. */
   projectionRev?: number | null;
+  /** Highest launcher event position included in an adopted summary projection. */
+  projectionSeq?: number;
   /** Highest diagnostic identifier represented in this view. */
   problemSeq?: number;
   /** Highest diagnostic delivered by the ordered WebSocket stream. */
@@ -507,7 +526,10 @@ export function applySummary(
   const staleProjection =
     projectionRev !== null && (incomingRev === null || incomingRev < projectionRev);
   if (staleControl && (staleProjection || (!force && controlOnly))) return session;
-  const newer = force || (summary.last_seq ?? -1) > session.lastSeq;
+  const newer =
+    force ||
+    (summary.last_seq ?? -1) >
+      Math.max(session.lastSeq, session.observedSeq ?? -1, session.projectionSeq ?? -1);
   const launcher =
     !force && !session.launcher.running && summary.launcher.running
       ? session.launcher
@@ -585,26 +607,17 @@ export function applySummary(
     preserveEvents && scenario && next.scenario
       ? {
           ...scenario,
-          steps: scenario.steps.reduce((steps, step) => {
-            const old = next.scenario?.steps.find((item) => item.index === step.index);
-            return withStep(
-              steps,
-              old
-                ? behind(`scenario_step:${step.index}`, 'result')
-                  ? old
-                  : mergeScenarioStep(old, step)
-                : step,
-            );
-          }, next.scenario.steps),
+          steps: mergeScenarioSteps(next.scenario.steps, scenario.steps, (old, step) =>
+            summary.last_seq !== null && (stepPositions.get(old) ?? -1) > summary.last_seq
+              ? old
+              : mergeScenarioStep(old, step),
+          ),
         }
       : scenario;
   if (mergedScenario && result?.scenario) {
     mergedScenario = {
       ...mergedScenario,
-      steps: result.scenario.steps.reduce(
-        (steps, step) => withStep(steps, step),
-        mergedScenario.steps,
-      ),
+      steps: mergeScenarioSteps(mergedScenario.steps, result.scenario.steps),
     };
   }
   if (mergedScenario && scenario && mergedScenario !== scenario) {
@@ -624,6 +637,7 @@ export function applySummary(
   return {
     ...next,
     ...(incomingRev === null ? {} : { projectionRev: incomingRev }),
+    projectionSeq: Math.max(next.projectionSeq ?? -1, summary.last_seq ?? -1),
     unreadable:
       force && !behind('finding', 'result', 'participant')
         ? summary.unreadable
@@ -785,16 +799,20 @@ export function applyEvents(
   let stale = 0;
   for (const event of events) {
     if (event.seq > next.lastSeq) {
+      const tracked = [
+        'time',
+        'phase',
+        'result',
+        'finding',
+        'participant',
+        'command',
+        CONTROL_EVENT,
+      ].includes(event.event);
+      if (event.event === 'scenario_step') stepPositions.set(event.step, event.seq);
       next = {
         ...next,
         observedSeq: Math.max(next.observedSeq ?? -1, event.seq),
-        eventSeqs: {
-          ...next.eventSeqs,
-          [event.event]: Math.max(next.eventSeqs?.[event.event] ?? -1, event.seq),
-          ...(event.event === 'scenario_step'
-            ? { [`scenario_step:${event.step.index}`]: event.seq }
-            : {}),
-        },
+        ...(tracked ? { eventSeqs: { ...next.eventSeqs, [event.event]: event.seq } } : {}),
       };
       const pending = next.pendingFindings;
       if (event.event === 'finding' && pending && event.seq <= pending.through) {
