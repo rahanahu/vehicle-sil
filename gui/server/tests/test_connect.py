@@ -47,7 +47,7 @@ def test_the_list_of_one_network_and_a_run_connected_to_a_target_of_it(tmp_path:
         assert status == 200 and reply["check"]["time_lock"] == {"locked": False, "because": ["ETH_EXT"]}, reply
         sock = await c.ws()
         await sock.until(is_synced)
-        status, reply = await c.post("api/run", {"file": FILE, "connect": {"ETH_EXT": "fake0"}})
+        status, reply = await c.post("api/run", {"file": FILE, "connect": {"ETH_EXT": "fake0"}, "stop_at_ms": 1000})
         assert status == 200, reply
         got = await sock.until(is_ended)
         assert got[-1]["session"]["result"]["result"] == "passed"
@@ -135,7 +135,7 @@ def test_a_target_that_the_last_list_did_not_give_as_usable_is_refused(tmp_path:
         assert status == 200, reply
         # The file has changed since the list: listed again before it is passed on
         touch(root / FILE)
-        error = refused(*await c.post("api/run", {"file": FILE, "connect": {"ETH_EXT": "fake0"}}),
+        error = refused(*await c.post("api/run", {"file": FILE, "connect": {"ETH_EXT": "fake0"}, "stop_at_ms": 1000}),
                         "target-not-listed")
         assert "connect.yaml has changed since 'ETH_EXT' was listed" in error["message"]
         await listed(c)
@@ -186,7 +186,7 @@ def test_a_network_that_the_file_lacks_is_left_to_the_launcher(tmp_path: Path) -
     """A request file of a test bench may connect networks that this configuration does not have: the launcher
     leaves them out with a note, as for run --request, and connects nothing for them."""
     async def main(c: Client) -> None:
-        req = {"file": FILE, "connect": {"CAN1": "physical:1"}}
+        req = {"file": FILE, "connect": {"CAN1": "physical:1"}, "stop_at_ms": 1000}
         status, reply = await c.post("api/check", req)
         assert status == 200 and reply["check"]["result"] == "passed", reply
         assert "connect-network-unused" in {f["code"] for f in reply["check"]["findings"]}
