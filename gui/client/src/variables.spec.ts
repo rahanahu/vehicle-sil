@@ -459,6 +459,31 @@ describe('variables', () => {
     expect(watch.history(ENGINE)).toEqual([{ sampleMs: 20, value: 8 }]);
   });
 
+  it('keeps values and write results when a session subscriber fetches the same run', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(hello(1, ready()));
+    const watch = client.variables.watch([ENGINE], { history: 10 });
+    const written = client.variables.write({ Engine: { 'engine.demand': 40 } });
+    http.expectOne('api/write').flush({ session_id: 1, operation: 7 });
+    let invoked = false;
+    const unsubscribe = client.session.session.subscribe(() => {
+      if (invoked) return;
+      invoked = true;
+      void client.fetchSession();
+      http.expectOne('api/session').flush({ instance: 'x', session: summary(1, ready()) });
+    });
+    await deliver(
+      { type: 'session', session: summary(1) },
+      values(1, 20, false, engine(20, 4)),
+      operation(7, 'applied', true, { applied_at_ms: 20 }),
+    );
+    expect(invoked).toBe(true);
+    expect(watch.history(ENGINE)).toEqual([{ sampleMs: 20, value: 4 }]);
+    await expect(written).resolves.toMatchObject({ seq: 7, state: 'applied' });
+    unsubscribe();
+    client.close();
+  });
+
   it('resolves a write when the operation is applied, whichever comes first, the answer or the result', async () => {
     const { client, http, deliver } = setup();
     await deliver(hello(1, ready()));
