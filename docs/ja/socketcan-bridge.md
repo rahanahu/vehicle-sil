@@ -13,7 +13,7 @@
 
 ## 最初の接続
 
-ランチャーを使うなら、自分で registry を起こす必要はありません。`vehicle_sil_launch connections simulation.yaml` でこの PC のインターフェースを見て、`vehicle_sil_launch run --connect CAN=vcan0 simulation.yaml` が registry とこのブリッジを起動します（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。使う構成は `stop_at_ms` のないものにします（プロジェクトのテンプレートでは `simulation.live.yaml`。`simulation.yaml` は短い時間で止まります）。。次のコマンドはブリッジを手で起動する手順で、`sil-kit-registry`（SIL Kit のリリース、またはソースからのビルドの `_deps` の下にあります） とインターフェース `vcan0` が要ります。
+ランチャーを使うなら、自分で registry を起こす必要はありません。`vehicle_sil_launch connections simulation.yaml` でこの PC のインターフェースを見て、`vehicle_sil_launch run --connect CAN=vcan0 simulation.yaml` が registry とこのブリッジを起動します（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。自動停止の時刻を設けない場合は、`--stop-at-ms` を指定しません。次のコマンドはブリッジを手で起動する手順で、`sil-kit-registry`（SIL Kit のリリース、またはソースからのビルドの `_deps` の下にあります） とインターフェース `vcan0` が要ります。
 
 ```sh
 sudo modprobe vcan

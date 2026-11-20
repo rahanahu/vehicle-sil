@@ -564,7 +564,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `{"command":"resume"}` | 一時停止をやめて進みます。 |
 | `{"command":"step","ms":<ms>}` | 一時停止している間だけ: 仮想時間を `<ms>`（1 以上 10^12 以下の整数）だけ進めて、また止まります。 |
 | `{"command":"run_until","at_ms":<ms>}` | 進み続けて、仮想時刻 `<ms>`（0 以上 10^12 以下の整数。タイムステップの倍数に切り上げます）で一時停止します。[Control API](control-api.md) の `RunUntil` と同じで、`--control` は要りません。 |
-| `{"command":"speed","value":<速度>}` | 速度を変えます（`<速度>` は数か `"max"`。設定ファイルの `speed` と同じ範囲）。 |
+| `{"command":"speed","value":<速度>}` | 速度を変えます（`<速度>` は数か `"max"`。`run --speed` と同じ範囲）。 |
 | 上のどれかに `"id":<id>` を付けたもの | 同じです。`<id>`（0 以上 2^53 以下の整数）が、その行の `command` のイベントの `id` に返ります。 |
 | 標準入力の終わり（EOF） | `stop` を 1 回受けたのと同じです（起動した側がいなくなった、パイプを閉じた）。 |
 | 空白だけの行 | 読み飛ばします。 |
@@ -760,7 +760,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 | `features` の名前 | 含むもの |
 |---|---|
-| `speed` | 設定ファイルの `speed`、`time_step_ms`、`late_tolerance_ms`、`run --speed`、結果の `timing`、指摘 `behind-real-time`、指摘 `coarse-time-step`、`time` のイベントの `actual_speed`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` |
+| `speed` | 設定ファイルの `time_step_ms`、実行要求の `speed` と `late_tolerance_ms`、`run --speed`、結果の `timing`、指摘 `behind-real-time`、指摘 `coarse-time-step`、`time` のイベントの `actual_speed`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` |
 | `control-links` | イベント `control_link`、結果の `participants[].control_link`、照合の JSON の `participants[].control`、指摘 `control-link-no-hello`、`control-link-version`、`control-link-revision`、`control-link-late-values`、`control-link-dropped`、`control-link-not-offered` |
 | `manual-participants` | 設定ファイルの `manual`、`--manual`、照合と結果の JSON の `participants[].manual`、指摘 `participant-manual`、イベント `participant` の `state` の `manual` |
 | `scenario` | 結果と照合の JSON の `scenario`、イベント `scenario_step`、指摘 `scenario-*`、指摘の `file` がシナリオのファイルになること |
