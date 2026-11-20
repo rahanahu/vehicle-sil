@@ -429,6 +429,73 @@ describe('SessionFeed', () => {
     expect(client.session.ready.get()).toBe(true);
   });
 
+  it('keeps a complete live result when the first HTTP summary arrives before hello', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const id = response.session['id'];
+    const result = {
+      vehicle_sil_run: 2,
+      result: 'passed',
+      end: 'completed',
+      ok: true,
+      message: 'x'.repeat(4 * 1024 * 1024 + 1),
+      errors: 0,
+      warnings: 0,
+      notes: 0,
+      participants: [
+        {
+          name: 'Engine',
+          required: true,
+          enabled: true,
+          manual: false,
+          ended: 'exited',
+          exit_code: 0,
+          signal: null,
+        },
+      ],
+      findings: [],
+    };
+    socket.send({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 1 },
+      replay: null,
+    });
+    socket.send({
+      type: 'event',
+      session: id,
+      event: { event: 'result', seq: 1, t_ms: 1, result },
+    });
+    socket.send({ type: 'synced', session: id, last_seq: 1 });
+    const refresh = client.fetchSession();
+    http.expectOne('api/session').flush({
+      instance: 'x',
+      session: {
+        ...response.session,
+        snapshot_rev: 2,
+        last_seq: 1,
+        result: {
+          vehicle_sil_run: 2,
+          result: 'passed',
+          end: 'completed',
+          ok: true,
+          errors: 0,
+          warnings: 0,
+          notes: 0,
+        },
+      },
+    });
+    await refresh;
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.result?.participants[0]?.name).toBe('Engine');
+    expect(client.session.session.get()?.result?.message.length).toBe(result.message.length);
+  });
+
   it('rebuilds all replayed logs after a stale hello without duplicating gaps', async () => {
     const http = new FakeHttp();
     const { socket } = open(http);
@@ -513,6 +580,66 @@ describe('SessionFeed', () => {
     expect(
       client.session.session.get()?.problems.filter((p) => p.code === problem.code),
     ).toHaveLength(1);
+  });
+
+  it('keeps diagnostics omitted from a summary when their websocket errors arrive later', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const id = response.session['id'];
+    socket.send({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 1 },
+      replay: null,
+    });
+    vi.advanceTimersByTime(BATCH_MS);
+    const problems = Array.from({ length: 100 }, (_, index) => ({
+      code: 'bad-event',
+      message: `problem ${index + 1}`,
+      detail: null,
+      problem_seq: index + 1,
+    }));
+    const refresh = client.fetchSession();
+    http.expectOne('api/session').flush({
+      instance: 'x',
+      session: {
+        ...response.session,
+        snapshot_rev: 2,
+        problem_seq: 101,
+        problems,
+        problems_omitted: 1,
+      },
+    });
+    await refresh;
+    socket.send({
+      type: 'error',
+      session: id,
+      code: 'bad-event',
+      message: 'problem 101',
+      detail: null,
+      problem_seq: 101,
+    });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.problems).toHaveLength(101);
+    expect(client.session.session.get()?.problemsOmitted).toBe(0);
+    socket.send({
+      type: 'session',
+      session: {
+        ...response.session,
+        snapshot_rev: 3,
+        problem_seq: 101,
+        problems,
+        problems_omitted: 1,
+      },
+    });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.problems).toHaveLength(101);
+    expect(client.session.session.get()?.problemsOmitted).toBe(0);
   });
 
   it.each(['old-first', 'new-first'] as const)(

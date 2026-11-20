@@ -252,12 +252,7 @@ export class SessionFeed implements ClientSession {
         ? null
         : previous
       : previous?.id === summary.id
-        ? applySummary(
-            previous,
-            summary,
-            false,
-            this.connection.state.get() === 'open' && summary.snapshot_rev == null,
-          )
+        ? applySummary(previous, summary, false, this.connection.state.get() === 'open')
         : sessionFromSummary(summary);
     const changedInstance = !!identity && identity !== this.instanceId;
     this.instanceId = identity;
@@ -485,7 +480,6 @@ export class SessionFeed implements ClientSession {
                 : {
                     ...session,
                     lastSeq: -1,
-                    projectedSeq: Math.max(session.projectedSeq ?? -1, session.lastSeq),
                     logs: [],
                     logSources: {},
                     droppedMarks: 0,
@@ -512,7 +506,12 @@ export class SessionFeed implements ClientSession {
           // server's state at that point (keep the log)
           session =
             session?.id === message.session.id
-              ? applySummary(session, message.session, true)
+              ? applySummary(
+                  session,
+                  message.session,
+                  true,
+                  message.session.last_seq !== null && session.lastSeq >= message.session.last_seq,
+                )
               : sessionFromSummary(message.session);
           break;
         case 'event':

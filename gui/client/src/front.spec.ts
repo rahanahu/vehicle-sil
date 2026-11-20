@@ -815,7 +815,7 @@ describe('the front door', () => {
       expect(done).toBe(true);
     });
 
-    it('keeps a newer HTTP projection while delivering buffered logs and command answers', async () => {
+    it('keeps launcher events, logs and command answers when HTTP responds first', async () => {
       const rig = await running();
       const pause = rig.front.time.pause();
       const id = rig.timeBody().id;
@@ -838,9 +838,76 @@ describe('the front door', () => {
       await vi.advanceTimersByTimeAsync(BATCH_MS);
       await expect(pause).resolves.toBeUndefined();
       const session = rig.front.low.session.session.get();
-      expect(session?.simMs).toBe(200);
+      expect(session?.simMs).toBe(100);
       expect(session?.findings.map((item) => item.message)).toEqual(['one']);
       expect(session?.logs.map((line) => line.line)).toContain('kept');
+    });
+
+    it('keeps a large complete result when an HTTP summary was trimmed', async () => {
+      const rig = await running();
+      const result = {
+        vehicle_sil_run: 2,
+        result: 'passed',
+        end: 'completed',
+        ok: true,
+        message: 'x'.repeat(4 * 1024 * 1024 + 1),
+        errors: 0,
+        warnings: 0,
+        notes: 0,
+        participants: [
+          {
+            name: 'Engine',
+            required: true,
+            enabled: true,
+            manual: false,
+            ended: 'exited',
+            exit_code: 0,
+            signal: null,
+          },
+        ],
+        findings: [],
+      };
+      expect(JSON.stringify(result).length).toBeGreaterThan(4 * 1024 * 1024);
+      expect(JSON.stringify(result).length).toBeLessThan(16 * 1024 * 1024);
+      rig.socket.send(event({ event: 'result', t_ms: 70, result }));
+      const refresh = rig.front.low.fetchSession();
+      rig.http.expectOne('api/session').flush({
+        instance: 'x',
+        session: summary({
+          snapshot_rev: 2,
+          last_seq: lastSeq,
+          result: {
+            vehicle_sil_run: 2,
+            result: 'passed',
+            end: 'completed',
+            ok: true,
+            errors: 0,
+            warnings: 0,
+            notes: 0,
+          },
+        }),
+      });
+      await refresh;
+      await vi.advanceTimersByTimeAsync(BATCH_MS);
+      await rig.deliver({
+        type: 'session',
+        session: summary({
+          snapshot_rev: 3,
+          last_seq: lastSeq,
+          result: {
+            vehicle_sil_run: 2,
+            result: 'passed',
+            end: 'completed',
+            ok: true,
+            errors: 0,
+            warnings: 0,
+            notes: 0,
+          },
+        }),
+      });
+      const received = rig.front.low.session.session.get()?.result;
+      expect(received?.participants[0]?.name).toBe('Engine');
+      expect(received?.message.length).toBe(result.message.length);
     });
 
     it('delivers ACK and values when a notice subscriber refreshes the same run', async () => {

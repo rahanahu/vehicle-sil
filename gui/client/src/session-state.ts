@@ -268,10 +268,10 @@ export interface SessionView {
   id: number;
   /** Server snapshot capture order for this run, null on older servers. */
   snapshotRev?: number | null;
-  /** Highest event seq already represented by a complete summary (separate from the replay cursor). */
-  projectedSeq?: number;
   /** Highest diagnostic identifier represented in this view. */
   problemSeq?: number;
+  /** Highest diagnostic delivered by the ordered WebSocket stream. */
+  problemEventSeq?: number;
   /** seq of the last event received (-1 if none). On reconnect, the resend is requested from the next one. */
   lastSeq: number;
   /** The configuration file (relative to root). */
@@ -477,6 +477,17 @@ export function applySummary(
   const notLess =
     summary.problems.length + summary.problems_omitted >=
     session.problems.length + session.problemsOmitted;
+  const mergedProblems = [...summary.problems];
+  let omitted = summary.problems_omitted;
+  if (summary.problem_seq != null) {
+    const included = new Set(mergedProblems.map((problem) => problem.problem_seq));
+    for (const problem of session.problems) {
+      if (problem.problem_seq === undefined || included.has(problem.problem_seq)) continue;
+      if (mergedProblems.length >= MAX_PROBLEMS) break;
+      mergedProblems.push(problem);
+      if (problem.problem_seq <= summary.problem_seq && omitted > 0) omitted--;
+    }
+  }
   const next: SessionView = {
     ...session,
     ...(incomingRev === null ? {} : { snapshotRev: incomingRev }),
@@ -486,17 +497,21 @@ export function applySummary(
     launcher,
     stopRequests: Math.max(session.stopRequests, stopRequestsOf(summary.stop)),
     logSources: withSources(session.logSources, Object.keys(summary.log)),
-    ...(force || notLess
-      ? { problems: summary.problems, problemsOmitted: summary.problems_omitted }
-      : {}),
+    ...(force || notLess ? { problems: mergedProblems, problemsOmitted: omitted } : {}),
   };
   if (!newer || (!force && controlOnly)) {
     return next;
   }
   const phase = summary.phase ?? next.phase;
   const rank = phaseIndex(phase);
-  const check = summary.check ?? next.check ?? summary.result?.check ?? null;
-  const result = summary.result ?? next.result;
+  const preserveEvents = force && controlOnly;
+  const check =
+    (preserveEvents ? next.check : null) ??
+    summary.check ??
+    next.check ??
+    summary.result?.check ??
+    null;
+  const result = (preserveEvents ? next.result : null) ?? summary.result ?? next.result;
   const known = new Map(session.participants.map((p) => [p.name, p]));
   const participants: readonly ParticipantView[] = summary.participants.map((p) => ({
     name: p.name,
@@ -519,7 +534,6 @@ export function applySummary(
   }));
   return {
     ...next,
-    projectedSeq: Math.max(next.projectedSeq ?? -1, summary.last_seq ?? -1),
     unreadable: force ? summary.unreadable : union(next.unreadable, summary.unreadable),
     phase,
     phaseRank: rank >= 0 ? rank : next.phaseRank,
@@ -532,7 +546,10 @@ export function applySummary(
       ? commandView(summary.last_command, summary.last_command.seq ?? -1)
       : next.lastCommand,
     launcherState: newerState(next.launcherState, summary.launcher_state ?? null),
-    findings: summary.findings,
+    findings:
+      preserveEvents && next.findings.length >= summary.findings.length
+        ? next.findings
+        : summary.findings,
     result,
     check,
     scenario: summary.scenario ? scenarioView(summary.scenario) : next.scenario,
@@ -569,14 +586,23 @@ function withSources(
  * counted.
  */
 export function addProblem(session: SessionView, problem: ServerProblem): SessionView {
-  if (problem.problem_seq !== undefined && problem.problem_seq <= (session.problemSeq ?? 0))
-    return session;
-  const updated =
-    problem.problem_seq === undefined ? session : { ...session, problemSeq: problem.problem_seq };
+  const seq = problem.problem_seq;
+  if (seq !== undefined && seq <= (session.problemEventSeq ?? 0)) return session;
+  const updated = seq === undefined ? session : { ...session, problemEventSeq: seq };
+  if (seq !== undefined && session.problems.some((item) => item.problem_seq === seq))
+    return updated;
   if (updated.problems.length >= MAX_PROBLEMS) {
-    return { ...updated, problemsOmitted: updated.problemsOmitted + 1 };
+    const alreadyCounted = seq !== undefined && seq <= (session.problemSeq ?? 0);
+    return alreadyCounted ? updated : { ...updated, problemsOmitted: updated.problemsOmitted + 1 };
   }
-  return { ...updated, problems: [...updated.problems, problem] };
+  const alreadyCounted = seq !== undefined && seq <= (session.problemSeq ?? 0);
+  return {
+    ...updated,
+    problems: [...updated.problems, problem],
+    problemsOmitted: alreadyCounted
+      ? Math.max(0, updated.problemsOmitted - 1)
+      : updated.problemsOmitted,
+  };
 }
 
 /** Position of the phase (-1 for an unknown phase). */
@@ -599,15 +625,6 @@ export function applyEvents(
   let stale = 0;
   for (const event of events) {
     if (event.seq > next.lastSeq) {
-      if (
-        event.seq <= (next.projectedSeq ?? -1) &&
-        event.event !== 'log' &&
-        event.event !== 'log_dropped'
-      ) {
-        // The summary already projects this event, but the replay cursor and ACK delivery remain separate.
-        next = { ...next, lastSeq: event.seq };
-        continue;
-      }
       next = applyOne(next, event, logs);
       if (event.unreadable)
         next = { ...next, unreadable: union(next.unreadable, event.unreadable) };
