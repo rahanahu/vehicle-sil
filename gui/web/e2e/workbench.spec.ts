@@ -192,11 +192,44 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
             page.evaluate(() => localStorage.getItem('vehicle-sil-workbench-waves:last-instance')),
           )
           .not.toBeNull();
+        const instance = await page.evaluate(() =>
+          localStorage.getItem('vehicle-sil-workbench-waves:last-instance'),
+        );
+        await page.evaluate(async () => {
+          const hold = new Promise<void>((resolve) => {
+            (window as typeof window & { releaseWaveLock: () => void }).releaseWaveLock = resolve;
+          });
+          await new Promise<void>((acquired) => {
+            void navigator.locks.request('vehicle-sil-workbench-wave-head', async () => {
+              acquired();
+              await hold;
+            });
+          });
+          localStorage.setItem('vehicle-sil-workbench-waves:last-instance', 'stale-instance');
+        });
+        await page.locator('app-io-row').filter({ hasText: 'ecu.connected' }).hover();
+        await page.getByRole('button', { name: 'Add ecu.connected to waveforms' }).click();
+        // Hold the lock past one attempt's timeout, then make no further selection changes.
+        await page.waitForTimeout(3500);
+        await page.evaluate(() =>
+          (window as typeof window & { releaseWaveLock: () => void }).releaseWaveLock(),
+        );
+        await expect
+          .poll(
+            () =>
+              page.evaluate(() =>
+                localStorage.getItem('vehicle-sil-workbench-waves:last-instance'),
+              ),
+            { timeout: RUN_TIMEOUT },
+          )
+          .toBe(instance);
         const held = new Promise<void>((resolve) => (releaseHeld = resolve));
         await page.route('**/api/app', async (route) => {
           heldRequests++;
           if (heldRequests === 1) await held;
-          await route.continue().catch(() => {});
+          await route.continue().catch(() => {
+            // The request can already have been aborted by the browser.
+          });
         });
         await page.evaluate(() =>
           localStorage.setItem('vehicle-sil-workbench-waves:last-instance', 'stale-instance'),
@@ -406,6 +439,7 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
           timeout: RUN_TIMEOUT,
         });
         await expect(fresh.getByRole('img', { name: 'engine.throttle waveform' })).toBeVisible();
+        await expect(fresh.getByRole('img', { name: 'ecu.connected waveform' })).toBeVisible();
         await fresh.getByRole('button', { name: 'Start', exact: true }).click();
         await expect(fresh.getByText('Running', { exact: true }).first()).toBeVisible({
           timeout: RUN_TIMEOUT,

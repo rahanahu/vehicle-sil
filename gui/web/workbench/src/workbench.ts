@@ -358,10 +358,19 @@ export class Workbench {
   private waveInstanceSeen: string | null = null;
   private waveHeadWorking = false;
   private waveHeadWanted: string | null = null;
+  private waveHeadTimer: ReturnType<typeof setTimeout> | null = null;
+  private waveHeadAbort: AbortController | null = null;
+  private waveHeadDelay = 1000;
+  private waveHeadDestroyed = false;
   private readonly waveEntries = new Map<string, WaveEntry>();
   private listRevision = 0;
 
   constructor() {
+    this.destroy.onDestroy(() => {
+      this.waveHeadDestroyed = true;
+      if (this.waveHeadTimer !== null) clearTimeout(this.waveHeadTimer);
+      this.waveHeadAbort?.abort();
+    });
     if (this.fixedPeer) document.title = `${this.fixedPeer} · vehicle-sil`;
     if (this.detachedWave) document.title = 'Waveforms · vehicle-sil';
     const storage = (event: StorageEvent) => {
@@ -712,47 +721,58 @@ export class Workbench {
     // Without Web Locks, keep the old head rather than risk overwriting a newer one.
     if (!navigator.locks || !pageToken) return;
     this.waveHeadWanted = instance;
-    if (this.waveHeadWorking) return;
+    if (this.waveHeadWorking || this.waveHeadTimer !== null || this.waveHeadDestroyed) return;
     this.waveHeadWorking = true;
     void (async () => {
+      let completed = false;
+      const wanted = this.waveHeadWanted!;
+      const controller = new AbortController();
+      this.waveHeadAbort = controller;
+      const timeout = setTimeout(() => controller.abort(), 3000);
       try {
-        while (this.waveHeadWanted) {
-          const wanted = this.waveHeadWanted;
-          this.waveHeadWanted = null;
-          // Bound both the lock wait and the response body; aborting fetch releases the lock.
-          const signal = AbortSignal.timeout(3000);
-          try {
-            await navigator.locks.request(
-              'vehicle-sil-workbench-wave-head',
-              { signal },
-              async () => {
-                if (this.front()?.low.session.currentInstance() !== wanted) return;
-                if (localStorage.getItem(waveStorageHead) === wanted) return;
-                const response = await fetch(new URL('/api/app', location.href), {
-                  headers: { Authorization: `Bearer ${pageToken}` },
-                  cache: 'no-store',
-                  signal,
-                });
-                if (!response.ok) return;
-                const app: unknown = await response.json();
-                if (
-                  signal.aborted ||
-                  !app ||
-                  typeof app !== 'object' ||
-                  (app as { instance?: unknown }).instance !== wanted ||
-                  this.front()?.low.session.currentInstance() !== wanted ||
-                  localStorage.getItem(waveStorageKey(wanted)) === null
-                )
-                  return;
-                localStorage.setItem(waveStorageHead, wanted);
-              },
-            );
-          } catch {
-            // Storage, locks and the network are optional for the current tab.
-          }
-        }
+        // Bound both the lock wait and the response body; aborting fetch releases the lock.
+        const signal = controller.signal;
+        completed = await navigator.locks.request(
+          'vehicle-sil-workbench-wave-head',
+          { signal },
+          async () => {
+            if (this.front()?.low.session.currentInstance() !== wanted) return true;
+            if (localStorage.getItem(waveStorageHead) === wanted) return true;
+            const response = await fetch(new URL('/api/app', location.href), {
+              headers: { Authorization: `Bearer ${pageToken}` },
+              cache: 'no-store',
+              signal,
+            });
+            if (!response.ok) return false;
+            const app: unknown = await response.json();
+            if (
+              signal.aborted ||
+              !app ||
+              typeof app !== 'object' ||
+              (app as { instance?: unknown }).instance !== wanted ||
+              this.front()?.low.session.currentInstance() !== wanted ||
+              localStorage.getItem(waveStorageKey(wanted)) === null
+            )
+              return false;
+            localStorage.setItem(waveStorageHead, wanted);
+            return true;
+          },
+        );
+      } catch {
+        // Storage, locks and the network are optional for the current tab.
       } finally {
+        clearTimeout(timeout);
+        this.waveHeadAbort = null;
         this.waveHeadWorking = false;
+        if (this.waveHeadWanted === wanted && completed) this.waveHeadWanted = null;
+        if (this.waveHeadWanted && !this.waveHeadDestroyed) {
+          const delay = completed ? 0 : this.waveHeadDelay;
+          this.waveHeadDelay = completed ? 1000 : Math.min(this.waveHeadDelay * 2, 30000);
+          this.waveHeadTimer = setTimeout(() => {
+            this.waveHeadTimer = null;
+            if (this.waveHeadWanted) this.promoteWaveHead(this.waveHeadWanted);
+          }, delay);
+        } else if (completed) this.waveHeadDelay = 1000;
       }
     })();
   }
