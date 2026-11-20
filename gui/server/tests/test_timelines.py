@@ -66,7 +66,7 @@ def test_a_scenario_run_records_its_timeline_and_the_server_serves_it(tmp_path: 
                 assert status == 401 and json.loads(body)["error"]["code"] == "unauthorized"
 
             # Another run: a run without a scenario has none; an id the server never gave has none
-            other, arguments = await run_to_end(c, {"file": "simulation.yaml"})
+            other, arguments = await run_to_end(c, {"file": "simulation.yaml", "stop_at_ms": 1000})
             assert "--timeline" not in arguments and other["scenario"] is None
             for wrong in (other["id"], 999, "x", "-1", "1e3", "１"):
                 status, body = await c.get(f"api/timeline/{wrong}")

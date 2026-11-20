@@ -22,7 +22,6 @@ function writeStart(file: string): void {
     [
       '# two ECUs; the networks are designed on the screen',
       'vehicle_sil_simulation: 2',
-      'stop_at_ms: 1000',
       'networks: []',
       'participants:',
       '  - name: ECU_A',

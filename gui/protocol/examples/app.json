@@ -54,6 +54,7 @@
           "stdin-run-until",
           "request",
           "scenario-samples",
+          "run-stop-at",
           "scenario-control",
           "scenario-time"
         ]

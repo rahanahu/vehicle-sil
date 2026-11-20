@@ -842,9 +842,6 @@ def checks() -> list[Case]:
              "the check of forever.yaml with a scenario, without Logger"),
         Case("check-simulation-scenario-paused", ["check", "--json", "--scenario", "scenarios/throttle.yaml",
                                                   "--start-paused", "--", "simulation.yaml"],
-             "the check of a scenario that is asked to start paused (the launcher refuses the two together)"),
-        Case("check-simulation-scenario-paused", ["check", "--json", "--scenario", "scenarios/throttle.yaml",
-                                                  "--start-paused", "--", "simulation.yaml"],
              "the check of a request file with a scenario and start_paused (the launcher refuses the two together)",
              request={"scenario": "scenarios/throttle.yaml", "start_paused": True}),
         Case("check-variants", ["check", "--json", "--", "variants.yaml"],
@@ -1057,7 +1054,174 @@ def connects() -> list[Case]:
     ]
 
 
-CASES: list[Case] = [Case("version", ["version", "--json"], "version --json"), *checks(), *runs(), *connects()]
+def gui_timing_cases() -> list[Case]:
+    """The standard screen starts at speed 1 and supplies its own finite run limit."""
+    timed = ("--speed", "1", "--stop-at-ms", "1000")
+    target = ("--connect", "ETH_EXT=fake0")
+    paused = {"speed": 1, "stop_at_ms": 1000, "start_paused": True}
+    return [
+        Case("check-simulation-speed1", ["check", "--json", "--speed", "1", "--", "simulation.yaml"],
+             "the standard GUI checks simulation.yaml at its initial speed"),
+        Case("check-simulation-speed1-stop", ["check", "--json", *timed, "--", "simulation.yaml"],
+             "the standard GUI checks its finite simulation run"),
+        Case("check-simulation-speed1-stop-paused", ["check", "--json", *timed, "--start-paused", "--", "simulation.yaml"],
+             "the standard GUI checks a finite run started paused", request=paused),
+        Case("check-simulation-disable-speed1-stop",
+             ["check", "--json", "--disable", "Dashboard", *timed, "--", "simulation.yaml"],
+             "the standard GUI checks a finite run without Dashboard"),
+        Case("check-simulation-no-logger-speed2-stop",
+             ["check", "--json", "--disable", "Logger", "--speed", "2", "--stop-at-ms", "1000", "--", "simulation.yaml"],
+             "a finite run without Logger, checked at speed 2"),
+        run_case("run-simulation-speed1-stop", "simulation.yaml", "the standard GUI runs to the requested stop",
+                 extra=timed),
+        run_case("run-simulation-disable-speed1-stop", "simulation.yaml",
+                 "the standard GUI runs without Dashboard to the requested stop",
+                 extra=("--disable", "Dashboard", *timed)),
+        run_case("control-simulation-speed1-stop-resume", "simulation.yaml",
+                 "the standard GUI resumes a finite run started paused", STANDS, ("send", RESUME),
+                 extra=(*CREDENTIALS, *timed, "--start-paused")),
+        Case("check-manual-speed1", ["check", "--json", "--speed", "1", "--", "manual.yaml"],
+             "the standard GUI checks manual.yaml at its initial speed"),
+        Case("check-manual-speed1-stop", ["check", "--json", *timed, "--", "manual.yaml"],
+             "the standard GUI checks a finite run with a manually started participant"),
+        run_case("run-manual-speed1-stop", "manual.yaml", "Dashboard joins a finite run by hand",
+                 ("until", event("participant", state="manual", name="Dashboard")), ("sleep", 0.3),
+                 ("start", "Dashboard"), extra=timed),
+        Case("check-connect-speed1", ["check", "--json", "--speed", "1", "--", "connect.yaml"],
+             "the standard GUI checks connect.yaml at its initial speed"),
+        Case("check-connect-speed1-stop", ["check", "--json", *timed, "--", "connect.yaml"],
+             "the standard GUI checks its finite connected run"),
+        Case("check-connect-speed1-stop-connected", ["check", "--json", *timed, *target, "--", "connect.yaml"],
+             "the standard GUI checks its finite run with ETH_EXT connected", tools=True),
+        Case("run-connect-speed1-stop", [*RUN, *timed, *target, "--", "connect.yaml"],
+             "the standard GUI runs ETH_EXT connected at speed 1 until its requested stop", tools=True),
+    ]
+
+
+def gui_speed_checks() -> list[Case]:
+    """Check the same configurations at the standard screen's initial speed."""
+    out = []
+    for case in checks():
+        # The simulation case is listed explicitly above. start_paused has to be sent in a
+        # request, and is recorded separately where the screen uses it.
+        if case.name in {"check-simulation", "check-manual"} or case.request is not None or "--start-paused" in case.argv:
+            continue
+        split = case.argv.index("--")
+        out.append(Case(case.name + "-speed1", [*case.argv[:split], "--speed", "1", *case.argv[split:]],
+                        case.about + ", at the standard GUI's initial speed", tools=case.tools))
+    return out
+
+
+def finite_api_cases() -> list[Case]:
+    """Explicit stop times for server tests that previously used the configuration's limit."""
+    names = {
+        "check-simulation", "check-simulation-no-logger", "check-variants-small",
+        "check-flood", "check-finding-flood", "check-launcher-crash", "check-bad-lines", "check-bad-types",
+        "check-future-events", "check-control-trouble", "check-large-fields", "check-large-result",
+        "check-log-dropped", "check-loose-fields", "check-manual", "check-orphan",
+        "check-result-then-wait", "run-simulation", "run-simulation-disable", "run-simulation-speed",
+        "run-variants-small", "run-flood", "run-finding-flood", "run-launcher-crash", "run-bad-lines", "run-bad-types",
+        "run-future-events", "run-control-trouble", "run-large-fields", "run-large-result",
+        "run-log-dropped", "run-loose-fields", "run-manual", "run-orphan", "run-result-then-wait",
+    }
+    out = []
+    for case in [*checks(), *runs()]:
+        if case.name not in names:
+            continue
+        split = case.argv.index("--")
+        # This configuration previously stopped at 300 ms; the others stopped at 1000 ms.
+        stop = "300" if case.argv[-1] == "result-then-wait.yaml" else "1000"
+        out.append(Case(case.name + "-finite", [*case.argv[:split], "--stop-at-ms", stop, *case.argv[split:]],
+                        case.about + ", with an explicit stop time", list(case.script), case.default,
+                        tools=case.tools))
+    return out
+
+
+def gui_finite_cases() -> list[Case]:
+    """The finite fixtures also used through the standard screen at speed 1."""
+    names = {"check-control-trouble-finite", "run-control-trouble-finite", "check-flood-finite", "run-flood-finite",
+             "check-result-then-wait-finite", "run-result-then-wait-finite"}
+    out = []
+    for case in finite_api_cases():
+        if case.name not in names:
+            continue
+        at = case.argv.index("--stop-at-ms")
+        out.append(Case(case.name + "-speed1", [*case.argv[:at], "--speed", "1", *case.argv[at:]],
+                        case.about + ", at the standard GUI's initial speed", list(case.script), case.default,
+                        tools=case.tools))
+    return out
+
+
+def gui_speed_runs() -> list[Case]:
+    """Interactive unbounded runs at the standard screen's initial speed."""
+    names = {"forever-stop", "forever-stop-twice", "forever-end-of-input", "forever-step-refused",
+             "forever-force", "forever-step-10", "forever-no-logger-stop", "forever-no-logger-paused-stop",
+             "forever-paused-stop", "ignore-stop-twice", "ignore-stop-end-of-input", "run-manual-stop",
+             "run-network-manual-stop", "run-participant-crash", "run-scenario-fails", "run-scenario-passes",
+             "run-scenario-fails-timeline", "run-scenario-passes-timeline", "control-scenario-fails",
+             "control-scenario-passes", "deaf", "jitter", "late"}
+    out = []
+    for case in runs():
+        if case.name not in names:
+            continue
+        at = case.argv.index("--start-paused") if "--start-paused" in case.argv else case.argv.index("--")
+        out.append(Case(case.name + "-speed1", [*case.argv[:at], "--speed", "1", *case.argv[at:]],
+                        case.about + ", at the standard GUI's initial speed", list(case.script), case.default,
+                        tools=case.tools))
+    out.append(run_case(
+        "forever-paused-commands-speed1", "forever.yaml",
+        "at speed 1: started paused, step 25, resume, pause, speed 2, stop",
+        ("until", paused(0)), ("send", step(25)), ("until", paused(25)), ("send", RESUME),
+        ("until", going()), ("send", PAUSE),
+        ("until", lambda events: command("pause")(events) and paused()(events)),
+        ("send", speed(2)), ("until", paused(speed=2)), ("send", STOP),
+        extra=("--speed", "1", "--start-paused")))
+    out.append(run_case("run-launcher-crash-speed1", "launcher-crash.yaml",
+                        "at speed 1, the replay fault ends the launcher while it runs",
+                        RUNNING, ("hang",), extra=("--speed", "1")))
+    for case in checks():
+        if case.name not in {"check-forever", "check-forever-no-logger"}:
+            continue
+        at = case.argv.index("--")
+        disabled = [case.argv[i + 1] for i, arg in enumerate(case.argv[:-1]) if arg == "--disable"]
+        request = {"speed": 1, "start_paused": True}
+        if disabled:
+            request["disable"] = disabled
+        out.append(Case(case.name + "-speed1-paused",
+                        [*case.argv[:at], "--speed", "1", "--start-paused", *case.argv[at:]],
+                        case.about + ", at speed 1 and started paused", request=request))
+    return out
+
+
+def paused_api_checks() -> list[Case]:
+    """Check's paused intent is part of the request, even without a scenario."""
+    out = []
+    for case in checks():
+        if case.name not in {"check-simulation", "check-forever", "check-forever-no-logger"}:
+            continue
+        at = case.argv.index("--")
+        disabled = [case.argv[i + 1] for i, arg in enumerate(case.argv[:-1]) if arg == "--disable"]
+        request = {"start_paused": True}
+        if disabled:
+            request["disable"] = disabled
+        out.append(Case(case.name + "-paused", [*case.argv[:at], "--start-paused", *case.argv[at:]],
+                        case.about + ", with a paused start", request=request))
+    out.extend([
+        Case("check-forever-no-logger-max-paused",
+             ["check", "--json", "--disable", "Logger", "--speed", "max", "--start-paused", "--", "forever.yaml"],
+             "a paused run without Logger, checked at maximum speed",
+             request={"disable": ["Logger"], "speed": "max", "start_paused": True}),
+        Case("check-forever-scenario-no-logger-slow",
+             ["check", "--json", "--scenario", "scenarios/throttle.yaml", "--disable", "Logger",
+              "--speed", "0.001", "--", "forever.yaml"],
+             "a slow scenario without Logger"),
+    ])
+    return out
+
+
+CASES: list[Case] = [Case("version", ["version", "--json"], "version --json"), *checks(), *runs(), *connects(),
+                     *gui_timing_cases(), *gui_speed_checks(), *finite_api_cases(), *gui_finite_cases(), *gui_speed_runs(),
+                     *paused_api_checks()]
 
 
 if __name__ == "__main__":

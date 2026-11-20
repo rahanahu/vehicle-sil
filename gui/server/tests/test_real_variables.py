@@ -159,7 +159,7 @@ def test_a_run_that_passes_has_its_last_values_after_the_end(tmp_path: Path) -> 
             ws = await c.ws()
             await ws.until(is_synced)
             await ws.send({"type": "watch", "id": 1, "variables": "all", "period_ms": 20})  # before any run
-            await c.post("api/run", {"file": "simulation.yaml", "speed": 1})
+            await c.post("api/run", {"file": "simulation.yaml", "speed": 1, "stop_at_ms": 1000})
             got = await ws.until(is_ended)
             assert got[-1]["session"]["result"]["result"] == "passed"
             states = [m["variables"]["state"] for m in got if m["type"] == "variables"]
@@ -183,7 +183,7 @@ def test_a_run_started_paused_stands_before_its_first_step_and_is_resumed(tmp_pa
         async def talk(c: Client) -> None:
             ws = await c.ws()
             await ws.until(is_synced)
-            await c.post("api/run", {"file": "simulation.yaml", "start_paused": True})
+            await c.post("api/run", {"file": "simulation.yaml", "start_paused": True, "stop_at_ms": 1000})
             await ws.until(is_variables("ready"))
             await ws.send({"type": "watch", "id": 1, "variables": "all", "period_ms": 20})
             first = (await ws.until(is_values(1, paused=True)))[-1]

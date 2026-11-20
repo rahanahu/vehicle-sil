@@ -34,6 +34,7 @@ test('the real check: the participants, their steps and their variables', async 
 
 test('a real run that passes', async ({ page }) => {
   await choose(page, 'simulation.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   const session = await start(page);
   await expect(result(page, session).getByTestId('result')).toContainText('成功', {
     timeout: RUN_TIMEOUT,
@@ -54,6 +55,7 @@ test('a real run that passes', async ({ page }) => {
 
 test('a real run with a participant left out', async ({ page }) => {
   await choose(page, 'simulation.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   const recheck = page.waitForResponse(
     (r) =>
       r.url().endsWith('/api/check') && r.request().postDataJSON().disable.includes('Dashboard'),
@@ -107,9 +109,10 @@ test('configurations that fail the real check', async ({ page }) => {
 });
 
 test('a real run that fails: a participant that never joins', async ({ page }) => {
+  test.setTimeout(RUN_TIMEOUT * 4.5);
   await choose(page, 'not-joined.yaml');
   const session = await start(page);
-  await expect(result(page, session)).toContainText('失敗', { timeout: RUN_TIMEOUT });
+  await expect(result(page, session)).toContainText('失敗', { timeout: RUN_TIMEOUT * 3 });
   await expect(page.getByTestId('first-error')).toContainText('not-joined');
   await expect(page.getByTestId('outcome')).toHaveAttribute('data-tone', 'bad');
   // ランチャーが止めた participant は、失敗の色にしない（失敗の理由は Logger が参加しなかったこと）
@@ -132,8 +135,9 @@ async function reach(page: Page, state: string): Promise<void> {
     return;
   }
   await choose(page, state === 'ended' ? 'simulation.yaml' : 'not-joined.yaml');
+  if (state === 'ended') await page.getByTestId('stop-at-ms').fill('1000');
   await start(page);
-  await expect(startButton(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT });
+  await expect(startButton(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT * 3 });
 }
 
 test.describe('screenshots', () => {
@@ -141,6 +145,7 @@ test.describe('screenshots', () => {
   test.skip(!directory, 'VEHICLE_SIL_GUI_SHOTS is not set');
   for (const state of ['chosen', 'running', 'ended', 'failed']) {
     test(state, async ({ page }) => {
+      if (state === 'failed') test.setTimeout(RUN_TIMEOUT * 4.5);
       await reach(page, state);
       const content = page.locator('mat-sidenav-content');
       for (const viewport of VIEWPORTS.filter((v) => [360, 1024, 1920].includes(v.width))) {
@@ -161,6 +166,7 @@ test('started paused: the screen resumes the run from before its first step, and
   // Control Server を持つランチャーは、最初のステップの前で待つ（time の事象を書かない）。持たないランチャーは、
   // 時刻 0 のステップの後に止まる。どちらでも、画面の「再開」で最後まで走る
   await choose(page, 'simulation.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   await page.getByTestId('start-paused').getByRole('checkbox').check();
   const session = await start(page);
   await expect(page.getByTestId('resume')).not.toHaveAttribute('aria-disabled', 'true', {

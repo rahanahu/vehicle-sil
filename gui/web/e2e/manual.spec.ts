@@ -57,6 +57,7 @@ test('a participant the file says the user starts: it joins later, and stays aft
   page,
 }) => {
   await choose(page, 'manual.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   const manual = page.getByTestId('manual-Dashboard').getByRole('switch');
   await expect(manual).toBeChecked();
   await expect(manual).toBeDisabled();

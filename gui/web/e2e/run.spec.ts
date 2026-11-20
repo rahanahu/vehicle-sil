@@ -31,6 +31,7 @@ test.beforeEach(async ({ page, locale }) => {
 
 test('a run that passes: phases, participants, logs and the result', async ({ page }) => {
   await choose(page, 'simulation.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   await expect(page.getByTestId('check-outcome')).toContainText('通った');
   for (const name of ['Engine', 'Dashboard', 'Logger']) {
     await expect(page.getByTestId(`check-participant-${name}`)).toBeVisible();
@@ -74,7 +75,7 @@ test('started paused: a step, resume, pause, a new speed, stop', async ({ page }
   await expect(resumeButton(page)).not.toHaveAttribute('aria-disabled', 'true');
   const place = await resumeButton(page).boundingBox();
 
-  // ステップ送り: ランチャーが刻み（10 ms）の倍数に切り上げた、実際に進む量を出す
+  // ステップ送り: ランチャーが自動で選んだ刻み（5 ms）で、実際に進む量を出す
   // ダブルクリックしても 1 回だけ進む（ランチャーの答えが届くまで、次を送らない）
   const steps: unknown[] = [];
   page.on('request', (r) => {
@@ -90,8 +91,8 @@ test('started paused: a step, resume, pause, a new speed, stop', async ({ page }
   await expect(page.getByTestId('step-ms-error')).toHaveText('');
   await expect(page.getByTestId('step')).not.toHaveAttribute('aria-disabled', 'true');
   await page.getByTestId('step').dblclick();
-  await expect(page.getByTestId('step-hint')).toContainText('30 ms');
-  await expect(page.getByTestId('time-sim')).toHaveText('0.030 s');
+  await expect(page.getByTestId('step-hint')).toContainText('25 ms');
+  await expect(page.getByTestId('time-sim')).toHaveText('0.025 s');
   await expect(page.getByTestId('time-state')).toHaveText('一時停止中');
   expect(steps).toEqual([{ command: 'step', ms: 25, id: expect.any(Number) }]);
 
@@ -194,6 +195,7 @@ test('a small lateness within the tolerance is not called late', async ({ page }
 test('how each participant is linked to its variables, a trouble in words', async ({ page }) => {
   // 構成ファイルの replay-fault: control-trouble: Engine は hello が来ず、Dashboard は形式の版が違い、Gauge は口を出さない
   await choose(page, 'control-trouble.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   const session = await start(page);
   await expect(result(page, session)).toBeVisible({ timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('control-Engine')).toContainText('hello が来なかった');
@@ -217,6 +219,7 @@ test('a check with an error: the findings, and no start', async ({ page }) => {
 
 test('a participant switched off is checked again and left out of the run', async ({ page }) => {
   await choose(page, 'simulation.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   const recheck = page.waitForRequest(
     (r) => r.url().endsWith('/api/check') && r.postDataJSON().disable.includes('Dashboard'),
   );
@@ -484,6 +487,7 @@ test('a launcher that dies without a result: an abnormal end, and where to look'
 test('a launcher that runs on after its result can still be stopped', async ({ page }) => {
   // 構成ファイルの replay-fault: result-then-wait: 結果を書いた後も、止めるよう頼まれるまで終わらない
   await choose(page, 'result-then-wait.yaml');
+  await page.getByTestId('stop-at-ms').fill('300');
   const session = await start(page);
   await expect(result(page, session)).toContainText('成功', { timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('outcome')).toContainText('ランチャーが終わるのを待っています');
@@ -584,6 +588,7 @@ test('a flood of lines keeps the lines of quiet participants, and counts what wa
   page,
 }) => {
   await choose(page, 'flood.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   const session = await start(page);
   await expect(result(page, session)).toBeVisible({ timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('log-dropped')).toContainText('Engine');
@@ -603,6 +608,7 @@ test('a log read while lines keep coming does not move', async ({ page }) => {
   });
   await page.reload();
   await choose(page, 'simulation.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   const session = await start(page);
   // 実行が終わってから、その続きの seq で行を足す（ランチャーの事象と seq が重ならない）
   await expect(result(page, session)).toBeVisible({ timeout: RUN_TIMEOUT });
@@ -666,6 +672,7 @@ test('a log paused in one run shows the next run, not the lines of the one befor
   await expect(page.getByTestId('log-follow')).not.toHaveClass(/checked/);
   // 次の実行
   await choose(page, 'simulation.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   const second = await start(page);
   await expect(result(page, second)).toBeVisible({ timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('log-follow')).toHaveClass(/checked/);
