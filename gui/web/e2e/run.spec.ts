@@ -255,7 +255,7 @@ test('quick switches are checked once, without a busy check', async ({ page }) =
   await page.getByRole('switch', { name: 'Logger を使う' }).click();
   await expect(page.getByTestId('check-participant-Dashboard')).toContainText('外した');
   await expect(startButton(page)).not.toHaveAttribute('aria-disabled', 'true');
-  expect(checks).toEqual([{ file: 'forever.yaml', disable: ['Dashboard'], manual: [] }]);
+  expect(checks).toEqual([{ file: 'forever.yaml', disable: ['Dashboard'], manual: [], speed: 1 }]);
   expect(failures).toEqual([]);
 });
 
@@ -357,8 +357,10 @@ test('a double click on start starts one run and does not stop it', async ({ pag
     await page.waitForTimeout(100);
   }
   const session = ((await (await reply).json()) as { session: { id: number } }).session.id;
-  // 押した後も実行は続いている（押した時刻より後の行が届いた）
-  await expect(page.getByTestId('log-line').nth(8)).toBeVisible({ timeout: RUN_TIMEOUT });
+  // 実行時刻が進み、停止せず同じセッションが続く
+  await expect(page.getByTestId('sim-time')).toHaveText(/^(?!0\.000 s)\d+\.\d{3} s$/, {
+    timeout: RUN_TIMEOUT,
+  });
   expect(actions).toEqual(['run']);
   expect(await serverSession(page)).toMatchObject({ id: session, stop: 'none' });
 });
@@ -374,7 +376,9 @@ test('repeated Enter on start starts one run and does not stop it', async ({ pag
     await page.waitForTimeout(100);
   }
   const session = ((await (await reply).json()) as { session: { id: number } }).session.id;
-  await expect(page.getByTestId('log-line').nth(8)).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect(page.getByTestId('sim-time')).toHaveText(/^(?!0\.000 s)\d+\.\d{3} s$/, {
+    timeout: RUN_TIMEOUT,
+  });
   expect(actions).toEqual(['run']);
   expect(await serverSession(page)).toMatchObject({ id: session, stop: 'none' });
 });

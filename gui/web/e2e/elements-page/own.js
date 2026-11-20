@@ -8,6 +8,8 @@ document
   .addEventListener('click', () => client.time.pause().catch(() => undefined));
 document.body.dataset.own = 'connected';
 // With ?paused the start part starts the run paused (its intent wins over what the choosing parts selected).
-if (new URLSearchParams(location.search).has('paused')) {
-  document.querySelector('vsil-run-controls').intent = { start_paused: true };
-}
+const params = new URLSearchParams(location.search);
+const intent = {};
+if (params.has('paused')) intent.start_paused = true;
+if (params.has('finite')) intent.stop_at_ms = 1000;
+if (Object.keys(intent).length) document.querySelector('vsil-run-controls').intent = intent;
