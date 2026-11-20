@@ -812,8 +812,6 @@ int run_launcher(const Options& options)
     {
         std::ofstream out(config, std::ios::binary);
         out << "vehicle_sil_simulation: 2\n"
-               "stop_at_ms: 60000\n"
-               "speed: 1\n"
                "registry_uri: silkit://127.0.0.1:0\n"
                "networks:\n"
                "  - name: ETH_EXT\n"
@@ -838,7 +836,7 @@ int run_launcher(const Options& options)
     }
 
     const fs::path checkLog = options.workDir / "check.log";
-    ChildProcess check(options.launch, {"check", config.string()}, checkLog);
+    ChildProcess check(options.launch, {"check", config.string(), "--speed", "1"}, checkLog);
     const auto checked = wait_or_kill(check, std::chrono::steady_clock::now() + options.timeout);
     const std::string checkText = read_text(checkLog);
     bool ok = expect(checked == 0, "check exit code " + exit_code_text(checked) + ", expected 0");
@@ -855,7 +853,7 @@ int run_launcher(const Options& options)
     }
 
     const fs::path runLog = options.workDir / "run.log";
-    ChildProcess run(options.launch, {"run", config.string(), "--scenario", scenario.string()}, runLog);
+    ChildProcess run(options.launch, {"run", config.string(), "--scenario", scenario.string(), "--stop-at-ms", "60000", "--speed", "1"}, runLog);
     const auto ran = wait_or_kill(run, std::chrono::steady_clock::now() + options.timeout);
     const std::string text = read_text(runLog);
     ok = expect(ran == 0, "run exit code " + exit_code_text(ran) + ", expected 0 (the scenario passed)");

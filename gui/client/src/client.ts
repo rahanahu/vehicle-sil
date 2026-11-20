@@ -247,7 +247,8 @@ export function buildClient(options: ClientOptions): ClientParts {
     () => limits.get(),
   );
   const variables = variablesFeed;
-  session.onInstance((instance, current) => variables.adoptInstance(instance, current));
+  session.onSnapshotVersion(() => variables.snapshotVersion());
+  session.onInstance((instance) => variables.adoptInstance(instance));
   const run = new RunControl(session, http, onError, () => longRequestMs(limits.get()));
   const time = new TimeControl(
     session.session,
@@ -394,6 +395,7 @@ export function buildClient(options: ClientOptions): ClientParts {
       ),
     fetchSession: () => {
       const resyncFrom = session.currentInstance();
+      const snapshotVersion = variables.snapshotVersion();
       return new Promise<SessionSummary | null>((resolve, reject) =>
         http({ method: 'GET', path: 'api/session' }, (outcome) => {
           if (!outcome.ok) {
@@ -409,12 +411,14 @@ export function buildClient(options: ClientOptions): ClientParts {
               resyncFrom,
             );
             if (adoption !== null) {
-              const current = () => session.isCurrent(adoption.revision);
+              const current = () => variables.snapshotVersion() === snapshotVersion;
               if (session.sameRun(adoption)) session.adoptAllowed(readSessionAllowed(outcome.body));
-              if (current()) variables.adoptInstance(instance, current);
-              if (current())
+              const sameRun = () => session.sameRun(adoption);
+              if (sameRun()) variables.adoptInstance(instance);
+              if (sameRun())
                 variables.adoptSummary(
                   (outcome.body as { session?: unknown } | null)?.session,
+                  sameRun,
                   current,
                 );
             }

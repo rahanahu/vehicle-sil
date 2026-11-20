@@ -147,15 +147,15 @@ TEST_CASE(a_plan_refuses_invalid_or_stale_timing)
     choices.stop_at_ms = 0;
     CHECK(refused(choices));
     choices.stop_at_ms.reset();
-    for (const auto value : {std::int64_t{0}, std::int64_t{-1}, kMaxMillis + 1,
-                             std::chrono::milliseconds::max().count()})
+    for (const auto value : {std::chrono::milliseconds{0}, std::chrono::milliseconds{-1},
+                             std::chrono::milliseconds{kMaxMillis + 1}, std::chrono::milliseconds::max()})
     {
-        choices.timeout = std::chrono::milliseconds(value);
+        choices.timeout = value;
         CHECK(refused(choices));
     }
-    for (const auto value : {std::int64_t{1}, kMaxMillis})
+    for (const auto value : {std::chrono::milliseconds{1}, std::chrono::milliseconds{kMaxMillis}})
     {
-        choices.timeout = std::chrono::milliseconds(value);
+        choices.timeout = value;
         CHECK(!refused(choices));
     }
     choices.timeout.reset();

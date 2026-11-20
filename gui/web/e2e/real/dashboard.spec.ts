@@ -49,6 +49,8 @@ test('the example dashboard file: its layout, and its panel shows the engine spe
     await expect(throttle).toContainText('Throttle');
     await expect(widget(page, 'Engine', 'engine.speed')).toContainText('Engine speed');
     await expect(widget(page, 'Engine', 'engine.speed').getByTestId('widget-graph')).toBeAttached();
+    // Widgets outside the viewport are deferred until the user scrolls near them.
+    await page.getByText('Speed on the dashboard', { exact: true }).scrollIntoViewIfNeeded();
     await expect(widget(page, 'Dashboard', 'dashboard.engine_speed')).toContainText(
       'Speed on the dashboard',
     );

@@ -321,7 +321,7 @@ def test_the_run_page_s_check_and_a_run_write_no_descriptions(tmp_path: Path, ro
     async def main(c: Client) -> None:
         status, reply = await c.post("api/check", {"file": FILE, "disable": ["Dashboard"]})
         assert status == 200, reply
-        status, reply = await c.post("api/run", {"file": FILE, "disable": ["Dashboard"]})
+        status, reply = await c.post("api/run", {"file": FILE, "disable": ["Dashboard"], "stop_at_ms": 1000})
         assert status == 200, reply
         assert log.checks() and not any(o in e["argv"] for e in log.checks() for o in
                                         ("--write-descriptions", "--descriptions", "--text-from-stdin"))

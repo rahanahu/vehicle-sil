@@ -783,7 +783,9 @@ void no_console(const Options& o)
     vehicle_sil::process::CaptureOptions options;
     options.timeout = scaled_timeout(240s);
     options.working_directory = dir;
-    const Captured run = vehicle_sil::process::run_captured(o.helper, {"--run-detached", shown_path(o.launch), "run", "sim.yaml"}, options);
+    const Captured run = vehicle_sil::process::run_captured(
+        o.helper, {"--run-detached", shown_path(o.launch), "run", "sim.yaml", "--stop-at-ms", "1000",
+                   "--participant-stop-timeout-ms", "300"}, options);
     expect_code(run, 1, "run without a console");
     expect_text(run_part(run.standard_output),
                 "run: the simulation ran to stop_at_ms (1000 ms) and ended\n"

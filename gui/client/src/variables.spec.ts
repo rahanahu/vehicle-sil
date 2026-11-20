@@ -440,6 +440,194 @@ describe('variables', () => {
     },
   );
 
+  it.each([
+    ['state', 'session'],
+    ['state', 'variables'],
+    ['operations', 'session'],
+    ['operations', 'variables'],
+  ] as const)(
+    'keeps a synchronously fetched ready state when %s notifies during %s',
+    async (source, kind) => {
+      const { client, http, deliver } = setup();
+      await deliver(hello(1, ready([listed(1, 'queued', false)])));
+      let fetched = false;
+      const unsubscribe = client.variables[source].subscribe(() => {
+        if (fetched) return;
+        fetched = true;
+        void client.fetchSession();
+        http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
+      });
+      const message =
+        kind === 'session'
+          ? { type: 'session', session: summary(2) }
+          : { type: 'variables', session: 2, variables: { ...ready(), state: 'connecting' } };
+      await deliver(message, { type: 'session', session: summary(2) });
+      expect(fetched).toBe(true);
+      expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
+      expect(client.variables.state.get().peers[0]?.variables[0]?.name).toBe('engine.demand');
+      unsubscribe();
+      client.close();
+    },
+  );
+
+  it.each(['state', 'operations'] as const)(
+    'keeps a synchronously fetched ready state when instance changes through %s',
+    async (source) => {
+      const { client, http, deliver } = setup();
+      await deliver(hello(1, ready([listed(1, 'queued', false)])));
+      let fetched = false;
+      const unsubscribe = client.variables[source].subscribe(() => {
+        if (fetched) return;
+        fetched = true;
+        void client.fetchSession();
+        http
+          .expectOne('api/session')
+          .flush({ instance: 'new-server', session: summary(2, ready()) });
+      });
+      await deliver({ ...hello(2), instance: 'new-server' });
+      expect(fetched).toBe(true);
+      expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
+      expect(client.variables.state.get().peers[0]?.variables[0]?.name).toBe('engine.demand');
+      unsubscribe();
+      client.close();
+    },
+  );
+
+  it.each(['state', 'operations'] as const)(
+    'keeps a fresh ready snapshot over an older hello and variables after %s reentry',
+    async (source) => {
+      const { client, http, deliver } = setup();
+      await deliver(hello(1, ready([listed(1, 'queued', false)])));
+      let fetched = false;
+      const unsubscribe = client.variables[source].subscribe(() => {
+        if (fetched) return;
+        fetched = true;
+        void client.fetchSession();
+        http
+          .expectOne('api/session')
+          .flush({ instance: 'new-server', session: summary(2, ready([], { reason: 'fresh' })) });
+      });
+      const old = { ...ready(), state: 'connecting', reason: 'older' };
+      await deliver(
+        { ...hello(2, old), instance: 'new-server' },
+        { type: 'variables', session: 2, variables: old },
+      );
+      expect(fetched).toBe(true);
+      expect(client.variables.state.get()).toMatchObject({
+        session: 2,
+        status: 'ready',
+        reason: 'fresh',
+      });
+      unsubscribe();
+      client.close();
+    },
+  );
+
+  it.each(['session', 'state'] as const)(
+    'settles an applied summary operation despite an older reentrant GET from %s',
+    async (source) => {
+      const { client, http, deliver } = setup();
+      await deliver(hello(1, ready()));
+      const written = client.variables.write({ Engine: { 'engine.demand': 40 } });
+      http.expectOne('api/write').flush({ session_id: 1, operation: 7 });
+      let fetched = false;
+      const readOld = () => {
+        if (fetched) return;
+        fetched = true;
+        void client.fetchSession();
+        http
+          .expectOne('api/session')
+          .flush({ instance: 'x', session: summary(1, ready([], { reason: 'fresh' })) });
+      };
+      const unsubscribe =
+        source === 'session'
+          ? client.session.session.subscribe(readOld)
+          : client.variables.state.subscribe(readOld);
+      const refresh = client.fetchSession();
+      http.expectOne('api/session').flush({
+        instance: 'x',
+        session: summary(1, ready([listed(7, 'applied', true)], { reason: 'older' })),
+      });
+      await refresh;
+      await expect(written).resolves.toMatchObject({ session: 1, seq: 7, state: 'applied' });
+      expect(fetched).toBe(true);
+      expect(client.variables.state.get()).toMatchObject({
+        session: 1,
+        status: 'ready',
+        reason: 'fresh',
+      });
+      unsubscribe();
+      client.close();
+    },
+  );
+
+  it('does not merge an older hello operation into a newer run with the same sequence', async () => {
+    const { client, http, deliver } = setup();
+    let written: Promise<unknown> | null = null;
+    let started = false;
+    const unsubscribe = client.variables.state.subscribe((state) => {
+      if (started || state.session !== 1) return;
+      started = true;
+      void client.fetchSession();
+      http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
+      written = client.variables.write({ Engine: { 'engine.demand': 40 } });
+      http.expectOne('api/write').flush({ session_id: 2, operation: 7 });
+    });
+    await deliver(
+      hello(1, ready([listed(7, 'rejected', true)])),
+      { type: 'session', session: summary(2) },
+      operation(7, 'applied', true, { applied_at_ms: 20 }, 2),
+    );
+    expect(started).toBe(true);
+    await expect(written).resolves.toMatchObject({ session: 2, seq: 7, state: 'applied' });
+    expect(client.variables.operations.get()).toMatchObject([
+      { session: 2, seq: 7, state: 'applied' },
+    ]);
+    unsubscribe();
+    client.close();
+  });
+
+  it('accepts a same-batch variables snapshot after a synchronous run response', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(hello(1, ready()));
+    const started = client.run.start({ file: 'a.yaml', disable: [] });
+    const request = http.expectOne('api/run');
+    let answered = false;
+    const unsubscribe = client.session.session.subscribe((session) => {
+      if (answered || session?.id !== 2) return;
+      answered = true;
+      request.flush({ instance: 'x', session: summary(2) });
+    });
+    await deliver(
+      { type: 'session', session: summary(2) },
+      { type: 'variables', session: 2, variables: ready() },
+    );
+    await started;
+    expect(answered).toBe(true);
+    expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
+    expect(client.variables.state.get().peers[0]?.variables[0]?.name).toBe('engine.demand');
+    unsubscribe();
+    client.close();
+  });
+
+  it('keeps a terminal operation from a hello after a same-run refresh', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(hello(1, ready()));
+    const written = client.variables.write({ Engine: { 'engine.demand': 40 } });
+    http.expectOne('api/write').flush({ session_id: 1, operation: 7 });
+    let fetched = false;
+    const unsubscribe = client.session.session.subscribe(() => {
+      if (fetched) return;
+      fetched = true;
+      void client.fetchSession();
+      http.expectOne('api/session').flush({ instance: 'x', session: summary(1, ready()) });
+    });
+    await deliver(hello(1, ready([listed(7, 'applied', true)])));
+    await expect(written).resolves.toMatchObject({ session: 1, seq: 7, state: 'applied' });
+    unsubscribe();
+    client.close();
+  });
+
   it('clears readings and history when a new server reuses the session id', async () => {
     const { client, deliver } = setup();
     await deliver(hello(1, ready()));
@@ -457,6 +645,121 @@ describe('variables', () => {
     expect(watch.value(ENGINE)).toBeUndefined();
     await deliver(values(1, 20, false, engine(20, 8)));
     expect(watch.history(ENGINE)).toEqual([{ sampleMs: 20, value: 8 }]);
+  });
+
+  it('ignores buffered notifications from a run older than one already read over HTTP', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(hello(1, ready()));
+    const watch = client.variables.watch([ENGINE], { history: 10 });
+    const refresh = client.fetchSession();
+    http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
+    await refresh;
+    await deliver(
+      { type: 'session', session: summary(1, ready()) },
+      { type: 'variables', session: 1, variables: ready() },
+      values(1, 10, false, engine(10, 4), 1),
+      operation(7, 'applied', true, {}, 1),
+      values(1, 20, false, engine(20, 8), 2),
+    );
+    expect(client.session.session.get()?.id).toBe(2);
+    expect(client.variables.state.get().session).toBe(2);
+    expect(watch.history(ENGINE)).toEqual([{ sampleMs: 20, value: 8 }]);
+    expect(client.variables.operations.get()).toEqual([]);
+    client.close();
+  });
+
+  it.each(['variables', 'empty-hello'] as const)(
+    'keeps a newer run write when an older %s precedes it in the same batch',
+    async (older) => {
+      const { client, http, deliver } = setup();
+      if (older === 'variables') await deliver(hello(1, ready()));
+      let written: Promise<unknown> | null = null;
+      let started = false;
+      const unsubscribe = client.session.session.subscribe((session) => {
+        if (session?.id !== 2 || started) return;
+        started = true;
+        void client.fetchSession();
+        http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
+        written = client.variables.write({ Engine: { 'engine.demand': 40 } });
+        http.expectOne('api/write').flush({ session_id: 2, operation: 7 });
+      });
+      const old =
+        older === 'variables' ? { type: 'variables', session: 1, variables: ready() } : hello(null);
+      await deliver(
+        old,
+        { type: 'session', session: summary(2) },
+        operation(7, 'applied', true, { applied_at_ms: 20 }, 2),
+      );
+      expect(written).not.toBeNull();
+      await expect(written).resolves.toMatchObject({ session: 2, seq: 7, state: 'applied' });
+      expect(client.variables.state.get().session).toBe(2);
+      unsubscribe();
+      client.close();
+    },
+  );
+
+  it.each(['session', 'variables'] as const)(
+    'does not re-enter an older run after %s flush notifies a subscriber',
+    async (kind) => {
+      const { client, http, deliver } = setup();
+      await deliver(hello(1, ready()));
+      let refreshed = false;
+      const unsubscribe = client.variables.operations.subscribe((operations) => {
+        if (refreshed || operations.length === 0) return;
+        refreshed = true;
+        void client.fetchSession();
+        http.expectOne('api/session').flush({ instance: 'x', session: summary(3, ready()) });
+      });
+      const older =
+        kind === 'session'
+          ? { type: 'session', session: summary(2) }
+          : { type: 'variables', session: 2, variables: ready() };
+      await deliver(operation(7, 'queued', false), older, { type: 'session', session: summary(3) });
+      expect(refreshed).toBe(true);
+      expect(client.session.session.get()?.id).toBe(3);
+      expect(client.variables.state.get()).toMatchObject({ session: 3, status: 'ready' });
+      unsubscribe();
+      client.close();
+    },
+  );
+
+  it.each(['event', 'summary'] as const)(
+    'settles an applied write before its %s operation list notifies a run switch',
+    async (source) => {
+      const { client, http, deliver } = setup();
+      await deliver(hello(1, ready()));
+      const written = client.variables.write({ Engine: { 'engine.demand': 40 } });
+      http.expectOne('api/write').flush({ session_id: 1, operation: 7 });
+      let switched = false;
+      const unsubscribe = client.variables.operations.subscribe((operations) => {
+        if (switched || !operations.some((operation) => operation.done)) return;
+        switched = true;
+        void client.fetchSession();
+        http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
+      });
+      if (source === 'event') {
+        await deliver(operation(7, 'applied', true, { applied_at_ms: 20 }));
+      } else {
+        const refresh = client.fetchSession();
+        http
+          .expectOne('api/session')
+          .flush({ instance: 'x', session: summary(1, ready([listed(7, 'applied', true)])) });
+        await refresh;
+      }
+      await expect(written).resolves.toMatchObject({ session: 1, seq: 7, state: 'applied' });
+      expect(switched).toBe(true);
+      expect(client.variables.state.get().session).toBe(2);
+      unsubscribe();
+      client.close();
+    },
+  );
+
+  it('accepts a smaller session id after the server instance changes', async () => {
+    const { client, deliver } = setup();
+    await deliver(hello(9, ready()));
+    await deliver({ ...hello(1, ready()), instance: 'new-server' });
+    expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
+    client.close();
   });
 
   it('keeps values and write results when a session subscriber fetches the same run', async () => {

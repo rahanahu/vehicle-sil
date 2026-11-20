@@ -368,6 +368,131 @@ describe('SessionFeed', () => {
     expect(run.notices()[0].count).toBe(3);
   });
 
+  it('flushes the old socket before close subscribers adopt a new server', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    play(socket, 'ws-pass', 0, 2);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    let switched = false;
+    const unsubscribe = client.connection.state.subscribe((state) => {
+      if (state !== 'closed' || switched) return;
+      switched = true;
+      void client.fetchSession();
+      http
+        .expectOne('api/session')
+        .flush({ instance: 'new-server', session: { ...response.session, file: 'new.yaml' } });
+    });
+    socket.send({ type: 'session', session: { ...response.session, file: 'old.yaml' } });
+    socket.fail();
+    vi.advanceTimersByTime(BATCH_MS);
+    unsubscribe();
+    expect(switched).toBe(true);
+    expect(client.session.session.get()?.file).toBe('new.yaml');
+    expect(client.session.currentTarget()).toEqual({
+      instance: 'new-server',
+      session: response.session['id'],
+    });
+  });
+
+  it('does not apply an old prefix to a new server during restart notification', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    play(socket, 'ws-pass', 0, 2);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    let switched = false;
+    const unsubscribe = client.connection.state.subscribe((state) => {
+      if (state !== 'closed' || switched) return;
+      switched = true;
+      void client.fetchSession();
+      http
+        .expectOne('api/session')
+        .flush({ instance: 'new-server', session: { ...response.session, file: 'new.yaml' } });
+    });
+    socket.send({ type: 'session', session: { ...response.session, file: 'old.yaml' } });
+    socket.send({ type: 'session', session: { id: 'invalid' } });
+    vi.advanceTimersByTime(BATCH_MS);
+    unsubscribe();
+    expect(switched).toBe(true);
+    expect(client.session.currentInstance()).toBe('new-server');
+    expect(client.session.session.get()?.file).toBe('new.yaml');
+    expect(client.session.currentTarget()).toEqual({
+      instance: 'new-server',
+      session: response.session['id'],
+    });
+  });
+
+  it('does not restart or apply the old prefix after a notice switches server', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    play(socket, 'ws-pass', 0, 2);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    let switched = false;
+    const unsubscribe = client.session.notices.subscribe(() => {
+      if (switched) return;
+      switched = true;
+      socket.fail();
+      void client.fetchSession();
+      http
+        .expectOne('api/session')
+        .flush({ instance: 'new-server', session: { ...response.session, file: 'new.yaml' } });
+    });
+    socket.send({ type: 'session', session: { ...response.session, file: 'old.yaml' } });
+    socket.send({ type: 'session', session: { id: 'invalid' } });
+    vi.advanceTimersByTime(BATCH_MS);
+    unsubscribe();
+    expect(switched).toBe(true);
+    expect(client.session.session.get()?.file).toBe('new.yaml');
+    expect(client.session.currentTarget()?.instance).toBe('new-server');
+  });
+
+  it('filters an older prefix if restart subscribers fetch a newer run on the same server', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    play(socket, 'ws-pass', 0, 2);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    let switched = false;
+    const unsubscribe = client.connection.state.subscribe((state) => {
+      if (state !== 'closed' || switched) return;
+      switched = true;
+      void client.fetchSession();
+      http.expectOne('api/session').flush({
+        instance: '0123456789abcdef',
+        session: { ...response.session, id: 2, file: 'new.yaml' },
+      });
+    });
+    socket.send({ type: 'session', session: { ...response.session, id: 1, file: 'old.yaml' } });
+    socket.send({ type: 'session', session: { id: 'invalid' } });
+    vi.advanceTimersByTime(BATCH_MS);
+    unsubscribe();
+    expect(switched).toBe(true);
+    expect(client.session.session.get()?.file).toBe('new.yaml');
+    expect(client.session.currentTarget()).toEqual({ instance: '0123456789abcdef', session: 2 });
+  });
+
+  it('keeps a valid prefix when a later malformed message restarts the same connection', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    play(socket, 'ws-pass', 0, 2);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const received: string[] = [];
+    client.session.onMessages((batch) => received.push(...batch.map((message) => message.type)));
+    socket.send({ type: 'session', session: { ...response.session, file: 'prefix.yaml' } });
+    socket.send({ type: 'session', session: { id: 'invalid' } });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.file).toBe('prefix.yaml');
+    expect(received).toContain('session');
+  });
+
   it('does not take an unreadable hello as in step, and connects again', () => {
     const { run, socket } = open();
     const hello = examples.get('ws-replay')?.server[0] as Record<string, unknown>;

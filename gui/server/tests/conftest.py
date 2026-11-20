@@ -147,7 +147,7 @@ REPOSITORY = TESTS.parents[2]
 # scenario runs with a timeline are recorded without the control server: run-scenario-*-timeline).
 CONTROL_FEATURES = ("events,stdin-commands,request,check-variables,speed,start-paused,time-commands,stdin-run-until,state,control-links,"
                     "scenario,manual-participants,scenario-wave,scenario-motion-expect,scenario-points-file,scenario-inputs,"
-                    "network-names,run-traffic,j1939-nodes,connect,connections,connect-counts,control-server")
+                    "network-names,run-traffic,j1939-nodes,connect,connections,connect-counts,run-stop-at,control-server")
 
 
 @pytest.fixture(scope="session")

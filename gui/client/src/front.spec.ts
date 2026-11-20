@@ -815,6 +815,125 @@ describe('the front door', () => {
       expect(done).toBe(true);
     });
 
+    it('delivers ACK and values when a notice subscriber refreshes the same run', async () => {
+      const rig = await running();
+      const ref = { peer: 'Engine', name: 'engine.demand' };
+      const watch = rig.front.low.variables.watch([ref], { history: 10 });
+      const pause = rig.front.time.pause();
+      const id = rig.timeBody().id;
+      let invoked = false;
+      const unsubscribe = rig.front.low.session.notices.subscribe(() => {
+        if (invoked) return;
+        invoked = true;
+        void rig.front.low.fetchSession();
+        rig.http.expectOne('api/session').flush({ instance: 'x', session: summary() });
+      });
+      await rig.deliver(
+        {
+          type: 'error',
+          session: null,
+          code: 'too-many-watches',
+          message: 'too many watches',
+          detail: { id: 1 },
+        },
+        {
+          type: 'values',
+          id: 1,
+          session: 1,
+          sim_ms: 20,
+          paused: false,
+          peers: { Engine: { sample_ms: 20, values: { 'engine.demand': 4 } } },
+        },
+        event(commandEvent(62, 'pause', id)),
+      );
+      await expect(pause).resolves.toBeUndefined();
+      expect(invoked).toBe(true);
+      expect(watch.history(ref)).toEqual([{ sampleMs: 20, value: 4 }]);
+      expect(rig.front.low.variables.watchProblem.get()?.code).toBe('too-many-watches');
+      unsubscribe();
+    });
+
+    it('does not deliver old-run messages when a notice subscriber adopts a newer run', async () => {
+      const rig = await running();
+      const ref = { peer: 'Engine', name: 'engine.demand' };
+      const watch = rig.front.low.variables.watch([ref], { history: 10 });
+      const pause = rig.front.time.pause().catch((error: unknown) => error);
+      const id = rig.timeBody().id;
+      let invoked = false;
+      const unsubscribe = rig.front.low.session.notices.subscribe(() => {
+        if (invoked) return;
+        invoked = true;
+        void rig.front.low.fetchSession();
+        rig.http.expectOne('api/session').flush({ instance: 'x', session: summary({}, 2) });
+      });
+      await rig.deliver(
+        {
+          type: 'error',
+          session: null,
+          code: 'too-many-watches',
+          message: 'too many watches',
+          detail: { id: 1 },
+        },
+        {
+          type: 'values',
+          id: 1,
+          session: 1,
+          sim_ms: 20,
+          paused: false,
+          peers: { Engine: { sample_ms: 20, values: { 'engine.demand': 4 } } },
+        },
+        event(commandEvent(62, 'pause', id)),
+      );
+      expect(await pause).toMatchObject({ code: 'not-running' });
+      expect(rig.front.low.session.session.get()?.id).toBe(2);
+      expect(watch.history(ref)).toEqual([]);
+      unsubscribe();
+    });
+
+    it('keeps a newer run acknowledgement after a buffered older hello', async () => {
+      const rig = await running();
+      const refresh = rig.front.low.fetchSession();
+      rig.http.expectOne('api/session').flush({ instance: 'x', session: summary({}, 2) });
+      await refresh;
+      const pause = rig.front.time.pause();
+      const id = rig.timeBody().id;
+      await rig.deliver(
+        {
+          type: 'hello',
+          vehicle_sil_gui: 2,
+          version: '0.1.0',
+          instance: 'x',
+          session: summary(),
+          replay: null,
+        },
+        { type: 'synced', session: 1, last_seq: 0 },
+        event(commandEvent(62, 'pause', id), 2),
+      );
+      await expect(pause).resolves.toBeUndefined();
+      expect(rig.front.low.session.session.get()?.id).toBe(2);
+      expect(rig.front.low.connection.state.get()).toBe('closed');
+    });
+
+    it('delivers an acknowledgement buffered before the socket closes', async () => {
+      const rig = await running();
+      const pause = rig.front.time.pause();
+      const id = rig.timeBody().id;
+      rig.socket.send(event(commandEvent(62, 'pause', id)));
+      rig.socket.fail();
+      await expect(pause).resolves.toBeUndefined();
+    });
+
+    it('delivers a valid acknowledgement before a malformed message forces a reconnect', async () => {
+      const rig = await running();
+      const pause = rig.front.time.pause();
+      const id = rig.timeBody().id;
+      await rig.deliver(event(commandEvent(62, 'pause', id)), {
+        type: 'session',
+        session: { id: 'invalid' },
+      });
+      await expect(pause).resolves.toBeUndefined();
+    });
+
     it('delivers an acknowledgement when a session subscriber refreshes the same run', async () => {
       const rig = await running();
       const pause = rig.front.time.pause();

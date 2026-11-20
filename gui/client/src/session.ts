@@ -114,8 +114,9 @@ interface Adoption {
  */
 export class SessionFeed implements ClientSession {
   private readonly rawListeners = new Set<
-    (batch: readonly unknown[], current: () => boolean) => void
+    (batch: readonly unknown[], current: () => boolean, snapshotVersion: number) => void
   >();
+  private snapshotVersion: () => number = () => 0;
   private instanceId: string | null = null;
   private adoptionRevision = 0;
   private instanceListener: (instance: string, current: () => boolean) => void = () => undefined;
@@ -198,9 +199,15 @@ export class SessionFeed implements ClientSession {
    * request for the same run (the rest arrives in notifications). A summary of an earlier run never brings back an old
    * run over a new one.
    */
-  onRawMessages(listener: (batch: readonly unknown[], current: () => boolean) => void): () => void {
+  onRawMessages(
+    listener: (batch: readonly unknown[], current: () => boolean, snapshotVersion: number) => void,
+  ): () => void {
     this.rawListeners.add(listener);
     return () => this.rawListeners.delete(listener);
+  }
+
+  onSnapshotVersion(read: () => number): void {
+    this.snapshotVersion = read;
   }
 
   /** Called before a new server's session can be published. */
@@ -293,6 +300,11 @@ export class SessionFeed implements ClientSession {
 
   /** Reads and applies a batch from the connection. */
   private receive(raw: readonly unknown[]): void {
+    const snapshotVersion = this.snapshotVersion();
+    const epoch = this.connection.batchEpoch();
+    let originInstance = this.instanceId;
+    const currentOrigin = () =>
+      this.connection.batchEpoch() === epoch && this.instanceId === originInstance;
     const batch: ServerMessage[] = [];
     const accepted: unknown[] = [];
     let stop: 'unauthorized' | 'incompatible' | 'lost' | null = null;
@@ -305,6 +317,7 @@ export class SessionFeed implements ClientSession {
         this.notify(
           error instanceof ProtocolError ? `unreadable message: ${error.message}` : String(error),
         );
+        if (!currentOrigin()) return;
         const type = (value as { type?: unknown } | null)?.type;
         if (
           type === 'hello' &&
@@ -335,20 +348,81 @@ export class SessionFeed implements ClientSession {
         break;
       }
     }
+    let filtered = this.filterOlderRuns(batch, accepted);
+    if (filtered.staleHello && stop === null) stop = 'lost';
     // Make the requests to the connection before notifying subscribers. Set the stop flag before disconnecting (so a
     // connect() called from within the disconnect notification does not connect)
     if (stop === 'unauthorized' || stop === 'incompatible') {
       this.stoppedFlag = true;
       this.connection.close();
     }
+    if (!currentOrigin()) {
+      if (stop === 'unauthorized' || stop === 'incompatible') this.stoppedFlag = false;
+      return;
+    }
     if (stop === 'lost') this.connection.restart();
-    this.apply(batch, accepted);
+    if (!currentOrigin()) return;
+    // A close subscriber can synchronously observe a later run on the same server.
+    filtered = this.filterOlderRuns(filtered.batch, filtered.raw);
+    this.apply(filtered.batch, filtered.raw, snapshotVersion, currentOrigin, (instance) => {
+      originInstance = instance;
+    });
+    if (!currentOrigin()) return;
     if (stop === 'lost' || stop === 'incompatible') this.synced.set(false);
     if (stop === 'unauthorized') this.rejectedValue.set(true);
     if (incompatible !== null) this.incompatibleValue.set(incompatible);
   }
 
-  private apply(batch: readonly ServerMessage[], raw: readonly unknown[]): void {
+  /** Keep messages at or after the run already observed over HTTP, within each server instance. */
+  private filterOlderRuns(
+    batch: readonly ServerMessage[],
+    raw: readonly unknown[],
+  ): {
+    batch: ServerMessage[];
+    raw: unknown[];
+    staleHello: boolean;
+  } {
+    let instance = this.instanceId;
+    let floor = this.current.get()?.id ?? null;
+    let staleHello = false;
+    const selected: ServerMessage[] = [];
+    const selectedRaw: unknown[] = [];
+    batch.forEach((message, index) => {
+      if (message.type === 'hello') {
+        const id = message.session?.id ?? null;
+        if (instance === message.instance && floor !== null && (id === null || id < floor)) {
+          // Ask for a fresh snapshot, but keep later messages of the current run, including ACKs.
+          staleHello = true;
+          return;
+        }
+        if (instance !== message.instance) {
+          instance = message.instance;
+          floor = id;
+        } else if (id !== null) floor = id;
+      } else {
+        const id =
+          message.type === 'session'
+            ? message.session.id
+            : 'session' in message && typeof message.session === 'number'
+              ? message.session
+              : null;
+        if (id !== null && floor !== null && id < floor) return;
+        if (message.type === 'session' && (floor === null || message.session.id > floor))
+          floor = message.session.id;
+      }
+      selected.push(message);
+      selectedRaw.push(raw[index]);
+    });
+    return { batch: selected, raw: selectedRaw, staleHello };
+  }
+
+  private apply(
+    batch: readonly ServerMessage[],
+    raw: readonly unknown[],
+    snapshotVersion: number,
+    currentOrigin: () => boolean,
+    commitOrigin: (instance: string | null) => void,
+  ): void {
     if (batch.length === 0) return;
     const revision = ++this.adoptionRevision;
     const before = this.current.get();
@@ -356,6 +430,7 @@ export class SessionFeed implements ClientSession {
     let instance = originalInstance;
     let session = before;
     let events: LauncherEvent[] = [];
+    const notices: string[] = [];
     let applied = false;
     let synced = this.synced.get();
     let allowedNow = this.allowedValue.get();
@@ -431,7 +506,7 @@ export class SessionFeed implements ClientSession {
               skipped === undefined ? { code, message: text } : { code, message: text, skipped },
             );
           } else {
-            this.notify(message.message);
+            notices.push(message.message);
           }
           break;
         case 'resync':
@@ -444,14 +519,17 @@ export class SessionFeed implements ClientSession {
     flush();
     const stale =
       (session?.staleEvents ?? 0) - (before?.id === session?.id ? (before?.staleEvents ?? 0) : 0);
-    if (!this.isCurrent(revision)) return;
+    if (!currentOrigin() || !this.isCurrent(revision)) return;
     this.instanceId = instance;
+    commitOrigin(instance);
     this.stopTarget = session && instance ? { session: session.id, instance } : null;
     // HTTP can synchronously refresh this same run during a notification. It supersedes its own
     // snapshot, but not the ordered WebSocket messages (which include command acknowledgements).
     const sessionId = session?.id ?? null;
     const sameRun = () =>
-      this.instanceId === instance && (this.current.get()?.id ?? null) === sessionId;
+      currentOrigin() &&
+      this.instanceId === instance &&
+      (this.current.get()?.id ?? null) === sessionId;
     const notifySession = this.current.setDeferred(session);
     const notifyAllowed = this.allowedValue.setDeferred(allowedNow);
     const notifySynced = this.synced.setDeferred(synced);
@@ -460,11 +538,15 @@ export class SessionFeed implements ClientSession {
     notifyAllowed();
     notifySynced();
     if (!sameRun()) return;
+    for (const notice of notices) {
+      this.notify(notice);
+      if (!sameRun()) return;
+    }
     if (applied) this.receivedAt.set(Date.now());
     if (!sameRun()) return;
     if (stale > 0) this.notify(STALE_EVENTS_NOTICE, stale);
     if (!sameRun()) return;
-    callEach(this.rawListeners, [raw, sameRun], this.onError, sameRun);
+    callEach(this.rawListeners, [raw, sameRun, snapshotVersion], this.onError, sameRun);
     if (!sameRun()) return;
     callEach(this.messageListeners, [batch], this.onError, sameRun);
   }
