@@ -1,6 +1,6 @@
 # vehicle-sil Workbench
 
-An English alternative to the standard browser GUI. The same GUI server and
+An example English-language GUI built with the GUI Client. The same GUI server and
 Control API run the simulation. This screen uses the public GUI Client and can
 run alongside the standard screen on a separate port. Each server has its own
 run. Detached Workbench tabs share the run of the Workbench that opened them.
