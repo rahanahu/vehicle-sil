@@ -138,9 +138,9 @@ describe('TimeControl', () => {
     http.expectNone('api/time');
 
     // The amount the launcher rounded up to the time step, and the time reached
-    at = await play(socket, 'ws-time', at, timeEvent({ sim_ms: 30 }));
-    expect(time.lastCommand()).toMatchObject({ name: 'step', accepted: true, ms: 30, atMs: 30 });
-    expect(time.simMs()).toBe(30);
+    at = await play(socket, 'ws-time', at, timeEvent({ sim_ms: 25 }));
+    expect(time.lastCommand()).toMatchObject({ name: 'step', accepted: true, ms: 25, atMs: 25 });
+    expect(time.simMs()).toBe(25);
     expect(time.sending()).toBeNull();
     // The time event says where it is; the state after it says that it stands still there
     at = await play(socket, 'ws-time', at, standing);
