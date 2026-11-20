@@ -2233,7 +2233,8 @@
         "findings": [
           {
             "severity": "note",
-            "message": "a finding with only a severity and a message"
+            "message": "a finding with only a severity and a message",
+            "event_seq": 27
           }
         ],
         "findings_omitted": 0,
