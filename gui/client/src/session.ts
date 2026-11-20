@@ -91,6 +91,12 @@ export interface ClientSession {
   dismissNotice(id: number): void;
 }
 
+interface Adoption {
+  revision: number;
+  instance: string | null;
+  session: number | null;
+}
+
 /**
  * Copy of a session (one run of the launcher). Reads the notifications of the connection (Connection) and builds the
  * state from the server's summary and events.
@@ -215,7 +221,7 @@ export class SessionFeed implements ClientSession {
     summary: SessionSummary | null,
     instance?: string | null,
     resyncFrom?: string | null,
-  ): number | null {
+  ): Adoption | null {
     const switching =
       instance !== undefined && this.instanceId !== null && instance !== this.instanceId;
     if (
@@ -227,7 +233,11 @@ export class SessionFeed implements ClientSession {
     if (summary && previous && summary.id < previous.id) return null;
     // A same-instance null summary preserves the run and must not supersede an in-progress adoption.
     if (!summary && !switching && (instance === undefined || instance === this.instanceId))
-      return this.adoptionRevision;
+      return {
+        revision: this.adoptionRevision,
+        instance: this.instanceId,
+        session: previous?.id ?? null,
+      };
     const revision = ++this.adoptionRevision;
     const identity = instance !== undefined && (summary || !previous) ? instance : this.instanceId;
     const next = !summary
@@ -239,6 +249,7 @@ export class SessionFeed implements ClientSession {
         : sessionFromSummary(summary);
     const changedInstance = !!identity && identity !== this.instanceId;
     this.instanceId = identity;
+    const adoption: Adoption = { revision, instance: identity, session: next?.id ?? null };
     this.stopTarget = next && identity ? { session: next.id, instance: identity } : null;
     const notifySession = this.current.setDeferred(next);
     const notifyAllowed = switching ? this.allowedValue.setDeferred(null) : () => undefined;
@@ -247,9 +258,15 @@ export class SessionFeed implements ClientSession {
     // Each deferred notification drops itself if a nested update changed that value.
     notifySession();
     notifyAllowed();
-    if (!this.isCurrent(revision)) return null;
+    if (!this.sameRun(adoption)) return null;
     this.adoptAllowed(summary?.allowed ?? null);
-    return this.isCurrent(revision) ? revision : null;
+    return this.sameRun(adoption) ? adoption : null;
+  }
+
+  sameRun(adoption: Adoption): boolean {
+    return (
+      this.instanceId === adoption.instance && (this.current.get()?.id ?? null) === adoption.session
+    );
   }
 
   isCurrent(revision: number): boolean {
@@ -447,7 +464,7 @@ export class SessionFeed implements ClientSession {
     if (!sameRun()) return;
     if (stale > 0) this.notify(STALE_EVENTS_NOTICE, stale);
     if (!sameRun()) return;
-    callEach(this.rawListeners, [raw, sameRun], this.onError, () => this.isCurrent(revision));
+    callEach(this.rawListeners, [raw, sameRun], this.onError, sameRun);
     if (!sameRun()) return;
     callEach(this.messageListeners, [batch], this.onError, sameRun);
   }

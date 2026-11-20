@@ -326,6 +326,42 @@ describe('RunControl', () => {
     expect(client.variables.state.get().session).toBe(2);
   });
 
+  it.each([false, true])(
+    'compares allowed revisions after a same-run nested read (top-level: %s)',
+    async (topLevel) => {
+      const response = answer('run') as { session: Record<string, unknown> };
+      const allowed = response.session['allowed'] as Record<string, unknown>;
+      seedSession();
+      let invoked = false;
+      const unsubscribe = client.variables.state.subscribe(() => {
+        if (invoked) return;
+        invoked = true;
+        void client.fetchSession();
+        http.expectOne('api/session').flush({
+          instance: 'new-instance',
+          allowed: { ...allowed, rev: 1 },
+          session: { ...response.session, id: 2, allowed: { ...allowed, rev: 1 } },
+        });
+      });
+      const newer = client.fetchSession();
+      const session = {
+        ...response.session,
+        id: 2,
+        allowed: topLevel ? undefined : { ...allowed, rev: 2 },
+      };
+      http.expectOne('api/session').flush({
+        instance: 'new-instance',
+        allowed: topLevel ? { ...allowed, rev: 2 } : undefined,
+        session,
+      });
+      await newer;
+      unsubscribe();
+      expect(invoked).toBe(true);
+      expect(client.session.session.get()?.id).toBe(2);
+      expect(client.session.allowed.get()?.rev).toBe(2);
+    },
+  );
+
   it('resynchronizes an HTTP-only client after the server restarts', async () => {
     const id = seedSession();
     const staleRead = client.fetchSession();

@@ -403,14 +403,14 @@ export function buildClient(options: ClientOptions): ClientParts {
           try {
             const summary = readSessionResponse(outcome.body);
             const instance = (outcome.body as { instance?: unknown } | null)?.instance;
-            const revision = session.adopt(
+            const adoption = session.adopt(
               summary,
               typeof instance === 'string' ? instance : null,
               resyncFrom,
             );
-            if (revision !== null) {
-              const current = () => session.isCurrent(revision);
-              session.adoptAllowed(readSessionAllowed(outcome.body));
+            if (adoption !== null) {
+              const current = () => session.isCurrent(adoption.revision);
+              if (session.sameRun(adoption)) session.adoptAllowed(readSessionAllowed(outcome.body));
               if (current()) variables.adoptInstance(instance, current);
               if (current())
                 variables.adoptSummary(
