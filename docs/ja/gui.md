@@ -1286,8 +1286,10 @@ declare module 'react' {
 - URL は環境変数で渡します（引数に書くと、トークンがほかの利用者のプロセスの一覧に見えるため）。
 
   ```sh
-  VEHICLE_SIL_GUI_URL='<URL the server printed>' node examples/gui_client/run.mjs simulation.yaml
+  VEHICLE_SIL_GUI_URL='<URL the server printed>' node examples/gui_client/run.mjs simulation.yaml --stop-at-ms 1000
   ```
+
+- 有限時間で実行するには、`--stop-at-ms` に停止する仮想時刻をミリ秒で指定します。省略すると、停止するまで実行が続きます。
 
 - ブラウザの外から使うので、`Origin` をサーバー自身の origin にして送ります。
 
