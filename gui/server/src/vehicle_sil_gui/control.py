@@ -3,7 +3,8 @@
 gRPC is optional: the GUI server runs without it, and then only the variables are missing (load() says why).
 The stubs of proto/vehicle_sil/control/v1/control.proto are taken from, in this order: the directory named by
 VEHICLE_SIL_CONTROL_STUBS; made now with grpcio-tools from the repository's proto file (into a temporary
-directory, removed at exit); python/vehicle_sil_control/_generated of the repository (what
+directory, removed as soon as the stubs are imported: a directory that waits for the process to exit stays
+behind when the process is killed); python/vehicle_sil_control/_generated of the repository (what
 `python -m vehicle_sil_control.generate` makes). So the variables work when the server runs from the repository
 (an editable install, `uv sync`); installed elsewhere, the optional dependency `variables` (grpcio, protobuf) is
 not enough by itself: the stubs must be given with VEHICLE_SIL_CONTROL_STUBS until they are shipped in the
@@ -29,7 +30,6 @@ event or a message: every text that comes from the control server is cleaned of 
 from __future__ import annotations
 
 import asyncio
-import atexit
 import importlib
 import logging
 import math
@@ -109,7 +109,7 @@ def _load() -> Library:
     except Exception as e:  # not installed, or an installation that does not load
         raise Unavailable(f"this GUI server has no gRPC ({type(e).__name__}: {e}): run it from the vehicle-sil "
                           "repository after `uv sync` (which installs grpcio, protobuf and grpcio-tools)") from None
-    stubs = _stubs_directory()
+    stubs, made = _stubs_directory()
     if str(stubs) not in sys.path:
         sys.path.insert(0, str(stubs))
     try:
@@ -118,16 +118,23 @@ def _load() -> Library:
     except Exception as e:  # stubs made for another grpcio or protobuf raise their own errors
         raise Unavailable(f"the Control API stubs in {stubs} cannot be loaded ({type(e).__name__}: {e}): make them "
                           "again with `python -m vehicle_sil_control.generate` (docs/control-api.md)") from None
+    finally:
+        if made:  # the modules are loaded and nothing reads the files again
+            if str(stubs) in sys.path:
+                sys.path.remove(str(stubs))
+            shutil.rmtree(stubs, ignore_errors=True)
     return Library(grpc, pb, rpc)
 
 
-def _stubs_directory() -> Path:
+def _stubs_directory() -> tuple[Path, bool]:
+    """Where the stubs are, and whether this call made the directory (a temporary one, which the caller removes
+    once the stubs are imported)."""
     explicit = os.environ.get(STUBS_VARIABLE)
     if explicit:
         if not (Path(explicit) / PROTO.with_name("control_pb2.py")).is_file():
             raise Unavailable(f"{STUBS_VARIABLE}={explicit} has no {PROTO.with_name('control_pb2.py')}: make the "
                               "stubs with `python -m vehicle_sil_control.generate --out <directory>`")
-        return Path(explicit)
+        return Path(explicit), False
     root = repository()
     generated = root / "python" / "vehicle_sil_control" / "_generated" if root is not None else None
     if root is not None:
@@ -137,14 +144,14 @@ def _stubs_directory() -> Path:
             protoc = None
         if protoc is not None:
             out = Path(tempfile.mkdtemp(prefix="vehicle-sil-gui-stubs-"))
-            atexit.register(shutil.rmtree, out, ignore_errors=True)
             code = protoc.main(["protoc", f"-I{root / 'proto'}", f"--python_out={out}", f"--grpc_python_out={out}",
                                 str(root / "proto" / PROTO)])
             if code == 0:
-                return out
+                return out, True
+            shutil.rmtree(out, ignore_errors=True)
             log.warning("making the Control API stubs failed (protoc exit code %s)", code)
     if generated is not None and (generated / PROTO.with_name("control_pb2.py")).is_file():
-        return generated
+        return generated, False
     where = "this GUI server does not run from the vehicle-sil repository, which has the proto file they are " \
             "made from" if root is None else "grpcio-tools is not installed (`uv sync` installs it)"
     raise Unavailable(f"the Control API stubs are missing ({where}): run the GUI server from the repository after "

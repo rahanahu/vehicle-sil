@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -488,3 +489,21 @@ def test_a_message_larger_than_the_limit_ends_the_connection(tmp_path: Path, con
             await again.until(is_ended)
         run_async(talk, gui)
         assert gui.stderr_text() == ""
+
+
+# ---------------------------------------------------------------- the stubs the server makes itself
+
+
+def test_the_stubs_the_server_makes_are_removed_as_soon_as_they_are_imported(tmp_path: Path, control_stubs,
+                                                                             monkeypatch) -> None:
+    """A directory that waits for the process to exit stays behind when the process is killed (the tests of a stop
+    do that on purpose): the server removes its own as soon as the stubs are imported."""
+    import tempfile
+
+    from vehicle_sil_gui import control
+
+    monkeypatch.delenv("VEHICLE_SIL_CONTROL_STUBS", raising=False)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    before = list(sys.path)
+    assert control._load().pb.DESCRIPTOR.name.endswith("control.proto")  # made from the repository's proto file
+    assert list(tmp_path.iterdir()) == [] and sys.path == before
