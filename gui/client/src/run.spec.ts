@@ -233,6 +233,99 @@ describe('RunControl', () => {
     expect(client.session.allowed.get()?.rev).toBe(1);
   });
 
+  it.each([1, 3])(
+    'keeps instance and session atomic when variable subscribers fetch run %i',
+    async (nestedId) => {
+      const response = answer('run') as { session: Record<string, unknown> };
+      const first = client.fetchSession();
+      http.expectOne('api/session').flush({ ...response, session: { ...response.session, id: 9 } });
+      await first;
+      let invoked = false;
+      const unsubscribe = client.variables.state.subscribe(() => {
+        if (invoked) return;
+        invoked = true;
+        void client.fetchSession();
+        http.expectOne('api/session').flush({
+          ...response,
+          instance: 'new-instance',
+          session: { ...response.session, id: nestedId },
+        });
+        const target = client.session.currentTarget();
+        expect(target?.instance).toBe('new-instance');
+        expect(client.session.session.get()?.id).toBe(target?.session);
+      });
+      const next = client.fetchSession();
+      http
+        .expectOne('api/session')
+        .flush({ ...response, instance: 'new-instance', session: { ...response.session, id: 2 } });
+      await next;
+      unsubscribe();
+      expect(invoked).toBe(true);
+      expect(client.session.session.get()?.id).toBe(Math.max(2, nestedId));
+      expect(client.session.currentTarget()).toEqual({
+        instance: 'new-instance',
+        session: Math.max(2, nestedId),
+      });
+    },
+  );
+
+  it('notifies the new session if a nested response makes no session change', async () => {
+    const response = answer('run') as { session: Record<string, unknown> };
+    seedSession();
+    const seen: number[] = [];
+    client.session.session.subscribe((session) => {
+      if (session) seen.push(session.id);
+    });
+    let invoked = false;
+    client.variables.state.subscribe(() => {
+      if (invoked) return;
+      invoked = true;
+      void client.fetchSession();
+      http.expectOne('api/session').flush({ instance: 'new-instance', session: null });
+    });
+    const next = client.fetchSession();
+    http
+      .expectOne('api/session')
+      .flush({ ...response, instance: 'new-instance', session: { ...response.session, id: 2 } });
+    await next;
+    expect(invoked).toBe(true);
+    expect(seen).toContain(2);
+  });
+
+  it('does not apply an older response after allowed subscribers adopt a newer one', async () => {
+    const response = answer('run') as { session: Record<string, unknown> };
+    const allowed = response.session['allowed'] as Record<string, unknown>;
+    let invoked = false;
+    const unsubscribe = client.session.allowed.subscribe(() => {
+      if (invoked) return;
+      invoked = true;
+      void client.fetchSession();
+      http.expectOne('api/session').flush({
+        ...response,
+        instance: 'new-instance',
+        allowed: { ...allowed, rev: 7 },
+        session: {
+          ...response.session,
+          id: 2,
+          allowed: { ...allowed, rev: 7 },
+          variables: { state: 'connecting' },
+        },
+      });
+    });
+    const old = client.fetchSession();
+    http.expectOne('api/session').flush({
+      ...response,
+      allowed: { ...allowed, rev: 99 },
+      session: { ...response.session, allowed: { ...allowed, rev: 99 } },
+    });
+    await old;
+    unsubscribe();
+    expect(invoked).toBe(true);
+    expect(client.session.session.get()?.id).toBe(2);
+    expect(client.session.allowed.get()?.rev).toBe(7);
+    expect(client.variables.state.get().session).toBe(2);
+  });
+
   it('resynchronizes an HTTP-only client after the server restarts', async () => {
     const id = seedSession();
     const staleRead = client.fetchSession();

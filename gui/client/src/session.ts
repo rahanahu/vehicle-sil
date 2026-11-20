@@ -107,9 +107,12 @@ export interface ClientSession {
  *   they happen even if a subscriber throws).
  */
 export class SessionFeed implements ClientSession {
+  private readonly rawListeners = new Set<
+    (batch: readonly unknown[], current: () => boolean) => void
+  >();
   private instanceId: string | null = null;
   private adoptionRevision = 0;
-  private instanceListener: (instance: string) => void = () => undefined;
+  private instanceListener: (instance: string, current: () => boolean) => void = () => undefined;
   private stopTarget: { session: number; instance: string } | null = null;
   private readonly current: Writable<SessionView | null>;
   private readonly synced: Writable<boolean>;
@@ -189,8 +192,13 @@ export class SessionFeed implements ClientSession {
    * request for the same run (the rest arrives in notifications). A summary of an earlier run never brings back an old
    * run over a new one.
    */
+  onRawMessages(listener: (batch: readonly unknown[], current: () => boolean) => void): () => void {
+    this.rawListeners.add(listener);
+    return () => this.rawListeners.delete(listener);
+  }
+
   /** Called before a new server's session can be published. */
-  onInstance(listener: (instance: string) => void): void {
+  onInstance(listener: (instance: string, current: () => boolean) => void): void {
     this.instanceListener = listener;
   }
 
@@ -207,49 +215,42 @@ export class SessionFeed implements ClientSession {
     summary: SessionSummary | null,
     instance?: string | null,
     resyncFrom?: string | null,
-  ): boolean {
-    // Reject an old response before it can overwrite the current instance. On a switch, publish the new
-    // identity before any synchronous notification. A nested, newer adoption supersedes the outer one.
+  ): number | null {
     const switching =
       instance !== undefined && this.instanceId !== null && instance !== this.instanceId;
     if (
       switching &&
       (!instance || resyncFrom !== this.instanceId || this.connection.state.get() === 'open')
     )
-      return false;
+      return null;
+    const previous = switching ? null : this.current.get();
+    if (summary && previous && summary.id < previous.id) return null;
     const revision = ++this.adoptionRevision;
-    if (switching && instance) {
-      this.stopTarget = null;
-      this.instanceId = instance;
-      this.instanceListener(instance);
-      if (revision !== this.adoptionRevision) return false;
-      this.current.set(null);
-      if (revision !== this.adoptionRevision) return false;
-      this.allowedValue.set(null);
-      if (revision !== this.adoptionRevision) return false;
-    } else if (instance !== undefined) {
-      if (instance && this.instanceId === null) {
-        this.instanceId = instance;
-        this.instanceListener(instance);
-        if (revision !== this.adoptionRevision) return false;
-      }
-      if (summary || !this.current.get()) this.instanceId = instance;
-    }
-    if (!summary) return true;
-    const session = this.current.get();
-    // A summary of an earlier run (such as the answer to a stop of a run that was just starting) never replaces a newer
-    // run
-    if (session && summary.id < session.id) return false;
-    const live = this.connection.state.get() === 'open';
-    const next =
-      session?.id === summary.id
-        ? applySummary(session, summary, false, live)
+    const identity = instance !== undefined && (summary || !previous) ? instance : this.instanceId;
+    const next = !summary
+      ? switching
+        ? null
+        : previous
+      : previous?.id === summary.id
+        ? applySummary(previous, summary, false, this.connection.state.get() === 'open')
         : sessionFromSummary(summary);
-    this.stopTarget = this.instanceId ? { session: next.id, instance: this.instanceId } : null;
-    this.current.set(next);
-    if (revision !== this.adoptionRevision) return false;
-    this.adoptAllowed(summary.allowed ?? null);
-    return true;
+    const changedInstance = !!identity && identity !== this.instanceId;
+    this.instanceId = identity;
+    this.stopTarget = next && identity ? { session: next.id, instance: identity } : null;
+    const notifySession = this.current.setDeferred(next);
+    const notifyAllowed = switching ? this.allowedValue.setDeferred(null) : () => undefined;
+    if (changedInstance && identity)
+      this.instanceListener(identity, () => this.isCurrent(revision));
+    // Each deferred notification drops itself if a nested update changed that value.
+    notifySession();
+    notifyAllowed();
+    if (!this.isCurrent(revision)) return null;
+    this.adoptAllowed(summary?.allowed ?? null);
+    return this.isCurrent(revision) ? revision : null;
+  }
+
+  isCurrent(revision: number): boolean {
+    return revision === this.adoptionRevision;
   }
 
   /**
@@ -273,6 +274,7 @@ export class SessionFeed implements ClientSession {
   /** Reads and applies a batch from the connection. */
   private receive(raw: readonly unknown[]): void {
     const batch: ServerMessage[] = [];
+    const accepted: unknown[] = [];
     let stop: 'unauthorized' | 'incompatible' | 'lost' | null = null;
     let incompatible: string | null = null;
     for (const value of raw) {
@@ -306,6 +308,7 @@ export class SessionFeed implements ClientSession {
       }
       if (message === null) continue;
       batch.push(message);
+      accepted.push(value);
       if (message.type === 'error' && message.code === 'unauthorized') {
         // Refused: take nothing more and do not reconnect (the screen tells the user to open it again)
         stop = 'unauthorized';
@@ -319,15 +322,18 @@ export class SessionFeed implements ClientSession {
       this.connection.close();
     }
     if (stop === 'lost') this.connection.restart();
-    this.apply(batch);
+    this.apply(batch, accepted);
     if (stop === 'lost' || stop === 'incompatible') this.synced.set(false);
     if (stop === 'unauthorized') this.rejectedValue.set(true);
     if (incompatible !== null) this.incompatibleValue.set(incompatible);
   }
 
-  private apply(batch: readonly ServerMessage[]): void {
+  private apply(batch: readonly ServerMessage[], raw: readonly unknown[]): void {
     if (batch.length === 0) return;
+    const revision = ++this.adoptionRevision;
     const before = this.current.get();
+    const originalInstance = this.instanceId;
+    let instance = originalInstance;
     let session = before;
     let events: LauncherEvent[] = [];
     let applied = false;
@@ -352,7 +358,6 @@ export class SessionFeed implements ClientSession {
       if (message.type !== 'event') flush();
       switch (message.type) {
         case 'hello': {
-          ++this.adoptionRevision;
           // Rebuild from the summary. Only a reconnect that asked to continue from what it holds (with from_seq) keeps
           // the local log
           synced = false;
@@ -362,11 +367,10 @@ export class SessionFeed implements ClientSession {
           takeAllowed(message.allowed ?? summary?.allowed ?? null, true);
           const resumed =
             summary &&
-            this.instanceId === message.instance &&
+            instance === message.instance &&
             session?.id === summary.id &&
             replay?.from_seq != null;
-          if (this.instanceId !== message.instance) this.instanceListener(message.instance);
-          this.instanceId = message.instance;
+          instance = message.instance;
           session = !summary
             ? null
             : resumed && session
@@ -420,14 +424,27 @@ export class SessionFeed implements ClientSession {
     flush();
     const stale =
       (session?.staleEvents ?? 0) - (before?.id === session?.id ? (before?.staleEvents ?? 0) : 0);
-    this.stopTarget =
-      session && this.instanceId ? { session: session.id, instance: this.instanceId } : null;
-    this.current.set(session);
-    this.allowedValue.set(allowedNow);
-    this.synced.set(synced);
+    if (!this.isCurrent(revision)) return;
+    this.instanceId = instance;
+    this.stopTarget = session && instance ? { session: session.id, instance } : null;
+    const notifySession = this.current.setDeferred(session);
+    const notifyAllowed = this.allowedValue.setDeferred(allowedNow);
+    const notifySynced = this.synced.setDeferred(synced);
+    if (instance && instance !== originalInstance)
+      this.instanceListener(instance, () => this.isCurrent(revision));
+    notifySession();
+    notifyAllowed();
+    notifySynced();
+    if (!this.isCurrent(revision)) return;
     if (applied) this.receivedAt.set(Date.now());
+    if (!this.isCurrent(revision)) return;
     if (stale > 0) this.notify(STALE_EVENTS_NOTICE, stale);
-    callEach(this.messageListeners, [batch], this.onError);
+    if (!this.isCurrent(revision)) return;
+    callEach(this.rawListeners, [raw, () => this.isCurrent(revision)], this.onError, () =>
+      this.isCurrent(revision),
+    );
+    if (!this.isCurrent(revision)) return;
+    callEach(this.messageListeners, [batch], this.onError, () => this.isCurrent(revision));
   }
 
   private notify(message: string, count = 1): void {

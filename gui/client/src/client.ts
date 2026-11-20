@@ -237,9 +237,17 @@ export function buildClient(options: ClientOptions): ClientParts {
   });
   feed = new SessionFeed(connection, onError);
   const session = feed;
-  variablesFeed = new VariablesFeed(connection, http, onError, () => limits.get());
+  variablesFeed = new VariablesFeed(
+    {
+      send: (message) => connection.send(message),
+      onBatch: (listener) => session.onRawMessages(listener),
+    },
+    http,
+    onError,
+    () => limits.get(),
+  );
   const variables = variablesFeed;
-  session.onInstance((instance) => variables.adoptInstance(instance));
+  session.onInstance((instance, current) => variables.adoptInstance(instance, current));
   const run = new RunControl(session, http, onError, () => longRequestMs(limits.get()));
   const time = new TimeControl(
     session.session,
@@ -395,13 +403,20 @@ export function buildClient(options: ClientOptions): ClientParts {
           try {
             const summary = readSessionResponse(outcome.body);
             const instance = (outcome.body as { instance?: unknown } | null)?.instance;
-            if (
-              session.adopt(summary, typeof instance === 'string' ? instance : null, resyncFrom)
-            ) {
+            const revision = session.adopt(
+              summary,
+              typeof instance === 'string' ? instance : null,
+              resyncFrom,
+            );
+            if (revision !== null) {
+              const current = () => session.isCurrent(revision);
               session.adoptAllowed(readSessionAllowed(outcome.body));
-              // The variable list and state are not part of the summary parser (SessionSummary)
-              variables.adoptInstance(instance);
-              variables.adoptSummary((outcome.body as { session?: unknown } | null)?.session);
+              if (current()) variables.adoptInstance(instance, current);
+              if (current())
+                variables.adoptSummary(
+                  (outcome.body as { session?: unknown } | null)?.session,
+                  current,
+                );
             }
             resolve(summary);
           } catch (error) {

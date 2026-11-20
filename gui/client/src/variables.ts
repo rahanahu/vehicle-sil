@@ -577,7 +577,7 @@ function lost(seq: number, summary: Listed): WriteError | null {
 export interface VariablesLink {
   /** Sends if connected (does nothing otherwise; resume() sends what is needed on connect). */
   send(message: unknown): unknown;
-  onBatch(listener: (batch: readonly unknown[]) => void): () => void;
+  onBatch(listener: (batch: readonly unknown[], current?: () => boolean) => void): () => void;
 }
 
 /**
@@ -636,7 +636,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     this.state = this.stateValue.readonly();
     this.operations = this.operationsValue.readonly();
     this.watchProblem = this.problemValue.readonly();
-    link.onBatch((batch) => this.receive(batch));
+    link.onBatch((batch, current) => this.receive(batch, current));
   }
 
   // --- Connection -----------------------------------------------------------------------------
@@ -670,7 +670,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
 
   // --- Notifications --------------------------------------------------------------------------
 
-  private receive(batch: readonly unknown[]): void {
+  private receive(batch: readonly unknown[], current: () => boolean = () => true): void {
     const touched = new Set<string>();
     let touchedAll = false;
     let operations: OperationView[] | null = null;
@@ -678,21 +678,25 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     // Apply the operation results received so far before the run changes (so settled results that arrived in the same
     // batch do not turn into "unknown" at the switch)
     const flush = () => {
-      if (operations) this.setOperations(operations, fresh);
+      if (operations) this.setOperations(operations, fresh, current);
       operations = null;
       fresh = [];
     };
     for (const message of batch) {
+      if (!current()) return;
       if (!isObject(message)) continue;
       switch (message['type']) {
         case 'hello': {
           flush();
+          if (!current()) return;
           const summary = message['session'];
-          this.adoptInstance(message['instance']);
+          this.adoptInstance(message['instance'], current);
+          if (!current()) return;
           if (isObject(summary) && Number.isSafeInteger(summary['id'])) {
-            this.adoptSummary(summary);
+            this.adoptSummary(summary, current);
           } else {
             this.enter(null);
+            if (!current()) return;
             this.stateValue.set({ ...NO_VARIABLES, status: 'off' });
           }
           touchedAll = true;
@@ -704,7 +708,9 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           // Another run started: its variable notification (variables) follows. Unknown until then
           if (Number.isSafeInteger(id) && id !== this.stateValue.get().session) {
             flush();
+            if (!current()) return;
             this.enter(id as number);
+            if (!current()) return;
             this.stateValue.set({ ...NO_VARIABLES, session: id as number });
             touchedAll = true;
           }
@@ -715,7 +721,9 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           if (!Number.isSafeInteger(id)) break;
           if (id !== this.stateValue.get().session) {
             flush();
+            if (!current()) return;
             this.enter(id as number);
+            if (!current()) return;
             touchedAll = true;
           }
           this.stateValue.set(readVariables(message['variables'], id as number));
@@ -753,7 +761,8 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
       }
     }
     flush();
-    if (touchedAll || touched.size > 0) this.publish(touchedAll ? null : touched);
+    if (current() && (touchedAll || touched.size > 0))
+      this.publish(touchedAll ? null : touched, current);
   }
 
   /** Returns whether any state changed. Only the availability table changes: `peers` keeps its identity. */
@@ -780,29 +789,34 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   }
 
   /** A reused numeric session on another server is a different run. */
-  adoptInstance(value: unknown): void {
+  adoptInstance(value: unknown, current: () => boolean = () => true): void {
     if (typeof value !== 'string' || !value) return;
     const changed = this.instanceId !== null && this.instanceId !== value;
     this.instanceId = value;
     if (changed) {
       this.enter(null);
+      if (!current()) return;
       this.stateValue.set(NO_VARIABLES);
-      this.publish(null);
+      if (!current()) return;
+      this.publish(null, current);
     }
   }
 
   /** Applies the variables part of hello and of an HTTP summary (`session`). */
-  adoptSummary(summary: unknown): void {
+  adoptSummary(summary: unknown, current: () => boolean = () => true): void {
     if (!isObject(summary) || !Number.isSafeInteger(summary['id'])) return;
     const id = summary['id'] as number;
     const variables = summary['variables'];
     if (id !== this.stateValue.get().session) {
       this.enter(id);
-      this.publish(null);
+      if (!current()) return;
+      this.publish(null, current);
+      if (!current()) return;
     } else if (variables === undefined) {
       return; // A summary of the same run without the variables field (a session notification): keep the current state
     }
     this.stateValue.set(readVariables(variables, id));
+    if (!current()) return;
     if (isObject(variables) && Array.isArray(variables['operations'])) {
       let operations = this.operationsValue.get();
       const listed: OperationView[] = [];
@@ -813,7 +827,8 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           operations = this.withOperation(operations, operation);
         }
       }
-      this.setOperations(operations, listed);
+      this.setOperations(operations, listed, current);
+      if (!current()) return;
       const fromSeq = variables['operations_from_seq'];
       const openOmitted = variables['operations_open_omitted'];
       this.forgetLost(id, {
@@ -920,8 +935,9 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   }
 
   /** Rebuilds values of the watches that observe the changed variables (all watches if touched is null). */
-  private publish(touched: Set<string> | null): void {
+  private publish(touched: Set<string> | null, current: () => boolean = () => true): void {
     for (const handle of this.handles) {
+      if (!current()) return;
       if (touched !== null && handle.keys !== null) {
         let hit = false;
         for (const key of handle.keys) {
@@ -975,8 +991,10 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   private setOperations(
     operations: readonly OperationView[],
     fresh: readonly OperationView[] = [],
+    current: () => boolean = () => true,
   ): void {
     this.operationsValue.set(operations);
+    if (!current()) return;
     for (const pending of [...this.pending]) {
       if (pending.seq === null) continue;
       const mine = (o: OperationView) =>
