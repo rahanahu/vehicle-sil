@@ -561,6 +561,55 @@ describe('variables', () => {
     },
   );
 
+  it('does not merge an older hello operation into a newer run with the same sequence', async () => {
+    const { client, http, deliver } = setup();
+    let written: Promise<unknown> | null = null;
+    let started = false;
+    const unsubscribe = client.variables.state.subscribe((state) => {
+      if (started || state.session !== 1) return;
+      started = true;
+      void client.fetchSession();
+      http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
+      written = client.variables.write({ Engine: { 'engine.demand': 40 } });
+      http.expectOne('api/write').flush({ session_id: 2, operation: 7 });
+    });
+    await deliver(
+      hello(1, ready([listed(7, 'rejected', true)])),
+      { type: 'session', session: summary(2) },
+      operation(7, 'applied', true, { applied_at_ms: 20 }, 2),
+    );
+    expect(started).toBe(true);
+    await expect(written).resolves.toMatchObject({ session: 2, seq: 7, state: 'applied' });
+    expect(client.variables.operations.get()).toMatchObject([
+      { session: 2, seq: 7, state: 'applied' },
+    ]);
+    unsubscribe();
+    client.close();
+  });
+
+  it('accepts a same-batch variables snapshot after a synchronous run response', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(hello(1, ready()));
+    const started = client.run.start({ file: 'a.yaml', disable: [] });
+    const request = http.expectOne('api/run');
+    let answered = false;
+    const unsubscribe = client.session.session.subscribe((session) => {
+      if (answered || session?.id !== 2) return;
+      answered = true;
+      request.flush({ instance: 'x', session: summary(2) });
+    });
+    await deliver(
+      { type: 'session', session: summary(2) },
+      { type: 'variables', session: 2, variables: ready() },
+    );
+    await started;
+    expect(answered).toBe(true);
+    expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
+    expect(client.variables.state.get().peers[0]?.variables[0]?.name).toBe('engine.demand');
+    unsubscribe();
+    client.close();
+  });
+
   it('keeps a terminal operation from a hello after a same-run refresh', async () => {
     const { client, http, deliver } = setup();
     await deliver(hello(1, ready()));

@@ -581,7 +581,7 @@ export interface VariablesLink {
     listener: (
       batch: readonly unknown[],
       current?: () => boolean,
-      snapshotCurrent?: () => boolean,
+      snapshotVersion?: number,
     ) => void,
   ): () => void;
 }
@@ -602,6 +602,7 @@ export interface VariablesLink {
  */
 export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   private instanceId: string | null = null;
+  private snapshotVersionValue = 0;
   private readonly stateValue: Writable<VariablesState>;
   private readonly operationsValue: Writable<readonly OperationView[]>;
   private readonly handles = new Set<Handle>();
@@ -681,8 +682,10 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   private receive(
     batch: readonly unknown[],
     current: () => boolean = () => true,
-    snapshotCurrent: () => boolean = current,
+    initialSnapshotVersion = this.snapshotVersionValue,
   ): void {
+    let snapshotVersion = initialSnapshotVersion;
+    const snapshotCurrent = () => this.snapshotVersionValue === snapshotVersion;
     const touched = new Set<string>();
     let touchedAll = false;
     let operations: OperationView[] | null = null;
@@ -713,7 +716,9 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           this.adoptInstance(message['instance']);
           if (!current()) return;
           if (isObject(summary) && Number.isSafeInteger(summary['id'])) {
-            this.adoptSummary(summary, current, snapshotCurrent);
+            const applied = this.adoptSummary(summary, current, snapshotCurrent);
+            if (applied !== null && this.snapshotVersionValue === applied)
+              snapshotVersion = applied;
           } else {
             // A later run may already have been adopted during a synchronous session notification.
             if (this.stateValue.get().session !== null) break;
@@ -822,6 +827,10 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     return true;
   }
 
+  snapshotVersion(): number {
+    return this.snapshotVersionValue;
+  }
+
   /** A reused numeric session on another server is a different run. */
   adoptInstance(value: unknown): void {
     if (typeof value !== 'string' || !value) return;
@@ -835,19 +844,23 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     summary: unknown,
     current: () => boolean = () => true,
     snapshotCurrent: () => boolean = current,
-  ): void {
-    if (!isObject(summary) || !Number.isSafeInteger(summary['id']) || !current()) return;
+  ): number | null {
+    if (!isObject(summary) || !Number.isSafeInteger(summary['id']) || !current()) return null;
     const id = summary['id'] as number;
+    const instance = this.instanceId;
     const existing = this.stateValue.get().session;
-    if (existing !== null && id < existing) return;
+    if (existing !== null && id < existing) return null;
     const variables = summary['variables'];
     let applyState = snapshotCurrent();
     if (id !== existing) {
       const initial = this.enter(id);
-      if (!current()) return;
+      if (!current()) return null;
       if (this.stateValue.get() !== initial) applyState = false;
     }
-    if (variables === undefined) return;
+    // A callback from enter may have adopted a different run; its operations are a different namespace.
+    const sameIdentity = () =>
+      current() && this.instanceId === instance && this.stateValue.get().session === id;
+    if (!sameIdentity() || variables === undefined) return null;
     applyState = applyState && snapshotCurrent();
     let notifyOperations: () => void = () => undefined;
     const listed: OperationView[] = [];
@@ -855,22 +868,29 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
       let operations = this.operationsValue.get();
       for (const entry of variables['operations']) {
         const operation = readOperation(entry, id);
-        // An older list may add confirmed terminal outcomes but cannot regress pending state.
         if (operation && (applyState || operation.done)) {
           listed.push(operation);
           operations = this.withOperation(operations, operation);
         }
       }
-      notifyOperations = this.prepareOperations(operations, listed, current);
+      notifyOperations = this.prepareOperations(operations, listed, sameIdentity);
     }
     let next: VariablesState | null = null;
-    if (applyState && snapshotCurrent() && current()) {
+    let appliedVersion: number | null = null;
+    if (applyState && snapshotCurrent() && sameIdentity()) {
       next = readVariables(variables, id);
+      appliedVersion = ++this.snapshotVersionValue;
       this.stateValue.set(next);
     }
-    // Deferred notification has its own value-version guard if a subscriber changed the list.
     notifyOperations();
-    if (!current() || !snapshotCurrent() || !next || this.stateValue.get() !== next) return;
+    if (
+      !sameIdentity() ||
+      appliedVersion === null ||
+      this.snapshotVersionValue !== appliedVersion ||
+      !next ||
+      this.stateValue.get() !== next
+    )
+      return appliedVersion;
     if (isObject(variables) && Array.isArray(variables['operations'])) {
       const fromSeq = variables['operations_from_seq'];
       const openOmitted = variables['operations_open_omitted'];
@@ -880,6 +900,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         openOmitted: typeof openOmitted === 'number' && openOmitted > 0,
       });
     }
+    return appliedVersion;
   }
 
   /**

@@ -114,8 +114,9 @@ interface Adoption {
  */
 export class SessionFeed implements ClientSession {
   private readonly rawListeners = new Set<
-    (batch: readonly unknown[], current: () => boolean, snapshotCurrent: () => boolean) => void
+    (batch: readonly unknown[], current: () => boolean, snapshotVersion: number) => void
   >();
+  private snapshotVersion: () => number = () => 0;
   private instanceId: string | null = null;
   private adoptionRevision = 0;
   private instanceListener: (instance: string, current: () => boolean) => void = () => undefined;
@@ -199,14 +200,14 @@ export class SessionFeed implements ClientSession {
    * run over a new one.
    */
   onRawMessages(
-    listener: (
-      batch: readonly unknown[],
-      current: () => boolean,
-      snapshotCurrent: () => boolean,
-    ) => void,
+    listener: (batch: readonly unknown[], current: () => boolean, snapshotVersion: number) => void,
   ): () => void {
     this.rawListeners.add(listener);
     return () => this.rawListeners.delete(listener);
+  }
+
+  onSnapshotVersion(read: () => number): void {
+    this.snapshotVersion = read;
   }
 
   /** Called before a new server's session can be published. */
@@ -299,6 +300,7 @@ export class SessionFeed implements ClientSession {
 
   /** Reads and applies a batch from the connection. */
   private receive(raw: readonly unknown[]): void {
+    const snapshotVersion = this.snapshotVersion();
     const epoch = this.connection.batchEpoch();
     let originInstance = this.instanceId;
     const currentOrigin = () =>
@@ -362,7 +364,7 @@ export class SessionFeed implements ClientSession {
     if (!currentOrigin()) return;
     // A close subscriber can synchronously observe a later run on the same server.
     filtered = this.filterOlderRuns(filtered.batch, filtered.raw);
-    this.apply(filtered.batch, filtered.raw, currentOrigin, (instance) => {
+    this.apply(filtered.batch, filtered.raw, snapshotVersion, currentOrigin, (instance) => {
       originInstance = instance;
     });
     if (!currentOrigin()) return;
@@ -417,6 +419,7 @@ export class SessionFeed implements ClientSession {
   private apply(
     batch: readonly ServerMessage[],
     raw: readonly unknown[],
+    snapshotVersion: number,
     currentOrigin: () => boolean,
     commitOrigin: (instance: string | null) => void,
   ): void {
@@ -543,12 +546,7 @@ export class SessionFeed implements ClientSession {
     if (!sameRun()) return;
     if (stale > 0) this.notify(STALE_EVENTS_NOTICE, stale);
     if (!sameRun()) return;
-    callEach(
-      this.rawListeners,
-      [raw, sameRun, () => this.isCurrent(revision)],
-      this.onError,
-      sameRun,
-    );
+    callEach(this.rawListeners, [raw, sameRun, snapshotVersion], this.onError, sameRun);
     if (!sameRun()) return;
     callEach(this.messageListeners, [batch], this.onError, sameRun);
   }
