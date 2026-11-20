@@ -221,7 +221,7 @@
               [value]="stopAt()"
               [disabled]="running() || !run.ready()"
               [attr.aria-invalid]="stopAtTouched() && stopAtInvalid()"
-              [attr.aria-describedby]="stopAtTouched() && stopAtInvalid() ? 'stop-at-error' : null"
+              [aria-describedby]="stopAtTouched() && stopAtInvalid() ? 'stop-at-error' : ''"
               #stopAtInput
               (input)="stopAtEdited.set(true); stopAt.set(stopAtInput.value)"
               (blur)="stopAtTouched.set(true)"

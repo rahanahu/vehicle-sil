@@ -54,6 +54,25 @@ test('a run that passes: phases, participants, logs and the result', async ({ pa
 const pauseButton = (page: Page) => page.getByTestId('pause');
 const resumeButton = (page: Page) => page.getByTestId('resume');
 
+test('the stop time keeps its instructions and describes an error until corrected', async ({
+  page,
+}) => {
+  await choose(page, 'forever.yaml');
+  const input = page.getByTestId('stop-at-ms');
+  const hint = /空欄なら自動停止しません/;
+  const error = /停止時刻は 1 から/;
+  await expect(input).toHaveAccessibleDescription(hint);
+  await input.fill('0');
+  await input.blur();
+  await expect(input).toHaveAttribute('aria-invalid', 'true');
+  await expect(input).toHaveAccessibleDescription(hint);
+  await expect(input).toHaveAccessibleDescription(error);
+  await input.fill('1000');
+  await expect(input).toHaveAttribute('aria-invalid', 'false');
+  await expect(input).toHaveAccessibleDescription(hint);
+  await expect(input).not.toHaveAccessibleDescription(error);
+});
+
 /** 時刻の命令を送り、サーバーの応答を待つ（ランチャーが受けたかは、画面に command と time の事象で届く）。 */
 async function command(page: Page, button: Locator, body: object): Promise<void> {
   const sent = page.waitForRequest((r) => r.url().endsWith('/api/time'));
@@ -255,7 +274,7 @@ test('quick switches are checked once, without a busy check', async ({ page }) =
   await page.getByRole('switch', { name: 'Logger を使う' }).click();
   await expect(page.getByTestId('check-participant-Dashboard')).toContainText('外した');
   await expect(startButton(page)).not.toHaveAttribute('aria-disabled', 'true');
-  expect(checks).toEqual([{ file: 'forever.yaml', disable: ['Dashboard'], manual: [] }]);
+  expect(checks).toEqual([{ file: 'forever.yaml', disable: ['Dashboard'], manual: [], speed: 1 }]);
   expect(failures).toEqual([]);
 });
 
@@ -357,8 +376,10 @@ test('a double click on start starts one run and does not stop it', async ({ pag
     await page.waitForTimeout(100);
   }
   const session = ((await (await reply).json()) as { session: { id: number } }).session.id;
-  // 押した後も実行は続いている（押した時刻より後の行が届いた）
-  await expect(page.getByTestId('log-line').nth(8)).toBeVisible({ timeout: RUN_TIMEOUT });
+  // 実行時刻が進み、停止せず同じセッションが続く
+  await expect(page.getByTestId('sim-time')).toHaveText(/^(?!0\.000 s)\d+\.\d{3} s$/, {
+    timeout: RUN_TIMEOUT,
+  });
   expect(actions).toEqual(['run']);
   expect(await serverSession(page)).toMatchObject({ id: session, stop: 'none' });
 });
@@ -374,7 +395,9 @@ test('repeated Enter on start starts one run and does not stop it', async ({ pag
     await page.waitForTimeout(100);
   }
   const session = ((await (await reply).json()) as { session: { id: number } }).session.id;
-  await expect(page.getByTestId('log-line').nth(8)).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect(page.getByTestId('sim-time')).toHaveText(/^(?!0\.000 s)\d+\.\d{3} s$/, {
+    timeout: RUN_TIMEOUT,
+  });
   expect(actions).toEqual(['run']);
   expect(await serverSession(page)).toMatchObject({ id: session, stop: 'none' });
 });
