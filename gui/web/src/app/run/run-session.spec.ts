@@ -3,7 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { FakeWebSockets, HttpExample, httpExamples } from '@vehicle-sil/gui-client/testing';
 import { authInterceptor } from '../core/auth/auth-interceptor';
-import { SOCKET_FACTORY } from '../core/session/gui-client';
+import { GUI_FRONT, SOCKET_FACTORY } from '../core/session/gui-client';
 import { SimulationTime } from '../core/session/simulation-time';
 import { RunSession } from './run-session';
 
@@ -50,6 +50,24 @@ describe('RunSession', () => {
     // 正面の口の status: ランチャーはまだ段階を言っていない
     expect(run.status().run).toBe('starting');
     expect(run.status().result).toBeNull();
+  });
+
+  it('does not show a pending stop of the previous run on the next run', async () => {
+    const response = examples.get('run')?.response as { session: Record<string, unknown> };
+    run.start({}, 'a.yaml');
+    http.expectOne('api/run').flush({ ...response, instance: '0123456789abcdef' });
+    await Promise.resolve();
+    await Promise.resolve();
+    run.stop();
+    const oldStop = http.expectOne('api/stop-session');
+    expect(run.stopping()).toBe('stop');
+    void TestBed.inject(GUI_FRONT).low.fetchSession();
+    http
+      .expectOne('api/session')
+      .flush({ instance: '0123456789abcdef', session: { ...response.session, id: 2 } });
+    expect(run.stopping()).toBeNull();
+    oldStop.flush({ session: response.session });
+    await new Promise((resolve) => setTimeout(resolve));
   });
 
   it('shows why the server refused', async () => {

@@ -36,6 +36,8 @@ export interface ClientRun {
   readonly starting: Readable<boolean>;
   /** A stop was sent and its answer is pending (which kind of stop). */
   readonly stopping: Readable<StopAction | null>;
+  /** A pending stop of the current session or current start, if any. */
+  readonly currentStopping: Readable<StopAction | null>;
   /** A stop was asked for while the answer to a start was pending. */
   readonly stopWhileStarting: Readable<boolean>;
   /** Why the last action was refused (the server's text, unchanged). null once a run starts or ends. */
@@ -75,7 +77,12 @@ export class RunControl implements ClientRun {
     summary: SessionSummary | null;
     instance: string | null;
   }> | null = null;
-  private readonly pendingStops = new Set<{ action: StopAction; starting: boolean }>();
+  private readonly pendingStops = new Set<{
+    action: StopAction;
+    starting: boolean;
+    key: object | string;
+  }>();
+  private readonly pendingRevision: Writable<number>;
   private readonly startSending: Writable<boolean>;
   private readonly stopSending: Writable<StopAction | null>;
   private readonly stopAskedWhileStarting: Writable<boolean>;
@@ -83,6 +90,7 @@ export class RunControl implements ClientRun {
 
   readonly starting: Readable<boolean>;
   readonly stopping: Readable<StopAction | null>;
+  readonly currentStopping: Readable<StopAction | null>;
   readonly stopWhileStarting: Readable<boolean>;
   readonly error: Readable<string | null>;
 
@@ -97,10 +105,24 @@ export class RunControl implements ClientRun {
   ) {
     this.startSending = new Writable<boolean>(false, Object.is, onError);
     this.stopSending = new Writable<StopAction | null>(null, Object.is, onError);
+    this.pendingRevision = new Writable<number>(0, Object.is, onError);
     this.stopAskedWhileStarting = new Writable<boolean>(false, Object.is, onError);
     this.failure = new Writable<ActionFailure | null>(null, Object.is, onError);
     this.starting = this.startSending.readonly();
     this.stopping = this.stopSending.readonly();
+    this.currentStopping = derived(
+      [this.pendingRevision, this.startSending, feed.session],
+      () => {
+        const key = this.startSending.get()
+          ? this.startOperation
+          : JSON.stringify(feed.currentTarget());
+        return (
+          [...this.pendingStops].filter((pending) => pending.key === key).at(-1)?.action ?? null
+        );
+      },
+      Object.is,
+      onError,
+    );
     this.stopWhileStarting = this.stopAskedWhileStarting.readonly();
     this.error = derived(
       [this.failure, feed.session],
@@ -179,11 +201,14 @@ export class RunControl implements ClientRun {
     const pending = {
       action: force ? ('force' as const) : ('stop' as const),
       starting: !!starting,
+      key: starting ?? JSON.stringify(target),
     };
     this.pendingStops.add(pending);
+    this.pendingRevision.update((n) => n + 1);
     this.stopSending.set(pending.action);
     const done = () => {
       this.pendingStops.delete(pending);
+      this.pendingRevision.update((n) => n + 1);
       const remaining = [...this.pendingStops];
       this.stopAskedWhileStarting.set(remaining.some((p) => p.starting));
       this.stopSending.set(remaining.at(-1)?.action ?? null);
@@ -216,6 +241,8 @@ export class RunControl implements ClientRun {
             });
             throw new Error(message);
           }
+          pending.key = JSON.stringify({ session: summary.id, instance });
+          this.pendingRevision.update((n) => n + 1);
           return this.send(
             'api/stop-session',
             { force, session: summary.id, instance },

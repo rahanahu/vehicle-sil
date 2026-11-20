@@ -300,6 +300,7 @@ export function buildClient(options: ClientOptions): ClientParts {
     run: {
       starting: run.starting,
       stopping: run.stopping,
+      currentStopping: run.currentStopping,
       stopWhileStarting: run.stopWhileStarting,
       error: run.error,
       start: (request) => run.start(request),

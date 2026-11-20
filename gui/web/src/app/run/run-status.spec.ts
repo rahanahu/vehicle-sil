@@ -264,6 +264,15 @@ describe('RunStatus', () => {
     expect(host.forces).toBe(0);
   });
 
+  it('does not show the previous run stop while a new run starts', async () => {
+    await show(sessionViewFrom(summary({ ...ENDED, stop: 'requested' })));
+    host.starting.set(true);
+    await settle();
+    expect(stopButton().textContent).not.toContain('止めています');
+    expect(query('outcome')?.textContent).toContain('始めています');
+    expect(query('force-stop')).toBeNull();
+  });
+
   it('does not stop without waiting on a second click', async () => {
     const running = sessionViewFrom(summary());
     await show(running);

@@ -112,12 +112,12 @@ The `currentTarget()` method returns the current `{session, instance}` pair, or 
 
 ### Run control
 
-| Kind | Name                                                                                             |
-| ---- | ------------------------------------------------------------------------------------------------ |
-| Type | `ClientRun` (`starting`, `stopping`, `stopWhileStarting`, `error`, `start`, `stop`, `forceStop`) |
-| Type | `StopAction`                                                                                     |
+| Kind | Name                                                                                                                |
+| ---- | ------------------------------------------------------------------------------------------------------------------- |
+| Type | `ClientRun` (`starting`, `stopping`, `currentStopping`, `stopWhileStarting`, `error`, `start`, `stop`, `forceStop`) |
+| Type | `StopAction`                                                                                                        |
 
-Stop and force stop target the known session and instance. A confirmation can pass the captured pair to `front.run.forceStop(target)`; the action is refused if the target has changed or a new start is pending. A stop requested during this client’s start waits for its answer; if that answer is lost, the stop is not sent and the error says so. Check the current session before retrying. An old server without targeted stop is rejected; overlapping starts on one client are rejected.
+`currentStopping` reports only pending stops of the current session or current start; `stopping` includes stops for earlier runs. Stop and force stop target the known session and instance. A confirmation can pass the captured pair to `front.run.forceStop(target)`; the action is refused if the target has changed or a new start is pending. A stop requested during this client’s start waits for its answer; if that answer is lost, the stop is not sent and the error says so. Check the current session before retrying. An old server without targeted stop is rejected; overlapping starts on one client are rejected.
 
 ### Time
 

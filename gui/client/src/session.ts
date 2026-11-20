@@ -108,6 +108,7 @@ export interface ClientSession {
  */
 export class SessionFeed implements ClientSession {
   private instanceId: string | null = null;
+  private adoptionRevision = 0;
   private instanceListener: (instance: string) => void = () => undefined;
   private stopTarget: { session: number; instance: string } | null = null;
   private readonly current: Writable<SessionView | null>;
@@ -207,21 +208,31 @@ export class SessionFeed implements ClientSession {
     instance?: string | null,
     resyncFrom?: string | null,
   ): boolean {
-    // An HTTP response may arrive after a reconnect to another server instance. Never attach its
-    // session to the new server, even when that server reused the same numeric session ID.
-    if (instance !== undefined) {
-      if (this.instanceId !== null && instance !== this.instanceId) {
-        // A fresh explicit HTTP read can recover without a WebSocket, but an answer sent before a
-        // later instance was adopted cannot roll it back. Unknown instance is never a resync.
-        if (!instance || resyncFrom !== this.instanceId || this.connection.state.get() === 'open')
-          return false;
-        this.stopTarget = null;
-        this.instanceListener(instance);
-        this.allowedValue.set(null);
+    // Reject an old response before it can overwrite the current instance. On a switch, publish the new
+    // identity before any synchronous notification. A nested, newer adoption supersedes the outer one.
+    const switching =
+      instance !== undefined && this.instanceId !== null && instance !== this.instanceId;
+    if (
+      switching &&
+      (!instance || resyncFrom !== this.instanceId || this.connection.state.get() === 'open')
+    )
+      return false;
+    const revision = ++this.adoptionRevision;
+    if (switching && instance) {
+      this.stopTarget = null;
+      this.instanceId = instance;
+      this.instanceListener(instance);
+      if (revision !== this.adoptionRevision) return false;
+      this.current.set(null);
+      if (revision !== this.adoptionRevision) return false;
+      this.allowedValue.set(null);
+      if (revision !== this.adoptionRevision) return false;
+    } else if (instance !== undefined) {
+      if (instance && this.instanceId === null) {
         this.instanceId = instance;
-        this.current.set(null);
+        this.instanceListener(instance);
+        if (revision !== this.adoptionRevision) return false;
       }
-      if (instance && this.instanceId === null) this.instanceListener(instance);
       if (summary || !this.current.get()) this.instanceId = instance;
     }
     if (!summary) return true;
@@ -236,6 +247,7 @@ export class SessionFeed implements ClientSession {
         : sessionFromSummary(summary);
     this.stopTarget = this.instanceId ? { session: next.id, instance: this.instanceId } : null;
     this.current.set(next);
+    if (revision !== this.adoptionRevision) return false;
     this.adoptAllowed(summary.allowed ?? null);
     return true;
   }
@@ -340,6 +352,7 @@ export class SessionFeed implements ClientSession {
       if (message.type !== 'event') flush();
       switch (message.type) {
         case 'hello': {
+          ++this.adoptionRevision;
           // Rebuild from the summary. Only a reconnect that asked to continue from what it holds (with from_seq) keeps
           // the local log
           synced = false;
