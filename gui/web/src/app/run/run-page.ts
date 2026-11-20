@@ -303,9 +303,40 @@ export class RunPage {
   });
   /** 速度の倍率の欄が範囲の外。 */
   protected readonly speedInvalid = signal(false);
+  /** 選択中のファイルとセッションを切り替えたら、その実行の上限に戻す。 */
+  private readonly stopAtSource = computed(
+    () => {
+      const file = this.selected();
+      const session = this.session();
+      const carried = this.carriedFor(session?.id ?? null);
+      const sessionStop = session?.file === file ? session.check?.stop_at_ms : undefined;
+      return {
+        file,
+        id: session?.id ?? null,
+        value:
+          carried && carried.file === file ? (carried.stopAt ?? '') : String(sessionStop ?? ''),
+      };
+    },
+    { equal: (a, b) => a.file === b.file && a.id === b.id && a.value === b.value },
+  );
   /** 空欄なら自動停止せず、値があれば仮想時刻の上限にする。 */
-  protected readonly stopAt = signal(this.carried?.stopAt ?? '');
-  protected readonly stopAtTouched = signal(false);
+  protected readonly stopAt = linkedSignal<
+    { file: string | null; id: number | null; value: string },
+    string
+  >({
+    source: this.stopAtSource,
+    computation: (source, previous) =>
+      previous &&
+      previous.source.file === source.file &&
+      previous.source.id === source.id &&
+      previous.value !== previous.source.value
+        ? previous.value
+        : source.value,
+  });
+  protected readonly stopAtTouched = linkedSignal({
+    source: () => ({ file: this.selected(), id: this.session()?.id ?? null }),
+    computation: () => false,
+  });
   protected readonly stopAtInvalid = computed(() => {
     const value = this.stopAt().trim();
     return (

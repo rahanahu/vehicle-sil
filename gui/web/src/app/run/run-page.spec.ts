@@ -464,6 +464,34 @@ describe('RunPage', () => {
     answerScenarios();
   });
 
+  it('does not carry a stop time to another configuration and restores the session value', async () => {
+    const fixture = await openWithFiles();
+    (await checkRequest()).flush(response('check-passed'));
+    await fixture.whenStable();
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    input.value = '123';
+    input.dispatchEvent(new Event('input'));
+    TestBed.tick();
+    expect(pageIntent.get().stop_at_ms).toBe(123);
+    const page = fixture.componentInstance as unknown as { selectFile(file: string): void };
+    page.selectFile('forever.yaml');
+    TestBed.tick();
+    expect(input.value).toBe('');
+    expect(pageIntent.get().stop_at_ms).toBeUndefined();
+
+    // A summary and its check arrive from another session; its stop belongs only to that file.
+    for (const message of server('ws-pass').slice(2)) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(input.value).toBe('');
+    page.selectFile('simulation.yaml');
+    TestBed.tick();
+    expect(input.value).toBe('1000');
+    expect(pageIntent.get().stop_at_ms).toBe(1000);
+  });
+
   it('checks the speed and the paused start with the rest, and does not start on what the check refuses', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
