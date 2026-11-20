@@ -561,6 +561,13 @@ export function applySummary(
         launcher,
         stopRequests: Math.max(session.stopRequests, stopRequestsOf(summary.stop)),
         logSources: withSources(session.logSources, Object.keys(summary.log)),
+        ...(summary.scenario?.timeline_url
+          ? {
+              scenario: session.scenario
+                ? { ...session.scenario, timelineUrl: summary.scenario.timeline_url }
+                : scenarioView(summary.scenario),
+            }
+          : {}),
         ...(force || notLess ? { problems: mergedProblems, problemsOmitted: omitted } : {}),
       };
   if (!newer || staleProjection || (!force && controlOnly)) {
@@ -602,7 +609,12 @@ export function applySummary(
       (preserveEvents ? (known.get(p.name)?.workingDirectory ?? null) : null),
     environment: p.environment ?? (preserveEvents ? (known.get(p.name)?.environment ?? {}) : {}),
   }));
-  const scenario = summary.scenario ? scenarioView(summary.scenario) : next.scenario;
+  const scenario = summary.scenario
+    ? {
+        ...scenarioView(summary.scenario),
+        timelineUrl: next.scenario?.timelineUrl ?? summary.scenario.timeline_url,
+      }
+    : next.scenario;
   let mergedScenario =
     preserveEvents && scenario && next.scenario
       ? {
