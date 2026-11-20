@@ -1234,6 +1234,16 @@ def paused_api_checks() -> list[Case]:
         out.append(Case(case.name + "-paused", [*case.argv[:at], "--start-paused", *case.argv[at:]],
                         case.about + ", with a paused start", request=request))
     out.extend([
+        Case("check-simulation-paused-finite", ["check", "--json", "--stop-at-ms", "1000", "--start-paused", "--", "simulation.yaml"],
+             "a finite simulation checked with a paused start", request={"stop_at_ms": 1000, "start_paused": True}),
+        Case("check-simulation-no-dashboard-finite", ["check", "--json", "--disable", "Dashboard", "--stop-at-ms", "1000", "--", "simulation.yaml"],
+             "a finite simulation checked without Dashboard"),
+        Case("check-connect-unused-finite", ["check", "--json", "--stop-at-ms", "1000", "--connect", "CAN1=physical:1", "--", "connect.yaml"],
+             "a finite check with an unused connection", request={"stop_at_ms": 1000, "connect": {"CAN1": "physical:1"}}),
+        Case("check-forever-scenario-slow", ["check", "--json", "--scenario", "scenarios/throttle.yaml", "--speed", "0.001", "--", "forever.yaml"],
+             "a slow scenario checked before a control run"),
+        Case("check-forever-disable-both-max", ["check", "--json", "--disable", "Dashboard", "--disable", "Logger", "--speed", "max", "--", "forever.yaml"],
+             "a maximum-speed check with Engine alone"),
         Case("check-forever-no-logger-max-paused",
              ["check", "--json", "--disable", "Logger", "--speed", "max", "--start-paused", "--", "forever.yaml"],
              "a paused run without Logger, checked at maximum speed",

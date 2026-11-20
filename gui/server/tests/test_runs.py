@@ -267,7 +267,7 @@ def test_the_intent_goes_to_the_launcher_in_a_request_file_that_is_removed_after
         run = made()[-1]
         assert run["argv"][:3] == ["run", "--events", "--stdin-commands"] and run["argv"][-2:] == ["--", "simulation.yaml"]
         assert not {"--disable", "--speed", "--scenario", "--variant"} & set(run["argv"])  # the intent is not in them
-        assert json.loads(run["text"]) == {"vehicle_sil_run_request": 1, "disable": ["Logger"], "speed": 2.0}
+        assert json.loads(run["text"]) == {"vehicle_sil_run_request": 1, "disable": ["Logger"], "speed": 2.0, "stop_at_ms": 1000}
         assert run["mode"] == 0o600 and not os.path.exists(run["path"])
     with gui_server(tmp_path, launcher=launcher) as gui:
         run_async(main, gui)
@@ -658,9 +658,9 @@ def test_pause_step_resume_and_speed(tmp_path: Path) -> None:
                                           "max", "--start-paused", "--", "forever.yaml"]
             status, body = await c.post("api/time", {"command": "step", "ms": 25})
             assert status == 200 and body == {"session_id": 1, "command": {"command": "step", "ms": 25}}, body
-            await sock.until_stands(30)
+            await sock.until_stands(25)
             step = next(e for e in events(sock.received, "command"))
-            assert step["accepted"] and step["ms"] == 30  # whole steps of 10 ms
+            assert step["accepted"] and step["ms"] == 25  # whole steps of 5 ms
             status, body = await c.post("api/time", {"command": "speed", "value": 2, "id": 7})
             assert status == 200 and body["command"] == {"command": "speed", "value": 2.0, "id": 7}
             await sock.until_stands(speed=2)
@@ -685,7 +685,7 @@ def test_pause_step_resume_and_speed(tmp_path: Path) -> None:
             end = got[-1]["session"]
             assert end["result"]["result"] == "stopped" and end["launcher_state"]["paused"] is False
             timing = end["result"]["timing"]
-            assert timing["speed"] == 2 and timing["time_step_ms"] == 10 and timing["paused_ms"] > 0
+            assert timing["speed"] == 2 and timing["time_step_ms"] == 5 and timing["paused_ms"] > 0
             status, body = await c.post("api/time", {"command": "resume"})
             assert status == 409 and body["error"]["code"] == "not-running"
         run_async(main, gui)
@@ -840,7 +840,7 @@ def test_lateness_reaches_the_screen_and_the_summary(tmp_path: Path) -> None:
     async def main(c: Client) -> None:
         sock = await c.ws()
         await sock.until(is_synced)
-        await c.post("api/run", {"file": "late.yaml"})
+        await c.post("api/run", {"file": "late.yaml", "speed": 1})
         got = await sock.until(is_time(late_steps=1, late_ms=0))
         stalled = [e for e in events(got, "time") if e["late_ms"] > 0]
         assert stalled and stalled[0]["late_ms"] == 200 and stalled[0]["slipped_ms"] == 200
