@@ -613,6 +613,71 @@ describe('SessionFeed', () => {
     expect(client.session.session.get()?.check?.participants[0]?.name).toBe('Engine');
   });
 
+  it('takes completed scenario steps from a same-run hello while keeping omitted steps', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const id = response.session['id'];
+    const scenario = {
+      file: 'scenario.yaml',
+      name: 'test',
+      step_count: 1001,
+      steps: [],
+      steps_omitted: 0,
+      status: null,
+      over_at_ms: null,
+      timeline_url: null,
+    };
+    const step = (index: number, status: string) => ({
+      index,
+      line: 1,
+      kind: 'expect',
+      text: 'long text',
+      status,
+      start_ms: 0,
+      at_ms: null,
+      end_ms: null,
+      code: null,
+      message: null,
+    });
+    const hello = (rev: number, sc: unknown) => ({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: rev, scenario: sc },
+      replay: { from_seq: null },
+    });
+    socket.send(hello(1, scenario));
+    socket.send({
+      type: 'event',
+      session: id,
+      event: { event: 'scenario_step', seq: 1, t_ms: 1, ...step(1, 'running') },
+    });
+    socket.send({
+      type: 'event',
+      session: id,
+      event: { event: 'scenario_step', seq: 2, t_ms: 2, ...step(1001, 'running') },
+    });
+    socket.send({ type: 'synced', session: id, last_seq: 2 });
+    vi.advanceTimersByTime(BATCH_MS);
+    socket.send(
+      hello(2, {
+        ...scenario,
+        steps: [{ ...step(1, 'passed'), text: 'long... (5 more characters)' }],
+        steps_omitted: 1,
+      }),
+    );
+    socket.send({ type: 'synced', session: id, last_seq: 3 });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.scenario?.steps).toMatchObject([
+      { index: 1, status: 'passed', text: 'long text' },
+      { index: 1001, status: 'running' },
+    ]);
+  });
+
   it('rebuilds all replayed logs after a stale hello without duplicating gaps', async () => {
     const http = new FakeHttp();
     const { socket } = open(http);

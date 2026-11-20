@@ -620,6 +620,36 @@ describe('applyEvents', () => {
       true,
     );
     expect(truncated.scenario?.steps.map((item) => item.index)).toEqual([1, 2]);
+    const old = applyEvents(
+      sessionFromSummary(summary({ scenario })),
+      events(
+        { event: 'scenario_step', step: step(1, 'running', { text: 'long text' }) },
+        { event: 'scenario_step', step: step(1001, 'running') },
+      ),
+    );
+    const refreshed = applySummary(
+      old,
+      summary({
+        scenario: {
+          ...scenario,
+          steps: [
+            step(1, 'failed', {
+              text: 'long... (5 more characters)',
+              message: 'failed during disconnect',
+            }),
+          ],
+          steps_omitted: 1,
+        },
+        last_seq: 5,
+      }),
+      true,
+      true,
+    );
+    expect(refreshed.scenario?.steps).toMatchObject([
+      { index: 1, status: 'failed', text: 'long text', message: 'failed during disconnect' },
+      { index: 1001, status: 'running' },
+    ]);
+    expect(refreshed.scenario?.stepsOmitted).toBe(0);
     const steps = [step(1, 'passed'), step(2, 'failed'), step(3, 'not_run')];
     const result = {
       ...(summary().result ?? {}),
@@ -826,6 +856,16 @@ describe('applySummary', () => {
     const late = applySummary(ended, summary({ last_seq: 4, stop: 'requested' }));
     expect(late.launcher.running).toBe(false);
     expect(late.problems.map((p) => p.code)).toEqual(['no-result']);
+  });
+
+  it('merges previously live and disconnected findings without dropping or repeating them', () => {
+    const f0 = { ...finding, message: 'large finding omitted from the server' };
+    const f1 = { ...finding, message: 'finding while disconnected' };
+    let session = applyEvents(emptySession(), events({ event: 'finding', finding: f0 }));
+    session = applySummary(session, summary({ last_seq: 2, findings: [f1] }), true, true);
+    expect(session.findings.map((item) => item.message)).toEqual([f0.message, f1.message]);
+    session = applySummary(session, summary({ last_seq: 2, findings: [f1] }), true, true);
+    expect(session.findings.map((item) => item.message)).toEqual([f0.message, f1.message]);
   });
 
   it('takes only the launcher and the stop from an answer when the notifications bring the rest', () => {

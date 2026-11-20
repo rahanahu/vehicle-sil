@@ -254,6 +254,26 @@ function scenarioView(summary: SummaryScenario): ScenarioView {
   };
 }
 
+/** Restore a locally received complete string only when the server's value is exactly its shortened form. */
+function fullStepText(incoming: string | null, current: string | null): string | null {
+  if (incoming === null || current === null) return incoming;
+  const cut = /^(.*)\.\.\. \((\d+) more characters\)$/s.exec(incoming);
+  if (!cut) return incoming;
+  const prefix = cut[1];
+  return current.startsWith(prefix) &&
+    Array.from(current).length === Array.from(prefix).length + Number(cut[2])
+    ? current
+    : incoming;
+}
+
+function mergeScenarioStep(current: ScenarioStep, incoming: ScenarioStep): ScenarioStep {
+  return {
+    ...incoming,
+    text: fullStepText(incoming.text, current.text) ?? incoming.text,
+    message: fullStepText(incoming.message, current.message),
+  };
+}
+
 /** Applies one step (replacing one with the same index; kept in index order). */
 function withStep(steps: readonly ScenarioStep[], step: ScenarioStep): readonly ScenarioStep[] {
   const i = steps.findIndex((s) => s.index >= step.index);
@@ -552,7 +572,10 @@ export function applySummary(
     preserveEvents && scenario && next.scenario
       ? {
           ...scenario,
-          steps: next.scenario.steps.reduce((steps, step) => withStep(steps, step), scenario.steps),
+          steps: scenario.steps.reduce((steps, step) => {
+            const old = next.scenario?.steps.find((item) => item.index === step.index);
+            return withStep(steps, old ? mergeScenarioStep(old, step) : step);
+          }, next.scenario.steps),
         }
       : scenario;
   if (mergedScenario && scenario && mergedScenario !== scenario) {
@@ -583,10 +606,7 @@ export function applySummary(
       ? commandView(summary.last_command, summary.last_command.seq ?? -1)
       : next.lastCommand,
     launcherState: newerState(next.launcherState, summary.launcher_state ?? null),
-    findings:
-      preserveEvents && next.findings.length >= summary.findings.length
-        ? next.findings
-        : summary.findings,
+    findings: preserveEvents ? mergeFindings(next.findings, summary.findings) : summary.findings,
     result,
     check,
     scenario: mergedScenario,
@@ -665,6 +685,34 @@ function findingKey(finding: Finding): string {
     finding.message,
     finding.detail,
   ]);
+}
+
+/** Merge two ordered, potentially incomplete lists without coalescing repeated findings. */
+function mergeFindings(
+  current: readonly Finding[],
+  incoming: readonly Finding[],
+): readonly Finding[] {
+  const a = current.slice(0, MAX_FINDINGS);
+  const b = incoming.slice(0, MAX_FINDINGS);
+  const ak = a.map(findingKey);
+  const bk = b.map(findingKey);
+  const sizes = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+  for (let i = a.length - 1; i >= 0; --i)
+    for (let j = b.length - 1; j >= 0; --j)
+      sizes[i][j] =
+        ak[i] === bk[j] ? 1 + sizes[i + 1][j + 1] : Math.max(sizes[i + 1][j], sizes[i][j + 1]);
+  const merged: Finding[] = [];
+  let i = 0,
+    j = 0;
+  while ((i < a.length || j < b.length) && merged.length < MAX_FINDINGS) {
+    if (i < a.length && j < b.length && ak[i] === bk[j]) {
+      merged.push(a[i++]);
+      j++;
+    } else if (j === b.length || (i < a.length && sizes[i + 1][j] >= sizes[i][j + 1]))
+      merged.push(a[i++]);
+    else merged.push(b[j++]);
+  }
+  return merged;
 }
 
 /**
