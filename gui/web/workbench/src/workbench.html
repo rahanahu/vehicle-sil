@@ -169,8 +169,8 @@
             [disabled]="!!fixedPeer || !variables()?.peers?.length"
             (change)="peerChoice.set($any($event.target).value)"
           >
-            @if (fixedPeer && !peer()) {
-              <option>{{ fixedPeer }}</option>
+            @if (peerChoice() && !peer()) {
+              <option [value]="peerChoice()">{{ peerChoice() }} (waiting)</option>
             }
             @for (ecu of variables()?.peers; track ecu.name) {
               <option [value]="ecu.name" [selected]="ecu.name === peerChoice()">

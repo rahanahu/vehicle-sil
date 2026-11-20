@@ -32,8 +32,9 @@ Open the complete URL printed by the command. See the
   the participant you selected. Current waveform history is bounded, sampled
   through the GUI Client and transferred between open tabs when available.
   Waveform selections are restored after a server restart when browser storage
-  is available. History belongs to one server instance and run; it is not
-  reused after a restart.
+  and Web Locks are available. Without Web Locks the current screen still works,
+  but it does not advance the saved selection for the next server restart.
+  History belongs to one server instance and run; it is not reused after a restart.
 - Stop a recorded run, open **Scenario** and select **Load recording** to
   review or save the YAML. Recording exports the existing server format:
   applied writes and their virtual times, with the observed run length in its

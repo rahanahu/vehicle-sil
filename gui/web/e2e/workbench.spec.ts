@@ -172,6 +172,8 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
           }),
         );
         await expect(peer.locator('option[value="Dashboard"]')).toHaveCount(1);
+        await expect(peer).toHaveValue('Engine');
+        await expect(peer.getByRole('option', { name: 'Engine (waiting)' })).toHaveCount(1);
         socket!.send(
           JSON.stringify({
             type: 'variables',
@@ -334,6 +336,11 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
           headers: { Authorization: `Bearer ${server.token}` },
         });
         const oldInstance = (await oldApp.json()).instance as string;
+        await expect
+          .poll(() =>
+            page.evaluate(() => localStorage.getItem('vehicle-sil-workbench-waves:last-instance')),
+          )
+          .toBe(oldInstance);
         const port = Number(new URL(server.url).port);
         // Let the browser close its WebSocket first so the server can bind the same port again.
         await page.close();
@@ -373,9 +380,14 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
           headers: { Authorization: `Bearer ${restarted.token}` },
         });
         const newInstance = (await newApp.json()).instance as string;
+        await expect
+          .poll(() =>
+            fresh.evaluate(() => localStorage.getItem('vehicle-sil-workbench-waves:last-instance')),
+          )
+          .toBe(newInstance);
         await fresh.evaluate(
           ({ old, current }) => {
-            localStorage.setItem(`vehicle-sil-workbench-waves:${old}`, '[]');
+            localStorage.removeItem(`vehicle-sil-workbench-waves:${old}`);
             const bus = new BroadcastChannel('vehicle-sil-workbench-waves');
             bus.postMessage({
               kind: 'selection',
@@ -409,9 +421,13 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
           timeout: RUN_TIMEOUT,
         });
         await expect(fresh.getByRole('img', { name: 'engine.speed waveform' })).toBeVisible();
-        // A late authenticated hello for the already initialized old instance must not move
-        // the storage head back after the new instance has claimed it.
+        // An old tab whose instance key was never created receives a late hello after the new
+        // instance has claimed the head. Its authoritative app recheck must reject the claim.
         const stale = await page.context().newPage();
+        let appReplies = 0;
+        stale.on('response', (response) => {
+          if (response.url().endsWith('/api/app')) appReplies++;
+        });
         await stale.routeWebSocket(/\/ws$/, (socket) => {
           const upstream = socket.connectToServer();
           upstream.onMessage((message) => {
@@ -429,15 +445,64 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
           timeout: RUN_TIMEOUT,
         });
         await stale.getByRole('button', { name: 'Waveforms', exact: true }).click();
-        await expect(stale.getByText('Add signals from ECU I/O to start tracing.')).toBeVisible({
+        await expect(stale.getByRole('img', { name: 'engine.speed waveform' })).toBeVisible({
           timeout: RUN_TIMEOUT,
         });
+        await expect.poll(() => appReplies).toBeGreaterThanOrEqual(2);
+        await fresh.evaluate(() =>
+          navigator.locks.request('vehicle-sil-workbench-wave-head', () => undefined),
+        );
         await expect
           .poll(() =>
             fresh.evaluate(() => localStorage.getItem('vehicle-sil-workbench-waves:last-instance')),
           )
           .toBe(newInstance);
         await stale.close();
+        // Quota failures during the copy must not move the head to a key that was not saved.
+        const quota = await page.context().newPage();
+        const quotaInstance = 'old-quota-instance';
+        await quota.addInitScript((blockedKey) => {
+          const set = Storage.prototype.setItem;
+          Storage.prototype.setItem = function (key, value) {
+            if (key === blockedKey) throw new DOMException('Quota exceeded', 'QuotaExceededError');
+            return set.call(this, key, value);
+          };
+        }, `vehicle-sil-workbench-waves:${quotaInstance}`);
+        await quota.routeWebSocket(/\/ws$/, (socket) => {
+          const upstream = socket.connectToServer();
+          upstream.onMessage((message) => {
+            if (typeof message !== 'string') return socket.send(message);
+            const packet = JSON.parse(message);
+            socket.send(
+              JSON.stringify(
+                packet.type === 'hello' ? { ...packet, instance: quotaInstance } : packet,
+              ),
+            );
+          });
+        });
+        await quota.goto(restarted.url);
+        await expect(quota.getByText('Running', { exact: true }).first()).toBeVisible({
+          timeout: RUN_TIMEOUT,
+        });
+        await quota.getByRole('button', { name: 'Waveforms', exact: true }).click();
+        await expect(quota.getByRole('img', { name: 'engine.speed waveform' })).toBeVisible({
+          timeout: RUN_TIMEOUT,
+        });
+        await fresh.evaluate(() =>
+          navigator.locks.request('vehicle-sil-workbench-wave-head', () => undefined),
+        );
+        expect(
+          await fresh.evaluate(() =>
+            localStorage.getItem('vehicle-sil-workbench-waves:last-instance'),
+          ),
+        ).toBe(newInstance);
+        expect(
+          await fresh.evaluate(
+            (id) => localStorage.getItem(`vehicle-sil-workbench-waves:${id}`),
+            quotaInstance,
+          ),
+        ).toBeNull();
+        await quota.close();
         await fresh.getByRole('button', { name: 'Stop', exact: true }).click();
         await expect(fresh.getByText('Run ended', { exact: false }).first()).toBeVisible({
           timeout: RUN_TIMEOUT,

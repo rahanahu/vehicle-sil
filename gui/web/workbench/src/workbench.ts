@@ -84,39 +84,45 @@ function readStored<T>(key: string, valid: (item: unknown) => item is T): T[] {
     return [];
   }
 }
-function saveStored(key: string, value: unknown): void {
+function saveStored(key: string, value: unknown): boolean {
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch {
     // Site data can be disabled: the current tab remains usable without persistence.
+    return false;
   }
 }
-function restoreTraces(instance: string): Selection[] {
+function restoreTraces(instance: string): { traces: Selection[]; persisted: boolean } {
   let traces: Selection[] = [];
   let create = false;
-  let previous: string | null = null;
+  let persisted = false;
+  const parse = (raw: string | null): Selection[] | null => {
+    if (raw === null) return null;
+    try {
+      const value: unknown = JSON.parse(raw);
+      return Array.isArray(value) ? value.filter(isTrace) : null;
+    } catch {
+      return null;
+    }
+  };
   try {
-    let saved = localStorage.getItem(waveStorageKey(instance));
-    previous = localStorage.getItem(waveStorageHead);
+    let saved = parse(localStorage.getItem(waveStorageKey(instance)));
+    const previous = localStorage.getItem(waveStorageHead);
     if (saved === null) {
       create = true;
-      saved = previous ? localStorage.getItem(waveStorageKey(previous)) : null;
-      saved ??= localStorage.getItem(waveStorage); // Before instance-scoped storage.
-    }
-    traces = savedArray(saved, isTrace);
+      saved =
+        previous && previous !== instance
+          ? parse(localStorage.getItem(waveStorageKey(previous)))
+          : null;
+      saved ??= parse(localStorage.getItem(waveStorage)); // Before instance-scoped storage.
+    } else persisted = true;
+    traces = saved ?? [];
   } catch {
     // Site data may be unavailable, while the current tab and run still work.
   }
-  if (create) saveStored(waveStorageKey(instance), traces);
-  try {
-    // An already initialized, older instance may be observed late. It must not move the head
-    // back from a newer one. Only the first initialization (or missing head) claims it.
-    if ((create || previous === null) && localStorage.getItem(waveStorageHead) === previous)
-      localStorage.setItem(waveStorageHead, instance);
-  } catch {
-    // Persistence is optional.
-  }
-  return traces;
+  if (create) persisted = saveStored(waveStorageKey(instance), traces);
+  return { traces, persisted };
 }
 const refKey = ({ peer, name }: VariableRef) => JSON.stringify([peer, name]);
 const tabNames = [
@@ -679,7 +685,8 @@ export class Workbench {
         .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
         .map((entry) => entry.trace!);
       this.applyTraces(traces);
-      if (this.waveInstanceSeen) saveStored(waveStorageKey(this.waveInstanceSeen), traces);
+      if (this.waveInstanceSeen && saveStored(waveStorageKey(this.waveInstanceSeen), traces))
+        this.promoteWaveHead(this.waveInstanceSeen);
     }
   }
 
@@ -688,12 +695,42 @@ export class Workbench {
     this.waveInstanceSeen = instance;
     this.waveRevision = 0;
     this.waveEntries.clear();
-    const traces = restoreTraces(instance);
+    const { traces, persisted } = restoreTraces(instance);
     for (const trace of traces) {
       const key = refKey(trace);
       this.waveEntries.set(key, { key, trace, revision: 0, actor: '' });
     }
     this.applyTraces(traces);
+    if (persisted) this.promoteWaveHead(instance);
+  }
+
+  private promoteWaveHead(instance: string) {
+    // A random instance ID has no ordering. Serialize claims across tabs and check the actual
+    // server under that lock: a late response from an old instance cannot reclaim the head.
+    // Without Web Locks, keep the old head rather than risk overwriting a newer one.
+    if (!navigator.locks || !pageToken) return;
+    void navigator.locks
+      .request('vehicle-sil-workbench-wave-head', async () => {
+        if (localStorage.getItem(waveStorageHead) === instance) return;
+        const response = await fetch(new URL('/api/app', location.href), {
+          headers: { Authorization: `Bearer ${pageToken}` },
+          cache: 'no-store',
+        });
+        if (!response.ok) return;
+        const app: unknown = await response.json();
+        if (
+          !app ||
+          typeof app !== 'object' ||
+          (app as { instance?: unknown }).instance !== instance ||
+          this.front()?.low.session.currentInstance() !== instance ||
+          localStorage.getItem(waveStorageKey(instance)) === null
+        )
+          return;
+        localStorage.setItem(waveStorageHead, instance);
+      })
+      .catch(() => {
+        /* Storage, locks and the network are optional for the current tab. */
+      });
   }
 
   private applyTraces(traces: Selection[]) {
