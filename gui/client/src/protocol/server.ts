@@ -64,6 +64,8 @@ export const PROTOCOL_VERSION = 2;
  * A server notice (an API error, a WebSocket error, problems of the session). message is shown in English, unchanged.
  */
 export interface ServerProblem {
+  /** Monotonic per-run diagnostic identifier, absent on older servers. */
+  problem_seq?: number;
   code: string;
   message: string;
   /** For launcher-stderr, the number of lines dropped at this point (`detail.skipped`). Other notices lack it. */
@@ -79,6 +81,8 @@ export const readServerProblem: Reader<ServerProblem> = (value, path) => {
     code: field(f, path, 'code', string),
     message: field(f, path, 'message', string),
   };
+  if (Number.isSafeInteger(f['problem_seq']) && (f['problem_seq'] as number) >= 0)
+    problem.problem_seq = f['problem_seq'] as number;
   // The contents of detail differ by code. Take only what is used, and only when its shape fits
   const detail = f['detail'];
   if (typeof detail === 'object' && detail !== null && 'skipped' in detail) {
@@ -633,6 +637,8 @@ export interface SessionSummary {
   log: Record<string, LogCounts>;
   problems: ServerProblem[];
   problems_omitted: number;
+  /** Highest diagnostic identifier allocated by the server, including omitted diagnostics. */
+  problem_seq?: number | null;
   /** Progress of the scenario run (`scenario` of `api/run`). null for a run without a scenario. */
   scenario: SummaryScenario | null;
   /**
@@ -784,6 +790,9 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
     log: field(f, path, 'log', soft(partlyRecord(readLogCounts, u), {}, u)),
     problems: field(f, path, 'problems', items(readServerProblem, u)),
     problems_omitted: field(f, path, 'problems_omitted', soft(integer, 0, u)),
+    ...(f['problem_seq'] === undefined
+      ? {}
+      : { problem_seq: field(f, path, 'problem_seq', soft(nullable(integer), null, u)) }),
     scenario: field(
       f,
       path,

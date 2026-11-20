@@ -429,6 +429,92 @@ describe('SessionFeed', () => {
     expect(client.session.ready.get()).toBe(true);
   });
 
+  it('rebuilds all replayed logs after a stale hello without duplicating gaps', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const id = response.session['id'];
+    const hello = (rev: number) => ({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: rev },
+      replay: { from_seq: null },
+    });
+    const log = (seq: number) => ({
+      type: 'event',
+      session: id,
+      event: { event: 'log', seq, t_ms: seq, source: 'ECU', line: `line ${seq}` },
+    });
+    const dropped = {
+      type: 'dropped',
+      session: id,
+      reason: 'not-kept',
+      log: { ECU: 1 },
+      at_least: [],
+      events: 0,
+    };
+    socket.send(hello(1));
+    socket.send(dropped);
+    socket.send(log(1));
+    socket.send(log(3));
+    socket.send({ type: 'synced', session: id, last_seq: 3 });
+    vi.advanceTimersByTime(BATCH_MS);
+    const refresh = client.fetchSession();
+    http
+      .expectOne('api/session')
+      .flush({ instance: 'x', session: { ...response.session, snapshot_rev: 3 } });
+    await refresh;
+    socket.send(hello(2));
+    socket.send(dropped);
+    socket.send(log(1));
+    socket.send(log(2));
+    socket.send(log(3));
+    socket.send({ type: 'synced', session: id, last_seq: 3 });
+    vi.advanceTimersByTime(BATCH_MS);
+    const logs = client.session.session.get()?.logs ?? [];
+    expect(logs.filter((line) => !line.gap).map((line) => line.line)).toEqual([
+      'line 1',
+      'line 2',
+      'line 3',
+    ]);
+    expect(logs.filter((line) => line.gap)).toHaveLength(1);
+  });
+
+  it('deduplicates a problem already included in a newer HTTP summary', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const id = response.session['id'];
+    const problem = { code: 'stop-not-delivered', message: 'failed', detail: null, problem_seq: 1 };
+    socket.send({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 1 },
+      replay: null,
+    });
+    vi.advanceTimersByTime(BATCH_MS);
+    const refresh = client.fetchSession();
+    http.expectOne('api/session').flush({
+      instance: 'x',
+      session: { ...response.session, snapshot_rev: 2, problem_seq: 1, problems: [problem] },
+    });
+    await refresh;
+    socket.send({ type: 'error', session: id, ...problem });
+    socket.send({ type: 'session', session: { ...response.session, snapshot_rev: 1 } });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(
+      client.session.session.get()?.problems.filter((p) => p.code === problem.code),
+    ).toHaveLength(1);
+  });
+
   it.each(['old-first', 'new-first'] as const)(
     'orders overlapping same-run session snapshots by server revision (%s)',
     async (order) => {

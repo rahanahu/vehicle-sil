@@ -39,3 +39,13 @@ def test_variable_snapshot_and_availability_capture_order():
         await variables.close()
 
     asyncio.run(run())
+
+
+def test_problem_sequence_is_shared_by_error_and_summary():
+    session = Session(1, "sim.yaml", [], None, False)
+    first = session.problem("stop-not-delivered", "failed", None)[0]
+    second = session.problem("stop-not-delivered", "failed", None)[0]
+    summary = session.summary()
+    assert (first["problem_seq"], second["problem_seq"]) == (1, 2)
+    assert summary["problem_seq"] == 2
+    assert [problem["problem_seq"] for problem in summary["problems"]] == [1, 2]

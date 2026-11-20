@@ -331,7 +331,7 @@ API のバージョンは `vehicle_sil_gui`（今は 2）です。サーバー�
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
 | `session` | `{session}`（要約） | `ws-pass.json`、`ws-without-check.json` |
 | `allowed` | `{session, allowed}`。サーバーが受け付けることが変わり、それを運ぶ `session` が続かない（下の「サーバーが受け付けること（`allowed`）」）。`session` は今の実行の id、なければ `null` | `ws-allowed.json` |
-| `error` | `{session, code, message, detail}`。サーバーが気づいたこと（下の「`error` の `code`」）。要約の `problems` にも残る | `ws-bad-lines.json` |
+| `error` | `{session, code, message, detail, problem_seq?}`。サーバーが気づいたこと（下の「`error` の `code`」）。要約の `problems` にも残る | `ws-bad-lines.json` |
 | `dropped` | `{session, reason, log, at_least, events}`。この画面に送らなかったものの数 | `ws-dropped.json`、`ws-slow-client.json` |
 | `resync` | `{reason, message}`。画面の受信が遅く、落とせない通知まであふれた。すぐ後に `hello` から送り直す | `ws-resync.json` |
 | `variables` | `{session, variables}`。その実行の変数の機能の状態か一覧（要約の `variables` と同じ形） | `ws-variables.json`、`ws-variables-failed.json` |
@@ -425,7 +425,8 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | `result` | `result` イベントの `result`（なければ `null`） |
 | `variables` | ECU の変数の機能の状態、participant ごとの変数、最近の操作（下の「ECU の変数」） |
 | `log` | source ごとの `{kept, dropped}`: サーバーが覚えている行の数と、落とした行の数 |
-| `problems`、`problems_omitted` | サーバーの通知（`error` と同じ `{code, message, detail}`）を起きた順に並べたものと、上限を超えて覚えていない数 |
+| `problems`、`problems_omitted` | サーバーの通知（`error` と同じ `{code, message, detail, problem_seq}`）を起きた順に並べたものと、上限を超えて覚えていない数 |
+| `problem_seq` | この実行で発生したサーバー診断の最大番号。省略された診断も含む。実行に属する `error` と要約の同じ診断は同じ番号を持ち、重複を除ける。旧サーバーにはない |
 | `scenario` | シナリオの実行（`api/run` の `scenario`）の経過。シナリオのない実行では `null`（下の「シナリオ」） |
 
 フィールドごとの補足です。
@@ -536,7 +537,7 @@ ECU は、動いている間に、いま変数のそれぞれを使っている�
 | `inactive` | ECU のいまの構成では使っていない |
 
 - 要約の変数の `availability` は、いまの状態です。再接続した後の `hello` の要約には、そのときの状態が入っています。
-- `availability` の通知は `{"type": "availability", "session", "peers": {"<participant>": {"<変数>": "<状態>", ...}}}` です。状態が変わった participant ごとに、利用状態を報告する変数の全部の状態が入り、その participant について前に届いたものを置き換えます。短い間の変化はまとめて送り、変数を watch しているかによらず、全部の接続に送ります。
+- `availability` の通知は `{"type": "availability", "session", "rev", "peers": {"<participant>": {"<変数>": "<状態>", ...}}}` です。状態が変わった participant ごとに、利用状態を報告する変数の全部の状態が入り、その participant について前に届いたものを置き換えます。短い間の変化はまとめて送り、変数を watch しているかによらず、全部の接続に送ります。
 - その変数が載った `variables` の通知（か `hello`）の後に届きます。上限で要約から外した participant と変数は入りません。
 - participant がシミュレーションから抜けても、Control Server との接続が切れても、状態は変わりません。ECU が最後に言ったままです（接続のことは `peers[].connected` と `state` が言います）。participant の新しいプロセスは、変数が宣言した状態から始まります。
 

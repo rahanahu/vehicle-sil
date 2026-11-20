@@ -815,6 +815,34 @@ describe('the front door', () => {
       expect(done).toBe(true);
     });
 
+    it('keeps a newer HTTP projection while delivering buffered logs and command answers', async () => {
+      const rig = await running();
+      const pause = rig.front.time.pause();
+      const id = rig.timeBody().id;
+      const finding = { severity: 'error', code: 'x', message: 'one' };
+      rig.socket.send(event({ event: 'finding', ...finding }));
+      rig.socket.send(event(timeEvent(60, 100)));
+      rig.socket.send(event({ event: 'log', t_ms: 61, source: 'ECU', line: 'kept' }));
+      rig.socket.send(event(commandEvent(62, 'pause', id)));
+      const refresh = rig.front.low.fetchSession();
+      rig.http.expectOne('api/session').flush({
+        instance: 'x',
+        session: summary({
+          snapshot_rev: 2,
+          last_seq: lastSeq,
+          time: { sim_ms: 200, actual_speed: 1 },
+          findings: [finding],
+        }),
+      });
+      await refresh;
+      await vi.advanceTimersByTimeAsync(BATCH_MS);
+      await expect(pause).resolves.toBeUndefined();
+      const session = rig.front.low.session.session.get();
+      expect(session?.simMs).toBe(200);
+      expect(session?.findings.map((item) => item.message)).toEqual(['one']);
+      expect(session?.logs.map((line) => line.line)).toContain('kept');
+    });
+
     it('delivers ACK and values when a notice subscriber refreshes the same run', async () => {
       const rig = await running();
       const ref = { peer: 'Engine', name: 'engine.demand' };

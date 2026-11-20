@@ -718,6 +718,36 @@ describe('variables', () => {
     client.close();
   });
 
+  it.each(['hello', 'variables'] as const)(
+    'keeps a newer %s snapshot when enter synchronously reads an older one',
+    async (kind) => {
+      const { client, http, deliver } = setup();
+      await deliver(hello(1, { ...ready(), rev: 1 }));
+      let fetched = false;
+      const unsubscribe = client.variables.state.subscribe((state) => {
+        if (fetched || state.session !== 2 || state.status !== 'unknown') return;
+        fetched = true;
+        void client.fetchSession();
+        http.expectOne('api/session').flush({
+          instance: 'x',
+          session: summary(2, { ...ready(), rev: 1, state: 'connecting' }),
+        });
+      });
+      if (kind === 'hello') {
+        await deliver(hello(2, { ...ready(), rev: 2 }));
+      } else {
+        await deliver(
+          { type: 'variables', session: 2, variables: { ...ready(), rev: 2 } },
+          { type: 'session', session: summary(2) },
+        );
+      }
+      expect(fetched).toBe(true);
+      expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
+      unsubscribe();
+      client.close();
+    },
+  );
+
   it('keeps a newer WebSocket variables snapshot over an older pending HTTP response', async () => {
     const { client, http, deliver } = setup();
     const connecting = { ...ready(), state: 'connecting' };

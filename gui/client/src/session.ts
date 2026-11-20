@@ -480,7 +480,16 @@ export class SessionFeed implements ClientSession {
           session = !summary
             ? null
             : staleSnapshot && session
-              ? session
+              ? resumed
+                ? session
+                : {
+                    ...session,
+                    lastSeq: -1,
+                    projectedSeq: Math.max(session.projectedSeq ?? -1, session.lastSeq),
+                    logs: [],
+                    logSources: {},
+                    droppedMarks: 0,
+                  }
               : resumed && session
                 ? applySummary(session, summary, true)
                 : sessionFromSummary(summary);
@@ -513,11 +522,13 @@ export class SessionFeed implements ClientSession {
           if (message.code === 'unauthorized') {
             // Reported through rejected (receive disconnects)
           } else if (session && message.session === session.id) {
-            const { code, message: text, skipped } = message;
-            session = addProblem(
-              session,
-              skipped === undefined ? { code, message: text } : { code, message: text, skipped },
-            );
+            const { code, message: text, skipped, problem_seq } = message;
+            session = addProblem(session, {
+              code,
+              message: text,
+              ...(skipped === undefined ? {} : { skipped }),
+              ...(problem_seq === undefined ? {} : { problem_seq }),
+            });
           } else {
             notices.push(message.message);
           }

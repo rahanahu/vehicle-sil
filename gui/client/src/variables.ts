@@ -756,6 +756,8 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         case 'variables': {
           const id = message['session'];
           if (!Number.isSafeInteger(id)) break;
+          const details = message['variables'];
+          const rev = isObject(details) ? positionOrNull(details['rev']) : null;
           const existing = this.stateValue.get().session;
           if (existing !== null && (id as number) < existing) break;
           if (id !== existing) {
@@ -763,15 +765,13 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
             if (!current()) return;
             const afterFlush = this.stateValue.get().session;
             if (afterFlush !== null && (id as number) < afterFlush) break;
-            // A synchronous read may already have supplied this run's newer variables.
-            if (afterFlush === id) break;
-            const initial = this.enter(id as number);
-            if (!current()) return;
-            if (this.stateValue.get() !== initial) break;
-            touchedAll = true;
+            if (afterFlush !== id) {
+              this.enter(id as number);
+              if (!current()) return;
+              if (this.stateValue.get().session !== id) break;
+              touchedAll = true;
+            }
           }
-          const details = message['variables'];
-          const rev = isObject(details) ? positionOrNull(details['rev']) : null;
           if (snapshotCurrent(id as number, rev)) {
             const version = this.applySnapshot(
               readVariables(details, id as number),
@@ -909,7 +909,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     if (id !== existing) {
       const initial = this.enter(id);
       if (!current()) return null;
-      if (this.stateValue.get() !== initial) applyState = false;
+      if (this.stateValue.get() !== initial) applyState = applyState && snapshotCurrent();
     }
     // A callback from enter may have adopted a different run; its operations are a different namespace.
     const sameIdentity = () =>

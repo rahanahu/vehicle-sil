@@ -334,7 +334,7 @@ After authentication, a screen can send variable `watch` and `unwatch` messages 
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
 | `session` | `{session}` (the summary) | `ws-pass.json`, `ws-without-check.json` |
 | `allowed` | `{session, allowed}`. What the server accepts changed, and no `session` follows to carry it ("What the server accepts (`allowed`)" below). `session` is the id of the current run, or `null` | `ws-allowed.json` |
-| `error` | `{session, code, message, detail}`. Something the server noticed ("The `code` of `error` messages" below). Also kept in `problems` of the summary | `ws-bad-lines.json` |
+| `error` | `{session, code, message, detail, problem_seq?}`. Something the server noticed ("The `code` of `error` messages" below). Also kept in `problems` of the summary | `ws-bad-lines.json` |
 | `dropped` | `{session, reason, log, at_least, events}`. Counts of what was not sent to this screen | `ws-dropped.json`, `ws-slow-client.json` |
 | `resync` | `{reason, message}`. The screen receives too slowly, and even notifications that must not be dropped overflowed. Right after this, the server sends everything again from `hello` | `ws-resync.json` |
 | `variables` | `{session, variables}`. The state or list of that run's variable feature (same shape as `variables` in the summary) | `ws-variables.json`, `ws-variables-failed.json` |
@@ -428,7 +428,8 @@ Notifications from the server.
 | `result` | `result` of the `result` event (`null` if none) |
 | `variables` | The state of the ECU variable feature, the variables of each participant, recent operations ("ECU variables" below) |
 | `log` | `{kept, dropped}` per source: the number of lines the server keeps and the number it dropped |
-| `problems`, `problems_omitted` | The server's notifications (`{code, message, detail}`, as in `error`) in the order they happened, and the number not kept because the limit was exceeded |
+| `problems`, `problems_omitted` | The server's notifications (`{code, message, detail, problem_seq}`, as in `error`) in the order they happened, and the number not kept because the limit was exceeded |
+| `problem_seq` | Highest server diagnostic sequence in this run, including omitted problems. A session-scoped `error` and its summary entry share the same sequence, allowing deduplication; older servers omit it |
 | `scenario` | The progress of the scenario run (`scenario` of `api/run`). `null` for a run without a scenario ("Scenarios" below) |
 
 Notes on the fields:
@@ -539,7 +540,7 @@ An ECU can say while it runs whether it uses each of its variables now, for exam
 | `inactive` | Not in use in the present set-up of the ECU |
 
 - `availability` of a variable in the summary is its state now. The summary in `hello` after a reconnection has the states of that moment.
-- The `availability` notification is `{"type": "availability", "session", "peers": {"<participant>": {"<variable>": "<state>", ...}}}`. Of each participant whose states changed, it holds the state of every variable that reports its availability, and replaces what came before for that participant. Changes over a short time are sent together, to every connection, whether it watches variables or not.
+- The `availability` notification is `{"type": "availability", "session", "rev", "peers": {"<participant>": {"<variable>": "<state>", ...}}}`. Of each participant whose states changed, it holds the state of every variable that reports its availability, and replaces what came before for that participant. Changes over a short time are sent together, to every connection, whether it watches variables or not.
 - It comes after the `variables` notification (or the `hello`) that lists those variables. Participants and variables that a limit leaves out of the summary are not in it.
 - A participant that leaves the simulation, and a lost connection to the Control Server, do not change the states: they stay what the ECU said last (`peers[].connected` and `state` tell of the connection). A new process of the participant starts from the states its variables declare.
 

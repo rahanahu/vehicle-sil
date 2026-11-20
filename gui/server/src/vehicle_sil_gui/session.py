@@ -284,6 +284,7 @@ class Session:
         self.result: dict | None = None
         self.problems: list[dict] = []
         self.problems_omitted = 0
+        self._problem_seq = 0
         self._problem_counts = {"launcher": 0, "server": 0}
         self._stderr_lines = 0
         self._stderr_last: deque[str] = deque(maxlen=self.limits.stderr_last)
@@ -592,7 +593,8 @@ class Session:
         """A problem for the screens, kept in the summary while its room has space: the server's own problems,
         the launcher's standard error (bounded by stderr_line) and the rest of what the launcher wrote each have
         their own room."""
-        entry = {"code": code, "message": message, "detail": detail}
+        self._problem_seq += 1
+        entry = {"code": code, "message": message, "detail": detail, "problem_seq": self._problem_seq}
         room = "server" if code in SERVER_PROBLEMS else None if code == STDERR else "launcher"
         if room is None or self._problem_counts[room] < (self.limits.server_problems if room == "server"
                                                          else self.limits.problems):
@@ -721,6 +723,7 @@ class Session:
             "log": {source: {"kept": log.kept, "dropped": log.dropped + log.launcher_dropped}
                     for source, log in self._logs.items()},
             "problems": list(self.problems), "problems_omitted": self.problems_omitted,
+            "problem_seq": self._problem_seq,
             "scenario": self.scenario_summary(),
         }
         if variables:
