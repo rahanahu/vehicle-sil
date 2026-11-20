@@ -1278,8 +1278,10 @@ declare module 'react' {
 - The URL is passed in an environment variable (as an argument, the token would be visible to other users in the process list).
 
   ```sh
-  VEHICLE_SIL_GUI_URL='<URL the server printed>' node examples/gui_client/run.mjs simulation.yaml
+  VEHICLE_SIL_GUI_URL='<URL the server printed>' node examples/gui_client/run.mjs simulation.yaml --stop-at-ms 1000
   ```
+
+- For a finite run, pass `--stop-at-ms` with the virtual stop time in milliseconds. Without it, the run continues until stopped.
 
 - They run outside a browser, so they send the server's own origin as `Origin`.
 
