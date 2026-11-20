@@ -858,6 +858,16 @@ describe('applySummary', () => {
     expect(late.problems.map((p) => p.code)).toEqual(['no-result']);
   });
 
+  it('keeps a later identical live finding from an older unnumbered server', () => {
+    let session = sessionFromSummary(summary({ last_seq: 5, findings: [finding] }));
+    session = applyEvents(session, eventsFrom(6, [{ event: 'finding', finding }]));
+    expect(session.findings).toHaveLength(2);
+    expect(session.findings.map((item) => item.message)).toEqual([
+      finding.message,
+      finding.message,
+    ]);
+  });
+
   it('keeps identical findings with different event sequences in their real order', () => {
     const first = { ...finding, event_seq: 1 };
     const third = { ...finding, event_seq: 3 };

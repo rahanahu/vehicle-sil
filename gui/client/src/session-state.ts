@@ -899,7 +899,9 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
         ? next
         : {
             ...next,
-            findings: mergeFindings(next.findings, [{ ...event.finding, event_seq: event.seq }]),
+            findings: next.findings.every((finding) => finding.event_seq !== undefined)
+              ? mergeFindings(next.findings, [{ ...event.finding, event_seq: event.seq }])
+              : [...next.findings, { ...event.finding, event_seq: event.seq }],
           };
     case 'time':
       return { ...next, simMs: event.sim_ms, timeOmittedFields: [], time: timeView(event) };
