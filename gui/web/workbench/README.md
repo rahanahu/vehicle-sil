@@ -24,8 +24,9 @@ Open the complete URL printed by the command. See the
   **Record & start**. Select **Start paused** to hold before the first step.
 - Use the inline controls on **ECU I/O**. Press Enter to send a typed number.
   A slider sends the value when the adjustment finishes. During a pause a
-  write remains pending until an ECU step applies it. **1 step** requests the
-  minimum step reported by the launcher.
+  write remains pending until an ECU step applies it. If the result is lost,
+  the screen says the outcome is unknown; check the value before writing again.
+  **1 step** requests the minimum step reported by the launcher.
 - Focus or hover over a signal to pin it or add it to **Waveforms**. Open an
   ECU or the waveform view in another browser tab. A detached ECU stays on
   the participant you selected. Current waveform history is bounded, sampled

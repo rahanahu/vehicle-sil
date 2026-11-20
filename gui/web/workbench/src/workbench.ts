@@ -13,6 +13,7 @@ import { DecimalPipe } from '@angular/common';
 import {
   ActionError,
   connect,
+  takeToken,
   watch,
   type CheckResult,
   type Front,
@@ -53,6 +54,8 @@ type WaveMessage =
   | { kind: 'request'; session: number }
   | { kind: 'history'; session: number; histories: [string, Point[]][] };
 const locationQuery = new URLSearchParams(location.search);
+// Retain the URL token in memory as well: storage can be unavailable or not copied to a new tab.
+const pageToken = takeToken(window);
 const waveStorage = 'vehicle-sil-workbench-waves';
 const pinStorage = 'vehicle-sil-workbench-pins';
 const refKey = ({ peer, name }: VariableRef) => JSON.stringify([peer, name]);
@@ -313,7 +316,9 @@ export class Workbench {
       });
     });
     void this.action(async () => {
-      const front = await connect();
+      const front = pageToken
+        ? await connect({ base_url: new URL('/', location.href).href, token: pageToken })
+        : await connect();
       this.front.set(front);
       this.destroy.onDestroy(() => front.close());
       const releases = [
@@ -415,7 +420,6 @@ export class Workbench {
     if (this.pending() || !this.controls()?.start?.ok) return;
     this.pending.set(true);
     this.recordNext.set(record);
-    this.recordedRun.set(null);
     try {
       // The answer identifies this start even if session notifications are delayed or another
       // run starts before they arrive. RunControl adopts that same summary into the session feed.
@@ -425,9 +429,10 @@ export class Workbench {
         ...intent,
         disable: intent.disable ?? [],
       });
-      if (record && started) {
-        this.recordedRun.set(started.id);
+      if (started) {
+        this.recordedRun.set(record ? started.id : null);
       } else if (record) {
+        this.recordedRun.set(null);
         this.notice.set('The run started, but its session could not be identified for recording.');
       }
     } finally {
@@ -465,7 +470,8 @@ export class Workbench {
     const url = new URL(location.pathname, location.origin);
     url.searchParams.set('view', view);
     if (ecu) url.searchParams.set('ecu', ecu);
-    // Copy sessionStorage into the same-origin tab, then disown the opener.
+    // The new tab consumes and removes the fragment immediately, even when sessionStorage is blocked.
+    if (pageToken) url.hash = `token=${encodeURIComponent(pageToken)}`;
     const tab = window.open('about:blank', '_blank');
     if (!tab) return this.notice.set('Allow pop-ups to open another view.');
     tab.opener = null;

@@ -10,7 +10,14 @@ import {
   signal,
   untracked,
 } from '@angular/core';
-import { watch, type Front, type VariableInfo, type VariableView } from '@vehicle-sil/gui-client';
+import {
+  watch,
+  type BoundVariable,
+  type Front,
+  type VariableBinding,
+  type VariableInfo,
+  type VariableView,
+} from '@vehicle-sil/gui-client';
 
 const onVisibility = new WeakMap<Element, (visible: boolean) => void>();
 const OUTPUT_REFRESH_MS = 150;
@@ -109,13 +116,15 @@ const viewport = new IntersectionObserver(
           <span>{{ view()?.text || '—' }} {{ info().unit }}</span>
         }
       </div>
-      @if (error()) {
+      @if (view()?.writing) {
+        <span class="write-status" role="status">Write pending</span>
+      } @else if (error()) {
         <span
           class="write-error"
           [class.switch-error]="info().type === 'bool'"
           role="status"
           [title]="error()"
-          >Write failed</span
+          >{{ uncertain() ? 'Write outcome unknown' : 'Write failed' }}</span
         >
       }
       <span class="signal-actions">
@@ -147,9 +156,15 @@ export class IoRow {
   readonly trace = output();
   readonly view = signal<VariableView | null>(null);
   readonly draft = signal<string | null>(null);
-  readonly pending = signal<number | boolean | null>(null);
+  readonly writer = signal<VariableBinding | null>(null);
+  readonly writeState = signal<BoundVariable | null>(null);
+  readonly pending = computed(() => this.writeState()?.pending ?? null);
+  private readonly requestedSwitch = signal<boolean | null>(null);
   private readonly awaitingSample = signal<boolean | null>(null);
-  readonly error = signal('');
+  readonly error = computed(() => this.view()?.problem?.message ?? '');
+  readonly uncertain = computed(() =>
+    ['no-answer', 'closed'].includes(this.view()?.write_status.kind ?? ''),
+  );
   readonly binding = computed(() =>
     this.front().variable({ peer: this.peer(), name: this.info().name }),
   );
@@ -166,6 +181,20 @@ export class IoRow {
   private readonly visible = signal(false);
 
   constructor() {
+    effect((cleanup) => {
+      const writer = this.front().low.variables.bind(
+        { peer: this.peer(), name: this.info().name },
+        { visible: false },
+      );
+      this.writer.set(writer);
+      const stop = watch(writer.state, (state) => this.writeState.set(state));
+      cleanup(() => {
+        stop();
+        writer.close();
+        this.writer.set(null);
+        this.writeState.set(null);
+      });
+    });
     effect((cleanup) => {
       onVisibility.set(this.host, (visible) => this.visible.set(visible));
       viewport.observe(this.host);
@@ -207,6 +236,17 @@ export class IoRow {
         stop();
       });
     });
+    effect(() => {
+      const status = this.writeState()?.writeStatus;
+      const requested = untracked(this.requestedSwitch);
+      if (requested === null || !status) return;
+      if (status.kind === 'applied') {
+        if (untracked(this.view)?.value !== requested) this.awaitingSample.set(requested);
+        this.requestedSwitch.set(null);
+      } else if ('message' in status) {
+        this.requestedSwitch.set(null);
+      }
+    });
     effect((cleanup) => {
       if (this.awaitingSample() === null) return;
       const timer = setTimeout(() => this.awaitingSample.set(null), SWITCH_READBACK_MS);
@@ -223,21 +263,10 @@ export class IoRow {
     if (element.reportValidity()) void this.send(element.valueAsNumber);
   }
 
-  async send(value: number | boolean) {
+  send(value: number | boolean) {
     if (this.blocked() || (typeof value === 'number' && !Number.isFinite(value))) return;
-    this.error.set('');
     this.draft.set(null);
-    this.pending.set(value);
-    try {
-      await this.binding().write(value);
-      const current = this.view();
-      if (typeof value === 'boolean' && current?.can_write && current.value !== value) {
-        this.awaitingSample.set(value);
-      }
-    } catch (error) {
-      this.error.set(error instanceof Error ? error.message : String(error));
-    } finally {
-      this.pending.set(null);
-    }
+    if (typeof value === 'boolean') this.requestedSwitch.set(value);
+    this.writer()?.write(value);
   }
 }

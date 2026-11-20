@@ -1,34 +1,44 @@
 <header class="bar">
   <strong class="brand">vehicle-sil <span>Workbench</span></strong>
   @if (!fixedPeer && !detachedWave) {
-    <label
-      >Network
-      <select
-        #networkFile
-        [disabled]="live() || configBusy()"
-        (change)="changeNetwork(networkFile)"
+    @if (live() && session()?.launcher?.running) {
+      <span>Network: {{ session()!.file }}</span>
+      <span
+        >Scenario:
+        {{
+          runScenario()?.file ?? (session()?.launcherState?.scenario === false ? 'Free run' : '—')
+        }}</span
       >
-        @for (file of files(); track file) {
-          <option [value]="file" [selected]="selectedFile() === file">{{ file }}</option>
-        } @empty {
-          <option value="">No networks found</option>
-        }
-      </select>
-    </label>
-    <label
-      >Scenario
-      <select
-        [disabled]="live()"
-        (change)="selectedScenario.set($any($event.target).value); check.set(null)"
-      >
-        <option value="" [selected]="!selectedScenario()">Free run</option>
-        @for (scenario of scenarios(); track scenario.path) {
-          <option [value]="scenario.path" [selected]="selectedScenario() === scenario.path">
-            {{ scenario.name }}
-          </option>
-        }
-      </select>
-    </label>
+    } @else {
+      <label
+        >Network
+        <select
+          #networkFile
+          [disabled]="live() || configBusy()"
+          (change)="changeNetwork(networkFile)"
+        >
+          @for (file of files(); track file) {
+            <option [value]="file" [selected]="selectedFile() === file">{{ file }}</option>
+          } @empty {
+            <option value="">No networks found</option>
+          }
+        </select>
+      </label>
+      <label
+        >Scenario
+        <select
+          [disabled]="live()"
+          (change)="selectedScenario.set($any($event.target).value); check.set(null)"
+        >
+          <option value="" [selected]="!selectedScenario()">Free run</option>
+          @for (scenario of scenarios(); track scenario.path) {
+            <option [value]="scenario.path" [selected]="selectedScenario() === scenario.path">
+              {{ scenario.name }}
+            </option>
+          }
+        </select>
+      </label>
+    }
     <label
       >Speed
       <select
@@ -112,8 +122,10 @@
       <button [disabled]="!controls()?.stop?.ok" (click)="action(() => front()!.run.stop())">
         Stop
       </button>
-      @if (recordNext() || (recordedRun() !== null && recordedRun() === session()?.id)) {
+      @if (!pending() && recordedRun() !== null && recordedRun() === session()?.id) {
         <span id="recording"><span class="record-dot" aria-hidden="true"></span> Recording</span>
+      } @else if (recordNext()) {
+        <span>Starting recording…</span>
       }
     }
   }
@@ -450,9 +462,12 @@
     @case ('Results') {
       @if (result(); as outcome) {
         <h1 [class.bad]="!outcome.ok" [class.good]="outcome.ok">
-          Run #{{ session()?.id }} · {{ outcome.scenario?.status ?? outcome.result }}
+          Run #{{ session()?.id }} · {{ outcome.result }}
         </h1>
         <p>{{ outcome.message }}</p>
+        @if (outcome.scenario; as scenario) {
+          <p>Scenario: {{ scenario.status }}</p>
+        }
         @if (outcome.timing; as timing) {
           <p class="muted">
             Actual {{ timing.actual_speed ?? '—' }}× · Late steps {{ timing.late_steps }} · Total
