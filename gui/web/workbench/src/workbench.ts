@@ -52,6 +52,7 @@ type Selection = VariableRef & { type: string; unit: string };
 type Point = { sampleMs: number; value: number | boolean | null };
 type WaveMessage =
   | { kind: 'request'; session: number }
+  | { kind: 'selection'; session: number; traces: Selection[] }
   | { kind: 'history'; session: number; histories: [string, Point[]][] };
 const locationQuery = new URLSearchParams(location.search);
 // Retain the URL token in memory as well: storage can be unavailable or not copied to a new tab.
@@ -285,29 +286,40 @@ export class Workbench {
   });
 
   private readonly destroy = inject(DestroyRef);
+  private waveChannel: BroadcastChannel | null = null;
   private listRevision = 0;
 
   constructor() {
     if (this.fixedPeer) document.title = `${this.fixedPeer} · vehicle-sil`;
     if (this.detachedWave) document.title = 'Waveforms · vehicle-sil';
     const storage = (event: StorageEvent) => {
-      if (event.key === waveStorage) this.traces.set(savedArray(event.newValue, isTrace));
+      if (event.key === waveStorage) this.applyTraces(savedArray(event.newValue, isTrace));
       if (event.key === pinStorage) this.pins.set(savedArray(event.newValue, isPin));
     };
     window.addEventListener('storage', storage);
     this.destroy.onDestroy(() => window.removeEventListener('storage', storage));
     const channel =
       typeof BroadcastChannel === 'function' ? new BroadcastChannel(waveStorage) : null;
+    this.waveChannel = channel;
     if (channel) {
       channel.onmessage = ({ data }: MessageEvent<WaveMessage>) => {
         const session = this.sessionId();
         if (!data || session == null || data.session !== session) return;
         if (data.kind === 'request') {
+          if (this.traces().length) {
+            channel.postMessage({
+              kind: 'selection',
+              session,
+              traces: this.traces(),
+            } satisfies WaveMessage);
+          }
           const histories = this.traces().map((trace, i): [string, Point[]] => [
             refKey(trace),
             this.histories()[i],
           ]);
           channel.postMessage({ kind: 'history', session, histories } satisfies WaveMessage);
+        } else if (data.kind === 'selection' && Array.isArray(data.traces)) {
+          this.applyTraces(data.traces.filter(isTrace));
         } else if (data.kind === 'history') {
           this.inheritedHistories.update((histories) => {
             const result = new Map(histories);
@@ -523,11 +535,29 @@ export class Workbench {
     if (this.traces().some((value) => refKey(value) === refKey(trace))) return;
     this.traces.update((traces) => [...traces, trace]);
     saveStored(waveStorage, this.traces());
+    this.shareTraces();
   }
 
   removeTrace(trace: Selection) {
     this.traces.update((traces) => traces.filter((value) => refKey(value) !== refKey(trace)));
     saveStored(waveStorage, this.traces());
+    this.shareTraces();
+  }
+
+  private shareTraces() {
+    const session = this.sessionId();
+    if (this.waveChannel && session != null)
+      this.waveChannel.postMessage({
+        kind: 'selection',
+        session,
+        traces: this.traces(),
+      } satisfies WaveMessage);
+  }
+
+  private applyTraces(traces: Selection[]) {
+    // A selection can arrive through both localStorage and BroadcastChannel. Avoid restarting
+    // the history watch when they describe the same signals.
+    if (JSON.stringify(this.traces()) !== JSON.stringify(traces)) this.traces.set(traces);
   }
 
   waveX(time: number, { start, end } = this.waveDomain()) {

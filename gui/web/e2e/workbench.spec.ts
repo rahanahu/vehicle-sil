@@ -87,6 +87,9 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
         );
       });
       await page.getByRole('button', { name: 'Start', exact: true }).click();
+      const peer = page.getByRole('combobox', { name: 'ECU', exact: true });
+      await expect(peer.locator('option[value="Engine"]')).toHaveCount(1, { timeout: RUN_TIMEOUT });
+      await peer.selectOption('Engine');
       const throttle = page.getByRole('spinbutton', { name: 'engine.throttle', exact: true });
       await expect(throttle).toBeEnabled({ timeout: RUN_TIMEOUT });
       await page.locator('app-io-row').filter({ hasText: 'engine.speed' }).hover();
@@ -124,14 +127,9 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
       ]);
       await wave.bringToFront();
       const path = wave.getByRole('img', { name: 'engine.speed waveform' }).locator('path.trace');
-      if (storage === 'blocked') {
-        await expect(wave.getByText('Add signals from ECU I/O to start tracing.')).toBeVisible();
-        await expect(wave.getByText('Running', { exact: true }).first()).toBeVisible();
-      } else {
-        await expect(path).toHaveCount(1, { timeout: RUN_TIMEOUT });
-      }
+      await expect(path).toHaveCount(1, { timeout: RUN_TIMEOUT });
       expect(new URL(wave.url()).hash).toBe('');
-      const first = storage === 'blocked' ? null : await path.getAttribute('d');
+      const first = await path.getAttribute('d');
       await ecu.bringToFront();
       await detachedThrottle.fill('80');
       await detachedThrottle.press('Enter');
@@ -139,8 +137,21 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
       await page.getByRole('button', { name: 'ECU I/O', exact: true }).click();
       await expect(throttle).toHaveValue('80', { timeout: RUN_TIMEOUT });
       await wave.bringToFront();
-      if (storage !== 'blocked')
-        await expect.poll(() => path.getAttribute('d'), { timeout: RUN_TIMEOUT }).not.toBe(first);
+      await expect.poll(() => path.getAttribute('d'), { timeout: RUN_TIMEOUT }).not.toBe(first);
+      if (storage === 'blocked') {
+        // Selections made after opening the child also cross the channel without localStorage.
+        await page.bringToFront();
+        await page.locator('app-io-row').filter({ hasText: 'engine.throttle' }).hover();
+        await page.getByRole('button', { name: 'Add engine.throttle to waveforms' }).click();
+        await wave.bringToFront();
+        const added = wave.getByRole('img', { name: 'engine.throttle waveform' });
+        await expect(added).toBeVisible({ timeout: RUN_TIMEOUT });
+        await added.locator('..').getByRole('button', { name: 'Remove' }).click();
+        await page.bringToFront();
+        await page.getByRole('button', { name: 'Waveforms', exact: true }).click();
+        await expect(page.getByRole('img', { name: 'engine.throttle waveform' })).toHaveCount(0);
+        await page.getByRole('button', { name: 'ECU I/O', exact: true }).click();
+      }
       await page.bringToFront();
       await page.evaluate(() => {
         window.open = () => null;
