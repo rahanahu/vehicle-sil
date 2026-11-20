@@ -58,6 +58,34 @@ const locationQuery = new URLSearchParams(location.search);
 const pageToken = takeToken(window);
 const waveStorage = 'vehicle-sil-workbench-waves';
 const pinStorage = 'vehicle-sil-workbench-pins';
+function savedArray<T>(text: string | null, valid: (item: unknown) => item is T): T[] {
+  try {
+    const parsed: unknown = JSON.parse(text ?? '[]');
+    return Array.isArray(parsed) ? parsed.filter(valid) : [];
+  } catch {
+    return [];
+  }
+}
+const isPin = (item: unknown): item is string => typeof item === 'string';
+const isTrace = (item: unknown): item is Selection => {
+  if (!item || typeof item !== 'object') return false;
+  const trace = item as Record<string, unknown>;
+  return ['peer', 'name', 'type', 'unit'].every((key) => typeof trace[key] === 'string');
+};
+function readStored<T>(key: string, valid: (item: unknown) => item is T): T[] {
+  try {
+    return savedArray(localStorage.getItem(key), valid);
+  } catch {
+    return [];
+  }
+}
+function saveStored(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Site data can be disabled: the current tab remains usable without persistence.
+  }
+}
 const refKey = ({ peer, name }: VariableRef) => JSON.stringify([peer, name]);
 const tabNames = [
   'ECU I/O',
@@ -129,8 +157,8 @@ export class Workbench {
   readonly logQuery = signal('');
   readonly ecuQuery = signal('');
   readonly pinnedOnly = signal(false);
-  readonly pins = signal<string[]>(JSON.parse(localStorage.getItem(pinStorage) ?? '[]'));
-  readonly traces = signal<Selection[]>(JSON.parse(localStorage.getItem(waveStorage) ?? '[]'));
+  readonly pins = signal<string[]>(readStored(pinStorage, isPin));
+  readonly traces = signal<Selection[]>(readStored(waveStorage, isTrace));
   readonly liveHistories = signal<Point[][]>([]);
   readonly inheritedHistories = signal(new Map<string, Point[]>());
   readonly sessionId = computed(() => this.variables()?.session ?? null);
@@ -263,8 +291,8 @@ export class Workbench {
     if (this.fixedPeer) document.title = `${this.fixedPeer} · vehicle-sil`;
     if (this.detachedWave) document.title = 'Waveforms · vehicle-sil';
     const storage = (event: StorageEvent) => {
-      if (event.key === waveStorage) this.traces.set(JSON.parse(event.newValue ?? '[]'));
-      if (event.key === pinStorage) this.pins.set(JSON.parse(event.newValue ?? '[]'));
+      if (event.key === waveStorage) this.traces.set(savedArray(event.newValue, isTrace));
+      if (event.key === pinStorage) this.pins.set(savedArray(event.newValue, isPin));
     };
     window.addEventListener('storage', storage);
     this.destroy.onDestroy(() => window.removeEventListener('storage', storage));
@@ -487,19 +515,19 @@ export class Workbench {
     this.pins.update((pins) =>
       pins.includes(key) ? pins.filter((pin) => pin !== key) : [...pins, key],
     );
-    localStorage.setItem(pinStorage, JSON.stringify(this.pins()));
+    saveStored(pinStorage, this.pins());
   }
 
   addTrace(peer: string, item: VariableInfo) {
     const trace = { peer, name: item.name, type: item.type, unit: item.unit };
     if (this.traces().some((value) => refKey(value) === refKey(trace))) return;
     this.traces.update((traces) => [...traces, trace]);
-    localStorage.setItem(waveStorage, JSON.stringify(this.traces()));
+    saveStored(waveStorage, this.traces());
   }
 
   removeTrace(trace: Selection) {
     this.traces.update((traces) => traces.filter((value) => refKey(value) !== refKey(trace)));
-    localStorage.setItem(waveStorage, JSON.stringify(this.traces()));
+    saveStored(waveStorage, this.traces());
   }
 
   waveX(time: number, { start, end } = this.waveDomain()) {

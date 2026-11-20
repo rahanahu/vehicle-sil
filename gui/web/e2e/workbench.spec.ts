@@ -23,110 +23,149 @@ const features = [
   'timeline',
 ].join(',');
 
-test('workbench detached views stay connected to a real launcher', async ({ page }) => {
-  const launcher = process.env['VEHICLE_SIL_WORKBENCH_REAL_LAUNCHER'];
-  const examples = process.env['VEHICLE_SIL_WORKBENCH_REAL_EXAMPLES'];
-  test.skip(!launcher || !examples || test.info().project.name !== 'static');
-  test.setTimeout(120_000);
-  const root = mkdtempSync(join(tmpdir(), 'vehicle-sil-real-workbench-'));
-  const config = join(root, 'simulation.yaml');
-  writeFileSync(
-    config,
-    [
-      'vehicle_sil_simulation: 2',
-      'networks:',
-      '  - { name: J1939_CAN, kind: can }',
-      'participants:',
-      '  - name: Engine',
-      `    command: [${JSON.stringify(join(examples!, 'engine', 'vehicle_sil_engine_ecu'))}]`,
-      '    step_ms: 10',
-      '  - name: Dashboard',
-      `    command: [${JSON.stringify(join(examples!, 'dashboard', 'vehicle_sil_dashboard_ecu'))}]`,
-      '    step_ms: 5',
-      '',
-    ].join('\n'),
-  );
-  const server = await launchGuiServer({
-    launcher: launcher!,
-    root,
-    config,
-    port: 0,
-    web: join(REPOSITORY, 'build', 'gui-workbench', 'browser'),
-  });
-  try {
-    const requestUrls: string[] = [];
-    page.context().on('request', (request) => requestUrls.push(request.url()));
-    await page.goto(server.url);
-    await page.getByRole('button', { name: 'Start', exact: true }).click();
-    const throttle = page.getByRole('spinbutton', { name: 'engine.throttle', exact: true });
-    await expect(throttle).toBeEnabled({ timeout: RUN_TIMEOUT });
-    await page.locator('app-io-row').filter({ hasText: 'engine.speed' }).hover();
-    await page.getByRole('button', { name: 'Add engine.speed to waveforms' }).click();
-    // Some browsers block sessionStorage or do not copy it into the new tab. The child must
-    // still authenticate when opened during the existing run, without restarting it.
-    await page.context().addInitScript(() => {
-      if (new URLSearchParams(location.search).has('view')) {
-        Object.defineProperty(window, 'sessionStorage', {
-          get() {
-            throw new DOMException('Storage is unavailable', 'SecurityError');
-          },
-        });
+for (const storage of ['available', 'blocked', 'corrupt'] as const) {
+  test(`workbench detached views stay connected to a real launcher (${storage} storage)`, async ({
+    page,
+  }) => {
+    const launcher = process.env['VEHICLE_SIL_WORKBENCH_REAL_LAUNCHER'];
+    const examples = process.env['VEHICLE_SIL_WORKBENCH_REAL_EXAMPLES'];
+    test.skip(!launcher || !examples || test.info().project.name !== 'static');
+    test.setTimeout(120_000);
+    const root = mkdtempSync(join(tmpdir(), 'vehicle-sil-real-workbench-'));
+    const config = join(root, 'simulation.yaml');
+    writeFileSync(
+      config,
+      [
+        'vehicle_sil_simulation: 2',
+        'networks:',
+        '  - { name: J1939_CAN, kind: can }',
+        'participants:',
+        '  - name: Engine',
+        `    command: [${JSON.stringify(join(examples!, 'engine', 'vehicle_sil_engine_ecu'))}]`,
+        '    step_ms: 10',
+        '  - name: Dashboard',
+        `    command: [${JSON.stringify(join(examples!, 'dashboard', 'vehicle_sil_dashboard_ecu'))}]`,
+        '    step_ms: 5',
+        '',
+      ].join('\n'),
+    );
+    const server = await launchGuiServer({
+      launcher: launcher!,
+      root,
+      config,
+      port: 0,
+      web: join(REPOSITORY, 'build', 'gui-workbench', 'browser'),
+    });
+    try {
+      await page.context().addInitScript((mode) => {
+        if (mode === 'blocked') {
+          for (const key of ['sessionStorage', 'localStorage']) {
+            Object.defineProperty(window, key, {
+              get() {
+                throw new DOMException('Storage is unavailable', 'SecurityError');
+              },
+            });
+          }
+        } else if (
+          mode === 'corrupt' &&
+          location.protocol === 'http:' &&
+          !new URLSearchParams(location.search).has('view')
+        ) {
+          localStorage.setItem('vehicle-sil-workbench-waves', '{invalid');
+          localStorage.setItem('vehicle-sil-workbench-pins', '[null,42]');
+        }
+      }, storage);
+      const requestUrls: string[] = [];
+      page.context().on('request', (request) => requestUrls.push(request.url()));
+      await page.goto(server.url);
+      await page.evaluate(() => {
+        window.dispatchEvent(
+          new StorageEvent('storage', { key: 'vehicle-sil-workbench-waves', newValue: '{invalid' }),
+        );
+        window.dispatchEvent(
+          new StorageEvent('storage', { key: 'vehicle-sil-workbench-pins', newValue: '[null,42]' }),
+        );
+      });
+      await page.getByRole('button', { name: 'Start', exact: true }).click();
+      const throttle = page.getByRole('spinbutton', { name: 'engine.throttle', exact: true });
+      await expect(throttle).toBeEnabled({ timeout: RUN_TIMEOUT });
+      await page.locator('app-io-row').filter({ hasText: 'engine.speed' }).hover();
+      await page.getByRole('button', { name: 'Add engine.speed to waveforms' }).click();
+      // Some browsers block sessionStorage or do not copy it into the new tab. The child must
+      // still authenticate when opened during the existing run, without restarting it.
+      await page.context().addInitScript(() => {
+        if (new URLSearchParams(location.search).has('view')) {
+          Object.defineProperty(window, 'sessionStorage', {
+            get() {
+              throw new DOMException('Storage is unavailable', 'SecurityError');
+            },
+          });
+        }
+      });
+      const [ecu] = await Promise.all([
+        page.context().waitForEvent('page'),
+        page.getByRole('button', { name: 'Open ECU in new tab' }).click(),
+      ]);
+      await ecu.bringToFront();
+      const detachedThrottle = ecu.getByRole('spinbutton', {
+        name: 'engine.throttle',
+        exact: true,
+      });
+      await expect(detachedThrottle).toBeEnabled({ timeout: RUN_TIMEOUT });
+      expect(new URL(ecu.url()).hash).toBe('');
+      await detachedThrottle.fill('50');
+      await detachedThrottle.press('Enter');
+      await expect(throttle).toHaveValue('50', { timeout: RUN_TIMEOUT });
+      await page.bringToFront();
+      await page.getByRole('button', { name: 'Waveforms', exact: true }).click();
+      const [wave] = await Promise.all([
+        page.context().waitForEvent('page'),
+        page.getByRole('button', { name: 'Open waveforms in new tab' }).click(),
+      ]);
+      await wave.bringToFront();
+      const path = wave.getByRole('img', { name: 'engine.speed waveform' }).locator('path.trace');
+      if (storage === 'blocked') {
+        await expect(wave.getByText('Add signals from ECU I/O to start tracing.')).toBeVisible();
+        await expect(wave.getByText('Running', { exact: true }).first()).toBeVisible();
+      } else {
+        await expect(path).toHaveCount(1, { timeout: RUN_TIMEOUT });
       }
-    });
-    const [ecu] = await Promise.all([
-      page.context().waitForEvent('page'),
-      page.getByRole('button', { name: 'Open ECU in new tab' }).click(),
-    ]);
-    await ecu.bringToFront();
-    const detachedThrottle = ecu.getByRole('spinbutton', { name: 'engine.throttle', exact: true });
-    await expect(detachedThrottle).toBeEnabled({ timeout: RUN_TIMEOUT });
-    expect(new URL(ecu.url()).hash).toBe('');
-    await detachedThrottle.fill('50');
-    await detachedThrottle.press('Enter');
-    await expect(throttle).toHaveValue('50', { timeout: RUN_TIMEOUT });
-    await page.bringToFront();
-    await page.getByRole('button', { name: 'Waveforms', exact: true }).click();
-    const [wave] = await Promise.all([
-      page.context().waitForEvent('page'),
-      page.getByRole('button', { name: 'Open waveforms in new tab' }).click(),
-    ]);
-    await wave.bringToFront();
-    const path = wave.getByRole('img', { name: 'engine.speed waveform' }).locator('path.trace');
-    await expect(path).toHaveCount(1, { timeout: RUN_TIMEOUT });
-    expect(new URL(wave.url()).hash).toBe('');
-    const first = await path.getAttribute('d');
-    await ecu.bringToFront();
-    await detachedThrottle.fill('80');
-    await detachedThrottle.press('Enter');
-    await page.bringToFront();
-    await page.getByRole('button', { name: 'ECU I/O', exact: true }).click();
-    await expect(throttle).toHaveValue('80', { timeout: RUN_TIMEOUT });
-    await wave.bringToFront();
-    await expect.poll(() => path.getAttribute('d'), { timeout: RUN_TIMEOUT }).not.toBe(first);
-    await page.bringToFront();
-    await page.evaluate(() => {
-      window.open = () => null;
-    });
-    await page.getByRole('button', { name: 'Open ECU in new tab' }).click();
-    await expect(page.getByRole('alert')).toHaveText('Allow pop-ups to open another view.');
-    expect(requestUrls.every((url) => new URL(url).hash === '')).toBe(true);
-    await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.getByText('Run ended', { exact: false }).first()).toBeVisible({
-      timeout: RUN_TIMEOUT,
-    });
-    await expect(ecu.getByText('Run ended', { exact: false }).first()).toBeVisible({
-      timeout: RUN_TIMEOUT,
-    });
-    await expect(wave.getByText('Run ended', { exact: false }).first()).toBeVisible({
-      timeout: RUN_TIMEOUT,
-    });
-    await wave.close();
-    await ecu.close();
-  } finally {
-    await server.stop();
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+      expect(new URL(wave.url()).hash).toBe('');
+      const first = storage === 'blocked' ? null : await path.getAttribute('d');
+      await ecu.bringToFront();
+      await detachedThrottle.fill('80');
+      await detachedThrottle.press('Enter');
+      await page.bringToFront();
+      await page.getByRole('button', { name: 'ECU I/O', exact: true }).click();
+      await expect(throttle).toHaveValue('80', { timeout: RUN_TIMEOUT });
+      await wave.bringToFront();
+      if (storage !== 'blocked')
+        await expect.poll(() => path.getAttribute('d'), { timeout: RUN_TIMEOUT }).not.toBe(first);
+      await page.bringToFront();
+      await page.evaluate(() => {
+        window.open = () => null;
+      });
+      await page.getByRole('button', { name: 'Open ECU in new tab' }).click();
+      await expect(page.getByRole('alert')).toHaveText('Allow pop-ups to open another view.');
+      expect(requestUrls.every((url) => new URL(url).hash === '')).toBe(true);
+      await page.getByRole('button', { name: 'Stop', exact: true }).click();
+      await expect(page.getByText('Run ended', { exact: false }).first()).toBeVisible({
+        timeout: RUN_TIMEOUT,
+      });
+      await expect(ecu.getByText('Run ended', { exact: false }).first()).toBeVisible({
+        timeout: RUN_TIMEOUT,
+      });
+      await expect(wave.getByText('Run ended', { exact: false }).first()).toBeVisible({
+        timeout: RUN_TIMEOUT,
+      });
+      await wave.close();
+      await ecu.close();
+    } finally {
+      await server.stop();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test('workbench shows the overall failure when the scenario passed', async ({ page }) => {
   test.skip(
