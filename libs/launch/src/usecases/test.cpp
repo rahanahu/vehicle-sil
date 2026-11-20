@@ -333,6 +333,14 @@ std::string run_alone(const TestReport& report, const TestRun& run)
     {
         out += " --late-tolerance-ms " + std::to_string(*report.given.late_tolerance_ms);
     }
+    if (report.given.participant_start_timeout_ms)
+    {
+        out += " --participant-start-timeout-ms " + std::to_string(*report.given.participant_start_timeout_ms);
+    }
+    if (report.given.participant_stop_timeout_ms)
+    {
+        out += " --participant-stop-timeout-ms " + std::to_string(*report.given.participant_stop_timeout_ms);
+    }
     if (report.given.timeout)
     {
         out += " --timeout-ms " + std::to_string(report.given.timeout->count());
@@ -538,6 +546,14 @@ TestReport test_file(const TestOptions& options)
     report.given.timeout = host.timeout;
     report.given.stop_at_ms = intent.stop_at_ms;
     report.given.late_tolerance_ms = intent.late_tolerance_ms;
+    if (host.start_timeout_ms != RunHost{}.start_timeout_ms)
+    {
+        report.given.participant_start_timeout_ms = host.start_timeout_ms;
+    }
+    if (host.stop_timeout_ms != RunHost{}.stop_timeout_ms)
+    {
+        report.given.participant_stop_timeout_ms = host.stop_timeout_ms;
+    }
     report.given.time_policy = intent.time_policy;
     if (host.describe_timeout != kDescribeTimeout)
     {

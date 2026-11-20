@@ -387,7 +387,7 @@ Notifications from the server.
 | `no-result` | The launcher exited without writing `result` (`detail.exit_code`) |
 | `output-left-open` | The launcher exited, but a process it started keeps its output open, so the server stopped reading the rest |
 | `stop-not-delivered` | The stop command could not be written to the launcher's stdin |
-| `stop-escalated` | While the server shut down, the launcher did not stop in time, and the server asked for it to be stopped with a signal |
+| `stop-escalated` | During server shutdown, the configured stop timeout expired or a second signal interrupted the wait, so the server asked the launcher to stop with a signal |
 | `launcher-silent` | The launcher process is running but has written no line for longer than `--silent-after` (default 5 seconds) before its result |
 
 - `unauthorized`: `session` is `null`. The connection is then closed with 4401.

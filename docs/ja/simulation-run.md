@@ -1130,7 +1130,7 @@ passed: 0 errors, 1 warning, 1 note
 
 | `end` | 終わった理由 | `result` |
 |---|---|---|
-| `"completed"` | 決めた終わりに達した。`stop_at_ms`、participant がシミュレーションを終えた、シナリオが終わった | `"passed"`。エラーがあれば `"failed"` |
+| `"completed"` | 決めた終わりに達した。`stop_at_ms`、participant がシミュレーションを終えた、シナリオが終わった | `"passed"`。要求した停止時刻でシナリオが途中終了した場合は `"incomplete"`、エラーがあれば `"failed"` |
 | `"stopped"` | コマンド（`{"command":"stop"}`、Control API の `Stop`）でシミュレーションの終わりより前に止めた。または、終わりの後の `{"command":"stop"}` が必須の participant の終わりを打ち切った | `"stopped"`。シナリオが最後まで進まなかったときは `"incomplete"`。エラーがあれば `"failed"` |
 | `"interrupted"` | シグナルやコンソールのイベント、標準入力の終わり、閉じた標準出力。シミュレーションの終わりより前か、participant が自分で終わるのを待つ間に来たもの | `"interrupted"` |
 | `"failed"` | 始められなかった、または続けられなかった。participant やブリッジの失敗、`--timeout-ms`、participant がそろわなかった | `"failed"` |
@@ -2017,7 +2017,7 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 | 4 | 引数のエラー（何も実行していません） |
 | 130 | 中断された（その前に失敗した組があっても 130） |
 
-`test` は止めるコマンドを受けないので、終了コード 5 はありません。`test` の実行がシナリオの終わる前に終わるのは、シグナル（130）か `--timeout-ms`（1）のときだけです。
+`test` は止めるコマンドを受けないので、終了コード 5 はありません。要求した仮想停止時刻までにシナリオの判定が決まらなかったケースは未完了となり、失敗したケースとして数えます（終了コード 1）。シグナルによる中断は 130、壁時計の上限 `--timeout-ms` による失敗は 1 です。
 
 `skipped` は失敗に数えません。全部が `skipped` でも、`--strict` がなければ 0 です。設定ファイルの `manual: true` の participant のエラーも 4 です。
 

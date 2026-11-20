@@ -383,6 +383,9 @@ struct CheckReport
     std::optional<std::int64_t> stop_at_ms{};
     std::optional<std::int64_t> start_timeout_ms{};
     std::optional<std::int64_t> stop_timeout_ms{};
+    /// The intent judged with run_timing (the outer empty speed means no speed was asked).
+    std::optional<std::optional<double>> checked_speed{};
+    bool checked_start_paused = false;
 
     [[nodiscard]] std::size_t errors() const;
     [[nodiscard]] std::size_t warnings() const;

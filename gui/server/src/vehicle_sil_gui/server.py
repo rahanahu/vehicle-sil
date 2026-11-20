@@ -191,7 +191,7 @@ class Options:
     initial_file: str | None = None
     dev_origin: str | None = None
     web_dir: Path | None = None
-    stop_timeout_s: float = 10.0
+    stop_timeout_s: float | None = None
     participant_start_timeout_ms: int = 30000
     participant_stop_timeout_ms: int = 10000
     check_timeout_s: float = CHECK_TIMEOUT_S
@@ -1289,7 +1289,7 @@ class GuiServer:
         reader = asyncio.create_task(self._read_output(run))
         watch = asyncio.create_task(self._watch_silence(session))
         try:
-            code = await proc.wait()
+            code = await process.wait_exit(proc)
             watch.cancel()
             process.kill_tree(proc)  # what the launcher left in its group (POSIX)
             # Recorded now (api/session and a stop see it), sent with the end: a summary sent before the
@@ -1411,8 +1411,9 @@ class GuiServer:
 
     async def shutdown(self) -> None:
         """Refuses new runs and checks, stops every launcher (end of input, then --stop-timeout, then SIGTERM /
-        Ctrl+Break, then a kill of the tree), kills the checks, and closes every WebSocket. Each wait is
-        bounded (END_BUDGET_S after --stop-timeout). A second call (a second Ctrl+C) skips the waiting."""
+        Ctrl+Break, then a kill of the tree), kills the checks, and closes every WebSocket. When a stop
+        timeout is set, the wait is bounded (END_BUDGET_S after --stop-timeout). A second call
+        (a second Ctrl+C) skips the waiting."""
         if self._closing:
             self._hurry.set()
             return
@@ -1448,9 +1449,10 @@ class GuiServer:
             if proc.stdin is not None:
                 proc.stdin.close()
             if not await self._wait(proc, self.o.stop_timeout_s):
-                self.hub.broadcast(session.problem("stop-escalated", "the launcher did not stop in "
-                                                   f"{self.o.stop_timeout_s:g} s after its input closed: it was "
-                                                   "asked to stop (SIGTERM / Ctrl+Break)", None))
+                why = ("shutdown was requested again" if self._hurry.is_set() or self.o.stop_timeout_s is None else
+                       f"the launcher did not stop in {self.o.stop_timeout_s:g} s after its input closed")
+                self.hub.broadcast(session.problem("stop-escalated", f"{why}: the launcher was asked to stop "
+                                                   "(SIGTERM / Ctrl+Break)", None))
                 process.ask_to_stop(proc)
                 if not await self._wait(proc, ESCALATE_WAIT_S):
                     process.kill_tree(proc)
@@ -1458,14 +1460,15 @@ class GuiServer:
         if run.task is not None:
             await asyncio.wait({run.task}, timeout=process.OUTPUT_GRACE_S + 1 + VARIABLES_CLOSE_S)
 
-    async def _wait(self, proc: asyncio.subprocess.Process, seconds: float) -> bool:
+    async def _wait(self, proc: asyncio.subprocess.Process, seconds: float | None) -> bool:
         hurry = asyncio.create_task(self._hurry.wait())
-        done = asyncio.create_task(proc.wait())
+        done = asyncio.create_task(process.wait_exit(proc))
         await asyncio.wait({hurry, done}, timeout=seconds, return_when=asyncio.FIRST_COMPLETED)
         hurry.cancel()
         if not done.done():
             done.cancel()
-            return False
+            # Exit may have been reported between the last poll and this timeout.
+            return proc.returncode is not None
         return True
 
     async def _close_sockets(self) -> None:

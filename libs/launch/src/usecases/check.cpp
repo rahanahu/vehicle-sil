@@ -213,6 +213,12 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     report.file = host.config;
     report.strict = intent.strict;
     // Known without the file.
+    if (auto invalid = validate_timing(request); !invalid.empty())
+    {
+        report.usage = true;
+        report.findings = std::move(invalid);
+        return report;
+    }
     if (auto conflicts = config::override_conflicts(overrides); !conflicts.empty())
     {
         report.usage = true;
@@ -407,6 +413,8 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     report.stop_at_ms = intent.stop_at_ms;
     report.start_timeout_ms = host.start_timeout_ms;
     report.stop_timeout_ms = host.stop_timeout_ms;
+    report.checked_speed = run_speed;
+    report.checked_start_paused = intent.start_paused;
     if (intent.stop_at_ms && *intent.stop_at_ms % report.run_timing->time_step_ms != 0)
     {
         report.findings.push_back(config::Finding{config::Severity::Error, "stop-not-on-step",

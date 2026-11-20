@@ -2,6 +2,7 @@
 #include "vehicle_sil/launch/request.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 namespace vehicle_sil::launch {
 namespace {
@@ -39,13 +40,10 @@ bool add_names(std::vector<std::string>& names, const std::vector<std::string>& 
 
 } // namespace
 
-std::vector<config::Finding> validate_request(const RunRequest& request, RequestCommand command)
+std::vector<config::Finding> validate_timing(const RunRequest& request)
 {
     const RunIntent& intent = request.intent;
     const RunHost& host = request.host;
-    const config::RequestOrigin& origin = request.origin;
-    const std::string scenario = origin.named("scenario", "--scenario", "scenario");
-    const std::string paused = origin.named("start_paused", "--start-paused", "start_paused");
     std::vector<config::Finding> out;
     if (intent.stop_at_ms && (*intent.stop_at_ms < 1 || *intent.stop_at_ms > config::kMaxMillis))
     {
@@ -55,6 +53,38 @@ std::vector<config::Finding> validate_request(const RunRequest& request, Request
     {
         out.push_back(usage("late_tolerance_ms must be an integer from 0 to 1000000000000"));
     }
+    if (intent.speed && *intent.speed &&
+        (!std::isfinite(**intent.speed) || **intent.speed < config::kMinSpeed || **intent.speed > config::kMaxSpeed))
+    {
+        out.push_back(usage("speed must be max or a number from 0.000001 to 1000000"));
+    }
+    if (host.start_timeout_ms < 1 || host.start_timeout_ms > config::kMaxMillis)
+    {
+        out.push_back(usage("participant start timeout must be an integer from 1 to 1000000000000 ms"));
+    }
+    if (host.stop_timeout_ms < 1 || host.stop_timeout_ms > config::kMaxMillis)
+    {
+        out.push_back(usage("participant stop timeout must be an integer from 1 to 1000000000000 ms"));
+    }
+    if (host.timeout && (host.timeout->count() < 1 || host.timeout->count() > config::kMaxMillis))
+    {
+        out.push_back(usage("timeout must be an integer from 1 to 1000000000000 ms"));
+    }
+    if (host.describe_timeout.count() < 1 || host.describe_timeout.count() > config::kMaxMillis)
+    {
+        out.push_back(usage("describe timeout must be an integer from 1 to 1000000000000 ms"));
+    }
+    return out;
+}
+
+std::vector<config::Finding> validate_request(const RunRequest& request, RequestCommand command)
+{
+    const RunIntent& intent = request.intent;
+    const RunHost& host = request.host;
+    const config::RequestOrigin& origin = request.origin;
+    const std::string scenario = origin.named("scenario", "--scenario", "scenario");
+    const std::string paused = origin.named("start_paused", "--start-paused", "start_paused");
+    std::vector<config::Finding> out = validate_timing(request);
     // A test takes the scenarios of its own list: a parameter is for each of them.
     // The params of a request file wait for a run with a scenario: one file serves runs with and without.
     const bool typed = std::any_of(intent.params.begin(), intent.params.end(),

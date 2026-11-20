@@ -16,7 +16,7 @@ For the Ethernet Bridge (`vehicle_sil_ethernet_bridge`), see [ethernet-bridge.md
 
 ## First connection
 
-With the launcher you need no registry of your own: `vehicle_sil_launch connections simulation.yaml` lists the channels of this computer, and `vehicle_sil_launch run --connect J1939_CAN1=virtual:1 simulation.yaml` starts the registry and the bridge (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md). Use a configuration without `stop_at_ms` for it (in the project template, `simulation.live.yaml`; `simulation.yaml` stops after a short time). These steps start the bridge by hand, on Windows only, and connect it to the first channel of Vector Virtual CAN. Step 3 needs `sil-kit-registry` (from a SIL Kit release, or under `_deps` of a build from source).
+With the launcher you need no registry of your own: `vehicle_sil_launch connections simulation.yaml` lists the channels of this computer, and `vehicle_sil_launch run --connect J1939_CAN1=virtual:1 simulation.yaml` starts the registry and the bridge (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md). Omit `--stop-at-ms` to run without an automatic virtual-time limit. These steps start the bridge by hand, on Windows only, and connect it to the first channel of Vector Virtual CAN. Step 3 needs `sil-kit-registry` (from a SIL Kit release, or under `_deps` of a build from source).
 
 | Step | What you do | What you see |
 |---|---|---|

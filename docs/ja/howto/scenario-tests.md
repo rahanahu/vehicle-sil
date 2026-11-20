@@ -215,7 +215,7 @@ steps:
 
 条件には、値そのもの（等しい）か、`ge`、`le`、`gt`、`lt`、`eq`、`ne`、`near` と `tolerance` を書きます。キーと条件の全部は、[scenario.md](../scenario.md) の「ファイルの形式」にあります。
 
-`wait_until` と、`within_ms` を付けた `expect` は、どちらも条件が成り立つまで待ちます。テストの前提がそろうのを待つときは `wait_until` を、テストしたい応答には `expect` を使います。失敗したときの指摘のコードが `scenario-timeout` と `scenario-failed` に分かれるので、どちらで失敗したかが結果からわかります。待つ時間は、設定ファイルの `stop_at_ms`（`simulation.yaml` では 1000 ms）までにシナリオが終わる長さにします。終わらないと、`scenario-out-of-time` で失敗します。
+`wait_until` と、`within_ms` を付けた `expect` は、どちらも条件が成り立つまで待ちます。テストの前提がそろうのを待つときは `wait_until` を、テストしたい応答には `expect` を使います。失敗したときの指摘のコードが `scenario-timeout` と `scenario-failed` に分かれるので、どちらで失敗したかが結果からわかります。実行要求に `stop_at_ms` を指定する場合は、その時刻までにシナリオが終わるようにします。先に停止時刻に達すると、シナリオは `incomplete` になります。ほかに問題がなければ実行の終了コードは 5 です。
 
 実行する前に、`check --scenario` で照合します。変数の名前、型、値の範囲、時刻の順序のエラーが、シミュレーションを起動せずにわかります。
 
@@ -371,14 +371,13 @@ line  step                                                result  at
 
 ### うまくいかないとき
 
-実行して初めてわかる失敗は、次の 4 つです。
+実行中に出る指摘のコードは次のとおりです。
 
 | 指摘のコード | 原因 | 直し方 |
 |---|---|---|
 | `scenario-failed` | `expect` の条件が成り立ちませんでした。 | `error:` の行の値と時刻を見て、ECU かシナリオを直します。 |
 | `scenario-timeout` | `wait_until` の条件が、`timeout_ms` の間に成り立ちませんでした。 | 前提がそろわない原因を調べるか、`timeout_ms` を大きくします。 |
-| `scenario-out-of-time` | シナリオが終わる前に、設定ファイルの `stop_at_ms` に達しました。 | `stop_at_ms` を大きくするか、消します。シナリオが終わればシミュレーションも止まります。 |
-| `scenario-incomplete` | ECU の異常終了、Ctrl+C、`--timeout-ms`、停止（標準入力の `stop`、Control API の `Stop`）で、シナリオの途中で実行が終わりました（停止のときの終了コードは 5）。 | 一緒に表示されるエラーを先に直します。 |
+| `scenario-incomplete` | ECU の異常終了、要求した `stop_at_ms` への到達、Ctrl+C、`--timeout-ms`、停止（標準入力の `stop`、Control API の `Stop`）で、シナリオの途中で実行が終わりました。 | 一緒に表示されるエラーを直します。要求した `stop_at_ms` に達した場合は、その値を大きくするか指定を省きます。 |
 
 結果のルールは、[scenario.md](../scenario.md) の「結果」にあります。
 

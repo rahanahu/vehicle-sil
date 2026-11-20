@@ -188,7 +188,7 @@ def test_a_launcher_whose_descendant_keeps_its_output_open_still_ends(tmp_path: 
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            status, body = await c.post("api/run", {"file": "orphan.yaml"})
+            status, body = await c.post("api/run", {"file": "orphan.yaml", "stop_at_ms": 1000})
             assert status == 200
             for e in event_messages(await sock.until(lambda m: "left a process behind" in str(m)), "log"):
                 if m := re.search(r"pid (\d+)", e["line"]):
@@ -198,7 +198,7 @@ def test_a_launcher_whose_descendant_keeps_its_output_open_still_ends(tmp_path: 
             assert end["result"]["result"] == "passed"
             assert end["launcher"]["running"] is False and end["launcher"]["exit_code"] == 0
             assert "output-left-open" in [p["code"] for p in end["problems"]]
-            status, body = await c.post("api/run", {"file": "simulation.yaml"})  # the next run may start
+            status, body = await c.post("api/run", {"file": "simulation.yaml", "stop_at_ms": 1000})  # the next run may start
             assert status == 200, body
             await sock.until(is_ended)
         try:
@@ -323,7 +323,7 @@ def test_the_end_is_bounded_by_the_stop_timeout(tmp_path: Path) -> None:
         pids = run_async(main, gui)
         s = unauthenticated_websocket(gui.port)
         try:
-            assert stop_and_time(gui.proc, limit=90) < scaled(55 + 15)
+            assert stop_and_time(gui.proc) < scaled(1 + 15)
         finally:
             s.close()
         assert wait_until(lambda: not any(alive(p) for p in pids), 5)

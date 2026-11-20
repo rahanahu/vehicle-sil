@@ -178,12 +178,18 @@ def expand_request(argv: list[str]) -> list[str]:
         options += ["--variant", request["variant"]]
     for name, value in request.get("params", {}).items():
         options += ["--param", f"{name}={value if isinstance(value, str) else json.dumps(value)}"]
-    if "speed" in request and argv[0] != "check":  # a check has no --speed: it does not change its output
+    if "speed" in request:
         speed = request["speed"]
         options += ["--speed", speed if isinstance(speed, str) else (str(int(speed)) if float(speed).is_integer()
                                                                        else repr(float(speed)))]
-    if request.get("start_paused") and (argv[0] != "check" or "scenario" in request):
-        options += ["--start-paused"]  # a check has no such option: only the scenario's rule is recorded (by a request)
+    if "stop_at_ms" in request:
+        options += ["--stop-at-ms", str(request["stop_at_ms"])]
+    if "late_tolerance_ms" in request:
+        options += ["--late-tolerance-ms", str(request["late_tolerance_ms"])]
+    if request.get("start_paused"):
+        # For check this is a canonical replay marker, not a supported command-line option.
+        # The real check reads start_paused from the request and can refuse it when time is locked.
+        options += ["--start-paused"]
     if request.get("strict"):
         options += ["--strict"]
     if "time_policy" in request:

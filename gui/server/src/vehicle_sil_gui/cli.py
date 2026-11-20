@@ -7,6 +7,7 @@ import asyncio
 import html
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -76,7 +77,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--json", action="store_true",
                    help='print {"vehicle_sil_gui": 2, "url": ..., "port": ...} on one line instead of the URL')
     p.add_argument("--stop-timeout", type=float, metavar="SECONDS",
-                   help="on exit, wait at least this many seconds before signaling the launcher")
+                   help="on exit, wait this many seconds before signaling the launcher (default: wait for it)")
     p.add_argument("--participant-start-timeout-ms", type=int, default=30000,
                    help="how long the launcher waits for required participants to join")
     p.add_argument("--participant-stop-timeout-ms", type=int, default=10000,
@@ -125,8 +126,8 @@ def main(argv: list[str] | None = None) -> int:
         return usage_error(f"--port {args.port}: write 0 (a free port) or a port from 1 to 65535")
     if args.port == 80:  # a browser leaves :80 out of Host and Origin, which the checks compare
         return usage_error("--port 80 cannot be used: choose another port, or 0 for a free one")
-    if args.stop_timeout is not None and args.stop_timeout < 0:
-        return usage_error("--stop-timeout must be 0 or more seconds")
+    if args.stop_timeout is not None and (not math.isfinite(args.stop_timeout) or args.stop_timeout < 0):
+        return usage_error("--stop-timeout must be a finite number of 0 or more seconds")
     if not (1 <= args.participant_start_timeout_ms <= 10**12 and
             1 <= args.participant_stop_timeout_ms <= 10**12):
         return usage_error("participant timeouts must be integers from 1 to 1000000000000 ms")
@@ -164,17 +165,9 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_OK
 
 
-def stop_budget(participant_stop_timeout_ms: int, requested: float | None) -> float:
-    # Two child waits and one manual-participant wait precede connection close. The latter
-    # allows the controller's 5 s shutdown and at least 5 s more (run.cpp's kCloseMargin).
-    participant_wait = participant_stop_timeout_ms / 1000
-    normal_stop_budget = 10 + 3 * participant_wait + max(5, participant_wait)
-    return max(requested or 0, normal_stop_budget)
-
-
 async def serve(args: argparse.Namespace, root: Path, initial: str | None, launcher: launcher_module.Launcher,
                 web_dir: Path | None) -> int:
-    stop_timeout_s = stop_budget(args.participant_stop_timeout_ms, args.stop_timeout)
+    stop_timeout_s = args.stop_timeout
     await launcher.probe()
     if not launcher.usable:
         for p in launcher.problems:
@@ -223,8 +216,8 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
         await stop.wait()
         return EXIT_OK
     finally:
-        try:  # each step of the end is bounded; this is the bound of all of them
-            async with asyncio.timeout(stop_timeout_s + END_BUDGET_S):
+        try:  # an explicit deadline also bounds the rest of the server's shutdown
+            async with asyncio.timeout(None if stop_timeout_s is None else stop_timeout_s + END_BUDGET_S):
                 await server.shutdown()
         except TimeoutError:
             server.kill_all()

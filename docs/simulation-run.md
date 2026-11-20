@@ -1130,7 +1130,7 @@ The result says three things about the end, in the JSON of `run --json` and in t
 
 | `end` | Why the run ended | `result` |
 |---|---|---|
-| `"completed"` | It reached an end that was set: `stop_at_ms`, a participant ended the simulation, or the scenario was over | `"passed"`, or `"failed"` if errors were found |
+| `"completed"` | It reached an end that was set: `stop_at_ms`, a participant ended the simulation, or the scenario was over | `"passed"`; `"incomplete"` if the requested stop time cut the scenario short; `"failed"` if errors were found |
 | `"stopped"` | A command stopped it (`{"command":"stop"}`, `Stop` of the Control API) before the simulation ended, or a `{"command":"stop"}` after the end cut short the end of a required participant | `"stopped"`; `"incomplete"` if its scenario did not get to its end; `"failed"` if errors were found |
 | `"interrupted"` | A signal or a console event, the end of stdin, or a closed stdout, before the simulation ended or while `run` waited for the participants to end on their own | `"interrupted"` |
 | `"failed"` | It could not start or go on: a participant or a bridge failed, `--timeout-ms` passed, the participants did not all join | `"failed"` |
@@ -2017,7 +2017,7 @@ Findings for the whole `test` are written after the table, one line each, as `<s
 | 4 | Usage error (nothing was run) |
 | 130 | Interrupted (130 even if a run failed before) |
 
-`test` takes no stop command, so it has no exit code 5: a run of `test` ends before its scenario's end only by a signal (130) or by `--timeout-ms` (1).
+`test` takes no stop command, so it has no exit code 5. A case that reaches its requested virtual stop time before the scenario is decided is incomplete and counts as a failed case (exit 1). A signal interrupts the test (130), and `--timeout-ms` is a wall-clock failure (1).
 
 `skipped` does not count as a failure. Even if every run is `skipped`, the exit code is 0 without `--strict`. The error for a participant with `manual: true` in the configuration file is also 4.
 

@@ -58,6 +58,7 @@ test('the run screen is in English: words, the status band, findings as they are
 
   // 実行: 状態の帯、段階、結果、ログの行数（複数形）
   await choose(page, 'simulation.yaml', 'en');
+  await page.getByTestId('stop-at-ms').fill('1000');
   await expect(page.getByTestId('check-outcome')).toContainText('Check: Passed');
   const session = await start(page);
   await expect(result(page, session)).toBeVisible({ timeout: RUN_TIMEOUT });

@@ -564,7 +564,7 @@ The launcher reads stdin only with `--stdin-commands`. Without it, stdin is not 
 | `{"command":"resume"}` | Ends the pause and continues. |
 | `{"command":"step","ms":<ms>}` | Only while paused: advances virtual time by `<ms>` (an integer from 1 to 10^12) and pauses again. |
 | `{"command":"run_until","at_ms":<ms>}` | Runs on and pauses at virtual time `<ms>` (an integer from 0 to 10^12; rounded up to a multiple of the time step). The same as `RunUntil` of the [Control API](control-api.md), and it does not need `--control`. |
-| `{"command":"speed","value":<speed>}` | Changes the speed (`<speed>` is a number or `"max"`, in the same range as `speed` in the configuration file). |
+| `{"command":"speed","value":<speed>}` | Changes the speed (`<speed>` is a number or `"max"`, in the same range as `run --speed`). |
 | Any of the above with `"id":<id>` | The same; `<id>` (an integer from 0 to 2^53) comes back in the `id` of the line's `command` event. |
 | End of stdin (EOF) | The same as one `stop` (the program that started the launcher has gone, or closed the pipe). |
 | A line of only white space | Skipped. |
@@ -760,7 +760,7 @@ Each name indicates that the following are present:
 
 | Name in `features` | Includes |
 |---|---|
-| `speed` | `speed`, `time_step_ms` and `late_tolerance_ms` in the configuration file, `run --speed`, `timing` in the result, the findings `behind-real-time` and `coarse-time-step`, and `actual_speed`, `late_steps`, `max_late_ms`, `slipped_ms` and `late_ms` in the `time` event |
+| `speed` | `time_step_ms` in the configuration file, `speed` and `late_tolerance_ms` in the run request, `run --speed`, `timing` in the result, the findings `behind-real-time` and `coarse-time-step`, and `actual_speed`, `late_steps`, `max_late_ms`, `slipped_ms` and `late_ms` in the `time` event |
 | `control-links` | The event `control_link`, `participants[].control_link` in the result, `participants[].control` in the check JSON, the findings `control-link-no-hello`, `control-link-version`, `control-link-revision`, `control-link-late-values`, `control-link-dropped` and `control-link-not-offered` |
 | `manual-participants` | `manual` in the configuration file, `--manual`, `participants[].manual` in the check and result JSON, the finding `participant-manual`, and the `state` `manual` of the event `participant` |
 | `scenario` | `scenario` in the result and check JSON, the event `scenario_step`, the findings `scenario-*`, and a finding's `file` being the scenario file |

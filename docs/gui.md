@@ -244,7 +244,7 @@ vehicle-sil-gui [options] [<configuration file>]
 | `--web <dir>` | Serve your own screen: its build output directory (must contain `index.html`). Default: the sample screens (see "[Files served with `--web`](#files-served-with---web)") |
 | `--dev-origin <origin>` | Also accept requests from the screen's development server (`ng serve`, Vite and others; only of the form `http://127.0.0.1:<port>`) (see "[Use a development server](#use-a-development-server)") |
 | `--json` | Print `{"vehicle_sil_gui": 2, "url": ..., "port": ...}` on one line instead of the URL (when a tool starts the GUI) |
-| `--stop-timeout <seconds>` | On exit, the minimum time to wait for a running simulation to stop. The server also allows enough time for the launcher's participant and connection shutdown stages before it stops the launcher |
+| `--stop-timeout <seconds>` | On exit, how long to wait for a running simulation to stop before signaling the launcher. By default the server waits for the launcher to finish |
 | `--participant-start-timeout-ms <ms>` | Wall-clock wait for required participants during startup (default 30000 ms) |
 | `--participant-stop-timeout-ms <ms>` | Launcher’s wall-clock wait per participant shutdown stage (default 10000 ms) |
 | `--check-timeout <seconds>` | The time limit of a check (including `--describe` of each ECU) (default 120). After that, the check is stopped |
@@ -346,7 +346,7 @@ In **Settings → Scenario folder**, choose a local directory for opening and sa
 | The server is killed | The launcher sees the end of stdin and stops by itself. |
 
 - A launcher that does not read stdin stops neither with **Stop** nor with **Stop without waiting**. In that case, stop the server.
-- When the server exits, it waits for the greater of `--stop-timeout` and the launcher's shutdown budget (10 seconds plus three participant stop timeouts and the greater of 5 seconds and one participant stop timeout). If the launcher has not stopped, the server sends SIGTERM (on Windows, Ctrl+Break) to its process group and kills the group 5 seconds later (on Windows, `taskkill /T /F`). A second signal skips the wait.
+- When the server exits, it closes the launcher's input and waits for it to finish. If `--stop-timeout` is given and the launcher has not stopped within that time, the server sends SIGTERM (on Windows, Ctrl+Break) to its process group and kills the group 5 seconds later (on Windows, `taskkill /T /F`). A second signal skips both the initial wait and the 5-second wait. With no timeout, a launcher that cannot finish needs a second signal to force it to stop.
 - The server can stop only the launcher and what is in the launcher's process group. Cleaning up the participants is the launcher's job (the launcher starts the participants in a process group of their own).
 - If the launcher has exited but a process it started still holds its output open, the server waits 2 seconds, then ends the run and notifies the screen. That process may still be running.
 

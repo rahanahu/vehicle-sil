@@ -26,7 +26,7 @@ def test_events_with_wrong_types_do_not_stop_the_reading(gui: Gui) -> None:
     async def main(c: Client) -> None:
         sock = await c.ws()
         await sock.until(is_synced)
-        assert (await c.post("api/run", {"file": "bad-types.yaml"}))[0] == 200
+        assert (await c.post("api/run", {"file": "bad-types.yaml", "stop_at_ms": 1000}))[0] == 200
         got = await sock.until(is_ended, timeout=15)
         end = got[-1]["session"]
         assert end["result"]["result"] == "passed" and end["launcher"]["exit_code"] == 0
@@ -43,7 +43,7 @@ def test_a_number_that_is_not_finite_does_not_stop_the_reading(tmp_path: Path) -
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            assert (await c.post("api/run", {"file": "simulation.yaml"}))[0] == 200
+            assert (await c.post("api/run", {"file": "simulation.yaml", "stop_at_ms": 1000}))[0] == 200
             got = await sock.until(is_ended, timeout=15)
             end = got[-1]["session"]
             assert end["result"]["result"] == "passed" and end["phase"] == "ended"
@@ -151,7 +151,7 @@ def test_auth_fields_must_be_counts(tmp_path: Path) -> None:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "simulation.yaml"})
+            await c.post("api/run", {"file": "simulation.yaml", "stop_at_ms": 1000})
             await sock.until(is_ended)
             for auth in ({"session": True, "from_seq": 5}, {"session": 1, "from_seq": -3},
                          {"session": 1, "from_seq": 2.5}):
@@ -226,7 +226,7 @@ def test_a_reconnection_is_told_how_many_lines_were_dropped(tmp_path: Path) -> N
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "flood.yaml"})
+            await c.post("api/run", {"file": "flood.yaml", "stop_at_ms": 1000})
             live = await sock.until(is_ended)
             engine = [e for e in event_messages(live, "log") if e["source"] == "Engine"]
             for from_seq in (50, engine[-2500]["seq"], engine[-100]["seq"]):

@@ -1509,6 +1509,11 @@ TEST_CASE(each_result_has_its_exit_code_its_ok_and_a_message)
     CHECK(lines(incomplete.findings).find("N 4 scenario-incomplete: the scenario did not get to its end") != std::string::npos);
     CHECK(lines(incomplete.findings).find("; the run was stopped by a stop request before the scenario's end\n") != std::string::npos);
     CHECK(format_run_text(incomplete).ends_with("\nincomplete: 0 errors, 0 warnings, 2 notes\n"));
+    RunOutcome atLimit = with_scenario(passed_run(), ScenarioStatus::Incomplete);
+    atLimit.end.simulation = SimulationEnd::ReachedStopAt;
+    const RunReport limited = report_of(atLimit);
+    CHECK(limited.result() == RunResult::Incomplete);
+    CHECK(limited.message() == "The run reached its requested stop time before the scenario reached its end, so the scenario has no verdict");
     // ... or before the scenario began.
     RunOutcome early = with_scenario(stopped_run("stop command", StopKind::Operator), ScenarioStatus::NotRun);
     early.end.simulation = SimulationEnd::NotStarted;

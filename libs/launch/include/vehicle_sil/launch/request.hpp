@@ -77,12 +77,13 @@ struct RunHost
     std::string config{};
     /// Where the launcher is, for the bridges of RunIntent::connect (empty: none is looked for next to it).
     std::filesystem::path tool_directory{};
+    /// Time limit per executable, from 1 to config::kMaxMillis milliseconds.
     std::chrono::milliseconds describe_timeout = kDescribeTimeout;
     /// A file of each participant's output in this directory; empty: none.
     std::filesystem::path log_dir{};
     /// The file of the scenario's timeline as the user gave it; empty: none.
     std::string timeline{};
-    /// The longest the simulation may run (wall clock); empty: no limit.
+    /// The longest the simulation may run (wall clock), from 1 to config::kMaxMillis ms; empty: no limit.
     std::optional<std::chrono::milliseconds> timeout{};
     std::int64_t start_timeout_ms = 30000;
     std::int64_t stop_timeout_ms = 10000;
@@ -121,6 +122,9 @@ enum class RequestCommand
     Run,
     Test,
 };
+
+/// Checks the ranges of timing values before any calculation or process is started. Empty on success.
+[[nodiscard]] std::vector<config::Finding> validate_timing(const RunRequest& request);
 
 /// The rules about fields that do not go together, as findings (code "usage"; the message says
 /// which fields and what to do), in the order in which they are checked; empty: none broken.

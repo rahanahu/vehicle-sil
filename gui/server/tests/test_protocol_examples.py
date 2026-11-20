@@ -580,7 +580,10 @@ def test_ws_scenario_examples(tmp_path: Path, scenario: str) -> None:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": file})
+            intent: dict[str, object] = {"file": file}
+            if file != "participant-crash.yaml":
+                intent["stop_at_ms"] = 1000
+            await c.post("api/run", intent)
             await sock.until(is_ended)
             check_example(f"ws-{scenario}", ws(description, sock.sent, sock.received), gui)
             if scenario == "pass":
@@ -609,7 +612,7 @@ def test_ws_without_check_example(tmp_path: Path) -> None:
             loose = [await c.ws({"session_without_check": value}) for value in (1, "true", None)]
             for sock in (lean, full, *loose):
                 await sock.until(is_synced)
-            await c.post("api/run", {"file": "simulation.yaml"})
+            await c.post("api/run", {"file": "simulation.yaml", "stop_at_ms": 1000})
             for sock in (lean, full, *loose):
                 await sock.until(is_ended)
 
@@ -896,7 +899,7 @@ def test_ws_orphan_example(tmp_path: Path) -> None:
         async def talk(c: Client) -> int:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "orphan.yaml"})
+            await c.post("api/run", {"file": "orphan.yaml", "stop_at_ms": 1000})
             await sock.until(is_ended)
             check_example("ws-orphan", ws("The launcher has exited, but a process it started holds its output: the "
                                           "server stops reading after a short time (output-left-open).",
@@ -916,7 +919,7 @@ def test_ws_dropped_example(tmp_path: Path) -> None:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "flood.yaml"})
+            await c.post("api/run", {"file": "flood.yaml", "stop_at_ms": 1000})
             await sock.until(is_ended)
             await sock.close()
             resumed = await c.ws({"session": 1, "from_seq": 20})
@@ -937,7 +940,7 @@ def test_ws_kept_limit_example(tmp_path: Path) -> None:
         async def talk(c: Client) -> None:
             live = await c.ws()
             await live.until(is_synced)
-            await c.post("api/run", {"file": "large-result.yaml"})
+            await c.post("api/run", {"file": "large-result.yaml", "stop_at_ms": 1000})
             await live.until(is_ended, timeout=120)
             await live.close()
             later = await c.ws()
@@ -967,7 +970,7 @@ def test_ws_slow_client_examples(tmp_path: Path, kind: str) -> None:
             slow = await c.ws()
             fast = await c.ws()
             await fast.until(is_synced)
-            await c.post("api/run", {"file": file})
+            await c.post("api/run", {"file": file, "stop_at_ms": 1000})
             await fast.until(is_ended, timeout=120)
             want = "dropped" if kind == "slow-client" else "resync"
             got = await slow.until(lambda m: m["type"] == want, timeout=120)

@@ -36,6 +36,7 @@ test('a network is connected outside only when chosen, says so before each start
     await page.goto(server.url);
     await expect(page.getByRole('heading', { level: 1, name: WORDS.ja.run })).toBeVisible();
     await choose(page, 'connect.yaml');
+    await page.getByTestId('stop-at-ms').fill('1000');
 
     // 照合の can と ethernet のネットワークごとに選択がある。最初は「つながない」で、開くまで一覧を取らない
     // （SIL Kit だけの PC でブリッジを起こさない）
@@ -70,12 +71,8 @@ test('a network is connected outside only when chosen, says so before each start
     await select.selectOption('fake0');
     // 始める前に、開始のボタンの下に、つなぐ先が出る
     await expect(page.getByTestId('connect-summary')).toContainText('ETH_EXT → fake0');
-    // 照合の所見（ランチャーの文）が、始める前に、選択の下と照合のカードに出る
-    await expect(eth.locator('.vsil-findings li[data-code="outside-speed-set"]')).toContainText(
-      'real time',
-    );
-    await expect(page.getByTestId('check-card')).toContainText('outside-speed-set');
-    await expect(page.getByTestId('check-card')).toContainText('real time');
+    // 等速を明示しているので、外部接続による速度変更の注記は出ない。
+    await expect(eth.locator('.vsil-findings li[data-code="outside-speed-set"]')).toHaveCount(0);
 
     // 狭い幅でも横にはみ出さない（先の説明が長い選択の箱も）
     const narrow = VIEWPORTS[0];

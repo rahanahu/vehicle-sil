@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 from vehicle_sil_gui import process
-from vehicle_sil_gui.cli import stop_budget
 from vehicle_sil_gui.allowed import Facts
 from vehicle_sil_gui.hub import Client, Hub, encode
 from vehicle_sil_gui.launcher import (InvalidRequest, Launcher, check_command, check_disable, check_enable,
@@ -21,12 +20,6 @@ from vehicle_sil_gui.launcher import (InvalidRequest, Launcher, check_command, c
 from vehicle_sil_gui.paths import ConfigRoot, PathRejected
 from vehicle_sil_gui.session import Limits, Session
 from vehicle_sil_gui.static import StaticFiles
-
-
-def test_stop_budget_covers_launcher_shutdown() -> None:
-    assert stop_budget(1, None) >= 15.003
-    assert stop_budget(10_000, 1) >= 50
-    assert stop_budget(10_000, 100) == 100
 
 
 def line(event: str, seq: int, **fields) -> str:
@@ -866,6 +859,66 @@ def test_lines_are_split_and_long_lines_skipped() -> None:
         return [x async for x in process.lines(reader, 50)]
 
     assert asyncio.run(main()) == ["one", None, "two", "\ufffd", "end"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+def test_a_command_exits_even_when_an_escaped_child_keeps_its_output_open(tmp_path: Path) -> None:
+    """Process exit, not pipe EOF, starts the output grace period (also on Python 3.11/3.12)."""
+    from conftest import alive, scaled, wait_until
+    import signal
+
+    pid_file = tmp_path / "escaped-pid"
+    code = ("import os, subprocess, sys\n"
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)\n"
+            f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
+            "print('parent exited', flush=True)\n")
+
+    async def main() -> None:
+        code_result, out, _ = await process.run_to_end([sys.executable, "-c", code], cwd=None, timeout_s=scaled(5))
+        assert code_result == 0 and out == b"parent exited\n"
+
+    try:
+        asyncio.run(main())
+        child = int(pid_file.read_text())
+        assert alive(child), "the escaped child still holds the output open"
+    finally:
+        if pid_file.exists():
+            child = int(pid_file.read_text())
+            try:
+                os.kill(child, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            assert wait_until(lambda: not alive(child), 5)
+
+
+def test_shutdown_wait_observes_exit_between_poll_and_deadline(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from vehicle_sil_gui.server import GuiServer
+
+    async def main() -> None:
+        monkeypatch.setattr(process, "EXIT_POLL_S", 1.0)
+        server = GuiServer.__new__(GuiServer)
+        server._hurry = asyncio.Event()
+        child = SimpleNamespace(returncode=None)
+        asyncio.get_running_loop().call_later(0.02, setattr, child, "returncode", 0)
+        assert await server._wait(child, 0.08)
+
+    asyncio.run(main())
+
+
+def test_process_waits_observe_exit_between_poll_and_deadline(monkeypatch) -> None:
+    from conftest import scaled
+    from types import SimpleNamespace
+
+    async def main() -> None:
+        monkeypatch.setattr(process, "EXIT_POLL_S", scaled(4))
+        child = SimpleNamespace(returncode=None)
+        asyncio.get_running_loop().call_later(0.02, setattr, child, "returncode", 0)
+        assert await process.wait_bounded(child, scaled(0.1))
+        code, out, _ = await process.run_to_end([sys.executable, "-c", "print('done')"], cwd=None, timeout_s=scaled(1))
+        assert code == 0 and out == b"done\n"
+
+    asyncio.run(main())
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")

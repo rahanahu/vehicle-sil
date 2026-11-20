@@ -95,6 +95,8 @@ struct TestArguments
     std::optional<std::int64_t> late_tolerance_ms{};          ///< --timeout-ms
     std::optional<std::chrono::milliseconds> describe_timeout{}; ///< --describe-timeout-ms, if not the default
     config::TimePolicy time_policy = config::TimePolicy::Realtime;               ///< --time-policy
+    std::optional<std::int64_t> participant_start_timeout_ms{};
+    std::optional<std::int64_t> participant_stop_timeout_ms{};
 };
 
 /// The result of `vehicle_sil_launch test`.

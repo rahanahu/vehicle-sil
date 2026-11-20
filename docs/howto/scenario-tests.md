@@ -215,7 +215,7 @@ steps:
 
 A condition is either a plain value (the variable must equal it) or one of `ge`, `le`, `gt`, `lt`, `eq`, `ne`, and `near` with `tolerance`. For all keys and conditions, see "File format" in [scenario.md](../scenario.md#file-format).
 
-`wait_until` and an `expect` with `within_ms` both wait until the condition holds. Use `wait_until` to wait for the preconditions of a test, and `expect` for the response you want to test. They fail with different finding codes, `scenario-timeout` and `scenario-failed`, so the result shows which of the two failed. Keep the waits short enough for the scenario to end before `stop_at_ms` of the configuration file (1000 ms in `simulation.yaml`); otherwise the run fails with `scenario-out-of-time`.
+`wait_until` and an `expect` with `within_ms` both wait until the condition holds. Use `wait_until` to wait for the preconditions of a test, and `expect` for the response you want to test. They fail with different finding codes, `scenario-timeout` and `scenario-failed`, so the result shows which of the two failed. If the run request sets `stop_at_ms`, allow enough time for the scenario to finish before that limit. If it reaches the limit first, the scenario is `incomplete`; the run exits with code 5 if nothing else is wrong.
 
 Before you run the scenario, check it with `check --scenario`. It finds errors in variable names, types, value ranges and the order of times without starting the simulation.
 
@@ -371,14 +371,13 @@ line  step                                                result  at
 
 ### Troubleshoot failures
 
-These 4 finding codes appear only when the scenario runs:
+These finding codes appear only when the scenario runs:
 
 | Code | Cause | Fix |
 |---|---|---|
 | `scenario-failed` | The condition of an `expect` did not hold. | Look at the value and the time on the `error:` line, then fix the ECU or the scenario. |
 | `scenario-timeout` | The condition of a `wait_until` did not hold within `timeout_ms`. | Find out why the precondition is not met, or increase `timeout_ms`. |
-| `scenario-out-of-time` | The run reached `stop_at_ms` of the configuration file before the scenario ended. | Increase `stop_at_ms`, or remove it. The simulation also stops when the scenario ends. |
-| `scenario-incomplete` | The run ended in the middle of the scenario: an ECU ended abnormally, the run was ended by Ctrl+C or `--timeout-ms`, or a stop (a `stop` on stdin, or `Stop` of the Control API) cut the scenario short (exit code 5). | Fix the error reported with it first. |
+| `scenario-incomplete` | The run ended in the middle of the scenario: an ECU ended abnormally, the requested `stop_at_ms` was reached, Ctrl+C or `--timeout-ms` ended the run, or a stop (a `stop` on stdin, or `Stop` of the Control API) cut the scenario short. | Fix any error reported with it. If the requested `stop_at_ms` was reached, increase it or leave it out. |
 
 For the rules of the result, see "Results" in [scenario.md](../scenario.md#results).
 
