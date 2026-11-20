@@ -496,6 +496,62 @@ describe('SessionFeed', () => {
     expect(client.session.session.get()?.result?.message.length).toBe(result.message.length);
   });
 
+  it('adopts missed launcher results from an older hello after a newer HTTP control snapshot', async () => {
+    const http = new FakeHttp();
+    const { socket } = open(http);
+    const client = clientsLast();
+    const example = (await httpExamples()).find((item) => item.name === 'run');
+    const response = example?.response as { session: Record<string, unknown> };
+    const id = response.session['id'];
+    const hello = (session: Record<string, unknown>) => ({
+      type: 'hello',
+      vehicle_sil_gui: 2,
+      version: '0.1.0',
+      instance: 'x',
+      session,
+      replay: { from_seq: null },
+    });
+    socket.send(
+      hello({ ...response.session, snapshot_rev: 1, result: null, findings: [], last_seq: 1 }),
+    );
+    socket.send({ type: 'synced', session: id, last_seq: 1 });
+    vi.advanceTimersByTime(BATCH_MS);
+    const result = {
+      vehicle_sil_run: 2,
+      result: 'passed',
+      end: 'completed',
+      ok: true,
+      message: 'finished',
+      errors: 0,
+      warnings: 0,
+      notes: 0,
+      participants: [],
+      findings: [],
+    };
+    const finding = { severity: 'warning', code: 'x', message: 'missed', event_seq: 2 };
+    socket.send(
+      hello({ ...response.session, snapshot_rev: 2, last_seq: 3, result, findings: [finding] }),
+    );
+    socket.send({ type: 'synced', session: id, last_seq: 3 });
+    const refresh = client.fetchSession();
+    http.expectOne('api/session').flush({
+      instance: 'x',
+      session: {
+        ...response.session,
+        snapshot_rev: 3,
+        last_seq: 3,
+        result,
+        findings: [finding],
+        launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
+      },
+    });
+    await refresh;
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.launcher.running).toBe(false);
+    expect(client.session.session.get()?.result?.result).toBe('passed');
+    expect(client.session.session.get()?.findings.map((item) => item.message)).toEqual(['missed']);
+  });
+
   it('deduplicates a buffered finding already in the first HTTP summary', async () => {
     const http = new FakeHttp();
     const { socket } = open(http);

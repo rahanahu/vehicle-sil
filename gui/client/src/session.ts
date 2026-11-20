@@ -472,7 +472,7 @@ export class SessionFeed implements ClientSession {
           if (!summary) {
             session = null;
           } else if (sameRun && session) {
-            const kept = staleSnapshot ? session : applySummary(session, summary, true, true);
+            const kept = applySummary(session, summary, true, true);
             session = resumed
               ? kept
               : { ...kept, lastSeq: -1, logs: [], logSources: {}, droppedMarks: 0 };

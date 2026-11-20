@@ -288,6 +288,8 @@ export interface SessionView {
   id: number;
   /** Server snapshot capture order for this run, null on older servers. */
   snapshotRev?: number | null;
+  /** Capture order of the last adopted launcher projection, independent of server state. */
+  projectionRev?: number | null;
   /** Highest diagnostic identifier represented in this view. */
   problemSeq?: number;
   /** Highest diagnostic delivered by the ordered WebSocket stream. */
@@ -296,6 +298,8 @@ export interface SessionView {
   pendingFindings?: { through: number; keys: readonly string[] };
   /** Highest live or replay event observed, retained across full log replay. */
   observedSeq?: number;
+  /** Last event position for each launcher projection, retained across replay. */
+  eventSeqs?: Readonly<Record<string, number>>;
   /** seq of the last event received (-1 if none). On reconnect, the resend is requested from the next one. */
   lastSeq: number;
   /** The configuration file (relative to root). */
@@ -498,7 +502,11 @@ export function applySummary(
 ): SessionView {
   const incomingRev = summary.snapshot_rev ?? null;
   const currentRev = session.snapshotRev ?? null;
-  if (currentRev !== null && (incomingRev === null || incomingRev < currentRev)) return session;
+  const staleControl = currentRev !== null && (incomingRev === null || incomingRev < currentRev);
+  const projectionRev = session.projectionRev ?? null;
+  const staleProjection =
+    projectionRev !== null && (incomingRev === null || incomingRev < projectionRev);
+  if (staleControl && (staleProjection || (!force && controlOnly))) return session;
   const newer = force || (summary.last_seq ?? -1) > session.lastSeq;
   const launcher =
     !force && !session.launcher.running && summary.launcher.running
@@ -520,23 +528,28 @@ export function applySummary(
   }
   if (mergedProblems.every((problem) => problem.problem_seq !== undefined))
     mergedProblems.sort((a, b) => a.problem_seq! - b.problem_seq!);
-  const next: SessionView = {
-    ...session,
-    ...(incomingRev === null ? {} : { snapshotRev: incomingRev }),
-    ...(summary.problem_seq == null
-      ? {}
-      : { problemSeq: Math.max(session.problemSeq ?? 0, summary.problem_seq) }),
-    launcher,
-    stopRequests: Math.max(session.stopRequests, stopRequestsOf(summary.stop)),
-    logSources: withSources(session.logSources, Object.keys(summary.log)),
-    ...(force || notLess ? { problems: mergedProblems, problemsOmitted: omitted } : {}),
-  };
-  if (!newer || (!force && controlOnly)) {
+  const next: SessionView = staleControl
+    ? session
+    : {
+        ...session,
+        ...(incomingRev === null ? {} : { snapshotRev: incomingRev }),
+        ...(summary.problem_seq == null
+          ? {}
+          : { problemSeq: Math.max(session.problemSeq ?? 0, summary.problem_seq) }),
+        launcher,
+        stopRequests: Math.max(session.stopRequests, stopRequestsOf(summary.stop)),
+        logSources: withSources(session.logSources, Object.keys(summary.log)),
+        ...(force || notLess ? { problems: mergedProblems, problemsOmitted: omitted } : {}),
+      };
+  if (!newer || staleProjection || (!force && controlOnly)) {
     return next;
   }
   const phase = summary.phase ?? next.phase;
   const rank = phaseIndex(phase);
   const preserveEvents = force && controlOnly;
+  const behind = (...kinds: string[]) =>
+    summary.last_seq !== null &&
+    kinds.some((kind) => (session.eventSeqs?.[kind] ?? -1) > summary.last_seq!);
   const check =
     (preserveEvents ? next.check : null) ??
     summary.check ??
@@ -568,16 +581,32 @@ export function applySummary(
     environment: p.environment ?? (preserveEvents ? (known.get(p.name)?.environment ?? {}) : {}),
   }));
   const scenario = summary.scenario ? scenarioView(summary.scenario) : next.scenario;
-  const mergedScenario =
+  let mergedScenario =
     preserveEvents && scenario && next.scenario
       ? {
           ...scenario,
           steps: scenario.steps.reduce((steps, step) => {
             const old = next.scenario?.steps.find((item) => item.index === step.index);
-            return withStep(steps, old ? mergeScenarioStep(old, step) : step);
+            return withStep(
+              steps,
+              old
+                ? behind(`scenario_step:${step.index}`, 'result')
+                  ? old
+                  : mergeScenarioStep(old, step)
+                : step,
+            );
           }, next.scenario.steps),
         }
       : scenario;
+  if (mergedScenario && result?.scenario) {
+    mergedScenario = {
+      ...mergedScenario,
+      steps: result.scenario.steps.reduce(
+        (steps, step) => withStep(steps, step),
+        mergedScenario.steps,
+      ),
+    };
+  }
   if (mergedScenario && scenario && mergedScenario !== scenario) {
     mergedScenario.stepsOmitted = Math.max(
       0,
@@ -594,17 +623,27 @@ export function applySummary(
     : participants;
   return {
     ...next,
-    unreadable: force ? summary.unreadable : union(next.unreadable, summary.unreadable),
-    phase,
-    phaseRank: rank >= 0 ? rank : next.phaseRank,
+    ...(incomingRev === null ? {} : { projectionRev: incomingRev }),
+    unreadable:
+      force && !behind('finding', 'result', 'participant')
+        ? summary.unreadable
+        : union(next.unreadable, summary.unreadable),
+    phase: behind('phase', 'result') ? (next.phase ?? phase) : phase,
+    phaseRank: behind('phase', 'result') ? next.phaseRank : rank >= 0 ? rank : next.phaseRank,
     elapsedMs: Math.max(next.elapsedMs, summary.last_t_ms ?? 0),
-    simMs: summary.sim_ms ?? next.simMs,
+    simMs: behind('time') ? (next.simMs ?? summary.sim_ms) : (summary.sim_ms ?? next.simMs),
     timeOmittedFields:
-      summary.sim_ms === null ? next.timeOmittedFields : summary.time_omitted_fields,
-    time: summary.time ? timeView(summary.time) : next.time,
-    lastCommand: summary.last_command
-      ? commandView(summary.last_command, summary.last_command.seq ?? -1)
-      : next.lastCommand,
+      behind('time') || summary.sim_ms === null
+        ? next.timeOmittedFields
+        : summary.time_omitted_fields,
+    time:
+      behind('time') && next.time ? next.time : summary.time ? timeView(summary.time) : next.time,
+    lastCommand:
+      behind('command') && next.lastCommand
+        ? next.lastCommand
+        : summary.last_command
+          ? commandView(summary.last_command, summary.last_command.seq ?? -1)
+          : next.lastCommand,
     launcherState: newerState(next.launcherState, summary.launcher_state ?? null),
     findings: preserveEvents ? mergeFindings(next.findings, summary.findings) : summary.findings,
     result,
@@ -612,10 +651,10 @@ export function applySummary(
     scenario: mergedScenario,
     // Whether a participant is required or left out is in the check result (as is the order, that of the configuration
     // file). If there is a result, how it ended (stopped or not) comes from the result too
-    participants: withResult(
-      check ? mergeCheck(mergedParticipants, check) : mergedParticipants,
-      result,
-    ),
+    participants:
+      behind('participant', 'result', CONTROL_EVENT) && next.participants.length > 0
+        ? next.participants
+        : withResult(check ? mergeCheck(mergedParticipants, check) : mergedParticipants, result),
   };
 }
 
@@ -746,7 +785,17 @@ export function applyEvents(
   let stale = 0;
   for (const event of events) {
     if (event.seq > next.lastSeq) {
-      next = { ...next, observedSeq: Math.max(next.observedSeq ?? -1, event.seq) };
+      next = {
+        ...next,
+        observedSeq: Math.max(next.observedSeq ?? -1, event.seq),
+        eventSeqs: {
+          ...next.eventSeqs,
+          [event.event]: Math.max(next.eventSeqs?.[event.event] ?? -1, event.seq),
+          ...(event.event === 'scenario_step'
+            ? { [`scenario_step:${event.step.index}`]: event.seq }
+            : {}),
+        },
+      };
       const pending = next.pendingFindings;
       if (event.event === 'finding' && pending && event.seq <= pending.through) {
         const numbered = pending.keys.indexOf(`seq:${event.seq}`);

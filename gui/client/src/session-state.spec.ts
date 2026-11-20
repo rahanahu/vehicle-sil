@@ -650,6 +650,50 @@ describe('applyEvents', () => {
       { index: 1001, status: 'running' },
     ]);
     expect(refreshed.scenario?.stepsOmitted).toBe(0);
+    const latest = applyEvents(
+      old,
+      eventsFrom(7, [{ event: 'scenario_step', step: step(1001, 'failed') }]),
+    );
+    const delayed = applySummary(
+      latest,
+      summary({
+        scenario: { ...scenario, steps: [step(1, 'passed'), step(1001, 'running')] },
+        last_seq: 5,
+      }),
+      true,
+      true,
+    );
+    expect(delayed.scenario?.steps.map((item) => [item.index, item.status])).toEqual([
+      [1, 'passed'],
+      [1001, 'failed'],
+    ]);
+    const completed = {
+      result: 'passed',
+      findings: [],
+      participants: [],
+      check: null,
+      scenario: {
+        file: 'scenarios/a.yaml',
+        name: 'A',
+        status: 'passed',
+        over_at_ms: 10,
+        steps: [step(1, 'passed'), step(1001, 'passed')],
+      },
+    } as unknown as RunResult;
+    const ended = applySummary(
+      old,
+      summary({
+        scenario: { ...scenario, status: 'passed', steps: [step(1, 'passed')], steps_omitted: 1 },
+        result: completed,
+        last_seq: 5,
+      }),
+      true,
+      true,
+    );
+    expect(ended.scenario?.steps.map((item) => [item.index, item.status])).toEqual([
+      [1, 'passed'],
+      [1001, 'passed'],
+    ]);
     const steps = [step(1, 'passed'), step(2, 'failed'), step(3, 'not_run')];
     const result = {
       ...(summary().result ?? {}),
