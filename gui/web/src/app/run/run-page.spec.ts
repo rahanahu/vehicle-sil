@@ -19,7 +19,8 @@ describe('RunPage', () => {
   });
 
   function response(name: string): object {
-    return (examples.get(name) as { response: object }).response;
+    const result = (examples.get(name) as { response: object }).response;
+    return name === 'run' ? { ...result, instance: '0123456789abcdef' } : result;
   }
 
   function server(name: string): unknown[] {

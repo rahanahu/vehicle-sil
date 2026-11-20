@@ -6,6 +6,7 @@
   },
   "status": 200,
   "response": {
+    "instance": "0123456789abcdef",
     "session": {
       "id": 1,
       "file": "ignore-stop.yaml",

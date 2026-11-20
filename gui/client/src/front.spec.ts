@@ -280,6 +280,26 @@ describe('the front door', () => {
       expect(c.step.ok).toBe(true);
     });
 
+    it('reports a start paused during the waiting phase as paused', async () => {
+      const { front } = await running(
+        stateEvent(
+          1,
+          { phase: 'waiting', paused: true, paused_at_ms: 0, holding: true },
+          { pause: ok, resume: ok, step: { ...ok, min_ms: 10, max_ms: 5000 } },
+        ),
+      );
+      expect(front.status.get().run).toBe('paused');
+      expect(front.controls.get().resume.ok).toBe(true);
+      expect(front.controls.get().step.ok).toBe(true);
+    });
+
+    it('keeps waiting while participants have not reached the initial hold', async () => {
+      const { front } = await running(
+        stateEvent(1, { phase: 'waiting', paused: true, holding: false }, {}),
+      );
+      expect(front.status.get().run).toBe('waiting');
+    });
+
     it('passes the launcher reason and its caution on as they are', async () => {
       const { front } = await running(
         stateEvent(
@@ -376,8 +396,9 @@ describe('the front door', () => {
         caution: null,
       });
       expect(rig.front.status.get().run).toBe('starting');
-      // stop is allowed while a start is on its way, as the server says
-      expect(rig.front.controls.get().stop.ok).toBe(true);
+      // Another page's start has no session identity until its response or notification.
+      expect(rig.front.controls.get().stop.reason?.code).toBe('starting');
+      expect(rig.front.controls.get().force_stop.reason?.code).toBe('starting');
       await rig.deliver({
         type: 'allowed',
         session: null,
@@ -1129,20 +1150,37 @@ describe('the front door', () => {
       expect(rig.front.status.get().link).toBe('offline');
       const first = rig.front.run.stop();
       const second = rig.front.run.stop();
-      rig.http.expectOne('api/stop').flush({ session: summary({ stop: 'requested' }) });
+      rig.http.expectOne('api/stop-session').flush({ session: summary({ stop: 'requested' }) });
       await Promise.all([first, second]);
-      rig.http.expectNone('api/stop');
+      rig.http.expectNone('api/stop-session');
     });
 
     it('turns force_stop on after a stop has been asked for', async () => {
       const rig = await running();
       const stop = rig.front.run.stop();
       expect(rig.front.controls.get().stop.reason?.code).toBe('busy');
-      rig.http.expectOne('api/stop').flush({ session: summary({ stop: 'requested' }) });
+      rig.http.expectOne('api/stop-session').flush({ session: summary({ stop: 'requested' }) });
       await stop;
       expect(rig.front.status.get().run).toBe('stopping');
       expect(rig.front.controls.get().force_stop.ok).toBe(true);
       expect(rig.front.controls.get().stop.reason?.code).toBe('already-stopping');
+    });
+
+    it('does not treat the previous run stop as a stop of the new run', async () => {
+      const rig = await running();
+      const firstStop = rig.front.run.stop();
+      const firstRequest = rig.http.expectOne('api/stop-session');
+      await rig.deliver({ type: 'session', session: summary({}, 2) });
+      expect(rig.front.controls.get().force_stop.reason?.code).toBe('not-stopping');
+      expect(rig.front.controls.get().stop.ok).toBe(true);
+      const secondStop = rig.front.run.stop();
+      const secondRequest = rig.http.expectOne('api/stop-session');
+      expect(secondRequest.request.body).toMatchObject({ session: 2, instance: 'x' });
+      firstRequest.flush({ session: summary({ stop: 'requested' }) });
+      await firstStop;
+      expect(rig.front.controls.get().stop.reason?.code).toBe('busy');
+      secondRequest.flush({ session: summary({ stop: 'requested' }, 2) });
+      await secondStop;
     });
 
     it('starts the run with what it was given, and says starting meanwhile', async () => {
@@ -1172,7 +1210,7 @@ describe('the front door', () => {
         start_paused: true,
         disable: ['Logger'],
       });
-      request.flush({ session: summary() });
+      request.flush({ instance: 'x', session: summary() });
       await start;
       expect(rig.front.status.get().run).not.toBe('none');
     });
@@ -1199,7 +1237,7 @@ describe('the front door', () => {
       // A run that is over (without the launcher's end event it reads as crashed): both are what a wait for the end tests
       expect(['ended', 'crashed']).toContain(rig.front.status.get().run);
       const start = rig.front.run.start({}, { file: 'sim.yaml' });
-      rig.http.expectOne('api/run').flush({ session: summary({}, 2) });
+      rig.http.expectOne('api/run').flush({ instance: 'x', session: summary({}, 2) });
       await start;
       // `until(status, s => s.run === 'ended')` after `await start()` waits for the new run, not for the old one
       expect(['ended', 'crashed']).not.toContain(rig.front.status.get().run);
@@ -1247,7 +1285,7 @@ describe('the front door', () => {
         connect: { ETH_EXT: 'eth0' },
         time_policy: 'free',
       });
-      request.flush({ session: summary() });
+      request.flush({ instance: 'x', session: summary() });
       await start;
     });
 

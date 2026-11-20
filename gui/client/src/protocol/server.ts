@@ -886,6 +886,12 @@ export interface StopRequestBody {
   force: boolean;
 }
 
+/** POST api/stop-session: the server stops only this session. */
+export interface StopSessionRequestBody extends StopRequestBody {
+  session: number;
+  instance: string;
+}
+
 /** Names of the time commands (the launcher's stdin commands other than stop). */
 export type TimeCommandName = 'pause' | 'resume' | 'step' | 'run_until' | 'speed';
 

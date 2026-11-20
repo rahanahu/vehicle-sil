@@ -41,6 +41,8 @@ const PASSED_THROUGH: readonly string[] = [
   'run result: vehicle_sil_run',
   'run result: vehicle_sil',
   'run result: strict',
+  // The run's configured stop time; screens can read it from raw.
+  'run result: stop_at_ms',
   // Where the run's registry listened: the same as the uri of the registry event, which the parser types
   'run result: registry_uri',
   // --connect: the bridges the run started (for_network null for a participant of the file) and the networks

@@ -53,10 +53,14 @@ describe('RunSession', () => {
   });
 
   it('shows why the server refused', async () => {
+    run.start({}, 'a.yaml');
+    http
+      .expectOne('api/run')
+      .flush({ ...(examples.get('run')?.response as object), instance: '0123456789abcdef' });
     run.forceStop();
     expect(run.stopping()).toBe('force');
     http
-      .expectOne('api/stop')
+      .expectOne('api/stop-session')
       .flush(
         { error: { code: 'shutting-down', message: 'the server is shutting down', detail: null } },
         { status: 503, statusText: 'Service Unavailable' },
@@ -70,9 +74,13 @@ describe('RunSession', () => {
   });
 
   it('leaves the failure of a time command to the time card', async () => {
+    run.start({}, 'a.yaml');
+    http
+      .expectOne('api/run')
+      .flush({ ...(examples.get('run')?.response as object), instance: '0123456789abcdef' });
     run.stop();
     http
-      .expectOne('api/stop')
+      .expectOne('api/stop-session')
       .flush(
         { error: { code: 'shutting-down', message: 'the server is shutting down', detail: null } },
         { status: 503, statusText: 'Service Unavailable' },

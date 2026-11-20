@@ -85,12 +85,13 @@ API のバージョンは `vehicle_sil_gui`（今は 2）です。サーバー�
 | `POST api/check` `{file, text, variant, strict}` | ファイルの保存していない文の照合。プロセスを起動しない。レスポンスは上と同じ | `check-text.json` |
 | `POST api/describe` `{file, variant}` | `{file, variant, exit_code, check}`: 保存したファイルを照合し、実行ファイルの説明を取り直す（文の照合のため） | `describe.json` |
 | `POST api/config` `{file, text, stamp}` | `{file, stamp}`: 文をそのファイルとして保存する。既定では、実行されるコマンドを変えない編集だけ（下の「文を保存する（`POST api/config`）」） | `save-config.json`、`error-commands-changed.json` |
-| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{session}`（始めた実行の要約）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
+| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{instance, session}`（始めた実行の要約）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: そのネットワークを、このコンピューターでどこにつなげるか（下の「ネットワークを外につなぐ」） | `connections.json` |
 | `POST api/stop` `{force}` | `{session}`（今の要約。実行がなければ `null`） | `stop*.json` |
+| `POST api/stop-session` `{session, instance, force}` | 対象の `{session}`、または 409 `session-changed` | — |
 | `POST api/time` `{command, ms, value, id}` | `{session_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
-| `GET api/session` | `{session, allowed}`（`session` は実行がなければ `null`。`allowed` は下の「サーバーが受け付けること（`allowed`）」） | `session-*.json` |
+| `GET api/session` | `{instance, session, allowed}`（`session` は実行がなければ `null`。`allowed` は下の「サーバーが受け付けること（`allowed`）」） | `session-*.json` |
 | `GET api/dashboard?file=<configuration file>` | 設定ファイルの隣のダッシュボードのファイル: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
 | `GET api/scenarios?file=<configuration file>` | 設定ファイルの隣の `scenarios` のシナリオ: `{file, directory, found, scenarios, truncated}` | `scenarios.json` |
 | `GET api/recording` | いまの（最後の）実行の、反映された書き込みをシナリオの YAML にしたもの: `{recording}`（実行がなければ `null`） | `recording.json` |
@@ -173,6 +174,8 @@ API のバージョンは `vehicle_sil_gui`（今は 2）です。サーバー�
 レスポンスは `{file, stamp}` で、保存した中身の印です。保存は照合の順番を 1 回使います（照合と同じく 503 `check-busy`）。サーバーが古い中身について覚えたものは捨てます。説明は次の文の照合の前に取り直すので、保存したファイルの実行ファイルがそのとき説明を出します（`--allow-command-changes` では、新しいコマンドがそこで `--describe` つきで動きます）。`connect` には `api/connections` の一覧を取り直します。2 回目の印の比べは、照合と置き換えの間にほかのプログラムがファイルを変えられる時間を狭めますが、なくしはしません。例: `save-config.json`、`error-commands-changed.json`。
 
 ### 停止（`api/stop`）
+
+`api/stop-session` は `session` と `instance` を原子的に照合し、一致しなければ 409 `session-changed` を返して何もしません。`force` の意味は `api/stop` と同じです。GUI Client は対象を特定してからこの口を使い、開始の応答を失った場合や旧サーバーでは停止を送れなかったことを報告します。現在の実行を確認してから再度操作してください。
 
 本文は `{"force": boolean}` です。省略は `false` で、本文なしで `Content-Type` もないリクエストも `false` です。
 

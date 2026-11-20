@@ -319,6 +319,7 @@ class GuiServer:
         app.router.add_post("/api/connections", self.post_connections)
         app.router.add_post("/api/run", self.post_run)
         app.router.add_post("/api/stop", self.post_stop)
+        app.router.add_post("/api/stop-session", self.post_stop_session)
         app.router.add_post("/api/time", self.post_time)
         app.router.add_post("/api/write", self.post_write)
         app.router.add_get("/api/session", self.get_session)
@@ -567,7 +568,7 @@ class GuiServer:
 
     async def get_session(self, request: web.Request) -> web.Response:
         # The same encoding as the WebSocket: strict JSON (never a bare NaN or Infinity), or a 500.
-        return web.Response(text=encode({"session": self.session.summary() if self.session else None,
+        return web.Response(text=encode({"instance": self.instance, "session": self.session.summary() if self.session else None,
                                          "allowed": self.allowed()}),
                             content_type="application/json")
 
@@ -928,16 +929,32 @@ class GuiServer:
         self._tell_variables([variables.message()])
         if self._closing:  # the end began while the launcher was starting: it is stopped with the others
             raise Refused(503, "shutting-down", "the GUI server is stopping: the run that was starting is stopped")
-        return web.json_response({"session": session.summary()})
+        return web.json_response({"instance": self.instance, "session": session.summary()})
 
-    async def post_stop(self, request: web.Request) -> web.Response:
+    async def post_stop_session(self, request: web.Request) -> web.Response:
+        """Stop one identified run, never a run that replaced it."""
+        return await self.post_stop(request, targeted=True)
+
+    async def post_stop(self, request: web.Request, *, targeted: bool = False) -> web.Response:
         try:
             body = await self._body(request, empty_ok=True)
+            if targeted:
+                check_fields("api/stop-session", body, ("force", "session", "instance"))
         except InvalidRequest as e:
             return self._refusal(e)
         force = body.get("force", False)
         if not isinstance(force, bool):
             return error(400, "invalid-field", "force must be true or false")
+        target = body.get("session") if targeted else None
+        if targeted and (isinstance(target, bool) or not isinstance(target, int) or target < 1):
+            return error(400, "invalid-field", "session must be a positive integer")
+        if targeted and (not isinstance(body.get("instance"), str) or not body["instance"]):
+            return error(400, "invalid-field", "instance must be the server instance from the run or session answer")
+        # Check before setting _stop_on_start or writing to a launcher: a delayed request must
+        # never stop a different run, including one which is still starting.
+        if target is not None and (body["instance"] != self.instance or self._starting or self.current is None
+                                   or self.current.session.id != target):
+            return error(409, "session-changed", "the run has changed: no stop was sent")
         if self._starting and not self._closing:  # applied as soon as the launcher has started (in _start)
             self._stop_on_start = force or bool(self._stop_on_start)
         run = self.current
