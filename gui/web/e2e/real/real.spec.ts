@@ -72,7 +72,9 @@ test('a real run with a participant left out', async ({ page }) => {
 
 test('stopping a real run that does not end by itself', async ({ page }) => {
   await choose(page, 'forever.yaml');
+  const started = page.waitForResponse((r) => r.url().endsWith('/api/run'));
   const session = await start(page);
+  const { instance } = (await (await started).json()) as { instance: string };
   await expect(page.getByTestId('outcome')).toContainText('実行中', { timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('status-Engine')).toContainText('参加した');
   await expect(page.getByTestId('log-line').first()).toBeVisible();
@@ -84,7 +86,7 @@ test('stopping a real run that does not end by itself', async ({ page }) => {
   await expect.poll(simSeconds, { timeout: RUN_TIMEOUT }).toBeGreaterThan(first);
   const stop = page.waitForRequest((r) => r.url().endsWith('/api/stop-session'));
   await press(stopButton(page));
-  expect((await stop).postDataJSON()).toEqual({ session, force: false });
+  expect((await stop).postDataJSON()).toEqual({ session, instance, force: false });
   await expect(result(page, session)).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
   await expect(result(page, session).getByTestId('result')).toHaveAttribute('data-tone', 'neutral');
   await expect(result(page, session)).toContainText('停止の命令');
