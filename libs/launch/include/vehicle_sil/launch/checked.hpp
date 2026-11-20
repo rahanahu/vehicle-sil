@@ -89,7 +89,8 @@ struct CheckOptions
 /// be written, after the participants were described), and the file to compare the commands with
 /// (RunHost::compare_commands: CheckReport::commands, read and compared once the configuration is
 /// read, before anything is looked for). What only a run has (the logs, the
-/// timeline, the time limit, the control server, the commands of standard input) it does not read.
+/// timeline, the control server, the commands of standard input) it does not read. It checks the
+/// wall-clock time limit's range but does not otherwise use it.
 ///
 /// `on_time_lock`, if given, is called once with Checked::time_lock as soon as the
 /// configuration has been read (with --variant, --disable and --enable applied), before any

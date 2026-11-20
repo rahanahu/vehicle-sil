@@ -105,20 +105,21 @@ TEST_CASE(direct_check_and_run_refuse_invalid_timing_before_reading_a_file)
     r.host.stop_timeout_ms = 0;
     CHECK(check_file(r).usage);
     r.host.stop_timeout_ms = 10000;
-    for (const auto value : {std::int64_t{0}, std::int64_t{-1}, kMaxMillis + 1,
-                             std::chrono::milliseconds::max().count()})
+    for (const auto value : {std::chrono::milliseconds{0}, std::chrono::milliseconds{-1},
+                             std::chrono::milliseconds{kMaxMillis + 1}, std::chrono::milliseconds::max()})
     {
-        r.host.timeout = std::chrono::milliseconds(value);
+        r.host.describe_timeout = kDescribeTimeout;
+        r.host.timeout = value;
         CHECK(check_file(r).usage);
         CHECK(run_file(r).check.usage);
         r.host.timeout.reset();
-        r.host.describe_timeout = std::chrono::milliseconds(value);
+        r.host.describe_timeout = value;
         CHECK(check_file(r).usage);
     }
-    for (const auto value : {std::int64_t{1}, kMaxMillis})
+    for (const auto value : {std::chrono::milliseconds{1}, std::chrono::milliseconds{kMaxMillis}})
     {
-        r.host.timeout = std::chrono::milliseconds(value);
-        r.host.describe_timeout = std::chrono::milliseconds(value);
+        r.host.timeout = value;
+        r.host.describe_timeout = value;
         CHECK(!check_file(r).usage);
     }
     r.host.timeout.reset();
