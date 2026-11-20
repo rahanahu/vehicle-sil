@@ -52,14 +52,15 @@ type Selection = VariableRef & { type: string; unit: string };
 type Point = { sampleMs: number; value: number | boolean | null };
 type WaveEntry = { key: string; trace: Selection | null; revision: number; actor: string };
 type WaveMessage =
-  | { kind: 'request'; session: number; requester: string }
-  | { kind: 'snapshot'; session: number; target: string; entries: WaveEntry[] }
-  | { kind: 'selection'; session: number; entries: WaveEntry[] }
-  | { kind: 'history'; session: number; histories: [string, Point[]][] };
+  | { kind: 'request'; instance: string; session: number; requester: string }
+  | { kind: 'snapshot'; instance: string; target: string; entries: WaveEntry[] }
+  | { kind: 'selection'; instance: string; entries: WaveEntry[] }
+  | { kind: 'history'; instance: string; session: number; histories: [string, Point[]][] };
 const locationQuery = new URLSearchParams(location.search);
 // Retain the URL token in memory as well: storage can be unavailable or not copied to a new tab.
 const pageToken = takeToken(window);
 const waveStorage = 'vehicle-sil-workbench-waves';
+const waveStorageKey = (instance: string) => `${waveStorage}:${instance}`;
 const pinStorage = 'vehicle-sil-workbench-pins';
 function savedArray<T>(text: string | null, valid: (item: unknown) => item is T): T[] {
   try {
@@ -161,10 +162,16 @@ export class Workbench {
   readonly ecuQuery = signal('');
   readonly pinnedOnly = signal(false);
   readonly pins = signal<string[]>(readStored(pinStorage, isPin));
-  readonly traces = signal<Selection[]>(readStored(waveStorage, isTrace));
+  readonly traces = signal<Selection[]>([]);
   readonly liveHistories = signal<Point[][]>([]);
   readonly inheritedHistories = signal(new Map<string, Point[]>());
-  readonly sessionId = computed(() => this.variables()?.session ?? null);
+  readonly waveTarget = computed(() => {
+    // SessionFeed updates its authenticated target before notifying subscribers.
+    this.session();
+    return this.front()?.low.session.currentTarget() ?? null;
+  });
+  readonly waveInstance = computed(() => this.waveTarget()?.instance ?? null);
+  readonly waveSession = computed(() => this.waveTarget()?.session ?? null);
   readonly histories = computed(() =>
     this.traces().map((trace, i) => {
       const newest = this.liveHistories()[i] ?? [];
@@ -291,18 +298,16 @@ export class Workbench {
   private waveChannel: BroadcastChannel | null = null;
   private readonly waveActor = crypto.randomUUID();
   private waveRevision = 0;
+  private waveInstanceSeen: string | null = null;
   private readonly waveEntries = new Map<string, WaveEntry>();
   private listRevision = 0;
 
   constructor() {
-    for (const trace of this.traces()) {
-      const key = refKey(trace);
-      this.waveEntries.set(key, { key, trace, revision: 0, actor: '' });
-    }
     if (this.fixedPeer) document.title = `${this.fixedPeer} · vehicle-sil`;
     if (this.detachedWave) document.title = 'Waveforms · vehicle-sil';
     const storage = (event: StorageEvent) => {
-      if (event.key === waveStorage && (!this.waveChannel || this.sessionId() == null)) {
+      const instance = this.waveInstance() ?? this.waveInstanceSeen;
+      if (instance && event.key === waveStorageKey(instance) && !this.waveChannel) {
         const traces = savedArray(event.newValue, isTrace);
         this.waveEntries.clear();
         for (const trace of traces) {
@@ -320,29 +325,38 @@ export class Workbench {
     this.waveChannel = channel;
     if (channel) {
       channel.onmessage = ({ data }: MessageEvent<WaveMessage>) => {
-        const session = this.sessionId();
-        if (!data || session == null || data.session !== session) return;
+        const target = this.front()?.low.session.currentTarget();
+        const instance = target?.instance ?? this.waveInstanceSeen;
+        if (!data || !instance || data.instance !== instance) return;
+        this.ensureWaveInstance(instance);
         if (data.kind === 'request') {
           if (typeof data.requester === 'string' && this.waveEntries.size) {
             channel.postMessage({
               kind: 'snapshot',
-              session,
+              instance,
               target: data.requester,
               entries: [...this.waveEntries.values()],
             } satisfies WaveMessage);
           }
-          const histories = this.traces().map((trace, i): [string, Point[]] => [
-            refKey(trace),
-            this.histories()[i],
-          ]);
-          channel.postMessage({ kind: 'history', session, histories } satisfies WaveMessage);
+          if (target && data.session === target.session) {
+            const histories = this.traces().map((trace, i): [string, Point[]] => [
+              refKey(trace),
+              this.histories()[i],
+            ]);
+            channel.postMessage({
+              kind: 'history',
+              instance,
+              session: target.session,
+              histories,
+            } satisfies WaveMessage);
+          }
         } else if (
           (data.kind === 'selection' ||
             (data.kind === 'snapshot' && data.target === this.waveActor)) &&
           Array.isArray(data.entries)
         ) {
           this.mergeWaveEntries(data.entries);
-        } else if (data.kind === 'history') {
+        } else if (data.kind === 'history' && target && data.session === target.session) {
           this.inheritedHistories.update((histories) => {
             const result = new Map(histories);
             for (const [key, points] of data.histories) {
@@ -356,11 +370,15 @@ export class Workbench {
       this.destroy.onDestroy(() => channel.close());
     }
     effect(() => {
-      const session = this.sessionId();
+      const instance = this.waveInstance();
+      const session = this.waveSession();
+      if (instance) this.ensureWaveInstance(instance);
       this.inheritedHistories.set(new Map());
-      if (channel && session != null)
+      this.liveHistories.set([]);
+      if (channel && instance && session != null)
         channel.postMessage({
           kind: 'request',
+          instance,
           session,
           requester: this.waveActor,
         } satisfies WaveMessage);
@@ -567,13 +585,16 @@ export class Workbench {
   }
 
   private changeTrace(key: string, trace: Selection | null) {
+    const target = this.front()?.low.session.currentTarget();
+    const instance = target?.instance ?? this.waveInstanceSeen;
+    if (!instance) return;
+    this.ensureWaveInstance(instance);
     const entry = { key, trace, revision: ++this.waveRevision, actor: this.waveActor };
     this.mergeWaveEntries([entry]);
-    const session = this.sessionId();
-    if (this.waveChannel && session != null)
+    if (this.waveChannel)
       this.waveChannel.postMessage({
         kind: 'selection',
-        session,
+        instance,
         entries: [entry],
       } satisfies WaveMessage);
   }
@@ -607,8 +628,21 @@ export class Workbench {
         .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
         .map((entry) => entry.trace!);
       this.applyTraces(traces);
-      saveStored(waveStorage, traces);
+      if (this.waveInstanceSeen) saveStored(waveStorageKey(this.waveInstanceSeen), traces);
     }
+  }
+
+  private ensureWaveInstance(instance: string) {
+    if (this.waveInstanceSeen === instance) return;
+    this.waveInstanceSeen = instance;
+    this.waveRevision = 0;
+    this.waveEntries.clear();
+    const traces = readStored(waveStorageKey(instance), isTrace);
+    for (const trace of traces) {
+      const key = refKey(trace);
+      this.waveEntries.set(key, { key, trace, revision: 0, actor: '' });
+    }
+    this.applyTraces(traces);
   }
 
   private applyTraces(traces: Selection[]) {

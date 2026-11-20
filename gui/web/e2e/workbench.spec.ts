@@ -89,7 +89,12 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
           location.protocol === 'http:' &&
           !new URLSearchParams(location.search).has('view')
         ) {
-          localStorage.setItem('vehicle-sil-workbench-waves', '{invalid');
+          const original = Storage.prototype.getItem;
+          Storage.prototype.getItem = function (key) {
+            return key.startsWith('vehicle-sil-workbench-waves:')
+              ? '{invalid'
+              : original.call(this, key);
+          };
           localStorage.setItem('vehicle-sil-workbench-pins', '[null,42]');
         }
       }, storage);
@@ -157,6 +162,49 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
       await wave.bringToFront();
       await expect.poll(() => path.getAttribute('d'), { timeout: RUN_TIMEOUT }).not.toBe(first);
       if (storage === 'blocked') {
+        const app = await page.request.get(new URL('/api/app', server.url).href, {
+          headers: { Authorization: `Bearer ${server.token}` },
+        });
+        const instance = (await app.json()).instance as string;
+        // An old server reuses session 1. Its selection and history must not cross into this run.
+        // The final message is from the current instance but an earlier run: selection still merges.
+        await page.evaluate((currentInstance) => {
+          const bus = new BroadcastChannel('vehicle-sil-workbench-waves');
+          const key = JSON.stringify(['Engine', 'engine.speed']);
+          bus.postMessage({
+            kind: 'history',
+            instance: 'old-server',
+            session: 1,
+            histories: [
+              [key, Array.from({ length: 600 }, (_, i) => ({ sampleMs: i - 600, value: 999999 }))],
+            ],
+          });
+          bus.postMessage({
+            kind: 'selection',
+            instance: 'old-server',
+            session: 1,
+            entries: [{ key, trace: null, revision: 9999, actor: 'old' }],
+          });
+          bus.postMessage({
+            kind: 'selection',
+            instance: currentInstance,
+            session: 0,
+            entries: [
+              {
+                key: JSON.stringify(['Engine', 'test.marker']),
+                trace: { peer: 'Engine', name: 'test.marker', type: 'real', unit: '' },
+                revision: 1,
+                actor: 'test',
+              },
+            ],
+          });
+          bus.close();
+        }, instance);
+        await expect(wave.getByRole('img', { name: 'test.marker waveform' })).toBeVisible({
+          timeout: RUN_TIMEOUT,
+        });
+        await expect(path).toHaveCount(1);
+        await expect(wave.getByText('999,999', { exact: true })).toHaveCount(0);
         // Deliver the two concurrent updates only after both tabs have made their choice.
         await page.evaluate(() => {
           (window as typeof window & { holdSelections: boolean }).holdSelections = true;
