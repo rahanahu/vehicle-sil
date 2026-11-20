@@ -81,6 +81,7 @@ Work on the launcher computer. The configuration file is `simulation.two-pcs.yam
 <!-- examples/ecu_main/simulation.two-pcs.yaml -->
 ```yaml
 vehicle_sil_simulation: 2
+
 registry_uri: silkit://0.0.0.0:8500
 networks:
   - name: J1939_CAN
@@ -409,8 +410,8 @@ Every step costs a round trip between the computers.
 
 | Run | Effect |
 |---|---|
-| As fast as possible (no `speed`) | Slower than on one computer |
-| At a set speed (`speed: 1` and others) | No effect, as long as the round trip takes much less than the real time available for one step |
+| As fast as possible (no `--speed`) | Slower than on one computer |
+| At a set speed (`--speed 1` and others) | No effect, as long as the round trip takes much less than the real time available for one step |
 
 The `time:` line of the result shows any lateness.
 

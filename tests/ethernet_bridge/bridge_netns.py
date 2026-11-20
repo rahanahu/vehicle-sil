@@ -890,9 +890,6 @@ def launch(world: World, backend: str = "packet") -> None:
 
     with open(os.path.join(world.work, "sim.yaml"), "w", encoding="utf-8") as f:
         f.write("vehicle_sil_simulation: 2\n"
-                "stop_at_ms: 600000\n"
-                "speed: 1\n"
-                "late_tolerance_ms: 60000\n"  # a busy machine: --strict would fail on behind-real-time
                 "registry_uri: silkit://127.0.0.1:0\n"
                 "networks:\n"
                 "  - name: ETH_EXT\n"
@@ -908,6 +905,7 @@ def launch(world: World, backend: str = "packet") -> None:
     # The launcher finds the bridge on PATH (it is not next to vehicle_sil_launch in the build).
     env = dict(os.environ, PATH=os.path.dirname(world.bridge_path) + os.pathsep + os.environ.get("PATH", ""))
     run = world.run([world.args.launch, "run", "--events", "--scenario", "answers.yaml", "--speed", "1", "--strict",
+                     "--stop-at-ms", "600000", "--late-tolerance-ms", "60000",
                      "--log-dir", "logs", "--connect", f"ETH_EXT={target}", "sim.yaml"], env)
     code = run.wait(4 * WAIT)
     done.set()

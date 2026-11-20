@@ -107,7 +107,7 @@ class TheGuide(unittest.TestCase):
         commands = [(name, text) for name, text in blocks() if name.startswith("vehicle_sil_control ")]
         self.assertGreaterEqual(len(commands), 1)
         normal = lambda text: re.sub(r"seq \d+", "seq <n>", "\n".join(" ".join(line.split()) for line in text.splitlines()))
-        with Launch(LAUNCH, CONFIG, start_paused=True) as launch:
+        with Launch(LAUNCH, CONFIG, start_paused=True, arguments=["--stop-at-ms", "1000"]) as launch:
             for name, expected in commands:
                 with self.subTest(command=name):
                     first_lines = name.endswith(": the first lines")
@@ -125,7 +125,7 @@ class TheGuide(unittest.TestCase):
         name = "standard input of run --start-paused --stdin-commands"
         commands = block(f"{name}: the input").splitlines()
         expected = block(f"{name}: the lines of the Dashboard").splitlines()
-        run = subprocess.Popen([LAUNCH, "run", "--events", "--start-paused", "--stdin-commands", CONFIG],
+        run = subprocess.Popen([LAUNCH, "run", "--events", "--start-paused", "--stdin-commands", "--stop-at-ms", "1000", CONFIG],
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         try:
             seen, sent = [], 0
