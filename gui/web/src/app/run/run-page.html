@@ -218,7 +218,7 @@
               inputmode="numeric"
               data-testid="stop-at-ms"
               [value]="stopAt()"
-              [disabled]="running()"
+              [disabled]="running() || !run.ready()"
               [attr.aria-invalid]="stopAtTouched() && stopAtInvalid()"
               [attr.aria-describedby]="stopAtTouched() && stopAtInvalid() ? 'stop-at-error' : null"
               #stopAtInput

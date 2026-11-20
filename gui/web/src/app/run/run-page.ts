@@ -311,11 +311,12 @@ export class RunPage {
     () => {
       const file = this.selected();
       const session = this.session();
-      const carried = this.carriedFor(session?.id ?? null);
+      const id = session?.file === file ? session.id : null;
+      const carried = this.carriedFor(id);
       const sessionStop = session?.file === file ? session.check?.stop_at_ms : undefined;
       return {
         file,
-        id: session?.id ?? null,
+        id,
         value:
           carried && carried.file === file && carried.stopAtEdited
             ? (carried.stopAt ?? '')
@@ -328,7 +329,8 @@ export class RunPage {
   private readonly stopAtEditSource = computed(
     () => {
       const file = this.selected();
-      const id = this.session()?.id ?? null;
+      const session = this.session();
+      const id = session?.file === file ? session.id : null;
       const carried = this.carriedFor(id);
       return { file, id, edited: !!(carried && carried.file === file && carried.stopAtEdited) };
     },
