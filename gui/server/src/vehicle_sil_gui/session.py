@@ -50,7 +50,7 @@ STOP_NONE, STOP_REQUESTED, STOP_FORCED = "none", "requested", "forced"
 # The summary's `variables` of a run without any (variables.Variables.summary makes the others).
 # The fields of a scenario step that the summary keeps (the launcher's scenario_step event and result.scenario.steps[])
 SCENARIO_STEP_FIELDS = ("index", "line", "kind", "text", "status", "start_ms", "at_ms", "end_ms", "code", "message")
-NO_VARIABLES = {"state": "off", "reason": None, "peers": [], "peers_omitted": 0, "variables_omitted": 0,
+NO_VARIABLES = {"rev": 0, "state": "off", "reason": None, "peers": [], "peers_omitted": 0, "variables_omitted": 0,
                 "operations": []}
 
 
@@ -284,6 +284,7 @@ class Session:
         self.result: dict | None = None
         self.problems: list[dict] = []
         self.problems_omitted = 0
+        self._problem_seq = 0
         self._problem_counts = {"launcher": 0, "server": 0}
         self._stderr_lines = 0
         self._stderr_last: deque[str] = deque(maxlen=self.limits.stderr_last)
@@ -297,6 +298,7 @@ class Session:
         # The ECUs' variables of the run (the schema, the state, the last operations), made by the server's
         # variables.Variables when a summary is asked for. Not in the `session` messages (see message).
         self.variables: Callable[[], dict] | None = None
+        self._snapshot_rev = 0  # order of complete server snapshots within this run
         # The scenario's progress (a run with --scenario): from the check, the scenario_step events, the result.
         self.scenario_name: str | None = None
         self.scenario_step_count: int | None = None
@@ -395,6 +397,7 @@ class Session:
                                              "bytes: only its short plain fields are kept for a screen opened later")
         elif kind == "finding":
             entry = {k: v for k, v in event.items() if k not in ENVELOPE}
+            entry["event_seq"] = event["seq"]
             if len(self.findings) < self.limits.findings and self.findings_bytes + size <= self.limits.findings_bytes:
                 self.findings.append(entry)
                 self.findings_bytes += size
@@ -591,7 +594,8 @@ class Session:
         """A problem for the screens, kept in the summary while its room has space: the server's own problems,
         the launcher's standard error (bounded by stderr_line) and the rest of what the launcher wrote each have
         their own room."""
-        entry = {"code": code, "message": message, "detail": detail}
+        self._problem_seq += 1
+        entry = {"code": code, "message": message, "detail": detail, "problem_seq": self._problem_seq}
         room = "server" if code in SERVER_PROBLEMS else None if code == STDERR else "launcher"
         if room is None or self._problem_counts[room] < (self.limits.server_problems if room == "server"
                                                          else self.limits.problems):
@@ -703,7 +707,9 @@ class Session:
     # ------------------------------------------------------------ output
 
     def summary(self, variables: bool = True) -> dict:
+        self._snapshot_rev += 1
         out = {
+            "snapshot_rev": self._snapshot_rev,
             "id": self.id, "file": self.file, "disable": self.disable, "manual": self.manual, "speed": self.speed,
             "start_paused": self.start_paused, "started_at": self.started_at, "ended_at": self.ended_at,
             "state": self.state,
@@ -712,12 +718,13 @@ class Session:
             "stop": self.stop, "phase": self.phase, "last_seq": self.last_seq, "last_t_ms": self.last_t_ms,
             "time": self.time, "check": self.check, "registry": self.registry,
             "participants": list(self.participants.values()), "participants_omitted": self.participants_omitted,
-            "findings": self.findings, "findings_omitted": self.findings_omitted,
+            "findings": list(self.findings), "findings_omitted": self.findings_omitted,
             "last_command": self.last_command, "launcher_state": self.launcher_state,
             "allowed": self.allowed(), "result": self.result,
             "log": {source: {"kept": log.kept, "dropped": log.dropped + log.launcher_dropped}
                     for source, log in self._logs.items()},
-            "problems": self.problems, "problems_omitted": self.problems_omitted,
+            "problems": list(self.problems), "problems_omitted": self.problems_omitted,
+            "problem_seq": self._problem_seq,
             "scenario": self.scenario_summary(),
         }
         if variables:

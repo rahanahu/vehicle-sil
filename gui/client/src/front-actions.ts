@@ -7,6 +7,7 @@ import { HttpError, HttpTransport, errorMessage } from './http';
 import type { FrontControls, Intent, OperationName, RunState } from './front-types';
 import { ActionError } from './front-types';
 import type { Snapshot } from './front-compose';
+import type { StopCapture } from './run';
 import { linkOf, standsAt } from './front-compose';
 import type {
   CheckResult,
@@ -35,6 +36,7 @@ export interface Failure {
 export interface ActionSources {
   low: GuiClient;
   http: HttpTransport;
+  captureStop(): StopCapture;
   snapshot(): Snapshot;
   controls(): FrontControls;
   run(): RunState;
@@ -144,7 +146,10 @@ export class FrontActions {
   private readonly busyValue: Writable<ReadonlySet<OperationName>>;
   private readonly failureValue: Writable<Failure | null>;
   private readonly waiting = new Map<number, Waiting>();
-  private readonly inFlight = new Map<'stop' | 'force_stop', Promise<void>>();
+  private readonly inFlight = new Map<
+    'stop' | 'force_stop',
+    { key: object | string; promise: Promise<void> }
+  >();
   /** The checks not answered yet, in the order they are sent: the first is on its way, the others wait. */
   private readonly checks: QueuedCheck[] = [];
   /** Rejects when the client closes: a check that waits ends with it. */
@@ -182,7 +187,9 @@ export class FrontActions {
     if (request instanceof ActionError) return this.fail(request);
     const own = this.refusalOfStart();
     if (own) return this.fail(own);
-    return this.guarded('start', () => this.src.low.run.start(request).then(() => undefined));
+    // Reserve the low-level start before notifying Front subscribers: a subscriber may stop synchronously.
+    const start = this.src.low.run.start(request);
+    return this.guarded('start', () => start.then(() => undefined));
   }
 
   /**
@@ -368,22 +375,71 @@ export class FrontActions {
   }
 
   stop(): Promise<void> {
-    return this.once('stop', () => this.src.low.run.stop());
+    return this.once('stop', false);
   }
 
-  forceStop(): Promise<void> {
-    return this.once('force_stop', () => this.src.low.run.forceStop());
+  forceStop(target?: { session: number; instance: string }): Promise<void> {
+    const current = this.src.low.session.currentTarget();
+    if (target && (current?.session !== target.session || current.instance !== target.instance))
+      return this.fail(
+        new ActionError('session-changed', 'the confirmed run has changed', 'refused'),
+      );
+    if (this.src.low.run.starting.get())
+      return this.fail(
+        new ActionError('starting', 'wait until the new run can be identified', 'refused'),
+      );
+    return this.once('force_stop', true);
   }
 
-  /** A stop asked again while its request is on its way is the same request (a double click sends nothing more). */
-  private once(name: 'stop' | 'force_stop', send: () => Promise<unknown>): Promise<void> {
+  /** Pending stop only affects controls of the run it was sent for. */
+  busyForCurrent(): ReadonlySet<OperationName> {
+    const busy = new Set(this.busyValue.get());
+    const key = this.stopKey();
+    for (const name of ['stop', 'force_stop'] as const) {
+      if (this.inFlight.get(name)?.key !== key) busy.delete(name);
+    }
+    return busy;
+  }
+
+  private stopKey(): object | string {
+    return this.src.captureStop().key;
+  }
+
+  /** Repeated requests for the same run share one operation. */
+  private once(name: 'stop' | 'force_stop', force: boolean): Promise<void> {
+    const capture = this.src.captureStop();
+    const key = capture.key;
     const running = this.inFlight.get(name);
-    if (running) return running;
-    // The stop goes out whatever the connection says: HTTP may reach the server when the WebSocket is down
-    const promise = this.guarded(name, () => send().then(() => undefined)).finally(() => {
-      this.inFlight.delete(name);
+    if (running?.key === key) return running.promise;
+    let resolve!: () => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<void>((ok, fail) => {
+      resolve = ok;
+      reject = fail;
     });
-    this.inFlight.set(name, promise);
+    const entry = { key, promise };
+    this.inFlight.set(name, entry);
+    this.failureValue.set(null);
+    // The low-level method snapshots the target before any Front busy notification.
+    const operation = capture.send(force);
+    if (this.busyValue.get().has(name)) this.busyValue.set(new Set(this.busyValue.get()));
+    else this.setBusy(name, true);
+    operation.then(
+      () => {
+        if (this.inFlight.get(name) === entry) {
+          this.inFlight.delete(name);
+          this.setBusy(name, false);
+        }
+        resolve();
+      },
+      (error: unknown) => {
+        if (this.inFlight.get(name) === entry) {
+          this.inFlight.delete(name);
+          this.setBusy(name, false);
+        }
+        reject(this.record(actionError(error)));
+      },
+    );
     return promise;
   }
 

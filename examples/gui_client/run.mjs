@@ -11,7 +11,7 @@
 //
 // Exit codes: 0 the result is passed, 1 failed (check errors, a failed run, a server error, a timeout), 2 usage error.
 
-const PROTOCOL = 2; // the API version this client reads (vehicle_sil_gui in api/app and hello)
+const PROTOCOL = 3; // the API version this client reads (vehicle_sil_gui in api/app and hello)
 
 function usage(message) {
   console.error(`run.mjs: ${message}`);
@@ -100,7 +100,7 @@ async function main() {
   if (app.vehicle_sil_gui !== PROTOCOL) {
     finish(
       1,
-      `the server speaks version ${app.vehicle_sil_gui} of the GUI protocol; this client reads ${PROTOCOL}`,
+      `the server speaks version ${app.vehicle_sil_gui} of the GUI protocol and this client reads ${PROTOCOL}. Use the GUI server from the same release`,
     );
   }
   if (!app.launcher.usable) {
@@ -128,7 +128,11 @@ async function main() {
       switch (message.type) {
         case "hello":
           if (message.vehicle_sil_gui !== PROTOCOL)
-            reject(new Error("unknown protocol version in hello"));
+            reject(
+              new Error(
+                `the server speaks version ${message.vehicle_sil_gui} of the GUI protocol. Use the GUI server from the same release`,
+              ),
+            );
           break;
         case "synced":
           // The replay is complete: starting from here, no event of the run we start is missed

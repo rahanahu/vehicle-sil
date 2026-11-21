@@ -95,7 +95,7 @@ export interface LogLine {
    * Only on a marker for dropped lines ("N lines were dropped here"). launcher: lines the launcher could not write
    * (log_dropped).
    */
-  gap?: { count: number; atLeast: boolean; launcher?: boolean };
+  gap?: { count: number; atLeast: boolean; launcher?: boolean; notKept?: boolean };
 }
 
 /** Log counts per source. */
@@ -254,6 +254,43 @@ function scenarioView(summary: SummaryScenario): ScenarioView {
   };
 }
 
+/** Restore a locally received complete string only when the server's value is exactly its shortened form. */
+function fullStepText(incoming: string | null, current: string | null): string | null {
+  if (incoming === null || current === null) return incoming;
+  const cut = /^(.*)\.\.\. \((\d+) more characters\)$/s.exec(incoming);
+  if (!cut) return incoming;
+  const prefix = cut[1];
+  return current.startsWith(prefix) &&
+    Array.from(current).length === Array.from(prefix).length + Number(cut[2])
+    ? current
+    : incoming;
+}
+
+function mergeScenarioStep(current: ScenarioStep, incoming: ScenarioStep): ScenarioStep {
+  return {
+    ...incoming,
+    text: fullStepText(incoming.text, current.text) ?? incoming.text,
+    message: fullStepText(incoming.message, current.message),
+  };
+}
+
+// Positions follow the lifetime of retained step objects; they do not keep discarded steps alive.
+const stepPositions = new WeakMap<ScenarioStep, number>();
+
+/** Merge by index once, preserving sorted output without repeatedly copying the full list. */
+function mergeScenarioSteps(
+  current: readonly ScenarioStep[],
+  incoming: readonly ScenarioStep[],
+  merge: (old: ScenarioStep, next: ScenarioStep) => ScenarioStep = (_old, next) => next,
+): ScenarioStep[] {
+  const steps = new Map(current.map((step) => [step.index, step]));
+  for (const step of incoming) {
+    const old = steps.get(step.index);
+    steps.set(step.index, old ? merge(old, step) : step);
+  }
+  return [...steps.values()].sort((a, b) => a.index - b.index);
+}
+
 /** Applies one step (replacing one with the same index; kept in index order). */
 function withStep(steps: readonly ScenarioStep[], step: ScenarioStep): readonly ScenarioStep[] {
   const i = steps.findIndex((s) => s.index >= step.index);
@@ -266,6 +303,22 @@ function withStep(steps: readonly ScenarioStep[], step: ScenarioStep): readonly 
 export interface SessionView {
   /** Session number the server assigned. */
   id: number;
+  /** Server snapshot capture order for this run, null on older servers. */
+  snapshotRev?: number | null;
+  /** Capture order of the last adopted launcher projection, independent of server state. */
+  projectionRev?: number | null;
+  /** Highest launcher event position included in an adopted summary projection. */
+  projectionSeq?: number;
+  /** Highest diagnostic identifier represented in this view. */
+  problemSeq?: number;
+  /** Highest diagnostic delivered by the ordered WebSocket stream. */
+  problemEventSeq?: number;
+  /** Summary findings awaiting possible earlier buffered live events. */
+  pendingFindings?: { through: number; keys: readonly string[] };
+  /** Highest live or replay event observed, retained across full log replay. */
+  observedSeq?: number;
+  /** Last event position for each launcher projection, retained across replay. */
+  eventSeqs?: Readonly<Record<string, number>>;
   /** seq of the last event received (-1 if none). On reconnect, the resend is requested from the next one. */
   lastSeq: number;
   /** The configuration file (relative to root). */
@@ -370,6 +423,7 @@ export function runOutcome(session: SessionView): RunOutcome {
 export function sessionFromSummary(summary: SessionSummary): SessionView {
   const blank: SessionView = {
     id: summary.id,
+    ...(summary.snapshot_rev == null ? {} : { snapshotRev: summary.snapshot_rev }),
     lastSeq: -1,
     file: summary.file,
     disable: summary.disable,
@@ -399,7 +453,13 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
     droppedMarks: 0,
     scenario: null,
   };
-  return applySummary(blank, summary, true);
+  const adopted = applySummary(blank, summary, true);
+  return summary.last_seq == null
+    ? adopted
+    : {
+        ...adopted,
+        pendingFindings: { through: summary.last_seq, keys: summary.findings.map(findingIdentity) },
+      };
 }
 
 /**
@@ -415,7 +475,11 @@ export function addDropped(session: SessionView, dropped: Dropped): SessionView 
     key: `dropped ${mark} ${source}`,
     source,
     line: '',
-    gap: { count, atLeast: dropped.at_least.includes(source) },
+    gap: {
+      count,
+      atLeast: dropped.at_least.includes(source),
+      ...(dropped.reason === 'not-kept' ? { notKept: true } : {}),
+    },
   }));
   const next = { ...appendLogs(session, gaps), droppedMarks: mark };
   const sources = { ...next.logSources };
@@ -459,7 +523,17 @@ export function applySummary(
   force = false,
   controlOnly = false,
 ): SessionView {
-  const newer = force || (summary.last_seq ?? -1) > session.lastSeq;
+  const incomingRev = summary.snapshot_rev ?? null;
+  const currentRev = session.snapshotRev ?? null;
+  const staleControl = currentRev !== null && (incomingRev === null || incomingRev < currentRev);
+  const projectionRev = session.projectionRev ?? null;
+  const staleProjection =
+    projectionRev !== null && (incomingRev === null || incomingRev < projectionRev);
+  if (staleControl && (staleProjection || (!force && controlOnly))) return session;
+  const newer =
+    force ||
+    (summary.last_seq ?? -1) >
+      Math.max(session.lastSeq, session.observedSeq ?? -1, session.projectionSeq ?? -1);
   const launcher =
     !force && !session.launcher.running && summary.launcher.running
       ? session.launcher
@@ -467,22 +541,55 @@ export function applySummary(
   const notLess =
     summary.problems.length + summary.problems_omitted >=
     session.problems.length + session.problemsOmitted;
-  const next: SessionView = {
-    ...session,
-    launcher,
-    stopRequests: Math.max(session.stopRequests, stopRequestsOf(summary.stop)),
-    logSources: withSources(session.logSources, Object.keys(summary.log)),
-    ...(force || notLess
-      ? { problems: summary.problems, problemsOmitted: summary.problems_omitted }
-      : {}),
-  };
-  if (!newer || (!force && controlOnly)) {
+  const mergedProblems = [...summary.problems];
+  let omitted = summary.problems_omitted;
+  if (summary.problem_seq != null) {
+    const included = new Set(mergedProblems.map((problem) => problem.problem_seq));
+    for (const problem of session.problems) {
+      if (problem.problem_seq === undefined || included.has(problem.problem_seq)) continue;
+      if (mergedProblems.length >= MAX_PROBLEMS) break;
+      mergedProblems.push(problem);
+      if (problem.problem_seq <= summary.problem_seq && omitted > 0) omitted--;
+    }
+  }
+  if (mergedProblems.every((problem) => problem.problem_seq !== undefined))
+    mergedProblems.sort((a, b) => a.problem_seq! - b.problem_seq!);
+  const next: SessionView = staleControl
+    ? session
+    : {
+        ...session,
+        ...(incomingRev === null ? {} : { snapshotRev: incomingRev }),
+        ...(summary.problem_seq == null
+          ? {}
+          : { problemSeq: Math.max(session.problemSeq ?? 0, summary.problem_seq) }),
+        launcher,
+        stopRequests: Math.max(session.stopRequests, stopRequestsOf(summary.stop)),
+        logSources: withSources(session.logSources, Object.keys(summary.log)),
+        ...(summary.scenario?.timeline_url
+          ? {
+              scenario: session.scenario
+                ? { ...session.scenario, timelineUrl: summary.scenario.timeline_url }
+                : scenarioView(summary.scenario),
+            }
+          : {}),
+        ...(force || notLess ? { problems: mergedProblems, problemsOmitted: omitted } : {}),
+      };
+  if (!newer || staleProjection || (!force && controlOnly)) {
     return next;
   }
   const phase = summary.phase ?? next.phase;
   const rank = phaseIndex(phase);
-  const check = summary.check ?? next.check ?? summary.result?.check ?? null;
-  const result = summary.result ?? next.result;
+  const preserveEvents = force && controlOnly;
+  const behind = (...kinds: string[]) =>
+    summary.last_seq !== null &&
+    kinds.some((kind) => (session.eventSeqs?.[kind] ?? -1) > summary.last_seq!);
+  const check =
+    (preserveEvents ? next.check : null) ??
+    summary.check ??
+    next.check ??
+    summary.result?.check ??
+    null;
+  const result = (preserveEvents ? next.result : null) ?? summary.result ?? next.result;
   const known = new Map(session.participants.map((p) => [p.name, p]));
   const participants: readonly ParticipantView[] = summary.participants.map((p) => ({
     name: p.name,
@@ -492,38 +599,92 @@ export function applySummary(
     exitCode: p.exit_code,
     signal: p.signal,
     failure: p.reason,
-    message: p.message,
+    message: p.message ?? (preserveEvents ? (known.get(p.name)?.message ?? null) : null),
     // A stop the launcher asked for is kept even in summaries of later states (ended and so on)
     stopRequested:
       p.stop_requested || p.state === 'stop_requested' || !!known.get(p.name)?.stopRequested,
     omittedFields: p.omitted_fields,
     controlLink: p.control_link ?? known.get(p.name)?.controlLink ?? null,
     manual: p.state === 'manual' || p.command_line !== null || !!known.get(p.name)?.manual,
-    commandLine: p.command_line,
-    workingDirectory: p.working_directory,
-    environment: p.environment ?? {},
+    commandLine:
+      p.command_line ?? (preserveEvents ? (known.get(p.name)?.commandLine ?? null) : null),
+    workingDirectory:
+      p.working_directory ??
+      (preserveEvents ? (known.get(p.name)?.workingDirectory ?? null) : null),
+    environment: p.environment ?? (preserveEvents ? (known.get(p.name)?.environment ?? {}) : {}),
   }));
+  const scenario = summary.scenario
+    ? {
+        ...scenarioView(summary.scenario),
+        timelineUrl: next.scenario?.timelineUrl ?? summary.scenario.timeline_url,
+      }
+    : next.scenario;
+  let mergedScenario =
+    preserveEvents && scenario && next.scenario
+      ? {
+          ...scenario,
+          steps: mergeScenarioSteps(next.scenario.steps, scenario.steps, (old, step) =>
+            summary.last_seq !== null && (stepPositions.get(old) ?? -1) > summary.last_seq
+              ? old
+              : mergeScenarioStep(old, step),
+          ),
+        }
+      : scenario;
+  if (mergedScenario && result?.scenario) {
+    mergedScenario = {
+      ...mergedScenario,
+      steps: mergeScenarioSteps(mergedScenario.steps, result.scenario.steps),
+    };
+  }
+  if (mergedScenario && scenario && mergedScenario !== scenario) {
+    mergedScenario.stepsOmitted = Math.max(
+      0,
+      scenario.stepsOmitted - (mergedScenario.steps.length - scenario.steps.length),
+    );
+  }
+  const mergedParticipants = preserveEvents
+    ? [
+        ...participants,
+        ...next.participants.filter(
+          (p) => !participants.some((current) => current.name === p.name),
+        ),
+      ]
+    : participants;
   return {
     ...next,
-    unreadable: force ? summary.unreadable : union(next.unreadable, summary.unreadable),
-    phase,
-    phaseRank: rank >= 0 ? rank : next.phaseRank,
+    ...(incomingRev === null ? {} : { projectionRev: incomingRev }),
+    projectionSeq: Math.max(next.projectionSeq ?? -1, summary.last_seq ?? -1),
+    unreadable:
+      force && !behind('finding', 'result', 'participant')
+        ? summary.unreadable
+        : union(next.unreadable, summary.unreadable),
+    phase: behind('phase', 'result') ? (next.phase ?? phase) : phase,
+    phaseRank: behind('phase', 'result') ? next.phaseRank : rank >= 0 ? rank : next.phaseRank,
     elapsedMs: Math.max(next.elapsedMs, summary.last_t_ms ?? 0),
-    simMs: summary.sim_ms ?? next.simMs,
+    simMs: behind('time') ? (next.simMs ?? summary.sim_ms) : (summary.sim_ms ?? next.simMs),
     timeOmittedFields:
-      summary.sim_ms === null ? next.timeOmittedFields : summary.time_omitted_fields,
-    time: summary.time ? timeView(summary.time) : next.time,
-    lastCommand: summary.last_command
-      ? commandView(summary.last_command, summary.last_command.seq ?? -1)
-      : next.lastCommand,
+      behind('time') || summary.sim_ms === null
+        ? next.timeOmittedFields
+        : summary.time_omitted_fields,
+    time:
+      behind('time') && next.time ? next.time : summary.time ? timeView(summary.time) : next.time,
+    lastCommand:
+      behind('command') && next.lastCommand
+        ? next.lastCommand
+        : summary.last_command
+          ? commandView(summary.last_command, summary.last_command.seq ?? -1)
+          : next.lastCommand,
     launcherState: newerState(next.launcherState, summary.launcher_state ?? null),
-    findings: summary.findings,
+    findings: preserveEvents ? mergeFindings(next.findings, summary.findings) : summary.findings,
     result,
     check,
-    scenario: summary.scenario ? scenarioView(summary.scenario) : next.scenario,
+    scenario: mergedScenario,
     // Whether a participant is required or left out is in the check result (as is the order, that of the configuration
     // file). If there is a result, how it ended (stopped or not) comes from the result too
-    participants: withResult(check ? mergeCheck(participants, check) : participants, result),
+    participants:
+      behind('participant', 'result', CONTROL_EVENT) && next.participants.length > 0
+        ? next.participants
+        : withResult(check ? mergeCheck(mergedParticipants, check) : mergedParticipants, result),
   };
 }
 
@@ -554,15 +715,89 @@ function withSources(
  * counted.
  */
 export function addProblem(session: SessionView, problem: ServerProblem): SessionView {
-  if (session.problems.length >= MAX_PROBLEMS) {
-    return { ...session, problemsOmitted: session.problemsOmitted + 1 };
+  const seq = problem.problem_seq;
+  if (seq !== undefined && seq <= (session.problemEventSeq ?? 0)) return session;
+  const updated = seq === undefined ? session : { ...session, problemEventSeq: seq };
+  if (seq !== undefined && session.problems.some((item) => item.problem_seq === seq))
+    return updated;
+  if (updated.problems.length >= MAX_PROBLEMS) {
+    const alreadyCounted = seq !== undefined && seq <= (session.problemSeq ?? 0);
+    return alreadyCounted ? updated : { ...updated, problemsOmitted: updated.problemsOmitted + 1 };
   }
-  return { ...session, problems: [...session.problems, problem] };
+  const alreadyCounted = seq !== undefined && seq <= (session.problemSeq ?? 0);
+  const problems = [...updated.problems, problem];
+  if (problems.every((item) => item.problem_seq !== undefined))
+    problems.sort((a, b) => a.problem_seq! - b.problem_seq!);
+  return {
+    ...updated,
+    problems,
+    problemsOmitted: alreadyCounted
+      ? Math.max(0, updated.problemsOmitted - 1)
+      : updated.problemsOmitted,
+  };
 }
 
 /** Position of the phase (-1 for an unknown phase). */
 export function phaseIndex(phase: Phase | null): number {
   return phase === null ? -1 : (PHASES as readonly string[]).indexOf(phase);
+}
+
+/** The fields common to a finding in a summary and in a live event. */
+function findingKey(finding: Finding): string {
+  return JSON.stringify([
+    finding.severity,
+    finding.code,
+    finding.file,
+    finding.line,
+    finding.participant,
+    finding.network,
+    finding.message,
+    finding.detail,
+  ]);
+}
+
+function findingIdentity(finding: Finding): string {
+  return finding.event_seq === undefined
+    ? `body:${findingKey(finding)}`
+    : `seq:${finding.event_seq}`;
+}
+
+/** Merge two ordered, potentially incomplete lists without coalescing repeated findings. */
+function mergeFindings(
+  current: readonly Finding[],
+  incoming: readonly Finding[],
+): readonly Finding[] {
+  const a = current.slice(0, MAX_FINDINGS);
+  const b = incoming.slice(0, MAX_FINDINGS);
+  if (
+    a.every((finding) => finding.event_seq !== undefined) &&
+    b.every((finding) => finding.event_seq !== undefined)
+  ) {
+    const bySeq = new Map<number, Finding>();
+    for (const finding of [...b, ...a]) bySeq.set(finding.event_seq!, finding);
+    return [...bySeq.values()]
+      .sort((left, right) => left.event_seq! - right.event_seq!)
+      .slice(0, MAX_FINDINGS);
+  }
+  const ak = a.map(findingKey);
+  const bk = b.map(findingKey);
+  const sizes = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+  for (let i = a.length - 1; i >= 0; --i)
+    for (let j = b.length - 1; j >= 0; --j)
+      sizes[i][j] =
+        ak[i] === bk[j] ? 1 + sizes[i + 1][j + 1] : Math.max(sizes[i + 1][j], sizes[i][j + 1]);
+  const merged: Finding[] = [];
+  let i = 0,
+    j = 0;
+  while ((i < a.length || j < b.length) && merged.length < MAX_FINDINGS) {
+    if (i < a.length && j < b.length && ak[i] === bk[j]) {
+      merged.push(a[i++]);
+      j++;
+    } else if (j === b.length || (i < a.length && sizes[i + 1][j] >= sizes[i][j + 1]))
+      merged.push(a[i++]);
+    else merged.push(b[j++]);
+  }
+  return merged;
 }
 
 /**
@@ -580,6 +815,33 @@ export function applyEvents(
   let stale = 0;
   for (const event of events) {
     if (event.seq > next.lastSeq) {
+      const tracked = [
+        'time',
+        'phase',
+        'result',
+        'finding',
+        'participant',
+        'command',
+        CONTROL_EVENT,
+      ].includes(event.event);
+      if (event.event === 'scenario_step') stepPositions.set(event.step, event.seq);
+      next = {
+        ...next,
+        observedSeq: Math.max(next.observedSeq ?? -1, event.seq),
+        ...(tracked ? { eventSeqs: { ...next.eventSeqs, [event.event]: event.seq } } : {}),
+      };
+      const pending = next.pendingFindings;
+      if (event.event === 'finding' && pending && event.seq <= pending.through) {
+        const numbered = pending.keys.indexOf(`seq:${event.seq}`);
+        const index =
+          numbered === -1 ? pending.keys.indexOf(`body:${findingKey(event.finding)}`) : numbered;
+        if (index !== -1) {
+          const keys = [...pending.keys];
+          keys.splice(index, 1);
+          next = { ...next, lastSeq: event.seq, pendingFindings: { ...pending, keys } };
+          continue;
+        }
+      }
       next = applyOne(next, event, logs);
       if (event.unreadable)
         next = { ...next, unreadable: union(next.unreadable, event.unreadable) };
@@ -599,6 +861,45 @@ export function applyEvents(
     sources[gap.source] = { ...counts, dropped: counts.dropped + (gap.gap?.count ?? 0) };
   }
   return { ...next, logSources: sources };
+}
+
+/** Combines a same-run full replay with lines only the client still holds. */
+export function recoverReplayLogs(
+  session: SessionView,
+  recovered: readonly LogLine[],
+  notKept: ReadonlyMap<string, number>,
+): SessionView {
+  if (!recovered.length) return session;
+  const sources = Object.fromEntries(
+    Object.entries(session.logSources).map(([name, source]) => [
+      name,
+      { lines: 0, dropped: source.dropped },
+    ]),
+  );
+  const restored = new Map<string, number>();
+  for (const line of recovered) {
+    const source = (sources[line.source] ??= { lines: 0, dropped: 0 });
+    if (line.gap) source.dropped += line.gap.count;
+    else {
+      const count = restored.get(line.source) ?? 0;
+      if (count < (notKept.get(line.source) ?? 0)) {
+        source.dropped--;
+        restored.set(line.source, count + 1);
+      }
+    }
+  }
+  // The display limit may already have removed a marker. Counts still include its lines.
+  const logs = session.logs.flatMap((line) => {
+    if (!line.gap?.notKept) return [line];
+    const available = restored.get(line.source) ?? 0;
+    const count = Math.max(0, line.gap.count - available);
+    restored.set(line.source, Math.max(0, available - line.gap.count));
+    return count > 0 ? [{ ...line, gap: { ...line.gap, count } }] : [];
+  });
+  // Reapply the ordinary client limits to the union, including any live lines received during replay.
+  logs.push(...recovered);
+  logs.sort((a, b) => a.seq - b.seq);
+  return appendLogs({ ...session, logs: [], logSources: sources }, logs);
 }
 
 /**
@@ -718,7 +1019,12 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
       // text may appear twice)
       return next.findings.length >= MAX_FINDINGS
         ? next
-        : { ...next, findings: [...next.findings, event.finding] };
+        : {
+            ...next,
+            findings: next.findings.every((finding) => finding.event_seq !== undefined)
+              ? mergeFindings(next.findings, [{ ...event.finding, event_seq: event.seq }])
+              : [...next.findings, { ...event.finding, event_seq: event.seq }],
+          };
     case 'time':
       return { ...next, simMs: event.sim_ms, timeOmittedFields: [], time: timeView(event) };
     case 'command':

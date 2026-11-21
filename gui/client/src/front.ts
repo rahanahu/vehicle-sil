@@ -52,7 +52,7 @@ export interface ConnectOptions {
 }
 
 function makeFront(options: ClientOptions, onClose: () => void): Front {
-  const { client: low, http, onError } = buildClient(options);
+  const { client: low, http, onError, runControl } = buildClient(options);
 
   let counter = 0;
   const stamp = () => ++counter;
@@ -77,7 +77,7 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
     session: low.session.session.get(),
     allowed: low.session.allowed.get(),
     limits: low.limits.get(),
-    busy: actions.busy.get(),
+    busy: actions.busyForCurrent(),
   });
 
   const sources: Readable<unknown>[] = [
@@ -101,6 +101,7 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
   actions = new FrontActions({
     low,
     http,
+    captureStop: () => runControl.captureStop(),
     snapshot,
     controls: () => controls.get(),
     run,
@@ -236,7 +237,7 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
     run: {
       start: (intent, startOptions) => actions.start(intent, startOptions),
       stop: () => actions.stop(),
-      forceStop: () => actions.forceStop(),
+      forceStop: (target) => actions.forceStop(target),
     },
     time: {
       pause: () => actions.pause(),

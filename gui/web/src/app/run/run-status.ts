@@ -87,6 +87,7 @@ export class RunStatus {
   private forceDialog: MatDialogRef<ForceStopDialog, boolean> | null = null;
 
   readonly session = input.required<SessionView | null>();
+  readonly currentTarget = input<() => { session: number; instance: string } | null>(() => null);
   /** 実行の状態と結果（正面の口の `status`）。色、結果の文、異常終了かは、ここから決める。 */
   readonly status = input.required<FrontStatus>();
   /** 開始、停止、待たずに止めるを押せるか、押せない理由（正面の口の `controls`）。 */
@@ -112,7 +113,7 @@ export class RunStatus {
 
   readonly start = output();
   readonly stop = output();
-  readonly forceStop = output();
+  readonly forceStop = output<{ session: number; instance: string }>();
   /** 結果（または異常終了）の詳しい表示へ移りたい。 */
   readonly showDetails = output();
 
@@ -121,7 +122,11 @@ export class RunStatus {
   private forceHadFocus = false;
 
   private readonly running = computed(() => this.session()?.launcher.running ?? false);
-  private readonly stopRequests = computed(() => this.session()?.stopRequests ?? 0);
+  private readonly stopRequests = computed(() =>
+    this.starting() || this.controls().stop.reason?.code === 'starting'
+      ? 0
+      : (this.session()?.stopRequests ?? 0),
+  );
 
   /** 開始を押せない理由（押せるなら null）: 正面の口の理由を先に、次にこの画面の入力の都合。 */
   protected readonly startBlocked = computed<string | null>(() => {
@@ -418,10 +423,19 @@ export class RunStatus {
 
   protected askForceStop(): void {
     if (!this.forceEnabled() || !this.forceArmed() || this.forceDialog) return;
+    const target = this.currentTarget()();
+    if (!target) return;
     this.forceDialog = this.dialog.open<ForceStopDialog, void, boolean>(ForceStopDialog);
     this.forceDialog.afterClosed().subscribe((confirmed) => {
       this.forceDialog = null;
-      if (confirmed && this.forceEnabled()) this.forceStop.emit();
+      const current = this.currentTarget()();
+      if (
+        confirmed &&
+        this.forceEnabled() &&
+        current?.session === target.session &&
+        current.instance === target.instance
+      )
+        this.forceStop.emit(target);
       // ボタンが消えていれば（ダイアログの間に実行が終わった）、帯の文へ
       if (!this.canForce()) this.outcomeElement().nativeElement.focus();
     });

@@ -229,7 +229,7 @@ export interface FrontRun {
   /** Stops in order. Works whatever the state of the connection (the request is sent if the network is up). */
   stop(): Promise<void>;
   /** Stops without waiting for the participants. */
-  forceStop(): Promise<void>;
+  forceStop(target?: { session: number; instance: string }): Promise<void>;
 }
 
 /**

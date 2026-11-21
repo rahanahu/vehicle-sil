@@ -7,6 +7,7 @@
   "status": 200,
   "response": {
     "session": {
+      "snapshot_rev": 1,
       "id": 1,
       "file": "ignore-stop.yaml",
       "disable": [],
@@ -375,7 +376,8 @@
           "participant": null,
           "network": null,
           "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
-          "detail": null
+          "detail": null,
+          "event_seq": 99
         },
         {
           "severity": "note",
@@ -385,7 +387,8 @@
           "participant": null,
           "network": null,
           "message": "the launcher did not wait for Logger to end, because it was asked to stop again (or while it waited for the participants to end): it ended it by force, with the processes started. This is no error: whoever asked chose not to wait; whether it ends when asked to is not known from this run (stop once and wait to see)",
-          "detail": null
+          "detail": null,
+          "event_seq": 112
         }
       ],
       "findings_omitted": 0,
@@ -921,8 +924,10 @@
       },
       "problems": [],
       "problems_omitted": 0,
+      "problem_seq": 0,
       "scenario": null,
       "variables": {
+        "rev": 1,
         "state": "off",
         "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
         "peers": [],

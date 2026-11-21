@@ -205,6 +205,7 @@ class Variables:
         self._seen: dict[str, int] = {}  # how many variables the source has for each peer it named
         self.operations: dict[int, dict] = {}  # by seq, in the order they were first seen
         self.time: TimeInfo | None = None  # as the source last told by itself (the values' time comes with a read)
+        self._snapshot_rev = 0  # orders full variable snapshots and availability deltas within this run
         self.schema_version = 0
         self.state_version = 0  # counts the changes of the state
         self._epoch = 0  # grows when a standstill that was read may be over (see _Read.epoch)
@@ -274,6 +275,7 @@ class Variables:
         return self.state in (READY, ENDED)
 
     def summary(self) -> dict:
+        self._snapshot_rev += 1
         # the operations: every open one that is kept, and the last ones. Every operation from `from_seq` on is
         # in the list; one that is not in it and has a lower number is done, unless open ones had to be forgotten
         first_recent = len(self.operations) - self.limits.operations_in_summary
@@ -283,7 +285,7 @@ class Variables:
                 listed.append(entry)
             else:
                 left_out = max(left_out, entry["seq"])
-        return {"state": self.state, "reason": self.reason,
+        return {"rev": self._snapshot_rev, "state": self.state, "reason": self.reason,
                 "peers": [{"name": p.name, "connected": p.connected, "variables": p.variables}
                           for p in self.peers.values()],
                 "peers_omitted": self.peers_omitted, "variables_omitted": self.variables_omitted,
@@ -331,7 +333,9 @@ class Variables:
                 if states:
                     peers[peer.name] = states
         if peers:
-            self._emit([{"type": "availability", "session": self.session_id, "peers": peers}])
+            self._snapshot_rev += 1
+            self._emit([{"type": "availability", "session": self.session_id, "rev": self._snapshot_rev,
+                         "peers": peers}])
 
     # ------------------------------------------------------------ from the source (on the event loop)
 
@@ -739,6 +743,7 @@ class Variables:
         if self.state == OFF:
             return
         before = self.summary()
+        before.pop("rev")
         for peer in self.peers.values():
             peer.connected = False
         if self.was_ready:
@@ -752,7 +757,9 @@ class Variables:
         else:
             self._set_state(FAILED, (self._lost + " until the run ended") if self._lost else
                             "the run ended before the variables were read", tell=False)
-        if open_ones or self._availability_changed or self.summary() != before:
+        after = self.summary()
+        after.pop("rev")
+        if open_ones or self._availability_changed or after != before:
             self._tell_schema()  # with the availability not told yet
 
     # ------------------------------------------------------------ values for a watch

@@ -9,7 +9,7 @@
   "server": [
     {
       "type": "hello",
-      "vehicle_sil_gui": 2,
+      "vehicle_sil_gui": 3,
       "version": "0.2.0-rc.1",
       "instance": "0123456789abcdef",
       "session": null,
@@ -75,6 +75,7 @@
     {
       "type": "session",
       "session": {
+        "snapshot_rev": 1,
         "id": 1,
         "file": "participant-crash.yaml",
         "disable": [],
@@ -132,6 +133,7 @@
         "log": {},
         "problems": [],
         "problems_omitted": 0,
+        "problem_seq": 0,
         "scenario": null
       }
     },
@@ -139,6 +141,7 @@
       "type": "variables",
       "session": 1,
       "variables": {
+        "rev": 1,
         "state": "off",
         "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
         "peers": [],
@@ -2127,6 +2130,7 @@
     {
       "type": "session",
       "session": {
+        "snapshot_rev": 2,
         "id": 1,
         "file": "participant-crash.yaml",
         "disable": [],
@@ -2499,7 +2503,8 @@
             "participant": "Dashboard",
             "network": null,
             "message": "participant 'Dashboard': it failed while the simulation was running, and the launcher aborted the simulation: its process exited with code 3; the lines [Dashboard] above show what it wrote",
-            "detail": null
+            "detail": null,
+            "event_seq": 59
           }
         ],
         "findings_omitted": 0,
@@ -3017,6 +3022,7 @@
         },
         "problems": [],
         "problems_omitted": 0,
+        "problem_seq": 0,
         "scenario": null
       }
     }

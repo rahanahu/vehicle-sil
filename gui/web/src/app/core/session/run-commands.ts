@@ -1,4 +1,4 @@
-import { Injectable, inject } from '@angular/core';
+import { Injectable, computed, inject } from '@angular/core';
 import { ActionError, CheckResult, Intent, OperationName } from '@vehicle-sil/gui-client';
 import { GUI_FRONT, lastOperation, readableSignal } from './gui-client';
 
@@ -20,9 +20,9 @@ export class RunCommands {
   /** 開始を送って、応答を待っている。 */
   readonly starting = readableSignal(this.control.starting);
   /** 停止を送って、応答を待っている（どちらの停止か）。 */
-  readonly stopping = readableSignal(this.control.stopping);
+  readonly stopping = readableSignal(this.control.currentStopping);
   /** 開始の応答を待っている間に、止めるよう頼んだ。 */
-  readonly stopWhileStarting = readableSignal(this.control.stopWhileStarting);
+  readonly stopWhileStarting = computed(() => this.starting() && this.stopping() !== null);
 
   private readonly last = lastOperation(this.status, ['start', 'stop', 'force_stop']);
   /**
@@ -55,8 +55,8 @@ export class RunCommands {
   }
 
   /** 待たずに止める（participant を強制終了する）。 */
-  forceStop(): void {
-    this.send('force_stop', () => this.front.run.forceStop());
+  forceStop(target?: { session: number; instance: string }): void {
+    this.send('force_stop', () => this.front.run.forceStop(target));
   }
 
   private send(op: OperationName, operation: () => Promise<void>): void {

@@ -437,13 +437,12 @@ passed: 0 errors, 2 warnings, 0 notes
 
 ### ECU の出力で確認する
 
-`run` は、ECU の標準出力と標準エラーを、行の先頭に `[<participant 名>] ` を付けて、標準エラーに表示します。例の表示の ECU は、500 ms ごとに、受信した回転数とメッセージの数を出力します。`simulation.fixed.yaml` では、次の 3 行が表示されます。
+`run` は、ECU の標準出力と標準エラーを、行の先頭に `[<participant 名>] ` を付けて、標準エラーに表示します。例の表示の ECU は、500 ms ごとに、受信した回転数とメッセージの数を出力します。`simulation.fixed.yaml` では、停止時刻までに次の行が表示されます。コントローラーが停止する前に Dashboard が 1000 ms のステップを実行した場合は、その時刻の行も表示されます。
 
 <!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml --stop-at-ms 1000, the lines of the Dashboard -->
 ```text
 [Dashboard] t=0 ms engine speed 0 rpm (0 messages)
 [Dashboard] t=500 ms engine speed 1200 rpm (5 messages)
-[Dashboard] t=1000 ms engine speed 1200 rpm (10 messages)
 ```
 
 `simulation.two-buses.yaml` では、最後まで 0 件のままです。
@@ -452,7 +451,6 @@ passed: 0 errors, 2 warnings, 0 notes
 ```text
 [Dashboard] t=0 ms engine speed 0 rpm (0 messages)
 [Dashboard] t=500 ms engine speed 0 rpm (0 messages)
-[Dashboard] t=1000 ms engine speed 0 rpm (0 messages)
 ```
 
 `--log-dir logs` を付けると、ECU ごとの出力が `logs/<participant 名>.log` にも保存されます（先頭の `[<participant 名>] ` は付きません）。

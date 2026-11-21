@@ -36,6 +36,42 @@ pytestmark = pytest.mark.skipif(REASON is not None, reason=REASON or "")
 RUN_TIMEOUT_S = 60
 
 
+def test_real_targeted_stop_does_not_stop_the_next_run(tmp_path: Path) -> None:
+    """A delayed stop for one real launcher must not stop its successor."""
+    configs = tmp_path / "configs"
+    write(configs, EXAMPLES)
+
+    async def talk(c: Client) -> None:
+        sock = await c.ws()
+        await sock.until(is_synced)
+        status, first = await c.post("api/run", {"file": "forever.yaml"})
+        assert status == 200, first
+        first_id, instance = first["session"]["id"], first["instance"]
+        await sock.until(lambda m: m.get("event", {}).get("event") == "time")
+        status, _ = await c.post("api/stop-session", {"session": first_id, "instance": instance})
+        assert status == 200
+        await sock.until(is_ended, timeout=60)
+
+        status, second = await c.post("api/run", {"file": "forever.yaml"})
+        assert status == 200, second
+        second_id = second["session"]["id"]
+        assert second_id != first_id
+        await sock.until(lambda m: m.get("event", {}).get("event") == "time")
+        status, stale = await c.post("api/stop-session", {"session": first_id, "instance": instance})
+        assert status == 409 and stale["error"]["code"] == "session-changed", stale
+        status, current = await c.get("api/session")
+        assert status == 200 and current["session"]["id"] == second_id
+        assert current["session"]["stop"] == "none"
+        assert alive(current["session"]["launcher"]["pid"])
+        status, stopped = await c.post("api/stop-session", {"session": second_id, "instance": instance})
+        assert status == 200 and stopped["session"]["stop"] == "requested", stopped
+        await sock.until(is_ended, timeout=60)
+        await sock.close()
+
+    with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER)) as gui:
+        run_async(talk, gui)
+
+
 def test_the_recordings_are_what_the_real_launcher_writes() -> None:
     p = subprocess.run([sys.executable, str(TESTS / "record_launcher.py"), "--launcher", LAUNCHER, "--examples",
                         str(EXAMPLES), "--compare"], capture_output=True, text=True, timeout=900)

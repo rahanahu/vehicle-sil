@@ -9,7 +9,7 @@
   "server": [
     {
       "type": "hello",
-      "vehicle_sil_gui": 2,
+      "vehicle_sil_gui": 3,
       "version": "0.2.0-rc.1",
       "instance": "0123456789abcdef",
       "session": null,
@@ -75,6 +75,7 @@
     {
       "type": "session",
       "session": {
+        "snapshot_rev": 1,
         "id": 1,
         "file": "large-fields.yaml",
         "disable": [],
@@ -132,6 +133,7 @@
         "log": {},
         "problems": [],
         "problems_omitted": 0,
+        "problem_seq": 0,
         "scenario": null
       }
     },
@@ -139,6 +141,7 @@
       "type": "variables",
       "session": 1,
       "variables": {
+        "rev": 1,
         "state": "off",
         "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
         "peers": [],
@@ -715,7 +718,8 @@
       "message": "the launcher wrote a 'participant' event larger than 4096 bytes: only its name, state, pid, exit_code, signal, reason, stop_requested, control_link and the fields that fit are kept for a screen opened later (the others are named in omitted_fields)",
       "detail": {
         "what": "participant"
-      }
+      },
+      "problem_seq": 1
     },
     {
       "type": "event",
@@ -1830,6 +1834,7 @@
     {
       "type": "session",
       "session": {
+        "snapshot_rev": 2,
         "id": 1,
         "file": "large-fields.yaml",
         "disable": [],
@@ -2694,10 +2699,12 @@
             "message": "the launcher wrote a 'participant' event larger than 4096 bytes: only its name, state, pid, exit_code, signal, reason, stop_requested, control_link and the fields that fit are kept for a screen opened later (the others are named in omitted_fields)",
             "detail": {
               "what": "participant"
-            }
+            },
+            "problem_seq": 1
           }
         ],
         "problems_omitted": 0,
+        "problem_seq": 1,
         "scenario": null
       }
     }

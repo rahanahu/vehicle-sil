@@ -9,7 +9,7 @@
   "server": [
     {
       "type": "hello",
-      "vehicle_sil_gui": 2,
+      "vehicle_sil_gui": 3,
       "version": "0.2.0-rc.1",
       "instance": "0123456789abcdef",
       "session": null,
@@ -75,6 +75,7 @@
     {
       "type": "session",
       "session": {
+        "snapshot_rev": 1,
         "id": 1,
         "file": "late.yaml",
         "disable": [],
@@ -132,6 +133,7 @@
         "log": {},
         "problems": [],
         "problems_omitted": 0,
+        "problem_seq": 0,
         "scenario": null
       }
     },
@@ -139,6 +141,7 @@
       "type": "variables",
       "session": 1,
       "variables": {
+        "rev": 1,
         "state": "off",
         "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
         "peers": [],
@@ -1008,6 +1011,7 @@
     {
       "type": "session",
       "session": {
+        "snapshot_rev": 2,
         "id": 1,
         "file": "late.yaml",
         "disable": [],
@@ -1422,6 +1426,7 @@
         },
         "problems": [],
         "problems_omitted": 0,
+        "problem_seq": 0,
         "scenario": null
       }
     },
@@ -2409,6 +2414,7 @@
     {
       "type": "session",
       "session": {
+        "snapshot_rev": 3,
         "id": 1,
         "file": "late.yaml",
         "disable": [],
@@ -2731,7 +2737,8 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+            "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow",
+            "event_seq": 44
           },
           {
             "severity": "note",
@@ -2741,7 +2748,8 @@
             "participant": null,
             "network": null,
             "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
-            "detail": null
+            "detail": null,
+            "event_seq": 45
           }
         ],
         "findings_omitted": 0,
@@ -3217,6 +3225,7 @@
         },
         "problems": [],
         "problems_omitted": 0,
+        "problem_seq": 0,
         "scenario": null
       }
     }

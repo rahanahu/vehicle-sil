@@ -14,6 +14,8 @@ import {
   addDropped,
   addProblem,
   applyEvents,
+  recoverReplayLogs,
+  type LogLine,
   applySummary,
   sessionFromSummary,
 } from './session-state';
@@ -45,6 +47,10 @@ export interface Notice {
 export interface ClientSession {
   /** The current (or last) session. null while the server has none yet. */
   readonly session: Readable<SessionView | null>;
+  /** Identity of the session suitable for a targeted action. */
+  currentTarget(): { session: number; instance: string } | null;
+  /** The last authenticated server instance, even when there is no session. */
+  currentInstance(): string | null;
   /**
    * The session copy matches the server: connected, and hello and the resent events have all arrived. Until then,
    * Start and Stop are disabled so that nobody acts on a stale display. Other features (values and so on) have their
@@ -87,6 +93,12 @@ export interface ClientSession {
   dismissNotice(id: number): void;
 }
 
+interface Adoption {
+  revision: number;
+  instance: string | null;
+  session: number | null;
+}
+
 /**
  * Copy of a session (one run of the launcher). Reads the notifications of the connection (Connection) and builds the
  * state from the server's summary and events.
@@ -103,6 +115,14 @@ export interface ClientSession {
  *   they happen even if a subscriber throws).
  */
 export class SessionFeed implements ClientSession {
+  private readonly rawListeners = new Set<
+    (batch: readonly unknown[], current: () => boolean, snapshotVersion: number) => void
+  >();
+  private snapshotVersion: () => number = () => 0;
+  private instanceId: string | null = null;
+  private adoptionRevision = 0;
+  private instanceListener: (instance: string, current: () => boolean) => void = () => undefined;
+  private stopTarget: { session: number; instance: string } | null = null;
   private readonly current: Writable<SessionView | null>;
   private readonly synced: Writable<boolean>;
   private readonly allowedValue: Writable<ServerAllowed | null>;
@@ -113,6 +133,13 @@ export class SessionFeed implements ClientSession {
   private readonly messageListeners = new Set<(batch: readonly ServerMessage[]) => void>();
   private noticeId = 0;
   private stoppedFlag = false;
+  private replayLogs: {
+    instance: string;
+    session: number;
+    logs: readonly LogLine[];
+    unseen: Set<number>;
+    notKept: Map<string, number>;
+  } | null = null;
 
   readonly session: Readable<SessionView | null>;
   readonly ready: Readable<boolean>;
@@ -163,8 +190,9 @@ export class SessionFeed implements ClientSession {
    */
   resumeFields(): Pick<AuthMessage, 'session' | 'from_seq'> {
     this.synced.set(false);
-    const session = this.current.get();
-    return session ? { session: session.id, from_seq: session.lastSeq + 1 } : {};
+    // A replacement server may reuse a session ID, and older servers ignore instance guards.
+    // Request the retained replay from its beginning rather than send a cursor for a different run.
+    return {};
   }
 
   onMessages(listener: (batch: readonly ServerMessage[]) => void): () => void {
@@ -180,19 +208,77 @@ export class SessionFeed implements ClientSession {
    * request for the same run (the rest arrives in notifications). A summary of an earlier run never brings back an old
    * run over a new one.
    */
-  adopt(summary: SessionSummary | null): void {
-    if (!summary) return;
-    const session = this.current.get();
-    // A summary of an earlier run (such as the answer to a stop of a run that was just starting) never replaces a newer
-    // run
-    if (session && summary.id < session.id) return;
-    const live = this.connection.state.get() === 'open';
-    this.adoptAllowed(summary.allowed ?? null);
-    this.current.set(
-      session?.id === summary.id
-        ? applySummary(session, summary, false, live)
-        : sessionFromSummary(summary),
+  onRawMessages(
+    listener: (batch: readonly unknown[], current: () => boolean, snapshotVersion: number) => void,
+  ): () => void {
+    this.rawListeners.add(listener);
+    return () => this.rawListeners.delete(listener);
+  }
+
+  onSnapshotVersion(read: () => number): void {
+    this.snapshotVersion = read;
+  }
+
+  /** Called before a new server's session can be published. */
+  onInstance(listener: (instance: string, current: () => boolean) => void): void {
+    this.instanceListener = listener;
+  }
+
+  /** Instance associated with the current session, or null if its origin is not known. */
+  currentInstance(): string | null {
+    return this.instanceId;
+  }
+
+  currentTarget(): { session: number; instance: string } | null {
+    return this.stopTarget ? { ...this.stopTarget } : null;
+  }
+
+  adopt(
+    summary: SessionSummary | null,
+    instance: string,
+    resyncFrom?: string | null,
+  ): Adoption | null {
+    const switching = this.instanceId !== null && instance !== this.instanceId;
+    if (switching && (resyncFrom !== this.instanceId || this.connection.state.get() === 'open'))
+      return null;
+    const previous = switching ? null : this.current.get();
+    if (summary && previous && summary.id < previous.id) return null;
+    // A same-instance null summary preserves the run and any in-progress adoption.
+    if (!summary && instance === this.instanceId)
+      return {
+        revision: this.adoptionRevision,
+        instance,
+        session: previous?.id ?? null,
+      };
+    const revision = ++this.adoptionRevision;
+    const next = !summary
+      ? null
+      : previous?.id === summary.id
+        ? applySummary(previous, summary, false, this.connection.state.get() === 'open')
+        : sessionFromSummary(summary);
+    const changedInstance = instance !== this.instanceId;
+    this.instanceId = instance;
+    const adoption: Adoption = { revision, instance, session: next?.id ?? null };
+    this.stopTarget = next ? { session: next.id, instance } : null;
+    const notifySession = this.current.setDeferred(next);
+    const notifyAllowed = switching ? this.allowedValue.setDeferred(null) : () => undefined;
+    if (changedInstance) this.instanceListener(instance, () => this.isCurrent(revision));
+    // Each deferred notification drops itself if a nested update changed that value.
+    notifySession();
+    notifyAllowed();
+    if (!this.sameRun(adoption)) return null;
+    this.adoptAllowed(summary?.allowed ?? null);
+    return this.sameRun(adoption) ? adoption : null;
+  }
+
+  sameRun(adoption: Adoption): boolean {
+    return (
+      this.instanceId === adoption.instance && (this.current.get()?.id ?? null) === adoption.session
     );
+  }
+
+  isCurrent(revision: number): boolean {
+    return revision === this.adoptionRevision;
   }
 
   /**
@@ -215,7 +301,13 @@ export class SessionFeed implements ClientSession {
 
   /** Reads and applies a batch from the connection. */
   private receive(raw: readonly unknown[]): void {
+    const snapshotVersion = this.snapshotVersion();
+    const epoch = this.connection.batchEpoch();
+    let originInstance = this.instanceId;
+    const currentOrigin = () =>
+      this.connection.batchEpoch() === epoch && this.instanceId === originInstance;
     const batch: ServerMessage[] = [];
+    const accepted: unknown[] = [];
     let stop: 'unauthorized' | 'incompatible' | 'lost' | null = null;
     let incompatible: string | null = null;
     for (const value of raw) {
@@ -226,6 +318,7 @@ export class SessionFeed implements ClientSession {
         this.notify(
           error instanceof ProtocolError ? `unreadable message: ${error.message}` : String(error),
         );
+        if (!currentOrigin()) return;
         const type = (value as { type?: unknown } | null)?.type;
         if (
           type === 'hello' &&
@@ -249,30 +342,102 @@ export class SessionFeed implements ClientSession {
       }
       if (message === null) continue;
       batch.push(message);
+      accepted.push(value);
       if (message.type === 'error' && message.code === 'unauthorized') {
         // Refused: take nothing more and do not reconnect (the screen tells the user to open it again)
         stop = 'unauthorized';
         break;
       }
     }
+    let filtered = this.filterOlderRuns(batch, accepted);
+    if (filtered.staleHello && stop === null) stop = 'lost';
     // Make the requests to the connection before notifying subscribers. Set the stop flag before disconnecting (so a
     // connect() called from within the disconnect notification does not connect)
     if (stop === 'unauthorized' || stop === 'incompatible') {
       this.stoppedFlag = true;
       this.connection.close();
     }
+    if (!currentOrigin()) {
+      if (stop === 'unauthorized' || stop === 'incompatible') this.stoppedFlag = false;
+      return;
+    }
     if (stop === 'lost') this.connection.restart();
-    this.apply(batch);
+    if (!currentOrigin()) return;
+    // A close subscriber can synchronously observe a later run on the same server.
+    filtered = this.filterOlderRuns(filtered.batch, filtered.raw);
+    this.apply(filtered.batch, filtered.raw, snapshotVersion, currentOrigin, (instance) => {
+      originInstance = instance;
+    });
+    if (!currentOrigin()) return;
     if (stop === 'lost' || stop === 'incompatible') this.synced.set(false);
     if (stop === 'unauthorized') this.rejectedValue.set(true);
     if (incompatible !== null) this.incompatibleValue.set(incompatible);
   }
 
-  private apply(batch: readonly ServerMessage[]): void {
+  /** Keep messages at or after the run already observed over HTTP, within each server instance. */
+  private filterOlderRuns(
+    batch: readonly ServerMessage[],
+    raw: readonly unknown[],
+  ): {
+    batch: ServerMessage[];
+    raw: unknown[];
+    staleHello: boolean;
+  } {
+    let instance = this.instanceId;
+    let floor = this.current.get()?.id ?? null;
+    let staleHello = false;
+    const selected: ServerMessage[] = [];
+    const selectedRaw: unknown[] = [];
+    batch.forEach((message, index) => {
+      if (message.type === 'hello') {
+        const id = message.session?.id ?? null;
+        if (instance === message.instance && floor !== null && (id === null || id < floor)) {
+          // Ask for a fresh snapshot, but keep later messages of the current run, including ACKs.
+          staleHello = true;
+          return;
+        }
+        if (instance !== message.instance) {
+          instance = message.instance;
+          floor = id;
+        } else if (id !== null) floor = id;
+      } else {
+        const id =
+          message.type === 'session'
+            ? message.session.id
+            : 'session' in message && typeof message.session === 'number'
+              ? message.session
+              : null;
+        if (id !== null && floor !== null && id < floor) return;
+        if (message.type === 'session' && (floor === null || message.session.id > floor))
+          floor = message.session.id;
+      }
+      selected.push(message);
+      selectedRaw.push(raw[index]);
+    });
+    return { batch: selected, raw: selectedRaw, staleHello };
+  }
+
+  private apply(
+    batch: readonly ServerMessage[],
+    raw: readonly unknown[],
+    snapshotVersion: number,
+    currentOrigin: () => boolean,
+    commitOrigin: (instance: string | null) => void,
+  ): void {
     if (batch.length === 0) return;
+    const revision = ++this.adoptionRevision;
     const before = this.current.get();
+    const originalInstance = this.instanceId;
+    let instance = originalInstance;
     let session = before;
+    let replayLogs =
+      this.replayLogs?.instance === instance && this.replayLogs?.session === session?.id
+        ? this.replayLogs
+        : null;
+    const unseenLogs = () =>
+      replayLogs?.logs.filter((line) => replayLogs?.unseen.has(line.seq)) ?? [];
     let events: LauncherEvent[] = [];
+    const notices: string[] = [];
     let applied = false;
     let synced = this.synced.get();
     let allowedNow = this.allowedValue.get();
@@ -295,26 +460,65 @@ export class SessionFeed implements ClientSession {
       if (message.type !== 'event') flush();
       switch (message.type) {
         case 'hello': {
-          // Rebuild from the summary. Only a reconnect that asked to continue from what it holds (with from_seq) keeps
-          // the local log
+          // Rebuild the retained replay independently and recover client-only logs after synced.
           synced = false;
           replaying = true;
           const { session: summary, replay } = message;
           // hello is authoritative (a server that restarted may number from the start again)
-          takeAllowed(message.allowed ?? summary?.allowed ?? null, true);
-          const resumed = summary && session?.id === summary.id && replay?.from_seq != null;
-          session = !summary
-            ? null
-            : resumed && session
-              ? applySummary(session, summary, true)
-              : sessionFromSummary(summary);
+          const staleSnapshot =
+            !!summary &&
+            instance === message.instance &&
+            session?.id === summary.id &&
+            session.snapshotRev != null &&
+            (summary.snapshot_rev == null || summary.snapshot_rev < session.snapshotRev);
+          takeAllowed(message.allowed ?? summary?.allowed ?? null, !staleSnapshot);
+          const sameRun = summary && instance === message.instance && session?.id === summary.id;
+          const resumed = sameRun && replay?.from_seq != null;
+          instance = message.instance;
+          if (!sameRun) replayLogs = null;
+          if (!summary) {
+            session = null;
+          } else if (sameRun && session) {
+            const kept = applySummary(session, summary, true, true);
+            if (!resumed && instance) {
+              const logs = replayLogs
+                ? recoverReplayLogs(kept, unseenLogs(), replayLogs.notKept).logs
+                : kept.logs;
+              replayLogs = {
+                instance,
+                session: summary.id,
+                logs: logs.filter((line) => !line.gap || line.gap.launcher),
+                unseen: new Set(logs.map((line) => line.seq)),
+                notKept: new Map(),
+              };
+            }
+            session = resumed
+              ? kept
+              : { ...kept, lastSeq: -1, logs: [], logSources: {}, droppedMarks: 0 };
+          } else {
+            session = sessionFromSummary(summary);
+          }
           break;
         }
         case 'dropped': {
-          if (session && message.session === session.id) session = addDropped(session, message);
+          if (session && message.session === session.id) {
+            session = addDropped(session, message);
+            if (message.reason === 'not-kept' && replayLogs) {
+              for (const [source, count] of Object.entries(message.log))
+                replayLogs.notKept.set(source, (replayLogs.notKept.get(source) ?? 0) + count);
+            }
+          }
           break;
         }
         case 'synced':
+          if (
+            session &&
+            replayLogs &&
+            replayLogs.instance === instance &&
+            replayLogs.session === session.id
+          )
+            session = recoverReplayLogs(session, unseenLogs(), replayLogs.notKept);
+          replayLogs = null;
           synced = true;
           replaying = false;
           break;
@@ -322,28 +526,42 @@ export class SessionFeed implements ClientSession {
           takeAllowed(message.allowed);
           break;
         case 'session':
+          if (session?.id !== message.session.id) replayLogs = null;
           takeAllowed(message.session.allowed);
           // The summary is authoritative: it arrives in the same order as events, so replace the state with the
           // server's state at that point (keep the log)
           session =
             session?.id === message.session.id
-              ? applySummary(session, message.session, true)
+              ? applySummary(
+                  session,
+                  message.session,
+                  true,
+                  message.session.last_seq !== null &&
+                    (session.observedSeq ?? session.lastSeq) >= message.session.last_seq,
+                )
               : sessionFromSummary(message.session);
           break;
         case 'event':
-          if (session?.id === message.session) events.push(message.event);
+          if (session?.id === message.session) {
+            // A replayed line counts as received even if the display limit removes it later.
+            if (message.event.event === 'log' || message.event.event === 'log_dropped')
+              replayLogs?.unseen.delete(message.event.seq);
+            events.push(message.event);
+          }
           break;
         case 'error':
           if (message.code === 'unauthorized') {
             // Reported through rejected (receive disconnects)
           } else if (session && message.session === session.id) {
-            const { code, message: text, skipped } = message;
-            session = addProblem(
-              session,
-              skipped === undefined ? { code, message: text } : { code, message: text, skipped },
-            );
+            const { code, message: text, skipped, problem_seq } = message;
+            session = addProblem(session, {
+              code,
+              message: text,
+              ...(skipped === undefined ? {} : { skipped }),
+              ...(problem_seq === undefined ? {} : { problem_seq }),
+            });
           } else {
-            this.notify(message.message);
+            notices.push(message.message);
           }
           break;
         case 'resync':
@@ -356,12 +574,40 @@ export class SessionFeed implements ClientSession {
     flush();
     const stale =
       (session?.staleEvents ?? 0) - (before?.id === session?.id ? (before?.staleEvents ?? 0) : 0);
-    this.allowedValue.set(allowedNow);
-    this.current.set(session);
-    this.synced.set(synced);
+    if (!currentOrigin() || !this.isCurrent(revision)) return;
+    this.instanceId = instance;
+    commitOrigin(instance);
+    this.replayLogs =
+      replayLogs && replayLogs.session === session?.id && replayLogs.instance === instance
+        ? replayLogs
+        : null;
+    this.stopTarget = session && instance ? { session: session.id, instance } : null;
+    // HTTP can synchronously refresh this same run during a notification. It supersedes its own
+    // snapshot, but not the ordered WebSocket messages (which include command acknowledgements).
+    const sessionId = session?.id ?? null;
+    const sameRun = () =>
+      currentOrigin() &&
+      this.instanceId === instance &&
+      (this.current.get()?.id ?? null) === sessionId;
+    const notifySession = this.current.setDeferred(session);
+    const notifyAllowed = this.allowedValue.setDeferred(allowedNow);
+    const notifySynced = this.synced.setDeferred(synced);
+    if (instance && instance !== originalInstance) this.instanceListener(instance, sameRun);
+    notifySession();
+    notifyAllowed();
+    notifySynced();
+    if (!sameRun()) return;
+    for (const notice of notices) {
+      this.notify(notice);
+      if (!sameRun()) return;
+    }
     if (applied) this.receivedAt.set(Date.now());
+    if (!sameRun()) return;
     if (stale > 0) this.notify(STALE_EVENTS_NOTICE, stale);
-    callEach(this.messageListeners, [batch], this.onError);
+    if (!sameRun()) return;
+    callEach(this.rawListeners, [raw, sameRun, snapshotVersion], this.onError, sameRun);
+    if (!sameRun()) return;
+    callEach(this.messageListeners, [batch], this.onError, sameRun);
   }
 
   private notify(message: string, count = 1): void {

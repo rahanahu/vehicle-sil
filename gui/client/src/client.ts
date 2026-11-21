@@ -27,6 +27,7 @@ import {
   readScenarioList,
   readSavedConfig,
   readSessionAllowed,
+  readSessionInstance,
   readSessionResponse,
 } from './protocol';
 import { ClientRun, RunControl } from './run';
@@ -102,7 +103,8 @@ export interface ClientOptions {
  * Lifetime: connect() connects (calling it again while connected does nothing). close() disconnects, stops pending
  * timers, stops waiting for answers to time commands and fails writes still waiting for their result (variable
  * watches stay and resume on reconnect). connect() after close() connects again (the session copy is kept and
- * resumes from what it already has). HTTP requests (loadApp() and so on) work without a connection. After the server
+ * resumes from what it already has). HTTP requests work without a WebSocket. Before sending a run or check over
+ * HTTP alone, call loadApp() to verify the server protocol. After the server
  * refused the token (session.rejected) or the versions differ (session.incompatible), connect() does nothing (create a
  * new client).
  */
@@ -205,6 +207,7 @@ export interface ClientParts {
   client: GuiClient;
   http: HttpTransport;
   onError: ErrorSink;
+  runControl: RunControl;
 }
 
 /** createClient, and the parts the front door is built from. */
@@ -236,8 +239,18 @@ export function buildClient(options: ClientOptions): ClientParts {
   });
   feed = new SessionFeed(connection, onError);
   const session = feed;
-  variablesFeed = new VariablesFeed(connection, http, onError, () => limits.get());
+  variablesFeed = new VariablesFeed(
+    {
+      send: (message) => connection.send(message),
+      onBatch: (listener) => session.onRawMessages(listener),
+    },
+    http,
+    onError,
+    () => limits.get(),
+  );
   const variables = variablesFeed;
+  session.onSnapshotVersion(() => variables.snapshotVersion());
+  session.onInstance((instance) => variables.adoptInstance(instance));
   const run = new RunControl(session, http, onError, () => longRequestMs(limits.get()));
   const time = new TimeControl(
     session.session,
@@ -283,6 +296,8 @@ export function buildClient(options: ClientOptions): ClientParts {
     },
     session: {
       session: session.session,
+      currentTarget: () => session.currentTarget(),
+      currentInstance: () => session.currentInstance(),
       ready: session.ready,
       allowed: session.allowed,
       lastEventAt: session.lastEventAt,
@@ -296,6 +311,7 @@ export function buildClient(options: ClientOptions): ClientParts {
     run: {
       starting: run.starting,
       stopping: run.stopping,
+      currentStopping: run.currentStopping,
       stopWhileStarting: run.stopWhileStarting,
       error: run.error,
       start: (request) => run.start(request),
@@ -379,8 +395,10 @@ export function buildClient(options: ClientOptions): ClientParts {
         },
         readConnections,
       ),
-    fetchSession: () =>
-      new Promise<SessionSummary | null>((resolve, reject) =>
+    fetchSession: () => {
+      const resyncFrom = session.currentInstance();
+      const snapshotVersion = variables.snapshotVersion();
+      return new Promise<SessionSummary | null>((resolve, reject) =>
         http({ method: 'GET', path: 'api/session' }, (outcome) => {
           if (!outcome.ok) {
             reject(outcome.error);
@@ -388,16 +406,37 @@ export function buildClient(options: ClientOptions): ClientParts {
           }
           try {
             const summary = readSessionResponse(outcome.body);
-            session.adopt(summary);
-            session.adoptAllowed(readSessionAllowed(outcome.body));
-            // The variable list and state are not part of the summary parser (SessionSummary)
-            variables.adoptSummary((outcome.body as { session?: unknown } | null)?.session);
+            const instance = readSessionInstance(outcome.body);
+            const adoption = session.adopt(summary, instance, resyncFrom);
+            if (adoption !== null) {
+              const rawSession = (
+                outcome.body as { session?: { variables?: { rev?: unknown } } } | null
+              )?.session;
+              const rev = rawSession?.variables?.rev;
+              const current = () =>
+                variables.isSnapshotCurrent(
+                  snapshotVersion,
+                  adoption.instance,
+                  adoption.session,
+                  Number.isSafeInteger(rev) && (rev as number) >= 0 ? (rev as number) : null,
+                );
+              if (session.sameRun(adoption)) session.adoptAllowed(readSessionAllowed(outcome.body));
+              const sameRun = () => session.sameRun(adoption);
+              if (sameRun()) variables.adoptInstance(instance);
+              if (sameRun())
+                variables.adoptSummary(
+                  (outcome.body as { session?: unknown } | null)?.session,
+                  sameRun,
+                  current,
+                );
+            }
             resolve(summary);
           } catch (error) {
             reject(error);
           }
         }),
-      ),
+      );
+    },
   };
-  return { client, http, onError };
+  return { client, http, onError, runControl: run };
 }

@@ -19,7 +19,8 @@ describe('RunPage', () => {
   });
 
   function response(name: string): object {
-    return (examples.get(name) as { response: object }).response;
+    const result = (examples.get(name) as { response: object }).response;
+    return name === 'run' ? { ...result, instance: '0123456789abcdef' } : result;
   }
 
   function server(name: string): unknown[] {
@@ -101,6 +102,20 @@ describe('RunPage', () => {
     TestBed.tick();
     return fixture;
   }
+
+  it('does not run a check until the server protocol is accepted', async () => {
+    const fixture = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush({ ...response('app'), vehicle_sil_gui: 2 });
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    fake.last().send({ ...(server('ws-pass')[0] as object), vehicle_sil_gui: 2 });
+    await sleep(CHECK_DELAY_MS + BATCH_MS + 20);
+    TestBed.tick();
+    expect(text(fixture, 'incompatible')).toContain('server speaks version 2');
+    http.expectNone('api/check');
+    http.expectNone('api/run');
+  });
 
   it('asks to be opened from the server URL when there is no token', async () => {
     sessionStorage.clear();

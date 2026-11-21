@@ -11,10 +11,11 @@
   "server": [
     {
       "type": "hello",
-      "vehicle_sil_gui": 2,
+      "vehicle_sil_gui": 3,
       "version": "0.2.0-rc.1",
       "instance": "0123456789abcdef",
       "session": {
+        "snapshot_rev": 1,
         "id": 1,
         "file": "flood.yaml",
         "disable": [],
@@ -885,8 +886,10 @@
         },
         "problems": [],
         "problems_omitted": 0,
+        "problem_seq": 0,
         "scenario": null,
         "variables": {
+          "rev": 1,
           "state": "off",
           "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
           "peers": [],

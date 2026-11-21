@@ -34,6 +34,51 @@ describe('Connection', () => {
     expect(c.state.get()).toBe('open');
   });
 
+  it('does not create a socket when connecting is synchronously cancelled', () => {
+    const c = connection();
+    c.state.subscribe((state) => {
+      if (state === 'connecting') c.close();
+    });
+    c.connect();
+    expect(fake.sockets).toHaveLength(0);
+    expect(c.state.get()).toBe('closed');
+  });
+
+  it('does not let a cancelled attempt replace the connection started by its subscriber', () => {
+    const c = connection();
+    let replaced = false;
+    c.state.subscribe((state) => {
+      if (state !== 'connecting' || replaced) return;
+      replaced = true;
+      c.close();
+      c.connect();
+    });
+    c.connect();
+    expect(fake.sockets).toHaveLength(1);
+    fake.last().open();
+    expect(c.state.get()).toBe('open');
+  });
+
+  it('closes a stale socket when its factory starts a replacement', () => {
+    let replaced = false;
+    const socket = (url: string, handlers: Parameters<typeof fake.factory>[1]) => {
+      const result = fake.factory(url, handlers);
+      if (!replaced) {
+        replaced = true;
+        c.close();
+        c.connect();
+      }
+      return result;
+    };
+    const c = new Connection({ url: 'ws://127.0.0.1:1/ws', socket, greeting: () => [] });
+    c.connect();
+    expect(fake.sockets).toHaveLength(2);
+    expect(fake.sockets[0].closedByClient).toBe(true);
+    expect(fake.sockets[1].closedByClient).toBe(false);
+    fake.sockets[1].open();
+    expect(c.state.get()).toBe('open');
+  });
+
   it('hands what arrives over in batches, at most every BATCH_MS', () => {
     const c = connection();
     const got = batches(c);
@@ -74,6 +119,40 @@ describe('Connection', () => {
     expect(fake.sockets).toHaveLength(2);
     vi.advanceTimersByTime(1);
     expect(fake.sockets).toHaveLength(3);
+  });
+
+  it('does not restart a replacement opened by an unreadable-message subscriber', () => {
+    const c = connection();
+    c.connect();
+    const old = fake.last();
+    old.open();
+    c.onUnreadable(() => {
+      c.close();
+      c.connect();
+      fake.last().open();
+    });
+    old.sendText('not JSON');
+    const replacement = fake.last();
+    expect(replacement).not.toBe(old);
+    expect(replacement.closedByClient).toBe(false);
+    expect(c.state.get()).toBe('open');
+  });
+
+  it('does not mark a replacement closed from the previous close notification', () => {
+    const c = connection();
+    c.connect();
+    const old = fake.last();
+    old.open();
+    c.lastClose.subscribe((close) => {
+      if (!close) return;
+      c.close();
+      c.connect();
+      fake.last().open();
+    });
+    old.fail();
+    expect(fake.last()).not.toBe(old);
+    expect(fake.last().closedByClient).toBe(false);
+    expect(c.state.get()).toBe('open');
   });
 
   it('reconnects with a growing delay and resets it after a message', () => {

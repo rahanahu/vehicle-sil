@@ -90,7 +90,8 @@ def test_stop_is_idempotent_and_answers_with_the_summary(tmp_path: Path) -> None
             assert end["launcher"] == {"pid": end["launcher"]["pid"], "running": False, "exit_code": 0,
                                        "signal": None, "silent_s": None}
             status, body = await c.post("api/stop", {"force": True})  # ended: the summary, nothing sent
-            assert status == 200 and without_variables(body["session"]) == end
+            assert status == 200 and body["session"]["snapshot_rev"] > end["snapshot_rev"]
+            assert {**without_variables(body["session"]), "snapshot_rev": end["snapshot_rev"]} == end
             for bad in ({"force": "yes"}, {"force": 1}):
                 status, body = await c.post("api/stop", bad)
                 assert status == 400 and body["error"]["code"] == "invalid-field"

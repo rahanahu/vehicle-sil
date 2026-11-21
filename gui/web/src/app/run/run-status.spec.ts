@@ -1,5 +1,7 @@
 import { Component, computed, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { MatDialog } from '@angular/material/dialog';
+import { Subject } from 'rxjs';
 import {
   Control,
   FrontClock,
@@ -20,6 +22,7 @@ const GUARD_MS = 200;
   template: `
     <app-run-status
       [session]="session()"
+      [currentTarget]="currentTarget"
       [status]="status()"
       [controls]="controls()"
       [clock]="clock()"
@@ -32,11 +35,15 @@ const GUARD_MS = 200;
       [otherFile]="otherFile()"
       (start)="starts = starts + 1"
       (stop)="stops = stops + 1"
+      (forceStop)="forces = forces + 1"
     />
   `,
 })
 class Host {
   readonly session = signal<SessionView | null>(null);
+  target = { session: 1, instance: 'one' };
+  readonly currentTarget = () => this.target;
+  forces = 0;
   readonly ready = signal(true);
   readonly starting = signal(false);
   readonly stopping = signal<StopAction | null>(null);
@@ -242,6 +249,28 @@ describe('RunStatus', () => {
     await fixture.whenStable();
     startButton().click();
     expect(host.starts).toBe(1);
+  });
+
+  it('does not confirm a force stop for a different run or server', async () => {
+    const answer = new Subject<boolean>();
+    vi.spyOn(TestBed.inject(MatDialog), 'open').mockReturnValue({
+      afterClosed: () => answer,
+    } as never);
+    await show(sessionViewFrom(summary(), summary({ stop: 'requested' })));
+    (query('force-stop') as HTMLButtonElement).click();
+    host.target = { session: 1, instance: 'two' };
+    answer.next(true);
+    answer.complete();
+    expect(host.forces).toBe(0);
+  });
+
+  it('does not show the previous run stop while a new run starts', async () => {
+    await show(sessionViewFrom(summary({ ...ENDED, stop: 'requested' })));
+    host.starting.set(true);
+    await settle();
+    expect(stopButton().textContent).not.toContain('止めています');
+    expect(query('outcome')?.textContent).toContain('始めています');
+    expect(query('force-stop')).toBeNull();
   });
 
   it('does not stop without waiting on a second click', async () => {
