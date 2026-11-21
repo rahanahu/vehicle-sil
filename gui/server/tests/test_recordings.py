@@ -23,7 +23,8 @@ RECORDINGS = REPLAY.parent / "recordings"
 EXAMPLES = REPLAY.parents[2] / "protocol" / "examples"
 sys.path.insert(0, str(REPLAY.parent))
 import replay_launcher  # noqa: E402
-from record_launcher import Case, Recorder, normalize_advertised_addresses  # noqa: E402
+from record_launcher import (Busy, Case, Recorder, Shapes, check_outside_events, compare,  # noqa: E402
+                             normalize_advertised_addresses, outline, terminal_failure_lateness)
 
 ALL = sorted(p.stem for p in RECORDINGS.glob("*.jsonl"))
 RUNS = [name for name in ALL if replay_launcher.read_recording(RECORDINGS / f"{name}.jsonl")[0]["shape"][0] == "run"]
@@ -31,6 +32,111 @@ RUNS = [name for name in ALL if replay_launcher.read_recording(RECORDINGS / f"{n
 
 def recording(name: str) -> tuple[dict, list[dict]]:
     return replay_launcher.read_recording(RECORDINGS / f"{name}.jsonl")
+
+
+def test_only_a_required_failure_with_one_terminal_late_step_is_exempt() -> None:
+    warning = {"event": "finding", "seq": 0, "t_ms": 1, "severity": "warning", "code": "behind-real-time",
+               "file": "sim.yaml", "line": None, "participant": None, "network": None, "message": "late", "detail": None}
+    failure = {"event": "finding", "severity": "error", "code": "participant-failed", "participant": "Dashboard"}
+    result = {"event": "result", "result": {"result": "failed", "simulation": "aborted", "warnings": 1,
+        "participants": [{"name": "Dashboard", "required": True, "enabled": True}],
+        "findings": [{"code": "participant-failed", "severity": "error", "participant": "Dashboard"},
+                     {k: v for k, v in warning.items() if k not in {"event", "seq", "t_ms"}}],
+        "timing": {"speed": 1, "late_steps": 1, "late_ms": 12, "late_tolerance_ms": 10,
+                   "max_late_ms": 12, "slipped_ms": 12}}}
+    assert terminal_failure_lateness([failure, warning, result])
+    assert not terminal_failure_lateness([warning, result])
+    assert not terminal_failure_lateness([failure, warning, warning, result])
+    assert not terminal_failure_lateness([failure, {**warning, "severity": "error"}, result])
+    assert not terminal_failure_lateness([failure, {**warning, "network": "CAN"}, result])
+    assert not terminal_failure_lateness([failure, {k: v for k, v in warning.items() if k != "file"}, result])
+    assert not terminal_failure_lateness([failure, {**warning, "message": "different"}, result])
+    run = result["result"]
+    for change in ({"late_steps": 2}, {"late_ms": 10}, {"max_late_ms": 13}, {"speed": "max"}):
+        assert not terminal_failure_lateness([failure, warning, {"event": "result", "result": {
+            **run, "timing": {**run["timing"], **change}}}])
+    assert not terminal_failure_lateness([failure, warning, {"event": "result", "result": {
+        **run, "simulation": "completed"}}])
+    assert not terminal_failure_lateness([failure, warning, {"event": "result", "result": {
+        **run, "findings": [{"code": "participant-failed", "participant": "Engine"}, run["findings"][1]]}}])
+    assert not terminal_failure_lateness([failure, warning, {"event": "result", "result": {
+        **run, "participants": [{"name": "Dashboard", "required": False, "enabled": True}]}}])
+    invalid_warning = {**warning, "message": 3}
+    assert not terminal_failure_lateness([failure, invalid_warning, {"event": "result", "result": {
+        **run, "findings": [run["findings"][0], {k: v for k, v in invalid_warning.items()
+                                                  if k not in {"event", "seq", "t_ms"}}]}}])
+
+
+def test_crash_terminal_lateness_is_removed_only_when_comparing(tmp_path: Path) -> None:
+    failure = {"event": "finding", "seq": 0, "t_ms": 0, "severity": "error", "code": "participant-failed", "participant": "Dashboard"}
+    warning = {"event": "finding", "seq": 1, "t_ms": 1, "severity": "warning", "code": "behind-real-time",
+               "file": "sim.yaml", "line": None, "participant": None, "network": None, "message": "late", "detail": None}
+    run = {"result": "failed", "simulation": "aborted", "warnings": 1,
+           "participants": [{"name": "Dashboard", "required": True, "enabled": True}],
+           "findings": [{"code": "participant-failed", "severity": "error", "participant": "Dashboard"},
+                        {k: v for k, v in warning.items() if k not in {"event", "seq", "t_ms"}}],
+           "timing": {"speed": 1, "late_steps": 1, "late_ms": 12, "late_tolerance_ms": 10,
+                      "max_late_ms": 12, "slipped_ms": 12}}
+    result = {"event": "result", "seq": 2, "t_ms": 2, "result": run}
+    lines = [(0.0, "out", json.dumps(failure)), (0.01, "out", json.dumps(warning)), (0.02, "out", json.dumps(result))]
+    case = Case("run-participant-crash-speed1", ["run", "--events"], "a crash")
+    comparing = Recorder(Path("launcher"), tmp_path, tmp_path, compare=True)
+    _, entries = comparing.normalize(case, lines, 1)
+    assert not any(e.get("out", {}).get("code") == "behind-real-time" for e in entries)
+    saved = next(e["out"]["result"] for e in entries if e.get("out", {}).get("event") == "result")
+    assert saved["warnings"] == 0 and [f["code"] for f in saved["findings"]] == ["participant-failed"]
+    with pytest.raises(Busy):
+        Recorder(Path("launcher"), tmp_path, tmp_path).normalize(case, lines, 1)
+    result["result"] = {**run, "timing": {**run["timing"], "late_steps": 2}}
+    with pytest.raises(Busy):
+        comparing.normalize(case, [lines[0], lines[1], (0.02, "out", json.dumps(result))], 1)
+    result["result"] = {**run, "findings": [run["findings"][0]]}
+    with pytest.raises(RuntimeError, match="late steps without exactly one warning"):
+        comparing.normalize(case, [lines[0], lines[1], (0.02, "out", json.dumps(result))], 1)
+    missing = {"event": "log", "seq": 1, "t_ms": 1, "line": "no warning"}
+    with pytest.raises(RuntimeError, match="late steps without exactly one warning"):
+        comparing.normalize(case, [lines[0], (0.01, "out", json.dumps(missing)), (0.02, "out", json.dumps(result))], 1)
+    after = {**warning, "seq": 2, "t_ms": 2}
+    early_result = {"event": "result", "seq": 1, "t_ms": 1, "result": run}
+    with pytest.raises(RuntimeError, match="result is the last event"):
+        comparing.normalize(case, [lines[0], (0.01, "out", json.dumps(early_result)),
+                                    (0.02, "out", json.dumps(after))], 1)
+
+
+def test_outside_counts_can_arrive_after_stopping_but_must_match_the_result(tmp_path: Path) -> None:
+    started = {"event": "participant", "name": "bridge.CAN", "state": "started"}
+    outside = {"event": "outside", "network": "CAN", "to_outside": 4, "from_outside": 7}
+    stopping = {"event": "phase", "phase": "stopping"}
+    result = {"event": "result", "result": {"outside": [{"network": "CAN", "to_outside": 4, "from_outside": 7}]}}
+    first = [started, outside, stopping, result]
+    later = [started, stopping, outside, result]
+    check_outside_events(first)
+    check_outside_events(later)
+    assert outline([{"out": e} for e in first]) == outline([{"out": e} for e in later])
+    with pytest.raises(RuntimeError, match="after its bridge started"):
+        check_outside_events([outside, started, stopping, result])
+    with pytest.raises(RuntimeError, match="do not match"):
+        check_outside_events([started, stopping, result])
+    with pytest.raises(RuntimeError, match="do not match"):
+        check_outside_events([started, {**outside, "from_outside": 8}, stopping, result])
+    with pytest.raises(RuntimeError, match="did not change"):
+        check_outside_events([started, outside, outside, result])
+    with pytest.raises(RuntimeError, match="before result"):
+        check_outside_events([started, result, outside])
+    for invalid in (True, 4.0):
+        with pytest.raises(RuntimeError, match="invalid outside counts"):
+            check_outside_events([started, outside, {"event": "result", "result": {"outside": [
+                {"network": "CAN", "to_outside": invalid, "from_outside": 7}]}}])
+    with pytest.raises(RuntimeError, match="duplicate networks"):
+        check_outside_events([started, outside, {"event": "result", "result": {"outside": result["result"]["outside"] * 2}}])
+    # A missing event and missing final counts together must still differ from the recording.
+    tracked, fresh = tmp_path / "tracked.jsonl", tmp_path / "fresh.jsonl"
+    head = {"vehicle_sil_recording": 1, "case": "outside", "about": "counts", "shape": ["run"]}
+    tracked.write_text("\n".join(json.dumps(e) for e in [head, *({"out": e} for e in first), {"exit": 0}]) + "\n")
+    missing = {"event": "result", "result": {"outside": []}}
+    fresh.write_text("\n".join(json.dumps(e) for e in [head, *({"out": e} for e in [started, stopping, missing]),
+                                                        {"exit": 0}]) + "\n")
+    assert any("outside networks differ" in x for x in compare("outside", tracked, fresh, (Shapes(), Shapes())))
 
 
 def test_manual_participant_addresses_are_normalized(tmp_path: Path) -> None:
