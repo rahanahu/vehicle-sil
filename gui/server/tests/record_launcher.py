@@ -24,7 +24,8 @@ no interface of this computer; --compare runs it without one where unshare -rn c
 shapes of a list), and recording it there fails with what to do.
 
 What changes from run to run is replaced with a fixed mark: the copy's directory (<root>), the pids ("<pid>"), the
-registry's port (silkit://127.0.0.1:8500), the control server's address (<control>), times (no seq, no t_ms, the
+registry's port (silkit://127.0.0.1:8500), advertised local addresses (192.0.2.1, a documentation address),
+the control server's address (<control>), times (no seq, no t_ms, the
 time between lines in steps of 100 ms), how fast it went (actual_speed 1.5, wall_ms 1000, paused_ms 500 when it
 stood still) and lateness (0). A recording that still has a path of this computer, the user's name or the control
 token in it is not written (the case fails with what was found).
@@ -153,6 +154,16 @@ CREDENTIALS = ("--control", "0", "--control-credentials", "<credentials>")
 
 
 # ---------------------------------------------------------------- recording
+
+
+def normalize_advertised_addresses(text: str) -> str:
+    """Do not save the recording host's addresses in the manual-participant hint."""
+    def replace(match: re.Match) -> str:
+        addresses = re.sub(r"silkit://(?:\[[^\]]+\]|[^:\s,]+):(\d+)",
+                           r"silkit://192.0.2.1:\1", match.group(2))
+        return match.group(1) + addresses + match.group(3)
+
+    return re.sub(r"(from other computers, join at )(.*?)( \(this computer)", replace, text)
 
 
 class Recorder:
@@ -312,6 +323,7 @@ class Recorder:
                     pids.add(e["pid"])
 
         def text_marks(s: str) -> str:
+            s = normalize_advertised_addresses(s)
             if "<timeline>" in case.argv:
                 for path in sorted({str(self.timeline_path(case).resolve()), str(self.timeline_path(case))},
                                    key=len, reverse=True):
@@ -469,6 +481,8 @@ class Recorder:
         host = socket.gethostname().split(".")[0]
         if len(host) >= 3 and re.search(rf"\b{re.escape(host)}\b", text, re.IGNORECASE):
             found.append("the host name")
+        if normalize_advertised_addresses(text) != text:
+            found.append("an advertised address of the recording host")
         if found:
             raise RuntimeError(f"{case.name}: the recording still has {', '.join(found)} in it: add a mark for it "
                                "in Recorder.normalize")
