@@ -6,7 +6,7 @@ The version comes from `project(vehicle_sil VERSION ...)` and `VEHICLE_SIL_VERSI
 
 ## [0.2.0] - Unreleased
 
-The first stable release of 0.2.0. It follows 0.1.0 and the release candidates 0.2.0-rc.1 and 0.2.0-rc.2 (there is no rc.3). The changes below describe 0.2.0 as a whole, since 0.1.0. Since rc.2, runs wait less at their start and end, the GUI binds time commands and stop limits to one run, and two kinds of input that were misread are refused.
+The first stable release of 0.2.0. It follows 0.1.0 and the release candidates 0.2.0-rc.1 and 0.2.0-rc.2 (there is no rc.3). The changes below describe 0.2.0 as a whole, since 0.1.0. Since rc.2, runs wait less at their start and end, the GUI binds time commands and stop limits to one run, and two kinds of input that were misread or ignored are refused.
 
 ### Breaking changes
 
@@ -48,7 +48,7 @@ The first stable release of 0.2.0. It follows 0.1.0 and the release candidates 0
 
 #### GUI server and client library
 
-- **GUI server HTTP API**: `api/check` and `api/run` answer 400 `invalid-field` for a field they do not take, and for `null` in any field (leave the key out instead of `speed: null` or `scenario: null`) (#184, #245). `api/run` checks the configuration with the run's own arguments first and answers 422 `check-failed` with the findings, starting nothing, when the check fails; a name in both `disable` and `manual`, and `start_paused` with a scenario, are such findings now instead of 400, and `name-like-option` is no longer returned (#187, #245). An `api/run` sent while another one is starting a run gets 409 `starting`, not `already-running` (#194).
+- **GUI server HTTP API**: `api/check` and `api/run` answer 400 `invalid-field` for a field they do not take, and for `null` in any field (leave the key out instead of `speed: null` or `scenario: null`) (#184, #245). `api/stop` does the same for any field other than `force`, and stops nothing then (#350). `api/run` checks the configuration with the run's own arguments first and answers 422 `check-failed` with the findings, starting nothing, when the check fails; a name in both `disable` and `manual`, and `start_paused` with a scenario, are such findings now instead of 400, and `name-like-option` is no longer returned (#187, #245). An `api/run` sent while another one is starting a run gets 409 `starting`, not `already-running` (#194).
 - **Reserved paths under `--web`**: a `vsil/` or `timeline/` directory of your own is no longer served; the GUI server serves its own files there (#222).
 - **gui-client time types**: `TimeState` drops `controllable`, `beforeStart`, `stepping`, `canPause`, `canResume`, `canStep` and `supported`, and `TimeView` and `TimeReport` drop `speed` and `paused`; use the front door's `controls` and `isHolding()` (#223, #291).
 - **gui-client feature constants**: `FEATURE_SPEED`, `FEATURE_START_PAUSED`, `FEATURE_TIME_COMMANDS`, `FEATURE_SCENARIO`, `FEATURE_SCENARIO_CONTROL` and `FEATURE_MANUAL` are removed: the GUI server refuses a launcher without these features, so the client and the screens no longer check them (#291).
