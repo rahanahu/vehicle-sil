@@ -457,14 +457,31 @@ describe('RunControl', () => {
     expect(run.session()?.id).toBe(id);
   });
 
-  it('does not guess an instance if an older start answer does not report one', async () => {
-    run.start({ file: 'a.yaml', disable: [] });
+  it('shows an older start answer from the known server without guessing the stop target', async () => {
+    const id = seedSession() + 1;
+    const started = client.run.start({ file: 'a.yaml', disable: [] });
     const stopped = client.run.stop();
-    const old = { ...answer('run') } as { instance?: string };
-    delete old.instance;
-    http.expectOne('api/run').flush(old);
+    const { session } = answer('run') as { session: Record<string, unknown> };
+    http.expectOne('api/run').flush({ session: { ...session, id } });
+    await expect(started).resolves.toMatchObject({ id });
     await expect(stopped).rejects.toThrow('did not identify the run');
+    expect(run.session()?.id).toBe(id);
+    expect(client.session.currentTarget()).toBeNull();
+    await expect(client.run.stop()).rejects.toThrow('no stop was sent');
+    http.expectNone('api/stop');
     http.expectNone('api/stop-session');
+  });
+
+  it('ignores an older start answer without an instance after the known server changes', async () => {
+    const id = seedSession();
+    const started = client.run.start({ file: 'a.yaml', disable: [] });
+    const fresh = client.fetchSession();
+    http.expectOne('api/session').flush({ ...answer('run'), instance: 'new-instance' });
+    const { session } = answer('run') as { session: Record<string, unknown> };
+    http.expectOne('api/run').flush({ session: { ...session, id: id + 1 } });
+    await Promise.all([started, fresh]);
+    expect(client.session.currentTarget()).toEqual({ session: id, instance: 'new-instance' });
+    expect(run.session()?.id).toBe(id);
   });
 
   it('does not send an unscoped stop if the start has no answer', async () => {

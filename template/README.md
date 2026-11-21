@@ -176,6 +176,7 @@ Keep the ECUs and the tools on the same version of vehicle-sil. If the versions 
 | 1 | From the template of the new version, copy `get_tools.py` and the `GIT_TAG` line of `CMakeLists.txt`. |
 | 2 | Run `python3 get_tools.py` again. |
 | 3 | Rebuild with `cmake --build --preset linux` (`windows` on Windows). |
+| 4 | Open format 1 configurations in a local editor and set `vehicle_sil_simulation: 2`. Move `stop_at_ms`, `speed` and `late_tolerance_ms` to run options or a run request. Move `start_timeout_ms` and `stop_timeout_ms` to `--participant-start-timeout-ms` and `--participant-stop-timeout-ms`. Keep `time_step_ms` in the configuration if you need a fixed step. |
 
 `get_tools.py` copies the JSON Schemas in the tools to `schema/` again and prints the copied files on one line. Editor completion and checks then know the keys of the new version. The `CHANGELOG.md` of vehicle-sil lists the changes and what to do about them.
 

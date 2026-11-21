@@ -64,9 +64,8 @@ struct CheckOptions
     /// Only read the file: no executable is looked for or run, and no scenario is read. The
     /// report has the file's findings, its variants and the overrides' usage errors.
     bool file_only = false;
-    /// test: without the time lock every run goes as fast as possible, whatever the file's speed
-    /// (which then does not count for time_lock_findings()); RunIntent::speed is that default
-    /// then, not a speed the user asked for, and the check does not judge it.
+    /// Treat RunIntent::speed as a test default. The run adopts it when the time lock is off;
+    /// with the time lock on, the run uses speed 1 without refusing the default.
     bool fastest_by_default = false;
 };
 
@@ -80,7 +79,7 @@ struct CheckOptions
 /// working directory, as it is named.
 ///
 /// Of `request` it reads the file, the intent (the speed and --start-paused for
-/// time_lock_findings(): the speed unless `options.fastest_by_default`), the --describe limit,
+/// time_lock_findings(): the speed is a default with `options.fastest_by_default`), the --describe limit,
 /// where the tools are, and what a check alone has: the configuration's text from standard input
 /// (RunHost::config_from_stdin; then RunHost::config only says where it is), the saved descriptions
 /// (RunHost::descriptions: then it starts no process at all: a participant without a saved output

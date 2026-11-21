@@ -112,6 +112,8 @@ Server-provided session and variable revisions order snapshots across HTTP and W
 
 The `currentTarget()` method returns the current `{session, instance}` pair, or `null` when it is unknown. `currentInstance()` returns the last authenticated server instance even if no run exists, and retains it while disconnected. On reconnect the client requests the retained replay from the beginning, so a restarted server cannot apply a cursor from another instance. An HTTP-only client can refresh its copy with `fetchSession()` after a server restart.
 
+An older protocol v2 server can omit `instance` in HTTP replies to `start()` and `fetchSession()`. The client applies these replies to its local copy if its known server instance stayed the same while the request was pending. A newly observed run needs confirmation from the WebSocket or an HTTP reply with its instance before it can be targeted by Stop.
+
 ### Run control
 
 | Kind | Name                                                                                                                |

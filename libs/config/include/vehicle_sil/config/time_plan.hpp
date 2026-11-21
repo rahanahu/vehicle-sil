@@ -63,7 +63,7 @@ struct TimeLock
 [[nodiscard]] TimeLock time_lock(const SimulationConfig& config, std::span<const ConnectRequest> connect, TimePolicy policy);
 
 /// The speed a run starts at: 1 with `lock.locked`; else `asked` (--speed; the inner empty: max)
-/// if it is set, else `otherwise` (the file's speed; empty: as fast as possible).
+/// if it is set, else `otherwise` (the caller's default; empty: as fast as possible).
 [[nodiscard]] std::optional<double> planned_speed(const TimeLock& lock, const std::optional<std::optional<double>>& asked,
                                                   const std::optional<double>& otherwise);
 
