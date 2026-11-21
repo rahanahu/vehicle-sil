@@ -359,11 +359,11 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 
 | `--time-policy` | 実行の速さ | 1 以外の `--speed`、`--start-paused` |
 |---|---|---|
-| `realtime`（既定） | ファイルの `speed` が何であっても 1 です。ファイルの速さが 1 でないとき（速さがないときも）、注記 `outside-speed-set` が知らせます。 | 照合のエラー `outside-real-time` です。何も起動しません（`--start-paused` は `--control` か `--stdin-commands` と一緒に使います。単独では、この照合より先に使い方の誤りで、終了コードは 4 です）。 |
-| `free` | ほかの実行と同じです。`--speed`、なければファイルの `speed`、それもなければ最速です。 | 受け付けます。注記 `outside-not-real-time` が、実時間でないことを知らせます。 |
+| `realtime`（既定） | 1 です。既定の最速から変更するときは、注記 `outside-speed-set` が知らせます。 | 照合のエラー `outside-real-time` です。何も起動しません（`--start-paused` は `--control` か `--stdin-commands` と一緒に使います。単独では、この照合より先に使い方の誤りで、終了コードは 4 です）。 |
+| `free` | ほかの実行と同じです。`--speed`、なければ実行要求の `speed`、それもなければ最速です。 | 受け付けます。注記 `outside-not-real-time` が、実時間でないことを知らせます。 |
 
 - 外につながっていない実行では、`--time-policy` は何もしません。
-- `check`、`run`、`test` で使えます。`check` はファイルの `speed` で、`run` は `--speed` と `--start-paused` も見て判断します。`check --json` の `time_lock` に、この判断があります（[simulation-check.md](simulation-check.md#json--json)）。
+- `check`、`run`、`test` で使えます。`check` と `run` は実行要求とコマンドラインの引数を使います。`check --json` の `time_lock` に、この判断があります（[simulation-check.md](simulation-check.md#json--json)）。
 - `test` は各シナリオを最速で実行しますが、ファイルに有効な `role: bridge` の participant がいるときは速さ 1 で実行します（注記 `outside-speed-set`）。このとき `test` の表の後に、注記 `test-speed-set` を全体で 1 回書きます。それでも最速で実行するなら、`--time-policy free` を付けるか、ブリッジを `--disable` します。
 - `free` が変えるのは、時間を操作できるかどうかだけです。ブリッジは両方向にフレームを運び続けます。シミュレーションが止まっている間、外から来たフレームは溜まり、ECU がそれまでに送ったものは送られたままです。
 - 注記は、`--strict` でも実行を失敗にしません。
@@ -1880,7 +1880,7 @@ vehicle_sil_launch test simulation.yaml --variant medium --scenarios a.yaml b.ya
 | 機種のない設定ファイル | シナリオだけを並べます。 |
 | `--variant <名前>` | その機種だけを実行します（繰り返せます。順は設定ファイルの順のままです）。 |
 | 1 組の実行 | `run <file> --variant <機種> --scenario <シナリオ> --speed max` と同じです。 |
-| 速度 | 設定ファイルの `speed` によらず、最速です。 |
+| 速度 | 実時間に固定されている場合を除き、最速です。 |
 | 組と組の間 | registry、controller、participant のプロセスを作り直します（前の組の状態は残りません）。 |
 | 同時の実行 | しません。 |
 

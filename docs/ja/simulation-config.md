@@ -502,7 +502,7 @@ passed: 0 errors, 0 warnings, 1 note
 
 - 人向けの participant の表では、`ecu` でない participant の名前の後に `(role: test)` のように書きます。
 - `check --json` では、`participants[].role` に出力されます。
-- 有効な `role: bridge` の participant のいる実行は、`--connect` のある実行と同じく実時間を保ちます。ファイルの `speed` が何であっても速さ 1 で動き、`test` もシナリオを速さ 1 で実行します（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
+- 有効な `role: bridge` の participant のいる実行は、`--connect` のある実行と同じく実時間を保ちます。速さ 1 で動き、`test` もシナリオを速さ 1 で実行します（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
 - 機種（`variants`）では変えられません（`describe`、`required` と同じです）。
 
 ### ネットワークを外につなぐ（`external`、`--connect`）
@@ -570,7 +570,7 @@ vehicle_sil_launch run --speed 1 --connect ETH_EXT=tap:vsil0 --connect J1939_CAN
 - Vector XL のブリッジは Windows でだけ動きます。Linux で `xl:virtual:1` と書くと、`connect-tool-missing` が、そのネットワークは SIL Kit の中だけで動くと言います（見つかったブリッジ、つまり試験用のビルドがあれば、それを使います）。
 - 照合は、下の引数と `--name bridge.<network>`（ブリッジの participant 名）でブリッジの `--describe` を走らせます。`run` は、同じ引数と `--name bridge.<network> --registry-uri <URI> --start-timeout-ms <start_timeout_ms>` でブリッジを起動します。`bridge.<network>` はファイルの participant ではないので、`--disable`、`--enable`、`--manual` には書けません。`--describe` のブリッジは、アダプターもチャンネルも開きません。引数を受けないブリッジは誤り `connect-tool-failed` で、ブリッジ自身の行を出します。
 - つなぐネットワークでは、ブリッジを participant として数えます（ECU が 1 つでも `single-participant` になりません）。同じネットワークに `role: bridge` の participant がいると、輪です（`connect-loop`）。
-- 実機のバスは仮想時間を待ちません。`--connect` のある実行は、ファイルの `speed` が何であっても速さ 1 で動きます（注記 `outside-speed-set`）。1 以外の `--speed` と `--start-paused` はエラー `outside-real-time` です。`--time-policy free` で外せます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
+- 実機のバスは仮想時間を待ちません。`--connect` のある実行は、既定では速さ 1 で動きます（注記 `outside-speed-set`）。1 以外の速さを明示するか `--start-paused` を指定すると、エラー `outside-real-time` です。`--time-policy free` で外せます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
 
 ランチャーがブリッジに渡す引数は、次のとおりです。
 

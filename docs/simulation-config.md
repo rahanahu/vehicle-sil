@@ -504,7 +504,7 @@ Other rules:
 
 - In the participant table of the human-readable output, the name of a participant whose role is not `ecu` is followed by `(role: test)` or similar.
 - `check --json` writes the role to `participants[].role`.
-- A run with an enabled `role: bridge` participant keeps real time, as one with `--connect` does: it goes at speed 1 whatever `speed` the file has, and `test` runs its scenarios at speed 1 too (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
+- A run with an enabled `role: bridge` participant keeps real time, as one with `--connect` does: it goes at speed 1, and `test` runs its scenarios at speed 1 too (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
 - A variant (`variants`) cannot change it, as with `describe` and `required`.
 
 ### Connecting a network outside (`external`, `--connect`)
@@ -572,7 +572,7 @@ A target is `none` or `[<backend>:]<selector>`. The backend says which way the n
 - The Vector XL bridge runs on Windows only. `xl:virtual:1` on Linux gives `connect-tool-missing`, which says that the network runs on SIL Kit only, unless a bridge is found anyway (a build for tests).
 - The check runs the bridge's `--describe` with the arguments below and `--name bridge.<network>`, the bridge's participant name. `run` starts it with the same arguments and `--name bridge.<network> --registry-uri <URI> --start-timeout-ms <start_timeout_ms>`. `bridge.<network>` is not a participant of the file: `--disable`, `--enable` and `--manual` do not take it. With `--describe`, the bridge opens neither the adapter nor the channel. A bridge that refuses the arguments is the error `connect-tool-failed`, with the bridge's own line.
 - On a connected network, the bridge counts as a participant (one ECU there is not `single-participant`), and a `role: bridge` participant on the same network is a loop (`connect-loop`).
-- A real bus does not wait for the virtual time: a run with `--connect` goes at speed 1 whatever `speed` the file has (the note `outside-speed-set`), and another `--speed` or `--start-paused` is the error `outside-real-time`. `--time-policy free` lifts this (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
+- A real bus does not wait for the virtual time: a run with `--connect` goes at speed 1 by default (the note `outside-speed-set`). An explicit speed other than 1 or `--start-paused` is the error `outside-real-time`. `--time-policy free` lifts this (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
 
 The arguments that the launcher gives the bridge:
 

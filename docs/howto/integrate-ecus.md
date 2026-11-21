@@ -657,7 +657,7 @@ vehicle_sil_launch run simulation.fixed.yaml --speed 1 --stop-at-ms 1000
 
 With a speed set, the result has an extra `time:` line. Here is the line for `--speed 4`; the parts between `<` and `>` differ from run to run:
 
-<!-- vehicle_sil_launch run simulation.fixed.yaml --speed 4 --stop-at-ms 1000: the line of the time -->
+<!-- vehicle_sil_launch run simulation.yaml --speed 4: the line of the time -->
 ```text
 time: speed 4, ran at <actual_speed> times real time; <late_steps> of 200 paced steps more than 10 ms late (the latest by <max_late_ms> ms), <slipped_ms> ms behind in all
 ```

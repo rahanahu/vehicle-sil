@@ -359,11 +359,11 @@ What is connected there does not wait for the virtual time, so by default such a
 
 | `--time-policy` | Speed of the run | `--speed` other than 1, `--start-paused` |
 |---|---|---|
-| `realtime` (the default) | 1, whatever `speed` the file has. The note `outside-speed-set` says so when the file's speed is not 1 (also without a speed). | The error `outside-real-time` of the check: nothing starts. (`--start-paused` goes with `--control` or `--stdin-commands`; alone it is a usage error, exit code 4, before this check.) |
-| `free` | As in any run: `--speed`, or else `speed` in the file, or else as fast as possible. | Accepted. The note `outside-not-real-time` says that the run is not in real time. |
+| `realtime` (the default) | 1. The note `outside-speed-set` reports the change when the default would be as fast as possible. | The error `outside-real-time` of the check: nothing starts. (`--start-paused` goes with `--control` or `--stdin-commands`; alone it is a usage error, exit code 4, before this check.) |
+| `free` | As in any run: `--speed`, or else `speed` in the run request, or else as fast as possible. | Accepted. The note `outside-not-real-time` says that the run is not in real time. |
 
 - `--time-policy` has no effect on a run that is not connected outside.
-- `check`, `run` and `test` take it. `check` judges the file's `speed`; `run` also its `--speed` and `--start-paused`. `check --json` has the decision in `time_lock` (see [simulation-check.md](simulation-check.md#json---json)).
+- `check`, `run` and `test` take it. `check` and `run` use the run request and the command-line options. `check --json` has the decision in `time_lock` (see [simulation-check.md](simulation-check.md#json---json)).
 - `test` runs each scenario as fast as possible, but at speed 1 when the file has an enabled `role: bridge` participant (the note `outside-speed-set`). The table of `test` then has the note `test-speed-set` after it, once for all the runs. To run them as fast as possible all the same, pass `--time-policy free` or `--disable` the bridge.
 - `free` changes only what you may do with the time. The bridge still carries frames both ways: while the simulation is paused, frames from outside pile up, and what the ECUs sent before stays sent.
 - The notes do not fail a run with `--strict`.
@@ -1880,7 +1880,7 @@ The runs are every variant × every scenario.
 | A configuration file without variants | Only the scenarios are listed. |
 | `--variant <name>` | Runs only that variant (repeatable; the order stays the configuration file order). |
 | One run | The same as `run <file> --variant <variant> --scenario <scenario> --speed max`. |
-| Speed | Maximum unless specified or locked to real time. |
+| Speed | As fast as possible unless locked to real time. |
 | Between runs | The registry, the controller and the participant processes are created anew (no state carries over from the previous run). |
 | Concurrent runs | None. |
 
