@@ -278,13 +278,25 @@ test('quick switches are checked once, without a busy check', async ({ page }) =
   expect(failures).toEqual([]);
 });
 
+/** The instance returned by this server scopes every session-specific stop. */
+async function serverInstance(page: Page): Promise<string> {
+  const response = await page.request.get('api/app', {
+    headers: { Authorization: `Bearer ${guiToken()}` },
+  });
+  expect(response.status()).toBe(200);
+  const { instance } = (await response.json()) as { instance: string };
+  expect(instance).toBeTruthy();
+  return instance;
+}
+
 test('stopping a run that does not end by itself', async ({ page }) => {
   await choose(page, 'forever.yaml');
   const session = await start(page);
+  const instance = await serverInstance(page);
   await expect(page.getByTestId('log-line').first()).toBeVisible({ timeout: RUN_TIMEOUT });
-  const stop = page.waitForRequest((r) => r.url().endsWith('/api/stop'));
+  const stop = page.waitForRequest((r) => r.url().endsWith('/api/stop-session'));
   await press(stopButton(page));
-  expect((await stop).postDataJSON()).toEqual({ force: false });
+  expect((await stop).postDataJSON()).toEqual({ force: false, session, instance });
   await expect(result(page, session)).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
   // 利用者が止めた実行は失敗の色と ✕ にしない
   await expect(result(page, session).getByTestId('result')).toHaveAttribute('data-tone', 'neutral');
@@ -295,10 +307,11 @@ test('stopping a run that does not end by itself', async ({ page }) => {
 test('a double click on stop does not stop without waiting', async ({ page }) => {
   await choose(page, 'ignore-stop.yaml');
   const session = await start(page);
+  const instance = await serverInstance(page);
   await expect(page.getByTestId('log-line').first()).toBeVisible({ timeout: RUN_TIMEOUT });
   const bodies: unknown[] = [];
   page.on('request', (r) => {
-    if (r.url().endsWith('/api/stop')) bodies.push(r.postDataJSON());
+    if (r.url().endsWith('/api/stop-session')) bodies.push(r.postDataJSON());
   });
   await expect(stopButton(page)).toHaveAttribute('data-armed', 'true');
   await stopButton(page).dblclick();
@@ -306,7 +319,7 @@ test('a double click on stop does not stop without waiting', async ({ page }) =>
   await expect(page.getByTestId('outcome')).toContainText('participant が終わるのを待っています');
   await expect(stopButton(page)).toHaveText(/止めています/);
   // 待たずに止めてはいない（サーバーの要約でも）
-  expect(bodies.every((body) => (body as { force: boolean }).force === false)).toBe(true);
+  expect(bodies).toEqual([{ force: false, session, instance }]);
   expect((await serverSession(page))?.stop).toBe('requested');
   await expect(page.getByTestId('status-Engine')).not.toContainText('強制終了');
 
@@ -321,9 +334,9 @@ test('a double click on stop does not stop without waiting', async ({ page }) =>
   expect(bodies.some((body) => (body as { force: boolean }).force)).toBe(false);
 
   await force.click();
-  const forced = page.waitForRequest((r) => r.url().endsWith('/api/stop'));
+  const forced = page.waitForRequest((r) => r.url().endsWith('/api/stop-session'));
   await page.getByTestId('force-stop-confirm').click();
-  expect((await forced).postDataJSON()).toEqual({ force: true });
+  expect((await forced).postDataJSON()).toEqual({ force: true, session, instance });
   // 待たずに止めるボタンは消える: フォーカスは、いまの状態を言う帯の文へ移る（body に落ちない）
   await expect(force).toHaveCount(0);
   await expect(page.getByTestId('outcome')).toBeFocused();
@@ -351,8 +364,8 @@ test('the dialog to stop without waiting closes when the run ends meanwhile', as
 function recordActions(page: Page): string[] {
   const actions: string[] = [];
   page.on('request', (r) => {
-    const match = /\/api\/(run|stop)$/.exec(r.url());
-    if (match) actions.push(match[1]);
+    const match = /\/api\/(run|stop-session)$/.exec(r.url());
+    if (match) actions.push(match[1] === 'stop-session' ? 'stop' : match[1]);
   });
   return actions;
 }
@@ -512,6 +525,7 @@ test('a launcher that runs on after its result can still be stopped', async ({ p
   await choose(page, 'result-then-wait.yaml');
   await page.getByTestId('stop-at-ms').fill('300');
   const session = await start(page);
+  const instance = await serverInstance(page);
   await expect(result(page, session)).toContainText('成功', { timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('outcome')).toContainText('ランチャーが終わるのを待っています');
   await expect(page.getByTestId('finishing')).toBeVisible();
@@ -525,9 +539,9 @@ test('a launcher that runs on after its result can still be stopped', async ({ p
   expect((await serverSession(page))?.launcher.running).toBe(true);
   await expect(stopButton(page)).not.toHaveAttribute('aria-disabled', 'true');
   await expect(startButton(page)).toHaveAttribute('aria-disabled', 'true');
-  const stop = page.waitForRequest((r) => r.url().endsWith('/api/stop'));
+  const stop = page.waitForRequest((r) => r.url().endsWith('/api/stop-session'));
   await press(stopButton(page));
-  expect((await stop).postDataJSON()).toEqual({ force: false });
+  expect((await stop).postDataJSON()).toEqual({ force: false, session, instance });
   await expect(startButton(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('outcome')).toContainText('成功');
   await expect(page.getByTestId('finishing')).toHaveCount(0);
@@ -583,9 +597,10 @@ test('a dropped connection is shown, joined again, and the log goes on without a
   await expect(page.getByTestId('connection')).toContainText(/接続が切れました|つないでいます/);
   // 切れている間も、HTTP で止めるよう頼める（何度頼んでも同じ）。見えていないことは帯が言う
   await expect(page.getByTestId('blocked')).toContainText('最新の状態は見えていません');
-  const stop = page.waitForResponse((r) => r.url().endsWith('/api/stop'));
+  const instance = await serverInstance(page);
+  const stop = page.waitForResponse((r) => r.url().endsWith('/api/stop-session'));
   await press(stopButton(page));
-  expect((await stop).request().postDataJSON()).toEqual({ force: false });
+  expect((await stop).request().postDataJSON()).toEqual({ force: false, session, instance });
   // 応答の要約から、止めるよう頼んだことがわかる
   await expect(stopButton(page)).toHaveText(/止めています/);
   refuse = false;
@@ -704,10 +719,12 @@ test('a log paused in one run shows the next run, not the lines of the one befor
 
 test('stopping while the start waits for its answer', async ({ page }) => {
   // 開始の応答を遅らせる（サーバーは実行を始めている）
+  let started: { instance: string; session: { id: number } } | undefined;
   let release: () => void = () => undefined;
   const held = new Promise<void>((resolve) => (release = resolve));
   await page.route(/\/api\/run$/, async (route) => {
     const response = await route.fetch();
+    started = (await response.json()) as { instance: string; session: { id: number } };
     await held;
     await route.fulfill({ response });
   });
@@ -715,11 +732,21 @@ test('stopping while the start waits for its answer', async ({ page }) => {
   await press(startButton(page));
   await expect(page.getByTestId('outcome')).toContainText('始めています');
   await expect(startButton(page)).toHaveAttribute('aria-disabled', 'true');
-  const stop = page.waitForResponse((r) => r.url().endsWith('/api/stop'));
+  const stops: unknown[] = [];
+  page.on('request', (r) => {
+    if (r.url().endsWith('/api/stop-session')) stops.push(r.postDataJSON());
+  });
   await press(stopButton(page));
-  expect((await stop).request().postDataJSON()).toEqual({ force: false });
   await expect(page.getByTestId('outcome')).toContainText('開始をやめます');
+  expect(stops).toEqual([]);
+  const stop = page.waitForResponse((r) => r.url().endsWith('/api/stop-session'));
   release();
+  expect(started).toBeDefined();
+  expect((await stop).request().postDataJSON()).toEqual({
+    force: false,
+    session: started!.session.id,
+    instance: started!.instance,
+  });
   await expect(page.getByTestId('outcome')).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
   expect((await serverSession(page))?.stop).toBe('requested');
   await page.unroute(/\/api\/run$/);
