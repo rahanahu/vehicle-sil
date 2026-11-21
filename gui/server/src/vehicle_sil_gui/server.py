@@ -942,6 +942,8 @@ class GuiServer:
             body = await self._body(request, empty_ok=True)
             if targeted:
                 check_fields("api/stop-session", body, ("force", "session", "instance"))
+            else:  # a field this endpoint does not take must not be ignored while the run is stopped
+                check_fields("api/stop", body, ("force",))
         except InvalidRequest as e:
             return self._refusal(e)
         force = body.get("force", False)

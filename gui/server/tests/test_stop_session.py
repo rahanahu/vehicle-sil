@@ -70,3 +70,42 @@ def test_targeted_stop_cannot_queue_a_stop_for_another_start(tmp_path: Path) -> 
             await sock.until(is_ended)
             await sock.close()
         run_async(main, gui)
+
+
+def test_unscoped_stop_rejects_unknown_fields_and_stops_nothing(tmp_path: Path) -> None:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
+        async def main(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            status, run = await c.post("api/run", {"file": "forever.yaml"})
+            assert status == 200, run
+            await sock.until(lambda m: m.get("event", {}).get("event") == "time")
+            for body in ({"session": 42, "instance": "not-this-server"}, {"forse": True}, {"force": True, "x": 1},
+                         {"force": None}):
+                status, reply = await c.post("api/stop", body)
+                assert status == 400 and reply["error"]["code"] == "invalid-field", (body, reply)
+            status, current = await c.get("api/session")
+            assert status == 200 and current["session"]["id"] == run["session"]["id"]
+            assert current["session"]["stop"] == "none"
+            status, stopped = await c.post("api/stop", {"force": False})
+            assert status == 200 and stopped["session"]["stop"] == "requested"
+            await sock.until(is_ended)
+            await sock.close()
+        run_async(main, gui)
+
+
+def test_unscoped_stop_accepts_an_empty_body_and_an_empty_object(tmp_path: Path) -> None:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
+        async def main(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            status, reply = await c.post("api/stop", {})
+            assert status == 200 and reply["session"] is None
+            status, run = await c.post("api/run", {"file": "forever.yaml"})
+            assert status == 200, run
+            await sock.until(lambda m: m.get("event", {}).get("event") == "time")
+            status, stopped = await c.post("api/stop")
+            assert status == 200 and stopped["session"]["stop"] == "requested"
+            await sock.until(is_ended)
+            await sock.close()
+        run_async(main, gui)
