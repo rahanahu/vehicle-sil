@@ -24,7 +24,10 @@ vehicle_sil_add_harness_tests(vehicle_sil_runner_tests
 # libs/runner/src: the run's private headers that the tests read (run_pacing.hpp, run_notes.hpp,
 # run_connection.hpp).
 target_include_directories(vehicle_sil_runner_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/config
-                           ${PROJECT_SOURCE_DIR}/libs/runner/src)
+                           ${PROJECT_SOURCE_DIR}/libs/runner/src ${PROJECT_SOURCE_DIR}/tests/process)
+add_dependencies(vehicle_sil_runner_tests vehicle_sil_process_helper)
+target_compile_definitions(vehicle_sil_runner_tests PRIVATE
+  VEHICLE_SIL_PROCESS_HELPER="$<TARGET_FILE:vehicle_sil_process_helper>")
 
 # The public headers of the runner (vehicle_sil/runner/, detail/ among them) include no SIL Kit
 # header and no header of core's runtime, directly or through the headers they include: the SIL Kit
