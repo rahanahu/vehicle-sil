@@ -27,8 +27,8 @@
       },
       "stop": "none",
       "phase": "running",
-      "last_seq": 36,
-      "last_t_ms": 360,
+      "last_seq": 31,
+      "last_t_ms": 310,
       "time": {
         "event": "time",
         "seq": 26,
@@ -42,7 +42,7 @@
       },
       "check": {
         "vehicle_sil_check": 1,
-        "vehicle_sil": "0.2.0-rc.1",
+        "vehicle_sil": "0.2.0",
         "file": "ignore-stop.yaml",
         "result": "passed",
         "strict": false,
@@ -70,7 +70,7 @@
             "step_ms": null,
             "status": "described",
             "reported": {
-              "vehicle_sil": "0.2.0-rc.1",
+              "vehicle_sil": "0.2.0",
               "name": "Engine",
               "step_ns": 10000000,
               "networks": [
@@ -170,7 +170,7 @@
             "step_ms": null,
             "status": "described",
             "reported": {
-              "vehicle_sil": "0.2.0-rc.1",
+              "vehicle_sil": "0.2.0",
               "name": "Dashboard",
               "step_ns": 5000000,
               "networks": [
@@ -461,7 +461,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 11,
+          "kept": 6,
           "dropped": 0
         }
       },

@@ -29,13 +29,13 @@
       },
       "stop": "forced",
       "phase": "stopping",
-      "last_seq": 107,
-      "last_t_ms": 1070,
+      "last_seq": 243,
+      "last_t_ms": 2430,
       "time": {
         "event": "time",
-        "seq": 96,
-        "t_ms": 960,
-        "sim_ms": 31523,
+        "seq": 233,
+        "t_ms": 2330,
+        "sim_ms": 100088,
         "actual_speed": 1.5,
         "late_steps": 0,
         "max_late_ms": 0,
@@ -44,7 +44,7 @@
       },
       "check": {
         "vehicle_sil_check": 1,
-        "vehicle_sil": "0.2.0-rc.1",
+        "vehicle_sil": "0.2.0",
         "file": "ignore-stop.yaml",
         "result": "passed",
         "strict": false,
@@ -72,7 +72,7 @@
             "step_ms": null,
             "status": "described",
             "reported": {
-              "vehicle_sil": "0.2.0-rc.1",
+              "vehicle_sil": "0.2.0",
               "name": "Engine",
               "step_ns": 10000000,
               "networks": [
@@ -172,7 +172,7 @@
             "step_ms": null,
             "status": "described",
             "reported": {
-              "vehicle_sil": "0.2.0-rc.1",
+              "vehicle_sil": "0.2.0",
               "name": "Dashboard",
               "step_ns": 5000000,
               "networks": [
@@ -380,12 +380,12 @@
           "network": null,
           "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
           "detail": null,
-          "event_seq": 99
+          "event_seq": 235
         }
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 91,
+        "seq": 221,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -394,7 +394,7 @@
         "id": null
       },
       "launcher_state": {
-        "seq": 101,
+        "seq": 237,
         "rev": 8,
         "phase": "stopping",
         "paused": false,
@@ -488,7 +488,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 64,
+          "kept": 201,
           "dropped": 0
         }
       },

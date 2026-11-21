@@ -10,7 +10,7 @@
     {
       "type": "hello",
       "vehicle_sil_gui": 2,
-      "version": "0.2.0-rc.1",
+      "version": "0.2.0",
       "instance": "0123456789abcdef",
       "session": null,
       "allowed": {
@@ -160,7 +160,7 @@
         "seq": 0,
         "t_ms": 0,
         "vehicle_sil_events": 2,
-        "vehicle_sil": "0.2.0-rc.1",
+        "vehicle_sil": "0.2.0",
         "pid": 10001,
         "file": "late.yaml",
         "arguments": [
@@ -263,7 +263,7 @@
         "t_ms": 30,
         "check": {
           "vehicle_sil_check": 1,
-          "vehicle_sil": "0.2.0-rc.1",
+          "vehicle_sil": "0.2.0",
           "file": "late.yaml",
           "result": "passed",
           "strict": false,
@@ -291,7 +291,7 @@
               "step_ms": null,
               "status": "described",
               "reported": {
-                "vehicle_sil": "0.2.0-rc.1",
+                "vehicle_sil": "0.2.0",
                 "name": "Engine",
                 "step_ns": 10000000,
                 "networks": [
@@ -391,7 +391,7 @@
               "step_ms": null,
               "status": "described",
               "reported": {
-                "vehicle_sil": "0.2.0-rc.1",
+                "vehicle_sil": "0.2.0",
                 "name": "Dashboard",
                 "step_ns": 5000000,
                 "networks": [
@@ -1045,7 +1045,7 @@
         },
         "check": {
           "vehicle_sil_check": 1,
-          "vehicle_sil": "0.2.0-rc.1",
+          "vehicle_sil": "0.2.0",
           "file": "late.yaml",
           "result": "passed",
           "strict": false,
@@ -1073,7 +1073,7 @@
               "step_ms": null,
               "status": "described",
               "reported": {
-                "vehicle_sil": "0.2.0-rc.1",
+                "vehicle_sil": "0.2.0",
                 "name": "Engine",
                 "step_ns": 10000000,
                 "networks": [
@@ -1173,7 +1173,7 @@
               "step_ms": null,
               "status": "described",
               "reported": {
-                "vehicle_sil": "0.2.0-rc.1",
+                "vehicle_sil": "0.2.0",
                 "name": "Dashboard",
                 "step_ns": 5000000,
                 "networks": [
@@ -1437,7 +1437,7 @@
         "event": "time",
         "seq": 26,
         "t_ms": 260,
-        "sim_ms": 205,
+        "sim_ms": 200,
         "actual_speed": 1.5,
         "late_steps": 1,
         "max_late_ms": 200,
@@ -1452,7 +1452,7 @@
         "event": "time",
         "seq": 27,
         "t_ms": 270,
-        "sim_ms": 305,
+        "sim_ms": 300,
         "actual_speed": 1.5,
         "late_steps": 1,
         "max_late_ms": 200,
@@ -1467,7 +1467,7 @@
         "event": "time",
         "seq": 28,
         "t_ms": 280,
-        "sim_ms": 405,
+        "sim_ms": 400,
         "actual_speed": 1.5,
         "late_steps": 1,
         "max_late_ms": 200,
@@ -1594,7 +1594,7 @@
         "event": "time",
         "seq": 37,
         "t_ms": 370,
-        "sim_ms": 1105,
+        "sim_ms": 1110,
         "actual_speed": 1.5,
         "late_steps": 1,
         "max_late_ms": 200,
@@ -1721,79 +1721,9 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "state",
+        "event": "log",
         "seq": 42,
         "t_ms": 420,
-        "rev": 7,
-        "phase": "running",
-        "paused": false,
-        "paused_at_ms": null,
-        "holding": false,
-        "speed": 1,
-        "pacing": "not-paced",
-        "stop": {
-          "requests": 1,
-          "by": "stop command"
-        },
-        "scenario": false,
-        "allowed": {
-          "pause": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): pause works from the start of the run until the simulation ends",
-            "caution": null
-          },
-          "resume": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): resume works from the start of the run until the simulation ends",
-            "caution": null
-          },
-          "step": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): step works from the start of the run until the simulation ends",
-            "caution": null,
-            "min_ms": 1,
-            "max_ms": 1000000000000
-          },
-          "speed": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): speed works from the start of the run until the simulation ends",
-            "caution": null,
-            "min": 1e-06,
-            "max": 1000000.0
-          },
-          "run_until": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
-            "caution": null
-          },
-          "stop": {
-            "ok": true,
-            "reason": null,
-            "message": null,
-            "caution": null
-          },
-          "write": {
-            "ok": false,
-            "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can write a variable",
-            "caution": null
-          }
-        },
-        "outside": []
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 43,
-        "t_ms": 430,
         "source": "vehicle_sil_launch",
         "line": "stopped by a stop request: the simulation was stopped"
       }
@@ -1803,8 +1733,8 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 44,
-        "t_ms": 440,
+        "seq": 43,
+        "t_ms": 430,
         "severity": "warning",
         "code": "behind-real-time",
         "file": "late.yaml",
@@ -1819,8 +1749,8 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 45,
-        "t_ms": 450,
+        "seq": 44,
+        "t_ms": 440,
         "severity": "note",
         "code": "stopped",
         "file": "late.yaml",
@@ -1836,8 +1766,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 46,
-        "t_ms": 460,
+        "seq": 45,
+        "t_ms": 450,
         "phase": "stopping"
       }
     },
@@ -1846,8 +1776,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 47,
-        "t_ms": 470,
+        "seq": 46,
+        "t_ms": 460,
         "rev": 8,
         "phase": "stopping",
         "paused": false,
@@ -1916,8 +1846,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 48,
-        "t_ms": 480,
+        "seq": 47,
+        "t_ms": 470,
         "source": "vehicle_sil_launch",
         "line": "Engine exited with code 0"
       }
@@ -1927,8 +1857,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 49,
-        "t_ms": 490,
+        "seq": 48,
+        "t_ms": 480,
         "name": "Engine",
         "state": "ended",
         "exit_code": 0,
@@ -1940,8 +1870,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 50,
-        "t_ms": 500,
+        "seq": 49,
+        "t_ms": 490,
         "source": "vehicle_sil_launch",
         "line": "Dashboard exited with code 0"
       }
@@ -1951,8 +1881,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 51,
-        "t_ms": 510,
+        "seq": 50,
+        "t_ms": 500,
         "name": "Dashboard",
         "state": "ended",
         "exit_code": 0,
@@ -1964,8 +1894,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 52,
-        "t_ms": 520,
+        "seq": 51,
+        "t_ms": 510,
         "phase": "ended"
       }
     },
@@ -1974,8 +1904,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 53,
-        "t_ms": 530,
+        "seq": 52,
+        "t_ms": 520,
         "rev": 9,
         "phase": "ended",
         "paused": false,
@@ -2044,11 +1974,11 @@
       "session": 1,
       "event": {
         "event": "result",
-        "seq": 54,
-        "t_ms": 540,
+        "seq": 53,
+        "t_ms": 530,
         "result": {
           "vehicle_sil_run": 2,
-          "vehicle_sil": "0.2.0-rc.1",
+          "vehicle_sil": "0.2.0",
           "file": "late.yaml",
           "result": "stopped",
           "end": "stopped",
@@ -2175,7 +2105,7 @@
           ],
           "check": {
             "vehicle_sil_check": 1,
-            "vehicle_sil": "0.2.0-rc.1",
+            "vehicle_sil": "0.2.0",
             "file": "late.yaml",
             "result": "passed",
             "strict": false,
@@ -2203,7 +2133,7 @@
                 "step_ms": null,
                 "status": "described",
                 "reported": {
-                  "vehicle_sil": "0.2.0-rc.1",
+                  "vehicle_sil": "0.2.0",
                   "name": "Engine",
                   "step_ns": 10000000,
                   "networks": [
@@ -2303,7 +2233,7 @@
                 "step_ms": null,
                 "status": "described",
                 "reported": {
-                  "vehicle_sil": "0.2.0-rc.1",
+                  "vehicle_sil": "0.2.0",
                   "name": "Dashboard",
                   "step_ns": 5000000,
                   "networks": [
@@ -2433,8 +2363,8 @@
         },
         "stop": "requested",
         "phase": "ended",
-        "last_seq": 54,
-        "last_t_ms": 540,
+        "last_seq": 53,
+        "last_t_ms": 530,
         "time": {
           "event": "time",
           "seq": 41,
@@ -2448,7 +2378,7 @@
         },
         "check": {
           "vehicle_sil_check": 1,
-          "vehicle_sil": "0.2.0-rc.1",
+          "vehicle_sil": "0.2.0",
           "file": "late.yaml",
           "result": "passed",
           "strict": false,
@@ -2476,7 +2406,7 @@
               "step_ms": null,
               "status": "described",
               "reported": {
-                "vehicle_sil": "0.2.0-rc.1",
+                "vehicle_sil": "0.2.0",
                 "name": "Engine",
                 "step_ns": 10000000,
                 "networks": [
@@ -2576,7 +2506,7 @@
               "step_ms": null,
               "status": "described",
               "reported": {
-                "vehicle_sil": "0.2.0-rc.1",
+                "vehicle_sil": "0.2.0",
                 "name": "Dashboard",
                 "step_ns": 5000000,
                 "networks": [
@@ -2738,7 +2668,7 @@
             "participant": null,
             "network": null,
             "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow",
-            "event_seq": 44
+            "event_seq": 43
           },
           {
             "severity": "note",
@@ -2749,7 +2679,7 @@
             "network": null,
             "message": "stopped by a stop request: the launcher stopped the simulation and the participants",
             "detail": null,
-            "event_seq": 45
+            "event_seq": 44
           }
         ],
         "findings_omitted": 0,
@@ -2763,7 +2693,7 @@
           "id": null
         },
         "launcher_state": {
-          "seq": 53,
+          "seq": 52,
           "rev": 9,
           "phase": "ended",
           "paused": false,
@@ -2852,7 +2782,7 @@
         },
         "result": {
           "vehicle_sil_run": 2,
-          "vehicle_sil": "0.2.0-rc.1",
+          "vehicle_sil": "0.2.0",
           "file": "late.yaml",
           "result": "stopped",
           "end": "stopped",
@@ -2979,7 +2909,7 @@
           ],
           "check": {
             "vehicle_sil_check": 1,
-            "vehicle_sil": "0.2.0-rc.1",
+            "vehicle_sil": "0.2.0",
             "file": "late.yaml",
             "result": "passed",
             "strict": false,
@@ -3007,7 +2937,7 @@
                 "step_ms": null,
                 "status": "described",
                 "reported": {
-                  "vehicle_sil": "0.2.0-rc.1",
+                  "vehicle_sil": "0.2.0",
                   "name": "Engine",
                   "step_ns": 10000000,
                   "networks": [
@@ -3107,7 +3037,7 @@
                 "step_ms": null,
                 "status": "described",
                 "reported": {
-                  "vehicle_sil": "0.2.0-rc.1",
+                  "vehicle_sil": "0.2.0",
                   "name": "Dashboard",
                   "step_ns": 5000000,
                   "networks": [

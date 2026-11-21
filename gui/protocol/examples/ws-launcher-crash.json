@@ -10,7 +10,7 @@
     {
       "type": "hello",
       "vehicle_sil_gui": 2,
-      "version": "0.2.0-rc.1",
+      "version": "0.2.0",
       "instance": "0123456789abcdef",
       "session": null,
       "allowed": {
@@ -160,7 +160,7 @@
         "seq": 0,
         "t_ms": 0,
         "vehicle_sil_events": 2,
-        "vehicle_sil": "0.2.0-rc.1",
+        "vehicle_sil": "0.2.0",
         "pid": 10001,
         "file": "launcher-crash.yaml",
         "arguments": [
@@ -263,7 +263,7 @@
         "t_ms": 30,
         "check": {
           "vehicle_sil_check": 1,
-          "vehicle_sil": "0.2.0-rc.1",
+          "vehicle_sil": "0.2.0",
           "file": "launcher-crash.yaml",
           "result": "passed",
           "strict": false,
@@ -291,7 +291,7 @@
               "step_ms": null,
               "status": "described",
               "reported": {
-                "vehicle_sil": "0.2.0-rc.1",
+                "vehicle_sil": "0.2.0",
                 "name": "Engine",
                 "step_ns": 10000000,
                 "networks": [
@@ -391,7 +391,7 @@
               "step_ms": null,
               "status": "described",
               "reported": {
-                "vehicle_sil": "0.2.0-rc.1",
+                "vehicle_sil": "0.2.0",
                 "name": "Dashboard",
                 "step_ns": 5000000,
                 "networks": [
@@ -911,12 +911,11 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "control_link",
+        "event": "log",
         "seq": 20,
         "t_ms": 200,
-        "name": "Engine",
-        "state": "connected",
-        "variables": 4
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -926,7 +925,7 @@
         "event": "control_link",
         "seq": 21,
         "t_ms": 210,
-        "name": "Dashboard",
+        "name": "Engine",
         "state": "connected",
         "variables": 4
       }
@@ -938,6 +937,18 @@
         "event": "control_link",
         "seq": 22,
         "t_ms": 220,
+        "name": "Dashboard",
+        "state": "connected",
+        "variables": 4
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "control_link",
+        "seq": 23,
+        "t_ms": 230,
         "name": "Logger",
         "state": "none"
       }
@@ -947,8 +958,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 23,
-        "t_ms": 230,
+        "seq": 24,
+        "t_ms": 240,
         "phase": "running"
       }
     },
@@ -957,8 +968,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 24,
-        "t_ms": 240,
+        "seq": 25,
+        "t_ms": 250,
         "rev": 5,
         "phase": "running",
         "paused": false,
@@ -1027,8 +1038,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 25,
-        "t_ms": 250,
+        "seq": 26,
+        "t_ms": 260,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -1038,25 +1049,14 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 26,
-        "t_ms": 260,
+        "seq": 27,
+        "t_ms": 270,
         "sim_ms": 0,
         "actual_speed": null,
         "late_steps": 0,
         "max_late_ms": 0,
         "slipped_ms": 0,
         "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 27,
-        "t_ms": 270,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -1114,8 +1114,8 @@
         "last_t_ms": 280,
         "time": {
           "event": "time",
-          "seq": 26,
-          "t_ms": 260,
+          "seq": 27,
+          "t_ms": 270,
           "sim_ms": 0,
           "actual_speed": null,
           "late_steps": 0,
@@ -1125,7 +1125,7 @@
         },
         "check": {
           "vehicle_sil_check": 1,
-          "vehicle_sil": "0.2.0-rc.1",
+          "vehicle_sil": "0.2.0",
           "file": "launcher-crash.yaml",
           "result": "passed",
           "strict": false,
@@ -1153,7 +1153,7 @@
               "step_ms": null,
               "status": "described",
               "reported": {
-                "vehicle_sil": "0.2.0-rc.1",
+                "vehicle_sil": "0.2.0",
                 "name": "Engine",
                 "step_ns": 10000000,
                 "networks": [
@@ -1253,7 +1253,7 @@
               "step_ms": null,
               "status": "described",
               "reported": {
-                "vehicle_sil": "0.2.0-rc.1",
+                "vehicle_sil": "0.2.0",
                 "name": "Dashboard",
                 "step_ns": 5000000,
                 "networks": [
@@ -1450,7 +1450,7 @@
         "findings_omitted": 0,
         "last_command": null,
         "launcher_state": {
-          "seq": 24,
+          "seq": 25,
           "rev": 5,
           "phase": "running",
           "paused": false,
