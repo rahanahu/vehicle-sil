@@ -64,9 +64,8 @@ struct CheckOptions
     /// Only read the file: no executable is looked for or run, and no scenario is read. The
     /// report has the file's findings, its variants and the overrides' usage errors.
     bool file_only = false;
-    /// test: without the time lock every run goes as fast as possible, whatever the file's speed
-    /// (which then does not count for time_lock_findings()); RunIntent::speed is that default
-    /// then, not a speed the user asked for, and the check does not judge it.
+    /// Treat RunIntent::speed as a test default. The run adopts it when the time lock is off;
+    /// with the time lock on, the run uses speed 1 without refusing the default.
     bool fastest_by_default = false;
 };
 

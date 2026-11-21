@@ -246,9 +246,8 @@ TEST_CASE(a_test_runs_every_variant_with_every_scenario_in_order)
     CHECK(stopped.count(TestRunResult::NotRun) == 3);
 }
 
-/// A participant with role: bridge (describe: false; its executable is missing, so nothing starts
-/// in any case) beside the file's speed 4: the time lock.
-const char* const kBridged = "vehicle_sil_simulation: 2\nspeed: 4\nnetworks: []\nparticipants:\n"
+/// A participant with role: bridge (describe: false; its executable is missing, so nothing starts).
+const char* const kBridged = "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                              "  - name: Gateway\n    command: [missing/gateway]\n    role: bridge\n    describe: false\n";
 
 std::string codes_of(const CheckReport& check, std::string_view prefix)
@@ -301,6 +300,16 @@ TEST_CASE(a_run_gives_its_check_the_speed_and_start_paused_of_its_request)
     test_options.fastest_by_default = true;
     const Checked test = checked(request, test_options);
     check_text(codes_of(test, "outside-"), "outside-speed-set N\n");
+    request.intent.speed = 0.5;
+    const Checked locked = checked(request, test_options);
+    check_text(codes_of(locked, "outside-"), "outside-speed-set N\n");
+    CHECK(locked.run_timing && locked.run_timing->speed == 1.0);
+
+    request.intent.time_policy = TimePolicy::Free;
+    const Checked unlocked = checked(request, test_options);
+    CHECK(unlocked.run_timing && unlocked.run_timing->speed == 0.5);
+    CHECK(unlocked.checked_speed == request.intent.speed);
+
     // --time-policy free: the notes for the same requests.
     request = RunRequest{};
     request.intent.time_policy = TimePolicy::Free;
