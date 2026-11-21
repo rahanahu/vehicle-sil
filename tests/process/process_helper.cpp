@@ -10,6 +10,7 @@
 //   --fill-err <n>       writes <n> bytes 'e' to stderr
 //   --echo-args          writes each of its arguments on a line of its own to stdout
 //   --read-stdin         reads stdin to its end and writes "stdin <bytes>" to stdout
+//   --close-output       closes stdout and stderr while leaving the process alive
 //   --sleep-ms <ms>      sleeps
 //   --flood              writes to stdout without end
 //   --abort              ends with std::abort() (POSIX: the signal SIGABRT; Linux: without a core file)
@@ -165,10 +166,14 @@ int main(int argc, char** argv)
             }
             std::printf("stdin %zu\n", bytes);
         }
+        else if (arg == "--close-output")
+        {
+            std::fclose(stdout);
+            std::fclose(stderr);
+        }
         else if (arg == "--sleep-ms" && hasValue)
         {
-            std::fflush(stdout);
-            std::fflush(stderr);
+            std::fflush(nullptr);
             std::this_thread::sleep_for(std::chrono::milliseconds(std::stol(args[++i])));
         }
         else if (arg == "--flood")
