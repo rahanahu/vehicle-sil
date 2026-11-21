@@ -23,6 +23,7 @@ RECORDINGS = REPLAY.parent / "recordings"
 EXAMPLES = REPLAY.parents[2] / "protocol" / "examples"
 sys.path.insert(0, str(REPLAY.parent))
 import replay_launcher  # noqa: E402
+from record_launcher import Case, Recorder, normalize_advertised_addresses  # noqa: E402
 
 ALL = sorted(p.stem for p in RECORDINGS.glob("*.jsonl"))
 RUNS = [name for name in ALL if replay_launcher.read_recording(RECORDINGS / f"{name}.jsonl")[0]["shape"][0] == "run"]
@@ -30,6 +31,28 @@ RUNS = [name for name in ALL if replay_launcher.read_recording(RECORDINGS / f"{n
 
 def recording(name: str) -> tuple[dict, list[dict]]:
     return replay_launcher.read_recording(RECORDINGS / f"{name}.jsonl")
+
+
+def test_manual_participant_addresses_are_normalized(tmp_path: Path) -> None:
+    """The hint may list IPv4 and IPv6 addresses from the recording computer."""
+    line = ("from other computers, join at silkit://198.51.100.9:8501 or "
+            "silkit://[2001:db8::9]:8501 (this computer's addresses): give it as --registry-uri")
+    expected = ("from other computers, join at silkit://192.0.2.1:8501 or "
+                "silkit://192.0.2.1:8501 (this computer's addresses): give it as --registry-uri")
+    recorder = Recorder(Path("launcher"), tmp_path, tmp_path)
+    case = Case("address-hint", ["version"], "manual address hint")
+    _, entries = recorder.normalize(case, [(0.0, "out", json.dumps({"event": "log", "line": line}))], 0)
+    assert entries[0]["print"]["line"] == expected
+    assert normalize_advertised_addresses(expected) == expected
+    assert normalize_advertised_addresses("registry at silkit://127.0.0.1:8501") == "registry at silkit://127.0.0.1:8501"
+    with pytest.raises(RuntimeError, match="an advertised address of the recording host"):
+        recorder.forbid(case, {}, [{"out": {"event": "log", "line": line}}])
+
+
+def test_no_recording_contains_unmasked_advertised_addresses() -> None:
+    for path in [*RECORDINGS.glob("*.jsonl"), *EXAMPLES.glob("*.json")]:
+        text = path.read_text(encoding="utf-8")
+        assert normalize_advertised_addresses(text) == text, f"{path.name} has an unmasked advertised address"
 
 
 def test_no_path_user_host_or_token_of_the_computer_that_recorded() -> None:
