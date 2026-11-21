@@ -14,6 +14,8 @@ import {
   addDropped,
   addProblem,
   applyEvents,
+  recoverReplayLogs,
+  type LogLine,
   applySummary,
   sessionFromSummary,
 } from './session-state';
@@ -131,6 +133,13 @@ export class SessionFeed implements ClientSession {
   private readonly messageListeners = new Set<(batch: readonly ServerMessage[]) => void>();
   private noticeId = 0;
   private stoppedFlag = false;
+  private replayLogs: {
+    instance: string;
+    session: number;
+    logs: readonly LogLine[];
+    unseen: Set<number>;
+    notKept: Map<string, number>;
+  } | null = null;
 
   readonly session: Readable<SessionView | null>;
   readonly ready: Readable<boolean>;
@@ -229,6 +238,8 @@ export class SessionFeed implements ClientSession {
     instance?: string | null,
     resyncFrom?: string | null,
   ): Adoption | null {
+    // Older HTTP answers omit the instance. Read their summary only if the observed server stayed the same.
+    if (instance === undefined && resyncFrom !== this.instanceId) return null;
     const switching =
       instance !== undefined && this.instanceId !== null && instance !== this.instanceId;
     if (
@@ -257,7 +268,12 @@ export class SessionFeed implements ClientSession {
     const changedInstance = !!identity && identity !== this.instanceId;
     this.instanceId = identity;
     const adoption: Adoption = { revision, instance: identity, session: next?.id ?? null };
-    this.stopTarget = next && identity ? { session: next.id, instance: identity } : null;
+    // An unconfirmed summary can keep an existing target for the same run, but cannot name a new one.
+    if (next && instance) {
+      this.stopTarget = { session: next.id, instance };
+    } else if (this.stopTarget?.session !== next?.id) {
+      this.stopTarget = null;
+    }
     const notifySession = this.current.setDeferred(next);
     const notifyAllowed = switching ? this.allowedValue.setDeferred(null) : () => undefined;
     if (changedInstance && identity)
@@ -429,6 +445,13 @@ export class SessionFeed implements ClientSession {
     const originalInstance = this.instanceId;
     let instance = originalInstance;
     let session = before;
+    let replayLogs =
+      this.replayLogs?.instance === instance && this.replayLogs?.session === session?.id
+        ? this.replayLogs
+        : null;
+    const unseenLogs = () =>
+      replayLogs?.logs.filter((line) => replayLogs?.unseen.has(line.seq)) ?? [];
+    let stopTarget = this.stopTarget;
     let events: LauncherEvent[] = [];
     const notices: string[] = [];
     let applied = false;
@@ -453,8 +476,7 @@ export class SessionFeed implements ClientSession {
       if (message.type !== 'event') flush();
       switch (message.type) {
         case 'hello': {
-          // Rebuild from the summary. Only a reconnect that asked to continue from what it holds (with from_seq) keeps
-          // the local log
+          // Rebuild the retained replay independently and recover client-only logs after synced.
           synced = false;
           replaying = true;
           const { session: summary, replay } = message;
@@ -469,10 +491,24 @@ export class SessionFeed implements ClientSession {
           const sameRun = summary && instance === message.instance && session?.id === summary.id;
           const resumed = sameRun && replay?.from_seq != null;
           instance = message.instance;
+          stopTarget = summary && instance ? { session: summary.id, instance } : null;
+          if (!sameRun) replayLogs = null;
           if (!summary) {
             session = null;
           } else if (sameRun && session) {
             const kept = applySummary(session, summary, true, true);
+            if (!resumed && instance) {
+              const logs = replayLogs
+                ? recoverReplayLogs(kept, unseenLogs(), replayLogs.notKept).logs
+                : kept.logs;
+              replayLogs = {
+                instance,
+                session: summary.id,
+                logs: logs.filter((line) => !line.gap || line.gap.launcher),
+                unseen: new Set(logs.map((line) => line.seq)),
+                notKept: new Map(),
+              };
+            }
             session = resumed
               ? kept
               : { ...kept, lastSeq: -1, logs: [], logSources: {}, droppedMarks: 0 };
@@ -482,10 +518,24 @@ export class SessionFeed implements ClientSession {
           break;
         }
         case 'dropped': {
-          if (session && message.session === session.id) session = addDropped(session, message);
+          if (session && message.session === session.id) {
+            session = addDropped(session, message);
+            if (message.reason === 'not-kept' && replayLogs) {
+              for (const [source, count] of Object.entries(message.log))
+                replayLogs.notKept.set(source, (replayLogs.notKept.get(source) ?? 0) + count);
+            }
+          }
           break;
         }
         case 'synced':
+          if (
+            session &&
+            replayLogs &&
+            replayLogs.instance === instance &&
+            replayLogs.session === session.id
+          )
+            session = recoverReplayLogs(session, unseenLogs(), replayLogs.notKept);
+          replayLogs = null;
           synced = true;
           replaying = false;
           break;
@@ -493,7 +543,9 @@ export class SessionFeed implements ClientSession {
           takeAllowed(message.allowed);
           break;
         case 'session':
+          if (session?.id !== message.session.id) replayLogs = null;
           takeAllowed(message.session.allowed);
+          stopTarget = instance ? { session: message.session.id, instance } : null;
           // The summary is authoritative: it arrives in the same order as events, so replace the state with the
           // server's state at that point (keep the log)
           session =
@@ -508,7 +560,12 @@ export class SessionFeed implements ClientSession {
               : sessionFromSummary(message.session);
           break;
         case 'event':
-          if (session?.id === message.session) events.push(message.event);
+          if (session?.id === message.session) {
+            // A replayed line counts as received even if the display limit removes it later.
+            if (message.event.event === 'log' || message.event.event === 'log_dropped')
+              replayLogs?.unseen.delete(message.event.seq);
+            events.push(message.event);
+          }
           break;
         case 'error':
           if (message.code === 'unauthorized') {
@@ -538,7 +595,11 @@ export class SessionFeed implements ClientSession {
     if (!currentOrigin() || !this.isCurrent(revision)) return;
     this.instanceId = instance;
     commitOrigin(instance);
-    this.stopTarget = session && instance ? { session: session.id, instance } : null;
+    this.replayLogs =
+      replayLogs && replayLogs.session === session?.id && replayLogs.instance === instance
+        ? replayLogs
+        : null;
+    this.stopTarget = stopTarget;
     // HTTP can synchronously refresh this same run during a notification. It supersedes its own
     // snapshot, but not the ordered WebSocket messages (which include command acknowledgements).
     const sessionId = session?.id ?? null;

@@ -836,6 +836,61 @@ describe('SessionFeed', () => {
       'line 3',
     ]);
     expect(logs.filter((line) => line.gap)).toHaveLength(1);
+
+    // The server has now discarded the first line, but the client still holds it.
+    socket.send(hello(4));
+    socket.send({ ...dropped, log: { ECU: 2 } });
+    vi.advanceTimersByTime(BATCH_MS);
+    socket.send(log(2));
+    socket.send(log(3));
+    socket.send(log(4));
+    socket.send({ type: 'synced', session: id, last_seq: 4 });
+    vi.advanceTimersByTime(BATCH_MS);
+    const recovered = client.session.session.get();
+    expect(recovered?.logs.filter((line) => !line.gap).map((line) => line.line)).toEqual([
+      'line 1',
+      'line 2',
+      'line 3',
+      'line 4',
+    ]);
+    expect(recovered?.logSources['ECU']).toEqual({ lines: 4, dropped: 1 });
+
+    // A second full replay may begin before the first reaches synced.
+    socket.send(hello(5));
+    socket.send(log(5));
+    vi.advanceTimersByTime(BATCH_MS);
+    socket.send(hello(6));
+    socket.send(log(6));
+    socket.send({ type: 'synced', session: id, last_seq: 6 });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(
+      client.session.session
+        .get()
+        ?.logs.filter((line) => !line.gap)
+        .map((line) => line.seq),
+    ).toEqual([1, 2, 3, 4, 5, 6]);
+
+    // The full replay includes every line, although the client discards some at its limit.
+    socket.send(hello(7));
+    for (let seq = 1; seq <= 2001; seq++) socket.send(log(seq));
+    socket.send({ type: 'synced', session: id, last_seq: 2001 });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.logSources['ECU']).toEqual({ lines: 2000, dropped: 1 });
+
+    // A server-dropped line can be restored even if the display limit removed its marker.
+    socket.send(hello(8));
+    socket.send({ ...dropped, log: { ECU: 2 } });
+    for (let seq = 3; seq <= 2003; seq++) socket.send(log(seq));
+    socket.send({ type: 'synced', session: id, last_seq: 2003 });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.logSources['ECU']).toEqual({ lines: 2000, dropped: 3 });
+
+    // The same numeric session ID on a replacement server cannot inherit the lines.
+    socket.send({ ...hello(1), instance: 'replacement' });
+    socket.send(log(2));
+    socket.send({ type: 'synced', session: id, last_seq: 2 });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(client.session.session.get()?.logs.map((line) => line.line)).toEqual(['line 2']);
   });
 
   it('deduplicates a problem already included in a newer HTTP summary', async () => {

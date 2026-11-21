@@ -95,7 +95,7 @@ export interface LogLine {
    * Only on a marker for dropped lines ("N lines were dropped here"). launcher: lines the launcher could not write
    * (log_dropped).
    */
-  gap?: { count: number; atLeast: boolean; launcher?: boolean };
+  gap?: { count: number; atLeast: boolean; launcher?: boolean; notKept?: boolean };
 }
 
 /** Log counts per source. */
@@ -475,7 +475,11 @@ export function addDropped(session: SessionView, dropped: Dropped): SessionView 
     key: `dropped ${mark} ${source}`,
     source,
     line: '',
-    gap: { count, atLeast: dropped.at_least.includes(source) },
+    gap: {
+      count,
+      atLeast: dropped.at_least.includes(source),
+      ...(dropped.reason === 'not-kept' ? { notKept: true } : {}),
+    },
   }));
   const next = { ...appendLogs(session, gaps), droppedMarks: mark };
   const sources = { ...next.logSources };
@@ -857,6 +861,45 @@ export function applyEvents(
     sources[gap.source] = { ...counts, dropped: counts.dropped + (gap.gap?.count ?? 0) };
   }
   return { ...next, logSources: sources };
+}
+
+/** Combines a same-run full replay with lines only the client still holds. */
+export function recoverReplayLogs(
+  session: SessionView,
+  recovered: readonly LogLine[],
+  notKept: ReadonlyMap<string, number>,
+): SessionView {
+  if (!recovered.length) return session;
+  const sources = Object.fromEntries(
+    Object.entries(session.logSources).map(([name, source]) => [
+      name,
+      { lines: 0, dropped: source.dropped },
+    ]),
+  );
+  const restored = new Map<string, number>();
+  for (const line of recovered) {
+    const source = (sources[line.source] ??= { lines: 0, dropped: 0 });
+    if (line.gap) source.dropped += line.gap.count;
+    else {
+      const count = restored.get(line.source) ?? 0;
+      if (count < (notKept.get(line.source) ?? 0)) {
+        source.dropped--;
+        restored.set(line.source, count + 1);
+      }
+    }
+  }
+  // The display limit may already have removed a marker. Counts still include its lines.
+  const logs = session.logs.flatMap((line) => {
+    if (!line.gap?.notKept) return [line];
+    const available = restored.get(line.source) ?? 0;
+    const count = Math.max(0, line.gap.count - available);
+    restored.set(line.source, Math.max(0, available - line.gap.count));
+    return count > 0 ? [{ ...line, gap: { ...line.gap, count } }] : [];
+  });
+  // Reapply the ordinary client limits to the union, including any live lines received during replay.
+  logs.push(...recovered);
+  logs.sort((a, b) => a.seq - b.seq);
+  return appendLogs({ ...session, logs: [], logSources: sources }, logs);
 }
 
 /**
