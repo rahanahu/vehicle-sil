@@ -4036,7 +4036,7 @@ tr.selected td {
           if (!fresh()) return;
           element.input = text;
           element.srcName = name;
-          element.inputName = o.fileName || name;
+          element.inputName = element.host.fileName || name;
           load(text, element.inputName);
         }),
         bound((e) => {
