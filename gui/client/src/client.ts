@@ -210,6 +210,13 @@ export interface ClientParts {
   runControl: RunControl;
 }
 
+const clientErrorSinks = new WeakMap<GuiClient, ErrorSink>();
+
+/** Use the client's error sink for readables built on top of it. */
+export function clientErrorSink(client: GuiClient): ErrorSink | undefined {
+  return clientErrorSinks.get(client);
+}
+
 /** createClient, and the parts the front door is built from. */
 export function buildClient(options: ClientOptions): ClientParts {
   const token = typeof options.token === 'function' ? options.token : () => options.token as string;
@@ -262,6 +269,7 @@ export function buildClient(options: ClientOptions): ClientParts {
   const binder = new VariableBinder({
     variables,
     connection: connection.state,
+    connectionEpoch: () => connection.batchEpoch(),
     session: session.session,
     onError,
   });
@@ -438,5 +446,6 @@ export function buildClient(options: ClientOptions): ClientParts {
       );
     },
   };
+  clientErrorSinks.set(client, onError);
   return { client, http, onError, runControl: run };
 }

@@ -230,3 +230,9 @@ export type {
   WatchMessage,
   WriteAnswer,
 } from './protocol';
+
+// Reusable view state for custom monitoring screens.
+export { createWaveforms } from './waveforms';
+export type { Waveforms, WaveformSeries } from './waveforms';
+export { createVariableEditor } from './variable-editor';
+export type { VariableEditor, VariableEditorState } from './variable-editor';
