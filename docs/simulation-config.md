@@ -1038,12 +1038,12 @@ The following give exit code 4:
 | Every command | An option given twice (`--disable` and `--enable` can be repeated) |
 | Every command | `--describe-timeout-ms` without a value |
 | `check` | `--events`, `--stdin-commands` |
-| `check` | `--log-dir`, `--timeout-ms`, `--speed`, `--start-paused`, `--control` and `--control-*` |
+| `check` | `--log-dir`, `--timeout-ms`, `--start-paused`, `--control` and `--control-*` |
 | `run` | `--json` and `--events` together |
 | `run` | `--text-from-stdin`, `--descriptions`, `--write-descriptions`, `--compare-commands` (they are for `check`) |
 | `run` | `--events-stall-ms` without `--events`, or with a value out of range |
 | `run` | `--start-paused` with neither `--stdin-commands` nor `--control` |
-| `run` | `--speed` that is neither a number nor `max` |
+| `check` or `run` | `--speed` that is neither a number nor `max` |
 | `run` | `--scenario` together with `--start-paused` |
 | `--control` | `--control-credentials` and the like without `--control` |
 | `--control` | `--control` in a build without the Control Server |

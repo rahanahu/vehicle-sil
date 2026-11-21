@@ -1036,7 +1036,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | どのコマンドでも | 同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます） |
 | どのコマンドでも | 値のない `--describe-timeout-ms` |
 | `check` | `--events`、`--stdin-commands` |
-| `check` | `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、`--control` と `--control-*` |
+| `check` | `--log-dir`、`--timeout-ms`、`--start-paused`、`--control` と `--control-*` |
 | `run` | `--json` と `--events` を一緒に付ける |
 | `run` | `--text-from-stdin`、`--descriptions`、`--write-descriptions`、`--compare-commands`（`check` だけのもの） |
 | `run` | `--events` なしの `--events-stall-ms` と、範囲の外の値 |
