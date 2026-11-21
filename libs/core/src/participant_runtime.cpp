@@ -1086,6 +1086,19 @@ std::vector<std::string> ParticipantRuntime::peer_names() const
     return names;
 }
 
+std::uint64_t ParticipantRuntime::peer_generation() const
+{
+    const std::lock_guard lock(peers_mutex_);
+    return peer_generation_;
+}
+
+bool ParticipantRuntime::wait_for_peer_change(std::uint64_t generation,
+                                              std::chrono::steady_clock::time_point deadline) const
+{
+    std::unique_lock lock(peers_mutex_);
+    return peers_cv_.wait_until(lock, deadline, [this, generation] { return peer_generation_ != generation; });
+}
+
 bool ParticipantRuntime::wait_for_peer(const std::string& participant_name,
                                        const std::function<bool(const PeerStatus&)>& predicate,
                                        std::chrono::milliseconds timeout)
@@ -1139,6 +1152,10 @@ void ParticipantRuntime::on_status(const orch::ParticipantStatus& status, bool r
         if (replayed && record.status.state && status.enterTime < record.enter_time)
         {
             return;
+        }
+        if (record.status.state != status.state)
+        {
+            ++peer_generation_;
         }
         record.status.state = status.state;
         record.enter_time = status.enterTime;

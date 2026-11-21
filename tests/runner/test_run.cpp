@@ -2,7 +2,7 @@
 //
 // The run (the runner library, without the launcher): judging what the run saw (assess_run()),
 // the close of the connections, the start limit and the lines of the participants that the run
-// writes. No process is started.
+// writes. The start-boundary tests also start a helper process.
 
 #include "run_support.hpp"
 #include "launch_test_util.hpp"
@@ -12,7 +12,12 @@
 #include "vehicle_sil/config/detail/check_words.hpp"
 #include "vehicle_sil/runner/detail/run_close.hpp"
 #include "run_connection.hpp"
+#include "run_control.hpp"
 #include "run_notes.hpp"
+#include "run_participants.hpp"
+#include "run_scenario.hpp"
+#include "run_start.hpp"
+#include "spawn_sleeper.hpp"
 #include "vehicle_sil/runner/detail/run_samples.hpp"
 #include "vehicle_sil/runner/detail/run_start_limit.hpp"
 #include "silkit_test_util.hpp"
@@ -26,15 +31,18 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
+#include <cstdio>
+#include <filesystem>
 #include <future>
+#include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <cstdint>
-#include <cstdio>
+#include <random>
 #include <string>
+#include <system_error>
 #include <thread>
-#include <initializer_list>
 #include <vector>
 
 #ifndef _WIN32
@@ -50,6 +58,137 @@ using vehicle_sil::config::test::check_text;
 using vehicle_sil::config::test::lines;
 using vehicle_sil::process::ExitStatus;
 using namespace vehicle_sil::runner::test::run_support;
+
+namespace {
+
+// Give each test its own directory without overwriting an earlier run's files.
+struct StartBoundaryDirectory
+{
+    std::filesystem::path path;
+    StartBoundaryDirectory()
+    {
+        do
+        {
+            path = std::filesystem::temp_directory_path() / ("vehicle-sil-start-boundary-" + std::to_string(std::random_device{}()));
+        } while (!std::filesystem::create_directory(path));
+    }
+    ~StartBoundaryDirectory()
+    {
+        std::error_code ignored;
+        std::filesystem::remove_all(path, ignored);
+    }
+};
+
+void check_start_boundary(bool deadline)
+{
+    using namespace vehicle_sil::runner::detail;
+    StartBoundaryDirectory dir;
+    CheckReport check;
+    check.file = "sim.yaml";
+    check.config.emplace();
+    ParticipantConfig child;
+    child.name = deadline ? "Ghost" : "Child";
+    child.describe = false;
+    child.command = {VEHICLE_SIL_PROCESS_HELPER, "--pid-file", "child.pid", "--exit", "7"};
+    check.config->participants.push_back(child);
+    ParticipantResult childResult;
+    childResult.status = ParticipantStatus::NotChecked;
+    childResult.executable = VEHICLE_SIL_PROCESS_HELPER;
+    check.participants.push_back(childResult);
+    if (!deadline)
+    {
+        ParticipantConfig last;
+        last.name = "Last";
+        last.manual = true;
+        last.describe = false;
+        last.command = {VEHICLE_SIL_PROCESS_HELPER};
+        check.config->participants.push_back(last);
+        check.participants.push_back(childResult);
+    }
+    RunPlan plan = plan_run(check, nullptr, dir.path, RunChoices{});
+    if (deadline)
+    {
+        // The internal plan makes the first check observe both the deadline and child exit.
+        plan.start_timeout_ms = 0;
+    }
+    RunObservers observers;
+    StopRequests stops;
+    RunControls controls(stops);
+    RunContext ctx{plan.config(), plan.check, plan, observers, nullptr, nullptr, controls, controls.time()};
+    RunOutcome outcome = planned_outcome(plan);
+    RunOutput output(ctx);
+    RunControl control(ctx, output);
+    RunSamples samples({}, {});
+    RunParticipants participants(ctx, output, outcome, plan.base);
+    RunNotes notes(ctx, participants);
+    RunScenario scenario(ctx, output, control, samples);
+    RunStart start(ctx, output, control, notes, scenario, participants, outcome);
+    vehicle_sil::unit::InProcessRegistry registry;
+    SimulationControllerOptions options;
+    options.registry_uri = registry.uri;
+    options.required_participants = deadline ? std::vector<std::string>{"Ghost"} : std::vector<std::string>{"Child", "Last"};
+    SimulationController controller(options);
+    control_silkit::HubTransport transport(control.hub(), controller.runtime());
+
+    std::unique_ptr<ParticipantRuntime> childStatus;
+    std::unique_ptr<ParticipantRuntime> lastStatus;
+    if (!deadline)
+    {
+        // This in-process participant supplies the Child status while the real child process
+        // below exits separately, making both observations available in the first check.
+        childStatus = std::make_unique<ParticipantRuntime>(ParticipantRuntimeOptions{"Child", registry.uri});
+        childStatus->start(vehicle_sil::test::scaled_timeout(20s));
+        CHECK(controller.runtime().wait_for_peer("Child", [](const PeerStatus& s) { return s.state.has_value(); },
+                                                 vehicle_sil::test::scaled_timeout(20s)));
+    }
+    CHECK(participants.start_children(registry.uri, RunParticipants::Which::Others));
+    const long pid = vehicle_sil::test::read_pid((dir.path / "child.pid").string(), 20s);
+    CHECK(pid > 0);
+    CHECK(vehicle_sil::test::wait_gone(pid, 20s));
+    if (!deadline)
+    {
+        lastStatus = std::make_unique<ParticipantRuntime>(ParticipantRuntimeOptions{"Last", registry.uri});
+        lastStatus->start(vehicle_sil::test::scaled_timeout(20s));
+        CHECK(controller.runtime().wait_for_peer("Last", [](const PeerStatus& s) { return s.state.has_value(); },
+                                                 vehicle_sil::test::scaled_timeout(20s)));
+        CHECK(controller.missing_participants().empty());
+    }
+    CHECK(!start.wait_for_start(controller, transport));
+    CHECK(!controller.runtime().started());
+    CHECK(outcome.participants[0].ending == Ending::ExitedBeforeStart);
+    if (deadline)
+    {
+        CHECK(outcome.start.timed_out);
+        CHECK(outcome.participants[0].missing_at_start);
+        CHECK(outcome.end.failed_participant.empty());
+        std::vector<std::string> childFindings;
+        for (const Finding& finding : assess_run(outcome))
+        {
+            if (finding.participant == "Ghost")
+            {
+                childFindings.push_back(finding.code);
+            }
+        }
+        CHECK(childFindings == std::vector<std::string>{"ended-before-start"});
+    }
+    else
+    {
+        CHECK(!outcome.start.timed_out);
+        CHECK(outcome.end.failed_participant == "Child");
+    }
+}
+
+} // namespace
+
+TEST_CASE(a_child_exit_takes_priority_when_the_last_participant_has_joined)
+{
+    check_start_boundary(false);
+}
+
+TEST_CASE(a_child_exit_and_start_deadline_in_the_same_check_keep_the_existing_findings)
+{
+    check_start_boundary(true);
+}
 
 TEST_CASE(a_timeline_that_dropped_points_or_was_not_written_is_said)
 {

@@ -421,6 +421,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
     }
     while (true)
     {
+        const auto peerGeneration = controller.runtime().peer_generation();
         if (ctx_.interrupts() > 0)
         {
             interrupted_before_start();
@@ -481,7 +482,16 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
                 " ms: " + names);
             return false;
         }
-        std::this_thread::sleep_for(ctx_.plan.poll);
+        auto wake = std::chrono::steady_clock::now() + ctx_.plan.poll;
+        if (!onlyManual)
+        {
+            wake = std::min(wake, deadline);
+        }
+        if (const auto from = shared_.manual_wait_began())
+        {
+            wake = std::min(wake, *from + *ctx_.plan.timeout);
+        }
+        controller.runtime().wait_for_peer_change(peerGeneration, wake);
     }
     try
     {

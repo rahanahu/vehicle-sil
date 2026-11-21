@@ -1408,16 +1408,18 @@ python3 gui/server/tests/record_launcher.py --launcher build/<preset>/tools/laun
 - It runs on Linux and uses the ECUs of the ecu_main example built next to the launcher. CI also runs it in linux-gcc-release.
 - With a launcher built without a Control Server, it skips the cases that need one, compares the features of `version --json` without that feature, and says so.
 - A case whose run fell behind real time (on a heavily loaded computer) is recorded again up to 3 times, and the summary line says so.
+- When a required participant fails and the run aborts, the comparison excludes a warning only if the sole late step was still unstarted at the abort. Other late steps still trigger a retry; a missing or duplicate warning fails the comparison.
 - The cases that connect a network outside run the launcher next to the bridges built on the fake drivers (the CMake targets `vehicle_sil_launch_connect_tools` and `vehicle_sil_fake_pcap`); without them, it skips those cases and says so. It records the list of a network in a network namespace of its own (`unshare -rn`), so that the list holds no interface of your computer.
 
 | What is compared | Details |
 |---|---|
-| Order of events | Times, logs, and the number and position of log_dropped are excluded. |
+| Order of events | Times, outside counts, logs, and the number and position of log_dropped are excluded. |
 | Values the launcher decides | Finding codes, whether commands were accepted and their `ms`, participant states and exit codes, `result` / `simulation` / `interrupted_by` of the result and its finding codes, the check result and its finding codes, the states of scenario steps, the features of `version --json` |
 | Keys and types | The keys and types of every kind of event, and of every object and array element in them |
 | Other | The commands written, the exit code, whether there is stderr output |
 
 - In the order of events, participant events among other events may come in any order relative to each other. The order of the states of one participant is compared.
+- For outside counts, the comparison checks that the bridge started first, the last counts match the result, and the same networks appear in the recording and the new run.
 - When recording, it also checks that the real lines begin with `event`, `seq` and `t_ms`, that `seq` increases by 1 from 0, and that `t_ms` never goes back.
 
 ### Re-record

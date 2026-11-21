@@ -31,14 +31,17 @@ stood still) and lateness (0). A recording that still has a path of this compute
 token in it is not written (the case fails with what was found).
 
 --compare records into a temporary directory and compares with recordings/ (outline() and Shapes say exactly
-what): the events in order (time, state, log and log_dropped aside: how many and where depends on timing; of the
+what): the events in order (time, state, outside, log and log_dropped aside: how many and where depends on timing; of the
 participant events between two others, the order across participants is not compared, the order of one
 participant's states is), the values the launcher decides (findings' codes, commands accepted or not, states and
 exit codes, the result, the check, version's features and formats), the keys and JSON types of every kind of
 event and of everything in it, the commands written, the exit code and whether anything came on standard error.
+For outside counts, it checks the bridge started first, the last counts match the result and the same networks
+appear in the recording and the new run.
 Cases that need a feature the launcher does not have (the control server) are skipped, and that feature is left
 out of version's features on both sides; both are said. A case whose run fell behind real time (a busy machine)
-is recorded again, up to three times; the summary line says which were. It says which case differs and how;
+is recorded again, up to three times; the summary line says which were. When a required participant failed,
+the comparison excludes a warning only if the sole late step was still unstarted at the abort. It says which case differs and how;
 record again when the change is meant (then `git diff gui/server/tests/recordings` shows what changed).
 
 When the launcher changes: record again, read the diff, and fix the GUI where it uses what changed. When a test
@@ -52,6 +55,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import math
 import os
 import re
 import secrets
@@ -77,13 +81,103 @@ LAUNCHER = "vehicle_sil_launch"
 STOP = '{"command":"stop"}'
 PAUSE, RESUME = '{"command":"pause"}', '{"command":"resume"}'
 TIMEOUT_S = 60
-# Findings that come from how busy the machine was, not from the launcher: a case that has one is recorded again
-BUSY = ("behind-real-time",)  # a step later than its real time: only a busy machine does that to the example ECUs
+# A late step usually means the recorder's machine was busy: record that case again. The comparison
+# of an aborted run has one exception for the unstarted step left behind by a required participant's failure.
+BUSY = ("behind-real-time",)
 ATTEMPTS = 3
 
 
 class Busy(RuntimeError):
     pass
+
+
+def terminal_failure_lateness(events: list[dict]) -> bool:
+    """The only late step was still unstarted when a required participant's failure aborted the run."""
+    results = [e.get("result") for e in events if e.get("event") == "result"]
+    warnings = [e for e in events if e.get("event") == "finding" and e.get("code") == "behind-real-time"]
+    if (len(results) != 1 or not isinstance(results[0], dict) or len(warnings) != 1 or
+            warnings[0].get("severity") != "warning" or warnings[0].get("participant") is not None or
+            warnings[0].get("network") is not None or not {"participant", "network"} <= warnings[0].keys()):
+        return False
+    result = results[0]
+    findings = result.get("findings") or []
+    timing = result.get("timing") or {}
+    late = timing.get("late_ms")
+    tolerance = timing.get("late_tolerance_ms")
+    late_findings = [f for f in findings if f.get("code") == "behind-real-time"]
+    required = {p.get("name") for p in result.get("participants") or []
+                if p.get("required") is True and p.get("enabled") is True and isinstance(p.get("name"), str)}
+    failed = {f.get("participant") for f in findings if f.get("code") == "participant-failed" and
+              f.get("severity") == "error" and f.get("participant") in required}
+    reported = {e.get("participant") for e in events if e.get("event") == "finding" and
+                e.get("code") == "participant-failed" and e.get("severity") == "error"}
+    finding_keys = {"severity", "code", "file", "line", "participant", "network", "message", "detail"}
+    return (result.get("result") == "failed" and result.get("simulation") == "aborted" and
+            bool(failed & reported) and
+            len(late_findings) == 1 and late_findings[0].get("severity") == "warning" and
+            set(late_findings[0]) == finding_keys and set(warnings[0]) == finding_keys | {"event", "seq", "t_ms"} and
+            all(warnings[0][key] == late_findings[0][key] for key in finding_keys) and
+            isinstance(late_findings[0]["file"], str) and isinstance(late_findings[0]["message"], str) and
+            late_findings[0]["line"] is None and warnings[0]["line"] is None and
+            (late_findings[0]["detail"] is None or isinstance(late_findings[0]["detail"], str)) and
+            late_findings[0].get("participant") is None and late_findings[0].get("network") is None and
+            {"participant", "network"} <= late_findings[0].keys() and
+            type(result.get("warnings")) is int and
+            result["warnings"] == sum(f.get("severity") == "warning" for f in findings) and
+            type(timing.get("speed")) in (int, float) and math.isfinite(timing["speed"]) and timing["speed"] > 0 and
+            type(timing.get("late_steps")) is int and timing["late_steps"] == 1 and
+            type(late) is int and type(tolerance) is int and late > tolerance and
+            late == timing.get("max_late_ms") == timing.get("slipped_ms"))
+
+
+def require_lateness_reported(events: list[dict]) -> None:
+    """Do not hide a missing or duplicate warning when comparing a run."""
+    results = [e.get("result") for e in events if e.get("event") == "result"]
+    if len(results) != 1 or not isinstance(results[0], dict):
+        return
+    result = results[0]
+    if (result.get("timing") or {}).get("late_steps", 0) > 0:
+        in_events = sum(e.get("event") == "finding" and e.get("code") == "behind-real-time" for e in events)
+        in_result = sum(f.get("code") == "behind-real-time" for f in result.get("findings") or [])
+        if in_events != 1 or in_result != 1:
+            raise RuntimeError("late steps without exactly one warning in events and result")
+
+
+def check_outside_events(events: list[dict]) -> None:
+    """Check the bridge-count contract without assuming when a statistics line arrives."""
+    started: set[str] = set()
+    last: dict[str, tuple[int, int]] = {}
+    result = None
+    result_seen = False
+    for e in events:
+        if e.get("event") == "participant" and e.get("state") == "started":
+            started.add(e.get("name"))
+        if e.get("event") == "outside":
+            network = e.get("network")
+            counts = (e.get("to_outside"), e.get("from_outside"))
+            if (not isinstance(network, str) or "bridge." + network not in started or result_seen or
+                    any(type(n) is not int or n < 0 for n in counts)):
+                raise RuntimeError("outside event is not after its bridge started and before result, or has invalid counts")
+            if last.get(network) == counts:
+                raise RuntimeError("outside counts did not change")
+            last[network] = counts
+        if e.get("event") == "result":
+            result = e.get("result")
+            result_seen = True
+    if not isinstance(result, dict):  # a recording that ends while the launcher is still running
+        return
+    outside = result.get("outside") or []
+    expected: dict[str, tuple[int | None, int | None]] = {}
+    for o in outside:
+        network = o.get("network")
+        counts = (o.get("to_outside"), o.get("from_outside"))
+        if (not isinstance(network, str) or network in expected or
+                (counts != (None, None) and any(type(n) is not int or n < 0 for n in counts))):
+            raise RuntimeError("the result has duplicate networks or invalid outside counts")
+        expected[network] = counts
+    expected = {name: counts for name, counts in expected.items() if counts != (None, None)}
+    if last != expected:
+        raise RuntimeError("the last outside counts do not match the result")
 
 
 def step(ms: int) -> str:
@@ -374,8 +468,14 @@ class Recorder:
                 return text_marks(value)
             return value
 
-        if "--events" in case.argv:
-            self.stream_rules(case, lines)
+        raw_events = self.stream_rules(case, lines) if "--events" in case.argv else []
+        # A run aborted after a participant failure can end with its next paced step overdue.
+        # That unstarted step is reported correctly, but its lateness depends on timing. Keep
+        # all other late steps as Busy; this exception is only for comparison, not recording.
+        ignore_terminal_lateness = False
+        if self.compare:
+            require_lateness_reported(raw_events)
+            ignore_terminal_lateness = terminal_failure_lateness(raw_events)
         entries: list[dict] = []
         out_text = [t for _, k, t in lines if k == "out"]
         printed = None
@@ -416,6 +516,12 @@ class Recorder:
                     continue
                 if e["event"] == "heartbeat":
                     continue
+                if ignore_terminal_lateness and e["event"] == "finding" and e.get("code") == "behind-real-time":
+                    continue
+                if ignore_terminal_lateness and e["event"] == "result":
+                    result = e["result"]
+                    e["result"] = {**result, "warnings": result["warnings"] - 1,
+                                   "findings": [f for f in result["findings"] if f.get("code") != "behind-real-time"]}
                 found = [f.get("code") for f in [e] + (e.get("result") or {}).get("findings", [])
                          if isinstance(f, dict)]
                 busy = [code for code in found if code in BUSY]
@@ -452,7 +558,7 @@ class Recorder:
         return head, entries
 
     @staticmethod
-    def stream_rules(case: Case, lines: list[tuple[float, str, str]]) -> None:
+    def stream_rules(case: Case, lines: list[tuple[float, str, str]]) -> list[dict]:
         """What docs/simulation-events.md promises about the event stream, on the real launcher's own lines (the
         recording keeps neither seq nor t_ms, and no heartbeat): every line an object that starts with event, seq,
         t_ms; seq from 0 up by one (heartbeats counted); t_ms never back; a heartbeat has nothing else."""
@@ -472,12 +578,16 @@ class Recorder:
             broken.append("seq goes up by one from 0")
         elif not all(a["t_ms"] <= b["t_ms"] for a, b in zip(events, events[1:])):
             broken.append("t_ms does not go back")
+        elif any(e["event"] == "result" for e in events[:-1]):
+            broken.append("result is the last event")
         elif any(e["event"] == "heartbeat" and list(e) != ["event", "seq", "t_ms"] for e in events):
             broken.append("a heartbeat has only event, seq and t_ms")
         if broken:
             raise RuntimeError(f"{case.name}: the real launcher's events break the rule '{broken[0]}' that the GUI "
                                "server relies on (docs/simulation-events.md): fix the launcher, or the GUI server and "
                                "replay_launcher.py with it")
+        check_outside_events(events)
+        return events
 
     def forbid(self, case: Case, head: dict, entries: list[dict]) -> None:
         text = json.dumps([head, entries], ensure_ascii=False)
@@ -546,13 +656,13 @@ def write(path: Path, head: dict, entries: list[dict]) -> None:
 # ---------------------------------------------------------------- comparing
 
 
-NOT_IN_ORDER = {"time", "log", "log_dropped", "state"}
+NOT_IN_ORDER = {"time", "log", "log_dropped", "state", "outside"}
 # The cases that stop twice at once: a participant that is not required (Logger) either ends on the first stop (SIGTERM)
 # or is killed first; which one happens is a race, so both count as the same ending there. No other case is lenient.
 EITHER_END = {"forever-stop-twice", "control-force", "control-paused-resume-force", "control-scenario-slow-force",
               "control-simulation-force"}
 ENDS_AT_STOP = ("stopped", "killed")
-SOMETIMES = {"log_dropped"}  # a kind of event that only a slow reader makes the launcher write  # how many and where depend on timing: their shapes are compared
+SOMETIMES = {"log_dropped", "outside"}  # their presence can depend on timing; when present their shapes are compared
 
 
 def json_type(value) -> str:
@@ -692,6 +802,10 @@ def compare(name: str, tracked: Path, fresh: Path, shapes: tuple[Shapes, Shapes]
     _, b = replay_launcher.read_recording(fresh)
     shapes[0].add(a)
     shapes[1].add(b)
+    outside_a = {e["out"]["network"] for e in a if e.get("out", {}).get("event") == "outside"}
+    outside_b = {e["out"]["network"] for e in b if e.get("out", {}).get("event") == "outside"}
+    if outside_a != outside_b:
+        return [f"{name}: outside networks differ: recorded {sorted(outside_a)}, now {sorted(outside_b)}"]
     either = name in EITHER_END
     left, right = outline(a, unsure, either), outline(b, unsure, either)
     if left == right:

@@ -751,6 +751,32 @@ TEST_CASE(virtual_time_api_misuse_is_rejected)
     }
 }
 
+TEST_CASE(peer_change_wait_keeps_changes_before_and_during_the_wait)
+{
+    InProcessRegistry registry;
+    std::atomic<unsigned> observed{0};
+    ParticipantRuntime watcher(ParticipantRuntimeOptions{"ChangeWatcher", registry.uri});
+    watcher.set_peer_status_observer([&](const std::string&, const PeerStatus&) { ++observed; });
+    ParticipantRuntime peer(ParticipantRuntimeOptions{"ChangePeer", registry.uri});
+
+    const auto before = watcher.peer_generation();
+    auto waiting = std::async(std::launch::async, [&] {
+        return watcher.wait_for_peer_change(before, Wall::now() + scaled_timeout(20s));
+    });
+    peer.start(scaled_timeout(20s));
+    CHECK(waiting.get());
+    CHECK(watcher.wait_for_peer("ChangePeer", [](const PeerStatus& s) { return s.state == orch::ParticipantState::Running; },
+                                scaled_timeout(20s)));
+    // The change arrived between taking the generation and entering this second wait.
+    CHECK(watcher.wait_for_peer_change(before, Wall::now() + scaled_timeout(20s)));
+    CHECK(observed.load() > 0);
+    watcher.refresh_peer_statuses();
+    const auto unchanged = watcher.peer_generation();
+    watcher.refresh_peer_statuses();
+    CHECK(!watcher.wait_for_peer_change(unchanged, Wall::now() + 20ms));
+    peer.stop("test complete");
+}
+
 TEST_CASE(participant_runtime_waits_while_the_registry_still_has_the_name)
 {
     // A participant with the name ends while another process (here: the same) joins with it: the

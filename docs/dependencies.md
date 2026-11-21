@@ -442,6 +442,8 @@ A status that arrives between 2 and 3 does not reach the new handler. If it is t
 
 **Handling**: While `ParticipantRuntime::wait_for_peer()` waits, it resynchronizes every 200 ms (`resync_peers()`). A resynchronization registers a temporary handler and removes it right away. The replay at registration runs correctly under the lock, so the lost status is recovered.
 
+`peer_generation()` and `wait_for_peer_change()` observe changes already known to the runtime; they do not resynchronize. Read the generation before checking peer states and recheck the conditions after the wait, including when its deadline expires.
+
 - `enterTime` is compared so that a replayed status does not overwrite a newer status that has already arrived.
 - Normal notifications are always applied. The `Error` on disconnection is stamped with the local clock, so it is not compared with the other participant's clock.
 - `ISystemMonitor::ParticipantStatus()` is not used, because it returns a reference to internal data under the lock and the caller reads it outside the lock.
