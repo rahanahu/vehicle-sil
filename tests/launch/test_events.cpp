@@ -1648,3 +1648,16 @@ TEST_CASE(an_accepted_stop_is_asked_for_before_the_detach_and_a_refused_one_not_
     const Command late = commands.apply(stop, "control_server", [&] { ++asked; });
     CHECK(!late.accepted && asked == 1);
 }
+
+TEST_CASE(stdin_command_rejects_integers_that_overflow_before_range_checks)
+{
+    for (const char* line : {R"({"command":"stop","id":18446744073709551616})",
+                             R"({"command":"run_until","at_ms":18446744073709551616})",
+                             R"({"command":"step","ms":18446744073709551616})"})
+    {
+        const auto parsed = parse_command(line);
+        CHECK(parsed.has_value());
+        CHECK(!parsed->accepted);
+        CHECK(parsed->reason == "invalid-argument");
+    }
+}
