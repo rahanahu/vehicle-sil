@@ -245,7 +245,7 @@ void RunScenario::start(SimulationController& controller, RunOutcome& outcome)
         {
             outcome.scenario.error = "the scenario could not begin before the simulation started";
         }
-        over_.store(true);
+        mark_over();
         return;
     }
     thread_ = std::thread([this, &controller] { loop(controller); });
@@ -272,7 +272,7 @@ void RunScenario::loop(SimulationController& controller)
             {
                 // Over: the guard stays, so that the simulation stands at this step until the
                 // main thread has stopped it.
-                over_.store(true);
+                mark_over();
                 return;
             }
             controller.guard_from(*p + SimDuration(1));
@@ -282,8 +282,32 @@ void RunScenario::loop(SimulationController& controller)
     {
         const std::lock_guard lock(error_mutex_);
         thread_error_ = *e.what() != '\0' ? e.what() : "exception without message";
-        over_.store(true);
+        mark_over();
     }
+}
+
+void RunScenario::mark_over()
+{
+    {
+        const std::lock_guard lock(completion_mutex_);
+        over_.store(true);
+        ++completion_generation_;
+    }
+    completion_changed_.notify_all();
+}
+
+bool RunScenario::wait_for_completion(std::uint64_t& generation, std::chrono::milliseconds timeout,
+                                      const std::function<void()>& before_wait) const
+{
+    std::unique_lock lock(completion_mutex_);
+    // The optional test probe runs under the mutex before wait atomically releases it.
+    if (before_wait)
+    {
+        before_wait();
+    }
+    const bool changed = completion_changed_.wait_for(lock, timeout, [this, generation] { return completion_generation_ != generation; });
+    generation = completion_generation_;
+    return changed;
 }
 
 void RunScenario::finish(SimulationController& controller, const WatchResult& watched, bool for_scenario, RunOutcome& outcome)
