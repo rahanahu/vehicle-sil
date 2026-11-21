@@ -542,7 +542,7 @@ private:
 1. 設定ファイルは変更せずに、`--manual` に participant 名を指定して実行します。
 
    ```sh
-   vehicle_sil_launch run simulation.yaml --manual Cooler
+   vehicle_sil_launch run simulation.yaml --manual Cooler --stop-at-ms 1000
    ```
 
 2. `vehicle_sil_launch` は、ほかの ECU を起動し、`Cooler` を起動するコマンドを標準エラーに表示して待ちます（`<dir>` はプロジェクトのディレクトリです）。
