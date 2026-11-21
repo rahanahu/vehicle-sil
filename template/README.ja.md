@@ -176,6 +176,7 @@ ECU とツールは、同じバージョンの vehicle-sil にそろえます。
 | 1 | 新しいバージョンのテンプレートから、`get_tools.py` と、`CMakeLists.txt` の `GIT_TAG` の行をコピーします。 |
 | 2 | `python3 get_tools.py` をもう一度実行します。 |
 | 3 | `cmake --build --preset linux` でビルドし直します（Windows は `windows`）。 |
+| 4 | 形式 1 の設定ファイルは `vehicle_sil_simulation: 2` に変更します。`stop_at_ms`、`speed`、`late_tolerance_ms` は実行時の引数か要求ファイルへ移します。`start_timeout_ms` と `stop_timeout_ms` は `--participant-start-timeout-ms` と `--participant-stop-timeout-ms` へ移します。刻みを固定する場合は `time_step_ms` を設定ファイルに残します。 |
 
 `get_tools.py` は、ツールに入っている JSON Schema を `schema/` にコピーし直し、コピーしたファイルを 1 行で表示します。これで、エディターの補完と検査が、新しいバージョンのキーに対応します。変更点と対応のしかたは、vehicle-sil の `CHANGELOG.md` にあります。
 

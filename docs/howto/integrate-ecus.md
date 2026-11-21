@@ -118,8 +118,7 @@ participants:
 | Line | What to write |
 |---|---|
 | The comment on line 1 | The location of the JSON Schema that editors use for completion and checking. The file works without it. |
-| `vehicle_sil_simulation` | The format version of the configuration file. Write `1`. |
-| `stop_at_ms` | The virtual time at which the simulation stops. Without it, the simulation runs until Ctrl+C. |
+| `vehicle_sil_simulation` | The format version of the configuration file. Write `2`. |
 | `networks` | The network names and kinds agreed in step 1, one entry each. |
 | `participants[].name` | The participant name. It must be unique within the simulation. |
 | `participants[].command` | The path of the executable. A relative path is relative to the directory of the configuration file. |
@@ -376,16 +375,16 @@ While you wait for a rebuild, disable that ECU and continue with the others (see
 ## Step 5: Run the simulation and verify communication
 
 ```sh
-vehicle_sil_launch run simulation.fixed.yaml
+vehicle_sil_launch run simulation.fixed.yaml --stop-at-ms 1000
 ```
 
-`run` first does the same check as `check`. If there is no `error`, it starts the SIL Kit registry and all ECUs, runs until `stop_at_ms` and ends the ECUs.
+`run` first does the same check as `check`. If there is no `error`, it starts the SIL Kit registry and all ECUs, runs until the virtual time set by `--stop-at-ms` and ends the ECUs.
 
 ### Verify the run result
 
 At the end of stdout, `run` prints the result below. If every entry in the `ended` column is `exit code 0` and the last line is `passed:`, the exit code is 0.
 
-<!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml, from the line "run:" -->
+<!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml --stop-at-ms 1000, from the line "run:" -->
 ```text
 run: the simulation ran to stop_at_ms (1000 ms) and ended
 
@@ -402,13 +401,13 @@ J1939_CAN  Dashboard       0        11
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-Exit code 0 tells you only that every ECU started, ran until `stop_at_ms` and exited with exit code 0. Whether messages arrived shows in the `traffic:` line: in the result above, Engine sent on `J1939_CAN` and Dashboard received. Run `simulation.two-buses.yaml` from step 3: the 2 ECUs are on separate buses, and `run` still ends with exit code 0, but the `traffic:` line shows that nobody received on `J1939_CAN` and nothing was sent on `VehicleCAN`.
+Exit code 0 tells you only that every ECU started, ran until the requested stop time and exited with exit code 0. Whether messages arrived shows in the `traffic:` line: in the result above, Engine sent on `J1939_CAN` and Dashboard received. Run `simulation.two-buses.yaml` from step 3: the 2 ECUs are on separate buses, and `run` still ends with exit code 0, but the `traffic:` line shows that nobody received on `J1939_CAN` and nothing was sent on `VehicleCAN`.
 
 ```sh
-vehicle_sil_launch run simulation.two-buses.yaml
+vehicle_sil_launch run simulation.two-buses.yaml --stop-at-ms 1000
 ```
 
-<!-- integrate ECUs: vehicle_sil_launch run simulation.two-buses.yaml, from the line "run:" -->
+<!-- integrate ECUs: vehicle_sil_launch run simulation.two-buses.yaml --stop-at-ms 1000, from the line "run:" -->
 ```text
 run: the simulation ran to stop_at_ms (1000 ms) and ended
 
@@ -440,7 +439,7 @@ If an ECU neither prints nor declares the values it receives, you can verify fro
 
 `run` prints the stdout and stderr of each ECU to its own stderr, with `[<participant name>] ` at the start of each line. The example dashboard ECU prints the received engine speed and the message count every 500 ms. With `simulation.fixed.yaml`, these 3 lines appear:
 
-<!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml, the lines of the Dashboard -->
+<!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml --stop-at-ms 1000, the lines of the Dashboard -->
 ```text
 [Dashboard] t=0 ms engine speed 0 rpm (0 messages)
 [Dashboard] t=500 ms engine speed 1200 rpm (5 messages)
@@ -449,7 +448,7 @@ If an ECU neither prints nor declares the values it receives, you can verify fro
 
 With `simulation.two-buses.yaml`, the count stays at 0 to the end:
 
-<!-- integrate ECUs: vehicle_sil_launch run simulation.two-buses.yaml, the lines of the Dashboard -->
+<!-- integrate ECUs: vehicle_sil_launch run simulation.two-buses.yaml --stop-at-ms 1000, the lines of the Dashboard -->
 ```text
 [Dashboard] t=0 ms engine speed 0 rpm (0 messages)
 [Dashboard] t=500 ms engine speed 0 rpm (0 messages)
@@ -542,7 +541,7 @@ To check and run without an ECU that you have not received yet, or without one t
 
 ```sh
 vehicle_sil_launch check simulation.fixed.yaml --disable Dashboard
-vehicle_sil_launch run simulation.fixed.yaml --disable Dashboard
+vehicle_sil_launch run simulation.fixed.yaml --disable Dashboard --stop-at-ms 1000
 ```
 
 ### Verify the disabled ECU
@@ -581,7 +580,7 @@ For the rules, see "Disabling a participant (`enabled`, `--disable`, `--enable`)
 
 | Method | Behavior | Exit code |
 |---|---|---|
-| Write `stop_at_ms` | The simulation stops at that virtual time. | 0 if there is no `error` finding |
+| Give `--stop-at-ms` | The simulation stops at that virtual time. | 0 if there is no `error` finding |
 | Ctrl+C | `vehicle_sil_launch` stops the simulation, ends the ECUs, then prints the result. | 130 |
 | Ctrl+C a second time | `vehicle_sil_launch` kills the ECUs without waiting. | 130 |
 | The `stop` command (`--stdin-commands`, the Control API, the GUI) | The same as the first Ctrl+C. | 0 if there is no `error` finding |
@@ -651,14 +650,14 @@ From Python, the `Launch` class starts `vehicle_sil_launch` this way (see "Pytho
 By default, the simulation runs as fast as the computer can compute. To run together with devices that work in real time, or to operate the simulation while you watch a screen, set the speed with `--speed`. `1` is real-time speed.
 
 ```sh
-vehicle_sil_launch run simulation.fixed.yaml --speed 1
+vehicle_sil_launch run simulation.fixed.yaml --speed 1 --stop-at-ms 1000
 ```
 
 ### Verify the timing line
 
 With a speed set, the result has an extra `time:` line. Here is the line for `--speed 4`; the parts between `<` and `>` differ from run to run:
 
-<!-- vehicle_sil_launch run simulation.yaml --speed 4: the line of the time -->
+<!-- vehicle_sil_launch run simulation.fixed.yaml --speed 4 --stop-at-ms 1000: the line of the time -->
 ```text
 time: speed 4, ran at <actual_speed> times real time; <late_steps> of 200 paced steps more than 10 ms late (the latest by <max_late_ms> ms), <slipped_ms> ms behind in all
 ```

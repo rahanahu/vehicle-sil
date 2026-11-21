@@ -4,7 +4,7 @@
 
 This is the reference for the configuration file that you pass to `vehicle_sil_launch`. It covers the keys and syntax rules of the file, and the arguments and exit codes of `check`, `run`, `test` and `version`. The format and the rules may still change.
 
-The configuration file lists the executables that become participants, the networks they connect to and the time at which the simulation stops. Use it to run ECU executables that were built separately ([ecu-executable.md](ecu-executable.md)) in one simulation.
+The configuration file lists the executables that become participants, and the networks they connect to. Use it to run ECU executables that were built separately ([ecu-executable.md](ecu-executable.md)) in one simulation.
 
 ```sh
 vehicle_sil_launch check simulation.yaml
@@ -998,7 +998,7 @@ On Windows, the arguments are read as UTF-8 from the wide-character command line
 | 1 | Errors |
 | 3 | The configuration file cannot be read |
 | 4 | Usage error |
-| 5 | `run`: a command stopped a scenario before its end |
+| 5 | `run`: the requested stop time or a command stopped a scenario before its end |
 | 130 | `run` or `test` was interrupted |
 
 When each exit code occurs:
@@ -1007,7 +1007,7 @@ When each exit code occurs:
 |---|---|
 | 0 | With only warnings and notes, the exit code is 0 (with `--strict`, there must be no warnings either). |
 | 0 | For `run`, when the simulation ended normally and every required participant exited with 0. |
-| 0 | For `run`, also when `{"command":"stop"}` or `Stop` from a Control Server client stopped it and nothing was wrong. |
+| 0 | For `run`, also when the requested stop time, `{"command":"stop"}` or `Stop` from a Control Server client stopped it and nothing was wrong. |
 | 1 | With `--strict`, warnings also give 1. |
 | 1 | For `run`, an error of the check (nothing is started) or an error of the run (a participant failed, the participants did not all join, a participant did not end when stopped, and so on). |
 | 1 | For `test`: at least one run failed, a run did not take place although `test` was not interrupted, or, with `--strict`, no run took place at all. |
@@ -1018,7 +1018,7 @@ When each exit code occurs:
 | 3 | Also when `run` cannot set up the registry or the controller. |
 | 3 | Also when the result cannot be written to stdout, and on an unexpected failure of `vehicle_sil_launch` itself. |
 | 4 | The error and the usage go to stderr (the table below lists the cases). |
-| 5 | For `run`, when `{"command":"stop"}` or `Stop` from a Control Server client stopped a scenario before its end and nothing else was wrong. |
+| 5 | For `run`, when the requested stop time, `{"command":"stop"}` or `Stop` from a Control Server client stopped a scenario before its end and nothing else was wrong. |
 | 130 | Ctrl+C and other signals, the end of stdin, a closed stdout. |
 
 On an unexpected failure (exit code 3), the reason goes to stderr. With `--json`, the command's usual JSON holds an error whose `code` is `internal`.
