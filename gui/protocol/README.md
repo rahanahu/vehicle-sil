@@ -423,7 +423,7 @@ Notifications from the server.
 | `last_seq`, `last_t_ms` | `seq` and `t_ms` of the last event received |
 | `time` | The last `time` event (as is; `null` if none) |
 | `check` | `check` of the `check` event (the whole check result; `null` if none yet) |
-| `stop_at_ms` | The checked stop time when the full check exceeded the retention limit. `null` means no stop time. Omitted when the check fits or the value is unknown |
+| `stop_at_ms` | The checked stop time when the full check exceeded the retention limit or its event line was skipped for size. If the line is skipped, the value comes from the check of the same request before launch. `null` means no stop time. Omitted when the check fits or the value is unknown |
 | `registry` | The last `registry` event without `event`, `seq` and `t_ms` (`null` if none) |
 | `participants` | The current state of each participant (in the order they first appeared) |
 | `participants_omitted` | Number of participant events not kept because the limit (256 participants) was exceeded |

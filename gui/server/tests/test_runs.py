@@ -38,6 +38,24 @@ async def run_to_end(c: Client, body: dict) -> list[dict]:
     return got
 
 
+def test_stop_time_survives_an_overlong_check_event(tmp_path: Path) -> None:
+    async def main(c: Client) -> None:
+        sock = await c.ws()
+        await sock.until(is_synced)
+        status, body = await c.post("api/run", {"file": "simulation.yaml", "stop_at_ms": 1000})
+        assert status == 200, body
+        await sock.until(lambda m: m["type"] == "error" and m["code"] == "line-too-long")
+        summary = (await sock.until(lambda m: m["type"] == "session"
+                                    and "stop_at_ms" in m["session"]))[-1]["session"]
+        assert summary["check"] is None and summary["stop_at_ms"] == 1000
+        late = await c.ws()
+        hello = (await late.until(lambda m: m["type"] == "hello"))[-1]["session"]
+        assert hello["check"] is None and hello["stop_at_ms"] == 1000
+        await late.close()
+        await sock.until(is_ended)
+
+    with gui_server(tmp_path, env={"REPLAY_FAULT": "overlong-check"}) as gui:
+        run_async(main, gui)
 
 
 # The features that every launcher of this GUI's version has and that the server requires at its start.

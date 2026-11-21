@@ -127,7 +127,7 @@ FORMAT = 1
 STEP_MS = 100  # the stand-in control server runs a step every 100 ms of virtual time
 REGISTRY = "silkit://127.0.0.1:8500"  # what record_launcher.py writes for the registry's address
 FAULTS = ("bad-lines", "bad-types", "non-finite", "loose-fields", "future-events", "flood", "finding-flood",
-          "large-result", "log-dropped", "large-fields", "launcher-crash", "orphan", "check-garbage",
+          "large-result", "log-dropped", "large-fields", "overlong-check", "launcher-crash", "orphan", "check-garbage",
           "result-then-wait", "silent", "ignore-stop", "deaf", "late", "jitter", "control-trouble", "manual-stay")
 RECORDER = "gui/server/tests/record_launcher.py"
 SIGNAL = "<SIGTERM>"  # in the queue of the commands: SIGTERM came
@@ -371,6 +371,15 @@ def apply_fault(fault: str, entries: list[dict], head: dict) -> list[dict]:
             if entries[i]["out"].get("state") == "started":
                 entries[i]["out"]["command"].append("--padding=" + "x" * 5000)
                 break
+        return entries
+    if fault == "overlong-check":
+        for entry in entries:
+            printed = entry.get("print", {})
+            if isinstance(printed, dict) and "vehicle_sil_check" in printed:
+                printed["test_padding"] = "x" * (17 * 1024 * 1024)
+            event = entry.get("out", {})
+            if event.get("event") == "check":
+                event["check"]["test_padding"] = "x" * (17 * 1024 * 1024)
         return entries
     if fault == "launcher-crash":  # at the third time event of the run, or before a command written after it
         at = times[min(2, len(times) - 1)] if times else len(entries)

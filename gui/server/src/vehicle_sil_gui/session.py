@@ -54,6 +54,15 @@ NO_VARIABLES = {"rev": 0, "state": "off", "reason": None, "peers": [], "peers_om
                 "operations": []}
 
 
+def check_timing(check: dict) -> dict:
+    """The bounded timing fields that survive losing a full check."""
+    if "stop_at_ms" in check:
+        stop_at = check["stop_at_ms"]
+        if stop_at is None or (type(stop_at) is int and 1 <= stop_at <= STEP_MS_MAX):
+            return {"stop_at_ms": stop_at}
+    return {}
+
+
 @dataclass(frozen=True)
 class Limits:
     log_lines_per_source: int = 2000  # log lines kept per source for a reconnecting screen
@@ -388,10 +397,7 @@ class Session:
                 self.check = check
             else:
                 self.check = None
-                if "stop_at_ms" in check:
-                    stop_at = check["stop_at_ms"]
-                    if stop_at is None or (type(stop_at) is int and 1 <= stop_at <= STEP_MS_MAX):
-                        self.check_timing = {"stop_at_ms": stop_at}
+                self.check_timing = check_timing(check)
                 out += self._limit("check", f"the launcher's check is larger than {self.limits.object_bytes} "
                                             "bytes: it is shown now, but not kept for a screen opened later")
         elif kind == "result":
