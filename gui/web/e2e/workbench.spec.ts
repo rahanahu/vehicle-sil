@@ -695,7 +695,8 @@ test('workbench shows the overall failure when the scenario passed', async ({ pa
     });
     await page.goto(server.url);
     await expect.poll(() => Boolean(socket)).toBe(true);
-    await expect(page.getByRole('button', { name: 'Results', exact: true })).toBeVisible();
+    // The server's initial hello replaces a session sent before the replay is complete.
+    await expect(page.getByRole('status').filter({ hasText: /^Ready$/ })).toBeVisible();
     const example = JSON.parse(
       readFileSync(join(REPOSITORY, 'gui/protocol/examples/session-ended.json'), 'utf8'),
     );
