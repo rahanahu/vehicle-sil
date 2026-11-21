@@ -207,6 +207,8 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     // A test's default speed does not count as a request that the time lock may refuse.
     const std::optional<std::optional<double>> requested_speed =
         options.fastest_by_default ? std::optional<std::optional<double>>{} : intent.speed;
+    const std::optional<double> default_speed = options.fastest_by_default ? intent.speed.value_or(std::nullopt)
+                                                                          : std::nullopt;
     // What of the request's connect counts for this file: known once it is read.
     std::vector<config::ConnectRequest> connect;
     Checked report;
@@ -265,10 +267,8 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         report.findings.insert(report.findings.end(), counted.notes.begin(), counted.notes.end());
         // The file and the request decide it: before any executable is asked.
         report.time_lock = config::time_lock(*report.config, connect, intent.time_policy);
-        const std::vector<config::Finding> time =
-            config::time_lock_findings(report.time_lock, requested_speed,
-                               std::optional<double>{}, intent.start_paused,
-                               request.origin);
+        const std::vector<config::Finding> time = config::time_lock_findings(
+            report.time_lock, requested_speed, default_speed, intent.start_paused, request.origin);
         report.findings.insert(report.findings.end(), time.begin(), time.end());
         if (on_time_lock)
         {
@@ -408,7 +408,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     report.findings.insert(report.findings.end(), compared.begin(), compared.end());
     drop_unusable_commands(report);
     report.run_timing = config::detail::plan_time_step(*report.config, report, intent.stop_at_ms);
-    report.run_timing->speed = config::planned_speed(report.time_lock, intent.speed, {});
+    report.run_timing->speed = config::planned_speed(report.time_lock, requested_speed, default_speed);
     report.run_timing->late_tolerance_ms = intent.late_tolerance_ms.value_or(config::kDefaultLateToleranceMs);
     report.stop_at_ms = intent.stop_at_ms;
     report.start_timeout_ms = host.start_timeout_ms;

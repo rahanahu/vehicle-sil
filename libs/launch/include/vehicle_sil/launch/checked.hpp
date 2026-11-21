@@ -79,7 +79,7 @@ struct CheckOptions
 /// working directory, as it is named.
 ///
 /// Of `request` it reads the file, the intent (the speed and --start-paused for
-/// time_lock_findings(): the speed unless `options.fastest_by_default`), the --describe limit,
+/// time_lock_findings(): the speed is a default with `options.fastest_by_default`), the --describe limit,
 /// where the tools are, and what a check alone has: the configuration's text from standard input
 /// (RunHost::config_from_stdin; then RunHost::config only says where it is), the saved descriptions
 /// (RunHost::descriptions: then it starts no process at all: a participant without a saved output

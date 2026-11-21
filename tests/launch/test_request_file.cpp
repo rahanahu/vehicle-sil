@@ -386,30 +386,30 @@ TEST_CASE(the_way_out_of_the_time_lock_names_the_request_file_for_the_networks_i
                "E outside-real-time: connect in bench.json connects CAN and ETH to a real bus, which does not stand still: "
                "--start-paused is refused. To stop the simulation and look at it, take CAN and ETH out of connect in "
                "bench.json, or pass --connect CAN=none --connect ETH=none, or " + freely + "\n");
-    // The note about the file's speed of the configuration says the same.
+    // The note about the default speed still names the request's connection.
     origin.fields = {"connect"};
     origin.connected = {"CAN"};
     check_text(lines(time_lock_findings(TimeLock{true, {"CAN"}, {}}, {}, 2.0, false, origin)),
                "N outside-speed-set: connect in bench.json connects CAN to a real bus, which does not wait for the virtual time: the "
-               "run goes at speed 1 (real time), not at the speed 2 of the file. To go at another speed, take CAN out of "
+               "run goes at speed 1 (real time), not at the default speed 2. To go at another speed, take CAN out of "
                "connect in bench.json, or pass --connect CAN=none, or " + freely + "\n");
     // One network of the file, one of the command line, and a bridge of the configuration.
     check_text(lines(time_lock_findings(TimeLock{true, {"ETH", "CAN"}, {"Gateway"}}, {}, 2.0, false, origin)),
                "N outside-speed-set: connect in bench.json and --connect connect ETH and CAN to a real bus, and participant 'Gateway' is a bridge "
                "(role: bridge) to something outside the simulation, which does not wait for the virtual time: the run goes "
-               "at speed 1 (real time), not at the speed 2 of the file. To go at another speed, take CAN out of connect in "
+               "at speed 1 (real time), not at the default speed 2. To go at another speed, take CAN out of connect in "
                "bench.json, or pass --connect CAN=none, and leave the other --connect out, and run with --disable Gateway, "
                "or " + freely + "\n");
     // A network of the file that an argument replaced is the command line's: its words.
     origin.connected = {};
     check_text(lines(time_lock_findings(TimeLock{true, {"CAN"}, {}}, {}, 2.0, false, origin)),
                "N outside-speed-set: --connect connects CAN to a real bus, which does not wait for the virtual time: the "
-               "run goes at speed 1 (real time), not at the speed 2 of the file. To go at another speed, run without "
+               "run goes at speed 1 (real time), not at the default speed 2. To go at another speed, run without "
                "--connect, or " + freely + "\n");
     // No request file at all: the options.
     check_text(lines(time_lock_findings(TimeLock{true, {"CAN"}, {}}, {}, 2.0, false, RequestOrigin{})),
                "N outside-speed-set: --connect connects CAN to a real bus, which does not wait for the virtual time: the "
-               "run goes at speed 1 (real time), not at the speed 2 of the file. To go at another speed, run without "
+               "run goes at speed 1 (real time), not at the default speed 2. To go at another speed, run without "
                "--connect, or pass --time-policy free if what is connected there can take messages that do not come in real "
                "time (the bridge still carries frames both ways)\n");
 }
@@ -474,11 +474,11 @@ TEST_CASE(the_findings_about_the_time_name_the_request_file_for_what_it_gave)
                "time_policy free in bench.json start_paused in bench.json makes the simulation wait before its first step: "
                "the bridge still carries frames both ways, so frames from outside pile up while the simulation stands "
                "still. To run in real time, leave time_policy free in bench.json and start_paused in bench.json out\n");
-    // The file's free policy with the file's own speed of the configuration: only the policy is named.
+    // The file's free policy with a default speed: only the policy is named.
     origin.fields = {"time_policy"};
     check_text(lines(time_lock_findings(free, {}, 2.0, false, origin)),
                "N outside-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
-               "and with time_policy free in bench.json the simulation runs at the speed 2 of the file: what is connected "
+               "and with time_policy free in bench.json the simulation runs at the default speed 2: what is connected "
                "there gets the messages at the wrong times, and the bridge still carries frames both ways. To run in real "
                "time, leave time_policy free in bench.json out\n");
     // A file that gave none of them: the words of the command line, except the way to the free policy,
