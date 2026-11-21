@@ -243,7 +243,7 @@ vehicle-sil-gui [options] [<configuration file>]
 | `--launcher <path>` | The path of `vehicle_sil_launch` (a path that ends in `.py` is run with this Python) |
 | `--web <dir>` | Serve your own screen: its build output directory (must contain `index.html`). Default: the sample screens (see "[Files served with `--web`](#files-served-with---web)") |
 | `--dev-origin <origin>` | Also accept requests from the screen's development server (`ng serve`, Vite and others; only of the form `http://127.0.0.1:<port>`) (see "[Use a development server](#use-a-development-server)") |
-| `--json` | Print `{"vehicle_sil_gui": 2, "url": ..., "port": ...}` on one line instead of the URL (when a tool starts the GUI) |
+| `--json` | Print `{"vehicle_sil_gui": 3, "url": ..., "port": ...}` on one line instead of the URL (when a tool starts the GUI) |
 | `--stop-timeout <seconds>` | On exit, how long to wait for a running simulation to stop before signaling the launcher. By default the server waits for the launcher to finish |
 | `--participant-start-timeout-ms <ms>` | Wall-clock wait for required participants during startup (default 30000 ms) |
 | `--participant-stop-timeout-ms <ms>` | Launcher’s wall-clock wait per participant shutdown stage (default 10000 ms) |

@@ -74,7 +74,7 @@ describe('SessionFeed', () => {
     const { socket } = open();
     socket.send({
       type: 'hello',
-      vehicle_sil_gui: 2,
+      vehicle_sil_gui: 3,
       version: '0.1.0',
       instance: 'new-server',
       session: null,
@@ -195,14 +195,19 @@ describe('SessionFeed', () => {
     expect(fake.sockets).toHaveLength(1);
   });
 
-  it('stops and says why when the server speaks another version', () => {
-    const { run, socket } = open();
+  it('stops and says why when the server speaks version 2', async () => {
+    const http = new FakeHttp();
+    const { run, socket } = open(http);
     const hello = examples.get('ws-replay')?.server[0] as Record<string, unknown>;
-    socket.send({ ...hello, vehicle_sil_gui: 3 });
+    socket.send({ ...hello, vehicle_sil_gui: 2 });
     vi.advanceTimersByTime(BATCH_MS);
     expect(socket.closedByClient).toBe(true);
     expect(run.ready()).toBe(false);
-    expect(run.incompatible()).toContain('version 3');
+    expect(run.incompatible()).toContain('server speaks version 2');
+    await expect(clientsLast().run.start({ file: 'sim.yaml', disable: [] })).rejects.toThrow(
+      'use a client made for the server',
+    );
+    http.expectNone('api/run');
     vi.advanceTimersByTime(backoffMs(5) * 2);
     expect(fake.sockets).toHaveLength(1);
   });
@@ -454,7 +459,7 @@ describe('SessionFeed', () => {
     const launcher = response.session['launcher'] as Record<string, unknown>;
     socket.send({
       type: 'hello',
-      vehicle_sil_gui: 2,
+      vehicle_sil_gui: 3,
       version: '0.1.0',
       instance: 'x',
       session: { ...response.session, snapshot_rev: 1 },
@@ -509,7 +514,7 @@ describe('SessionFeed', () => {
     };
     socket.send({
       type: 'hello',
-      vehicle_sil_gui: 2,
+      vehicle_sil_gui: 3,
       version: '0.1.0',
       instance: 'x',
       session: { ...response.session, snapshot_rev: 1 },
@@ -554,7 +559,7 @@ describe('SessionFeed', () => {
     const id = response.session['id'];
     const hello = (session: Record<string, unknown>) => ({
       type: 'hello',
-      vehicle_sil_gui: 2,
+      vehicle_sil_gui: 3,
       version: '0.1.0',
       instance: 'x',
       session,
@@ -620,7 +625,7 @@ describe('SessionFeed', () => {
     };
     socket.send({
       type: 'hello',
-      vehicle_sil_gui: 2,
+      vehicle_sil_gui: 3,
       version: '0.1.0',
       instance: 'x',
       session: { ...response.session, snapshot_rev: 1, findings: [] },
@@ -679,7 +684,7 @@ describe('SessionFeed', () => {
     };
     const hello = (session: Record<string, unknown>) => ({
       type: 'hello',
-      vehicle_sil_gui: 2,
+      vehicle_sil_gui: 3,
       version: '0.1.0',
       instance: 'x',
       session,
@@ -749,7 +754,7 @@ describe('SessionFeed', () => {
     });
     const hello = (rev: number, sc: unknown) => ({
       type: 'hello',
-      vehicle_sil_gui: 2,
+      vehicle_sil_gui: 3,
       version: '0.1.0',
       instance: 'x',
       session: { ...response.session, snapshot_rev: rev, scenario: sc },
@@ -792,7 +797,7 @@ describe('SessionFeed', () => {
     const id = response.session['id'];
     const hello = (rev: number) => ({
       type: 'hello',
-      vehicle_sil_gui: 2,
+      vehicle_sil_gui: 3,
       version: '0.1.0',
       instance: 'x',
       session: { ...response.session, snapshot_rev: rev },
@@ -903,7 +908,7 @@ describe('SessionFeed', () => {
     const problem = { code: 'stop-not-delivered', message: 'failed', detail: null, problem_seq: 1 };
     socket.send({
       type: 'hello',
-      vehicle_sil_gui: 2,
+      vehicle_sil_gui: 3,
       version: '0.1.0',
       instance: 'x',
       session: { ...response.session, snapshot_rev: 1 },
@@ -933,7 +938,7 @@ describe('SessionFeed', () => {
     const id = response.session['id'];
     socket.send({
       type: 'hello',
-      vehicle_sil_gui: 2,
+      vehicle_sil_gui: 3,
       version: '0.1.0',
       instance: 'x',
       session: { ...response.session, snapshot_rev: 1 },
@@ -984,7 +989,7 @@ describe('SessionFeed', () => {
     expect(client.session.session.get()?.problemsOmitted).toBe(0);
     socket.send({
       type: 'hello',
-      vehicle_sil_gui: 2,
+      vehicle_sil_gui: 3,
       version: '0.1.0',
       instance: 'x',
       session: {

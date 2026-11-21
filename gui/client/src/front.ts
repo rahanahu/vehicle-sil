@@ -75,7 +75,6 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
     incompatible: low.session.incompatible.get(),
     ready: low.session.ready.get(),
     session: low.session.session.get(),
-    stopTargetKnown: low.session.currentTarget() !== null,
     allowed: low.session.allowed.get(),
     limits: low.limits.get(),
     busy: actions.busyForCurrent(),

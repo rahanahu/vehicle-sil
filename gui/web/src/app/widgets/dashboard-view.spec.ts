@@ -53,7 +53,7 @@ const variable = (name: string, fields: object = {}) => ({
 
 const hello = {
   type: 'hello',
-  vehicle_sil_gui: 2,
+  vehicle_sil_gui: 3,
   version: '0.1.0',
   instance: 'x',
   session: {

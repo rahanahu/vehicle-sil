@@ -6,7 +6,7 @@
   },
   "status": 200,
   "response": {
-    "vehicle_sil_gui": 2,
+    "vehicle_sil_gui": 3,
     "version": "0.2.0",
     "instance": "0123456789abcdef",
     "root": "/path/to/root",

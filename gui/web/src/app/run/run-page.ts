@@ -381,7 +381,14 @@ export class RunPage {
   protected readonly scenarios = resource({
     params: () => {
       const file = this.selected();
-      if (!this.auth.token() || file === null || this.running()) return undefined;
+      if (
+        !this.app.hasValue() ||
+        this.run.incompatible() ||
+        !this.auth.token() ||
+        file === null ||
+        this.running()
+      )
+        return undefined;
       return { file };
     },
     loader: ({ params }) => this.info.scenarios(params.file),
@@ -474,7 +481,14 @@ export class RunPage {
   protected readonly check = resource({
     params: () => {
       const file = this.selected();
-      if (!this.auth.token() || file === null || this.running()) return undefined;
+      if (
+        !this.app.hasValue() ||
+        this.run.incompatible() ||
+        !this.auth.token() ||
+        file === null ||
+        this.running()
+      )
+        return undefined;
       return { file, intent: this.intent(), again: this.rechecks() };
     },
     loader: async ({ params, abortSignal }) => {
