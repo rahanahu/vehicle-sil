@@ -515,19 +515,15 @@ TEST_CASE(scenario_failures_say_the_time_and_the_values)
     check_text(run("  - at_ms: 80\n    set: { Body.level: 1 }\n  - at_ms: 90\n    expect: { Body.level: 1 }\n"
                    "  - at_ms: 100\n    expect: { Body.level: 1 }\n  - at_ms: 150\n    set: { Body.level: 2 }\n",
                    [](World& w) { w.stop_at = at(100ms); }),
-               "failed over=100\n"
+               "incomplete over=100\n"
                "3 passed start=80 at=80 end=80\n"
                "5 passed start=90 at=90 end=90\n"
-               "7 failed start=100 at=100 end=100 scenario-out-of-time: the simulation stopped at 100 ms (stop_at_ms) before this "
-               "step could be decided (its time is 100 ms): there was not enough time for the scenario; raise stop_at_ms, or "
-               "leave it out (the run then ends with the scenario)\n"
+               "7 not_run start=- at=- end=-\n"
                "9 not_run start=- at=- end=-\n");
-    // It stops while the result of a write is not due yet: that step is out of time.
+    // The stop arrives before the controller can start the write at 95 ms.
     check_text(run("  - at_ms: 95\n    set: { Body.level: 1 }\n", [](World& w) { w.stop_at = at(100ms); }),
-               "failed over=100\n"
-               "3 failed start=95 at=100 end=95 scenario-out-of-time: the simulation stopped at 100 ms (stop_at_ms) before this "
-               "step was decided (it began at 95 ms): there was not enough time for the scenario; raise stop_at_ms, or leave it "
-               "out (the run then ends with the scenario)\n");
+               "incomplete over=100\n"
+               "3 not_run start=- at=- end=-\n");
     // A participant failed and ended the run: a step that failed (of that) is not the result.
     {
         World world;
@@ -556,6 +552,136 @@ TEST_CASE(scenario_failures_say_the_time_and_the_values)
                                                  "3 passed start=0 at=0 end=0\n"
                                                  "4 unfinished start=0 at=- end=-\n");
     }
+}
+
+TEST_CASE(scenario_stop_keeps_writes_that_apply_before_the_boundary)
+{
+    // One set spans two ECUs. Body can apply both values at 15 ms; Door's next step is the
+    // exclusive end at 20 ms. Its write must not suppress Body's command or complete the set.
+    const Scenario scenario = read(kHead + "  - at_ms: 15\n"
+                                           "    set: { Body.level: 5, Body.lamp: true, Door.level: 9 }\n",
+                                   catalog(5ms, 10ms));
+    World world;
+    world.tick = 5ms;
+    world.ecus[0].step = 5ms;
+    world.stop_at = at(20ms);
+    const ScenarioRun run = world.run(scenario);
+    CHECK(run.status == ScenarioStatus::Incomplete);
+    CHECK(run.steps[0].status == StepStatus::Unfinished);
+    CHECK_EQ(world.ecus[0].level, std::int64_t{5});
+    CHECK(world.ecus[0].lamp);
+    CHECK_EQ(world.ecus[1].level, std::int64_t{0});
+    check_text(joined(world.log), "Body.level=5 for 15 applied at 15\n"
+                                  "Body.lamp=true for 15 applied at 15\n");
+
+    World refused;
+    refused.tick = 5ms;
+    refused.ecus[0].step = 5ms;
+    refused.stop_at = at(20ms);
+    refused.refuse = [](const std::string& peer, SimTime) -> std::optional<control::TargetResult> {
+        if (peer != "Body") return std::nullopt;
+        control::TargetResult result;
+        result.peer = peer;
+        result.status = control::TargetStatus::Invalid;
+        result.reason = "refused";
+        return result;
+    };
+    CHECK(refused.run(scenario).status == ScenarioStatus::Failed);
+}
+
+TEST_CASE(scenario_stop_does_not_issue_relative_steps_after_a_blocked_step)
+{
+    const Scenario scenario = read(kHead + "  - at_ms: 100\n"
+                                           "    set: { Body.level: 5 }\n"
+                                           "  - set: { Body.level: 9 }\n");
+    World world;
+    world.stop_at = at(100ms);
+    const ScenarioRun run = world.run(scenario);
+    CHECK(run.status == ScenarioStatus::Incomplete);
+    CHECK(run.steps[0].status == StepStatus::NotRun);
+    CHECK(run.steps[1].status == StepStatus::NotRun);
+    CHECK(world.log.empty());
+}
+
+TEST_CASE(scenario_stop_places_only_motions_that_can_write_before_it)
+{
+    const Scenario scenario = read(kHead + "  - at_ms: 15\n"
+                                           "    ramp: { Body.level: { from: 5, to: 10, over_ms: 10 }, "
+                                           "Door.level: { from: 7, to: 12, over_ms: 10 } }\n",
+                                   catalog(5ms, 10ms));
+    TimelineRecord timeline(scenario);
+    World world;
+    world.record = &timeline;
+    world.tick = 5ms;
+    world.ecus[0].step = 5ms;
+    world.stop_at = at(20ms);
+    CHECK(world.run(scenario).status == ScenarioStatus::Incomplete);
+    CHECK_EQ(world.ecus[0].level, std::int64_t{5});
+    CHECK_EQ(world.ecus[1].level, std::int64_t{0});
+    CHECK(timeline.recorded_to() == at(15ms));
+    CHECK_EQ(timeline.lines().size(), std::size_t{1});
+    CHECK(scenario.variables[timeline.lines()[0].variable].text == "Body.level");
+    CHECK(timeline.lines()[0].from == at(15ms));
+}
+
+TEST_CASE(scenario_stop_places_only_dithers_that_can_write_before_it)
+{
+    const Scenario scenario = read(kHead + "  - set: { Body.level: 50, Door.level: 50 }\n"
+                                           "  - at_ms: 15\n"
+                                           "    dither: { Body.level: { square: { amplitude: 1, period_ms: 20 } }, "
+                                           "Door.level: { square: { amplitude: 1, period_ms: 20 } } }\n",
+                                   catalog(5ms, 10ms));
+    TimelineRecord timeline(scenario);
+    World world;
+    world.record = &timeline;
+    world.tick = 5ms;
+    world.ecus[0].step = 5ms;
+    world.stop_at = at(20ms);
+    const ScenarioRun run = world.run(scenario);
+    CHECK(run.status == ScenarioStatus::Incomplete);
+    CHECK(run.steps[1].status == StepStatus::Unfinished);
+    CHECK_EQ(world.ecus[0].level, std::int64_t{49});
+    CHECK_EQ(world.ecus[1].level, std::int64_t{50});
+    CHECK(timeline.recorded_to() == at(15ms));
+    const auto body = std::count_if(timeline.lines().begin(), timeline.lines().end(), [&](const auto& line) {
+        return line.dither && scenario.variables[line.variable].text == "Body.level";
+    });
+    const auto door = std::count_if(timeline.lines().begin(), timeline.lines().end(), [&](const auto& line) {
+        return line.dither && scenario.variables[line.variable].text == "Door.level";
+    });
+    CHECK_EQ(body, 1);
+    CHECK_EQ(door, 0);
+}
+
+TEST_CASE(scenario_stop_checks_only_writes_that_can_apply_before_it)
+{
+    const Scenario scenario = read(kHead + "  - at_ms: 15\n"
+                                           "    set: { Body.level: 5, Door.level: 9 }\n",
+                                   catalog(5ms, 10ms));
+    World limited;
+    limited.tick = 5ms;
+    limited.ecus[0].step = 5ms;
+    limited.ecus.pop_back(); // Door's control link is absent
+    limited.stop_at = at(20ms);
+    const ScenarioRun cut = limited.run(scenario);
+    CHECK(cut.status == ScenarioStatus::Incomplete);
+    CHECK_EQ(limited.ecus[0].level, std::int64_t{5});
+
+    World unlimited;
+    unlimited.tick = 5ms;
+    unlimited.ecus[0].step = 5ms;
+    unlimited.ecus.pop_back();
+    CHECK(unlimited.run(scenario).status == ScenarioStatus::Failed);
+    CHECK(unlimited.log.empty());
+
+    // Read conditions are checked even if the participant has no step before the boundary.
+    const Scenario watch = read(kHead + "  - at_ms: 15\n"
+                                        "    expect: { Door.level: 0 }\n", catalog(5ms, 10ms));
+    World no_link;
+    no_link.tick = 5ms;
+    no_link.ecus.pop_back();
+    no_link.stop_at = at(20ms);
+    CHECK(no_link.run(watch).status == ScenarioStatus::Failed);
 }
 
 TEST_CASE(scenario_ramp_writes_a_line_in_the_steps_of_its_ecu)
@@ -916,8 +1042,53 @@ TEST_CASE(scenario_steps_that_use_an_absent_variable_are_skipped_and_the_others_
                                             catalog_without_boost());
     CHECK(late.scenario.has_value());
     const ScenarioRun cut = stopped.run(*late.scenario);
-    CHECK(cut.status == ScenarioStatus::Failed);
-    CHECK(cut.steps[1].status == StepStatus::Skipped && cut.steps[2].status == StepStatus::Failed);
+    CHECK(cut.status == ScenarioStatus::Incomplete);
+    CHECK(cut.steps[1].status == StepStatus::Skipped && cut.steps[2].status == StepStatus::NotRun);
+}
+
+TEST_CASE(scenario_stop_does_not_extend_a_passed_run_for_a_skipped_suffix)
+{
+    const Scenario scenario = read(kHead + "  - set: { Body.level: 5 }\n"
+                                           "  - at_ms: 100\n"
+                                           "    set: { Body.boost: 2 }\n"
+                                           "  - after_ms: 20\n"
+                                           "    expect: { Body.boost: 1 }\n", catalog_without_boost());
+    World limited;
+    limited.stop_at = at(40ms);
+    std::vector<ScenarioStepRun> notices;
+    limited.on_step = [&](const ScenarioStepRun& step) {
+        if (step.status == StepStatus::Skipped) notices.push_back(step);
+    };
+    const ScenarioRun cut = limited.run(scenario);
+    CHECK(cut.status == ScenarioStatus::Passed);
+    CHECK(cut.steps[0].status == StepStatus::Passed);
+    CHECK(cut.steps[1].status == StepStatus::Skipped && cut.steps[2].status == StepStatus::Skipped);
+    CHECK(cut.steps[1].start == at(100ms) && cut.steps[1].end == at(100ms));
+    CHECK(cut.steps[2].start == at(120ms) && cut.steps[2].end == at(120ms));
+    CHECK_EQ(notices.size(), std::size_t{2});
+    CHECK(notices[0].start == cut.steps[1].start && notices[0].end == cut.steps[1].end && !notices[0].at);
+    CHECK(notices[1].start == cut.steps[2].start && notices[1].end == cut.steps[2].end && !notices[1].at);
+    CHECK_EQ(limited.ecus[0].level, std::int64_t{5});
+
+    World unlimited;
+    const ScenarioRun all = unlimited.run(scenario);
+    CHECK(all.status == ScenarioStatus::Passed);
+    CHECK(all.steps[1].start == at(100ms) && all.steps[2].start == at(120ms));
+
+    // The known skipped steps are announced even if the earlier write later fails.
+    const Scenario failure = read(kHead + "  - set: { Body.level: 13 }\n"
+                                          "  - at_ms: 100\n"
+                                          "    set: { Body.boost: 2 }\n", catalog_without_boost());
+    World failed;
+    failed.stop_at = at(40ms);
+    std::vector<ScenarioStepRun> failed_notices;
+    failed.on_step = [&](const ScenarioStepRun& step) {
+        if (step.status == StepStatus::Skipped) failed_notices.push_back(step);
+    };
+    const ScenarioRun result = failed.run(failure);
+    CHECK(result.status == ScenarioStatus::Failed);
+    CHECK_EQ(failed_notices.size(), std::size_t{1});
+    CHECK(failed_notices[0].start == at(100ms) && failed_notices[0].end == at(100ms));
 }
 
 /// The errors alone (lines()), without the notes and the warnings.

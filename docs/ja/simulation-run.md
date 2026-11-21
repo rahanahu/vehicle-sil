@@ -37,7 +37,7 @@
 
 手順 2: registry のアドレスは `registry_uri` で、なければ 127.0.0.1 の空いているポートです。標準エラーの最初の行が、その URI です（`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`）。`--control` を付けたときは、registry より前に Control Server を起動し、`[vehicle_sil_launch] control server at <address>` の行を書きます。
 
-手順 3: シミュレーションが待つ participant（このドキュメントでは「必須の participant」）は、無効にしていない `required: true` のものです。controller はタイムステップ（`time_step_ms` か、その既定値）で時刻同期に参加し、タイムステップの終わりを止めて、速度、一時停止、ステップ実行を決めます。最速のときも同じで、タイムステップごとに同期が 1 回増えます。
+手順 3: シミュレーションが待つ participant（このドキュメントでは「必須の participant」）は、無効にしていない `required: true` のものです。controller はタイムステップ（設定または実行時に決定した `time_step_ms`）で時刻同期に参加し、タイムステップの終わりを止めて、速度、一時停止、ステップ実行を決めます。最速のときも同じで、タイムステップごとに同期が 1 回増えます。
 
 手順 4: `--connect` があると、先につなぐネットワークごとのブリッジを起動し、動き出すのを待ちます（[バスを外につなぐ](#バスを外につなぐ--connect)）。`manual` の participant は起動せず、起動するコマンドを書きます。起動する participant の作業ディレクトリは設定ファイルのあるディレクトリで、標準入力は空です。
 
@@ -89,6 +89,10 @@
 participant がシミュレーションから抜けたかどうかは、controller から見て判断します。中断の規則は `vehicle_sil_sim_controller` と `vehicle_sil::Simulation` と同じです。中断されても、ほかの ECU は自分で終わります（終了コード 0）。`required: false` の participant は、始まるときも待ちません。
 
 一時停止している間も、participant の失敗、止める要求、`--timeout-ms` は同じように扱います。
+
+停止時刻を指定したシナリオでは、停止時刻より前のサンプルと適用時刻だけを使います。開始済みの判定は、停止時刻が期限ならそこで結果を確定できます。途中で止まったシナリオは `incomplete`（`run` の終了コード 5）になります。`test` では失敗として集計します。
+
+`--participant-start-timeout-ms`（既定 30000）と `--participant-stop-timeout-ms`（既定 10000）はホスト上の実時間の待機上限です。
 
 ### `start_timeout_ms` の数え方
 
@@ -186,7 +190,7 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 
 ## 速度を指定して動かす（`speed`）
 
-`speed`（設定ファイル）か `run --speed` を指定すると、controller はタイムステップ（`time_step_ms`）ごとに、仮想時間を実時間に合わせます。`speed: 1` では、仮想時間 1000 ms に実時間で 1000 ms 以上かかります。実時間で動く機器と一緒に動かすとき、人が画面を見ながら操作するときに使います。
+要求ファイルの `speed` か `run --speed` を指定すると、controller はタイムステップ（`time_step_ms`）ごとに、仮想時間を実時間に合わせます。`speed: 1` では、仮想時間 1000 ms に実時間で 1000 ms 以上かかります。実時間で動く機器と一緒に動かすとき、人が画面を見ながら操作するときに使います。
 
 合わせるために待つだけなので、いちばん遅い participant より速くはなりません。最速（`max`）では合わせず、遅れも数えません。
 
@@ -242,7 +246,7 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 | 10 ms | 15 ms | 5 ms |
 | 10 ms | タイムステップの倍数 | 0 |
 
-そのため、速度を指定して `time_step_ms` を書かなければ、タイムステップは、10 ms、`stop_at_ms`、ECU のステップ幅の最大公約数になります。ECU のステップ幅は、無効にしていない ECU の `--describe` の出力を照合で読んだものです。
+自動刻みは、10 ms、動作する ECU の実行周期、Run の停止時刻（指定時）の最大公約数です。周期は `--describe` から取得します。速度とシナリオの有無を変えても、同じネットワークと停止時刻であれば刻みは同じです。
 
 | ECU のステップ幅 | タイムステップ |
 |---|---|
@@ -254,13 +258,10 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 
 `time_step_ms` を書いたときは、その値を使います。速度の指定があり、ECU のステップがタイムステップの境目で始まらないときは、警告 `coarse-time-step` を出します。警告には、最大で何 ms 遅れてまとまるかと、何と書けばよいかを書きます。
 
-| 場合 | `coarse-time-step` を出す時点 |
-|---|---|
-| 設定ファイルに `speed` も書いてある | `check` の時点（`run` ではその 1 つだけ） |
-| `run --speed` で速度を変えた | `run` が、変えた速度で判断します。 |
-| 最速で始めて、途中で `speed` のコマンドを受けた | そのとき（タイムステップは始めに決まり、途中で変わりません） |
+`check` と `run` の両方が指定速度で刻みの警告を出します。最大速度で始めた Run も、速度変更でペーシングを始めたときに警告を出します。
 
-タイムステップを細かくすると、時刻同期の回数が増えます。最速のときの既定が 10 ms のままなのは、そのためです。
+ECU が 5 ms と 10 ms で動き、停止時刻を 1003 ms とした場合、自動刻みは 1 ms で、1003 ms で止まります。`time_step_ms: 5` なら、起動前に `stop-not-on-step` になります。
+
 
 ### どの速さまで出せるか
 
@@ -358,11 +359,11 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 
 | `--time-policy` | 実行の速さ | 1 以外の `--speed`、`--start-paused` |
 |---|---|---|
-| `realtime`（既定） | ファイルの `speed` が何であっても 1 です。ファイルの速さが 1 でないとき（速さがないときも）、注記 `outside-speed-set` が知らせます。 | 照合のエラー `outside-real-time` です。何も起動しません（`--start-paused` は `--control` か `--stdin-commands` と一緒に使います。単独では、この照合より先に使い方の誤りで、終了コードは 4 です）。 |
-| `free` | ほかの実行と同じです。`--speed`、なければファイルの `speed`、それもなければ最速です。 | 受け付けます。注記 `outside-not-real-time` が、実時間でないことを知らせます。 |
+| `realtime`（既定） | 1 です。既定の最速から変更するときは、注記 `outside-speed-set` が知らせます。 | 照合のエラー `outside-real-time` です。何も起動しません（`--start-paused` は `--control` か `--stdin-commands` と一緒に使います。単独では、この照合より先に使い方の誤りで、終了コードは 4 です）。 |
+| `free` | ほかの実行と同じです。`--speed`、なければ実行要求の `speed`、それもなければ最速です。 | 受け付けます。注記 `outside-not-real-time` が、実時間でないことを知らせます。 |
 
 - 外につながっていない実行では、`--time-policy` は何もしません。
-- `check`、`run`、`test` で使えます。`check` はファイルの `speed` で、`run` は `--speed` と `--start-paused` も見て判断します。`check --json` の `time_lock` に、この判断があります（[simulation-check.md](simulation-check.md#json--json)）。
+- `check`、`run`、`test` で使えます。`check` と `run` は実行要求とコマンドラインの引数を使います。`check --json` の `time_lock` に、この判断があります（[simulation-check.md](simulation-check.md#json--json)）。
 - `test` は各シナリオを最速で実行しますが、ファイルに有効な `role: bridge` の participant がいるときは速さ 1 で実行します（注記 `outside-speed-set`）。このとき `test` の表の後に、注記 `test-speed-set` を全体で 1 回書きます。それでも最速で実行するなら、`--time-policy free` を付けるか、ブリッジを `--disable` します。
 - `free` が変えるのは、時間を操作できるかどうかだけです。ブリッジは両方向にフレームを運び続けます。シミュレーションが止まっている間、外から来たフレームは溜まり、ECU がそれまでに送ったものは送られたままです。
 - 注記は、`--strict` でも実行を失敗にしません。
@@ -645,7 +646,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 - 欄ごとに、引数がファイルより優先されます（[引数と要求ファイルを一緒に使う](#引数と要求ファイルを一緒に使う)）。
 - ランチャーが読むのは、`--request` で指定したファイルだけです。設定ファイルの隣、作業ディレクトリ、ホームディレクトリ、環境変数から探すことはありません。
 - `check --request` は、`run --request` と同じ要求を照合します（[時間のロック](#外につながる実行の時間--time-policy)に関わる速さと `start_paused` も含みます）。先に照合してから実行します。`run` だけが見る規則が 1 つあります。`start_paused` には `--stdin-commands` か `--control` が要る、という規則です（どちらも `run` だけの引数のため）。
-- `test` は `--request` を受けません（使い方の誤り）。
+- `test` は `stop_at_ms` と `late_tolerance_ms` を含む要求ファイルを受け付けます。それ以外の実行条件を指定すると使い方の誤りになります。停止時刻は各ケースに適用します。
 - ファイルは JSON で書きます。ランチャーはそれより緩い書き方を読めることがありますが、約束しません。スキーマと、このファイルを読むほかのツールは、JSON だけを受けます。
 - ファイルの間違い（知らないキー、2 回書いたキー、型の違う値、`null`、別の版）は、ファイル名と行を示す使い方の誤り（終了コード 4）で、照合も起動もしません。指定しないキーは書きません。
 - JSON Schema は [schema/run-request.schema.json](../../schema/run-request.schema.json) です。`"$schema"` にそのパスを書いたファイルは、エディターが補完と検査をします。
@@ -668,6 +669,8 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `time_policy` | `"realtime"` か `"free"` | `--time-policy` |
 | `speed` | 0.000001 から 1000000 の数か `"max"` | `--speed` |
 | `start_paused` | `true` か `false`。`run` では、続ける手段として `--stdin-commands` か `--control` も要ります。 | `--start-paused` |
+| `stop_at_ms` | 自動停止する仮想時刻（1～10^12 ms の整数）。省略時は自動停止なし。 | `--stop-at-ms` |
+| `late_tolerance_ms` | 実時間の遅延許容値（0～10^12 ms の整数）。既定は 10 ms。 | `--late-tolerance-ms` |
 | `strict` | `true` か `false` | `--strict` |
 
 ### 引数と要求ファイルを一緒に使う
@@ -1127,7 +1130,7 @@ passed: 0 errors, 1 warning, 1 note
 
 | `end` | 終わった理由 | `result` |
 |---|---|---|
-| `"completed"` | 決めた終わりに達した。`stop_at_ms`、participant がシミュレーションを終えた、シナリオが終わった | `"passed"`。エラーがあれば `"failed"` |
+| `"completed"` | 決めた終わりに達した。`stop_at_ms`、participant がシミュレーションを終えた、シナリオが終わった | `"passed"`。要求した停止時刻でシナリオが途中終了した場合は `"incomplete"`、エラーがあれば `"failed"` |
 | `"stopped"` | コマンド（`{"command":"stop"}`、Control API の `Stop`）でシミュレーションの終わりより前に止めた。または、終わりの後の `{"command":"stop"}` が必須の participant の終わりを打ち切った | `"stopped"`。シナリオが最後まで進まなかったときは `"incomplete"`。エラーがあれば `"failed"` |
 | `"interrupted"` | シグナルやコンソールのイベント、標準入力の終わり、閉じた標準出力。シミュレーションの終わりより前か、participant が自分で終わるのを待つ間に来たもの | `"interrupted"` |
 | `"failed"` | 始められなかった、または続けられなかった。participant やブリッジの失敗、`--timeout-ms`、participant がそろわなかった | `"failed"` |
@@ -1232,10 +1235,10 @@ passed: 0 errors, 1 warning, 1 note
 | キー | 値 |
 |---|---|
 | `speed` | 終わったときの速度（数か `"max"`） |
-| `time_step_ms` | controller のタイムステップ（設定ファイルの値か既定値） |
+| `time_step_ms` | controller のタイムステップ（設定値か実行時に決定した値） |
 | `ecu_step_ms` | ECU のステップ幅の最小（ミリ秒） |
 | `step_delay_ms` | タイムステップが ECU のステップより粗いために、ECU のステップが、その仮想時刻にあたる実時間より遅く動く量の最大（ミリ秒） |
-| `late_tolerance_ms` | 遅れの許容（設定ファイルの値か既定値） |
+| `late_tolerance_ms` | 遅れの許容（`--late-tolerance-ms`、要求ファイル、または既定の 10 ms） |
 | `sim_ms` | 進んだ仮想時間（ミリ秒。最後に始まったタイムステップの時刻） |
 | `wall_ms` | かかった実時間（ミリ秒。一時停止していた時間を含む） |
 | `actual_speed` | 全体の実際の速度（`sim_ms` ÷（`wall_ms` − `paused_ms`）、小数 3 桁） |
@@ -1292,11 +1295,12 @@ passed: 0 errors, 1 warning, 1 note
   "simulation": "reached_stop_at",
   "interrupted_by": null,
   "registry_uri": "silkit://127.0.0.1:<port>",
+  "stop_at_ms": 1000,
   "timing": {
     "speed": "max",
-    "time_step_ms": 10,
+    "time_step_ms": 5,
     "ecu_step_ms": 5,
-    "step_delay_ms": 5,
+    "step_delay_ms": 0,
     "late_tolerance_ms": 10,
     "sim_ms": 1000,
     "wall_ms": <wall_ms>,
@@ -1393,6 +1397,7 @@ passed: 0 errors, 1 warning, 1 note
     "warnings": 0,
     "notes": 0,
     "stop_at_ms": 1000,
+    "time_step_ms": 5,
     "start_timeout_ms": 30000,
     "stop_timeout_ms": 10000,
     "registry_uri": null,
@@ -1826,7 +1831,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 |---|---|
 | 失敗した（`failed`） | 失敗した手順の `at_ms`（`stop_at_ms` で終わった実行では、止まった時刻） |
 | 通った（`passed`） | 手順の `at_ms` のうち、いちばん後のもの |
-| 途中で終わった（`incomplete`） | 最後に見たサンプルの時刻（1 つも見ていなければ 0）。書き込みが断られた後で participant の失敗が実行の結果になったときは、その書き込みの時刻（`failed` はどの手順でも `null` ですが、`not_applied_from` は `null` ではありません） |
+| 途中で終わった（`incomplete`） | 最後のコントローラー時刻までに観測したサンプルと送信した書き込みのうち、最も遅い時刻（どちらもなければ 0）。書き込みが断られた後で participant の失敗が実行の結果になったときは、その書き込みの時刻（`failed` はどの手順でも `null` ですが、`not_applied_from` は `null` ではありません） |
 | シナリオが始まらなかった（`not_run`。シミュレーションは始まったのにシナリオを始められなかったときは `incomplete`） | `null`（系列は空） |
 
 - controller はタイムステップごとにしかサンプルを見ないので、シナリオが終わったとわかる時刻（`over_at_ms`）は、ふつう `recorded_to_ms` より後です。その間のサンプルと書き込みは、ファイルに入れません。エージェントがすぐ断った書き込みで失敗した実行だけ、`over_at_ms`（断られた時点のタイムステップ）が `recorded_to_ms`（その書き込みの時刻）以前です。
@@ -1875,7 +1880,7 @@ vehicle_sil_launch test simulation.yaml --variant medium --scenarios a.yaml b.ya
 | 機種のない設定ファイル | シナリオだけを並べます。 |
 | `--variant <名前>` | その機種だけを実行します（繰り返せます。順は設定ファイルの順のままです）。 |
 | 1 組の実行 | `run <file> --variant <機種> --scenario <シナリオ> --speed max` と同じです。 |
-| 速度 | 設定ファイルの `speed` によらず、最速です。 |
+| 速度 | 実時間に固定されている場合を除き、最速です。 |
 | 組と組の間 | registry、controller、participant のプロセスを作り直します（前の組の状態は残りません）。 |
 | 同時の実行 | しません。 |
 
@@ -2012,7 +2017,7 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 | 4 | 引数のエラー（何も実行していません） |
 | 130 | 中断された（その前に失敗した組があっても 130） |
 
-`test` は止めるコマンドを受けないので、終了コード 5 はありません。`test` の実行がシナリオの終わる前に終わるのは、シグナル（130）か `--timeout-ms`（1）のときだけです。
+`test` は止めるコマンドを受けないので、終了コード 5 はありません。要求した仮想停止時刻までにシナリオの判定が決まらなかったケースは未完了となり、失敗したケースとして数えます（終了コード 1）。シグナルによる中断は 130、壁時計の上限 `--timeout-ms` による失敗は 1 です。
 
 `skipped` は失敗に数えません。全部が `skipped` でも、`--strict` がなければ 0 です。設定ファイルの `manual: true` の participant のエラーも 4 です。
 

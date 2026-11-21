@@ -25,8 +25,8 @@ void network(const Options& o)
     // 127.0.0.1; else 0, also when the launcher's own environment has 1 (a note says so). A
     // participant started by hand is told the variable in the line and the event.
     const auto config = [&o](const std::string& host) {
-        return "vehicle_sil_simulation: 1\n"
-               "stop_at_ms: 1000\n"
+        return "vehicle_sil_simulation: 2\n"
+               "# run-option --stop-at-ms 1000\n"
                "registry_uri: silkit://" + host + ":0\n" // a free port, chosen by the registry
                "networks: []\n"
                "participants:\n"
@@ -185,7 +185,7 @@ std::string json_text(const std::string& line, const std::string& key)
 /// participant started by hand takes by default, which may be taken here).
 std::string hand_config(const Options& o, const std::string& keys, const std::string& more)
 {
-    return "vehicle_sil_simulation: 1\n" + keys + "registry_uri: silkit://127.0.0.1:0\n"
+    return "vehicle_sil_simulation: 2\n" + keys + "registry_uri: silkit://127.0.0.1:0\n"
            "networks: []\n"
            "participants:\n"
            "  - name: Auto\n"
@@ -203,7 +203,7 @@ void manual_late(const Options& o)
     {
         // Started long after start_timeout_ms (8 s for Auto to join is generous), and standing
         // still in its step at 100 ms for 1.5 s, as in a debugger: the run passes.
-        const fs::path dir = hand_dir(o, "late", hand_config(o, "stop_at_ms: 300\nstart_timeout_ms: 8000\n", ""),
+        const fs::path dir = hand_dir(o, "late", hand_config(o, "# run-option --stop-at-ms 300\n# run-option --participant-start-timeout-ms 8000\n", ""),
                                       {{"Auto", "pid"}, {"Hand", "slow-at-ms 100 1500"}});
         Live live(o, dir, {"run", "sim.yaml"});
         const std::string err = live.wait_for_error(
@@ -241,7 +241,7 @@ void manual_fails(const Options& o)
 {
     {
         // It fails while the simulation runs: the launcher sees it leave the simulation.
-        const fs::path dir = hand_dir(o, "fails", hand_config(o, "stop_at_ms: 1000\n", ""), {{"Auto", ""}, {"Hand", "exit-at-ms 100 3"}});
+        const fs::path dir = hand_dir(o, "fails", hand_config(o, "# run-option --stop-at-ms 1000\n", ""), {{"Auto", ""}, {"Hand", "exit-at-ms 100 3"}});
         Live live(o, dir, {"run", "--events", "sim.yaml"});
         const std::string event = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
         require(contains(event, "\"command\":[\"") && contains(event, "\"--name\",\"Hand\",\"--registry-uri\","),
@@ -296,7 +296,7 @@ void manual_frozen(const Options& o)
         // stepping depends on how far it got (logged), and both must end on the stop.
         // No stop_at_ms: if Late got to its first steps before it was frozen, the simulation must not
         // end before the stop command.
-        const fs::path dir = hand_dir(o, "frozen", hand_config(o, "stop_timeout_ms: 3000\n", late_participant(o)),
+        const fs::path dir = hand_dir(o, "frozen", hand_config(o, "# run-option --participant-stop-timeout-ms 3000\n", late_participant(o)),
                                       {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
         Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
         const std::string hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
@@ -340,7 +340,7 @@ void manual_frozen(const Options& o)
         // ended: an error, so the stopped run failed), and the launcher closes its connection to it
         // (on Windows a TCP connection: closing a local-domain socket to a process that stands
         // still may never return there, docs/dependencies.md).
-        const fs::path dir = hand_dir(o, "frozen_running", hand_config(o, "stop_timeout_ms: 3000\n", late_participant(o)),
+        const fs::path dir = hand_dir(o, "frozen_running", hand_config(o, "# run-option --participant-stop-timeout-ms 3000\n", late_participant(o)),
                                       {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
         Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
         const std::string hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
@@ -373,7 +373,7 @@ void manual_thawed(const Options& o)
         // Frozen for 3 s after it joined, before the first step (Late cannot join while it is), then
         // going on: the run passes. Whether its variables can be used is logged (its control link
         // at the start).
-        const fs::path dir = hand_dir(o, "thawed", hand_config(o, "stop_at_ms: 200\n", late_participant(o)), {{"Auto", ""}, {"Hand", "variables"}, {"Late", ""}});
+        const fs::path dir = hand_dir(o, "thawed", hand_config(o, "# run-option --stop-at-ms 200\n", late_participant(o)), {{"Auto", ""}, {"Hand", "variables"}, {"Late", ""}});
         Live live(o, dir, {"run", "--events", "sim.yaml"});
         const std::string hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
         const std::string lateEvent = live.wait_for({"\"name\":\"Late\"", "\"state\":\"manual\""});
@@ -446,8 +446,8 @@ void busy_port(const Options& o)
     // The registry's port is taken: run fails at once with the setup error, before it starts
     // anything (the registry does not go on with a local-domain socket only).
     const auto config = [&o](int port) {
-        return "vehicle_sil_simulation: 1\n"
-               "stop_at_ms: 300\n"
+        return "vehicle_sil_simulation: 2\n"
+               "# run-option --stop-at-ms 300\n"
                "registry_uri: silkit://127.0.0.1:" + std::to_string(port) + "\n"
                "networks: []\n"
                "participants:\n"
@@ -512,7 +512,7 @@ void manual_stranger(const Options& o)
     // Started by hand with a mistyped name: it waits for the start (in ServicesCreated), and the
     // launcher says so once, and waits on for Hand. A participant
     // outside the file that runs on its own (autonomous) is not named: it is one of the simulation.
-    const fs::path dir = hand_dir(o, "stranger", hand_config(o, "stop_at_ms: 300\n", ""), {{"Auto", ""}, {"Hand", ""}});
+    const fs::path dir = hand_dir(o, "stranger", hand_config(o, "# run-option --stop-at-ms 300\n", ""), {{"Auto", ""}, {"Hand", ""}});
     Live live(o, dir, {"run", "sim.yaml"});
     const std::string err = live.wait_for_error(
         [](const std::string& text) { return contains(text, "[vehicle_sil_launch] waiting for Hand to join (manual): "); });
@@ -568,7 +568,7 @@ void manual(const Options& o)
 {
     {
         // The example of the docs: Engine by hand, Dashboard by the launcher.
-        Live live(o, o.example_dir, {"run", "simulation.yaml", "--manual", "Engine"});
+        Live live(o, o.example_dir, {"run", "simulation.yaml", "--stop-at-ms", "1000", "--manual", "Engine"});
         HandCommand hand;
         static_cast<void>(live.wait_for_error([&](const std::string& text) {
             hand = hand_command(text, "Engine");

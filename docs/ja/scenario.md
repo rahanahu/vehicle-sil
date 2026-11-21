@@ -105,7 +105,7 @@ J1939_CAN  Dashboard       0         8
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-`at` は、その手順の結果が決まった仮想時間です（下の「結果」）。設定ファイルの `stop_at_ms` は 1000 ms ですが、シナリオが終わった 705 ms で止まります。
+`at` は、その手順の結果が決まった仮想時間です（下の「結果」）。シナリオが終わった 705 ms で実行は止まります。
 
 ### ECU をバスから切断する
 
@@ -254,7 +254,7 @@ JSON Schema は [schema/scenario.schema.json](../../schema/scenario.schema.json)
 
 そのため、待つ手順より後ろには `at_ms` を書けません（`after_ms` で書きます）。時刻が戻る `at_ms` もエラーです。
 
-controller のタイムステップは、設定ファイルの `time_step_ms` です。書いていなければ、10 ms、`stop_at_ms`、ECU のステップ幅の最大公約数で、どの ECU のステップも controller のステップの境目で始まります（結果の `timing.time_step_ms`。速度を指定したときの既定と同じです。[simulation-run.md](simulation-run.md#タイムステップと-ecu-のステップ) の「タイムステップと ECU のステップ」）。シナリオのある実行では、速度によらずこのタイムステップです。
+controller のタイムステップは、設定ファイルに `time_step_ms` を書いたときはその値です。省略したときは、有効な ECU の周期と、指定されていれば停止時刻からランチャーが決めます。結果の `timing.time_step_ms` に表示し、速度やシナリオの有無では変わりません。計算方法とその制限は [simulation-run.md](simulation-run.md#タイムステップと-ecu-のステップ) の「タイムステップと ECU のステップ」を見てください。
 
 ## 値の見え方
 
@@ -619,7 +619,7 @@ U は、E が ECU のステップの上なら E、間なら次のステップで
 | 一部の機種だけでシナリオを実行する | `only` | [機種を限定する（`only`）](#機種を限定するonly) |
 | 実装ごとに変数の名前や単位を変える | 設定ファイルの `variables` | [simulation-config.md](simulation-config.md#変数の名前と値を合わせるvariables) の「変数の名前と値を合わせる（`variables`）」 |
 | 実装ごとにネットワークの名前を変える | 設定ファイルの `network_names`（シナリオにネットワークの名前は書かない） | [simulation-config.md](simulation-config.md#ネットワークの名前を合わせるnetwork_names) の「ネットワークの名前を合わせる（`network_names`）」 |
-| シナリオと選択（機種、パラメーター、participant、速さ）を 1 つのファイルで共有する | 要求ファイル: `check` と `run` の `--request`（`test` は受けません）。ファイルに設定ファイルの名前は書きません。シナリオの相対パスは、設定ファイルのあるディレクトリから読みます | [simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」、[examples/ecu_main/requests/throttle_step.json](../../examples/ecu_main/requests/throttle_step.json) |
+| シナリオと選択（機種、パラメーター、participant、速さ）を 1 つのファイルで共有する | 要求ファイル: `check` と `run` の `--request`（`test` は停止時刻と遅延の許容値だけを受けます）。ファイルに設定ファイルの名前は書きません。シナリオの相対パスは、設定ファイルのあるディレクトリから読みます | [simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」、[examples/ecu_main/requests/throttle_step.json](../../examples/ecu_main/requests/throttle_step.json) |
 | 同じシナリオを、別の設定ファイルで実行する | その設定ファイルを引数に渡します。ない participant があれば、エラー `scenario-variable` です | [照合（`check --scenario`、`run --scenario` の最初）](#照合check---scenariorun---scenario-の最初) |
 
 今のシナリオにできないこと（文面を写してください）:
@@ -749,12 +749,12 @@ steps:
 | 全部の手順が成功した | `passed` | ランチャーがその controller のステップでシミュレーションを止め、成功します（ほかにエラーがなければ終了コード 0）。 |
 | 手順が 1 つ失敗した | `failed` | ランチャーがシミュレーションを止め、失敗します（終了コード 1）。 |
 | シナリオが値を読む ECU が、ステップより粗い頻度で値を送信している（`samples: every_step`） | `failed` | シナリオを始めません。手順は全部 `not_run` のままで、ランチャーは最初のステップの前にシミュレーションを止め、実行は指摘 `scenario-not-observed` で失敗します（終了コード 1）。 |
-| `stop_at_ms` に先に達した | `failed` | 結果が決まっていない最初の手順が失敗です（`scenario-out-of-time`）。 |
+| 指定した `stop_at_ms` に先に達した | `incomplete` | 実行は `incomplete`（終了コード 5）です。シナリオの判定はありません。 |
 | `stop` のコマンド、Control API の `Stop` | `incomplete` | ほかに問題がなければ、実行は `incomplete`（終了コード 5）です。シナリオの判定はありません。 |
 | Ctrl+C などの中断、participant の失敗、`--timeout-ms` | `incomplete` | シナリオより優先で、[simulation-run.md](simulation-run.md) のルールのままです（中断は 130、失敗は 1）。 |
 
-- 全部の手順が成功すればランチャーが止めるので、設定ファイルに `stop_at_ms` がなくても実行できます。
-- `stop_at_ms` に先に達したときは、決められる所まで結果を決めます（`stop_at_ms` を大きくするか、消します）。
+- 全部の手順が成功すればランチャーが止めるので、停止時刻を指定しなくても実行できます。
+- `stop_at_ms` に先に達したときは、決められる所まで結果を決めます。指定する停止時刻を大きくするか、省略してください。
 - `incomplete` のときは、指摘 `scenario-incomplete` が、どこまで進んだかを示します。停止や中断でシナリオが途中になったときは注記、それ以外はエラーです。
 - 異常終了した ECU への書き込みが先に失敗しても、実行の結果は participant の失敗で、シナリオは `incomplete` です。
 
@@ -853,7 +853,6 @@ error: s.yaml:4: wait_until Body.ticks ge 10; Body.level eq 6 (timeout 100 ms): 
 | `scenario-failed` | `expect`（`ramp` と `wave` の横の `expect` も）が成り立たなかった。または、読む変数の participant がこの実行で接続していない。 |
 | `scenario-timeout` | `wait_until` が `timeout_ms` の間に成り立たなかった。 |
 | `scenario-write` | `set`、`ramp`、`wave` の書き込みが反映されなかった（`wave` が範囲の外の値を書こうとした、など）。または、`ramp` の始まりの値や `wave` の中心の値がない。 |
-| `scenario-out-of-time` | `stop_at_ms` で止まったとき、まだ結果が決まっていなかった。 |
 | `scenario-incomplete` | シナリオが終わる前に、ほかの理由でシミュレーションが終わった。 |
 | `scenario-not-observed` | シナリオを始めなかった。シナリオが値を読む ECU が、ステップより粗い頻度で値を送信していて、サンプルとサンプルの間の変数の動きが条件から見えない。条件は 1 つも判定していない（条件が成り立たなかった `scenario-failed` とは違う）。指摘の文に、participant、その `sample_period` とステップがある。実行ファイルをこの vehicle-sil で作り直すか、`samples: as_sent` を書く（[ECU が値を送る頻度](#ecu-が値を送る頻度samples)）。 |
 

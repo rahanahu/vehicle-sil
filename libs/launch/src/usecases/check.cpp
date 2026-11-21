@@ -204,15 +204,23 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     overrides.manual = intent.manual;
     overrides.variant = intent.variant;
     overrides.origin = request.origin;
-    // The speed the run was asked for; a test's is its default, which is not judged.
-    const std::optional<std::optional<double>> run_speed =
+    // A test's default speed does not count as a request that the time lock may refuse.
+    const std::optional<std::optional<double>> requested_speed =
         options.fastest_by_default ? std::optional<std::optional<double>>{} : intent.speed;
+    const std::optional<double> default_speed = options.fastest_by_default ? intent.speed.value_or(std::nullopt)
+                                                                          : std::nullopt;
     // What of the request's connect counts for this file: known once it is read.
     std::vector<config::ConnectRequest> connect;
     Checked report;
     report.file = host.config;
     report.strict = intent.strict;
     // Known without the file.
+    if (auto invalid = validate_timing(request); !invalid.empty())
+    {
+        report.usage = true;
+        report.findings = std::move(invalid);
+        return report;
+    }
     if (auto conflicts = config::override_conflicts(overrides); !conflicts.empty())
     {
         report.usage = true;
@@ -259,10 +267,8 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         report.findings.insert(report.findings.end(), counted.notes.begin(), counted.notes.end());
         // The file and the request decide it: before any executable is asked.
         report.time_lock = config::time_lock(*report.config, connect, intent.time_policy);
-        const std::vector<config::Finding> time =
-            config::time_lock_findings(report.time_lock, run_speed,
-                               options.fastest_by_default ? std::optional<double>{} : report.config->speed, intent.start_paused,
-                               request.origin);
+        const std::vector<config::Finding> time = config::time_lock_findings(
+            report.time_lock, requested_speed, default_speed, intent.start_paused, request.origin);
         report.findings.insert(report.findings.end(), time.begin(), time.end());
         if (on_time_lock)
         {
@@ -401,17 +407,23 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     auto compared = config::check_participants(*report.config, report.participants, version(), outside);
     report.findings.insert(report.findings.end(), compared.begin(), compared.end());
     drop_unusable_commands(report);
-    // A run at the file's speed (1 with the time lock) with the file's time_step_ms: known before
-    // it runs. A run with a speed of its own (run --speed, test) reports its own afterwards.
-    if (const std::optional<double> speed = config::planned_speed(report.time_lock, {}, report.config->speed);
-        !run_speed && !options.fastest_by_default && speed && report.config->time_step_ms)
+    report.run_timing = config::detail::plan_time_step(*report.config, report, intent.stop_at_ms);
+    report.run_timing->speed = config::planned_speed(report.time_lock, requested_speed, default_speed);
+    report.run_timing->late_tolerance_ms = intent.late_tolerance_ms.value_or(config::kDefaultLateToleranceMs);
+    report.stop_at_ms = intent.stop_at_ms;
+    report.start_timeout_ms = host.start_timeout_ms;
+    report.stop_timeout_ms = host.stop_timeout_ms;
+    report.checked_speed = intent.speed;
+    report.checked_start_paused = intent.start_paused;
+    if (intent.stop_at_ms && *intent.stop_at_ms % report.run_timing->time_step_ms != 0)
     {
-        config::RunTiming timing = config::detail::plan_time_step(*report.config, report, speed);
-        timing.speed = speed;
-        if (auto f = config::detail::coarse_time_step(timing))
-        {
-            report.findings.push_back(std::move(*f));
-        }
+        report.findings.push_back(config::Finding{config::Severity::Error, "stop-not-on-step",
+            "stop_at_ms (" + std::to_string(*intent.stop_at_ms) + ") is not a multiple of time_step_ms (" +
+                std::to_string(report.run_timing->time_step_ms) + ")", 0, "", ""});
+    }
+    if (auto f = config::detail::coarse_time_step(*report.run_timing))
+    {
+        report.findings.push_back(std::move(*f));
     }
     if (intent.scenario && !intent.scenario->empty())
     {

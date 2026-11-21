@@ -935,6 +935,33 @@ TEST_CASE(timeline_of_a_failed_run_has_the_steps_as_the_controllers_step_saw_the
                same + "\"index\": 3, \"status\": \"passed\", \"start_ms\": 20, \"at_ms\": 20, \"end_ms\": 20,\n" + series);
 }
 
+TEST_CASE(a_scheduled_stop_can_close_an_open_watch_but_cannot_open_the_next_step)
+{
+    World ends;
+    ends.stop_at = at(30ms);
+    const auto run = ends.run(read(kHead + "  - expect: { Body.level: 0 }\n"
+                                          "    hold_for_ms: 30\n"
+                                          "  - set: { Body.level: 13 }\n"));
+    CHECK(run.status == ScenarioStatus::Incomplete);
+    CHECK(run.steps[0].status == StepStatus::Passed && run.steps[0].at == at(30ms));
+    CHECK(run.steps[1].status == StepStatus::NotRun);
+    CHECK(ends.log.empty());
+
+    World rounded;
+    rounded.stop_at = at(30ms);
+    const auto pending = rounded.run(read(kHead + "  - at_ms: 29\n"
+                                                   "    set: { Body.level: 13 }\n"));
+    CHECK(pending.status == ScenarioStatus::Incomplete);
+    CHECK(rounded.log.empty());
+
+    World expires;
+    expires.stop_at = at(30ms);
+    const auto failed = expires.run(read(kHead + "  - wait_until: { Body.level: 13 }\n"
+                                                  "    timeout_ms: 30\n"));
+    CHECK(failed.status == ScenarioStatus::Failed);
+    CHECK(failed.steps[0].at == at(30ms));
+}
+
 TEST_CASE(timeline_of_a_run_that_did_not_get_to_its_end_says_how_far_it_is_recorded)
 {
     const auto head = [](const std::string& text, const std::function<void(World&)>& setup) {
@@ -965,14 +992,14 @@ TEST_CASE(timeline_of_a_run_that_did_not_get_to_its_end_says_how_far_it_is_recor
                                         "    set: { Body.level: 13 }\n"
                                         "  - expect: { Body.level: 13 }\n"
                                         "    within_ms: 100\n";
-    // stop_at_ms before the scenario's end: failed at that time, and recorded to it.
+    // A scheduled stop leaves the scenario incomplete and records the samples before it.
     check_text(head(refused, [](World& w) { w.stop_at = at(30ms); }),
-               "    \"status\": \"failed\",\n"
+               "    \"status\": \"incomplete\",\n"
                "    \"over_at_ms\": 30,\n"
-               "    \"recorded_to_ms\": 30\n"
+               "    \"recorded_to_ms\": 20\n"
                "\"last_ms\": 20,\n"
                "\"failed\": null\n"
-               "\"failed\": {\n"
+               "\"failed\": null\n"
                "\"failed\": null\n");
     // A participant failed after a write to it had failed: the scenario is incomplete and no step
     // has failed, but the record ends where it was closed, at the write, and its point is marked.

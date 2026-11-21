@@ -9,8 +9,8 @@ named by VEHICLE_SIL_GUI_LAUNCHER (build/<preset>/tools/launch/vehicle_sil_launc
 paths, so the files work in any directory, and nothing is written into the build directory.
 Standard library only; also used by the e2e of gui/web (e2e-real/).
 
-  simulation.yaml          Engine and Dashboard, stop_at_ms 1000: passes
-  forever.yaml             the same without stop_at_ms: runs until stopped
+  simulation.yaml          Engine and Dashboard: runs until stopped
+  forever.yaml             the same participants, for runs stopped by the user
   missing-executable.yaml  Dashboard's executable does not exist: the check fails (executable)
   wrong-step.yaml          Engine's step_ms is 20, its executable says 10: the check fails (step-mismatch)
   not-joined.yaml          a required participant that never joins (sleep): the run fails (not-joined)
@@ -63,21 +63,21 @@ NETWORKS = "networks:\n  - name: J1939_CAN\n    kind: can\n"
 
 def write(directory: Path, examples: Path) -> list[Path]:
     engine, dashboard = (p.as_posix() for p in executables(examples))
-    head = "vehicle_sil_simulation: 1\n"
+    head = "vehicle_sil_simulation: 2\n"
     files = {
-        "simulation.yaml": head + "stop_at_ms: 1000\n" + NETWORKS
+        "simulation.yaml": head + NETWORKS
                            + _participants(engine, dashboard),
-        "variants.yaml": head + "stop_at_ms: 1000\n" + NETWORKS + _participants(engine, dashboard)
+        "variants.yaml": head + NETWORKS + _participants(engine, dashboard)
                          + "variants:\n  small: {}\n  big: {}\n",
         "forever.yaml": head + NETWORKS + _participants(engine, dashboard),
-        "missing-executable.yaml": head + "stop_at_ms: 1000\n" + NETWORKS
+        "missing-executable.yaml": head + NETWORKS
                                    + _participants(engine, dashboard + "-missing"),
-        "wrong-step.yaml": head + "stop_at_ms: 1000\n" + NETWORKS
+        "wrong-step.yaml": head + NETWORKS
                            + _participants(engine, dashboard, engine_step=20),
-        "not-joined.yaml": head + "stop_at_ms: 1000\nstart_timeout_ms: 2500\n"
+        "not-joined.yaml": head
                            + NETWORKS + _participants(engine, dashboard)
                            + "  - name: Logger\n    command: [sleep, '100']\n    describe: false\n",
-        "broken.yaml": "vehicle_sil_simulation: 1\nparticipants: [\n",
+        "broken.yaml": "vehicle_sil_simulation: 2\nparticipants: [\n",
         "example.yaml": head + NETWORKS + _participants(engine, dashboard),
         "example.dashboard.yaml": (EXAMPLE / "simulation.dashboard.yaml").read_text(encoding="utf-8"),
         "panels/rpm-bar.js": (EXAMPLE / "panels" / "rpm-bar.js").read_text(encoding="utf-8"),

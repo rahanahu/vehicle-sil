@@ -70,7 +70,7 @@ std::string results(const TestReport& report)
 }
 
 /// Two variants of a participant whose executable is missing: every check fails, nothing starts.
-const char* const kConfig = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+const char* const kConfig = "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                             "  - name: Engine\n    command: [missing/engine]\n"
                             "variants:\n  small: {}\n  medium: { params: { depth: 4 } }\n";
 const char* const kPlain = "vehicle_sil_scenario: 1\nparams: { fill: 1 }\nsteps:\n  - set: { Engine.level: \"${fill}\" }\n";
@@ -156,7 +156,7 @@ TEST_CASE(a_test_that_cannot_begin_runs_nothing)
 
     // A participant that someone starts by hand: every run would wait for a person. Refused
     // before the first run, with what to do; left out with --disable, the test runs.
-    write(dir / "manual.yaml", "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    write(dir / "manual.yaml", "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                "  - name: Engine\n    command: [missing/engine]\n"
                                "  - name: Hil\n    command: [missing/hil]\n    manual: true\n"
                                "  - name: Off\n    command: [missing/off]\n    manual: true\n    enabled: false\n");
@@ -185,7 +185,7 @@ TEST_CASE(a_test_that_cannot_begin_runs_nothing)
           enabled.findings[0].message.rfind("participant 'Off' is manual (manual: true in the file): ", 0) == 0);
     options.request.intent.disable.clear();
     options.request.intent.enable.clear();
-    write(dir / "manual-variants.yaml", "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    write(dir / "manual-variants.yaml", "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                         "  - name: Hil\n    command: [missing/hil]\n    manual: true\n"
                                         "variants:\n  small: {}\n  medium: { participants: { Hil: { enabled: false } } }\n"
                                         "  large: {}\n");
@@ -246,9 +246,8 @@ TEST_CASE(a_test_runs_every_variant_with_every_scenario_in_order)
     CHECK(stopped.count(TestRunResult::NotRun) == 3);
 }
 
-/// A participant with role: bridge (describe: false; its executable is missing, so nothing starts
-/// in any case) beside the file's speed 4: the time lock.
-const char* const kBridged = "vehicle_sil_simulation: 1\nspeed: 4\nnetworks: []\nparticipants:\n"
+/// A participant with role: bridge (describe: false; its executable is missing, so nothing starts).
+const char* const kBridged = "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                              "  - name: Gateway\n    command: [missing/gateway]\n    role: bridge\n    describe: false\n";
 
 std::string codes_of(const CheckReport& check, std::string_view prefix)
@@ -301,6 +300,24 @@ TEST_CASE(a_run_gives_its_check_the_speed_and_start_paused_of_its_request)
     test_options.fastest_by_default = true;
     const Checked test = checked(request, test_options);
     check_text(codes_of(test, "outside-"), "outside-speed-set N\n");
+    request.intent.speed = 0.5;
+    const Checked locked = checked(request, test_options);
+    check_text(codes_of(locked, "outside-"), "outside-speed-set N\n");
+    CHECK(locked.run_timing && locked.run_timing->speed == 1.0);
+    CHECK(format_text(locked).find("not at the default speed 0.5") != std::string::npos);
+
+    request.intent.time_policy = TimePolicy::Free;
+    const Checked unlocked = checked(request, test_options);
+    CHECK(unlocked.run_timing && unlocked.run_timing->speed == 0.5);
+    CHECK(unlocked.checked_speed == request.intent.speed);
+    check_text(codes_of(unlocked, "outside-"), "outside-not-real-time N\n");
+    CHECK(format_text(unlocked).find("the simulation runs at the default speed 0.5") != std::string::npos);
+
+    request.intent.speed = 1.0;
+    const Checked real_time = checked(request, test_options);
+    CHECK(real_time.run_timing && real_time.run_timing->speed == 1.0);
+    check_text(codes_of(real_time, "outside-"), "");
+
     // --time-policy free: the notes for the same requests.
     request = RunRequest{};
     request.intent.time_policy = TimePolicy::Free;
@@ -434,6 +451,8 @@ TEST_CASE(the_command_of_one_run_alone_has_the_options_of_the_test)
     report.given.enable = {"Hil"};
     report.given.timeout = std::chrono::milliseconds(60000);
     report.given.describe_timeout = std::chrono::milliseconds(500);
+    report.given.participant_start_timeout_ms = 300;
+    report.given.participant_stop_timeout_ms = 400;
     report.runs = {{"it's", "scn/a b.yaml", TestRunResult::Failed, "why", failed}};
     const std::string text = format_test_text(report);
     const std::string begin = "to see a failed run in full, run it alone: ";
@@ -446,13 +465,18 @@ TEST_CASE(the_command_of_one_run_alone_has_the_options_of_the_test)
     check_text(text.substr(from + begin.size(), text.find('\n', from) - from - begin.size()),
              "vehicle_sil_launch run 'my sims/sim.yaml' --speed max --variant 'it'\\''s' --scenario 'scn/a b.yaml' "
              "--param 'depth=a b' --param fill= --disable Dashboard --disable 'Rear Axle' --enable Hil --strict "
-             "--timeout-ms 60000 --describe-timeout-ms 500");
+             "--participant-start-timeout-ms 300 --participant-stop-timeout-ms 400 --timeout-ms 60000 --describe-timeout-ms 500");
+
+    report.runs[0].run->check.run_timing.emplace().speed = 0.5;
+    CHECK(format_test_text(report).find("vehicle_sil_launch run 'my sims/sim.yaml' --speed 0.5 --variant") != std::string::npos);
 
     // A scenario that the check did not read: no --param (the run says what is wrong with it).
     report.runs[0].run = RunReport{};
     report.strict = false;
     report.given.timeout.reset();
     report.given.describe_timeout.reset();
+    report.given.participant_start_timeout_ms.reset();
+    report.given.participant_stop_timeout_ms.reset();
     CHECK(format_test_text(report).find("--scenario 'scn/a b.yaml' --disable Dashboard --disable 'Rear Axle' --enable Hil\n") !=
           std::string::npos);
 }

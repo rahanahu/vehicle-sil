@@ -1768,7 +1768,6 @@ TEST_CASE(check_connections_takes_the_backend_of_a_target_and_refuses_one_the_os
 TEST_CASE(check_connections_without_a_target_connects_nothing)
 {
     Setup s = connect_setup();
-    s.config.speed.reset();
     FakeTools fake;
     const ConnectTools tools = fake.tools();
     const ConnectCheck check = check_connections(s.config, s.results, {{"ETH", "none"}, {"CAN1", "none"}, {"BODY", "none"}}, &tools);
@@ -1956,7 +1955,6 @@ TEST_CASE(check_connections_says_when_a_bridge_is_missing_or_fails)
 TEST_CASE(check_connections_leaves_the_time_to_time_lock_findings)
 {
     Setup s = connect_setup();
-    s.config.speed.reset();
     FakeTools fake;
     check_text(connect_lines(s, {{"ETH", "eth0"}, {"CAN1", "virtual:1"}}, fake), "");
 }
@@ -2108,7 +2106,7 @@ TEST_CASE(time_lock_findings_say_what_is_connected_and_how_to_go_on)
     check_text(lines(time_lock_findings(bridge, kNoSpeedAsked, 2.0, false, RequestOrigin{})),
                "N 0 outside-speed-set: participant 'Gateway' is a bridge (role: bridge) to something outside the "
                "simulation, which does not wait for the virtual time: the run goes at speed 1 (real time), not at the "
-               "speed 2 of the file. To go at another speed, run with --disable Gateway, or " + freely + "\n");
+               "default speed 2. To go at another speed, run with --disable Gateway, or " + freely + "\n");
     const TimeLock all{true, {"ETH"}, {"Gateway", "Tap"}};
     check_text(lines(time_lock_findings(all, kNoSpeedAsked, std::nullopt, false, RequestOrigin{})),
                "N 0 outside-speed-set: --connect connects ETH to a real bus, and participants 'Gateway' and 'Tap' are "
@@ -2133,7 +2131,7 @@ TEST_CASE(time_lock_findings_say_what_is_connected_and_how_to_go_on)
                "leave --time-policy free and --speed out\n");
     check_text(lines(time_lock_findings(free, kNoSpeedAsked, 2.0, false, RequestOrigin{})),
                "N 0 outside-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
-               "and with --time-policy free the simulation runs at the speed 2 of the file: what is connected there gets "
+               "and with --time-policy free the simulation runs at the default speed 2: what is connected there gets "
                "the messages at the wrong times, and the bridge still carries frames both ways. To run in real time, "
                "leave --time-policy free out\n");
     check_text(lines(time_lock_findings(free, kNoSpeedAsked, std::nullopt, false, RequestOrigin{})),

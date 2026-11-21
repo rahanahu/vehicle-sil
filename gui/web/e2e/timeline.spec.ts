@@ -242,6 +242,74 @@ test("timeline page: the read-out says where points were dropped at the file's l
   expect(problems).toEqual([]);
 });
 
+test('timeline page: hover updates every signal without resizing the cursor time', async ({
+  page,
+}) => {
+  const problems = await serve(page);
+  await page.goto(`${ORIGIN}/timeline.html?src=data/fails_beside.timeline.json`);
+  await page.locator('vehicle-sil-timeline').evaluate((el) => el.setAttribute('compact', ''));
+  await page.getByRole('button', { name: 'Whole run' }).click();
+  const axis = page.locator('#chart .axis');
+  await axis.scrollIntoViewIfNeeded();
+  const time = axis.locator('#cursor-time');
+  const height = (await axis.boundingBox())?.height;
+  const level = lane(page, 'Body.level').locator('.hover-readout');
+  const speed = lane(page, 'Body.body.speed').locator('.hover-readout');
+  await expect(level).toBeHidden();
+
+  await hoverAt(page, axis, 25);
+  await expect(level).toBeVisible();
+  await expect(level).toContainText('sent 14 · seen 14');
+  await expect(speed).toBeVisible();
+  await expect(speed).toContainText('seen 140');
+  expect((await axis.boundingBox())?.height).toBe(height);
+
+  await hoverAt(page, axis, 125);
+  await expect(time).toHaveText(/^Cursor \d+(\.\d+)? ms$/);
+  await expect(level).toContainText('sent 20 · seen 20');
+  await expect(speed).toContainText('seen 200');
+  expect((await axis.boundingBox())?.height).toBe(height);
+
+  await page.mouse.move(0, 0);
+  await expect(level).toBeHidden();
+  await expect(speed).toBeHidden();
+  expect(problems).toEqual([]);
+});
+
+test('timeline page: the step inspector explains expectations and the cursor spans the chart', async ({
+  page,
+}) => {
+  const problems = await serve(page);
+  await page.goto(`${ORIGIN}/timeline.html?src=data/waits.timeline.json`);
+  const details = page.getByRole('region', { name: 'Step details' });
+  await expect(details).toContainText('Body.body.speed ge 100');
+  await expect(details).toContainText('at least once between 0 ms and 200 ms');
+  await expect(details).toContainText('decided 10 ms');
+
+  const chart = page.locator('#chart');
+  const axis = chart.locator('.axis');
+  await axis.scrollIntoViewIfNeeded();
+  await hoverAt(page, axis, 90);
+  await expect(details).toContainText('Body.body.speed near 200 ± 0.5');
+  await expect(details).toContainText('Body.pulse eq false');
+  await expect(details).toContainText('at least once between 80 ms and 580 ms');
+  await expect(details).toContainText('decided 80 ms');
+
+  const cursor = chart.locator('.cursor-line');
+  await expect(cursor).toBeVisible();
+  const line = (await cursor.boundingBox())!;
+  const plot = (await axis.locator('svg.plot').boundingBox())!;
+  const group = (await chart.locator('.group').last().boundingBox())!;
+  const board = (await chart.boundingBox())!;
+  expect(line.x).toBeGreaterThan(plot.x);
+  expect(line.y + line.height).toBeGreaterThan(group.y + group.height);
+  expect(line.y + line.height).toBeCloseTo(board.y + board.height - 1);
+
+  await hoverAt(page, axis, 125);
+  await expect(details).toContainText('Must match throughout 110 ms to 140 ms');
+  expect(problems).toEqual([]);
+});
+
 test('timeline page: a file is opened with the keyboard alone, and data in the page is read as text', async ({
   page,
 }) => {

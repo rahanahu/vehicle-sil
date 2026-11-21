@@ -24,7 +24,8 @@ no interface of this computer; --compare runs it without one where unshare -rn c
 shapes of a list), and recording it there fails with what to do.
 
 What changes from run to run is replaced with a fixed mark: the copy's directory (<root>), the pids ("<pid>"), the
-registry's port (silkit://127.0.0.1:8500), the control server's address (<control>), times (no seq, no t_ms, the
+registry's port (silkit://127.0.0.1:8500), local addresses (192.0.2.1 or [2001:db8::1], documentation addresses),
+the control server's address (<control>), times (no seq, no t_ms, the
 time between lines in steps of 100 ms), how fast it went (actual_speed 1.5, wall_ms 1000, paused_ms 500 when it
 stood still) and lateness (0). A recording that still has a path of this computer, the user's name or the control
 token in it is not written (the case fails with what was found).
@@ -139,10 +140,39 @@ def run_case(name: str, file: str, about: str, *script, extra: tuple = (), defau
     return Case(name, [*RUN, *extra, "--", file], about, list(script), default)
 
 
+def finite_run(case: Case, stop_ms: int) -> Case:
+    """Give a formerly configuration-bounded run the same explicit run limit."""
+    at = min((case.argv.index(option) for option in ("--start-paused", "--connect", "--")
+              if option in case.argv), default=len(case.argv))
+    case.argv[at:at] = ["--stop-at-ms", str(stop_ms)]
+    if case.request is not None:
+        case.request["stop_at_ms"] = stop_ms
+    return case
+
+
 CREDENTIALS = ("--control", "0", "--control-credentials", "<credentials>")
 
 
 # ---------------------------------------------------------------- recording
+
+
+def normalize_advertised_addresses(text: str) -> str:
+    """Do not save local addresses in manual-participant or registry-bind hints."""
+    def uri(match: re.Match) -> str:
+        host = "[2001:db8::1]" if match.group(1).startswith("[") else "192.0.2.1"
+        return f"silkit://{host}:{match.group(2)}"
+
+    def advertised(match: re.Match) -> str:
+        addresses = re.sub(r"silkit://(\[[^\]]+\]|[^:\s,]+):(\d+)", uri, match.group(2))
+        return match.group(1) + addresses + match.group(3)
+
+    def bind_list(match: re.Match) -> str:
+        addresses = re.sub(r"\[[^\]]+\]", "[2001:db8::1]", match.group(2))
+        addresses = re.sub(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])", "192.0.2.1", addresses)
+        return match.group(1) + addresses + match.group(3)
+
+    text = re.sub(r"(from other computers, join at )(.*?)( \(this computer)", advertised, text)
+    return re.sub(r"(one of this computer's addresses \()([^)]*)(\))", bind_list, text)
 
 
 class Recorder:
@@ -302,6 +332,7 @@ class Recorder:
                     pids.add(e["pid"])
 
         def text_marks(s: str) -> str:
+            s = normalize_advertised_addresses(s)
             if "<timeline>" in case.argv:
                 for path in sorted({str(self.timeline_path(case).resolve()), str(self.timeline_path(case))},
                                    key=len, reverse=True):
@@ -459,6 +490,8 @@ class Recorder:
         host = socket.gethostname().split(".")[0]
         if len(host) >= 3 and re.search(rf"\b{re.escape(host)}\b", text, re.IGNORECASE):
             found.append("the host name")
+        if normalize_advertised_addresses(text) != text:
+            found.append("an advertised address of the recording host")
         if found:
             raise RuntimeError(f"{case.name}: the recording still has {', '.join(found)} in it: add a mark for it "
                                "in Recorder.normalize")
@@ -842,9 +875,6 @@ def checks() -> list[Case]:
              "the check of forever.yaml with a scenario, without Logger"),
         Case("check-simulation-scenario-paused", ["check", "--json", "--scenario", "scenarios/throttle.yaml",
                                                   "--start-paused", "--", "simulation.yaml"],
-             "the check of a scenario that is asked to start paused (the launcher refuses the two together)"),
-        Case("check-simulation-scenario-paused", ["check", "--json", "--scenario", "scenarios/throttle.yaml",
-                                                  "--start-paused", "--", "simulation.yaml"],
              "the check of a request file with a scenario and start_paused (the launcher refuses the two together)",
              request={"scenario": "scenarios/throttle.yaml", "start_paused": True}),
         Case("check-variants", ["check", "--json", "--", "variants.yaml"],
@@ -925,7 +955,7 @@ def runs() -> list[Case]:
                  ("sleep", 0.3), stop, extra=("--start-paused",)),
         run_case("forever-paused-commands", "forever.yaml",
                  "started paused: step 25, resume, pause, speed 2, stop", ("until", paused(0)), ("send", step(25)),
-                 ("until", paused(30)), ("send", RESUME), ("until", going()), ("send", PAUSE),
+                 ("until", paused(25)), ("send", RESUME), ("until", going()), ("send", PAUSE),
                  ("until", lambda events: command("pause")(events) and paused()(events)),
                  ("send", speed(2)), ("until", paused(speed=2)), stop, extra=("--start-paused",)),
     ]
@@ -934,7 +964,7 @@ def runs() -> list[Case]:
         out.append(run_case(
             f"time-commands-speed-{value}", "forever.yaml",
             f"started paused: step 25, speed {value}, resume, step {small} (refused while it runs), pause, stop",
-            ("until", paused(0)), ("send", step(25)), ("until", paused(30)), ("send", speed(value)),
+            ("until", paused(0)), ("send", step(25)), ("until", paused(25)), ("send", speed(value)),
             ("until", paused(speed=value)), ("send", RESUME), ("until", going()),
             ("send", step(small)), ("until", command("step", 2)), ("send", PAUSE),
             ("until", lambda events: command("pause")(events) and paused()(events)), stop,
@@ -980,6 +1010,9 @@ def runs() -> list[Case]:
         run_case("control-simulation-step-500", "simulation.yaml",
                  "with the control server, started paused: a step of 500 ms, then resumed to the end", STANDS,
                  ("send", step(500)), ("until", paused(500)), ("send", RESUME), extra=(*control, "--start-paused")),
+        run_case("control-simulation-stop-finite", "simulation.yaml",
+                 "with the control server, a finite paused run force-stopped before the first step", STANDS,
+                 ("sleep", 0.3), stop, stop, extra=(*control, "--stop-at-ms", "1000", "--start-paused")),
         run_case("control-simulation-stop", "simulation.yaml",
                  "with the control server, started paused, stopped before the first step", STANDS, ("sleep", 0.3),
                  stop, extra=(*control, "--start-paused")),
@@ -1016,6 +1049,14 @@ def runs() -> list[Case]:
                  STANDS, ("send", PAUSE), ("until", command("pause")), ("send", RESUME),
                  extra=(*control, "--start-paused")),
     ]
+    finite = {f"run-{name}" for name in to_the_end if name != "participant-crash"} | {
+        "run-manual", "run-variants-small", "run-simulation-disable", "run-simulation-speed",
+        "run-simulation-paused", "run-simulation-no-dashboard", "control-simulation-resume",
+        "control-simulation-step-200", "control-simulation-step-500", "control-simulation-paused",
+    }
+    for case in out:
+        if case.name in finite:
+            finite_run(case, 300 if case.name == "run-result-then-wait" else 1000)
     return out
 
 
@@ -1026,7 +1067,7 @@ def connects() -> list[Case]:
     file lacks (listed: a usage error; in a request file's connect: a note); a file with variants."""
     target = ("--connect", "ETH_EXT=fake0")
     unused = ("--connect", "CAN1=physical:1")
-    return [
+    out = [
         Case("connections-connect", ["connections", "--json", "--network", "ETH_EXT", "--", "connect.yaml"],
              "where ETH_EXT can be connected (packet: the fake pcap library's adapters; tap: none but lo)",
              tools=True, own_network=True),
@@ -1034,6 +1075,8 @@ def connects() -> list[Case]:
              "connected"),
         Case("check-connect", ["check", "--json", *target, "--", "connect.yaml"],
              "the check with ETH_EXT connected to fake0: the time is locked to real time", tools=True),
+        Case("check-connect-stop", ["check", "--json", "--stop-at-ms", "1000", *target, "--", "connect.yaml"],
+             "the finite check with ETH_EXT connected to fake0", tools=True),
         Case("check-connect-sil-kit-only", ["check", "--json", "--connect", "ETH_EXT=none", "--", "connect.yaml"],
              "the check with ETH_EXT kept on SIL Kit only (none)"),
         Case("check-connect-free", ["check", "--json", "--time-policy", "free", *target, "--", "connect.yaml"],
@@ -1055,9 +1098,195 @@ def connects() -> list[Case]:
              "a run of a request whose connect has a network that connect.yaml lacks, to its end",
              request={"connect": {"CAN1": "physical:1"}}),
     ]
+    for case in out:
+        if case.name in {"run-connect", "run-connect-unused"}:
+            finite_run(case, 1000)
+    return out
 
 
-CASES: list[Case] = [Case("version", ["version", "--json"], "version --json"), *checks(), *runs(), *connects()]
+def gui_timing_cases() -> list[Case]:
+    """The standard screen starts at speed 1 and supplies its own finite run limit."""
+    timed = ("--speed", "1", "--stop-at-ms", "1000")
+    target = ("--connect", "ETH_EXT=fake0")
+    paused = {"speed": 1, "stop_at_ms": 1000, "start_paused": True}
+    return [
+        Case("check-simulation-speed1", ["check", "--json", "--speed", "1", "--", "simulation.yaml"],
+             "the standard GUI checks simulation.yaml at its initial speed"),
+        Case("check-simulation-speed1-stop", ["check", "--json", *timed, "--", "simulation.yaml"],
+             "the standard GUI checks its finite simulation run"),
+        Case("check-simulation-speed1-stop-paused", ["check", "--json", *timed, "--start-paused", "--", "simulation.yaml"],
+             "the standard GUI checks a finite run started paused", request=paused),
+        Case("check-simulation-disable-speed1-stop",
+             ["check", "--json", "--disable", "Dashboard", *timed, "--", "simulation.yaml"],
+             "the standard GUI checks a finite run without Dashboard"),
+        Case("check-simulation-no-logger-speed2-stop",
+             ["check", "--json", "--disable", "Logger", "--speed", "2", "--stop-at-ms", "1000", "--", "simulation.yaml"],
+             "a finite run without Logger, checked at speed 2"),
+        run_case("run-simulation-speed1-stop", "simulation.yaml", "the standard GUI runs to the requested stop",
+                 extra=timed),
+        run_case("run-simulation-disable-speed1-stop", "simulation.yaml",
+                 "the standard GUI runs without Dashboard to the requested stop",
+                 extra=("--disable", "Dashboard", *timed)),
+        run_case("control-simulation-speed1-stop-resume", "simulation.yaml",
+                 "the standard GUI resumes a finite run started paused", STANDS, ("send", RESUME),
+                 extra=(*CREDENTIALS, *timed, "--start-paused")),
+        Case("check-manual-speed1", ["check", "--json", "--speed", "1", "--", "manual.yaml"],
+             "the standard GUI checks manual.yaml at its initial speed"),
+        Case("check-manual-speed1-stop", ["check", "--json", *timed, "--", "manual.yaml"],
+             "the standard GUI checks a finite run with a manually started participant"),
+        run_case("run-manual-speed1-stop", "manual.yaml", "Dashboard joins a finite run by hand",
+                 ("until", event("participant", state="manual", name="Dashboard")), ("sleep", 0.3),
+                 ("start", "Dashboard"), extra=timed),
+        Case("check-connect-speed1", ["check", "--json", "--speed", "1", "--", "connect.yaml"],
+             "the standard GUI checks connect.yaml at its initial speed"),
+        Case("check-forever-max", ["check", "--json", "--speed", "max", "--", "forever.yaml"],
+             "the Workbench checks an unbounded run at maximum speed"),
+        Case("check-connect-speed1-stop", ["check", "--json", *timed, "--", "connect.yaml"],
+             "the standard GUI checks its finite connected run"),
+        Case("check-connect-speed1-stop-connected", ["check", "--json", *timed, *target, "--", "connect.yaml"],
+             "the standard GUI checks its finite run with ETH_EXT connected", tools=True),
+        Case("run-connect-speed1-stop", [*RUN, *timed, *target, "--", "connect.yaml"],
+             "the standard GUI runs ETH_EXT connected at speed 1 until its requested stop", tools=True),
+    ]
+
+
+def gui_speed_checks() -> list[Case]:
+    """Check the same configurations at the standard screen's initial speed."""
+    out = []
+    for case in checks():
+        # The simulation case is listed explicitly above. start_paused has to be sent in a
+        # request, and is recorded separately where the screen uses it.
+        if case.name in {"check-simulation", "check-manual"} or case.request is not None or "--start-paused" in case.argv:
+            continue
+        split = case.argv.index("--")
+        out.append(Case(case.name + "-speed1", [*case.argv[:split], "--speed", "1", *case.argv[split:]],
+                        case.about + ", at the standard GUI's initial speed", tools=case.tools))
+    return out
+
+
+def finite_api_cases() -> list[Case]:
+    """Explicit stop times for server tests that previously used the configuration's limit."""
+    names = {
+        "check-simulation", "check-simulation-no-logger", "check-variants-small",
+        "check-flood", "check-finding-flood", "check-launcher-crash", "check-bad-lines", "check-bad-types",
+        "check-future-events", "check-control-trouble", "check-large-fields", "check-large-result",
+        "check-log-dropped", "check-loose-fields", "check-manual", "check-orphan",
+        "check-result-then-wait", "run-simulation", "run-simulation-disable", "run-simulation-speed",
+        "run-variants-small", "run-flood", "run-finding-flood", "run-launcher-crash", "run-bad-lines", "run-bad-types",
+        "run-future-events", "run-control-trouble", "run-large-fields", "run-large-result",
+        "run-log-dropped", "run-loose-fields", "run-manual", "run-orphan", "run-result-then-wait",
+    }
+    out = []
+    for case in [*checks(), *runs()]:
+        if case.name not in names:
+            continue
+        split = case.argv.index("--")
+        # This configuration previously stopped at 300 ms; the others stopped at 1000 ms.
+        stop = "300" if case.argv[-1] == "result-then-wait.yaml" else "1000"
+        argv = case.argv if "--stop-at-ms" in case.argv else [*case.argv[:split], "--stop-at-ms", stop, *case.argv[split:]]
+        out.append(Case(case.name + "-finite", list(argv),
+                        case.about + ", with an explicit stop time", list(case.script), case.default,
+                        tools=case.tools))
+    return out
+
+
+def gui_finite_cases() -> list[Case]:
+    """The finite fixtures also used through the standard screen at speed 1."""
+    names = {"check-control-trouble-finite", "run-control-trouble-finite", "check-flood-finite", "run-flood-finite",
+             "check-result-then-wait-finite", "run-result-then-wait-finite"}
+    out = []
+    for case in finite_api_cases():
+        if case.name not in names:
+            continue
+        at = case.argv.index("--stop-at-ms")
+        out.append(Case(case.name + "-speed1", [*case.argv[:at], "--speed", "1", *case.argv[at:]],
+                        case.about + ", at the standard GUI's initial speed", list(case.script), case.default,
+                        tools=case.tools))
+    return out
+
+
+def gui_speed_runs() -> list[Case]:
+    """Interactive unbounded runs at the standard screen's initial speed."""
+    names = {"forever-stop", "forever-stop-twice", "forever-end-of-input", "forever-step-refused",
+             "forever-force", "forever-step-10", "forever-no-logger-stop", "forever-no-logger-paused-stop",
+             "forever-paused-stop", "ignore-stop-twice", "ignore-stop-end-of-input", "run-manual-stop",
+             "run-network-manual-stop", "run-participant-crash", "run-scenario-fails", "run-scenario-passes",
+             "run-scenario-fails-timeline", "run-scenario-passes-timeline", "control-scenario-fails",
+             "control-scenario-passes", "control-paused-resume", "control-paused-stop", "control-stop", "deaf", "jitter", "late"}
+    out = []
+    for case in runs():
+        if case.name not in names:
+            continue
+        at = case.argv.index("--start-paused") if "--start-paused" in case.argv else case.argv.index("--")
+        out.append(Case(case.name + "-speed1", [*case.argv[:at], "--speed", "1", *case.argv[at:]],
+                        case.about + ", at the standard GUI's initial speed", list(case.script), case.default,
+                        tools=case.tools))
+    out.append(run_case(
+        "forever-paused-commands-speed1", "forever.yaml",
+        "at speed 1: started paused, step 25, resume, pause, speed 2, stop",
+        ("until", paused(0)), ("send", step(25)), ("until", paused(25)), ("send", RESUME),
+        ("until", going()), ("send", PAUSE),
+        ("until", lambda events: command("pause")(events) and paused()(events)),
+        ("send", speed(2)), ("until", paused(speed=2)), ("send", STOP),
+        extra=("--speed", "1", "--start-paused")))
+    out.append(run_case("run-launcher-crash-speed1", "launcher-crash.yaml",
+                        "at speed 1, the replay fault ends the launcher while it runs",
+                        RUNNING, ("hang",), extra=("--speed", "1")))
+    for case in checks():
+        if case.name not in {"check-forever", "check-forever-no-logger"}:
+            continue
+        at = case.argv.index("--")
+        disabled = [case.argv[i + 1] for i, arg in enumerate(case.argv[:-1]) if arg == "--disable"]
+        request = {"speed": 1, "start_paused": True}
+        if disabled:
+            request["disable"] = disabled
+        out.append(Case(case.name + "-speed1-paused",
+                        [*case.argv[:at], "--speed", "1", "--start-paused", *case.argv[at:]],
+                        case.about + ", at speed 1 and started paused", request=request))
+    return out
+
+
+def paused_api_checks() -> list[Case]:
+    """Check's paused intent is part of the request, even without a scenario."""
+    out = []
+    for case in checks():
+        if case.name not in {"check-simulation", "check-forever", "check-forever-no-logger"}:
+            continue
+        at = case.argv.index("--")
+        disabled = [case.argv[i + 1] for i, arg in enumerate(case.argv[:-1]) if arg == "--disable"]
+        request = {"start_paused": True}
+        if disabled:
+            request["disable"] = disabled
+        out.append(Case(case.name + "-paused", [*case.argv[:at], "--start-paused", *case.argv[at:]],
+                        case.about + ", with a paused start", request=request))
+    out.extend([
+        Case("check-simulation-step10-stop25", ["check", "--json", "--stop-at-ms", "25", "--", "simulation-step10.yaml"],
+             "the stop time is not a multiple of the simulation step"),
+        Case("check-simulation-paused-finite", ["check", "--json", "--stop-at-ms", "1000", "--start-paused", "--", "simulation.yaml"],
+             "a finite simulation checked with a paused start", request={"stop_at_ms": 1000, "start_paused": True}),
+        Case("check-simulation-no-dashboard-finite", ["check", "--json", "--disable", "Dashboard", "--stop-at-ms", "1000", "--", "simulation.yaml"],
+             "a finite simulation checked without Dashboard"),
+        Case("check-connect-unused-finite", ["check", "--json", "--stop-at-ms", "1000", "--connect", "CAN1=physical:1", "--", "connect.yaml"],
+             "a finite check with an unused connection", request={"stop_at_ms": 1000, "connect": {"CAN1": "physical:1"}}),
+        Case("check-forever-scenario-slow", ["check", "--json", "--scenario", "scenarios/throttle.yaml", "--speed", "0.001", "--", "forever.yaml"],
+             "a slow scenario checked before a control run"),
+        Case("check-forever-disable-both-max", ["check", "--json", "--disable", "Dashboard", "--disable", "Logger", "--speed", "max", "--", "forever.yaml"],
+             "a maximum-speed check with Engine alone"),
+        Case("check-forever-no-logger-max-paused",
+             ["check", "--json", "--disable", "Logger", "--speed", "max", "--start-paused", "--", "forever.yaml"],
+             "a paused run without Logger, checked at maximum speed",
+             request={"disable": ["Logger"], "speed": "max", "start_paused": True}),
+        Case("check-forever-scenario-no-logger-slow",
+             ["check", "--json", "--scenario", "scenarios/throttle.yaml", "--disable", "Logger",
+              "--speed", "0.001", "--", "forever.yaml"],
+             "a slow scenario without Logger"),
+    ])
+    return out
+
+
+CASES: list[Case] = [Case("version", ["version", "--json"], "version --json"), *checks(), *runs(), *connects(),
+                     *gui_timing_cases(), *gui_speed_checks(), *finite_api_cases(), *gui_finite_cases(), *gui_speed_runs(),
+                     *paused_api_checks()]
 
 
 if __name__ == "__main__":

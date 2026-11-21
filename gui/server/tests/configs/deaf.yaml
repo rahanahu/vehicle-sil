@@ -1,7 +1,7 @@
 # A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it
 # (recordings/, made by record_launcher.py: record again after changing this file).
 # replay-fault: deaf
-vehicle_sil_simulation: 1
+vehicle_sil_simulation: 2
 # no stop_at_ms; it never reads its standard input, so only a signal stops it
 networks:
   - name: J1939_CAN

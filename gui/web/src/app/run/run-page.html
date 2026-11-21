@@ -210,6 +210,28 @@
             [(speed)]="speed"
             [(invalid)]="speedInvalid"
           />
+          <mat-form-field subscriptSizing="dynamic">
+            <mat-label i18n>停止時刻（仮想時間 ms、任意）</mat-label>
+            <input
+              matInput
+              type="text"
+              inputmode="numeric"
+              data-testid="stop-at-ms"
+              [value]="stopAt()"
+              [disabled]="running() || !run.ready()"
+              [attr.aria-invalid]="stopAtTouched() && stopAtInvalid()"
+              [aria-describedby]="stopAtTouched() && stopAtInvalid() ? 'stop-at-error' : ''"
+              #stopAtInput
+              (input)="stopAtEdited.set(true); stopAt.set(stopAtInput.value)"
+              (blur)="stopAtTouched.set(true)"
+            />
+            <mat-hint i18n>空欄なら自動停止しません。1〜1000000000000 ms。</mat-hint>
+          </mat-form-field>
+          @if (stopAtTouched() && stopAtInvalid()) {
+            <p id="stop-at-error" class="error" role="status" i18n>
+              停止時刻は 1 から 1000000000000 までの整数にしてください。
+            </p>
+          }
           <mat-checkbox
             class="start-paused"
             data-testid="start-paused"

@@ -285,7 +285,7 @@
 
 合わせて直すコードとファイル:
 
-- `examples/ecu_main/simulation.live.yaml`（`stop_at_ms` なし、`speed: 1`。GUI で操作するための設定ファイル）: `simulation.yaml` と participant、ネットワークが同じであることを、`launch_run.live` が確認します。
+- `examples/ecu_main/simulation.live.yaml`（GUI で操作するための設定ファイル。速度と停止時刻は実行時に選択）: `simulation.yaml` と participant、ネットワークが同じであることを、`launch_run.live` が確認します。
 - テンプレートの同じファイルは、`template.check_and_run` が確認します。
 - ビルドのディレクトリの `simulation.live.dashboard.yaml` は、CMake が `simulation.dashboard.yaml` をコピーしたものです。
 - GUI のテストが再生する、ランチャーの出力の記録（`gui/server/tests/recordings/`）: `gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch>` で記録し直します。

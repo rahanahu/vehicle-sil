@@ -1,12 +1,12 @@
 # A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it
 # (recordings/, made by record_launcher.py: record again after changing this file).
 # replay-fault: control-trouble
-vehicle_sil_simulation: 1
+vehicle_sil_simulation: 2
 # The fault control-trouble: Engine offers its variables and does not say hello (no_hello), Dashboard says hello
 # in another version of the messages (version_mismatch), Gauge does not offer them (not_offered), Logger has none.
 # Gauge is a process that does not describe itself (two of the example's ECUs cannot run here at once); the fault
 # gives it the state not_offered
-stop_at_ms: 1000
+
 networks:
   - name: J1939_CAN
     kind: can

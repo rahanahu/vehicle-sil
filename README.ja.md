@@ -40,8 +40,7 @@ ECU は 1 つずつ別の実行ファイルです。何人かが別々に作っ�
 例は 2 つの ECU です。エンジンの ECU は、スロットルの値に合わせて回転数を変え、J1939 で送ります。表示の ECU は、それを受信して表示します。次の設定ファイルで、2 つを 1 つのシミュレーションにまとめます（[examples/ecu_main/simulation.yaml](examples/ecu_main/simulation.yaml)。コメントは省いています）。`participants` の 1 項目が、1 つの ECU の実行ファイルに対応します。
 
 ```yaml
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
 networks:
   - name: J1939_CAN
     kind: can
@@ -59,7 +58,7 @@ participants:
 | コマンド | 動作 | 起動するもの |
 |---|---|---|
 | `vehicle_sil_launch check simulation.yaml` | 各 ECU に自身の構成を出力させて、設定ファイルと照合します。 | 各 ECU を `--describe` で起動するだけで、シミュレーションは実行しません。 |
-| `vehicle_sil_launch run simulation.yaml` | シミュレーションを `stop_at_ms` まで実行します。 | SIL Kit の registry とすべての ECU を起動し、終わったら終了させます。 |
+| `vehicle_sil_launch run simulation.yaml --stop-at-ms 1000` | シミュレーションを `stop_at_ms` まで実行します。 | SIL Kit の registry とすべての ECU を起動し、終わったら終了させます。 |
 | `vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml` | シナリオの手順どおりに値を設定して確認します。 | 同じものを起動し、すべての手順が成功すれば終了コード 0 で終わります。 |
 | `vehicle-sil-gui simulation.live.yaml` | 同じ 2 つの ECU を、時間の制限のない設定ファイル（`simulation.yaml` の隣にあります）で、停止するまで実行し、ブラウザで値を見て操作します。 | GUI サーバーを起動し、画面の「開始」でシミュレーションを起動します。「クイックスタート」の `scripts/run-gui.py` は、このコマンドを代わりに実行します（このリポジトリのクローンでだけです。ビルド済みのツールのアーカイブに、このスクリプトはありません）。 |
 

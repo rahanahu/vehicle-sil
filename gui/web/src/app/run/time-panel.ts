@@ -151,7 +151,6 @@ export const DEFAULT_STEP_MS = 100;
 
     <div class="row">
       <app-speed-picker
-        [withFile]="false"
         [label]="speedLabelText"
         [min]="controls().speed.min"
         [max]="controls().speed.max"

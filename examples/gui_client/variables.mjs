@@ -157,6 +157,7 @@ async function main() {
   // Start paused: a launcher with a Control Server waits before the first step
   const started = await client.run.start({
     file,
+    stop_at_ms: 1000,
     disable: [],
     start_paused: true,
   });
@@ -251,7 +252,7 @@ async function main() {
     client.session.session,
     (s) => s?.id === started?.id && !s.launcher.running,
   );
-  // Without an end (stop_at_ms) in the configuration file, we never get here: the timeout stops it
+  // Without stop_at_ms in the run request, we never get here: the timeout stops it
   expect(
     ended.result?.result === "passed",
     `the run ${ended.result?.result ?? "ended without a result"}`,

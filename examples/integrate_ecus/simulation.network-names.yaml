@@ -1,8 +1,8 @@
 # yaml-language-server: $schema=../../schema/simulation.schema.json
 # simulation.yaml with the dashboard ECU as first handed over, its name for the bus mapped onto the
 # agreed one: for an ECU that cannot be built again (the guide docs/howto/integrate-ecus.md).
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
+
 networks:
   - name: J1939_CAN
     kind: can

@@ -179,9 +179,9 @@ struct RunLent
 /// findings. Must be called from the thread that lives longest (the main thread): on Linux, the
 /// participants end when it ends (process::Process).
 ///
-/// Of `request` the run reads what the check reads, and of the rest: RunIntent::speed (replaces
-/// the configuration's speed; the inner empty: "max"; with the time lock the run goes at speed 1
-/// whatever it says, planned_speed(), and its check refuses another speed), RunIntent::start_paused
+/// Of `request` the run reads what the check reads, and of the rest: RunIntent::speed (the inner
+/// empty: "max"; with the time lock the run goes at speed 1 and its check refuses another speed
+/// unless it is a default), RunIntent::start_paused
 /// (the simulation stands still at 0 until a resume or step command; with the time lock the check
 /// refuses it), RunHost::log_dir (created if needed), RunHost::timeline (with a scenario: the
 /// timeline file of the run, timeline.hpp; its directory is created if needed; the file is opened

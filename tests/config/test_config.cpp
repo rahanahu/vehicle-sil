@@ -26,9 +26,9 @@ using vehicle_sil::config::test::lines;
 namespace {
 
 constexpr const char* kExample = R"(# two ECUs
-vehicle_sil_simulation: 1
-stop_at_ms: 5000
-start_timeout_ms: 20000
+vehicle_sil_simulation: 2
+time_step_ms: 5
+
 networks:
   - name: J1939_CAN
     kind: can
@@ -53,7 +53,7 @@ std::string read(const std::string& text)
 /// A minimal correct file with `participants` as its participants list.
 std::string with_participants(const std::string& participants)
 {
-    return "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n" + participants;
+    return "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n" + participants;
 }
 
 } // namespace
@@ -64,8 +64,7 @@ TEST_CASE(reads_a_correct_file)
     check_text(lines(read.findings), "");
     CHECK(read.config.has_value());
     const SimulationConfig& c = *read.config;
-    CHECK(c.stop_at_ms == 5000);
-    CHECK_EQ(c.start_timeout_ms, 20000);
+    CHECK(c.time_step_ms == 5);
     CHECK_EQ(c.networks.size(), std::size_t{2});
     CHECK(c.networks[0].name == "J1939_CAN" && c.networks[0].kind == NetworkKind::Can && c.networks[0].line == 6);
     CHECK(c.networks[1].name == "Body_LIN" && c.networks[1].kind == NetworkKind::Lin && c.networks[1].line == 8);
@@ -85,8 +84,7 @@ TEST_CASE(defaults_of_the_optional_keys)
 {
     const ConfigRead read = read_config(with_participants("  - name: A\n    command: a\n"));
     check_text(lines(read.findings), "");
-    CHECK(!read.config->stop_at_ms);
-    CHECK_EQ(read.config->start_timeout_ms, 30000);
+    CHECK(!read.config->time_step_ms);
     // A command written as one text is the executable alone (not split at spaces).
     CHECK(read.config->participants[0].command == std::vector<std::string>{"a"});
     CHECK(read_config(with_participants("  - name: A\n    command: dir with spaces/a b\n"))
@@ -97,9 +95,9 @@ TEST_CASE(defaults_of_the_optional_keys)
 TEST_CASE(reads_the_same_file_as_json)
 {
     const std::string json = R"({
-  "vehicle_sil_simulation": 1,
-  "stop_at_ms": 5000,
-  "start_timeout_ms": 20000,
+  "vehicle_sil_simulation": 2,
+  "time_step_ms": 5,
+
   "networks": [{"name": "J1939_CAN", "kind": "can"}, {"name": "Body_LIN", "kind": "lin"}],
   "participants": [
     {"name": "Engine", "command": ["engine/engine_ecu"], "step_ms": 10},
@@ -111,7 +109,7 @@ TEST_CASE(reads_the_same_file_as_json)
     const ConfigRead fromYaml = read_config(kExample);
     check_text(lines(fromJson.findings), "");
     CHECK(fromJson.config.has_value());
-    CHECK(fromJson.config->stop_at_ms == fromYaml.config->stop_at_ms);
+    CHECK(fromJson.config->time_step_ms == fromYaml.config->time_step_ms);
     CHECK_EQ(fromJson.config->networks.size(), std::size_t{2});
     CHECK(fromJson.config->networks[1].name == "Body_LIN" && fromJson.config->networks[1].kind == NetworkKind::Lin);
     CHECK(fromJson.config->participants[1].command == fromYaml.config->participants[1].command);
@@ -119,7 +117,7 @@ TEST_CASE(reads_the_same_file_as_json)
     // Lines in JSON too.
     CHECK_EQ(fromJson.config->participants[0].line, std::size_t{7});
     // A JSON error has its line.
-    check_text(lines(read_config(R"({"vehicle_sil_simulation": 1, "networks": [], "participants": [
+    check_text(lines(read_config(R"({"vehicle_sil_simulation": 2, "networks": [], "participants": [
   {"name": "A", "command": "a", "step_ms": "10"}]})")
                          .findings),
                "E 2 value: participant 'A': step_ms must be a whole number (the step the executable reports), not the text "
@@ -135,23 +133,21 @@ TEST_CASE(a_byte_order_mark_is_skipped)
 
 TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
 {
-    check_text(read(std::string(kExample) + "stop_at: 3\nextra: 1\n"),
-               "E 18 unknown-key: unknown key 'stop_at': did you mean 'stop_at_ms'? (the keys here: "
-               "vehicle_sil_simulation, stop_at_ms, start_timeout_ms, stop_timeout_ms, registry_uri, time_step_ms, speed, "
-               "late_tolerance_ms, networks, participants, variants, params)\n"
-               "E 19 unknown-key: unknown key 'extra': remove it, or use one of the keys here (vehicle_sil_simulation, "
-               "stop_at_ms, start_timeout_ms, stop_timeout_ms, registry_uri, time_step_ms, speed, late_tolerance_ms, "
-               "networks, participants, variants, params)\n");
+    check_text(read(std::string(kExample) + "time_step: 3\nextra: 1\n"),
+               "E 18 unknown-key: unknown key 'time_step': did you mean 'time_step_ms'? (the keys here: "
+               "vehicle_sil_simulation, registry_uri, time_step_ms, networks, participants, variants, params)\n"
+               "E 19 unknown-key: unknown key 'extra': remove it, or use one of the keys here ("
+               "vehicle_sil_simulation, registry_uri, time_step_ms, networks, participants, variants, params)\n");
     check_text(read(with_participants("  - name: A\n    command: a\n    requird: false\n    Step_ms: 5\n")),
                "E 6 unknown-key: participant 'A': unknown key 'requird': did you mean 'required'? (the keys here: name, "
                "command, step_ms, describe, required, enabled, manual, role, variables, network_names, j1939_nodes)\n"
                "E 7 unknown-key: participant 'A': unknown key 'Step_ms': did you mean 'step_ms'? (the keys here: name, "
                "command, step_ms, describe, required, enabled, manual, role, variables, network_names, j1939_nodes)\n");
-    check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n    bitrate: 250000\n"
+    check_text(read("vehicle_sil_simulation: 2\nnetworks:\n  - name: N\n    kind: can\n    bitrate: 250000\n"
                     "participants:\n  - name: A\n    command: a\n"),
                "E 5 unknown-key: network 'N': unknown key 'bitrate': move it into external (external: { bitrate: ... }), "
                "which says how the network behaves when it is connected outside (the keys here: name, kind, external)\n");
-    check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n    connect: eth0\n    nam: x\n"
+    check_text(read("vehicle_sil_simulation: 2\nnetworks:\n  - name: N\n    kind: can\n    connect: eth0\n    nam: x\n"
                     "participants:\n  - name: A\n    command: a\n"),
                "E 5 unknown-key: network 'N': unknown key 'connect': where a network is connected is not written in the "
                "file, since it differs from PC to PC: remove connect, and give it when you start: vehicle_sil_launch check|run "
@@ -160,53 +156,18 @@ TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
                "external)\n");
 }
 
-TEST_CASE(the_speed_the_step_of_the_controller_and_the_tolerance)
+TEST_CASE(the_configuration_owns_only_the_controller_step)
 {
     const auto config = [](const std::string& keys) {
-        return read_config("vehicle_sil_simulation: 1\n" + keys + "networks: []\nparticipants:\n  - name: A\n    command: a\n");
+        return read_config("vehicle_sil_simulation: 2\n" + keys + "networks: []\nparticipants:\n  - name: A\n    command: a\n");
     };
-    // Not written: as fast as possible, steps of 10 ms, a tolerance of one step.
-    ConfigRead r = config("");
-    CHECK(!r.config->speed && !r.config->time_step_ms && !r.config->late_tolerance_ms);
-    CHECK_EQ(time_step_ms(*r.config), 10);
-    CHECK_EQ(late_tolerance_ms(*r.config), 10);
-    r = config("speed: 0.5\ntime_step_ms: 20\nlate_tolerance_ms: 50\nstop_at_ms: 1000\n");
-    check_text(lines(r.findings), "");
-    CHECK(r.config->speed == 0.5);
-    CHECK_EQ(time_step_ms(*r.config), 20);
-    CHECK_EQ(late_tolerance_ms(*r.config), 50);
-    CHECK(!config("speed: max\n").config->speed);
-    CHECK(!config("speed: \"max\"\n").config->speed);
-    CHECK(config("speed: 1e3\n").config->speed == 1000.0);
-    CHECK(config("speed: 2\n").config->speed == 2.0);
-    // Without time_step_ms, the step divides stop_at_ms: the simulation stops at stop_at_ms itself.
-    CHECK_EQ(time_step_ms(*config("stop_at_ms: 1005\n").config), 5);
-    CHECK_EQ(time_step_ms(*config("stop_at_ms: 1001\n").config), 1);
-    CHECK_EQ(time_step_ms(*config("stop_at_ms: 3000\n").config), 10);
-    // The tolerance does not follow the step: wall-clock time, 10 ms unless written.
-    CHECK_EQ(late_tolerance_ms(*config("stop_at_ms: 1005\n").config), 10);
-    CHECK_EQ(late_tolerance_ms(*config("stop_at_ms: 1001\ntime_step_ms: 1\n").config), 10);
-    CHECK_EQ(late_tolerance_ms(*config("time_step_ms: 50\n").config), 10);
-    // Written, it must divide stop_at_ms.
-    check_text(lines(config("stop_at_ms: 1005\ntime_step_ms: 10\n").findings),
-               "E 3 value: stop_at_ms (1005) is not a multiple of time_step_ms (10): the launcher's controller can stop the "
-               "simulation only at one of its steps; make stop_at_ms a multiple of time_step_ms, or leave time_step_ms out\n");
-    const std::string speed =
-        "speed must be simulation seconds per wall-clock second from 0.000001 to 1000000 (1: real time, 2: twice as fast, "
-        "0.5: half as fast), or max (as fast as possible), not ";
-    check_text(lines(config("speed: 0\ntime_step_ms: 0\nlate_tolerance_ms: x\n").findings),
-               "E 2 value: " + speed + "'0'\n"
-               "E 3 value: time_step_ms is 0, but it must be from 1 to 1000000000000 (milliseconds of virtual time between two "
-               "steps of the launcher's controller)\n"
-               "E 4 value: late_tolerance_ms must be a whole number (wall-clock milliseconds a step may begin late before it "
-               "counts as late), not 'x'\n");
-    for (const std::string bad : {"-1", "fast", "inf", "nan", "2000000", ".5", "1/2", "Max", "0.0000001"})
+    CHECK(!config("").config->time_step_ms);
+    CHECK(config("time_step_ms: 5\n").config->time_step_ms == 5);
+    CHECK(config("time_step_ms: 0\n").findings.front().code == "value");
+    for (const std::string key : {"speed", "late_tolerance_ms", "stop_at_ms", "start_timeout_ms", "stop_timeout_ms"})
     {
-        check_text(lines(config("speed: " + bad + "\n").findings), "E 2 value: " + speed + "'" + bad + "'\n");
+        CHECK(config(key + ": 10\n").findings.front().code == "unknown-key");
     }
-    check_text(lines(config("speed: \"2\"\n").findings), "E 2 value: " + speed + "the text \"2\": write the number without quotes\n");
-    check_text(lines(config("speed: [1]\n").findings), "E 2 value: " + speed + "a list\n");
-    // The text for people and the JSON.
     check_text(speed_text(std::nullopt), "max");
     check_text(speed_text(0.25), "0.25");
     check_text(speed_text(1.0), "1");
@@ -222,21 +183,21 @@ TEST_CASE(a_key_twice_is_an_error)
 {
     check_text(read(with_participants("  - name: A\n    command: a\n    command: b\n")),
                "E 6 duplicate-key: participant 'A': 'command' appears twice (first at line 5); keep one of them\n");
-    check_text(read("vehicle_sil_simulation: 1\nstop_at_ms: 1\nstop_at_ms: 2\nnetworks: []\nparticipants:\n  - name: A\n    "
+    check_text(read("vehicle_sil_simulation: 2\ntime_step_ms: 1\ntime_step_ms: 2\nnetworks: []\nparticipants:\n  - name: A\n    "
                     "command: a\n"),
-               "E 3 duplicate-key: 'stop_at_ms' appears twice (first at line 2); keep one of them\n");
+               "E 3 duplicate-key: 'time_step_ms' appears twice (first at line 2); keep one of them\n");
 }
 
 TEST_CASE(missing_keys_are_errors)
 {
-    check_text(read("stop_at_ms: 1\n"),
+    check_text(read("time_step_ms: 1\n"),
                "E 0 missing-key: the file has no vehicle_sil_simulation (the format version): add "
-               "vehicle_sil_simulation: 1\n"
+               "vehicle_sil_simulation: 2\n"
                "E 0 missing-key: the file has no networks: add networks, a list of the networks with name and kind (can, "
                "lin or ethernet)\n"
                "E 0 missing-key: the file has no participants: add participants, a list of the participants with name "
                "and command\n");
-    check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - kind: can\n  - name: N\nparticipants:\n  - command: [a]\n  - "
+    check_text(read("vehicle_sil_simulation: 2\nnetworks:\n  - kind: can\n  - name: N\nparticipants:\n  - command: [a]\n  - "
                     "name: B\n"),
                "E 3 missing-key: networks[0] has no name: add name: <the network's name>\n"
                "E 4 missing-key: network 'N': no kind: add kind: can, kind: lin or kind: ethernet\n"
@@ -247,10 +208,9 @@ TEST_CASE(missing_keys_are_errors)
 
 TEST_CASE(values_of_the_wrong_type_or_range_are_errors)
 {
-    check_text(read("vehicle_sil_simulation: 1\nstop_at_ms: 0\nstart_timeout_ms: 1.5\nnetworks: {}\nparticipants: x\n"),
-               "E 2 value: stop_at_ms is 0, but it must be from 1 to 1000000000000 (milliseconds of virtual time; leave "
-               "stop_at_ms out to run until stopped)\n"
-               "E 3 value: start_timeout_ms must be a whole number (milliseconds to wait for the participants), not '1.5'\n"
+    check_text(read("vehicle_sil_simulation: 2\ntime_step_ms: 0\n# blank\nnetworks: {}\nparticipants: x\n"),
+               "E 2 value: time_step_ms is 0, but it must be from 1 to 1000000000000 (milliseconds of virtual time between two "
+               "steps of the launcher's controller)\n"
                "E 4 value: networks must be a list of networks (\"- name: <name>\" and \"kind: can\", \"kind: lin\" or \"kind: ethernet\"), "
                "not a mapping\n"
                "E 5 value: participants must be a list of participants (\"- name: <name>\" and \"command: "
@@ -260,7 +220,7 @@ TEST_CASE(values_of_the_wrong_type_or_range_are_errors)
                "executable reports)\n"
                "E 7 value: participant 'A': describe must be true or false, not 'yes'\n"
                "E 8 value: participant 'A': required must be true or false, not empty\n");
-    check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: A\n    kind: CAN\n  - name: B\n    kind: flexray\n  - "
+    check_text(read("vehicle_sil_simulation: 2\nnetworks:\n  - name: A\n    kind: CAN\n  - name: B\n    kind: flexray\n  - "
                     "name: [x]\n    kind: can\n  - just text\nparticipants: []\n"),
                "E 4 value: network 'A': kind is 'CAN': write can (lower case)\n"
                "E 6 value: network 'B': kind is 'flexray': write can, lin or ethernet (the kinds of network there are)\n"
@@ -274,7 +234,7 @@ TEST_CASE(every_kind_of_network_is_read_by_its_name)
     // kNetworkKinds: also a kind added later is read without a change here.
     for (const NetworkKind kind : kNetworkKinds)
     {
-        const ConfigRead read = read_config(std::string("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: ") +
+        const ConfigRead read = read_config(std::string("vehicle_sil_simulation: 2\nnetworks:\n  - name: N\n    kind: ") +
                                             to_string(kind) + "\nparticipants:\n  - name: A\n    command: a\n");
         CHECK(read.findings.empty());
         CHECK(read.config && read.config->networks.size() == 1 && read.config->networks[0].valid &&
@@ -294,7 +254,7 @@ TEST_CASE(a_bad_describe_value_stops_the_participant_from_being_checked)
 TEST_CASE(a_network_without_a_valid_kind_stays_listed_but_invalid)
 {
     const ConfigRead read =
-        read_config("vehicle_sil_simulation: 1\nnetworks:\n  - name: A\n    kind: x\nparticipants:\n  - name: P\n    command: p\n");
+        read_config("vehicle_sil_simulation: 2\nnetworks:\n  - name: A\n    kind: x\nparticipants:\n  - name: P\n    command: p\n");
     CHECK_EQ(read.config->networks.size(), std::size_t{1});
     CHECK(read.config->networks[0].name == "A" && !read.config->networks[0].valid);
 }
@@ -302,7 +262,7 @@ TEST_CASE(a_network_without_a_valid_kind_stays_listed_but_invalid)
 /// A file with `networks` as its networks list and one participant.
 std::string with_network_list(const std::string& networks)
 {
-    return "vehicle_sil_simulation: 1\nnetworks:\n" + networks + "participants:\n  - name: P\n    command: p\n";
+    return "vehicle_sil_simulation: 2\nnetworks:\n" + networks + "participants:\n  - name: P\n    command: p\n";
 }
 
 TEST_CASE(external_of_a_network_is_read_for_its_kind_also_before_the_kind)
@@ -347,7 +307,7 @@ TEST_CASE(external_of_a_network_is_read_for_its_kind_also_before_the_kind)
     CHECK(!networks[5].external);
 
     // In JSON, an EtherType in hexadecimal is a text.
-    const ConfigRead json = read_config(R"({"vehicle_sil_simulation": 1, "networks": [
+    const ConfigRead json = read_config(R"({"vehicle_sil_simulation": 2, "networks": [
   {"name": "ETH1", "kind": "ethernet", "external": {"ethertypes": ["0x88b5", 34997]}}],
   "participants": [{"name": "P", "command": "p"}]})");
     CHECK(lines(json.findings) == "E 2 value: network 'ETH1': external.ethertypes lists 0x88b5 twice: keep one\n");
@@ -433,7 +393,7 @@ TEST_CASE(the_values_of_external_are_checked)
 
 TEST_CASE(names_twice_and_reserved_names_are_errors)
 {
-    check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n  - name: N\n    kind: lin\n"
+    check_text(read("vehicle_sil_simulation: 2\nnetworks:\n  - name: N\n    kind: can\n  - name: N\n    kind: lin\n"
                     "participants:\n  - name: A\n    command: a\n  - name: A\n    command: b\n  - name: SimulationController\n"
                     "    command: c\n  - name: --x\n    command: d\n  - name: \"\"\n    command: e\n"),
                "E 5 duplicate-name: network 'N' is listed twice (first at line 3); remove one, or give it another name\n"
@@ -531,7 +491,7 @@ TEST_CASE(step_ms_of_a_participant_that_is_not_described_is_noted)
 
 TEST_CASE(names_are_text_on_one_line)
 {
-    check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: \"N\\tX\"\n    kind: can\nparticipants:\n"
+    check_text(read("vehicle_sil_simulation: 2\nnetworks:\n  - name: \"N\\tX\"\n    kind: can\nparticipants:\n"
                     "  - name: \"A\\nB\"\n    command: a\n  - name: \"C\\x01\"\n    command: c\n"),
                "E 3 value: networks[0]: the network's name must be text on one line (it has the control character "
                "U+0009): write the name without it\n"
@@ -543,7 +503,7 @@ TEST_CASE(names_are_text_on_one_line)
 
 TEST_CASE(anchors_aliases_and_more_documents_are_refused)
 {
-    const ConfigRead aliased = read_config("vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    const ConfigRead aliased = read_config("vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                            "  - name: &n Engine\n    command: [a]\n  - name: *n\n    command: [b]\n");
     CHECK(!aliased.config.has_value());
     check_text(lines(aliased.findings),
@@ -551,7 +511,7 @@ TEST_CASE(anchors_aliases_and_more_documents_are_refused)
                "starts with * or & must be in quotes)\n"
                "E 6 unsupported-yaml: anchors and aliases (&name, *name, <<) are not read: write the values out (a value that "
                "starts with * or & must be in quotes)\n");
-    const ConfigRead merged = read_config("vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    const ConfigRead merged = read_config("vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                           "  - name: A\n    <<: {command: [a]}\n");
     CHECK(!merged.config.has_value());
     // A "---" at the end is no second document.
@@ -584,8 +544,8 @@ TEST_CASE(numbers_too_large_are_out_of_range)
 
 TEST_CASE(many_errors_are_reported_at_once_in_the_order_of_the_file)
 {
-    const std::string text = "vehicle_sil_simulation: 1\n"  // 1
-                             "stop_at_ms: never\n"          // 2
+    const std::string text = "vehicle_sil_simulation: 2\n"  // 1
+                             "time_step_ms: never\n"          // 2
                              "networks:\n"                  // 3
                              "  - name: N\n"                // 4
                              "    kind: CAN\n"              // 5
@@ -596,8 +556,8 @@ TEST_CASE(many_errors_are_reported_at_once_in_the_order_of_the_file)
                              "  - name: A\n"                // 10
                              "    commands: [b]\n";         // 11
     check_text(read(text),
-               "E 2 value: stop_at_ms must be a whole number (milliseconds of virtual time; leave stop_at_ms out to run "
-               "until stopped), not 'never'\n"
+               "E 2 value: time_step_ms must be a whole number (milliseconds of virtual time between two steps of the "
+               "launcher's controller), not 'never'\n"
                "E 5 value: network 'N': kind is 'CAN': write can (lower case)\n"
                "E 9 value: participant 'A': step_ms is 0, but it must be from 1 to 1000000000000 (the step the executable "
                "reports)\n"
@@ -618,16 +578,16 @@ TEST_CASE(files_that_cannot_be_read)
         CHECK(!r.config.has_value());
         return lines(r.findings);
     };
-    check_text(unreadable("  \n\n"), "E 0 not-a-configuration: the file is empty: write vehicle_sil_simulation: 1, networks "
+    check_text(unreadable("  \n\n"), "E 0 not-a-configuration: the file is empty: write vehicle_sil_simulation: 2, networks "
                                      "and participants (docs/simulation-config.md)\n");
     check_text(unreadable("- a\n- b\n"),
                "E 1 not-a-configuration: the file is not a configuration: it must be a mapping with "
-               "vehicle_sil_simulation: 1, networks and participants (docs/simulation-config.md)\n");
+               "vehicle_sil_simulation: 2, networks and participants (docs/simulation-config.md)\n");
     // An unknown version: nothing else is reported (the keys may mean something else there).
-    check_text(unreadable("unknown: 1\nvehicle_sil_simulation: 2\nnetworks: x\n"),
-               "E 2 format-version: vehicle_sil_simulation is 2, but this vehicle_sil_launch reads format 1 only: use the "
+    check_text(unreadable("unknown: 1\nvehicle_sil_simulation: 1\nnetworks: x\n"),
+               "E 2 format-version: vehicle_sil_simulation is 1, but this vehicle_sil_launch reads format 2 only: use the "
                "vehicle-sil that the file was written for\n");
-    const ConfigRead syntax = read_config("vehicle_sil_simulation: 1\nnetworks: [a\nparticipants: []\n");
+    const ConfigRead syntax = read_config("vehicle_sil_simulation: 2\nnetworks: [a\nparticipants: []\n");
     CHECK(!syntax.config.has_value());
     CHECK_EQ(syntax.findings.size(), std::size_t{1});
     CHECK(syntax.findings[0].code == "syntax" && syntax.findings[0].line >= 2);
@@ -641,8 +601,8 @@ TEST_CASE(files_that_cannot_be_read)
     // A version that is not a number is an error, but the file is read.
     const ConfigRead quoted = read_config("vehicle_sil_simulation: \"1\"\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n");
     CHECK(quoted.config.has_value());
-    check_text(lines(quoted.findings), "E 1 format-version: vehicle_sil_simulation must be the format version 1, not the "
-                                       "text \"1\": write vehicle_sil_simulation: 1\n");
+    check_text(lines(quoted.findings), "E 1 format-version: vehicle_sil_simulation must be the format version 2, not the "
+                                       "text \"1\": write vehicle_sil_simulation: 2\n");
 }
 
 TEST_CASE(expands_the_placeholders_in_any_argument)
@@ -677,7 +637,7 @@ TEST_CASE(expands_escaped_braces)
 
 TEST_CASE(reads_where_the_registry_listens_and_how_long_to_wait_for_the_end)
 {
-    const ConfigRead read = read_config("vehicle_sil_simulation: 1\nstop_timeout_ms: 2500\nregistry_uri: silkit://0.0.0.0:8500\n"
+    const ConfigRead read = read_config("vehicle_sil_simulation: 2\n\nregistry_uri: silkit://0.0.0.0:8500\n"
                                         "networks: []\nparticipants:\n  - name: A\n    command: a\n");
     // Not a loopback address: a note.
     check_text(lines(read.findings),
@@ -687,20 +647,18 @@ TEST_CASE(reads_where_the_registry_listens_and_how_long_to_wait_for_the_end)
                "the command of a participant you start yourself: set it for every participant on this computer that connects "
                "to the registry at a loopback address; to keep the simulation on this computer, use 127.0.0.1 or leave "
                "registry_uri out\n");
-    CHECK_EQ(read.config->stop_timeout_ms, 2500);
     CHECK(read.config->registry_uri == "silkit://0.0.0.0:8500");
     for (const char* uri : {"silkit://127.0.0.1:8500", "'silkit://[::1]:8500'", "silkit://localhost:8500"})
     {
-        check_text(lines(read_config(std::string("vehicle_sil_simulation: 1\nregistry_uri: ") + uri +
+        check_text(lines(read_config(std::string("vehicle_sil_simulation: 2\nregistry_uri: ") + uri +
                                      "\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n")
                              .findings),
                    "");
     }
-    // Without them: 10 s, and no URI (a free port).
+    // Without a URI, the registry uses a free port.
     const ConfigRead defaults = read_config(with_participants("  - name: A\n    command: a\n"));
-    CHECK_EQ(defaults.config->stop_timeout_ms, 10000);
     CHECK(!defaults.config->registry_uri.has_value());
-    CHECK(read_config("vehicle_sil_simulation: 1\nregistry_uri: 'silkit://[::1]:65535'\nnetworks: []\nparticipants:\n"
+    CHECK(read_config("vehicle_sil_simulation: 2\nregistry_uri: 'silkit://[::1]:65535'\nnetworks: []\nparticipants:\n"
                       "  - name: A\n    command: a\n")
               .config->registry_uri == "silkit://[::1]:65535");
 }
@@ -708,7 +666,7 @@ TEST_CASE(reads_where_the_registry_listens_and_how_long_to_wait_for_the_end)
 TEST_CASE(run_decides_the_listen_variable_of_its_participants_and_notes_one_it_inherited)
 {
     const auto config_with = [](const std::string& registry) {
-        return *read_config("vehicle_sil_simulation: 1\n" + registry + "networks: []\nparticipants:\n  - name: A\n    command: a\n")
+        return *read_config("vehicle_sil_simulation: 2\n" + registry + "networks: []\nparticipants:\n  - name: A\n    command: a\n")
                     .config;
     };
     const SimulationConfig unwritten = config_with("");
@@ -746,7 +704,7 @@ TEST_CASE(a_registry_uri_must_be_a_silkit_uri_with_a_port)
              {"'silkit://local host:8500'", "the text \"silkit://local host:8500\""},
              {"8500", "the text \"8500\""}})
     {
-        const std::string got = read("vehicle_sil_simulation: 1\nregistry_uri: " + value +
+        const std::string got = read("vehicle_sil_simulation: 2\nregistry_uri: " + value +
                                      "\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n");
         check_text(got.substr(0, std::min(got.size(), std::string("E 2 value: ").size())), "E 2 value: ", value.c_str());
         CHECK(got.find(expected) != std::string::npos);
@@ -755,12 +713,9 @@ TEST_CASE(a_registry_uri_must_be_a_silkit_uri_with_a_port)
     // Port 0: the registry takes a free port when the run starts.
     for (const std::string uri : {"silkit://127.0.0.1:0", "silkit://localhost:65535"})
     {
-        check_text(read("vehicle_sil_simulation: 1\nregistry_uri: " + uri + "\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n"),
+        check_text(read("vehicle_sil_simulation: 2\nregistry_uri: " + uri + "\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n"),
                    "", uri.c_str());
     }
-    check_text(read("vehicle_sil_simulation: 1\nstop_timeout_ms: 0\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n"),
-               "E 2 value: stop_timeout_ms is 0, but it must be from 1 to 1000000000000 (milliseconds to wait for each "
-               "participant to end)\n");
 }
 
 TEST_CASE(required_false_is_only_for_executables_that_are_not_ecu_main)
@@ -780,7 +735,7 @@ TEST_CASE(required_false_is_only_for_executables_that_are_not_ecu_main)
 
 TEST_CASE(a_simulation_needs_a_required_participant)
 {
-    check_text(read("vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    check_text(read("vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                     "  - name: A\n    command: a\n    describe: false\n    required: false\n"
                     "  - name: B\n    command: b\n    describe: false\n    required: false\n"),
                "N 5 no-registry-uri: participant 'A': the command has no {registry_uri}, so the executable is not told "
@@ -793,7 +748,7 @@ TEST_CASE(a_simulation_needs_a_required_participant)
                "required participants have joined, so it needs at least one: remove required: false from the "
                "participants it must wait for (an ecu_main executable is always required)\n");
     // One required participant is enough.
-    check_text(read("vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    check_text(read("vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                     "  - name: A\n    command: a\n"
                     "  - name: B\n    command: [b, \"{registry_uri}\"]\n    describe: false\n    required: false\n"),
                "");
@@ -924,7 +879,7 @@ TEST_CASE(the_command_line_must_name_participants_of_the_file_once)
 
 TEST_CASE(the_command_line_cannot_name_the_bridge_of_a_connected_network)
 {
-    const std::string text = "vehicle_sil_simulation: 1\nnetworks:\n  - { name: ETH, kind: ethernet }\nparticipants:\n"
+    const std::string text = "vehicle_sil_simulation: 2\nnetworks:\n  - { name: ETH, kind: ethernet }\nparticipants:\n"
                              "  - name: Engine\n    command: e\n";
     EnabledOverrides overrides;
     overrides.disable = {"bridge.ETH"};
@@ -944,7 +899,7 @@ TEST_CASE(the_command_line_cannot_name_the_bridge_of_a_connected_network)
 
 TEST_CASE(a_request_file_that_connects_the_network_names_the_file_for_its_bridge)
 {
-    const std::string text = "vehicle_sil_simulation: 1\nnetworks:\n  - { name: ETH, kind: ethernet }\nparticipants:\n"
+    const std::string text = "vehicle_sil_simulation: 2\nnetworks:\n  - { name: ETH, kind: ethernet }\nparticipants:\n"
                              "  - name: Engine\n    command: e\n";
     EnabledOverrides overrides;
     overrides.disable = {"bridge.ETH"};
@@ -1156,7 +1111,7 @@ TEST_CASE(a_mapping_that_is_not_one_of_the_forms_is_an_error_and_is_left_out)
 namespace {
 
 /// A file with two variants over a common part.
-constexpr const char* kVariants = R"(vehicle_sil_simulation: 1
+constexpr const char* kVariants = R"(vehicle_sil_simulation: 2
 networks: []
 participants:
   - name: Engine
@@ -1248,7 +1203,7 @@ TEST_CASE(a_variant_is_laid_over_the_common_part)
     // Taken in again, it is not the variant's any more; --disable is not the variant either.
     CHECK(!overridden.config->participants[1].left_out_by_variant && !overridden.config->participants[2].left_out_by_variant);
     // The rules that depend on enabled are those of the variant: here nothing required is left.
-    const std::string lonely = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n"
+    const std::string lonely = "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n"
                                "variants:\n  with: {}\n  without: { participants: { A: { enabled: false } } }\n";
     CHECK(lines(read_config(lonely, variant("with")).findings).empty());
     CHECK(lines(read_config(lonely, variant("without")).findings).find("E 3 no-required-participant: every participant is disabled") == 0);
@@ -1284,7 +1239,7 @@ TEST_CASE(a_file_with_variants_needs_one_and_says_which_there_are)
 
 TEST_CASE(every_variant_is_checked_and_only_its_keys_are_read)
 {
-    const std::string head = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: Engine\n    command: ./engine\n"
+    const std::string head = "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: Engine\n    command: ./engine\n"
                              "  - name: Tool\n    command: [./tool, \"{registry_uri}\"]\n    describe: false\n    required: false\n";
     const auto errors = [&head](const std::string& rest, const std::string& chosen = "a") {
         return lines(read_config(head + rest, variant(chosen)).findings);
@@ -1359,7 +1314,7 @@ namespace {
 /// A file with the networks VehicleCAN, BodyCAN (can) and Body (lin), and `participants`.
 std::string with_networks(const std::string& participants, const std::string& more = {})
 {
-    return "vehicle_sil_simulation: 1\n"                    // 1
+    return "vehicle_sil_simulation: 2\n"                    // 1
            "networks:\n"                                    // 2
            "  - { name: VehicleCAN, kind: can }\n"          // 3
            "  - { name: BodyCAN, kind: can }\n"             // 4
@@ -1455,7 +1410,7 @@ TEST_CASE(network_names_of_the_wrong_form_are_errors_and_the_participant_is_not_
 TEST_CASE(a_key_of_network_names_is_a_network_of_the_file_and_an_executables_network_has_one_name)
 {
     // networks may come after participants: the keys are compared when the whole file is read.
-    const std::string file = "vehicle_sil_simulation: 1\n"            // 1
+    const std::string file = "vehicle_sil_simulation: 2\n"            // 1
                              "participants:\n"                        // 2
                              "  - name: Engine\n"                     // 3
                              "    command: engine\n"                  // 4
@@ -1720,7 +1675,7 @@ TEST_CASE(a_renamed_network_has_ascii_names_where_the_arguments_come_in_the_code
     // ecu_main on Windows refuses a --map-network that is not ASCII (its arguments are not UTF-8
     // there), so the launcher of a Windows build says it before anything is started. Elsewhere the
     // names go through as they are.
-    const std::string file = "vehicle_sil_simulation: 1\nnetworks:\n  - { name: \xE8\xBB\x8A\xE4\xB8\xA1""CAN, kind: can }\n"
+    const std::string file = "vehicle_sil_simulation: 2\nnetworks:\n  - { name: \xE8\xBB\x8A\xE4\xB8\xA1""CAN, kind: can }\n"
                              "  - { name: Body, kind: can }\n"
                              "participants:\n  - name: A\n    command: a\n"
                              "    network_names: { \xE8\xBB\x8A\xE4\xB8\xA1""CAN: J1939_CAN, Body: \xE8\xBB\x8A, J1939_CAN: J1939_CAN }\n"; // 8
@@ -2097,7 +2052,7 @@ TEST_CASE(j1939_nodes_have_ascii_names_where_the_arguments_come_in_the_code_page
 {
     // ecu_main on Windows refuses a --j1939-node that is not ASCII (its arguments are not UTF-8
     // there), so the launcher of a Windows build says it before anything is started.
-    const std::string file = "vehicle_sil_simulation: 1\nnetworks:\n  - { name: \xE8\xBB\x8A\xE4\xB8\xA1""CAN, kind: can }\n"
+    const std::string file = "vehicle_sil_simulation: 2\nnetworks:\n  - { name: \xE8\xBB\x8A\xE4\xB8\xA1""CAN, kind: can }\n"
                              "participants:\n  - name: A\n    command: a\n"
                              "    j1939_nodes: [{ network: \xE8\xBB\x8A\xE4\xB8\xA1""CAN, address: 1 }]\n"; // 7
     const ConfigRead r = read_config(file);

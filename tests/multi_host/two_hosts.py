@@ -19,6 +19,7 @@ Dashboard on b killed: the launcher aborts the run at once and names it.
 """
 import argparse
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -126,8 +127,7 @@ def sh(*argv: str) -> None:
 
 
 def config(example_dir: str) -> str:
-    return ("vehicle_sil_simulation: 1\n"
-            "stop_at_ms: 1000\n"
+    return ("vehicle_sil_simulation: 2\n"
             f"registry_uri: silkit://0.0.0.0:{REGISTRY_PORT}\n"
             "networks:\n"
             "  - name: J1939_CAN\n"
@@ -165,7 +165,7 @@ def inner(args: argparse.Namespace) -> None:
     procs: list[Proc] = []
     try:
         # 1. The launcher on a tells a's address; the Dashboard on b joins there; the run passes.
-        a = Proc("a", [launch, "run", "sim.yaml", "--timeout-ms", "60000"], work)
+        a = Proc("a", [launch, "run", "sim.yaml", "--stop-at-ms", "1000", "--timeout-ms", "60000"], work)
         procs.append(a)
         a.wait_for("waiting for Dashboard to join (manual)", 60)
         told = a.wait_for("from other computers, join at ", 1)
@@ -175,13 +175,17 @@ def inner(args: argparse.Namespace) -> None:
         procs.append(b)
         if a.wait(60) != 0:
             fail("the run with the Dashboard on b passes:\n" + a.text())
-        if b.wait(30) != 0 or "t=1000 ms engine speed" not in b.text():
-            fail("the Dashboard on b got the engine speed until 1000 ms:\n" + b.text())
+        if "run: the simulation ran to stop_at_ms (1000 ms) and ended" not in a.text():
+            fail("the launcher reached the requested stop time:\n" + a.text())
+        # The step at the stop time may or may not run; 500 ms is strictly before it.
+        if b.wait(30) != 0 or not re.search(r"^t=500 ms engine speed [1-9]\d* rpm \([1-9]\d* messages\)$",
+                                             b.text(), re.MULTILINE):
+            fail("the Dashboard on b received engine speed before the stop:\n" + b.text())
         print("two_hosts: joined from b, the run passed", flush=True)
 
         # 2. The link cut while the simulation runs (slowly, at speed 0.01): after 10 s the launcher says that
         # virtual time does not advance; once the link is back, that it does again.
-        a = Proc("a", [launch, "run", "sim.yaml", "--speed", "0.01", "--stdin-commands", "--timeout-ms", "120000"], work,
+        a = Proc("a", [launch, "run", "sim.yaml", "--stop-at-ms", "1000", "--speed", "0.01", "--stdin-commands", "--timeout-ms", "120000"], work,
                  stdin=True)
         procs.append(a)
         a.wait_for("waiting for Dashboard to join (manual)", 60)
@@ -205,7 +209,7 @@ def inner(args: argparse.Namespace) -> None:
         print("two_hosts: link back, it went on, stopped", flush=True)
 
         # 3. The Dashboard on b killed while the simulation runs: the run is aborted at once.
-        a = Proc("a", [launch, "run", "sim.yaml", "--speed", "0.01", "--timeout-ms", "120000"], work)
+        a = Proc("a", [launch, "run", "sim.yaml", "--stop-at-ms", "1000", "--speed", "0.01", "--timeout-ms", "120000"], work)
         procs.append(a)
         a.wait_for("waiting for Dashboard to join (manual)", 60)
         b = Proc("b", [dashboard, "--name", "Dashboard", "--registry-uri", uri, "--start-timeout-ms", "60000"], work)

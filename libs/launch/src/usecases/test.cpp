@@ -156,8 +156,10 @@ void judge(TestRun& run, RunReport report)
         run.result = TestRunResult::Interrupted;
         run.reason = report.run && !report.run->end.interrupted_by.empty() ? "by " + report.run->end.interrupted_by : "";
         break;
-    // RunResult::Stopped and RunResult::Incomplete do not happen here (a test takes no stop
-    // command); if one did, it fails like the rest instead of passing silently.
+    case RunResult::Incomplete:
+        run.result = TestRunResult::Failed;
+        run.reason = "the scenario did not finish before the requested stop time";
+        break;
     default:
         run.result = TestRunResult::Failed;
         run.reason = failure_reason(report);
@@ -297,9 +299,10 @@ std::string shell_word(std::string_view text)
 /// does not have); none if the scenario was not read that far.
 std::string run_alone(const TestReport& report, const TestRun& run)
 {
-    // With the time lock the run goes at speed 1, and run refuses --speed max.
+    // The time lock already selects speed 1. Otherwise reproduce the checked starting speed.
     const bool locked = run.run && run.run->check.time_lock.locked;
-    std::string out = "vehicle_sil_launch run " + shell_word(report.file) + (locked ? "" : " --speed max") +
+    const std::optional<double> speed = run.run && run.run->check.run_timing ? run.run->check.run_timing->speed : std::nullopt;
+    std::string out = "vehicle_sil_launch run " + shell_word(report.file) + (locked ? "" : " --speed " + config::speed_text(speed)) +
                       (report.given.time_policy == config::TimePolicy::Free ? " --time-policy free" : "") +
                       (run.variant.empty() ? std::string{} : " --variant " + shell_word(run.variant)) + " --scenario " +
                       shell_word(run.scenario);
@@ -323,6 +326,22 @@ std::string run_alone(const TestReport& report, const TestRun& run)
         out += " --enable " + shell_word(name);
     }
     out += report.strict ? " --strict" : "";
+    if (report.given.stop_at_ms)
+    {
+        out += " --stop-at-ms " + std::to_string(*report.given.stop_at_ms);
+    }
+    if (report.given.late_tolerance_ms)
+    {
+        out += " --late-tolerance-ms " + std::to_string(*report.given.late_tolerance_ms);
+    }
+    if (report.given.participant_start_timeout_ms)
+    {
+        out += " --participant-start-timeout-ms " + std::to_string(*report.given.participant_start_timeout_ms);
+    }
+    if (report.given.participant_stop_timeout_ms)
+    {
+        out += " --participant-stop-timeout-ms " + std::to_string(*report.given.participant_stop_timeout_ms);
+    }
     if (report.given.timeout)
     {
         out += " --timeout-ms " + std::to_string(report.given.timeout->count());
@@ -526,6 +545,16 @@ TestReport test_file(const TestOptions& options)
     report.given.disable = intent.disable;
     report.given.enable = intent.enable;
     report.given.timeout = host.timeout;
+    report.given.stop_at_ms = intent.stop_at_ms;
+    report.given.late_tolerance_ms = intent.late_tolerance_ms;
+    if (host.start_timeout_ms != RunHost{}.start_timeout_ms)
+    {
+        report.given.participant_start_timeout_ms = host.start_timeout_ms;
+    }
+    if (host.stop_timeout_ms != RunHost{}.stop_timeout_ms)
+    {
+        report.given.participant_stop_timeout_ms = host.stop_timeout_ms;
+    }
     report.given.time_policy = intent.time_policy;
     if (host.describe_timeout != kDescribeTimeout)
     {
@@ -756,6 +785,14 @@ std::string format_test_json(const TestReport& report)
         }
         w.end_array();
     };
+    if (report.given.stop_at_ms)
+    {
+        w.integer("stop_at_ms", *report.given.stop_at_ms);
+    }
+    if (report.given.late_tolerance_ms)
+    {
+        w.integer("late_tolerance_ms", *report.given.late_tolerance_ms);
+    }
     names("variants", report.variants);
     names("scenarios", report.scenarios);
     for (const TestRunResult which : {TestRunResult::Passed, TestRunResult::Failed, TestRunResult::Skipped, TestRunResult::Interrupted,

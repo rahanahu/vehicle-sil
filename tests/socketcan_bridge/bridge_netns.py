@@ -509,9 +509,7 @@ def launch(world: World) -> None:
     for t in threads:
         t.start()
     with open(os.path.join(world.work, "sim.yaml"), "w", encoding="utf-8") as f:
-        f.write("vehicle_sil_simulation: 1\n"
-                "stop_at_ms: 3000\n"
-                "speed: 1\n"
+        f.write("vehicle_sil_simulation: 2\n"
                 "registry_uri: silkit://127.0.0.1:0\n"
                 "networks:\n"
                 "  - name: J1939_CAN\n"
@@ -522,7 +520,7 @@ def launch(world: World) -> None:
                 "    step_ms: 10\n")
     # The launcher finds the bridge on PATH (it is not next to vehicle_sil_launch in the build).
     env = dict(os.environ, PATH=os.path.dirname(world.bridge_path) + os.pathsep + os.environ.get("PATH", ""))
-    run = subprocess.Popen([world.args.launch, "run", "--events", "--log-dir", "logs", "--connect", "J1939_CAN=vcan0", "sim.yaml"],
+    run = subprocess.Popen([world.args.launch, "run", "--events", "--stop-at-ms", "3000", "--speed", "1", "--log-dir", "logs", "--connect", "J1939_CAN=vcan0", "sim.yaml"],
                            cwd=world.work, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            text=True, start_new_session=True)
     try:

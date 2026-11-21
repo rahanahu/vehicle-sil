@@ -303,6 +303,7 @@ export interface CheckResult extends FromLauncher {
   warnings: number;
   notes: number;
   stop_at_ms: number | null;
+  time_step_ms?: number | null;
   participants: CheckParticipant[];
   networks: CheckNetwork[];
   findings: Finding[];
@@ -321,6 +322,9 @@ export const readCheckResult = (value: unknown, path: string, u?: Unreadable): C
     warnings: field(f, path, 'warnings', lenient(integer, 0, u)),
     notes: field(f, path, 'notes', lenient(integer, 0, u)),
     stop_at_ms: field(f, path, 'stop_at_ms', soft(nullable(number), null, u)),
+    ...(f['time_step_ms'] === undefined
+      ? {}
+      : { time_step_ms: field(f, path, 'time_step_ms', soft(nullable(number), null, u)) }),
     participants: field(
       f,
       path,

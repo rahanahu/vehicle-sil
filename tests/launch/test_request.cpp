@@ -17,6 +17,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -80,6 +81,49 @@ TEST_CASE(an_empty_request_breaks_no_rule)
     {
         CHECK(messages(RunRequest{}, command).empty());
     }
+}
+
+TEST_CASE(direct_check_and_run_refuse_invalid_timing_before_reading_a_file)
+{
+    RunRequest r;
+    r.host.config = "not-a-file.yaml";
+    for (const auto value : {std::int64_t{0}, std::numeric_limits<std::int64_t>::min(), kMaxMillis + 1})
+    {
+        r.intent.stop_at_ms = value;
+        const Checked checked = check_file(r);
+        CHECK(checked.usage && !checked.config && !checked.findings.empty());
+        const RunReport run = run_file(r);
+        CHECK(run.check.usage && !run.run);
+    }
+    r.intent.stop_at_ms.reset();
+    r.intent.late_tolerance_ms = -1;
+    CHECK(check_file(r).usage);
+    r.intent.late_tolerance_ms.reset();
+    r.intent.speed = std::numeric_limits<double>::infinity();
+    CHECK(check_file(r).usage);
+    r.intent.speed.reset();
+    r.host.stop_timeout_ms = 0;
+    CHECK(check_file(r).usage);
+    r.host.stop_timeout_ms = 10000;
+    for (const auto value : {std::chrono::milliseconds{0}, std::chrono::milliseconds{-1},
+                             std::chrono::milliseconds{kMaxMillis + 1}, std::chrono::milliseconds::max()})
+    {
+        r.host.describe_timeout = kDescribeTimeout;
+        r.host.timeout = value;
+        CHECK(check_file(r).usage);
+        CHECK(run_file(r).check.usage);
+        r.host.timeout.reset();
+        r.host.describe_timeout = value;
+        CHECK(check_file(r).usage);
+    }
+    for (const auto value : {std::chrono::milliseconds{1}, std::chrono::milliseconds{kMaxMillis}})
+    {
+        r.host.timeout = value;
+        r.host.describe_timeout = value;
+        CHECK(!check_file(r).usage);
+    }
+    r.host.timeout.reset();
+    CHECK(!check_file(r).usage);
 }
 
 TEST_CASE(a_parameter_needs_a_scenario_except_in_a_test)
@@ -170,11 +214,11 @@ namespace {
 
 /// A file with two participants whose executables are missing (nothing is run) and a bridge, which
 /// sets the time lock; B is switched off.
-const char* const kSim = "vehicle_sil_simulation: 1\nnetworks:\n  - name: ETH1\n    kind: ethernet\nparticipants:\n"
+const char* const kSim = "vehicle_sil_simulation: 2\nnetworks:\n  - name: ETH1\n    kind: ethernet\nparticipants:\n"
                          "  - name: A\n    command: [missing/a]\n"
                          "  - name: B\n    command: [missing/b]\n    enabled: false\n"
                          "  - name: Gateway\n    command: [missing/gateway]\n    role: bridge\n    describe: false\n";
-const char* const kVariants = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+const char* const kVariants = "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                               "  - name: A\n    command: [missing/a]\nvariants:\n  winter: {}\n  summer: {}\n";
 const char* const kDrive = "vehicle_sil_scenario: 1\nparams: { x: 0 }\nsteps:\n  - set: { A.level: \"${x}\" }\n";
 
@@ -419,7 +463,7 @@ TEST_CASE(saved_descriptions_that_cannot_be_used_say_why)
     CHECK(read_saved_descriptions(dir).problem == "the file is not a regular file");
     std::ofstream(dir / "garbage.json", std::ios::binary) << "{\"vehicle_sil_descriptions\": ";
     CHECK(read_saved_descriptions(dir / "garbage.json").problem.rfind("the file is not one that check --write-descriptions wrote (", 0) == 0);
-    std::ofstream(dir / "config.json", std::ios::binary) << "{\"vehicle_sil_simulation\": 1}";
+    std::ofstream(dir / "config.json", std::ios::binary) << "{\"vehicle_sil_simulation\": 2}";
     CHECK(read_saved_descriptions(dir / "config.json").problem ==
           "the file is not one that check --write-descriptions wrote (it has no vehicle_sil_descriptions)");
     std::ofstream(dir / "other.json", std::ios::binary)
@@ -502,12 +546,15 @@ TEST_CASE(a_plan_takes_every_field_of_the_request_that_the_run_reads)
     RunRequest r;
     r.intent.speed = std::optional<double>(2.0);
     CHECK(plan(r).timing.speed == std::optional<double>(2.0));
-    r = {};
-    check.config->speed = 3.0;
-    CHECK(plan(r).timing.speed == std::optional<double>(3.0)); // the file's
-    r.intent.speed = std::optional<double>{}; // max: replaces the file's speed
+    r.intent.speed = std::optional<double>{};
     CHECK(!plan(r).timing.speed);
-    check.config->speed.reset();
+    r.intent.stop_at_ms = 1003;
+    r.intent.late_tolerance_ms = 0;
+    r.host.start_timeout_ms = 17;
+    r.host.stop_timeout_ms = 19;
+    const RunPlan limited = plan(r);
+    CHECK(limited.stop_at_ms == 1003 && limited.timing.time_step_ms == 1);
+    CHECK(limited.timing.late_tolerance_ms == 0 && limited.start_timeout_ms == 17 && limited.stop_timeout_ms == 19);
     r = {};
     r.intent.start_paused = true;
     CHECK(plan(r, true).holds_before_start && !plan(r).holds_before_start);

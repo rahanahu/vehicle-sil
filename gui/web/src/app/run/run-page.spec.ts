@@ -115,7 +115,12 @@ describe('RunPage', () => {
     const fixture = await openWithFiles();
     // 起動のときのファイルがないので、一覧の最初のファイル
     const first = await checkRequest();
-    expect(first.request.body).toEqual({ file: 'bad-lines.yaml', disable: [], manual: [] });
+    expect(first.request.body).toEqual({
+      file: 'bad-lines.yaml',
+      disable: [],
+      manual: [],
+      speed: 1,
+    });
     expect(first.request.headers.get('Authorization')).toBe('Bearer secret');
     first.flush(response('check-passed'));
     await fixture.whenStable();
@@ -129,6 +134,7 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: ['Dashboard'],
       manual: [],
+      speed: 1,
     });
     again.flush(response('check-disabled'));
     await fixture.whenStable();
@@ -144,6 +150,7 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: ['Dashboard'],
       manual: ['Engine'],
+      speed: 1,
     });
   });
 
@@ -170,12 +177,54 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: [],
       manual: [],
+      speed: 1,
     });
     // 応答の要約をその場で当てる（通知を待たずに、停止が押せて、開始は押せない）
     run.flush(response('run'));
     await fixture.whenStable();
     expect(disabled(button(fixture, 'stop'))).toBe(false);
     expect(disabled(button(fixture, 'start'))).toBe(true);
+  });
+
+  it('checks and starts with the same optional stop time, and rejects invalid input', async () => {
+    const fixture = await openWithFiles();
+    (await checkRequest()).flush(response('check-passed'));
+    await fixture.whenStable();
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    const described = () =>
+      (input.getAttribute('aria-describedby') ?? '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(
+          (id) =>
+            (fixture.nativeElement as HTMLElement).querySelector(`[id="${id}"]`)?.textContent ?? '',
+        );
+    expect(described().some((text) => text.includes('空欄なら自動停止しません'))).toBe(true);
+    input.value = '0';
+    input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new Event('blur'));
+    TestBed.tick();
+    expect(disabled(button(fixture, 'start'))).toBe(true);
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(described().some((text) => text.includes('空欄なら自動停止しません'))).toBe(true);
+    expect(described().some((text) => text.includes('停止時刻は 1 から'))).toBe(true);
+    expect(text(fixture, 'blocked')).toContain('停止時刻');
+    input.value = '1003';
+    input.dispatchEvent(new Event('input'));
+    TestBed.tick();
+    expect(input.getAttribute('aria-invalid')).toBe('false');
+    expect(described().some((text) => text.includes('空欄なら自動停止しません'))).toBe(true);
+    expect(described().some((text) => text.includes('停止時刻は 1 から'))).toBe(false);
+    const checked = await checkRequest();
+    expect(checked.request.body).toMatchObject({ speed: 1, stop_at_ms: 1003 });
+    expect(pageIntent.get().stop_at_ms).toBe(1003);
+    checked.flush(response('check-passed'));
+    await fixture.whenStable();
+    await sleep(10);
+    button(fixture, 'start').click();
+    expect(http.expectOne('api/run').request.body).toMatchObject({ speed: 1, stop_at_ms: 1003 });
   });
 
   it('shows under the status bar why the server refused the start (the problem of the front door)', async () => {
@@ -244,6 +293,7 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: ['Dashboard', 'Engine'],
       manual: [],
+      speed: 1,
     });
     // 応答の前に切り替える: 前の照合の応答が来るまで、次は送らない
     toggle(fixture, 'Engine');
@@ -255,6 +305,7 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: ['Dashboard'],
       manual: [],
+      speed: 1,
     });
     next.flush(response('check-disabled'));
     await fixture.whenStable();
@@ -326,6 +377,7 @@ describe('RunPage', () => {
         file: 'bad-lines.yaml',
         disable: [],
         manual: [],
+        speed: 1,
         connect: { ETH_EXT: 'fake0' },
       });
       again.flush(response('check-passed'));
@@ -338,6 +390,7 @@ describe('RunPage', () => {
         file: 'bad-lines.yaml',
         disable: [],
         manual: [],
+        speed: 1,
         connect: { ETH_EXT: 'fake0' },
       });
     } finally {
@@ -349,7 +402,7 @@ describe('RunPage', () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
     await fixture.whenStable();
-    expect(pageIntent.get()).toEqual({ disable: [], manual: [] });
+    expect(pageIntent.get()).toEqual({ disable: [], manual: [], speed: 1 });
     // 部品のネットワークに先を選んだ: 部品（約 200 ms 後）と画面（CHECK_DELAY_MS 後）が同じ意図を照合する
     pageIntent.update({ connect: { J1939_CAN: 'can0' } });
     TestBed.tick();
@@ -358,6 +411,7 @@ describe('RunPage', () => {
       connect: { J1939_CAN: 'can0' },
       disable: ['Dashboard'],
       manual: [],
+      speed: 1,
     });
     const part = (fixture.nativeElement as HTMLElement).querySelector(
       '[data-testid="connect-J1939_CAN"] vsil-connect',
@@ -370,6 +424,7 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: ['Dashboard'],
       manual: [],
+      speed: 1,
       connect: { J1939_CAN: 'can0' },
     });
     once.flush(response('check-disabled'));
@@ -421,6 +476,194 @@ describe('RunPage', () => {
     await sleep(CHECK_DELAY_MS + 20);
     for (const request of http.match('api/check')) request.flush(response('check-passed'));
     answerScenarios();
+  });
+
+  it('does not carry a stop time to another configuration and restores the session value', async () => {
+    const fixture = await openWithFiles();
+    (await checkRequest()).flush(response('check-passed'));
+    await fixture.whenStable();
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    input.value = '123';
+    input.dispatchEvent(new Event('input'));
+    TestBed.tick();
+    expect(pageIntent.get().stop_at_ms).toBe(123);
+    const page = fixture.componentInstance as unknown as { selectFile(file: string): void };
+    page.selectFile('forever.yaml');
+    TestBed.tick();
+    expect(input.value).toBe('');
+    expect(pageIntent.get().stop_at_ms).toBeUndefined();
+    input.value = '321';
+    input.dispatchEvent(new Event('input'));
+    TestBed.tick();
+
+    // A summary and its check arrive from another session; its stop belongs only to that file.
+    for (const message of server('ws-pass').slice(2)) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(input.value).toBe('321');
+    const otherSession = structuredClone(server('ws-pass')[49]) as { session: { id: number } };
+    otherSession.session.id = 2;
+    fake.last().send(otherSession);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(input.value).toBe('321');
+    expect(pageIntent.get().stop_at_ms).toBe(321);
+    page.selectFile('simulation.yaml');
+    TestBed.tick();
+    expect(input.value).toBe('1000');
+    expect(pageIntent.get().stop_at_ms).toBe(1000);
+  });
+
+  it('disables the stop time until the first hello and replay have synchronized', async () => {
+    const fixture = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush(response('app'));
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    TestBed.tick();
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    expect(input.disabled).toBe(true);
+    const messages = server('ws-replay');
+    fake.last().send(messages[0]);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(input.disabled).toBe(true);
+    for (const message of messages.slice(1)) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(input.disabled).toBe(false);
+    expect(input.value).toBe('1000');
+  });
+
+  it('keeps an edited stop time through a reconnect to the same session', async () => {
+    const fixture = await openWithFiles();
+    for (const message of server('ws-pass').slice(2)) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    expect(input.value).toBe('1000');
+    input.value = '123';
+    input.dispatchEvent(new Event('input'));
+    TestBed.tick();
+    const before = fake.last();
+    before.fail();
+    TestBed.tick();
+    expect(input.disabled).toBe(true);
+    await sleep(600);
+    const after = fake.last();
+    expect(after).not.toBe(before);
+    after.open();
+    for (const message of server('ws-replay')) after.send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(input.disabled).toBe(false);
+    expect(input.value).toBe('123');
+    expect(pageIntent.get().stop_at_ms).toBe(123);
+  });
+
+  it('restores an edited stop time for a selected file different from the last session', async () => {
+    sessionStorage.setItem(
+      'vehicle-sil-gui-carry',
+      JSON.stringify({
+        run: {
+          session: 1,
+          chosen: 'forever.yaml',
+          file: 'forever.yaml',
+          disable: [],
+          manual: [],
+          speed: 1,
+          stopAt: '321',
+          stopAtEdited: true,
+          stopSession: null,
+          logSource: '',
+        },
+      }),
+    );
+    const fixture = await openWithFiles();
+    for (const message of server('ws-pass').slice(2)) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    expect(input.value).toBe('321');
+  });
+
+  for (const mode of ['untouched', 'carried-edit', 'edit-now'] as const) {
+    it(`restores a delayed session check after a language change (${mode})`, async () => {
+      sessionStorage.setItem(
+        'vehicle-sil-gui-carry',
+        JSON.stringify({
+          run: {
+            session: 1,
+            chosen: 'simulation.yaml',
+            file: 'simulation.yaml',
+            disable: [],
+            manual: [],
+            speed: 1,
+            stopAt: '',
+            stopAtEdited: mode === 'carried-edit',
+            logSource: '',
+          },
+        }),
+      );
+      const fixture = await openWithFiles();
+      const summary = structuredClone(server('ws-pass')[3]) as {
+        session: { state: string; ended_at: string; launcher: { running: boolean } };
+      };
+      summary.session.state = 'ended';
+      summary.session.ended_at = '2026-01-01T00:00:01Z';
+      summary.session.launcher.running = false;
+      fake.last().send(summary);
+      await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+      TestBed.tick();
+      const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+        '[data-testid="stop-at-ms"]',
+      )!;
+      expect(input.value).toBe('');
+      if (mode === 'edit-now') {
+        input.value = '250';
+        input.dispatchEvent(new Event('input'));
+        TestBed.tick();
+      }
+      fake.last().send(server('ws-pass')[8]);
+      await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+      TestBed.tick();
+      expect(input.value).toBe(mode === 'untouched' ? '1000' : mode === 'edit-now' ? '250' : '');
+    });
+  }
+
+  it('clears the prior stop time when another session starts for the same configuration', async () => {
+    const fixture = await openWithFiles();
+    for (const message of server('ws-pass').slice(2)) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    expect(input.value).toBe('1000');
+    const summary = structuredClone(server('ws-pass')[3]) as { session: { id: number } };
+    summary.session.id = 2;
+    fake.last().send(summary);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(input.value).toBe('');
+    const check = structuredClone(server('ws-pass')[8]) as {
+      session: number;
+      event: { check: { stop_at_ms: number } };
+    };
+    check.session = 2;
+    check.event.check.stop_at_ms = 2000;
+    fake.last().send(check);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(input.value).toBe('2000');
   });
 
   it('checks the speed and the paused start with the rest, and does not start on what the check refuses', async () => {
@@ -487,6 +730,7 @@ describe('RunPage', () => {
       file: 'bad-lines.yaml',
       disable: ['Engine'],
       manual: [],
+      speed: 1,
     });
   });
 
@@ -546,5 +790,7 @@ describe('readRunChoices', () => {
     expect(readRunChoices({ ...choices, logSource: undefined })).toBeNull();
     expect(readRunChoices({ ...choices, startPaused: 'yes' })).toBeNull();
     expect(readRunChoices({ ...choices, manual: ['A', 1] })).toBeNull();
+    expect(readRunChoices({ ...choices, stopAtEdited: true })).toBeNull();
+    expect(readRunChoices({ ...choices, stopAtEdited: 'yes' })).toBeNull();
   });
 });

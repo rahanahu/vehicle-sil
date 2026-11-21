@@ -4,11 +4,11 @@
 
 This is the reference for the configuration file that you pass to `vehicle_sil_launch`. It covers the keys and syntax rules of the file, and the arguments and exit codes of `check`, `run`, `test` and `version`. The format and the rules may still change.
 
-The configuration file lists the executables that become participants, the networks they connect to and the time at which the simulation stops. Use it to run ECU executables that were built separately ([ecu-executable.md](ecu-executable.md)) in one simulation.
+The configuration file lists the executables that become participants, and the networks they connect to. Use it to run ECU executables that were built separately ([ecu-executable.md](ecu-executable.md)) in one simulation.
 
 ```sh
 vehicle_sil_launch check simulation.yaml
-vehicle_sil_launch run simulation.yaml
+vehicle_sil_launch run simulation.yaml --stop-at-ms 1000
 ```
 
 | To find | See |
@@ -63,8 +63,8 @@ Example: [examples/ecu_main/simulation.yaml](../examples/ecu_main/simulation.yam
 # The two ECUs of this directory in one simulation. CMake copies this file next to the executables
 # (build/<preset>/examples/ecu_main/); there, vehicle_sil_launch check simulation.yaml checks it and
 # vehicle_sil_launch run simulation.yaml runs it.
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
+
 networks:
   - name: J1939_CAN
     kind: can
@@ -83,14 +83,9 @@ Top-level keys:
 
 | Key | Required | Value | If omitted |
 |---|---|---|---|
-| `vehicle_sil_simulation` | Yes | Format version (currently `1`) | |
-| `stop_at_ms` | | Virtual time at which the simulation stops (ms, an integer from 1 to 10^12) | The simulation runs until a participant stops it or you stop `run` with Ctrl+C |
-| `start_timeout_ms` | | How long to wait for the required participants to join (ms, an integer from 1 to 10^12) | 30000 |
-| `stop_timeout_ms` | | How long `run` waits for participants to end (ms, an integer from 1 to 10^12) | 10000 |
+| `vehicle_sil_simulation` | Yes | Format version (currently `2`) | |
 | `registry_uri` | | Where `run` starts the registry (`silkit://<host>:<port>`, port from 0 to 65535; 0: a free port) | A free port on 127.0.0.1 |
-| `speed` | | Speed at which virtual time advances (a number from 0.000001 to 1000000, or `max`) | As fast as possible (same as `max`) |
-| `time_step_ms` | | The controller's time step (ms of virtual time, an integer from 1 to 10^12) | 10 when running as fast as possible |
-| `late_tolerance_ms` | | Tolerance for lateness (ms of real time, an integer from 1 to 10^12) | 10 (independent of the time step and the speed) |
+| `time_step_ms` | | The controller's time step (ms of virtual time, an integer from 1 to 10^12) | Automatically resolved |
 | `networks` | Yes | Array of networks (may be empty) | |
 | `participants` | Yes | Array of participants (at least one) | |
 | `variants` | | Variants (variant name → its differences from the common part; see [Variants](#variants-variants---variant)) | The configuration file has no variants |
@@ -122,10 +117,6 @@ Keys of each element of `participants`:
 
 Notes on individual keys:
 
-**`start_timeout_ms`**: `run` also passes a value to ecu_main executables with `--start-timeout-ms`. For the value it passes, see [ecu_main executables](#ecu_main-executables-describe-true).
-
-**`stop_timeout_ms`**: `run` waits this long at each stage of stopping (see "Stopping a run" in [simulation-run.md](simulation-run.md#stopping-a-run)).
-
 **`registry_uri`**
 
 | Case | Where the registry is, and what happens |
@@ -138,18 +129,9 @@ Notes on individual keys:
 
 For the steps to let participants join from other computers, see the guide [Run on several computers](howto/multi-pc.md).
 
-**`speed`**: Seconds of virtual time per second of real time. `1` is real-time speed, `2` is twice as fast and `0.5` is half speed. `run --speed` overrides it (see "Running at a set speed (`speed`)" in [simulation-run.md](simulation-run.md#running-at-a-set-speed-speed)).
+**`time_step_ms`** sets the controller’s virtual-time step. If omitted, the launcher resolves it from the greatest common divisor of 10 ms, the active ECU periods and the requested stop time, when supplied. When the step is fixed, `check` and `run` report `stop-not-on-step` if the requested stop time is off that grid.
 
-**`time_step_ms`**: The granularity of pausing and stepping, and of keeping to the set speed.
-
-| Case | Value of `time_step_ms` |
-|---|---|
-| Omitted, running as fast as possible | 10. |
-| Omitted, running as fast as possible, and `stop_at_ms` is not a multiple of 10 | The greatest common divisor of `stop_at_ms` and 10. |
-| Omitted, with a set speed | As above, further reduced to the greatest common divisor with the step sizes of the ECUs (see "Time steps and ECU steps" in [simulation-run.md](simulation-run.md#time-steps-and-ecu-steps)). |
-| Written | Must divide `stop_at_ms` (otherwise the error `value`). |
-
-**`late_tolerance_ms`**: A time step that is late by more than this value counts as a late time step.
+To migrate from format 1, set `vehicle_sil_simulation: 2` and move `stop_at_ms`, `speed` and `late_tolerance_ms` to run arguments or the request file. Move `start_timeout_ms` and `stop_timeout_ms` to the host options `--participant-start-timeout-ms` and `--participant-stop-timeout-ms`.
 
 **`participants[].name`**: The name must not be empty, must fit on one line (no control characters) and must not start with `-`. `SimulationController` (the participant name of vehicle-sil's controller) is not allowed. For the check, the name is passed to ecu_main executables with `--name`.
 
@@ -174,8 +156,6 @@ For the steps to let participants join from other computers, see the guide [Run 
 | Integers | Write them without quotes (`"5000"` is a string, so it is an error). |
 | Booleans | `true` or `false` without quotes (`True`, `TRUE`, `False` and `FALSE` are also read). |
 | `yes`, `on` and similar | An error where a boolean is expected. |
-
-`stop_at_ms`, `start_timeout_ms`, `stop_timeout_ms`, `registry_uri`, `speed`, `time_step_ms` and `late_tolerance_ms` are values for running the simulation. `check` checks only their form (and the combination of `stop_at_ms` and `time_step_ms`).
 
 ### Editor completion
 
@@ -524,7 +504,7 @@ Other rules:
 
 - In the participant table of the human-readable output, the name of a participant whose role is not `ecu` is followed by `(role: test)` or similar.
 - `check --json` writes the role to `participants[].role`.
-- A run with an enabled `role: bridge` participant keeps real time, as one with `--connect` does: it goes at speed 1 whatever `speed` the file has, and `test` runs its scenarios at speed 1 too (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
+- A run with an enabled `role: bridge` participant keeps real time, as one with `--connect` does: it goes at speed 1, and `test` runs its scenarios at speed 1 too (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
 - A variant (`variants`) cannot change it, as with `describe` and `required`.
 
 ### Connecting a network outside (`external`, `--connect`)
@@ -592,7 +572,7 @@ A target is `none` or `[<backend>:]<selector>`. The backend says which way the n
 - The Vector XL bridge runs on Windows only. `xl:virtual:1` on Linux gives `connect-tool-missing`, which says that the network runs on SIL Kit only, unless a bridge is found anyway (a build for tests).
 - The check runs the bridge's `--describe` with the arguments below and `--name bridge.<network>`, the bridge's participant name. `run` starts it with the same arguments and `--name bridge.<network> --registry-uri <URI> --start-timeout-ms <start_timeout_ms>`. `bridge.<network>` is not a participant of the file: `--disable`, `--enable` and `--manual` do not take it. With `--describe`, the bridge opens neither the adapter nor the channel. A bridge that refuses the arguments is the error `connect-tool-failed`, with the bridge's own line.
 - On a connected network, the bridge counts as a participant (one ECU there is not `single-participant`), and a `role: bridge` participant on the same network is a loop (`connect-loop`).
-- A real bus does not wait for the virtual time: a run with `--connect` goes at speed 1 whatever `speed` the file has (the note `outside-speed-set`), and another `--speed` or `--start-paused` is the error `outside-real-time`. `--time-policy free` lifts this (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
+- A real bus does not wait for the virtual time: a run with `--connect` goes at speed 1 by default (the note `outside-speed-set`). An explicit speed other than 1 or `--start-paused` is the error `outside-real-time`. `--time-policy free` lifts this (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
 
 The arguments that the launcher gives the bridge:
 
@@ -903,7 +883,9 @@ For the syntax and the errors, see "Variants and parameters" in [scenario.md](sc
 ```text
 vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
-                         [--time-policy realtime|free] [--request <file>]
+                         [--time-policy realtime|free] [--request <file>] [--speed <speed>]
+                         [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
+                         [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                          [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]
                          [--compare-commands <file>]
                          [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>
@@ -912,11 +894,15 @@ vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-com
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
+                       [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
+                       [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                        [--time-policy realtime|free] [--request <file>] [--disable <name>]...
                        [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
+                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]
+                        [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                         [--disable <name>]... [--enable <name>]...
                         <file> --scenarios <directory or files>...
 vehicle_sil_launch connections [--json] [--network <name>] [--request <file>] [--] <file>
@@ -948,7 +934,10 @@ The usage above shows which commands accept each option. The Condition column of
 | `--timeline <file>` | `run` only, and only with `--scenario` | Writes the values that the scenario wrote and saw to a JSON file, in virtual-time order (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)). |
 | `--scenarios <dir or files>` | `test` only | The scenarios to run. |
 | `--fail-fast` | `test` only | Runs nothing after the first run that fails. |
-| `--speed <speed>` | `run` only | Overrides `speed` in the configuration file (a number or `max`; see "Running at a set speed (`speed`)" in [simulation-run.md](simulation-run.md#running-at-a-set-speed-speed)). |
+| `--speed <speed>` | `check`, `run` | Run speed (a number or `max`). |
+| `--stop-at-ms <ms>` | `check`, `run`, `test` | Automatic stop at the specified virtual time. Omit for no automatic stop. |
+| `--late-tolerance-ms <ms>` | `check`, `run`, `test` | Wall-clock pacing tolerance. Defaults to 10 ms. |
+| `--participant-start-timeout-ms <ms>`, `--participant-stop-timeout-ms <ms>` | `check`, `run`, `test` | Host startup and shutdown waits. Default to 30000 ms and 10000 ms. |
 | `--strict` | | Fails on warnings too (not on notes). |
 | `--log-dir <dir>` | `run` only | Directory for the output files, one per participant. |
 | `--timeout-ms <ms>` | `run`, and `test` (per run) | Limit on the wall-clock time from the start to the end of the simulation (an integer of 1 or more; default no limit). |
@@ -1015,7 +1004,7 @@ On Windows, the arguments are read as UTF-8 from the wide-character command line
 | 1 | Errors |
 | 3 | The configuration file cannot be read |
 | 4 | Usage error |
-| 5 | `run`: a command stopped a scenario before its end |
+| 5 | `run`: the requested stop time or a command stopped a scenario before its end |
 | 130 | `run` or `test` was interrupted |
 
 When each exit code occurs:
@@ -1024,7 +1013,7 @@ When each exit code occurs:
 |---|---|
 | 0 | With only warnings and notes, the exit code is 0 (with `--strict`, there must be no warnings either). |
 | 0 | For `run`, when the simulation ended normally and every required participant exited with 0. |
-| 0 | For `run`, also when `{"command":"stop"}` or `Stop` from a Control Server client stopped it and nothing was wrong. |
+| 0 | For `run`, also when the requested stop time, `{"command":"stop"}` or `Stop` from a Control Server client stopped it and nothing was wrong. |
 | 1 | With `--strict`, warnings also give 1. |
 | 1 | For `run`, an error of the check (nothing is started) or an error of the run (a participant failed, the participants did not all join, a participant did not end when stopped, and so on). |
 | 1 | For `test`: at least one run failed, a run did not take place although `test` was not interrupted, or, with `--strict`, no run took place at all. |
@@ -1035,7 +1024,7 @@ When each exit code occurs:
 | 3 | Also when `run` cannot set up the registry or the controller. |
 | 3 | Also when the result cannot be written to stdout, and on an unexpected failure of `vehicle_sil_launch` itself. |
 | 4 | The error and the usage go to stderr (the table below lists the cases). |
-| 5 | For `run`, when `{"command":"stop"}` or `Stop` from a Control Server client stopped a scenario before its end and nothing else was wrong. |
+| 5 | For `run`, when the requested stop time, `{"command":"stop"}` or `Stop` from a Control Server client stopped a scenario before its end and nothing else was wrong. |
 | 130 | Ctrl+C and other signals, the end of stdin, a closed stdout. |
 
 On an unexpected failure (exit code 3), the reason goes to stderr. With `--json`, the command's usual JSON holds an error whose `code` is `internal`.
@@ -1049,12 +1038,12 @@ The following give exit code 4:
 | Every command | An option given twice (`--disable` and `--enable` can be repeated) |
 | Every command | `--describe-timeout-ms` without a value |
 | `check` | `--events`, `--stdin-commands` |
-| `check` | `--log-dir`, `--timeout-ms`, `--speed`, `--start-paused`, `--control` and `--control-*` |
+| `check` | `--log-dir`, `--timeout-ms`, `--start-paused`, `--control` and `--control-*` |
 | `run` | `--json` and `--events` together |
 | `run` | `--text-from-stdin`, `--descriptions`, `--write-descriptions`, `--compare-commands` (they are for `check`) |
 | `run` | `--events-stall-ms` without `--events`, or with a value out of range |
 | `run` | `--start-paused` with neither `--stdin-commands` nor `--control` |
-| `run` | `--speed` that is neither a number nor `max` |
+| `check` or `run` | `--speed` that is neither a number nor `max` |
 | `run` | `--scenario` together with `--start-paused` |
 | `--control` | `--control-credentials` and the like without `--control` |
 | `--control` | `--control` in a build without the Control Server |

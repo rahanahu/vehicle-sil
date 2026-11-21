@@ -143,6 +143,7 @@ public:
     const Scenario* scenario = nullptr;
     /// What the engine notes for a timeline, if set (run()).
     TimelineRecord* record = nullptr;
+    ScenarioEngine::OnStep on_step{};
     /// If set: what `peer` answers at once to a command for the time `at` instead of taking it
     /// (its status and reason, and failed_write if it is about one write; empty: it takes the
     /// command as ever).
@@ -262,7 +263,7 @@ public:
     ScenarioRun run(const Scenario& s, SimDuration limit = 5s)
     {
         scenario = &s;
-        ScenarioEngine e(s, tick, *this, {}, record);
+        ScenarioEngine e(s, tick, *this, on_step, record, stop_at);
         engine = &e;
         std::vector<EnginePeer> peers;
         for (const auto& p : s.participants)

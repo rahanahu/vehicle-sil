@@ -5,7 +5,7 @@
 // state changes, and prints the result.
 //
 //   (cd gui/web && npm run build:client)   # builds build/gui-client/vehicle-sil-gui-client.mjs
-//   VEHICLE_SIL_GUI_URL='<URL the server printed (with #token=)>' node examples/gui_client/run-with-library.mjs simulation.yaml
+//   VEHICLE_SIL_GUI_URL='<URL the server printed (with #token=)>' node examples/gui_client/run-with-library.mjs simulation.yaml --stop-at-ms 1000
 //
 // Pass the URL in the environment variable (on the command line, the token would show in the process list to other
 // users of the computer and stay in the shell history). The URL may also be the first argument. VEHICLE_SIL_GUI_CLIENT
@@ -19,7 +19,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 function usage(message) {
   console.error(`run-with-library.mjs: ${message}`);
   console.error(
-    "usage: VEHICLE_SIL_GUI_URL=<url with #token=...> node run-with-library.mjs <configuration file> [--timeout <seconds>]",
+    "usage: VEHICLE_SIL_GUI_URL=<url with #token=...> node run-with-library.mjs <configuration file> [--timeout <seconds>] [--stop-at-ms <milliseconds>]",
   );
   process.exit(2);
 }
@@ -28,6 +28,15 @@ function usage(message) {
 const READY_TIMEOUT_S = 15;
 
 const args = process.argv.slice(2);
+let stopAtMs;
+const stopAt = args.indexOf("--stop-at-ms");
+if (stopAt >= 0) {
+  const value = args[stopAt + 1];
+  stopAtMs = Number(value);
+  if (!value || !Number.isSafeInteger(stopAtMs) || stopAtMs < 1 || stopAtMs > 1_000_000_000_000)
+    usage("--stop-at-ms needs an integer from 1 to 1000000000000 milliseconds");
+  args.splice(stopAt, 2);
+}
 let timeoutS = 120;
 const timeoutAt = args.indexOf("--timeout");
 if (timeoutAt >= 0) {
@@ -93,7 +102,8 @@ async function main() {
       `the launcher cannot be used: ${app.launcher.problems.map((p) => p.message).join("; ")}`,
     );
   }
-  const check = await client.check({ file, disable: [] });
+  const intent = { file, disable: [], ...(stopAtMs === undefined ? {} : { stop_at_ms: stopAtMs }) };
+  const check = await client.check(intent);
   console.log(`check: ${check.result} (errors ${check.errors ?? 0})`);
   if (check.result !== "passed") finish(1);
 
@@ -123,10 +133,7 @@ async function main() {
       console.log(`phase: ${phase}`);
     }
   });
-  const started = await client.run.start({
-    file,
-    disable: [],
-  });
+  const started = await client.run.start(intent);
   console.log(`started: session ${started?.id}`);
   setTimeout(
     () => finish(1, `no result after ${timeoutS} s`),

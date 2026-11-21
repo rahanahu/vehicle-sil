@@ -157,7 +157,7 @@ Checked mixed_report()
 {
     Setup s = good_pair();
     s.network("Body", NetworkKind::Lin, 5);
-    s.config.stop_at_ms = 1000;
+
     s.config.participants.push_back(participant("Cluster \xC3\xA9", 12));
     s.results.push_back(ParticipantResult{ParticipantStatus::Failed, std::nullopt});
     s.config.participants.push_back(participant("", 15));
@@ -168,6 +168,7 @@ Checked mixed_report()
     s.results[1].ecu->description.networks.push_back(NetworkDescription{"Body", NetworkUse::Raw, {}});
     Checked r;
     r.file = "dir/simulation.yaml";
+    r.stop_at_ms = 1000;
     r.config = s.config;
     r.participants = s.results;
     r.findings = {Finding{Severity::Error, "describe-failed", "participant 'Cluster \xC3\xA9': it failed", 13, "Cluster \xC3\xA9", "",
@@ -267,8 +268,9 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
   "warnings": 0,
   "notes": 1,
   "stop_at_ms": 1000,
-  "start_timeout_ms": 30000,
-  "stop_timeout_ms": 10000,
+  "time_step_ms": null,
+  "start_timeout_ms": null,
+  "stop_timeout_ms": null,
   "registry_uri": null,
   "commands": null,
   "participants": [
@@ -507,6 +509,7 @@ TEST_CASE(the_json_report_of_a_file_that_cannot_be_read)
   "warnings": 0,
   "notes": 0,
   "stop_at_ms": null,
+  "time_step_ms": null,
   "start_timeout_ms": null,
   "stop_timeout_ms": null,
   "registry_uri": null,
@@ -545,6 +548,7 @@ TEST_CASE(the_json_report_of_a_wrong_command_line)
   "warnings": 0,
   "notes": 0,
   "stop_at_ms": null,
+  "time_step_ms": null,
   "start_timeout_ms": null,
   "stop_timeout_ms": null,
   "registry_uri": null,
@@ -830,7 +834,7 @@ TEST_CASE(check_file_neither_looks_for_nor_runs_a_disabled_executable)
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
     const auto file = dir / "sim.yaml";
-    std::ofstream(file) << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    std::ofstream(file) << "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                            "  - name: Engine\n    command: [missing/engine]\n"
                            "  - name: Ghost\n    command: [missing/ghost]\n    enabled: false\n";
     const vehicle_sil::config::test::InDirectory there(dir); // the files by their names
@@ -879,7 +883,7 @@ TEST_CASE(check_file_a_disabled_entry_with_errors_and_an_unreadable_enabled)
     std::filesystem::create_directories(dir);
     const auto file = dir / "sim.yaml";
     // Ghost is disabled and has no command; Maybe's enabled cannot be read: neither is looked for.
-    std::ofstream(file) << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    std::ofstream(file) << "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                            "  - name: Engine\n    command: [missing/engine]\n"
                            "  - name: Ghost\n    enabled: false\n"
                            "  - name: Maybe\n    command: [missing/maybe]\n    enabled: no\n";

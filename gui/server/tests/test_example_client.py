@@ -58,10 +58,27 @@ def run_example(name: str, url: str | None, *args: str) -> subprocess.CompletedP
 def test_runs_a_configuration_to_its_end(tmp_path: Path, bundle: Path, example: str, file: str, code: int,
                                          last: str) -> None:
     with gui_server(tmp_path) as gui:
-        out = run_example(example, gui.url, file, "--timeout", "60")
+        out = run_example(example, gui.url, file, "--timeout", "60",
+                          *(["--stop-at-ms", "1000"] if file in {"simulation.yaml", "launcher-crash.yaml"} else []))
     assert out.returncode == code, out.stdout + out.stderr
     assert out.stdout.strip().splitlines()[-1].startswith(last), out.stdout + out.stderr
     assert gui.token not in out.stdout + out.stderr
+
+
+@pytest.mark.parametrize("example", ["run.mjs", "run-with-library.mjs"])
+def test_check_uses_the_same_stop_time_as_the_run(tmp_path: Path, bundle: Path, example: str) -> None:
+    # This file's time step is 10 ms: 25 ms is rejected by check, before any run starts.
+    with gui_server(tmp_path) as gui:
+        out = run_example(example, gui.url, "simulation-step10.yaml", "--stop-at-ms", "25")
+    assert out.returncode == 1 and "check: failed" in out.stdout, out.stdout + out.stderr
+    assert "started:" not in out.stdout
+
+
+@pytest.mark.parametrize("example", ["run.mjs", "run-with-library.mjs", "front.mjs"])
+@pytest.mark.parametrize("value", ["0", "1000000000001", "1.5"])
+def test_stop_time_rejects_out_of_range_values(example: str, value: str) -> None:
+    out = run_example(example, None, "simulation.yaml", "--stop-at-ms", value)
+    assert out.returncode == 2 and "--stop-at-ms needs an integer" in out.stderr
 
 
 @pytest.mark.parametrize("file, code, last", [
@@ -73,7 +90,8 @@ def test_runs_a_configuration_to_its_end(tmp_path: Path, bundle: Path, example: 
 def test_front_door_runs_a_configuration_to_its_end(tmp_path: Path, bundle: Path, file: str, code: int,
                                                     last: str) -> None:
     with gui_server(tmp_path) as gui:
-        out = run_example("front.mjs", gui.url, file, "--timeout", "60")
+        out = run_example("front.mjs", gui.url, file, "--timeout", "60",
+                          *(["--stop-at-ms", "1000"] if file in {"simulation.yaml", "launcher-crash.yaml"} else []))
     assert out.returncode == code, out.stdout + out.stderr
     lines = out.stdout.strip().splitlines()
     assert any(line.startswith(last) for line in lines), out.stdout + out.stderr

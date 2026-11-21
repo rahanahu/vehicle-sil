@@ -35,7 +35,7 @@ def is_step(status: str, index: int | None = None):
 def test_only_the_files_in_scenarios_next_to_the_configuration_are_listed_and_taken(tmp_path: Path) -> None:
     root = tmp_path / "root"
     (root / "bench" / "scenarios" / "deeper").mkdir(parents=True)
-    (root / "bench" / "sim.yaml").write_text("vehicle_sil_simulation: 1\n")
+    (root / "bench" / "sim.yaml").write_text("vehicle_sil_simulation: 2\n")
     scenarios = root / "bench" / "scenarios"
     for name in ("a.yaml", "b.yml", ".hidden.yaml", "notes.txt", "deeper/c.yaml", "x" * 250 + ".yaml"):
         (scenarios / name).write_text("vehicle_sil_scenario: 1\n")
@@ -76,7 +76,7 @@ def test_only_the_files_in_scenarios_next_to_the_configuration_are_listed_and_ta
         # A directory above scenarios that is a link inside the root: not read either
         (root / "other" / "scenarios").mkdir(parents=True)
         (root / "other" / "scenarios" / "a.yaml").write_text("vehicle_sil_scenario: 1\n")
-        (root / "other" / "sim.yaml").write_text("vehicle_sil_simulation: 1\n")
+        (root / "other" / "sim.yaml").write_text("vehicle_sil_simulation: 2\n")
         os.symlink(root / "other", root / "linked")
         linked = cfg.resolve("linked/sim.yaml")  # a configuration may be reached through a link in the root
         assert list_scenarios(cfg, linked)[1:] == (False, [], False)

@@ -89,7 +89,8 @@ using namespace vehicle_sil;
 constexpr const char* kUsage =
     "usage: vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]\n"
     "                                [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
-    "                                [--time-policy realtime|free] [--request <file>]\n"
+    "                                [--time-policy realtime|free] [--request <file>] [--speed <speed>]\n"
+    "                                [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]\n"
     "                                [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]\n"
     "                                [--compare-commands <file>]\n"
     "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
@@ -98,12 +99,13 @@ constexpr const char* kUsage =
     "                              --control-tls-key <file>] [--control-audit-log <file>]]\n"
     "                              [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]\n"
     "                              [--speed <speed>] [--strict] [--log-dir <dir>]\n"
-    "                              [--timeout-ms <ms>]\n"
+    "                              [--timeout-ms <ms>] [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]\n"
     "                              [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
     "                              [--time-policy realtime|free] [--request <file>]\n"
     "                              [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...\n"
     "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]\n"
+    "                               [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]\n"
     "                               [--disable <name>]... [--enable <name>]... <file> --scenarios <directory or files>...\n"
     "       vehicle_sil_launch connections [--json] [--network <name>] [--request <file>] [--] <file>\n"
     "       vehicle_sil_launch version [--json]\n"
@@ -165,10 +167,14 @@ constexpr const char* kUsage =
     "                              (its steps, the written and the sampled values) to <file> as JSON\n"
     "                              (docs/simulation-run.md; schema/timeline.schema.json)\n"
     "  --fail-fast                 test: do not run what comes after the first run that fails\n"
-    "  --speed <speed>             run: simulation seconds per wall-clock second (1 real time, 2 twice as fast)\n"
-    "                              or max (as fast as possible); replaces speed in <file>\n"
+    "  --speed <speed>             check, run: simulation seconds per wall-clock second (1 real time, 2 twice as fast)\n"
+    "                              or max (as fast as possible); overrides speed in the request file\n"
     "  --strict                    fail on warnings too\n"
     "  --log-dir <dir>             run: also write each participant's output to <dir>/<name>.log\n"
+    "  --stop-at-ms <ms>           stop at this exact virtual time (default: no automatic stop)\n"
+    "  --late-tolerance-ms <ms>    wall-clock pacing tolerance (default 10)\n"
+    "  --participant-start-timeout-ms <ms>  wait for required participants (default 30000)\n"
+    "  --participant-stop-timeout-ms <ms>   wait per participant shutdown stage (default 10000)\n"
     "  --timeout-ms <ms>           run: abort the simulation if it has not ended <ms> after its start (wall clock;\n"
     "                              with --start-paused and --control, from when it stands still before the start);\n"
     "                              test: each run\n"
@@ -196,7 +202,7 @@ constexpr const char* kUsage =
     "                              it ends. Repeatable, each network once\n"
     "  --time-policy realtime|free the time of a run that is connected outside the simulation (by --connect, or by\n"
     "                              an enabled participant with role: bridge). realtime (the default): it goes at\n"
-    "                              speed 1 whatever speed <file> has; another --speed and --start-paused are the\n"
+    "                              speed 1; another --speed and --start-paused are the\n"
     "                              error outside-real-time, and the commands that pause or step it or change its\n"
     "                              speed are refused while it runs. free: the speed and the time are yours to\n"
     "                              change as in any run; the bridge still carries frames both ways, so what is\n"
@@ -204,11 +210,11 @@ constexpr const char* kUsage =
     "                              runs\n"
     "  --request <file>            check, run, connections: what to run, from the request file <file> (JSON:\n"
     "                              variant, params, scenario, disable, enable, manual, connect, time_policy, speed,\n"
-    "                              start_paused, strict; schema/run-request.schema.json). An argument wins over the\n"
+    "                              start_paused, strict, stop_at_ms, late_tolerance_ms; schema/run-request.schema.json). An argument wins over the\n"
     "                              file, field by field: --connect and --param by name, --connect <network>=none\n"
     "                              takes the file's target away; the lists add up. scenario in <file> is from the\n"
     "                              directory of the configuration file. Only this file is read: none is looked for.\n"
-    "                              connections reads only its connect\n"
+    "                              connections reads only its connect; test reads only stop_at_ms and late_tolerance_ms\n"
     "  --network <name>            connections: only the network <name>\n"
     "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable\n"
     "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable\n"
@@ -221,7 +227,7 @@ constexpr const char* kUsage =
     "exit codes: 0 passed (run: also stopped by a command), 1 errors (with --strict: or warnings; run: also a failed\n"
     "            simulation; test: a run failed or was left out; connections: a list could not be made, or a\n"
     "            target of --request cannot be used), 3 the file cannot be read (run: or the registry cannot be set\n"
-    "            up), 4 usage, 5 run: a scenario was stopped by a command before its end, 130 run or test was\n"
+    "            up), 4 usage, 5 run: a scenario stopped before its end, 130 run or test was\n"
     "            interrupted (a signal, or its input or output closed)\n"
     "the file format: docs/simulation-config.md; check: docs/simulation-check.md; run: docs/simulation-run.md;\n"
     "events and commands: docs/simulation-events.md; scenarios: docs/scenario.md\n";
@@ -891,6 +897,8 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
             optionsEnded = true;
         }
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
+                 a == "--stop-at-ms" || a == "--late-tolerance-ms" || a == "--participant-start-timeout-ms" ||
+                 a == "--participant-stop-timeout-ms" ||
                  a == "--disable" || a == "--enable" || a == "--manual" || a == "--speed" || a == "--scenario" || a == "--control" ||
                  a == "--variant" || a == "--param" || a == "--scenarios" || a == "--timeline" || a == "--connect" ||
                  a == "--network" || a == "--time-policy" || a == "--request" || a == "--descriptions" ||
@@ -1000,6 +1008,21 @@ launch::RunRequest whole_request(const launch::RunRequest& arguments, launch::Re
     return request;
 }
 
+void read_speed(const cli::Args& args, launch::RunIntent& intent)
+{
+    if (args.has("speed"))
+    {
+        std::optional<double> speed;
+        if (!config::parse_speed(args.str("speed", ""), speed))
+        {
+            throw cli::UsageError("--speed must be a number of simulation seconds per wall-clock second from 0.000001 to "
+                                  "1000000 (1: real time, 2: twice as fast) or max (as fast as possible), not '" +
+                                  args.str("speed", "") + "'");
+        }
+        intent.speed.emplace(speed);
+    }
+}
+
 /// What check, run and test share: the configuration file and the arguments that say what to run.
 launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand command, const RequestArgument& asked = {})
 {
@@ -1029,6 +1052,25 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
     {
         throw cli::UsageError("--describe-timeout-ms must be at least 1");
     }
+    const auto ms = [&args](const char* option, std::int64_t otherwise, std::int64_t min) {
+        const auto count = args.millis(option, std::chrono::milliseconds(otherwise)).count();
+        if (count < min || count > config::kMaxMillis)
+        {
+            throw cli::UsageError("--" + std::string(option) + " must be between " + std::to_string(min) + " and " +
+                                  std::to_string(config::kMaxMillis));
+        }
+        return static_cast<std::int64_t>(count);
+    };
+    if (args.has("stop-at-ms"))
+    {
+        intent.stop_at_ms = ms("stop-at-ms", 0, 1);
+    }
+    if (args.has("late-tolerance-ms"))
+    {
+        intent.late_tolerance_ms = ms("late-tolerance-ms", 0, 0);
+    }
+    host.start_timeout_ms = ms("participant-start-timeout-ms", host.start_timeout_ms, 1);
+    host.stop_timeout_ms = ms("participant-stop-timeout-ms", host.stop_timeout_ms, 1);
     intent.strict = args.flag("strict");
     intent.disable = args.all("disable");
     intent.enable = args.all("enable");
@@ -1134,7 +1176,7 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
 
 int check(const cli::Args& args)
 {
-    for (const char* runOnly : {"log-dir", "timeout-ms", "events-stall-ms", "events", "stdin-commands", "speed", "start-paused",
+    for (const char* runOnly : {"log-dir", "timeout-ms", "events-stall-ms", "events", "stdin-commands", "start-paused",
                                 "control", "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log",
                                 "timeline"})
     {
@@ -1144,8 +1186,9 @@ int check(const cli::Args& args)
         }
     }
     const RequestArgument asked = read_request_argument(args);
-    const launch::RunRequest request =
-        whole_request(read_request(args, launch::RequestCommand::Check, asked), launch::RequestCommand::Check, asked);
+    launch::RunRequest request = read_request(args, launch::RequestCommand::Check, asked);
+    read_speed(args, request.intent);
+    request = whole_request(request, launch::RequestCommand::Check, asked);
     const std::string& file = request.host.config;
     const launch::Checked report = launch::check_file(request);
     if (report.usage)
@@ -1238,17 +1281,8 @@ int run(const cli::Args& args, launch::EventStream* events)
             throw cli::UsageError("--timeout-ms must be at least 1");
         }
     }
-    if (args.has("speed"))
-    {
-        std::optional<double> speed;
-        if (!config::parse_speed(args.str("speed", ""), speed))
-        {
-            throw cli::UsageError("--speed must be a number of simulation seconds per wall-clock second from 0.000001 to "
-                                  "1000000 (1: real time, 2: twice as fast) or max (as fast as possible), not '" +
-                                  args.str("speed", "") + "'");
-        }
-        request.intent.speed.emplace(speed); // also an empty one: "max" replaces the file's speed
-    }
+
+    read_speed(args, request.intent);
     const bool control = args.has("control");
     for (const char* option : {"control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"})
     {
@@ -1428,11 +1462,16 @@ int test(const cli::Args& args)
                               "other, and a real bus does not wait for the virtual time; for a test with a device, run one scenario: vehicle_sil_launch "
                               "run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>");
     }
-    if (args.has("request"))
+    const RequestArgument asked = read_request_argument(args);
+    if (asked.file)
     {
-        throw cli::UsageError("--request is for check and run: test takes its variants and scenarios itself (--variant, "
-                              "--scenarios); to use the request file, run one scenario with vehicle_sil_launch run --request "
-                              "<file>");
+        for (const auto& field : asked.file->fields)
+        {
+            if (field != "stop_at_ms" && field != "late_tolerance_ms")
+            {
+                throw cli::UsageError("test --request takes only stop_at_ms and late_tolerance_ms; it selects its own runs");
+            }
+        }
     }
     for (const char* runOnly : {"log-dir", "events-stall-ms", "events", "stdin-commands", "speed", "start-paused", "manual", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline"})
@@ -1445,7 +1484,8 @@ int test(const cli::Args& args)
                                   "simulation): to use it, run one scenario with vehicle_sil_launch run --scenario <file>");
         }
     }
-    launch::RunRequest request = read_request(args, launch::RequestCommand::Test);
+    launch::RunRequest request = whole_request(read_request(args, launch::RequestCommand::Test, asked),
+                                               launch::RequestCommand::Test, asked);
     const std::string& file = request.host.config;
     const bool json = args.flag("json");
     launch::TestOptions options;
@@ -1620,13 +1660,17 @@ int main(int argc, char** argv)
         const cli::Args args =
             isConnections ? cli::Args(arguments, {"network", "variant", "request"}, {"json"})
             : isTest ? cli::Args(arguments,
-                               {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
+                               {"describe-timeout-ms", "log-dir", "timeout-ms", "stop-at-ms", "late-tolerance-ms",
+                                "participant-start-timeout-ms", "participant-stop-timeout-ms",
+                                "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline",
                                 "time-policy", "request", "descriptions", "write-descriptions", "compare-commands"},
                                {"json", "strict", "events", "stdin-commands", "start-paused", "fail-fast", "text-from-stdin"},
                                {"disable", "enable", "manual", "param", "variant", "scenarios", "connect"})
                    : cli::Args(arguments,
-                               {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
+                               {"describe-timeout-ms", "log-dir", "timeout-ms", "stop-at-ms", "late-tolerance-ms",
+                                "participant-start-timeout-ms", "participant-stop-timeout-ms",
+                                "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "variant",
                                 "timeline", "time-policy", "request", "descriptions", "write-descriptions",
                                 "compare-commands"},

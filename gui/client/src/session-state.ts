@@ -276,7 +276,7 @@ export interface SessionView {
    * Participants the user chose on the screen to start themselves (manual: true in the configuration file is in check).
    */
   manual: readonly string[];
-  /** Speed given at the start (null means as in the configuration file). The current speed is `speed` of launcherState. */
+  /** Speed requested at the start (null means no speed was requested). The current speed is `speed` of launcherState. */
   speed: Speed;
   /** Whether the run started paused. */
   startPaused: boolean;

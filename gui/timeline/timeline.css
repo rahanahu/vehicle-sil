@@ -76,15 +76,18 @@
 :host([hide~='toolbar']) #toolbar,
 :host([hide~='help']) #help,
 :host([hide~='tables']) #tables,
-:host([hide~='steps']) .lane.steps,
-:host([hide~='readout']) .readout,
+:host([hide~='steps']) :is(.lane.steps, #step-details),
+:host([hide~='readout']) :is(.readout, .hover-readout),
 :host([hide~='legend']) .legend .key {
   display: none !important;
 }
-:host([compact]) .lane {
-  grid-template-columns: 120px 1fr;
+:host([compact]) :is(.lane, .cursor-line) {
+  --lane-head-width: 120px;
 }
 @container (max-width: 479px) {
+  :host([compact]) .cursor-line {
+    --lane-head-width: 0px;
+  }
   :host([compact]) .lane {
     grid-template-columns: 1fr;
   }
@@ -298,13 +301,18 @@ summary {
 }
 #chart {
   container-type: inline-size;
+  position: relative;
   border: 1px solid var(--_border);
   border-radius: 6px;
   background: var(--_panel);
 }
+.lane,
+.cursor-line {
+  --lane-head-width: 200px;
+}
 .lane {
   display: grid;
-  grid-template-columns: 200px 1fr;
+  grid-template-columns: var(--lane-head-width) 1fr;
   border-bottom: 1px solid var(--_grid);
 }
 .lane-head {
@@ -317,8 +325,11 @@ summary {
   box-shadow: inset 4px 0 0 var(--_bad);
 }
 .lane-plot {
+  position: relative;
   min-width: 0;
   overflow: hidden;
+  touch-action: none;
+  cursor: crosshair;
 }
 .lane.axis {
   position: sticky;
@@ -335,12 +346,33 @@ summary {
   border-bottom: 1px solid var(--_grid);
 }
 @container (max-width: 719px) {
+  :host(:not([compact])) .cursor-line {
+    --lane-head-width: 0px;
+  }
   :host(:not([compact])) .lane {
     grid-template-columns: 1fr;
   }
   :host(:not([compact])) .lane-head {
     border-right: none;
   }
+}
+#step-details {
+  height: 6.25em;
+  margin-bottom: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--_border);
+  border-radius: 6px;
+  background: var(--_panel);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  scrollbar-gutter: stable;
+}
+.detail-heading > span {
+  margin-inline-start: 10px;
+}
+#step-details ul {
+  margin: 0;
+  padding-inline-start: 1.4em;
 }
 .var-name {
   font-weight: 600;
@@ -384,6 +416,45 @@ summary {
   min-height: 1.45em;
   overflow-wrap: anywhere;
 }
+#cursor-time,
+#chart[data-hover] .lane-head .readout {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#cursor-time {
+  font-variant-numeric: tabular-nums;
+}
+.hover-readout {
+  position: absolute;
+  bottom: 4px;
+  display: none;
+  width: max-content;
+  max-width: var(--cursor-room);
+  padding: 1px 6px;
+  border: 1px solid var(--_border);
+  border-radius: 4px;
+  background: var(--_panel);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.hover-readout strong {
+  margin-right: 6px;
+}
+#chart[data-hover] .hover-readout {
+  display: block;
+}
+#chart[data-cursor-side='right'] .hover-readout {
+  left: calc(var(--cursor-x) + 8px);
+}
+#chart[data-cursor-side='left'] .hover-readout {
+  left: calc(var(--cursor-x) - 8px);
+  transform: translateX(-100%);
+}
 .note {
   color: var(--_warn);
 }
@@ -399,8 +470,6 @@ summary {
 /* the chart */
 svg.plot {
   display: block;
-  touch-action: none;
-  cursor: crosshair;
   user-select: none;
 }
 svg text {
@@ -433,10 +502,19 @@ svg text {
   stroke: var(--_warn);
   stroke-dasharray: 3 3;
 }
-.cursor {
-  stroke: var(--_cursor);
-  stroke-width: 1;
+.cursor-line {
+  display: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--lane-head-width) + var(--cursor-x));
+  z-index: 2;
+  width: 1px;
+  background: var(--_cursor);
   pointer-events: none;
+}
+#chart[data-cursor-side] > .cursor-line {
+  display: block;
 }
 .selection {
   fill: var(--_selection);

@@ -60,11 +60,11 @@ def test_a_run_that_passes(tmp_path: Path) -> None:
     async def main(c: Client) -> None:
         status, app = await c.get("api/app")
         assert app["launcher"]["usable"] and app["initial_file"] is None
-        got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"], "speed": 2})
+        got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"], "speed": 2, "stop_at_ms": 1000})
         seqs = [e["seq"] for e in events(got)]
         assert seqs == list(range(len(seqs)))
         hello = events(got, "hello")[0]
-        assert hello["arguments"] == ["run", "--events", "--stdin-commands", "--disable", "Logger", "--speed", "2",
+        assert hello["arguments"] == ["run", "--events", "--stdin-commands", "--disable", "Logger", "--speed", "2", "--stop-at-ms", "1000",
                                       "--", "simulation.yaml"]
         end = got[-1]["session"]
         assert end["launcher"]["exit_code"] == 0 and end["result"]["result"] == "passed" and end["problems"] == []
@@ -82,7 +82,7 @@ def test_a_launcher_that_writes_nothing_for_a_while_is_reported(tmp_path: Path) 
     env = {"REPLAY_FAULT": "silent", "REPLAY_SILENT_S": "4"}
     with gui_server(tmp_path, env=env, args=("--silent-after", "1.5")) as gui:
         async def main(c: Client) -> None:
-            got = await run_to_end(c, {"file": "simulation.yaml"})
+            got = await run_to_end(c, {"file": "simulation.yaml", "stop_at_ms": 1000})
             summaries = [m["session"] for m in got if m["type"] == "session"]
             silent = [s["launcher"]["silent_s"] for s in summaries]
             assert any(s is not None and s >= 1.5 for s in silent), silent
@@ -96,7 +96,7 @@ def test_a_launcher_that_writes_nothing_for_a_while_is_reported(tmp_path: Path) 
 def test_lines_the_launcher_could_not_write_are_counted(tmp_path: Path) -> None:
     with gui_server(tmp_path, env={"REPLAY_FAULT": "log-dropped"}) as gui:
         async def main(c: Client) -> None:
-            got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"]})
+            got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"], "stop_at_ms": 1000})
             assert len(events(got, "log_dropped")) == 1
             log = got[-1]["session"]["log"]
             assert log["Engine"]["dropped"] == 120 and log["vehicle_sil_launch"]["dropped"] == 5
@@ -189,7 +189,7 @@ def test_a_run_whose_check_fails_is_refused_with_the_findings_of_the_check(gui: 
         assert any(f["severity"] == "error" for f in error["detail"]["findings"])
         status, body = await c.get("api/session")
         assert body["session"] is None  # nothing was started, and the next start is not blocked
-        got = await run_to_end(c, {"file": "simulation.yaml"})
+        got = await run_to_end(c, {"file": "simulation.yaml", "stop_at_ms": 1000})
         assert got[-1]["session"]["result"]["result"] == "passed"
     run_async(main, gui)
 
@@ -203,9 +203,9 @@ def test_a_variant_goes_to_the_check_and_the_run(gui: Gui) -> None:
         # without a variant, the launcher's check says to choose one: the run is refused with that finding
         status, body = await c.post("api/run", {"file": "variants.yaml"})
         assert (status, body["error"]["code"]) == (422, "check-failed"), body
-        got = await run_to_end(c, {"file": "variants.yaml", "variant": "small"})
+        got = await run_to_end(c, {"file": "variants.yaml", "variant": "small", "stop_at_ms": 1000})
         assert got[-1]["session"]["result"]["result"] == "passed"
-        assert events(got, "hello")[0]["arguments"][-4:] == ["--variant", "small", "--", "variants.yaml"]
+        assert events(got, "hello")[0]["arguments"][-6:] == ["--variant", "small", "--stop-at-ms", "1000", "--", "variants.yaml"]
     run_async(main, gui)
 
 
@@ -221,15 +221,15 @@ def test_a_start_checks_the_file_once_and_asks_for_the_names_only_for_disable_or
         return sum(1 for line in lines if json.loads(line)[:1] == ["check"])
 
     async def main(c: Client) -> None:
-        got = await run_to_end(c, {"file": "simulation.yaml"})
+        got = await run_to_end(c, {"file": "simulation.yaml", "stop_at_ms": 1000})
         assert got[-1]["session"]["result"]["result"] == "passed"
         assert checks() == 1  # the run's check: no names asked for
-        got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"]})
+        got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"], "stop_at_ms": 1000})
         assert got[-1]["session"]["result"]["result"] == "passed"
         assert checks() == 2  # the names come from the last check of the same file
         stat = (root / "simulation.yaml").stat()
         os.utime(root / "simulation.yaml", ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
-        got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"]})
+        got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"], "stop_at_ms": 1000})
         assert got[-1]["session"]["result"]["result"] == "passed"
         assert checks() == 4  # the file changed since: the names are asked for again, then the run's check
     with gui_server(tmp_path, root=root, env={"REPLAY_CALLS": str(calls)}) as gui:
@@ -262,12 +262,12 @@ def test_the_intent_goes_to_the_launcher_in_a_request_file_that_is_removed_after
         assert check["argv"][:2] == ["check", "--json"] and check["mode"] == 0o600
         assert json.loads(check["text"]) == {"vehicle_sil_run_request": 1, "scenario": "scenarios/throttle.yaml"}
         assert not os.path.exists(check["path"])
-        got = await run_to_end(c, {"file": "simulation.yaml", "speed": 2, "disable": ["Logger"]})
+        got = await run_to_end(c, {"file": "simulation.yaml", "speed": 2, "disable": ["Logger"], "stop_at_ms": 1000})
         assert got[-1]["session"]["result"]["result"] == "passed"
         run = made()[-1]
         assert run["argv"][:3] == ["run", "--events", "--stdin-commands"] and run["argv"][-2:] == ["--", "simulation.yaml"]
         assert not {"--disable", "--speed", "--scenario", "--variant"} & set(run["argv"])  # the intent is not in them
-        assert json.loads(run["text"]) == {"vehicle_sil_run_request": 1, "disable": ["Logger"], "speed": 2.0}
+        assert json.loads(run["text"]) == {"vehicle_sil_run_request": 1, "disable": ["Logger"], "speed": 2.0, "stop_at_ms": 1000}
         assert run["mode"] == 0o600 and not os.path.exists(run["path"])
     with gui_server(tmp_path, launcher=launcher) as gui:
         run_async(main, gui)
@@ -342,7 +342,7 @@ def test_one_run_at_a_time_and_stop(tmp_path: Path) -> None:
             assert end["launcher"]["exit_code"] == 0 and end["result"]["result"] == "stopped"
             assert (end["result"]["end"], end["result"]["ok"]) == ("stopped", True) and end["result"]["message"]
             assert all(not alive(pid) for pid in started_pids(sock.received))
-            status, _ = await c.post("api/run", {"file": "simulation.yaml"})  # the next run may start
+            status, _ = await c.post("api/run", {"file": "simulation.yaml", "stop_at_ms": 1000})  # the next run may start
             assert status == 200
             got = [m for m in await sock.until(is_ended) if m["type"] != "allowed"]  # (`starting` comes first)
             assert got[0]["type"] == "session" and got[0]["session"]["id"] == 2
@@ -375,18 +375,18 @@ def test_problems_of_the_launcher_are_shown(gui: Gui) -> None:
         end = got[-1]["session"]
         assert end["result"]["result"] == "failed" and end["findings"][0]["code"] == "participant-failed"
         assert {p["name"]: p.get("exit_code") for p in end["participants"]}["Dashboard"] == 3
-        got = await run_to_end(c, {"file": "launcher-crash.yaml"})
+        got = await run_to_end(c, {"file": "launcher-crash.yaml", "stop_at_ms": 1000})
         end = got[-1]["session"]
         assert end["launcher"]["exit_code"] == 70
         assert [p["code"] for p in end["problems"]] == ["launcher-stderr", "no-result"]
         if POSIX:  # what the dead launcher left in its process group is killed
             assert wait_until(lambda: all(not alive(pid) for pid in started_pids(got)), 5)
-        got = await run_to_end(c, {"file": "bad-lines.yaml"})
+        got = await run_to_end(c, {"file": "bad-lines.yaml", "stop_at_ms": 1000})
         assert [m["code"] for m in got if m["type"] == "error"] == ["launcher-output", "launcher-output", "seq-gap"]
         assert events(got, "mystery")  # an unknown event is passed on
         assert any(e.get("colour") == "blue" for e in events(got, "log"))  # unknown fields are passed on
         assert got[-1]["session"]["result"]["result"] == "passed"
-        got = await run_to_end(c, {"file": "future-events.yaml"})
+        got = await run_to_end(c, {"file": "future-events.yaml", "stop_at_ms": 1000})
         assert [m["code"] for m in got if m["type"] == "error"] == ["events-format"]
     run_async(main, gui)
 
@@ -395,7 +395,7 @@ def test_a_launcher_that_runs_on_after_its_result_can_be_stopped(gui: Gui) -> No
     async def main(c: Client) -> None:
         sock = await c.ws()
         await sock.until(is_synced)
-        assert (await c.post("api/run", {"file": "result-then-wait.yaml"}))[0] == 200
+        assert (await c.post("api/run", {"file": "result-then-wait.yaml", "stop_at_ms": 300}))[0] == 200
         await sock.until(lambda m: m.get("event", {}).get("event") == "result")
         await asyncio.sleep(0.5)
         status, body = await c.get("api/session")
@@ -420,7 +420,7 @@ def test_a_launcher_that_runs_on_after_its_result_can_be_stopped(gui: Gui) -> No
 def test_reconnecting_replays_the_kept_log(tmp_path: Path) -> None:
     with gui_server(tmp_path, env={"REPLAY_FLOOD": "2500"}) as gui:
         async def main(c: Client) -> None:
-            live = await run_to_end(c, {"file": "flood.yaml"})
+            live = await run_to_end(c, {"file": "flood.yaml", "stop_at_ms": 1000})
             again = await c.ws()
             got = await again.until(is_synced)
             hello = got[0]
@@ -447,7 +447,7 @@ def test_several_screens_see_the_same_run(gui: Gui) -> None:
         a, b = await c.ws(), await c.ws()
         await a.until(is_synced)
         await b.until(is_synced)
-        await c.post("api/run", {"file": "simulation.yaml"})
+        await c.post("api/run", {"file": "simulation.yaml", "stop_at_ms": 1000})
         got_a, got_b = await asyncio.gather(a.until(is_ended), b.until(is_ended))
         assert events(got_a) == events(got_b)
     run_async(main, gui)
@@ -459,7 +459,7 @@ def test_checks_and_configs(tmp_path: Path) -> None:
     (root / "nested" / "deeper").mkdir(parents=True)
     shutil.copy(CONFIGS / "simulation.yaml", root / "nested" / "deeper" / "n.yml")
     (root / ".git").mkdir()
-    (root / ".git" / "x.yaml").write_text("vehicle_sil_simulation: 1\n")
+    (root / ".git" / "x.yaml").write_text("vehicle_sil_simulation: 2\n")
     with gui_server(tmp_path, root=root, env={"REPLAY_CHECK_DELAY_MS": "700"},
                     args=(str(root / "nested" / "deeper" / "n.yml"),)) as gui:
         async def main(c: Client) -> None:
@@ -509,13 +509,20 @@ def test_a_launcher_that_does_not_stop_is_killed(tmp_path: Path) -> None:
         start = time.monotonic()
         gui.proc.send_signal(signal.SIGTERM)
         assert gui.proc.wait(scaled(20)) == 0
-        assert time.monotonic() - start < 10
+        assert time.monotonic() - start < scaled(10)
         assert wait_until(lambda: not any(alive(p) for p in pids), 5)
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "-1"])
+def test_stop_timeout_rejects_non_finite_or_negative_values(tmp_path: Path, value: str) -> None:
+    with gui_server(tmp_path, args=(f"--stop-timeout={value}",), expect_start=False) as gui:
+        assert gui.proc.returncode == 2
+        assert "--stop-timeout must be a finite number of 0 or more seconds" in gui.stderr_text()
 
 
 @pytest.mark.skipif(not POSIX, reason="signals and /proc")
 def test_a_second_signal_skips_the_waiting(tmp_path: Path) -> None:
-    with gui_server(tmp_path, args=("--stop-timeout", "60")) as gui:
+    with gui_server(tmp_path) as gui:
         pids = start_run(gui, "ignore-stop.yaml")
         gui.proc.send_signal(signal.SIGINT)
         time.sleep(0.5)
@@ -651,9 +658,9 @@ def test_pause_step_resume_and_speed(tmp_path: Path) -> None:
                                           "max", "--start-paused", "--", "forever.yaml"]
             status, body = await c.post("api/time", {"command": "step", "ms": 25})
             assert status == 200 and body == {"session_id": 1, "command": {"command": "step", "ms": 25}}, body
-            await sock.until_stands(30)
+            await sock.until_stands(25)
             step = next(e for e in events(sock.received, "command"))
-            assert step["accepted"] and step["ms"] == 30  # whole steps of 10 ms
+            assert step["accepted"] and step["ms"] == 25  # whole steps of 5 ms
             status, body = await c.post("api/time", {"command": "speed", "value": 2, "id": 7})
             assert status == 200 and body["command"] == {"command": "speed", "value": 2.0, "id": 7}
             await sock.until_stands(speed=2)
@@ -678,7 +685,7 @@ def test_pause_step_resume_and_speed(tmp_path: Path) -> None:
             end = got[-1]["session"]
             assert end["result"]["result"] == "stopped" and end["launcher_state"]["paused"] is False
             timing = end["result"]["timing"]
-            assert timing["speed"] == 2 and timing["time_step_ms"] == 10 and timing["paused_ms"] > 0
+            assert timing["speed"] == 2 and timing["time_step_ms"] == 5 and timing["paused_ms"] > 0
             status, body = await c.post("api/time", {"command": "resume"})
             assert status == 409 and body["error"]["code"] == "not-running"
         run_async(main, gui)
@@ -833,7 +840,7 @@ def test_lateness_reaches_the_screen_and_the_summary(tmp_path: Path) -> None:
     async def main(c: Client) -> None:
         sock = await c.ws()
         await sock.until(is_synced)
-        await c.post("api/run", {"file": "late.yaml"})
+        await c.post("api/run", {"file": "late.yaml", "speed": 1})
         got = await sock.until(is_time(late_steps=1, late_ms=0))
         stalled = [e for e in events(got, "time") if e["late_ms"] > 0]
         assert stalled and stalled[0]["late_ms"] == 200 and stalled[0]["slipped_ms"] == 200

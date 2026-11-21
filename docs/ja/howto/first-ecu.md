@@ -45,7 +45,7 @@ export PATH="$PWD/tools/vehicle-sil-tools-<version>-linux-x86_64/bin:$PATH"   # 
 cmake --preset linux             # vehicle-sil と SIL Kit をダウンロードする
 cmake --build --preset linux     # 最初の 1 回だけ、SIL Kit のコンパイルに数分かかる
 vehicle_sil_launch check simulation.yaml
-vehicle_sil_launch run simulation.yaml
+vehicle_sil_launch run simulation.yaml --stop-at-ms 1000
 ```
 
 Windows では、次の 4 つが変わります。
@@ -123,8 +123,8 @@ passed: 0 errors, 0 warnings, 0 notes
 #   vehicle_sil_launch check simulation.yaml
 #   vehicle_sil_launch run simulation.yaml [--scenario scenarios/throttle_step.yaml]
 # The paths in command are relative to this file's directory.
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
+
 networks:
   - name: J1939_CAN
     kind: can
@@ -367,10 +367,10 @@ warning: simulation.yaml:9: network 'J1939_CAN': only Engine is on it, so what i
 
 ## 手順 6: シミュレーションを実行する
 
-3 つの ECU を、`stop_at_ms` に書いた 1000 ms まで実行します。
+3 つの ECU を、指定した停止時刻の 1000 ms まで実行します。
 
 ```sh
-vehicle_sil_launch run simulation.yaml
+vehicle_sil_launch run simulation.yaml --stop-at-ms 1000
 ```
 
 ### 確認
@@ -542,7 +542,7 @@ private:
 1. 設定ファイルは変更せずに、`--manual` に participant 名を指定して実行します。
 
    ```sh
-   vehicle_sil_launch run simulation.yaml --manual Cooler
+   vehicle_sil_launch run simulation.yaml --manual Cooler --stop-at-ms 1000
    ```
 
 2. `vehicle_sil_launch` は、ほかの ECU を起動し、`Cooler` を起動するコマンドを標準エラーに表示して待ちます（`<dir>` はプロジェクトのディレクトリです）。

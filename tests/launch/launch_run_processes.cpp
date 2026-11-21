@@ -71,7 +71,7 @@ void howto_copies_agree(const fs::path& docs, const std::string& command)
 void docs(const Options& o)
 {
     const fs::path dir = o.example_dir;
-    const Captured text = launch(o, {"run", "simulation.yaml"}, dir);
+    const Captured text = launch(o, {"run", "simulation.yaml", "--stop-at-ms", "1000"}, dir);
     expect_code(text, 0, "run simulation.yaml");
     expect_text(text.standard_output, block_after(o.docs, "<!-- vehicle_sil_launch run simulation.yaml -->"),
                 "run simulation.yaml");
@@ -82,13 +82,13 @@ void docs(const Options& o)
             "the first line on stderr is where the registry listens:\n" + err);
     require(contains(err, "\n[vehicle_sil_launch] simulation running\n"), "the start on stderr:\n" + err);
 
-    const Captured without = launch(o, {"run", "simulation.yaml", "--disable", "Dashboard"}, dir);
+    const Captured without = launch(o, {"run", "simulation.yaml", "--stop-at-ms", "1000", "--disable", "Dashboard"}, dir);
     expect_code(without, 0, "run simulation.yaml --disable Dashboard");
     expect_text(without.standard_output,
                 block_after(o.docs, "<!-- vehicle_sil_launch run simulation.yaml --disable Dashboard -->"),
                 "run simulation.yaml --disable Dashboard");
 
-    const Captured json = launch(o, {"run", "simulation.yaml", "--json"}, dir);
+    const Captured json = launch(o, {"run", "simulation.yaml", "--stop-at-ms", "1000", "--json"}, dir);
     expect_code(json, 0, "run simulation.yaml --json");
     // Byte for byte: "\n" also on Windows.
     expect_text(without_timing(without_versions(json.standard_output)),
@@ -103,14 +103,14 @@ void docs(const Options& o)
                 contains(json.standard_output, "  \"registry_uri\": \"" + listened + "\",\n"),
             "registry_uri of run --json is " + listened + ":\n" + json.standard_output);
     // As fast as possible: the time as it went, never late, never paused.
-    require(contains(json.standard_output, "  \"timing\": {\n    \"speed\": \"max\",\n    \"time_step_ms\": 10,\n") &&
+    require(contains(json.standard_output, "  \"timing\": {\n    \"speed\": \"max\",\n    \"time_step_ms\": 5,\n") &&
                 contains(json.standard_output, "    \"sim_ms\": 1000,\n") &&
                 contains(json.standard_output, "    \"paced_steps\": 0,\n    \"late_steps\": 0,\n    \"max_late_ms\": 0,\n"
                                                "    \"slipped_ms\": 0,\n    \"late_ms\": 0,\n    \"paused_ms\": 0\n  },\n"),
             "the timing of a run as fast as possible:\n" + json.standard_output);
     // With a speed: the line of the time, as the manual shows it (the numbers that depend on the
     // machine as <...>). The controller steps every 5 ms then, as Dashboard does: 200 steps.
-    const Captured paced = launch(o, {"run", "simulation.yaml", "--speed", "4"}, dir);
+    const Captured paced = launch(o, {"run", "simulation.yaml", "--stop-at-ms", "1000", "--speed", "4"}, dir);
     expect_code(paced, 0, "run simulation.yaml --speed 4");
     const auto timeAt = paced.standard_output.find("\ntime: ");
     require(timeAt != std::string::npos, "no line of the time:\n" + paced.standard_output);
@@ -127,7 +127,7 @@ void docs(const Options& o)
     howto_copies_agree(o.docs, "run");
 
     const fs::path logs = o.work_dir / "logs";
-    const Captured logged = launch(o, {"run", "--json", "--log-dir", shown_path(logs), "simulation.yaml"}, dir);
+    const Captured logged = launch(o, {"run", "--json", "--log-dir", shown_path(logs), "--stop-at-ms", "1000", "simulation.yaml"}, dir);
     expect_code(logged, 0, "run --log-dir");
     // The JSON names each participant's file.
     require(contains(logged.standard_output, "      \"log\": \"" + shown_path(logs / "Dashboard.log") + "\",\n"),
@@ -140,7 +140,7 @@ void docs(const Options& o)
 
 void check(const Options& o)
 {
-    const fs::path dir = scenario_dir(o, "vehicle_sil_simulation: 1\n"
+    const fs::path dir = scenario_dir(o, "vehicle_sil_simulation: 2\n"
                                          "networks: []\n"
                                          "participants:\n"
                                          "  - name: Logger\n"
@@ -176,8 +176,8 @@ const std::string kTwoEcusTable = "participant  step   networks\n";
 void crash(const Options& o)
 {
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n"
-                                      "stop_at_ms: 1000\n"
+                                      "vehicle_sil_simulation: 2\n"
+                                      "# run-option --stop-at-ms 1000\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Engine\n"
@@ -213,8 +213,8 @@ void crash(const Options& o)
 void step(const Options& o)
 {
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n"
-                                      "stop_at_ms: 1000\n"
+                                      "vehicle_sil_simulation: 2\n"
+                                      "# run-option --stop-at-ms 1000\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Engine\n"
@@ -243,8 +243,8 @@ void step(const Options& o)
 
 void optional(const Options& o)
 {
-    const fs::path dir = scenario_dir(o, "vehicle_sil_simulation: 1\n"
-                                         "stop_at_ms: 1000\n"
+    const fs::path dir = scenario_dir(o, "vehicle_sil_simulation: 2\n"
+                                         "# run-option --stop-at-ms 1000\n"
                                          "networks: []\n"
                                          "participants:\n"
                                          "  - name: Engine\n"
@@ -282,9 +282,9 @@ void not_joined(const Options& o)
         throw Skip("no console to send Ctrl+Break through (the participants are ended at once)");
     }
     // 8 s for Engine to join is generous; Ghost never joins.
-    const fs::path dir = scenario_dir(o, "vehicle_sil_simulation: 1\n"
-                                         "stop_at_ms: 1000\n"
-                                         "start_timeout_ms: 8000\n"
+    const fs::path dir = scenario_dir(o, "vehicle_sil_simulation: 2\n"
+                                         "# run-option --stop-at-ms 1000\n"
+                                         "# run-option --participant-start-timeout-ms 8000\n"
                                          "networks: []\n"
                                          "participants:\n"
                                          "  - name: Engine\n"
@@ -332,9 +332,9 @@ void quitter(const Options& o)
     // join the simulation, so no wait inside SIL Kit can keep the request from reaching it (under the thread
     // sanitizer a signal is held back while a thread sleeps in such a wait); that ecu_main ends at once on a
     // stop request before the start is checked by not_joined.
-    const fs::path dir = scenario_dir(o, "vehicle_sil_simulation: 1\n"
-                                         "stop_at_ms: 1000\n"
-                                         "start_timeout_ms: 600000\n"
+    const fs::path dir = scenario_dir(o, "vehicle_sil_simulation: 2\n"
+                                         "# run-option --stop-at-ms 1000\n"
+                                         "# run-option --participant-start-timeout-ms 600000\n"
                                          "networks: []\n"
                                          "participants:\n"
                                          "  - name: Engine\n"
@@ -390,9 +390,9 @@ void hang(const Options& o)
     // second period ends (else it is killed too): scaled, as that takes longer on a slow machine.
     const std::string stop_ms = std::to_string(scaled_timeout(300ms).count());
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n"
-                                      "stop_at_ms: 1000\n"
-                                      "stop_timeout_ms: " + stop_ms + "\n"
+                                      "vehicle_sil_simulation: 2\n"
+                                      "# run-option --stop-at-ms 1000\n"
+                                      "# run-option --participant-stop-timeout-ms " + stop_ms + "\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Stuck\n"
@@ -427,8 +427,8 @@ void hang(const Options& o)
 void grandchild(const Options& o)
 {
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n"
-                                      "stop_at_ms: 1000\n"
+                                      "vehicle_sil_simulation: 2\n"
+                                      "# run-option --stop-at-ms 1000\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Engine\n"
@@ -464,8 +464,8 @@ void path(const Options& o)
 {
     // A bare name runs from PATH (here: only the helper's directory); the participants run in the
     // directory of the configuration file.
-    const fs::path dir = scenario_dir(o, "vehicle_sil_simulation: 1\n"
-                                         "stop_at_ms: 1000\n"
+    const fs::path dir = scenario_dir(o, "vehicle_sil_simulation: 2\n"
+                                         "# run-option --stop-at-ms 1000\n"
                                          "networks: []\n"
                                          "participants:\n"
                                          "  - name: Engine\n"
@@ -496,7 +496,7 @@ void path(const Options& o)
     const std::string err = lf(run.standard_error);
     // check runs --describe in the directory of the configuration file too: the helper writes a
     // description from a file there (a relative path).
-    write_file(dir / "check.yaml", "vehicle_sil_simulation: 1\n"
+    write_file(dir / "check.yaml", "vehicle_sil_simulation: 2\n"
                                    "networks: []\n"
                                    "participants:\n"
                                    "  - name: Described\n"
@@ -524,7 +524,7 @@ void interrupt(const Options& o)
 #endif
     // No stop_at_ms: the simulation runs until it is interrupted.
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n"
+                                      "vehicle_sil_simulation: 2\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Engine\n"
@@ -569,8 +569,8 @@ void interrupt_twice(const Options& o)
     // Deaf does not end after the simulation and ignores the stop request; stop_timeout_ms would
     // wait 10 minutes twice. A second interrupt ends the waiting.
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n"
-                                      "stop_timeout_ms: 600000\n"
+                                      "vehicle_sil_simulation: 2\n"
+                                      "# run-option --participant-stop-timeout-ms 600000\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Deaf\n"
@@ -587,7 +587,7 @@ void interrupt_twice(const Options& o)
         (stream == vehicle_sil::process::Stream::Output ? out : err) += std::string(line) + "\n";
         changed.notify_all();
     };
-    vehicle_sil::process::Process launcher(o.launch, {"run", "sim.yaml"}, std::move(options));
+    vehicle_sil::process::Process launcher(o.launch, fixture_run_arguments(dir, {"run", "sim.yaml"}), std::move(options));
     const auto wait_for_line = [&](const std::string& line) {
         std::unique_lock lock(mutex);
         // Only a last line against a hang.
@@ -632,8 +632,8 @@ void ended_early(const Options& o)
     }
     // stop_at_ms is far away; Engine stops the simulation (a stop request makes ecu_main stop it).
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n"
-                                      "stop_at_ms: 1000000000000\n"
+                                      "vehicle_sil_simulation: 2\n"
+                                      "# run-option --stop-at-ms 1000000000000\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Engine\n"
@@ -673,9 +673,9 @@ void interrupt_ending(const Options& o)
 #endif
     // Stuck does not end after the simulation; the launcher would wait 10 minutes for it.
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n"
-                                      "stop_at_ms: 1000\n"
-                                      "stop_timeout_ms: 600000\n"
+                                      "vehicle_sil_simulation: 2\n"
+                                      "# run-option --stop-at-ms 1000\n"
+                                      "# run-option --participant-stop-timeout-ms 600000\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Stuck\n"
@@ -692,7 +692,7 @@ void interrupt_ending(const Options& o)
         (stream == vehicle_sil::process::Stream::Output ? out : err) += std::string(line) + "\n";
         changed.notify_all();
     };
-    vehicle_sil::process::Process launcher(o.launch, {"run", "sim.yaml"}, std::move(options));
+    vehicle_sil::process::Process launcher(o.launch, fixture_run_arguments(dir, {"run", "sim.yaml"}), std::move(options));
     {
         std::unique_lock lock(mutex);
         // Only a last line against a hang.
@@ -735,9 +735,9 @@ void timeout(const Options& o)
     // Hang never returns from its step at 200 ms: virtual time stops for everyone, and only the
     // wall-clock limit ends the run.
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n"
-                                      "stop_at_ms: 1000\n"
-                                      "stop_timeout_ms: 300\n"
+                                      "vehicle_sil_simulation: 2\n"
+                                      "# run-option --stop-at-ms 1000\n"
+                                      "# run-option --participant-stop-timeout-ms 300\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Hang\n"
@@ -772,9 +772,9 @@ void no_console(const Options& o)
     // The launcher without a console (as from a service): it cannot send Ctrl+Break, so it ends a
     // participant that does not end at once, and says so.
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n"
-                                      "stop_at_ms: 1000\n"
-                                      "stop_timeout_ms: 300\n"
+                                      "vehicle_sil_simulation: 2\n"
+                                      "# run-option --stop-at-ms 1000\n"
+                                      "# run-option --participant-stop-timeout-ms 300\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Deaf\n"
@@ -783,7 +783,9 @@ void no_console(const Options& o)
     vehicle_sil::process::CaptureOptions options;
     options.timeout = scaled_timeout(240s);
     options.working_directory = dir;
-    const Captured run = vehicle_sil::process::run_captured(o.helper, {"--run-detached", shown_path(o.launch), "run", "sim.yaml"}, options);
+    const Captured run = vehicle_sil::process::run_captured(
+        o.helper, {"--run-detached", shown_path(o.launch), "run", "sim.yaml", "--stop-at-ms", "1000",
+                   "--participant-stop-timeout-ms", "300"}, options);
     expect_code(run, 1, "run without a console");
     expect_text(run_part(run.standard_output),
                 "run: the simulation ran to stop_at_ms (1000 ms) and ended\n"
@@ -810,7 +812,7 @@ void no_console(const Options& o)
 void killed(const Options& o)
 {
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n"
+                                      "vehicle_sil_simulation: 2\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Engine\n"
@@ -886,8 +888,8 @@ void control(const Options& o)
         // Engine and Brake offer variables; Tool declares none (it has ecu.connected); Quiet has some and does not offer them
         // (--no-control, which its --describe says too).
         const fs::path dir = scenario_dir(o,
-                                          "vehicle_sil_simulation: 1\n"
-                                          "stop_at_ms: 200\n"
+                                          "vehicle_sil_simulation: 2\n"
+                                          "# run-option --stop-at-ms 200\n"
                                           "networks: []\n"
                                           "participants:\n"
                                           "  - name: Engine\n"
@@ -942,8 +944,8 @@ void control(const Options& o)
         // --no-control behind the launcher's back): the start waits for its hello in vain, and
         // says so.
         const fs::path dir = scenario_dir(o,
-                                          "vehicle_sil_simulation: 1\n"
-                                          "stop_at_ms: 200\n"
+                                          "vehicle_sil_simulation: 2\n"
+                                          "# run-option --stop-at-ms 200\n"
                                           "networks: []\n"
                                           "participants:\n"
                                           "  - name: Engine\n"
@@ -968,8 +970,8 @@ void disabled(const Options& o)
     // Ghost's executable does not exist, and it is required: started or waited for, it would fail
     // the run.
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\n"
-                                      "stop_at_ms: 300\n"
+                                      "vehicle_sil_simulation: 2\n"
+                                      "# run-option --stop-at-ms 300\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Engine\n"
@@ -1050,8 +1052,8 @@ void disabled(const Options& o)
 
     // A run that fails with a disabled participant: it stays not started, with no finding.
     const fs::path failing = scenario_dir(o,
-                                          "vehicle_sil_simulation: 1\n"
-                                          "stop_at_ms: 1000\n"
+                                          "vehicle_sil_simulation: 2\n"
+                                          "# run-option --stop-at-ms 1000\n"
                                           "networks: []\n"
                                           "participants:\n"
                                           "  - name: Engine\n"
@@ -1073,7 +1075,7 @@ void disabled(const Options& o)
 
     // --strict: leaving Dashboard out of the example gives a warning (one participant on
     // J1939_CAN), so nothing is started.
-    const Captured strict = launch(o, {"run", "--strict", "simulation.yaml", "--disable", "Dashboard"}, o.example_dir);
+    const Captured strict = launch(o, {"run", "--strict", "simulation.yaml", "--stop-at-ms", "1000", "--disable", "Dashboard"}, o.example_dir);
     expect_code(strict, 1, "run --strict simulation.yaml --disable Dashboard");
     require(contains(strict.standard_output, "\nnothing was started: the check found warnings, and --strict fails on them") &&
                 !contains(strict.standard_error, "[vehicle_sil_launch] registry"),

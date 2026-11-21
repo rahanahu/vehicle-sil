@@ -90,7 +90,7 @@
 |---|---|
 | 共通の部分と、それに重ねた各機種（`--variant` で選んだものに限らず、すべての機種）での、各 participant の `command`（配列の全体）、`describe`、`manual`、`enabled` | `networks`（`kind` と `external` を含む）、`variables`、`role`、`required`、`step_ms` |
 | `describe: false` の participant では、その `network_names` と `j1939_nodes` のために `run` が引数に足すもの（`--map-network`、`--j1939-node`）も | ecu_main の participant（`describe: true`）の `network_names` と `j1939_nodes` |
-| participant の名前と機種の名前（順は比べません） | `params`、`stop_at_ms`、待ち時間、`time_step_ms`、`speed`、`late_tolerance_ms` |
+| participant の名前と機種の名前（順は比べません） | `params`、`time_step_ms` |
 | `registry_uri` | コメント、キーの順、コマンドが指すファイルや実行ファイル |
 
 | `commands` | いつ | 注記 |
@@ -117,15 +117,16 @@
 | コード | 重大度 | 意味 | 直し方 |
 |---|---|---|---|
 | `syntax` | エラー（読めない） | YAML または JSON の文法のエラーです。 | 添えられた場所の文法を直します。 |
-| `not-a-configuration` | エラー（読めない） | 空のファイルか、マッピングでないファイルです。 | `vehicle_sil_simulation: 1`、`networks`、`participants` を持つマッピングを書きます。 |
+| `not-a-configuration` | エラー（読めない） | 空のファイルか、マッピングでないファイルです。 | `vehicle_sil_simulation: 2`、`networks`、`participants` を持つマッピングを書きます。 |
 | `encoding` | エラー（読めない） | UTF-8 でないファイルです（UTF-16、NUL を含む）。 | UTF-8 で保存します。 |
 | `unsupported-yaml` | エラー（アンカーとエイリアスは読めない） | アンカーとエイリアスか、2 つ目の文書（`---`）があります。 | 値を書き下し、2 つ目以降の文書は削除するか別のファイルにします。 |
-| `format-version` | エラー（知らないバージョンは読めない） | `vehicle_sil_simulation` が 1 ではありません。 | `vehicle_sil_simulation: 1` と書くか、そのファイルの形式を読める vehicle-sil を使います。 |
+| `format-version` | エラー（知らないバージョンは読めない） | `vehicle_sil_simulation` が対応する形式バージョンではありません。 | `vehicle_sil_simulation: 2` と書くか、そのファイルの形式を読める vehicle-sil を使います。 |
 | `file` | エラー（読めない） | ファイルがない、ディレクトリ、通常のファイルでない、大きすぎる、開けない、のどれかです。`--text-from-stdin` のときは、標準入力の文が 16 MiB を超えるか、標準入力を読めません。 | パスとファイルを確認します。 |
 | `missing-key` | エラー | 必須のキーがありません。 | 指摘の文にあるキーを追加します。 |
 | `unknown-key` | エラー | 知らないキーがあります。 | キーの名前を直します（指摘の文に、近い名前と書けるキーの一覧があります）。 |
 | `duplicate-key` | エラー | 同じキーが 2 回あります。 | 片方を削除します。 |
-| `value` | エラー | 型または範囲が違う値、使えない名前、実行ファイルのパスのプレースホルダー、`stop_at_ms` の約数でない `time_step_ms` のどれかです。 | 指摘の文に従って、値を直します。 |
+| `value` | エラー | 型または範囲が違う値、使えない名前、実行ファイルのパスのプレースホルダーのどれかです。 | 指摘の文に従って、値を直します。 |
+| `stop-not-on-step` | エラー | Run の停止時刻が固定刻みの倍数ではありません。 | 停止時刻を倍数にするか、固定刻みを省略します。 |
 | `duplicate-name` | エラー | participant 名、またはネットワークの名前が 2 回あります。 | 片方を削除するか、別の名前にします。 |
 | `reserved-name` | エラー | participant 名が `SimulationController` です。 | 別の名前にします。 |
 | `launcher-argument` | エラー | ecu_main の `command` に、`ecu_main` の引数かプレースホルダーがあります。 | それを削除するか、`ecu_main` で作っていない実行ファイルなら `describe: false` を書きます。 |
@@ -173,8 +174,8 @@
 | `connect-target-shared` | 警告 | つないだ 2 つのネットワークの先が同じです。同じ Ethernet のインターフェース（Windows ではアダプター名の大文字小文字を区別しません。`enp3s0`、`packet:enp3s0`、`tap:enp3s0` は同じインターフェースです）、同じ SocketCAN のインターフェース、同じ `physical:<n>` のチャンネル、または 2 つの `virtual:<n>`（Vector Virtual CAN は全チャンネルが 1 つのバスです）。両方のネットワークのフレームがそこで混ざります。`physical:1` と `physical:2` は別のデバイスです。チェックは先の文字列を比べるだけです。接続名と同じアダプターの pcap の名前は見分けず、この PC の別の実行も見えません。 | 分けておきたいなら、別のチャンネル（アダプター）につなぎます。1 つのバスなら、構成で 1 つのネットワークにします。 |
 | `connect-shared-loop` | 誤り | `connect-target-shared` の条件の 2 つのネットワークが、participant を通してもつながっています。ECU（`role: test` と `role: bridge` を除く）が両方にいるか、ECU の連なりがつなぎます。転送する ECU がいると、フレームが先とシミュレーションの間を回ります。ブリッジの回りの防ぎは外の機器の MAC を塞いで、片方のネットワークを外の機器から切ることがあります。`describe: false` の participant は名前を挙げます（ほかのネットワークもつなぐかもしれません）。その組には `connect-target-shared` の代わりに出ます。 | 2 つのネットワークを別の先につなぐか、構成で 1 つのネットワークにします。 |
 | `outside-real-time` | エラー | 実行がシミュレーションの外につながっていて（`--connect` でつなぐネットワーク、または有効な `role: bridge` の participant）、実時間を保ちます（`--time-policy realtime`、既定）。そこへ `run` に 1 以外の `--speed` か `--start-paused` が付いています。何も起動しません。 | `--speed` と `--start-paused` を外します。ほかの速さで動かす、または止めるなら、つながずに動かす（`--connect` を外す、ブリッジを `--disable` する）か、`--time-policy free` を付けます。 |
-| `outside-speed-set` | 注記 | 実行がシミュレーションの外につながっていて、実時間を保ちます。ファイルの `speed`（速さがない、つまり最速のときも）でなく、速さ 1 で動きます。 | 直すものはありません。ほかの速さにするには `outside-real-time` を見ます。 |
-| `outside-not-real-time` | 注記 | `--time-policy free` のとき: 実行がシミュレーションの外につながっていて、速さが 1 でない（`--speed`、なければファイルの値。速さがなければ最速）か、`--start-paused` が付いています。ブリッジは両方向にフレームを運び続けます。 | 実時間で動かすなら、`--time-policy free` を外します。 |
+| `outside-speed-set` | 注記 | 実行がシミュレーションの外につながっていて、実時間を保ちます。実行要求の既定の速さ（指定がなければ最速）でなく、速さ 1 で動きます。 | 直すものはありません。ほかの速さにするには `outside-real-time` を見ます。 |
+| `outside-not-real-time` | 注記 | `--time-policy free` のとき: 実行がシミュレーションの外につながっていて、速さが 1 でない（`--speed` または実行要求の速さ。指定がなければ最速）か、`--start-paused` が付いています。ブリッジは両方向にフレームを運び続けます。 | 実時間で動かすなら、`--time-policy free` を外します。 |
 | `not-checked` | 注記 | `describe: false` の participant です（照合していない）。 | 対応は不要です。 |
 | `not-described` | 注記 | `--descriptions` のとき: `describe: true` の participant に、今の `command` と実行ファイルに合う保存した `--describe` の出力がありません（コマンドを変えた、実行ファイルを作り直した、保存していない）。コマンドで渡すファイル、ライブラリ、環境変数は比べません（[保存した説明](#保存した説明--write-descriptions--descriptions)）。 | `--descriptions` なしで照合します。`--write-descriptions` を付けると、出力を保存し直します。 |
 | `descriptions-not-used` | 注記 | `--descriptions` のとき: ファイルが読めない、保存した説明のファイルでない、別の vehicle-sil の版が書いた、のどれかです。どの participant も照合しません。 | `--descriptions` なしで照合します。`--write-descriptions` を付けると、出力を保存し直します。 |
@@ -184,7 +185,7 @@
 | `participant-disabled` | 注記 | 無効にした participant です（`enabled: false`、`--disable`。照合も起動もしない）。 | 対応は不要です。 |
 | `participant-manual` | 注記 | 自分で起動する participant です（`manual: true`、`--manual`。`run` は起動せず、コマンドを表示して待つ）。 | `run` が表示するコマンドで起動します。 |
 | `version-mismatch` | 注記 | 実行ファイルをビルドした vehicle-sil のバージョンが、`vehicle_sil_launch` のバージョンと違います。 | 一緒に動かなければ、同じバージョンでビルドし直します。 |
-| `coarse-time-step` | 警告 | ファイルに `speed`（数）と `time_step_ms` があり、ECU のステップがタイムステップの境目で始まりません。 | 指摘の文にある値を、`time_step_ms` に書きます。 |
+| `coarse-time-step` | 警告 | 実行速度が数値で、設定に `time_step_ms` があり、ECU のステップがタイムステップの境目で始まりません。 | 指摘の文にある値を、`time_step_ms` に書きます。 |
 | `control-link-not-offered` | 注記 | 変数のある ECU が、それをシミュレーションに公開すると `--describe` に出力していません（`--no-control`、`control` のない古い実行ファイル）。 | 変数を読み書きしたいなら、`--no-control` を削除するか、新しい vehicle-sil で ECU をビルドし直します。 |
 | `control-link-version` | 警告 | 変数のある ECU が出力した、メッセージの形式のバージョンが `vehicle_sil_launch` と違うか、トランスポートが `silkit` ではありません。シミュレーションは動きますが、`run` はその ECU の変数を読み書きできません。どちらが古いかは文に出ます。 | ECU のほうが古ければ、`vehicle_sil_launch` の vehicle-sil でビルドし直します。新しければ、ECU と同じかそれより新しいバージョンの `vehicle_sil_launch` を使います。別のトランスポートなら、実行ファイルが `silkit` で変数を出すようにします。 |
 | `control-link-revision` | 注記 | 変数のある ECU が書くメッセージの形式の改訂が、`vehicle_sil_launch` より古い（`--describe` の `control.wire_revision`。ないときは 0）。変数はふつうに読み書きできますが、後の改訂で足したものはその ECU から届きません。変数は利用状態を報告せず、すべて Active に見えます。 | 変数に利用状態を報告させるなら、ECU を `vehicle_sil_launch` の vehicle-sil でビルドし直し、その変数を `VariableOptions::availability` で宣言します。 |
@@ -349,8 +350,8 @@ passed: 0 errors, 0 warnings, 0 notes
 
 <!-- two-engines.yaml -->
 ```yaml
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
+
 networks:
   - name: J1939_CAN
     kind: can
@@ -427,7 +428,8 @@ failed: 3 errors, 1 warning, 0 notes
 | `variant` | 選んだ機種（`--variant`）。機種を書いた設定ファイル（`variants`）のときだけあります |
 | `variants` | 設定ファイルにある機種の名前の配列。機種を書いた設定ファイルのときだけあります |
 | `params` | 共通の `params` に、選んだ機種の `params` を重ねたもの。設定ファイルに `params` があるときだけあります |
-| `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` | 設定ファイルの値 |
+| `stop_at_ms`、`time_step_ms` | Run が要求した停止時刻と、Describe 後に決めた刻み（仮想ミリ秒） |
+| `start_timeout_ms`、`stop_timeout_ms`、`registry_uri` | ホストの待機上限と、構成の registry URI |
 | `commands` | `--compare-commands` のとき: `"same"`、`"changed"`、`"not_compared"`。ないときと引数のエラーのときは `null`（[実行されるコマンドを比べる](#実行されるコマンドを比べる--compare-commands)） |
 | `participants[]` | participant の配列（設定ファイルの順） |
 | `networks[]` | ネットワークの配列（設定ファイルの順） |
@@ -435,8 +437,7 @@ failed: 3 errors, 1 warning, 0 notes
 
 - `--variant` がない、または名前が違うとき（`result` が `"usage"`）は、`variant` が `null` で、`variants` に選べる名前が出ます。
 - `params` の要素は、`name`、`value`（`true`・`false`、数、文字列）、`from`（`configuration` か `variant`）です。
-- 設定ファイルを読めないときは、`stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` が `null` です。
-- 書いていない `stop_at_ms` と `registry_uri` は `null` で、書いていない `start_timeout_ms` と `stop_timeout_ms` は既定の値です。
+- Run の計画まで進めない場合は、刻みと Run のタイミング設定が `null` です。停止時刻を指定しなかった場合、`stop_at_ms` は `null` です。
 
 `participants[]` の要素のキーは次のとおりです。
 
@@ -531,7 +532,7 @@ failed: 3 errors, 1 warning, 0 notes
 
 <!-- engine-alone.yaml -->
 ```yaml
-vehicle_sil_simulation: 1
+vehicle_sil_simulation: 2
 networks:
   - name: J1939_CAN
     kind: can
@@ -553,6 +554,7 @@ participants:
   "warnings": 1,
   "notes": 0,
   "stop_at_ms": null,
+  "time_step_ms": 10,
   "start_timeout_ms": 30000,
   "stop_timeout_ms": 10000,
   "registry_uri": null,

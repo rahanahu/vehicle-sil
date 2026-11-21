@@ -330,7 +330,6 @@ inline Setup connect_setup()
     s.network("ETH", NetworkKind::Ethernet, 3).network("CAN1", NetworkKind::Can, 5).network("BODY", NetworkKind::Lin, 7);
     s.described(participant("Camera", 10), ecu("Camera", 10ms, {on_ethernet("ETH", mac_of(1))}));
     s.described(participant("Engine", 13), ecu("Engine", 10ms, {NetworkDescription{"CAN1", NetworkUse::Raw, {}}}));
-    s.config.speed = 1.0;
     return s;
 }
 
@@ -421,7 +420,6 @@ inline Setup two_ethernets()
     s.network("A", NetworkKind::Ethernet, 3).network("B", NetworkKind::Ethernet, 4);
     s.described(participant("EcuA", 10), ecu("EcuA", 10ms, {on_ethernet("A", mac_of(1))}));
     s.described(participant("EcuB", 11), ecu("EcuB", 10ms, {on_ethernet("B", mac_of(2))}));
-    s.config.speed = 1.0;
     return s;
 }
 
@@ -432,7 +430,6 @@ inline Setup two_cans()
     s.network("C1", NetworkKind::Can, 3).network("C2", NetworkKind::Can, 4);
     s.described(participant("EcuC1", 10), ecu("EcuC1", 10ms, {NetworkDescription{"C1", NetworkUse::Raw, {}}}));
     s.described(participant("EcuC2", 11), ecu("EcuC2", 10ms, {NetworkDescription{"C2", NetworkUse::Raw, {}}}));
-    s.config.speed = 1.0;
     return s;
 }
 

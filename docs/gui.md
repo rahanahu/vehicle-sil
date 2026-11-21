@@ -59,7 +59,7 @@ Run the commands in the template project's directory (the one that contains `sim
 | Command to start | `vehicle-sil-gui simulation.live.yaml` | `scripts/run-gui.py` |
 | Configuration file used | `simulation.live.yaml` | `build/<preset>/examples/ecu_main/simulation.live.yaml` |
 
-`simulation.live.yaml` is a configuration file that runs the same 2 ECUs as `simulation.yaml`, without `stop_at_ms` and with `speed: 1`. It runs until you stop it, so you can watch values on the screen while you change them.
+`simulation.live.yaml` uses the same two ECUs as `simulation.yaml`. The stop time is chosen for each run.
 
 ### Overview
 
@@ -117,7 +117,6 @@ Click **Start** at the top of the Run screen.
 | Symptom | Cause | Fix |
 |---|---|---|
 | **Start** cannot be clicked | The check has errors. | Read the text under **Findings**, fix the configuration file or the ECU, and click **Check again** (see [simulation-check.md](simulation-check.md)). |
-| The run ends after about 1 second | `simulation.yaml` (`stop_at_ms: 1000`) is selected. | Select `simulation.live.yaml` under **Configuration file**. |
 | **Variables: connected** does not appear | The launcher or the ECU does not support reading and writing variables. | Check "Reading and writing ECU variables" in "[Requirements](#requirements)". |
 
 ### Step 3: Watch and write variables
@@ -245,7 +244,9 @@ vehicle-sil-gui [options] [<configuration file>]
 | `--web <dir>` | Serve your own screen: its build output directory (must contain `index.html`). Default: the sample screens (see "[Files served with `--web`](#files-served-with---web)") |
 | `--dev-origin <origin>` | Also accept requests from the screen's development server (`ng serve`, Vite and others; only of the form `http://127.0.0.1:<port>`) (see "[Use a development server](#use-a-development-server)") |
 | `--json` | Print `{"vehicle_sil_gui": 2, "url": ..., "port": ...}` on one line instead of the URL (when a tool starts the GUI) |
-| `--stop-timeout <seconds>` | On exit, how long to wait for a running simulation to stop (default 10). After that, the launcher is stopped |
+| `--stop-timeout <seconds>` | On exit, how long to wait for a running simulation to stop before signaling the launcher. By default the server waits for the launcher to finish |
+| `--participant-start-timeout-ms <ms>` | Wall-clock wait for required participants during startup (default 30000 ms) |
+| `--participant-stop-timeout-ms <ms>` | Launcher’s wall-clock wait per participant shutdown stage (default 10000 ms) |
 | `--check-timeout <seconds>` | The time limit of a check (including `--describe` of each ECU) (default 120). After that, the check is stopped |
 | `--silent-after <seconds>` | If the running launcher prints nothing (not even a heartbeat) for longer than this, notify the screen (default 5; 1 or more) |
 | `--no-variables` | Do not start the launcher's Control Server (no reading or writing of ECU variables) |
@@ -297,7 +298,7 @@ With the prebuilt tools, add their `bin` to `PATH` and start the GUI in the dire
 
 ### Start from the repository
 
-Run `uv sync` at the root of the repository, then start the GUI and name the launcher you built with `--launcher`. The command below uses the ECU example from the build (`build/<preset>/examples/ecu_main/`; CMake copies the configuration file next to the executables). When it reaches `stop_at_ms` (1000 ms in the example), the screen shows the result.
+Run `uv sync` at the root of the repository, then start the GUI and name the launcher you built with `--launcher`. The command below uses the ECU example from the build (`build/<preset>/examples/ecu_main/`; CMake copies the configuration file next to the executables).
 
 ```sh
 uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch \
@@ -320,6 +321,20 @@ scripts/run-gui.py
 - The printed commands are meant to be run at the root of the repository. When you call the script from another directory, the first line says where to run them.
 - On Windows, Ctrl+C stops everything. If only this script's process ends (a tool ends it, or you use End task), the GUI server and the running simulation keep running. To stop it from a tool, stop the whole process tree (`taskkill /T /PID <pid>`).
 
+### Workbench
+
+Build the alternate Workbench screen and start it from the repository root.
+
+~~~sh
+npm --prefix gui/web/workbench ci
+npm --prefix gui/web/workbench run build
+scripts/run-gui.py --workbench
+~~~
+
+The top **Network** menu selects a simulation configuration. **Network Designer** edits its buses and ECU channel mappings. The top **Scenario** menu lists runnable YAML files in the server's `scenarios/` directory next to that configuration. **Free run** and **Record & start** have no automatic stop when **Stop at (ms)** is blank. A supplied limit applies to both Check and Start.
+
+In **Settings → Scenario folder**, choose a local directory for opening and saving YAML from the **Scenario** tab. If the browser offers read-only folder access, **Save YAML** downloads the file. To run a local file on the server, put it in the selected network's server-side `scenarios/` directory and refresh the run list.
+
 ## Stopping and exiting
 
 | Action | What happens |
@@ -331,7 +346,7 @@ scripts/run-gui.py
 | The server is killed | The launcher sees the end of stdin and stops by itself. |
 
 - A launcher that does not read stdin stops neither with **Stop** nor with **Stop without waiting**. In that case, stop the server.
-- When the server exits and the launcher has not stopped within `--stop-timeout`, the server sends SIGTERM (on Windows, Ctrl+Break) to the launcher's process group and kills the group 5 seconds later (on Windows, `taskkill /T /F`). Exiting takes at most about `--stop-timeout` plus 20 seconds.
+- When the server exits, it closes the launcher's input and waits for it to finish. If `--stop-timeout` is given and the launcher has not stopped within that time, the server sends SIGTERM (on Windows, Ctrl+Break) to its process group and kills the group 5 seconds later (on Windows, `taskkill /T /F`). A second signal skips both the initial wait and the 5-second wait. With no timeout, a launcher that cannot finish needs a second signal to force it to stop.
 - The server can stop only the launcher and what is in the launcher's process group. Cleaning up the participants is the launcher's job (the launcher starts the participants in a process group of their own).
 - If the launcher has exited but a process it started still holds its output open, the server waits 2 seconds, then ends the run and notifies the screen. That process may still be running.
 
@@ -1119,6 +1134,10 @@ The element `<vehicle-sil-timeline>` draws a timeline file on a screen of your o
 - The element works even under a CSP that allows no inline style (`style-src 'self'`; the GUI server's is less strict): its CSS is a constructable style sheet, not a `<style>` element.
 - While it loads `src`, the element has `aria-busy="true"` and dims the file shown before.
 
+Hover over the chart to see each signal's value at the same virtual time. When both are recorded, `sent` is the write and `seen` is the sampled value. A dash means no value is available at that time.
+
+The step details above the chart show the expected values, the rule for when they must match, and the actual decision time. Hover over a step or click it to inspect it. The cursor line runs across the chart so you can compare signals at the same time.
+
 Every option below can be changed after the element is on the page. The element redraws once for the changes made together. A simple option is both an attribute (kebab-case) and a property (camelCase); objects are properties only. A value it cannot use is ignored with a warning in the browser's console (a number that is not one, a word of `hide` or a `theme` it does not know, `from` not before `to`), and the names of `variables` that match no variable are said above the chart.
 
 | Attribute | Property | Type | Default | What it does |
@@ -1259,8 +1278,10 @@ declare module 'react' {
 - The URL is passed in an environment variable (as an argument, the token would be visible to other users in the process list).
 
   ```sh
-  VEHICLE_SIL_GUI_URL='<URL the server printed>' node examples/gui_client/run.mjs simulation.yaml
+  VEHICLE_SIL_GUI_URL='<URL the server printed>' node examples/gui_client/run.mjs simulation.yaml --stop-at-ms 1000
   ```
+
+- For a finite run, pass `--stop-at-ms` with the virtual stop time in milliseconds (an integer from 1 to 1000000000000). Without it, the run continues until stopped.
 
 - They run outside a browser, so they send the server's own origin as `Origin`.
 
@@ -1288,7 +1309,7 @@ The library does not enforce these rules for you. The sample screens follow them
 
 **Check and start requests**:
 
-- A choice that is not made is a field that is left out: the server refuses `null`. The fields are the keys of the launcher's request file, with its names and value forms (`variant`, `params`, `scenario`, `disable`, `enable`, `manual`, `strict`, `speed`, `start_paused`). A check judges the speed and `start_paused` as the start would: a run connected outside that keeps real time refuses a speed other than 1 and `start_paused` (`outside-real-time`), and a check with a speed leaves the warning `coarse-time-step` to the run, which reports it for that speed (see "Time steps and ECU steps" in [simulation-run.md](simulation-run.md#time-steps-and-ecu-steps)). What they mean for the configuration file is the launcher's to say, as findings of the check.
+- A choice that is not made is a field that is left out: the server refuses `null`. The fields are the keys of the launcher's request file, with its names and value forms (`variant`, `params`, `scenario`, `disable`, `enable`, `manual`, `strict`, `speed`, `start_paused`, `stop_at_ms`, `late_tolerance_ms`). Check resolves the run’s time step and checks the requested stop time, speed and paused start.
 - Do not put a name from `disable` into `manual` (the launcher refuses it).
 - If a scenario is selected, set `start_paused` to false (a scenario cannot start paused).
 - Send a check only after the response to the previous check (the server runs checks one at a time). The front door's `check()` does this for you, and shares a check of the same intent and file that waits or is on its way; do it yourself with the low-level `client.check()`.

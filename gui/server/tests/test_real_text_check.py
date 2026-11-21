@@ -41,7 +41,7 @@ def test_a_text_check_starts_nothing(tmp_path: Path) -> None:
     root.mkdir()
     ecu, mark = tmp_path / "ecu.py", tmp_path / "started.txt"
     ecu.write_text(ECU, encoding="utf-8")
-    saved = ("vehicle_sil_simulation: 1\nnetworks:\n  - name: CAN1\n    kind: can\nparticipants:\n"
+    saved = ("vehicle_sil_simulation: 2\nnetworks:\n  - name: CAN1\n    kind: can\nparticipants:\n"
              + participant("Engine", ecu, mark) + participant("Dashboard", ecu, mark))
     (root / "sim.yaml").write_text(saved, encoding="utf-8")
 
@@ -83,7 +83,7 @@ def test_saving_keeps_the_commands_by_default(tmp_path: Path) -> None:
     root.mkdir()
     ecu, mark = tmp_path / "ecu.py", tmp_path / "started.txt"
     ecu.write_text(ECU, encoding="utf-8")
-    saved = ("vehicle_sil_simulation: 1\nnetworks:\n  - name: CAN1\n    kind: can\nparticipants:\n"
+    saved = ("vehicle_sil_simulation: 2\nnetworks:\n  - name: CAN1\n    kind: can\nparticipants:\n"
              + participant("Engine", ecu, mark) + participant("Dashboard", ecu, mark))
     (root / "sim.yaml").write_text(saved, encoding="utf-8")
     # The networks and their mapping only: the simulation calls the bus BodyCAN, the executables still CAN1

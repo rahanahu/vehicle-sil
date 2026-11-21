@@ -198,6 +198,8 @@ export const readAppInfo = (value: unknown): AppInfo => {
 export interface ConfigFile {
   /** Path relative to root (separator /). */
   path: string;
+  /** The server recognized a simulation configuration. Older servers may omit this flag. */
+  simulation?: boolean;
 }
 
 /** GET api/configs: the configuration files under root. */
@@ -215,7 +217,14 @@ export const readConfigList = (value: unknown): ConfigList => {
       f,
       path,
       'files',
-      array((item, p) => ({ path: field(object(item, p), p, 'path', string) })),
+      array((item, p) => {
+        const entry = object(item, p);
+        const simulation = field(entry, p, 'simulation', optional(boolean, undefined));
+        return {
+          path: field(entry, p, 'path', string),
+          ...(simulation === undefined ? {} : { simulation }),
+        };
+      }),
     ),
     truncated: field(f, path, 'truncated', boolean),
   };
@@ -245,6 +254,10 @@ export interface CheckRequest {
   params?: Record<string, string | number | boolean>;
   /** true: fail on warnings too. */
   strict?: boolean;
+  /** Exact virtual time at which to stop. Omit for no automatic stop. */
+  stop_at_ms?: number;
+  /** Wall-clock milliseconds of lateness before a paced step counts as late. */
+  late_tolerance_ms?: number;
   /**
    * Where networks are connected outside the simulation: network name to target. For a network of the file, a target
    * other than `none` must be a `value` that the last `POST api/connections` of that network gave with `usable: true`
@@ -576,7 +589,7 @@ export interface SessionSummary {
    * is in the check result).
    */
   manual: string[];
-  /** Speed given at the start (null means as in the configuration file). The current speed is `speed` of launcher_state. */
+  /** Speed requested at the start (null means no speed was requested). The current speed is `speed` of launcher_state. */
   speed: Speed;
   /** Whether the run started paused. */
   start_paused: boolean;

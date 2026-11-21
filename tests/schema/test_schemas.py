@@ -278,29 +278,23 @@ MISTAKES_IN_DOCUMENTS = {
 # --- samples --------------------------------------------------------------------------------------------------
 
 # @EXE@ is an executable that exists (the launcher itself; such a participant is not asked what it is).
-CONFIG_HEAD = "vehicle_sil_simulation: 1\nnetworks:\n  - { name: Body, kind: can }\n"
+CONFIG_HEAD = "vehicle_sil_simulation: 2\nnetworks:\n  - { name: Body, kind: can }\n"
 P = "participants:\n  - name: Tool\n    command: ['@EXE@']\n    describe: false\n"
 
 # (what it shows, the text, "valid" | "invalid" | "check only": the launcher refuses it, the schema cannot tell)
 CONFIG_SAMPLES = [
     ("the least", CONFIG_HEAD + P, "valid"),
-    ("JSON", '{"vehicle_sil_simulation": 1, "networks": [], "participants": [{"name": "Tool", "command": ["@EXE@"], '
+    ("JSON", '{"vehicle_sil_simulation": 2, "networks": [], "participants": [{"name": "Tool", "command": ["@EXE@"], '
              '"describe": false}]}', "valid"),
     ("every key at the top",
-     CONFIG_HEAD + P + "stop_at_ms: 1000\nstart_timeout_ms: 5000\nstop_timeout_ms: 2000\n"
-     "registry_uri: silkit://127.0.0.1:8500\nspeed: 0.5\ntime_step_ms: 10\nlate_tolerance_ms: 20\nparams: { idle_rpm: 800 }\n",
-     "valid"),
-    ("speed max, an exponent, capital booleans",
-     CONFIG_HEAD + "speed: max\nlate_tolerance_ms: 010\nparticipants:\n  - name: Tool\n    command: '@EXE@'\n"
+     CONFIG_HEAD + P + "registry_uri: silkit://127.0.0.1:8500\ntime_step_ms: 10\n"
+     "params: { idle_rpm: 800 }\nvariants: { demo: {} }\n", "valid"),
+    ("capital booleans",
+     CONFIG_HEAD + "participants:\n  - name: Tool\n    command: '@EXE@'\n"
      "    describe: False\n    required: TRUE\n    enabled: True\n    manual: false\n", "valid"),
-    ("speed 1e3", CONFIG_HEAD + P + "speed: 1e3\n", "valid"),
-    ("the ends of the ranges",
-     CONFIG_HEAD + P + "speed: 0.000001\nstart_timeout_ms: 1\nstop_timeout_ms: 1000000000000\n"
-     "registry_uri: \"silkit://[::1]:65535\"\n", "valid"),
-    ("max in quotes, the fastest speed", CONFIG_HEAD + P + "speed: \"max\"\nlate_tolerance_ms: 1\n", "valid"),
-    ("more milliseconds than there are", CONFIG_HEAD + P + "stop_at_ms: 1000000000001\n", "invalid"),
+    ("more milliseconds than there are", CONFIG_HEAD + P + "time_step_ms: 1000000000001\n", "invalid"),
     ("names that YAML reads as numbers and booleans",
-     "vehicle_sil_simulation: 1\nnetworks:\n  - { name: 7, kind: lin }\n  - { name: true, kind: ethernet }\n"
+     "vehicle_sil_simulation: 2\nnetworks:\n  - { name: 7, kind: lin }\n  - { name: true, kind: ethernet }\n"
      "participants:\n  - name: 12\n    command: ['@EXE@', --count, 3, --fast, true, 1.5, '']\n    describe: false\n", "valid"),
     ("every form of a variable mapping",
      CONFIG_HEAD + P + "    variables:\n      a.b: raw\n      a.c: { from: raw_c, scale: 0.1, offset: -40, unit: degC }\n"
@@ -312,7 +306,7 @@ CONFIG_SAMPLES = [
      "    params: { idle_rpm: 650, name: \"a text\", on: true }\n", "valid"),
     ("an empty params", CONFIG_HEAD + P + "params: {}\n", "valid"),
     ("an unknown key at the top", CONFIG_HEAD + P + "stop_ms: 5\n", "invalid"),
-    ("an unknown key of a network", "vehicle_sil_simulation: 1\nnetworks:\n  - { name: Body, kind: can, baud: 1 }\n" + P,
+    ("an unknown key of a network", "vehicle_sil_simulation: 2\nnetworks:\n  - { name: Body, kind: can, baud: 1 }\n" + P,
      "invalid"),
     ("an unknown key of a participant", CONFIG_HEAD + P + "    step: 5\n", "invalid"),
     ("an unknown key of a variable mapping", CONFIG_HEAD + P + "    variables: { a.b: { from: x, factor: 2 } }\n", "invalid"),
@@ -320,13 +314,13 @@ CONFIG_SAMPLES = [
     ("an unknown key of a variant's participant",
      CONFIG_HEAD + P + "variants: { small: { participants: { Tool: { step_ms: 5 } } } }\n", "invalid"),
     ("no format version", "networks: []\n" + P, "invalid"),
-    ("another format version", CONFIG_HEAD.replace(": 1", ": 2") + P, "invalid"),
-    ("no networks", "vehicle_sil_simulation: 1\n" + P, "invalid"),
+    ("another format version", CONFIG_HEAD.replace(": 2", ": 1") + P, "invalid"),
+    ("no networks", "vehicle_sil_simulation: 2\n" + P, "invalid"),
     ("no participants", CONFIG_HEAD, "invalid"),
     ("an empty participants", CONFIG_HEAD + "participants: []\n", "invalid"),
     ("a participant without a name", CONFIG_HEAD + "participants:\n  - command: ['@EXE@']\n    describe: false\n", "invalid"),
     ("a participant without a command", CONFIG_HEAD + "participants:\n  - name: Tool\n    describe: false\n", "invalid"),
-    ("a network without a kind", "vehicle_sil_simulation: 1\nnetworks:\n  - name: Body\n" + P, "invalid"),
+    ("a network without a kind", "vehicle_sil_simulation: 2\nnetworks:\n  - name: Body\n" + P, "invalid"),
     ("a kind there is not", CONFIG_HEAD.replace("can", "flexray") + P, "invalid"),
     ("a kind in capitals", CONFIG_HEAD.replace("can", "CAN") + P, "invalid"),
     ("a participant for testing", CONFIG_HEAD + P + "    role: test\n", "valid"),
@@ -335,15 +329,15 @@ CONFIG_SAMPLES = [
     ("a role in capitals", CONFIG_HEAD + P + "    role: Test\n", "invalid"),
     ("a role in a variant", CONFIG_HEAD + P + "variants: { small: { participants: { Tool: { role: test } } } }\n",
      "invalid"),
-    ("a number in quotes", CONFIG_HEAD + P + 'stop_at_ms: "1000"\n', "invalid"),
-    ("a number with a fraction", CONFIG_HEAD + P + "stop_at_ms: 1.5\n", "invalid"),
-    ("zero milliseconds", CONFIG_HEAD + P + "stop_timeout_ms: 0\n", "invalid"),
+    ("a number in quotes", CONFIG_HEAD + P + 'time_step_ms: "1000"\n', "invalid"),
+    ("a number with a fraction", CONFIG_HEAD + P + "time_step_ms: 1.5\n", "invalid"),
+    ("zero milliseconds", CONFIG_HEAD + P + "time_step_ms: 0\n", "invalid"),
     ("a boolean in quotes", CONFIG_HEAD + P + '    manual: "true"\n', "invalid"),
     ("yes for a boolean", CONFIG_HEAD + P + "    manual: yes\n", "invalid"),
     ("a speed of 0", CONFIG_HEAD + P + "speed: 0\n", "invalid"),
     ("a speed that is a word", CONFIG_HEAD + P + "speed: fast\n", "invalid"),
     ("a registry without a port", CONFIG_HEAD + P + "registry_uri: silkit://localhost\n", "invalid"),
-    ("networks as a mapping", "vehicle_sil_simulation: 1\nnetworks: { Body: can }\n" + P, "invalid"),
+    ("networks as a mapping", "vehicle_sil_simulation: 2\nnetworks: { Body: can }\n" + P, "invalid"),
     ("an empty command", CONFIG_HEAD + "participants:\n  - name: Tool\n    command: []\n    describe: false\n", "invalid"),
     ("a placeholder without quotes",
      CONFIG_HEAD + "participants:\n  - name: Tool\n    command: ['@EXE@', {registry_uri}]\n    describe: false\n", "invalid"),
@@ -365,13 +359,11 @@ CONFIG_SAMPLES = [
      "invalid"),
     ("an empty map", CONFIG_HEAD + P + "    variables: { a.b: { from: x, map: {} } }\n", "invalid"),
     # What the schema leaves to check.
-    ("a key twice", CONFIG_HEAD + P + "stop_at_ms: 10\nstop_at_ms: 20\n", "check only"),
+    ("a key twice", CONFIG_HEAD + P + "time_step_ms: 10\ntime_step_ms: 20\n", "check only"),
     ("a name twice", CONFIG_HEAD + P + P.split("\n", 1)[1], "check only"),
     ("an executable that is not there", CONFIG_HEAD + P.replace("@EXE@", "no/such/executable"), "check only"),
     ("required: false with describe: true", CONFIG_HEAD + P.replace("describe: false", "required: false"), "check only"),
     ("a port out of range", CONFIG_HEAD + P + "registry_uri: silkit://127.0.0.1:70000\n", "check only"),
-    ("stop_at_ms that is not a multiple of time_step_ms", CONFIG_HEAD + P + "stop_at_ms: 15\ntime_step_ms: 10\n",
-     "check only"),
     ("a name that starts with -", CONFIG_HEAD + P.replace("Tool", "-Tool"), "check only"),
     ("a placeholder there is not", CONFIG_HEAD + P.replace("['@EXE@']", "['@EXE@', '{port}']"), "check only"),
     ("a variant of a participant there is not", CONFIG_HEAD + P + "variants: { small: { participants: { Door: {} } } }\n",
@@ -396,15 +388,15 @@ CONFIG_SAMPLES = [
      "      - { network: Body, from: 0x1f, function_instance: 0, ecu_instance: 0 }\n"
      "      - { network: Body, from: 0x21 }\n", "valid"),
     ("external of each kind that can be connected, EtherTypes in each form, the ends of the ranges",
-     "vehicle_sil_simulation: 1\nnetworks:\n  - { name: C, kind: can, external: { bitrate: 1000000 } }\n"
+     "vehicle_sil_simulation: 2\nnetworks:\n  - { name: C, kind: can, external: { bitrate: 1000000 } }\n"
      "  - { name: D, kind: can, external: { bitrate: 1 } }\n  - { name: E, external: {}, kind: can }\n"
      "  - name: F\n    kind: ethernet\n    external: { ethertypes: [0x88b5, 2048, \"0x86DD\", 0, 0xFFFF, \"0x1\"] }\n"
      "  - { name: G, kind: ethernet, external: { all_frames: true } }\n"
      "  - { name: H, kind: ethernet, external: { all_frames: false, ethertypes: [0x0800] } }\n" + P, "valid"),
     ("external in JSON, with an EtherType in hexadecimal as a text",
-     '{"vehicle_sil_simulation": 1, "networks": [{"name": "E", "kind": "ethernet", "external": {"ethertypes": '
+     '{"vehicle_sil_simulation": 2, "networks": [{"name": "E", "kind": "ethernet", "external": {"ethertypes": '
      '["0x88b5", 2048]}}], "participants": [{"name": "Tool", "command": "@EXE@", "describe": false}]}', "valid"),
-    ("external of a lin network", "vehicle_sil_simulation: 1\nnetworks:\n  - { name: L, kind: lin, external: {} }\n" + P,
+    ("external of a lin network", "vehicle_sil_simulation: 2\nnetworks:\n  - { name: L, kind: lin, external: {} }\n" + P,
      "invalid"),
     ("an EtherType of a can network", CONFIG_HEAD.replace("can }", "can, external: { ethertypes: [0x88b5] } }") + P,
      "invalid"),
@@ -461,7 +453,7 @@ CONFIG_SAMPLES = [
 # output), Engine.ecu.connected (bool input), Dashboard.dashboard.engine_lost (bool output). The launcher checks them
 # with this configuration, as its variant small (@DIR@: the directory of the built example).
 SCENARIO_CONFIG = (
-    "vehicle_sil_simulation: 1\nnetworks:\n  - { name: J1939_CAN, kind: can }\nparticipants:\n"
+    "vehicle_sil_simulation: 2\nnetworks:\n  - { name: J1939_CAN, kind: can }\nparticipants:\n"
     "  - name: Engine\n    command: ['@DIR@/engine/vehicle_sil_engine_ecu']\n"
     "    variables: { engine.turbo: { absent: true } }\n"
     "  - name: Dashboard\n    command: ['@DIR@/dashboard/vehicle_sil_dashboard_ecu']\n"
@@ -1327,7 +1319,7 @@ class SchemaAndLauncher(unittest.TestCase):
     def test_the_keys_of_the_configuration_are_the_launchers(self):
         probes = {
             "top": CONFIG_HEAD + P + "zz_probe: 1\n",
-            "network": "vehicle_sil_simulation: 1\nnetworks:\n  - { name: Body, kind: can, zz_probe: 1 }\n" + P,
+            "network": "vehicle_sil_simulation: 2\nnetworks:\n  - { name: Body, kind: can, zz_probe: 1 }\n" + P,
             "participant": CONFIG_HEAD + P + "    zz_probe: 1\n",
             "variable": CONFIG_HEAD + P + "    variables: { a.b: { from: x, zz_probe: 1 } }\n",
             "variant": CONFIG_HEAD + P + "variants: { small: { zz_probe: 1 } }\n",

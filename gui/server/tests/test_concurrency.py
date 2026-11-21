@@ -188,7 +188,7 @@ def test_a_launcher_whose_descendant_keeps_its_output_open_still_ends(tmp_path: 
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            status, body = await c.post("api/run", {"file": "orphan.yaml"})
+            status, body = await c.post("api/run", {"file": "orphan.yaml", "stop_at_ms": 1000})
             assert status == 200
             for e in event_messages(await sock.until(lambda m: "left a process behind" in str(m)), "log"):
                 if m := re.search(r"pid (\d+)", e["line"]):
@@ -198,7 +198,7 @@ def test_a_launcher_whose_descendant_keeps_its_output_open_still_ends(tmp_path: 
             assert end["result"]["result"] == "passed"
             assert end["launcher"]["running"] is False and end["launcher"]["exit_code"] == 0
             assert "output-left-open" in [p["code"] for p in end["problems"]]
-            status, body = await c.post("api/run", {"file": "simulation.yaml"})  # the next run may start
+            status, body = await c.post("api/run", {"file": "simulation.yaml", "stop_at_ms": 1000})  # the next run may start
             assert status == 200, body
             await sock.until(is_ended)
         try:
@@ -217,7 +217,7 @@ def test_the_summary_says_when_the_launcher_has_ended_without_a_result(tmp_path:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "launcher-crash.yaml"})
+            await c.post("api/run", {"file": "launcher-crash.yaml", "stop_at_ms": 1000})
             got = await sock.until(is_ended)
             sessions = [m["session"] for m in got if m["type"] == "session"]
             assert [s["state"] for s in sessions] == ["running", "ended"]  # the start, then the end
@@ -240,7 +240,7 @@ def test_no_new_run_or_check_once_the_server_is_ending(tmp_path: Path) -> None:
             await c.post("api/run", {"file": "ignore-stop.yaml"})
             await sock.until(lambda m: m.get("event", {}).get("event") == "time")
             launchers = children(gui.proc.pid)
-            gui.proc.send_signal(signal.SIGTERM)  # waits up to 3 s for this launcher, which ignores the end
+            gui.proc.send_signal(signal.SIGTERM)  # waits for this launcher, which ignores the end
 
             async def ending() -> bool:  # a file outside the root: refused without starting anything, or 503
                 return (await c.post("api/check", {"file": "../outside.yaml"}))[0] == 503
@@ -250,6 +250,7 @@ def test_no_new_run_or_check_once_the_server_is_ending(tmp_path: Path) -> None:
                 assert status == 503 and reply["error"]["code"] == "shutting-down", (path, reply)
             return launchers
         launchers = run_async(main, gui)
+        gui.proc.send_signal(signal.SIGTERM)  # no need to wait for the escalation in this test
         assert gui.proc.wait(scaled(30)) == 0
         assert wait_until(lambda: not any(alive(p) for p in launchers), 5)
 
@@ -322,7 +323,7 @@ def test_the_end_is_bounded_by_the_stop_timeout(tmp_path: Path) -> None:
         pids = run_async(main, gui)
         s = unauthenticated_websocket(gui.port)
         try:
-            assert stop_and_time(gui.proc) < 1 + 15
+            assert stop_and_time(gui.proc) < scaled(1 + 15)
         finally:
             s.close()
         assert wait_until(lambda: not any(alive(p) for p in pids), 5)

@@ -40,6 +40,15 @@ const READERS: Record<string, (value: unknown) => unknown> = {
 };
 
 describe('the readers accept every example of gui/protocol', () => {
+  it('keeps the simulation marker when the configuration listing sends it', () => {
+    const files = [
+      { path: 'simulation.yaml', simulation: true },
+      { path: 'scenarios/drive.yaml', simulation: false },
+      { path: 'older.yaml' },
+    ];
+    expect(readConfigList({ files, truncated: false }).files).toEqual(files);
+  });
+
   it('reads the HTTP answers, and the message of every error', async () => {
     const examples = await httpExamples();
     expect(examples.length).toBeGreaterThan(10);
@@ -258,7 +267,7 @@ describe('the readers accept every example of gui/protocol', () => {
       expect.anything(),
     );
     const step = events.find((e) => e.event === 'command' && e.command === 'step');
-    expect(step).toMatchObject({ accepted: true, ms: 30, message: null });
+    expect(step).toMatchObject({ accepted: true, ms: 25, message: null });
     const refused = events.filter((e) => e.event === 'command' && !e.accepted);
     expect(refused.length).toBe(1);
     const times = events.flatMap((e) => (e.event === 'time' ? [e] : []));
@@ -270,7 +279,7 @@ describe('the readers accept every example of gui/protocol', () => {
     const end = time.at(-1);
     expect(end?.type === 'session' && end.session.result?.timing).toMatchObject({
       speed: 1,
-      time_step_ms: 10,
+      time_step_ms: 5,
     });
     expect(end?.type === 'session' && end.session.launcher_state?.paused).toBe(false);
 

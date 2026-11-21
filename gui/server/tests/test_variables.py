@@ -407,7 +407,7 @@ def test_a_screen_that_does_not_read_gets_the_latest_values_when_it_reads_again(
 def test_a_run_that_stands_before_its_first_step_is_resumed_from_the_screen(tmp_path: Path, control_env) -> None:
     with gui_server(tmp_path, env=control_env) as gui:
         async def talk(c: Client) -> None:
-            ws, session = await start(c, file="simulation.yaml", start_paused=True)
+            ws, session = await start(c, file="simulation.yaml", start_paused=True, stop_at_ms=1000)
             await ws.until(is_variables("ready"))
             standing = "standing still before the first step"  # the launcher's log line, before or after ready
             if not any(m["type"] == "event" and m["event"]["event"] == "log" and m["event"]["line"].startswith(standing)
@@ -442,7 +442,7 @@ def test_no_variables_when_the_server_is_told_so_or_cannot_load_the_stubs(tmp_pa
             async def talk(c: Client) -> None:
                 _, app = await c.get("api/app")
                 assert app["variables"]["available"] is False and why in app["variables"]["reason"]
-                ws, session = await start(c, file="simulation.yaml", start_paused=True)
+                ws, session = await start(c, file="simulation.yaml", start_paused=True, stop_at_ms=1000)
                 assert session["variables"] == {**session["variables"], "state": "off",
                                                 "reason": app["variables"]["reason"]}
                 # Without the control server the launcher stands still after its first step, as before.

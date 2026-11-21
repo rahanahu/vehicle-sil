@@ -31,6 +31,7 @@ test.beforeEach(async ({ page, locale }) => {
 
 test('a run that passes: phases, participants, logs and the result', async ({ page }) => {
   await choose(page, 'simulation.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   await expect(page.getByTestId('check-outcome')).toContainText('通った');
   for (const name of ['Engine', 'Dashboard', 'Logger']) {
     await expect(page.getByTestId(`check-participant-${name}`)).toBeVisible();
@@ -53,6 +54,25 @@ test('a run that passes: phases, participants, logs and the result', async ({ pa
 const pauseButton = (page: Page) => page.getByTestId('pause');
 const resumeButton = (page: Page) => page.getByTestId('resume');
 
+test('the stop time keeps its instructions and describes an error until corrected', async ({
+  page,
+}) => {
+  await choose(page, 'forever.yaml');
+  const input = page.getByTestId('stop-at-ms');
+  const hint = /空欄なら自動停止しません/;
+  const error = /停止時刻は 1 から/;
+  await expect(input).toHaveAccessibleDescription(hint);
+  await input.fill('0');
+  await input.blur();
+  await expect(input).toHaveAttribute('aria-invalid', 'true');
+  await expect(input).toHaveAccessibleDescription(hint);
+  await expect(input).toHaveAccessibleDescription(error);
+  await input.fill('1000');
+  await expect(input).toHaveAttribute('aria-invalid', 'false');
+  await expect(input).toHaveAccessibleDescription(hint);
+  await expect(input).not.toHaveAccessibleDescription(error);
+});
+
 /** 時刻の命令を送り、サーバーの応答を待つ（ランチャーが受けたかは、画面に command と time の事象で届く）。 */
 async function command(page: Page, button: Locator, body: object): Promise<void> {
   const sent = page.waitForRequest((r) => r.url().endsWith('/api/time'));
@@ -74,7 +94,7 @@ test('started paused: a step, resume, pause, a new speed, stop', async ({ page }
   await expect(resumeButton(page)).not.toHaveAttribute('aria-disabled', 'true');
   const place = await resumeButton(page).boundingBox();
 
-  // ステップ送り: ランチャーが刻み（10 ms）の倍数に切り上げた、実際に進む量を出す
+  // ステップ送り: ランチャーが自動で選んだ刻み（5 ms）で、実際に進む量を出す
   // ダブルクリックしても 1 回だけ進む（ランチャーの答えが届くまで、次を送らない）
   const steps: unknown[] = [];
   page.on('request', (r) => {
@@ -90,8 +110,8 @@ test('started paused: a step, resume, pause, a new speed, stop', async ({ page }
   await expect(page.getByTestId('step-ms-error')).toHaveText('');
   await expect(page.getByTestId('step')).not.toHaveAttribute('aria-disabled', 'true');
   await page.getByTestId('step').dblclick();
-  await expect(page.getByTestId('step-hint')).toContainText('30 ms');
-  await expect(page.getByTestId('time-sim')).toHaveText('0.030 s');
+  await expect(page.getByTestId('step-hint')).toContainText('25 ms');
+  await expect(page.getByTestId('time-sim')).toHaveText('0.025 s');
   await expect(page.getByTestId('time-state')).toHaveText('一時停止中');
   expect(steps).toEqual([{ command: 'step', ms: 25, id: expect.any(Number) }]);
 
@@ -194,6 +214,7 @@ test('a small lateness within the tolerance is not called late', async ({ page }
 test('how each participant is linked to its variables, a trouble in words', async ({ page }) => {
   // 構成ファイルの replay-fault: control-trouble: Engine は hello が来ず、Dashboard は形式の版が違い、Gauge は口を出さない
   await choose(page, 'control-trouble.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   const session = await start(page);
   await expect(result(page, session)).toBeVisible({ timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('control-Engine')).toContainText('hello が来なかった');
@@ -217,6 +238,7 @@ test('a check with an error: the findings, and no start', async ({ page }) => {
 
 test('a participant switched off is checked again and left out of the run', async ({ page }) => {
   await choose(page, 'simulation.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   const recheck = page.waitForRequest(
     (r) => r.url().endsWith('/api/check') && r.postDataJSON().disable.includes('Dashboard'),
   );
@@ -252,7 +274,7 @@ test('quick switches are checked once, without a busy check', async ({ page }) =
   await page.getByRole('switch', { name: 'Logger を使う' }).click();
   await expect(page.getByTestId('check-participant-Dashboard')).toContainText('外した');
   await expect(startButton(page)).not.toHaveAttribute('aria-disabled', 'true');
-  expect(checks).toEqual([{ file: 'forever.yaml', disable: ['Dashboard'], manual: [] }]);
+  expect(checks).toEqual([{ file: 'forever.yaml', disable: ['Dashboard'], manual: [], speed: 1 }]);
   expect(failures).toEqual([]);
 });
 
@@ -354,8 +376,10 @@ test('a double click on start starts one run and does not stop it', async ({ pag
     await page.waitForTimeout(100);
   }
   const session = ((await (await reply).json()) as { session: { id: number } }).session.id;
-  // 押した後も実行は続いている（押した時刻より後の行が届いた）
-  await expect(page.getByTestId('log-line').nth(8)).toBeVisible({ timeout: RUN_TIMEOUT });
+  // 実行時刻が進み、停止せず同じセッションが続く
+  await expect(page.getByTestId('sim-time')).toHaveText(/^(?!0\.000 s)\d+\.\d{3} s$/, {
+    timeout: RUN_TIMEOUT,
+  });
   expect(actions).toEqual(['run']);
   expect(await serverSession(page)).toMatchObject({ id: session, stop: 'none' });
 });
@@ -371,7 +395,9 @@ test('repeated Enter on start starts one run and does not stop it', async ({ pag
     await page.waitForTimeout(100);
   }
   const session = ((await (await reply).json()) as { session: { id: number } }).session.id;
-  await expect(page.getByTestId('log-line').nth(8)).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect(page.getByTestId('sim-time')).toHaveText(/^(?!0\.000 s)\d+\.\d{3} s$/, {
+    timeout: RUN_TIMEOUT,
+  });
   expect(actions).toEqual(['run']);
   expect(await serverSession(page)).toMatchObject({ id: session, stop: 'none' });
 });
@@ -484,6 +510,7 @@ test('a launcher that dies without a result: an abnormal end, and where to look'
 test('a launcher that runs on after its result can still be stopped', async ({ page }) => {
   // 構成ファイルの replay-fault: result-then-wait: 結果を書いた後も、止めるよう頼まれるまで終わらない
   await choose(page, 'result-then-wait.yaml');
+  await page.getByTestId('stop-at-ms').fill('300');
   const session = await start(page);
   await expect(result(page, session)).toContainText('成功', { timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('outcome')).toContainText('ランチャーが終わるのを待っています');
@@ -584,6 +611,7 @@ test('a flood of lines keeps the lines of quiet participants, and counts what wa
   page,
 }) => {
   await choose(page, 'flood.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   const session = await start(page);
   await expect(result(page, session)).toBeVisible({ timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('log-dropped')).toContainText('Engine');
@@ -603,6 +631,7 @@ test('a log read while lines keep coming does not move', async ({ page }) => {
   });
   await page.reload();
   await choose(page, 'simulation.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   const session = await start(page);
   // 実行が終わってから、その続きの seq で行を足す（ランチャーの事象と seq が重ならない）
   await expect(result(page, session)).toBeVisible({ timeout: RUN_TIMEOUT });
@@ -666,6 +695,7 @@ test('a log paused in one run shows the next run, not the lines of the one befor
   await expect(page.getByTestId('log-follow')).not.toHaveClass(/checked/);
   // 次の実行
   await choose(page, 'simulation.yaml');
+  await page.getByTestId('stop-at-ms').fill('1000');
   const second = await start(page);
   await expect(result(page, second)).toBeVisible({ timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('log-follow')).toHaveClass(/checked/);

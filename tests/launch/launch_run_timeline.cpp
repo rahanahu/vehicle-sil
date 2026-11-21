@@ -168,22 +168,20 @@ void timeline(const Options& o)
     };
     const std::string steps = "vehicle_sil_scenario: 1\nsteps:\n";
     {
-        // stop_at_ms before the scenario's end: failed at that time, and recorded to it.
-        const fs::path stopped = scenario_ecus(o, "stop_at_ms: 100\n",
+        const fs::path stopped = scenario_ecus(o, "# run-option --stop-at-ms 100\n",
                                                steps + "  - at_ms: 50\n    set: { Body.level: 5 }\n"
                                                        "  - wait_until: { Body.level: 6 }\n    timeout_ms: 1000\n");
-        expect_code(launch(o, with({"--timeline", "stopped.json"}), stopped), 1, "stop_at_ms with --timeline");
-        expect_text(head_of("stopped.json"),
-                    "  \"scenario\": {\n    \"file\": \"s.yaml\",\n    \"name\": null,\n    \"status\": \"failed\",\n"
-                    "    \"over_at_ms\": 100,\n    \"recorded_to_ms\": 100\n",
-                    "the timeline of a run that stop_at_ms ended");
-        require(contains(read_text(dir / "stopped.json"), "        \"code\": \"scenario-out-of-time\",\n") &&
+        expect_code(launch(o, with({"--timeline", "stopped.json"}), stopped), 5, "stop_at_ms with --timeline");
+        require(contains(head_of("stopped.json"), "\"status\": \"incomplete\"") &&
+                    contains(head_of("stopped.json"), "\"over_at_ms\": 100,"),
+                "the timeline's stop boundary:\n" + head_of("stopped.json"));
+        require(!contains(read_text(dir / "stopped.json"), "scenario-out-of-time") &&
                     contains(read_text(dir / "stopped.json"), "      \"points\": [\n        [50, 5]\n      ]\n"),
-                "the step that was out of time, and the write before it:\n" + read_text(dir / "stopped.json"));
+                "the write before the stop:\n" + read_text(dir / "stopped.json"));
     }
     {
         // An ECU hangs and --timeout-ms ends the run: incomplete, recorded to a sample it saw.
-        const fs::path hung = scenario_ecus(o, "stop_timeout_ms: 500\n",
+        const fs::path hung = scenario_ecus(o, "# run-option --participant-stop-timeout-ms 500\n",
                                             steps + "  - set: { Body.level: 0 }\n"
                                                     "  - ramp: { Body.level: { to: 100, over_ms: 2000 } }\n"
                                                     "    expect: { Body.level: { ge: 0 } }\n",
@@ -196,7 +194,7 @@ void timeline(const Options& o)
     }
     {
         // A participant ends before the start: the scenario did not run, and the file says so.
-        const fs::path unstarted = scenario_dir(o, "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+        const fs::path unstarted = scenario_dir(o, "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                                    "  - name: Body\n    command: [" + ecu(o) + "]\n"
                                                    "  - name: Door\n    command: [" + ecu(o) + "]\n"
                                                    "  - name: Ghost\n    command: [" + yaml_quote(shown_path(o.launch)) + ", version]\n"

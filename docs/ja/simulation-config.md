@@ -4,11 +4,11 @@
 
 `vehicle_sil_launch` に渡す設定ファイルのリファレンスです。設定ファイルのキーと書き方のルール、`check`、`run`、`test`、`version` の引数と終了コードを載せています。形式とルールはまだ変わることがあります。
 
-設定ファイルには、participant にする実行ファイル、それらが接続するネットワーク、止める時刻を書きます。別々に作った ECU の実行ファイル（[ecu-executable.md](ecu-executable.md)）を、1 つのシミュレーションで動かすために使います。
+設定ファイルには、participant にする実行ファイル、それらが接続するネットワークを書きます。別々に作った ECU の実行ファイル（[ecu-executable.md](ecu-executable.md)）を、1 つのシミュレーションで動かすために使います。
 
 ```sh
 vehicle_sil_launch check simulation.yaml
-vehicle_sil_launch run simulation.yaml
+vehicle_sil_launch run simulation.yaml --stop-at-ms 1000
 ```
 
 | 調べること | 節 |
@@ -63,8 +63,8 @@ vehicle_sil_launch run simulation.yaml
 # The two ECUs of this directory in one simulation. CMake copies this file next to the executables
 # (build/<preset>/examples/ecu_main/); there, vehicle_sil_launch check simulation.yaml checks it and
 # vehicle_sil_launch run simulation.yaml runs it.
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
+
 networks:
   - name: J1939_CAN
     kind: can
@@ -84,13 +84,8 @@ participants:
 | キー | 必須 | 値 | 書かないとき |
 |---|---|---|---|
 | `vehicle_sil_simulation` | はい | 形式のバージョン（今は `1`） | |
-| `stop_at_ms` | | シミュレーションを止める仮想時間（ミリ秒、1 以上 10^12 以下の整数） | participant が止めるか、`run` を Ctrl+C で止めるまで動きます |
-| `start_timeout_ms` | | 必須の participant がそろうまで待つ時間（ミリ秒、1 以上 10^12 以下の整数） | 30000 |
-| `stop_timeout_ms` | | `run` が participant の終了を待つ時間（ミリ秒、1 以上 10^12 以下の整数） | 10000 |
 | `registry_uri` | | `run` が registry を立てる場所（`silkit://<host>:<port>`、ポートは 0 以上 65535 以下。0 は空いているポート） | 127.0.0.1 の空いているポート |
-| `speed` | | 仮想時間を進める速度（0.000001 以上 1000000 以下の数か、`max`） | 最速（`max` と同じ） |
-| `time_step_ms` | | controller のタイムステップ（ミリ秒の仮想時間、1 以上 10^12 以下の整数） | 最速のときは 10 |
-| `late_tolerance_ms` | | 遅れの許容（実時間のミリ秒、1 以上 10^12 以下の整数） | 10（タイムステップと速度によりません） |
+| `time_step_ms` | | controller のタイムステップ（ミリ秒の仮想時間、1 以上 10^12 以下の整数） | 自動決定 |
 | `networks` | はい | ネットワークの配列（空でもかまいません） | |
 | `participants` | はい | participant の配列（1 つ以上） | |
 | `variants` | | 機種の対応（機種の名前 → 共通の部分との差分。[機種](#機種variants--variant)） | 機種のない設定ファイルです |
@@ -122,10 +117,6 @@ participants:
 
 キーごとの補足です。
 
-**`start_timeout_ms`**: `run` は、ecu_main の実行ファイルにも `--start-timeout-ms` で値を渡します（渡す値は [ecu_main の実行ファイル](#ecu_main-の実行ファイルdescribe-true)）。
-
-**`stop_timeout_ms`**: 止め方の各段階で、この時間だけ待ちます（[simulation-run.md](simulation-run.md) の「止め方」）。
-
 **`registry_uri`**
 
 | 場合 | registry の場所と、起きること |
@@ -138,18 +129,9 @@ participants:
 
 ほかの PC から参加させる手順は、[howto/multi-pc.md](howto/multi-pc.md) にあります。
 
-**`speed`**: 実時間 1 秒あたりの仮想時間の秒数です。`1` が等速、`2` が 2 倍速、`0.5` が半分の速度です。`run --speed` で上書きできます（[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)）。
+**`time_step_ms`** は、コントローラーの仮想時間の刻みです。省略すると、ランチャーが稼働する ECU の周期、10 ms、Run の停止時刻（指定時）の最大公約数から求めます。固定値を使う場合は、Run の停止時刻がその倍数でなければ `check` と `run` が `stop-not-on-step` を報告します。
 
-**`time_step_ms`**: 一時停止とステップ実行の細かさ、速度を合わせる細かさです。
-
-| 場合 | `time_step_ms` の値 |
-|---|---|
-| 書かず、最速で動かす | 10 です。 |
-| 書かず、最速で、`stop_at_ms` が 10 の倍数でない | `stop_at_ms` と 10 の最大公約数です。 |
-| 書かず、速度を指定した | さらに、ECU のステップ幅との最大公約数にします（[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)の「タイムステップと ECU のステップ」）。 |
-| 書く | `stop_at_ms` の約数にします（約数でなければエラー `value`）。 |
-
-**`late_tolerance_ms`**: タイムステップの遅れがこの値を超えたら、遅れたタイムステップとして数えます。
+形式 1 から移行する場合は、`vehicle_sil_simulation: 2` に変更し、`stop_at_ms`、`speed`、`late_tolerance_ms` を Run の引数か要求ファイルに移します。`start_timeout_ms` と `stop_timeout_ms` はホストの起動引数 `--participant-start-timeout-ms`、`--participant-stop-timeout-ms` に移します。
 
 **`participants[].name`**: 空でなく、1 行で（制御文字なし）、`-` で始まらない名前にします。`SimulationController`（vehicle-sil の controller の participant 名）は使えません。照合では、ecu_main の実行ファイルに `--name` で渡します。
 
@@ -174,8 +156,6 @@ participants:
 | 整数 | 引用符なしで書きます（`"5000"` は文字列なのでエラーです）。 |
 | 真偽値 | 引用符なしの `true` か `false` です（`True`、`TRUE`、`False`、`FALSE` も読みます）。 |
 | `yes`、`on` など | 真偽値としてはエラーです。 |
-
-`stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri`、`speed`、`time_step_ms`、`late_tolerance_ms` は、シミュレーションを動かすときの値です。`check` は値の形（と `stop_at_ms` と `time_step_ms` の組み合わせ）だけを確認します。
 
 ### エディターの補完
 
@@ -522,7 +502,7 @@ passed: 0 errors, 0 warnings, 1 note
 
 - 人向けの participant の表では、`ecu` でない participant の名前の後に `(role: test)` のように書きます。
 - `check --json` では、`participants[].role` に出力されます。
-- 有効な `role: bridge` の participant のいる実行は、`--connect` のある実行と同じく実時間を保ちます。ファイルの `speed` が何であっても速さ 1 で動き、`test` もシナリオを速さ 1 で実行します（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
+- 有効な `role: bridge` の participant のいる実行は、`--connect` のある実行と同じく実時間を保ちます。速さ 1 で動き、`test` もシナリオを速さ 1 で実行します（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
 - 機種（`variants`）では変えられません（`describe`、`required` と同じです）。
 
 ### ネットワークを外につなぐ（`external`、`--connect`）
@@ -590,7 +570,7 @@ vehicle_sil_launch run --speed 1 --connect ETH_EXT=tap:vsil0 --connect J1939_CAN
 - Vector XL のブリッジは Windows でだけ動きます。Linux で `xl:virtual:1` と書くと、`connect-tool-missing` が、そのネットワークは SIL Kit の中だけで動くと言います（見つかったブリッジ、つまり試験用のビルドがあれば、それを使います）。
 - 照合は、下の引数と `--name bridge.<network>`（ブリッジの participant 名）でブリッジの `--describe` を走らせます。`run` は、同じ引数と `--name bridge.<network> --registry-uri <URI> --start-timeout-ms <start_timeout_ms>` でブリッジを起動します。`bridge.<network>` はファイルの participant ではないので、`--disable`、`--enable`、`--manual` には書けません。`--describe` のブリッジは、アダプターもチャンネルも開きません。引数を受けないブリッジは誤り `connect-tool-failed` で、ブリッジ自身の行を出します。
 - つなぐネットワークでは、ブリッジを participant として数えます（ECU が 1 つでも `single-participant` になりません）。同じネットワークに `role: bridge` の participant がいると、輪です（`connect-loop`）。
-- 実機のバスは仮想時間を待ちません。`--connect` のある実行は、ファイルの `speed` が何であっても速さ 1 で動きます（注記 `outside-speed-set`）。1 以外の `--speed` と `--start-paused` はエラー `outside-real-time` です。`--time-policy free` で外せます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
+- 実機のバスは仮想時間を待ちません。`--connect` のある実行は、既定では速さ 1 で動きます（注記 `outside-speed-set`）。1 以外の速さを明示するか `--start-paused` を指定すると、エラー `outside-real-time` です。`--time-policy free` で外せます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
 
 ランチャーがブリッジに渡す引数は、次のとおりです。
 
@@ -901,7 +881,9 @@ variants:
 ```text
 vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
-                         [--time-policy realtime|free] [--request <file>]
+                         [--time-policy realtime|free] [--request <file>] [--speed <speed>]
+                         [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
+                         [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                          [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]
                          [--compare-commands <file>]
                          [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>
@@ -910,11 +892,15 @@ vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-com
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
+                       [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
+                       [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                        [--time-policy realtime|free] [--request <file>] [--disable <name>]...
                        [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
+                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]
+                        [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                         [--disable <name>]... [--enable <name>]...
                         <file> --scenarios <directory or files>...
 vehicle_sil_launch connections [--json] [--network <name>] [--request <file>] [--] <file>
@@ -946,7 +932,10 @@ vehicle_sil_launch version [--json]
 | `--timeline <file>` | `run` だけ、`--scenario` と一緒にだけ | シナリオが書いた値と見た値を、仮想時刻の順に JSON のファイルに書きます（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。 |
 | `--scenarios <dir or files>` | `test` だけ | 実行するシナリオです。 |
 | `--fail-fast` | `test` だけ | 最初に失敗した組の後は実行しません。 |
-| `--speed <speed>` | `run` だけ | 設定ファイルの `speed` を上書きします（数か `max`。[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)）。 |
+| `--speed <speed>` | `check`、`run` | Run の速度（数値か `max`）。 |
+| `--stop-at-ms <ms>` | `check`、`run`、`test` | 仮想時刻での自動停止。省略時は自動停止なし。 |
+| `--late-tolerance-ms <ms>` | `check`、`run`、`test` | 実時間の遅延許容値。既定は 10 ms。 |
+| `--participant-start-timeout-ms <ms>`、`--participant-stop-timeout-ms <ms>` | `check`、`run`、`test` | ホストの起動・停止待機上限。既定は 30000 ms、10000 ms。 |
 | `--strict` | | 警告があっても失敗にします（注記では失敗にしません）。 |
 | `--log-dir <dir>` | `run` だけ | participant ごとの出力のファイルを置くディレクトリです。 |
 | `--timeout-ms <ms>` | `run` と `test`（1 組ごと） | シミュレーションの開始から終わりまでの実時間の上限です（1 以上の整数。既定は上限なし）。 |
@@ -1013,7 +1002,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | 1 | エラーがある |
 | 3 | 設定ファイルを読めない |
 | 4 | 引数のエラー |
-| 5 | `run`: コマンドで、シナリオが終わる前に止めた |
+| 5 | `run`: 指定した停止時刻かコマンドで、シナリオが終わる前に止めた |
 | 130 | `run` か `test` が中断された |
 
 終了コードごとの条件は次のとおりです。
@@ -1022,7 +1011,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 |---|---|
 | 0 | 警告と注記だけなら 0 です（`--strict` では、警告もないこと）。 |
 | 0 | `run` では、シミュレーションが正常に終わり、必須の participant がどれも 0 で終わったときです。 |
-| 0 | `run` では、`{"command":"stop"}` か Control Server のクライアントの `Stop` で止め、ほかに問題がなかったときも 0 です。 |
+| 0 | `run` では、指定した停止時刻、`{"command":"stop"}`、または Control Server のクライアントの `Stop` で止め、ほかに問題がなかったときも 0 です。 |
 | 1 | `--strict` では、警告があるときも 1 です。 |
 | 1 | `run` では、照合のエラー（何も起動しない）か、実行のエラー（participant が失敗した、そろわなかった、止めても終わらなかったなど）です。 |
 | 1 | `test` では、失敗した組が 1 つ以上ある、中断されていないのに実行しなかった組がある、`--strict` で実行した組が 1 つもない、のどれかです。 |
@@ -1033,7 +1022,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | 3 | `run` で registry や controller を用意できないときも 3 です。 |
 | 3 | 結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です。 |
 | 4 | エラーと使い方を標準エラーに書きます（対象の引数は下の表）。 |
-| 5 | `run` では、`{"command":"stop"}` か Control Server のクライアントの `Stop` で、シナリオが終わる前に止め、ほかに問題がなかったときです。 |
+| 5 | `run` では、指定した停止時刻、`{"command":"stop"}`、または Control Server のクライアントの `Stop` で、シナリオが終わる前に止め、ほかに問題がなかったときです。 |
 | 130 | Ctrl+C などのシグナル、標準入力の終わり、閉じた標準出力です。 |
 
 想定外の失敗（終了コード 3）では、標準エラーに理由を書きます。`--json` では、そのコマンドの形の JSON に、`code` が `internal` のエラーを書きます。
@@ -1047,7 +1036,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | どのコマンドでも | 同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます） |
 | どのコマンドでも | 値のない `--describe-timeout-ms` |
 | `check` | `--events`、`--stdin-commands` |
-| `check` | `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、`--control` と `--control-*` |
+| `check` | `--log-dir`、`--timeout-ms`、`--start-paused`、`--control` と `--control-*` |
 | `run` | `--json` と `--events` を一緒に付ける |
 | `run` | `--text-from-stdin`、`--descriptions`、`--write-descriptions`、`--compare-commands`（`check` だけのもの） |
 | `run` | `--events` なしの `--events-stall-ms` と、範囲の外の値 |

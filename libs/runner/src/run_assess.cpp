@@ -761,6 +761,8 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
             // The stop ended the simulation (one that came while the participants were ending did not).
             const bool cutShort = (end == EndReason::Stopped || end == EndReason::Interrupted) &&
                                   !outcome.end.interrupted_while_ending && outcome.scenario.error.empty();
+            const bool reachedLimit = outcome.end.simulation == SimulationEnd::ReachedStopAt &&
+                                      outcome.scenario.error.empty() && outcome.scenario.not_observed.empty();
             add_scenario("scenario-incomplete",
                          "the scenario did not get to its end: the simulation ended at " + std::to_string(outcome.timing.sim_ms) +
                              " ms when " + std::to_string(passed) + " of " + std::to_string(scenario.steps.size()) +
@@ -771,13 +773,14 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
                              (!outcome.scenario.error.empty()
                                   ? "; the launcher's scenario thread failed (" + outcome.scenario.error +
                                         "): this is an error of vehicle_sil_launch"
+                              : reachedLimit ? "; the run reached the requested stop_at_ms"
                               : cutShort
                                   ? "; the run was " + outcome.end.stop_text() + " before the scenario's end"
                                   : std::string("; the other findings and the lines above say why the simulation ended")),
                          reached != scenario.steps.rend() ? reached->line : 0,
                          // Cut short by a stop or an interrupt: that is why, and it is not an error
                          // of the run (the result says that the scenario has no verdict).
-                         cutShort ? config::Severity::Note : config::Severity::Error);
+                         (cutShort || reachedLimit) ? config::Severity::Note : config::Severity::Error);
         }
     }
     if (!outcome.scenario.timeline.empty() && outcome.scenario.timeline_record && outcome.scenario.timeline_record->dropped() > 0)

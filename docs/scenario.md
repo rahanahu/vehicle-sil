@@ -105,7 +105,7 @@ J1939_CAN  Dashboard       0         8
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-`at` is the virtual time at which the step's result was decided (see [Results](#results)). `stop_at_ms` in the configuration file is 1000 ms, but the run stops at 705 ms, when the scenario is over.
+`at` is the virtual time at which the step's result was decided (see [Results](#results)). The run stops at 705 ms, when the scenario is over.
 
 ### Disconnecting an ECU from the bus
 
@@ -254,7 +254,7 @@ A wait step ends at P + time step because the launcher is sure to have the sampl
 
 For this reason, a step after a wait step cannot have `at_ms` (write `after_ms`). An `at_ms` that goes back in time is also an error.
 
-The controller's time step is `time_step_ms` in the configuration file. If it is not set, the time step is the greatest common divisor of 10 ms, `stop_at_ms` and the ECU step sizes, so every ECU step starts on a controller step (`timing.time_step_ms` in the result; the same as the default when a speed is set, see "Time steps and ECU steps" in [simulation-run.md](simulation-run.md#time-steps-and-ecu-steps)). In a run with a scenario, this time step applies whatever the speed.
+The controller's time step is `time_step_ms` in the configuration file when specified. Otherwise, the launcher resolves it from the active ECU periods and any requested stop time. The result reports it as `timing.time_step_ms`; speed and scenario selection do not change it. See "Time steps and ECU steps" in [simulation-run.md](simulation-run.md#time-steps-and-ecu-steps) for the calculation and its limits.
 
 ## Values that conditions see
 
@@ -619,7 +619,7 @@ If a variable of the `expect` is absent in the configuration file (`absent: true
 | Run the scenario on some variants only | `only` | [Limiting a scenario to variants (`only`)](#limiting-a-scenario-to-variants-only) |
 | Use another variable name or unit per implementation | `variables` in the configuration file | "Matching variable names and values (`variables`)" in [simulation-config.md](simulation-config.md#matching-variable-names-and-values-variables) |
 | Use another network name per implementation | `network_names` in the configuration file (the scenario names no network) | "Matching network names (`network_names`)" in [simulation-config.md](simulation-config.md#matching-network-names-network_names) |
-| Share the scenario and the choices (variant, parameters, participants, speed) as a file | A request file: `--request` of `check` and `run` (`test` does not take it). The file does not name the configuration file; a relative scenario path is read from the directory of the configuration file | "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request); [examples/ecu_main/requests/throttle_step.json](../examples/ecu_main/requests/throttle_step.json) |
+| Share the scenario and the choices (variant, parameters, participants, speed) as a file | A request file: `--request` of `check` and `run` (`test` accepts only the stop time and lateness tolerance in its request). The file does not name the configuration file; a relative scenario path is read from the directory of the configuration file | "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request); [examples/ecu_main/requests/throttle_step.json](../examples/ecu_main/requests/throttle_step.json) |
 | Run the same scenario on another configuration file | Give that file in the arguments. A participant that it lacks is the error `scenario-variable` | [Check (`check --scenario`, start of `run --scenario`)](#check-check---scenario-start-of-run---scenario) |
 
 What a scenario cannot do now (copy the text instead):
@@ -749,12 +749,12 @@ The result of the scenario (`status` in JSON) is decided as follows:
 | All steps passed | `passed` | The launcher stops the simulation at that controller step, and the run passes (exit code 0 if there are no other errors). |
 | One step failed | `failed` | The launcher stops the simulation, and the run fails (exit code 1). |
 | An ECU whose values the scenario reads sends them less often than its step (`samples: every_step`) | `failed` | The scenario is not begun: every step stays `not_run`, the launcher stops the simulation before its first step, and the run fails (exit code 1) with the finding `scenario-not-observed`. |
-| `stop_at_ms` was reached first | `failed` | The first step whose result is not decided fails (`scenario-out-of-time`). |
+| The requested `stop_at_ms` was reached first | `incomplete` | The run is `incomplete` (exit code 5): the scenario has no verdict. |
 | The `stop` command, or `Stop` of the Control API | `incomplete` | The run is `incomplete` (exit code 5) if nothing else is wrong: the scenario has no verdict. |
 | Ctrl+C or another interrupt, a participant failure, `--timeout-ms` | `incomplete` | These take precedence over the scenario. The rules of [simulation-run.md](simulation-run.md) apply unchanged (130 for an interrupt, 1 for a failure). |
 
-- The launcher stops the run when all steps pass, so the configuration file does not need `stop_at_ms`.
-- When `stop_at_ms` is reached first, the results are decided as far as possible. Increase `stop_at_ms` or remove it.
+- The launcher stops the run when all steps pass, so the run does not need a stop time.
+- When `stop_at_ms` is reached first, results are decided as far as possible. Increase the requested stop time or leave it out.
 - With `incomplete`, the finding `scenario-incomplete` shows how far the scenario got. It is a note when a stop or an interrupt cut the scenario short, and an error otherwise.
 - If a write to an ECU that crashed fails first, the result of the run is still a participant failure, and the scenario is `incomplete`.
 
@@ -853,7 +853,6 @@ All of them are errors.
 | `scenario-failed` | An `expect` (including one beside `ramp` or `wave`) did not hold, or the participant of a variable it reads is not connected in this run. |
 | `scenario-timeout` | A `wait_until` did not hold within `timeout_ms`. |
 | `scenario-write` | A write of `set`, `ramp` or `wave` was not applied (a `wave` tried to write a value out of range, for example), or there is no start value for a `ramp` or no center value for a `wave`. |
-| `scenario-out-of-time` | The run stopped at `stop_at_ms` before the result was decided. |
 | `scenario-incomplete` | The simulation ended for another reason before the scenario was over. |
 | `scenario-not-observed` | The scenario was not begun: an ECU whose values it reads sends them less often than its step, so a condition would not see what a variable does between 2 samples. No condition was judged; this is not a condition that was false (`scenario-failed`). The message names the participant, its `sample_period` and its step. Build the executable again with this vehicle-sil, or write `samples: as_sent` (see [How often the ECUs send their values](#how-often-the-ecus-send-their-values-samples)). |
 

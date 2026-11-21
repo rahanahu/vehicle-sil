@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
-from conftest import Client, gui_server, is_ended, is_synced, run_async
+from conftest import Client, alive, gui_server, is_ended, is_synced, run_async, scaled, wait_until
 from real_configs import NETWORKS, examples_dir, executables, usable, write
 from vehicle_sil_gui.recording import scenario_yaml
 
@@ -46,7 +48,7 @@ def test_a_saved_scenario_with_names_beyond_ascii_passes_the_real_check(tmp_path
     engine, dashboard = (p.as_posix() for p in executables(EXAMPLES))
     name = "Mot\u00f6r\u00b0\u00b5\u00e9\u4e00"
     (tmp_path / "sim.yaml").write_text(
-        f"vehicle_sil_simulation: 1\nstop_at_ms: 1000\n{NETWORKS}participants:\n"
+        f"vehicle_sil_simulation: 2\n{NETWORKS}participants:\n"
         f"  - name: {name}\n    command: ['{engine}']\n    step_ms: 10\n"
         f"  - name: Dashboard\n    command: ['{dashboard}']\n    step_ms: 5\n", encoding="utf-8")
     text, steps, _ = scenario_yaml([(0, 1, name, "engine.throttle", 10.0), (20, 2, name, "ecu.connected", True)],
@@ -80,9 +82,66 @@ def test_a_variant_chosen_in_the_browser_reaches_the_real_check_and_run(tmp_path
         assert status == 200 and body["check"]["result"] == "usage", body
         sock = await c.ws()
         await sock.until(is_synced)
-        status, body = await c.post("api/run", {"file": "variants.yaml", "variant": "small", "speed": "max"})
+        status, body = await c.post("api/run", {"file": "variants.yaml", "variant": "small", "speed": "max",
+                                                 "stop_at_ms": 1000})
         assert status == 200, body
         got = await sock.until(is_ended)
         assert got[-1]["session"]["result"]["result"] == "passed", got[-1]["session"]["result"]
     with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER)) as gui:
         run_async(talk, gui)
+
+
+@pytest.mark.parametrize("deadline", [None, "0.1"], ids=["default-waits", "explicit-deadline"])
+def test_real_launcher_gets_time_to_finish_participant_shutdown(tmp_path: Path, deadline: str | None) -> None:
+    """The default waits for cleanup; an explicitly requested deadline still escalates."""
+    engine, _ = executables(EXAMPLES)
+    ready, done = tmp_path / "ready", tmp_path / "cleanup-complete"
+    helper = tmp_path / "slow_exit.py"
+    helper.write_text(
+        "import os, signal, time\n"
+        "from pathlib import Path\n"
+        "def stop(*_):\n"
+        "    time.sleep(11)\n"
+        f"    Path({str(done)!r}).write_text('finished')\n"
+        "    raise SystemExit(0)\n"
+        "signal.signal(signal.SIGTERM, stop)\n"
+        f"Path({str(ready)!r}).write_text(str(os.getpid()))\n"
+        "while True: time.sleep(0.1)\n", encoding="utf-8")
+    (tmp_path / "sim.yaml").write_text(
+        f"vehicle_sil_simulation: 2\n{NETWORKS}participants:\n"
+        f"  - name: Engine\n    command: [{json.dumps(str(engine))}]\n"
+        f"  - name: Logger\n    command: [{json.dumps(sys.executable)}, {json.dumps(str(helper))}]\n"
+        "    describe: false\n    required: false\n", encoding="utf-8")
+
+    async def start(c: Client) -> None:
+        sock = await c.ws()
+        await sock.until(is_synced)
+        status, body = await c.post("api/run", {"file": "sim.yaml"})
+        assert status == 200, body
+        await sock.until(lambda m: m.get("event", {}).get("event") == "time")
+        await sock.close()
+
+    args = ("--no-variables", "--participant-stop-timeout-ms", "15000")
+    if deadline is not None:
+        args += ("--stop-timeout", deadline)
+    with gui_server(tmp_path, root=tmp_path, launcher=Path(LAUNCHER), args=args) as gui:
+        run_async(start, gui)
+        assert wait_until(lambda: ready.exists() and ready.stat().st_size > 0, 10)
+        began = time.monotonic()
+        pid = int(ready.read_text(encoding="utf-8"))
+        try:
+            gui.proc.send_signal(signal.SIGTERM)
+            time.sleep(0.3)
+            if deadline is None:
+                assert gui.proc.poll() is None, "the server ended before the participant could finish"
+            assert gui.proc.wait(scaled(30)) == 0
+            if deadline is None:
+                assert time.monotonic() - began >= 10
+                assert done.read_text(encoding="utf-8") == "finished"
+            else:
+                assert time.monotonic() - began < scaled(10)
+                assert not done.exists()
+        finally:
+            if alive(pid):
+                os.kill(pid, signal.SIGKILL)
+                assert wait_until(lambda: not alive(pid), 5)

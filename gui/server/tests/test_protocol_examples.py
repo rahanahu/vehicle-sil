@@ -378,7 +378,7 @@ def test_connect_examples(tmp_path: Path) -> None:
     tools = {str(REPLAY.parent): "/path/to/tools"}  # where the stand-in launcher says the bridges are
     with gui_server(tmp_path) as gui:
         async def talk(c: Client) -> None:
-            req = {"file": "connect.yaml", "connect": {"ETH_EXT": "fake0"}}
+            req = {"file": "connect.yaml", "connect": {"ETH_EXT": "fake0"}, "stop_at_ms": 1000}
             status, body = await c.post("api/check", req)
             check_example("error-target-not-listed", http(
                 "A target that the last list of that network (POST api/connections) did not give as usable: here, "
@@ -412,8 +412,8 @@ def test_config_text_examples(tmp_path: Path) -> None:
     launcher is text_launcher.py (the check of the saved file, played; the options of saved descriptions)."""
     root = tmp_path / "root"
     shutil.copytree(CONFIGS, root)
-    (root / "latin1.yaml").write_bytes("vehicle_sil_simulation: 1\n# caf\u00e9\n".encode("latin-1"))
-    (root / "large.yaml").write_bytes(b"vehicle_sil_simulation: 1\n" + b"#" * (1024 * 1024))
+    (root / "latin1.yaml").write_bytes("vehicle_sil_simulation: 2\n# caf\u00e9\n".encode("latin-1"))
+    (root / "large.yaml").write_bytes(b"vehicle_sil_simulation: 2\n" + b"#" * (1024 * 1024))
     paths = {str(root): "/path/to/root"}
     with gui_server(tmp_path, root=root, launcher=REPLAY.parent / "text_launcher.py") as gui:
         async def talk(c: Client) -> None:
@@ -466,7 +466,7 @@ def test_config_text_examples(tmp_path: Path) -> None:
         run_async(talk, gui)
     with gui_server(tmp_path, root=root, launcher=REPLAY.parent / "text_launcher.py", args=("--no-save",)) as gui:
         async def talk_no_save(c: Client) -> None:
-            req = {"file": "simulation.yaml", "text": "vehicle_sil_simulation: 1\n", "stamp": "0" * 64}
+            req = {"file": "simulation.yaml", "text": "vehicle_sil_simulation: 2\n", "stamp": "0" * 64}
             status, body = await c.post("api/config", req)
             check_example("error-save-disabled", http("A server started with --no-save.", "POST", "api/config",
                                                       req, status, body), gui, paths)
@@ -580,7 +580,10 @@ def test_ws_scenario_examples(tmp_path: Path, scenario: str) -> None:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": file})
+            intent: dict[str, object] = {"file": file}
+            if file != "participant-crash.yaml":
+                intent["stop_at_ms"] = 1000
+            await c.post("api/run", intent)
             await sock.until(is_ended)
             check_example(f"ws-{scenario}", ws(description, sock.sent, sock.received), gui)
             if scenario == "pass":
@@ -609,7 +612,7 @@ def test_ws_without_check_example(tmp_path: Path) -> None:
             loose = [await c.ws({"session_without_check": value}) for value in (1, "true", None)]
             for sock in (lean, full, *loose):
                 await sock.until(is_synced)
-            await c.post("api/run", {"file": "simulation.yaml"})
+            await c.post("api/run", {"file": "simulation.yaml", "stop_at_ms": 1000})
             for sock in (lean, full, *loose):
                 await sock.until(is_ended)
 
@@ -663,7 +666,7 @@ def test_ws_time_examples(tmp_path: Path) -> None:
             status, body = await c.post("api/time", req)
             check_example("time", http("A time command: passed on to the launcher at once (what it did comes as its "
                                        "command and time events).", "POST", "api/time", req, status, body), gui)
-            await sock.until_stands(30)
+            await sock.until_stands(25)
             await c.post("api/time", {"command": "speed", "value": 1})
             await sock.until_stands(speed=1)
             await c.post("api/time", {"command": "resume"})
@@ -854,7 +857,7 @@ def test_ws_late_example(tmp_path: Path) -> None:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "late.yaml"})
+            await c.post("api/run", {"file": "late.yaml", "speed": 1})
             await sock.until(is_time(late_steps=1, late_ms=0))
             await c.post("api/stop", {})
             await sock.until(is_ended)
@@ -896,7 +899,7 @@ def test_ws_orphan_example(tmp_path: Path) -> None:
         async def talk(c: Client) -> int:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "orphan.yaml"})
+            await c.post("api/run", {"file": "orphan.yaml", "stop_at_ms": 1000})
             await sock.until(is_ended)
             check_example("ws-orphan", ws("The launcher has exited, but a process it started holds its output: the "
                                           "server stops reading after a short time (output-left-open).",
@@ -916,7 +919,7 @@ def test_ws_dropped_example(tmp_path: Path) -> None:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "flood.yaml"})
+            await c.post("api/run", {"file": "flood.yaml", "stop_at_ms": 1000})
             await sock.until(is_ended)
             await sock.close()
             resumed = await c.ws({"session": 1, "from_seq": 20})
@@ -937,7 +940,7 @@ def test_ws_kept_limit_example(tmp_path: Path) -> None:
         async def talk(c: Client) -> None:
             live = await c.ws()
             await live.until(is_synced)
-            await c.post("api/run", {"file": "large-result.yaml"})
+            await c.post("api/run", {"file": "large-result.yaml", "stop_at_ms": 1000})
             await live.until(is_ended, timeout=120)
             await live.close()
             later = await c.ws()
@@ -967,7 +970,7 @@ def test_ws_slow_client_examples(tmp_path: Path, kind: str) -> None:
             slow = await c.ws()
             fast = await c.ws()
             await fast.until(is_synced)
-            await c.post("api/run", {"file": file})
+            await c.post("api/run", {"file": file, "stop_at_ms": 1000})
             await fast.until(is_ended, timeout=120)
             want = "dropped" if kind == "slow-client" else "resync"
             got = await slow.until(lambda m: m["type"] == want, timeout=120)

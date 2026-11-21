@@ -205,7 +205,7 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
         {
             out.push_back(Finding{Severity::Note, "outside-speed-set",
                                   what + ", which does not wait for the virtual time: the run goes at speed 1 (real time), not " +
-                                      (otherwise ? "at the speed " + speed_text(otherwise) + " of the file"
+                                      (otherwise ? "at the default speed " + speed_text(otherwise)
                                                  : std::string("as fast as possible")) +
                                       ". To go at another speed, " + run_not_connected(lock, origin) + ", or " + freely,
                                   0, "", ""});
@@ -231,7 +231,7 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
         }
         else
         {
-            runs = unlocked ? "the simulation runs at the speed " + speed_text(unlocked) + " of the file"
+            runs = unlocked ? "the simulation runs at the default speed " + speed_text(unlocked)
                             : std::string("the simulation runs as fast as possible");
         }
         out.push_back(Finding{Severity::Note, "outside-not-real-time",
@@ -278,8 +278,7 @@ std::vector<std::string> detail::real_time_peers(const SimulationConfig& config,
     return out;
 }
 
-RunTiming detail::plan_time_step(const SimulationConfig& config, const CheckReport& check, const std::optional<double>& speed,
-                                 bool fineStep)
+RunTiming detail::plan_time_step(const SimulationConfig& config, const CheckReport& check, std::optional<std::int64_t> stop_at_ms)
 {
     RunTiming t;
     // The synchronised ECUs' steps (an ECU without one runs in real time: the gate does not move it).
@@ -304,9 +303,7 @@ RunTiming detail::plan_time_step(const SimulationConfig& config, const CheckRepo
             known = false;
         }
     }
-    SimulationConfig unwritten = config;
-    unwritten.time_step_ms.reset();
-    const std::int64_t coarsest = time_step_ms(unwritten);
+    const auto coarsest = std::gcd(kDefaultTimeStepMs, stop_at_ms.value_or(0));
     // The step at which every ECU step starts at a controller step.
     std::int64_t fine = coarsest * kNanosPerMilli;
     for (const std::int64_t step : steps)
@@ -315,7 +312,7 @@ RunTiming detail::plan_time_step(const SimulationConfig& config, const CheckRepo
     }
     t.fine_step_ms = known && fine % kNanosPerMilli == 0 ? fine / kNanosPerMilli : 1;
     t.time_step_written = config.time_step_ms.has_value();
-    t.time_step_ms = t.time_step_written ? *config.time_step_ms : speed || fineStep ? t.fine_step_ms : coarsest;
+    t.time_step_ms = config.time_step_ms.value_or(t.fine_step_ms);
     if (known)
     {
         // An ECU step at T runs when the controller's first step at or after T is due.
@@ -337,15 +334,14 @@ RunTiming detail::plan_time_step(const SimulationConfig& config, const CheckRepo
 std::optional<Finding> detail::coarse_time_step(const RunTiming& t)
 {
     // Only where a speed counts: a run as fast as possible keeps no real time anyway.
-    if (!((t.speed || t.paced_steps > 0) && t.step_delay_ns.value_or(0) > 0 && t.fine_step_ms > 0 &&
-          t.fine_step_ms < t.time_step_ms))
+    if (!((t.speed || t.paced_steps > 0) && t.step_delay_ns.value_or(0) > 0))
     {
         return std::nullopt;
     }
     const std::string delay = millis_text(*t.step_delay_ns);
     return Finding{Severity::Warning, "coarse-time-step",
             "the launcher's controller steps every " + std::to_string(t.time_step_ms) + " ms (" +
-                (t.time_step_written ? "time_step_ms" : "the default of a run that starts without a speed") + "), but " +
+                (t.time_step_written ? "time_step_ms" : "the automatic time step") + "), but " +
                 (t.ecu_step_ns && *t.ecu_step_ns < t.time_step_ms * kNanosPerMilli
                      ? "the ECUs' steps are as small as " + millis_text(*t.ecu_step_ns) + " ms"
                      : std::string("not every ECU step starts at one of its steps")) +
@@ -353,9 +349,11 @@ std::optional<Finding> detail::coarse_time_step(const RunTiming& t)
                 "between two of them runs at the later one, up to " +
                 delay + " ms after the real time it stands for (never before it), together with the other steps in "
                         "between; a device attached in real time gets the messages of those steps up to " +
-                delay + " ms late and in a burst. Write time_step_ms: " + std::to_string(t.fine_step_ms) +
-                (t.time_step_written ? " (or leave time_step_ms out: with a speed, the default is that)"
-                                     : " (or give the speed from the start, with speed or run --speed: the default is then that)"), 0, "", ""};
+                delay + " ms late and in a burst. " +
+                (t.fine_step_ms < t.time_step_ms
+                     ? "Write time_step_ms: " + std::to_string(t.fine_step_ms) +
+                           (t.time_step_written ? " (or leave time_step_ms out to use the automatic step)" : "")
+                     : std::string("The controller's whole-millisecond step cannot align every ECU step.")), 0, "", ""};
 }
 
 } // namespace vehicle_sil::config

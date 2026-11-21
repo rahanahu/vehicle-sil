@@ -28,8 +28,8 @@ void availability(const Options& o)
                              "  - expect: { Nvm.io.out1: 0 }\n";
     const auto run = [&](const std::string& behaviour) {
         const fs::path dir = scenario_dir(o,
-                                          "vehicle_sil_simulation: 1\n"
-                                          "stop_at_ms: 1000\n"
+                                          "vehicle_sil_simulation: 2\n"
+                                          "# run-option --stop-at-ms 1000\n"
                                           "networks: []\n"
                                           "participants:\n"
                                           "  - name: Nvm\n"

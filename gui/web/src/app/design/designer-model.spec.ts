@@ -67,7 +67,7 @@ function checkOf(
 }
 
 const START = `# kept comment
-vehicle_sil_simulation: 1
+vehicle_sil_simulation: 2
 networks: []
 participants:
   - name: ECU_A
@@ -141,7 +141,7 @@ describe('designer model', () => {
 
   it('keeps a long line of the text on one line, and the flow style the author chose', () => {
     const long = `/very/long/${'directory/'.repeat(12)}ecu`;
-    const source = `vehicle_sil_simulation: 1\nparticipants:\n  - name: ECU_A\n    command: ["${long}", eth0, 1]\n`;
+    const source = `vehicle_sil_simulation: 2\nparticipants:\n  - name: ECU_A\n    command: ["${long}", eth0, 1]\n`;
     const m = open(source);
     wire(m, 'ECU_A', 'eth0', 'ETH_AB');
     expect(text(m)).toContain(`command: ["${long}", eth0, 1]`);
@@ -194,7 +194,7 @@ describe('designer model', () => {
       'true',
       'null',
     ];
-    const source = `vehicle_sil_simulation: 1
+    const source = `vehicle_sil_simulation: 2
 networks:
   - name: 1
     kind: ethernet
@@ -241,14 +241,14 @@ participants:
 
     // a text whose sequences are flush with their key, and one whose maps use 4 spaces
     const flush = open(
-      'vehicle_sil_simulation: 1\nparticipants:\n- name: ECU_A\n  command: [./a]\n',
+      'vehicle_sil_simulation: 2\nparticipants:\n- name: ECU_A\n  command: [./a]\n',
     );
     wire(flush, 'ECU_A', 'eth0', 'ETH_AB');
     expect(text(flush)).toContain(
       'participants:\n- name: ECU_A\n  command: [./a]\n  network_names:\n    ETH_AB: eth0',
     );
     const four = open(
-      'vehicle_sil_simulation: 1\nparticipants:\n    - name: ECU_A\n      command: [./a]\n',
+      'vehicle_sil_simulation: 2\nparticipants:\n    - name: ECU_A\n      command: [./a]\n',
     );
     wire(four, 'ECU_A', 'eth0', 'ETH_AB');
     expect(text(four)).toContain(
@@ -274,7 +274,7 @@ participants:
   });
 
   it('tells a line of a variant by its place in the tree, not by deriving the merge', () => {
-    const source = `vehicle_sil_simulation: 1
+    const source = `vehicle_sil_simulation: 2
 networks:
   - name: ETH_AB
     kind: ethernet
@@ -335,13 +335,13 @@ variants:
   });
 
   it('leaves a JSON configuration to the text pane', () => {
-    expect(open('{"vehicle_sil_simulation": 1}').editable).toBe(false);
-    expect(open('\n  {"vehicle_sil_simulation": 1}').json).toBe(true);
-    expect(open('vehicle_sil_simulation: 1\n').editable).toBe(true);
+    expect(open('{"vehicle_sil_simulation": 2}').editable).toBe(false);
+    expect(open('\n  {"vehicle_sil_simulation": 2}').json).toBe(true);
+    expect(open('vehicle_sil_simulation: 2\n').editable).toBe(true);
   });
 
   it('reports a text that is not YAML, with its line, and stops the tables', () => {
-    const m = open('vehicle_sil_simulation: 1\nnetworks: [a\nparticipants: x: y\n');
+    const m = open('vehicle_sil_simulation: 2\nnetworks: [a\nparticipants: x: y\n');
     expect(m.editable).toBe(false);
     expect(m.errors.length).toBeGreaterThan(0);
     expect(m.errors[0].line).not.toBeNull();

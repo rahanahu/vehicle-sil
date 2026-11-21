@@ -145,7 +145,7 @@ def test_where_a_new_file_may_be_made(tmp_path: Path) -> None:
 def test_where_an_existing_file_may_be_saved(tmp_path: Path) -> None:
     """The same places as for a new file: what GET api/config reads is not enough (a dashboard file or a scenario file
     can have the marker in a comment)."""
-    marked = b"vehicle_sil_simulation: 1\n"
+    marked = b"vehicle_sil_simulation: 2\n"
     deep = "/".join(f"d{n}" for n in range(MAX_DEPTH + 1))
     names = ("sim.yaml", "sim.dashboard.yaml", "sub/scenarios/s.yaml", f"{deep}/a.yaml",
              "/".join(f"d{n}" for n in range(MAX_DEPTH)) + "/ok.yaml")
@@ -162,8 +162,8 @@ def test_where_an_existing_file_may_be_saved(tmp_path: Path) -> None:
 
 
 def test_the_text_stays_readable() -> None:
-    check_text("a.yaml", b"vehicle_sil_simulation: 1\n")
-    for data, said in ((b"vehicle_sil_simulation: 1\n\0", "a NUL character at byte 26"),
+    check_text("a.yaml", b"vehicle_sil_simulation: 2\n")
+    for data, said in ((b"vehicle_sil_simulation: 2\n\0", "a NUL character at byte 26"),
                        (b"key: 1\n", "has no vehicle_sil_simulation in its first 4096 bytes")):
         with pytest.raises(Refused) as e:
             check_text("a.yaml", data)
@@ -179,7 +179,7 @@ def test_a_new_file_through_links(tmp_path: Path) -> None:
     (base / "inner").symlink_to(base / ".private")
     (base / "alias").symlink_to(base / "real")
     (base / "dangling.yaml").symlink_to(base / "nowhere.yaml")
-    (base / "real" / "sim.yaml").write_text("vehicle_sil_simulation: 1\n", encoding="utf-8")
+    (base / "real" / "sim.yaml").write_text("vehicle_sil_simulation: 2\n", encoding="utf-8")
     (base / "link.yaml").symlink_to(base / "real" / "sim.yaml")
     root = ConfigRoot(base)
     assert new_file(root, "real/new.yaml").absolute == base.resolve() / "real" / "new.yaml"
@@ -201,14 +201,14 @@ def test_the_file_is_replaced_as_bytes_keeping_its_mode(tmp_path: Path) -> None:
     target = tmp_path / "sim.yaml"
     target.write_bytes(b"old\n")
     target.chmod(0o640)
-    data = "﻿vehicle_sil_simulation: 1\r\n# 日本語\r\nno end".encode()
+    data = "﻿vehicle_sil_simulation: 2\r\n# 日本語\r\nno end".encode()
     replace_file(target, data)
     assert target.read_bytes() == data and leftovers(tmp_path) == []
     if POSIX:
         assert stat.S_IMODE(target.stat().st_mode) == 0o640
     new = tmp_path / "new.yaml"
-    replace_file(new, b"vehicle_sil_simulation: 1\n")
-    assert new.read_bytes() == b"vehicle_sil_simulation: 1\n"
+    replace_file(new, b"vehicle_sil_simulation: 2\n")
+    assert new.read_bytes() == b"vehicle_sil_simulation: 2\n"
     if POSIX:  # a new file has this user's default mode (the umask applies), not the 0600 of a temporary file
         umask = os.umask(0)
         os.umask(umask)
@@ -358,17 +358,17 @@ def test_with_command_changes_allowed(tmp_path: Path, root: Path) -> None:
 
 
 def test_files_that_are_not_saved(tmp_path: Path, root: Path) -> None:
-    files = {"other.yaml": b"key: 1\n", ".hidden/x.yaml": b"vehicle_sil_simulation: 1\n",
-             "notes.txt": b"vehicle_sil_simulation: 1\n",
-             "sim.dashboard.yaml": b"# vehicle_sil_simulation: 1\npanels: []\n",
-             "scenarios/marked.yaml": b"# vehicle_sil_simulation: 1\nsteps: []\n"}
+    files = {"other.yaml": b"key: 1\n", ".hidden/x.yaml": b"vehicle_sil_simulation: 2\n",
+             "notes.txt": b"vehicle_sil_simulation: 2\n",
+             "sim.dashboard.yaml": b"# vehicle_sil_simulation: 2\npanels: []\n",
+             "scenarios/marked.yaml": b"# vehicle_sil_simulation: 2\nsteps: []\n"}
     for name, data in files.items():
         (root / name).parent.mkdir(exist_ok=True)
         (root / name).write_bytes(data)
     server, log = serve(tmp_path, root, args=("--allow-command-changes",))
 
     async def main(c: Client) -> None:
-        text = "vehicle_sil_simulation: 1\n"
+        text = "vehicle_sil_simulation: 2\n"
         for name, data in files.items():
             refused(*await c.post("api/config", {"file": name, "text": text, "stamp": sha(data)}),
                     (400, "not-a-configuration"))

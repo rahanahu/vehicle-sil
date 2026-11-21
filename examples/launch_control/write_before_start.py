@@ -37,7 +37,7 @@ def main() -> int:
             problems.append(what)
 
     # --start-paused with the control server: the simulation stands still before its first step.
-    with Launch(args.launch, args.config, start_paused=True) as launch:
+    with Launch(args.launch, args.config, start_paused=True, arguments=["--stop-at-ms", "1000"]) as launch:
         print(f"control server at {launch.address}")
         with Control(launch.address) as c:
             stands = c.sim.wait_paused()
@@ -62,7 +62,7 @@ def main() -> int:
             expect(values["engine.speed"] == EXPECTED_RPM, f"engine.speed reads {values['engine.speed']} rpm "
                                                            f"(expected {EXPECTED_RPM})")
 
-            # Runs on to stop_at_ms of simulation.yaml.
+            # Runs on to the requested stop time.
             c.sim.resume()
         result = launch.wait()
         commands = [e for e in launch.events if e["event"] == "command" and e["source"] == "control_server"]

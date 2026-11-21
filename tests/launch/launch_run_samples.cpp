@@ -16,7 +16,7 @@ void scenario_samples(const Options& o)
     // Body steps every 1 ms; its code asks for a sample every 10 ms (0, 10, ...). "healthy" is
     // false in the step at 1053 ms only: between the samples of 1050 ms and 1060 ms.
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                                      "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                       "  - name: Body\n    command: [" + ecu(o) + "]\n",
                                       {{"Body", "sample-ms 10 scenario-variables glitch 1053"}});
     write_file(dir / "test-ecu-step-ms", "1\n");

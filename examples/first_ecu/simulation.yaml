@@ -3,8 +3,8 @@
 # the template's two ECUs and the Cooler of this directory. The paths in command are the ones of the
 # template's project (bin/). The test template.first_ecu puts this file next to that bin/. It has as
 # many lines of comments as the template's file, so that the line numbers in the output are the guide's.
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
+
 networks:
   - name: J1939_CAN
     kind: can

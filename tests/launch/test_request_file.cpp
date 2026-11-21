@@ -147,7 +147,7 @@ TEST_CASE(a_request_file_with_a_mistake_is_refused_with_the_file_and_the_line)
 {
     check_text(errors_of("{\n  \"vehicle_sil_run_request\": 1,\n  \"conect\": {}\n}"),
                "bench.json, line 3: unknown key 'conect': did you mean 'connect'? (the keys here: vehicle_sil_run_request, "
-               "variant, params, scenario, disable, enable, manual, connect, time_policy, speed, start_paused, strict)\n");
+               "variant, params, scenario, disable, enable, manual, connect, time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms)\n");
     // What the caller decides is not in the file.
     CHECK(errors_of(with("\"timeline\": \"t.json\"")).find("unknown key 'timeline'") != std::string::npos);
     CHECK(errors_of(with("\"file\": \"sim.yaml\"")).find("unknown key 'file'") != std::string::npos);
@@ -218,6 +218,19 @@ TEST_CASE(a_request_file_with_a_mistake_is_refused_with_the_file_and_the_line)
     // Every mistake at once.
     const RequestFileRead two = read_request_file(with("\"strict\": 1, \"speed\": \"fast\""), "bench.json");
     CHECK(two.findings.size() == 2);
+}
+
+TEST_CASE(a_request_file_sets_the_stop_and_late_tolerance_independently)
+{
+    const RequestFile file = file_of(with("\"stop_at_ms\": 1003, \"late_tolerance_ms\": 0"));
+    RunRequest cli;
+    cli.intent.stop_at_ms = 1005;
+    const RunRequest merged = with_request_file(cli, file, false);
+    CHECK(merged.intent.stop_at_ms == 1005);
+    CHECK(merged.intent.late_tolerance_ms == 0);
+    CHECK(merged.origin.has("late_tolerance_ms"));
+    CHECK(!errors_of(with("\"stop_at_ms\": 0")).empty());
+    CHECK(!errors_of(with("\"late_tolerance_ms\": 1.5")).empty());
 }
 
 TEST_CASE(an_argument_wins_over_the_request_file_field_by_field)
@@ -373,37 +386,37 @@ TEST_CASE(the_way_out_of_the_time_lock_names_the_request_file_for_the_networks_i
                "E outside-real-time: connect in bench.json connects CAN and ETH to a real bus, which does not stand still: "
                "--start-paused is refused. To stop the simulation and look at it, take CAN and ETH out of connect in "
                "bench.json, or pass --connect CAN=none --connect ETH=none, or " + freely + "\n");
-    // The note about the file's speed of the configuration says the same.
+    // The note about the default speed still names the request's connection.
     origin.fields = {"connect"};
     origin.connected = {"CAN"};
     check_text(lines(time_lock_findings(TimeLock{true, {"CAN"}, {}}, {}, 2.0, false, origin)),
                "N outside-speed-set: connect in bench.json connects CAN to a real bus, which does not wait for the virtual time: the "
-               "run goes at speed 1 (real time), not at the speed 2 of the file. To go at another speed, take CAN out of "
+               "run goes at speed 1 (real time), not at the default speed 2. To go at another speed, take CAN out of "
                "connect in bench.json, or pass --connect CAN=none, or " + freely + "\n");
     // One network of the file, one of the command line, and a bridge of the configuration.
     check_text(lines(time_lock_findings(TimeLock{true, {"ETH", "CAN"}, {"Gateway"}}, {}, 2.0, false, origin)),
                "N outside-speed-set: connect in bench.json and --connect connect ETH and CAN to a real bus, and participant 'Gateway' is a bridge "
                "(role: bridge) to something outside the simulation, which does not wait for the virtual time: the run goes "
-               "at speed 1 (real time), not at the speed 2 of the file. To go at another speed, take CAN out of connect in "
+               "at speed 1 (real time), not at the default speed 2. To go at another speed, take CAN out of connect in "
                "bench.json, or pass --connect CAN=none, and leave the other --connect out, and run with --disable Gateway, "
                "or " + freely + "\n");
     // A network of the file that an argument replaced is the command line's: its words.
     origin.connected = {};
     check_text(lines(time_lock_findings(TimeLock{true, {"CAN"}, {}}, {}, 2.0, false, origin)),
                "N outside-speed-set: --connect connects CAN to a real bus, which does not wait for the virtual time: the "
-               "run goes at speed 1 (real time), not at the speed 2 of the file. To go at another speed, run without "
+               "run goes at speed 1 (real time), not at the default speed 2. To go at another speed, run without "
                "--connect, or " + freely + "\n");
     // No request file at all: the options.
     check_text(lines(time_lock_findings(TimeLock{true, {"CAN"}, {}}, {}, 2.0, false, RequestOrigin{})),
                "N outside-speed-set: --connect connects CAN to a real bus, which does not wait for the virtual time: the "
-               "run goes at speed 1 (real time), not at the speed 2 of the file. To go at another speed, run without "
+               "run goes at speed 1 (real time), not at the default speed 2. To go at another speed, run without "
                "--connect, or pass --time-policy free if what is connected there can take messages that do not come in real "
                "time (the bridge still carries frames both ways)\n");
 }
 
 TEST_CASE(a_participant_of_the_request_file_that_the_configuration_lacks_is_an_error_that_names_the_file)
 {
-    const char* const sim = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: A\n    command: [missing/a]\n";
+    const char* const sim = "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: A\n    command: [missing/a]\n";
     const RequestFile bench = *read_request_file(with("\"manual\": [\"Engine\"], \"disable\": [\"A\"]"), "bench.json").file;
     RunRequest given;
     given.intent.enable = {"Motor"};
@@ -461,11 +474,11 @@ TEST_CASE(the_findings_about_the_time_name_the_request_file_for_what_it_gave)
                "time_policy free in bench.json start_paused in bench.json makes the simulation wait before its first step: "
                "the bridge still carries frames both ways, so frames from outside pile up while the simulation stands "
                "still. To run in real time, leave time_policy free in bench.json and start_paused in bench.json out\n");
-    // The file's free policy with the file's own speed of the configuration: only the policy is named.
+    // The file's free policy with a default speed: only the policy is named.
     origin.fields = {"time_policy"};
     check_text(lines(time_lock_findings(free, {}, 2.0, false, origin)),
                "N outside-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
-               "and with time_policy free in bench.json the simulation runs at the speed 2 of the file: what is connected "
+               "and with time_policy free in bench.json the simulation runs at the default speed 2: what is connected "
                "there gets the messages at the wrong times, and the bridge still carries frames both ways. To run in real "
                "time, leave time_policy free in bench.json out\n");
     // A file that gave none of them: the words of the command line, except the way to the free policy,
@@ -487,7 +500,7 @@ TEST_CASE(the_findings_about_the_time_name_the_request_file_for_what_it_gave)
 
 namespace {
 
-const char* const kSim = "vehicle_sil_simulation: 1\nnetworks:\n  - name: ETH1\n    kind: ethernet\nparticipants:\n"
+const char* const kSim = "vehicle_sil_simulation: 2\nnetworks:\n  - name: ETH1\n    kind: ethernet\nparticipants:\n"
                          "  - name: A\n    command: [missing/a]\n    describe: false\n";
 const char* const kDrive = "vehicle_sil_scenario: 1\nsteps:\n  - at_ms: 0\n    set: { A.level: 1 }\n";
 

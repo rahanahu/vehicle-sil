@@ -259,7 +259,7 @@ int RunWatch::settle(SimulationController& controller, const Watched& over)
     case WatchEnd::Ended:
         if (watched.state == orch::ParticipantState::Shutdown)
         {
-            outcome_.end.simulation = ctx_.config.stop_at_ms && controller.wall_time_to_stop_at() ? SimulationEnd::ReachedStopAt
+            outcome_.end.simulation = ctx_.plan.stop_at_ms && controller.wall_time_to_stop_at() ? SimulationEnd::ReachedStopAt
                                                                                            : SimulationEnd::Ended;
         }
         else

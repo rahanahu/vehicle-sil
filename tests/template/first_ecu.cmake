@@ -172,7 +172,7 @@ run_in_work(0 "${LAUNCH}" check simulation.yaml)
 block_after(expected "first ECU: vehicle_sil_launch check simulation.yaml")
 expect_same("the output of vehicle_sil_launch check simulation.yaml with the Cooler" "${output}" "${expected}")
 
-run_in_work(0 "${LAUNCH}" run simulation.yaml)
+run_in_work(0 "${LAUNCH}" run simulation.yaml --stop-at-ms 1000)
 block_after(expected "first ECU: vehicle_sil_launch run simulation.yaml, after the tables of the check")
 string(FIND "${output}" "run: " at)
 if(at EQUAL -1)

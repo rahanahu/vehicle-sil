@@ -13,7 +13,7 @@
 /// write takes effect in the same step as without a map.
 void variable_map(const Options& o)
 {
-    const std::string head = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n";
+    const std::string head = "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n";
     const std::string body = "  - name: Body\n    command: [" + ecu(o) + "]\n";
     const std::string door = "  - name: Door\n    command: [" + ecu(o) + "]\n";
     const std::string mapped = head + body +
@@ -118,7 +118,7 @@ void variable_map(const Options& o)
 
     // A participant that does not describe itself cannot be compared before the run: what does
     // not fit is said when its agent has connected (a line of the run), and with the result.
-    write_file(dir / "sim.yaml", std::string("vehicle_sil_simulation: 1\nstop_at_ms: 100\nnetworks: []\nparticipants:\n") +
+    write_file(dir / "sim.yaml", std::string("vehicle_sil_simulation: 2\n# run-option --stop-at-ms 100\nnetworks: []\nparticipants:\n") +
                                      "  - name: Body\n    command: [" + ecu(o) +
                                      ", --registry-uri, \"{registry_uri}\", --name, \"{name}\"]\n    describe: false\n"
                                      "    variables:\n      body.fill: { from: levle, scale: 0.01 }\n"
@@ -156,7 +156,7 @@ void variable_map(const Options& o)
 /// variant does not have, or of a participant the variant leaves out, is skipped and said so.
 void variants(const Options& o)
 {
-    const std::string config = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    const std::string config = "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                "  - name: Body\n    command: [" + ecu(o) + "]\n"
                                "    variables:\n"
                                "      body.fill: level\n"
@@ -387,7 +387,7 @@ void variants(const Options& o)
 
 void test_command(const Options& o)
 {
-    const std::string participants = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    const std::string participants = "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                      "  - name: Body\n    command: [" + ecu(o) + "]\n"
                                      "    variables:\n"
                                      "      body.fill: level\n"
@@ -623,7 +623,7 @@ void test_interrupt(const Options& o)
     const std::string by = "SIGINT";
 #endif
     const fs::path dir = scenario_dir(o,
-                                      "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                                      "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                       "  - name: Body\n    command: [" + ecu(o) + "]\n",
                                       {{"Body", "scenario-variables"}});
     // Far too long to end by itself, also as fast as possible.

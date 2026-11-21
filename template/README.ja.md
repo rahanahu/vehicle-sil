@@ -80,7 +80,7 @@ python3 get_tools.py     # Windows（UCRT64 シェル）: python get_tools.py
 cmake --preset linux             # Windows: cmake --preset windows
 cmake --build --preset linux     # Windows: cmake --build --preset windows
 vehicle_sil_launch check simulation.yaml
-vehicle_sil_launch run simulation.yaml
+vehicle_sil_launch run simulation.yaml --stop-at-ms 1000
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 ```
 
@@ -89,7 +89,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 | `cmake --preset` | vehicle-sil と SIL Kit をダウンロードします。 |
 | `cmake --build` | 2 つの ECU を `bin/` にビルドします（最初の 1 回だけ、SIL Kit のコンパイルに数分かかります）。 |
 | `check` | 各 ECU を `--describe` で起動し、その出力と設定ファイルを照合します。 |
-| `run` | registry と各 ECU を起動して、`stop_at_ms` まで実行します。 |
+| `run` | registry と各 ECU を起動して、指定した停止時刻（1000 ms）まで実行します。 |
 | `run --scenario` | シナリオの手順どおりに値を設定して確認します。 |
 
 ### 確認
@@ -120,7 +120,7 @@ vehicle-sil-gui simulation.live.yaml
 
 ブラウザで、設定ファイルを照合し、シミュレーションを実行し、変数を見て書き込む画面を開きます。終了するときは Ctrl+C を押します。
 
-`simulation.live.yaml` は、同じ 2 つの ECU を、等速で、止めるまで実行する設定ファイルです。`simulation.yaml` は 1000 ms で終わるので、GUI で値を見ながら操作するのには向きません。
+`simulation.live.yaml` は、同じ 2 つの ECU と画面の配置の設定です。GUI で等速を選ぶと、停止するまで値を見ながら操作できます。
 
 ## 入っているファイル
 
@@ -133,7 +133,7 @@ vehicle-sil-gui simulation.live.yaml
 | `simulation.yaml` | 2 つの ECU を 1 つのシミュレーションにする設定ファイルです。 |
 | `scenarios/throttle_step.yaml` | スロットルを踏んで、回転数と表示を確認するシナリオです。 |
 | `simulation.dashboard.yaml` | GUI の「変数」の画面の配置です。 |
-| `simulation.live.yaml`、`simulation.live.dashboard.yaml` | 等速で、止めるまで実行する設定ファイル（`stop_at_ms` なし、`speed: 1`）と、その画面の配置です。 |
+| `simulation.live.yaml`、`simulation.live.dashboard.yaml` | ECU を見ながら操作するための設定ファイルと、その画面の配置です。 |
 | `schema/` | 上の 3 種類の YAML の JSON Schema です。 |
 | `get_tools.py` | ツール（`vehicle_sil_launch` と GUI）を、バージョンと SHA-256 を確認して `tools/` にダウンロードします。 |
 
@@ -176,6 +176,7 @@ ECU とツールは、同じバージョンの vehicle-sil にそろえます。
 | 1 | 新しいバージョンのテンプレートから、`get_tools.py` と、`CMakeLists.txt` の `GIT_TAG` の行をコピーします。 |
 | 2 | `python3 get_tools.py` をもう一度実行します。 |
 | 3 | `cmake --build --preset linux` でビルドし直します（Windows は `windows`）。 |
+| 4 | 形式 1 の設定ファイルはローカルのエディターで開いて `vehicle_sil_simulation: 2` に変更します。`stop_at_ms`、`speed`、`late_tolerance_ms` は実行時の引数か要求ファイルへ移します。`start_timeout_ms` と `stop_timeout_ms` は `--participant-start-timeout-ms` と `--participant-stop-timeout-ms` へ移します。刻みを固定する場合は `time_step_ms` を設定ファイルに残します。 |
 
 `get_tools.py` は、ツールに入っている JSON Schema を `schema/` にコピーし直し、コピーしたファイルを 1 行で表示します。これで、エディターの補完と検査が、新しいバージョンのキーに対応します。変更点と対応のしかたは、vehicle-sil の `CHANGELOG.md` にあります。
 

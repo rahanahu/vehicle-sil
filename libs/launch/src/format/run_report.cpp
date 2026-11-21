@@ -56,6 +56,11 @@ RunResult RunReport::result() const
     {
         return RunResult::Failed;
     }
+    if (run->end.simulation == runner::SimulationEnd::ReachedStopAt && run->scenario.result &&
+        run->scenario.result->status == scenario::ScenarioStatus::Incomplete)
+    {
+        return RunResult::Incomplete;
+    }
     if (end == runner::EndReason::Stopped)
     {
         // A scenario that did not pass and did not fail has no verdict: it did not begin, or the
@@ -124,6 +129,10 @@ std::string RunReport::message() const
         return "The run was stopped " + by + (forced.empty() ? " without errors" : "") +
                (scenario != nullptr ? ", after the scenario had passed" : "") + force;
     case RunResult::Incomplete:
+        if (run->end.simulation == runner::SimulationEnd::ReachedStopAt)
+        {
+            return "The run reached its requested stop time before the scenario reached its end, so the scenario has no verdict" + force;
+        }
         return "The run was stopped " + by + " before the scenario reached its end, so the scenario has no verdict" + force;
     case RunResult::Interrupted: return "The run was interrupted " + by + force;
     case RunResult::Failed:

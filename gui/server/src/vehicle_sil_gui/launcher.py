@@ -49,6 +49,7 @@ SCENARIO_STEP_EVENT = "scenario_step"
 # A scenario run's timeline ("Recording a scenario run on a timeline" in docs/simulation-run.md): run --scenario
 # --timeline <file> writes what the scenario wrote and saw to that file after the run.
 FEATURE_TIMELINE = "timeline"
+FEATURE_RUN_STOP_AT = "run-stop-at"
 
 
 class LauncherNotFound(Exception):
@@ -175,7 +176,7 @@ class InvalidRequest(ValueError):
 REQUEST_VERSION_KEY = "vehicle_sil_run_request"
 INTENT_FIELDS = ("scenario", "variant", "params", "disable", "enable", "manual", "strict", "connect", "time_policy")
 # `$schema` is the editor's key of a request file: read and dropped, as the launcher does.
-REQUEST_FIELDS = ("file", "$schema", REQUEST_VERSION_KEY, *INTENT_FIELDS, "speed", "start_paused")
+REQUEST_FIELDS = ("file", "$schema", REQUEST_VERSION_KEY, *INTENT_FIELDS, "speed", "start_paused", "stop_at_ms", "late_tolerance_ms")
 # POST api/check with `text` (the unsaved text of the file, checked as that file): the configuration only, so of the
 # intent only what chooses which configuration is checked. A scenario, the participants to leave out or start by
 # hand, the connections and the time are choices of a run, which a run makes from the saved file.
@@ -274,6 +275,15 @@ def check_network(network: object) -> str:
         raise InvalidRequest("invalid-field", 'network must be the name of a network of the file (a non-empty '
                                               'string), e.g. {"file": "simulation.yaml", "network": "ETH_EXT"}')
     return network
+
+
+def check_run_millis(body: dict, key: str, minimum: int) -> int | None:
+    if key not in body:
+        return None
+    value = body[key]
+    if type(value) is not int or not minimum <= value <= STEP_MS_MAX:
+        raise InvalidRequest("invalid-field", f"{key} must be an integer from {minimum} to {STEP_MS_MAX}")
+    return value
 
 
 def check_speed(speed: object) -> float | str | None:

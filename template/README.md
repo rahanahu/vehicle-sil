@@ -80,7 +80,7 @@ To extract the tools by hand instead of with `get_tools.py`, check the archive a
 cmake --preset linux             # Windows: cmake --preset windows
 cmake --build --preset linux     # Windows: cmake --build --preset windows
 vehicle_sil_launch check simulation.yaml
-vehicle_sil_launch run simulation.yaml
+vehicle_sil_launch run simulation.yaml --stop-at-ms 1000
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 ```
 
@@ -89,7 +89,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 | `cmake --preset` | Downloads vehicle-sil and SIL Kit. |
 | `cmake --build` | Builds the 2 ECUs into `bin/`. The first build also compiles SIL Kit, which takes a few minutes. |
 | `check` | Starts each ECU with `--describe` and checks the configuration file against that output. |
-| `run` | Starts the registry and each ECU, and runs until `stop_at_ms`. |
+| `run` | Starts the registry and each ECU, and runs until the requested stop time (1000 ms). |
 | `run --scenario` | Sets and checks values as the steps of the scenario say. |
 
 ### Verify the build and run
@@ -120,7 +120,7 @@ vehicle-sil-gui simulation.live.yaml
 
 The browser opens a screen where you check the configuration file, run the simulation, and watch and write variables. To quit, press Ctrl+C.
 
-`simulation.live.yaml` is a configuration file that runs the same 2 ECUs at real-time speed until you stop them. `simulation.yaml` ends at 1000 ms, which is too short to watch and change values in the GUI.
+`simulation.live.yaml` configures the same 2 ECUs and their screen layout. Choose real-time speed in the GUI to watch and change values until you stop the run.
 
 ## What the template contains
 
@@ -133,7 +133,7 @@ The browser opens a screen where you check the configuration file, run the simul
 | `simulation.yaml` | The configuration file that combines the 2 ECUs into one simulation. |
 | `scenarios/throttle_step.yaml` | A scenario that presses the throttle and checks the engine speed and the dashboard. |
 | `simulation.dashboard.yaml` | The layout of the **Variables** screen of the GUI. |
-| `simulation.live.yaml`, `simulation.live.dashboard.yaml` | A configuration file that runs at real-time speed until you stop it (no `stop_at_ms`, `speed: 1`), and its screen layout. |
+| `simulation.live.yaml`, `simulation.live.dashboard.yaml` | A configuration file for watching and operating the ECUs, and its screen layout. |
 | `schema/` | JSON Schemas for the 3 kinds of YAML above. |
 | `get_tools.py` | Downloads the tools (`vehicle_sil_launch` and the GUI) to `tools/`, checking the version and the SHA-256. |
 
@@ -176,6 +176,7 @@ Keep the ECUs and the tools on the same version of vehicle-sil. If the versions 
 | 1 | From the template of the new version, copy `get_tools.py` and the `GIT_TAG` line of `CMakeLists.txt`. |
 | 2 | Run `python3 get_tools.py` again. |
 | 3 | Rebuild with `cmake --build --preset linux` (`windows` on Windows). |
+| 4 | Open format 1 configurations in a local editor and set `vehicle_sil_simulation: 2`. Move `stop_at_ms`, `speed` and `late_tolerance_ms` to run options or a run request. Move `start_timeout_ms` and `stop_timeout_ms` to `--participant-start-timeout-ms` and `--participant-stop-timeout-ms`. Keep `time_step_ms` in the configuration if you need a fixed step. |
 
 `get_tools.py` copies the JSON Schemas in the tools to `schema/` again and prints the copied files on one line. Editor completion and checks then know the keys of the new version. The `CHANGELOG.md` of vehicle-sil lists the changes and what to do about them.
 

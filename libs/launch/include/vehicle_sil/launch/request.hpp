@@ -45,11 +45,14 @@ struct RunIntent
     /// The networks connected outside the simulation, each once.
     std::vector<config::ConnectRequest> connect{};
     config::TimePolicy time_policy = config::TimePolicy::Realtime;
-    /// The speed replaces the file's (the inner empty: as fast as possible); the outer empty: the
-    /// file's speed counts.
+    /// The inner empty is fastest; the outer empty uses the launcher's default.
     std::optional<std::optional<double>> speed{};
     bool start_paused = false;
     bool strict = false;
+    /// Automatic stop in virtual milliseconds, or no automatic stop.
+    std::optional<std::int64_t> stop_at_ms{};
+    /// Wall-clock milliseconds of lateness before a step counts as late.
+    std::optional<std::int64_t> late_tolerance_ms{};
 };
 
 /// run --control: where the run's control server listens and the files it reads, as the caller
@@ -74,13 +77,16 @@ struct RunHost
     std::string config{};
     /// Where the launcher is, for the bridges of RunIntent::connect (empty: none is looked for next to it).
     std::filesystem::path tool_directory{};
+    /// Time limit per executable, from 1 to config::kMaxMillis milliseconds.
     std::chrono::milliseconds describe_timeout = kDescribeTimeout;
     /// A file of each participant's output in this directory; empty: none.
     std::filesystem::path log_dir{};
     /// The file of the scenario's timeline as the user gave it; empty: none.
     std::string timeline{};
-    /// The longest the simulation may run (wall clock); empty: no limit.
+    /// The longest the simulation may run (wall clock), from 1 to config::kMaxMillis ms; empty: no limit.
     std::optional<std::chrono::milliseconds> timeout{};
+    std::int64_t start_timeout_ms = 30000;
+    std::int64_t stop_timeout_ms = 10000;
     /// A control server is asked for (only in a build with VEHICLE_SIL_BUILD_CONTROL_SERVER:
     /// run_file() throws std::invalid_argument in one without); empty: none.
     std::optional<ControlHost> control{};
@@ -116,6 +122,9 @@ enum class RequestCommand
     Run,
     Test,
 };
+
+/// Checks the ranges of timing values before any calculation or process is started. Empty on success.
+[[nodiscard]] std::vector<config::Finding> validate_timing(const RunRequest& request);
 
 /// The rules about fields that do not go together, as findings (code "usage"; the message says
 /// which fields and what to do), in the order in which they are checked; empty: none broken.
@@ -159,7 +168,7 @@ struct RequestFileRead
 
 /// Reads the text of a request file named `shown`: a JSON object with "vehicle_sil_run_request": 1
 /// and any of variant, params, scenario, disable, enable, manual, connect, time_policy, speed,
-/// start_paused and strict. An unknown key, a key written twice, a value of the wrong type (null
+/// start_paused, strict, stop_at_ms and late_tolerance_ms. An unknown key, a key written twice, a value of the wrong type (null
 /// too: a key that is not meant is left out) and another version are errors. The format is JSON;
 /// the reader may take more than JSON (it is the YAML reader), which is no promise. Only the form is read: whether the file has the variant, the
 /// participants and the networks is the check's to say. No file system access.
@@ -177,7 +186,7 @@ struct RequestFileRead
 
 /// `arguments` (the request as the command line gave it) with what `file` adds: an argument wins,
 /// field by field.
-/// - variant, scenario, speed: the file's if the command line gave none. time_policy: the file's
+/// - variant, scenario, speed, stop_at_ms, late_tolerance_ms: the file's if the command line gave none. time_policy: the file's
 ///   unless `time_policy_given` (the command line named one, also realtime).
 /// - start_paused, strict: true if either is (no argument says false).
 /// - params: by name, the argument's value wins.

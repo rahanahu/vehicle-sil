@@ -14,7 +14,8 @@
 
 namespace vehicle_sil::runner {
 
-std::int64_t detail::ecu_start_timeout_ms(const config::SimulationConfig& config, bool stands_still_before_start)
+std::int64_t detail::ecu_start_timeout_ms(const config::SimulationConfig& config, bool stands_still_before_start,
+                                              std::int64_t start_timeout_ms, std::int64_t stop_timeout_ms)
 {
     // The launcher waits start_timeout_ms for the start and then stops the participants within
     // stop_timeout_ms; the ECU must not give up first (it would end, and the launcher would name it
@@ -26,7 +27,7 @@ std::int64_t detail::ecu_start_timeout_ms(const config::SimulationConfig& config
     {
         return config::kMaxMillis;
     }
-    return std::min(config.start_timeout_ms + config.stop_timeout_ms + 10000, config::kMaxMillis);
+    return std::min(start_timeout_ms + stop_timeout_ms + 10000, config::kMaxMillis);
 }
 
 detail::StopRequest detail::record_stop_request(ParticipantRun& run, bool sent, const std::optional<process::ExitStatus>& status)
@@ -135,7 +136,8 @@ std::string command_text(const std::filesystem::path& executable, const std::vec
 
 std::vector<std::string> participant_arguments(const config::SimulationConfig& config, const config::ParticipantConfig& participant,
                                                const std::string& registry_uri, bool stands_still_before_start,
-                                               bool sample_every_step)
+                                               bool sample_every_step, std::int64_t start_timeout_ms,
+                                               std::int64_t stop_timeout_ms)
 {
     const std::vector<std::string> rest(participant.command.begin() + (participant.command.empty() ? 0 : 1),
                                         participant.command.end());
@@ -144,7 +146,7 @@ std::vector<std::string> participant_arguments(const config::SimulationConfig& c
     {
         arguments = config::expand_placeholders(rest, "", "");
         arguments.insert(arguments.end(), {"--name", participant.name, "--registry-uri", registry_uri, "--start-timeout-ms",
-                                           std::to_string(ecu_start_timeout_ms(config, stands_still_before_start))});
+                                           std::to_string(ecu_start_timeout_ms(config, stands_still_before_start, start_timeout_ms, stop_timeout_ms))});
     }
     else
     {
@@ -198,11 +200,12 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
         std::vector<std::string> arguments;
         if (bridge)
         {
-            arguments = config::bridge_run_arguments(*outside, uri, ctx_.config.start_timeout_ms);
+            arguments = config::bridge_run_arguments(*outside, uri, ctx_.plan.start_timeout_ms);
         }
         else
         {
-            arguments = participant_arguments(ctx_.config, p, uri, ctx_.holds(), ctx_.plan.members[i].sample_every_step);
+            arguments = participant_arguments(ctx_.config, p, uri, ctx_.holds(), ctx_.plan.members[i].sample_every_step,
+                                              ctx_.plan.start_timeout_ms, ctx_.plan.stop_timeout_ms);
         }
         const std::filesystem::path executable = without_dots(std::filesystem::absolute(ctx_.check.participants[i].executable));
         if (p.manual)
@@ -343,7 +346,7 @@ bool RunParticipants::any_running(bool required_only)
 
 void RunParticipants::end_children(bool ran, int interrupts_at_end)
 {
-    const std::chrono::milliseconds stopTimeout(ctx_.config.stop_timeout_ms);
+    const std::chrono::milliseconds stopTimeout(ctx_.plan.stop_timeout_ms);
     // An interrupt while the launcher waits for the participants to end by themselves stops
     // the waiting (a first one too: the simulation has ended already); a second interrupt in
     // all skips the wait after the stop requests as well.
@@ -512,14 +515,14 @@ void RunParticipants::end_manual(SimulationController& controller, bool ran, int
     };
     // As for the processes: an interrupt (one more than had come when the simulation ended)
     // cuts the wait short.
-    static_cast<void>(wait_until(std::chrono::milliseconds(ctx_.config.stop_timeout_ms), interrupts_at_end,
+    static_cast<void>(wait_until(std::chrono::milliseconds(ctx_.plan.stop_timeout_ms), interrupts_at_end,
                                  [&] { return std::all_of(joined.begin(), joined.end(), gone); }));
     for (const std::size_t i : joined)
     {
         if (!gone(i))
         {
             out_.say(outcome_.participants[i].name + " (started by you, manual) has not left the simulation " +
-                std::to_string(ctx_.config.stop_timeout_ms) +
+                std::to_string(ctx_.plan.stop_timeout_ms) +
                 " ms after it ended: the launcher cannot end it, so end it yourself");
         }
     }

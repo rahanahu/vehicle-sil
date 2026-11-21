@@ -24,8 +24,8 @@ namespace {
 // The lists of keys (k...Keys) are what the message of an unknown key shows. Most readers take a key in a branch of
 // their own (key == "..."), not from the list: a key with a new branch must be added to its list too, or the JSON
 // Schema (schema/) and its test (tests/schema), which compare with the lists in the messages, pass without the key.
-const std::vector<std::string> kTopKeys = {"vehicle_sil_simulation", "stop_at_ms", "start_timeout_ms", "stop_timeout_ms",
-                                           "registry_uri", "time_step_ms", "speed", "late_tolerance_ms", "networks",
+const std::vector<std::string> kTopKeys = {"vehicle_sil_simulation",
+                                           "registry_uri", "time_step_ms", "networks",
                                            "participants", "variants", "params"};
 /// What a variant may write: its own keys, and the keys of one participant in it. A new thing a
 /// variant can change gets its key here, a member of VariantParticipant (or VariantConfig), a
@@ -36,10 +36,6 @@ constexpr const char* kVariantsForm =
     "variants: { small: {}, medium: { participants: { Engine: { command: [./engine_medium] } }, params: { idle_rpm: "
     "650 } } }";
 
-/// What a speed is, in messages.
-constexpr const char* kSpeedMeaning =
-    "simulation seconds per wall-clock second from 0.000001 to 1000000 (1: real time, 2: twice as fast, 0.5: half as "
-    "fast), or max (as fast as possible)";
 const std::vector<std::string> kNetworkKeys = {"name", "kind", "external"};
 /// The keys of a network's "external", for each kind of network that can be connected outside.
 const std::vector<std::string> kExternalCanKeys = {"bitrate"};
@@ -272,7 +268,7 @@ public:
         if (root == ryml::NONE || !tree_.is_map(root))
         {
             unreadable("not-a-configuration", root == ryml::NONE ? 0 : doc_.line(root),
-                       "the file is not a configuration: it must be a mapping with vehicle_sil_simulation: 1, networks "
+                       "the file is not a configuration: it must be a mapping with vehicle_sil_simulation: 2, networks "
                        "and participants (docs/simulation-config.md)");
             return std::nullopt;
         }
@@ -302,7 +298,6 @@ public:
         bool hasNetworks = false;
         bool hasParticipants = false;
         std::size_t participantsLine = 0;
-        std::size_t timeStepLine = 0;
         ryml::id_type variantsNode = ryml::NONE;
         std::map<std::string, std::size_t> seen;
         for (auto child = tree_.first_child(root); child != ryml::NONE; child = tree_.next_sibling(child))
@@ -341,20 +336,6 @@ public:
                               std::to_string(kSimulationFormat));
                 }
             }
-            else if (key == "stop_at_ms")
-            {
-                config.stop_at_ms = millis(child, "", key, "milliseconds of virtual time; leave stop_at_ms out to run until stopped");
-            }
-            else if (key == "start_timeout_ms")
-            {
-                config.start_timeout_ms =
-                    millis(child, "", key, "milliseconds to wait for the participants").value_or(config.start_timeout_ms);
-            }
-            else if (key == "stop_timeout_ms")
-            {
-                config.stop_timeout_ms =
-                    millis(child, "", key, "milliseconds to wait for each participant to end").value_or(config.stop_timeout_ms);
-            }
             else if (key == "registry_uri")
             {
                 const std::size_t before = findings_.size();
@@ -376,16 +357,6 @@ public:
             {
                 config.time_step_ms =
                     millis(child, "", key, "milliseconds of virtual time between two steps of the launcher's controller");
-                timeStepLine = doc_.line(child);
-            }
-            else if (key == "speed")
-            {
-                config.speed = speed(child);
-            }
-            else if (key == "late_tolerance_ms")
-            {
-                config.late_tolerance_ms =
-                    millis(child, "", key, "wall-clock milliseconds a step may begin late before it counts as late");
             }
             else if (key == "networks")
             {
@@ -421,14 +392,6 @@ public:
         {
             error("missing-key", 0,
                   "the file has no participants: add participants, a list of the participants with name and command");
-        }
-        if (config.time_step_ms && config.stop_at_ms && *config.stop_at_ms % *config.time_step_ms != 0)
-        {
-            error("value", timeStepLine,
-                  "stop_at_ms (" + std::to_string(*config.stop_at_ms) + ") is not a multiple of time_step_ms (" +
-                      std::to_string(*config.time_step_ms) +
-                      "): the launcher's controller can stop the simulation only at one of its steps; make stop_at_ms a "
-                      "multiple of time_step_ms, or leave time_step_ms out");
         }
         config.participants_line = participantsLine;
         if (variantsNode != ryml::NONE)
@@ -508,22 +471,6 @@ private:
             }
         }
         error("value", doc_.line(node), prefix + key + " must be true or false, not " + shown_value(node), participant);
-        return std::nullopt;
-    }
-
-    /// A speed (parse_speed()); empty for "max" and for an error (with the error).
-    std::optional<double> speed(ryml::id_type node)
-    {
-        const bool quoted = is_scalar(node) && tree_.is_val_quoted(node);
-        const std::string text = is_scalar(node) && !is_null(node) ? detail::to_string(tree_.val(node)) : std::string{};
-        std::optional<double> value;
-        if (is_scalar(node) && !is_null(node) && parse_speed(text, value) && (!quoted || !value))
-        {
-            return value;
-        }
-        error("value", doc_.line(node),
-              "speed must be " + std::string(kSpeedMeaning) + ", not " + shown_value(node) +
-                  (quoted && value ? ": write the number without quotes" : ""));
         return std::nullopt;
     }
 
@@ -2877,7 +2824,7 @@ ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides)
         if (doc.empty())
         {
             out.findings.push_back(Finding{Severity::Error, "not-a-configuration",
-                                           "the file is empty: write vehicle_sil_simulation: 1, networks and participants "
+                                           "the file is empty: write vehicle_sil_simulation: 2, networks and participants "
                                            "(docs/simulation-config.md)",
                                            0, "", ""});
             return out;
@@ -2951,24 +2898,6 @@ std::optional<Finding> executable_finding(const ParticipantConfig& participant, 
         return std::nullopt;
     }
     return Finding{Severity::Error, "executable", problem, participant.command_line, participant.name, ""};
-}
-
-std::int64_t time_step_ms(const SimulationConfig& config)
-{
-    if (config.time_step_ms)
-    {
-        return *config.time_step_ms;
-    }
-    if (config.stop_at_ms)
-    {
-        return std::gcd(kDefaultTimeStepMs, *config.stop_at_ms);
-    }
-    return kDefaultTimeStepMs;
-}
-
-std::int64_t late_tolerance_ms(const SimulationConfig& config)
-{
-    return config.late_tolerance_ms.value_or(kDefaultLateToleranceMs);
 }
 
 bool parse_speed(std::string_view text, std::optional<double>& speed)

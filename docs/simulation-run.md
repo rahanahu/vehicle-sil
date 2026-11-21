@@ -37,7 +37,7 @@ Stage 1: If the check finds errors (with `--strict`, also warnings), `run` start
 
 Stage 2: The registry address is `registry_uri`, or a free port on 127.0.0.1 if `registry_uri` is not set. The first line on stderr gives that URI (`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`). With `--control`, the Control Server starts before the registry and `run` writes the line `[vehicle_sil_launch] control server at <address>`.
 
-Stage 3: The participants the simulation waits for (called "required participants" on this page) are those with `required: true` that are not disabled. The controller joins time synchronization with the time step (`time_step_ms`, or its default). It holds each time step at its end and decides there on speed, pauses and single-steps. This applies at maximum speed too, which adds one synchronization per time step.
+Stage 3: The participants the simulation waits for (called "required participants" on this page) are those with `required: true` that are not disabled. The controller joins time synchronization with the time step (the configured or resolved `time_step_ms`). It holds each time step at its end and decides there on speed, pauses and single-steps. This applies at maximum speed too, which adds one synchronization per time step.
 
 Stage 4: With `--connect`, `run` first starts the bridge of each connected network and waits until it runs (see [Connecting a bus outside](#connecting-a-bus-outside---connect)). `run` does not start a `manual` participant; it prints the command that starts it. A participant that `run` starts gets the directory of the configuration file as its working directory and an empty stdin.
 
@@ -89,6 +89,10 @@ A skipped step has `at_ms` null. If every checking step is skipped, the check re
 Whether a participant has left the simulation is decided from the controller's view. The abort rules are the same as in `vehicle_sil_sim_controller` and `vehicle_sil::Simulation`. When the simulation is aborted, the other ECUs still end on their own (exit code 0). The start does not wait for participants with `required: false` either.
 
 While the simulation is paused, participant failures, stop requests and `--timeout-ms` are handled the same way.
+
+A scenario with a scheduled stop uses samples and write application times strictly before the stop. An already-open check can decide at the stop if its deadline falls there. A scenario cut short is `incomplete` (`run` exit 5) and counts as a failed case in `test`.
+
+The host options `--participant-start-timeout-ms` (default 30000) and `--participant-stop-timeout-ms` (default 10000) set wall-clock waits.
 
 ### How `start_timeout_ms` is measured
 
@@ -186,7 +190,7 @@ There is no authentication between the ECUs and `vehicle_sil_launch`. Anyone who
 
 ## Running at a set speed (`speed`)
 
-With `speed` (configuration file) or `run --speed`, the controller paces virtual time to real time at every time step (`time_step_ms`). With `speed: 1`, 1000 ms of virtual time takes at least 1000 ms of real time. Use a set speed to run together with devices that work in real time, or when a person operates the simulation while watching a screen.
+With `speed` in a request file or `run --speed`, the controller paces virtual time to real time at every time step (`time_step_ms`). With `speed: 1`, 1000 ms of virtual time takes at least 1000 ms of real time. Use a set speed to run together with devices that work in real time, or when a person operates the simulation while watching a screen.
 
 Pacing only adds waits, so it never makes the simulation faster than its slowest participant. At maximum speed (`max`), there is no pacing and no lateness is counted.
 
@@ -242,7 +246,7 @@ This delay is at most "time step − (greatest common divisor of the time step a
 | 10 ms | 15 ms | 5 ms |
 | 10 ms | A multiple of the time step | 0 |
 
-So, with a set speed and no `time_step_ms`, the time step is the greatest common divisor of 10 ms, `stop_at_ms` and the ECU step sizes. The ECU step sizes are those that the check reads from the `--describe` output of the ECUs that are not disabled.
+The automatic step is the greatest common divisor of 10 ms, the active ECU periods reported by `--describe` and the requested stop time, when supplied. Speed and scenario selection do not change it.
 
 | ECU step sizes | Time step |
 |---|---|
@@ -254,13 +258,10 @@ So, with a set speed and no `time_step_ms`, the time step is the greatest common
 
 If you set `time_step_ms`, that value is used. With a set speed, if ECU steps do not start at time step boundaries, the warning `coarse-time-step` is reported. The warning says by how many ms at most the steps are delayed and bunched together, and what value to write.
 
-| Case | When `coarse-time-step` is reported |
-|---|---|
-| `speed` is also in the configuration file | At the check (in `run`, only that finding is reported) |
-| `run --speed` changed the speed | At `run`, with the changed speed |
-| The run started at maximum speed and received a `speed` command | At that moment (the time step is set at the start and does not change during the run) |
+Both `check` and `run` report timing warnings for the requested speed. A run that starts at maximum speed can report the warning when a later speed command starts pacing.
 
-A finer time step means more time synchronizations. That is why the default at maximum speed stays 10 ms.
+With 5 ms and 10 ms ECU periods and a stop time of 1003 ms, an automatic step resolves to 1 ms and the run stops at exactly 1003 ms. With `time_step_ms: 5`, the launcher reports `stop-not-on-step` before startup.
+
 
 ### How fast a run can go
 
@@ -358,11 +359,11 @@ What is connected there does not wait for the virtual time, so by default such a
 
 | `--time-policy` | Speed of the run | `--speed` other than 1, `--start-paused` |
 |---|---|---|
-| `realtime` (the default) | 1, whatever `speed` the file has. The note `outside-speed-set` says so when the file's speed is not 1 (also without a speed). | The error `outside-real-time` of the check: nothing starts. (`--start-paused` goes with `--control` or `--stdin-commands`; alone it is a usage error, exit code 4, before this check.) |
-| `free` | As in any run: `--speed`, or else `speed` in the file, or else as fast as possible. | Accepted. The note `outside-not-real-time` says that the run is not in real time. |
+| `realtime` (the default) | 1. The note `outside-speed-set` reports the change when the default would be as fast as possible. | The error `outside-real-time` of the check: nothing starts. (`--start-paused` goes with `--control` or `--stdin-commands`; alone it is a usage error, exit code 4, before this check.) |
+| `free` | As in any run: `--speed`, or else `speed` in the run request, or else as fast as possible. | Accepted. The note `outside-not-real-time` says that the run is not in real time. |
 
 - `--time-policy` has no effect on a run that is not connected outside.
-- `check`, `run` and `test` take it. `check` judges the file's `speed`; `run` also its `--speed` and `--start-paused`. `check --json` has the decision in `time_lock` (see [simulation-check.md](simulation-check.md#json---json)).
+- `check`, `run` and `test` take it. `check` and `run` use the run request and the command-line options. `check --json` has the decision in `time_lock` (see [simulation-check.md](simulation-check.md#json---json)).
 - `test` runs each scenario as fast as possible, but at speed 1 when the file has an enabled `role: bridge` participant (the note `outside-speed-set`). The table of `test` then has the note `test-speed-set` after it, once for all the runs. To run them as fast as possible all the same, pass `--time-policy free` or `--disable` the bridge.
 - `free` changes only what you may do with the time. The bridge still carries frames both ways: while the simulation is paused, frames from outside pile up, and what the ECUs sent before stays sent.
 - The notes do not fail a run with `--strict`.
@@ -645,7 +646,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 - An argument wins over the file, field by field (see [Arguments together with a request file](#arguments-together-with-a-request-file)).
 - The launcher reads only the file that `--request` names. It never looks for one: not next to the configuration file, not in the working directory or the home directory, and not through an environment variable.
 - `check --request` judges the same request as `run --request`, the speed and `start_paused` for the [time lock](#time-of-a-run-that-is-connected-outside---time-policy) included. Check first, then run. One rule is left to `run`: that `start_paused` needs `--stdin-commands` or `--control`, which are arguments of `run` only.
-- `test` does not take `--request` (usage error).
+- `test` accepts a request file containing `stop_at_ms` and `late_tolerance_ms`; other run intent fields are a usage error. The stop time applies to each case.
 - Write the file as JSON. The launcher may read a looser form, but that is no promise: the schema and the other tools that read the file take JSON only.
 - A mistake in the file (an unknown key, a key written twice, a value of the wrong type, `null`, another version) is a usage error (exit code 4) that names the file and the line; nothing is checked or started. Leave a key out to not set it.
 - The JSON Schema is [schema/run-request.schema.json](../schema/run-request.schema.json). An editor completes and checks a file that names it in `"$schema"`.
@@ -668,6 +669,8 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `time_policy` | `"realtime"` or `"free"` | `--time-policy` |
 | `speed` | A number from 0.000001 to 1000000, or `"max"` | `--speed` |
 | `start_paused` | `true` or `false`. `run` also needs `--stdin-commands` or `--control`, a way to go on. | `--start-paused` |
+| `stop_at_ms` | Virtual stop time (an integer from 1 to 10^12 ms). Omit for no automatic stop. | `--stop-at-ms` |
+| `late_tolerance_ms` | Wall-clock lateness tolerance (an integer from 0 to 10^12 ms). Defaults to 10 ms. | `--late-tolerance-ms` |
 | `strict` | `true` or `false` | `--strict` |
 
 ### Arguments together with a request file
@@ -1127,7 +1130,7 @@ The result says three things about the end, in the JSON of `run --json` and in t
 
 | `end` | Why the run ended | `result` |
 |---|---|---|
-| `"completed"` | It reached an end that was set: `stop_at_ms`, a participant ended the simulation, or the scenario was over | `"passed"`, or `"failed"` if errors were found |
+| `"completed"` | It reached an end that was set: `stop_at_ms`, a participant ended the simulation, or the scenario was over | `"passed"`; `"incomplete"` if the requested stop time cut the scenario short; `"failed"` if errors were found |
 | `"stopped"` | A command stopped it (`{"command":"stop"}`, `Stop` of the Control API) before the simulation ended, or a `{"command":"stop"}` after the end cut short the end of a required participant | `"stopped"`; `"incomplete"` if its scenario did not get to its end; `"failed"` if errors were found |
 | `"interrupted"` | A signal or a console event, the end of stdin, or a closed stdout, before the simulation ended or while `run` waited for the participants to end on their own | `"interrupted"` |
 | `"failed"` | It could not start or go on: a participant or a bridge failed, `--timeout-ms` passed, the participants did not all join | `"failed"` |
@@ -1232,10 +1235,10 @@ Keys of `timing` (for the definitions of the counts, see [Running at a set speed
 | Key | Value |
 |---|---|
 | `speed` | Speed at the end (a number or `"max"`) |
-| `time_step_ms` | The controller's time step (the value from the configuration file, or the default) |
+| `time_step_ms` | The controller's time step (configured or resolved for the run) |
 | `ecu_step_ms` | The smallest ECU step size (milliseconds) |
 | `step_delay_ms` | The largest amount by which ECU steps run later than the real time that corresponds to their virtual time, because the time step is coarser than the ECU steps (milliseconds) |
-| `late_tolerance_ms` | The lateness tolerance (the value from the configuration file, or the default) |
+| `late_tolerance_ms` | The lateness tolerance (from `--late-tolerance-ms`, the request file, or the 10 ms default) |
 | `sim_ms` | Virtual time reached (milliseconds; the time of the last time step that started) |
 | `wall_ms` | Real time taken (milliseconds, including time spent paused) |
 | `actual_speed` | Overall actual speed (`sim_ms` ÷ (`wall_ms` − `paused_ms`), 3 decimal places) |
@@ -1292,11 +1295,12 @@ For a program that decides whether frames arrived, read `delivered` of each netw
   "simulation": "reached_stop_at",
   "interrupted_by": null,
   "registry_uri": "silkit://127.0.0.1:<port>",
+  "stop_at_ms": 1000,
   "timing": {
     "speed": "max",
-    "time_step_ms": 10,
+    "time_step_ms": 5,
     "ecu_step_ms": 5,
-    "step_delay_ms": 5,
+    "step_delay_ms": 0,
     "late_tolerance_ms": 10,
     "sim_ms": 1000,
     "wall_ms": <wall_ms>,
@@ -1393,6 +1397,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
     "warnings": 0,
     "notes": 0,
     "stop_at_ms": 1000,
+    "time_step_ms": 5,
     "start_timeout_ms": 30000,
     "stop_timeout_ms": 10000,
     "registry_uri": null,
@@ -1826,7 +1831,7 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 |---|---|
 | Failed (`failed`) | The `at_ms` of the failed step (in a run that ended at `stop_at_ms`, the time it stopped) |
 | Passed (`passed`) | The latest `at_ms` of the steps |
-| Ended partway (`incomplete`) | The time of the last sample seen (0 if none was seen). If a write was refused and then a participant failure became the result of the run, the time of that write (`failed` is `null` for every step, but `not_applied_from` is not `null`) |
+| Ended partway (`incomplete`) | The latest time among observed samples and writes sent through the last controller time (0 if there were none). If a write was refused and then a participant failure became the result of the run, the time of that write (`failed` is `null` for every step, but `not_applied_from` is not `null`) |
 | Did not start (`not_run`; if the simulation started but the scenario could not, `incomplete`) | `null` (the series are empty) |
 
 - The controller sees samples only once per time step, so the time at which it knows that the scenario is over (`over_at_ms`) is usually after `recorded_to_ms`. The samples and writes in between are left out of the file. Only in a run that failed on a write that the ECU's Agent refused at once is `over_at_ms` (the time step of the refusal) at or before `recorded_to_ms` (the time of that write).
@@ -1875,7 +1880,7 @@ The runs are every variant × every scenario.
 | A configuration file without variants | Only the scenarios are listed. |
 | `--variant <name>` | Runs only that variant (repeatable; the order stays the configuration file order). |
 | One run | The same as `run <file> --variant <variant> --scenario <scenario> --speed max`. |
-| Speed | Maximum, whatever `speed` the configuration file sets. |
+| Speed | As fast as possible unless locked to real time. |
 | Between runs | The registry, the controller and the participant processes are created anew (no state carries over from the previous run). |
 | Concurrent runs | None. |
 
@@ -2012,7 +2017,7 @@ Findings for the whole `test` are written after the table, one line each, as `<s
 | 4 | Usage error (nothing was run) |
 | 130 | Interrupted (130 even if a run failed before) |
 
-`test` takes no stop command, so it has no exit code 5: a run of `test` ends before its scenario's end only by a signal (130) or by `--timeout-ms` (1).
+`test` takes no stop command, so it has no exit code 5. A case that reaches its requested virtual stop time before the scenario is decided is incomplete and counts as a failed case (exit 1). A signal interrupts the test (130), and `--timeout-ms` is a wall-clock failure (1).
 
 `skipped` does not count as a failure. Even if every run is `skipped`, the exit code is 0 without `--strict`. The error for a participant with `manual: true` in the configuration file is also 4.
 

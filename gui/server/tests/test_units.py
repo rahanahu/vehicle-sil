@@ -687,12 +687,12 @@ def tree(tmp_path: Path) -> Path:
     root = tmp_path / "root"
     (root / "sub" / "deeper").mkdir(parents=True)
     (root / ".hidden").mkdir()
-    (root / "a.yaml").write_text("vehicle_sil_simulation: 1\n")
+    (root / "a.yaml").write_text("vehicle_sil_simulation: 2\n")
     (root / "b.yml").write_text("other: 1\n")
     (root / "notes.txt").write_text("x")
-    (root / "sub" / "deeper" / "c.YAML").write_text("vehicle_sil_simulation: 1\n")
+    (root / "sub" / "deeper" / "c.YAML").write_text("vehicle_sil_simulation: 2\n")
     (root / ".hidden" / "h.yaml").write_text("x")
-    (tmp_path / "outside.yaml").write_text("vehicle_sil_simulation: 1\n")
+    (tmp_path / "outside.yaml").write_text("vehicle_sil_simulation: 2\n")
     (tmp_path / "outdir").mkdir()
     (tmp_path / "outdir" / "o.yaml").write_text("x")
     os.symlink(tmp_path / "outside.yaml", root / "link-out.yaml")
@@ -862,6 +862,66 @@ def test_lines_are_split_and_long_lines_skipped() -> None:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+def test_a_command_exits_even_when_an_escaped_child_keeps_its_output_open(tmp_path: Path) -> None:
+    """Process exit, not pipe EOF, starts the output grace period (also on Python 3.11/3.12)."""
+    from conftest import alive, scaled, wait_until
+    import signal
+
+    pid_file = tmp_path / "escaped-pid"
+    code = ("import os, subprocess, sys\n"
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)\n"
+            f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
+            "print('parent exited', flush=True)\n")
+
+    async def main() -> None:
+        code_result, out, _ = await process.run_to_end([sys.executable, "-c", code], cwd=None, timeout_s=scaled(5))
+        assert code_result == 0 and out == b"parent exited\n"
+
+    try:
+        asyncio.run(main())
+        child = int(pid_file.read_text())
+        assert alive(child), "the escaped child still holds the output open"
+    finally:
+        if pid_file.exists():
+            child = int(pid_file.read_text())
+            try:
+                os.kill(child, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            assert wait_until(lambda: not alive(child), 5)
+
+
+def test_shutdown_wait_observes_exit_between_poll_and_deadline(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from vehicle_sil_gui.server import GuiServer
+
+    async def main() -> None:
+        monkeypatch.setattr(process, "EXIT_POLL_S", 1.0)
+        server = GuiServer.__new__(GuiServer)
+        server._hurry = asyncio.Event()
+        child = SimpleNamespace(returncode=None)
+        asyncio.get_running_loop().call_later(0.02, setattr, child, "returncode", 0)
+        assert await server._wait(child, 0.08)
+
+    asyncio.run(main())
+
+
+def test_process_waits_observe_exit_between_poll_and_deadline(monkeypatch) -> None:
+    from conftest import scaled
+    from types import SimpleNamespace
+
+    async def main() -> None:
+        monkeypatch.setattr(process, "EXIT_POLL_S", scaled(4))
+        child = SimpleNamespace(returncode=None)
+        asyncio.get_running_loop().call_later(0.02, setattr, child, "returncode", 0)
+        assert await process.wait_bounded(child, scaled(0.1))
+        code, out, _ = await process.run_to_end([sys.executable, "-c", "print('done')"], cwd=None, timeout_s=scaled(1))
+        assert code == 0 and out == b"done\n"
+
+    asyncio.run(main())
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
 def test_a_command_that_does_not_end_is_killed_with_its_children(tmp_path: Path) -> None:
     pids = tmp_path / "pids"
     code = ("import os, subprocess, sys, time\n"
@@ -1012,11 +1072,12 @@ def test_the_intent_becomes_a_request_file_and_the_launchers_arguments(tmp_path:
     with pytest.raises(InvalidRequest):
         check_strict("yes")
     intent = {"variant": "-small", "params": {"gain": 0.5}, "scenario": "scenarios/s.yaml", "disable": ["-x"],
-              "speed": 2.0}
+              "speed": 2.0, "stop_at_ms": 1003}
     assert json.loads(request_text(intent)) == {"vehicle_sil_run_request": 1, **intent}
     request = write_request_file(intent)
     try:
-        assert json.loads(request.read_text(encoding="utf-8"))["variant"] == "-small"
+        body = json.loads(request.read_text(encoding="utf-8"))
+        assert body["variant"] == "-small" and body["stop_at_ms"] == 1003
         if os.name == "posix":
             assert request.stat().st_mode & 0o777 == 0o600  # the other users of this computer cannot read it
     finally:
@@ -1038,6 +1099,7 @@ def test_a_request_field_is_checked_before_anything_is_made_of_it() -> None:
     check_fields("api/run", {"file": "a.yaml", "$schema": "x.json", "vehicle_sil_run_request": 1, "speed": 2},
                  REQUEST_FIELDS)
     check_fields("api/check", {"file": "a.yaml", "speed": 1, "start_paused": True}, REQUEST_FIELDS)
+    check_fields("api/run", {"file": "a.yaml", "stop_at_ms": 1003}, REQUEST_FIELDS)
     check_fields("api/run", {"file": "a.yaml", "connect": {"N": "x"}, "time_policy": "free"}, REQUEST_FIELDS)
     for body, code in (({"connect": None}, "invalid-field"), ({"time_policy": None}, "invalid-field"),
                        ({"variant": None}, "invalid-field"), ({"speed": None}, "invalid-field"),

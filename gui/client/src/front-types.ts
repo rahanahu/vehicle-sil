@@ -158,6 +158,10 @@ export interface Intent {
   params?: Record<string, string | number | boolean>;
   speed?: number | 'max';
   start_paused?: boolean;
+  /** Exact virtual time at which to stop. Omit for no automatic stop. */
+  stop_at_ms?: number;
+  /** Wall-clock milliseconds of lateness before a paced step counts as late. */
+  late_tolerance_ms?: number;
   strict?: boolean;
   /**
    * Network name to where it is connected outside the simulation: a `value` that `connections()` gave with `usable`

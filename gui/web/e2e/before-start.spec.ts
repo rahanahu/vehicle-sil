@@ -6,7 +6,7 @@ import { CONFIGS, REPLAY_LAUNCHER, GuiServer, launchGuiServer } from './support/
 import { RUN_TIMEOUT, WORDS, choose, result, start } from './support/run-page';
 
 const CONTROL_FEATURES =
-  'events,stdin-commands,request,stdin-run-until,check-variables,speed,start-paused,manual-participants,scenario,time-commands,control-links,control-server,state';
+  'events,stdin-commands,request,stdin-run-until,check-variables,speed,start-paused,run-stop-at,manual-participants,scenario,time-commands,control-links,control-server,state';
 
 test('started paused with a control server: it waits before the first step, and the screen resumes it', async ({
   page,
@@ -23,8 +23,17 @@ test('started paused with a control server: it waits before the first step, and 
     await page.goto(server.url);
     await expect(page.getByRole('heading', { level: 1, name: WORDS.ja.run })).toBeVisible();
     await choose(page, 'simulation.yaml');
+    await page.getByTestId('stop-at-ms').fill('1000');
     await page.getByTestId('start-paused').getByRole('checkbox').check();
+    const request = page.waitForRequest(
+      (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+    );
     const session = await start(page);
+    expect((await request).postDataJSON()).toMatchObject({
+      speed: 1,
+      stop_at_ms: 1000,
+      start_paused: true,
+    });
     // 最初のステップの前: サーバーの要約では、段階は waiting のままで、time はまだない
     await expect
       .poll(

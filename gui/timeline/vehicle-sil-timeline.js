@@ -217,6 +217,11 @@
     'step.title': ({ index, kind, line, status }) =>
       `Step ${index} (${kind}, line ${line}): ${status}`,
     'step.times': ({ start, decided, end }) => `start ${start}, decided ${decided}, end ${end}`,
+    'step.details': 'Step details',
+    'step.matchOnce': ({ from, to }) =>
+      `All conditions must match together at least once between ${from} and ${to}`,
+    'step.matchAt': ({ from }) => `Must match at ${from}`,
+    'step.matchThroughout': ({ from, to }) => `Must match throughout ${from} to ${to}`,
     'lane.range': ({ min, max }) => `${min} to ${max}`,
     'lane.ecuStep': ({ ms }) => `step ${ms}`,
     'lane.label': ({ name }) => `${name}: values over virtual time`,
@@ -520,6 +525,11 @@
       `手順 ${index}（${kind}、${line} 行）: ${status}`,
     'step.times': ({ start, decided, end }) =>
       `始まり ${start}、決まった ${decided}、終わり ${end}`,
+    'step.details': '手順の詳細',
+    'step.matchOnce': ({ from, to }) =>
+      `${from} から ${to} までにすべての条件が同時に成立すれば成功`,
+    'step.matchAt': ({ from }) => `${from} に成立すること`,
+    'step.matchThroughout': ({ from, to }) => `${from} から ${to} まで成立し続けること`,
     'lane.range': ({ min, max }) => `${min} から ${max}`,
     'lane.ecuStep': ({ ms }) => `刻み ${ms}`,
     'lane.label': ({ name }) => `${name}: 仮想時刻での値`,
@@ -704,15 +714,18 @@
 :host([hide~='toolbar']) #toolbar,
 :host([hide~='help']) #help,
 :host([hide~='tables']) #tables,
-:host([hide~='steps']) .lane.steps,
-:host([hide~='readout']) .readout,
+:host([hide~='steps']) :is(.lane.steps, #step-details),
+:host([hide~='readout']) :is(.readout, .hover-readout),
 :host([hide~='legend']) .legend .key {
   display: none !important;
 }
-:host([compact]) .lane {
-  grid-template-columns: 120px 1fr;
+:host([compact]) :is(.lane, .cursor-line) {
+  --lane-head-width: 120px;
 }
 @container (max-width: 479px) {
+  :host([compact]) .cursor-line {
+    --lane-head-width: 0px;
+  }
   :host([compact]) .lane {
     grid-template-columns: 1fr;
   }
@@ -926,13 +939,18 @@ summary {
 }
 #chart {
   container-type: inline-size;
+  position: relative;
   border: 1px solid var(--_border);
   border-radius: 6px;
   background: var(--_panel);
 }
+.lane,
+.cursor-line {
+  --lane-head-width: 200px;
+}
 .lane {
   display: grid;
-  grid-template-columns: 200px 1fr;
+  grid-template-columns: var(--lane-head-width) 1fr;
   border-bottom: 1px solid var(--_grid);
 }
 .lane-head {
@@ -945,8 +963,11 @@ summary {
   box-shadow: inset 4px 0 0 var(--_bad);
 }
 .lane-plot {
+  position: relative;
   min-width: 0;
   overflow: hidden;
+  touch-action: none;
+  cursor: crosshair;
 }
 .lane.axis {
   position: sticky;
@@ -963,12 +984,33 @@ summary {
   border-bottom: 1px solid var(--_grid);
 }
 @container (max-width: 719px) {
+  :host(:not([compact])) .cursor-line {
+    --lane-head-width: 0px;
+  }
   :host(:not([compact])) .lane {
     grid-template-columns: 1fr;
   }
   :host(:not([compact])) .lane-head {
     border-right: none;
   }
+}
+#step-details {
+  height: 6.25em;
+  margin-bottom: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--_border);
+  border-radius: 6px;
+  background: var(--_panel);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  scrollbar-gutter: stable;
+}
+.detail-heading > span {
+  margin-inline-start: 10px;
+}
+#step-details ul {
+  margin: 0;
+  padding-inline-start: 1.4em;
 }
 .var-name {
   font-weight: 600;
@@ -1012,6 +1054,45 @@ summary {
   min-height: 1.45em;
   overflow-wrap: anywhere;
 }
+#cursor-time,
+#chart[data-hover] .lane-head .readout {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#cursor-time {
+  font-variant-numeric: tabular-nums;
+}
+.hover-readout {
+  position: absolute;
+  bottom: 4px;
+  display: none;
+  width: max-content;
+  max-width: var(--cursor-room);
+  padding: 1px 6px;
+  border: 1px solid var(--_border);
+  border-radius: 4px;
+  background: var(--_panel);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.hover-readout strong {
+  margin-right: 6px;
+}
+#chart[data-hover] .hover-readout {
+  display: block;
+}
+#chart[data-cursor-side='right'] .hover-readout {
+  left: calc(var(--cursor-x) + 8px);
+}
+#chart[data-cursor-side='left'] .hover-readout {
+  left: calc(var(--cursor-x) - 8px);
+  transform: translateX(-100%);
+}
 .note {
   color: var(--_warn);
 }
@@ -1027,8 +1108,6 @@ summary {
 /* the chart */
 svg.plot {
   display: block;
-  touch-action: none;
-  cursor: crosshair;
   user-select: none;
 }
 svg text {
@@ -1061,10 +1140,19 @@ svg text {
   stroke: var(--_warn);
   stroke-dasharray: 3 3;
 }
-.cursor {
-  stroke: var(--_cursor);
-  stroke-width: 1;
+.cursor-line {
+  display: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--lane-head-width) + var(--cursor-x));
+  z-index: 2;
+  width: 1px;
+  background: var(--_cursor);
   pointer-events: none;
+}
+#chart[data-cursor-side] > .cursor-line {
+  display: block;
 }
 .selection {
   fill: var(--_selection);
@@ -2365,7 +2453,7 @@ tr.selected td {
       cursor: null,
       /** The index of the chosen step, or null. */
       step: null,
-      lanes: [],
+      readouts: [],
       width: 0,
       /** The name of the file shown (null for data without a name, or none). */
       file: null,
@@ -2423,7 +2511,7 @@ tr.selected td {
     box.hidden = false;
     state.model = null;
     state.file = null;
-    state.lanes = [];
+    state.readouts = [];
     $('view').hidden = true;
     $('title').textContent = t('page.title');
     $('facts').replaceChildren();
@@ -2951,8 +3039,9 @@ tr.selected td {
     const width = plotWidth();
     state.width = width;
     const scale = makeScale(state.view[0], state.view[1], width);
-    state.lanes = [];
+    state.readouts = [];
     const chart = $('chart');
+    chart.removeAttribute('data-hover');
     const children = [axisLane(scale), stepLane(m, scale)];
     const { inputs, others, groups, missing } = lanesToDraw(m);
     // A name of the variables property that matches nothing is said, not dropped in silence.
@@ -2973,7 +3062,8 @@ tr.selected td {
       if (groups) children.push(h('div', { class: 'group', text: t('chart.others') }));
       children.push(...others.map((v) => variableLane(m, v, scale)));
     }
-    chart.replaceChildren(...children);
+    chart.replaceChildren(...children, h('div', { class: 'cursor-line', 'aria-hidden': 'true' }));
+    delete $('step-details').dataset.step;
     $('range').textContent = t('chart.showing', {
       from: fmtMs(scale.t0),
       to: fmtMs(scale.t1),
@@ -2998,10 +3088,8 @@ tr.selected td {
       h('div', { class: 'lane-head' }, head),
       h('div', { class: 'lane-plot' }, svg),
     );
-    const cursor = s('line', { class: 'cursor', x1: -10, x2: -10, y1: 0, y2: height }, null);
-    state.lanes.push({ svg, cursor, height, readout: null });
     attachPointer(svg, scale, height);
-    return { lane, svg, cursor };
+    return { lane, svg };
   }
 
   /** The marks every lane has: the part after the record, the failure time. Drawn before the data. */
@@ -3014,17 +3102,16 @@ tr.selected td {
       s('rect', { class: 'unrecorded', x: 0, y: 0, width: scale.width, height }, svg);
   }
 
-  function commonFront(svg, m, scale, height, cursor) {
+  function commonFront(svg, m, scale, height) {
     if (m.failure && isNum(m.failure.at) && m.failure.at >= scale.t0 && m.failure.at <= scale.t1) {
       const x = scale.x(m.failure.at);
       s('line', { class: 'fail-line', x1: x, x2: x, y1: 0, y2: height }, svg);
     }
-    svg.append(cursor);
   }
 
   function axisLane(scale) {
     const height = 22;
-    const { lane, svg, cursor } = laneShell(
+    const { lane, svg } = laneShell(
       h('span', {
         class: 'muted small',
         id: 'cursor-time',
@@ -3042,7 +3129,6 @@ tr.selected td {
       s('line', { class: 'tick', x1: x, x2: x, y1: height - 6, y2: height }, svg);
       s('text', { class: 'tick-label', x: x + 3, y: height - 8, text: fmtMs(t) }, svg);
     }
-    svg.append(cursor);
     return lane;
   }
 
@@ -3080,7 +3166,7 @@ tr.selected td {
       h('strong', { text: t('chart.steps') }),
       h('div', { class: 'readout small', id: 'cursor-steps' }),
     );
-    const { lane, svg, cursor } = laneShell(head, height, scale, 'steps');
+    const { lane, svg } = laneShell(head, height, scale, 'steps');
     commonBack(svg, m, scale, height);
     items.forEach((it, i) => {
       const y = rows[i] * STEP_ROW + 4;
@@ -3157,7 +3243,7 @@ tr.selected td {
         lines.push(t('step.expectSkipped', { why: it.st.expect_skipped }));
       tooltip(g, lines.join('\n'));
     });
-    commonFront(svg, m, scale, height, cursor);
+    commonFront(svg, m, scale, height);
     return lane;
   }
 
@@ -3251,8 +3337,16 @@ tr.selected td {
       readout,
       ...v.notes.map((n) => h('div', { class: 'note small', text: t('lane.note', { text: n }) })),
     );
-    const { lane, svg, cursor } = laneShell(head, height, scale, v.failing ? 'failing' : '');
-    state.lanes[state.lanes.length - 1].readout = { el: readout, v };
+    const { lane, svg } = laneShell(head, height, scale, v.failing ? 'failing' : '');
+    const hoverValue = h('span');
+    const hover = h(
+      'div',
+      { class: 'hover-readout small', 'aria-hidden': 'true' },
+      h('strong', { text: label ?? v.name }),
+      hoverValue,
+    );
+    svg.parentElement.append(hover);
+    state.readouts.push({ el: readout, hoverValue, v });
     svg.setAttribute('aria-label', t('lane.label', { name: label ?? v.name }));
     commonBack(svg, m, scale, height);
     if (strip) drawLines(svg, m, v, scale);
@@ -3334,7 +3428,7 @@ tr.selected td {
     if (!v.written && !v.sampled && !v.notes.length) {
       s('text', { class: 'empty-label', x: 6, y: height / 2 + 4, text: t('lane.noValues') }, svg);
     }
-    commonFront(svg, m, scale, height, cursor);
+    commonFront(svg, m, scale, height);
     return lane;
   }
 
@@ -3682,14 +3776,15 @@ tr.selected td {
   }
 
   /** Moves the cursor as the user does, and says so. */
-  function moveCursor(at) {
-    if (at === state.cursor) return;
+  function moveCursor(at, hoveredStep) {
+    const changed = at !== state.cursor;
     state.cursor = at;
-    updateCursor();
-    emit('cursorchange', { cursor: at });
+    updateCursor(hoveredStep);
+    if (changed) emit('cursorchange', { cursor: at });
   }
 
   function attachPointer(svg, scale, height) {
+    const plot = svg.parentElement;
     let down = null;
     let downStep = null;
     let sel = null;
@@ -3697,24 +3792,30 @@ tr.selected td {
       const r = svg.getBoundingClientRect();
       return Math.min(scale.width, Math.max(0, e.clientX - r.left));
     };
-    listen(svg, 'pointerdown', (e) => {
+    listen(plot, 'pointerdown', (e) => {
       if (e.button !== 0) return;
+      $('chart').removeAttribute('data-hover');
       down = xOf(e);
       // A click on a step chooses it (the pointer is captured, so the click itself goes to the lane).
       const step = e.target.closest ? e.target.closest('[data-step]') : null;
       downStep = step ? stepOf(Number(step.dataset.step)) : null;
-      svg.setPointerCapture(e.pointerId);
+      plot.setPointerCapture(e.pointerId);
     });
-    listen(svg, 'pointermove', (e) => {
+    listen(plot, 'pointermove', (e) => {
       const x = xOf(e);
-      moveCursor(scale.t(x));
+      if (e.pointerType === 'mouse' && down === null) {
+        $('chart').setAttribute('data-hover', '');
+      }
+      const step = e.target.closest('[data-step]');
+      moveCursor(scale.t(x), step ? stepOf(Number(step.dataset.step)) : null);
       if (down !== null && Math.abs(x - down) > 4) {
         if (!sel) sel = s('rect', { class: 'selection', y: 0, height }, svg);
         sel.setAttribute('x', Math.min(x, down));
         sel.setAttribute('width', Math.abs(x - down));
       }
     });
-    listen(svg, 'pointerup', (e) => {
+    listen(plot, 'pointerleave', () => $('chart').removeAttribute('data-hover'));
+    listen(plot, 'pointerup', (e) => {
       const x = xOf(e);
       const dragged = down !== null && Math.abs(x - down) > 4;
       if (dragged) setView([scale.t(Math.min(x, down)), scale.t(Math.max(x, down))]);
@@ -3724,50 +3825,127 @@ tr.selected td {
       if (sel) sel.remove();
       sel = null;
     });
-    listen(svg, 'dblclick', () => setView(state.model.domain));
+    listen(plot, 'pointercancel', () => {
+      down = null;
+      downStep = null;
+      if (sel) sel.remove();
+      sel = null;
+    });
+    listen(plot, 'dblclick', () => setView(state.model.domain));
   }
 
-  function updateCursor() {
+  /** A readable description of the step, kept outside the plot so it never covers the waveforms. */
+  function updateStepDetails(preferred) {
+    const m = state.model;
+    const panel = $('step-details');
+    const step =
+      preferred ??
+      stepOf(state.step) ??
+      m?.failure?.step ??
+      m?.steps.find((st) => Array.isArray(st.watch?.conditions) && st.watch.conditions.length) ??
+      m?.steps[0];
+    panel.hidden = !step;
+    if (!step || panel.dataset.step === String(step.index)) return;
+    panel.dataset.step = String(step.index);
+    const title = t('step.title', {
+      index: step.index,
+      kind: step.kind,
+      line: step.line,
+      status: statusWord(step.status),
+    });
+    const timings = t('step.times', {
+      start: fmtMs(step.start_ms),
+      decided: fmtMs(step.at_ms),
+      end: fmtMs(step.end_ms),
+    });
+    const watch = step.watch;
+    const conditions = Array.isArray(watch?.conditions)
+      ? watch.conditions.filter((c) => isObject(c) && typeof c.variable === 'string')
+      : [];
+    const modes = {
+      once: 'step.matchOnce',
+      at: 'step.matchAt',
+      always: 'step.matchThroughout',
+      during: 'step.matchThroughout',
+    };
+    const mode = Object.hasOwn(modes, watch?.mode) ? modes[watch.mode] : null;
+    panel.replaceChildren(
+      h(
+        'div',
+        { class: 'detail-heading' },
+        h('strong', { text: title }),
+        h('span', { class: 'muted', text: timings }),
+      ),
+      conditions.length
+        ? h(
+            'div',
+            {},
+            mode
+              ? h('div', { text: t(mode, { from: fmtMs(watch.from_ms), to: fmtMs(watch.to_ms) }) })
+              : null,
+            h(
+              'ul',
+              {},
+              conditions.map((c) =>
+                h(
+                  'li',
+                  {},
+                  h('code', { text: c.variable }),
+                  ` ${compareText(c.compare, m.byName.get(c.variable)?.info)}`,
+                ),
+              ),
+            ),
+          )
+        : h('div', { text: step.text ?? '' }),
+    );
+    panel.scrollTop = 0;
+  }
+
+  function updateCursor(hoveredStep) {
     const m = state.model;
     const at = state.cursor;
+    const chart = $('chart');
     if (!m || at === null || at < state.view[0] || at > state.view[1]) {
-      for (const lane of state.lanes) {
-        lane.cursor.setAttribute('x1', -10);
-        lane.cursor.setAttribute('x2', -10);
-        if (lane.readout) lane.readout.el.textContent = '';
-      }
+      chart.removeAttribute('data-hover');
+      chart.removeAttribute('data-cursor-side');
+      for (const { el } of state.readouts) el.title = el.textContent = '';
       const time = $('cursor-time');
-      if (time) time.textContent = t('chart.virtualTime');
+      if (time) time.title = time.textContent = t('chart.virtualTime');
       const steps = $('cursor-steps');
-      if (steps) steps.textContent = '';
+      if (steps) steps.title = steps.textContent = '';
+      updateStepDetails();
       return;
     }
     const scale = makeScale(state.view[0], state.view[1], state.width);
     const x = scale.x(at);
-    for (const lane of state.lanes) {
-      lane.cursor.setAttribute('x1', x);
-      lane.cursor.setAttribute('x2', x);
-      if (!lane.readout) continue;
-      const v = lane.readout.v;
+    const right = x < scale.width / 2;
+    chart.setAttribute('data-cursor-side', right ? 'right' : 'left');
+    chart.style.setProperty('--cursor-x', `${x}px`);
+    chart.style.setProperty('--cursor-room', `${(right ? scale.width - x : x) - 8}px`);
+    for (const { el, hoverValue, v } of state.readouts) {
       const parts = [];
       const end = m.recordedTo;
       const w = valueAt(v.written, at, end, v.gaps.written);
       const sv = valueAt(v.sampled, at, end, v.gaps.sampled);
       if (w) parts.push(readoutText('sent', w, v.info));
       if (sv) parts.push(readoutText('seen', sv, v.info));
-      // The time is in the head of the axis lane; each lane says only its values (all of them on hover).
-      lane.readout.el.textContent = parts.join(' · ');
-      lane.readout.el.title = lane.readout.el.textContent;
+      const values = parts.join(' · ');
+      el.title = el.textContent = values;
+      hoverValue.textContent = values || '—';
     }
-    $('cursor-time').textContent = t('chart.cursor', { at: fmtMs(Number(at.toPrecision(6))) });
+    const time = $('cursor-time');
+    time.title = time.textContent = t('chart.cursor', { at: fmtMs(Number(at.toPrecision(6))) });
     const active = m.steps.filter((st) => {
       if (!isNum(st.start_ms)) return false;
       const e = [st.end_ms, st.at_ms].filter(isNum).reduce((a, b) => Math.max(a, b), st.start_ms);
       return at >= st.start_ms && (at <= e || st.status === 'unfinished');
     });
-    $('cursor-steps').textContent = active.length
-      ? active.map((st) => `#${st.index} ${st.kind} (${statusWord(st.status)})`).join(', ')
-      : '';
+    const steps = $('cursor-steps');
+    steps.title = steps.textContent = active
+      .map((st) => `#${st.index} ${st.kind} (${statusWord(st.status)})`)
+      .join(', ');
+    const inspected = hoveredStep ?? (hoveredStep === undefined ? stepOf(state.step) : null);
+    updateStepDetails(inspected ?? active.find((st) => isObject(st.watch)) ?? active[0]);
   }
 
   // --- loading
@@ -3913,7 +4091,7 @@ tr.selected td {
     current.inputName = null;
     state.model = null;
     state.file = null;
-    state.lanes = [];
+    state.readouts = [];
     clearError();
     $('view').hidden = true;
     $('title').textContent = t('page.title');
@@ -3952,6 +4130,13 @@ tr.selected td {
         ),
         h('p', { id: 'help', class: 'muted small', 'data-text': 'page.help' }),
         h('p', { id: 'chart-note', class: 'note small', role: 'status', hidden: true }),
+        h('section', {
+          id: 'step-details',
+          class: 'small',
+          'data-label': 'step.details',
+          tabindex: '0',
+          hidden: true,
+        }),
         h('div', { id: 'chart', tabindex: '0', 'data-label': 'page.chartLabel' }),
         h('div', { id: 'tables' }),
       ),
@@ -3988,6 +4173,7 @@ tr.selected td {
       }
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       e.preventDefault();
+      chart.removeAttribute('data-hover');
       const stepT =
         (state.model.timeStep ?? (state.view[1] - state.view[0]) / 100) * (e.shiftKey ? 10 : 1);
       const t = state.cursor ?? state.view[0];

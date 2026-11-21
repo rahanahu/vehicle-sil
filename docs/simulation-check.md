@@ -90,7 +90,7 @@ With `--connect`, after stage 3 the check also looks for the bridge of each conn
 |---|---|
 | For the common part and for each variant laid over it (every variant, whatever `--variant` chooses): each participant's `command` (the whole list), `describe`, `manual` and `enabled` | `networks` (with `kind` and `external`), `variables`, `role`, `required`, `step_ms` |
 | For a participant with `describe: false`, also what `run` adds to its arguments for its `network_names` and `j1939_nodes` (`--map-network`, `--j1939-node`) | `network_names` and `j1939_nodes` of an ecu_main participant (`describe: true`) |
-| The names of the participants, and of the variants (not their order) | `params`, `stop_at_ms`, the timeouts, `time_step_ms`, `speed`, `late_tolerance_ms` |
+| The names of the participants, and of the variants (not their order) | `params`, `time_step_ms` |
 | `registry_uri` | Comments, the order of the keys, the files and executables that the commands name |
 
 | `commands` | When | Note |
@@ -117,15 +117,16 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | Code | Severity | Meaning | Fix |
 |---|---|---|---|
 | `syntax` | Error (unreadable) | A YAML or JSON syntax error. | Fix the syntax at the place given in the attached text. |
-| `not-a-configuration` | Error (unreadable) | The file is empty or is not a mapping. | Write a mapping with `vehicle_sil_simulation: 1`, `networks` and `participants`. |
+| `not-a-configuration` | Error (unreadable) | The file is empty or is not a mapping. | Write a mapping with `vehicle_sil_simulation: 2`, `networks` and `participants`. |
 | `encoding` | Error (unreadable) | The file is not UTF-8 (UTF-16, or it contains NUL). | Save the file as UTF-8. |
 | `unsupported-yaml` | Error (unreadable for anchors and aliases) | The file has anchors and aliases, or a second document (`---`). | Write the values out in full, and delete the second and later documents or move them to other files. |
-| `format-version` | Error (unreadable for an unknown version) | `vehicle_sil_simulation` is not 1. | Write `vehicle_sil_simulation: 1`, or use a vehicle-sil that can read the format of that file. |
+| `format-version` | Error (unreadable for an unknown version) | `vehicle_sil_simulation` is not a supported format version. | Write `vehicle_sil_simulation: 2`, or use a vehicle-sil that can read the format of that file. |
 | `file` | Error (unreadable) | The file does not exist, is a directory, is not a regular file, is too large or cannot be opened. With `--text-from-stdin`: the text on stdin is larger than 16 MiB, or stdin cannot be read. | Check the path and the file. |
 | `missing-key` | Error | A required key is missing. | Add the key named in the finding message. |
 | `unknown-key` | Error | There is an unknown key. | Correct the key name (the finding message gives a close name and the list of valid keys). |
 | `duplicate-key` | Error | The same key appears twice. | Delete one of them. |
-| `value` | Error | A value of the wrong type or out of range, an invalid name, a placeholder in the executable path, or a `time_step_ms` that does not divide `stop_at_ms`. | Correct the value as the finding message says. |
+| `value` | Error | A value of the wrong type or out of range, an invalid name or a placeholder in the executable path. | Correct the value as the finding message says. |
+| `stop-not-on-step` | Error | The requested stop time falls between fixed controller steps. | Use a stop time on the step grid or omit the fixed step. |
 | `duplicate-name` | Error | A participant name or a network name appears twice. | Delete one of them, or rename it. |
 | `reserved-name` | Error | The participant name is `SimulationController`. | Use another name. |
 | `launcher-argument` | Error | The `command` of an ecu_main executable has an argument of `ecu_main` or a placeholder. | Delete it, or write `describe: false` if the executable is not built with `ecu_main`. |
@@ -173,8 +174,8 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `connect-target-shared` | Warning | Two connected networks have the same target: the same Ethernet interface (on Windows, the adapter name without regard to case; `enp3s0`, `packet:enp3s0` and `tap:enp3s0` are one interface), the same SocketCAN interface, the same `physical:<n>` channel, or two `virtual:<n>` channels (all Vector Virtual CAN channels are one bus). The frames of both networks are mixed there. `physical:1` and `physical:2` are two devices. The check compares the text of the targets: a connection name and the pcap name of the same adapter are not told apart, and a run elsewhere (another launcher on this computer) is not seen. | If the networks must stay apart, connect them to different channels (adapters). If they are one bus, make them one network in the file. |
 | `connect-shared-loop` | Error | Two networks with `connect-target-shared`'s condition are also joined through participants: an ECU (not `role: test` or `role: bridge`) is on both, or a chain of ECUs joins them. A forwarding ECU then sends frames round between the target and the simulation, and the bridge's guard against that can cut the external device off from one of the networks (on Ethernet it blocks that device's MAC address). A participant with `describe: false` is named: it may join more networks. Reported instead of `connect-target-shared` for that pair. | Connect the two networks to different targets, or make them one network in the file. |
 | `outside-real-time` | Error | The run is connected outside the simulation (a network that `--connect` connects, or an enabled `role: bridge` participant), so it keeps real time (`--time-policy realtime`, the default), and `run` got a `--speed` other than 1 or `--start-paused`. Nothing starts. | Leave `--speed` and `--start-paused` out. To go at another speed or to pause, run without the connection (no `--connect`, `--disable` the bridge), or pass `--time-policy free`. |
-| `outside-speed-set` | Note | The run is connected outside the simulation and keeps real time: it goes at speed 1, not at the file's `speed` (also without a speed: as fast as possible). | Nothing to fix. For another speed, see `outside-real-time`. |
-| `outside-not-real-time` | Note | With `--time-policy free`: the run is connected outside the simulation, and its speed is not 1 (`--speed`, or else the file's; without a speed, as fast as possible) or `--start-paused` is given. The bridge still carries frames both ways. | To run in real time, leave `--time-policy free` out. |
+| `outside-speed-set` | Note | The run is connected outside the simulation and keeps real time: it goes at speed 1, not at the default speed in the run request (as fast as possible if unspecified). | Nothing to fix. For another speed, see `outside-real-time`. |
+| `outside-not-real-time` | Note | With `--time-policy free`: the run is connected outside the simulation, and its speed is not 1 (`--speed` or the request speed, as fast as possible if unspecified) or `--start-paused` is given. The bridge still carries frames both ways. | To run in real time, leave `--time-policy free` out. |
 | `not-checked` | Note | A `describe: false` participant (not checked). | No action needed. |
 | `not-described` | Note | With `--descriptions`: a `describe: true` participant that has no saved `--describe` output for its `command` and its executable as they are now (the command changed, the executable was built again, or nothing was saved for it). Files that the command names, libraries and the environment are not compared (see [Saved descriptions](#saved-descriptions---write-descriptions---descriptions)). | Check without `--descriptions`, and with `--write-descriptions` to save the outputs again. |
 | `descriptions-not-used` | Note | With `--descriptions`: the file cannot be read, is not a file of saved descriptions, or another vehicle-sil version wrote it. No participant is described. | Check without `--descriptions`, and with `--write-descriptions` to save the outputs again. |
@@ -184,7 +185,7 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `participant-disabled` | Note | A disabled participant (`enabled: false`, `--disable`; neither checked nor started). | No action needed. |
 | `participant-manual` | Note | A participant that you start yourself (`manual: true`, `--manual`; `run` does not start it, but prints the command and waits). | Start it with the command that `run` prints. |
 | `version-mismatch` | Note | The vehicle-sil version that the executable was built with differs from the version of `vehicle_sil_launch`. | If they do not work together, rebuild with the same version. |
-| `coarse-time-step` | Warning | The file has `speed` (a number) and `time_step_ms`, and an ECU's steps do not start on time step boundaries. | Set `time_step_ms` to the value given in the finding message. |
+| `coarse-time-step` | Warning | The run uses numeric speed and a configured `time_step_ms`, and an ECU's steps do not start on time step boundaries. | Set `time_step_ms` to the value given in the finding message. |
 | `control-link-not-offered` | Note | An ECU with variables does not report in its `--describe` output that it exposes them to the simulation (`--no-control`, or an old executable without `control`). | To read and write the variables, remove `--no-control`, or rebuild the ECU with a newer vehicle-sil. |
 | `control-link-version` | Warning | An ECU with variables reports another message format version than `vehicle_sil_launch`, or another transport than `silkit`. The simulation runs, but `run` cannot read or write that ECU's variables. The message says which side is older. | If the ECU is older, rebuild it with the vehicle-sil of `vehicle_sil_launch`. If it is newer, use a `vehicle_sil_launch` of its vehicle-sil version or a newer one. For another transport, make the executable offer its variables over `silkit`. |
 | `control-link-revision` | Note | An ECU with variables writes an older revision of the message format than `vehicle_sil_launch` (`control.wire_revision` of `--describe`; 0 if it does not say). Its variables are read and written as usual, but what later revisions added does not arrive from it: its variables report no availability, so every one of them looks Active. | If its variables should report their availability, rebuild the ECU with the vehicle-sil of `vehicle_sil_launch` and declare those variables with `VariableOptions::availability`. |
@@ -349,8 +350,8 @@ An example with errors: it runs two instances of the same ECU, and has a wrong s
 
 <!-- two-engines.yaml -->
 ```yaml
-vehicle_sil_simulation: 1
-stop_at_ms: 1000
+vehicle_sil_simulation: 2
+
 networks:
   - name: J1939_CAN
     kind: can
@@ -427,7 +428,8 @@ Top-level keys:
 | `variant` | The selected variant (`--variant`). Present only for a configuration file with variants (`variants`) |
 | `variants` | Array of the variant names in the configuration file. Present only for a configuration file with variants |
 | `params` | The common `params`, overridden by the `params` of the selected variant. Present only when the configuration file has `params` |
-| `stop_at_ms`, `start_timeout_ms`, `stop_timeout_ms`, `registry_uri` | Values from the configuration file |
+| `stop_at_ms`, `time_step_ms` | The requested stop time and the step resolved after Describe (virtual milliseconds) |
+| `start_timeout_ms`, `stop_timeout_ms`, `registry_uri` | The host’s participant timeouts and the configured registry URI |
 | `commands` | With `--compare-commands`: `"same"`, `"changed"` or `"not_compared"`; `null` without it and on a usage error (see [Comparing the commands that run](#comparing-the-commands-that-run---compare-commands)) |
 | `participants[]` | Array of participants (in the order of the configuration file) |
 | `networks[]` | Array of networks (in the order of the configuration file) |
@@ -435,8 +437,7 @@ Top-level keys:
 
 - If `--variant` is missing or names no variant (`result` is `"usage"`), `variant` is `null` and `variants` gives the names you can choose from.
 - Each element of `params` has `name`, `value` (`true`/`false`, a number or a string) and `from` (`configuration` or `variant`).
-- If the configuration file cannot be read, `stop_at_ms`, `start_timeout_ms`, `stop_timeout_ms` and `registry_uri` are `null`.
-- `stop_at_ms` and `registry_uri` are `null` if not written; `start_timeout_ms` and `stop_timeout_ms` have their defaults if not written.
+- If Check cannot resolve a run plan, the run timing fields are `null`. Without a specified stop time, `stop_at_ms` is `null`.
 
 Keys of each element of `participants[]`:
 
@@ -531,7 +532,7 @@ Keys of each element of `networks[]` and `findings[]`:
 
 <!-- engine-alone.yaml -->
 ```yaml
-vehicle_sil_simulation: 1
+vehicle_sil_simulation: 2
 networks:
   - name: J1939_CAN
     kind: can
@@ -553,6 +554,7 @@ participants:
   "warnings": 1,
   "notes": 0,
   "stop_at_ms": null,
+  "time_step_ms": 10,
   "start_timeout_ms": 30000,
   "stop_timeout_ms": 10000,
   "registry_uri": null,

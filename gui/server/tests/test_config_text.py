@@ -194,7 +194,7 @@ def test_a_text_takes_the_variant_and_strict_only(tmp_path: Path, root: Path) ->
         assert "lone surrogate" in message
         refused(*await c.post("api/check", {"file": "../x.yaml", "text": text}), (400, "outside-root"))
         refused(*await c.post("api/check", {"file": "missing.yaml", "text": text}), (404, "file-not-found"))
-        for name, data in ((".hidden/x.yaml", b"vehicle_sil_simulation: 1\n"), ("other.yaml", b"key: 1\n")):
+        for name, data in ((".hidden/x.yaml", b"vehicle_sil_simulation: 2\n"), ("other.yaml", b"key: 1\n")):
             (root / name).parent.mkdir(exist_ok=True)
             (root / name).write_bytes(data)
             for path, body in (("api/check", {"file": name, "text": text}), ("api/describe", {"file": name})):
@@ -321,7 +321,7 @@ def test_the_run_page_s_check_and_a_run_write_no_descriptions(tmp_path: Path, ro
     async def main(c: Client) -> None:
         status, reply = await c.post("api/check", {"file": FILE, "disable": ["Dashboard"]})
         assert status == 200, reply
-        status, reply = await c.post("api/run", {"file": FILE, "disable": ["Dashboard"]})
+        status, reply = await c.post("api/run", {"file": FILE, "disable": ["Dashboard"], "stop_at_ms": 1000})
         assert status == 200, reply
         assert log.checks() and not any(o in e["argv"] for e in log.checks() for o in
                                         ("--write-descriptions", "--descriptions", "--text-from-stdin"))
@@ -337,18 +337,18 @@ def test_the_run_page_s_check_and_a_run_write_no_descriptions(tmp_path: Path, ro
 def test_reading_the_text_of_a_configuration_file(tmp_path: Path, root: Path) -> None:
     server, _ = serve(tmp_path, root)
     files = {
-        "crlf.yaml": "vehicle_sil_simulation: 1\r\n# 日本語\r\nparticipants: []\r\n".encode(),
+        "crlf.yaml": "vehicle_sil_simulation: 2\r\n# 日本語\r\nparticipants: []\r\n".encode(),
         "bom.yaml": "\ufeffvehicle_sil_simulation: 1\nparticipants: []".encode(),  # no line end at the end
-        "largest.yaml": b"vehicle_sil_simulation: 1\n" + b"#" * (MAX_TEXT - 26),
-        "too-large.yaml": b"vehicle_sil_simulation: 1\n" + b"#" * (MAX_TEXT - 25),
-        "nul.yaml": b"vehicle_sil_simulation: 1\n\0",
-        "latin1.yaml": "vehicle_sil_simulation: 1\n# caf\u00e9\n".encode("latin-1"),
+        "largest.yaml": b"vehicle_sil_simulation: 2\n" + b"#" * (MAX_TEXT - 26),
+        "too-large.yaml": b"vehicle_sil_simulation: 2\n" + b"#" * (MAX_TEXT - 25),
+        "nul.yaml": b"vehicle_sil_simulation: 2\n\0",
+        "latin1.yaml": "vehicle_sil_simulation: 2\n# caf\u00e9\n".encode("latin-1"),
         # Not configuration files: none is read for the screen
-        "utf16.yaml": "vehicle_sil_simulation: 1\n".encode("utf-16"),
+        "utf16.yaml": "vehicle_sil_simulation: 2\n".encode("utf-16"),
         "other.yaml": b"oauth_token: x\n",
         "late.yaml": b"#" * 4096 + b"\nvehicle_sil_simulation: 1\n",
-        ".hidden/x.yaml": b"vehicle_sil_simulation: 1\n",
-        "sub/.x.yaml": b"vehicle_sil_simulation: 1\n",
+        ".hidden/x.yaml": b"vehicle_sil_simulation: 2\n",
+        "sub/.x.yaml": b"vehicle_sil_simulation: 2\n",
     }
     for name, data in files.items():
         (root / name).parent.mkdir(exist_ok=True)
@@ -386,7 +386,7 @@ def test_reading_the_text_of_a_configuration_file(tmp_path: Path, root: Path) ->
 @pytest.mark.skipif(not POSIX or (hasattr(os, "geteuid") and os.geteuid() == 0),
                     reason="the mode of a file that this user cannot read (POSIX, not root)")
 def test_a_configuration_file_that_cannot_be_read(tmp_path: Path, root: Path) -> None:
-    (root / "secret.yaml").write_text("vehicle_sil_simulation: 1\n", encoding="utf-8")
+    (root / "secret.yaml").write_text("vehicle_sil_simulation: 2\n", encoding="utf-8")
     (root / "secret.yaml").chmod(0)
     server, _ = serve(tmp_path, root)
 

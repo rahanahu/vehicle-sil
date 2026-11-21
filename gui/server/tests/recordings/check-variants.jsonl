@@ -1,9 +1,10 @@
-{"vehicle_sil_recording": 1, "case": "check-variants", "about": "the check of a file with variants, none chosen (the launcher says to choose one)", "shape": ["check", "--json", "--", "<file>"], "config": "variants.yaml", "config_sha256": "ae23682745d516ba933d830e2233bdb114e6161bdbeb120c017e67d5beeee767"}
-{"print": {"vehicle_sil_check": 1, "vehicle_sil": "0.1.0", "file": "<file>", "result": "usage", "strict": false, "errors": 1, "warnings": 0, "notes": 0, "stop_at_ms": null, "start_timeout_ms": null, "stop_timeout_ms": null, "registry_uri": null, "commands": null, "variant": null, "variants": ["small", "quiet"], "participants": [], "networks": [], "time_lock": null, "findings": [{"severity": "error", "code": "usage", "file": "<file>", "line": null, "participant": null, "network": null, "message": "the file defines variants, and a check or a run is of one of them: give --variant <name> with one of small, quiet (none of them is the default)", "detail": null}]}}
+{"vehicle_sil_recording": 1, "case": "check-variants", "about": "the check of a file with variants, none chosen (the launcher says to choose one)", "shape": ["check", "--json", "--", "<file>"], "config": "variants.yaml", "config_sha256": "db0679fb980ef2a3ac6557d0de884dbf0713deaf2ac4a56c5bcf30cb161eb316"}
+{"print": {"vehicle_sil_check": 1, "vehicle_sil": "0.2.0-rc.1", "file": "<file>", "result": "usage", "strict": false, "errors": 1, "warnings": 0, "notes": 0, "stop_at_ms": null, "time_step_ms": null, "start_timeout_ms": null, "stop_timeout_ms": null, "registry_uri": null, "commands": null, "variant": null, "variants": ["small", "quiet"], "participants": [], "networks": [], "time_lock": null, "findings": [{"severity": "error", "code": "usage", "file": "<file>", "line": null, "participant": null, "network": null, "message": "the file defines variants, and a check or a run is of one of them: give --variant <name> with one of small, quiet (none of them is the default)", "detail": null}]}}
 {"err": "error: the file defines variants, and a check or a run is of one of them: give --variant <name> with one of small, quiet (none of them is the default)"}
 {"err": "usage: vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]"}
 {"err": "                                [--describe-timeout-ms <ms>] [--connect <network>=<target>]..."}
-{"err": "                                [--time-policy realtime|free] [--request <file>]"}
+{"err": "                                [--time-policy realtime|free] [--request <file>] [--speed <speed>]"}
+{"err": "                                [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]"}
 {"err": "                                [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]"}
 {"err": "                                [--compare-commands <file>]"}
 {"err": "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>"}
@@ -12,12 +13,13 @@
 {"err": "                              --control-tls-key <file>] [--control-audit-log <file>]]"}
 {"err": "                              [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]"}
 {"err": "                              [--speed <speed>] [--strict] [--log-dir <dir>]"}
-{"err": "                              [--timeout-ms <ms>]"}
+{"err": "                              [--timeout-ms <ms>] [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]"}
 {"err": "                              [--describe-timeout-ms <ms>] [--connect <network>=<target>]..."}
 {"err": "                              [--time-policy realtime|free] [--request <file>]"}
 {"err": "                              [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>"}
 {"err": "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]..."}
 {"err": "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]"}
+{"err": "                               [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]"}
 {"err": "                               [--disable <name>]... [--enable <name>]... <file> --scenarios <directory or files>..."}
 {"err": "       vehicle_sil_launch connections [--json] [--network <name>] [--request <file>] [--] <file>"}
 {"err": "       vehicle_sil_launch version [--json]"}
@@ -83,6 +85,10 @@
 {"err": "                              or max (as fast as possible); replaces speed in <file>"}
 {"err": "  --strict                    fail on warnings too"}
 {"err": "  --log-dir <dir>             run: also write each participant's output to <dir>/<name>.log"}
+{"err": "  --stop-at-ms <ms>           stop at this exact virtual time (default: no automatic stop)"}
+{"err": "  --late-tolerance-ms <ms>    wall-clock pacing tolerance (default 10)"}
+{"err": "  --participant-start-timeout-ms <ms>  wait for required participants (default 30000)"}
+{"err": "  --participant-stop-timeout-ms <ms>   wait per participant shutdown stage (default 10000)"}
 {"err": "  --timeout-ms <ms>           run: abort the simulation if it has not ended <ms> after its start (wall clock;"}
 {"err": "                              with --start-paused and --control, from when it stands still before the start);"}
 {"err": "                              test: each run"}
@@ -95,9 +101,10 @@
 {"err": "  --descriptions <file>       check: start no process: take each participant's --describe output from <file>"}
 {"err": "                              (check --write-descriptions) if its command and executable are as they were;"}
 {"err": "                              any other participant is not described. --connect: only its form and names"}
-{"err": "  --compare-commands <file>   check: say in \"commands\" of --json whether the commands that run (each"}
-{"err": "                              participant's command, describe, manual and enabled in every variant, the"}
-{"err": "                              participants, the variants, registry_uri) are the same as in <file>; it only"}
+{"err": "  --compare-commands <file>   check: say in \"commands\" of --json (same, changed or not_compared) whether"}
+{"err": "                              the commands that run (each participant's command, describe, manual, enabled"}
+{"err": "                              and, for describe: false, what run adds to its arguments, in every variant;"}
+{"err": "                              the participants, the variants, registry_uri) are as in <file>; it only"}
 {"err": "                              reads <file>"}
 {"err": "  --connect <network>=<target> connect the network <network> of <file> to a real bus at <target>: an"}
 {"err": "                              Ethernet adapter (or tap:<device>), a SocketCAN interface (can0, vcan0 or"}
@@ -109,7 +116,7 @@
 {"err": "                              it ends. Repeatable, each network once"}
 {"err": "  --time-policy realtime|free the time of a run that is connected outside the simulation (by --connect, or by"}
 {"err": "                              an enabled participant with role: bridge). realtime (the default): it goes at"}
-{"err": "                              speed 1 whatever speed <file> has; another --speed and --start-paused are the"}
+{"err": "                              speed 1; another --speed and --start-paused are the"}
 {"err": "                              error outside-real-time, and the commands that pause or step it or change its"}
 {"err": "                              speed are refused while it runs. free: the speed and the time are yours to"}
 {"err": "                              change as in any run; the bridge still carries frames both ways, so what is"}
@@ -117,11 +124,11 @@
 {"err": "                              runs"}
 {"err": "  --request <file>            check, run, connections: what to run, from the request file <file> (JSON:"}
 {"err": "                              variant, params, scenario, disable, enable, manual, connect, time_policy, speed,"}
-{"err": "                              start_paused, strict; schema/run-request.schema.json). An argument wins over the"}
+{"err": "                              start_paused, strict, stop_at_ms, late_tolerance_ms; schema/run-request.schema.json). An argument wins over the"}
 {"err": "                              file, field by field: --connect and --param by name, --connect <network>=none"}
 {"err": "                              takes the file's target away; the lists add up. scenario in <file> is from the"}
 {"err": "                              directory of the configuration file. Only this file is read: none is looked for."}
-{"err": "                              connections reads only its connect"}
+{"err": "                              connections reads only its connect; test reads only stop_at_ms and late_tolerance_ms"}
 {"err": "  --network <name>            connections: only the network <name>"}
 {"err": "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable"}
 {"err": "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable"}
@@ -134,7 +141,7 @@
 {"err": "exit codes: 0 passed (run: also stopped by a command), 1 errors (with --strict: or warnings; run: also a failed"}
 {"err": "            simulation; test: a run failed or was left out; connections: a list could not be made, or a"}
 {"err": "            target of --request cannot be used), 3 the file cannot be read (run: or the registry cannot be set"}
-{"err": "            up), 4 usage, 5 run: a scenario was stopped by a command before its end, 130 run or test was"}
+{"err": "            up), 4 usage, 5 run: a scenario stopped before its end, 130 run or test was"}
 {"err": "            interrupted (a signal, or its input or output closed)"}
 {"err": "the file format: docs/simulation-config.md; check: docs/simulation-check.md; run: docs/simulation-run.md;"}
 {"err": "events and commands: docs/simulation-events.md; scenarios: docs/scenario.md"}

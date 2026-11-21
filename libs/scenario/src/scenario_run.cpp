@@ -45,6 +45,13 @@ SimTime at_ms(std::int64_t ms)
     return SimTime{} + std::chrono::milliseconds(ms);
 }
 
+bool applies_before_stop(SimTime at, SimDuration step, const std::optional<SimTime>& stop)
+{
+    if (!stop) return true;
+    const auto remainder = to_ns(at) % step.count();
+    return at + SimDuration(remainder == 0 ? 0 : step.count() - remainder) < *stop;
+}
+
 const char* target_status_text(control::TargetStatus status)
 {
     switch (status)
@@ -168,8 +175,8 @@ struct ScenarioEngine::Lines
 ScenarioEngine::~ScenarioEngine() = default;
 
 ScenarioEngine::ScenarioEngine(const Scenario& scenario, SimDuration tick, ScenarioPort& port, OnStep on_step,
-                               TimelineRecord* record) :
-  scenario_(scenario), tick_(tick), port_(port), on_step_(std::move(on_step)), lines_(std::make_unique<Lines>()), record_(record)
+                               TimelineRecord* record, std::optional<SimTime> stop_at) :
+  scenario_(scenario), tick_(tick), stop_at_(stop_at), port_(port), on_step_(std::move(on_step)), lines_(std::make_unique<Lines>()), record_(record)
 {
     if (tick_ <= SimDuration::zero())
     {
@@ -289,7 +296,7 @@ void ScenarioEngine::begin(const std::vector<EnginePeer>& peers)
 
 void ScenarioEngine::sample(std::size_t participant, std::shared_ptr<const control::Snapshot> sample)
 {
-    if (participant < samples_.size() && sample && !over_)
+    if (participant < samples_.size() && sample && !over_ && (!stop_at_ || sample->time < *stop_at_))
     {
         samples_[participant].push_back(std::move(sample));
     }
@@ -297,7 +304,7 @@ void ScenarioEngine::sample(std::size_t participant, std::shared_ptr<const contr
 
 bool ScenarioEngine::tick(SimTime p)
 {
-    if (!begun_)
+    if (!begun_ || (stop_at_ && p >= *stop_at_))
     {
         return false;
     }
@@ -332,32 +339,14 @@ void ScenarioEngine::stopped_at(SimTime p)
     judge(p);
     if (!over_)
     {
-        observe(p);
+        observe(p, true);
     }
-    if (over_)
+    if (!over_)
     {
-        run_.over_at = p;
-        close_record();
-        return;
+        finish(ScenarioStatus::Incomplete);
     }
-    for (std::size_t i = 0; i < run_.steps.size(); ++i)
-    {
-        if (run_.steps[i].status != StepStatus::Passed && run_.steps[i].status != StepStatus::Skipped)
-        {
-            const ScenarioStepRun& step = run_.steps[i];
-            fail(i, p, "scenario-out-of-time",
-                 "the simulation stopped at " + ms_text(p) + " ms (stop_at_ms) " +
-                     (step.status == StepStatus::Running
-                          ? "before this step was decided (it began at " + ms_text(*step.start) + " ms)"
-                          : step.start ? "before this step could be decided (its time is " + ms_text(*step.start) + " ms)"
-                                       : std::string("before this step began")) +
-                     ": there was not enough time for the scenario; raise stop_at_ms, or leave it out (the run then ends "
-                     "with the scenario)");
-            run_.over_at = p;
-            close_record();
-            return;
-        }
-    }
+    run_.over_at = p;
+    close_record();
 }
 
 void ScenarioEngine::cut_short()
@@ -394,9 +383,30 @@ void ScenarioEngine::issue()
 {
     while (!over_ && base_ && next_ < scenario_.steps.size())
     {
-        const std::size_t index = next_++;
+        const std::size_t index = next_;
         const ScenarioStep& step = scenario_.steps[index];
         const SimTime time = step.at_ms ? at_ms(*step.at_ms) : *base_ + std::chrono::milliseconds(step.after_ms);
+        if (stop_at_ && time >= *stop_at_)
+        {
+            // Later relative steps depend on this step; they must not use the previous base.
+            // A suffix of steps already known to be skipped has no work and does not extend a
+            // scenario past its last actual step, even if its nominal time is beyond the stop.
+            const auto first = scenario_.steps.begin() + static_cast<std::ptrdiff_t>(next_);
+            if (std::all_of(first, scenario_.steps.end(), [](const ScenarioStep& s) { return !s.skipped.empty(); }))
+            {
+                // Use the normal skipped path: it records nominal start/end and notifies the
+                // observer, without waiting for these steps to occur in the simulation.
+                while (!over_ && next_ < scenario_.steps.size())
+                {
+                    const std::size_t skipped = next_++;
+                    const ScenarioStep& item = scenario_.steps[skipped];
+                    const SimTime nominal = item.at_ms ? at_ms(*item.at_ms) : *base_ + std::chrono::milliseconds(item.after_ms);
+                    issue_step(skipped, nominal);
+                }
+            }
+            break;
+        }
+        ++next_;
         issue_step(index, time);
     }
 }
@@ -407,15 +417,15 @@ bool ScenarioEngine::unusable(std::size_t index, SimTime time)
     std::vector<std::pair<std::size_t, bool>> used; // the variable, and whether the step writes it
     for (const auto& w : step.writes)
     {
-        used.emplace_back(w.variable, true);
+        if (applies_before_stop(time, step_of(w.variable), stop_at_)) used.emplace_back(w.variable, true);
     }
     for (const auto& r : step.motions)
     {
-        used.emplace_back(r.variable, true);
+        if (applies_before_stop(time, step_of(r.variable), stop_at_)) used.emplace_back(r.variable, true);
     }
     for (const auto& o : step.overlays)
     {
-        used.emplace_back(o.variable, true);
+        if (applies_before_stop(time, step_of(o.variable), stop_at_)) used.emplace_back(o.variable, true);
     }
     for (const auto& c : step.conditions)
     {
@@ -685,6 +695,18 @@ void ScenarioEngine::close_record()
     record_closed_ = true;
     // Recorded to: the time that decided the scenario.
     SimTime to = last_seen_.value_or(SimTime{});
+    if (run_.status == ScenarioStatus::Incomplete)
+    {
+        // A write can be observed by an ECU even when no condition watches any samples. Keep
+        // writes reached by the controller, but not future writes submitted ahead of its step.
+        for (const auto& series : record_->series())
+        {
+            for (const auto& point : series.written)
+            {
+                if (point.at <= now_) to = std::max(to, point.at);
+            }
+        }
+    }
     if (run_.status != ScenarioStatus::Incomplete)
     {
         to = SimTime{};
@@ -729,8 +751,17 @@ void ScenarioEngine::close_record()
 
 bool ScenarioEngine::submit_one(Write write, std::size_t unchecked)
 {
+    const auto at_or_after_stop = [&](std::size_t variable) {
+        return !applies_before_stop(write.at, step_of(variable), stop_at_);
+    };
+    if (write.motion && at_or_after_stop(motions_[*write.motion].motion.variable))
+    {
+        return true;
+    }
     // Its step begins when the engine looks at what became of it (taken_at_once()), in the order
     // sent: a write after one that was refused at once leaves its step NotRun.
+    bool omitted_overlay = false;
+    bool usable_overlay = false;
     if (write.grid)
     {
         // Its values were worked out when it was made (submit()).
@@ -742,6 +773,12 @@ bool ScenarioEngine::submit_one(Write write, std::size_t unchecked)
         // nothing on yet is not written: its dither waits for the first set, ramp or wave.
         for (const ScenarioOverlay& overlay : scenario_.steps[write.step].overlays)
         {
+            if (at_or_after_stop(overlay.variable))
+            {
+                omitted_overlay = true;
+                continue;
+            }
+            usable_overlay = true;
             if (const auto value = lines_->lines[overlay.variable].written_value(write.at))
             {
                 write.writes.push_back(ScenarioWrite{overlay.variable, *value});
@@ -750,6 +787,8 @@ bool ScenarioEngine::submit_one(Write write, std::size_t unchecked)
         }
         if (write.writes.empty())
         {
+            if (!usable_overlay) return true;
+            if (omitted_overlay) ++open_writes_[write.step];
             // Nothing to send. Decided like a write all the same, at the controller's first step
             // after its time (judge()): not now, when its time may still be ahead.
             write.judge = next_tick_after(write.at);
@@ -794,6 +833,33 @@ bool ScenarioEngine::submit_one(Write write, std::size_t unchecked)
             write.bases.push_back(detail::number_of(w.value));
             w.value = lines_->lines[w.variable].written(w.value, write.at);
         }
+    }
+    // A command can address ECUs with different periods. Keep the targets that can apply it
+    // before the stop, preserving their order and the positions of writes within each ECU.
+    if (stop_at_)
+    {
+        std::vector<ScenarioWrite> before_stop;
+        std::vector<double> before_stop_bases;
+        for (std::size_t i = 0; i < write.writes.size(); ++i)
+        {
+            if (!at_or_after_stop(write.writes[i].variable))
+            {
+                before_stop.push_back(std::move(write.writes[i]));
+                before_stop_bases.push_back(write.bases[i]);
+            }
+        }
+        if (before_stop.empty())
+        {
+            return true;
+        }
+        if ((before_stop.size() != write.writes.size() || omitted_overlay) && !write.grid)
+        {
+            // The submitted targets still need their results checked, but their success cannot
+            // complete a step whose other targets will not run before the boundary.
+            ++open_writes_[write.step];
+        }
+        write.writes = std::move(before_stop);
+        write.bases = std::move(before_stop_bases);
     }
     std::vector<control::PeerWrite> out;
     for (std::size_t i = 0; i < write.writes.size(); ++i)
@@ -888,7 +954,7 @@ bool ScenarioEngine::taken_at_once(std::size_t from)
 
 void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool at_start)
 {
-    const auto in_range = [&](SimTime t) { return t > from_exclusive && t <= to_inclusive; };
+    const auto in_range = [&](SimTime t) { return t > from_exclusive && t <= to_inclusive && (!stop_at_ || t < *stop_at_); };
     // Cannot happen: a write's time is always after the step of the controller that issues it,
     // and tick() is called at every step.
     const auto missed = [&](std::size_t step, SimTime at) {
@@ -957,7 +1023,9 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
         // The first multiple of the step after `from` (which is -1 at the start: 0).
         for (std::int64_t t = from < 0 ? 0 : (from / step + 1) * step; t <= to_ns(to_inclusive); t += step)
         {
-            grid.push_back(SimTime{} + SimDuration(t));
+            const SimTime at = SimTime{} + SimDuration(t);
+            if (!in_range(at)) break;
+            grid.push_back(at);
         }
     }
     std::sort(grid.begin(), grid.end());
@@ -1132,6 +1200,7 @@ void ScenarioEngine::place(const Write& write)
         for (std::size_t i = 0; i < overlays.size(); ++i)
         {
             const ScenarioOverlay& overlay = overlays[i];
+            if (!applies_before_stop(write.at, step_of(overlay.variable), stop_at_)) continue;
             lines_->lines[overlay.variable].overlay(overlay.shape);
             lines_->dither[overlay.variable] = overlay.shape ? &overlay : nullptr;
             if (record_ != nullptr)
@@ -1150,6 +1219,7 @@ void ScenarioEngine::place(const Write& write)
         for (std::size_t i = 0; i < write.writes.size(); ++i)
         {
             const ScenarioWrite& w = write.writes[i];
+            if (!applies_before_stop(write.at, step_of(w.variable), stop_at_)) continue;
             lines_->lines[w.variable].set(write.at, w.value);
             if (record_ != nullptr)
             {
@@ -1165,6 +1235,7 @@ void ScenarioEngine::place(const Write& write)
         return; // not its first write
     }
     const std::size_t v = motion.motion.variable;
+    if (!applies_before_stop(write.at, step_of(v), stop_at_)) return;
     // A sample only if the scenario has put nothing on the line yet: the latest looked at.
     const detail::LineMotion& placed = lines_->lines[v].move(write.at, motion.motion.shape, std::chrono::milliseconds(motion.motion.length_ms),
                                                              motion.motion.base, variables_[v].value);
@@ -1363,7 +1434,7 @@ void ScenarioEngine::close(Watch& watch, SimTime t)
     }
 }
 
-void ScenarioEngine::observe(SimTime p)
+void ScenarioEngine::observe(SimTime p, bool final_boundary)
 {
     // The samples of steps before p, by time; within one time in the order of the participants.
     struct Taken
@@ -1394,7 +1465,7 @@ void ScenarioEngine::observe(SimTime p)
         for (const Watch& w : watches_)
         {
             const std::optional<SimTime> at = !w.opened ? std::optional<SimTime>(w.from) : w.until;
-            if (at && *at < p && (!boundary || *at < *boundary))
+            if (at && (*at < p || (final_boundary && w.opened && *at == p)) && (!boundary || *at < *boundary))
             {
                 boundary = at;
             }
@@ -1459,7 +1530,7 @@ void ScenarioEngine::observe(SimTime p)
                 {
                     continue;
                 }
-                if (!watches_[i].opened && watches_[i].from == t)
+                if (!watches_[i].opened && watches_[i].from == t && (!final_boundary || t < p))
                 {
                     watches_[i].opened = true;
                     started(watches_[i].step);

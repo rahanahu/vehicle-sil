@@ -106,9 +106,9 @@ fs::path connect_dir(const Options& o, const std::string& name, const std::strin
 {
     const fs::path dir = o.work_dir / name;
     fs::create_directories(dir);
-    write_file(dir / "sim.yaml", "vehicle_sil_simulation: 1\n"
-                                 "speed: 1\n"
-                                 "late_tolerance_ms: 60000\n"
+    write_file(dir / "sim.yaml", "vehicle_sil_simulation: 2\n"
+                                 "# run-option --speed 1\n"
+                                 "# run-option --late-tolerance-ms 60000\n"
                                  "registry_uri: silkit://127.0.0.1:0\n" +
                                      top +
                                      "networks:\n"
@@ -305,7 +305,7 @@ void connect_roundtrip(const Options& base)
     const Options o = connect_options(base);
     // Long enough for a statistics line of the bridges while the frames go (once a second): on Windows
     // the launcher may have to end them, and then their last one is what run has.
-    const fs::path dir = connect_dir(o, "roundtrip", "stop_at_ms: 2500\n", talker(o), {{"Talker", "talk CAN"}});
+    const fs::path dir = connect_dir(o, "roundtrip", "# run-option --stop-at-ms 2500\n", talker(o), {{"Talker", "talk CAN"}});
     const Captured run = launch(o, {"run", "--events", "--speed", "1", "--strict", "--log-dir", "logs", "--connect", "ETH_EXT=fake0",
                                     "--connect", "CAN=virtual:1", "sim.yaml"},
                                 dir);
@@ -370,7 +370,7 @@ void connect_no_adapter(const Options& base)
     const Options o = connect_options(base);
     // The launcher waits for the bridges up to start_timeout_ms: long, so that only seeing them end
     // gives the finding in time.
-    const fs::path dir = connect_dir(o, "no_adapter", "start_timeout_ms: 120000\n", talker(o), {{"Talker", "talk CAN"}});
+    const fs::path dir = connect_dir(o, "no_adapter", "# run-option --participant-start-timeout-ms 120000\n", talker(o), {{"Talker", "talk CAN"}});
     const Captured run =
         launch(o, {"run", "--events", "--connect", "ETH_EXT=eth9", "--connect", "CAN=physical:9", "sim.yaml"}, dir);
     const std::vector<std::string> lines = check_events(run.standard_output);
@@ -402,7 +402,7 @@ void connect_bus_off(const Options& base)
     const Options o = connect_options(base);
     set_environment("VEHICLE_SIL_FAKE_XL_ECHO", "0");
     set_environment("VEHICLE_SIL_FAKE_XL_BUS_OFF_AFTER_MS", "1000");
-    const fs::path dir = connect_dir(o, "bus_off", "stop_at_ms: 4500\n", talker(o), {{"Talker", "talk CAN"}});
+    const fs::path dir = connect_dir(o, "bus_off", "# run-option --stop-at-ms 4500\n", talker(o), {{"Talker", "talk CAN"}});
     const Captured run = launch(o, {"run", "--events", "--speed", "1", "--log-dir", "logs", "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
     set_environment("VEHICLE_SIL_FAKE_XL_BUS_OFF_AFTER_MS", "");
     const std::vector<std::string> lines = check_events(run.standard_output);
@@ -435,7 +435,7 @@ void connect_bus_off_lost(const Options& base)
     const Options o = connect_options(base);
     set_environment("VEHICLE_SIL_FAKE_XL_ECHO", "0");
     set_environment("VEHICLE_SIL_FAKE_XL_BUS_OFF_AFTER_MS", "0");
-    const fs::path dir = connect_dir(o, "bus_off_lost", "stop_at_ms: 300000\n", talker(o), {{"Talker", "talk CAN"}});
+    const fs::path dir = connect_dir(o, "bus_off_lost", "# run-option --stop-at-ms 300000\n", talker(o), {{"Talker", "talk CAN"}});
     const std::string timeout = std::to_string(scaled_timeout(120s).count());
     const auto began = std::chrono::steady_clock::now();
     const Captured run = launch(o, {"run", "--events", "--speed", "1", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0",
@@ -469,7 +469,7 @@ void connect_nothing_received(const Options& base)
     const Options o = connect_options(base);
     // No echo node on the CAN channel; fake1 has no device behind it.
     set_environment("VEHICLE_SIL_FAKE_XL_ECHO", "");
-    const fs::path dir = connect_dir(o, "nothing_received", "stop_at_ms: 2500\n", talker(o), {{"Talker", "talk CAN"}});
+    const fs::path dir = connect_dir(o, "nothing_received", "# run-option --stop-at-ms 2500\n", talker(o), {{"Talker", "talk CAN"}});
     const std::vector<std::string> args{"--speed", "1", "--strict", "--log-dir", "logs", "--connect", "ETH_EXT=fake1",
                                         "--connect", "CAN=virtual:1", "sim.yaml"};
     std::vector<std::string> withEvents{"run", "--events"};
@@ -573,7 +573,7 @@ void connect_speed(const Options& base)
     // Both networks connected, as connect_roundtrip: the check has no other finding, so --strict
     // judges these alone.
     const auto dir_of = [&o](const std::string& name) {
-        return connect_dir(o, name, "stop_at_ms: 300\n", talker(o), {{"Talker", "talk CAN"}});
+        return connect_dir(o, name, "# run-option --stop-at-ms 300\n", talker(o), {{"Talker", "talk CAN"}});
     };
     const auto run_with = [](std::vector<std::string> args) {
         args.insert(args.begin(), {"run", "--events"});
@@ -604,32 +604,32 @@ void connect_speed(const Options& base)
                 !events_with(freeLines, {"\"event\":\"state\"", "\"speed\":2,"}).empty() &&
                 contains(freeLines.back(), "\"simulation\":\"reached_stop_at\""),
             "the note is about --speed, and the run went at speed 2:\n" + out_of(freeLines));
-    // No --speed, and another speed in the file: the run goes at speed 1, and a note says so.
+    // No requested speed: the connected run goes at speed 1, and a note says so.
     {
         const fs::path other = dir_of("speed_set");
         std::string text = read_text(other / "sim.yaml");
-        require(contains(text, "speed: 1\n"), "the file of connect_dir() has speed: 1");
-        text.replace(text.find("speed: 1\n"), 9, "speed: 8\n");
+        require(contains(text, "# run-option --speed 1\n"), "the file of connect_dir() has speed: 1");
+        text.erase(text.find("# run-option --speed 1\n"), std::string_view("# run-option --speed 1\n").size());
         write_file(other / "sim.yaml", text);
         const Captured set = launch(o, run_with({"--strict"}), other);
         const std::vector<std::string> setLines = check_events(set.standard_output);
-        expect_code(set, 0, "run --strict --connect of a file with speed: 8 (a note)");
-        require(contains(finding_in(setLines, "outside-speed-set"), "not at the speed 8 of the file") &&
+        expect_code(set, 0, "run --strict --connect without a speed (a note)");
+        require(contains(finding_in(setLines, "outside-speed-set"), "not as fast as possible") &&
                     !events_with(setLines, {"\"event\":\"state\"", "\"speed\":1,"}).empty() &&
                     events_with(setLines, {"\"event\":\"state\"", "\"speed\":8,"}).empty() &&
                     contains(setLines.back(), "\"timing\":{\"speed\":1,") &&
                     contains(setLines.back(), "\"simulation\":\"reached_stop_at\""),
                 "the run went at speed 1, and outside-speed-set says so:\n" + out_of(setLines));
-        // With --time-policy free, the file's speed.
-        const Captured kept = launch(o, run_with({"--strict", "--time-policy", "free"}), other);
+        // With --time-policy free, an explicitly requested speed is accepted.
+        const Captured kept = launch(o, run_with({"--strict", "--time-policy", "free", "--speed", "8"}), other);
         const std::vector<std::string> keptLines = check_events(kept.standard_output);
         expect_code(kept, 0, "run --strict --time-policy free --connect of a file with speed: 8");
-        require(contains(finding_in(keptLines, "outside-not-real-time"), "at the speed 8 of the file") &&
+        require(contains(finding_in(keptLines, "outside-not-real-time"), "--speed 8 runs the simulation at that speed") &&
                     contains(keptLines.back(), "\"timing\":{\"speed\":8,"),
                 "the run went at the file's speed:\n" + out_of(keptLines));
         // Nothing connected (none): nothing is locked: the file's speed, and no finding about it.
         const Captured alone =
-            launch(o, {"run", "--events", "--connect", "ETH_EXT=none", "--connect", "CAN=none", "sim.yaml"}, other);
+            launch(o, {"run", "--events", "--speed", "8", "--connect", "ETH_EXT=none", "--connect", "CAN=none", "sim.yaml"}, other);
         const std::vector<std::string> aloneLines = check_events(alone.standard_output);
         expect_code(alone, 0, "run --connect <network>=none of a file with speed: 8");
         require(finding_in(aloneLines, "outside-speed-set").empty() && finding_in(aloneLines, "outside-not-real-time").empty() &&
@@ -640,9 +640,9 @@ void connect_speed(const Options& base)
     // without a speed and with a time_step_ms coarser than the ECUs' steps gets coarse-time-step
     // from the check, as a file with speed: 1 does (and not with --time-policy free: no speed).
     {
-        const fs::path coarse = connect_dir(o, "speed_step", "stop_at_ms: 300\ntime_step_ms: 30\n", talker(o), {{"Talker", "talk CAN"}});
+        const fs::path coarse = connect_dir(o, "speed_step", "# run-option --stop-at-ms 300\ntime_step_ms: 30\n", talker(o), {{"Talker", "talk CAN"}});
         std::string text = read_text(coarse / "sim.yaml");
-        text.erase(text.find("speed: 1\n"), 9);
+        text.erase(text.find("# run-option --speed 1\n"), std::string_view("# run-option --speed 1\n").size());
         write_file(coarse / "sim.yaml", text);
         const std::vector<std::string> both{"--connect", "ETH_EXT=fake0", "--connect", "CAN=virtual:1", "sim.yaml"};
         const auto with = [&both](std::vector<std::string> args) {
@@ -689,7 +689,7 @@ void connect_speed(const Options& base)
 void connect_request(const Options& base)
 {
     const Options o = connect_options(base);
-    const fs::path dir = connect_dir(o, "request", "stop_at_ms: 300\n", talker(o), {{"Talker", "talk CAN"}});
+    const fs::path dir = connect_dir(o, "request", "# run-option --stop-at-ms 300\n", talker(o), {{"Talker", "talk CAN"}});
     const auto bench = [&dir](const std::string& more) {
         write_file(dir / "bench.json", "{ \"vehicle_sil_run_request\": 1,\n"
                                        "  \"connect\": { \"ETH_EXT\": \"fake0\", \"CAN\": \"virtual:1\", \"LIN_BODY\": \"1\" }" +
@@ -733,6 +733,12 @@ void connect_request(const Options& base)
                 "no bridge ran:\n" + out_of(aloneLines));
     }
     // The file's speed is refused as --speed is, and named with the file; --speed 1 wins over it.
+    {
+        std::string text = read_text(dir / "sim.yaml");
+        const std::string speed = "# run-option --speed 1\n";
+        text.erase(text.find(speed), speed.size());
+        write_file(dir / "sim.yaml", text);
+    }
     bench(", \"speed\": 2");
     {
         const Captured run = launch(o, {"run", "--events", "--request", "bench.json", "sim.yaml"}, dir);
@@ -836,7 +842,7 @@ void connect_time_locked(const Options& base)
     {
         // Without --events: the answers of the commands that were refused are lines on stderr,
         // those written at once too.
-        const fs::path dir = connect_dir(o, "time_locked_text", "stop_at_ms: 300\n", talker(o), {{"Talker", "talk CAN"}});
+        const fs::path dir = connect_dir(o, "time_locked_text", "# run-option --stop-at-ms 300\n", talker(o), {{"Talker", "talk CAN"}});
         Live live(o, dir, {"run", "--stdin-commands", "--connect", "ETH_EXT=fake0", "--connect", "CAN=virtual:1", "sim.yaml"});
         live.write("{\"command\":\"pause\"}\n{\"command\":\"resume\"}\n");
         const auto [status, lines] = live.finish_unchecked();
@@ -910,7 +916,7 @@ void connect_time_changed(const Options& base)
     }
     // With --strict the note does not fail the run. The speed is written at once: a command before
     // the simulation starts waits for the configuration, is taken and kept, and counts as well.
-    const fs::path dir = connect_dir(o, "time_changed_strict", "stop_at_ms: 300\n", talker(o), {{"Talker", "talk CAN"}});
+    const fs::path dir = connect_dir(o, "time_changed_strict", "# run-option --stop-at-ms 300\n", talker(o), {{"Talker", "talk CAN"}});
     Live live(o, dir, {"run", "--events", "--strict", "--stdin-commands", "--time-policy", "free", "--connect", "ETH_EXT=fake0",
                        "--connect", "CAN=virtual:1", "sim.yaml"});
     live.write("{\"command\":\"speed\",\"value\":\"max\"}\n");
@@ -1045,7 +1051,7 @@ void connect_device_shared(const Options& base)
     OutsideBridge outside(o, registry.uri());
     outside.wait_ready();
     {
-        const fs::path dir = connect_dir(o, "device_shared", "stop_at_ms: 2500\n", talker(o), {{"Talker", "talk CAN"}});
+        const fs::path dir = connect_dir(o, "device_shared", "# run-option --stop-at-ms 2500\n", talker(o), {{"Talker", "talk CAN"}});
         const Captured run = launch(o, {"run", "--events", "--speed", "1", "--log-dir", "logs", "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
         const std::vector<std::string> lines = check_events(run.standard_output);
         expect_code(run, 0, "run --connect on a device that a bridge outside the run uses (a warning)");
@@ -1077,7 +1083,7 @@ void connect_device_shared(const Options& base)
     // A manual participant that has not come: the run waits for it, and has said it by then (from
     // the bridge's first link line, not only when the run is going), once.
     {
-        const fs::path dir = connect_dir(o, "device_shared_manual", "stop_at_ms: 2500\n", talker(o) + "  - name: Late\n    command: [" + ecu(o) + "]\n",
+        const fs::path dir = connect_dir(o, "device_shared_manual", "# run-option --stop-at-ms 2500\n", talker(o) + "  - name: Late\n    command: [" + ecu(o) + "]\n",
                                          {{"Talker", "talk CAN"}});
         Live live(o, dir, {"run", "--events", "--manual", "Late", "--speed", "1", "--connect", "CAN=virtual:1", "sim.yaml"});
         live.wait_for({"\"event\":\"log\"", "outside: CAN -> virtual:1: also used by another vehicle-sil bridge" + who_text(outside.id())});
@@ -1089,7 +1095,7 @@ void connect_device_shared(const Options& base)
                 "the launcher said it once:\n" + out_of(lines));
     }
     // --strict: an error, and the ECUs are not started.
-    const fs::path dir = connect_dir(o, "device_shared_strict", "stop_at_ms: 2500\n", talker(o), {{"Talker", "talk CAN"}});
+    const fs::path dir = connect_dir(o, "device_shared_strict", "# run-option --stop-at-ms 2500\n", talker(o), {{"Talker", "talk CAN"}});
     const Captured run =
         launch(o, {"run", "--events", "--strict", "--speed", "1", "--connect", "ETH_EXT=fake0", "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
     const std::vector<std::string> lines = check_events(run.standard_output);
@@ -1129,7 +1135,7 @@ void connect_device_shared_later(const Options& base)
     vehicle_sil::test::RegistryProcess registry(o.registry, o.work_dir / "registry");
     const std::string timeout = std::to_string(scaled_timeout(120s).count());
     {
-        const fs::path dir = connect_dir(o, "device_shared_later", "stop_at_ms: 300000\n", talker(o), {{"Talker", "talk CAN"}});
+        const fs::path dir = connect_dir(o, "device_shared_later", "# run-option --stop-at-ms 300000\n", talker(o), {{"Talker", "talk CAN"}});
         Live live(o, dir, {"run", "--events", "--strict", "--speed", "1", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0",
                           "--connect", "CAN=virtual:1", "sim.yaml"});
         live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
@@ -1163,7 +1169,7 @@ void connect_device_shared_later(const Options& base)
         }
     }
     // Gone again within 3 s: the run is not stopped.
-    const fs::path dir = connect_dir(o, "device_shared_gone", "stop_at_ms: 7000\n", talker(o), {{"Talker", "talk CAN"}});
+    const fs::path dir = connect_dir(o, "device_shared_gone", "# run-option --stop-at-ms 7000\n", talker(o), {{"Talker", "talk CAN"}});
     Live live(o, dir, {"run", "--events", "--strict", "--speed", "1", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0",
                           "--connect", "CAN=virtual:1", "sim.yaml"});
     live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
@@ -1193,11 +1199,11 @@ void connect_device_shared_own(const Options& base)
     const ScopedEnvironment scope("VEHICLE_SIL_FAKE_DEVICE_SCOPE", device_scope("device-shared-own"));
     const fs::path dir = o.work_dir / "device_shared_own";
     fs::create_directories(dir);
-    write_file(dir / "sim.yaml", "vehicle_sil_simulation: 1\n"
-                                 "speed: 1\n"
-                                 "late_tolerance_ms: 60000\n"
+    write_file(dir / "sim.yaml", "vehicle_sil_simulation: 2\n"
+                                 "# run-option --speed 1\n"
+                                 "# run-option --late-tolerance-ms 60000\n"
                                  "registry_uri: silkit://127.0.0.1:0\n"
-                                 "stop_at_ms: 2500\n"
+                                 "# run-option --stop-at-ms 2500\n"
                                  "networks:\n"
                                  "  - name: CAN\n"
                                  "    kind: can\n"

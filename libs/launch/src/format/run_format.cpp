@@ -438,6 +438,8 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
     if (report.run)
     {
         const config::RunTiming& t = report.run->timing;
+        if (report.run->end.stop_at_ms) w.integer("stop_at_ms", *report.run->end.stop_at_ms);
+        else w.null("stop_at_ms");
         w.begin_object("timing");
         if (t.speed)
         {

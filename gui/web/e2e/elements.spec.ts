@@ -217,7 +217,7 @@ test('a run that starts paused, by the intent property of the start part: what c
 test('the resume part button resumes a run that started paused', async ({ page }) => {
   const server = await serve('simulation.yaml');
   cleanups.push(() => server.stop());
-  await page.goto(server.url.replace('#', '?paused#'));
+  await page.goto(server.url.replace('#', '?paused&finite#'));
   await expect(page.locator('body')).toHaveAttribute('data-own', 'connected');
   const status = page.getByTestId('status');
   const button = (testid: string, name: string) =>
@@ -242,10 +242,10 @@ test('the time part steps a paused run, then resumes it and pauses it again', as
   await expect(status).toHaveAttribute('data-run', 'paused', { timeout: RUN_TIMEOUT });
   await expect(status.locator('.vsil-time')).toHaveText(/^0 ms/);
 
-  // A step moves the time on (the launcher rounds the amount up to its tick) and the run is paused again
+  // A step moves the time on by 25 ms, then the run is paused again (the controller ticks every 1 ms)
   await page.getByTestId('time').getByRole('spinbutton', { name: 'Step (ms)' }).fill('25');
   await button('time', 'Step').click();
-  await expect(status.locator('.vsil-time')).toHaveText(/^30 ms/);
+  await expect(status.locator('.vsil-time')).toHaveText(/^25 ms/);
   await expect(status).toHaveAttribute('data-run', 'paused');
 
   // The resume button can be pressed again, and the run goes on
@@ -254,7 +254,7 @@ test('the time part steps a paused run, then resumes it and pauses it again', as
   await expect(status).toHaveAttribute('data-run', 'running', { timeout: RUN_TIMEOUT });
   await expect(button('time', 'Resume')).toHaveAttribute('aria-disabled', 'true');
   await expect(button('time', 'Step')).toHaveAttribute('aria-disabled', 'true');
-  await expect(status.locator('.vsil-time')).not.toHaveText(/^30 ms/);
+  await expect(status.locator('.vsil-time')).not.toHaveText(/^25 ms/);
 
   // The pause button stops it: the time stays where it is
   await expect(button('time', 'Pause')).toHaveAttribute('aria-disabled', 'false');
@@ -283,7 +283,7 @@ test('the connect part lists its network only when it is opened, and the run it 
       posted.push({ path: new URL(request.url()).pathname, body: request.postDataJSON() });
   });
   const listed = () => posted.filter((p) => p.path === '/api/connections');
-  await page.goto(server.url);
+  await page.goto(server.url.replace('#', '?finite#'));
   await expect(page.locator('body')).toHaveAttribute('data-own', 'connected');
   const status = page.getByTestId('status');
   await expect(status).toHaveAttribute('data-link', 'online');

@@ -14,6 +14,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { CheckResult, Intent, Speed, errorMessage } from '@vehicle-sil/gui-client';
 import { pageIntent } from '@vehicle-sil/gui-client/elements';
@@ -67,6 +68,9 @@ interface RunChoices {
   /** 自分で起動する participant（古い持ち越しにはない）。 */
   manual?: string[];
   speed: Speed;
+  stopAt?: string;
+  stopAtEdited?: boolean;
+  stopSession?: number | null;
   /** 止めた状態で始めるか（古い持ち越しにはない）。 */
   startPaused?: boolean;
   logSource: string;
@@ -88,6 +92,14 @@ export function readRunChoices(value: unknown): RunChoices | null {
     !(v['manual'] === undefined || (Array.isArray(v['manual']) && v['manual'].every(isText))) ||
     !speedOk ||
     !(v['startPaused'] === undefined || typeof v['startPaused'] === 'boolean') ||
+    !(v['stopAt'] === undefined || typeof v['stopAt'] === 'string') ||
+    !(v['stopAtEdited'] === undefined || typeof v['stopAtEdited'] === 'boolean') ||
+    !(
+      v['stopSession'] === undefined ||
+      v['stopSession'] === null ||
+      typeof v['stopSession'] === 'number'
+    ) ||
+    (v['stopAtEdited'] === true && typeof v['stopAt'] !== 'string') ||
     !isText(v['logSource'])
   ) {
     return null;
@@ -130,6 +142,7 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
     MatCardModule,
     MatCheckboxModule,
     MatFormFieldModule,
+    MatInputModule,
     MatSelectModule,
     CheckPanel,
     FindingsList,
@@ -291,14 +304,73 @@ export class RunPage {
     const session = this.session();
     return !!session && session.launcher.running && !session.result;
   });
-  /** 速度。前の実行のもの（なければ構成ファイルのとおり）から始める。 */
+  /** 速度。前の実行のもの（なければ等速）から始める。 */
   protected readonly speed = linkedSignal<Speed>(() => {
     const session = this.session();
     const carried = this.carriedFor(session?.id ?? null);
-    return carried ? carried.speed : (session?.speed ?? null);
+    return (carried ? carried.speed : session?.speed) ?? 1;
   });
   /** 速度の倍率の欄が範囲の外。 */
   protected readonly speedInvalid = signal(false);
+  /** 選択中のファイルとセッションを切り替えたら、その実行の上限に戻す。 */
+  private readonly stopAtSource = computed(
+    () => {
+      const file = this.selected();
+      const session = this.session();
+      const id = session?.file === file ? session.id : null;
+      const carried = this.carriedStopFor(id);
+      const sessionStop = session?.file === file ? session.check?.stop_at_ms : undefined;
+      return {
+        file,
+        id,
+        value:
+          carried && carried.file === file && carried.stopAtEdited
+            ? (carried.stopAt ?? '')
+            : String(sessionStop ?? ''),
+      };
+    },
+    { equal: (a, b) => a.file === b.file && a.id === b.id && a.value === b.value },
+  );
+  /** 利用者が編集した空欄と、まだセッションの照合結果を待つ空欄を区別する。 */
+  private readonly stopAtEditSource = computed(
+    () => {
+      const file = this.selected();
+      const session = this.session();
+      const id = session?.file === file ? session.id : null;
+      const carried = this.carriedStopFor(id);
+      return { file, id, edited: !!(carried && carried.file === file && carried.stopAtEdited) };
+    },
+    { equal: (a, b) => a.file === b.file && a.id === b.id && a.edited === b.edited },
+  );
+  protected readonly stopAtEdited = linkedSignal({
+    source: this.stopAtEditSource,
+    computation: ({ edited }) => edited,
+  });
+  /** 空欄なら自動停止せず、値があれば仮想時刻の上限にする。 */
+  protected readonly stopAt = linkedSignal<
+    { file: string | null; id: number | null; value: string },
+    string
+  >({
+    source: this.stopAtSource,
+    computation: (source, previous) =>
+      previous &&
+      previous.source.file === source.file &&
+      previous.source.id === source.id &&
+      this.stopAtEdited()
+        ? previous.value
+        : source.value,
+  });
+  protected readonly stopAtTouched = linkedSignal({
+    source: this.stopAtEditSource,
+    computation: () => false,
+  });
+  protected readonly stopAtInvalid = computed(() => {
+    const value = this.stopAt().trim();
+    return (
+      value !== '' &&
+      (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1_000_000_000_000)
+    );
+  });
   /**
    * 止めた状態で始める（全員がそろったら仮想時間 0 で止まり、再開かステップ送りを待つ）。前の実行からは持ち越さない
    * （別のタブや前の人が止めて始めたことで、気づかずに止まったまま始まらないように）。この画面の中では選んだまま。
@@ -374,11 +446,13 @@ export class RunPage {
       const speed = this.speed();
       const paused = scenario === null && this.startPaused();
       const connect = this.connectToSend();
+      const stopAt = this.stopAt().trim();
       return {
         disable: [...this.disabled()].sort(),
         manual: this.manualToSend(),
         ...(scenario !== null ? { scenario } : {}),
         ...(speed !== null ? { speed } : {}),
+        ...(!this.stopAtInvalid() && stopAt !== '' ? { stop_at_ms: Number(stopAt) } : {}),
         ...(paused ? { start_paused: true } : {}),
         ...(connect !== null ? { connect } : {}),
       };
@@ -445,6 +519,8 @@ export class RunPage {
     if (this.speedInvalid()) {
       return [$localize`速度の倍率が範囲の外です。`];
     }
+    if (this.stopAtInvalid())
+      return [$localize`停止時刻は 1 から 1000000000000 までの整数にしてください。`];
     // 選んだシナリオを送れないうちは始めない（シナリオなしの実行が始まらないように）
     const scenario = this.scenarioChoice();
     if (scenario !== null && this.chosenScenario() === null) {
@@ -581,6 +657,9 @@ export class RunPage {
         disable: [...this.disabled()],
         manual: [...this.manual()],
         speed: this.speed(),
+        stopAt: this.stopAt(),
+        stopAtEdited: this.stopAtEdited(),
+        stopSession: this.session()?.file === this.selected() ? (this.session()?.id ?? null) : null,
         startPaused: this.startPaused(),
         logSource: this.logSource(),
       }),
@@ -591,8 +670,8 @@ export class RunPage {
     // 戻り、それを書く
     const own = computed(
       () => {
-        const { disable, manual, scenario, speed, start_paused } = this.intent();
-        return { disable, manual, scenario, speed, start_paused };
+        const { disable, manual, scenario, speed, start_paused, stop_at_ms } = this.intent();
+        return { disable, manual, scenario, speed, start_paused, stop_at_ms };
       },
       { equal: sameIntent },
     );
@@ -606,6 +685,7 @@ export class RunPage {
         scenario: undefined,
         speed: undefined,
         start_paused: undefined,
+        stop_at_ms: undefined,
       }),
     );
   }
@@ -613,6 +693,14 @@ export class RunPage {
   /** 持ち越した選択。持ち越したときと同じセッションの間だけ使う。 */
   private carriedFor(session: number | null): RunChoices | null {
     return this.carried && this.carried.session === session ? this.carried : null;
+  }
+
+  private carriedStopFor(session: number | null): RunChoices | null {
+    return this.carried &&
+      (this.carried.stopSession === undefined ? this.carried.session : this.carried.stopSession) ===
+        session
+      ? this.carried
+      : null;
   }
 
   protected selectFile(file: string): void {

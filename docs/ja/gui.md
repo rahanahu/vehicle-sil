@@ -59,7 +59,7 @@ flowchart LR
 | 起動するコマンド | `vehicle-sil-gui simulation.live.yaml` | `scripts/run-gui.py` |
 | 使われる設定ファイル | `simulation.live.yaml` | `build/<preset>/examples/ecu_main/simulation.live.yaml` |
 
-`simulation.live.yaml` は、`simulation.yaml` と同じ 2 つの ECU を、`stop_at_ms` なし、`speed: 1` で動かす設定ファイルです。停止するまで動くので、画面で値を見ながら操作できます。
+`simulation.live.yaml` は、`simulation.yaml` と同じ 2 台の ECU を使います。停止時刻は実行時に指定します。
 
 ### 全体の流れ
 
@@ -125,7 +125,6 @@ vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server
 | 症状 | 原因 | 直し方 |
 |---|---|---|
 | 「開始」を押せない | 照合にエラーがあります。 | 「所見」の文を読んで設定ファイルか ECU を直し、「照合し直す」を押します（[simulation-check.md](simulation-check.md)）。 |
-| 1 秒ほどで終わる | `simulation.yaml`（`stop_at_ms: 1000`）を選んでいます。 | 「構成ファイル」で `simulation.live.yaml` を選びます。 |
 | 「変数: つながった」にならない | ランチャーか ECU が、変数の読み書きに対応していません。 | 「[必要なもの](#必要なもの)」の「ECU の変数の読み書き」を確認します。 |
 
 ### 手順 3: 変数を見て、書き込む
@@ -253,7 +252,9 @@ vehicle-sil-gui [options] [<configuration file>]
 | `--web <dir>` | 自分の画面を配信する: そのビルドの出力のディレクトリ（`index.html` があること）。既定はサンプルの画面（「[`--web` で配信するファイル](#--web-で配信するファイル)」） |
 | `--dev-origin <origin>` | 画面の開発サーバー（`ng serve`、Vite など。`http://127.0.0.1:<port>` の形だけ）からのリクエストも受け付ける（「[開発サーバーを使う](#開発サーバーを使う)」） |
 | `--json` | URL の代わりに `{"vehicle_sil_gui": 2, "url": ..., "port": ...}` を 1 行で表示する（ツールから起動するとき） |
-| `--stop-timeout <seconds>` | 終了するとき、実行中のシミュレーションが止まるのを待つ時間（既定 10）。過ぎたらランチャーを止める |
+| `--stop-timeout <seconds>` | 終了するとき、実行中のシミュレーションが止まるのを待ち、ランチャーにシグナルを送るまでの時間。既定ではランチャーの終了を待つ |
+| `--participant-start-timeout-ms <ms>` | 起動時に必須 participant を待つ実時間（既定 30000 ms） |
+| `--participant-stop-timeout-ms <ms>` | ランチャーが participant の停止を段階ごとに待つ実時間（既定 10000 ms） |
 | `--check-timeout <seconds>` | 照合（各 ECU の `--describe` を含む）の時間の上限（既定 120）。過ぎたら照合を止める |
 | `--silent-after <seconds>` | 実行中のランチャーがこの時間より長く何も出力しなければ（ハートビートも来なければ）、画面に通知する（既定 5。1 以上） |
 | `--no-variables` | ランチャーの Control Server を起動しない（ECU の変数を読み書きしない） |
@@ -305,7 +306,7 @@ vehicle-sil-gui [options] [<configuration file>]
 
 ### リポジトリから起動する
 
-リポジトリのルートで `uv sync` をしてから、ビルドしたランチャーを `--launcher` で渡して起動します。例は、ビルドした ECU の例（`build/<preset>/examples/ecu_main/`。CMake が設定ファイルを実行ファイルの隣にコピーします）です。`stop_at_ms`（例では 1000 ms）で終わると、結果を表示します。
+リポジトリのルートで `uv sync` をしてから、ビルドしたランチャーを `--launcher` で渡して起動します。例は、ビルドした ECU の例（`build/<preset>/examples/ecu_main/`。CMake が設定ファイルを実行ファイルの隣にコピーします）です。
 
 ```sh
 uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch \
@@ -328,6 +329,20 @@ scripts/run-gui.py
 - 表示するコマンドは、リポジトリのルートで実行する形です。ほかのディレクトリから呼んだときは、実行する場所を最初の行で示します。
 - Windows では、Ctrl+C で全部が止まります。このスクリプトのプロセスだけを終了させると（ツールからの終了、タスクの終了）、GUI サーバーと実行中のシミュレーションが残ります。ツールから止めるときは、プロセスツリーごと止めます（`taskkill /T /PID <pid>`）。
 
+### Workbench
+
+リポジトリのルートで、別画面の Workbench をビルドして起動します。
+
+~~~sh
+npm --prefix gui/web/workbench ci
+npm --prefix gui/web/workbench run build
+scripts/run-gui.py --workbench
+~~~
+
+上部の **Network** でシミュレーション構成を選びます。**Network Designer** では、その構成のバスと ECU チャネルの接続先を編集できます。上部の **Scenario** には、構成ファイルと同じ階層にあるサーバー側の `scenarios/` から実行できる YAML が並びます。**Free run** と **Record & start** は、**Stop at (ms)** を空欄にすると、仮想時間で自動停止しません。時刻を入力すると、Check と再生に同じ設定が適用されます。
+
+**Settings → Scenario folder** では、**Scenario** タブで YAML を開いたり保存したりするローカルフォルダを選びます。ブラウザーが読み取り専用でフォルダを開く場合、**Save YAML** はファイルをダウンロードします。ローカルの YAML をサーバーで実行するには、選択中の Network のサーバー側 `scenarios/` に置き、実行リストを更新します。
+
 ## 停止と終了
 
 | 操作 | 起きること |
@@ -339,7 +354,7 @@ scripts/run-gui.py
 | サーバーの強制終了 | ランチャーは標準入力の終わりを受け取って、自分で止まります。 |
 
 - 標準入力を読まないランチャーは、「停止」でも「待たずに止める」でも止まりません。そのときはサーバーを止めます。
-- サーバーの終了では、`--stop-timeout` の間に止まらなければ、ランチャーのプロセスグループに SIGTERM（Windows は Ctrl+Break）を送り、5 秒後にグループを強制終了します（Windows は `taskkill /T /F`）。終わるまでの時間は、長くても `--stop-timeout` に 20 秒を加えた程度です。
+- サーバーの終了では、ランチャーの入力を閉じて終了を待ちます。`--stop-timeout` を指定してその時間内に止まらなければ、ランチャーのプロセスグループに SIGTERM（Windows は Ctrl+Break）を送り、5 秒後にグループを強制終了します（Windows は `taskkill /T /F`）。2 回目のシグナルは最初の待機と、その後の 5 秒の待機をどちらも打ち切ります。タイムアウトを指定せず、ランチャーが終了できない場合は、2 回目のシグナルで強制停止できます。
 - サーバーが止められるのは、ランチャーと、ランチャーと同じプロセスグループにいるものまでです。participant の後始末はランチャーの役目です（ランチャーは participant を別のプロセスグループで起動します）。
 - ランチャーが終わっても、ランチャーが起動したプロセスが出力を開いたままのときは、2 秒待ってから実行を終わりにし、画面に通知します。そのプロセスは残っているかもしれません。
 
@@ -1127,6 +1142,10 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 - 要素は、インラインのスタイルを許さない CSP（`style-src 'self'`。GUI サーバーのものはこれより緩い）の下でも動きます。CSS は `<style>` の要素ではなく、組み立てたスタイルシート（constructable stylesheet）で入れます。
 - `src` を読んでいる間、要素は `aria-busy="true"` を持ち、前に出していたファイルを薄く出します。
 
+グラフにマウスを重ねると、同じ仮想時刻での各信号の値が波形の横に出ます。書き込みとサンプルの両方が記録されていれば、「送った値」と「見た値」を表示します。その時刻の値がなければ「—」を表示します。
+
+グラフの上の手順の詳細には、期待値、いつ条件を満たす必要があるか、実際に判定した時刻が出ます。手順にマウスを重ねるか、クリックすると切り替わります。カーソル線はグラフ全体を縦に通るので、各信号を同じ時刻で比べられます。
+
 下の設定は、どれも要素を置いた後に変えられます。同時に変えたものは、まとめて 1 回で描き直します。単純な設定は、属性（ケバブケース）とプロパティ（キャメルケース）の両方です。オブジェクトはプロパティだけです。使えない値（数でない数、知らない `hide` の語や `theme`、`to` より前でない `from`）は使わず、ブラウザーのコンソールに警告を出します。`variables` の名前のうち、どの変数にも当たらないものは、図の上に出します。
 
 | 属性 | プロパティ | 型 | 既定 | 働き |
@@ -1267,8 +1286,10 @@ declare module 'react' {
 - URL は環境変数で渡します（引数に書くと、トークンがほかの利用者のプロセスの一覧に見えるため）。
 
   ```sh
-  VEHICLE_SIL_GUI_URL='<URL the server printed>' node examples/gui_client/run.mjs simulation.yaml
+  VEHICLE_SIL_GUI_URL='<URL the server printed>' node examples/gui_client/run.mjs simulation.yaml --stop-at-ms 1000
   ```
+
+- 有限時間で実行するには、`--stop-at-ms` に停止する仮想時刻をミリ秒（1 から 1000000000000 までの整数）で指定します。省略すると、停止するまで実行が続きます。
 
 - ブラウザの外から使うので、`Origin` をサーバー自身の origin にして送ります。
 
@@ -1296,7 +1317,7 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 
 **照合と開始のリクエスト**:
 
-- 選ばないものは、フィールドを書きません（サーバーは `null` を断ります）。フィールドは、ランチャーの要求ファイルのキーで、名前と値の形も同じです（`variant`、`params`、`scenario`、`disable`、`enable`、`manual`、`strict`、`speed`、`start_paused`）。照合は、速度と `start_paused` を開始と同じに判じます: 外につないで実時間を保つ実行は、等速以外の速度と `start_paused` を断り（`outside-real-time`）、速度のある照合は、警告 `coarse-time-step` を実行に任せます（実行がその速度で出します。[simulation-run.md](simulation-run.md#タイムステップと-ecu-のステップ) の「タイムステップと ECU のステップ」）。構成ファイルに照らして何を意味するかは、ランチャーが照合の所見で言います。
+- 選ばないものは、フィールドを書きません（サーバーは `null` を断ります）。 照合では実行の刻みを決め、指定された停止時刻、速度、一時停止開始を検証します。
 - `manual` に `disable` の名前を入れません（ランチャーが拒否します）。
 - シナリオを選んだら `start_paused` は偽にします（シナリオは止めた状態では開始できません）。
 - 照合は、前の照合のレスポンスを待ってから送ります（サーバーは 1 つずつ実行します）。正面の口の `check()` はこれを代わりに行い、待っているか送っている途中の、同じ意図と同じファイルの照合を分け合います。下の口の `client.check()` では自分で行います。
