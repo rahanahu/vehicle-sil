@@ -1,0 +1,17 @@
+# A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it
+# (recordings/, made by record_launcher.py: record again after changing this file).
+vehicle_sil_simulation: 2
+time_step_ms: 10
+
+networks:
+  - name: J1939_CAN
+    kind: can
+participants:
+  - name: Engine
+    command: [engine/vehicle_sil_engine_ecu]
+  - name: Dashboard
+    command: [dashboard/vehicle_sil_dashboard_ecu]
+  - name: Logger
+    command: [logger/can_logger, "{registry_uri}"]
+    describe: false
+    required: false
