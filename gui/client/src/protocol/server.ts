@@ -5,6 +5,7 @@
 
 import {
   Open,
+  ProtocolError,
   Reader,
   Unreadable,
   array,
@@ -56,7 +57,7 @@ import {
  * read a hello or an api/app of another version (their fields may mean something else). When to raise the version:
  * "Versioning and compatibility" in gui/protocol/README.md.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 // --- GUI server: common --------------------------------------------------------------------------
 
@@ -883,6 +884,14 @@ function partlyRecord<T>(read: Reader<T>, u: Unreadable): Reader<Record<string, 
 /** Answer of GET api/session, POST api/run and POST api/stop (the current session; null if none). */
 export const readSessionResponse = (value: unknown): SessionSummary | null =>
   field(object(value, 'response'), 'response', 'session', nullable(readSessionSummary));
+
+/** GET api/session and POST api/run must identify the GUI server that supplied the run ID. */
+export const readSessionInstance = (value: unknown): string =>
+  field(object(value, 'response'), 'response', 'instance', (instance, path) => {
+    if (typeof instance !== 'string' || !instance)
+      throw new ProtocolError(path, 'a server instance ID. Use the GUI server from this release');
+    return instance;
+  });
 
 /** What the server accepts, from `allowed` of an `api/session` response: also there when there is no run. */
 export const readSessionAllowed = (value: unknown): ServerAllowed | null =>

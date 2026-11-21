@@ -88,7 +88,7 @@ const launcherState = (write: object = TAKES) => ({
 
 const hello = (state = 'ready', id = 1, write: object = TAKES) => ({
   type: 'hello',
-  vehicle_sil_gui: 2,
+  vehicle_sil_gui: 3,
   version: '0.1.0',
   instance: 'x',
   session: {

@@ -225,7 +225,7 @@ describe('the front door', () => {
     await rig.deliver(
       {
         type: 'hello',
-        vehicle_sil_gui: 2,
+        vehicle_sil_gui: 3,
         version: '0.1.0',
         instance: 'x',
         session: summary(),
@@ -240,17 +240,6 @@ describe('the front door', () => {
   }
 
   describe('what it shows', () => {
-    it('waits for the run identity before enabling targeted controls', async () => {
-      const rig = await running();
-      const refresh = rig.front.low.fetchSession();
-      rig.http.expectOne('api/session').flush({ session: summary({}, 2) });
-      await refresh;
-      expect(rig.front.controls.get().stop.reason?.code).toBe('starting');
-      expect(rig.front.controls.get().force_stop.reason?.code).toBe('starting');
-      await rig.deliver({ type: 'session', session: summary({}, 2) });
-      expect(rig.front.controls.get().stop.ok).toBe(true);
-    });
-
     it('says the run is running, with its clock, and takes each control from the launcher', async () => {
       const { front } = await running();
       expect(front.status.get()).toEqual({
@@ -357,7 +346,7 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 2,
+          vehicle_sil_gui: 3,
           version: '0.1.0',
           instance: 'x',
           session: null,
@@ -390,7 +379,7 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 2,
+          vehicle_sil_gui: 3,
           version: '0.1.0',
           instance: 'x',
           session: null,
@@ -431,7 +420,7 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 2,
+          vehicle_sil_gui: 3,
           version: '0.1.0',
           instance: 'x',
           session: null,
@@ -1006,7 +995,7 @@ describe('the front door', () => {
       });
       rig.socket.send({
         type: 'hello',
-        vehicle_sil_gui: 2,
+        vehicle_sil_gui: 3,
         version: '0.1.0',
         instance: 'x',
         session: old,
@@ -1039,7 +1028,7 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 2,
+          vehicle_sil_gui: 3,
           version: '0.1.0',
           instance: 'x',
           session: summary(),
@@ -1158,7 +1147,7 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 2,
+          vehicle_sil_gui: 3,
           version: '0.1.0',
           instance: 'x',
           session: null,
@@ -1333,7 +1322,7 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 2,
+          vehicle_sil_gui: 3,
           version: '0.1.0',
           instance: 'x',
           session: summary(),
@@ -1358,7 +1347,7 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 2,
+          vehicle_sil_gui: 3,
           version: '0.1.0',
           instance: 'x',
           session: null,
@@ -1380,7 +1369,7 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 2,
+          vehicle_sil_gui: 3,
           version: '0.1.0',
           instance: 'x',
           session: null,
@@ -1520,7 +1509,7 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 2,
+          vehicle_sil_gui: 3,
           version: '0.1.0',
           instance: 'x',
           session: null,
@@ -1557,7 +1546,7 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 2,
+          vehicle_sil_gui: 3,
           version: '0.1.0',
           instance: 'x',
           session: ended,
@@ -1581,7 +1570,7 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 2,
+          vehicle_sil_gui: 3,
           version: '0.1.0',
           instance: 'x',
           session: null,
@@ -1999,7 +1988,7 @@ describe('the front door', () => {
         };
         const hello = (save: object) => ({
           type: 'hello',
-          vehicle_sil_gui: 2,
+          vehicle_sil_gui: 3,
           version: '0.1.0',
           instance: 'x',
           session: null,
@@ -2214,7 +2203,7 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 2,
+          vehicle_sil_gui: 3,
           version: '0.1.0',
           instance: 'x',
           session: summary({ launcher_state: { ...stateEvent(4, { outside: [row()] }), seq: 14 } }),
@@ -2233,7 +2222,7 @@ describe('the front door', () => {
     await rig.deliver(
       {
         type: 'hello',
-        vehicle_sil_gui: 2,
+        vehicle_sil_gui: 3,
         version: '0.1.0',
         instance: 'x',
         session: {
@@ -2345,7 +2334,7 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 2,
+          vehicle_sil_gui: 3,
           version: '0.1.0',
           instance: 'x',
           session: summary(),

@@ -251,7 +251,7 @@ vehicle-sil-gui [options] [<configuration file>]
 | `--launcher <path>` | `vehicle_sil_launch` のパス（`.py` で終わるパスは、この Python で実行する） |
 | `--web <dir>` | 自分の画面を配信する: そのビルドの出力のディレクトリ（`index.html` があること）。既定はサンプルの画面（「[`--web` で配信するファイル](#--web-で配信するファイル)」） |
 | `--dev-origin <origin>` | 画面の開発サーバー（`ng serve`、Vite など。`http://127.0.0.1:<port>` の形だけ）からのリクエストも受け付ける（「[開発サーバーを使う](#開発サーバーを使う)」） |
-| `--json` | URL の代わりに `{"vehicle_sil_gui": 2, "url": ..., "port": ...}` を 1 行で表示する（ツールから起動するとき） |
+| `--json` | URL の代わりに `{"vehicle_sil_gui": 3, "url": ..., "port": ...}` を 1 行で表示する（ツールから起動するとき） |
 | `--stop-timeout <seconds>` | 終了するとき、実行中のシミュレーションが止まるのを待ち、ランチャーにシグナルを送るまでの時間。既定ではランチャーの終了を待つ |
 | `--participant-start-timeout-ms <ms>` | 起動時に必須 participant を待つ実時間（既定 30000 ms） |
 | `--participant-stop-timeout-ms <ms>` | ランチャーが participant の停止を段階ごとに待つ実時間（既定 10000 ms） |

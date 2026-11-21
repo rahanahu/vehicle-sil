@@ -235,49 +235,34 @@ export class SessionFeed implements ClientSession {
 
   adopt(
     summary: SessionSummary | null,
-    instance?: string | null,
+    instance: string,
     resyncFrom?: string | null,
   ): Adoption | null {
-    // Older HTTP answers omit the instance. Read their summary only if the observed server stayed the same.
-    if (instance === undefined && resyncFrom !== this.instanceId) return null;
-    const switching =
-      instance !== undefined && this.instanceId !== null && instance !== this.instanceId;
-    if (
-      switching &&
-      (!instance || resyncFrom !== this.instanceId || this.connection.state.get() === 'open')
-    )
+    const switching = this.instanceId !== null && instance !== this.instanceId;
+    if (switching && (resyncFrom !== this.instanceId || this.connection.state.get() === 'open'))
       return null;
     const previous = switching ? null : this.current.get();
     if (summary && previous && summary.id < previous.id) return null;
-    // A same-instance null summary preserves the run and must not supersede an in-progress adoption.
-    if (!summary && !switching && (instance === undefined || instance === this.instanceId))
+    // A same-instance null summary preserves the run and any in-progress adoption.
+    if (!summary && instance === this.instanceId)
       return {
         revision: this.adoptionRevision,
-        instance: this.instanceId,
+        instance,
         session: previous?.id ?? null,
       };
     const revision = ++this.adoptionRevision;
-    const identity = instance !== undefined && (summary || !previous) ? instance : this.instanceId;
     const next = !summary
-      ? switching
-        ? null
-        : previous
+      ? null
       : previous?.id === summary.id
         ? applySummary(previous, summary, false, this.connection.state.get() === 'open')
         : sessionFromSummary(summary);
-    const changedInstance = !!identity && identity !== this.instanceId;
-    this.instanceId = identity;
-    const adoption: Adoption = { revision, instance: identity, session: next?.id ?? null };
-    // An unconfirmed summary can keep an existing target for the same run, but cannot name a new one.
-    if (next && instance) {
-      this.stopTarget = { session: next.id, instance };
-    } else if (this.stopTarget?.session !== next?.id) {
-      this.stopTarget = null;
-    }
+    const changedInstance = instance !== this.instanceId;
+    this.instanceId = instance;
+    const adoption: Adoption = { revision, instance, session: next?.id ?? null };
+    this.stopTarget = next ? { session: next.id, instance } : null;
     const notifySession = this.current.setDeferred(next);
     const notifyAllowed = switching ? this.allowedValue.setDeferred(null) : () => undefined;
-    if (changedInstance && identity)
-      this.instanceListener(identity, () => this.isCurrent(revision));
+    if (changedInstance) this.instanceListener(instance, () => this.isCurrent(revision));
     // Each deferred notification drops itself if a nested update changed that value.
     notifySession();
     notifyAllowed();
@@ -451,7 +436,6 @@ export class SessionFeed implements ClientSession {
         : null;
     const unseenLogs = () =>
       replayLogs?.logs.filter((line) => replayLogs?.unseen.has(line.seq)) ?? [];
-    let stopTarget = this.stopTarget;
     let events: LauncherEvent[] = [];
     const notices: string[] = [];
     let applied = false;
@@ -491,7 +475,6 @@ export class SessionFeed implements ClientSession {
           const sameRun = summary && instance === message.instance && session?.id === summary.id;
           const resumed = sameRun && replay?.from_seq != null;
           instance = message.instance;
-          stopTarget = summary && instance ? { session: summary.id, instance } : null;
           if (!sameRun) replayLogs = null;
           if (!summary) {
             session = null;
@@ -545,7 +528,6 @@ export class SessionFeed implements ClientSession {
         case 'session':
           if (session?.id !== message.session.id) replayLogs = null;
           takeAllowed(message.session.allowed);
-          stopTarget = instance ? { session: message.session.id, instance } : null;
           // The summary is authoritative: it arrives in the same order as events, so replace the state with the
           // server's state at that point (keep the log)
           session =
@@ -599,7 +581,7 @@ export class SessionFeed implements ClientSession {
       replayLogs && replayLogs.session === session?.id && replayLogs.instance === instance
         ? replayLogs
         : null;
-    this.stopTarget = stopTarget;
+    this.stopTarget = session && instance ? { session: session.id, instance } : null;
     // HTTP can synchronously refresh this same run during a notification. It supersedes its own
     // snapshot, but not the ordered WebSocket messages (which include command acknowledgements).
     const sessionId = session?.id ?? null;

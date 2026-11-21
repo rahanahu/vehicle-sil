@@ -93,6 +93,13 @@ export class DesignPage {
   private readonly document = inject(DOCUMENT);
 
   protected readonly kinds = KINDS;
+  protected readonly connectionProblem = computed(() => {
+    const error = this.info.app.error();
+    return this.connection.incompatible() ?? (error ? errorMessage(error) : null);
+  });
+  private readonly compatible = computed(
+    () => this.info.app.hasValue() && !this.connection.incompatible(),
+  );
 
   protected readonly configs = resource({
     params: () => this.auth.token() ?? undefined,
@@ -111,7 +118,9 @@ export class DesignPage {
   protected readonly loaded = resource({
     params: () => {
       const file = this.file();
-      return this.auth.token() && file !== null ? { file, reloads: this.reloads() } : undefined;
+      return this.compatible() && this.auth.token() && file !== null
+        ? { file, reloads: this.reloads() }
+        : undefined;
     },
     loader: ({ params }) => this.front.readConfig({ file: params.file }),
   });
@@ -152,7 +161,8 @@ export class DesignPage {
     params: () => {
       const file = this.file();
       const draft = this.draft();
-      if (file === null || draft === null || !this.auth.token()) return undefined;
+      if (!this.compatible() || file === null || draft === null || !this.auth.token())
+        return undefined;
       return { file, text: draft, variant: this.variant(), again: this.again() };
     },
     loader: async ({ params, abortSignal }): Promise<Answer> => {
@@ -434,7 +444,7 @@ export class DesignPage {
   /** 保存してあるファイルの ECU を読み直す（実行ファイルを作り直した後）。答えは次の照合が使う。 */
   protected async describeAgain(): Promise<void> {
     const file = this.file();
-    if (file === null || this.describing()) return;
+    if (!this.compatible() || file === null || this.describing()) return;
     this.describing.set(true);
     this.describeProblem.set(null);
     const pressed = this.design()?.notDescribed ?? [];

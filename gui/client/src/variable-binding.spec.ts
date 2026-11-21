@@ -77,7 +77,7 @@ const launcherEvent = (seq: number, state: object, session = 1) => ({
 
 const hello = (state = 'ready', id = 1, session: object = {}) => ({
   type: 'hello',
-  vehicle_sil_gui: 2,
+  vehicle_sil_gui: 3,
   version: '0.1.0',
   instance: 'x',
   session: {

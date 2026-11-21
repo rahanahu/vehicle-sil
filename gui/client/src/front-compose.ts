@@ -38,7 +38,6 @@ export interface Snapshot {
   /** The session copy matches the server. */
   ready: boolean;
   session: SessionView | null;
-  stopTargetKnown: boolean;
   /** What the GUI server accepts (null until it says). */
   allowed: ServerAllowed | null;
   limits: AppInfo['limits'];
@@ -293,8 +292,6 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
     stop = fromServer(serverStop, 'the server does not stop the run now');
   else if (!stoppable)
     stop = control(false, reason('not-running', 'no run is going: there is nothing to stop'));
-  else if (!s.stopTargetKnown)
-    stop = control(false, reason('starting', 'wait until the new run can be identified'));
   else if (stopsAsked > 0)
     stop = control(
       false,
@@ -312,8 +309,6 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
     force = fromServer(serverForce, 'the server does not force a stop now');
   else if (!stoppable)
     force = control(false, reason('not-running', 'no run is going: there is nothing to stop'));
-  else if (!s.stopTargetKnown)
-    force = control(false, reason('starting', 'wait until the new run can be identified'));
   else if (stopsAsked === 0 && !s.busy.has('stop'))
     force = control(
       false,

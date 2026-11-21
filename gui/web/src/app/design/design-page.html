@@ -9,6 +9,8 @@
       </p>
     </mat-card-content>
   </mat-card>
+} @else if (connectionProblem(); as reason) {
+  <p class="error" role="alert" lang="en" data-testid="design-connection-error">{{ reason }}</p>
 } @else {
   <mat-card appearance="outlined">
     <mat-card-content>

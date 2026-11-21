@@ -149,7 +149,7 @@ describe('RunControl', () => {
       const session = (answer('run') as { session: Record<string, unknown> }).session;
       const hello = (instance: string) => ({
         type: 'hello',
-        vehicle_sil_gui: 2,
+        vehicle_sil_gui: 3,
         version: '0.1.0',
         instance,
         session,
@@ -457,31 +457,23 @@ describe('RunControl', () => {
     expect(run.session()?.id).toBe(id);
   });
 
-  it('shows an older start answer from the known server without guessing the stop target', async () => {
-    const id = seedSession() + 1;
-    const started = client.run.start({ file: 'a.yaml', disable: [] });
-    const stopped = client.run.stop();
-    const { session } = answer('run') as { session: Record<string, unknown> };
-    http.expectOne('api/run').flush({ session: { ...session, id } });
-    await expect(started).resolves.toMatchObject({ id });
-    await expect(stopped).rejects.toThrow('did not identify the run');
-    expect(run.session()?.id).toBe(id);
-    expect(client.session.currentTarget()).toBeNull();
-    await expect(client.run.stop()).rejects.toThrow('no stop was sent');
-    http.expectNone('api/stop');
-    http.expectNone('api/stop-session');
+  it('rejects an older session response with version guidance', async () => {
+    const refresh = client.fetchSession();
+    const { session } = answer('run') as { session: unknown };
+    http.expectOne('api/session').flush({ session });
+    await expect(refresh).rejects.toThrow('Use the GUI server from this release');
+    expect(run.session()).toBeNull();
   });
 
-  it('ignores an older start answer without an instance after the known server changes', async () => {
-    const id = seedSession();
+  it('rejects an older start answer without sending a queued stop', async () => {
     const started = client.run.start({ file: 'a.yaml', disable: [] });
-    const fresh = client.fetchSession();
-    http.expectOne('api/session').flush({ ...answer('run'), instance: 'new-instance' });
-    const { session } = answer('run') as { session: Record<string, unknown> };
-    http.expectOne('api/run').flush({ session: { ...session, id: id + 1 } });
-    await Promise.all([started, fresh]);
-    expect(client.session.currentTarget()).toEqual({ session: id, instance: 'new-instance' });
-    expect(run.session()?.id).toBe(id);
+    const stopped = client.run.stop();
+    const { session } = answer('run') as { session: unknown };
+    http.expectOne('api/run').flush({ session });
+    await expect(started).rejects.toThrow('Use the GUI server from this release');
+    await expect(stopped).rejects.toThrow('no stop was sent');
+    expect(run.session()).toBeNull();
+    http.expectNone('api/stop-session');
   });
 
   it('does not send an unscoped stop if the start has no answer', async () => {

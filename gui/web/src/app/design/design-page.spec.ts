@@ -75,6 +75,21 @@ describe('DesignPage', () => {
     return fixture;
   }
 
+  it('shows the protocol mismatch without opening or checking a configuration', async () => {
+    const fixture = TestBed.createComponent(DesignPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush({ ...response('app'), vehicle_sil_gui: 2 });
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    fake.last().send({ ...(server('ws-pass')[0] as object), vehicle_sil_gui: 2 });
+    await sleep(DESIGN_CHECK_DELAY_MS + BATCH_MS + 20);
+    TestBed.tick();
+    expect(text(fixture, 'design-connection-error')).toContain('server speaks version 2');
+    http.expectNone((request) => request.url.startsWith('api/config?'));
+    http.expectNone('api/check');
+    http.expectNone('api/describe');
+  });
+
   it('builds the tables from the check of the text, and puts the findings on their rows', async () => {
     const fixture = await openWith((check) => {
       check['findings'] = [
