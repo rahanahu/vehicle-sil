@@ -18,7 +18,7 @@ if(NOT TARGET vehicle_sil::simulation)
     GIT_REPOSITORY https://github.com/rahanahu/vehicle-sil.git
     # The vehicle-sil release your ECUs are built with. Keep it the same as the version of the
     # tools (vehicle_sil_launch version): change both together.
-    GIT_TAG v0.2.0-rc.2
+    GIT_TAG v0.2.0
     GIT_SHALLOW TRUE)
   FetchContent_MakeAvailable(vehicle_sil)
 endif()
