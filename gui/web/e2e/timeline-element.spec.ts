@@ -411,6 +411,37 @@ test('timeline element: src with a token and headers; data before src; errors sa
   expect(problems.filter((p) => !/status of 40[14]/.test(p))).toEqual([]);
 });
 
+test('timeline element: a file name changed during a pending fetch is retained', async ({
+  page,
+}) => {
+  await serve(page, '<vehicle-sil-timeline id="t"></vehicle-sil-timeline>');
+  let started!: () => void;
+  let release!: () => void;
+  const requested = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const response = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(`${ORIGIN}/api/timeline/1`, async (route) => {
+    started();
+    await response;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: readFileSync(join(REFERENCES, 'write_refused.timeline.json'), 'utf8'),
+    });
+  });
+  await page.goto(`${ORIGIN}/test.html`);
+  await set(page, 't', { src: '/api/timeline/1' });
+  await requested;
+  await set(page, 't', { fileName: 'shown.json' });
+  release();
+  const el = page.locator('#t');
+  await expect(el.getByRole('heading', { level: 2 })).toHaveText('an ECU refuses a write');
+  await expect(el.locator('#facts')).toContainText('shown.json');
+});
+
 test("timeline element: the page's CSS does not reach in, its CSS does not leak out, and colours can be set", async ({
   page,
 }) => {
