@@ -2,7 +2,7 @@ import { Component, computed, inject, linkedSignal, signal } from '@angular/core
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
-import { Speed } from '@vehicle-sil/gui-client';
+import { RunTarget, Speed } from '@vehicle-sil/gui-client';
 import { MeasurePipe } from '../core/format/measure-pipe';
 import { numberText } from '../core/format/number-text';
 import { SimulationTime } from '../core/session/simulation-time';
@@ -33,6 +33,7 @@ export const DEFAULT_STEP_MS = 100;
   selector: 'app-time-panel',
   imports: [MatButtonModule, MatFormFieldModule, MatInputModule, MeasurePipe, SpeedPicker],
   template: `
+    @let target = time.target();
     <dl class="facts">
       <div>
         <dt i18n>仮想時刻</dt>
@@ -101,7 +102,7 @@ export const DEFAULT_STEP_MS = 100;
       </p>
     }
     <!-- Enter は form の暗黙の送信で送る: 日本語入力の変換を確定する Enter では、ブラウザーは送らない -->
-    <form class="row" (submit)="sendStep($event)">
+    <form class="row" (submit)="sendStep($event, target)">
       <mat-form-field class="ms" subscriptSizing="dynamic">
         <mat-label i18n>ステップ送りの量（ms）</mat-label>
         <input
@@ -166,7 +167,7 @@ export const DEFAULT_STEP_MS = 100;
         [disabled]="!canSetSpeed()"
         disabledInteractive
         [attr.aria-describedby]="speedWhy() ? 'time-speed-why' : null"
-        (click)="setSpeed()"
+        (click)="setSpeed(target)"
         i18n
       >
         速度を変える
@@ -381,15 +382,15 @@ export class TimePanel {
   }
 
   /** 「ステップ送り」か Enter。ページは移らない（サーバーの CSP は form-action 'none'）。 */
-  protected sendStep(event: Event): void {
+  protected sendStep(event: Event, target: RunTarget | null): void {
     event.preventDefault();
     this.stepChecked.set(true);
     const ms = this.stepMs();
-    if (ms !== null && this.canStep()) void this.time.step(ms);
+    if (ms !== null && this.canStep()) void this.time.step(ms, target);
   }
 
-  protected setSpeed(): void {
+  protected setSpeed(target: RunTarget | null): void {
     const speed = this.newSpeed();
-    if (speed !== null && this.canSetSpeed()) void this.time.setSpeed(speed);
+    if (speed !== null && this.canSetSpeed()) void this.time.setSpeed(speed, target);
   }
 }

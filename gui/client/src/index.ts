@@ -6,7 +6,7 @@
 export { DEFAULT_LIMITS, createClient } from './client';
 export type { ClientOptions, GuiClient } from './client';
 export type { ClientConnection, CloseInfo, ConnectionState } from './connection';
-export type { ClientSession, Notice } from './session';
+export type { ClientSession, Notice, RunTarget } from './session';
 export type { ClientRun, StopAction } from './run';
 export type {
   ClientTime,

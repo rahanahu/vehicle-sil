@@ -42,7 +42,7 @@ from .paths import ConfigFile, ConfigRoot, PathRejected
 from .recording import Recording
 from .refusal import Refused
 from .scenarios import list_scenarios, relative_to_config, resolve_scenario
-from .session import SILENT_AFTER_S, Limits, Session
+from .session import SILENT_AFTER_S, Limits, Session, check_timing
 from .source import Source
 from .static import MAX_FILE_BYTES, NOT_BUILT, StaticFiles, TooLarge
 from .timelines import (KEPT as TIMELINES_KEPT, PAGE_FILES, Timelines, api_path, find_page_dir, read_page_file,
@@ -221,6 +221,7 @@ class Run:
     token: str | None = None  # of that file
     recording: Recording = field(default_factory=Recording)  # the applied writes made through this server
     timeline: Path | None = None  # the file the launcher writes the scenario's timeline to (--timeline)
+    preflight_timing: dict = field(default_factory=dict)
 
 
 @dataclass(eq=False)
@@ -918,7 +919,8 @@ class GuiServer:
             available=False, reason="this run plays a scenario: its writes are the scenario's own" if scenario
             is not None else f"this run has no variables to write: {why_not}")
         run = Run(session, proc, variables, features=tuple(self.launcher.features), credentials=credentials,
-                  token=token, recording=recording, timeline=timeline, request=request)
+                  token=token, recording=recording, timeline=timeline, request=request,
+                  preflight_timing=check_timing(checked))
         self._runs.add(run)
         self.current = run
         run.task = asyncio.create_task(self._follow(run))
@@ -977,10 +979,22 @@ class GuiServer:
         that stands still must not hold this request)."""
         try:
             self._not_closing()
-            command = check_time_command(await self._body(request))
+            body = await self._body(request)
+            targeted = "session" in body or "instance" in body
+            session = body.pop("session", None)
+            instance = body.pop("instance", None)
+            if targeted:
+                if type(session) is not int or session < 1:
+                    raise InvalidRequest("invalid-field", "session must be a positive integer")
+                if not isinstance(instance, str) or not instance:
+                    raise InvalidRequest("invalid-field", "instance must be the server instance from the run or session answer")
+            command = check_time_command(body)
         except (InvalidRequest, Refused) as e:
             return self._refusal(e)
         run = self.current
+        # Compare the target after reading the request and before writing anything to the launcher.
+        if targeted and (instance != self.instance or self._starting or run is None or session != run.session.id):
+            return error(409, "session-changed", "the run has changed: no time command was sent")
         proc = run.proc if run else None
         if run is None or self._starting or run.session.state != "running" or not run.session.launcher_running \
                 or proc.stdin is None or proc.stdin.is_closing():
@@ -1390,8 +1404,13 @@ class GuiServer:
         async def stdout() -> None:
             async for line in process.lines(proc.stdout, MAX_LINE):
                 if line is None:
-                    self.hub.broadcast(session.problem("line-too-long", f"the launcher wrote a line longer than "
-                                                       f"{MAX_LINE} bytes: it is skipped", None))
+                    messages = session.problem("line-too-long", f"the launcher wrote a line longer than "
+                                               f"{MAX_LINE} bytes: it is skipped", None)
+                    if session.check is None and not session.check_timing and run.preflight_timing:
+                        # Check and run use the same intent, including its stop time.
+                        session.check_timing = run.preflight_timing
+                        messages.append(session.message())
+                    self.hub.broadcast(messages)
                 elif line.strip():
                     self.relay(session, hide_request_in_line(line, run.request), run)
 

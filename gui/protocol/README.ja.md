@@ -89,7 +89,7 @@ API のバージョンは `vehicle_sil_gui`（今は 3）です。サーバー�
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: そのネットワークを、このコンピューターでどこにつなげるか（下の「ネットワークを外につなぐ」） | `connections.json` |
 | `POST api/stop` `{force}` | `{session}`（今の要約。実行がなければ `null`） | `stop*.json` |
 | `POST api/stop-session` `{session, instance, force}` | 対象の `{session}`、または 409 `session-changed` | — |
-| `POST api/time` `{command, ms, value, id}` | `{session_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
+| `POST api/time` `{command, ms, at_ms, value, id, session, instance}` | `{session_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
 | `GET api/session` | `{instance, session, allowed}`（`session` は実行がなければ `null`。`allowed` は下の「サーバーが受け付けること（`allowed`）」） | `session-*.json` |
 | `GET api/dashboard?file=<configuration file>` | 設定ファイルの隣のダッシュボードのファイル: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
@@ -193,7 +193,7 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 
 ### 時間のコマンド（`api/time`）
 
-本文は次のどれかです（ほかのフィールドは 400 `invalid-field`）。
+本文は次のいずれかのコマンドです。表の下で説明するフィールドも追加できます。
 
 | 本文 | 値の範囲 |
 |---|---|
@@ -205,10 +205,12 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 
 どの本体にも `"id"`（0 から 2^53 までの整数）を付けられます。サーバーはそれをコマンドの行に入れてランチャーに渡し、ランチャーはその行に答える `command` イベントの `id` に返します（`id` のない行は `null`）。画面は、自分のコマンドへの答えを、ほかの画面やランチャーの標準入力のコマンドへの答えと見分けるのに使います。サーバーは `id` を読みません。レスポンスのコマンドにも `id` が入ります。そのような数でない `id` は 400 `invalid-field`です。
 
+特定の実行にコマンドを送るには、`session`（正の整数）と `instance`（`api/run`、`api/session` の応答か WebSocket の `hello` にあるサーバーの識別子）を両方指定します。サーバーはランチャーに書く直前にこの組を照合します。一致しない場合、実行がない場合、次の実行を開始中の場合は 409 `session-changed` を返します。2 つの値はランチャーへのコマンドや応答の `command` に含めません。片方だけの指定、不正な値、未知のフィールドは 400 `invalid-field` です。両方を省略すると、サーバーが処理した時点の実行にコマンドを送ります。
+
 サーバーは、動いている実行のランチャーの標準入力に 1 行で書き、レスポンスを待たずに返します。止まっているランチャーでリクエストが固まらないようにするためです。
 
 - 受け付けたかどうかと理由は、ランチャーの `command` のイベント（`accepted`、`message`、断った理由のコード `reason`、`id`、`step` の実際に進む `ms` とその後に止まる時刻 `at_ms`、`run_until` の頼んだ時刻をタイムステップに切り上げた `at_ms`）で届きます。コマンドが反映されたことは `time` のイベントで届きます。どちらも、要約の `last_command` と `time` に残ります。
-- 動いている実行がなければ（終わった、始まりかけ、ランチャーの入力が閉じた、ランチャーの最後の `state` が `not-running` と言っている）409 `not-running` です。ランチャーの `allowed` にある、ほかの理由では断りません。その `allowed` は少し古いことがあるので、コマンドの答えはランチャー自身が返します。
+- 対象の指定がないか照合が通った場合に、ランチャーがコマンドを受け取れなければ 409 `not-running` です。実行の終了や開始中、ランチャーの入力が閉じた場合、最後の `state` が `not-running` の場合が該当します。`allowed` にあるほかの理由はすでに変わっていることがあるため、ランチャーがコマンドに答えます。
 - ランチャーが入力を読まないままのときも、リクエストは長くて約 2 秒で返ります（コマンドはランチャーの入力に残ります）。
 - コマンドの意味（一時停止はステップの境目で反映される、ステップ実行は一時停止の間だけ、など）はランチャーのルールです（[docs/simulation-events.md](../../docs/ja/simulation-events.md) の「標準入力のコマンド」）。
 
@@ -246,7 +248,7 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | 422 | `check-failed` | `api/run`: 実行を成す内容の照合が通らなかったので、実行を始めなかった（`detail` は `{result, findings}`。上の「照合と開始」）。例: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`、`api/write`: 動いている実行がない |
 | 409 | `scenario-running` | `api/write`: 動いている実行がシナリオを実行している（シナリオの結果を変えないため、書かない）。例 `error-scenario-running.json` |
-| 409 | `session-changed` | `api/write`: `session` が、動いている実行の id と違う（実行が替わる間に送った書き込み）。何も書いていない。例 `error-session-changed.json` |
+| 409 | `session-changed` | `api/stop-session` と対象を指定した `api/time` では、サーバーの識別子か実行が変わった。`api/write` では、指定した実行 ID が動いている実行と違う。操作は送られていない。例 `error-session-changed.json` |
 | 409 | `config-changed` | `POST api/config`: ファイルの中身がもう `stamp` でない、または新しいファイル（`stamp` が `null`）がすでにある |
 | 409 | `config-busy` | `POST api/config`: ファイルを置き換えられなかった（理由はメッセージに） |
 | 409 | `variables-not-ready` | `api/write`: 変数の機能の状態が `ready` でない（文言に、要約の `variables.reason`） |
@@ -418,6 +420,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | `last_seq`、`last_t_ms` | 最後に受信したイベントの `seq` と `t_ms` |
 | `time` | 最後の `time` イベント（そのまま。なければ `null`） |
 | `check` | `check` イベントの `check`（照合の結果を丸ごと。まだなければ `null`） |
+| `stop_at_ms` | 照合結果が保存上限を超えたときや、イベントの行が大きすぎて読み飛ばされたときの、照合済みの停止時刻。行を読み飛ばした場合は、起動前に同じリクエストを照合した値を使う。`null` は上限なし。照合結果を保存できるときや値が不明なときは省略 |
 | `registry` | 最後の `registry` イベントから `event`、`seq`、`t_ms` を除いたもの（なければ `null`） |
 | `participants` | participant ごとの今の状態（初めて現れた順） |
 | `participants_omitted` | 上限（256 人）を超えたので覚えていない participant のイベントの数 |

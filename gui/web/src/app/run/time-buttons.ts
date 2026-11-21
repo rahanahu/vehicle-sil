@@ -1,5 +1,6 @@
 import { Component, computed, inject } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
+import type { RunTarget } from '@vehicle-sil/gui-client';
 import { SimulationTime } from '../core/session/simulation-time';
 import { WAITING_TEXT, controlLine } from '../widgets/control-labels';
 import { failureLine } from './labels';
@@ -13,6 +14,7 @@ import { failureLine } from './labels';
   selector: 'app-time-buttons',
   imports: [MatButtonModule],
   template: `
+    @let target = time.target();
     <button
       matButton="tonal"
       type="button"
@@ -20,7 +22,7 @@ import { failureLine } from './labels';
       [disabled]="!controls().pause.ok"
       disabledInteractive
       [attr.aria-describedby]="pauseWhy() ? 'time-pause-why' : null"
-      (click)="pause()"
+      (click)="pause(target)"
     >
       <span class="mark" aria-hidden="true">‖</span>
       <span class="text">{{ pauseText }}</span>
@@ -32,7 +34,7 @@ import { failureLine } from './labels';
       [disabled]="!controls().resume.ok"
       disabledInteractive
       [attr.aria-describedby]="resumeWhy() ? 'time-resume-why' : null"
-      (click)="resume()"
+      (click)="resume(target)"
     >
       <span class="mark" aria-hidden="true">▶</span>
       <span class="text">{{ resumeText }}</span>
@@ -109,11 +111,11 @@ export class TimeButtons {
     return controlLine(op, this.controls()[op]);
   }
 
-  protected pause(): void {
-    if (this.controls().pause.ok) this.time.pause();
+  protected pause(target: RunTarget | null): void {
+    if (this.controls().pause.ok) this.time.pause(target);
   }
 
-  protected resume(): void {
-    if (this.controls().resume.ok) this.time.resume();
+  protected resume(target: RunTarget | null): void {
+    if (this.controls().resume.ok) this.time.resume(target);
   }
 }

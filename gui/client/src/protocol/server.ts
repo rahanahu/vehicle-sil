@@ -631,6 +631,8 @@ export interface SessionSummary {
    * that asked for `session_without_check` lack the field and read it as null (the local check result is used as is).
    */
   check: CheckResult | null;
+  /** The checked stop time when the full check was too large to keep. */
+  stop_at_ms?: number | null;
   participants: SummaryParticipant[];
   findings: Finding[];
   result: RunResult | null;
@@ -700,6 +702,7 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
   const u = new Unreadable(path);
   const time = field(f, path, 'time', soft(nullable(object), null, u));
   const timePath = `${path}.time`;
+  const stopAt = field(f, path, 'stop_at_ms', soft(nullable(integer), undefined, u));
   const summary: Omit<SessionSummary, 'unreadable'> = {
     id: field(f, path, 'id', integer),
     ...(f['snapshot_rev'] === undefined
@@ -756,6 +759,7 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
       ),
     ),
     allowed: field(f, path, 'allowed', soft(nullable(readServerAllowed), null, u)),
+    ...(stopAt === undefined ? {} : { stop_at_ms: stopAt }),
     check: field(
       f,
       path,
@@ -919,8 +923,8 @@ export interface StopSessionRequestBody extends StopRequestBody {
 export type TimeCommandName = 'pause' | 'resume' | 'step' | 'run_until' | 'speed';
 
 /**
- * Body of POST api/time. The server passes it to the launcher as one line and returns at once. Whether it was accepted
- * arrives as a command event, and its effect as a time event.
+ * The command sent in POST api/time. The GUI Client adds the run's session and server instance to the request.
+ * The server passes the command to the launcher as one line. The answer arrives as a command event.
  */
 export type TimeCommand = (
   | { command: 'pause' }

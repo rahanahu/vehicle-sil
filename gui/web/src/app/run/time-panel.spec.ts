@@ -1,5 +1,5 @@
 import { signal } from '@angular/core';
-import { Control, FrontControls } from '@vehicle-sil/gui-client';
+import { Control, FrontControls, RunTarget } from '@vehicle-sil/gui-client';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { OperationFailure } from '../core/session/gui-client';
 import { SimulationTime } from '../core/session/simulation-time';
@@ -8,11 +8,17 @@ import { TimePanel } from './time-panel';
 describe('TimePanel: the step field', () => {
   let fixture: ComponentFixture<TimePanel>;
   let steps: number[];
+  let targets: (RunTarget | null)[];
+  const firstRun = { session: 1, instance: 'server' };
+  const target = signal<RunTarget | null>(firstRun);
 
   beforeEach(async () => {
     steps = [];
+    targets = [];
+    target.set(firstRun);
     // 一時停止していて、ステップ送りができる時刻
     const time = {
+      target,
       simMs: signal(0),
       speed: signal(1),
       actualSpeed: signal(null),
@@ -30,7 +36,11 @@ describe('TimePanel: the step field', () => {
       }),
       failure: signal(null),
       answerTimeoutMs: 5000,
-      step: (ms: number) => Promise.resolve(steps.push(ms)).then(() => undefined),
+      step: (ms: number, shown: RunTarget | null) => {
+        steps.push(ms);
+        targets.push(shown);
+        return Promise.resolve();
+      },
       setSpeed: () => Promise.resolve(),
     };
     TestBed.configureTestingModule({
@@ -75,6 +85,18 @@ describe('TimePanel: the step field', () => {
     );
     await fixture.whenStable();
     expect(steps).toEqual([]);
+  });
+
+  it('submits the target from the rendered form while a newer run is waiting to render', async () => {
+    await type('25');
+    const secondRun = { session: 2, instance: 'server' };
+    target.set(secondRun);
+    // The click happened before Angular rendered the new target.
+    field().form!.requestSubmit();
+    expect(targets).toEqual([firstRun]);
+    await fixture.whenStable();
+    await submit();
+    expect(targets).toEqual([firstRun, secondRun]);
   });
 
   it('shows an error when the field is left or sent, not while it is typed', async () => {
@@ -132,6 +154,7 @@ describe('TimePanel: why an operation cannot be used', () => {
     failure.set(null);
     speeds.length = 0;
     const time = {
+      target: signal({ session: 1, instance: 'server' }),
       simMs: signal(1000),
       speed: signal(1),
       actualSpeed: signal(1),

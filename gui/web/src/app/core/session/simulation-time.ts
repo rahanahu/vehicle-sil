@@ -3,6 +3,7 @@ import {
   ActionError,
   CommandView,
   OperationName,
+  RunTarget,
   TimeView,
   isHolding,
 } from '@vehicle-sil/gui-client';
@@ -33,6 +34,10 @@ export class SimulationTime {
   private readonly control = this.front.low.time;
   private readonly state = readableSignal(this.control.state);
   private readonly session = readableSignal(this.front.low.session.session);
+  readonly target = computed(() => {
+    this.session();
+    return this.front.low.session.currentTarget();
+  });
 
   /** 各操作を押せるか、押せない理由、範囲（ステップ送りの上限、速さの範囲）。正面の口が言う。 */
   readonly controls = readableSignal(this.front.controls);
@@ -83,22 +88,22 @@ export class SimulationTime {
   readonly failure = this.last.failure;
 
   /** 一時停止を送る。失敗は `status.problem` に出る（この Promise は断られても失敗しない）。 */
-  pause(): Promise<void> {
-    return this.send('pause', () => this.front.time.pause());
+  pause(target?: RunTarget | null): Promise<void> {
+    return this.send('pause', () => this.front.time.pause(target));
   }
 
-  resume(): Promise<void> {
-    return this.send('resume', () => this.front.time.resume());
+  resume(target?: RunTarget | null): Promise<void> {
+    return this.send('resume', () => this.front.time.resume(target));
   }
 
   /** 一時停止しているとき、仮想時間を ms 進めて、また止める（ランチャーが刻みの倍数に切り上げる）。 */
-  step(ms: number): Promise<void> {
-    return this.send('step', () => this.front.time.step(ms));
+  step(ms: number, target?: RunTarget | null): Promise<void> {
+    return this.send('step', () => this.front.time.step(ms, target));
   }
 
   /** 速さを変える（一時停止はそのまま）。 */
-  setSpeed(value: number | 'max'): Promise<void> {
-    return this.send('speed', () => this.front.time.setSpeed(value));
+  setSpeed(value: number | 'max', target?: RunTarget | null): Promise<void> {
+    return this.send('speed', () => this.front.time.setSpeed(value, target));
   }
 
   private async send(op: OperationName, operation: () => Promise<void>): Promise<void> {

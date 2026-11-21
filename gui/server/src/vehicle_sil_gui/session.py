@@ -24,7 +24,7 @@ from itertools import islice
 from typing import Any
 
 from .allowed import Facts, Numbered, allowed as allowed_of
-from .launcher import CONTROL_EVENT, CONTROL_SUMMARY_FIELD, SCENARIO_STEP_EVENT
+from .launcher import CONTROL_EVENT, CONTROL_SUMMARY_FIELD, SCENARIO_STEP_EVENT, STEP_MS_MAX
 
 EVENTS_FORMAT = 2  # the `vehicle_sil_events` of hello that this server reads
 SHARED_LOG = "*"  # the source key of the log shared by the sources after Limits.log_sources
@@ -52,6 +52,15 @@ STOP_NONE, STOP_REQUESTED, STOP_FORCED = "none", "requested", "forced"
 SCENARIO_STEP_FIELDS = ("index", "line", "kind", "text", "status", "start_ms", "at_ms", "end_ms", "code", "message")
 NO_VARIABLES = {"rev": 0, "state": "off", "reason": None, "peers": [], "peers_omitted": 0, "variables_omitted": 0,
                 "operations": []}
+
+
+def check_timing(check: dict) -> dict:
+    """The bounded timing fields that survive losing a full check."""
+    if "stop_at_ms" in check:
+        stop_at = check["stop_at_ms"]
+        if stop_at is None or (type(stop_at) is int and 1 <= stop_at <= STEP_MS_MAX):
+            return {"stop_at_ms": stop_at}
+    return {}
 
 
 @dataclass(frozen=True)
@@ -271,6 +280,7 @@ class Session:
         self.last_t_ms: int | None = None
         self.time: dict | None = None
         self.check: dict | None = None
+        self.check_timing: dict = {}  # kept only when the full check cannot be retained
         self.registry: dict | None = None
         self.participants: dict[str, dict] = {}
         self.participants_omitted = 0
@@ -380,10 +390,14 @@ class Session:
         elif kind == SCENARIO_STEP_EVENT:
             self._keep_step(event)
         elif kind == "check":
-            self._scenario_of_check(event["check"])
+            check = event["check"]
+            self._scenario_of_check(check)
+            self.check_timing = {}
             if size <= self.limits.object_bytes:
-                self.check = event["check"]
+                self.check = check
             else:
+                self.check = None
+                self.check_timing = check_timing(check)
                 out += self._limit("check", f"the launcher's check is larger than {self.limits.object_bytes} "
                                             "bytes: it is shown now, but not kept for a screen opened later")
         elif kind == "result":
@@ -726,6 +740,7 @@ class Session:
             "problems": list(self.problems), "problems_omitted": self.problems_omitted,
             "problem_seq": self._problem_seq,
             "scenario": self.scenario_summary(),
+            **self.check_timing,
         }
         if variables:
             out["variables"] = self.variables() if self.variables is not None else dict(NO_VARIABLES)

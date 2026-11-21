@@ -262,6 +262,7 @@ export function buildClient(options: ClientOptions): ClientParts {
   const time = new TimeControl(
     session.session,
     http,
+    () => session.currentTarget(),
     options.answerTimeoutMs ?? ANSWER_TIMEOUT_MS,
     onError,
   );

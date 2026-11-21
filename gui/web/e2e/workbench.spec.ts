@@ -675,6 +675,55 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
   });
 }
 
+test('workbench shows the active stop time and restores the next run input', async ({ page }) => {
+  test.skip(
+    process.env['VEHICLE_SIL_VERIFY_WORKBENCH'] !== '1' || test.info().project.name !== 'static',
+  );
+  const server = await launchGuiServer({
+    launcher: REPLAY_LAUNCHER,
+    root: CONFIGS,
+    config: join(CONFIGS, 'forever.yaml'),
+    env: { REPLAY_FEATURES: features },
+    port: 0,
+    web: join(REPOSITORY, 'build', 'gui-workbench', 'browser'),
+  });
+  try {
+    let socket: WebSocketRoute | undefined;
+    await page.routeWebSocket(/\/ws$/, (ws) => {
+      ws.connectToServer();
+      socket = ws;
+    });
+    await page.goto(server.url);
+    await expect(page.getByRole('status').filter({ hasText: /^Ready$/ })).toBeVisible();
+    const draft = page.getByRole('textbox', { name: 'Stop at (ms)' });
+    await draft.fill('4321');
+    const summary = (state: string) =>
+      JSON.parse(
+        readFileSync(join(REPOSITORY, `gui/protocol/examples/session-${state}.json`), 'utf8'),
+      ).response.session;
+    const running = summary('running');
+    const send = (session: object) => socket!.send(JSON.stringify({ type: 'session', session }));
+
+    send({ ...running, check: null });
+    await expect(page.getByText('Stop at (ms): Awaiting check', { exact: true })).toBeVisible();
+    await expect(draft).toHaveCount(0);
+    send({
+      ...running,
+      snapshot_rev: running.snapshot_rev + 1,
+      check: null,
+      stop_at_ms: 10000,
+    });
+    await expect(page.getByText('Stop at (ms): 10000', { exact: true })).toBeVisible();
+    send({ ...summary('ended'), snapshot_rev: running.snapshot_rev + 2 });
+    await expect(draft).toHaveValue('4321');
+
+    send({ ...running, id: running.id + 1 });
+    await expect(page.getByText('Stop at (ms): No limit', { exact: true })).toBeVisible();
+  } finally {
+    await server.stop();
+  }
+});
+
 test('workbench shows the overall failure when the scenario passed', async ({ page }) => {
   test.skip(
     process.env['VEHICLE_SIL_VERIFY_WORKBENCH'] !== '1' || test.info().project.name !== 'static',

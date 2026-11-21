@@ -1,6 +1,7 @@
 // Shapes of the front door (`connect()` in front.ts). Data fields use the wire's names (snake_case: the same words as
 // the launcher's `state` event and the GUI server's `allowed`); functions use JavaScript's (`forceStop`, `runUntil`).
 import type { GuiClient } from './client';
+import type { RunTarget } from './session';
 import type {
   CheckResult,
   ConfigText,
@@ -236,13 +237,14 @@ export interface FrontRun {
  * Time operations. `pause`, `resume` and `setSpeed` resolve when the launcher has answered; `step` and `runUntil`
  * resolve when time has arrived and the run is paused again (read `clock` after `await`). Another command sent before
  * it arrives (from this page, another page or stdin) rejects it with `interrupted`.
+ * Pass the target from the rendered view to refuse the operation if the run changes before dispatch.
  */
 export interface FrontTime {
-  pause(): Promise<void>;
-  resume(): Promise<void>;
-  step(ms: number): Promise<void>;
-  setSpeed(value: number | 'max'): Promise<void>;
-  runUntil(ms: number): Promise<void>;
+  pause(target?: RunTarget | null): Promise<void>;
+  resume(target?: RunTarget | null): Promise<void>;
+  step(ms: number, target?: RunTarget | null): Promise<void>;
+  setSpeed(value: number | 'max', target?: RunTarget | null): Promise<void>;
+  runUntil(ms: number, target?: RunTarget | null): Promise<void>;
 }
 
 /** What a screen shows for one variable. */

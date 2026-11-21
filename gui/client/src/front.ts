@@ -240,11 +240,11 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
       forceStop: (target) => actions.forceStop(target),
     },
     time: {
-      pause: () => actions.pause(),
-      resume: () => actions.resume(),
-      step: (ms) => actions.step(ms),
-      setSpeed: (value) => actions.setSpeed(value),
-      runUntil: (ms) => actions.runUntil(ms),
+      pause: (target) => actions.pause(target),
+      resume: (target) => actions.resume(target),
+      step: (ms, target) => actions.step(ms, target),
+      setSpeed: (value, target) => actions.setSpeed(value, target),
+      runUntil: (ms, target) => actions.runUntil(ms, target),
     },
     variable: (ref) => {
       const named = refOf(ref);

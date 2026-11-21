@@ -1,3 +1,4 @@
+@let target = runTarget();
 <header class="bar">
   <strong class="brand">vehicle-sil <span>Workbench</span></strong>
   @if (!fixedPeer && !detachedWave) {
@@ -46,30 +47,34 @@
         [value]="live() && clock()?.speed != null ? clock()?.speed : speed()"
         [disabled]="live() && !controls()?.speed?.ok"
         [title]="live() ? (controls()?.speed?.reason?.message ?? '') : ''"
-        (change)="action(() => setSpeed(pace.value))"
+        (change)="action(() => setSpeed(pace.value, target))"
       >
         @for (factor of ['0.1', '0.5', '1', '2', '5', 'max']; track factor) {
           <option [value]="factor">{{ factor === 'max' ? 'Fastest' : factor + '×' }}</option>
         }
       </select>
     </label>
-    <label>
-      Stop at (ms)
-      <input
-        class="run-limit"
-        type="text"
-        inputmode="numeric"
-        [disabled]="live()"
-        [attr.aria-invalid]="!validStopAt()"
-        [attr.aria-describedby]="validStopAt() ? null : 'run-limit-error'"
-        [value]="stopAt()"
-        (input)="stopAt.set($any($event.target).value); check.set(null)"
-      />
-    </label>
-    @if (!validStopAt()) {
-      <span id="run-limit-error" role="alert"
-        >Enter a whole number from 1 to 1,000,000,000,000 ms.</span
-      >
+    @if (live()) {
+      <span>Stop at (ms): {{ activeStopAt() }}</span>
+    } @else {
+      <label for="run-limit">
+        Stop at (ms)
+        <input
+          id="run-limit"
+          class="run-limit"
+          type="text"
+          inputmode="numeric"
+          [attr.aria-invalid]="!validStopAt()"
+          [attr.aria-describedby]="validStopAt() ? null : 'run-limit-error'"
+          [value]="stopAt()"
+          (input)="stopAt.set($any($event.target).value); check.set(null)"
+        />
+      </label>
+      @if (!validStopAt()) {
+        <span id="run-limit-error" role="alert"
+          >Enter a whole number from 1 to 1,000,000,000,000 ms.</span
+        >
+      }
     }
     @if (!live()) {
       @if (!selectedScenario()) {
@@ -100,13 +105,16 @@
       }
     } @else {
       @if (paused()) {
-        <button [disabled]="!controls()?.resume?.ok" (click)="action(() => front()!.time.resume())">
+        <button
+          [disabled]="!controls()?.resume?.ok"
+          (click)="action(() => front()!.time.resume(target))"
+        >
           Resume
         </button>
         <button
           [disabled]="!controls()?.step?.ok"
           [title]="controls()?.step?.reason?.message ?? ''"
-          (click)="action(() => front()!.time.step(controls()!.step.min_ms))"
+          (click)="action(() => front()!.time.step(controls()!.step.min_ms, target))"
         >
           1 step
         </button>
@@ -114,7 +122,7 @@
         <button
           [disabled]="!controls()?.pause?.ok"
           [title]="controls()?.pause?.reason?.message ?? ''"
-          (click)="action(() => front()!.time.pause())"
+          (click)="action(() => front()!.time.pause(target))"
         >
           Pause
         </button>
