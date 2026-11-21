@@ -35,7 +35,7 @@ Windows の GUI は、uv がダウンロードする Python で動きます。MS
 
 ## 手順 1: テンプレートを展開する
 
-vehicle-sil の[リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)から `vehicle-sil-template-0.2.0.zip` をダウンロードして展開し、ディレクトリの名前を自分のプロジェクトの名前にします。Git で管理するなら、そこで `git init` を実行します（`.gitignore` が `build/`、`bin/`、`tools/` を除外します）。
+vehicle-sil の[リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)から `vehicle-sil-template-0.2.0-rc.2.zip` をダウンロードして展開し、ディレクトリの名前を自分のプロジェクトの名前にします。Git で管理するなら、そこで `git init` を実行します（`.gitignore` が `build/`、`bin/`、`tools/` を除外します）。
 
 テンプレートとツールは、リリースしたバージョンにだけあります。vehicle-sil のリポジトリの `template/` をコピーしても同じものですが、そのコピーの `get_tools.py` には、ツールの SHA-256 が入っていません（手順 2 で `--sha256` を渡します）。
 
@@ -52,7 +52,7 @@ python3 get_tools.py     # Windows（UCRT64 シェル）: python get_tools.py
 |---|---|
 | 1 | リリースのページから、自分の OS のツールのアーカイブをダウンロードします。 |
 | 2 | アーカイブの SHA-256 を確認します。 |
-| 3 | `tools/vehicle-sil-tools-0.2.0-<OS>/` に展開します。 |
+| 3 | `tools/vehicle-sil-tools-0.2.0-rc.2-<OS>/` に展開します。 |
 | 4 | ツールに入っている JSON Schema を `schema/` にコピーします。 |
 | 5 | `bin` を `PATH` に追加するコマンドを表示します。 |
 
@@ -69,7 +69,7 @@ python3 get_tools.py     # Windows（UCRT64 シェル）: python get_tools.py
 | 症状 | 原因 | 直し方 |
 |---|---|---|
 | `may not be published yet` と表示して止まる | この README のバージョンが、まだリリースされていません。 | そのバージョンのツールのアーカイブがファイルで手元にあれば（同僚からもらったものなど）、`python3 get_tools.py --archive <ファイル>` を実行します。なければ、vehicle-sil のリポジトリをクローンしてビルドし（vehicle-sil の README の「リポジトリからビルドする」）、そのビルドの `vehicle_sil_launch` を使います。 |
-| ネットワークからダウンロードできない | PC からリリースのページに接続できません。 | ブラウザで `vehicle-sil-tools-0.2.0-linux-x86_64.tar.gz`（Windows は `-windows-x86_64.zip`）をダウンロードし、`python3 get_tools.py --archive <ダウンロードしたファイル>` を実行します（SHA-256 の確認は同じです）。 |
+| ネットワークからダウンロードできない | PC からリリースのページに接続できません。 | ブラウザで `vehicle-sil-tools-0.2.0-rc.2-linux-x86_64.tar.gz`（Windows は `-windows-x86_64.zip`）をダウンロードし、`python3 get_tools.py --archive <ダウンロードしたファイル>` を実行します（SHA-256 の確認は同じです）。 |
 | `this copy of the template has no SHA-256` と表示して止まる | リポジトリの `template/` をコピーしたので、SHA-256 が入っていません。 | リリースのページの `SHA256SUMS` にある値を `--sha256` で渡します。 |
 
 `get_tools.py` を使わずに手で展開するときは、リリースのページの `SHA256SUMS` と照合してから展開し、その中の `bin` を `PATH` に追加します。
@@ -100,7 +100,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 | `run` | `ended` の列が、2 つの ECU とも `exit code 0` です。 |
 | `run --scenario` | `result` の列がすべて `ok` で、終了コードが 0 です。 |
 
-`check` と `run` の出力の全体は、ガイド「[最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/ja/howto/first-ecu.md)」の手順 1 にあります。
+`check` と `run` の出力の全体は、ガイド「[最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0-rc.2/docs/ja/howto/first-ecu.md)」の手順 1 にあります。
 
 ### うまくいかないとき
 
@@ -152,7 +152,7 @@ vehicle-sil-gui simulation.live.yaml
 
 Manufacturer Code の 0x7F0 は仮の値です。
 
-ECU を 1 つ追加する手順の全体は、ガイド「[最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/ja/howto/first-ecu.md)」にあります。
+ECU を 1 つ追加する手順の全体は、ガイド「[最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0-rc.2/docs/ja/howto/first-ecu.md)」にあります。
 
 ## 1 つの実行ファイルで配布する
 
@@ -165,7 +165,7 @@ cmake --build --preset linux                      # Windows: cmake --build --pre
 
 SIL Kit と C++ のランタイムを、実行ファイルに静的にリンクします（Linux の glibc は共有ライブラリのままです）。Linux では、静的な libstdc++ が必要です（Fedora は `libstdc++-static`）。元に戻すときは、`-DVEHICLE_SIL_STATIC=OFF` で configure し直します。
 
-人に渡すときは、実行ファイルの中に入ったもののライセンスの表示を添えます。添えるものの一覧は、vehicle-sil の [docs/build.md](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/ja/build.md) の「配布するときに添えるライセンスの表示」にあります。ツールの `licenses/sil-kit/`（Windows は `licenses/msys2/` も）に、そのまま添えられるファイルがあります。
+人に渡すときは、実行ファイルの中に入ったもののライセンスの表示を添えます。添えるものの一覧は、vehicle-sil の [docs/build.md](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0-rc.2/docs/ja/build.md) の「配布するときに添えるライセンスの表示」にあります。ツールの `licenses/sil-kit/`（Windows は `licenses/msys2/` も）に、そのまま添えられるファイルがあります。
 
 ## vehicle-sil のバージョンを上げる
 
@@ -182,9 +182,9 @@ ECU とツールは、同じバージョンの vehicle-sil にそろえます。
 
 ## 次に読むもの
 
-- ECU を 1 つ追加して、Python から変数を読み書きする → [最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/ja/howto/first-ecu.md)（J1939 での通信と、デバッガーからの起動も）
-- J1939 のノードを書く → [J1939 のノードの作り方](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/ja/j1939-guide.md)、[型付きメッセージ](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/ja/j1939-codec.md)
-- 設定ファイルとコマンドを調べる → [設定ファイル](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/ja/simulation-config.md)、[照合](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/ja/simulation-check.md)、[実行](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/ja/simulation-run.md)、[シナリオ](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/ja/scenario.md)、[ブラウザの GUI](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/ja/gui.md)
+- ECU を 1 つ追加して、Python から変数を読み書きする → [最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0-rc.2/docs/ja/howto/first-ecu.md)（J1939 での通信と、デバッガーからの起動も）
+- J1939 のノードを書く → [J1939 のノードの作り方](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0-rc.2/docs/ja/j1939-guide.md)、[型付きメッセージ](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0-rc.2/docs/ja/j1939-codec.md)
+- 設定ファイルとコマンドを調べる → [設定ファイル](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0-rc.2/docs/ja/simulation-config.md)、[照合](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0-rc.2/docs/ja/simulation-check.md)、[実行](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0-rc.2/docs/ja/simulation-run.md)、[シナリオ](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0-rc.2/docs/ja/scenario.md)、[ブラウザの GUI](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0-rc.2/docs/ja/gui.md)
 
 ## ライセンス
 

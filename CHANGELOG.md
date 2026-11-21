@@ -4,9 +4,9 @@ Changes of vehicle-sil by version, in the format of [Keep a Changelog 1.1.0](htt
 
 The version comes from `project(vehicle_sil VERSION ...)` and `VEHICLE_SIL_VERSION_PRERELEASE` (`""` for a release) in the root `CMakeLists.txt` (`vehicle_sil_launch version` and `vehicle_sil` in the `--describe` output of an ECU print it). When the version is raised, write the same number in `pyproject.toml`, `gui/server/pyproject.toml`, `__version__` in `python/vehicle_sil_control/__init__.py` and in `gui/server/src/vehicle_sil_gui/__init__.py`, `VERSION` in `template/get_tools.py`, `GIT_TAG` in `template/CMakeLists.txt`, the version written in `template/README.md` and `template/README.ja.md`, and the heading in this file, `## [<version>] - Unreleased` until the release. The commit that is tagged `v<version>` replaces `Unreleased` with the release date (`YYYY-MM-DD`). `scripts/package.py version` finds mismatches; with `--expect v<version>`, which the release workflow runs for the tag, it also refuses a heading without the date. The release notes are this version's section.
 
-## [0.2.0] - Unreleased
+## [0.2.0-rc.2] - Unreleased
 
-This release includes real buses connected from the launcher (`run --connect`, `connections`, the SocketCAN bridge), run request files, scenario timelines, ECU variable availability, the GUI parts and the client's front door, and the Network design screen.
+The second release candidate includes the configuration timing migration, faster captured-process startup, targeted GUI stops, the Workbench example, and the GUI client APIs for waveform history and variable editing. The changes below describe 0.2.0 as a whole.
 
 ### Breaking changes
 

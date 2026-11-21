@@ -5,7 +5,7 @@
 
 [project]
 name = "vehicle-sil-gui"
-version = "0.2.0"
+version = "0.2.0-rc.2"
 description = "Browser GUI of vehicle-sil: a local server that runs vehicle_sil_launch and shows its progress"
 requires-python = ">=3.11"
 license = "MIT"
