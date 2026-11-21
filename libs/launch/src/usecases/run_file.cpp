@@ -249,13 +249,7 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     // control server stay here).
     // The run tells through the interface it knows (RunEvents), which the stream of the events
     // implements; the stream's own members (check(), phase(), state()) are called here only.
-    runner::RunChoices choices = run_choices(request);
-    if (check.fastest_by_default)
-    {
-        // This is a default rather than a user-requested speed, as in check_file().
-        choices.speed.reset();
-    }
-    runner::detail::Runner runner(runner::plan_run(report.check, detail::scenario_of(report.check), base, choices, limits,
+    runner::detail::Runner runner(runner::plan_run(report.check, detail::scenario_of(report.check), base, run_choices(request), limits,
                            server_of_run != nullptr),
                   observers, lent.events, controls);
     // The control server between the Runner's two stages: after the run's files are open, before

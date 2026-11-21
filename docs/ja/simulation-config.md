@@ -4,7 +4,7 @@
 
 `vehicle_sil_launch` に渡す設定ファイルのリファレンスです。設定ファイルのキーと書き方のルール、`check`、`run`、`test`、`version` の引数と終了コードを載せています。形式とルールはまだ変わることがあります。
 
-設定ファイルには、participant にする実行ファイル、それらが接続するネットワーク、止める時刻を書きます。別々に作った ECU の実行ファイル（[ecu-executable.md](ecu-executable.md)）を、1 つのシミュレーションで動かすために使います。
+設定ファイルには、participant にする実行ファイル、それらが接続するネットワークを書きます。別々に作った ECU の実行ファイル（[ecu-executable.md](ecu-executable.md)）を、1 つのシミュレーションで動かすために使います。
 
 ```sh
 vehicle_sil_launch check simulation.yaml
@@ -502,7 +502,7 @@ passed: 0 errors, 0 warnings, 1 note
 
 - 人向けの participant の表では、`ecu` でない participant の名前の後に `(role: test)` のように書きます。
 - `check --json` では、`participants[].role` に出力されます。
-- 有効な `role: bridge` の participant のいる実行は、`--connect` のある実行と同じく実時間を保ちます。ファイルの `speed` が何であっても速さ 1 で動き、`test` もシナリオを速さ 1 で実行します（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
+- 有効な `role: bridge` の participant のいる実行は、`--connect` のある実行と同じく実時間を保ちます。速さ 1 で動き、`test` もシナリオを速さ 1 で実行します（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
 - 機種（`variants`）では変えられません（`describe`、`required` と同じです）。
 
 ### ネットワークを外につなぐ（`external`、`--connect`）
@@ -570,7 +570,7 @@ vehicle_sil_launch run --speed 1 --connect ETH_EXT=tap:vsil0 --connect J1939_CAN
 - Vector XL のブリッジは Windows でだけ動きます。Linux で `xl:virtual:1` と書くと、`connect-tool-missing` が、そのネットワークは SIL Kit の中だけで動くと言います（見つかったブリッジ、つまり試験用のビルドがあれば、それを使います）。
 - 照合は、下の引数と `--name bridge.<network>`（ブリッジの participant 名）でブリッジの `--describe` を走らせます。`run` は、同じ引数と `--name bridge.<network> --registry-uri <URI> --start-timeout-ms <start_timeout_ms>` でブリッジを起動します。`bridge.<network>` はファイルの participant ではないので、`--disable`、`--enable`、`--manual` には書けません。`--describe` のブリッジは、アダプターもチャンネルも開きません。引数を受けないブリッジは誤り `connect-tool-failed` で、ブリッジ自身の行を出します。
 - つなぐネットワークでは、ブリッジを participant として数えます（ECU が 1 つでも `single-participant` になりません）。同じネットワークに `role: bridge` の participant がいると、輪です（`connect-loop`）。
-- 実機のバスは仮想時間を待ちません。`--connect` のある実行は、ファイルの `speed` が何であっても速さ 1 で動きます（注記 `outside-speed-set`）。1 以外の `--speed` と `--start-paused` はエラー `outside-real-time` です。`--time-policy free` で外せます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
+- 実機のバスは仮想時間を待ちません。`--connect` のある実行は、既定では速さ 1 で動きます（注記 `outside-speed-set`）。1 以外の速さを明示するか `--start-paused` を指定すると、エラー `outside-real-time` です。`--time-policy free` で外せます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
 
 ランチャーがブリッジに渡す引数は、次のとおりです。
 
@@ -881,7 +881,9 @@ variants:
 ```text
 vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
-                         [--time-policy realtime|free] [--request <file>]
+                         [--time-policy realtime|free] [--request <file>] [--speed <speed>]
+                         [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
+                         [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                          [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]
                          [--compare-commands <file>]
                          [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>
@@ -890,11 +892,15 @@ vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-com
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
+                       [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
+                       [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                        [--time-policy realtime|free] [--request <file>] [--disable <name>]...
                        [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
+                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]
+                        [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                         [--disable <name>]... [--enable <name>]...
                         <file> --scenarios <directory or files>...
 vehicle_sil_launch connections [--json] [--network <name>] [--request <file>] [--] <file>
@@ -996,7 +1002,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | 1 | エラーがある |
 | 3 | 設定ファイルを読めない |
 | 4 | 引数のエラー |
-| 5 | `run`: コマンドで、シナリオが終わる前に止めた |
+| 5 | `run`: 指定した停止時刻かコマンドで、シナリオが終わる前に止めた |
 | 130 | `run` か `test` が中断された |
 
 終了コードごとの条件は次のとおりです。
@@ -1005,7 +1011,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 |---|---|
 | 0 | 警告と注記だけなら 0 です（`--strict` では、警告もないこと）。 |
 | 0 | `run` では、シミュレーションが正常に終わり、必須の participant がどれも 0 で終わったときです。 |
-| 0 | `run` では、`{"command":"stop"}` か Control Server のクライアントの `Stop` で止め、ほかに問題がなかったときも 0 です。 |
+| 0 | `run` では、指定した停止時刻、`{"command":"stop"}`、または Control Server のクライアントの `Stop` で止め、ほかに問題がなかったときも 0 です。 |
 | 1 | `--strict` では、警告があるときも 1 です。 |
 | 1 | `run` では、照合のエラー（何も起動しない）か、実行のエラー（participant が失敗した、そろわなかった、止めても終わらなかったなど）です。 |
 | 1 | `test` では、失敗した組が 1 つ以上ある、中断されていないのに実行しなかった組がある、`--strict` で実行した組が 1 つもない、のどれかです。 |
@@ -1016,7 +1022,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | 3 | `run` で registry や controller を用意できないときも 3 です。 |
 | 3 | 結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です。 |
 | 4 | エラーと使い方を標準エラーに書きます（対象の引数は下の表）。 |
-| 5 | `run` では、`{"command":"stop"}` か Control Server のクライアントの `Stop` で、シナリオが終わる前に止め、ほかに問題がなかったときです。 |
+| 5 | `run` では、指定した停止時刻、`{"command":"stop"}`、または Control Server のクライアントの `Stop` で、シナリオが終わる前に止め、ほかに問題がなかったときです。 |
 | 130 | Ctrl+C などのシグナル、標準入力の終わり、閉じた標準出力です。 |
 
 想定外の失敗（終了コード 3）では、標準エラーに理由を書きます。`--json` では、そのコマンドの形の JSON に、`code` が `internal` のエラーを書きます。

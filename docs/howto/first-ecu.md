@@ -544,7 +544,7 @@ To run the simulation while you stop your ECU in a debugger, start only that ECU
 1. Leave the configuration file as it is, and run with the participant name in `--manual`:
 
    ```sh
-   vehicle_sil_launch run simulation.yaml --manual Cooler
+   vehicle_sil_launch run simulation.yaml --manual Cooler --stop-at-ms 1000
    ```
 
 2. `vehicle_sil_launch` starts the other ECUs, prints the command that starts `Cooler` to stderr, and waits. `<dir>` is the project directory.

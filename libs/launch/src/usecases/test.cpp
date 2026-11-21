@@ -299,9 +299,10 @@ std::string shell_word(std::string_view text)
 /// does not have); none if the scenario was not read that far.
 std::string run_alone(const TestReport& report, const TestRun& run)
 {
-    // With the time lock the run goes at speed 1, and run refuses --speed max.
+    // The time lock already selects speed 1. Otherwise reproduce the checked starting speed.
     const bool locked = run.run && run.run->check.time_lock.locked;
-    std::string out = "vehicle_sil_launch run " + shell_word(report.file) + (locked ? "" : " --speed max") +
+    const std::optional<double> speed = run.run && run.run->check.run_timing ? run.run->check.run_timing->speed : std::nullopt;
+    std::string out = "vehicle_sil_launch run " + shell_word(report.file) + (locked ? "" : " --speed " + config::speed_text(speed)) +
                       (report.given.time_policy == config::TimePolicy::Free ? " --time-policy free" : "") +
                       (run.variant.empty() ? std::string{} : " --variant " + shell_word(run.variant)) + " --scenario " +
                       shell_word(run.scenario);

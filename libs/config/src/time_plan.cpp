@@ -205,7 +205,7 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
         {
             out.push_back(Finding{Severity::Note, "outside-speed-set",
                                   what + ", which does not wait for the virtual time: the run goes at speed 1 (real time), not " +
-                                      (otherwise ? "at the speed " + speed_text(otherwise) + " of the file"
+                                      (otherwise ? "at the default speed " + speed_text(otherwise)
                                                  : std::string("as fast as possible")) +
                                       ". To go at another speed, " + run_not_connected(lock, origin) + ", or " + freely,
                                   0, "", ""});
@@ -231,7 +231,7 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
         }
         else
         {
-            runs = unlocked ? "the simulation runs at the speed " + speed_text(unlocked) + " of the file"
+            runs = unlocked ? "the simulation runs at the default speed " + speed_text(unlocked)
                             : std::string("the simulation runs as fast as possible");
         }
         out.push_back(Finding{Severity::Note, "outside-not-real-time",
