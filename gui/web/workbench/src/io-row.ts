@@ -8,20 +8,18 @@ import {
   input,
   output,
   signal,
-  untracked,
 } from '@angular/core';
 import {
   watch,
-  type BoundVariable,
+  createVariableEditor,
   type Front,
-  type VariableBinding,
+  type VariableEditor,
+  type VariableEditorState,
   type VariableInfo,
-  type VariableView,
 } from '@vehicle-sil/gui-client';
 
 const onVisibility = new WeakMap<Element, (visible: boolean) => void>();
 const OUTPUT_REFRESH_MS = 150;
-const SWITCH_READBACK_MS = 500;
 const viewport = new IntersectionObserver(
   (entries) => {
     for (const entry of entries) onVisibility.get(entry.target)?.(entry.isIntersecting);
@@ -154,25 +152,17 @@ export class IoRow {
   readonly running = input.required<boolean>();
   readonly pin = output();
   readonly trace = output();
-  readonly view = signal<VariableView | null>(null);
+  private readonly editor = signal<VariableEditor | null>(null);
+  private readonly editing = signal<VariableEditorState | null>(null);
+  readonly view = computed(() => this.editing()?.view ?? null);
   readonly draft = signal<string | null>(null);
-  readonly writer = signal<VariableBinding | null>(null);
-  readonly writeState = signal<BoundVariable | null>(null);
-  readonly pending = computed(() => this.writeState()?.pending ?? null);
-  private readonly requestedSwitch = signal<boolean | null>(null);
-  private readonly awaitingSample = signal<boolean | null>(null);
   readonly error = computed(() => this.view()?.problem?.message ?? '');
   readonly uncertain = computed(() =>
     ['no-answer', 'closed'].includes(this.view()?.write_status.kind ?? ''),
   );
-  readonly binding = computed(() =>
-    this.front().variable({ peer: this.peer(), name: this.info().name }),
-  );
-  readonly shown = computed(() => this.pending() ?? this.view()?.value);
-  readonly switchWaiting = computed(
-    () => this.pending() !== null || this.awaitingSample() !== null,
-  );
-  readonly blocked = computed(() => !this.view()?.can_write || this.switchWaiting());
+  readonly shown = computed(() => this.editing()?.shown ?? null);
+  readonly switchWaiting = computed(() => this.editing()?.waiting ?? false);
+  readonly blocked = computed(() => !this.editing()?.canWrite);
   readonly lampText = computed(() =>
     this.view()?.value == null ? 'No sample' : this.view()?.value ? 'ON' : 'OFF',
   );
@@ -182,17 +172,16 @@ export class IoRow {
 
   constructor() {
     effect((cleanup) => {
-      const writer = this.front().low.variables.bind(
-        { peer: this.peer(), name: this.info().name },
-        { visible: false },
-      );
-      this.writer.set(writer);
-      const stop = watch(writer.state, (state) => this.writeState.set(state));
+      const editor = createVariableEditor(this.front(), {
+        peer: this.peer(),
+        name: this.info().name,
+      });
+      this.editor.set(editor);
       cleanup(() => {
-        stop();
-        writer.close();
-        this.writer.set(null);
-        this.writeState.set(null);
+        editor.close();
+        this.editor.set(null);
+        this.editing.set(null);
+        this.draft.set(null);
       });
     });
     effect((cleanup) => {
@@ -203,54 +192,39 @@ export class IoRow {
         onVisibility.delete(this.host);
       });
     });
+    effect(() => this.editor()?.setVisible(this.visible()));
     effect((cleanup) => {
-      if (!this.visible()) return;
+      const editor = this.editor();
+      if (!editor || !this.visible()) return;
       const throttle = !this.info().writable && this.running();
       let timer: ReturnType<typeof setTimeout> | undefined;
-      let latest: VariableView | undefined;
-      const stop = watch(this.binding(), (value) => {
-        const expected = untracked(this.awaitingSample);
-        if (expected !== null && (value.value === expected || !value.can_write)) {
-          this.awaitingSample.set(null);
-        }
-        const current = untracked(this.view);
+      let latest: VariableEditorState | undefined;
+      let previous: VariableEditorState | undefined;
+      const stop = watch(editor.state, (value) => {
         if (
           !throttle ||
-          !current ||
-          value.condition.kind !== current.condition.kind ||
-          value.availability !== current.availability
+          !previous ||
+          value.view.condition.kind !== previous.view.condition.kind ||
+          value.view.availability !== previous.view.availability
         ) {
           clearTimeout(timer);
           timer = undefined;
-          this.view.set(value);
+          previous = value;
+          this.editing.set(value);
           return;
         }
         latest = value;
         timer ??= setTimeout(() => {
           timer = undefined;
-          if (latest) this.view.set(latest);
+          if (!latest) return;
+          previous = latest;
+          this.editing.set(latest);
         }, OUTPUT_REFRESH_MS);
       });
       cleanup(() => {
         clearTimeout(timer);
         stop();
       });
-    });
-    effect(() => {
-      const status = this.writeState()?.writeStatus;
-      const requested = untracked(this.requestedSwitch);
-      if (requested === null || !status) return;
-      if (status.kind === 'applied') {
-        if (untracked(this.view)?.value !== requested) this.awaitingSample.set(requested);
-        this.requestedSwitch.set(null);
-      } else if ('message' in status) {
-        this.requestedSwitch.set(null);
-      }
-    });
-    effect((cleanup) => {
-      if (this.awaitingSample() === null) return;
-      const timer = setTimeout(() => this.awaitingSample.set(null), SWITCH_READBACK_MS);
-      cleanup(() => clearTimeout(timer));
     });
   }
 
@@ -264,9 +238,6 @@ export class IoRow {
   }
 
   send(value: number | boolean) {
-    if (this.blocked() || (typeof value === 'number' && !Number.isFinite(value))) return;
-    this.draft.set(null);
-    if (typeof value === 'boolean') this.requestedSwitch.set(value);
-    this.writer()?.write(value);
+    if (this.editor()?.write(value)) this.draft.set(null);
   }
 }

@@ -59,6 +59,24 @@ GUI サーバーは、2 つの `.mjs` のファイルも、トークンなしで
 
 公開 API は狭く始めます（追加は互換を保ち、削除は互換を壊すため）。必要なものが公開のエントリーポイントにないときは、`internal` に頼らず、追加するかを決めます。
 
+## 自作画面の波形と変数編集
+
+`createWaveforms` は選択順に各信号の履歴を返します。選択を変更しても共通の信号の履歴を保持し、実行が替わると履歴を消します。既定は信号ごとに600点です。点の描画と別タブ間の同期は画面で行います。
+
+`createVariableEditor` は変数の定義、表示値、書き込みの結果を `state` に公開します。数値・真偽値・列挙値を定義に照らして検査します。真偽値は適用の通知を受けてから、読み戻しが届くまで最長500 ms、次の操作を待ちます。`setVisible` で値の購読を切り替え、使い終えたら両方とも `close()` を呼びます。
+
+```ts
+import { connect, createVariableEditor, createWaveforms } from '@vehicle-sil/gui-client';
+
+const front = await connect();
+const ref = { peer: 'Engine', name: 'engine.throttle' };
+const waves = createWaveforms(front.low, { periodMs: 20 });
+waves.setSignals([ref]);
+const editor = createVariableEditor(front, ref);
+editor.setVisible(true);
+// Render waves.series and editor.state. Call editor.write(value) on commit.
+```
+
 ## 公開 API
 
 `src/index.ts` が公開する名前を、グループごとに挙げます。括弧の中は、そのオブジェクトのメンバーです。
