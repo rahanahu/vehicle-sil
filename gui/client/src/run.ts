@@ -61,7 +61,7 @@ export interface ClientRun {
 }
 
 /**
- * Run control: start (`POST api/run`), stop in order or without waiting (`POST api/stop`), and the state for them.
+ * Run control: start (`POST api/run`), stop in order or without waiting (`POST api/stop-session`), and their state.
  *
  * - The answer to an action (the current summary) is applied to the session copy without waiting for the notification
  *   (no stale display right after a click).
@@ -277,6 +277,7 @@ export class RunControl implements ClientRun {
   ): Promise<SessionSummary | null> {
     this.failure.set(null);
     return new Promise((resolve, reject) => {
+      const sentFrom = this.feed.currentInstance();
       this.transport({ method: 'POST', path, body, timeoutMs }, (outcome) => {
         if (!outcome.ok) {
           const failure =
@@ -306,15 +307,15 @@ export class RunControl implements ClientRun {
           ) {
             throw new Error('the stop answer did not identify the requested session');
           }
-          const value = outcome.body as { instance?: unknown } | null;
+          const value = (outcome.body as { instance?: unknown } | null)?.instance;
           const instance =
             path === 'api/stop-session'
               ? (body as { instance: string }).instance
-              : typeof value?.instance === 'string'
-                ? value.instance
+              : typeof value === 'string' || value === undefined
+                ? value
                 : null;
-          onInstance?.(instance);
-          this.feed.adopt(summary, instance);
+          onInstance?.(instance ?? null);
+          this.feed.adopt(summary, instance, instance === undefined ? sentFrom : undefined);
         } catch (error) {
           // An answer whose summary core is unreadable is reported, and the summary of the next notification takes over
           this.feed.report(

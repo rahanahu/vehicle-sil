@@ -240,6 +240,17 @@ describe('the front door', () => {
   }
 
   describe('what it shows', () => {
+    it('waits for the run identity before enabling targeted controls', async () => {
+      const rig = await running();
+      const refresh = rig.front.low.fetchSession();
+      rig.http.expectOne('api/session').flush({ session: summary({}, 2) });
+      await refresh;
+      expect(rig.front.controls.get().stop.reason?.code).toBe('starting');
+      expect(rig.front.controls.get().force_stop.reason?.code).toBe('starting');
+      await rig.deliver({ type: 'session', session: summary({}, 2) });
+      expect(rig.front.controls.get().stop.ok).toBe(true);
+    });
+
     it('says the run is running, with its clock, and takes each control from the launcher', async () => {
       const { front } = await running();
       expect(front.status.get()).toEqual({

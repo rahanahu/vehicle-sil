@@ -407,7 +407,7 @@ export function buildClient(options: ClientOptions): ClientParts {
             const instance = (outcome.body as { instance?: unknown } | null)?.instance;
             const adoption = session.adopt(
               summary,
-              typeof instance === 'string' ? instance : null,
+              typeof instance === 'string' || instance === undefined ? instance : null,
               resyncFrom,
             );
             if (adoption !== null) {
