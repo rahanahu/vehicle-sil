@@ -1281,7 +1281,7 @@ declare module 'react' {
   VEHICLE_SIL_GUI_URL='<URL the server printed>' node examples/gui_client/run.mjs simulation.yaml --stop-at-ms 1000
   ```
 
-- For a finite run, pass `--stop-at-ms` with the virtual stop time in milliseconds. Without it, the run continues until stopped.
+- For a finite run, pass `--stop-at-ms` with the virtual stop time in milliseconds (an integer from 1 to 1000000000000). Without it, the run continues until stopped.
 
 - They run outside a browser, so they send the server's own origin as `Origin`.
 

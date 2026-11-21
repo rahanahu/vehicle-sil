@@ -33,8 +33,8 @@ const stopAt = args.indexOf("--stop-at-ms");
 if (stopAt >= 0) {
   const value = args[stopAt + 1];
   stopAtMs = Number(value);
-  if (!value || !Number.isSafeInteger(stopAtMs) || stopAtMs <= 0)
-    usage("--stop-at-ms needs a positive integer of milliseconds");
+  if (!value || !Number.isSafeInteger(stopAtMs) || stopAtMs < 1 || stopAtMs > 1_000_000_000_000)
+    usage("--stop-at-ms needs an integer from 1 to 1000000000000 milliseconds");
   args.splice(stopAt, 2);
 }
 let timeoutS = 120;
@@ -102,7 +102,8 @@ async function main() {
       `the launcher cannot be used: ${app.launcher.problems.map((p) => p.message).join("; ")}`,
     );
   }
-  const check = await client.check({ file, disable: [] });
+  const intent = { file, disable: [], ...(stopAtMs === undefined ? {} : { stop_at_ms: stopAtMs }) };
+  const check = await client.check(intent);
   console.log(`check: ${check.result} (errors ${check.errors ?? 0})`);
   if (check.result !== "passed") finish(1);
 
@@ -132,11 +133,7 @@ async function main() {
       console.log(`phase: ${phase}`);
     }
   });
-  const started = await client.run.start({
-    file,
-    disable: [],
-    ...(stopAtMs === undefined ? {} : { stop_at_ms: stopAtMs }),
-  });
+  const started = await client.run.start(intent);
   console.log(`started: session ${started?.id}`);
   setTimeout(
     () => finish(1, `no result after ${timeoutS} s`),
