@@ -881,7 +881,9 @@ variants:
 ```text
 vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
-                         [--time-policy realtime|free] [--request <file>]
+                         [--time-policy realtime|free] [--request <file>] [--speed <speed>]
+                         [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
+                         [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                          [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]
                          [--compare-commands <file>]
                          [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>
@@ -890,11 +892,15 @@ vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-com
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
+                       [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
+                       [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                        [--time-policy realtime|free] [--request <file>] [--disable <name>]...
                        [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
+                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]
+                        [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                         [--disable <name>]... [--enable <name>]...
                         <file> --scenarios <directory or files>...
 vehicle_sil_launch connections [--json] [--network <name>] [--request <file>] [--] <file>
