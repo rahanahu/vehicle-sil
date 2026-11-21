@@ -18,6 +18,20 @@
 
 namespace vehicle_sil::runner::detail {
 
+// The scenario notification only wakes the existing watch. Keeping the wait operations
+// explicit lets tests fix the ordering of controller completion and scenario notification.
+struct ScenarioWatchWait
+{
+    using State = SilKit::Services::Orchestration::ParticipantState;
+    std::function<std::optional<State>(std::chrono::milliseconds)> controller;
+    std::function<bool(std::chrono::milliseconds)> scenario;
+    std::function<bool()> stopping;
+    std::function<std::chrono::steady_clock::time_point()> now;
+};
+
+[[nodiscard]] std::optional<ScenarioWatchWait::State> wait_scenario_watch(
+    const ScenarioWatchWait& wait, std::chrono::milliseconds timeout);
+
 /// Watches the simulation from its start to its end (watch()), then settles what is known when it
 /// is over (settle(), which the run calls right after).
 ///

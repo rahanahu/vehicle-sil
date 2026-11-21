@@ -23,6 +23,25 @@ namespace orch = SilKit::Services::Orchestration;
 
 } // namespace
 
+std::optional<ScenarioWatchWait::State> wait_scenario_watch(const ScenarioWatchWait& wait,
+                                                           std::chrono::milliseconds timeout)
+{
+    const auto deadline = wait.now() + timeout;
+    if (auto ended = wait.controller(std::chrono::milliseconds(0)))
+    {
+        return ended;
+    }
+    if (wait.scenario(timeout) && wait.stopping())
+    {
+        const auto remaining = deadline - wait.now();
+        if (remaining > std::chrono::steady_clock::duration::zero())
+        {
+            return wait.controller(std::chrono::ceil<std::chrono::milliseconds>(remaining));
+        }
+    }
+    return wait.controller(std::chrono::milliseconds(0));
+}
+
 std::string StandStill::look(std::int64_t now_ms, bool paused, std::optional<std::chrono::nanoseconds> overdue,
                              std::chrono::steady_clock::time_point wall)
 {
@@ -221,9 +240,26 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         }
     };
     WatchTarget target;
-    target.wait_until_finished = [&controller](std::chrono::milliseconds timeout) { return controller.wait_until_finished(timeout); };
+    std::uint64_t completionGeneration = 0;
+    bool stopping = false;
+    const ScenarioWatchWait wait{
+        [&controller](std::chrono::milliseconds duration) { return controller.wait_until_finished(duration); },
+        [this, &completionGeneration](std::chrono::milliseconds duration) {
+            return scenario_.wait_for_completion(completionGeneration, duration);
+        },
+        [&controller] { return has_finished(PeerStatus{controller.runtime().state()}); },
+        [] { return std::chrono::steady_clock::now(); },
+    };
+    target.wait_until_finished = [this, &controller, &wait, &stopping](std::chrono::milliseconds timeout) {
+        if (ctx_.scenario == nullptr || stopping)
+        {
+            return controller.wait_until_finished(timeout);
+        }
+        return wait_scenario_watch(wait, timeout);
+    };
     target.left_participant = [&controller] { return FailureCheck::left_participant(controller); };
-    target.stop = [this, &controller, &forScenario](std::string_view reason) {
+    target.stop = [this, &controller, &forScenario, &stopping](std::string_view reason) {
+        stopping = true;
         controller.stop(!forScenario ? reason
                         : scenario_.refused() ? std::string_view("the scenario was not begun")
                                               : std::string_view("the scenario is over"));

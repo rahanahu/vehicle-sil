@@ -17,7 +17,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -91,6 +93,12 @@ public:
     /// The scenario's thread has found the scenario over (or has failed): stop the simulation.
     [[nodiscard]] bool over() const { return over_.load(); }
 
+    /// Wait for a new completion notification, or the polling limit. The caller keeps its own
+    /// generation so an already observed completion does not make later checks spin. The
+    /// optional test probe runs under the completion mutex and must not wait or re-enter it.
+    [[nodiscard]] bool wait_for_completion(std::uint64_t& generation, std::chrono::milliseconds timeout,
+                                           const std::function<void()>& before_wait = {}) const;
+
     /// The simulation is over (main thread): ends the scenario's thread and decides what is left.
     void finish(SimulationController& controller, const WatchResult& watched, bool for_scenario, RunOutcome& outcome);
 
@@ -101,6 +109,7 @@ public:
 private:
     class HubPort;
 
+    void mark_over();
     void note_step(const scenario::ScenarioStepRun& step);
     /// Gives the engine the samples that have arrived since the last call.
     void drain();
@@ -124,6 +133,9 @@ private:
     std::thread thread_;
     std::atomic<bool> quit_{false}; ///< main: the simulation is over
     std::atomic<bool> over_{false}; ///< the scenario's thread: the scenario is over, stop the simulation
+    mutable std::mutex completion_mutex_;
+    mutable std::condition_variable completion_changed_;
+    std::uint64_t completion_generation_ = 0; ///< guarded by completion_mutex_
     std::mutex error_mutex_;
     std::string thread_error_; ///< guarded by error_mutex_
 };

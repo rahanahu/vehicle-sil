@@ -17,6 +17,7 @@
 #include "run_participants.hpp"
 #include "run_scenario.hpp"
 #include "run_start.hpp"
+#include "run_watch.hpp"
 #include "spawn_sleeper.hpp"
 #include "vehicle_sil/runner/detail/run_samples.hpp"
 #include "vehicle_sil/runner/detail/run_start_limit.hpp"
@@ -188,6 +189,130 @@ TEST_CASE(a_child_exit_takes_priority_when_the_last_participant_has_joined)
 TEST_CASE(a_child_exit_and_start_deadline_in_the_same_check_keep_the_existing_findings)
 {
     check_start_boundary(true);
+}
+
+TEST_CASE(scenario_watch_keeps_controller_completion_ahead_when_already_stopping)
+{
+    using namespace vehicle_sil::runner::detail;
+    using State = ScenarioWatchWait::State;
+    for (bool finishes : {false, true})
+    {
+        auto now = std::chrono::steady_clock::time_point{};
+        std::vector<std::chrono::milliseconds> waits;
+        ScenarioWatchWait wait;
+        wait.now = [&] { return now; };
+        wait.scenario = [&](std::chrono::milliseconds timeout) {
+            CHECK(timeout == 20ms);
+            now += 5ms;
+            return true;
+        };
+        wait.stopping = [] { return true; };
+        wait.controller = [&](std::chrono::milliseconds duration) -> std::optional<State> {
+            waits.push_back(duration);
+            if (duration > 0ms && finishes)
+            {
+                return State::Shutdown;
+            }
+            return std::nullopt;
+        };
+        const auto result = wait_scenario_watch(wait, 20ms);
+        CHECK(result.has_value() == finishes);
+        if (finishes)
+        {
+            CHECK(*result == State::Shutdown);
+        }
+        CHECK((waits == std::vector<std::chrono::milliseconds>{0ms, 15ms}));
+    }
+    // While still running, completion is handled immediately; no second poll is spent.
+    auto now = std::chrono::steady_clock::time_point{};
+    std::vector<std::chrono::milliseconds> waits;
+    ScenarioWatchWait wait;
+    wait.now = [&] { return now; };
+    wait.scenario = [&](std::chrono::milliseconds) { now += 5ms; return true; };
+    wait.stopping = [] { return false; };
+    wait.controller = [&](std::chrono::milliseconds duration) -> std::optional<State> {
+        waits.push_back(duration);
+        return std::nullopt;
+    };
+    CHECK(!wait_scenario_watch(wait, 20ms));
+    CHECK((waits == std::vector<std::chrono::milliseconds>{0ms, 0ms}));
+
+    // An already finished controller wins without waiting for a scenario.
+    bool scenarioSeen = false;
+    wait.controller = [](std::chrono::milliseconds) -> std::optional<State> { return State::Shutdown; };
+    wait.scenario = [&](std::chrono::milliseconds) { scenarioSeen = true; return true; };
+    CHECK(wait_scenario_watch(wait, 20ms) == State::Shutdown);
+    CHECK(!scenarioSeen);
+
+    // A timeout does not trigger the stopping path. A fractional remainder rounds up.
+    waits.clear();
+    wait.controller = [&](std::chrono::milliseconds duration) -> std::optional<State> {
+        waits.push_back(duration);
+        return std::nullopt;
+    };
+    wait.stopping = [] { return true; };
+    wait.scenario = [&](std::chrono::milliseconds) { now += 20ms; return false; };
+    CHECK(!wait_scenario_watch(wait, 20ms));
+    CHECK((waits == std::vector<std::chrono::milliseconds>{0ms, 0ms}));
+    waits.clear();
+    wait.scenario = [&](std::chrono::milliseconds) { now += 5ms + 500us; return true; };
+    CHECK(!wait_scenario_watch(wait, 20ms));
+    CHECK((waits == std::vector<std::chrono::milliseconds>{0ms, 15ms}));
+    waits.clear();
+    wait.scenario = [&](std::chrono::milliseconds) { now += 20ms; return true; };
+    CHECK(!wait_scenario_watch(wait, 20ms));
+    CHECK((waits == std::vector<std::chrono::milliseconds>{0ms, 0ms}));
+}
+
+TEST_CASE(scenario_completion_notification_survives_both_wait_orders)
+{
+    using namespace vehicle_sil::runner::detail;
+    CheckReport check;
+    check.file = "sim.yaml";
+    check.config.emplace();
+    ParticipantConfig member;
+    member.name = "Member";
+    check.config->participants.push_back(member);
+    check.participants.emplace_back();
+    RunPlan plan = plan_run(check, nullptr, ".", RunChoices{});
+    RunObservers observers;
+    StopRequests stops;
+    RunControls controls(stops);
+    Scenario read;
+    RunContext ctx{plan.config(), plan.check, plan, observers, nullptr, &read, controls, controls.time()};
+    RunOutcome outcome = planned_outcome(plan);
+    RunOutput output(ctx);
+    RunControl control(ctx, output);
+    RunSamples samples({}, {});
+    RunScenario scenario(ctx, output, control, samples);
+    vehicle_sil::unit::InProcessRegistry registry;
+    SimulationControllerOptions options;
+    options.registry_uri = registry.uri;
+    options.required_participants = {"Member"};
+    SimulationController controller(options);
+
+    std::uint64_t generation = 0;
+    std::promise<void> entering;
+    auto waiting = std::async(std::launch::async, [&] {
+        return scenario.wait_for_completion(generation, 5s, [&] { entering.set_value(); });
+    });
+    CHECK(entering.get_future().wait_for(1s) == std::future_status::ready);
+    CHECK(waiting.wait_for(20ms) == std::future_status::timeout);
+    // No engine was prepared: this is the completion path when a scenario could not begin.
+    scenario.start(controller, outcome);
+    CHECK(waiting.wait_for(1s) == std::future_status::ready);
+    CHECK(waiting.get());
+    CHECK(scenario.over());
+    CHECK_EQ(generation, std::uint64_t{1});
+    std::uint64_t earlier = 0;
+    CHECK(scenario.wait_for_completion(earlier, 5s)); // notification before this wait
+    CHECK_EQ(earlier, std::uint64_t{1});
+    auto next = std::async(std::launch::async, [&] { return scenario.wait_for_completion(generation, 5s); });
+    CHECK(next.wait_for(20ms) == std::future_status::timeout); // an observed notification does not spin
+    scenario.start(controller, outcome);
+    CHECK(next.wait_for(1s) == std::future_status::ready);
+    CHECK(next.get());
+    CHECK_EQ(generation, std::uint64_t{2});
 }
 
 TEST_CASE(a_timeline_that_dropped_points_or_was_not_written_is_said)
