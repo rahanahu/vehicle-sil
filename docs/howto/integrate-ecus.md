@@ -437,13 +437,12 @@ If an ECU neither prints nor declares the values it receives, you can verify fro
 
 ### Verify with the ECU output
 
-`run` prints the stdout and stderr of each ECU to its own stderr, with `[<participant name>] ` at the start of each line. The example dashboard ECU prints the received engine speed and the message count every 500 ms. With `simulation.fixed.yaml`, these 3 lines appear:
+`run` prints the stdout and stderr of each ECU to its own stderr, with `[<participant name>] ` at the start of each line. The example dashboard ECU prints the received engine speed and the message count every 500 ms. With `simulation.fixed.yaml`, these lines appear before the stop time. The Dashboard may also print a line at 1000 ms if its step at that time runs before the controller stops the simulation.
 
 <!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml --stop-at-ms 1000, the lines of the Dashboard -->
 ```text
 [Dashboard] t=0 ms engine speed 0 rpm (0 messages)
 [Dashboard] t=500 ms engine speed 1200 rpm (5 messages)
-[Dashboard] t=1000 ms engine speed 1200 rpm (10 messages)
 ```
 
 With `simulation.two-buses.yaml`, the count stays at 0 to the end:
@@ -452,7 +451,6 @@ With `simulation.two-buses.yaml`, the count stays at 0 to the end:
 ```text
 [Dashboard] t=0 ms engine speed 0 rpm (0 messages)
 [Dashboard] t=500 ms engine speed 0 rpm (0 messages)
-[Dashboard] t=1000 ms engine speed 0 rpm (0 messages)
 ```
 
 With `--log-dir logs`, `run` also saves the output of each ECU to `logs/<participant name>.log`, without the `[<participant name>] ` prefix.

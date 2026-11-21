@@ -84,13 +84,16 @@ function(tail_from out text from)
   set(${out} "${text}" PARENT_SCOPE)
 endfunction()
 
-# The lines of TEXT that start with "[Dashboard] ", each with its line end.
-function(dashboard_lines out text)
+# The Dashboard lines before the stop time, each with its line end.
+function(dashboard_lines_before_stop out text stop_ms)
   string(REGEX MATCHALL "(^|\n)\\[Dashboard\\] [^\n]*" lines "${text}")
   set(result "")
   foreach(line IN LISTS lines)
     string(REGEX REPLACE "^\n" "" line "${line}")
-    string(APPEND result "${line}\n")
+    # The controller can stop the simulation before an ECU executes the boundary step.
+    if(NOT line MATCHES "^\\[Dashboard\\] t=${stop_ms} ms ")
+      string(APPEND result "${line}\n")
+    endif()
   endforeach()
   set(${out} "${result}" PARENT_SCOPE)
 endfunction()
@@ -204,7 +207,7 @@ vehicle_sil_launch run ${config} --stop-at-ms 1000
   tail_from(tail "${output}" "run: ")
   expect_same("the output of vehicle_sil_launch run ${config}, from the line 'run:'," "${tail}" "${expected}")
   block_after(expected "integrate ECUs: vehicle_sil_launch run ${config} --stop-at-ms 1000, the lines of the Dashboard")
-  dashboard_lines(lines "${errors}")
+  dashboard_lines_before_stop(lines "${errors}" 1000)
   expect_same("the lines of the Dashboard on the standard error of vehicle_sil_launch run ${config}" "${lines}"
               "${expected}")
 endforeach()
