@@ -4,7 +4,7 @@
 
 This is the reference for the configuration file that you pass to `vehicle_sil_launch`. It covers the keys and syntax rules of the file, and the arguments and exit codes of `check`, `run`, `test` and `version`. The format and the rules may still change.
 
-The configuration file lists the executables that become participants, the networks they connect to and the time at which the simulation stops. Use it to run ECU executables that were built separately ([ecu-executable.md](ecu-executable.md)) in one simulation.
+The configuration file lists the executables that become participants, and the networks they connect to. Use it to run ECU executables that were built separately ([ecu-executable.md](ecu-executable.md)) in one simulation.
 
 ```sh
 vehicle_sil_launch check simulation.yaml
@@ -504,7 +504,7 @@ Other rules:
 
 - In the participant table of the human-readable output, the name of a participant whose role is not `ecu` is followed by `(role: test)` or similar.
 - `check --json` writes the role to `participants[].role`.
-- A run with an enabled `role: bridge` participant keeps real time, as one with `--connect` does: it goes at speed 1 whatever `speed` the file has, and `test` runs its scenarios at speed 1 too (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
+- A run with an enabled `role: bridge` participant keeps real time, as one with `--connect` does: it goes at speed 1, and `test` runs its scenarios at speed 1 too (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
 - A variant (`variants`) cannot change it, as with `describe` and `required`.
 
 ### Connecting a network outside (`external`, `--connect`)
@@ -572,7 +572,7 @@ A target is `none` or `[<backend>:]<selector>`. The backend says which way the n
 - The Vector XL bridge runs on Windows only. `xl:virtual:1` on Linux gives `connect-tool-missing`, which says that the network runs on SIL Kit only, unless a bridge is found anyway (a build for tests).
 - The check runs the bridge's `--describe` with the arguments below and `--name bridge.<network>`, the bridge's participant name. `run` starts it with the same arguments and `--name bridge.<network> --registry-uri <URI> --start-timeout-ms <start_timeout_ms>`. `bridge.<network>` is not a participant of the file: `--disable`, `--enable` and `--manual` do not take it. With `--describe`, the bridge opens neither the adapter nor the channel. A bridge that refuses the arguments is the error `connect-tool-failed`, with the bridge's own line.
 - On a connected network, the bridge counts as a participant (one ECU there is not `single-participant`), and a `role: bridge` participant on the same network is a loop (`connect-loop`).
-- A real bus does not wait for the virtual time: a run with `--connect` goes at speed 1 whatever `speed` the file has (the note `outside-speed-set`), and another `--speed` or `--start-paused` is the error `outside-real-time`. `--time-policy free` lifts this (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
+- A real bus does not wait for the virtual time: a run with `--connect` goes at speed 1 by default (the note `outside-speed-set`). An explicit speed other than 1 or `--start-paused` is the error `outside-real-time`. `--time-policy free` lifts this (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
 
 The arguments that the launcher gives the bridge:
 
@@ -883,7 +883,9 @@ For the syntax and the errors, see "Variants and parameters" in [scenario.md](sc
 ```text
 vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
-                         [--time-policy realtime|free] [--request <file>]
+                         [--time-policy realtime|free] [--request <file>] [--speed <speed>]
+                         [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
+                         [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                          [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]
                          [--compare-commands <file>]
                          [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>
@@ -892,11 +894,15 @@ vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-com
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
+                       [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
+                       [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                        [--time-policy realtime|free] [--request <file>] [--disable <name>]...
                        [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
+                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]
+                        [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                         [--disable <name>]... [--enable <name>]...
                         <file> --scenarios <directory or files>...
 vehicle_sil_launch connections [--json] [--network <name>] [--request <file>] [--] <file>
@@ -998,7 +1004,7 @@ On Windows, the arguments are read as UTF-8 from the wide-character command line
 | 1 | Errors |
 | 3 | The configuration file cannot be read |
 | 4 | Usage error |
-| 5 | `run`: a command stopped a scenario before its end |
+| 5 | `run`: the requested stop time or a command stopped a scenario before its end |
 | 130 | `run` or `test` was interrupted |
 
 When each exit code occurs:
@@ -1007,7 +1013,7 @@ When each exit code occurs:
 |---|---|
 | 0 | With only warnings and notes, the exit code is 0 (with `--strict`, there must be no warnings either). |
 | 0 | For `run`, when the simulation ended normally and every required participant exited with 0. |
-| 0 | For `run`, also when `{"command":"stop"}` or `Stop` from a Control Server client stopped it and nothing was wrong. |
+| 0 | For `run`, also when the requested stop time, `{"command":"stop"}` or `Stop` from a Control Server client stopped it and nothing was wrong. |
 | 1 | With `--strict`, warnings also give 1. |
 | 1 | For `run`, an error of the check (nothing is started) or an error of the run (a participant failed, the participants did not all join, a participant did not end when stopped, and so on). |
 | 1 | For `test`: at least one run failed, a run did not take place although `test` was not interrupted, or, with `--strict`, no run took place at all. |
@@ -1018,7 +1024,7 @@ When each exit code occurs:
 | 3 | Also when `run` cannot set up the registry or the controller. |
 | 3 | Also when the result cannot be written to stdout, and on an unexpected failure of `vehicle_sil_launch` itself. |
 | 4 | The error and the usage go to stderr (the table below lists the cases). |
-| 5 | For `run`, when `{"command":"stop"}` or `Stop` from a Control Server client stopped a scenario before its end and nothing else was wrong. |
+| 5 | For `run`, when the requested stop time, `{"command":"stop"}` or `Stop` from a Control Server client stopped a scenario before its end and nothing else was wrong. |
 | 130 | Ctrl+C and other signals, the end of stdin, a closed stdout. |
 
 On an unexpected failure (exit code 3), the reason goes to stderr. With `--json`, the command's usual JSON holds an error whose `code` is `internal`.

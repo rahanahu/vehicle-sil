@@ -118,8 +118,7 @@ participants:
 | 行 | 書くもの |
 |---|---|
 | 1 行目のコメント | エディターが補完と検査に使う JSON Schema の場所で、なくても動きます。 |
-| `vehicle_sil_simulation` | 設定ファイルの形式のバージョンで、`1` と書きます。 |
-| `stop_at_ms` | シミュレーションを止める仮想時刻で、省略すると Ctrl+C まで動きます。 |
+| `vehicle_sil_simulation` | 設定ファイルの形式のバージョンで、`2` と書きます。 |
 | `networks` | 手順 1 で決めたネットワーク名と種類を、1 つずつ書きます。 |
 | `participants[].name` | participant 名で、シミュレーションの中で重ならないようにします。 |
 | `participants[].command` | 実行ファイルのパスで、相対パスは設定ファイルのあるディレクトリを基準にします。 |
@@ -376,16 +375,16 @@ passed: 0 errors, 0 warnings, 0 notes
 ## 手順 5: 実行して通信を確認する
 
 ```sh
-vehicle_sil_launch run simulation.fixed.yaml
+vehicle_sil_launch run simulation.fixed.yaml --stop-at-ms 1000
 ```
 
-`run` は、まず `check` と同じ照合をします。`error` がなければ、SIL Kit の registry とすべての ECU を起動し、`stop_at_ms` まで実行して、ECU を終了させます。
+`run` は、まず `check` と同じ照合をします。`error` がなければ、SIL Kit の registry とすべての ECU を起動し、`--stop-at-ms` で指定した仮想時刻まで実行して、ECU を終了させます。
 
 ### 確認
 
 標準出力の最後に、次の結果が表示されます。`ended` の列がすべて `exit code 0` で、最後の行が `passed:` なら、終了コードは 0 です。
 
-<!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml, from the line "run:" -->
+<!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml --stop-at-ms 1000, from the line "run:" -->
 ```text
 run: the simulation ran to stop_at_ms (1000 ms) and ended
 
@@ -402,13 +401,13 @@ J1939_CAN  Dashboard       0        11
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-終了コード 0 からわかるのは、すべての ECU が起動し、`stop_at_ms` まで動いて、終了コード 0 で終わったことだけです。メッセージが届いたかどうかは `traffic:` の行に出ます。上の結果では、`J1939_CAN` で Engine が送り、Dashboard が受けています。手順 3 の `simulation.two-buses.yaml` を実行すると、2 つの ECU が別のバスにいても終了コード 0 で終わりますが、`traffic:` の行は、`J1939_CAN` では誰も受けておらず、`VehicleCAN` では何も送られていないことを示します。
+終了コード 0 からわかるのは、すべての ECU が起動し、指定した停止時刻まで動いて、終了コード 0 で終わったことだけです。メッセージが届いたかどうかは `traffic:` の行に出ます。上の結果では、`J1939_CAN` で Engine が送り、Dashboard が受けています。手順 3 の `simulation.two-buses.yaml` を実行すると、2 つの ECU が別のバスにいても終了コード 0 で終わりますが、`traffic:` の行は、`J1939_CAN` では誰も受けておらず、`VehicleCAN` では何も送られていないことを示します。
 
 ```sh
-vehicle_sil_launch run simulation.two-buses.yaml
+vehicle_sil_launch run simulation.two-buses.yaml --stop-at-ms 1000
 ```
 
-<!-- integrate ECUs: vehicle_sil_launch run simulation.two-buses.yaml, from the line "run:" -->
+<!-- integrate ECUs: vehicle_sil_launch run simulation.two-buses.yaml --stop-at-ms 1000, from the line "run:" -->
 ```text
 run: the simulation ran to stop_at_ms (1000 ms) and ended
 
@@ -440,7 +439,7 @@ passed: 0 errors, 2 warnings, 0 notes
 
 `run` は、ECU の標準出力と標準エラーを、行の先頭に `[<participant 名>] ` を付けて、標準エラーに表示します。例の表示の ECU は、500 ms ごとに、受信した回転数とメッセージの数を出力します。`simulation.fixed.yaml` では、次の 3 行が表示されます。
 
-<!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml, the lines of the Dashboard -->
+<!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml --stop-at-ms 1000, the lines of the Dashboard -->
 ```text
 [Dashboard] t=0 ms engine speed 0 rpm (0 messages)
 [Dashboard] t=500 ms engine speed 1200 rpm (5 messages)
@@ -449,7 +448,7 @@ passed: 0 errors, 2 warnings, 0 notes
 
 `simulation.two-buses.yaml` では、最後まで 0 件のままです。
 
-<!-- integrate ECUs: vehicle_sil_launch run simulation.two-buses.yaml, the lines of the Dashboard -->
+<!-- integrate ECUs: vehicle_sil_launch run simulation.two-buses.yaml --stop-at-ms 1000, the lines of the Dashboard -->
 ```text
 [Dashboard] t=0 ms engine speed 0 rpm (0 messages)
 [Dashboard] t=500 ms engine speed 0 rpm (0 messages)
@@ -542,7 +541,7 @@ failed: 1 error, 2 warnings, 0 notes
 
 ```sh
 vehicle_sil_launch check simulation.fixed.yaml --disable Dashboard
-vehicle_sil_launch run simulation.fixed.yaml --disable Dashboard
+vehicle_sil_launch run simulation.fixed.yaml --disable Dashboard --stop-at-ms 1000
 ```
 
 ### 確認
@@ -581,7 +580,7 @@ passed: 0 errors, 1 warning, 1 note
 
 | 止め方 | 動作 | 終了コード |
 |---|---|---|
-| `stop_at_ms` を書く | その仮想時刻で止まります。 | 指摘に `error` がなければ 0 |
+| `--stop-at-ms` を付ける | その仮想時刻で止まります。 | 指摘に `error` がなければ 0 |
 | Ctrl+C | シミュレーションを止め、ECU を終了させてから、結果を表示します。 | 130 |
 | Ctrl+C をもう 1 回 | 待たずに強制終了します。 | 130 |
 | `stop` コマンド（`--stdin-commands`、Control API、GUI） | 1 回目の Ctrl+C と同じです。 | `error` の指摘がなければ 0 |
@@ -651,7 +650,7 @@ Python からは、`Launch` クラスがこの形で `vehicle_sil_launch` を起
 何も指定しないと、シミュレーションは PC が計算できる最速で進みます。実時間で動く機器と一緒に動かすときや、画面を見ながら操作するときは、`--speed` で速度を指定します。`1` が実時間と同じ速度です。
 
 ```sh
-vehicle_sil_launch run simulation.fixed.yaml --speed 1
+vehicle_sil_launch run simulation.fixed.yaml --speed 1 --stop-at-ms 1000
 ```
 
 ### 確認

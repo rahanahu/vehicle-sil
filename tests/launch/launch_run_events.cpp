@@ -279,12 +279,14 @@ void events_usage(const Options& o)
     // first at the check, the second when the time commands ended), then the result.
     const fs::path failing = dir / "not_started";
     fs::create_directories(failing);
-    write_file(failing / "sim.yaml", "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+    write_file(failing / "sim.yaml", "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                      "  - name: Engine\n    command: [no-such-ecu]\n");
+    const Captured checkFailed = launch(o, {"run", "--events", "sim.yaml"}, failing);
+    expect_code(checkFailed, 1, "run --events with a missing participant executable");
     for (const auto& [run, what] : std::vector<std::pair<Captured, std::string>>{
              {missing, "a file that cannot be read"},
              {name, "a usage error the check finds"},
-             {launch(o, {"run", "--events", "sim.yaml"}, failing), "a check that fails"}})
+             {checkFailed, "a check that fails"}})
     {
         std::vector<std::string> tail;
         for (const std::string& line : check_events(run.standard_output))
