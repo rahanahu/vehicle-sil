@@ -709,7 +709,8 @@ TEST_CASE(a_run_that_does_not_start_ends_the_same_way_whatever_kept_it_from_star
     /// What the controls told in run_file() of `file` (a pause came before it), in order:
     /// "phase <name>", "command <name> <accepted or reason>", "state <phase> <allowed.pause>"; then
     /// what a pause after the run is answered.
-    const auto run = [](const std::string& file, RunRequest asked) {
+    using vehicle_sil::launch::RunResult;
+    const auto run = [](const std::string& file, RunRequest asked, RunResult expected) {
         std::vector<std::string> told;
         vehicle_sil::runner::RunControls::Observers observers;
         observers.on_phase = [&told](Phase phase) { told.push_back(std::string("phase ") + vehicle_sil::runner::phase_name(phase)); };
@@ -727,18 +728,23 @@ TEST_CASE(a_run_that_does_not_start_ends_the_same_way_whatever_kept_it_from_star
         lent.controls = &controls;
         asked.host.config = file;
         const auto report = vehicle_sil::launch::run_file(asked, {}, lent);
+        CHECK(report.result() == expected);
         CHECK(!report.run.has_value());
         const Command late = controls.time().apply(command("resume"), "stdin");
         told.push_back("after " + (late.accepted ? std::string("accepted") : late.reason));
         return told;
     };
-    const std::string plain = vehicle_sil::process::utf8_from_path(config_file("plain.yaml", engine));
+    // Each CTest case owns its fixture: the time-lock test writes plain.yaml in parallel.
+    const std::string plain = vehicle_sil::process::utf8_from_path(config_file("does-not-start.yaml", engine));
     RunRequest unknown_name;
     unknown_name.intent.disable = {"NoSuchParticipant"};
     // The file cannot be read; the check failed; a name of --disable that the file does not have
     // (a usage error found by reading the file).
-    const std::vector<std::vector<std::string>> runs = {run("no-such-directory/sim.yaml", RunRequest{}),
-                                                        run(plain, RunRequest{}), run(plain, unknown_name)};
+    const std::vector<std::vector<std::string>> runs = {
+        run("no-such-directory/sim.yaml", RunRequest{}, RunResult::Unreadable),
+        run(plain, RunRequest{}, RunResult::CheckFailed),
+        run(plain, unknown_name, RunResult::Usage),
+    };
     // The pause waits for the time lock, which comes only with a configuration: refused at the
     // end when the file cannot be read or the arguments do not fit it; decided by the lock when
     // the check reads the file and then fails.
