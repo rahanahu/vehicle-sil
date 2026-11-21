@@ -10,7 +10,7 @@
     {
       "type": "hello",
       "vehicle_sil_gui": 3,
-      "version": "0.2.0-rc.1",
+      "version": "0.2.0-rc.2",
       "instance": "0123456789abcdef",
       "session": {
         "snapshot_rev": 1,
@@ -47,7 +47,7 @@
         },
         "check": {
           "vehicle_sil_check": 1,
-          "vehicle_sil": "0.2.0-rc.1",
+          "vehicle_sil": "0.2.0",
           "file": "simulation.yaml",
           "result": "passed",
           "strict": false,
@@ -75,7 +75,7 @@
               "step_ms": null,
               "status": "described",
               "reported": {
-                "vehicle_sil": "0.2.0-rc.1",
+                "vehicle_sil": "0.2.0",
                 "name": "Engine",
                 "step_ns": 10000000,
                 "networks": [
@@ -175,7 +175,7 @@
               "step_ms": null,
               "status": "described",
               "reported": {
-                "vehicle_sil": "0.2.0-rc.1",
+                "vehicle_sil": "0.2.0",
                 "name": "Dashboard",
                 "step_ns": 5000000,
                 "networks": [
@@ -468,7 +468,7 @@
         },
         "result": {
           "vehicle_sil_run": 2,
-          "vehicle_sil": "0.2.0-rc.1",
+          "vehicle_sil": "0.2.0",
           "file": "simulation.yaml",
           "result": "passed",
           "end": "completed",
@@ -603,7 +603,7 @@
           "findings": [],
           "check": {
             "vehicle_sil_check": 1,
-            "vehicle_sil": "0.2.0-rc.1",
+            "vehicle_sil": "0.2.0",
             "file": "simulation.yaml",
             "result": "passed",
             "strict": false,
@@ -631,7 +631,7 @@
                 "step_ms": null,
                 "status": "described",
                 "reported": {
-                  "vehicle_sil": "0.2.0-rc.1",
+                  "vehicle_sil": "0.2.0",
                   "name": "Engine",
                   "step_ns": 10000000,
                   "networks": [
@@ -731,7 +731,7 @@
                 "step_ms": null,
                 "status": "described",
                 "reported": {
-                  "vehicle_sil": "0.2.0-rc.1",
+                  "vehicle_sil": "0.2.0",
                   "name": "Dashboard",
                   "step_ns": 5000000,
                   "networks": [
@@ -982,10 +982,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 25,
-        "t_ms": 250,
-        "source": "vehicle_sil_launch",
-        "line": "simulation running"
+        "seq": 20,
+        "t_ms": 200,
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -993,10 +993,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 27,
-        "t_ms": 270,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
+        "seq": 26,
+        "t_ms": 260,
+        "source": "vehicle_sil_launch",
+        "line": "simulation running"
       }
     },
     {
