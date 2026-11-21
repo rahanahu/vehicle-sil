@@ -8,8 +8,20 @@
 
 #include <charconv>
 #include <string>
+#include <system_error>
 
 namespace vehicle_sil::launch {
+
+namespace {
+
+bool whole_number(const std::string& text, std::int64_t& value)
+{
+    const char* const end = text.data() + text.size();
+    const auto parsed = std::from_chars(text.data(), end, value);
+    return parsed.ec == std::errc{} && parsed.ptr == end;
+}
+
+} // namespace
 
 std::optional<runner::Command> parse_command(std::string_view line)
 {
@@ -63,8 +75,7 @@ std::optional<runner::Command> parse_command(std::string_view line)
         {
             const auto id = scalar("id");
             std::int64_t value = 0;
-            const char* end = id ? id->first.data() + id->first.size() : nullptr;
-            if (!id || id->second || id->first.empty() || std::from_chars(id->first.data(), end, value).ptr != end ||
+            if (!id || id->second || id->first.empty() || !whole_number(id->first, value) ||
                 value < 0 || value > runner::kMaxCommandId)
             {
                 out.message = "\"id\" must be a whole number from 0 to " + std::to_string(runner::kMaxCommandId) +
@@ -79,8 +90,7 @@ std::optional<runner::Command> parse_command(std::string_view line)
         {
             const auto ms = scalar("ms");
             std::int64_t value = 0;
-            const char* end = ms ? ms->first.data() + ms->first.size() : nullptr;
-            if (!ms || ms->second || ms->first.empty() || std::from_chars(ms->first.data(), end, value).ptr != end ||
+            if (!ms || ms->second || ms->first.empty() || !whole_number(ms->first, value) ||
                 value < 1 || value > config::kMaxMillis)
             {
                 out.message = "step needs \"ms\", a whole number of milliseconds of virtual time from 1 to " +
@@ -94,8 +104,7 @@ std::optional<runner::Command> parse_command(std::string_view line)
         {
             const auto at = scalar("at_ms");
             std::int64_t value = 0;
-            const char* end = at ? at->first.data() + at->first.size() : nullptr;
-            if (!at || at->second || at->first.empty() || std::from_chars(at->first.data(), end, value).ptr != end ||
+            if (!at || at->second || at->first.empty() || !whole_number(at->first, value) ||
                 value < 0 || value > config::kMaxMillis)
             {
                 out.message = "run_until needs \"at_ms\", the virtual time to stand still at, a whole number of "
