@@ -127,7 +127,12 @@ describe('TimeControl', () => {
     time.step(25);
     const step = http.expectOne('api/time');
     expect(step.request.method).toBe('POST');
-    expect(step.request.body).toEqual({ command: 'step', ms: 25 });
+    expect(step.request.body).toEqual({
+      command: 'step',
+      ms: 25,
+      session: 1,
+      instance: '0123456789abcdef',
+    });
     expect(time.sending()).toBe('step');
     step.flush({ session_id: 1, command: { command: 'step', ms: 25 } });
     // No further command is sent until the launcher's answer (the command event) arrives (a double click does not
@@ -174,7 +179,12 @@ describe('TimeControl', () => {
     await play(socket, 'ws-time', 0, standing);
     expect(time.runUntil(500)).toEqual({ sent: true });
     const sent = http.expectOne('api/time');
-    expect(sent.request.body).toEqual({ command: 'run_until', at_ms: 500 });
+    expect(sent.request.body).toEqual({
+      command: 'run_until',
+      at_ms: 500,
+      session: 1,
+      instance: '0123456789abcdef',
+    });
     expect(time.sending()).toBe('run_until');
   });
 

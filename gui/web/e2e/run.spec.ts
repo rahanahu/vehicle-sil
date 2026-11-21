@@ -78,8 +78,13 @@ async function command(page: Page, button: Locator, body: object): Promise<void>
   const sent = page.waitForRequest((r) => r.url().endsWith('/api/time'));
   await expect(button).not.toHaveAttribute('aria-disabled', 'true');
   await button.click();
-  // 画面は、答えを結ぶための id を付けて送る
-  expect((await sent).postDataJSON()).toEqual({ ...body, id: expect.any(Number) });
+  // 画面は、操作先の実行と答えを結ぶための id を付けて送る
+  expect((await sent).postDataJSON()).toEqual({
+    ...body,
+    id: expect.any(Number),
+    session: expect.any(Number),
+    instance: expect.any(String),
+  });
 }
 
 test('started paused: a step, resume, pause, a new speed, stop', async ({ page }) => {
@@ -113,7 +118,9 @@ test('started paused: a step, resume, pause, a new speed, stop', async ({ page }
   await expect(page.getByTestId('step-hint')).toContainText('25 ms');
   await expect(page.getByTestId('time-sim')).toHaveText('0.025 s');
   await expect(page.getByTestId('time-state')).toHaveText('一時停止中');
-  expect(steps).toEqual([{ command: 'step', ms: 25, id: expect.any(Number) }]);
+  expect(steps).toEqual([
+    { command: 'step', ms: 25, id: expect.any(Number), session, instance: expect.any(String) },
+  ]);
 
   await command(page, resumeButton(page), { command: 'resume' });
   await expect(page.getByTestId('outcome')).toContainText('実行中');

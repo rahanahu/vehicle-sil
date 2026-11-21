@@ -78,6 +78,7 @@ interface Waiting {
   /** The step's or run_until's own request: the amount for a step, the time for a run_until. */
   amount: number;
   session: number;
+  instance: string;
   stage: 'sent' | 'moving';
   /** moving: the virtual time that has to be reached, and the time it started from. */
   target: number;
@@ -505,6 +506,7 @@ export class FrontActions {
   }
 
   private time(op: TimeOperation, body: Record<string, unknown>, amount: number): Promise<void> {
+    const target = this.src.low.session.currentTarget();
     this.failureValue.set(null);
     const snapshot = this.src.snapshot();
     const link = linkOf(snapshot);
@@ -516,20 +518,21 @@ export class FrontActions {
           ? { code: 'busy', message: `the previous ${op} has not been answered yet: wait for it` }
           : null;
     if (own) return this.fail(new ActionError(own.code, own.message, 'refused'));
+    if (!target)
+      return this.fail(new ActionError('not-running', 'there is no identified run', 'refused'));
     // Already as wanted: nothing to send (the pause button of a second tab does not turn up as a mistake). `controls`
     // gives these two codes only when the copy can be trusted: online, with a run that takes the operation
     const code = this.src.controls()[op === 'pause' ? 'pause' : 'resume'].reason?.code;
     if ((op === 'pause' && code === 'paused') || (op === 'resume' && code === 'not-paused')) {
       return Promise.resolve();
     }
-    const session = snapshot.session;
     const id = this.nextId++;
     return new Promise<void>((resolve, reject) => {
       const waiting: Waiting = {
         id,
         op,
         amount,
-        session: session?.id ?? -1,
+        ...target,
         stage: 'sent',
         target: 0,
         from: 0,
@@ -550,9 +553,12 @@ export class FrontActions {
           ),
         );
       }, this.src.answerTimeoutMs);
-      this.src.http({ method: 'POST', path: 'api/time', body: { ...body, id } }, (outcome) => {
-        if (!outcome.ok) this.settle(waiting, actionError(outcome.error));
-      });
+      this.src.http(
+        { method: 'POST', path: 'api/time', body: { ...body, id, ...target } },
+        (outcome) => {
+          if (!outcome.ok) this.settle(waiting, actionError(outcome.error));
+        },
+      );
     });
   }
 
@@ -661,8 +667,15 @@ export class FrontActions {
   private evaluate(): void {
     if (this.waiting.size === 0) return;
     const session = this.src.low.session.session.get();
+    const instance = this.src.low.session.currentInstance();
     for (const w of [...this.waiting.values()]) {
-      if (!session || session.id !== w.session || !session.launcher.running || session.result) {
+      if (
+        !session ||
+        session.id !== w.session ||
+        instance !== w.instance ||
+        !session.launcher.running ||
+        session.result
+      ) {
         this.settle(
           w,
           new ActionError(

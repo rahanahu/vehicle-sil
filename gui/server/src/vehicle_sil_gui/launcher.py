@@ -338,7 +338,7 @@ def speed_argument(speed: float | str) -> str:
 
 
 def check_time_command(body: dict) -> dict:
-    """The body of POST api/time as the command line it becomes: {"command": "pause" | "resume"},
+    """The command of POST api/time after its run target has been removed: {"command": "pause" | "resume"},
     {"command": "step", "ms": <1 to 10^12>}, {"command": "run_until", "at_ms": <0 to 10^12>} or
     {"command": "speed", "value": <a speed or "max">}, each with an
     optional "id" (a whole number from 0 to 2^53: the launcher's `command` event answering it has the same id).

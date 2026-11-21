@@ -147,6 +147,8 @@ editor.setVisible(true);
 | 型   | `TimeState`、`TimeFailure`、`Lateness`、`SendResult`、`NotSentReason`                     |
 | 定数 | `ANSWER_TIMEOUT_MS`                                                                       |
 
+`front.time` と `client.time` は、把握している実行 ID とサーバーの識別子をコマンドに付けます。実行が切り替わった場合、サーバーはランチャーに送る前にコマンドを拒否します。この指定に対応していないサーバーはリクエストを拒否します。
+
 ### ECU の変数
 
 | 種類   | 名前                                                                                                                                                                  |

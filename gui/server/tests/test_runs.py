@@ -660,7 +660,8 @@ def test_pause_step_resume_and_speed(tmp_path: Path) -> None:
             hello = events(sock.received, "hello")[0]
             assert hello["arguments"] == ["run", "--events", "--stdin-commands", "--disable", "Logger", "--speed",
                                           "max", "--start-paused", "--", "forever.yaml"]
-            status, body = await c.post("api/time", {"command": "step", "ms": 25})
+            target = {"session": body["session"]["id"], "instance": body["instance"]}
+            status, body = await c.post("api/time", {"command": "step", "ms": 25, **target})
             assert status == 200 and body == {"session_id": 1, "command": {"command": "step", "ms": 25}}, body
             await sock.until_stands(25)
             step = next(e for e in events(sock.received, "command"))
@@ -705,7 +706,11 @@ def test_time_commands_are_checked(tmp_path: Path) -> None:
                     {"command": "speed", "value": "fast"}, {"command": "speed", "value": 10 ** 7},
                     {"command": "pause", "ms": 5}, {"command": "run_until"}, {"command": "run_until", "at_ms": -1},
                     {"command": "run_until", "at_ms": 1.5}, {"command": "run_until", "at_ms": 10 ** 12 + 1},
-                    {"command": "run_until", "at_ms": 5, "ms": 5}, {"command": "pause", "id": -1}):
+                    {"command": "run_until", "at_ms": 5, "ms": 5}, {"command": "pause", "id": -1},
+                    {"command": "pause", "session": 1}, {"command": "pause", "instance": "x"},
+                    {"command": "pause", "session": None, "instance": None},
+                    {"command": "pause", "session": True, "instance": "x"},
+                    {"command": "pause", "session": 1, "instance": ""}):
             status, body = await c.post("api/time", bad)
             assert status == 400 and body["error"]["code"] == "invalid-field", (bad, body)
         status, body = await c.post("api/time", raw=b'{"command": "speed", "value": NaN}')
@@ -719,6 +724,34 @@ def test_time_commands_are_checked(tmp_path: Path) -> None:
         await sock.until(is_command("step", False))  # not paused
         await c.post("api/stop")
         await sock.until(is_ended)
+    with gui_server(tmp_path) as gui:
+        run_async(main, gui)
+
+
+def test_time_commands_reject_stale_run_targets(tmp_path: Path) -> None:
+    async def main(c: Client) -> None:
+        sock = await c.ws()
+        await sock.until(is_synced)
+        status, first = await c.post("api/run", {"file": "forever.yaml"})
+        assert status == 200, first
+        await sock.until(is_time(sim_ms=0))
+        await c.post("api/stop")
+        await sock.until(is_ended)
+
+        status, second = await c.post("api/run", {"file": "forever.yaml"})
+        assert status == 200, second
+        current_id = second["session"]["id"]
+        await sock.until(lambda m: m.get("session") == current_id and is_time(sim_ms=0)(m))
+
+        for target in ({"session": first["session"]["id"], "instance": first["instance"]},
+                       {"session": current_id, "instance": "previous-server"}):
+            status, body = await c.post("api/time", {"command": "resume", "id": 7, **target})
+            assert status == 409 and body["error"]["code"] == "session-changed", body
+        await c.post("api/stop")
+        ended = (await sock.until(is_ended))[-1]["session"]
+        assert ended["id"] == current_id and ended["result"]["result"] == "stopped", ended
+        assert [e["command"] for e in events(sock.received, "command")][-2:] == ["stop", "stop"]
+
     with gui_server(tmp_path) as gui:
         run_async(main, gui)
 

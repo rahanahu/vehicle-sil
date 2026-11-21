@@ -56,7 +56,12 @@ test('started paused with a control server: it waits before the first step, and 
     await expect(page.getByTestId('pause')).toHaveAttribute('aria-disabled', 'true');
     const sent = page.waitForRequest((r) => r.url().endsWith('/api/time'));
     await page.getByTestId('resume').click();
-    expect((await sent).postDataJSON()).toEqual({ command: 'resume', id: expect.any(Number) });
+    expect((await sent).postDataJSON()).toEqual({
+      command: 'resume',
+      id: expect.any(Number),
+      session,
+      instance: expect.any(String),
+    });
     await expect(result(page, session).getByTestId('result')).toContainText('成功', {
       timeout: RUN_TIMEOUT,
     });

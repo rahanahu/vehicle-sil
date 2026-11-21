@@ -147,6 +147,8 @@ The `currentTarget()` method returns the current `{session, instance}` pair, or 
 | Type     | `TimeState`, `TimeFailure`, `Lateness`, `SendResult`, `NotSentReason`                    |
 | Constant | `ANSWER_TIMEOUT_MS`                                                                      |
 
+Both `front.time` and `client.time` send commands with the known run ID and server instance. If the run is replaced, the server rejects the command before sending it to a launcher. Older servers that do not accept these fields reject the request.
+
 ### ECU variable API
 
 | Kind     | Name                                                                                                                                                                  |

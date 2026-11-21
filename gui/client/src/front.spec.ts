@@ -802,7 +802,7 @@ describe('the front door', () => {
       let done = false;
       const pause = rig.front.time.pause().then(() => (done = true));
       const body = rig.timeBody();
-      expect(body).toMatchObject({ command: 'pause' });
+      expect(body).toMatchObject({ command: 'pause', session: 1, instance: 'x' });
       expect(Number.isSafeInteger(body.id)).toBe(true);
       // Another page's pause (another id) and a stdin line (no id) are not our answer
       await rig.deliver(
@@ -1141,8 +1141,7 @@ describe('the front door', () => {
       going.http.expectNone('api/time');
     });
 
-    it('sends what the controls refuse when the copy cannot be trusted, and lets the launcher answer', async () => {
-      // No run in the copy: the operation goes out, and the server's refusal is the answer
+    it('refuses a time command when there is no identified run', async () => {
       const rig = await open();
       await rig.deliver(
         {
@@ -1157,14 +1156,11 @@ describe('the front door', () => {
         { type: 'synced', session: null, last_seq: null },
       );
       expect(rig.front.controls.get().step.ok).toBe(false);
-      const step = rig.front.time.step(10).catch((e: unknown) => e as ActionError);
-      rig.http
-        .expectOne('api/time')
-        .flush(
-          { error: { code: 'not-running', message: 'no simulation is running', detail: null } },
-          { status: 409, statusText: 'Conflict' },
-        );
-      expect(await step).toMatchObject({ code: 'not-running', outcome: 'refused' });
+      await expect(rig.front.time.step(10)).rejects.toMatchObject({
+        code: 'not-running',
+        outcome: 'refused',
+      });
+      rig.http.expectNone('api/time');
     });
 
     it('resolves a step only when time has arrived and the run is paused again', async () => {

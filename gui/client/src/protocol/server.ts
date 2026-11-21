@@ -919,8 +919,8 @@ export interface StopSessionRequestBody extends StopRequestBody {
 export type TimeCommandName = 'pause' | 'resume' | 'step' | 'run_until' | 'speed';
 
 /**
- * Body of POST api/time. The server passes it to the launcher as one line and returns at once. Whether it was accepted
- * arrives as a command event, and its effect as a time event.
+ * The command sent in POST api/time. The GUI Client adds the run's session and server instance to the request.
+ * The server passes the command to the launcher as one line. The answer arrives as a command event.
  */
 export type TimeCommand = (
   | { command: 'pause' }

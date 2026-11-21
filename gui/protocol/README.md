@@ -89,7 +89,7 @@ Every `api/` request has these conditions:
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: where that network can be connected on this computer ("Connecting a network outside" below) | `connections.json` |
 | `POST api/stop` `{force}` | `{session}` (the current summary; `null` if there is no run) | `stop*.json` |
 | `POST api/stop-session` `{session, instance, force}` | `{session}` of the targeted run, or 409 `session-changed` | — |
-| `POST api/time` `{command, ms, value, id}` | `{session_id, command}` (the command sent to the launcher, with its `id` if given) | `time.json` |
+| `POST api/time` `{command, ms, at_ms, value, id, session, instance}` | `{session_id, command}` (the command sent to the launcher, with its `id` if given) | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}` (the operation number; the result arrives as `operation` over WebSocket) | `write.json` |
 | `GET api/session` | `{instance, session, allowed}` (`session` is `null` if none; `allowed` as in "What the server accepts (`allowed`)" below) | `session-*.json` |
 | `GET api/dashboard?file=<configuration file>` | The dashboard file next to the configuration file: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
@@ -196,7 +196,7 @@ To stop a particular run, use `POST api/stop-session` with `{"session": <positiv
 
 ### Time commands (`api/time`)
 
-The body is one of the following (any other field gives 400 `invalid-field`).
+The body is one of the following commands, with the optional fields described below.
 
 | Body | Range |
 |---|---|
@@ -207,6 +207,8 @@ The body is one of the following (any other field gives 400 `invalid-field`).
 | `{"command": "speed", "value": <"max" or a number>}` | Same range as `speed` |
 
 Each body may also have `"id"`, a whole number from 0 to 2^53. The server passes it to the launcher in the command line, and the launcher returns it as `id` in the `command` event that answers that line (`null` when the line had none). A screen uses it to tell the answer to its own command from the answers to the commands of other screens or of the launcher's stdin; the server does not read it. The response carries the command with its `id`. An `id` that is not such a number gives 400 `invalid-field`.
+
+To send a command to a particular run, include both `session` (a positive integer) and `instance` (the server identifier from `api/run`, `api/session`, or the WebSocket hello). The server checks the pair before writing to the launcher. A mismatch, an absent run, or a run being replaced returns 409 `session-changed`. Neither field is passed to the launcher or included in the response's `command`. A request with just one field of the pair, an invalid value, or an unknown field returns 400 `invalid-field`. If both fields are omitted, the command still goes to the run current when the server handles it.
 
 The server writes the command as one line to the stdin of the running run's launcher and returns without waiting for an answer. This keeps a request from hanging on a stuck launcher.
 
@@ -249,7 +251,7 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 422 | `check-failed` | `api/run`: the check of what the run is made of did not pass, so no run was started (`detail` holds `{result, findings}`; "Check and start" above). Example: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`, `api/write`: no run is running |
 | 409 | `scenario-running` | `api/write`: the running run is running a scenario (not written, so that the scenario result does not change). Example: `error-scenario-running.json` |
-| 409 | `session-changed` | `api/write`: `session` differs from the id of the running run (a write sent while the run changed). Nothing is written. Example: `error-session-changed.json` |
+| 409 | `session-changed` | `api/stop-session` and targeted `api/time`: the server instance or current run changed. `api/write`: the requested run ID differs from the running run. No operation was sent. Example: `error-session-changed.json` |
 | 409 | `config-changed` | `POST api/config`: the file's content no longer has `stamp`, or a new file (`stamp` `null`) is there already |
 | 409 | `config-busy` | `POST api/config`: the file could not be replaced (the message says why) |
 | 409 | `variables-not-ready` | `api/write`: the variable feature is not `ready` (the message includes `variables.reason` of the summary) |

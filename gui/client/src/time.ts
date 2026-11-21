@@ -119,6 +119,7 @@ export class TimeControl implements ClientTime {
   constructor(
     private readonly session: Readable<SessionView | null>,
     private readonly transport: HttpTransport,
+    private readonly currentTarget: () => { session: number; instance: string } | null,
     /** How long to wait for an answer (ms). */
     readonly answerTimeoutMs = ANSWER_TIMEOUT_MS,
     onError: ErrorSink = rethrowLater,
@@ -162,7 +163,8 @@ export class TimeControl implements ClientTime {
    */
   send(command: TimeCommand): SendResult {
     const session = this.session.get();
-    if (!session) return { sent: false, reason: 'no-session' };
+    const target = this.currentTarget();
+    if (!session || target?.session !== session.id) return { sent: false, reason: 'no-session' };
     if (this.state.get().sending !== null) return { sent: false, reason: 'waiting' };
     this.failureValue.set(null);
     const pending: Pending = {
@@ -174,18 +176,23 @@ export class TimeControl implements ClientTime {
     this.inFlight.update((n) => n + 1);
     clearTimeout(this.answerTimer);
     this.answerTimer = setTimeout(() => this.giveUp(pending), this.answerTimeoutMs);
-    this.transport({ method: 'POST', path: 'api/time', body: command }, (outcome) => {
-      this.inFlight.update((n) => n - 1);
-      if (outcome.ok || this.pending.get() !== pending) return;
-      clearTimeout(this.answerTimer);
-      this.pending.set(null); // Not sent: no launcher answer will come
-      this.failureValue.set({
-        kind: 'server',
-        message: errorMessage(outcome.error),
-        command: pending.command,
-        session: this.session.get()?.id ?? null,
-      });
-    });
+    this.transport(
+      { method: 'POST', path: 'api/time', body: { ...command, ...target } },
+      (outcome) => {
+        this.inFlight.update((n) => n - 1);
+        if (outcome.ok || this.pending.get() !== pending) return;
+        clearTimeout(this.answerTimer);
+        this.pending.set(null); // Not sent: no launcher answer will come
+        const current = this.currentTarget();
+        if (current?.session !== target.session || current.instance !== target.instance) return;
+        this.failureValue.set({
+          kind: 'server',
+          message: errorMessage(outcome.error),
+          command: pending.command,
+          session: pending.session,
+        });
+      },
+    );
     return { sent: true };
   }
 

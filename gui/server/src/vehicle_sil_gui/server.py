@@ -977,10 +977,22 @@ class GuiServer:
         that stands still must not hold this request)."""
         try:
             self._not_closing()
-            command = check_time_command(await self._body(request))
+            body = await self._body(request)
+            targeted = "session" in body or "instance" in body
+            session = body.pop("session", None)
+            instance = body.pop("instance", None)
+            if targeted:
+                if type(session) is not int or session < 1:
+                    raise InvalidRequest("invalid-field", "session must be a positive integer")
+                if not isinstance(instance, str) or not instance:
+                    raise InvalidRequest("invalid-field", "instance must be the server instance from the run or session answer")
+            command = check_time_command(body)
         except (InvalidRequest, Refused) as e:
             return self._refusal(e)
         run = self.current
+        # Compare the target after reading the request and before writing anything to the launcher.
+        if targeted and (instance != self.instance or self._starting or run is None or session != run.session.id):
+            return error(409, "session-changed", "the run has changed: no time command was sent")
         proc = run.proc if run else None
         if run is None or self._starting or run.session.state != "running" or not run.session.launcher_running \
                 or proc.stdin is None or proc.stdin.is_closing():

@@ -167,6 +167,11 @@ export class Workbench {
   readonly selectedScenario = signal('');
   readonly speed = signal('1');
   readonly stopAt = signal('');
+  readonly activeStopAt = computed(() => {
+    const session = this.session();
+    if (!session?.launcher.running || !session.check) return 'Awaiting check';
+    return session.check.stop_at_ms ?? 'No limit';
+  });
   readonly validStopAt = computed(() => {
     const stop = this.stopAt();
     return stop === '' || (/^\d+$/.test(stop) && Number(stop) >= 1 && Number(stop) <= 1e12);
