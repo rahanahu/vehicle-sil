@@ -59,6 +59,24 @@ The GUI server also serves the two `.mjs` files, without the token, as `/vsil/ve
 
 The public API is kept small, because adding to it keeps compatibility and removing from it breaks compatibility. If the public entry point lacks something you need, do not reach into `internal`; decide whether to add it to the public API.
 
+## Live waveforms and variable editing
+
+`createWaveforms` returns live histories in selection order. Signals shared by two selections keep their history, and a new run clears the histories. It keeps up to 600 points per signal by default. The screen draws the points and handles cross-tab synchronization.
+
+`createVariableEditor` exposes the variable definition, display value and write outcome in `state`. It validates numeric, Boolean and enum edits against the definition. After a Boolean edit is applied, it waits for readback for up to 500 ms before accepting another edit. Set visibility to subscribe to values, and call `close()` on both parts when done.
+
+```ts
+import { connect, createVariableEditor, createWaveforms } from '@vehicle-sil/gui-client';
+
+const front = await connect();
+const ref = { peer: 'Engine', name: 'engine.throttle' };
+const waves = createWaveforms(front.low, { periodMs: 20 });
+waves.setSignals([ref]);
+const editor = createVariableEditor(front, ref);
+editor.setVisible(true);
+// Render waves.series and editor.state. Call editor.write(value) on commit.
+```
+
 ## Public API
 
 The names that `src/index.ts` exports, by group. Parentheses list the members of the object.

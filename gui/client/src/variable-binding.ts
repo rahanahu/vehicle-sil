@@ -147,6 +147,7 @@ export interface BindingSources {
     ): Promise<OperationView>;
   };
   readonly connection: Readable<ConnectionState>;
+  readonly connectionEpoch: () => number;
   readonly session: Readable<SessionView | null>;
   readonly onError: ErrorSink;
 }
@@ -357,6 +358,7 @@ export class VariableBinder {
   }
 
   private send(entry: Entry, value: WriteValue): void {
+    const epoch = this.sources.connectionEpoch();
     const mine: Sent = { value };
     const { peer, name } = entry.ref;
     entry.sending = mine;
@@ -364,7 +366,6 @@ export class VariableBinder {
     entry.shown = mine;
     entry.status = { kind: 'sending' };
     entry.pending = value;
-    this.changed(entry);
     /** The server received it: send the held next value, if any. */
     const accepted = (seq: number | null) => {
       if (entry.sending !== mine) return;
@@ -408,6 +409,17 @@ export class VariableBinder {
       if (entry.shown === mine) entry.status = status;
       this.changed(entry);
     };
+    // A synchronous subscriber can close the client or switch runs on the sending notification.
+    this.changed(entry);
+    if (
+      this.sources.connectionEpoch() !== epoch ||
+      this.sources.session.get()?.id !== entry.session ||
+      this.sources.variables.state.get().session !== entry.session ||
+      this.block(entry.ref) !== null
+    ) {
+      settled({ kind: 'dropped', message: DROPPED_MESSAGE });
+      return;
+    }
     this.sources.variables
       .write(
         { [peer]: { [name]: value } },

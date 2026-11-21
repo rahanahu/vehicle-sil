@@ -1,4 +1,5 @@
-import { GuiClient, createClient } from './client';
+import { GuiClient } from './client';
+import { createFront, createVariableEditor, createWaveforms, type Front } from './index';
 import { BATCH_MS } from './connection';
 import { isHolding } from './session-state';
 import { FakeHttp, FakeRequest } from './testing/fake-http';
@@ -127,12 +128,13 @@ describe('client.variables.bind', () => {
   let fake: FakeWebSockets;
   let http: FakeHttp;
   let client: GuiClient;
+  let front: Front;
 
   beforeEach(() => {
     vi.useFakeTimers();
     fake = new FakeWebSockets();
     http = new FakeHttp();
-    client = createClient({
+    front = createFront({
       baseUrl: 'http://127.0.0.1:8765/',
       token: 'secret',
       socket: fake.factory,
@@ -141,12 +143,13 @@ describe('client.variables.bind', () => {
         throw error;
       },
     });
+    client = front.low;
     client.connect();
     socket().open();
   });
 
   afterEach(() => {
-    client.close();
+    front.close();
     vi.useRealTimers();
   });
 
@@ -171,6 +174,80 @@ describe('client.variables.bind', () => {
     for (const request of found) http.requests.splice(http.requests.indexOf(request), 1);
     return found;
   };
+
+  it('preserves selected histories when signals change and clears them for another run', async () => {
+    await deliver(hello());
+    const waves = createWaveforms(client, { history: 3 });
+    const demand = ref('engine.demand');
+    const speed = ref('engine.speed');
+    waves.setSignals([demand]);
+    await deliver(values(10, false, { 'engine.demand': 11 }));
+    waves.setSignals([speed, demand, speed]);
+    expect(waves.series.get()).toEqual([
+      { ref: speed, points: [] },
+      { ref: demand, points: [{ sampleMs: 10, value: 11 }] },
+    ]);
+    waves.setSignals([demand]);
+    expect(waves.series.get()[0].points).toHaveLength(1);
+    const unsubscribe = client.session.session.subscribe((session) => {
+      if (session?.id === 2) expect(waves.series.get()[0].points).toEqual([]);
+    });
+    await deliver(hello('ready', 2));
+    unsubscribe();
+    expect(waves.series.get()[0].points).toEqual([]);
+    waves.close();
+    waves.setSignals([speed]);
+    expect(waves.series.get()).toEqual([]);
+  });
+
+  it('waits for Boolean readback, rejects invalid edits, and forgets waits from earlier runs', async () => {
+    await deliver(hello(), { type: 'synced', session: 1, last_seq: null });
+    const editor = createVariableEditor(front, ref('engine.enabled'));
+    editor.setVisible(true);
+    await deliver(values(10, false, { 'engine.enabled': false }));
+    expect(editor.write(1)).toBe(false);
+    http.expectNone('api/write');
+    expect(editor.write(true)).toBe(true);
+    expect(editor.state.get()).toMatchObject({ shown: true, waiting: true, canWrite: false });
+    http.expectOne('api/write').flush({ session_id: 1, operation: 4 });
+    await deliver(operation(4, 'applied', true));
+    expect(editor.state.get()).toMatchObject({ shown: false, waiting: true });
+    await deliver(values(20, false, { 'engine.enabled': true }));
+    expect(editor.state.get()).toMatchObject({ shown: true, waiting: false });
+    client.close();
+    client.connect();
+    socket().open();
+    expect(editor.write(false)).toBe(false);
+    http.expectNone('api/write');
+    await deliver(hello(), { type: 'synced', session: 1, last_seq: null });
+    expect(editor.write(false)).toBe(true);
+    http.expectOne('api/write').flush({ session_id: 1, operation: 5 });
+    await deliver(operation(5, 'applied', true));
+    expect(editor.state.get().waiting).toBe(true);
+    await deliver(hello('ready', 2));
+    expect(editor.state.get().waiting).toBe(false);
+    editor.close();
+    expect(editor.write(true)).toBe(false);
+  });
+
+  it('cancels the edit if a sending subscriber closes the connection', async () => {
+    await deliver(hello(), { type: 'synced', session: 1, last_seq: null });
+    const editor = createVariableEditor(front, ref('engine.demand'));
+    editor.setVisible(true);
+    const unsubscribe = editor.state.subscribe((state) => {
+      if (!state.waiting) return;
+      unsubscribe();
+      client.close();
+    });
+    expect(editor.write(25)).toBe(true);
+    http.expectNone('api/write');
+    expect(editor.state.get()).toMatchObject({
+      waiting: false,
+      canWrite: false,
+      view: { write_status: { kind: 'dropped' } },
+    });
+    editor.close();
+  });
 
   it('tells a value that is waited for, live, of a stopped time, old, and the last of a run', async () => {
     const speed = client.variables.bind(ref('engine.speed'));
