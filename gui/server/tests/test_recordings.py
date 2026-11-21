@@ -38,7 +38,7 @@ def test_manual_participant_addresses_are_normalized(tmp_path: Path) -> None:
     line = ("from other computers, join at silkit://198.51.100.9:8501 or "
             "silkit://[2001:db8::9]:8501 (this computer's addresses): give it as --registry-uri")
     expected = ("from other computers, join at silkit://192.0.2.1:8501 or "
-                "silkit://192.0.2.1:8501 (this computer's addresses): give it as --registry-uri")
+                "silkit://[2001:db8::1]:8501 (this computer's addresses): give it as --registry-uri")
     recorder = Recorder(Path("launcher"), tmp_path, tmp_path)
     case = Case("address-hint", ["version"], "manual address hint")
     _, entries = recorder.normalize(case, [(0.0, "out", json.dumps({"event": "log", "line": line}))], 0)
@@ -47,6 +47,27 @@ def test_manual_participant_addresses_are_normalized(tmp_path: Path) -> None:
     assert normalize_advertised_addresses("registry at silkit://127.0.0.1:8501") == "registry at silkit://127.0.0.1:8501"
     with pytest.raises(RuntimeError, match="an advertised address of the recording host"):
         recorder.forbid(case, {}, [{"out": {"event": "log", "line": line}}])
+
+
+def test_registry_bind_hints_are_normalized(tmp_path: Path) -> None:
+    line = ("write in registry_uri one of this computer's addresses (198.51.100.9, [2001:db8::9]), "
+            "0.0.0.0 for all of them, or 127.0.0.1 for this computer only")
+    expected = ("write in registry_uri one of this computer's addresses (192.0.2.1, [2001:db8::1]), "
+                "0.0.0.0 for all of them, or 127.0.0.1 for this computer only")
+    recorder = Recorder(Path("launcher"), tmp_path, tmp_path)
+    case = Case("bind-hint", ["version"], "registry bind hint")
+    _, entries = recorder.normalize(case, [(0.0, "out", json.dumps({"finding": {"message": line}}))], 1)
+    assert entries[0]["print"]["finding"]["message"] == expected
+    assert normalize_advertised_addresses(expected) == expected
+    with pytest.raises(RuntimeError, match="an advertised address of the recording host"):
+        recorder.forbid(case, {}, [{"print": {"finding": {"message": line}}}])
+
+
+def test_ipv6_only_manual_hint_keeps_ipv6() -> None:
+    line = "from other computers, join at silkit://[2001:db8::9]:8501 (this computer's address; it listens on IPv6 only here)"
+    expected = "from other computers, join at silkit://[2001:db8::1]:8501 (this computer's address; it listens on IPv6 only here)"
+    assert normalize_advertised_addresses(line) == expected
+    assert normalize_advertised_addresses(expected) == expected
 
 
 def test_no_recording_contains_unmasked_advertised_addresses() -> None:

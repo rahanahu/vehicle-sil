@@ -24,7 +24,7 @@ no interface of this computer; --compare runs it without one where unshare -rn c
 shapes of a list), and recording it there fails with what to do.
 
 What changes from run to run is replaced with a fixed mark: the copy's directory (<root>), the pids ("<pid>"), the
-registry's port (silkit://127.0.0.1:8500), advertised local addresses (192.0.2.1, a documentation address),
+registry's port (silkit://127.0.0.1:8500), local addresses (192.0.2.1 or [2001:db8::1], documentation addresses),
 the control server's address (<control>), times (no seq, no t_ms, the
 time between lines in steps of 100 ms), how fast it went (actual_speed 1.5, wall_ms 1000, paused_ms 500 when it
 stood still) and lateness (0). A recording that still has a path of this computer, the user's name or the control
@@ -157,13 +157,22 @@ CREDENTIALS = ("--control", "0", "--control-credentials", "<credentials>")
 
 
 def normalize_advertised_addresses(text: str) -> str:
-    """Do not save the recording host's addresses in the manual-participant hint."""
-    def replace(match: re.Match) -> str:
-        addresses = re.sub(r"silkit://(?:\[[^\]]+\]|[^:\s,]+):(\d+)",
-                           r"silkit://192.0.2.1:\1", match.group(2))
+    """Do not save local addresses in manual-participant or registry-bind hints."""
+    def uri(match: re.Match) -> str:
+        host = "[2001:db8::1]" if match.group(1).startswith("[") else "192.0.2.1"
+        return f"silkit://{host}:{match.group(2)}"
+
+    def advertised(match: re.Match) -> str:
+        addresses = re.sub(r"silkit://(\[[^\]]+\]|[^:\s,]+):(\d+)", uri, match.group(2))
         return match.group(1) + addresses + match.group(3)
 
-    return re.sub(r"(from other computers, join at )(.*?)( \(this computer)", replace, text)
+    def bind_list(match: re.Match) -> str:
+        addresses = re.sub(r"\[[^\]]+\]", "[2001:db8::1]", match.group(2))
+        addresses = re.sub(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])", "192.0.2.1", addresses)
+        return match.group(1) + addresses + match.group(3)
+
+    text = re.sub(r"(from other computers, join at )(.*?)( \(this computer)", advertised, text)
+    return re.sub(r"(one of this computer's addresses \()([^)]*)(\))", bind_list, text)
 
 
 class Recorder:
