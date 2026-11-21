@@ -198,7 +198,7 @@ export class Workbench {
   readonly pinnedOnly = signal(false);
   readonly pins = signal<string[]>(readStored(pinStorage, isPin));
   readonly traces = signal<Selection[]>([]);
-  readonly liveHistories = signal<Point[][]>([]);
+  readonly liveHistories = signal(new Map<string, Point[]>());
   readonly inheritedHistories = signal(new Map<string, Point[]>());
   readonly waveTarget = computed(() => {
     // SessionFeed updates its authenticated target before notifying subscribers.
@@ -213,9 +213,10 @@ export class Workbench {
   });
   readonly waveSession = computed(() => this.waveTarget()?.session ?? null);
   readonly histories = computed(() =>
-    this.traces().map((trace, i) => {
-      const newest = this.liveHistories()[i] ?? [];
-      const previous = this.inheritedHistories().get(refKey(trace)) ?? [];
+    this.traces().map((trace) => {
+      const key = refKey(trace);
+      const newest = this.liveHistories().get(key) ?? [];
+      const previous = this.inheritedHistories().get(key) ?? [];
       return [
         ...previous.filter((point) => !newest.length || point.sampleMs < newest[0].sampleMs),
         ...newest,
@@ -442,7 +443,7 @@ export class Workbench {
       const session = this.waveSession();
       if (instance) this.ensureWaveInstance(instance);
       this.inheritedHistories.set(new Map());
-      this.liveHistories.set([]);
+      this.liveHistories.set(new Map());
       if (channel && instance)
         channel.postMessage({
           kind: 'request',
@@ -451,21 +452,30 @@ export class Workbench {
           requester: this.waveActor,
         } satisfies WaveMessage);
     });
-    effect((cleanup) => {
+    let releaseWaveWatch: (() => void) | undefined;
+    this.destroy.onDestroy(() => releaseWaveWatch?.());
+    effect(() => {
       const client = this.front();
       const traces = this.traces();
+      const releasePrevious = releaseWaveWatch;
       if (!client || !traces.length) {
-        this.liveHistories.set([]);
+        releasePrevious?.();
+        releaseWaveWatch = undefined;
+        this.liveHistories.set(new Map());
         return;
       }
+      // Keep the shared traces subscribed while replacing the watch so the client retains their samples.
       const feed = client.low.variables.watch(traces, { periodMs: 20, history: 600 });
+      releasePrevious?.();
       const release = watch(feed.values, () =>
-        this.liveHistories.set(traces.map((trace) => feed.history(trace))),
+        this.liveHistories.set(
+          new Map(traces.map((trace) => [refKey(trace), feed.history(trace)])),
+        ),
       );
-      cleanup(() => {
+      releaseWaveWatch = () => {
         release();
         feed.close();
-      });
+      };
     });
     void this.action(async () => {
       const front = pageToken

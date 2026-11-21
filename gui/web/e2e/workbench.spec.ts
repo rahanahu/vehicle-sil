@@ -723,6 +723,51 @@ test('workbench shows the overall failure when the scenario passed', async ({ pa
   }
 });
 
+test('workbench preserves waveform history when another trace is added or removed', async ({
+  page,
+}) => {
+  test.skip(
+    process.env['VEHICLE_SIL_VERIFY_WORKBENCH'] !== '1' || test.info().project.name !== 'static',
+    'run with verify-web.py --workbench',
+  );
+  const server = await launchGuiServer({
+    launcher: REPLAY_LAUNCHER,
+    root: CONFIGS,
+    config: join(CONFIGS, 'forever.yaml'),
+    env: { REPLAY_TICK_MS: '50', REPLAY_FEATURES: features, REPLAY_VARIABLES: 'more' },
+    port: 0,
+    web: join(REPOSITORY, 'build', 'gui-workbench', 'browser'),
+  });
+  try {
+    await page.goto(server.url);
+    await page.getByRole('button', { name: 'Start', exact: true }).click();
+    await page.locator('app-io-row').filter({ hasText: 'engine.demand' }).hover();
+    await page.getByRole('button', { name: 'Add engine.demand to waveforms' }).click();
+    const showWaveforms = page.getByRole('button', { name: 'Waveforms', exact: true });
+    await showWaveforms.click();
+    const demand = page.getByRole('img', { name: 'engine.demand waveform' }).locator('path.trace');
+    await expect(demand).toHaveAttribute('d', /L /, { timeout: RUN_TIMEOUT });
+
+    // Freeze sampling so new data cannot replace the original history during either assertion.
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(page.getByText('Run ended', { exact: false }).first()).toBeVisible({
+      timeout: RUN_TIMEOUT,
+    });
+    await page.getByRole('button', { name: 'ECU I/O', exact: true }).click();
+    await page.locator('app-io-row').filter({ hasText: 'engine.enabled' }).hover();
+    await page.getByRole('button', { name: 'Add engine.enabled to waveforms' }).click();
+    await showWaveforms.click();
+    const enabled = page.getByRole('img', { name: 'engine.enabled waveform' });
+    await expect(enabled).toBeVisible();
+    await expect(demand).toHaveAttribute('d', /L /);
+    await enabled.locator('..').getByRole('button', { name: 'Remove' }).click();
+    await expect(enabled).toHaveCount(0);
+    await expect(demand).toHaveAttribute('d', /L /);
+  } finally {
+    await server.stop();
+  }
+});
+
 test('workbench writes an ECU input, detaches the ECU, and loads the recorded YAML', async ({
   page,
 }) => {

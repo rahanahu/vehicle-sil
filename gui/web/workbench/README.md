@@ -31,9 +31,10 @@ Open the complete URL printed by the command. See the
   ECU or the waveform view in another browser tab. A detached ECU stays on
   the participant you selected. Current waveform history is bounded, sampled
   through the GUI Client and transferred between open tabs when available.
-  Waveform selections are restored after a server restart when browser storage
-  and Web Locks are available. Without Web Locks the current screen still works,
-  but it does not advance the saved selection for the next server restart.
+  Waveform selections are restored after a server restart at the same origin
+  when browser storage and Web Locks are available. Pass the same `--port`
+  on each launch to keep the origin. Without Web Locks the current screen still
+  works, but it does not advance the saved selection for the next server restart.
   History belongs to one server instance and run; it is not reused after a restart.
 - Stop a recorded run, open **Scenario** and select **Load recording** to
   review or save the YAML. Recording exports the existing server format:
