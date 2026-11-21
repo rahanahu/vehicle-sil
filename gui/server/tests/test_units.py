@@ -360,10 +360,12 @@ def test_memory_is_bounded_in_bytes() -> None:
     for n in range(200):
         small.feed_line(line("log", n, source=f"S{n % 5}", line="x" * 2048))
     assert small._log_bytes <= 100 * 1024 and sum(log.dropped for log in small._logs.values()) > 0
-    big = {"participants": [], "blob": "z" * (5 * 1024 * 1024)}
+    big = {"participants": [], "stop_at_ms": 10000, "blob": "z" * (5 * 1024 * 1024)}
+    assert "stop_at_ms" not in s.summary()
     out = s.feed_line(line("check", seq, check=big))
     seq += 1
     assert kinds(out) == ["error:kept-limit", "event"] and s.summary()["check"] is None
+    assert s.summary()["stop_at_ms"] == 10000
     out = s.feed_line(line("result", seq, result={"result": "passed", "blob": "z" * (5 * 1024 * 1024)}))
     seq += 1
     assert kinds(out) == ["error:kept-limit", "event"] and s.summary()["result"] == {"result": "passed"}

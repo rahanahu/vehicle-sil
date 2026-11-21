@@ -259,6 +259,31 @@ describe('TimeControl', () => {
     expect(time.sending()).toBeNull();
   });
 
+  it('does not carry a pending command across a restart that reuses the run ID', async () => {
+    const { time, socket } = await open();
+    await play(socket, 'ws-time', 0, standing);
+    await sendStep(time);
+    socket.send({
+      type: 'hello',
+      vehicle_sil_gui: 3,
+      instance: 'restarted',
+      replay: { from_seq: null },
+      session: lastSummary((s) => {
+        running(s);
+        s['last_command'] = null;
+      }),
+    });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(time.sending()).toBeNull();
+    vi.advanceTimersByTime(ANSWER_MS);
+    expect(time.error()).toBeNull();
+    expect(time.step(10)).toEqual({ sent: true });
+    expect(http.expectOne('api/time').request.body).toMatchObject({
+      session: 1,
+      instance: 'restarted',
+    });
+  });
+
   it('takes the answer from the summary of a reconnection', async () => {
     const { time, socket } = await open();
     await play(socket, 'ws-time', 0, standing);

@@ -23,6 +23,7 @@ import {
   type FrontScenario,
   type FrontStatus,
   type Intent,
+  type RunTarget,
   type ScenarioFile,
   type SessionView,
   type VariableInfo,
@@ -169,8 +170,9 @@ export class Workbench {
   readonly stopAt = signal('');
   readonly activeStopAt = computed(() => {
     const session = this.session();
-    if (!session?.launcher.running || !session.check) return 'Awaiting check';
-    return session.check.stop_at_ms ?? 'No limit';
+    if (!session?.launcher.running) return 'Awaiting check';
+    const stopAt = session.check ? session.check.stop_at_ms : session.stopAtMs;
+    return stopAt === undefined ? 'Awaiting check' : (stopAt ?? 'No limit');
   });
   readonly validStopAt = computed(() => {
     const stop = this.stopAt();
@@ -212,7 +214,7 @@ export class Workbench {
     () => new Map(this.waveformSeries().map(({ ref, points }) => [refKey(ref), points])),
   );
   readonly inheritedHistories = signal(new Map<string, Point[]>());
-  readonly waveTarget = computed(() => {
+  readonly runTarget = computed(() => {
     // SessionFeed updates its authenticated target before notifying subscribers.
     this.session();
     return this.front()?.low.session.currentTarget() ?? null;
@@ -223,7 +225,7 @@ export class Workbench {
     this.session();
     return this.front()?.low.session.currentInstance() ?? null;
   });
-  readonly waveSession = computed(() => this.waveTarget()?.session ?? null);
+  readonly waveSession = computed(() => this.runTarget()?.session ?? null);
   readonly histories = computed(() =>
     this.traces().map((trace) => {
       const key = refKey(trace);
@@ -604,9 +606,9 @@ export class Workbench {
     }
   }
 
-  async setSpeed(value: string) {
+  async setSpeed(value: string, target: RunTarget | null) {
     if (this.live() && value)
-      await this.front()!.time.setSpeed(value === 'max' ? value : Number(value));
+      await this.front()!.time.setSpeed(value === 'max' ? value : Number(value), target);
     this.speed.set(value);
     this.check.set(null);
   }

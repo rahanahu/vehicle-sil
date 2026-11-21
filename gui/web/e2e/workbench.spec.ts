@@ -710,7 +710,8 @@ test('workbench shows the active stop time and restores the next run input', asy
     send({
       ...running,
       snapshot_rev: running.snapshot_rev + 1,
-      check: { ...running.check, stop_at_ms: 10000 },
+      check: null,
+      stop_at_ms: 10000,
     });
     await expect(page.getByText('Stop at (ms): 10000', { exact: true })).toBeVisible();
     send({ ...summary('ended'), snapshot_rev: running.snapshot_rev + 2 });

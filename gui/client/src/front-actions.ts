@@ -8,6 +8,7 @@ import type { FrontControls, Intent, OperationName, RunState } from './front-typ
 import { ActionError } from './front-types';
 import type { Snapshot } from './front-compose';
 import type { StopCapture } from './run';
+import { sameRunTarget, type RunTarget } from './session';
 import { linkOf, standsAt } from './front-compose';
 import type {
   CheckResult,
@@ -458,15 +459,15 @@ export class FrontActions {
 
   // --- time --------------------------------------------------------------------------------------
 
-  pause(): Promise<void> {
-    return this.time('pause', { command: 'pause' }, 0);
+  pause(target?: RunTarget | null): Promise<void> {
+    return this.time('pause', { command: 'pause' }, 0, target);
   }
 
-  resume(): Promise<void> {
-    return this.time('resume', { command: 'resume' }, 0);
+  resume(target?: RunTarget | null): Promise<void> {
+    return this.time('resume', { command: 'resume' }, 0, target);
   }
 
-  step(ms: number): Promise<void> {
+  step(ms: number, target?: RunTarget | null): Promise<void> {
     if (!Number.isFinite(ms) || ms <= 0) {
       return this.fail(
         new ActionError(
@@ -476,10 +477,10 @@ export class FrontActions {
         ),
       );
     }
-    return this.time('step', { command: 'step', ms }, ms);
+    return this.time('step', { command: 'step', ms }, ms, target);
   }
 
-  setSpeed(value: number | 'max'): Promise<void> {
+  setSpeed(value: number | 'max', target?: RunTarget | null): Promise<void> {
     if (value !== 'max' && !(Number.isFinite(value) && value > 0)) {
       return this.fail(
         new ActionError(
@@ -489,10 +490,10 @@ export class FrontActions {
         ),
       );
     }
-    return this.time('speed', { command: 'speed', value }, 0);
+    return this.time('speed', { command: 'speed', value }, 0, target);
   }
 
-  runUntil(ms: number): Promise<void> {
+  runUntil(ms: number, target?: RunTarget | null): Promise<void> {
     if (!Number.isFinite(ms) || ms < 0) {
       return this.fail(
         new ActionError(
@@ -502,10 +503,15 @@ export class FrontActions {
         ),
       );
     }
-    return this.time('run_until', { command: 'run_until', at_ms: ms }, ms);
+    return this.time('run_until', { command: 'run_until', at_ms: ms }, ms, target);
   }
 
-  private time(op: TimeOperation, body: Record<string, unknown>, amount: number): Promise<void> {
+  private time(
+    op: TimeOperation,
+    body: Record<string, unknown>,
+    amount: number,
+    shownTarget?: RunTarget | null,
+  ): Promise<void> {
     const target = this.src.low.session.currentTarget();
     this.failureValue.set(null);
     const snapshot = this.src.snapshot();
@@ -518,6 +524,10 @@ export class FrontActions {
           ? { code: 'busy', message: `the previous ${op} has not been answered yet: wait for it` }
           : null;
     if (own) return this.fail(new ActionError(own.code, own.message, 'refused'));
+    if (shownTarget !== undefined && !sameRunTarget(shownTarget, target))
+      return this.fail(
+        new ActionError('session-changed', 'the displayed run has changed', 'refused'),
+      );
     if (!target)
       return this.fail(new ActionError('not-running', 'there is no identified run', 'refused'));
     // Already as wanted: nothing to send (the pause button of a second tab does not turn up as a mistake). `controls`

@@ -797,6 +797,17 @@ describe('the front door', () => {
   });
 
   describe('the time operations', () => {
+    it('does not send a step from a rendered view of another run', async () => {
+      const rig = await running(pausedState(1));
+      const shown = rig.front.low.session.currentTarget();
+      await rig.deliver({ type: 'session', session: summary({}, 2) });
+      await expect(rig.front.time.step(10, shown)).rejects.toMatchObject({
+        code: 'session-changed',
+        outcome: 'refused',
+      });
+      rig.http.expectNone('api/time');
+    });
+
     it('ties the answer to the command by its id, and ignores the same name with another id', async () => {
       const rig = await running();
       let done = false;

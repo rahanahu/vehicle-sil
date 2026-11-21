@@ -213,7 +213,7 @@ To send a command to a particular run, include both `session` (a positive intege
 The server writes the command as one line to the stdin of the running run's launcher and returns without waiting for an answer. This keeps a request from hanging on a stuck launcher.
 
 - Whether the command was accepted, and why not, arrives in the launcher's `command` event (`accepted`, `message`, `reason` (the code of why not), `id`, for `step` the actual `ms` it advances and the `at_ms` at which the simulation pauses after it, and for `run_until` the `at_ms` asked for, rounded up to the time step). The `time` event shows that the command took effect. Both stay in `last_command` and `time` of the summary.
-- If no run is running (it ended, it is starting, the launcher's input is closed, or the launcher's last `state` says `not-running`), the response is 409 `not-running`. The server does not refuse a command for any other reason in the launcher's `allowed`: that `allowed` may be a moment old, so the launcher answers the command itself.
+- If the request has no target or its target matches, but the launcher cannot take a command, the response is 409 `not-running`. This includes a run that ended or is starting, closed launcher input, and a launcher state of `not-running`. The server lets the launcher answer for any other reason in `allowed`, since it may have changed.
 - Even if the launcher never reads its input, the request returns within about 2 seconds (the command stays in the launcher's input).
 - What the commands mean (a pause takes effect at a step boundary, stepping works only while paused and so on) is defined by the launcher (see "Stdin commands (`run --stdin-commands`)" in [docs/simulation-events.md](../../docs/simulation-events.md#stdin-commands-run---stdin-commands)).
 
@@ -423,6 +423,7 @@ Notifications from the server.
 | `last_seq`, `last_t_ms` | `seq` and `t_ms` of the last event received |
 | `time` | The last `time` event (as is; `null` if none) |
 | `check` | `check` of the `check` event (the whole check result; `null` if none yet) |
+| `stop_at_ms` | The checked stop time when the full check exceeded the retention limit. `null` means no stop time. Omitted when the check fits or the value is unknown |
 | `registry` | The last `registry` event without `event`, `seq` and `t_ms` (`null` if none) |
 | `participants` | The current state of each participant (in the order they first appeared) |
 | `participants_omitted` | Number of participant events not kept because the limit (256 participants) was exceeded |

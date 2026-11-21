@@ -43,12 +43,27 @@ export interface Notice {
   count: number;
 }
 
+/** Identity of one run across all starts of the server. */
+export interface RunTarget {
+  session: number;
+  instance: string;
+}
+
+export function sameRunTarget(left: RunTarget | null, right: RunTarget | null): boolean {
+  return (
+    left !== null &&
+    right !== null &&
+    left.session === right.session &&
+    left.instance === right.instance
+  );
+}
+
 /** Read side of the session copy (GuiClient.session). */
 export interface ClientSession {
   /** The current (or last) session. null while the server has none yet. */
   readonly session: Readable<SessionView | null>;
   /** Identity of the session suitable for a targeted action. */
-  currentTarget(): { session: number; instance: string } | null;
+  currentTarget(): RunTarget | null;
   /** The last authenticated server instance, even when there is no session. */
   currentInstance(): string | null;
   /**
@@ -229,7 +244,7 @@ export class SessionFeed implements ClientSession {
     return this.instanceId;
   }
 
-  currentTarget(): { session: number; instance: string } | null {
+  currentTarget(): RunTarget | null {
     return this.stopTarget ? { ...this.stopTarget } : null;
   }
 

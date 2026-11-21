@@ -337,6 +337,8 @@ export interface SessionView {
   /** Position of the last known phase received (so an unknown phase never moves the phase backwards). */
   phaseRank: number;
   check: CheckResult | null;
+  /** The checked stop time when the full check was too large to keep. */
+  stopAtMs?: number | null;
   participants: readonly ParticipantView[];
   /** Log lines (in seq order). */
   logs: readonly LogLine[];
@@ -559,6 +561,7 @@ export function applySummary(
     : {
         ...session,
         ...(incomingRev === null ? {} : { snapshotRev: incomingRev }),
+        ...(summary.stop_at_ms === undefined ? {} : { stopAtMs: summary.stop_at_ms }),
         ...(summary.problem_seq == null
           ? {}
           : { problemSeq: Math.max(session.problemSeq ?? 0, summary.problem_seq) }),

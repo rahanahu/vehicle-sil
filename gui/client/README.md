@@ -149,6 +149,8 @@ The `currentTarget()` method returns the current `{session, instance}` pair, or 
 
 Both `front.time` and `client.time` send commands with the known run ID and server instance. If the run is replaced, the server rejects the command before sending it to a launcher. Older servers that do not accept these fields reject the request.
 
+A screen can pass the `RunTarget` it captured when rendering a control to `front.time`. The client rejects the action if that target no longer matches the current run.
+
 ### ECU variable API
 
 | Kind     | Name                                                                                                                                                                  |

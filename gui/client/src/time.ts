@@ -1,5 +1,6 @@
 import { HttpTransport, errorMessage } from './http';
 import { TimeCommand, TimeCommandName } from './protocol';
+import { sameRunTarget, type RunTarget } from './session';
 import { CommandView, SessionView, TimeView } from './session-state';
 import { ErrorSink, Readable, Writable, derived, rethrowLater, shallowEqual } from './values';
 
@@ -69,7 +70,7 @@ export interface TimeState {
 /** A command sent whose launcher answer (command event) has not been seen yet. */
 interface Pending {
   command: TimeCommandName;
-  session: number;
+  target: RunTarget;
   /** seq of the last command event when it was sent. The next command event after it is the answer. */
   afterSeq: number;
 }
@@ -107,9 +108,9 @@ export interface ClientTime {
  *   command; the launcher's state (a pause, a resume, the speed) and time (where it is) show that it took effect.
  */
 export class TimeControl implements ClientTime {
-  private readonly inFlight: Writable<number>;
+  private readonly awaitingHttp: Writable<Pending | null>;
   private readonly pending: Writable<Pending | null>;
-  private readonly failureValue: Writable<TimeFailure | null>;
+  private readonly failureValue: Writable<{ target: RunTarget; report: TimeFailure } | null>;
   private answerTimer: ReturnType<typeof setTimeout> | undefined;
   private lastLateness: Lateness | null = null;
 
@@ -119,16 +120,20 @@ export class TimeControl implements ClientTime {
   constructor(
     private readonly session: Readable<SessionView | null>,
     private readonly transport: HttpTransport,
-    private readonly currentTarget: () => { session: number; instance: string } | null,
+    private readonly currentTarget: () => RunTarget | null,
     /** How long to wait for an answer (ms). */
     readonly answerTimeoutMs = ANSWER_TIMEOUT_MS,
     onError: ErrorSink = rethrowLater,
   ) {
-    this.inFlight = new Writable<number>(0, Object.is, onError);
+    this.awaitingHttp = new Writable<Pending | null>(null, Object.is, onError);
     this.pending = new Writable<Pending | null>(null, Object.is, onError);
-    this.failureValue = new Writable<TimeFailure | null>(null, Object.is, onError);
+    this.failureValue = new Writable<{ target: RunTarget; report: TimeFailure } | null>(
+      null,
+      Object.is,
+      onError,
+    );
     this.state = derived(
-      [session, this.inFlight, this.pending, this.failureValue],
+      [session, this.awaitingHttp, this.pending, this.failureValue],
       () => this.compute(session.get()),
       shallowEqual,
       onError,
@@ -169,27 +174,29 @@ export class TimeControl implements ClientTime {
     this.failureValue.set(null);
     const pending: Pending = {
       command: command.command,
-      session: session.id,
+      target,
       afterSeq: session.lastCommand?.seq ?? -1,
     };
+    this.awaitingHttp.set(pending);
     this.pending.set(pending);
-    this.inFlight.update((n) => n + 1);
     clearTimeout(this.answerTimer);
     this.answerTimer = setTimeout(() => this.giveUp(pending), this.answerTimeoutMs);
     this.transport(
       { method: 'POST', path: 'api/time', body: { ...command, ...target } },
       (outcome) => {
-        this.inFlight.update((n) => n - 1);
+        if (this.awaitingHttp.get() === pending) this.awaitingHttp.set(null);
         if (outcome.ok || this.pending.get() !== pending) return;
         clearTimeout(this.answerTimer);
         this.pending.set(null); // Not sent: no launcher answer will come
-        const current = this.currentTarget();
-        if (current?.session !== target.session || current.instance !== target.instance) return;
+        if (!sameRunTarget(this.currentTarget(), target)) return;
         this.failureValue.set({
-          kind: 'server',
-          message: errorMessage(outcome.error),
-          command: pending.command,
-          session: pending.session,
+          target,
+          report: {
+            kind: 'server',
+            message: errorMessage(outcome.error),
+            command: pending.command,
+            session: target.session,
+          },
         });
       },
     );
@@ -200,6 +207,7 @@ export class TimeControl implements ClientTime {
   dispose(): void {
     clearTimeout(this.answerTimer);
     this.pending.set(null);
+    this.awaitingHttp.set(null);
   }
 
   /** The answer timed out: if no answer has come yet, stop waiting and say so. */
@@ -207,12 +215,15 @@ export class TimeControl implements ClientTime {
     if (this.pending.get() !== pending || this.state.get().sending === null) return;
     this.pending.set(null);
     this.failureValue.set({
-      kind: 'no-answer',
-      message:
-        `the launcher did not answer the command (${pending.command}) within ` +
-        `${this.answerTimeoutMs / 1000} s; it may not read its input. You can send it again.`,
-      command: pending.command,
-      session: pending.session,
+      target: pending.target,
+      report: {
+        kind: 'no-answer',
+        message:
+          `the launcher did not answer the command (${pending.command}) within ` +
+          `${this.answerTimeoutMs / 1000} s; it may not read its input. You can send it again.`,
+        command: pending.command,
+        session: pending.target.session,
+      },
     });
   }
 
@@ -235,14 +246,14 @@ export class TimeControl implements ClientTime {
     this.lastLateness = lateness;
     const lastCommand = session?.lastCommand ?? null;
     const pending = this.pending.get();
+    const target = this.currentTarget();
     let sending: TimeCommandName | null = null;
-    if (pending) {
+    if (pending && sameRunTarget(pending.target, target)) {
       const answered =
         !session ||
-        session.id !== pending.session ||
         !session.launcher.running ||
         (session.lastCommand?.seq ?? -1) > pending.afterSeq;
-      sending = this.inFlight.get() > 0 || !answered ? pending.command : null;
+      sending = this.awaitingHttp.get() === pending || !answered ? pending.command : null;
     }
     const failure = this.failureValue.get();
     return {
@@ -252,7 +263,7 @@ export class TimeControl implements ClientTime {
       behind: (lateness?.lateSteps ?? 0) > 0,
       lastCommand,
       sending,
-      failure: failure && failure.session === (session?.id ?? null) ? failure : null,
+      failure: failure && sameRunTarget(failure.target, target) ? failure.report : null,
     };
   }
 }
