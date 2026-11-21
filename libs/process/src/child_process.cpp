@@ -6,6 +6,7 @@
 #include "spawn.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 
@@ -26,6 +27,9 @@
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/syscall.h>
+#endif
 
 extern char** environ;
 #endif
@@ -445,6 +449,10 @@ Captured run_captured(const std::filesystem::path& executable, const std::vector
     request.own_group = true;
     request.end_with_caller = true;
     const pid_t pid = detail::spawn(executable, arguments, request);
+    Fd childExit;
+#if defined(__linux__) && defined(SYS_pidfd_open)
+    childExit.fd = static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
+#endif
     // Only the child holds the write ends now: the pipes close when it (and what it started)
     // has ended.
     outWrite.reset();
@@ -496,8 +504,9 @@ Captured run_captured(const std::filesystem::path& executable, const std::vector
             result.exit_code.reset();
             break;
         }
-        // Wait for output, or a little while for the process to end.
-        pollfd fds[2];
+        // The pipes can close before waitpid() has an exit status. A pidfd wakes poll at exit
+        // even then. Without one (for example, an older kernel), keep checking periodically.
+        pollfd fds[3];
         nfds_t count = 0;
         for (const Fd* pipe : {&outRead, &errRead})
         {
@@ -506,8 +515,14 @@ Captured run_captured(const std::filesystem::path& executable, const std::vector
                 fds[count++] = pollfd{pipe->fd, POLLIN, 0};
             }
         }
+        const bool watchExit = !exitedAt && childExit.fd >= 0;
+        if (watchExit)
+        {
+            fds[count++] = pollfd{childExit.fd, POLLIN, 0};
+        }
         const auto left = std::chrono::duration_cast<std::chrono::milliseconds>((exitedAt ? *exitedAt + kDrainAfterExit : deadline) - now);
-        const int wait = static_cast<int>(std::clamp<std::chrono::milliseconds::rep>(left.count(), 1, 10));
+        const int maxWait = watchExit ? std::numeric_limits<int>::max() : 10;
+        const int wait = static_cast<int>(std::clamp<std::chrono::milliseconds::rep>(left.count(), 1, maxWait));
         if (count > 0)
         {
             ::poll(fds, count, wait);
