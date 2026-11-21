@@ -179,7 +179,7 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 
 `api/stop-session` は `session` と `instance` を原子的に照合し、一致しなければ 409 `session-changed` を返して何もしません。`force` の意味は `api/stop` と同じです。GUI Client は対象を特定してからこの口を使い、開始の応答を失った場合や旧サーバーでは停止を送れなかったことを報告します。現在の実行を確認してから再度操作してください。
 
-本文は `{"force": boolean}` です。省略は `false` で、本文なしで `Content-Type` もないリクエストも `false` です。
+本文は `{"force": boolean}` です。省略は `false` で、本文なしで `Content-Type` もないリクエストも `false` です。`force` 以外の欄（または null）は、ほかの口と同じく 400 `invalid-field` で断り、何も止めません。
 
 | `force` | すること | すでに頼んであるとき |
 |---|---|---|
