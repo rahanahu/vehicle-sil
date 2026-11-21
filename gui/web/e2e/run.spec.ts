@@ -309,17 +309,14 @@ test('a double click on stop does not stop without waiting', async ({ page }) =>
   const session = await start(page);
   const instance = await serverInstance(page);
   await expect(page.getByTestId('log-line').first()).toBeVisible({ timeout: RUN_TIMEOUT });
-  const bodies: unknown[] = [];
-  page.on('request', (r) => {
-    if (r.url().endsWith('/api/stop-session')) bodies.push(r.postDataJSON());
-  });
+  const stops = recordStops(page);
   await expect(stopButton(page)).toHaveAttribute('data-armed', 'true');
   await stopButton(page).dblclick();
   // 2 回目のクリックより後に、サーバーが停止を受けた知らせが届いた
   await expect(page.getByTestId('outcome')).toContainText('participant が終わるのを待っています');
   await expect(stopButton(page)).toHaveText(/止めています/);
   // 待たずに止めてはいない（サーバーの要約でも）
-  expect(bodies).toEqual([{ force: false, session, instance }]);
+  expect(stops).toEqual([{ endpoint: 'stop-session', body: { force: false, session, instance } }]);
   expect((await serverSession(page))?.stop).toBe('requested');
   await expect(page.getByTestId('status-Engine')).not.toContainText('強制終了');
 
@@ -331,12 +328,16 @@ test('a double click on stop does not stop without waiting', async ({ page }) =>
   await page.keyboard.press('Enter');
   await expect(page.getByRole('dialog')).toBeHidden();
   await expect(force).toBeFocused();
-  expect(bodies.some((body) => (body as { force: boolean }).force)).toBe(false);
+  expect(stops).toEqual([{ endpoint: 'stop-session', body: { force: false, session, instance } }]);
 
   await force.click();
   const forced = page.waitForRequest((r) => r.url().endsWith('/api/stop-session'));
   await page.getByTestId('force-stop-confirm').click();
   expect((await forced).postDataJSON()).toEqual({ force: true, session, instance });
+  expect(stops).toEqual([
+    { endpoint: 'stop-session', body: { force: false, session, instance } },
+    { endpoint: 'stop-session', body: { force: true, session, instance } },
+  ]);
   // 待たずに止めるボタンは消える: フォーカスは、いまの状態を言う帯の文へ移る（body に落ちない）
   await expect(force).toHaveCount(0);
   await expect(page.getByTestId('outcome')).toBeFocused();
@@ -364,10 +365,20 @@ test('the dialog to stop without waiting closes when the run ends meanwhile', as
 function recordActions(page: Page): string[] {
   const actions: string[] = [];
   page.on('request', (r) => {
-    const match = /\/api\/(run|stop-session)$/.exec(r.url());
-    if (match) actions.push(match[1] === 'stop-session' ? 'stop' : match[1]);
+    const match = /\/api\/(run|stop|stop-session)$/.exec(r.url());
+    if (match) actions.push(match[1]);
   });
   return actions;
+}
+
+/** Record both stop APIs, so an unsafe unscoped request cannot go unnoticed. */
+function recordStops(page: Page): { endpoint: string; body: unknown }[] {
+  const stops: { endpoint: string; body: unknown }[] = [];
+  page.on('request', (r) => {
+    const match = /\/api\/(stop|stop-session)$/.exec(r.url());
+    if (match) stops.push({ endpoint: match[1], body: r.postDataJSON() });
+  });
+  return stops;
 }
 
 /** 要素の真ん中（マウスで押す位置）。 */
@@ -473,6 +484,7 @@ test('a click meant for stop as the run ends does not start a new run', async ({
   }
   expect(after).toBe(4);
   expect(actions).not.toContain('run');
+  expect(actions).not.toContain('stop');
   expect((await serverSession(page))?.id).toBe(session);
   await stopOnServer(page);
 });
@@ -728,28 +740,39 @@ test('stopping while the start waits for its answer', async ({ page }) => {
     await held;
     await route.fulfill({ response });
   });
-  await choose(page, 'forever.yaml');
-  await press(startButton(page));
-  await expect(page.getByTestId('outcome')).toContainText('始めています');
-  await expect(startButton(page)).toHaveAttribute('aria-disabled', 'true');
-  const stops: unknown[] = [];
-  page.on('request', (r) => {
-    if (r.url().endsWith('/api/stop-session')) stops.push(r.postDataJSON());
-  });
-  await press(stopButton(page));
-  await expect(page.getByTestId('outcome')).toContainText('開始をやめます');
-  expect(stops).toEqual([]);
-  const stop = page.waitForResponse((r) => r.url().endsWith('/api/stop-session'));
-  release();
-  expect(started).toBeDefined();
-  expect((await stop).request().postDataJSON()).toEqual({
-    force: false,
-    session: started!.session.id,
-    instance: started!.instance,
-  });
-  await expect(page.getByTestId('outcome')).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
-  expect((await serverSession(page))?.stop).toBe('requested');
-  await page.unroute(/\/api\/run$/);
+  const stops = recordStops(page);
+  try {
+    await choose(page, 'forever.yaml');
+    await press(startButton(page));
+    await expect(page.getByTestId('outcome')).toContainText('始めています');
+    await expect(startButton(page)).toHaveAttribute('aria-disabled', 'true');
+    await press(stopButton(page));
+    await expect(page.getByTestId('outcome')).toContainText('開始をやめます');
+    await expect.poll(() => started).toBeDefined();
+    expect(stops).toEqual([]);
+    const stop = page.waitForResponse((r) => r.url().endsWith('/api/stop-session'));
+    release();
+    expect((await stop).request().postDataJSON()).toEqual({
+      force: false,
+      session: started!.session.id,
+      instance: started!.instance,
+    });
+    await expect(page.getByTestId('outcome')).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
+    expect(stops).toEqual([
+      {
+        endpoint: 'stop-session',
+        body: {
+          force: false,
+          session: started!.session.id,
+          instance: started!.instance,
+        },
+      },
+    ]);
+    expect((await serverSession(page))?.stop).toBe('requested');
+  } finally {
+    release();
+    await page.unroute(/\/api\/run$/);
+  }
 });
 
 test('the screen asks for the server URL without a token', async ({ browser }) => {
@@ -793,15 +816,20 @@ test('everything can be done with the keyboard; Enter on start does not stop the
   }
   await expect(startButton(page)).toBeFocused();
   const actions = recordActions(page);
+  const stops = recordStops(page);
   const response = page.waitForResponse((r) => r.url().endsWith('/api/run'));
   await page.keyboard.press('Enter');
-  const session = ((await (await response).json()) as { session: { id: number } }).session.id;
+  const {
+    session: { id: session },
+    instance,
+  } = (await (await response).json()) as { session: { id: number }; instance: string };
   await expect(page.getByTestId('outcome')).toContainText('実行中');
   // フォーカスは開始のボタンに残る（押せない）。もう一度 Enter を押しても、止めない
   await expect(startButton(page)).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('log-line').nth(5)).toBeVisible({ timeout: RUN_TIMEOUT });
   expect(actions).toEqual(['run']);
+  expect(stops).toEqual([]);
   expect((await serverSession(page))?.stop).toBe('none');
   // 止めるのは、次の要素の停止のボタン
   await page.keyboard.press('Tab');
@@ -809,7 +837,8 @@ test('everything can be done with the keyboard; Enter on start does not stop the
   await expect(stopButton(page)).toHaveAttribute('data-armed', 'true');
   await page.keyboard.press('Enter');
   await expect(result(page, session)).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
-  expect(actions).toEqual(['run', 'stop']);
+  expect(actions).toEqual(['run', 'stop-session']);
+  expect(stops).toEqual([{ endpoint: 'stop-session', body: { force: false, session, instance } }]);
   // 停止のボタンは押せなくなっても、そこにあってフォーカスを持ったまま
   await expect(stopButton(page)).toBeFocused();
 
