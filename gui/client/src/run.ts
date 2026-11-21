@@ -1,5 +1,11 @@
 import { HttpError, HttpTransport, errorMessage } from './http';
-import { ProtocolError, RunRequest, SessionSummary, readSessionResponse } from './protocol';
+import {
+  ProtocolError,
+  RunRequest,
+  SessionSummary,
+  readSessionInstance,
+  readSessionResponse,
+} from './protocol';
 import { SessionFeed } from './session';
 import { ErrorSink, Readable, Writable, derived, rethrowLater } from './values';
 
@@ -275,9 +281,13 @@ export class RunControl implements ClientRun {
     done: () => void,
     onInstance?: (instance: string | null) => void,
   ): Promise<SessionSummary | null> {
+    const incompatible = this.feed.incompatible.get();
+    if (incompatible) {
+      done();
+      return Promise.reject(new Error(incompatible));
+    }
     this.failure.set(null);
     return new Promise((resolve, reject) => {
-      const sentFrom = this.feed.currentInstance();
       this.transport({ method: 'POST', path, body, timeoutMs }, (outcome) => {
         if (!outcome.ok) {
           const failure =
@@ -300,6 +310,10 @@ export class RunControl implements ClientRun {
         }
         let summary: SessionSummary | null = null;
         try {
+          const instance =
+            path === 'api/stop-session'
+              ? (body as { instance: string }).instance
+              : readSessionInstance(outcome.body);
           summary = readSessionResponse(outcome.body);
           if (
             path === 'api/stop-session' &&
@@ -307,22 +321,19 @@ export class RunControl implements ClientRun {
           ) {
             throw new Error('the stop answer did not identify the requested session');
           }
-          const value = (outcome.body as { instance?: unknown } | null)?.instance;
-          const instance =
-            path === 'api/stop-session'
-              ? (body as { instance: string }).instance
-              : typeof value === 'string' || value === undefined
-                ? value
-                : null;
-          onInstance?.(instance ?? null);
-          this.feed.adopt(summary, instance, instance === undefined ? sentFrom : undefined);
+          onInstance?.(instance);
+          this.feed.adopt(summary, instance);
         } catch (error) {
           // An answer whose summary core is unreadable is reported, and the summary of the next notification takes over
           this.feed.report(
             error instanceof ProtocolError ? `unreadable answer: ${error.message}` : String(error),
           );
-          if (path === 'api/stop-session') {
-            const message = 'the stop answer was unreadable: check the session before trying again';
+          const missingInstance =
+            error instanceof ProtocolError && error.path === 'response.instance';
+          if (path === 'api/stop-session' || missingInstance) {
+            const message = missingInstance
+              ? `${error.message}. The run may have started. Check the current run before retrying`
+              : 'the stop answer was unreadable: check the session before trying again';
             const session = this.feed.session.get();
             this.failure.set({
               message,

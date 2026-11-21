@@ -72,9 +72,9 @@ describe('ServerConnection', () => {
     const run = TestBed.inject(ServerConnection);
     fake.last().open();
     const hello = examples.get('ws-replay')?.server[0] as Record<string, unknown>;
-    fake.last().send({ ...hello, vehicle_sil_gui: 3 });
+    fake.last().send({ ...hello, vehicle_sil_gui: 2 });
     vi.advanceTimersByTime(BATCH_MS);
-    expect(run.incompatible()).toContain('version 3');
+    expect(run.incompatible()).toContain('server speaks version 2');
     vi.advanceTimersByTime(backoffMs(5) * 2);
     expect(fake.sockets).toHaveLength(1);
   });

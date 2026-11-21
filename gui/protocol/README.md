@@ -17,7 +17,7 @@ The public specification of the HTTP and WebSocket API of the GUI server (`gui/s
 
 ## Versioning and compatibility
 
-The API version is `vehicle_sil_gui` (currently 2). The server writes it in the response of `GET api/app`, in the WebSocket `hello`, and in the line it prints when started with `--json`.
+The API version is `vehicle_sil_gui` (currently 3). The server writes it in the response of `GET api/app`, in the WebSocket `hello`, and in the line it prints when started with `--json`.
 
 | Change | Version | What a reader does |
 |---|---|---|
@@ -176,6 +176,8 @@ The body has exactly these 3 fields (another field is 400 `invalid-field`). `tex
 The response is `{file, stamp}`, with the stamp of the saved content. A save takes one turn of the queue of the checks (503 `check-busy` as for a check). What the server kept of the old content is dropped: its descriptions are made again before the next check of its text, so the executables of the saved file describe themselves then (with `--allow-command-changes`, a new command runs with `--describe` at that point), and a `connect` needs a new list of `api/connections`. The second comparison of the stamp narrows the time in which another program can change the file between the check and the replacement; it does not close it. Examples: `save-config.json`, `error-commands-changed.json`.
 
 ### Stop (`api/stop`)
+
+The GUI Client requires an `instance` in successful `api/session` and `api/run` responses. If it is missing, the operation fails with a message to use the GUI server from the same release. A start request may already have reached the server. Check the current run before retrying.
 
 The body is `{"force": boolean}`. If omitted, it is `false`; a request with no body and no `Content-Type` also means `false`.
 

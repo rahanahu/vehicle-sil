@@ -17,7 +17,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の API の、公開す
 
 ## バージョンと互換性
 
-API のバージョンは `vehicle_sil_gui`（今は 2）です。サーバーは `GET api/app` のレスポンス、WebSocket の `hello`、`--json` で起動したときの 1 行に書きます。
+API のバージョンは `vehicle_sil_gui`（今は 3）です。サーバーは `GET api/app` のレスポンス、WebSocket の `hello`、`--json` で起動したときの 1 行に書きます。
 
 | 変更 | バージョン | 読む側がすること |
 |---|---|---|
@@ -174,6 +174,8 @@ API のバージョンは `vehicle_sil_gui`（今は 2）です。サーバー�
 レスポンスは `{file, stamp}` で、保存した中身の印です。保存は照合の順番を 1 回使います（照合と同じく 503 `check-busy`）。サーバーが古い中身について覚えたものは捨てます。説明は次の文の照合の前に取り直すので、保存したファイルの実行ファイルがそのとき説明を出します（`--allow-command-changes` では、新しいコマンドがそこで `--describe` つきで動きます）。`connect` には `api/connections` の一覧を取り直します。2 回目の印の比べは、照合と置き換えの間にほかのプログラムがファイルを変えられる時間を狭めますが、なくしはしません。例: `save-config.json`、`error-commands-changed.json`。
 
 ### 停止（`api/stop`）
+
+GUI Client は `api/session` と `api/run` の成功応答に `instance` を必要とします。応答にない場合は操作を中断し、同じリリースの GUI サーバーを使うよう案内します。開始要求はサーバーに届いている場合があるため、再試行の前に現在の実行を確認してください。
 
 `api/stop-session` は `session` と `instance` を原子的に照合し、一致しなければ 409 `session-changed` を返して何もしません。`force` の意味は `api/stop` と同じです。GUI Client は対象を特定してからこの口を使い、開始の応答を失った場合や旧サーバーでは停止を送れなかったことを報告します。現在の実行を確認してから再度操作してください。
 
