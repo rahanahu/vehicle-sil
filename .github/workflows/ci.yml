@@ -433,6 +433,14 @@ jobs:
       - name: Server, screen and examples
         if: needs.changes.outputs.docs_only != 'true'
         run: python3 scripts/verify-gui.py --skip-install --tag ci
+      # The Workbench example (gui/web/workbench) has its own packages and build, and its browser tests skip
+      # themselves unless VEHICLE_SIL_VERIFY_WORKBENCH is set (verify-web.py --workbench sets it).
+      - name: Install the packages of the Workbench
+        if: needs.changes.outputs.docs_only != 'true'
+        run: npm --prefix gui/web/workbench ci --no-fund --no-audit
+      - name: Workbench (build and browser tests)
+        if: needs.changes.outputs.docs_only != 'true'
+        run: python3 scripts/verify-web.py --skip-install --workbench --no-wait --tag ci-workbench
       # Only documents changed, and one of them is read by a test of this job (the `gui_reads` list of the job
       # `changes`): the GUI server's tests and the timeline element's test, which need no browser and no C++ build.
       - name: Tests that read the changed documents (the server, the timeline element)
