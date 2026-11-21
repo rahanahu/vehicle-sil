@@ -1237,6 +1237,8 @@ def paused_api_checks() -> list[Case]:
         out.append(Case(case.name + "-paused", [*case.argv[:at], "--start-paused", *case.argv[at:]],
                         case.about + ", with a paused start", request=request))
     out.extend([
+        Case("check-simulation-step10-stop25", ["check", "--json", "--stop-at-ms", "25", "--", "simulation-step10.yaml"],
+             "the stop time is not a multiple of the simulation step"),
         Case("check-simulation-paused-finite", ["check", "--json", "--stop-at-ms", "1000", "--start-paused", "--", "simulation.yaml"],
              "a finite simulation checked with a paused start", request={"stop_at_ms": 1000, "start_paused": True}),
         Case("check-simulation-no-dashboard-finite", ["check", "--json", "--disable", "Dashboard", "--stop-at-ms", "1000", "--", "simulation.yaml"],

@@ -31,8 +31,8 @@ const stopAt = args.indexOf("--stop-at-ms");
 if (stopAt >= 0) {
   const value = args[stopAt + 1];
   stopAtMs = Number(value);
-  if (!value || !Number.isSafeInteger(stopAtMs) || stopAtMs <= 0)
-    usage("--stop-at-ms needs a positive integer of milliseconds");
+  if (!value || !Number.isSafeInteger(stopAtMs) || stopAtMs < 1 || stopAtMs > 1_000_000_000_000)
+    usage("--stop-at-ms needs an integer from 1 to 1000000000000 milliseconds");
   args.splice(stopAt, 2);
 }
 let timeoutS = 120;
