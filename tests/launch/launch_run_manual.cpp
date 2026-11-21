@@ -285,6 +285,22 @@ void manual_stop(const Options& o)
         require(contains(lines.back(), "{\"name\":\"Late\",\"required\":true,\"enabled\":true,\"manual\":true,\"for_network\":null,\"ended\":\"not_started\","),
                 "Late in the result:\n" + lines.back());
     }
+    if (can_request_stop())
+    {
+        // A signal must also wake a run that can wait indefinitely for a manual participant.
+        const fs::path dir = hand_dir(o, "signal", hand_config(o, "", ""), {{"Auto", ""}, {"Hand", ""}});
+        Live live(o, dir, {"run", "--events", "sim.yaml"});
+        live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
+        live.wait_for({"\"name\":\"Auto\"", "\"state\":\"joined\""});
+#ifdef _WIN32
+        require(live.process().request_stop(), "Ctrl+Break could not be sent");
+#else
+        ::kill(static_cast<pid_t>(live.process().id()), SIGINT);
+#endif
+        const auto [status, lines] = live.finish();
+        require(status && status->code == 130, "a signal ends a run waiting for a manual participant");
+        require(contains(lines.back(), "\"result\":\"interrupted\""), "the run reports the interrupt");
+    }
 }
 
 void manual_frozen(const Options& o)
@@ -399,20 +415,17 @@ void manual_again(const Options& o)
         // Ended after it joined, before the start (to start it again): the start fails, and the
         // finding says to start the launcher again as well.
         const fs::path dir = hand_dir(o, "again", hand_config(o, "", late_participant(o)), {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
-        Live live(o, dir, {"run", "sim.yaml"});
-        const std::string err = live.wait_for_error([](const std::string& text) {
-            return !hand_command(text, "Hand").line.empty() && !hand_command(text, "Late").line.empty();
-        });
-        auto byHand = std::make_unique<ByHand>(hand_command(err, "Hand").line, hand_command(err, "Hand").directory);
-        static_cast<void>(live.wait_for_error([](const std::string& text) {
-            return contains(text, "[vehicle_sil_launch] waiting for Late to join (manual)");
-        }));
+        Live live(o, dir, {"run", "--events", "sim.yaml"});
+        const auto hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
+        const auto late = live.wait_for({"\"name\":\"Late\"", "\"state\":\"manual\""});
+        auto byHand = std::make_unique<ByHand>(json_text(hand, "command_line"), json_text(hand, "working_directory"));
+        live.wait_for({"\"name\":\"Hand\"", "\"state\":\"joined\""});
         byHand.reset(); // ends it
-        const HandCommand lateCommand = hand_command(err, "Late");
-        ByHand lateByHand(lateCommand.line, lateCommand.directory);
+        ByHand lateByHand(json_text(late, "command_line"), json_text(late, "working_directory"));
         const auto [status, out] = live.finish_unchecked(60s);
         require(status && status->code == 1 &&
-                    contains(out_of(out), "error: sim.yaml: the simulation did not start: ") &&
+                    contains(out_of(out), "\"code\":\"simulation-start\"") &&
+                    contains(out_of(out), "the simulation did not start: ") &&
                     contains(out_of(out), "participant 'Hand' left the simulation before it started") &&
                     contains(out_of(out), "you started it yourself (manual), and it cannot join this run again: to start "
                                           "it again, start vehicle_sil_launch again as well"),

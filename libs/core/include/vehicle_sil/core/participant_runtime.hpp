@@ -370,6 +370,13 @@ public:
     /// The names of the participants peer_status() knows a state of (this one's too), in order.
     [[nodiscard]] std::vector<std::string> peer_names() const;
 
+    /// A generation of the observed peer states. Read before checking the states, then pass it
+    /// to wait_for_peer_change() so a change during the check cannot be missed. Thread safe.
+    [[nodiscard]] std::uint64_t peer_generation() const;
+    /// Wait until a peer state changes since `generation`, or until `deadline`. Thread safe;
+    /// must not be called from a SIL Kit handler. The caller must recheck its own conditions.
+    bool wait_for_peer_change(std::uint64_t generation, std::chrono::steady_clock::time_point deadline) const;
+
     /// Re-reads the statuses SIL Kit's system monitor knows, so that peer_status() also reports
     /// one whose notification was missed (see resync_peers()). Thread safe (callers take turns,
     /// also with wait_for_peer()). Must not be called from a SIL Kit handler.
@@ -490,6 +497,7 @@ private:
 
     mutable std::mutex peers_mutex_;
     mutable std::condition_variable peers_cv_;
+    std::uint64_t peer_generation_ = 0; // guarded by peers_mutex_
     std::map<std::string, PeerRecord, std::less<>> peers_;
 };
 
