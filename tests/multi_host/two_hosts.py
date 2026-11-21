@@ -19,6 +19,7 @@ Dashboard on b killed: the launcher aborts the run at once and names it.
 """
 import argparse
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -174,8 +175,12 @@ def inner(args: argparse.Namespace) -> None:
         procs.append(b)
         if a.wait(60) != 0:
             fail("the run with the Dashboard on b passes:\n" + a.text())
-        if b.wait(30) != 0 or "t=1000 ms engine speed" not in b.text():
-            fail("the Dashboard on b got the engine speed until 1000 ms:\n" + b.text())
+        if "run: the simulation ran to stop_at_ms (1000 ms) and ended" not in a.text():
+            fail("the launcher reached the requested stop time:\n" + a.text())
+        # The step at the stop time may or may not run; 500 ms is strictly before it.
+        if b.wait(30) != 0 or not re.search(r"^t=500 ms engine speed [1-9]\d* rpm \([1-9]\d* messages\)$",
+                                             b.text(), re.MULTILINE):
+            fail("the Dashboard on b received engine speed before the stop:\n" + b.text())
         print("two_hosts: joined from b, the run passed", flush=True)
 
         # 2. The link cut while the simulation runs (slowly, at speed 0.01): after 10 s the launcher says that
