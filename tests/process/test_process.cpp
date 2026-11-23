@@ -16,8 +16,12 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -413,4 +417,59 @@ TEST_CASE(run_captured_time_limit_ends_what_the_process_started)
         vehicle_sil::test::kill_one(grandchild);
     }
     CHECK(gone);
+}
+
+TEST_CASE(concurrent_helper_starts_atomically_append_mark_file)
+{
+    constexpr std::size_t kWorkers = 8;
+    const fs::path dir = scratch("helper mark");
+    const fs::path mark = dir / "started.txt";
+    ProcessOptions options;
+    options.environment.emplace_back("VEHICLE_SIL_HELPER_MARK", vehicle_sil::process::utf8_from_path(mark));
+
+    std::vector<std::unique_ptr<Process>> children;
+    children.reserve(kWorkers);
+    for (std::size_t i = 0; i < kWorkers; ++i)
+    {
+        children.push_back(std::make_unique<Process>(kHelper, std::vector<std::string>{}, options));
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(30s);
+    std::vector<std::optional<ExitStatus>> exits(kWorkers);
+    while (true)
+    {
+        bool allDone = true;
+        for (std::size_t i = 0; i < kWorkers; ++i)
+        {
+            if (!exits[i])
+            {
+                exits[i] = children[i]->poll();
+            }
+            if (!exits[i])
+            {
+                allDone = false;
+            }
+        }
+        if (allDone || std::chrono::steady_clock::now() >= deadline)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(5ms);
+    }
+    for (std::size_t i = 0; i < kWorkers; ++i)
+    {
+        CHECK(exits[i].has_value());
+        CHECK(!exits[i]->signal.has_value());
+        CHECK_EQ(exits[i]->code, 0);
+    }
+    children.clear();
+
+    std::ifstream in(mark, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::string expected;
+    for (std::size_t i = 0; i < kWorkers; ++i)
+    {
+        expected += "started\n";
+    }
+    CHECK(text == expected);
 }
