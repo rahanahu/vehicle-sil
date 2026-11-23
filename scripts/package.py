@@ -999,7 +999,7 @@ def stage_msys2_licenses(s: Step, into: Path, dlls: list[Path], allow_missing: b
     """The license files that MSYS2 installs for each package whose code is in the archive: the packages of the
     DLLs taken from MinGW, and of the runtime libraries linked statically into every MinGW executable. A package
     without license files fails the step (allow_missing: only noted), so no code goes out without its text."""
-    into.mkdir()
+    into.mkdir(parents=True, exist_ok=True)
     parts: list[tuple[Path, str]] = [(dll, dll.name) for dll in dlls]
     for name, what in MINGW_STATIC.items():
         found = s.run(["gcc", f"-print-file-name={name}"], capture=True).stdout.strip()

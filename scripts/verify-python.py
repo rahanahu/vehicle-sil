@@ -18,8 +18,9 @@ needs no C++ build:
            (scripts/check-docs.py), tests/scripts/test_check_commits.py (scripts/check-commits.py),
            tests/scripts/test_ci_workflow.py (.github/workflows/ci.yml), tests/scripts/test_verify.py
            (scripts/verify.py), tests/scripts/test_verify_web.py (scripts/verify-web.py),
-           tests/scripts/test_hotspots.py (scripts/hotspots.py) and
-           tests/scripts/test_trace_report.py (scripts/trace-report.py)
+           tests/scripts/test_hotspots.py (scripts/hotspots.py),
+           tests/scripts/test_trace_report.py (scripts/trace-report.py) and
+           tests/scripts/test_package.py (scripts/package.py)
   control  generates the gRPC stubs of the Control API, imports the client and its tests, and runs
            `python -m vehicle_sil_control --help` and the examples of examples/launch_control with
            --help
@@ -228,7 +229,8 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
                     s.run([python, "tests/scripts/test_verify.py"]),
                     s.run([python, "tests/scripts/test_verify_web.py"]),
                     s.run([python, "tests/scripts/test_hotspots.py"]),
-                    s.run([python, "tests/scripts/test_trace_report.py"])])
+                    s.run([python, "tests/scripts/test_trace_report.py"]),
+                    s.run([python, "tests/scripts/test_package.py"])])
 
     def control(s: Step) -> bool:
         if not s.run([python, "-m", "vehicle_sil_control.generate", "--out", str(stubs)]):

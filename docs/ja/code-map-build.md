@@ -50,6 +50,7 @@
 | `tests/scripts/test_verify.py` | `scripts/verify.py --summarize`: 要約に出す、落ちたテストの出力の行（先頭の行と、その先の FAIL や Error を含む行） |
 | `tests/scripts/test_hotspots.py` | `scripts/hotspots.py`: 信号（大きさ、変更の頻度、stack、parallel）、下の層と独立した作業の分け方、数えないもの（マージ済み、閉じた、古い）、観測できなかった範囲の表示、HEAD にないパス、`gh` の失敗、無応答、想定外の応答（Windows では実行しません） |
 | `tests/scripts/test_trace_report.py` | `scripts/trace-report.py`: 作ったトレースで、各ステップを最後に終えた参加者、同期の時間、ランチャーの保持、書き込みごとの往復、終了コード |
+| `tests/scripts/test_package.py` | `scripts/package.py`: MSYS2 のライセンス収集と Windows の `--build-only` 出力 |
 | `tests/template/test_get_tools.py` | `package.py template`、`version` |
 
 - `ctest -R`: `^template\.get_tools`、`^scripts\.`
