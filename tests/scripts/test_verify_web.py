@@ -300,14 +300,28 @@ class VerifyWebJUnitTest(unittest.TestCase):
         self.assertIn("VEHICLE_SIL_PLAYWRIGHT_JUNIT", pw_real_cfg)
         self.assertIn("../../build/logs/web-e2e-real.junit.xml", pw_real_cfg)
 
+    def _make_fake_uv(self, bin_dir: Path, args_log: Path | None = None) -> None:
+        bin_dir.mkdir(exist_ok=True)
+        fake_uv = bin_dir / ("uv.bat" if os.name == "nt" else "uv")
+        if os.name == "nt":
+            log_line = f'echo %* >> "{args_log}"\r\n' if args_log is not None else ""
+            fake_uv.write_text(f"@echo off\r\n{log_line}exit /b 0\r\n", encoding="utf-8")
+        else:
+            log_line = f"printf '%s\\n' \"$*\" >> {args_log!s}\n" if args_log is not None else ""
+            fake_uv.write_text(f"#!/bin/sh\n{log_line}exit 0\n", encoding="utf-8")
+            fake_uv.chmod(0o755)
+
     def test_verify_gui_no_sync_missing_venv_exits_two(self) -> None:
         missing_venv = self.dir / "missing-venv"
+        bin_dir = self.dir / "fake-bin"
+        self._make_fake_uv(bin_dir)
         env = {
             k: v
             for k, v in os.environ.items()
             if k not in (job_summary.SUMMARY_ENV, job_summary.NESTED_ENV, job_summary.ARTIFACT_ENV)
         }
         env["UV_PROJECT_ENVIRONMENT"] = str(missing_venv)
+        env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
         proc = subprocess.run(
             [sys.executable, str(VERIFY_GUI), "--skip-web", "--no-wait", "--no-sync"],
             capture_output=True,
@@ -325,17 +339,8 @@ class VerifyWebJUnitTest(unittest.TestCase):
         venv = self.dir / "existing-venv"
         venv.mkdir()
         bin_dir = self.dir / "fake-bin"
-        bin_dir.mkdir()
         args_log = self.dir / "uv-calls.txt"
-        fake_uv = bin_dir / ("uv.bat" if os.name == "nt" else "uv")
-        if os.name == "nt":
-            fake_uv.write_text(f'@echo off\r\necho %*>> "{args_log}"\r\nexit /b 0\r\n', encoding="utf-8")
-        else:
-            fake_uv.write_text(
-                f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {args_log!s}\nexit 0\n",
-                encoding="utf-8",
-            )
-            fake_uv.chmod(0o755)
+        self._make_fake_uv(bin_dir, args_log)
         env = {
             k: v
             for k, v in os.environ.items()

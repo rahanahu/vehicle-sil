@@ -331,7 +331,14 @@ def rel(path: Path) -> str:
         return str(path)
 
 
-def run_preset(preset: str, args: argparse.Namespace, test_jobs: int | None) -> Result:
+def run_preset(preset: str, args: argparse.Namespace, test_jobs: int | None,
+               cmake: str | None = None, ctest: str | None = None) -> Result:
+    cmake_bin = cmake or shutil.which("cmake")
+    ctest_bin = ctest or shutil.which("ctest")
+    if cmake_bin is None or ctest_bin is None:
+        missing = "cmake" if cmake_bin is None else "ctest"
+        die_usage(f"{missing} is not on PATH; install CMake 3.21 or newer")
+
     result = Result(name=preset, kind="preset")
     base = LOG_DIR / f"{args.tag}-{preset}"
     logs = {stage: Path(f"{base}-{stage}.log") for stage in ("configure", "build", "test")}
@@ -340,7 +347,7 @@ def run_preset(preset: str, args: argparse.Namespace, test_jobs: int | None) -> 
         stale.unlink(missing_ok=True)
 
     if not args.no_configure:
-        cmd = ["cmake", "--preset", preset]
+        cmd = [cmake_bin, "--preset", preset]
         if not args.no_werror:
             cmd.append("-DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON")
         cmd += args.cmake_arg or []
@@ -351,7 +358,7 @@ def run_preset(preset: str, args: argparse.Namespace, test_jobs: int | None) -> 
             result.errors = first_errors(read_text(logs["configure"]))
             return result
 
-    cmd = ["cmake", "--build", "--preset", preset, "-j", str(args.jobs)]
+    cmd = [cmake_bin, "--build", "--preset", preset, "-j", str(args.jobs)]
     if args.targets:
         cmd += ["--target", *args.targets]
     code, result.seconds["build"] = run_step(cmd, logs["build"])
@@ -367,7 +374,7 @@ def run_preset(preset: str, args: argparse.Namespace, test_jobs: int | None) -> 
 
     # The test preset already sets the output on failure and the parallelism: override the parallelism on request,
     # or when this computer has fewer CPUs than the preset runs tests at once.
-    cmd = ["ctest", "--preset", preset, "--output-junit", str(junit)]
+    cmd = [ctest_bin, "--preset", preset, "--output-junit", str(junit)]
     if test_jobs is not None:
         cmd += ["-j", str(test_jobs)]
     if args.tests:
@@ -494,15 +501,18 @@ def main() -> int:
         foreign = [p for p in presets if known[p]["host"] not in (None, here)]
         if foreign:
             die_usage(f"{', '.join(foreign)} cannot run on this {here} host (the presets require another host system)")
+        tools: dict[str, str] = {}
         for tool in ("cmake", "ctest"):
-            if shutil.which(tool) is None:
+            resolved = shutil.which(tool)
+            if resolved is None:
                 die_usage(f"{tool} is not on PATH; install CMake 3.21 or newer")
+            tools[tool] = resolved
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         results = []
         try:
             for preset in presets:
                 test_jobs = args.test_jobs if args.test_jobs is not None else default_test_jobs(known[preset]["test_jobs"])
-                r = run_preset(preset, args, test_jobs)
+                r = run_preset(preset, args, test_jobs, tools["cmake"], tools["ctest"])
                 results.append(r)
                 if not args.json:
                     print_result(r)

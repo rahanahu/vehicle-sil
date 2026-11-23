@@ -92,7 +92,7 @@ def test_cmake_arg_is_forwarded_to_configure() -> None:
         cmake_calls = tmp / "cmake-calls.txt"
         if os.name == "nt":
             (bin_dir / "cmake.bat").write_text(
-                f'@echo off\r\necho %*>> "{cmake_calls}"\r\nexit /b 0\r\n', encoding="utf-8")
+                f'@echo off\r\necho %* >> "{cmake_calls}"\r\nexit /b 0\r\n', encoding="utf-8")
             (bin_dir / "ctest.bat").write_text(
                 '@echo off\r\necho 100%% tests passed out of 1\r\nexit /b 0\r\n', encoding="utf-8")
         else:
