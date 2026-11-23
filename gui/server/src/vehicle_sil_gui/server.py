@@ -1126,17 +1126,27 @@ class GuiServer:
         self._started.clear()
         self._stop_on_start = None
         self._push_allowed()
-        try:
-            return await self._start(body)
-        except (PathRejected, InvalidRequest, Refused) as e:
-            return self._refusal(e)
-        finally:
+        registered = False
+
+        def finish_starting() -> None:
+            nonlocal registered
+            registered = True
             self._starting = False
             self._stop_on_start = None
             self._started.set()
-            self._push_allowed()
 
-    async def _start(self, body: dict) -> web.Response:
+        try:
+            return await self._start(body, finish_starting)
+        except (PathRejected, InvalidRequest, Refused) as e:
+            return self._refusal(e)
+        finally:
+            if not registered:
+                self._starting = False
+                self._stop_on_start = None
+                self._started.set()
+                self._push_allowed()
+
+    async def _start(self, body: dict, finish_starting: Callable[[], None]) -> web.Response:
         config = self.root.resolve(body.get("file"))
         await self._usable()
         scenario = self._scenario(config, body)
@@ -1287,8 +1297,13 @@ class GuiServer:
         self._next_session_id += 1
         self.current = run
         run.silence_task = asyncio.create_task(self._watch_silence(session))
-        if self._stop_on_start is not None:  # api/stop came while it was starting: it applies now
-            self._write_stop(run, self._stop_on_start)
+        stop_on_start = self._stop_on_start
+        # Registration is complete: clear starting state before broadcasting the session and draining
+        # buffered pre-start callbacks so an already-exited launcher neither corrupts `allowed` while
+        # draining nor triggers a spurious `allowed` push when post_run() exits.
+        finish_starting()
+        if stop_on_start is not None:  # api/stop came while it was starting: it applies now
+            self._write_stop(run, stop_on_start)
         # The session messages do not carry the variables: a new run's are told right after it.
         self.hub.broadcast([session.message()])
         self._tell_variables([variables.message()])
