@@ -97,12 +97,27 @@ export interface GuiServer {
   stop: () => Promise<void>;
 }
 
+export function prepareControlStubs(): () => void {
+  const madeStubs = makeControlStubs();
+  return () => {
+    if (madeStubs) {
+      delete process.env['VEHICLE_SIL_CONTROL_STUBS'];
+      rmSync(madeStubs, { recursive: true, force: true });
+    }
+  };
+}
+
 export default async function startFakeGuiServer(config: FullConfig): Promise<() => Promise<void>> {
+  const devOrigin = config.metadata['devOrigin'] as string | undefined;
+  if (!devOrigin) {
+    const cleanupStubs = prepareControlStubs();
+    return async () => cleanupStubs();
+  }
   return startGuiServer({
     launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
-    devOrigin: config.metadata['devOrigin'] as string | undefined,
-    env: { REPLAY_TICK_MS: '50' },
+    devOrigin,
+    env: { REPLAY_TICK_MS: '20' },
   });
 }
 

@@ -139,13 +139,19 @@ export async function serverSession(page: Page): Promise<ServerSession | null> {
  * 画面を通さずに、サーバーの実行を止めて終わるまで待つ（順に止め、3 秒で終わらなければ待たずに止める）。
  * 前の試験の後始末と、画面に偽の通知を差し込んだ試験の後始末に使う。
  */
-export async function stopOnServer(page: Page): Promise<void> {
+export async function stopOnServer(page: Page, options: { force?: boolean } = {}): Promise<void> {
+  const session = await serverSession(page);
+  if (!session || session.state !== 'running') return;
   const headers = { Authorization: `Bearer ${guiToken()}`, Origin: new URL(page.url()).origin };
   const ended = async () => (await serverSession(page))?.state !== 'running';
-  for (const [force, timeout] of [
-    [false, 3000],
-    [true, RUN_TIMEOUT],
-  ] as const) {
+  const passes =
+    options.force || session.stop !== 'none'
+      ? ([[true, RUN_TIMEOUT]] as const)
+      : ([
+          [false, 3000],
+          [true, RUN_TIMEOUT],
+        ] as const);
+  for (const [force, timeout] of passes) {
     await page.request.post('api/stop', { headers, data: { force } });
     try {
       await expect.poll(ended, { timeout }).toBe(true);

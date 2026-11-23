@@ -1,6 +1,6 @@
 // シェルのレイアウトを、幅を変えて確かめる。中身は試験用の画面（/_test/layout）で、捨てる画面には頼らない。
 // 画面を足したら ROUTES に足す（その画面も、すべての幅で崩れないことを確かめる）。
-import { Page, expect, test } from '@playwright/test';
+import { Page, expect, test } from './support/gui-test';
 import { guiToken } from './support/gui-server';
 import { VIEWPORTS, Viewport, findLayoutProblems } from './support/layout';
 
@@ -113,7 +113,15 @@ async function checkNavigation(page: Page, viewport: Viewport) {
   // Esc を押してもナビゲーションは消えない
   await firstLink.focus();
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(300);
+  await nav.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect(nav).toHaveClass(/mat-drawer-opened/);
+  await expect(nav).not.toHaveClass(/mat-drawer-animating/);
+  await expect(firstLink).toBeFocused();
   await expect(nav).toBeVisible();
   await expect(nav).toHaveAttribute('data-nav-mode', viewport.navMode);
 }

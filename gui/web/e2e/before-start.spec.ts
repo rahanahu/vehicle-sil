@@ -16,7 +16,7 @@ test('started paused with a control server: it waits before the first step, and 
   const server: GuiServer = await launchGuiServer({
     launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
-    env: { REPLAY_TICK_MS: '50', REPLAY_FEATURES: CONTROL_FEATURES },
+    env: { REPLAY_TICK_MS: '20', REPLAY_FEATURES: CONTROL_FEATURES },
     port: 0,
   });
   try {

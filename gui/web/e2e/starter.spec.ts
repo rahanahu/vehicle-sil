@@ -25,6 +25,7 @@ import {
   launchGuiServer,
 } from './support/gui-server';
 import { RUN_TIMEOUT } from './support/run-page';
+import { Target, stopRun } from './support/variables-page';
 
 const CONTROL_FEATURES =
   'events,stdin-commands,request,stdin-run-until,state,check-variables,speed,start-paused,manual-participants,time-commands,control-links,control-server,' +
@@ -37,11 +38,6 @@ const RENAME: [string, string][] = [
 ];
 
 let screen: string;
-const cleanups: (() => Promise<void>)[] = [];
-
-test.afterEach(async () => {
-  for (const cleanup of cleanups.splice(0)) await cleanup();
-});
 
 test.beforeAll(() => {
   // Not in the development server's form (e2e:dev): the starter does not use the sample screens
@@ -65,136 +61,169 @@ test.afterAll(() => {
 });
 
 async function serve(config: string, features = CONTROL_FEATURES): Promise<GuiServer> {
-  const server = await launchGuiServer({
+  return launchGuiServer({
     launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
     config: join(CONFIGS, config),
     // more: the variables that a slider and a lamp need (engine.demand has a range; engine.warning is true above 50)
-    env: { REPLAY_TICK_MS: '50', REPLAY_FEATURES: features, REPLAY_VARIABLES: 'more' },
+    env: { REPLAY_TICK_MS: '20', REPLAY_FEATURES: features, REPLAY_VARIABLES: 'more' },
     port: 0,
     web: screen,
   });
-  cleanups.push(() => server.stop());
-  return server;
 }
 
-test('a starter opened without the token tells the failure once, and every part carries the mark', async ({
-  page,
-}) => {
-  const server = await serve('forever.yaml');
-  const open = new URL(server.url);
-  open.hash = '';
-  await page.goto(open.href);
-  await expect(page.locator('vsil-status')).toHaveAttribute('data-error', /\S/);
-  await expect(page.locator('.vsil > small[role=alert]')).toHaveCount(1);
-  await expect(page.locator('vsil-status [role=alert]')).toHaveText(/\S/);
-  const names = ['vsil-run-controls', 'vsil-time-controls', 'vsil-slider', 'vsil-value'];
-  for (const name of names) {
-    for (const part of await page.locator(name).all())
-      await expect(part).toHaveAttribute('data-error', /\S/);
-  }
-});
+test.describe('forever.yaml with control server', () => {
+  let server: GuiServer;
+  let target: Target;
 
-test('the starter runs and stops, writes and shows variables, and reports a refused operation of its own', async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-  // The starter has no copy of the library: it comes from the server
-  expect(readdirSync(screen).filter((name) => name.endsWith('.mjs'))).toEqual([]);
-  const server = await serve('forever.yaml');
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
-  page.on('console', (message) => {
-    if (message.type() === 'error') errors.push(message.text());
+  test.beforeAll(async () => {
+    if (!screen) return;
+    server = await serve('forever.yaml');
+    target = { base: new URL('/', server.url).href, token: server.token };
   });
-  const sockets: string[] = [];
-  page.on('websocket', (socket) => sockets.push(socket.url()));
-  await page.goto(server.url);
-  const status = page.locator('vsil-status');
-  await expect(status).toHaveAttribute('data-link', 'online');
-  expect(new URL(page.url()).hash).toBe(''); // the token left the URL
-  await expect(status).toHaveAttribute('data-run', 'none');
-  // The attribute of the time part reaches its list of speeds
-  await expect(page.locator('vsil-time-controls select option')).toHaveText([
-    '-',
-    '1×',
-    '5×',
-    'fastest',
-  ]);
-  const button = (name: string) => page.getByRole('button', { name, exact: true });
 
-  // Nothing runs: the button of its own is refused, and says so next to itself (the parts keep to their own words)
-  await button('Throttle to 100 %').click();
-  await expect(page.locator('#floor-error')).toHaveText(/\w+/);
+  test.afterEach(async ({ page }) => {
+    if (target) await stopRun(page, target);
+  });
 
-  await button('Start').click();
-  await expect(status).toHaveAttribute('data-run', 'running', { timeout: RUN_TIMEOUT });
-  await expect(page.locator('#floor-error')).toHaveText(/\w+/); // still the old sentence: it is the script's to clear
+  test.afterAll(async () => {
+    await server?.stop();
+  });
 
-  // A part writes: the slider. The fake ECU raises the warning above 50, which another part shows
-  const slider = page.locator('vsil-slider input');
-  const warning = page.locator('vsil-value[variable="Engine.engine.warning"]');
-  await expect(slider).toBeEnabled();
-  await expect(warning).toHaveAttribute('data-on', 'false');
-  await slider.fill('70');
-  await expect(warning).toHaveAttribute('data-on', 'true');
-  await slider.fill('30');
-  await expect(warning).toHaveAttribute('data-on', 'false');
-  // The button of its own writes through the same connection, and the parts show it
-  await button('Throttle to 100 %').click();
-  await expect(slider).toHaveValue('100');
-  await expect(warning).toHaveAttribute('data-on', 'true');
-  await expect(page.locator('#floor-error')).toHaveText('');
-  // The display of its own
-  await expect(page.locator('#rpm-text')).toHaveText(/^\d+ rpm$/);
-  await expect(page.locator('#rpm')).toHaveAttribute('data-stale', 'false');
-  // A part writes: the button
-  await button('Cut engine from the bus').click();
-  await expect(button('Cut engine from the bus')).toHaveAttribute('aria-disabled', 'true');
+  test('a starter opened without the token tells the failure once, and every part carries the mark', async ({
+    page,
+  }) => {
+    const open = new URL(server.url);
+    open.hash = '';
+    await page.goto(open.href);
+    await expect(page.locator('vsil-status')).toHaveAttribute('data-error', /\S/);
+    await expect(page.locator('.vsil > small[role=alert]')).toHaveCount(1);
+    await expect(page.locator('vsil-status [role=alert]')).toHaveText(/\S/);
+    const names = ['vsil-run-controls', 'vsil-time-controls', 'vsil-slider', 'vsil-value'];
+    for (const name of names) {
+      for (const part of await page.locator(name).all())
+        await expect(part).toHaveAttribute('data-error', /\S/);
+    }
+  });
 
-  await button('Stop').click();
-  await expect(status).not.toHaveAttribute('data-run', 'running', { timeout: RUN_TIMEOUT });
-  await expect(slider).toBeDisabled();
-  await expect(status).toHaveAttribute('data-run', 'ended');
-  // What is not a live value any more is marked (style.css dims it), also in the display of its own
-  await expect(page.locator('#rpm')).toHaveAttribute('data-stale', 'true');
-  expect(sockets).toHaveLength(1);
-  expect(errors).toEqual([]);
+  test('the starter runs and stops, writes and shows variables, and reports a refused operation of its own', async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    // The starter has no copy of the library: it comes from the server
+    expect(readdirSync(screen).filter((name) => name.endsWith('.mjs'))).toEqual([]);
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text());
+    });
+    const sockets: string[] = [];
+    page.on('websocket', (socket) => sockets.push(socket.url()));
+    await page.goto(server.url);
+    const status = page.locator('vsil-status');
+    await expect(status).toHaveAttribute('data-link', 'online');
+    expect(new URL(page.url()).hash).toBe(''); // the token left the URL
+    await expect(status).toHaveAttribute('data-run', 'none');
+    // The attribute of the time part reaches its list of speeds
+    await expect(page.locator('vsil-time-controls select option')).toHaveText([
+      '-',
+      '1×',
+      '5×',
+      'fastest',
+    ]);
+    const button = (name: string) => page.getByRole('button', { name, exact: true });
+
+    // Nothing runs: the button of its own is refused, and says so next to itself (the parts keep to their own words)
+    await button('Throttle to 100 %').click();
+    await expect(page.locator('#floor-error')).toHaveText(/\w+/);
+
+    await button('Start').click();
+    await expect(status).toHaveAttribute('data-run', 'running', { timeout: RUN_TIMEOUT });
+    await expect(page.locator('#floor-error')).toHaveText(/\w+/); // still the old sentence: it is the script's to clear
+
+    // A part writes: the slider. The fake ECU raises the warning above 50, which another part shows
+    const slider = page.locator('vsil-slider input');
+    const warning = page.locator('vsil-value[variable="Engine.engine.warning"]');
+    await expect(slider).toBeEnabled();
+    await expect(warning).toHaveAttribute('data-on', 'false');
+    await slider.fill('70');
+    await expect(warning).toHaveAttribute('data-on', 'true');
+    await slider.fill('30');
+    await expect(warning).toHaveAttribute('data-on', 'false');
+    // The button of its own writes through the same connection, and the parts show it
+    await button('Throttle to 100 %').click();
+    await expect(slider).toHaveValue('100');
+    await expect(warning).toHaveAttribute('data-on', 'true');
+    await expect(page.locator('#floor-error')).toHaveText('');
+    // The display of its own
+    await expect(page.locator('#rpm-text')).toHaveText(/^\d+ rpm$/);
+    await expect(page.locator('#rpm')).toHaveAttribute('data-stale', 'false');
+    // A part writes: the button
+    await button('Cut engine from the bus').click();
+    await expect(button('Cut engine from the bus')).toHaveAttribute('aria-disabled', 'true');
+
+    await button('Stop').click();
+    await expect(status).not.toHaveAttribute('data-run', 'running', { timeout: RUN_TIMEOUT });
+    await expect(slider).toBeDisabled();
+    await expect(status).toHaveAttribute('data-run', 'ended');
+    // What is not a live value any more is marked (style.css dims it), also in the display of its own
+    await expect(page.locator('#rpm')).toHaveAttribute('data-stale', 'true');
+    expect(sockets).toHaveLength(1);
+    expect(errors).toEqual([]);
+  });
 });
 
 // A launcher without a Control Server: there is no recording yet of a scenario run with a Control Server and a
 // timeline (the GUI server asks for both when the launcher has both), and this test writes no variable.
 const SCENARIO_FEATURES = CONTROL_FEATURES.replace(',control-server', '');
 
-test('the starter runs a scenario and shows its timeline', async ({ page }) => {
-  test.setTimeout(120_000);
-  const server = await serve('simulation.yaml', SCENARIO_FEATURES);
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
-  page.on('console', (message) => {
-    if (message.type() === 'error') errors.push(message.text());
+test.describe('simulation.yaml scenario', () => {
+  let server: GuiServer;
+  let target: Target;
+
+  test.beforeAll(async () => {
+    if (!screen) return;
+    server = await serve('simulation.yaml', SCENARIO_FEATURES);
+    target = { base: new URL('/', server.url).href, token: server.token };
   });
-  await page.goto(server.url);
-  await expect(page.locator('vsil-status')).toHaveAttribute('data-link', 'online');
-  const timeline = page.locator('vehicle-sil-timeline');
-  await expect(timeline).toBeHidden(); // no scenario run yet
-  const scenario = page.locator('vsil-scenario-select select');
-  await expect(scenario.locator('option', { hasText: 'fails.yaml' })).toHaveCount(1);
-  await scenario.selectOption({ label: 'fails.yaml' });
-  await page.getByRole('button', { name: 'Start', exact: true }).click();
-  await expect(page.locator('vsil-scenario-result')).toHaveAttribute('data-status', 'failed', {
-    timeout: RUN_TIMEOUT,
+
+  test.afterEach(async ({ page }) => {
+    if (target) await stopRun(page, target);
   });
-  await expect(timeline.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveText(
-    /^Step 2 failed at [\d.]+ ms$/,
-    { timeout: RUN_TIMEOUT },
-  );
-  await expect(timeline).toBeVisible();
-  await expect(timeline.locator('#help')).toBeHidden();
-  const shots = process.env['VEHICLE_SIL_GUI_SHOTS'];
-  if (shots) {
-    await page.setViewportSize({ width: 1280, height: 900 });
-    await page.screenshot({ path: `${shots}/element-starter-light-1280.png`, fullPage: true });
-  }
-  expect(errors).toEqual([]);
+
+  test.afterAll(async () => {
+    await server?.stop();
+  });
+
+  test('the starter runs a scenario and shows its timeline', async ({ page }) => {
+    test.setTimeout(120_000);
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text());
+    });
+    await page.goto(server.url);
+    await expect(page.locator('vsil-status')).toHaveAttribute('data-link', 'online');
+    const timeline = page.locator('vehicle-sil-timeline');
+    await expect(timeline).toBeHidden(); // no scenario run yet
+    const scenario = page.locator('vsil-scenario-select select');
+    await expect(scenario.locator('option', { hasText: 'fails.yaml' })).toHaveCount(1);
+    await scenario.selectOption({ label: 'fails.yaml' });
+    await page.getByRole('button', { name: 'Start', exact: true }).click();
+    await expect(page.locator('vsil-scenario-result')).toHaveAttribute('data-status', 'failed', {
+      timeout: RUN_TIMEOUT,
+    });
+    await expect(timeline.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveText(
+      /^Step 2 failed at [\d.]+ ms$/,
+      { timeout: RUN_TIMEOUT },
+    );
+    await expect(timeline).toBeVisible();
+    await expect(timeline.locator('#help')).toBeHidden();
+    const shots = process.env['VEHICLE_SIL_GUI_SHOTS'];
+    if (shots) {
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.screenshot({ path: `${shots}/element-starter-light-1280.png`, fullPage: true });
+    }
+    expect(errors).toEqual([]);
+  });
 });

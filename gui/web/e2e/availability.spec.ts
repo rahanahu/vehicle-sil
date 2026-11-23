@@ -25,7 +25,7 @@ test.beforeAll(async () => {
     launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
     env: {
-      REPLAY_TICK_MS: '50',
+      REPLAY_TICK_MS: '20',
       REPLAY_FEATURES: CONTROL_FEATURES,
       REPLAY_VARIABLES: 'more',
       REPLAY_AVAILABILITY: '1',

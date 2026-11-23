@@ -1,3 +1,4 @@
+import { cpus } from 'node:os';
 import { defineConfig, devices } from '@playwright/test';
 import { GUI_PORT, freePort } from './e2e/support/gui-server';
 import { scaled } from './e2e/support/timeouts';
@@ -8,12 +9,6 @@ import { scaled } from './e2e/support/timeouts';
 // 切り替えは設定ファイルで行う（環境変数は Windows の npm スクリプトで書き方が変わるため）。
 export type E2eMode = 'static' | 'dev';
 
-// 開発サーバーのポート: 実行ごとに空いているポート（手元の開発サーバーや、別の作業ツリーの e2e とぶつからない）。
-// 試験を動かすプロセスも設定ファイルを読み直すので、環境変数で同じ値を渡す。
-process.env['VEHICLE_SIL_GUI_E2E_DEV_PORT'] ??= String(freePort());
-const devPort = Number(process.env['VEHICLE_SIL_GUI_E2E_DEV_PORT']);
-const devOrigin = `http://127.0.0.1:${devPort}`;
-
 const junitOutputFile = (mode: E2eMode): string => {
   const fromEnv = process.env['VEHICLE_SIL_PLAYWRIGHT_JUNIT']?.trim();
   if (fromEnv) {
@@ -23,13 +18,28 @@ const junitOutputFile = (mode: E2eMode): string => {
   return `../../build/logs/web-e2e-${kind}.junit.xml`;
 };
 
-export const e2eConfig = (mode: E2eMode) =>
-  defineConfig({
+export const e2eConfig = (mode: E2eMode) => {
+  // 開発サーバーのポート: 実行ごとに空いているポート（手元の開発サーバーや、別の作業ツリーの e2e とぶつからない）。
+  // 試験を動かすプロセスも設定ファイルを読み直すので、環境変数で同じ値を渡す。
+  let devPort = 0;
+  let devOrigin = '';
+  if (mode === 'dev') {
+    process.env['VEHICLE_SIL_GUI_E2E_DEV_PORT'] ??= String(freePort());
+    devPort = Number(process.env['VEHICLE_SIL_GUI_E2E_DEV_PORT']);
+    devOrigin = `http://127.0.0.1:${devPort}`;
+  }
+
+  return defineConfig({
     testDir: 'e2e',
     // 本物のランチャーで動かす e2e は別の設定（playwright.real.config.ts）
     testIgnore: ['real/**'],
     fullyParallel: false,
-    workers: 1,
+    workers:
+      mode === 'static'
+        ? process.env['CI']
+          ? 2
+          : Math.min(4, Math.max(2, Math.floor(cpus().length / 2)))
+        : 1,
     retries: 0,
     forbidOnly: true,
     // 1 つの試験と expect の待ちの上限（Playwright の既定の 30 秒と 5 秒）に、VEHICLE_SIL_TEST_TIMEOUT_SCALE の倍率を掛ける
@@ -40,7 +50,7 @@ export const e2eConfig = (mode: E2eMode) =>
     globalSetup: './e2e/support/gui-server.ts',
     metadata: mode === 'dev' ? { devOrigin } : {},
     use: {
-      baseURL: mode === 'dev' ? devOrigin : `http://127.0.0.1:${GUI_PORT}`,
+      baseURL: mode === 'dev' ? devOrigin : undefined,
       trace: 'retain-on-failure',
       // 画面の言語はブラウザの言語で決まる。試験は日本語（元の言語）で書き、英語の試験（i18n.spec.ts）だけが変える
       locale: 'ja-JP',
@@ -60,5 +70,6 @@ export const e2eConfig = (mode: E2eMode) =>
           ]
         : [],
   });
+};
 
 export default e2eConfig('static');

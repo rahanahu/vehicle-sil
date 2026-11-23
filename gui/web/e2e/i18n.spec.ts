@@ -1,7 +1,7 @@
 // 画面の言語: ブラウザの言語で英語になること、言語のメニューで変えて覚えること、実行中に変えても実行が続くこと、
 // 訳がない文は日本語の元の文で出ること。英語の幅ごとの崩れは run.spec.ts（the screen at every width, in English）と
 // layout.spec.ts が確かめる。
-import { Page, expect, test } from '@playwright/test';
+import { Page, expect, test } from './support/gui-test';
 import {
   RUN_TIMEOUT,
   WORDS,
