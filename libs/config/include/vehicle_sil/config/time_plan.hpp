@@ -21,6 +21,50 @@ namespace vehicle_sil::config {
 
 struct CheckReport; // check.hpp, which includes this header
 
+/// Whether a millisecond duration/timestamp in [1, kMaxMillis] is valid (`stop_at_ms`, `time_step_ms`,
+/// `start_timeout_ms`, `stop_timeout_ms`, `timeout_ms`, `describe_timeout_ms`).
+[[nodiscard]] constexpr bool valid_positive_millis(std::int64_t ms) noexcept
+{
+    return ms >= 1 && ms <= kMaxMillis;
+}
+
+/// Whether a millisecond duration in [0, kMaxMillis] is valid (`late_tolerance_ms`).
+[[nodiscard]] constexpr bool valid_non_negative_millis(std::int64_t ms) noexcept
+{
+    return ms >= 0 && ms <= kMaxMillis;
+}
+
+/// Whether a requested speed multiplier is finite and in [kMinSpeed, kMaxSpeed] (empty: max / unset).
+[[nodiscard]] bool valid_speed(double speed) noexcept;
+[[nodiscard]] bool valid_speed(const std::optional<double>& speed) noexcept;
+[[nodiscard]] bool valid_speed(const std::optional<std::optional<double>>& speed) noexcept;
+
+/// Whether `stop_at_ms` (when set) lies on a positive `time_step_ms` boundary.
+[[nodiscard]] constexpr bool stop_on_time_step(std::optional<std::int64_t> stop_at_ms, std::int64_t time_step_ms) noexcept
+{
+    return !stop_at_ms || (valid_positive_millis(time_step_ms) && *stop_at_ms % time_step_ms == 0);
+}
+
+/// The timing and timeout numbers of a request or a run plan that share the 1..kMaxMillis,
+/// 0..kMaxMillis and kMinSpeed..kMaxSpeed bounds.
+struct TimingValues
+{
+    std::optional<std::int64_t> stop_at_ms{};
+    std::optional<std::int64_t> late_tolerance_ms{};
+    std::optional<std::optional<double>> speed{};
+    std::int64_t start_timeout_ms = 30000;
+    std::int64_t stop_timeout_ms = 10000;
+    std::optional<std::int64_t> timeout_ms{};
+    std::optional<std::int64_t> describe_timeout_ms{};
+    std::optional<std::int64_t> time_step_ms{};
+};
+
+/// Whether every field in `values` is within its allowed range.
+[[nodiscard]] bool valid_timing_values(const TimingValues& values) noexcept;
+
+/// One "usage" finding for each out-of-range timing field in `values`, in request validation order.
+[[nodiscard]] std::vector<Finding> validate_timing_values(const TimingValues& values);
+
 /// --time-policy: what a run does about time when it is connected outside the simulation.
 enum class TimePolicy
 {
@@ -159,6 +203,10 @@ namespace detail {
 /// between two controller steps. assess_run() reports it after a run; check_file() before one, if
 /// the file has speed and time_step_ms.
 [[nodiscard]] std::optional<Finding> coarse_time_step(const RunTiming& timing);
+
+/// The error stop-not-on-step when `stop_at_ms` is set and is not a multiple of `time_step_ms`.
+[[nodiscard]] std::optional<Finding> stop_not_on_step(std::optional<std::int64_t> stop_at_ms,
+                                                      std::int64_t time_step_ms);
 } // namespace detail
 
 } // namespace vehicle_sil::config

@@ -138,14 +138,18 @@ public:
             }
             else if (key == "stop_at_ms" || key == "late_tolerance_ms")
             {
-                const std::int64_t min = key == "stop_at_ms" ? 1 : 0;
+                const bool positive = key == "stop_at_ms";
+                const std::int64_t min = positive ? 1 : 0;
                 std::int64_t value = 0;
-                if (!plain_integer(child, value) || value < min || value > config::kMaxMillis)
+                const bool in_range =
+                    plain_integer(child, value) &&
+                    (positive ? config::valid_positive_millis(value) : config::valid_non_negative_millis(value));
+                if (!in_range)
                 {
                     error("value", doc_.line(child), key + " must be an integer from " + std::to_string(min) +
                               " to " + std::to_string(config::kMaxMillis) + ", not " + shown_value(child));
                 }
-                else if (key == "stop_at_ms")
+                else if (positive)
                 {
                     intent.stop_at_ms = value;
                 }

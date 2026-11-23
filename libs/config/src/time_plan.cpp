@@ -24,6 +24,77 @@ using detail::and_list;
 using detail::kNanosPerMilli;
 using detail::millis_text;
 
+bool valid_speed(double speed) noexcept
+{
+    return std::isfinite(speed) && speed >= kMinSpeed && speed <= kMaxSpeed;
+}
+
+bool valid_speed(const std::optional<double>& speed) noexcept
+{
+    return !speed || valid_speed(*speed);
+}
+
+bool valid_speed(const std::optional<std::optional<double>>& speed) noexcept
+{
+    return !speed || valid_speed(*speed);
+}
+
+bool valid_timing_values(const TimingValues& values) noexcept
+{
+    return (!values.stop_at_ms || valid_positive_millis(*values.stop_at_ms)) &&
+           (!values.late_tolerance_ms || valid_non_negative_millis(*values.late_tolerance_ms)) &&
+           valid_speed(values.speed) &&
+           valid_positive_millis(values.start_timeout_ms) &&
+           valid_positive_millis(values.stop_timeout_ms) &&
+           (!values.timeout_ms || valid_positive_millis(*values.timeout_ms)) &&
+           (!values.describe_timeout_ms || valid_positive_millis(*values.describe_timeout_ms)) &&
+           (!values.time_step_ms || valid_positive_millis(*values.time_step_ms));
+}
+
+std::vector<Finding> validate_timing_values(const TimingValues& values)
+{
+    const auto usage = [](std::string message) {
+        Finding f;
+        f.code = "usage";
+        f.message = std::move(message);
+        return f;
+    };
+    std::vector<Finding> out;
+    if (values.stop_at_ms && !valid_positive_millis(*values.stop_at_ms))
+    {
+        out.push_back(usage("stop_at_ms must be an integer from 1 to 1000000000000"));
+    }
+    if (values.late_tolerance_ms && !valid_non_negative_millis(*values.late_tolerance_ms))
+    {
+        out.push_back(usage("late_tolerance_ms must be an integer from 0 to 1000000000000"));
+    }
+    if (!valid_speed(values.speed))
+    {
+        out.push_back(usage("speed must be max or a number from 0.000001 to 1000000"));
+    }
+    if (!valid_positive_millis(values.start_timeout_ms))
+    {
+        out.push_back(usage("participant start timeout must be an integer from 1 to 1000000000000 ms"));
+    }
+    if (!valid_positive_millis(values.stop_timeout_ms))
+    {
+        out.push_back(usage("participant stop timeout must be an integer from 1 to 1000000000000 ms"));
+    }
+    if (values.timeout_ms && !valid_positive_millis(*values.timeout_ms))
+    {
+        out.push_back(usage("timeout must be an integer from 1 to 1000000000000 ms"));
+    }
+    if (values.describe_timeout_ms && !valid_positive_millis(*values.describe_timeout_ms))
+    {
+        out.push_back(usage("describe timeout must be an integer from 1 to 1000000000000 ms"));
+    }
+    if (values.time_step_ms && !valid_positive_millis(*values.time_step_ms))
+    {
+        out.push_back(usage("time_step_ms must be an integer from 1 to 1000000000000"));
+    }
+    return out;
+}
+
 const char* to_string(TimePolicy policy)
 {
     return policy == TimePolicy::Free ? "free" : "realtime";
@@ -354,6 +425,18 @@ std::optional<Finding> detail::coarse_time_step(const RunTiming& t)
                      ? "Write time_step_ms: " + std::to_string(t.fine_step_ms) +
                            (t.time_step_written ? " (or leave time_step_ms out to use the automatic step)" : "")
                      : std::string("The controller's whole-millisecond step cannot align every ECU step.")), 0, "", ""};
+}
+
+std::optional<Finding> detail::stop_not_on_step(std::optional<std::int64_t> stop_at_ms, std::int64_t time_step_ms)
+{
+    if (!stop_at_ms || stop_on_time_step(stop_at_ms, time_step_ms))
+    {
+        return std::nullopt;
+    }
+    return Finding{Severity::Error, "stop-not-on-step",
+                   "stop_at_ms (" + std::to_string(*stop_at_ms) + ") is not a multiple of time_step_ms (" +
+                       std::to_string(time_step_ms) + ")",
+                   0, "", ""};
 }
 
 } // namespace vehicle_sil::config

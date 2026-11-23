@@ -601,11 +601,9 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     report.stop_timeout_ms = host.stop_timeout_ms;
     report.checked_speed = intent.speed;
     report.checked_start_paused = intent.start_paused;
-    if (intent.stop_at_ms && *intent.stop_at_ms % report.run_timing->time_step_ms != 0)
+    if (auto f = config::detail::stop_not_on_step(intent.stop_at_ms, report.run_timing->time_step_ms))
     {
-        report.findings.push_back(config::Finding{config::Severity::Error, "stop-not-on-step",
-            "stop_at_ms (" + std::to_string(*intent.stop_at_ms) + ") is not a multiple of time_step_ms (" +
-                std::to_string(report.run_timing->time_step_ms) + ")", 0, "", ""});
+        report.findings.push_back(std::move(*f));
     }
     if (auto f = config::detail::coarse_time_step(*report.run_timing))
     {
