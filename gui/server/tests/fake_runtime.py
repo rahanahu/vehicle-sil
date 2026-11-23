@@ -100,6 +100,18 @@ class FakeRun:
     def pid(self) -> int | None:
         return self._pid
 
+    @property
+    def run_id(self) -> str | None:
+        return None
+
+    @property
+    def mode(self) -> str:
+        return "cold"
+
+    @property
+    def control_token(self) -> str | None:
+        return None
+
     def start(self, sink: RunSink) -> None:
         self.sink = sink
         self.started.set()
@@ -223,6 +235,26 @@ class FakeRuntime:
 
     def active_pids(self) -> list[int]:
         return [run.pid for run in list(self._active) if run.pid is not None]
+
+    def sync_launcher(self) -> None:
+        return
+
+    def status(self) -> dict:
+        return {
+            "mode": "cold",
+            "state": "running" if self._active else "cold",
+            "config": None,
+            "reason": "fake-runtime",
+            "message": None,
+        }
+
+    async def prepare(self, config: str, *, variant: str | None = None, disable: tuple[str, ...] = (),
+                      enable: tuple[str, ...] = (), manual: tuple[str, ...] = (),
+                      want_control: bool = True) -> dict:
+        return self.status()
+
+    async def release_config(self, config: str) -> None:
+        return
 
 
 async def _wait_run_or_hurry(run: FakeRun, hurry: asyncio.Event, seconds: float | None) -> bool:

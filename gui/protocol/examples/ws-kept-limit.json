@@ -573,6 +573,13 @@
       },
       "replay": {
         "from_seq": null
+      },
+      "runtime": {
+        "mode": "cold",
+        "state": "cold",
+        "config": null,
+        "reason": "launcher-unsupported",
+        "message": "this launcher was built without serve mode: running each simulation in its own launcher"
       }
     },
     {

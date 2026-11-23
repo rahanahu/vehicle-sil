@@ -91,7 +91,8 @@ Every `api/` request has these conditions:
 | `POST api/stop-session` `{session, instance, force}` | `{session}` of the targeted run, or 409 `session-changed` | — |
 | `POST api/time` `{command, ms, at_ms, value, id, session, instance}` | `{session_id, command}` (the command sent to the launcher, with its `id` if given) | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}` (the operation number; the result arrives as `operation` over WebSocket) | `write.json` |
-| `GET api/session` | `{instance, session, allowed}` (`session` is `null` if none; `allowed` as in "What the server accepts (`allowed`)" below) | `session-*.json` |
+| `GET api/session` | `{instance, session, allowed, runtime}` (`session` is `null` if none; `allowed` as in "What the server accepts (`allowed`)" below) | `session-*.json` |
+| `POST api/prepare` `{file, variant, disable, enable, manual}` | `{instance, runtime}`: prepares a persistent launcher when eligible, or returns `cold` with `reason` | — |
 | `GET api/dashboard?file=<configuration file>` | The dashboard file next to the configuration file: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
 | `GET api/scenarios?file=<configuration file>` | The scenarios in `scenarios` next to the configuration file: `{file, directory, found, scenarios, truncated}` | `scenarios.json` |
 | `GET api/recording` | The applied writes of the current (last) run as scenario YAML: `{recording}` (`null` if there is no run) | `recording.json` |
@@ -319,11 +320,11 @@ Even with `session_without_check`, the `hello` summary includes `check`, and the
 
 After authentication, the server sends, in this order:
 
-1. `hello`: `instance`, `session` (the summary, or `null`), `allowed` (the same as `session.allowed` when there is a run; with no run, what the server accepts), `replay` (`from_seq`: where the replay starts; `null` means from the beginning). The screen rebuilds its state from this summary.
+1. `hello`: `instance`, `session` (the summary, or `null`), `allowed` (the same as `session.allowed` when there is a run; with no run, what the server accepts), `replay` (`from_seq`: where the replay starts; `null` means from the beginning), `runtime` (`{mode, state, config, reason, message}`). The screen rebuilds its state from this summary.
 2. `dropped` (if any): the number of log lines from `from_seq` on that the server cannot send because it no longer keeps them (per source).
 3. `event`: the kept log lines from `from_seq` on, in `seq` order.
 4. `synced`: `{session, last_seq}`. The end of the replay.
-5. From then on, as things happen: `event`, `session`, `allowed`, `error`, `dropped`, `resync`, `variables`, `values`, `operation`, `availability`.
+5. From then on, as things happen: `event`, `session`, `allowed`, `runtime`, `error`, `dropped`, `resync`, `variables`, `values`, `operation`, `availability`.
 
 If `session` differs from the `id` of the `hello` summary, or `from_seq` does not belong to the current session, the replay starts from the beginning (`replay.from_seq` is `null`).
 
@@ -338,6 +339,7 @@ After authentication, a screen can send variable `watch` and `unwatch` messages 
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
 | `session` | `{session}` (the summary) | `ws-pass.json`, `ws-without-check.json` |
 | `allowed` | `{session, allowed}`. What the server accepts changed, and no `session` follows to carry it ("What the server accepts (`allowed`)" below). `session` is the id of the current run, or `null` | `ws-allowed.json` |
+| `runtime` | `{runtime}`. Persistent launcher state (`mode`, `state`, `config`, `reason`, `message`) changed | — |
 | `error` | `{session, code, message, detail, problem_seq?}`. Something the server noticed ("The `code` of `error` messages" below). Also kept in `problems` of the summary | `ws-bad-lines.json` |
 | `dropped` | `{session, reason, log, at_least, events}`. Counts of what was not sent to this screen | `ws-dropped.json`, `ws-slow-client.json` |
 | `resync` | `{reason, message}`. The screen receives too slowly, and even notifications that must not be dropped overflowed. Right after this, the server sends everything again from `hello` | `ws-resync.json` |

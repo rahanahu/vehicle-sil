@@ -91,7 +91,8 @@ API のバージョンは `vehicle_sil_gui`（今は 3）です。サーバー�
 | `POST api/stop-session` `{session, instance, force}` | 対象の `{session}`、または 409 `session-changed` | — |
 | `POST api/time` `{command, ms, at_ms, value, id, session, instance}` | `{session_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
-| `GET api/session` | `{instance, session, allowed}`（`session` は実行がなければ `null`。`allowed` は下の「サーバーが受け付けること（`allowed`）」） | `session-*.json` |
+| `GET api/session` | `{instance, session, allowed, runtime}`（`session` は実行がなければ `null`。`allowed` は下の「サーバーが受け付けること（`allowed`）」） | `session-*.json` |
+| `POST api/prepare` `{file, variant, disable, enable, manual}` | `{instance, runtime}`: 条件を満たせば常駐ランチャーを準備し、そうでなければ `cold` と `reason` を返す | — |
 | `GET api/dashboard?file=<configuration file>` | 設定ファイルの隣のダッシュボードのファイル: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
 | `GET api/scenarios?file=<configuration file>` | 設定ファイルの隣の `scenarios` のシナリオ: `{file, directory, found, scenarios, truncated}` | `scenarios.json` |
 | `GET api/recording` | いまの（最後の）実行の、反映された書き込みをシナリオの YAML にしたもの: `{recording}`（実行がなければ `null`） | `recording.json` |
@@ -316,11 +317,11 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 
 認証の後、サーバーは次の順に送ります。
 
-1. `hello`: `instance`、`session`（要約。なければ `null`）、`allowed`（実行があれば `session.allowed` と同じ。なければ、サーバーが受け付けること）、`replay`（`from_seq`: 再送の始まり。`null` は最初から）。画面は状態をこの要約で作り直す。
+1. `hello`: `instance`、`session`（要約。なければ `null`）、`allowed`（実行があれば `session.allowed` と同じ。なければ、サーバーが受け付けること）、`replay`（`from_seq`: 再送の始まり。`null` は最初から）、`runtime`（`{mode, state, config, reason, message}`）。画面は状態をこの要約で作り直す。
 2. `dropped`（あれば）: `from_seq` 以後の log の行のうち、サーバーが覚えていないので送れない数（source ごと）。
 3. `event`: 覚えている log の行のうち `from_seq` 以後のものを、`seq` の順に。
 4. `synced`: `{session, last_seq}`。再送の終わり。
-5. 以後は、起きるたびに `event`、`session`、`allowed`、`error`、`dropped`、`resync`、`variables`、`values`、`operation`、`availability`。
+5. 以後は、起きるたびに `event`、`session`、`allowed`、`runtime`、`error`、`dropped`、`resync`、`variables`、`values`、`operation`、`availability`。
 
 `session` の `id` が `hello` の要約と違う、または `from_seq` が今のセッションのものでないときは、最初からの再送になります（`replay.from_seq` が `null`）。
 
@@ -335,6 +336,7 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
 | `session` | `{session}`（要約） | `ws-pass.json`、`ws-without-check.json` |
 | `allowed` | `{session, allowed}`。サーバーが受け付けることが変わり、それを運ぶ `session` が続かない（下の「サーバーが受け付けること（`allowed`）」）。`session` は今の実行の id、なければ `null` | `ws-allowed.json` |
+| `runtime` | `{runtime}`。常駐ランチャーの状態（`mode`、`state`、`config`、`reason`、`message`）が変わった | — |
 | `error` | `{session, code, message, detail, problem_seq?}`。サーバーが気づいたこと（下の「`error` の `code`」）。要約の `problems` にも残る | `ws-bad-lines.json` |
 | `dropped` | `{session, reason, log, at_least, events}`。この画面に送らなかったものの数 | `ws-dropped.json`、`ws-slow-client.json` |
 | `resync` | `{reason, message}`。画面の受信が遅く、落とせない通知まであふれた。すぐ後に `hello` から送り直す | `ws-resync.json` |

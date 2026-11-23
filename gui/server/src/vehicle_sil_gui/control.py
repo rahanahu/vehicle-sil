@@ -49,6 +49,9 @@ from .source import AVAILABILITY, OperationInfo, PeerInfo, Sink, SnapshotInfo, S
 FEATURE = "control-server"  # of vehicle_sil_launch version --json: run --control and the event below
 EVENT = "control_server"  # {"address", "tls", "credentials"}: where the run's control server listens
 STUBS_VARIABLE = "VEHICLE_SIL_CONTROL_STUBS"
+RUN_METADATA = "vehicle-sil-run"
+REASON_METADATA = "vehicle-sil-reason"
+REASON_RUN_CHANGED = "run-changed"
 SCENARIO_CLIENT = "scenario"  # the client of a scenario's writes (fixed: docs/control-api.md)
 PROTO = Path("vehicle_sil") / "control" / "v1" / "control.proto"
 ROLE_LINE = "operator vehicle-sil-gui {token}\n"  # reads, writes and time; not the stop (that goes by stdin)
@@ -239,11 +242,16 @@ class _Snapshot:
 
 
 class GrpcSource:
-    def __init__(self, library: Library, address: str, token: str | None):
+    def __init__(self, library: Library, address: str, token: str | None, *, run_id: str | None = None):
         self._grpc, self._pb = library.grpc, library.pb
         self._address = address
         self._token = token
-        self._metadata = (("authorization", f"Bearer {token}"),) if token else None
+        metadata: list[tuple[str, str]] = []
+        if token:
+            metadata.append(("authorization", f"Bearer {token}"))
+        if run_id:
+            metadata.append((RUN_METADATA, run_id))
+        self._metadata = tuple(metadata) or None
         self._channel = self._grpc.insecure_channel(address, options=[
             ("grpc.enable_retries", 0),
             ("grpc.enable_http_proxy", 0),
@@ -384,6 +392,19 @@ class GrpcSource:
     def _clean(self, text: str) -> str:
         return text.replace(self._token, "<token>") if self._token else text
 
+    @staticmethod
+    def _trailing_reason(err) -> str | None:
+        metadata = getattr(err, "trailing_metadata", None)
+        if not callable(metadata):
+            return None
+        for entry in metadata() or ():
+            key, val = entry[0], entry[1]
+            if isinstance(key, bytes):
+                key = key.decode("utf-8", errors="ignore")
+            if key.lower() == REASON_METADATA:
+                return val.decode("utf-8", errors="ignore") if isinstance(val, bytes) else str(val)
+        return None
+
     def _take(self) -> None:
         """On the loop: passes on what the reader has read since the last time."""
         with self._lock:
@@ -509,10 +530,15 @@ class GrpcSource:
                     watchdog.cancel()
             except grpc.RpcError as e:
                 code = e.code()
-                fatal = code in fatal_codes
+                trailing_reason = self._trailing_reason(e)
+                fatal = code in fatal_codes or (
+                    code == grpc.StatusCode.FAILED_PRECONDITION and trailing_reason == REASON_RUN_CHANGED
+                )
                 reason = f"the control server at {self._address} "
                 if silent.is_set():
                     reason += f"did not send its state in {SYNC_TIMEOUT_S:g} s"
+                elif code == grpc.StatusCode.FAILED_PRECONDITION and trailing_reason == REASON_RUN_CHANGED:
+                    reason += "switched away from this run (run-changed)"
                 elif code in (grpc.StatusCode.UNAUTHENTICATED, grpc.StatusCode.PERMISSION_DENIED):
                     reason += f"refused this GUI server ({code.name}: {e.details()})"
                 elif code == grpc.StatusCode.UNAVAILABLE:

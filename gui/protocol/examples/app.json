@@ -55,7 +55,6 @@
           "request",
           "scenario-samples",
           "run-stop-at",
-          "serve",
           "scenario-control",
           "scenario-time"
         ]

@@ -48,6 +48,7 @@ def is_operation(seq: int, state: str):
 def test_write_before_the_start_and_read_while_it_stands_still(tmp_path: Path) -> None:
     configs = tmp_path / "configs"
     write(configs, EXAMPLES)
+    cred_paths: list[Path] = []
     with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER)) as gui:
         async def talk(c: Client) -> None:
             _, app = await c.get("api/app")
@@ -62,10 +63,14 @@ def test_write_before_the_start_and_read_while_it_stands_still(tmp_path: Path) -
             got = await ws.until(is_variables("ready"))
             got += await ws.until(lambda m: m["type"] == "variables" and len(m["variables"]["peers"]) == 2
                                   and all(p["connected"] and p["variables"] for p in m["variables"]["peers"]))
-            # The launcher got the credentials as a file, which is gone once its control server listens.
+            # One-shot `run` deletes credentials immediately; persistent `serve` retains them until shutdown.
             hello = next(m["event"] for m in got if m["type"] == "event" and m["event"]["event"] == "hello")
             path = Path(hello["arguments"][hello["arguments"].index("--control-credentials") + 1])
-            assert not path.exists()
+            cred_paths.append(path)
+            if hello["arguments"][0] == "serve":
+                assert path.exists()
+            else:
+                assert not path.exists()
             schema = {p["name"]: {v["name"]: v for v in p["variables"]} for p in got[-1]["variables"]["peers"]}
             assert set(schema) == {"Engine", "Dashboard"}
             throttle, speed = schema["Engine"]["engine.throttle"], schema["Engine"]["engine.speed"]
@@ -149,6 +154,7 @@ def test_write_before_the_start_and_read_while_it_stands_still(tmp_path: Path) -
             await ws.close()
         run_async(talk, gui)
         assert gui.stderr_text() == ""
+    assert cred_paths and not cred_paths[0].exists()
 
 
 def test_a_run_that_passes_has_its_last_values_after_the_end(tmp_path: Path) -> None:
@@ -256,5 +262,61 @@ def test_the_recorded_writes_pass_the_launchers_check_and_play_back(tmp_path: Pa
             got = await ws.until(is_ended)
             assert got[-1]["session"]["scenario"]["status"] == "passed", got[-1]["session"]["scenario"]
             assert got[-1]["session"]["result"]["simulation"] == "ended"
+            await ws.close()
+        run_async(talk, gui)
+
+
+def test_real_hot_runs_reuse_resident_and_isolate_variables(tmp_path: Path) -> None:
+    """Two consecutive hot runs reuse one `serve` process, isolate Run variables, and clean up per run."""
+    configs = tmp_path / "configs"
+    write(configs, EXAMPLES)
+    with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER)) as gui:
+        async def talk(c: Client) -> None:
+            _, app = await c.get("api/app")
+            if not app["variables"]["available"]:
+                pytest.skip(app["variables"]["reason"])
+            ws = await c.ws()
+            await ws.until(is_synced)
+
+            status, prep = await c.post("api/prepare", {"file": "forever.yaml"})
+            assert status == 200, prep
+            assert prep["runtime"]["mode"] == "hot" and prep["runtime"]["state"] == "ready"
+
+            status, r1 = await c.post("api/run", {"file": "forever.yaml", "speed": 1, "start_paused": True})
+            assert status == 200, r1
+            pid1 = r1["session"]["launcher"]["pid"]
+            await ws.until(is_variables("ready"))
+            await ws.until(lambda m: m["type"] == "variables" and len(m["variables"]["peers"]) == 2
+                           and all(p["connected"] and p["variables"] for p in m["variables"]["peers"]))
+            st, w1 = await c.post("api/write", {
+                "session": r1["session"]["id"],
+                "writes": {"Engine": {"engine.throttle": 25}},
+            })
+            assert st == 200, w1
+            await c.post("api/stop", {"force": False})
+            got1 = await ws.until(is_ended)
+            assert got1[-1]["session"]["result"]["result"] == "stopped"
+
+            status, r2 = await c.post("api/run", {"file": "forever.yaml", "speed": 1, "start_paused": True})
+            assert status == 200, r2
+            assert r2["session"]["launcher"]["pid"] == pid1
+            assert r2["session"]["id"] != r1["session"]["id"]
+            await ws.until(is_variables("ready"))
+            await ws.until(lambda m: m["type"] == "variables" and len(m["variables"]["peers"]) == 2
+                           and all(p["connected"] and p["variables"] for p in m["variables"]["peers"]))
+            # Stale write referencing Run 1 must be rejected
+            st, stale = await c.post("api/write", {
+                "session": r1["session"]["id"],
+                "writes": {"Engine": {"engine.throttle": 50}},
+            })
+            assert st == 409 and stale["error"]["code"] == "session-changed"
+            st, w2 = await c.post("api/write", {
+                "session": r2["session"]["id"],
+                "writes": {"Engine": {"engine.throttle": 75}},
+            })
+            assert st == 200, w2
+            await c.post("api/stop", {"force": False})
+            got2 = await ws.until(is_ended)
+            assert got2[-1]["session"]["result"]["result"] == "stopped"
             await ws.close()
         run_async(talk, gui)
