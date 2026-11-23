@@ -3,10 +3,12 @@
 process to process, and the stream check finds each kind of broken stream (so that a passing serve test means the
 rules were checked, not that the checker saw nothing)."""
 import copy
+import os
 import unittest
+from unittest import mock
 
 from serve_digest import deterministic, differences, digest, first_points_ms, first_time_ms, stream_problems
-from serve_support import slope
+from serve_support import asan_built, slope
 
 RESULT = {
     "vehicle_sil_run": 2, "vehicle_sil": "0.0.0", "file": "sim.yaml", "result": "passed", "end": "completed", "ok": True,
@@ -72,6 +74,16 @@ class DigestTest(unittest.TestCase):
     def test_slope(self):
         self.assertAlmostEqual(slope([1, 3, 5, 7]), 2.0)
         self.assertEqual(slope([4]), 0.0)
+
+    def test_asan_built(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(asan_built())
+        for off in ("OFF", "off", "0", "false", "no", ""):
+            with mock.patch.dict(os.environ, {"VEHICLE_SIL_SERVE_ASAN": off}, clear=True):
+                self.assertFalse(asan_built(), off)
+        for on in ("ON", "on", "1", "true", "yes"):
+            with mock.patch.dict(os.environ, {"VEHICLE_SIL_SERVE_ASAN": on}, clear=True):
+                self.assertTrue(asan_built(), on)
 
 
 L = "0123456789abcdef"

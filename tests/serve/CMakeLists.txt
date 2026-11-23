@@ -29,6 +29,10 @@ set(_serve_control "OFF")
 if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
   set(_serve_control "ON")
 endif()
+set(_serve_asan "OFF")
+if("address" IN_LIST VEHICLE_SIL_SANITIZERS)
+  set(_serve_asan "ON")
+endif()
 
 set(_serve_common_env
   "VEHICLE_SIL_LAUNCH_EXE=$<TARGET_FILE:vehicle_sil_launch>"
@@ -39,6 +43,7 @@ set(_serve_common_env
   "VEHICLE_SIL_SERVE_LIN_SLAVE=$<TARGET_FILE:vehicle_sil_serve_lin_slave>"
   "VEHICLE_SIL_SERVE_FAULT_DELAY=${_serve_fault_delay}"
   "VEHICLE_SIL_SERVE_CONTROL_SERVER=${_serve_control}"
+  "VEHICLE_SIL_SERVE_ASAN=${_serve_asan}"
   "VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT=${VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT}"
 )
 
