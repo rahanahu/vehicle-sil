@@ -592,14 +592,23 @@ class LauncherTest(unittest.TestCase):
         for speed in ("max", "1"):
             with self.launch("scenario_same", stop_at_ms=5000, arguments=["--scenario", str(play), "--speed", speed]) as launch:
                 address = launch.address
+                # The server closes with the run and the run does not wait for clients: as fast as
+                # possible, it can be over before a reader has asked anything. So it stands still
+                # first (a pause sent before the simulation runs, as in the next test), and goes on
+                # once every reader has read.
+                with Control(address) as c:
+                    c.sim.pause()
+                    c.sim.wait_paused(60)
                 over = threading.Event()
                 seen = {"snapshots": 0, "moving": 0, "throttle": set(), "watched": 0, "errors": []}
+                have_read = []  # one entry from each reader thread, after its first read
                 stuck = []
                 # How a call ends when the run is over and the server closes.
                 closing = (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.CANCELLED)
 
                 def poll():
                     # Asks as fast as it can, with everything that reads.
+                    read = False
                     try:
                         with Control(address) as c:
                             while not over.is_set():
@@ -612,15 +621,22 @@ class LauncherTest(unittest.TestCase):
                                 c.sim.time()
                                 if c.peer("Engine").connected:
                                     c.values("Engine")
+                                if not read:
+                                    read = True
+                                    have_read.append("poll")
                     except ControlError as e:
                         if e.code not in closing:
                             seen["errors"].append(e)
 
                 def watch():
+                    read = False
                     try:
                         with Control(address) as c:
                             for _ in c.watch(time=True, simulation=True):
                                 seen["watched"] += 1
+                                if not read:
+                                    read = True
+                                    have_read.append("watch")
                     except ControlError as e:
                         if e.code not in closing:
                             seen["errors"].append(e)
@@ -636,6 +652,9 @@ class LauncherTest(unittest.TestCase):
                 threads += [threading.Thread(target=watch, daemon=True) for _ in range(3)]
                 for thread in threads:
                     thread.start()
+                wait_until(self, "every reader has read once", lambda: len(have_read) == len(threads) or seen["errors"])
+                with Control(address) as c:
+                    c.sim.resume()
                 # It ends by itself, readers that are stuck or not, and with the same result.
                 result = launch.wait(120)
                 over.set()
@@ -649,7 +668,9 @@ class LauncherTest(unittest.TestCase):
             self.assertEqual(seen["errors"], [])
             self.assertGreater(seen["snapshots"], 0)
             self.assertGreater(seen["watched"], 0)
-            self.assertEqual(commands_of(launch), [])
+            # The readers sent no command: the pause and the resume are the test's own.
+            self.assertEqual(commands_of(launch), [("pause", "control_server", True, None, None),
+                                                   ("resume", "control_server", True, None, None)])
             if speed == "1":
                 # In real time the readers were there while it played: they saw the time go on
                 # and the scenario's own writes (the throttle it sets, on its way up or down).
