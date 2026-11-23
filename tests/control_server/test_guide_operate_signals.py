@@ -12,7 +12,9 @@ after a line "<!-- ... -->" there:
 - vehicle_sil_control <arguments>                      what the CLI prints for these arguments, the blocks one
                                                        after the other against one run that stands still before
                                                        its first step (but for the operation's number and the
-                                                       widths of the columns; ": the first lines": its first lines)
+                                                       widths of the columns; ": the first lines": its first lines;
+                                                       `resume`: a time from where it stood to the end, as the
+                                                       simulation may have gone on before the reply)
 - standard input of run --start-paused --stdin-commands: the input, and: the lines of the Dashboard
                                                        the lines given on standard input, and the lines the
                                                        dashboard then writes
@@ -32,6 +34,7 @@ import unittest
 from vehicle_sil_control import Launch
 
 LAUNCH = CONFIG = REPOSITORY = GUIDE = None
+STOP_AT_MS = 1000  # where the run of the guide's CLI commands ends (the guide says 1000 ms)
 MARKER = re.compile(r"^<!-- ([^\n]+) -->\n```[a-z]*\n(.*?)^```$", re.MULTILINE | re.DOTALL)
 
 
@@ -107,7 +110,7 @@ class TheGuide(unittest.TestCase):
         commands = [(name, text) for name, text in blocks() if name.startswith("vehicle_sil_control ")]
         self.assertGreaterEqual(len(commands), 1)
         normal = lambda text: re.sub(r"seq \d+", "seq <n>", "\n".join(" ".join(line.split()) for line in text.splitlines()))
-        with Launch(LAUNCH, CONFIG, start_paused=True, arguments=["--stop-at-ms", "1000"]) as launch:
+        with Launch(LAUNCH, CONFIG, start_paused=True, arguments=["--stop-at-ms", str(STOP_AT_MS)]) as launch:
             for name, expected in commands:
                 with self.subTest(command=name):
                     first_lines = name.endswith(": the first lines")
@@ -118,8 +121,19 @@ class TheGuide(unittest.TestCase):
                     actual = normal(done.stdout)
                     if first_lines:
                         actual = "\n".join(actual.splitlines()[:len(expected.splitlines())])
+                    if arguments == ["resume"]:
+                        actual = self.resumed(actual, normal(expected))
                     self.same(actual, normal(expected), f"what `vehicle_sil_control {' '.join(arguments)}` prints")
             self.assertEqual(launch.wait(60)["result"], "passed", "the run of the guide's commands (the last one resumes it)")
+
+    def resumed(self, actual: str, expected: str) -> str:
+        """What `resume` prints is the time state read after the simulation went on (docs/control-api.md,
+        "Read the time state"): as fast as possible, it may already be past the time it stood at, up to the
+        end. The guide's line when `actual` is such a state, otherwise `actual` (so that `same` says what it was)."""
+        stood = re.fullmatch(r"running at (\d+) ms, speed max", expected)
+        self.assertIsNotNone(stood, f"the line of `resume` in {GUIDE}: {expected}")
+        now = re.fullmatch(r"(?:running|ended) at (\d+) ms, speed max", actual)
+        return expected if now and int(stood.group(1)) <= int(now.group(1)) <= STOP_AT_MS else actual
 
     def test_the_commands_of_standard_input_do_what_the_guide_shows(self):
         name = "standard input of run --start-paused --stdin-commands"

@@ -252,6 +252,8 @@ seq 1794666759502165 Engine: invalid (engine.speed: an output is not writable), 
 running at 500 ms, speed max
 ```
 
+The time in this line is read after the simulation goes on, so it can be later than 500 ms (see "Read the time state" in [control-api.md](../control-api.md#read-the-time-state)).
+
 After `resume`, the simulation in terminal 1 runs to the requested stop time (1000 ms), prints the result table and exits with code 0.
 
 Other CLI commands:

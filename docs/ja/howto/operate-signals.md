@@ -252,6 +252,8 @@ seq 1794666759502165 Engine: invalid (engine.speed: an output is not writable), 
 running at 500 ms, speed max
 ```
 
+この行の時刻は、シミュレーションが進み始めた後に読むので、500 ms より後になることがあります（[control-api.md](../control-api.md#時間の状態を読む) の「時間の状態を読む」）。
+
 `resume` の後、端末 1 のシミュレーションは指定した停止時刻（1000 ms）まで進み、結果の表を表示して、終了コード 0 で終わります。
 
 CLI のほかのコマンドは、次のとおりです。
