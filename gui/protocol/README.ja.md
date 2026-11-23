@@ -90,7 +90,7 @@ API のバージョンは `vehicle_sil_gui`（今は 3）です。サーバー�
 | `POST api/stop` `{force}` | `{session}`（今の要約。実行がなければ `null`） | `stop*.json` |
 | `POST api/stop-session` `{session, instance, force}` | 対象の `{session}`、または 409 `session-changed` | — |
 | `POST api/time` `{command, ms, at_ms, value, id, session, instance}` | `{session_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
-| `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
+| `POST api/write` `{session, instance, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
 | `GET api/session` | `{instance, session, allowed, runtime}`（`session` は実行がなければ `null`。`allowed` は下の「サーバーが受け付けること（`allowed`）」） | `session-*.json` |
 | `POST api/prepare` `{file, variant, disable, enable, manual}` | `{instance, runtime}`: 条件を満たせば常駐ランチャーを準備し、そうでなければ `cold` と `reason` を返す | — |
 | `GET api/dashboard?file=<configuration file>` | 設定ファイルの隣のダッシュボードのファイル: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
@@ -144,10 +144,10 @@ API のバージョンは `vehicle_sil_gui`（今は 3）です。サーバー�
 ### 照合と開始（`api/check`、`api/run`）
 
 - **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけている間は 409 `starting`、動いている間は 409 `already-running` です。レスポンスの要約を、画面はその場で手元の状態に反映します（後から届く `session` も同じ内容です）。
-- **照合のあとの開始**: `api/run` は、まず実行を成す内容（実行と同じ要求ファイル）を、`api/check` と同じ順番で照合します。照合が通らなければ（`result` が `passed` でなければ）実行は始めず、422 `check-failed` を返します。`detail` は `{result, findings}` で、`result` は照合の `result`（`failed`、`unreadable`、`usage`）、`findings` は同じリクエストで `api/check` が返す `findings`（同じオブジェクト）です。警告や注記があるだけで通る照合は、実行を始めます。所見を直してから、もう一度 `api/run` を送ります。何も始める前に断るので、止めるものはありません。例: `error-check-failed.json`。
+- **照合のあとの開始**: `api/run` は、`disable`/`manual` の participant 名を保存済み構成と照合したうえで、起動時にランチャー自身の単一の `check` を実行します。照合が通らなければ（`result` が `passed` でなければ）実行は進まず、422 `check-failed` を返します。`detail` は `{result, findings}` で、`result` は照合の `result`（`failed`、`unreadable`、`usage`）、`findings` は同じリクエストで `api/check` が返す `findings`（同じオブジェクト）です。警告や注記があるだけで通る照合は、実行を始めます。所見を直してから、もう一度 `api/run` を送ります。セッションを有効にする前に断るので、止めるものはありません。例: `error-check-failed.json`。
 - **意図と要求ファイル**: 本文は、`file`（このサーバーのフィールド。root からの相対の構成ファイル）と、ランチャーの要求ファイル（`schema/run-request.schema.json`。[docs/simulation-run.md](../../docs/ja/simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）のキーです。名前と値の形は同じです。`variant`（文字列）、`params`（パラメーター名から文字列、数、真偽への object）、`scenario`、`disable`、`enable`、`manual`（participant 名の配列）、`strict`（真偽）、`connect`（ネットワーク名から先への object）と `time_policy`（文字列）（上の「ネットワークを外につなぐ」）、`speed` と `start_paused`（`api/check` でも。ランチャーの照合が、時間とシナリオの規則に使います）です。`vehicle_sil_run_request` は `1` なら、`$schema` は文字列なら送れます（後者は捨てます）。キーの名前と値の形は要求ファイルと同じで、`file` が加わります。`scenario` は `api/scenarios` の一覧の名前で、構成ファイルのディレクトリからのパスではありません。サーバーは、各値の形（本文は 64 KiB まで。`api/check` は 6 MiB + 64 KiB まで）、パス（`file`、`api/scenarios` の一覧と照らす `scenario`）だけを調べ、意図を自分の要求ファイル（この利用者だけが読める。照合か実行が終わったら消す）に書いて、ランチャーに `--request <そのファイル>` を渡します。値がそのファイルで何を意味するか（その variant があるか、`disable` と `manual` を併せてよいか、シナリオにその `params` があるか）は、ランチャーが言います。所見（`api/check`）か 422 `check-failed`（`api/run`）に出ます。要求ファイルについての所見は、そのファイルを「the request」と呼びます（一時ファイルは、読むときにはもうありません）。`scenario` のない `params` は断りません。どの要求ファイルでも、ランチャーは `params` をシナリオを動かすときだけ使い、それ以外では無視します。`disable` と `manual` に使える名前は、その variant の照合の結果のものです。
 - **選ばないことは、キーを書かないこと。** `null` は断ります（400 `invalid-field`）。実行をする側のキー（`control`、`timeline`、`log_dir` など）は知らないフィールドです（400 `invalid-field`）。サーバーが決めます。送る `scenario` は、`api/scenarios` が返す `path`（root からの相対）です。サーバーは、要求ファイルが読む基準である構成ファイルのディレクトリからの相対に直して書きます。`request` の feature がないランチャーは使えません（`api/app` の `launcher.problems` に出ます）。
-- **照合**: 同時の `api/check` は拒否せず、順に 1 つずつ実行します。待っているリクエストが多すぎるか、待ちが照合の時間の上限（`api/app` の `limits.check_timeout_s`）を過ぎたら 503 `check-busy` です。`api/run` も同じ順番で照合します。
+- **照合**: 同時の `api/check` は拒否せず、順に 1 つずつ実行します。待っているリクエストが多すぎるか、待ちが照合の時間の上限（`api/app` の `limits.check_timeout_s`）を過ぎたら 503 `check-busy` です。`api/run` はメタデータを局所で検証したうえで、開始したランチャー実行内の単一チェックに `limits.check_timeout_s` を適用します。
 
 ### 構成ファイルの文（`api/config`、`api/check` の `text`、`api/describe`）
 
@@ -616,16 +616,17 @@ ECU は、動いている間に、いま変数のそれぞれを使っている�
 
 ### 書き込み（`api/write`、`operation`）
 
-`POST api/write` `{"session": <run id>, "writes": {"<peer>": {"<name>": <value>}}, "at_ms": <integer>, "late": "reject" | "apply"}` → `{"session_id", "operation"}`
+`POST api/write` `{"session": <run id>, "instance": <server instance>, "writes": {"<peer>": {"<name>": <value>}}, "at_ms": <integer>, "late": "reject" | "apply"}` → `{"session_id", "operation"}`
 
 | フィールド | 内容 |
 |---|---|
 | `session`（必須） | 書き込みを向ける実行の id（要約の `id`） |
+| `instance`（任意） | `api/app`・`hello`・`api/run` のサーバー `instance`。指定されて一致しなければ 409 `session-changed` |
 | `writes` | 変数の型に合わせた値。1 回のリクエストは `limits.writes_per_request`（256）個まで |
 | `at_ms` | 反映する仮想時間（0 から `limits.write_at_ms_max`）。省くと次のステップ |
 | `late` | 届いたときにその時刻のステップがもう実行されていたときの扱い: `reject`（既定）か `apply` |
 
-- **`session`**: 動いている実行の id と違えば、409 `session-changed` で拒否し、何も書きません。ある実行を見ながら送った書き込みが、その実行が終わって次が始まった後に届いても、次の実行に書かれないようにするためです。拒否されたら、いまの実行の変数を見てから書き直します。
+- **`session` と `instance`**: 送られた `instance` が現在のサーバーの `instance` と違うとき、または `session` が動いている実行の id と違えば、409 `session-changed` で拒否し、何も書きません。空文字列や文字列でない `instance` は 400 `invalid-field` です。ある実行やサーバープロセスを見ながら送った書き込みが、切り替わり後に誤って書かれないようにするためです。拒否されたら、いまの実行の変数を見てから書き直します。
 - **`writes` の値**: `bool` は `true` / `false`、`integer` は整数（整数値の実数も可）、`real` は有限の数、`enum` は項目の値（数）か項目の名前（文字列）です。`min` と `max` があれば、その範囲（両端を含む）にします。
 - サーバーは、変数の一覧と照合して、合わないものを 400 で拒否します（`invalid-field`、`unknown-variable`、`not-writable`）。1 つでも合わなければ、全部を送りません。
 - **`at_ms`**: その時刻以後に始まる最初のステップで反映されます。

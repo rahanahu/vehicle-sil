@@ -169,6 +169,8 @@ export interface OperationView {
 
 /** Options of a write. */
 export interface WriteOptions {
+  /** Optional server instance identifier to reject stale writes across server restarts. */
+  instance?: string;
   /** Virtual time at which to apply it (ms). Omitted: the next step. */
   atMs?: number;
   /** If the requested time cannot be met: reject (default; not applied) or apply (applied in the next step). */
@@ -1188,6 +1190,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
       );
     }
     const body: Fields = { session, writes };
+    if (options.instance !== undefined) body['instance'] = options.instance;
     if (options.atMs !== undefined) body['at_ms'] = options.atMs;
     if (options.late !== undefined) body['late'] = options.late;
     return new Promise<OperationView>((resolve, reject) => {

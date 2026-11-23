@@ -224,6 +224,14 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
           },
         );
     },
+    configs: () =>
+      low.configs().catch((error: unknown) => {
+        throw actionError(error);
+      }),
+    recording: () =>
+      low.recording().catch((error: unknown) => {
+        throw actionError(error);
+      }),
     connections: ({ network }, listOptions = {}) => {
       const file = listOptions.file ?? initialFile();
       if (file === null) {

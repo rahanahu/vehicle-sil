@@ -66,6 +66,7 @@ def test_watch_write_and_result(tmp_path: Path, control_env: dict) -> None:
         async def talk(c: Client) -> None:
             _, app = await c.get("api/app")
             assert app["variables"] == {"available": True, "reason": None}
+            instance = app["instance"]
             ws, session = await start(c, start_paused=True)
             assert session["variables"]["state"] == "connecting"
             got = await ws.until(is_variables("ready"))
@@ -84,8 +85,13 @@ def test_watch_write_and_result(tmp_path: Path, control_env: dict) -> None:
             first = (await ws.until(is_values(paused=True)))[-1]
             assert first == {"type": "values", "id": 1, "session": session["id"], "sim_ms": 0, "paused": True,
                              "peers": {}}
+            # Optional instance guard: bad or stale instance is refused before any write.
+            bad_inst = await c.post("api/write", {"session": session["id"], "instance": "", "writes": {"Engine": {"engine.demand": 1}}})
+            assert (bad_inst[0], bad_inst[1]["error"]["code"]) == (400, "invalid-field")
+            stale_inst = await c.post("api/write", {"session": session["id"], "instance": "stale-inst", "writes": {"Engine": {"engine.demand": 1}}})
+            assert (stale_inst[0], stale_inst[1]["error"]["code"]) == (409, "session-changed")
             # A write before the start, a parameter too: queued, then applied in the first step.
-            status, body = await c.post("api/write", {"session": session["id"], "writes": {"Engine": {"engine.demand": 40, "engine.mode": "on"}}})
+            status, body = await c.post("api/write", {"session": session["id"], "instance": instance, "writes": {"Engine": {"engine.demand": 40, "engine.mode": "on"}}})
             assert status == 200 and body == {"session_id": session["id"], "operation": 1}
             await ws.until(is_operation(1, "queued"))
             # It stands still before the first step: the phase is still waiting, and no time event has come.

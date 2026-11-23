@@ -765,8 +765,10 @@ test('workbench shows the overall failure when the scenario passed', async ({ pa
       },
     };
     socket!.send(JSON.stringify({ type: 'session', session }));
+    await expect(page.getByText(/Run #\d+/)).toHaveCount(0);
     await page.getByRole('button', { name: 'Results', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Run #1000 · failed' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'simulation.yaml · failed' })).toBeVisible();
+    await expect(page.getByText(/Run #\d+/)).toHaveCount(0);
     await expect(page.getByText('Scenario: passed', { exact: true })).toBeVisible();
   } finally {
     await server.stop();
