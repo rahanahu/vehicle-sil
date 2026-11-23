@@ -16,6 +16,15 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/unit)
 # The factor when VEHICLE_SIL_TEST_TIMEOUT_SCALE is not set where a test runs (VehicleSilTestHelpers.cmake).
 add_compile_definitions(VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT="${VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT}")
 
+# ThreadSanitizer runs have high per-thread CPU/memory overhead: limit heavy multi-ECU
+# tests to 2 slots on TSan builds while letting normal builds use all cores.
+set(_vehicle_sil_tsan_processors "")
+if("thread" IN_LIST VEHICLE_SIL_SANITIZERS
+   OR CMAKE_CXX_FLAGS MATCHES "fsanitize=thread"
+   OR CMAKE_C_FLAGS MATCHES "fsanitize=thread")
+  set(_vehicle_sil_tsan_processors PROCESSORS 2)
+endif()
+
 # main() and the registry of the in-process test harness (unit/test_harness.hpp).
 add_library(vehicle_sil_test_main OBJECT unit/test_main.cpp)
 target_include_directories(vehicle_sil_test_main PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/unit)

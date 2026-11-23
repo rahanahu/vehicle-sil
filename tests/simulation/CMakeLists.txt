@@ -16,12 +16,14 @@ vehicle_sil_add_harness_tests(vehicle_sil_simulation_tests
   LINK vehicle_sil::simulation vehicle_sil::testkit vehicle_sil::control_silkit)
 # simulation_internal.hpp: the tests shorten a wait of the library.
 target_include_directories(vehicle_sil_simulation_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/simulation/src)
-set_tests_properties(simulation.ecu_main_start_timeout_and_start_failure PROPERTIES PROCESSORS 2 COST 6)
+set_tests_properties(simulation.ecu_main_start_timeout_and_start_failure PROPERTIES ${_vehicle_sil_tsan_processors} COST 6)
 set_tests_properties(simulation.ecu_main_j1939_node_changes_the_nodes_of_the_run
                      simulation.ecu_main_map_network_renames_the_networks_of_the_run
-                     PROPERTIES PROCESSORS 2 COST 25)
-set_tests_properties(simulation.ecu_main_j1939_node_leaves_a_node_added_in_a_step_as_its_code_has_it
-                     PROPERTIES PROCESSORS 2)
+                     PROPERTIES ${_vehicle_sil_tsan_processors} COST 25)
+if(_vehicle_sil_tsan_processors)
+  set_tests_properties(simulation.ecu_main_j1939_node_leaves_a_node_added_in_a_step_as_its_code_has_it
+                       PROPERTIES ${_vehicle_sil_tsan_processors})
+endif()
 set_tests_properties(simulation.ecu_main_gives_the_silkit_configuration_to_its_participant PROPERTIES COST 5)
 set_tests_properties(simulation.simulation_stops_everything_when_the_start_times_out PROPERTIES COST 6)
 

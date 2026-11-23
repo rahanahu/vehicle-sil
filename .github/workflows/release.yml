@@ -65,10 +65,15 @@ jobs:
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-pw.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            if sudo apt-get install -y -q --no-download --no-install-recommends "$deb_dir"/*.deb &&
+            mkdir -p "$deb_dir/partial"
+            if sudo apt-get install -y -q --no-download --no-install-recommends \
+                 -o Dir::Cache::archives="$deb_dir" \
+                 -o APT::Keep-Downloaded-Packages=true \
+                 "$deb_dir"/*.deb &&
                npx playwright install-deps --dry-run chromium > /dev/null 2>&1; then
               ok=true
             fi
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb
@@ -124,10 +129,15 @@ jobs:
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-release-tools.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            if sudo apt-get install -y -q --no-download --no-install-recommends "$deb_dir"/*.deb &&
+            mkdir -p "$deb_dir/partial"
+            if sudo apt-get install -y -q --no-download --no-install-recommends \
+                 -o Dir::Cache::archives="$deb_dir" \
+                 -o APT::Keep-Downloaded-Packages=true \
+                 "$deb_dir"/*.deb &&
                dpkg -s g++-12 ninja-build ccache > /dev/null 2>&1; then
               ok=true
             fi
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb
@@ -197,10 +207,15 @@ jobs:
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-release-tools.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            if sudo apt-get install -y -q --no-download --no-install-recommends "$deb_dir"/*.deb &&
+            mkdir -p "$deb_dir/partial"
+            if sudo apt-get install -y -q --no-download --no-install-recommends \
+                 -o Dir::Cache::archives="$deb_dir" \
+                 -o APT::Keep-Downloaded-Packages=true \
+                 "$deb_dir"/*.deb &&
                dpkg -s g++-12 ninja-build ccache > /dev/null 2>&1; then
               ok=true
             fi
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb

@@ -259,7 +259,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     add_dependencies(vehicle_sil_launch_run_launcher vehicle_sil_eth_sensor_ecu vehicle_sil_eth_display_ecu)
   endif()
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
-    PREFIX launch_run LABELS integration launch TIMEOUT 300 PROCESSORS 2
+    PREFIX launch_run LABELS integration launch TIMEOUT 300 ${_vehicle_sil_tsan_processors}
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
     SCENARIOS
       availability
@@ -352,7 +352,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   add_dependencies(vehicle_sil_launch_run_launcher vehicle_sil_launch_connect_tools vehicle_sil_ethernet_bridge_it_ecu
                    vehicle_sil_fake_pcap sil-kit-registry)
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
-    PREFIX launch_run LABELS integration launch TIMEOUT 300 PROCESSORS 2
+    PREFIX launch_run LABELS integration launch TIMEOUT 300 ${_vehicle_sil_tsan_processors}
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
     SCENARIOS
       connect_bus_off
@@ -392,7 +392,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
                    -DDOC=${VEHICLE_SIL_TESTED_DOCS}/howto/scenario-tests.md
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}/scenario_guide
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/scenario_guide.cmake)
-  set_tests_properties(launch_run.scenario_guide PROPERTIES LABELS "integration;launch" TIMEOUT 300 PROCESSORS 2 COST 6)
+  set_tests_properties(launch_run.scenario_guide PROPERTIES LABELS "integration;launch" TIMEOUT 300 ${_vehicle_sil_tsan_processors} COST 6)
   # The profiling trace of a whole run (docs/internals/trace.md): the files of the launcher and the two
   # ECUs, written at exit, with their records; scripts/trace-report.py summarises them when there is a
   # Python.
@@ -403,11 +403,11 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
                    -DSCRIPT=${PROJECT_SOURCE_DIR}/scripts/trace-report.py
                    -DPYTHON=${VEHICLE_SIL_J1939_CODEGEN_PYTHON}
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/trace_files.cmake)
-  set_tests_properties(launch_run.trace_files PROPERTIES LABELS "integration;launch" TIMEOUT 300 PROCESSORS 2)
+  set_tests_properties(launch_run.trace_files PROPERTIES LABELS "integration;launch" TIMEOUT 300 ${_vehicle_sil_tsan_processors})
   # The example of the docs with a participant started by hand: its registry is at 8500, the port
   # of such a run, which the docs show. Builds in other working trees on this machine take turns.
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
-    PREFIX launch_run LABELS integration launch TIMEOUT 300 PROCESSORS 2
+    PREFIX launch_run LABELS integration launch TIMEOUT 300 ${_vehicle_sil_tsan_processors}
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
     SCENARIOS manual
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
@@ -419,7 +419,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   # Alone: it says that an idle simulation is not late at speed 1 within the default tolerance,
   # which is a bound on real time (the other scenarios have bounds on one side only).
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
-    PREFIX launch_run LABELS integration launch TIMEOUT 300 PROCESSORS 2
+    PREFIX launch_run LABELS integration launch TIMEOUT 300 ${_vehicle_sil_tsan_processors}
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
     SCENARIOS on_time
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
@@ -480,6 +480,6 @@ if(TARGET vehicle_sil_launch_test_ecu)
   endforeach()
   set_tests_properties(launch_control.the_ecus_wait_as_long_as_the_run_stands_still PROPERTIES COST 15)
   set_tests_properties(launch_control.a_write_in_the_start_window_reaches_each_process_before_its_first_step
-                       PROPERTIES COST 12 PROCESSORS 2)
+                       PROPERTIES COST 12 ${_vehicle_sil_tsan_processors})
   set_tests_properties(launch_control.the_start_is_limited_before_and_after_the_hold_but_not_in_it PROPERTIES COST 15)
 endif()

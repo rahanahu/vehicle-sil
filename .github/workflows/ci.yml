@@ -198,7 +198,7 @@ jobs:
       CCACHE_COMPRESSLEVEL: "6"
       # gRPC, protobuf, abseil and BoringSSL are most of what linux-gcc-control compiles (FetchContent gRPC uses -g0
       # and CI Debug/Sanitizer presets use -g1 to stay within the repository cache budget).
-      CCACHE_MAXSIZE: ${{ matrix.preset == 'linux-gcc-control' && '400M' || matrix.preset == 'linux-gcc-static' && '200M' || '350M' }}
+      CCACHE_MAXSIZE: ${{ matrix.preset == 'linux-gcc-control' && '550M' || matrix.preset == 'linux-gcc-static' && '200M' || '350M' }}
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       VEHICLE_SIL_LOG_ARTIFACT: logs-${{ matrix.preset }}
@@ -221,11 +221,16 @@ jobs:
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-tools.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            if sudo apt-get install -y -q --no-download --no-install-recommends "$deb_dir"/*.deb &&
+            mkdir -p "$deb_dir/partial"
+            if sudo apt-get install -y -q --no-download --no-install-recommends \
+                 -o Dir::Cache::archives="$deb_dir" \
+                 -o APT::Keep-Downloaded-Packages=true \
+                 "$deb_dir"/*.deb &&
                dpkg -s ninja-build ccache ethtool > /dev/null 2>&1 &&
                (dpkg -s libpcap0.8t64 > /dev/null 2>&1 || dpkg -s libpcap0.8 > /dev/null 2>&1); then
               ok=true
             fi
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb
@@ -257,10 +262,15 @@ jobs:
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-grpc.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            if sudo apt-get install -y -q --no-download --no-install-recommends "$deb_dir"/*.deb &&
+            mkdir -p "$deb_dir/partial"
+            if sudo apt-get install -y -q --no-download --no-install-recommends \
+                 -o Dir::Cache::archives="$deb_dir" \
+                 -o APT::Keep-Downloaded-Packages=true \
+                 "$deb_dir"/*.deb &&
                dpkg -s libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc > /dev/null 2>&1; then
               ok=true
             fi
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb
@@ -404,10 +414,10 @@ jobs:
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |
-          ccache -s
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             ccache -c
           fi
+          ccache -s
       # Only a run on main saves the compiler cache. A pull request reads the newest one of main; if each push
       # of each pull request saved its own, the repository would go over the size GitHub keeps and the caches
       # of main would be the ones thrown out.
@@ -461,11 +471,16 @@ jobs:
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-tools.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            if sudo apt-get install -y -q --no-download --no-install-recommends "$deb_dir"/*.deb &&
+            mkdir -p "$deb_dir/partial"
+            if sudo apt-get install -y -q --no-download --no-install-recommends \
+                 -o Dir::Cache::archives="$deb_dir" \
+                 -o APT::Keep-Downloaded-Packages=true \
+                 "$deb_dir"/*.deb &&
                dpkg -s ninja-build ccache ethtool > /dev/null 2>&1 &&
                (dpkg -s libpcap0.8t64 > /dev/null 2>&1 || dpkg -s libpcap0.8 > /dev/null 2>&1); then
               ok=true
             fi
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb
@@ -496,10 +511,10 @@ jobs:
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |
-          ccache -s
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             ccache -c
           fi
+          ccache -s
       - if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -545,11 +560,16 @@ jobs:
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-tools.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            if sudo apt-get install -y -q --no-download --no-install-recommends "$deb_dir"/*.deb &&
+            mkdir -p "$deb_dir/partial"
+            if sudo apt-get install -y -q --no-download --no-install-recommends \
+                 -o Dir::Cache::archives="$deb_dir" \
+                 -o APT::Keep-Downloaded-Packages=true \
+                 "$deb_dir"/*.deb &&
                dpkg -s ninja-build ccache ethtool > /dev/null 2>&1 &&
                (dpkg -s libpcap0.8t64 > /dev/null 2>&1 || dpkg -s libpcap0.8 > /dev/null 2>&1); then
               ok=true
             fi
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb
@@ -599,10 +619,10 @@ jobs:
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |
-          ccache -s
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             ccache -c
           fi
+          ccache -s
       - if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -730,10 +750,10 @@ jobs:
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |
-          ccache -s
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             ccache -c
           fi
+          ccache -s
       # Only a run on main saves the compiler cache. A pull request reads the newest one of main; if each push
       # of each pull request saved its own, the repository would go over the size GitHub keeps and the caches
       # of main would be the ones thrown out.
@@ -795,10 +815,15 @@ jobs:
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-pw.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            if sudo apt-get install -y -q --no-download --no-install-recommends "$deb_dir"/*.deb &&
+            mkdir -p "$deb_dir/partial"
+            if sudo apt-get install -y -q --no-download --no-install-recommends \
+                 -o Dir::Cache::archives="$deb_dir" \
+                 -o APT::Keep-Downloaded-Packages=true \
+                 "$deb_dir"/*.deb &&
                npx playwright install-deps --dry-run chromium > /dev/null 2>&1; then
               ok=true
             fi
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb

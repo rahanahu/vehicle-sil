@@ -26,4 +26,4 @@ add_test(NAME multi_host.two_hosts
           --launch $<TARGET_FILE:vehicle_sil_launch>
           --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..)
 set_tests_properties(multi_host.two_hosts PROPERTIES LABELS "integration;launch" TIMEOUT 300 SKIP_RETURN_CODE 77
-                                                     PROCESSORS 2 COST 15)
+                                                     ${_vehicle_sil_tsan_processors} COST 15)

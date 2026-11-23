@@ -60,7 +60,7 @@ add_test(NAME serve.basic
          COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_serve_basic
          WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 set_tests_properties(serve.basic PROPERTIES
-  LABELS "serve;launch;integration;python" TIMEOUT 600 PROCESSORS 2 COST 25
+  LABELS "serve;launch;integration;python" TIMEOUT 600 ${_vehicle_sil_tsan_processors} COST 25
   ENVIRONMENT "${_serve_common_env}")
 
 # #3 (stale stdin), #4 (event window isolation & log-dir), #6 (idle signals & run/SIGINT race),
