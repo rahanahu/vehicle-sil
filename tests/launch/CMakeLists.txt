@@ -7,6 +7,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
   PREFIX launch LABELS unit launch TIMEOUT 60
   SOURCES
     test_batch.cpp
+    test_check_parallel.cpp
     test_check_reports.cpp
     test_config_executables.cpp
     test_connect_tool.cpp
@@ -35,7 +36,9 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
 target_include_directories(vehicle_sil_launch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/config
                            ${PROJECT_SOURCE_DIR}/tests/scenario ${PROJECT_SOURCE_DIR}/tests/runner
                            ${PROJECT_SOURCE_DIR}/libs/launch/src ${PROJECT_SOURCE_DIR}/libs/runner/src)
+add_dependencies(vehicle_sil_launch_tests vehicle_sil_process_helper)
 target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}/scratch"
+                           VEHICLE_SIL_PROCESS_HELPER="$<TARGET_FILE:vehicle_sil_process_helper>"
                            # test_shared_values.cpp reads the GUI's sources.
                            VEHICLE_SIL_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 

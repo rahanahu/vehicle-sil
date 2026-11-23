@@ -53,7 +53,7 @@ With `--connect`, after stage 3 the check also looks for the bridge of each conn
 
 | Item | Rule |
 |---|---|
-| Start order | One executable at a time, in turn (not in parallel). |
+| Start order | Up to 6 executables run in parallel (bounded by available CPUs); findings and report rows keep the configuration file's order. |
 | Working directory and stdin | The working directory is the directory of the configuration file. Stdin is empty. |
 | Time limit | The executable is stopped after `--describe-timeout-ms` (default 10000 ms), even if it is still writing output. |
 | What makes it an error for that participant | A nonzero exit code, not ending in time, output that is not JSON, or a different format version. |

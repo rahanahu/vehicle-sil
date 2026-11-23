@@ -8,6 +8,7 @@
 // through Executables. The outputs are in check_format.cpp; the counts of the report in
 // check_report.cpp.
 #include "format/exit_codes.hpp"
+#include "usecases/check_describe.hpp"
 
 #include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/checked.hpp"
@@ -21,10 +22,14 @@
 #include "vehicle_sil/runner/detail/run_detail.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <exception>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -83,6 +88,137 @@ Executables executables_for(const RunHost& host, const std::filesystem::path& di
 }
 
 } // namespace
+
+namespace detail {
+
+std::size_t describe_worker_count(std::size_t task_count, unsigned int hardware_threads) noexcept
+{
+    if (task_count <= 1)
+    {
+        return task_count;
+    }
+    const std::size_t cap = std::clamp<std::size_t>(hardware_threads, 1, kMaxDescribeConcurrency);
+    return std::min(task_count, cap);
+}
+
+std::vector<DescribeSlot> run_describe_tasks(const std::vector<DescribeTask>& tasks, const DescribeSource& describe,
+                                             bool record_stamps, bool allow_parallel,
+                                             std::size_t max_workers_override)
+{
+    std::vector<DescribeSlot> slots(tasks.size());
+    const auto run_one = [&](std::size_t index) {
+        const DescribeTask& task = tasks[index];
+        DescribeSlot& slot = slots[index];
+        if (record_stamps)
+        {
+            slot.before = executable_stamp(task.executable);
+        }
+        slot.run = describe(*task.participant, task.executable, task.arguments);
+        if (record_stamps && slot.before && slot.run)
+        {
+            slot.after = executable_stamp(task.executable);
+        }
+    };
+
+    const std::size_t worker_count = [&]() -> std::size_t {
+        if (!allow_parallel || tasks.size() <= 1)
+        {
+            return 1;
+        }
+        if (max_workers_override > 0)
+        {
+            return std::min(tasks.size(), std::clamp<std::size_t>(max_workers_override, 1, kMaxDescribeConcurrency));
+        }
+        return describe_worker_count(tasks.size(), std::thread::hardware_concurrency());
+    }();
+
+    if (worker_count <= 1)
+    {
+        for (std::size_t i = 0; i < tasks.size(); ++i)
+        {
+            run_one(i);
+        }
+        return slots;
+    }
+
+    std::atomic<std::size_t> next{0};
+    std::atomic<bool> failed{false};
+    std::mutex error_mutex;
+    std::exception_ptr first_error;
+
+    const auto worker = [&] {
+        try
+        {
+            for (;;)
+            {
+                if (failed.load(std::memory_order_relaxed))
+                {
+                    return;
+                }
+                const std::size_t index = next.fetch_add(1, std::memory_order_relaxed);
+                if (index >= tasks.size())
+                {
+                    return;
+                }
+                // run_one() runs run_captured() synchronously to completion on this thread before
+                // claiming the next task or returning, preserving Linux PR_SET_PDEATHSIG.
+                run_one(index);
+            }
+        }
+        catch (...)
+        {
+            failed.store(true, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lock(error_mutex);
+            if (!first_error)
+            {
+                first_error = std::current_exception();
+            }
+        }
+    };
+
+    struct JoinAll
+    {
+        std::vector<std::thread> threads;
+        ~JoinAll()
+        {
+            for (std::thread& t : threads)
+            {
+                if (t.joinable())
+                {
+                    t.join();
+                }
+            }
+        }
+    };
+
+    {
+        JoinAll pool;
+        // Spawn (worker_count - 1) background threads and run the calling thread as worker #0 so
+        // total concurrency never exceeds worker_count and all tasks still finish if thread
+        // creation fails partway through.
+        pool.threads.reserve(worker_count - 1);
+        for (std::size_t w = 1; w < worker_count; ++w)
+        {
+            try
+            {
+                pool.threads.emplace_back(worker);
+            }
+            catch (...)
+            {
+                break;
+            }
+        }
+        worker();
+    }
+
+    if (first_error)
+    {
+        std::rethrow_exception(first_error);
+    }
+    return slots;
+}
+
+} // namespace detail
 
 int check_exit_code(const config::CheckReport& report) { return exit_code_of(report); }
 
@@ -326,21 +462,30 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
                                               "them, with --write-descriptions to save them again",
                                           0, "", ""});
     }
-    // What --write-descriptions saves: each output that was read.
-    std::vector<SavedDescription> described;
-    for (const config::ParticipantConfig& p : report.config->participants)
+    // Phase A (sequential): resolve executables and collect runnable --describe tasks in
+    // participant order, deferring findings emission to Phase C so findings and participants stay
+    // byte-identical to sequential execution.
+    struct PreparedParticipant
     {
-        config::ParticipantResult result;
+        config::ParticipantResult result{};
+        std::optional<config::Finding> finding{};
+        std::optional<std::size_t> task_index{};
+    };
+    std::vector<PreparedParticipant> prepared;
+    prepared.reserve(report.config->participants.size());
+    std::vector<detail::DescribeTask> tasks;
+    for (std::size_t i = 0; i < report.config->participants.size(); ++i)
+    {
+        const config::ParticipantConfig& p = report.config->participants[i];
+        PreparedParticipant& entry = prepared.emplace_back();
         // Disabled whatever its entry's errors (they are findings).
         if (!p.enabled)
         {
-            result.status = config::ParticipantStatus::Disabled;
-            report.participants.push_back(result);
+            entry.result.status = config::ParticipantStatus::Disabled;
             continue;
         }
         if (!p.valid)
         {
-            report.participants.push_back(result);
             continue;
         }
         // "{{word}}" in the path is the literal "{word}" (a valid entry has no other "{word}").
@@ -349,61 +494,79 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         const std::filesystem::path& executable = found.path;
         if (auto bad = config::executable_finding(p, executable, executable_status(executable)))
         {
-            report.findings.push_back(std::move(*bad));
-            result.status = config::ParticipantStatus::Failed;
-            report.participants.push_back(result);
+            entry.finding = std::move(*bad);
+            entry.result.status = config::ParticipantStatus::Failed;
             continue;
         }
-        result.executable = executable;
+        entry.result.executable = executable;
         if (found.on_path)
         {
-            report.findings.push_back(config::Finding{config::Severity::Note, "found-on-path",
-                                              "participant '" + p.name + "': " + written +
-                                                  " is not in the directory of the configuration file; it runs " +
-                                                  process::shown_path(executable) + " (found on PATH)",
-                                              p.command_line, p.name, ""});
+            entry.finding = config::Finding{config::Severity::Note, "found-on-path",
+                                            "participant '" + p.name + "': " + written +
+                                                " is not in the directory of the configuration file; it runs " +
+                                                process::shown_path(executable) + " (found on PATH)",
+                                            p.command_line, p.name, ""};
         }
         if (!p.describe)
         {
-            result.status = config::ParticipantStatus::NotChecked;
-            report.participants.push_back(result);
+            entry.result.status = config::ParticipantStatus::NotChecked;
             continue;
         }
         // "{{word}}" stands for "{word}" here too (an ecu_main command has no placeholders).
         std::vector<std::string> arguments =
             config::expand_placeholders(std::vector<std::string>(p.command.begin() + 1, p.command.end()), "", "");
         arguments.insert(arguments.end(), {"--describe", "--name", p.name});
-        // --write-descriptions: the executable as it was before --describe ran, so that one built
-        // again meanwhile does not get the output of the one before.
-        const std::optional<ExecutableStamp> before =
-            host.write_descriptions.empty() ? std::nullopt : executable_stamp(executable);
-        const std::optional<config::DescribeRun> run = executables.describe(p, executable, arguments);
-        if (!run)
+        entry.task_index = tasks.size();
+        tasks.push_back(detail::DescribeTask{i, &p, executable, std::move(arguments)});
+    }
+    // Phase B: run live --describe processes with bounded concurrency when more than one
+    // participant is described; saved descriptions (--descriptions) stay sequential.
+    const bool allow_parallel = host.descriptions.empty();
+    const std::vector<detail::DescribeSlot> slots =
+        detail::run_describe_tasks(tasks, executables.describe, !host.write_descriptions.empty(), allow_parallel);
+    // Phase C (sequential): fold results in exact participant order 0..N-1.
+    // What --write-descriptions saves: each output that was read.
+    std::vector<SavedDescription> described;
+    report.participants.reserve(prepared.size());
+    for (std::size_t i = 0; i < prepared.size(); ++i)
+    {
+        const config::ParticipantConfig& p = report.config->participants[i];
+        PreparedParticipant& entry = prepared[i];
+        if (entry.finding)
         {
-            result.status = config::ParticipantStatus::NotDescribed;
-            report.participants.push_back(std::move(result));
-            continue;
+            report.findings.push_back(std::move(*entry.finding));
         }
-        config::DescribeOutcome outcome = config::interpret_describe(p, *run);
-        if (outcome.error)
+        if (entry.task_index)
         {
-            report.findings.push_back(std::move(*outcome.error));
-            result.status = config::ParticipantStatus::Failed;
-        }
-        else
-        {
-            result.status = config::ParticipantStatus::Described;
-            result.ecu = std::move(outcome.ecu);
-            if (before && before == executable_stamp(executable))
+            const detail::DescribeSlot& slot = slots[*entry.task_index];
+            if (!slot.run)
             {
-                SavedDescription& saved = described.emplace_back();
-                saved.name = p.name;
-                saved.command = p.command;
-                saved.executable = *before;
-                saved.output = run->standard_output;
+                entry.result.status = config::ParticipantStatus::NotDescribed;
+            }
+            else
+            {
+                config::DescribeOutcome outcome = config::interpret_describe(p, *slot.run);
+                if (outcome.error)
+                {
+                    report.findings.push_back(std::move(*outcome.error));
+                    entry.result.status = config::ParticipantStatus::Failed;
+                }
+                else
+                {
+                    entry.result.status = config::ParticipantStatus::Described;
+                    entry.result.ecu = std::move(outcome.ecu);
+                    if (slot.before && slot.before == slot.after)
+                    {
+                        SavedDescription& saved = described.emplace_back();
+                        saved.name = p.name;
+                        saved.command = p.command;
+                        saved.executable = *slot.before;
+                        saved.output = slot.run->standard_output;
+                    }
+                }
             }
         }
-        report.participants.push_back(std::move(result));
+        report.participants.push_back(std::move(entry.result));
     }
     if (!host.write_descriptions.empty())
     {
