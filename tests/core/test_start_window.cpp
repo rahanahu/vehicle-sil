@@ -307,3 +307,67 @@ TEST_CASE(peer_statuses_can_be_re_read_from_several_threads_at_once)
         thread.join();
     }
 }
+
+TEST_CASE(start_window_immediate_abort_after_start_lets_every_required_participant_start_cleanly)
+{
+    // A coordinated simulation with several virtual-time participants that the controller aborts
+    // as soon as start() returns (as vehicle_sil_launch does when before_start fails): every
+    // required participant must have reached Running before the abort arrives, so its start()
+    // returns cleanly and its lifecycle reaches Shutdown rather than throwing "failed to start".
+    for (int round = 0; round < 5; ++round)
+    {
+        const InProcessRegistry registry;
+        SimulationControllerOptions c;
+        c.registry_uri = registry.uri;
+        c.required_participants = {"A", "B"};
+        c.time_control = TimeControlOptions{10ms};
+        SimulationController controller(c);
+        controller.set_start_window([](const StartWindow&) {});
+
+        ParticipantRuntime a(coordinated_options("A", registry.uri, VirtualTimeOptions{10ms}));
+        ParticipantRuntime b(coordinated_options("B", registry.uri, VirtualTimeOptions{10ms}));
+        a.set_step_handler([](SimTime, SimDuration) {});
+        b.set_step_handler([](SimTime, SimDuration) {});
+
+        std::string errorA;
+        std::string errorB;
+        std::thread startA([&] {
+            try
+            {
+                a.start(scaled_timeout(60s));
+            }
+            catch (const std::exception& e)
+            {
+                errorA = e.what();
+            }
+        });
+        std::thread startB([&] {
+            try
+            {
+                b.start(scaled_timeout(60s));
+            }
+            catch (const std::exception& e)
+            {
+                errorB = e.what();
+            }
+        });
+
+        controller.start(scaled_timeout(60s));
+        controller.abort();
+
+        startA.join();
+        startB.join();
+        const auto endA = a.wait_until_finished(scaled_timeout(30s));
+        const auto endB = b.wait_until_finished(scaled_timeout(30s));
+        a.stop("test");
+        b.stop("test");
+
+        if (!errorA.empty() || !errorB.empty())
+        {
+            throw vehicle_sil::unit::Failure("round " + std::to_string(round) + ": start() threw after immediate abort: A=\"" +
+                                             errorA + "\", B=\"" + errorB + "\"");
+        }
+        CHECK(endA == std::optional(orch::ParticipantState::Shutdown));
+        CHECK(endB == std::optional(orch::ParticipantState::Shutdown));
+    }
+}

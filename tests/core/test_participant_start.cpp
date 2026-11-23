@@ -823,3 +823,87 @@ TEST_CASE(participant_stop_after_a_failed_start_returns_once_the_lifecycle_is_in
             + " ms: it has to end once the lifecycle is in Shutdown, as SIL Kit may never set the final state then");
     }
 }
+
+TEST_CASE(participant_start_takes_a_virtual_time_run_aborted_before_its_first_step_for_a_start)
+{
+    // A virtual-time participant can reach Running and be aborted by the system controller before
+    // its first step executes and before start() polls again (for example when the launcher aborts
+    // immediately after the start window). Without virtual time, StartingHandler marks the start;
+    // with virtual time, SIL Kit does not call StartingHandler, so start() must recognise that the
+    // lifecycle already entered Running and return rather than throwing "failed to start".
+    InProcessRegistry registry;
+
+    // A second virtual-time participant held in CommunicationInitialized keeps Engine's step 0
+    // from running once Engine reaches Running, so step_entered_ is guaranteed to stay false.
+    auto blocker = SilKit::CreateParticipant(
+        SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(registry.uri)),
+        "Blocker", registry.uri);
+    auto* const blockerLifecycle = blocker->CreateLifecycleService({orch::OperationMode::Autonomous});
+    std::atomic<bool> blockerReady{false};
+    blockerLifecycle->SetCommunicationReadyHandlerAsync([&blockerReady] { blockerReady.store(true); });
+    auto* const blockerTime = blockerLifecycle->CreateTimeSyncService();
+    blockerTime->SetSimulationStepHandler([](std::chrono::nanoseconds, std::chrono::nanoseconds) {}, 10ms);
+    auto blockerDone = blockerLifecycle->StartLifecycle();
+    CHECK(unit::eventually([&] { return blockerReady.load(); }, 20s));
+
+    ParticipantRuntime boss(ParticipantRuntimeOptions{"Boss", registry.uri});
+    auto* const controller = SilKit::Experimental::Participant::CreateSystemController(&boss.participant());
+
+    Meeting meeting;
+    ParticipantRuntime* started = nullptr;
+    bool sawRunning = false;
+    bool sawShutdown = false;
+    const ProbeInPlace probe([&](StartProbePoint point) {
+        if (point != StartProbePoint::BetweenFlagsAndState)
+        {
+            return;
+        }
+        {
+            const std::lock_guard lock(meeting.mutex);
+            if (meeting.flagsRead)
+            {
+                return;
+            }
+            meeting.flagsRead = true;
+        }
+        meeting.changed.notify_all();
+        sawRunning = unit::eventually([&] { return started->state() == orch::ParticipantState::Running; }, 20s);
+        controller->AbortSimulation();
+        sawShutdown = unit::eventually([&] { return started->state() == orch::ParticipantState::Shutdown; }, 20s);
+    });
+
+    ParticipantRuntimeOptions options{"Engine", registry.uri};
+    options.virtual_time = VirtualTimeOptions{10ms, std::nullopt};
+    ParticipantRuntime engine(options);
+    started = &engine;
+    std::atomic<int> steps{0};
+    engine.set_step_handler([&steps](SimTime, SimDuration) { ++steps; });
+    hold_the_lifecycle_until_the_flags_are_read(engine, meeting);
+
+    std::string thrown;
+    try
+    {
+        engine.start(unit::scaled_timeout(60s));
+    }
+    catch (const std::exception& e)
+    {
+        thrown = e.what();
+    }
+    const auto finalState = engine.wait_until_finished(unit::scaled_timeout(10s));
+    engine.stop("test");
+    if (blockerDone.wait_for(unit::scaled_timeout(5s)) != std::future_status::ready)
+    {
+        blockerLifecycle->CompleteCommunicationReadyHandlerAsync();
+    }
+    blocker.reset();
+
+    CHECK(sawRunning);
+    CHECK(sawShutdown);
+    CHECK(!meeting.waitRanOut);
+    CHECK_EQ(steps.load(), 0);
+    if (!thrown.empty())
+    {
+        throw vehicle_sil::unit::Failure("start() threw for a virtual-time participant aborted after Running: " + thrown);
+    }
+    CHECK(finalState == std::optional(orch::ParticipantState::Shutdown));
+}
