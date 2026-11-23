@@ -235,6 +235,15 @@ def shape(argv: list[str]) -> tuple[list[str], str | None, str | None]:
     return out, file, scenario
 
 
+def read_head(path: Path) -> dict:
+    with path.open(encoding="utf-8") as f:
+        first = f.readline()
+    head = json.loads(first)
+    if head.get("vehicle_sil_recording") != FORMAT:
+        raise ValueError(f"{path}: not a recording of format {FORMAT}")
+    return head
+
+
 def read_recording(path: Path) -> tuple[dict, list[dict]]:
     lines = path.read_text(encoding="utf-8").splitlines()
     head = json.loads(lines[0])
@@ -248,17 +257,24 @@ def choose(argv: list[str]) -> list[tuple[dict, list[dict]]] | str:
     error)."""
     wanted, file, scenario = shape(argv)
     config_sha, scenario_sha = text_sha256(file), text_sha256(scenario)
+    case = os.environ.get("REPLAY_CASE")
+    if case:
+        direct = RECORDINGS / f"{case}.jsonl"
+        if direct.is_file():
+            head = read_head(direct)
+            if (head["shape"] == wanted and head.get("config_sha256") == config_sha
+                    and head.get("scenario_sha256") == scenario_sha):
+                return [read_recording(direct)]
     same_line, matches = [], []
     for path in sorted(RECORDINGS.glob("*.jsonl")):
-        head, entries = read_recording(path)
+        head = read_head(path)
         if head["shape"] != wanted:
             continue
         if head.get("config") == file and head.get("scenario") == scenario:
             same_line.append(head["case"])
         if head.get("config_sha256") == config_sha and head.get("scenario_sha256") == scenario_sha:
-            matches.append((head, entries))
+            matches.append(read_recording(path))
     line = " ".join(argv)
-    case = os.environ.get("REPLAY_CASE")
     if case and matches:
         chosen = [m for m in matches if m[0]["case"] == case]
         if chosen:
@@ -545,6 +561,22 @@ class Take:
         return self.entries[self.sends[k]]["send"]
 
 
+class _FakeSleeper:
+    """In-memory participant PID stand-in when REPLAY_NO_SLEEPERS=1 (for tests that do not inspect OS child PIDs)."""
+
+    _next_pid = 40000
+
+    def __init__(self) -> None:
+        _FakeSleeper._next_pid += 1
+        self.pid = _FakeSleeper._next_pid
+
+    def kill(self) -> None:
+        pass
+
+    def wait(self) -> None:
+        pass
+
+
 class Player:
     """Plays one of the recordings of a command line. They differ in the commands written to the launcher: it
     starts with the one that has none (else the one whose first command comes latest), and when a command comes
@@ -579,8 +611,9 @@ class Player:
         # that line. The id is taken off the line before the recordings are compared with it (a recording has none).
         self.ids: collections.deque = collections.deque()
         self.tick = int(os.environ.get("REPLAY_TICK_MS", "100")) / 100
-        self.sleepers: dict[str, subprocess.Popen] = {}
+        self.sleepers: dict[str, subprocess.Popen | _FakeSleeper] = {}
         self.control = None
+        self.control_address: str | None = None
         self.control_ms = 0  # the next step of the stand-in control server
         self.last_sim = 0  # the virtual time of the last time event written
         self.last_time: dict | None = None  # that event
@@ -642,7 +675,7 @@ class Player:
             value = value.replace("<scenario>", self.scenario or "")
             value = value.replace("<timeline>", self.timeline or "")
             value = value.replace("<tools>", os.path.dirname(os.path.abspath(sys.argv[0])))
-            if self.control is not None:
+            if self.control_address is not None:
                 value = value.replace("<control>", self.control_address)
         return value
 
@@ -823,8 +856,11 @@ class Player:
     # ---- the participants and the control server
 
     def sleeper(self, name: str) -> int:
-        proc = subprocess.Popen([sys.executable, "-c", "import time\nwhile True: time.sleep(60)"],
-                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if os.environ.get("REPLAY_NO_SLEEPERS") == "1":
+            proc = _FakeSleeper()
+        else:
+            proc = subprocess.Popen([sys.executable, "-c", "import time\nwhile True: time.sleep(60)"],
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.sleepers[name] = proc
         return proc.pid
 
@@ -835,7 +871,6 @@ class Player:
             proc.wait()
 
     def start_control(self, event: dict) -> None:
-        import fake_control
         trouble = os.environ.get("REPLAY_CONTROL", "")
         token, role = None, "operator"
         if "--control-credentials" in self.argv:
@@ -848,6 +883,10 @@ class Player:
             lines = [ln.split() for ln in Path(path).read_text().splitlines()
                      if ln.strip() and not ln.lstrip().startswith("#")]
             role, token = lines[0][0], lines[0][2]
+        if trouble == "off":
+            self.control_address = "127.0.0.1:8510"
+            return
+        import fake_control
         peers = {name: fake_control.variables(name) for name in self.peers}
         reports = {name: fake_control.availability(name) for name in self.peers} \
             if os.environ.get("REPLAY_AVAILABILITY") == "1" else None

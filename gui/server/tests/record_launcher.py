@@ -53,6 +53,7 @@ differs, 2 on a usage error.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import getpass
 import json
 import math
@@ -307,15 +308,20 @@ class Recorder:
         credentials = self.root / ".control-credentials"
         credentials.write_text(f"operator gui {self.token}\n")
         credentials.chmod(0o600)
+        (self.root / ".requests").mkdir(exist_ok=True)
+        (self.root / ".timelines").mkdir(exist_ok=True)
 
     def timeline_path(self, case: Case) -> Path:
         return self.root / ".timelines" / f"{case.name}.timeline.json"
+
+    def request_path(self, case: Case) -> Path:
+        return self.root / ".requests" / f"{case.name}.request.json"
 
     def record(self, case: Case) -> tuple[dict, list[dict]]:
         argv = [str(self.root / ".control-credentials") if a == "<credentials>" else
                 str(self.timeline_path(case)) if a == "<timeline>" else a for a in case.argv]
         if case.request is not None:
-            path = self.root / ".request.json"
+            path = self.request_path(case)
             path.write_text(json.dumps({"vehicle_sil_run_request": 1, **case.request}), encoding="utf-8")
             # check: its --json; run: the options of RUN; the rest is in the request
             keep = argv.index("--json") + 1 if "--json" in argv else len(RUN)
@@ -431,6 +437,11 @@ class Recorder:
                 for path in sorted({str(self.timeline_path(case).resolve()), str(self.timeline_path(case))},
                                    key=len, reverse=True):
                     s = s.replace(path, "<timeline>")
+            if case.request is not None:
+                for path in sorted({str(self.request_path(case).resolve()), str(self.request_path(case))},
+                                   key=len, reverse=True):
+                    s = s.replace(path, "<root>/.request.json")
+                s = s.replace(f".requests/{case.name}.request.json", ".request.json")
             marked = {p: "<root>" for p in (str(self.root.resolve()), str(self.root), str(self.examples.resolve()),
                                              str(self.examples))}
             if self.tools is not None:
@@ -635,16 +646,31 @@ def launcher_features(launcher: Path) -> set[str]:
     return set(json.loads(p.stdout).get("features") or [])
 
 
-def record_once(recorder: Recorder, case: Case, again: dict[str, int]) -> tuple[dict, list[dict]]:
+def uses_fixed_port(case: Case) -> bool:
+    """Cases with manual participants or network.yaml bind a fixed SIL Kit registry port (8500 or 8501)."""
+    return ("manual" in case.name or "network" in case.name
+            or "--manual" in case.argv or "manual.yaml" in case.argv or "network.yaml" in case.argv
+            or bool(case.request and case.request.get("manual")))
+
+
+def record_once(recorder: Recorder, case: Case, again: dict[str, int],
+                retry_lock: threading.Lock | None = None) -> tuple[dict, list[dict]]:
     """A case, recorded again (up to ATTEMPTS times) while its run fell behind real time; again counts how often."""
     for attempt in range(1, ATTEMPTS + 1):
         try:
+            if attempt > 1 and retry_lock is not None:
+                with retry_lock:
+                    return recorder.record(case)
             return recorder.record(case)
         except Busy as e:
             if attempt == ATTEMPTS:
                 raise RuntimeError(f"{case.name}: {ATTEMPTS} times {', '.join(BUSY)}: unless the machine is busy, the "
                                    "launcher's timing has changed") from e
-            again[case.name] = attempt
+            if retry_lock is not None:
+                with retry_lock:
+                    again[case.name] = attempt
+            else:
+                again[case.name] = attempt
     raise AssertionError("not reached")
 
 
@@ -659,10 +685,25 @@ def write(path: Path, head: dict, entries: list[dict]) -> None:
 NOT_IN_ORDER = {"time", "log", "log_dropped", "state", "outside"}
 # The cases that stop twice at once: a participant that is not required (Logger) either ends on the first stop (SIGTERM)
 # or is killed first; which one happens is a race, so both count as the same ending there. No other case is lenient.
-EITHER_END = {"forever-stop-twice", "control-force", "control-paused-resume-force", "control-scenario-slow-force",
-              "control-simulation-force"}
+EITHER_END = {"forever-stop-twice", "forever-stop-twice-speed1", "control-force", "control-paused-resume-force",
+              "control-scenario-slow-force", "control-simulation-force", "control-simulation-stop-finite"}
 ENDS_AT_STOP = ("stopped", "killed")
+PARTICIPANT_ENDS_AT_STOP = ("ended", *ENDS_AT_STOP)
 SOMETIMES = {"log_dropped", "outside"}  # their presence can depend on timing; when present their shapes are compared
+
+
+def _participant_ended_at_stop(e: dict, either_end: frozenset) -> bool:
+    if e.get("name") not in either_end or e.get("exit_code") is not None:
+        return False
+    state, sig = e.get("state"), e.get("signal")
+    return (state == "killed" and sig is None) or (state in ("ended", "stopped") and sig == "SIGTERM")
+
+
+def _result_ended_at_stop(p: dict, either_end: frozenset) -> bool:
+    if p.get("name") not in either_end or p.get("exit_code") is not None:
+        return False
+    ended, sig = p.get("ended"), p.get("signal")
+    return (ended == "killed" and sig is None) or (ended == "stopped" and sig == "SIGTERM")
 
 
 def json_type(value) -> str:
@@ -679,7 +720,7 @@ def decided(e: dict, either_end: frozenset = frozenset()) -> tuple:
     if kind == "command":
         return e.get("command"), e.get("source"), e.get("accepted"), e.get("ms")
     if kind == "participant":
-        if e.get("name") in either_end and e.get("state") in ENDS_AT_STOP:
+        if _participant_ended_at_stop(e, either_end):
             return e.get("name"), "ended at the stop", None, None, e.get("reason")
         return e.get("name"), e.get("state"), e.get("exit_code"), e.get("signal"), e.get("reason")
     if kind in ("phase", "control_link"):
@@ -691,9 +732,10 @@ def decided(e: dict, either_end: frozenset = frozenset()) -> tuple:
     if kind == "result" and isinstance(e.get("result"), dict):
         r = e["result"]
         return (r.get("result"), r.get("simulation"), r.get("interrupted_by"),
-                tuple(f.get("code") for f in r.get("findings") or []),
+                tuple(f.get("code") for f in r.get("findings") or []
+                      if not (either_end and f.get("code") == "ended-by-force")),
                 tuple((p.get("name"), "ended at the stop", None, None)
-                      if p.get("name") in either_end and p.get("ended") in ENDS_AT_STOP else
+                      if _result_ended_at_stop(p, either_end) else
                       (p.get("name"), p.get("ended"), p.get("exit_code"), p.get("signal"))
                       for p in r.get("participants") or []), checked(r.get("check")),
                 (r.get("scenario") or {}).get("status"))
@@ -724,7 +766,7 @@ def outline(entries: list[dict], unsure: frozenset = frozenset(), either_end: bo
     for e in entries:
         if "out" in e:
             kind = e["out"].get("event")
-            if kind in NOT_IN_ORDER:
+            if kind in NOT_IN_ORDER or (either and kind == "finding" and e["out"].get("code") == "ended-by-force"):
                 continue
             item = ("event", kind, decided(e["out"], either))
             if kind == "participant":
@@ -740,6 +782,19 @@ def outline(entries: list[dict], unsure: frozenset = frozenset(), either_end: bo
         elif "exit" in e:
             out.append(("exit", e["exit"]))
     out += sorted(group, key=lambda g: str(g[2][0]))
+    if either:
+        any_killed = any(
+            p.get("ended") == "killed" for e in entries if "out" in e and e["out"].get("event") == "result"
+            and isinstance(e["out"].get("result"), dict)
+            for p in e["out"]["result"].get("participants") or [])
+        stream_forced = any(
+            e.get("out", {}).get("event") == "finding" and e["out"].get("code") == "ended-by-force" for e in entries)
+        result_forced = any(
+            f.get("code") == "ended-by-force" for e in entries if "out" in e and e["out"].get("event") == "result"
+            and isinstance(e["out"].get("result"), dict)
+            for f in e["out"]["result"].get("findings") or [])
+        if stream_forced != any_killed or result_forced != any_killed:
+            out.append(("ended-by-force mismatch", any_killed, stream_forced, result_forced))
     out.append(("commands", tuple(e["send"] for e in entries if "send" in e)))
     written = next((e["timeline_file"] for e in entries if "timeline_file" in e), None)
     out.append(("timeline file", tuple(sorted(written)) if isinstance(written, dict) else None))
@@ -838,6 +893,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--fake-pcap", type=Path, help="the fake pcap library (default: "
                                                        "tests/eth_link/fake_pcap/vehicle_sil_fake_pcap.so of the "
                                                        "launcher's build)")
+    parser.add_argument("--jobs", type=int, default=min(os.cpu_count() or 4, 6),
+                        help="how many cases to record at once (default: up to 6)")
     parser.add_argument("cases", nargs="*", help="the cases (default: all)")
     args = parser.parse_args(argv)
     sys.path.insert(0, str(HERE))
@@ -886,16 +943,28 @@ def main(argv: list[str]) -> int:
         out = Path(tmp) / "fresh" if args.compare else args.out
         shapes = (Shapes(), Shapes())
         out.mkdir(parents=True, exist_ok=True)
-        for case in chosen:
-            try:
-                head, entries = record_once(recorder, case, again)
-            except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
-                failed.append(str(e) if str(e).startswith(case.name + ":") else f"{case.name}: {e}")
-                continue
-            write(out / f"{case.name}.jsonl", head, entries)
-            if args.compare:
-                failed += compare(case.name, RECORDINGS / f"{case.name}.jsonl", out / f"{case.name}.jsonl", shapes,
-                                  missing)
+        port_lock = threading.Lock()
+        retry_lock = threading.Lock()
+
+        def run_case_task(c: Case) -> tuple[dict, list[dict]]:
+            if uses_fixed_port(c):
+                with port_lock:
+                    return record_once(recorder, c, again, retry_lock)
+            return record_once(recorder, c, again, retry_lock)
+
+        workers = max(1, min(args.jobs, len(chosen) or 1))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            tasks = [(case, pool.submit(run_case_task, case)) for case in chosen]
+            for case, future in tasks:
+                try:
+                    head, entries = future.result()
+                except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+                    failed.append(str(e) if str(e).startswith(case.name + ":") else f"{case.name}: {e}")
+                    continue
+                write(out / f"{case.name}.jsonl", head, entries)
+                if args.compare:
+                    failed += compare(case.name, RECORDINGS / f"{case.name}.jsonl", out / f"{case.name}.jsonl",
+                                      shapes, missing)
         if args.compare:  # the shapes of every kind of event, over the cases compared (the same on both sides)
             failed += [f"shapes: {d}: record again and read the diff" for d in shapes[0].differences(shapes[1])]
     for line in failed:

@@ -313,7 +313,7 @@ def test_a_hanging_check_does_not_delay_the_end(tmp_path: Path) -> None:
 def test_the_end_is_bounded_by_the_stop_timeout(tmp_path: Path) -> None:
     # A launcher that ignores the end of its input and SIGTERM: input closed, --stop-timeout, SIGTERM, a wait,
     # then SIGKILL. With a WebSocket connected and another one not yet authenticated.
-    with gui_server(tmp_path, args=("--stop-timeout", "1")) as gui:
+    with gui_server(tmp_path, args=("--stop-timeout", "0.3")) as gui:
         async def main(c: Client) -> list[int]:
             sock = await c.ws()
             await sock.until(is_synced)

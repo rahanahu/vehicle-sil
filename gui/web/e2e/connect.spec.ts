@@ -1,10 +1,11 @@
 // 実行の画面で、ネットワークを外につなぐ（部品 <vsil-connect> と <vsil-outside> を画面に置いたもの）。録りは
-// connect.yaml のもの（ETH_EXT を偽の pcap のアダプター fake0 につなぐ）。録りの速さでは、つないだ実行が 10 秒ほど
-// 続くように、この試験だけの GUI サーバーを起動する。
+// connect.yaml のもの（ETH_EXT を偽の pcap のアダプター fake0 につなぐ）。つないだ実行の間の表示を確かめられる速さで、
+// この試験だけの GUI サーバーを起動する。
 import { expect, test } from '@playwright/test';
 import { CONFIGS, REPLAY_LAUNCHER, GuiServer, launchGuiServer } from './support/gui-server';
 import { VIEWPORTS, findLayoutProblems } from './support/layout';
 import { RUN_TIMEOUT, WORDS, choose, start, startButton, stopButton } from './support/run-page';
+import { scaled } from './support/timeouts';
 
 test('a network is connected outside only when chosen, says so before each start, and shows its row while it runs', async ({
   page,
@@ -15,7 +16,7 @@ test('a network is connected outside only when chosen, says so before each start
   const server: GuiServer = await launchGuiServer({
     launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
-    env: { REPLAY_TICK_MS: '1000' },
+    env: { REPLAY_TICK_MS: String(scaled(500)) },
     port: 0,
   });
   const posted: { path: string; body: unknown }[] = [];
