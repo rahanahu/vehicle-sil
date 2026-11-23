@@ -61,7 +61,7 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 | 多くのターゲットが含む公開ヘッダーや、クラス・関数テンプレート | 触ったターゲットを `linux-clang-tsan` でビルドする: `scripts/verify.py linux-clang-tsan --targets <target> --tests '<regex>'` |
 | ランチャーが出力・計数するもの（所見、イベント、`run` の出力）と、それを写したドキュメント | `^launch`、`^multi_host\.`、`^schema\.`、`^template\.`（ECU のプロジェクトテンプレート）。ドキュメントと照合します（[ドキュメントの例とテスト](#ドキュメントの例とテスト)） |
 | GUI が再生するランチャーの出力（`gui/server/tests/recordings/`）、または Control API | `scripts/verify.py linux-gcc-control --tests '^control'`、続けて `scripts/verify-gui.py --skip-web --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch` |
-| ブラウザ GUI だけ | `scripts/verify-web.py --skip-install`（`--e2e-grep <パターン>` は、名前が一致する e2e テストだけを実行） |
+| ブラウザ GUI だけ | `scripts/verify-web.py --skip-install`（`--e2e-grep <パターン>` は、名前が一致する e2e テストだけを実行。`--summarize-junit build/logs/web-e2e.junit.xml` は、ファイルごとの所要時間と遅いテストを表示） |
 | ドキュメントだけ | `scripts/check-docs.py` |
 | スクリプトだけ | `python3 tests/scripts/test_<name>.py` |
 

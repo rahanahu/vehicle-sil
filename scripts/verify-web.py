@@ -15,10 +15,11 @@ Angular build tools bring), npm run pack:client (the client library as an npm pa
 build/gui-client/vehicle-sil-gui-client-<version>.tgz, with its types; it is installed and used to check it), npm
 run e2e (the built
 app served by the GUI server of gui/server, which runs the stand-in launcher that replays recordings), and, with --e2e-dev, npm run e2e:dev (the same tests through the
-dev server with its proxy to the GUI server). The full output of each step goes to build/logs/<tag>-<step>.log (tag: web); the
+dev server with its proxy to the GUI server). The full output of each step goes to build/logs/<tag>-<step>.log (tag: web) and the Playwright JUnit XML report of each e2e step to build/logs/<tag>-<step>.junit.xml; the
 summary shows one line per step and, for a failed step, its first error lines and its log. Stops at the first
 failed step. A stopped run (Ctrl-C, SIGTERM) stops the whole process group of the running step, so no dev
-server or GUI server is left behind.
+server or GUI server is left behind. --summarize-junit summarizes an existing JUnit XML file (overall counts,
+per-file cumulative durations and the slowest individual tests).
 
 Before each heavy step (unit tests, build, e2e) it waits while a C++ build or test run (ninja, ctest) or the
 Windows VM (qemu-system-x86*) runs on this machine, because the browser tests are timing-sensitive and so are
@@ -47,6 +48,7 @@ import signal
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -119,13 +121,17 @@ class Step:
     code: int = 0
     seconds: float = 0.0
     log: str = ""
+    junit: str = ""
     summary: str = ""
     notes: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict:
-        return {"step": self.name, "ok": self.ok, "exit_code": self.code, "seconds": round(self.seconds, 1),
-                "log": self.log, "summary": self.summary, "notes": self.notes, "errors": self.errors}
+        out = {"step": self.name, "ok": self.ok, "exit_code": self.code, "seconds": round(self.seconds, 1),
+               "log": self.log, "summary": self.summary, "notes": self.notes, "errors": self.errors}
+        if self.junit:
+            out["junit"] = self.junit
+        return out
 
 
 def die_usage(message: str) -> None:
@@ -207,12 +213,14 @@ def stop_group(process: subprocess.Popen) -> None:
             time.sleep(0.2)
 
 
-def run_step(step: Step, env: dict[str, str], log: Path) -> None:
+def run_step(step: Step, env: dict[str, str], log: Path, junit: Path | None = None) -> None:
     step.log = rel(log)
     start = time.monotonic()
     # Vitest ignores FORCE_COLOR=0; Playwright warns about NO_COLOR next to its own FORCE_COLOR.
     if not step.name.startswith("e2e"):
         env = {**env, "NO_COLOR": "1"}
+    if junit is not None:
+        env = {**env, "VEHICLE_SIL_PLAYWRIGHT_JUNIT": str(junit)}
     group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
     with open(log, "w", encoding="utf-8", errors="replace") as f:
         f.write("$ npm " + " ".join(step.command[1:]) + "\n")
@@ -226,6 +234,8 @@ def run_step(step: Step, env: dict[str, str], log: Path) -> None:
             raise
     step.seconds = time.monotonic() - start
     step.ok = step.code == 0
+    if junit is not None and junit.is_file():
+        step.junit = rel(junit)
     lines = clean_lines(log.read_text(encoding="utf-8", errors="replace"))
     found = [ln.strip() for ln in lines if SUMMARY_LINES[step.name].search(ln)]
     step.summary = re.sub(r"\s*\|\s*|\s{2,}", " ", found[-1]).strip() if found else ""
@@ -296,6 +306,105 @@ def update_translations(npm: str, env: dict[str, str]) -> int:
     return 0
 
 
+def summarize_junit(path: Path, top: int, as_json: bool) -> int:
+    try:
+        tree = ET.parse(path)
+    except (OSError, ET.ParseError) as e:
+        die_usage(f"cannot read JUnit XML {path}: {e}")
+    root = tree.getroot()
+    if root.tag not in ("testsuites", "testsuite"):
+        die_usage(f"{path}: expected <testsuites> or <testsuite> root element, got <{root.tag}>")
+    suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+    if not suites:
+        suites = [root]
+
+    cases: list[dict] = []
+    by_file: dict[str, dict] = {}
+    for suite in suites:
+        suite_file = suite.get("file") or suite.get("name") or ""
+        for case in suite.findall("testcase"):
+            name = case.get("name") or "(unnamed)"
+            file_name = case.get("file") or case.get("classname") or suite_file or "(unknown)"
+            raw_time = case.get("time")
+            try:
+                seconds = float(raw_time) if raw_time not in (None, "") else 0.0
+            except ValueError:
+                die_usage(f"{path}: invalid testcase time {raw_time!r} on {name!r}")
+            if case.find("failure") is not None or case.find("error") is not None:
+                status = "failed"
+            elif case.find("skipped") is not None or case.get("status") == "skipped":
+                status = "skipped"
+            else:
+                status = "passed"
+            cases.append({"file": file_name, "name": name, "status": status, "seconds": seconds})
+            entry = by_file.setdefault(
+                file_name,
+                {"file": file_name, "tests": 0, "passed": 0, "failed": 0, "skipped": 0,
+                 "seconds": 0.0, "max_seconds": 0.0},
+            )
+            entry["tests"] += 1
+            entry[status] += 1
+            entry["seconds"] += seconds
+            if seconds > entry["max_seconds"]:
+                entry["max_seconds"] = seconds
+
+    total = len(cases)
+    passed = sum(1 for c in cases if c["status"] == "passed")
+    failed = sum(1 for c in cases if c["status"] == "failed")
+    skipped = sum(1 for c in cases if c["status"] == "skipped")
+    total_seconds = sum(c["seconds"] for c in cases)
+    files_sorted = sorted(by_file.values(), key=lambda f: (-f["seconds"], f["file"]))
+    slowest = sorted(cases, key=lambda c: (-c["seconds"], c["file"], c["name"]))[:top]
+    ok = failed == 0
+
+    if as_json:
+        out = {
+            "vehicle_sil_verify_web_junit": 1,
+            "path": rel(path),
+            "ok": ok,
+            "total": total,
+            "passed": passed,
+            "failed": failed,
+            "skipped": skipped,
+            "seconds": round(total_seconds, 3),
+            "files": [
+                {
+                    "file": f["file"],
+                    "tests": f["tests"],
+                    "passed": f["passed"],
+                    "failed": f["failed"],
+                    "skipped": f["skipped"],
+                    "seconds": round(f["seconds"], 3),
+                    "max_seconds": round(f["max_seconds"], 3),
+                }
+                for f in files_sorted
+            ],
+            "slowest": [
+                {
+                    "file": c["file"],
+                    "name": c["name"],
+                    "status": c["status"],
+                    "seconds": round(c["seconds"], 3),
+                }
+                for c in slowest
+            ],
+        }
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+        return 0 if ok else 1
+
+    state = "ok" if ok else "FAILED"
+    print(f"verify-web junit: {rel(path)} - {state} - {passed} passed, {failed} failed, "
+          f"{skipped} skipped, {total} total ({total_seconds:.1f} s)")
+    print(f"files ({len(files_sorted)}):")
+    for f in files_sorted:
+        print(f"  {f['seconds']:7.2f} s  max {f['max_seconds']:6.2f} s  {f['tests']:3d} tests "
+              f"({f['passed']} passed, {f['failed']} failed, {f['skipped']} skipped)  {f['file']}")
+    print(f"slowest tests (top {len(slowest)} of {total}):")
+    for c in slowest:
+        print(f"  {c['seconds']:7.2f} s  [{c['status']}]  {c['file']} :: {c['name']}")
+    return 0 if ok else 1
+
+
 def on_sigterm(_signum, _frame) -> None:
     raise KeyboardInterrupt
 
@@ -317,9 +426,14 @@ def main() -> int:
         "  scripts/verify-web.py --skip-install --skip-checks --e2e-grep 'double click' --e2e-repeat 5\n"
         "  scripts/verify-web.py --i18n-only      # only compare the messages with the translation files\n"
         "  scripts/verify-web.py --i18n-update    # add new messages to the files as not translated yet\n"
-        "  scripts/verify-web.py --i18n-only --allow-untranslated   # work in progress: let null targets pass",
+        "  scripts/verify-web.py --i18n-only --allow-untranslated   # work in progress: let null targets pass\n"
+        "  scripts/verify-web.py --summarize-junit build/logs/web-e2e.junit.xml",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--summarize-junit", metavar="PATH",
+                        help="run nothing; summarize a Playwright JUnit XML file (per-file cumulative time and slowest tests)")
+    parser.add_argument("--top", type=int, default=20, metavar="N",
+                        help="number of slowest tests to list with --summarize-junit (default: %(default)s)")
     parser.add_argument("--skip-install", action="store_true", help="do not run npm ci (use the node_modules there)")
     parser.add_argument("--skip-e2e", action="store_true", help="do not run the Playwright tests")
     parser.add_argument("--e2e-dev", action="store_true",
@@ -346,6 +460,10 @@ def main() -> int:
                         help="let the i18n step pass with messages marked not translated yet (\"target\": null); "
                         "for work in progress on your own machine, CI does not pass it")
     args = parser.parse_args()
+    if args.top < 1:
+        die_usage("--top must be 1 or more")
+    if args.summarize_junit:
+        return summarize_junit(Path(args.summarize_junit), args.top, args.json)
     if args.e2e_repeat < 1:
         die_usage("--e2e-repeat must be 1 or more")
     if args.wait_limit < 0:
@@ -399,9 +517,11 @@ def main() -> int:
     if args.workbench:
         env["VEHICLE_SIL_VERIFY_WORKBENCH"] = "1"
     env.pop("NO_COLOR", None)  # Playwright warns when NO_COLOR and FORCE_COLOR are both set
+    env.pop("VEHICLE_SIL_PLAYWRIGHT_JUNIT", None)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     logs = {s.name: LOG_DIR / f"{args.tag}-{s.name}.log" for s in steps}
-    for stale in logs.values():
+    junits = {s.name: LOG_DIR / f"{args.tag}-{s.name}.junit.xml" for s in steps if s.name in ("e2e", "e2e-dev")}
+    for stale in [*logs.values(), *junits.values()]:
         stale.unlink(missing_ok=True)
     signal.signal(signal.SIGTERM, on_sigterm)
     if args.i18n_update:
@@ -416,7 +536,7 @@ def main() -> int:
         for step in steps:
             if step.name in HEAVY and not args.no_wait:
                 wait_until_quiet("verify-web", args.wait_limit * 60)
-            run_step(step, env, logs[step.name])
+            run_step(step, env, logs[step.name], junits.get(step.name))
             if step.name == "i18n" and step.ok:
                 check_translations(step, logs[step.name], args.allow_untranslated)
             done.append(step)

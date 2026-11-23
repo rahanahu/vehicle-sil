@@ -17,7 +17,8 @@ needs no C++ build:
            tests/scripts/test_job_summary.py (scripts/job_summary.py), tests/scripts/test_check_docs.py
            (scripts/check-docs.py), tests/scripts/test_check_commits.py (scripts/check-commits.py),
            tests/scripts/test_ci_workflow.py (.github/workflows/ci.yml), tests/scripts/test_verify.py
-           (scripts/verify.py), tests/scripts/test_hotspots.py (scripts/hotspots.py) and
+           (scripts/verify.py), tests/scripts/test_verify_web.py (scripts/verify-web.py),
+           tests/scripts/test_hotspots.py (scripts/hotspots.py) and
            tests/scripts/test_trace_report.py (scripts/trace-report.py)
   control  generates the gRPC stubs of the Control API, imports the client and its tests, and runs
            `python -m vehicle_sil_control --help` and the examples of examples/launch_control with
@@ -225,6 +226,7 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
                     s.run([python, "tests/scripts/test_check_commits.py"]),
                     s.run([python, "tests/scripts/test_ci_workflow.py"]),
                     s.run([python, "tests/scripts/test_verify.py"]),
+                    s.run([python, "tests/scripts/test_verify_web.py"]),
                     s.run([python, "tests/scripts/test_hotspots.py"]),
                     s.run([python, "tests/scripts/test_trace_report.py"])])
 

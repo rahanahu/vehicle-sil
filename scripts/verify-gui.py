@@ -19,7 +19,7 @@ Steps, in order:
   real    with a real launcher only (--launcher <path>, or VEHICLE_SIL_GUI_LAUNCHER): npm run e2e:real, the
           screen, the GUI server, that vehicle_sil_launch and the ecu_main example ECUs built next to it (pass,
           a participant left out, stop, failing checks, a failing run); needs the build of gui/web (the web step,
-          or an earlier one). Without a launcher it prints "skipped: no launcher" and does not fail
+          or an earlier one); JUnit XML in build/logs/<tag>-real.junit.xml. Without a launcher it prints "skipped: no launcher" and does not fail
 
 --skip-server leaves out the server step only (CI runs it in a job of its own, at the same time as the others).
 
@@ -89,6 +89,7 @@ class Step:
     code: int = 0
     seconds: float = 0.0
     log: str = ""
+    junit: str = ""
     summary: str = ""
     errors: list[str] = field(default_factory=list)
     substeps: list[dict] = field(default_factory=list)
@@ -96,6 +97,8 @@ class Step:
     def to_json(self) -> dict:
         out = {"step": self.name, "ok": self.ok, "exit_code": self.code, "seconds": round(self.seconds, 1),
                "log": self.log, "summary": self.summary, "errors": self.errors}
+        if self.junit:
+            out["junit"] = self.junit
         if self.substeps:
             out["steps"] = self.substeps
         return out
@@ -136,9 +139,11 @@ def stop_group(process: subprocess.Popen) -> None:
             time.sleep(0.2)
 
 
-def run_step(step: Step, env: dict[str, str], log: Path) -> None:
+def run_step(step: Step, env: dict[str, str], log: Path, junit: Path | None = None) -> None:
     step.log = rel(log)
     start = time.monotonic()
+    if junit is not None:
+        env = {**env, "VEHICLE_SIL_PLAYWRIGHT_JUNIT": str(junit)}
     group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
     with open(log, "w", encoding="utf-8", errors="replace") as f:
         f.write("$ " + " ".join(step.command) + "\n")
@@ -157,6 +162,8 @@ def run_step(step: Step, env: dict[str, str], log: Path) -> None:
             f.write(out.decode("utf-8", "replace"))
     step.seconds = time.monotonic() - start
     step.ok = step.code == 0
+    if junit is not None and junit.is_file():
+        step.junit = rel(junit)
     lines = clean_lines(log.read_text(encoding="utf-8", errors="replace"))
     if step.name == "web":
         read_web(step, out.decode("utf-8", "replace") if out else "", lines)
@@ -279,11 +286,13 @@ def main() -> int:
     # The tests of the ECUs' variables need grpcio-tools (uv sync installs it): here they fail without it, not skip.
     env = {**os.environ, "NO_COLOR": "1", "PYTHONDONTWRITEBYTECODE": "1", "VEHICLE_SIL_GUI_REQUIRE_CONTROL": "1"}
     env.pop("VEHICLE_SIL_GUI_LAUNCHER", None)
+    env.pop("VEHICLE_SIL_PLAYWRIGHT_JUNIT", None)
     if launcher is not None:
         env["VEHICLE_SIL_GUI_LAUNCHER"] = str(Path(launcher).resolve())
     env.pop("VIRTUAL_ENV", None)
+    real_junit = LOG_DIR / f"{args.tag}-real.junit.xml"
     logs = {s.name: LOG_DIR / f"{args.tag}-{s.name}.log" for s in steps}
-    for stale in [*logs.values(), junit]:
+    for stale in [*logs.values(), junit, real_junit]:
         stale.unlink(missing_ok=True)
     signal.signal(signal.SIGTERM, on_sigterm)
 
@@ -292,7 +301,7 @@ def main() -> int:
         for step in steps:
             if step.name != "sync" and not args.no_wait:
                 wait_until_quiet("verify-gui", args.wait_limit * 60)
-            run_step(step, env, logs[step.name])
+            run_step(step, env, logs[step.name], real_junit if step.name == "real" else None)
             done.append(step)
             if not args.json:
                 head = f"gui {step.name}: " + ("ok" if step.ok else f"FAILED (exit {step.code})")
