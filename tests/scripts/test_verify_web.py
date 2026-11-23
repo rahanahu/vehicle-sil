@@ -76,7 +76,14 @@ def run_verify_web(*args: str) -> subprocess.CompletedProcess[str]:
     env = {
         k: v
         for k, v in os.environ.items()
-        if k not in (job_summary.SUMMARY_ENV, job_summary.NESTED_ENV, job_summary.ARTIFACT_ENV)
+        if k
+        not in (
+            job_summary.SUMMARY_ENV,
+            job_summary.NESTED_ENV,
+            job_summary.ARTIFACT_ENV,
+            "PYTHONUTF8",
+            "PYTHONIOENCODING",
+        )
     }
     return subprocess.run(
         [sys.executable, str(VERIFY_WEB), *args],
@@ -172,6 +179,11 @@ class VerifyWebJUnitTest(unittest.TestCase):
         self.assertEqual(data["failed"], 1)
 
     def test_missing_or_malformed_xml_exits_two(self) -> None:
+        for blank in ("", "   "):
+            proc_blank = run_verify_web("--summarize-junit", blank)
+            self.assertEqual(proc_blank.returncode, 2)
+            self.assertIn("--summarize-junit requires a file path", proc_blank.stderr)
+
         missing = self.dir / "does-not-exist.junit.xml"
         proc_missing = run_verify_web("--summarize-junit", str(missing))
         self.assertEqual(proc_missing.returncode, 2)
@@ -189,15 +201,49 @@ class VerifyWebJUnitTest(unittest.TestCase):
         self.assertEqual(proc_root.returncode, 2)
         self.assertIn("expected <testsuites> or <testsuite>", proc_root.stderr)
 
-        bad_time = self.dir / "bad-time.xml"
-        bad_time.write_text('<testsuite name="a.spec.ts"><testcase name="t" time="not-a-float"/></testsuite>', encoding="utf-8")
-        proc_time = run_verify_web("--summarize-junit", str(bad_time))
-        self.assertEqual(proc_time.returncode, 2)
-        self.assertIn("invalid testcase time", proc_time.stderr)
+        for raw_time in ("not-a-float", "NaN", "inf", "-inf", "-2.5"):
+            bad_time = self.dir / f"bad-time-{raw_time}.xml"
+            bad_time.write_text(
+                f'<testsuite name="a.spec.ts"><testcase name="t" time="{raw_time}"/></testsuite>',
+                encoding="utf-8",
+            )
+            proc_time = run_verify_web("--summarize-junit", str(bad_time))
+            self.assertEqual(proc_time.returncode, 2, raw_time)
+            self.assertIn("invalid testcase time", proc_time.stderr)
 
-        proc_top = run_verify_web("--summarize-junit", str(bad_time), "--top", "0")
-        self.assertEqual(proc_top.returncode, 2)
-        self.assertIn("--top must be 1 or more", proc_top.stderr)
+        for bad_top in ("0", "-1"):
+            proc_top = run_verify_web("--summarize-junit", str(wrong_root), "--top", bad_top)
+            self.assertEqual(proc_top.returncode, 2, bad_top)
+            self.assertIn("--top must be 1 or more", proc_top.stderr)
+
+    def test_nested_testsuite_error_tag_file_precedence_and_empty_suite(self) -> None:
+        nested_xml = self.dir / "nested.junit.xml"
+        nested_xml.write_text(
+            '<testsuite name="root">'
+            '<testsuite name="suite-a.spec.ts">'
+            '<testcase name="a › pass" file="override-a.spec.ts" classname="suite-a.spec.ts" time="1.5"/>'
+            '<testcase name="a › err" classname="suite-a.spec.ts" time="0.5">'
+            '<error message="boom"/>'
+            "</testcase>"
+            "</testsuite>"
+            "</testsuite>",
+            encoding="utf-8",
+        )
+        proc = run_verify_web("--summarize-junit", str(nested_xml), "--json")
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        data = json.loads(proc.stdout)
+        self.assertFalse(data["ok"])
+        self.assertEqual((data["total"], data["passed"], data["failed"], data["skipped"]), (2, 1, 1, 0))
+        self.assertEqual([f["file"] for f in data["files"]], ["override-a.spec.ts", "suite-a.spec.ts"])
+        self.assertEqual(data["slowest"][1]["status"], "failed")
+
+        empty_xml = self.dir / "empty.junit.xml"
+        empty_xml.write_text("<testsuites/>", encoding="utf-8")
+        proc_empty = run_verify_web("--summarize-junit", str(empty_xml), "--json")
+        self.assertEqual(proc_empty.returncode, 0, proc_empty.stderr)
+        empty_data = json.loads(proc_empty.stdout)
+        self.assertTrue(empty_data["ok"])
+        self.assertEqual((empty_data["total"], empty_data["files"], empty_data["slowest"]), (0, [], []))
 
     def test_multi_file_non_overwrite_and_step_json_contract(self) -> None:
         # Three distinct runs (gui-web-e2e, gui-real, gui-workbench-e2e) produce distinct XML files in the same directory

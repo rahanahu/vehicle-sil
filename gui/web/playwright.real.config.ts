@@ -20,7 +20,8 @@ export default defineConfig({
       'junit',
       {
         outputFile:
-          process.env['VEHICLE_SIL_PLAYWRIGHT_JUNIT'] || '../../build/logs/web-e2e-real.junit.xml',
+          process.env['VEHICLE_SIL_PLAYWRIGHT_JUNIT']?.trim() ||
+          '../../build/logs/web-e2e-real.junit.xml',
       },
     ],
   ],

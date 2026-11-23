@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -314,9 +315,7 @@ def summarize_junit(path: Path, top: int, as_json: bool) -> int:
     root = tree.getroot()
     if root.tag not in ("testsuites", "testsuite"):
         die_usage(f"{path}: expected <testsuites> or <testsuite> root element, got <{root.tag}>")
-    suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
-    if not suites:
-        suites = [root]
+    suites = list(root.iter("testsuite")) or [root]
 
     cases: list[dict] = []
     by_file: dict[str, dict] = {}
@@ -329,6 +328,8 @@ def summarize_junit(path: Path, top: int, as_json: bool) -> int:
             try:
                 seconds = float(raw_time) if raw_time not in (None, "") else 0.0
             except ValueError:
+                die_usage(f"{path}: invalid testcase time {raw_time!r} on {name!r}")
+            if not math.isfinite(seconds) or seconds < 0:
                 die_usage(f"{path}: invalid testcase time {raw_time!r} on {name!r}")
             if case.find("failure") is not None or case.find("error") is not None:
                 status = "failed"
@@ -410,8 +411,9 @@ def on_sigterm(_signum, _frame) -> None:
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(errors="backslashreplace")
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(
         prog="scripts/verify-web.py",
         description="Run npm ci, the format check, lint, unit tests, the production build and the end-to-end "
@@ -462,7 +464,9 @@ def main() -> int:
     args = parser.parse_args()
     if args.top < 1:
         die_usage("--top must be 1 or more")
-    if args.summarize_junit:
+    if args.summarize_junit is not None:
+        if not args.summarize_junit.strip():
+            die_usage("--summarize-junit requires a file path")
         return summarize_junit(Path(args.summarize_junit), args.top, args.json)
     if args.e2e_repeat < 1:
         die_usage("--e2e-repeat must be 1 or more")
