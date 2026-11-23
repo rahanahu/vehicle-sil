@@ -198,7 +198,7 @@ jobs:
       CCACHE_COMPRESSLEVEL: "6"
       # gRPC, protobuf, abseil and BoringSSL are most of what linux-gcc-control compiles (FetchContent gRPC uses -g0
       # and CI Debug/Sanitizer presets use -g1 to stay within the repository cache budget).
-      CCACHE_MAXSIZE: ${{ matrix.preset == 'linux-gcc-control' && '550M' || matrix.preset == 'linux-gcc-static' && '200M' || '350M' }}
+      CCACHE_MAXSIZE: ${{ matrix.preset == 'linux-gcc-control' && '1.3G' || matrix.preset == 'linux-gcc-static' && '200M' || '500M' }}
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       VEHICLE_SIL_LOG_ARTIFACT: logs-${{ matrix.preset }}
@@ -346,7 +346,10 @@ jobs:
               ;;
           esac
           if [ "${{ matrix.preset }}" = "linux-gcc-control" ] && [ "${{ github.event_name }}" != "pull_request" ] && [ "${{ steps.grpc-src.outputs.cache-hit }}" = "true" ]; then
-            extra+=(--cmake-arg="-DFETCHCONTENT_SOURCE_DIR_GRPC=$HOME/.cache/grpc-src")
+            mkdir -p build/linux-gcc-control/_deps
+            rm -rf build/linux-gcc-control/_deps/grpc-src
+            mv "$HOME/.cache/grpc-src" build/linux-gcc-control/_deps/grpc-src
+            extra+=(--cmake-arg="-DFETCHCONTENT_SOURCE_DIR_GRPC=${{ github.workspace }}/build/linux-gcc-control/_deps/grpc-src")
           fi
           python3 scripts/verify.py ${{ matrix.preset }} --tag ci "${extra[@]}"
       - name: Populate gRPC source cache
@@ -448,7 +451,7 @@ jobs:
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_COMPRESSLEVEL: "6"
-      CCACHE_MAXSIZE: 350M
+      CCACHE_MAXSIZE: 500M
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       # Empty (not set): the preset's default factor (4) applies.
@@ -646,7 +649,7 @@ jobs:
         shell: msys2 {0}
     env:
       CCACHE_COMPRESSLEVEL: "6"
-      CCACHE_MAXSIZE: 250M
+      CCACHE_MAXSIZE: 350M
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       VEHICLE_SIL_LOG_ARTIFACT: logs-windows-mingw-release

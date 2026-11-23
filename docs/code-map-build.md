@@ -50,6 +50,7 @@ Scripts for development and CI. For the list, see "Verification and scripts" in 
 | `tests/scripts/test_verify.py` | `scripts/verify.py --summarize`: the lines of a failing test's output in the summary (the first lines, then the lines further down that say FAIL or Error) |
 | `tests/scripts/test_hotspots.py` | `scripts/hotspots.py`: the signals (size, churn, stack, parallel), what counts as a lower layer and as independent work, what is left out (merged, closed, stale), what it says it could not observe, a path that is not in HEAD, and a failing, hanging or odd `gh` (the test is not run on Windows) |
 | `tests/scripts/test_trace_report.py` | `scripts/trace-report.py`: on made-up traces, the participant that completes each step last, the synchronization time, the launcher's hold, each write's round trip, and the exit codes |
+| `tests/scripts/test_package.py` | `scripts/package.py`: MSYS2 license staging and Windows `--build-only` export |
 | `tests/template/test_get_tools.py` | `package.py template`, `version` |
 
 - `ctest -R`: `^template\.get_tools`, `^scripts\.`

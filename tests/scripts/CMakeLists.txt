@@ -8,6 +8,7 @@
 # .github/workflows/ci.yml: the job `all checks` waits for every other job.
 # scripts/check-commits.py: the titles and files that CI checks of a pull request (--message, --changed).
 # scripts/trace-report.py: the critical path, the hold and the round trips of made-up traces, and its exit codes.
+# scripts/package.py: MSYS2 license staging and Windows --build-only export.
 if(VEHICLE_SIL_J1939_CODEGEN_PYTHON)
   add_test(NAME scripts.run_gui
            COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_run_gui.py)
@@ -33,6 +34,9 @@ if(VEHICLE_SIL_J1939_CODEGEN_PYTHON)
   add_test(NAME scripts.trace_report
            COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_trace_report.py)
   set_tests_properties(scripts.trace_report PROPERTIES LABELS unit TIMEOUT 120)
+  add_test(NAME scripts.package
+           COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_package.py)
+  set_tests_properties(scripts.package PROPERTIES LABELS unit TIMEOUT 120)
   if(NOT WIN32)
     add_test(NAME scripts.hotspots
              COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_hotspots.py)
