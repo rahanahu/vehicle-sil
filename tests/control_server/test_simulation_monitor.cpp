@@ -637,3 +637,57 @@ TEST_CASE(control_server_watch_and_list_peers_report_a_peer_alike)
     CHECK(u->peer().SerializeAsString() == listed(*stub).at("Body"));
     w.context.TryCancel();
 }
+
+TEST_CASE(simulation_monitor_stop_joins_thread_and_stops_reading_time_control)
+{
+    auto time = std::make_unique<ScriptedTime>();
+    SimulationMonitorOptions options;
+    options.period = 1ms;
+    SimulationMonitor monitor(*time, options);
+    const auto deadline = std::chrono::steady_clock::now() + 10s;
+    while (time->state_reads.load() < 2 && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(1ms);
+    }
+    CHECK(time->state_reads.load() >= 2);
+
+    monitor.stop();
+    monitor.stop(); // idempotent
+    // Destroy TimeControl before SimulationMonitor: stop() joined the thread, so nothing reads it.
+    time.reset();
+    std::this_thread::sleep_for(50ms);
+    monitor.poll(); // no-op after stop()
+    CHECK(monitor.snapshot().version >= 1U);
+}
+
+TEST_CASE(control_server_shutdown_stops_monitor_before_time_control_is_destroyed)
+{
+    auto time = std::make_unique<ScriptedTime>();
+    control_grpc::ServerOptions options;
+    options.time = time.get();
+    options.monitor_period = 1ms;
+    control_grpc::ControlServer server(options);
+    auto stub = v1::ControlService::NewStub(channel(server));
+    WatchStream w(*stub, true, true);
+    CHECK(!w.initial().empty());
+
+    const auto deadline = std::chrono::steady_clock::now() + 10s;
+    while (time->state_reads.load() < 2 && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(1ms);
+    }
+    CHECK(time->state_reads.load() >= 2);
+
+    server.shutdown();
+    v1::Update u;
+    while (w.reader->Read(&u))
+    {
+    }
+    // Destroy TimeControl while ControlServer is still alive: shutdown() already stopped SimulationMonitor.
+    time.reset();
+    std::this_thread::sleep_for(50ms);
+    CHECK(server.simulation() != nullptr);
+    server.simulation()->poll(); // no-op after stop()
+    CHECK(server.simulation()->snapshot().version >= 1U);
+    server.shutdown(); // idempotent
+}

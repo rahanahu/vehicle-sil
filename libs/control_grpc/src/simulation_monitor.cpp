@@ -81,6 +81,12 @@ SimulationMonitor::SimulationMonitor(TimeControl& time, SimulationMonitorOptions
 
 SimulationMonitor::~SimulationMonitor()
 {
+    stop();
+}
+
+void SimulationMonitor::stop()
+{
+    const std::lock_guard stopping(stop_mutex_);
     {
         const std::lock_guard lock(mutex_);
         stop_ = true;
@@ -90,6 +96,8 @@ SimulationMonitor::~SimulationMonitor()
     {
         thread_.join();
     }
+    // Wait for any poll() called directly on another thread that started before stop_ was set.
+    const std::lock_guard wait(poll_mutex_);
 }
 
 SimulationSnapshot SimulationMonitor::snapshot() const
@@ -119,6 +127,13 @@ void SimulationMonitor::unsubscribe(std::uint64_t id)
 void SimulationMonitor::poll()
 {
     const std::lock_guard polling(poll_mutex_);
+    {
+        const std::lock_guard lock(mutex_);
+        if (stop_)
+        {
+            return;
+        }
+    }
     SimulationSnapshot next = snapshot();
     try
     {

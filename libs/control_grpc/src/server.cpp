@@ -276,6 +276,10 @@ void ControlServer::shutdown()
     impl_->stopping = true;
     impl_->server->Shutdown(std::chrono::system_clock::now() + std::chrono::seconds(2));
     impl_->server->Wait();
+    if (impl_->monitor)
+    {
+        impl_->monitor->stop();
+    }
 }
 
 } // namespace vehicle_sil::control_grpc
