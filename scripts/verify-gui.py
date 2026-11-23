@@ -21,6 +21,8 @@ Steps, in order:
           a participant left out, stop, failing checks, a failing run); needs the build of gui/web (the web step,
           or an earlier one). Without a launcher it prints "skipped: no launcher" and does not fail
 
+--skip-server leaves out the server step only (CI runs it in a job of its own, at the same time as the others).
+
 With a real launcher, the server step also runs gui/server/tests/test_real_launcher.py, which records every case of
 the stand-in launcher again with the real one and compares (gui/server/tests/record_launcher.py --compare), and test_real_variables.py, which reads and writes the
 variables of the example ECUs through the GUI server (a launcher built with its control server); without one,
@@ -196,6 +198,7 @@ def main() -> int:
         epilog="examples:\n"
         "  scripts/verify-gui.py                    # everything\n"
         "  scripts/verify-gui.py --skip-web         # only the server (no Node needed)\n"
+        "  scripts/verify-gui.py --skip-server      # only the screen and the examples\n"
         "  scripts/verify-gui.py -k security        # only the server tests whose names match\n"
         "  scripts/verify-gui.py --skip-install --skip-e2e   # passed on to verify-web.py\n"
         "  scripts/verify-gui.py --no-wait          # do not wait for ninja, ctest or the VM\n"
@@ -204,6 +207,9 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--skip-web", action="store_true", help="do not run scripts/verify-web.py")
+    parser.add_argument("--skip-server", action="store_true",
+                        help="do not run the server step (CI runs it in a job of its own, at the same time); the "
+                        "web, example and real steps still run; not with --skip-web or -k")
     parser.add_argument("--launcher", metavar="PATH",
                         help="a real vehicle_sil_launch (build/<preset>/tools/launch/vehicle_sil_launch, with the "
                         "ecu_main example built next to it): also run the tests against it (default: "
@@ -223,6 +229,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.wait_limit < 0:
         die_usage("--wait-limit must be 0 or more minutes")
+    if args.skip_server and (args.skip_web or args.keyword):
+        die_usage("--skip-server leaves out the server step: with --skip-web or -k nothing would be left to run")
     if not re.fullmatch(r"[A-Za-z0-9._-]+", args.tag):
         die_usage(f"--tag {args.tag!r}: use letters, digits, '.', '_' and '-' only (it becomes part of file names)")
     uv = shutil.which("uv")
@@ -239,7 +247,10 @@ def main() -> int:
               f"--junitxml={junit}"]
     if args.keyword:
         pytest += ["-k", args.keyword]
-    steps = [Step("sync", [uv, "sync", "--locked"]), Step("server", pytest)]
+    steps = [Step("sync", [uv, "sync", "--locked"])]
+    skipped_server = "--skip-server" if args.skip_server else None
+    if skipped_server is None:
+        steps.append(Step("server", pytest))
     skipped_example = "--skip-web" if args.skip_web else "-k (only server tests)" if args.keyword else None
     if skipped_example is None:
         if shutil.which("node") is None:
@@ -307,7 +318,8 @@ def main() -> int:
         return 130
 
     failed = [s for s in done if not s.ok]
-    skipped = [(name, reason) for name, reason in (("example", skipped_example), ("real", skipped_real))
+    skipped = [(name, reason) for name, reason in (("server", skipped_server), ("example", skipped_example),
+                                                   ("real", skipped_real))
                if reason is not None]
     if not failed and not args.json:
         for name, reason in skipped:

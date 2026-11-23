@@ -80,12 +80,15 @@ Not run: <CI に任せたもの、実行しなかったものと、その理由>
 
 | 変更 | 実行するもの |
 |---|---|
-| 文書だけ | リンク（`python`）、文書を比べる `linux-gcc-debug` のテスト、GUI の README の書式。変更したファイルが `gui/` にあるか、GUI のテストが読む文書（`docs/gui.md`）であるときは、GUI サーバーのテストとタイムライン要素のテストも。変更したファイルが `docs/howto/first-ecu.md` か `docs/howto/operate-signals.md`（`linux-gcc-control` のテストが例と比べる）であるときは、`linux-gcc-control` も |
-| コード | `linux-gcc-debug`、`linux-clang-tsan`、`linux-gcc-control`、Windows、GUI（変更したファイルがすべて GUI の外なら除く）、`python` |
-| ビルドのファイル（CMake、プリセット、パッチ、`external/`、`.github/`） | さらに `linux-gcc-release`、`linux-gcc-static`、最も古い CMake、ECU プロジェクトのテンプレートを FetchContent でビルドするテスト |
-| `main` への push | 上のすべてと `linux-clang-asan` |
+| 文書だけ | リンクとスキーマ・テンプレートの検査（`python`）。変更したページが、文書を比べる `linux-gcc-debug` のテストが読むもの（`docs/simulation-*.md`、`docs/scenario.md`、`docs/ecu-executable.md`、`docs/j1939-guide.md`、`docs/howto/*.md`）であるときは `linux-gcc-debug` も、`docs/howto/first-ecu.md` か `docs/howto/operate-signals.md` であるときは `linux-gcc-control` も。変更したファイルが `gui/` 以下にあるときは GUI の README の書式も、`docs/gui.md` か `gui/protocol/README.md`（またはその日本語のページ）であるときは GUI サーバーのテストとタイムライン要素のテストも、`gui/client/README.md` か `examples/gui_starter/README.md`（またはその日本語のページ）であるときはクライアントライブラリのパッケージの検査（`npm run pack:client`）も |
+| ブラウザ GUI だけ（`gui/web`、`gui/client`、`gui/timeline`、`gui/protocol/examples`、`examples/gui_client`、`examples/gui_starter`） | GUI のジョブ（`gui` と `gui-server`）と `python`。変更したファイルが、`tests/launch/test_shared_values.cpp` が上限や定数を読むファイルであるときは `linux-gcc-debug` も |
+| GUI サーバー（`gui/server`、`gui/protocol/dashboard.schema.json`） | `gui`、`gui-server`、`linux-gcc-debug`、`linux-gcc-control`、`python` |
+| `tools/knowledge` だけ | `python` |
+| コード | `linux-gcc-debug`、`linux-clang-tsan`、`linux-gcc-control`、Windows、GUI のジョブ（変更したファイルがすべて GUI とそのテストが読むものの外なら除く）、`python` |
+| ビルドのファイル（CMake、プリセット、パッチ、`external/`、`.gitmodules`、`.github/`） | さらに `linux-gcc-release`、`linux-gcc-static`、最も古い CMake、ECU プロジェクトのテンプレートを FetchContent でビルドするテスト |
+| `main` への push（または `workflow_dispatch`） | 上のすべてと `linux-clang-asan` |
 
-プルリクエストでは、`linux-clang-tsan` の失敗はそのチェックに表示されますが、`all checks` を失敗させません。`main` では失敗させます。`python` は、プルリクエストの題と、コミットが 1 つのときはそのコミットのメッセージ（`scripts/check-commits.py --message`）、`.local/` と `build/` 以下のファイルや `CLAUDE.local.md` が変更に入っていないこと（`--changed`）も確かめます。再実行は古い題を読みます。題を直したら、コミットを push するか、プルリクエストを閉じて開き直します。
+`all checks` は `linux-clang-tsan` を待ちません。プルリクエストでは、その失敗はそのチェックに表示されますが、マージを止めません。`main` では run を失敗させます。`python` は、プルリクエストの題と、コミットが 1 つのときはそのコミットのメッセージ（`scripts/check-commits.py --message`）、`.local/` と `build/` 以下のファイルや `CLAUDE.local.md` が変更に入っていないこと（`--changed`）も確かめます。再実行は古い題を読みます。題を直したら、コミットを push するか、プルリクエストを閉じて開き直します。
 
 ### ポートとロック
 

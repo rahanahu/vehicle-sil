@@ -12,6 +12,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -34,24 +35,27 @@ env:
 
 jobs:
   # A pull request runs fewer jobs than a push to main, so that several open pull requests do not wait for
-  # runners. A push to main runs everything.
-  # - Only Markdown files changed: the checks that read the documents: the links (python), the examples that
-  #   the launcher's tests compare with the documents (linux-gcc-debug), and the format of the GUI's READMEs (gui).
-  #   Two more checks run when a changed document is one that a test reads: the GUI server's tests and the
-  #   timeline element's test when the file is in gui/ or in `gui_reads` below, and linux-gcc-control (the
-  #   control server's tests of the guides; 15 to 19 minutes instead of 5) when it is in `control_reads`.
-  #   A new test that reads a document outside the directory of its job adds the document to the list.
-  # - Otherwise: linux-gcc-debug, linux-clang-tsan, linux-gcc-control, Windows and python. The presets
+  # runners. A push to main (or workflow_dispatch) runs everything.
+  # - Only Markdown files changed: the checks that read the documents: the links and the schema and template checks
+  #   (python), the examples that the launcher's tests compare with the documents (linux-gcc-debug) when a changed
+  #   page is in `debug_reads_docs`, linux-gcc-control when it is in `control_reads`, the format of the GUI's READMEs
+  #   (gui) when a file is in gui/, the GUI server's tests (gui-server) and the timeline element's test (gui) when a
+  #   file is in `gui_doc_reads`, and the client library package check (`npm run pack:client` in gui) when a file is in
+  #   `pack_reads`.
+  # - Only the browser GUI changed (gui/web, gui/client, gui/timeline, gui/protocol/examples, examples/gui_client,
+  #   examples/gui_starter): gui, gui-server and python (plus linux-gcc-debug when a changed file is in `cpp_reads_gui`).
+  #   When gui/server changes, linux-gcc-debug and linux-gcc-control also run.
+  # - Otherwise: linux-gcc-debug, linux-gcc-control, linux-tsan (the thread sanitizer), Windows and python. The presets
   #   linux-gcc-release and linux-gcc-static and the oldest CMake are added when the pull request changes how
   #   things are built (the `build` list below). Every check that only one preset makes is in linux-gcc-debug
   #   (two computers, the Ethernet bridge on real interfaces, the GUI's recordings), so the left-out jobs add
   #   the other build types only, and main still runs them after the merge.
-  # - Only a push to main adds linux-clang-asan (the address sanitizer). A leg that builds linux-gcc-release (a
-  #   push to main, or a pull request that changes how things are built) also runs the test that builds the ECU
-  #   project template with FetchContent.
-  # - The gui job is left out when every changed file is in the `not_gui` list below and none is in `gui_reads`.
-  #   The job builds no C++; the GUI server against the launcher runs in linux-gcc-control. Rule for the lists:
-  #   a path outside gui/ that a test of the gui job reads belongs in `gui_reads`, never only in `not_gui`.
+  # - Only a push to main (or workflow_dispatch) adds linux-clang-asan (the address sanitizer). A leg that builds
+  #   linux-gcc-release (a push to main, or a pull request that changes how things are built) also runs the test that
+  #   builds the ECU project template with FetchContent.
+  # - The gui jobs (gui and gui-server) are left out when every changed file is in the `not_gui` list below and none is
+  #   in `gui_reads`, `gui_doc_reads` or `pack_reads`. Rule for the lists: a path outside gui/ that a test of the gui
+  #   or gui-server job reads belongs in `gui_reads`, `gui_doc_reads` or `pack_reads`, never only in `not_gui`.
   # The job `all checks` at the end is the one required check of main's branch protection: keep its name. The
   # names of the other jobs may change.
   changes:
@@ -62,7 +66,11 @@ jobs:
       docs_only: ${{ steps.look.outputs.docs_only }}
       full: ${{ steps.look.outputs.full }}
       gui: ${{ steps.look.outputs.gui }}
+      gui_server: ${{ steps.look.outputs.gui_server }}
       gui_docs: ${{ steps.look.outputs.gui_docs }}
+      gui_pack_docs: ${{ steps.look.outputs.gui_pack_docs }}
+      tsan: ${{ steps.look.outputs.tsan }}
+      windows: ${{ steps.look.outputs.windows }}
       presets: ${{ steps.look.outputs.presets }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -77,14 +85,25 @@ jobs:
           docs_only=false
           full=true
           gui=true
+          gui_server=true
           gui_docs=false
-          control_docs=false
-          # Paths outside gui/ that the gui job's tests read: the launcher's reference timelines (gui/timeline's and
-          # gui/web's tests) and the manual that the GUI server's tests and the timeline's test hold against the
-          # code (docs/gui.md and its Japanese page).
-          gui_reads='^tests/launch/timeline/|^docs/(ja/)?gui\.md$'
+          gui_pack_docs=false
+          tsan=true
+          windows=true
+          # Paths outside gui/ that the gui and gui-server jobs' tests read: the launcher's reference timelines
+          # (gui/timeline's and gui/web's tests) and the example dashboard and panels read by test_dashboard.py and
+          # test_protocol_examples.py.
+          gui_reads='^tests/launch/timeline/|^examples/ecu_main/(simulation\.dashboard\.yaml$|panels/)'
+          # The manuals that the GUI server's tests and the timeline's test hold against the code.
+          gui_doc_reads='^docs/(ja/)?gui\.md$|^gui/protocol/README(\.ja)?\.md$'
+          # The READMEs whose ```ts code blocks gui/client/pack.mjs (npm run pack:client) type-checks.
+          pack_reads='^(examples/gui_starter|gui/client)/README(\.ja)?\.md$'
+          # The pages of docs/ that C++ tests in linux-gcc-debug hold against the examples and the outputs.
+          debug_reads_docs='^docs/(simulation-(config|check|run|events)|scenario|ecu-executable|j1939-guide|howto/[^/]+)\.md$'
           # The guides that the control server's tests (tests/control_server) hold against the examples.
           control_reads='^docs/howto/(first-ecu|operate-signals)\.md$'
+          # Files under gui/ that C++ build/tests read (tests/launch/test_shared_values.cpp, CMakeLists.txt, record_launcher.py, test_real_*.py).
+          cpp_reads_gui='^gui/(server/|protocol/dashboard\.schema\.json$|client/src/(client|protocol/server)\.ts$|web/src/app/run/(speed-picker|run-page)\.ts$)'
           if [ "$EVENT" = pull_request ]; then
             files=$(git diff --name-only --no-renames HEAD^1 HEAD)
             echo "$files"
@@ -92,21 +111,57 @@ jobs:
               if ! grep -qv '\.md$' <<<"$files"; then docs_only=true; fi
               build='(^|/)CMakeLists\.txt$|\.cmake$|^cmake/|(^|/)CMakePresets\.json$|^patches/|^external/|^\.gitmodules$|^\.github/'
               if ! grep -qE "$build" <<<"$files"; then full=false; fi
-              not_gui='^(libs|tests|bridges|tools|cmake|patches|external|template|docs)/|^examples/([^g]|g[^u]|gu[^i]|gui[^_])|(^|/)CMakeLists\.txt$|^CMakePresets\.json$'
-              if [ "$docs_only" = false ] && ! grep -qE "$gui_reads" <<<"$files" && ! grep -qvE "$not_gui" <<<"$files"; then
+              not_gui='^(libs|tests|bridges|tools|cmake|patches|external|template|docs|schema)/|^examples/([^g]|g[^u]|gu[^i]|gui[^_])|(^|/)CMakeLists\.txt$|^CMakePresets\.json$|^\.gitmodules$'
+              if [ "$docs_only" = false ] && ! grep -qE "$gui_reads|$gui_doc_reads|$pack_reads" <<<"$files" && ! grep -qvE "$not_gui" <<<"$files"; then
                 gui=false
+                gui_server=false
               fi
-              if [ "$docs_only" = true ] && grep -qE "^gui/|$gui_reads" <<<"$files"; then gui_docs=true; fi
-              if [ "$docs_only" = true ] && grep -qE "$control_reads" <<<"$files"; then control_docs=true; fi
+              if [ "$docs_only" = false ] && [ "$gui" = true ] && ! grep -qvE "$not_gui" <<<"$files" && ! grep -qE '^tests/launch/timeline/|^docs/(ja/)?gui\.md$' <<<"$files"; then
+                gui=false
+                gui_server=true
+              fi
+              if [ "$docs_only" = true ]; then
+                gui_server=false
+                tsan=false
+                windows=false
+                if grep -qE "$gui_doc_reads" <<<"$files"; then
+                  gui_docs=true
+                  gui_server=true
+                fi
+                if grep -qE "$pack_reads" <<<"$files"; then gui_pack_docs=true; fi
+                if ! grep -qE "^gui/|$gui_doc_reads|$pack_reads" <<<"$files"; then gui=false; fi
+              fi
             fi
           fi
           if [ "$docs_only" = true ]; then
-            presets='["linux-gcc-debug"]'
-            if [ "$control_docs" = true ]; then presets='["linux-gcc-debug", "linux-gcc-control"]'; fi
+            presets='[]'
+            if grep -qE "$control_reads" <<<"$files"; then
+              presets='["linux-gcc-debug", "linux-gcc-control"]'
+            elif grep -qE "$debug_reads_docs" <<<"$files"; then
+              presets='["linux-gcc-debug"]'
+            fi
           elif [ "$full" = true ]; then
-            presets='["linux-gcc-debug", "linux-gcc-release", "linux-gcc-static", "linux-clang-tsan", "linux-gcc-control"]'
+            presets='["linux-gcc-debug", "linux-gcc-release", "linux-gcc-static", "linux-gcc-control"]'
+          elif [ "$EVENT" = pull_request ] && [ -n "${files:-}" ] && ! grep -qvE '^tools/knowledge/' <<<"$files"; then
+            presets='[]'
+            tsan=false
+            windows=false
+            gui=false
+            gui_server=false
+          elif [ "$EVENT" = pull_request ] && [ -n "${files:-}" ] && ! grep -qvE '^(gui|examples/gui_(client|starter)|docs)/|\.md$' <<<"$files" && ! grep -qE "$cpp_reads_gui|$debug_reads_docs|$control_reads" <<<"$files"; then
+            presets='[]'
+            tsan=false
+            windows=false
+          elif [ "$EVENT" = pull_request ] && [ -n "${files:-}" ] && ! grep -qvE '^(gui|examples/gui_(client|starter)|docs)/|\.md$' <<<"$files" && ! grep -qE '^gui/(server/|protocol/dashboard\.schema\.json$)' <<<"$files" && ! grep -qE "$control_reads" <<<"$files"; then
+            presets='["linux-gcc-debug"]'
+            tsan=false
+            windows=false
+          elif [ "$EVENT" = pull_request ] && [ -n "${files:-}" ] && ! grep -qvE '^(gui|examples/gui_(client|starter)|docs)/|\.md$' <<<"$files"; then
+            presets='["linux-gcc-debug", "linux-gcc-control"]'
+            tsan=false
+            windows=false
           else
-            presets='["linux-gcc-debug", "linux-clang-tsan", "linux-gcc-control"]'
+            presets='["linux-gcc-debug", "linux-gcc-control"]'
           fi
           # The address sanitizer only after a merge: a pull request is not held for it (the job `all checks` still
           # looks at it, so that a failure on main shows).
@@ -116,36 +171,35 @@ jobs:
           echo "docs_only=$docs_only" | tee -a "$GITHUB_OUTPUT"
           echo "full=$full" | tee -a "$GITHUB_OUTPUT"
           echo "gui=$gui" | tee -a "$GITHUB_OUTPUT"
+          echo "gui_server=$gui_server" | tee -a "$GITHUB_OUTPUT"
           echo "gui_docs=$gui_docs" | tee -a "$GITHUB_OUTPUT"
+          echo "gui_pack_docs=$gui_pack_docs" | tee -a "$GITHUB_OUTPUT"
+          echo "tsan=$tsan" | tee -a "$GITHUB_OUTPUT"
+          echo "windows=$windows" | tee -a "$GITHUB_OUTPUT"
           echo "presets=$presets" | tee -a "$GITHUB_OUTPUT"
 
   linux:
     needs: changes
+    if: needs.changes.outputs.presets != '[]'
     name: linux (${{ matrix.preset }})
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    # In a pull request, a race that only the thread sanitizer finds is reported but does not hold the merge: the
-    # leg's check shows its failure, the job's result (what `all checks` reads) stays a success. On main the leg
-    # counts: the run fails, and release.yml, which wants this workflow's run to have passed, stays shut.
-    continue-on-error: ${{ matrix.preset == 'linux-clang-tsan' && github.event_name == 'pull_request' }}
     strategy:
       fail-fast: false
       matrix:
         # linux-gcc-static: VEHICLE_SIL_STATIC=ON (SIL Kit and the C++ runtime linked into each executable)
-        # linux-clang-tsan: the thread sanitizer; a race in a test or in the product shows only here
         # linux-clang-asan: the address sanitizer (a push to main only)
+        # (the thread sanitizer is the job linux-tsan below)
         # linux-gcc-control: VEHICLE_SIL_BUILD_CONTROL_SERVER=ON (the pinned gRPC built with FetchContent, the
-        # control server's tests, and the GUI server against this launcher and its control server)
+        # control server's tests, and the GUI server's real-launcher tests against this launcher and its control server)
         preset: ${{ fromJSON(needs.changes.outputs.presets) }}
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       # gRPC, protobuf, abseil and BoringSSL are most of what linux-gcc-control compiles: it needs more room. So
       # does linux-gcc-release: the template's own build (FetchContent, Debug) goes into the same cache.
-      CCACHE_MAXSIZE: ${{ (matrix.preset == 'linux-gcc-control' || matrix.preset == 'linux-gcc-release') && '2G' || '1G' }}
+      CCACHE_MAXSIZE: ${{ matrix.preset == 'linux-gcc-control' && '1.2G' || matrix.preset == 'linux-gcc-release' && '750M' || matrix.preset == 'linux-gcc-debug' && '650M' || '500M' }}
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
-      # Empty (not set) for the thread sanitizer: its preset's default factor (4) applies.
-      VEHICLE_SIL_TEST_TIMEOUT_SCALE: ${{ matrix.preset != 'linux-clang-tsan' && '3' || '' }}
       VEHICLE_SIL_LOG_ARTIFACT: logs-${{ matrix.preset }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -169,7 +223,7 @@ jobs:
           libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
       # The sanitizers cannot map their shadow memory when the kernel randomizes addresses with more bits.
       - name: Address space layout for the sanitizers
-        if: matrix.preset == 'linux-clang-tsan' || matrix.preset == 'linux-clang-asan'
+        if: matrix.preset == 'linux-clang-asan'
         run: sudo sysctl -w vm.mmap_rnd_bits=28 && clang++ --version | head -n 1
       # multi_host.two_hosts makes two computers as network namespaces in a user namespace, which Ubuntu's AppArmor
       # does not let a user make by default; with VEHICLE_SIL_REQUIRE_MULTI_HOST=1 the test fails rather than skips.
@@ -246,13 +300,14 @@ jobs:
             echo "::error::schema.files_and_launcher is not registered: CMake found no Python 3.11+ with PyYAML and jsonschema (see 'the tests of the JSON Schemas are skipped' in build/logs/ci-linux-gcc-debug-configure.log), or the launcher and the examples of examples/ecu_main were not built; run uv sync --locked (its dev group has both) before the configure"
             exit 1
           fi
-      # The GUI server against this launcher and its control server (gui/server/tests/test_real_launcher.py records
-      # every case again, those with the control server too, and compares; test_real_variables.py reads and writes
-      # the example ECUs' variables). The screen and its browser tests are in the gui job (without a real launcher).
+      # The GUI server's real-launcher tests against this launcher and its control server (gui/server/tests/test_real_launcher.py
+      # records every case again, those with the control server too, and compares; test_real_text_check.py checks unsaved
+      # text and saving; test_real_variables.py reads and writes the example ECUs' variables). The tests against the
+      # stand-in launcher run in gui-server, and the screen and its browser tests in gui.
       - name: The GUI server against this launcher
         if: matrix.preset == 'linux-gcc-control'
         run: >-
-          python3 scripts/verify-gui.py --skip-web --skip-e2e --no-wait --tag ci
+          python3 scripts/verify-gui.py --skip-web --skip-e2e --no-wait -k test_real_ --tag ci
           --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch
       # Only a run on main saves the compiler cache. A pull request reads the newest one of main; if each push
       # of each pull request saved its own, the repository would go over the size GitHub keeps and the caches
@@ -269,6 +324,58 @@ jobs:
           path: build/logs
           retention-days: 14
 
+  # The thread sanitizer (linux-clang-tsan): a race in a test or in the product shows only here. Not in the matrix of
+  # `linux`, so that `all checks` does not wait for it in a pull request: there a race is reported (the job's check
+  # shows its failure) but does not hold the merge, and its result stays a success (continue-on-error). On main it
+  # counts: a failure fails the run, and release.yml, which wants this workflow's run to have passed, stays shut.
+  # `all checks` does not list it (tests/scripts/test_ci_workflow.py knows this one exception).
+  linux-tsan:
+    needs: changes
+    if: needs.changes.outputs.tsan == 'true'
+    name: linux (linux-clang-tsan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      # Empty (not set): the preset's default factor (4) applies.
+      VEHICLE_SIL_TEST_TIMEOUT_SCALE: ""
+      VEHICLE_SIL_LOG_ARTIFACT: logs-linux-clang-tsan
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Install Ninja, ccache, ethtool and libpcap
+        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache ethtool libpcap0.8
+      - name: Python environment (PyYAML for the code generator, gRPC for the Python tests)
+        run: uv sync --locked
+      # The sanitizers cannot map their shadow memory when the kernel randomizes addresses with more bits.
+      - name: Address space layout for the sanitizer
+        run: sudo sysctl -w vm.mmap_rnd_bits=28 && clang++ --version | head -n 1
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-linux-clang-tsan-${{ github.sha }}
+          restore-keys: ccache-linux-clang-tsan-
+      - name: Configure, build and test
+        run: python3 scripts/verify.py linux-clang-tsan --tag ci
+      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-linux-clang-tsan-${{ github.sha }}
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logs-linux-clang-tsan
+          path: build/logs
+          retention-days: 14
+
   # The oldest CMake that docs/build.md asks for (3.21, its last release), so that every run checks that claim. Kitware's
   # own Linux build, checked against the SHA-256 that the release lists (cmake-3.21.7-SHA-256.txt).
   linux-oldest-cmake:
@@ -279,7 +386,7 @@ jobs:
     timeout-minutes: 120
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 1G
+      CCACHE_MAXSIZE: 750M
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       CMAKE_OLDEST: 3.21.7
@@ -302,13 +409,12 @@ jobs:
           echo "$RUNNER_TEMP/$archive/bin" >> "$GITHUB_PATH"
       - name: Python environment (PyYAML for the code generator, gRPC for the Python tests)
         run: uv sync --locked
+      # Reads the compiler cache that the leg linux-gcc-release saves on main (same compiler and flags).
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-linux-gcc-release-cmake-${{ env.CMAKE_OLDEST }}-${{ github.sha }}
-          restore-keys: |
-            ccache-linux-gcc-release-cmake-${{ env.CMAKE_OLDEST }}-
-            ccache-linux-gcc-release-
+          key: ccache-linux-gcc-release-${{ github.sha }}
+          restore-keys: ccache-linux-gcc-release-
       - name: Configure, build and test
         env:
           VEHICLE_SIL_LOG_ARTIFACT: logs-linux-gcc-release-cmake-${{ env.CMAKE_OLDEST }}
@@ -316,14 +422,6 @@ jobs:
           cmake --version | head -n 1
           cmake --version | grep -qxF "cmake version $CMAKE_OLDEST"
           python3 scripts/verify.py linux-gcc-release --tag ci
-      # Only a run on main saves the compiler cache. A pull request reads the newest one of main; if each push
-      # of each pull request saved its own, the repository would go over the size GitHub keeps and the caches
-      # of main would be the ones thrown out.
-      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .ccache
-          key: ccache-linux-gcc-release-cmake-${{ env.CMAKE_OLDEST }}-${{ github.sha }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -333,7 +431,7 @@ jobs:
 
   windows:
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.windows == 'true'
     name: windows (windows-mingw-release)
     runs-on: windows-2025
     timeout-minutes: 150
@@ -341,7 +439,7 @@ jobs:
       run:
         shell: msys2 {0}
     env:
-      CCACHE_MAXSIZE: 1G
+      CCACHE_MAXSIZE: 500M
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       VEHICLE_SIL_LOG_ARTIFACT: logs-windows-mingw-release
@@ -404,7 +502,7 @@ jobs:
   gui:
     needs: changes
     if: needs.changes.outputs.gui == 'true'
-    name: gui (server, screen, examples)
+    name: gui (screen, examples, workbench)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -430,9 +528,10 @@ jobs:
         if: needs.changes.outputs.docs_only != 'true'
         working-directory: gui/web
         run: npx playwright install --with-deps --only-shell chromium
-      - name: Server, screen and examples
+      # The server's tests run in the job gui-server at the same time (the two take about as long as each other).
+      - name: Screen and examples
         if: needs.changes.outputs.docs_only != 'true'
-        run: python3 scripts/verify-gui.py --skip-install --tag ci
+        run: python3 scripts/verify-gui.py --skip-server --skip-install --no-wait --tag ci
       # The Workbench example (gui/web/workbench) has its own packages and build, and its browser tests skip
       # themselves unless VEHICLE_SIL_VERIFY_WORKBENCH is set (verify-web.py --workbench sets it).
       - name: Install the packages of the Workbench
@@ -441,13 +540,15 @@ jobs:
       - name: Workbench (build and browser tests)
         if: needs.changes.outputs.docs_only != 'true'
         run: python3 scripts/verify-web.py --skip-install --workbench --no-wait --tag ci-workbench
-      # Only documents changed, and one of them is read by a test of this job (the `gui_reads` list of the job
-      # `changes`): the GUI server's tests and the timeline element's test, which need no browser and no C++ build.
-      - name: Tests that read the changed documents (the server, the timeline element)
+      # Only documents changed, and one of them is read by the timeline element's test (the `gui_doc_reads` list of
+      # the job `changes`; the GUI server's tests run in gui-server): needs no browser and no C++ build.
+      - name: Tests that read the changed documents (the timeline element)
         if: needs.changes.outputs.docs_only == 'true' && needs.changes.outputs.gui_docs == 'true'
-        run: |
-          python3 scripts/verify-gui.py --skip-web --no-wait --tag ci
-          npm --prefix gui/web run test:timeline
+        run: npm --prefix gui/web run test:timeline
+      # Only documents changed, and one of them has ```ts code blocks that gui/client/pack.mjs type-checks.
+      - name: Client library package check of the changed READMEs
+        if: needs.changes.outputs.docs_only == 'true' && needs.changes.outputs.gui_pack_docs == 'true'
+        run: npm --prefix gui/web run pack:client
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -455,6 +556,30 @@ jobs:
           path: |
             build/logs
             gui/web/test-results
+          retention-days: 14
+
+  # The GUI server's tests against the stand-in launcher (no Node, no C++ build). Apart from the job gui so that
+  # the two run at the same time; also runs when a pull request changes only documents that these tests read.
+  gui-server:
+    needs: changes
+    if: needs.changes.outputs.gui_server == 'true'
+    name: gui (server)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      VEHICLE_SIL_LOG_ARTIFACT: logs-gui-server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Server
+        run: python3 scripts/verify-gui.py --skip-web --no-wait --tag ci
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logs-gui-server
+          path: build/logs
           retention-days: 14
 
   python:
@@ -508,13 +633,14 @@ jobs:
   # The one check that main's branch protection requires: it passes when every job above passed or was left
   # out (skipped), and fails on anything else. A new job goes into `needs` (tests/scripts/test_ci_workflow.py
   # checks it). Keep the name.
-  # The thread sanitizer's leg of `linux` does not count in a pull request (continue-on-error there); the
-  # address sanitizer's does, and it runs on main only.
+  # The one exception is linux-tsan (the thread sanitizer): it is not waited for, so that a pull request does not
+  # wait for it; on main its failure fails the run, which release.yml reads. The address sanitizer's leg of `linux`
+  # counts, and it runs on main only.
   # `if: always()` must stay: with `!cancelled()` a cancelled run would leave this job skipped, and a skipped
   # required check counts as passed.
   all-checks:
     name: all checks
-    needs: [changes, linux, linux-oldest-cmake, windows, gui, python]
+    needs: [changes, linux, linux-oldest-cmake, windows, gui, gui-server, python]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -527,6 +653,7 @@ jobs:
             linux-oldest-cmake ${{ needs.linux-oldest-cmake.result }}
             windows ${{ needs.windows.result }}
             gui ${{ needs.gui.result }}
+            gui-server ${{ needs.gui-server.result }}
             python ${{ needs.python.result }}
         run: |
           echo "$RESULTS"

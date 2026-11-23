@@ -80,12 +80,15 @@ The job `all checks` in `.github/workflows/ci.yml` is the check that a merge int
 
 | Change | What runs |
 |---|---|
-| Documents only | The links (`python`), the `linux-gcc-debug` tests that compare the documents, and the format of the GUI's READMEs. Also the GUI server's tests and the timeline element's test, when a changed file is in `gui/` or is a document that they read (`docs/gui.md`); also `linux-gcc-control`, when a changed file is `docs/howto/first-ecu.md` or `docs/howto/operate-signals.md`, which its tests compare with the examples |
-| Code | `linux-gcc-debug`, `linux-clang-tsan`, `linux-gcc-control`, Windows, the GUI (unless every file is outside it) and `python` |
-| Build files (CMake, presets, patches, `external/`, `.github/`) | Also `linux-gcc-release`, `linux-gcc-static`, the oldest CMake and the test that builds the ECU project template with FetchContent |
-| A push to `main` | Everything above, and `linux-clang-asan` |
+| Documents only | The links and the schema and template checks (`python`). Also the `linux-gcc-debug` tests that compare the documents when a changed page is one they read (`docs/simulation-*.md`, `docs/scenario.md`, `docs/ecu-executable.md`, `docs/j1939-guide.md`, `docs/howto/*.md`), and `linux-gcc-control` when it is `docs/howto/first-ecu.md` or `docs/howto/operate-signals.md`. Also the format of the GUI's READMEs when a changed file is under `gui/`, the GUI server's tests and the timeline element's test when it is `docs/gui.md` or `gui/protocol/README.md` (or their Japanese pages), and the client library package check (`npm run pack:client`) when it is `gui/client/README.md` or `examples/gui_starter/README.md` (or their Japanese pages) |
+| The browser GUI only (`gui/web`, `gui/client`, `gui/timeline`, `gui/protocol/examples`, `examples/gui_client`, `examples/gui_starter`) | The GUI jobs (`gui` and `gui-server`) and `python`. Also `linux-gcc-debug` when a changed file is one of the files whose limits or constants `tests/launch/test_shared_values.cpp` reads |
+| The GUI server (`gui/server`, `gui/protocol/dashboard.schema.json`) | `gui`, `gui-server`, `linux-gcc-debug`, `linux-gcc-control` and `python` |
+| `tools/knowledge` only | `python` |
+| Code | `linux-gcc-debug`, `linux-clang-tsan`, `linux-gcc-control`, Windows, the GUI jobs (unless every file is outside the GUI and what its tests read) and `python` |
+| Build files (CMake, presets, patches, `external/`, `.gitmodules`, `.github/`) | Also `linux-gcc-release`, `linux-gcc-static`, the oldest CMake and the test that builds the ECU project template with FetchContent |
+| A push to `main` (or `workflow_dispatch`) | Everything above, and `linux-clang-asan` |
 
-In a pull request, a failure of `linux-clang-tsan` is shown on its check but does not fail `all checks`; on `main` it does. `python` also checks the title of a pull request and, when it has one commit, that commit's message (`scripts/check-commits.py --message`), and that no file under `.local/` or `build/` and no `CLAUDE.local.md` is in the change (`--changed`). A re-run reads the old title: after you fix it, push a commit or close and reopen the pull request.
+`all checks` does not wait for `linux-clang-tsan`: in a pull request its failure is shown on its check but does not hold the merge; on `main` it fails the run. `python` also checks the title of a pull request and, when it has one commit, that commit's message (`scripts/check-commits.py --message`), and that no file under `.local/` or `build/` and no `CLAUDE.local.md` is in the change (`--changed`). A re-run reads the old title: after you fix it, push a commit or close and reopen the pull request.
 
 ### Ports and locks
 
