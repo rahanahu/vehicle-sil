@@ -21,6 +21,7 @@ import {
   readSessionResponse,
   readSessionRuntime,
   readTimeResponse,
+  readVariablesReport,
   readVariablesSummary,
   readWriteResponse,
 } from './protocol';
@@ -607,7 +608,7 @@ describe('the readers refuse what they cannot read', () => {
     };
     expect(() => readVariablesSummary(rawVars)).toThrow(ProtocolError);
     const uVars = new Unreadable('variables');
-    const lenientVars = readVariablesSummary(rawVars, uVars);
+    const lenientVars = readVariablesReport(rawVars, 'variables', uVars);
     expect(lenientVars).toEqual({
       rev: null,
       state: 'unknown',

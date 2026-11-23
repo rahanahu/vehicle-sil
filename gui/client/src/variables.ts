@@ -4,7 +4,7 @@ import {
   Unreadable,
   readAvailability,
   readOperationReport,
-  readVariablesSummary,
+  readVariablesReport,
 } from './protocol';
 import type { VariableAvailability } from './protocol';
 import { lenient } from './protocol/read';
@@ -338,7 +338,11 @@ const positionOrNull = (value: unknown) =>
 /** Reads `variables` of a summary. Unreadable parts are skipped as if absent (additions are compatible). */
 export function readVariables(value: unknown, session: number | null): VariablesState {
   const u = new Unreadable('variables');
-  const summary = lenient((v) => readVariablesSummary(v, u), null, u)(value, 'variables');
+  const summary = lenient(
+    (v) => readVariablesReport(v, 'variables', u),
+    null,
+    u,
+  )(value, 'variables');
   if (!summary) return { ...NO_VARIABLES, session };
   const peers: VariablePeer[] = [];
   const availability = new Map<string, Map<string, VariableAvailability>>();

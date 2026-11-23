@@ -1183,10 +1183,14 @@ const readVariableSummary = (value: unknown, path: string, u?: Unreadable): Vari
 };
 
 /** Reads `variables` of a summary (present in `hello` and HTTP summaries, absent from `session` notifications). */
-export const readVariablesSummary = (value: unknown, u?: Unreadable): VariablesSummary =>
-  readVariables(value, 'variables', u);
+export const readVariablesSummary = (value: unknown): VariablesSummary =>
+  readVariablesReport(value, 'variables');
 
-const readVariables = (value: unknown, path: string, u?: Unreadable): VariablesSummary => {
+export const readVariablesReport = (
+  value: unknown,
+  path: string,
+  u?: Unreadable,
+): VariablesSummary => {
   const f = object(value, path);
   return {
     ...(f['rev'] === undefined
@@ -1246,6 +1250,8 @@ const readVariables = (value: unknown, path: string, u?: Unreadable): VariablesS
     ),
   };
 };
+
+const readVariables = readVariablesReport;
 
 /** The `values` notification: the last values of the watched variables, and when they are from. */
 export interface ValuesMessage {
