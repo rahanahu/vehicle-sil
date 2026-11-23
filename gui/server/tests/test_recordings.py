@@ -24,8 +24,9 @@ RECORDINGS = REPLAY.parent / "recordings"
 EXAMPLES = REPLAY.parents[2] / "protocol" / "examples"
 sys.path.insert(0, str(REPLAY.parent))
 import replay_launcher  # noqa: E402
-from record_launcher import (Busy, Case, Recorder, Shapes, check_outside_events, compare,  # noqa: E402
-                             normalize_advertised_addresses, outline, terminal_failure_lateness)
+from record_launcher import (CASES, Busy, Case, Recorder, Shapes, check_outside_events, compare,  # noqa: E402
+                             default_jobs, needs_serial, normalize_advertised_addresses, outline,
+                             terminal_failure_lateness, uses_fixed_port)
 
 ALL = sorted(p.stem for p in RECORDINGS.glob("*.jsonl"))
 RUNS = [name for name in ALL if replay_launcher.read_recording(RECORDINGS / f"{name}.jsonl")[0]["shape"][0] == "run"]
@@ -443,3 +444,16 @@ def test_either_end_treats_participant_ended_and_killed_the_same_for_non_require
     assert outline(killed_missing_forced, either_end=True) != outline(killed, either_end=True)
     assert outline(stopped_spurious_forced, either_end=True) != outline(stopped_on_sigterm, either_end=True)
     assert outline(crashed_sigsegv, either_end=True) != outline(killed, either_end=True)
+
+
+def test_default_jobs_and_serial_cases_avoid_cpu_oversubscription() -> None:
+    assert default_jobs(1) == 1
+    assert default_jobs(2) == 1
+    assert default_jobs(4) == 2
+    assert default_jobs(8) == 4
+    assert default_jobs(12) == 6
+    assert default_jobs(24) == 6
+    assert default_jobs(0) == 2
+    serial = [case.name for case in CASES if needs_serial(case)]
+    assert serial == ["run-participant-crash", "run-participant-crash-speed1"]
+    assert all(not uses_fixed_port(case) for case in CASES if needs_serial(case))

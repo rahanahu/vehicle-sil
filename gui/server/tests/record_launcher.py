@@ -646,11 +646,22 @@ def launcher_features(launcher: Path) -> set[str]:
     return set(json.loads(p.stdout).get("features") or [])
 
 
+def default_jobs(cpu_count: int | None = None) -> int:
+    """Half the logical CPUs (from 1 to 6), so multi-process runs do not oversubscribe a small machine."""
+    cpus = os.cpu_count() if cpu_count is None else cpu_count
+    return max(1, min((cpus or 4) // 2, 6))
+
+
 def uses_fixed_port(case: Case) -> bool:
     """Cases with manual participants or network.yaml bind a fixed SIL Kit registry port (8500 or 8501)."""
     return ("manual" in case.name or "network" in case.name
             or "--manual" in case.argv or "manual.yaml" in case.argv or "network.yaml" in case.argv
             or bool(case.request and case.request.get("manual")))
+
+
+def needs_serial(case: Case) -> bool:
+    """Cases whose sub-second kill-and-exit script must not compete with parallel simulations."""
+    return "participant-crash" in case.name and "--events" in case.argv
 
 
 def record_once(recorder: Recorder, case: Case, again: dict[str, int],
@@ -893,8 +904,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--fake-pcap", type=Path, help="the fake pcap library (default: "
                                                        "tests/eth_link/fake_pcap/vehicle_sil_fake_pcap.so of the "
                                                        "launcher's build)")
-    parser.add_argument("--jobs", type=int, default=min(os.cpu_count() or 4, 6),
-                        help="how many cases to record at once (default: up to 6)")
+    parser.add_argument("--jobs", type=int, default=default_jobs(),
+                        help="how many cases to record at once (default: half the CPUs, up to 6)")
     parser.add_argument("cases", nargs="*", help="the cases (default: all)")
     args = parser.parse_args(argv)
     sys.path.insert(0, str(HERE))
@@ -952,19 +963,30 @@ def main(argv: list[str]) -> int:
                     return record_once(recorder, c, again, retry_lock)
             return record_once(recorder, c, again, retry_lock)
 
-        workers = max(1, min(args.jobs, len(chosen) or 1))
+        parallel = [case for case in chosen if not needs_serial(case)]
+        serial = [case for case in chosen if needs_serial(case)]
+        results: dict[str, tuple[dict, list[dict]]] = {}
+        workers = max(1, min(args.jobs, len(parallel) or 1))
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-            tasks = [(case, pool.submit(run_case_task, case)) for case in chosen]
+            tasks = [(case, pool.submit(run_case_task, case)) for case in parallel]
             for case, future in tasks:
                 try:
-                    head, entries = future.result()
+                    results[case.name] = future.result()
                 except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
                     failed.append(str(e) if str(e).startswith(case.name + ":") else f"{case.name}: {e}")
-                    continue
-                write(out / f"{case.name}.jsonl", head, entries)
-                if args.compare:
-                    failed += compare(case.name, RECORDINGS / f"{case.name}.jsonl", out / f"{case.name}.jsonl",
-                                      shapes, missing)
+        for case in serial:
+            try:
+                results[case.name] = record_once(recorder, case, again)
+            except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+                failed.append(str(e) if str(e).startswith(case.name + ":") else f"{case.name}: {e}")
+        for case in chosen:
+            if case.name not in results:
+                continue
+            head, entries = results[case.name]
+            write(out / f"{case.name}.jsonl", head, entries)
+            if args.compare:
+                failed += compare(case.name, RECORDINGS / f"{case.name}.jsonl", out / f"{case.name}.jsonl",
+                                  shapes, missing)
         if args.compare:  # the shapes of every kind of event, over the cases compared (the same on both sides)
             failed += [f"shapes: {d}: record again and read the diff" for d in shapes[0].differences(shapes[1])]
     for line in failed:
