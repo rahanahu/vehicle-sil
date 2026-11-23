@@ -74,7 +74,8 @@ struct CheckOptions
 };
 
 /// Checks the file of `request` (RunHost::config, shown as given): reads it, checks the
-/// executables, runs each --describe in turn (not in parallel), compares. A disabled participant's
+/// executables, runs each --describe (bounded concurrency for live checks; results folded in
+/// participant order), compares. A disabled participant's
 /// executable is neither looked for nor run. With RunIntent::scenario, the scenario file is read
 /// and checked against the participants' descriptions as well (if the configuration could be
 /// read). Never throws for a problem of a file or of an executable: they are findings. The
