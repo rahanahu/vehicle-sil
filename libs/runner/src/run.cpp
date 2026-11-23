@@ -479,9 +479,12 @@ void RunnerImpl::close_connection(std::shared_ptr<RunConnection> connection)
     const int interrupts = ctx_.interrupts();
     // The thread keeps the connection, and reaches nothing else of this run (the list at the
     // top of this file): the Runner may be destroyed while the thread is still closing.
-    // `interrupted` is asked on this thread, during the wait only.
-    const auto left = detail::close_connection_within(std::move(connection), close_limit_, ctx_.plan.poll,
-                                                      [this, interrupts] { return ctx_.interrupts() > interrupts; });
+    // `interrupted` is asked on this thread, during the wait only: the caller's rule
+    // (RunObservers::close_cut, serve), else a stop request that comes after the wait began.
+    const auto left = detail::close_connection_within(
+      std::move(connection), close_limit_, ctx_.plan.poll,
+      [this, interrupts] { return ctx_.observers.close_cut ? ctx_.observers.close_cut(interrupts) : ctx_.interrupts() > interrupts; },
+      detail::fault_close_delay());
     if (!left)
     {
         return;

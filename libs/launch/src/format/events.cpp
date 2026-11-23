@@ -49,6 +49,25 @@ void optional_text(Writer& w, std::string_view key, const std::string& value)
     }
 }
 
+/// `members` (a compact JSON object) with "run":`run` as its first member (a run's window).
+std::string with_run(const std::string& run, const std::string& members)
+{
+    Writer head(true);
+    head.begin_object();
+    head.string("run", run);
+    std::string out = head.take(); // "{"run":...": the object is still open
+    if (members.size() > 2)
+    {
+        out += ',';
+        out.append(members, 1, std::string::npos);
+    }
+    else
+    {
+        out += '}';
+    }
+    return out;
+}
+
 } // namespace
 
 std::string format_version_text() { return std::string("vehicle_sil_launch ") + version() + "\n"; }
@@ -135,6 +154,12 @@ struct Line
     bool last = false;
     /// Set: the place of dropped "log" events ("log_dropped"; `members` is made when it is written).
     std::unique_ptr<Dropped> dropped{};
+    /// The window that made it (serve: EventStream::open_run()); 0: the stream itself.
+    std::uint64_t window = 0;
+    /// "log_dropped" of a window: its run, put first when `members` is made.
+    std::string run{};
+    /// Its place in the queue (1, 2, ...), which result() waits for; 0: a heartbeat.
+    std::uint64_t order = 0;
 };
 
 } // namespace
@@ -157,6 +182,14 @@ struct EventStream::State
     std::size_t log_bytes = 0;
     std::size_t other_events = 0;
     Dropped* dropping = nullptr; ///< the last line of the queue's "log_dropped", while no "log" follows it
+
+    std::uint64_t dropping_window = 0; ///< the window of `dropping`
+
+    std::uint64_t queued = 0;      ///< the order of the last line queued
+    std::uint64_t done_order = 0;  ///< the order of the last line written
+    std::uint64_t next_window = 1; ///< the number of the next window (open_run())
+    std::uint64_t open_window = 0; ///< the window open now, whose run the heartbeats name; 0: none
+    std::string open_run{};        ///< its run
 
     std::int64_t seq = 0;        ///< of the next line written
     bool writing = false;        ///< the writer is in a line
@@ -188,6 +221,19 @@ struct EventStream::State
         alarm.notify_all();
     }
 };
+
+/// A run's window: what it adds to the stream's state (guarded by the state's mutex).
+struct EventStream::Window
+{
+    std::string run;
+    std::uint64_t number = 0;
+    bool closed = false; ///< its result has been given, or it has been destroyed
+};
+
+EventStream::EventStream(std::shared_ptr<State> state, std::shared_ptr<Window> window) :
+  state_(std::move(state)), window_(std::move(window))
+{
+}
 
 EventStream::EventStream(Write write, OnClosed on_closed, EventStreamOptions options) : state_(std::make_shared<State>())
 {
@@ -228,6 +274,20 @@ EventStream::EventStream(Write write, OnClosed on_closed, EventStreamOptions opt
 EventStream::~EventStream()
 {
     std::unique_lock lock(state_->mutex);
+    if (window_)
+    {
+        // A window only closes: the stream and its threads are not its.
+        if (!window_->closed)
+        {
+            window_->closed = true;
+            if (state_->open_window == window_->number)
+            {
+                state_->open_window = 0;
+                state_->open_run.clear();
+            }
+        }
+        return;
+    }
     state_->ending = true;
     state_->work.notify_all();
     state_->alarm.notify_all();
@@ -270,7 +330,8 @@ void EventStream::write_lines(const std::shared_ptr<State>& state)
                 continue;
             }
             line.event = "heartbeat";
-            line.members = "{}";
+            // In a run's window, a heartbeat is the run's line too.
+            line.members = s.open_run.empty() ? std::string("{}") : with_run(s.open_run, "{}");
             line.t_ms = s.options.now_ms();
         }
         else
@@ -293,6 +354,10 @@ void EventStream::write_lines(const std::shared_ptr<State>& state)
                     }
                     w.end_object();
                 });
+                if (!line.run.empty())
+                {
+                    line.members = with_run(line.run, line.members);
+                }
             }
             else if (line.log)
             {
@@ -352,6 +417,10 @@ void EventStream::write_lines(const std::shared_ptr<State>& state)
         }
         s.writing = false;
         s.written = Clock::now();
+        if (line.order != 0)
+        {
+            s.done_order = line.order;
+        }
         s.changed.notify_all();
         if (line.last)
         {
@@ -397,28 +466,39 @@ void EventStream::watch(const std::shared_ptr<State>& state)
     s.changed.notify_all();
 }
 
-bool EventStream::emit(std::string_view event, std::string members, Kind kind, const std::string& source)
+bool EventStream::emit(std::string_view event, std::string members, Kind kind, const std::string& source,
+                       std::uint64_t* order)
 {
     State& s = *state_;
+    if (window_)
+    {
+        members = with_run(window_->run, members); // the run ID never changes: no lock needed
+    }
     const std::lock_guard lock(s.mutex);
-    if (s.closed || s.sealed || s.ending)
+    if (s.closed || s.sealed || s.ending || (window_ && window_->closed))
     {
         return false;
     }
+    const std::uint64_t window = window_ ? window_->number : 0;
     Line line;
     line.t_ms = s.options.now_ms();
+    line.window = window;
     if (kind == Kind::Log)
     {
         if (s.log_lines > 0 && (s.log_lines >= s.options.max_log_lines || s.log_bytes + members.size() > s.options.max_log_bytes))
         {
-            // No room: counted at this place of the stream instead.
-            if (s.dropping == nullptr)
+            // No room: counted at this place of the stream instead (a place of this window's).
+            if (s.dropping == nullptr || s.dropping_window != window)
             {
                 Line place;
                 place.event = "log_dropped";
                 place.t_ms = line.t_ms;
                 place.dropped = std::make_unique<Dropped>();
+                place.window = window;
+                place.run = window_ ? window_->run : std::string{};
+                place.order = ++s.queued;
                 s.dropping = place.dropped.get();
+                s.dropping_window = window;
                 s.queue.push_back(std::move(place));
                 s.work.notify_one();
             }
@@ -436,14 +516,15 @@ bool EventStream::emit(std::string_view event, std::string members, Kind kind, c
         // Only the latest state means anything: one that still waits is taken out, and this one
         // goes to the end of the queue, after the history it reflects. So at most one waits, and
         // it is not counted among the events that close the stream.
-        const auto old = std::find_if(s.queue.rbegin(), s.queue.rend(), [](const Line& l) { return l.state; });
+        const auto old =
+          std::find_if(s.queue.rbegin(), s.queue.rend(), [window](const Line& l) { return l.state && l.window == window; });
         if (old != s.queue.rend())
         {
             s.queue.erase(std::next(old).base());
         }
         line.state = true;
     }
-    else if (kind == Kind::Other)
+    else if (kind == Kind::Other || kind == Kind::Open)
     {
         if (s.other_events >= s.options.max_other_events)
         {
@@ -451,6 +532,28 @@ bool EventStream::emit(std::string_view event, std::string members, Kind kind, c
             return false;
         }
         ++s.other_events;
+        if (kind == Kind::Open && window_)
+        {
+            s.open_window = window;
+            s.open_run = window_->run;
+        }
+    }
+    else if (window_)
+    {
+        // A run's result: the window's last line; with Kind::ResultFinal (launcher_ends: true),
+        // the stream ends here too so nothing follows it.
+        ++s.other_events;
+        window_->closed = true;
+        if (s.open_window == window)
+        {
+            s.open_window = 0;
+            s.open_run.clear();
+        }
+        if (kind == Kind::ResultFinal)
+        {
+            s.sealed = true;
+            line.last = true;
+        }
     }
     else
     {
@@ -460,6 +563,11 @@ bool EventStream::emit(std::string_view event, std::string members, Kind kind, c
     }
     line.event = std::string(event);
     line.members = std::move(members);
+    line.order = ++s.queued;
+    if (order != nullptr)
+    {
+        *order = line.order;
+    }
     s.queue.push_back(std::move(line));
     s.work.notify_one();
     return true;
@@ -490,20 +598,118 @@ std::string EventStream::close_reason() const
     return state_->reason;
 }
 
+namespace {
+
+/// The members of "hello": `launcher` only for serve.
+std::string hello_members(int format, long pid, const std::string& file, const std::vector<std::string>& arguments,
+                          const std::string* launcher)
+{
+    return object([&](Writer& w) {
+        w.integer("vehicle_sil_events", format);
+        w.string("vehicle_sil", version());
+        w.integer("pid", pid);
+        optional_text(w, "file", file);
+        w.begin_array("arguments");
+        for (const auto& argument : arguments)
+        {
+            w.string({}, argument);
+        }
+        w.end_array();
+        if (launcher != nullptr)
+        {
+            w.string("launcher", *launcher);
+        }
+    });
+}
+
+/// The members of "command" (EventStream::command()), into an object that is open.
+void write_command_members(Writer& w, const runner::Command& command, std::string_view source)
+{
+    if (command.name)
+    {
+        w.string("command", *command.name);
+    }
+    else
+    {
+        w.null("command");
+    }
+    w.string("source", source);
+    w.boolean("accepted", command.accepted);
+    optional_text(w, "message", command.message);
+    // Not accepted: the code of why, for a program.
+    optional_text(w, "reason", command.accepted ? std::string{} : command.reason);
+    // step: how far the simulation goes (a whole number of the controller's steps).
+    if (command.accepted && command.name == "step" && command.ms)
+    {
+        w.integer("ms", *command.ms);
+    }
+    // step, run_until, pause at (a control client): where it will stand.
+    if (command.accepted && command.at_ms)
+    {
+        w.integer("at_ms", *command.at_ms);
+    }
+    // The sender's number, as it came.
+    if (command.id)
+    {
+        w.integer("id", *command.id);
+    }
+    else
+    {
+        w.null("id");
+    }
+}
+
+} // namespace
+
 void EventStream::hello(long pid, const std::string& file, const std::vector<std::string>& arguments)
 {
-    emit("hello", object([&](Writer& w) {
-             w.integer("vehicle_sil_events", kEventsFormat);
-             w.string("vehicle_sil", version());
-             w.integer("pid", pid);
-             optional_text(w, "file", file);
-             w.begin_array("arguments");
-             for (const auto& argument : arguments)
+    emit("hello", hello_members(kEventsFormat, pid, file, arguments, nullptr));
+}
+
+void EventStream::hello(long pid, const std::string& file, const std::vector<std::string>& arguments,
+                        const std::string& launcher)
+{
+    emit("hello", hello_members(kServeEventsFormat, pid, file, arguments, &launcher));
+}
+
+void EventStream::idle() { emit("idle", "{}"); }
+
+void EventStream::refused(const runner::Command& command, std::string_view source, const std::optional<std::string>& asked_run)
+{
+    emit("command", object([&](Writer& w) {
+             write_command_members(w, command, source);
+             if (asked_run)
              {
-                 w.string({}, argument);
+                 w.string("asked_run", *asked_run);
              }
-             w.end_array();
+             else
+             {
+                 w.null("asked_run");
+             }
          }));
+}
+
+std::unique_ptr<EventStream> EventStream::open_run(const std::string& run, std::optional<std::int64_t> id)
+{
+    auto window = std::make_shared<Window>();
+    window->run = run;
+    {
+        const std::lock_guard lock(state_->mutex);
+        window->number = state_->next_window++;
+    }
+    std::unique_ptr<EventStream> out(new EventStream(state_, std::move(window)));
+    out->emit("run_start", object([&](Writer& w) {
+                  if (id)
+                  {
+                      w.integer("id", *id);
+                  }
+                  else
+                  {
+                      w.null("id");
+                  }
+              }),
+              Kind::Open);
+    return out;
 }
 
 void EventStream::phase(runner::Phase phase)
@@ -682,40 +888,7 @@ void EventStream::time(const runner::TimeEvent& time)
 
 void EventStream::command(const runner::Command& command, std::string_view source)
 {
-    emit("command", object([&](Writer& w) {
-             if (command.name)
-             {
-                 w.string("command", *command.name);
-             }
-             else
-             {
-                 w.null("command");
-             }
-             w.string("source", source);
-             w.boolean("accepted", command.accepted);
-             optional_text(w, "message", command.message);
-             // Not accepted: the code of why, for a program.
-             optional_text(w, "reason", command.accepted ? std::string{} : command.reason);
-             // step: how far the simulation goes (a whole number of the controller's steps).
-             if (command.accepted && command.name == "step" && command.ms)
-             {
-                 w.integer("ms", *command.ms);
-             }
-             // step, run_until, pause at (a control client): where it will stand.
-             if (command.accepted && command.at_ms)
-             {
-                 w.integer("at_ms", *command.at_ms);
-             }
-             // The sender's number, as it came.
-             if (command.id)
-             {
-                 w.integer("id", *command.id);
-             }
-             else
-             {
-                 w.null("id");
-             }
-         }));
+    emit("command", object([&](Writer& w) { write_command_members(w, command, source); }));
 }
 
 namespace {
@@ -823,19 +996,24 @@ void EventStream::state(const runner::RunState& state)
          Kind::State);
 }
 
-bool EventStream::result(std::string members, const std::function<bool()>& give_up)
+bool EventStream::result(std::string members, const std::function<bool()>& give_up, bool seal)
 {
-    if (!emit("result", std::move(members), Kind::Result))
+    std::uint64_t order = 0;
+    const Kind kind = (window_ && seal) ? Kind::ResultFinal : Kind::Result;
+    if (!emit("result", std::move(members), kind, {}, &order))
     {
         return false;
     }
+    // The stream's result (or a window's result that seals the stream) is the last line; an
+    // unsealed window's result is written when the writer has come past it.
+    const auto written = [this, order, seal](const State& s) { return (window_ && !seal) ? s.done_order >= order : s.finished; };
     State& s = *state_;
     std::unique_lock lock(s.mutex);
     // The limit of this wait is its own: a reader that reads, but too slowly, is no reader that
     // does not read (the watch's limit).
     const auto start = Clock::now();
     const auto deadline = start + s.options.stall_timeout;
-    while (!s.finished && !s.closed)
+    while (!written(s) && !s.closed)
     {
         const auto now = Clock::now();
         if (now >= deadline)
@@ -848,7 +1026,7 @@ bool EventStream::result(std::string members, const std::function<bool()>& give_
             lock.unlock();
             const bool over = give_up();
             lock.lock();
-            if (over && !s.finished)
+            if (over && !written(s))
             {
                 s.close("the result was not read, and the wait for its reader was stopped");
                 break;
@@ -856,7 +1034,7 @@ bool EventStream::result(std::string members, const std::function<bool()>& give_
         }
         s.changed.wait_for(lock, std::chrono::milliseconds(10));
     }
-    return s.finished;
+    return written(s);
 }
 
 } // namespace vehicle_sil::launch

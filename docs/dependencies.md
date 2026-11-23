@@ -503,6 +503,16 @@ Nothing tells the joining participant that the other one is gone.
 
 **Reported upstream**: Not yet.
 
+### MinGW GCC (`winpthreads`): `std::recursive_mutex` leaks a Win32 `Event` handle on destruction
+
+**Description**: With MinGW-w64 GCC built for the `posix` thread model (`winpthreads`, as on MSYS2 UCRT64), `libstdc++`'s `os_defines.h` defines `_GTHREAD_USE_MUTEX_INIT_FUNC` and `_GTHREAD_USE_COND_INIT_FUNC` so `std::mutex` and `std::condition_variable` destroy their `winpthreads` resources, but does not define `_GTHREAD_USE_RECURSIVE_MUTEX_INIT_FUNC`. As a result, `std::recursive_mutex` uses `PTHREAD_RECURSIVE_MUTEX_INITIALIZER` with a trivial destructor and never calls `pthread_mutex_destroy()`. Locking a `std::recursive_mutex` lazily allocates a Win32 `Event` handle in `winpthreads`, which then leaks when the mutex is destroyed.
+
+**Impact**: SIL Kit uses `std::recursive_mutex` in several internal services and handler lists. In a resident launcher (`vehicle_sil_launch serve`) that creates and destroys SIL Kit objects on every run, the launcher leaks roughly 15–17 Win32 `Event` handles per run without a workaround.
+
+**Handling**: In `cmake/VehicleSilDependencies.cmake`, MinGW builds add `_GTHREAD_USE_RECURSIVE_MUTEX_INIT_FUNC=1` to SIL Kit's internal interface target (`I_SilKit`). Only `gthr-posix.h` inspects this macro, so it is a no-op on non-`winpthreads` toolchains, and SIL Kit's public ABI is a C API so the macro does not cross a binary boundary. With this workaround, handle growth drops to roughly +1 handle per run (remaining small growth is a known limitation, not blocking repeated runs in practice).
+
+**Reported upstream**: Not reported.
+
 ## Patches to SIL Kit
 
 The patches in `patches/sil-kit/` were created with `git format-patch` on the upstream tag `v5.0.8` (the pinned commit) and follow the upstream style (clang-format). 0001 includes an upstream integration test, and 0006 includes upstream unit tests.

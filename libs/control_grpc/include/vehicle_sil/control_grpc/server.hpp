@@ -122,6 +122,13 @@ struct SecurityOptions
 /// tell the refusals apart without reading the message (ObserveOnly::reason, Refused::reason()).
 inline constexpr const char* kRefusalReasonKey = "vehicle-sil-reason";
 
+/// The name of the metadata a client names the run it means with (ServerOptions::run).
+inline constexpr const char* kRunKey = "vehicle-sil-run";
+/// The refusal reasons (kRefusalReasonKey) of a call for another run (ServerOptions::run): a call
+/// without the run where it is required, and a call that names another run.
+inline constexpr const char* kRunRequired = "run-required";
+inline constexpr const char* kRunChanged = "run-changed";
+
 /// What a TimeControl operation throws when it refuses the call for a reason that a program must
 /// tell apart: the client gets FAILED_PRECONDITION with what(), and reason() as the trailing
 /// metadata kRefusalReasonKey (left out unless it is a word of a-z, 0-9 and '-').
@@ -191,8 +198,20 @@ struct ServerOptions
     /// `time`, with a line in the audit log. The calls that read or wait are served as always, and
     /// so is Stop (a simulation can always be ended).
     std::optional<ObserveOnly> observe_only{};
+    /// The ID of the run the server belongs to: an opaque string of printable ASCII without spaces,
+    /// at most 128 bytes (std::invalid_argument otherwise); empty: none. Ping reports it
+    /// (PingReply.run). Every other call that carries the metadata kRunKey with another value (or
+    /// with any value when `run` is empty) is refused with FAILED_PRECONDITION and the reason
+    /// kRunChanged, after the authentication and the role and before anything else: so a client of
+    /// an earlier run, whose channel reconnected by itself to this server at the same address,
+    /// cannot act on this one. Not a credential: whoever may call Ping can read it.
+    std::string run{};
+    /// Every call but Ping must carry kRunKey (refused with the reason kRunRequired without it).
+    /// Needs `run` (std::invalid_argument otherwise). false: a call without it is served.
+    bool run_required = false;
     /// Called with one line for every call that changes something (write, time operations) and
-    /// for refused calls: who, from where, what, and the outcome. Control
+    /// for refused calls: who, from where, what, and the outcome; "[run <run>] " before it when
+    /// `run` is set (one audit file can hold the lines of several runs). Control
     /// characters become '?' and a line is cut at about 1000 bytes. Refused calls are thinned
     /// out (anyone who reaches the port can make them): at most 20 lines per second, and a line
     /// with the number left out. Must be thread safe.

@@ -114,9 +114,60 @@ public:
         grpc::ServerContext* context;
     };
 
+    /// Why a call is not for this server's run (ServerOptions::run): kRunRequired, kRunChanged, or
+    /// nullptr if it is. Every value of the metadata must name the run (any value is refused when
+    /// `options_.run` is empty).
+    [[nodiscard]] const char* other_run(const grpc::ServerContext& context) const
+    {
+        const auto [first, last] = context.client_metadata().equal_range(grpc::string_ref(kRunKey));
+        if (first == last)
+        {
+            return options_.run_required ? kRunRequired : nullptr;
+        }
+        if (options_.run.empty())
+        {
+            return kRunChanged;
+        }
+        for (auto it = first; it != last; ++it)
+        {
+            if (std::string_view(it->second.data(), it->second.size()) != options_.run)
+            {
+                return kRunChanged;
+            }
+        }
+        return nullptr;
+    }
+
+    /// The mismatched run a call names (the first metadata value differing from `options_.run`,
+    /// else the first value), bounded, for the audit log and the message.
+    [[nodiscard]] std::string asked_run(const grpc::ServerContext& context) const
+    {
+        constexpr std::size_t kMaxShown = 128;
+        const auto [first, last] = context.client_metadata().equal_range(grpc::string_ref(kRunKey));
+        if (first == last)
+        {
+            return {};
+        }
+        auto pick = first;
+        for (auto it = first; it != last; ++it)
+        {
+            if (options_.run.empty() || std::string_view(it->second.data(), it->second.size()) != options_.run)
+            {
+                pick = it;
+                break;
+            }
+        }
+        return clean(cut_utf8(std::string(pick->second.data(), pick->second.size()), kMaxShown));
+    }
+
     /// The first line of every RPC: runs `body` with the caller if the authorization table lets
-    /// them call `method`, or else refuses the call (and logs the refusal). A method without a
-    /// rule is refused for everyone.
+    /// them call `method` and the call is for this server's run, or else refuses the call (and
+    /// logs the refusal). A method without a rule is refused for everyone.
+    ///
+    /// The order: who calls (UNAUTHENTICATED), what they may do (PERMISSION_DENIED), then the run
+    /// (FAILED_PRECONDITION, ServerOptions::run). A caller without a valid token learns nothing of
+    /// the run; one who may call learns no more than Ping tells them. Ping is never refused for
+    /// the run: it is how a client learns it.
     template <typename F>
     grpc::Status guarded(grpc::ServerContext* context, std::string_view method, F&& body)
     {
@@ -125,6 +176,27 @@ public:
         if (rule != nullptr && found && allows(*found, rule->need))
         {
             const Call call{*found, rule, context};
+            if (const char* why = method == "Ping" ? nullptr : other_run(*context))
+            {
+                // Before the call's body: nothing of a call for another run reaches the hub or the
+                // time (the client of an earlier run, reconnected to this server at the same address).
+                const std::string asked = asked_run(*context);
+                audit_.refused(call.who.name + "@" + context->peer() + " " + std::string(rule->what) + ": refused (" + why +
+                               (asked.empty() ? std::string() : ", the call names run " + asked) + ")");
+                context->AddTrailingMetadata(kRefusalReasonKey, why);
+                if (std::string_view(why) == kRunRequired)
+                {
+                    return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
+                                        "cannot " + std::string(rule->what) + ": this control server takes calls that name its run "
+                                        "only: send the metadata " + std::string(kRunKey) + " with the run's ID (Ping reports it "
+                                        "as PingReply.run)");
+                }
+                return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
+                                    "cannot " + std::string(rule->what) + ": the call is for the run '" + asked +
+                                        "', and this control server belongs to the run '" + options_.run +
+                                        "' (a client of an earlier run cannot act on a later one): bind a client to the "
+                                        "current run, which Ping reports as PingReply.run");
+            }
             if (options_.observe_only &&
                 (rule->effect == Effect::Write ||
                  (rule->effect == Effect::Time && options_.observe_only->refuses == ObserveOnly::Refuses::Changes)))
@@ -167,6 +239,7 @@ public:
             reply->set_text(request->text());
             reply->set_server_version("vehicle-sil control v1");
             reply->set_vehicle_sil(vehicle_sil::version());
+            reply->set_run(options_.run);
             return grpc::Status::OK;
         });
     }

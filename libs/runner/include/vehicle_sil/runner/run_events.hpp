@@ -161,6 +161,15 @@ struct RunObservers
     /// the hub from any thread while the simulation runs and after run_file() has returned (it
     /// then holds what the agents said last).
     std::function<void(const std::shared_ptr<control::Hub>& hub)> before_start{};
+    /// Asked on the run's thread, every few milliseconds, while the run waits for its own
+    /// connection to SIL Kit to close (after the participants have ended): true ends that wait
+    /// before its limit (OutcomeClose::not_closed_ms, OutcomeClose::interrupted). `stops_before_close`
+    /// is the stop request count when closing began. Empty: the wait ends when a stop request comes
+    /// after it began (run, test). serve gives one that is true only when a new stop request comes
+    /// while closing that brings the count to 2+ (Force) or the launcher ends, so that one late stop
+    /// or an earlier Force does not leave its connection open. Short, no wait, no call into the run
+    /// or its controls.
+    std::function<bool(int stops_before_close)> close_cut{};
 };
 
 } // namespace vehicle_sil::runner

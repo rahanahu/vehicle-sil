@@ -68,6 +68,12 @@ struct ControlHost
     std::string tls_key{};
     /// The file that who changed what is appended to; empty: none.
     std::string audit_log{};
+    /// The ID of the run this server belongs to (an opaque string the launcher gives; empty:
+    /// none). Every call but Ping that carries the run's metadata with another ID is refused, so
+    /// that a client of an earlier run cannot reach this one at the same address. Not a credential.
+    std::string run_id{};
+    /// Every call but Ping must carry `run_id` (serve). false: a call without it is taken (run).
+    bool run_id_required = false;
 };
 
 /// What the caller that starts the launcher decides: where things are and how long they may take.

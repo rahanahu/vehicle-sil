@@ -56,6 +56,9 @@ def main(argv=None) -> int:
                         help="bearer token (default: $VEHICLE_SIL_CONTROL_TOKEN)")
     parser.add_argument("--root-cert", default=os.environ.get("VEHICLE_SIL_CONTROL_ROOT_CERT"),
                         help="PEM file of the server's root certificate: use TLS (default: $VEHICLE_SIL_CONTROL_ROOT_CERT)")
+    parser.add_argument("--run", default=os.environ.get("VEHICLE_SIL_CONTROL_RUN") or None,
+                        help="the ID of the run the command is for; refused once the server belongs to another run "
+                             "(default: $VEHICLE_SIL_CONTROL_RUN; none: any run, where the server allows it)")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("peers", help="list the peers")
     p = sub.add_parser("show", help="variables of a peer with their latest values")
@@ -93,7 +96,7 @@ def main(argv=None) -> int:
         if args.root_cert:
             with open(args.root_cert, "rb") as f:
                 roots = f.read()
-        with Control(args.server, token=args.token, root_certificates=roots) as c:
+        with Control(args.server, token=args.token, root_certificates=roots, run=args.run or None) as c:
             if args.command == "peers":
                 for peer in c.peers():
                     state = ("connected" if peer.connected else "disconnected") if peer.has_agent else "no agent"

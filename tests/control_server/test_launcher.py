@@ -537,10 +537,15 @@ class LauncherTest(unittest.TestCase):
             finally:
                 channel.close()
             with Control(launch.address, root_certificates=roots, token=TOKEN) as c:
+                run = c.current_run()
                 c.sim.stop("the test is done")
             result = launch.wait()
         self.assertEqual(result["interrupted_by"], "control server stop")
+        # Each line starts with the run (one audit file can hold the lines of several runs).
+        self.assertTrue(run)
         lines = audit.read_text().splitlines()
+        self.assertTrue(lines and all(line.startswith(f"[run {run}] ") for line in lines), lines)
+        lines = [line[len(f"[run {run}] "):] for line in lines]
         self.assertTrue(any(line.startswith("o@") and "pause" in line and line.endswith(": ok") for line in lines), lines)
         self.assertTrue(any(line.startswith("v@") for line in lines), lines)
         self.assertTrue(any(line.startswith("tester@") and "stop (the test is done)" in line for line in lines), lines)
@@ -946,6 +951,56 @@ class LauncherTest(unittest.TestCase):
                 self.assertEqual(c.sim.wait_paused(60).now, 0)
                 c.sim.stop("the test is done")
             launch.wait()
+
+    def test_an_earlier_runs_client_at_a_fixed_address_is_refused(self):
+        # Two runs one after the other at one fixed address (two launchers here; serve runs them in
+        # one, with IDs the same way). gRPC connects the Controls made for the first run again by
+        # itself to the second server there: the one bound to the first run is refused for every
+        # call but Ping; the one bound to no run reaches the second run (run does not require it).
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as free:
+            free.bind(("127.0.0.1", 0))
+            port = free.getsockname()[1]
+        address = f"127.0.0.1:{port}"
+        with self.launch("fixed_first", stop_at_ms=600_000, start_paused=True, address=str(port)) as first:
+            self.assertEqual(first.address, address)
+            bound = Control.for_current_run(address)
+            self.addCleanup(bound.close)
+            unbound = Control(address)
+            self.addCleanup(unbound.close)
+            first_run = bound.run
+            self.assertEqual(unbound.current_run(), first_run)
+            self.assertEqual(bound.sim.wait_paused(60).now, 0)
+            bound.sim.stop("the first run is done")
+            self.assertEqual(first.wait()["interrupted_by"], "control server stop")
+        with self.launch("fixed_second", stop_at_ms=600_000, start_paused=True, address=str(port)) as second:
+            self.assertEqual(second.address, address)
+            deadline = time.monotonic() + 30 * float(os.environ.get("VEHICLE_SIL_TEST_TIMEOUT_SCALE") or 1)
+            while True:  # gRPC's backoff: UNAVAILABLE until the channel has connected again
+                with self.assertRaises(ControlError) as refused:
+                    bound.sim.stop("an earlier run's client")
+                if refused.exception.code != grpc.StatusCode.UNAVAILABLE or time.monotonic() > deadline:
+                    break
+                time.sleep(0.1)
+            self.assertEqual((refused.exception.code, refused.exception.reason),
+                             (grpc.StatusCode.FAILED_PRECONDITION, "run-changed"))
+            for call in (lambda: bound.write({"Engine": {"engine.throttle": 1.0}}), bound.sim.pause,
+                         lambda: bound.sim.step(ms(10)), lambda: bound.operation(1), lambda: next(iter(bound.watch()))):
+                with self.assertRaises(ControlError) as refused:
+                    call()
+                self.assertEqual((refused.exception.code, refused.exception.reason),
+                                 (grpc.StatusCode.FAILED_PRECONDITION, "run-changed"))
+            second_run = bound.current_run()  # Ping is not refused: it tells the run now
+            self.assertTrue(second_run)
+            self.assertNotEqual(second_run, first_run)
+            self.assertEqual(unbound.current_run(), second_run)
+            self.assertEqual(unbound.sim.wait_paused(60).now, 0)
+            with Control(address, run=second_run) as c:
+                c.sim.stop("the test is done")
+            result = second.wait()
+        self.assertEqual(result["interrupted_by"], "control server stop")
+        # Nothing of the first run's client reached the second run: one command from a client, the last stop.
+        commands = [e["command"] for e in second.events if e["event"] == "command" and e["source"] == "control_server"]
+        self.assertEqual(commands, ["stop"])
 
     def test_version_lists_the_control_server(self):
         out = self.run_launcher("version", "--json")

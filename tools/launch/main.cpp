@@ -7,6 +7,10 @@
 //                  and every participant, watches the simulation to its end, ends every
 //                  participant and reports how each ended; with --events as events (one JSON
 //                  object per line), with --stdin-commands stopped by commands on stdin.
+//   serve <file>   stays for one configuration file and runs one run after the other, each when a
+//                  run command on stdin asks for it (from its request file), each as run --events
+//                  --stdin-commands would, its events between run_start and its result with its
+//                  run ID; ends with the end of stdin, a signal, or a run that left it unclean.
 //   test <file>    runs every scenario of a list with the file, once for each of its variants,
 //                  one run after the other, and reports all of them as one table.
 //   connections <file>  where each network of the file can be connected on this computer: the
@@ -30,6 +34,13 @@
 // their writes and reads go to the run's hub; the run (launch::run_file()) makes the server from
 // the request and ends it after the simulation, before main writes the result; main lets go of
 // what is left of it after the result.
+//
+// The threads of serve: the same, for the life of the launcher instead of one run: main runs one run
+// after the other (launch::Serve::run(): only main ever calls run_file()), the reader of stdin
+// installs each run and hands the commands to the current run (launch::Serve::command()), the
+// events' two threads write the one stream, whose windows give each run's lines its run ID. The
+// signal handler asks the launcher's end and, through a pointer that main takes back after each
+// run, the current run's stop requests (launch::LauncherEnd; serve.hpp says why no request is lost).
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/cli/console.hpp"
 #include "vehicle_sil/cli/utf8.hpp"
@@ -42,6 +53,7 @@
 #include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/serve.hpp"
 #include "vehicle_sil/runner/stop_requests.hpp"
 #include "vehicle_sil/launch/test.hpp"
 #include "vehicle_sil/process/child_process.hpp"
@@ -103,6 +115,11 @@ constexpr const char* kUsage =
     "                              [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
     "                              [--time-policy realtime|free] [--request <file>]\n"
     "                              [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
+    "       vehicle_sil_launch serve [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeout-ms <ms>]\n"
+    "                                [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]\n"
+    "                                [--events-stall-ms <ms>] [--control <address> [--control-credentials <file>]\n"
+    "                                [--control-tls-cert <file> --control-tls-key <file>] [--control-audit-log <file>]]\n"
+    "                                [--] <file>\n"
     "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...\n"
     "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]\n"
     "                               [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]\n"
@@ -116,6 +133,11 @@ constexpr const char* kUsage =
     "                              controller in this process, each participant as a process of its own\n"
     "                              (its output on stderr, each line after [<name>]); then end every\n"
     "                              participant and report how each ended. Ctrl+C stops it in order\n"
+    "  serve <file>                stay and run <file> once for each {\"command\":\"run\"} on stdin, one run after the\n"
+    "                              other, each as run --events --stdin-commands (its request file in \"request\");\n"
+    "                              events on stdout, each run's lines with its run ID; commands for a run need\n"
+    "                              \"run\":\"<run ID>\". Ends with the end of stdin, Ctrl+C or a signal\n"
+    "                              (docs/simulation-run.md)\n"
     "  test <file>                 run every scenario of --scenarios with <file>, once for each of its variants, one\n"
     "                              run after the other (each as run --speed max --scenario: its own registry and\n"
     "                              processes); then a table of all runs: passed, FAILED or skipped, and why. A\n"
@@ -170,7 +192,8 @@ constexpr const char* kUsage =
     "  --speed <speed>             check, run: simulation seconds per wall-clock second (1 real time, 2 twice as fast)\n"
     "                              or max (as fast as possible); overrides speed in the request file\n"
     "  --strict                    fail on warnings too\n"
-    "  --log-dir <dir>             run: also write each participant's output to <dir>/<name>.log\n"
+    "  --log-dir <dir>             run: also write each participant's output to <dir>/<name>.log; serve: to\n"
+    "                              <dir>/<run ID>/<name>.log\n"
     "  --stop-at-ms <ms>           stop at this exact virtual time (default: no automatic stop)\n"
     "  --late-tolerance-ms <ms>    wall-clock pacing tolerance (default 10)\n"
     "  --participant-start-timeout-ms <ms>  wait for required participants (default 30000)\n"
@@ -227,8 +250,9 @@ constexpr const char* kUsage =
     "exit codes: 0 passed (run: also stopped by a command), 1 errors (with --strict: or warnings; run: also a failed\n"
     "            simulation; test: a run failed or was left out; connections: a list could not be made, or a\n"
     "            target of --request cannot be used), 3 the file cannot be read (run: or the registry cannot be set\n"
-    "            up), 4 usage, 5 run: a scenario stopped before its end, 130 run or test was\n"
-    "            interrupted (a signal, or its input or output closed)\n"
+    "            up), 4 usage, 5 run: a scenario stopped before its end, 6 serve: a run left the launcher\n"
+    "            unclean (its result says launcher_ends), 130 run, test or serve was interrupted (a signal, or\n"
+    "            its input or output closed; serve: 0 when stdin ends between runs)\n"
     "the file format: docs/simulation-config.md; check: docs/simulation-check.md; run: docs/simulation-run.md;\n"
     "events and commands: docs/simulation-events.md; scenarios: docs/scenario.md\n";
 
@@ -426,6 +450,11 @@ void write_stderr_line_without_waiting(std::string line)
 /// launch::RunLent::stops). The source of a request: a
 /// signal (POSIX), a console event + 1 (Windows), or one of runner::stop_source.
 constinit runner::StopRequests g_stops;
+/// serve: the launcher's end, which the handlers ask instead of g_stops (it passes the request on to
+/// the current run's stop requests), and the launcher that runs the runs.
+constinit launch::LauncherEnd g_end;
+constinit std::atomic<bool> g_serving{false};
+std::atomic<launch::Serve*> g_serve{nullptr};
 using runner::stop_source::kEndOfInput;
 using runner::stop_source::kOutputClosed;
 using runner::stop_source::kStopCommand;
@@ -439,7 +468,14 @@ BOOL WINAPI on_console_event(DWORD event)
         return FALSE;
     }
     // Closing the console is not followed by a second request: it skips the waits at once.
-    g_stops.request(static_cast<int>(event) + 1, event == CTRL_CLOSE_EVENT ? 2 : 1);
+    if (g_serving.load())
+    {
+        g_end.request(static_cast<int>(event) + 1, event == CTRL_CLOSE_EVENT ? 2 : 1);
+    }
+    else
+    {
+        g_stops.request(static_cast<int>(event) + 1, event == CTRL_CLOSE_EVENT ? 2 : 1);
+    }
     if (event == CTRL_CLOSE_EVENT)
     {
         // Windows ends the process when this returns: give the run time to end the participants
@@ -449,9 +485,9 @@ BOOL WINAPI on_console_event(DWORD event)
     return TRUE;
 }
 
-std::string interrupt_name()
+/// The name of a stop request's source (a console event's code + 1, or one of runner::stop_source).
+std::string source_name(int first)
 {
-    const int first = g_stops.first();
     if (first < 0)
     {
         return runner::stop_source_name(first);
@@ -470,12 +506,23 @@ void watch_interrupts() { SetConsoleCtrlHandler(on_console_event, TRUE); }
 /// A broken pipe is an error of the write, not a signal, on Windows.
 void ignore_broken_pipes() {}
 #else
-/// Only runner::StopRequests::request(): lock-free atomics, nothing else (async-signal-safe).
-extern "C" void on_signal(int signal) { g_stops.request(signal); }
-
-std::string interrupt_name()
+/// Only runner::StopRequests::request() or launch::LauncherEnd::request(): lock-free atomics,
+/// nothing else (async-signal-safe).
+extern "C" void on_signal(int signal)
 {
-    const int first = g_stops.first();
+    if (g_serving.load())
+    {
+        g_end.request(signal);
+    }
+    else
+    {
+        g_stops.request(signal);
+    }
+}
+
+/// The name of a stop request's source (a signal's number, or one of runner::stop_source).
+std::string source_name(int first)
+{
     return first < 0 ? runner::stop_source_name(first) : process::signal_name(first);
 }
 
@@ -508,7 +555,9 @@ void ignore_broken_pipes()
 }
 #endif
 
-// --- the events (run --events) ---
+std::string interrupt_name() { return source_name(g_stops.first()); }
+
+// --- the events (run --events, serve) ---
 
 #ifdef _WIN32
 HANDLE g_events_handle = INVALID_HANDLE_VALUE;
@@ -620,6 +669,23 @@ launch::EventWrite write_events(std::string_view bytes)
 /// that says why.
 void on_events_closed(const std::string& reason)
 {
+    if (g_serving.load())
+    {
+        // serve: the launcher ends; the current run, if any, is stopped once.
+        if (launch::Serve* const serve = g_serve.load())
+        {
+            serve->output_closed();
+        }
+        else
+        {
+            g_end.mark(kOutputClosed);
+        }
+#ifdef _WIN32
+        CancelIoEx(g_events_handle, nullptr);
+#endif
+        note_from_thread("vehicle_sil_launch: cannot write the events (" + reason + "): the launcher ends");
+        return;
+    }
     const bool stops = g_stops.request_first(kOutputClosed, [] {});
 #ifdef _WIN32
     // A write that waits for the reader ends (so that nothing of the process waits in it).
@@ -655,8 +721,10 @@ std::chrono::milliseconds events_stall_timeout(const std::vector<std::string>& a
     return launch::EventStreamOptions{}.stall_timeout;
 }
 
-/// Starts the events: hello with the arguments as given. Null if there is no standard output.
-launch::EventStream* start_events(const std::string& file, const std::vector<std::string>& arguments)
+/// Starts the events: hello with the arguments as given (serve: with the launcher's `instance`).
+/// Null if there is no standard output.
+launch::EventStream* start_events(const std::string& file, const std::vector<std::string>& arguments,
+                                  const std::string* instance = nullptr)
 {
     if (!take_stdout_for_events())
     {
@@ -670,7 +738,14 @@ launch::EventStream* start_events(const std::string& file, const std::vector<std
 #else
     const long pid = static_cast<long>(::getpid());
 #endif
-    shared().events->hello(pid, file, arguments);
+    if (instance != nullptr)
+    {
+        shared().events->hello(pid, file, arguments, *instance);
+    }
+    else
+    {
+        shared().events->hello(pid, file, arguments);
+    }
     return shared().events;
 }
 
@@ -718,6 +793,49 @@ void write_stdin_notes(bool from_main)
     }
 }
 
+/// Reads standard input to EOF into `input` (shared by run --stdin-commands and serve).
+void read_stdin_to_end(launch::CommandInput& input)
+{
+    char buffer[4096];
+    while (true)
+    {
+#ifdef _WIN32
+        const HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+        DWORD got = 0;
+        SetLastError(ERROR_SUCCESS);
+        if (in == nullptr || in == INVALID_HANDLE_VALUE)
+        {
+            break;
+        }
+        const BOOL ok = ReadFile(in, buffer, sizeof(buffer), &got, nullptr);
+        if (!ok || got == 0)
+        {
+            // A console's read that Ctrl+C or Ctrl+Break interrupted is no end of input (the
+            // console event is the stop request).
+            DWORD mode = 0;
+            if (GetLastError() == ERROR_OPERATION_ABORTED && GetConsoleMode(in, &mode))
+            {
+                Sleep(20);
+                continue;
+            }
+            break;
+        }
+#else
+        const ssize_t got = ::read(STDIN_FILENO, buffer, sizeof(buffer));
+        if (got < 0 && errno == EINTR)
+        {
+            continue;
+        }
+        if (got <= 0)
+        {
+            break;
+        }
+#endif
+        input.append(std::string_view(buffer, static_cast<std::size_t>(got)));
+    }
+    input.finish();
+}
+
 /// Reads standard input to its end on a thread of its own: each command as an event (or, without
 /// --events, a line on stderr for one that was not accepted: a time command's from the controls'
 /// observer, which also has the answer of one that waited for the run to read its configuration);
@@ -763,43 +881,7 @@ void start_reading_commands()
                 note_stdin_ignored(command);
             }
         });
-        char buffer[4096];
-        while (true)
-        {
-#ifdef _WIN32
-            const HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
-            DWORD got = 0;
-            SetLastError(ERROR_SUCCESS);
-            if (in == nullptr || in == INVALID_HANDLE_VALUE || !ReadFile(in, buffer, sizeof(buffer), &got, nullptr))
-            {
-                break;
-            }
-            if (got == 0)
-            {
-                // A console's read that Ctrl+C or Ctrl+Break interrupted is no end of input (the
-                // console event is the stop request).
-                DWORD mode = 0;
-                if (GetLastError() == ERROR_OPERATION_ABORTED && GetConsoleMode(in, &mode))
-                {
-                    Sleep(20);
-                    continue;
-                }
-                break;
-            }
-#else
-            const ssize_t got = ::read(STDIN_FILENO, buffer, sizeof(buffer));
-            if (got < 0 && errno == EINTR)
-            {
-                continue;
-            }
-            if (got <= 0)
-            {
-                break;
-            }
-#endif
-            input.append(std::string_view(buffer, static_cast<std::size_t>(got)));
-        }
-        input.finish();
+        read_stdin_to_end(input);
         static_cast<void>(g_stops.request_first(kEndOfInput, [events] {
             if (events != nullptr)
             {
@@ -813,6 +895,22 @@ void start_reading_commands()
         {
             controls->publish();
         }
+    }).detach();
+}
+
+/// serve: reads standard input to its end on a thread of its own and hands every line to `serve`
+/// (`serve` outlives the process).
+void start_reading_serve_commands(launch::Serve* serve)
+{
+    static std::atomic<bool> started{false};
+    if (started.exchange(true))
+    {
+        return;
+    }
+    std::thread([serve] {
+        launch::CommandInput input(launch::CommandInput::Serve{}, [serve](const launch::ServeCommand& line) { serve->command(line); });
+        read_stdin_to_end(input);
+        serve->end_of_input();
     }).detach();
 }
 
@@ -833,11 +931,12 @@ int write_or_fail(const std::string& text, int code)
 /// or one that comes while it waits (as the waits for the participants). The exit code of the run,
 /// or 3 if the result could not be written (unless the run was stopped: then that is what
 /// happened).
-int finish_events(launch::EventStream& events, const launch::RunReport& report, int code)
+int finish_events(launch::EventStream& events, const launch::RunReport& report, int code, bool serve_ends = false)
 {
-    const int requests = g_stops.count();
-    const bool written = events.result(launch::format_result_event(report),
-                                       [requests] { return g_stops.count() > std::min(requests, 1); });
+    const int requests = serve_ends ? g_end.count() : g_stops.count();
+    const bool written = events.result(
+      serve_ends ? launch::format_result_event(report, true) : launch::format_result_event(report),
+      [requests, serve_ends] { return (serve_ends ? g_end.count() : g_stops.count()) > std::min(requests, 1); });
     finish_threads();
     if (!written && report.result() != launch::RunResult::Interrupted)
     {
@@ -853,7 +952,7 @@ int finish_events(launch::EventStream& events, const launch::RunReport& report, 
 /// answer. `file`: the configuration file if the arguments name one, else "" (null in the JSON).
 /// `variants`: the variants the file defines, if it was read (the JSON lists what --variant takes).
 int usage_error(const std::vector<config::Finding>& errors, bool json, launch::CommandKind command, const std::string& file,
-                launch::EventStream* events, const std::vector<std::string>& variants = {})
+                launch::EventStream* events, const std::vector<std::string>& variants = {}, bool serve_ends = false)
 {
     for (const auto& error : errors)
     {
@@ -869,14 +968,15 @@ int usage_error(const std::vector<config::Finding>& errors, bool json, launch::C
     }
     if (events != nullptr)
     {
-        return finish_events(*events, launch::usage_run_report(file, errors, variants), cli::kExitUsage);
+        return finish_events(*events, launch::usage_run_report(file, errors, variants), cli::kExitUsage, serve_ends);
     }
     return json ? write_or_fail(launch::format_usage_json(command, file, errors, variants), cli::kExitUsage) : cli::kExitUsage;
 }
 
-int usage_error(const std::string& message, bool json, launch::CommandKind command, const std::string& file, launch::EventStream* events)
+int usage_error(const std::string& message, bool json, launch::CommandKind command, const std::string& file, launch::EventStream* events,
+                bool serve_ends = false)
 {
-    return usage_error({config::Finding{config::Severity::Error, "usage", message, 0, "", ""}}, json, command, file, events);
+    return usage_error({config::Finding{config::Severity::Error, "usage", message, 0, "", ""}}, json, command, file, events, {}, serve_ends);
 }
 
 /// The arguments that are no option or an option's value (as cli::Args reads them), for a usage
@@ -1233,6 +1333,18 @@ int connections(const cli::Args& args)
                          report.exit_code());
 }
 
+/// --control and its files, as given: the run reads and checks them (launch::run_file()), and a
+/// value that is wrong comes back as a usage error of the run.
+void read_control(const cli::Args& args, launch::RunHost& host)
+{
+    launch::ControlHost& server = host.control.emplace();
+    server.listen = args.str("control", "");
+    server.credentials = args.str("control-credentials", "");
+    server.tls_cert = args.str("control-tls-cert", "");
+    server.tls_key = args.str("control-tls-key", "");
+    server.audit_log = args.str("control-audit-log", "");
+}
+
 int run(const cli::Args& args, launch::EventStream* events)
 {
     const RequestArgument asked = read_request_argument(args);
@@ -1301,14 +1413,11 @@ int run(const cli::Args& args, launch::EventStream* events)
 #endif
     if (control)
     {
-        // As given: the run reads and checks them (launch::run_file()), and a value that is wrong
-        // comes back as a usage error of the run.
-        launch::ControlHost& server = host.control.emplace();
-        server.listen = args.str("control", "");
-        server.credentials = args.str("control-credentials", "");
-        server.tls_cert = args.str("control-tls-cert", "");
-        server.tls_key = args.str("control-tls-key", "");
-        server.audit_log = args.str("control-audit-log", "");
+        read_control(args, host);
+        // The run's ID, as serve would give its first run: a client may name it (Ping tells it), and
+        // one that names another run is refused; one that names none is taken.
+        host.control->run_id = launch::new_launcher_instance() + "-1";
+        host.control->run_id_required = false;
     }
     host.stdin_commands = args.flag("stdin-commands");
     request.intent.start_paused = args.flag("start-paused");
@@ -1402,6 +1511,135 @@ int run(const cli::Args& args, launch::EventStream* events)
         end_process_at_once(code);
     }
     return code;
+}
+
+int serve(const cli::Args& args, launch::EventStream* events, const std::string& instance)
+{
+    if (vehicle_sil::trace::enabled())
+    {
+        throw cli::UsageError("serve does not run with VEHICLE_SIL_TRACE set: tracing keeps per-run trace rings in the "
+                              "resident launcher and grows memory with every run; trace one run with `vehicle_sil_launch "
+                              "run` instead (unset VEHICLE_SIL_TRACE to use serve)");
+    }
+    for (const char* perRun : {"scenario", "variant", "param", "speed", "strict", "start-paused", "stop-at-ms",
+                               "late-tolerance-ms", "disable", "enable", "manual", "connect", "time-policy", "request"})
+    {
+        if (args.has(perRun) || args.flag(perRun))
+        {
+            throw cli::UsageError("--" + std::string(perRun) +
+                                  " is per-run, not for serve: put it in a run command's request file "
+                                  "({\"command\":\"run\",\"request\":\"<file>.json\"})");
+        }
+    }
+    if (args.has("timeline"))
+    {
+        throw cli::UsageError("--timeline is per-run, not for serve: give \"timeline\" in the run command "
+                              "({\"command\":\"run\",\"request\":\"<file>.json\",\"timeline\":\"<file>.json\"})");
+    }
+    for (const char* alwaysOn : {"events", "stdin-commands"})
+    {
+        if (args.flag(alwaysOn))
+        {
+            throw cli::UsageError("--" + std::string(alwaysOn) +
+                                  " is not for serve: serve always writes events on stdout and reads commands from stdin");
+        }
+    }
+    for (const char* other : {"json", "text-from-stdin", "descriptions", "write-descriptions", "compare-commands"})
+    {
+        if (args.has(other) || args.flag(other))
+        {
+            throw cli::UsageError("--" + std::string(other) + " is not for serve");
+        }
+    }
+    const auto& positionals = args.positionals();
+    if (positionals.size() != 2)
+    {
+        throw cli::UsageError(positionals.size() < 2
+                                  ? "serve needs the configuration file: vehicle_sil_launch serve <file>"
+                                  : "serve takes one file, not " + std::to_string(positionals.size() - 1));
+    }
+    launch::RunRequest base;
+    launch::RunHost& host = base.host;
+    host.config = positionals[1];
+    host.tool_directory = process::current_executable().parent_path();
+    host.stdin_commands = true;
+    host.describe_timeout = args.millis("describe-timeout-ms", host.describe_timeout);
+    if (host.describe_timeout.count() == 0)
+    {
+        throw cli::UsageError("--describe-timeout-ms must be at least 1");
+    }
+    const auto ms = [&args](const char* option, std::int64_t otherwise, std::int64_t min) {
+        const auto count = args.millis(option, std::chrono::milliseconds(otherwise)).count();
+        if (count < min || count > config::kMaxMillis)
+        {
+            throw cli::UsageError("--" + std::string(option) + " must be between " + std::to_string(min) + " and " +
+                                  std::to_string(config::kMaxMillis));
+        }
+        return static_cast<std::int64_t>(count);
+    };
+    host.start_timeout_ms = ms("participant-start-timeout-ms", host.start_timeout_ms, 1);
+    host.stop_timeout_ms = ms("participant-stop-timeout-ms", host.stop_timeout_ms, 1);
+    if (args.has("log-dir"))
+    {
+        const std::string dir = args.str("log-dir", "");
+        if (dir.empty())
+        {
+            throw cli::UsageError("--log-dir needs a directory");
+        }
+        host.log_dir = process::path_from_utf8(dir);
+    }
+    if (args.has("events-stall-ms"))
+    {
+        const auto stall = static_cast<std::int64_t>(args.millis("events-stall-ms", std::chrono::milliseconds(0)).count());
+        if (stall < kMinEventsStallMs || stall > kMaxEventsStallMs)
+        {
+            throw cli::UsageError("--events-stall-ms must be from " + std::to_string(kMinEventsStallMs) + " to " +
+                                  std::to_string(kMaxEventsStallMs));
+        }
+    }
+    if (args.has("timeout-ms"))
+    {
+        host.timeout = args.millis("timeout-ms", std::chrono::milliseconds(0));
+        if (host.timeout->count() == 0)
+        {
+            throw cli::UsageError("--timeout-ms must be at least 1");
+        }
+    }
+    const bool control = args.has("control");
+    for (const char* option : {"control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"})
+    {
+        if (args.has(option) && !control)
+        {
+            throw cli::UsageError("--" + std::string(option) + " is for --control: without it there is no control server");
+        }
+    }
+#ifndef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
+    if (control)
+    {
+        throw cli::UsageError("--control needs a vehicle_sil_launch built with the control server: configure with "
+                              "-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (it needs gRPC) and build again; `vehicle_sil_launch "
+                              "version --json` lists control-server in its features when it has it (docs/control-api.md)");
+    }
+#endif
+    if (control)
+    {
+        read_control(args, host);
+    }
+    watch_interrupts();
+    launch::ServeOptions options;
+    options.base = std::move(base);
+    options.instance = instance;
+    options.source_name = source_name;
+    // Never destroyed: the detached stdin reader and the events' watch thread may call into it until the process ends.
+    auto* const server = new launch::Serve(*events, g_end, std::move(options));
+    g_serve.store(server);
+    start_reading_serve_commands(server);
+    const launch::ServeEnd ended = server->run();
+    if (ended.at_once)
+    {
+        end_process_at_once(ended.code);
+    }
+    return ended.code;
 }
 
 /// "--scenarios a b c" as "--scenarios a --scenarios b --scenarios c" (test): --scenarios takes
@@ -1625,15 +1863,20 @@ int main(int argc, char** argv)
     // The command and the file, for a usage error's JSON.
     const std::vector<std::string> positionals = positional_arguments(arguments);
     const bool isRun = !positionals.empty() && positionals.front() == "run";
+    const bool isServe = !positionals.empty() && positionals.front() == "serve";
     const bool isTest = !positionals.empty() && positionals.front() == "test";
     const bool isConnections = !positionals.empty() && positionals.front() == "connections";
-    const launch::CommandKind command = isRun ? launch::CommandKind::Run : isTest ? launch::CommandKind::Test : isConnections ? launch::CommandKind::Connections : launch::CommandKind::Check;
+    const launch::CommandKind command = (isRun || isServe) ? launch::CommandKind::Run
+                                      : isTest             ? launch::CommandKind::Test
+                                      : isConnections      ? launch::CommandKind::Connections
+                                                           : launch::CommandKind::Check;
     const std::string file = positionals.size() == 2 ? positionals[1] : std::string{};
     if (!positionals.empty() && positionals.front() == "version")
     {
         return version(arguments);
     }
     launch::EventStream* stream = nullptr;
+    std::string serve_instance;
     if (isRun)
     {
         ignore_broken_pipes();
@@ -1647,6 +1890,19 @@ int main(int argc, char** argv)
                                    "closed): start vehicle_sil_launch with its standard output as a pipe or a file",
                                    false, launch::CommandKind::Run, file, nullptr);
             }
+        }
+    }
+    if (isServe)
+    {
+        g_serving.store(true);
+        ignore_broken_pipes();
+        serve_instance = launch::new_launcher_instance();
+        stream = start_events(file, arguments, &serve_instance);
+        if (stream == nullptr)
+        {
+            return usage_error("serve needs a standard output to write the events to, and there is none (it is "
+                               "closed): start vehicle_sil_launch with its standard output as a pipe or a file",
+                               false, launch::CommandKind::Run, file, nullptr);
         }
     }
     if (isTest)
@@ -1678,34 +1934,34 @@ int main(int argc, char** argv)
                                {"disable", "enable", "manual", "param", "connect"});
         if (args.positionals().empty())
         {
-            code = usage_error("no command: give check <file>, run <file>, test <file>, connections <file> or version", json,
-                               command, file, stream);
+            code = usage_error("no command: give check <file>, run <file>, serve <file>, test <file>, connections <file> or version", json,
+                               command, file, stream, isServe);
         }
-        else if (args.positionals().front() != "check" && !isRun && !isTest && !isConnections)
+        else if (args.positionals().front() != "check" && !isRun && !isServe && !isTest && !isConnections)
         {
             code = usage_error("unknown command '" + args.positionals().front() +
-                                   "': the commands are check, run, test, connections and version",
-                               json, command, file, stream);
+                                   "': the commands are check, run, serve, test, connections and version",
+                               json, command, file, stream, isServe);
         }
         else
         {
-            code = isRun ? run(args, stream) : isTest ? test(args) : isConnections ? connections(args) : check(args);
+            code = isRun ? run(args, stream) : isServe ? serve(args, stream, serve_instance) : isTest ? test(args) : isConnections ? connections(args) : check(args);
         }
     }
     catch (const cli::UsageError& e)
     {
-        code = usage_error(e.what(), json, command, file, stream);
+        code = usage_error(e.what(), json, command, file, stream, isServe);
     }
     catch (const RequestFileError& e)
     {
-        code = usage_error(e.findings, json, command, file, stream);
+        code = usage_error(e.findings, json, command, file, stream, {}, isServe);
     }
     catch (const std::exception& e)
     {
         write_stderr_line(std::string("error: ") + e.what());
         if (stream != nullptr)
         {
-            static_cast<void>(finish_events(*stream, launch::internal_error_run_report(e.what()), cli::kExitSetupFailed));
+            static_cast<void>(finish_events(*stream, launch::internal_error_run_report(e.what()), cli::kExitSetupFailed, isServe));
         }
         else if (json)
         {

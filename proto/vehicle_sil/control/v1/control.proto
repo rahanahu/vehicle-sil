@@ -118,6 +118,12 @@ message PingReply {
   // The vehicle-sil release the server was built from (e.g. "0.2.0" or "0.2.0-rc.1"). The Python client
   // compares it with its own at its first call and refuses another release ("": a server from before this field).
   string vehicle_sil = 3;
+  // The ID of the run this server belongs to: an opaque string, compared for equality only ("": the
+  // server belongs to no run). A client sends it back as the metadata "vehicle-sil-run" on its calls,
+  // so that a client of an earlier run cannot act on a later one at the same address (the server
+  // refuses another ID with FAILED_PRECONDITION and the trailing metadata "vehicle-sil-reason:
+  // run-changed"). Ping is never refused for it. It is no credential: whoever may Ping can read it.
+  string run = 4;
 }
 
 message PeerInfo {

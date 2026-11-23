@@ -5,6 +5,8 @@
   (started here).
 - ConversionTest: what the client makes of variables and values, without a server.
 - ReleaseTest: the release check of the first call, against a server here that answers Ping alone.
+- RunBindingTest: a Control bound to a run (run=..., for_current_run()), against a server here that
+  checks the run as the launcher's does.
 (TLS, tokens and roles, the audit log and the CLI with them: test_launcher.py.)
 
 Environment: VEHICLE_SIL_LAUNCH_EXE, VEHICLE_SIL_EXAMPLE_DIR (examples/ecu_main in the build tree),
@@ -189,6 +191,28 @@ class LaunchedTest(unittest.TestCase):
         self.assertIn("Engine: invalid", out)
         self.assertIn(", 0 of 2 writes took effect, refused: engine.speed", out)
 
+    def test_d_the_run(self):
+        # run (one run, the run is not required): the server reports its run; a Control bound to it
+        # is served, one bound to another run is refused, one bound to none is served.
+        import grpc
+        run = self.c.current_run()
+        self.assertTrue(run)
+        with Control.for_current_run(self.address) as bound:
+            self.assertEqual(bound.run, run)
+            bound.sim.time()
+        with Control(self.address, run=run + "-earlier") as other:
+            with self.assertRaises(ControlError) as refused:
+                other.sim.time()
+            self.assertEqual((refused.exception.code, refused.exception.reason),
+                             (grpc.StatusCode.FAILED_PRECONDITION, "run-changed"))
+        self.c.sim.time()
+        # The CLI: --run binds the command to a run.
+        self.assertIn("paused at", self.cli("--run", run, "time"))
+        out = subprocess.run([sys.executable, "-m", "vehicle_sil_control", "--server", self.address, "--run", run + "-earlier",
+                              "time"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn(f"the call is for the run '{run}-earlier'", out.stderr)
+
     def test_c_a_warning_comes_on_every_call(self):
         from vehicle_sil_control._stubs import pb
         with Control(self.address) as c:
@@ -314,6 +338,95 @@ class ReleaseTest(unittest.TestCase):
         self.assertIn("are older than this vehicle_sil_control (their PingReply has no vehicle_sil): make them again "
                       "with `python -m vehicle_sil_control.generate`", str(refused.exception))
         self.assertEqual(pings, [])
+
+
+def run_server(test, run, required=False):
+    """A gRPC server on a free local port whose ControlService answers Ping (with `run` as its run)
+    and GetTime, and refuses a GetTime for another run (or without one, if `required`) as the
+    launcher's server does. Returns (its address, the metadata of each call as a dict)."""
+    from concurrent import futures
+    import grpc
+    import vehicle_sil_control
+    from vehicle_sil_control._stubs import pb, rpc
+    calls = []
+
+    class Service(rpc.ControlServiceServicer):
+        def Ping(self, request, context):
+            calls.append(("Ping", dict(context.invocation_metadata())))
+            return pb.PingReply(text=request.text, server_version="vehicle-sil control v1",
+                                vehicle_sil=vehicle_sil_control.__version__, run=run)
+
+        def GetTime(self, request, context):
+            metadata = dict(context.invocation_metadata())
+            calls.append(("GetTime", metadata))
+            asked = metadata.get("vehicle-sil-run")
+            why = "run-required" if asked is None and required else "run-changed" if asked not in (None, run) else ""
+            if why:
+                context.set_trailing_metadata((("vehicle-sil-reason", why),))
+                context.abort(grpc.StatusCode.FAILED_PRECONDITION, f"cannot read the time: {why}")
+            return pb.TimeState(available=True, paused=True)
+
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
+    rpc.add_ControlServiceServicer_to_server(Service(), server)
+    port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    test.addCleanup(server.stop, None)
+    return f"127.0.0.1:{port}", calls
+
+
+class RunBindingTest(unittest.TestCase):
+    """The run a Control is bound to goes with every call; a refusal for the run has its reason."""
+
+    def test_the_run_and_the_token_go_with_every_call(self):
+        address, calls = run_server(self, "4f2a-1", required=True)
+        with Control(address, token="t" * 16, run="4f2a-1") as c:
+            self.assertEqual(c.run, "4f2a-1")
+            self.assertTrue(c.sim.time().paused)
+            self.assertEqual(c.current_run(), "4f2a-1")
+        self.assertEqual([name for name, _ in calls], ["Ping", "GetTime", "Ping"])  # the release check first
+        for _, metadata in calls:
+            self.assertEqual(metadata.get("vehicle-sil-run"), "4f2a-1")
+            self.assertEqual(metadata.get("authorization"), "Bearer " + "t" * 16)
+
+    def test_without_a_run_no_run_is_sent(self):
+        address, calls = run_server(self, "4f2a-1")
+        with Control(address) as c:
+            self.assertIsNone(c.run)
+            self.assertTrue(c.sim.time().paused)  # served: the run is not required
+        self.assertTrue(all("vehicle-sil-run" not in metadata for _, metadata in calls))
+
+    def test_a_refusal_for_the_run_has_its_reason(self):
+        import grpc
+        address, _ = run_server(self, "4f2a-2", required=True)
+        for run, reason in (("4f2a-1", "run-changed"), (None, "run-required")):
+            with Control(address, run=run) as c:
+                with self.assertRaises(ControlError) as refused:
+                    c.sim.time()
+                self.assertEqual(refused.exception.code, grpc.StatusCode.FAILED_PRECONDITION)
+                self.assertEqual(refused.exception.reason, reason)
+                self.assertEqual(c.current_run(), "4f2a-2")  # Ping is not refused: it tells the run now
+
+    def test_for_current_run_binds_to_the_run_ping_reports(self):
+        address, calls = run_server(self, "4f2a-3", required=True)
+        with Control.for_current_run(address, timeout=5.0) as c:
+            self.assertEqual(c.run, "4f2a-3")
+            self.assertTrue(c.sim.time().paused)
+        self.assertEqual(calls[-1], ("GetTime", calls[-1][1]))
+        self.assertEqual(calls[-1][1].get("vehicle-sil-run"), "4f2a-3")
+        with self.assertRaises(TypeError):
+            Control.for_current_run(address, run="4f2a-3")
+
+    def test_for_current_run_needs_a_run(self):
+        import grpc
+        address, _ = run_server(self, "")
+        with self.assertRaises(ControlError) as refused:
+            Control.for_current_run(address)
+        self.assertEqual(refused.exception.code, grpc.StatusCode.FAILED_PRECONDITION)
+        self.assertIn("belongs to no run", str(refused.exception))
+
+    def test_an_empty_run_is_refused(self):
+        with self.assertRaises(ValueError):
+            Control("127.0.0.1:1", run="")
 
 
 if __name__ == "__main__":

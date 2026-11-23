@@ -99,6 +99,11 @@ struct RunReport
 /// "result" of a compact JSON object.
 [[nodiscard]] std::string format_result_event(const RunReport& report);
 
+/// serve: the members of a run's event "result": {"launcher_ends":<bool>,"result":{...}} (the
+/// run's window puts "run" first). `launcher_ends`: the launcher ends after this result (no
+/// "idle" follows).
+[[nodiscard]] std::string format_result_event(const RunReport& report, bool launcher_ends);
+
 /// The JSON of `vehicle_sil_launch <command> --json` when the launcher itself failed unexpectedly
 /// (`message`): the form of the command's result (`run`: "vehicle_sil_run"; else the check's),
 /// result "unreadable", one finding with the code "internal".
@@ -170,6 +175,12 @@ struct RunLent
     /// (with lent controls, the caller's observers write them); the parts of the run are given the
     /// stream as the interface they know (RunEvents, run_events.hpp).
     EventStream* events = nullptr;
+    /// serve: a run whose registry would listen at a fixed address (the file's registry_uri, or a
+    /// participant that is started by hand, which waits at the fixed address of manual runs) is
+    /// refused after its check, before anything starts: CheckReport::usage with one finding that
+    /// says why and to use `run` for it. A participant of an earlier run that is started late
+    /// could join the next run there under the same name, and the run ID does not reach SIL Kit.
+    bool refuse_fixed_registry = false;
 };
 
 

@@ -8,13 +8,14 @@ if(NOT TARGET rapidyaml)
 endif()
 
 # The five parts of src/ (the include direction between them is kept by the tests in tests/launch):
-# usecases/ (check, run, test, connections: calls the others in order), request/ (the request and its
+# usecases/ (check, run, serve, test, connections: calls the others in order), request/ (the request and its
 # reading), probe/ (looks at the computer), format/ (the outputs, the exit codes), endpoints/ (stdin
 # commands and the Control Server).
 add_library(vehicle_sil_launch_lib STATIC
   src/usecases/check.cpp
   src/usecases/connections.cpp
   src/usecases/run_file.cpp
+  src/usecases/serve.cpp
   src/usecases/test.cpp
   src/request/request.cpp
   src/request/request_read.cpp

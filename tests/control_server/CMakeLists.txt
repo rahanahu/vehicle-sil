@@ -14,6 +14,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_control_server_tests
     test_grpc_ping.cpp
     test_limits.cpp
     test_observe_only.cpp
+    test_run_binding.cpp
     test_security.cpp
     test_simulation_monitor.cpp
     test_snapshot.cpp

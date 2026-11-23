@@ -789,9 +789,20 @@ The roles are ordered viewer < operator < admin. Each role can do everything the
 
 To listen on a non-loopback address, both TLS and credentials are required (unless `allow_insecure` is set explicitly, the Server does not start and throws `std::invalid_argument`). Only `localhost`, `[::1]`, numeric `127.x.y.z` and `unix:` addresses count as loopback (`is_loopback_address()`).
 
+#### The run of a server
+
+- `ServerOptions::run` is the ID of the run the Server belongs to (opaque; printable ASCII without spaces, at most 128 bytes; empty: none). `Ping` returns it in `PingReply.run`.
+- A call names a run with the metadata `vehicle-sil-run` (`kRunKey`). A call whose value is not `run` (also any value when `run` is empty, and a call with several values of which one differs) is refused with `FAILED_PRECONDITION` and the reason `run-changed` (`kRunChanged`).
+- With `run_required` (it needs `run`), a call without the metadata is refused with the reason `run-required` (`kRunRequired`). Without it, such a call is served.
+- `Ping` is never refused for the run.
+- The check is in the same place as the authorization, the first line of every RPC (`guarded()`): after the token and the role, before `observe_only` and the body of the call. A refused call reaches neither the Hub nor `TimeControl`, and is logged as a refused call.
+- Why: gRPC connects a channel again by itself to the next server at the same address. Without the check, a client of an earlier run would act on the next one there.
+- The run ID is not a credential. The check comes after the authentication, so a client without a valid token learns nothing about it, and every authenticated client may call `Ping`, which returns it.
+
 #### Auditing
 
 - `audit` receives one line for each changing call (writes, time control, forgetting peers) and each refused call: who (credential name and origin), what, and the result.
+- With `ServerOptions::run`, each line begins with `[run <ID>] `. A call refused for the run is logged with the run it named.
 - Control characters are replaced with `?` (a newline in a name cannot forge a line).
 - A line is cut at about 1000 bytes.
 - A write line holds the first 16 names and the number of the rest.
@@ -939,6 +950,7 @@ In such a run, in every phase, `give_up` watches for a stop request (an interrup
 - The rules of `ControlServer` apply (TLS and credentials for a non-loopback address).
 - If a non-loopback address has no TLS and credentials, the launcher reports an argument error (it does not offer `allow_insecure`).
 - The launcher accepts tokens only in a file (arguments appear in the `hello` event).
+- The launcher gives the Server the ID of its run (`ControlHost::run_id`, `ServerOptions::run`). `run` does not require it in calls; `serve` does (`ControlHost::run_id_required`, `ServerOptions::run_required`).
 
 ## Samples the launcher receives (`RunSamples`)
 

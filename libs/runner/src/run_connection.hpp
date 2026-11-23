@@ -9,7 +9,9 @@
 #include "vehicle_sil/runner/detail/run_close.hpp"
 
 #include <chrono>
+#include <cstdlib>
 #include <functional>
+#include <thread>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -59,16 +61,52 @@ struct ConnectionOf
     std::unique_ptr<Transport> transport;
 };
 
+/// The environment variable that delays the close of a run's connection in a build with
+/// VEHICLE_SIL_FAULT_INJECTION (tests only; fault_close_delay()).
+inline constexpr const char* kFaultCloseDelayVariable = "VEHICLE_SIL_FAULT_CLOSE_DELAY_MS";
+
+/// How long the closing thread waits before it closes (close_connection_within()): in a build
+/// with VEHICLE_SIL_FAULT_INJECTION (a CMake option for tests, never in a release), the
+/// milliseconds of kFaultCloseDelayVariable, so that a test can make a real run whose connection
+/// does not close within its limit (OutcomeClose::not_closed_ms) by the real way. 0 in every
+/// other build, and without the variable or with a value that is not a whole number from 1 to
+/// one hour.
+[[nodiscard]] inline std::chrono::milliseconds fault_close_delay()
+{
+#ifdef VEHICLE_SIL_FAULT_INJECTION
+    const char* const text = std::getenv(kFaultCloseDelayVariable);
+    if (text == nullptr || *text == '\0')
+    {
+        return std::chrono::milliseconds(0);
+    }
+    char* end = nullptr;
+    const long long ms = std::strtoll(text, &end, 10);
+    return *end == '\0' && ms > 0 && ms <= 3'600'000 ? std::chrono::milliseconds(ms) : std::chrono::milliseconds(0);
+#else
+    return std::chrono::milliseconds(0);
+#endif
+}
+
 /// Closes `connection` (ConnectionOf::close()) on a thread of its own and waits for it as
 /// close_within() does. The caller gives its hold away: from here on the closing thread is the
 /// only one that touches the connection, and the connection lives until that thread has ended,
 /// also if it is left (the result is not empty) and whatever the caller destroys meanwhile.
+/// `delay`: the closing thread first waits this long (fault_close_delay(); 0 in a product build).
 template <class Connection>
 [[nodiscard]] std::optional<CloseLeft> close_connection_within(std::shared_ptr<Connection> connection,
                                                                std::chrono::milliseconds limit, std::chrono::milliseconds poll,
-                                                               const std::function<bool()>& interrupted)
+                                                               const std::function<bool()>& interrupted,
+                                                               std::chrono::milliseconds delay = std::chrono::milliseconds(0))
 {
-    return close_within([closing = std::move(connection)] { closing->close(); }, limit, poll, interrupted);
+    return close_within(
+      [closing = std::move(connection), delay] {
+          if (delay.count() > 0)
+          {
+              std::this_thread::sleep_for(delay);
+          }
+          closing->close();
+      },
+      limit, poll, interrupted);
 }
 
 } // namespace vehicle_sil::runner::detail

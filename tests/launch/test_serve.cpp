@@ -1,0 +1,975 @@
+// SPDX-License-Identifier: MIT
+//
+// Deterministic unit tests for `vehicle_sil_launch serve` (serve.hpp, command_input.hpp,
+// events.hpp windows, checked.hpp fixed-registry refusal): no SIL Kit and no child processes.
+// Uses H1 (injectable ServeRunFunction) and explicit synchronization barriers to test run
+// numbering, command matching, window isolation, signal/install races, close_cut rules, and
+// contamination exit deterministically.
+#include "launch_test_util.hpp"
+
+#include "vehicle_sil/launch/checked.hpp"
+#include "vehicle_sil/launch/command_input.hpp"
+#include "vehicle_sil/launch/events.hpp"
+#include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/serve.hpp"
+#include "vehicle_sil/runner/control_rules.hpp"
+
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <future>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <vector>
+
+using namespace std::chrono_literals;
+using namespace vehicle_sil;
+using namespace vehicle_sil::launch;
+using namespace vehicle_sil::runner;
+using namespace vehicle_sil::config;
+
+namespace {
+
+/// Finds a top-level (depth 1) member value in a compact JSON object.
+std::optional<std::string_view> top_field(std::string_view raw, std::string_view key)
+{
+    int depth = 0;
+    bool in_str = false;
+    for (std::size_t i = 0; i < raw.size(); ++i)
+    {
+        const char c = raw[i];
+        if (in_str)
+        {
+            if (c == '\\' && i + 1 < raw.size())
+            {
+                ++i;
+            }
+            else if (c == '"')
+            {
+                in_str = false;
+            }
+            continue;
+        }
+        if (c == '{' || c == '[')
+        {
+            ++depth;
+            continue;
+        }
+        if (c == '}' || c == ']')
+        {
+            --depth;
+            continue;
+        }
+        if (c == '"')
+        {
+            const std::size_t start = i + 1;
+            ++i;
+            while (i < raw.size())
+            {
+                if (raw[i] == '\\' && i + 1 < raw.size())
+                {
+                    i += 2;
+                    continue;
+                }
+                if (raw[i] == '"')
+                {
+                    break;
+                }
+                ++i;
+            }
+            const std::string_view name = raw.substr(start, i - start);
+            if (depth == 1 && i + 1 < raw.size() && raw[i + 1] == ':')
+            {
+                std::size_t vstart = i + 2;
+                std::size_t vend = vstart;
+                int vdepth = 0;
+                bool vstr = false;
+                while (vend < raw.size())
+                {
+                    const char vc = raw[vend];
+                    if (vstr)
+                    {
+                        if (vc == '\\' && vend + 1 < raw.size())
+                        {
+                            vend += 2;
+                            continue;
+                        }
+                        if (vc == '"')
+                        {
+                            vstr = false;
+                        }
+                    }
+                    else if (vc == '"')
+                    {
+                        vstr = true;
+                    }
+                    else if (vc == '{' || vc == '[')
+                    {
+                        ++vdepth;
+                    }
+                    else if (vc == '}' || vc == ']')
+                    {
+                        if (vdepth == 0)
+                        {
+                            break;
+                        }
+                        --vdepth;
+                    }
+                    else if (vc == ',' && vdepth == 0)
+                    {
+                        break;
+                    }
+                    ++vend;
+                }
+                if (name == key)
+                {
+                    return raw.substr(vstart, vend - vstart);
+                }
+                i = vend - 1;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> json_string(std::optional<std::string_view> v)
+{
+    if (!v || v->size() < 2 || v->front() != '"' || v->back() != '"')
+    {
+        return std::nullopt;
+    }
+    return std::string(v->substr(1, v->size() - 2));
+}
+
+std::optional<bool> json_bool(std::optional<std::string_view> v)
+{
+    if (!v)
+    {
+        return std::nullopt;
+    }
+    if (*v == "true")
+    {
+        return true;
+    }
+    if (*v == "false")
+    {
+        return false;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::int64_t> json_int(std::optional<std::string_view> v)
+{
+    if (!v || v->empty() || v->front() == '"' || *v == "null" || *v == "true" || *v == "false")
+    {
+        return std::nullopt;
+    }
+    return std::stoll(std::string(*v));
+}
+
+/// Parsed JSON event line.
+struct JsonLine
+{
+    std::string raw;
+    std::string event;
+    std::int64_t seq = -1;
+    std::int64_t t_ms = -1;
+    std::optional<std::string> run;
+    std::optional<std::string> launcher;
+    std::optional<std::string> command;
+    std::optional<std::string> reason;
+    std::optional<std::string> asked_run;
+    std::optional<bool> accepted;
+    std::optional<bool> launcher_ends;
+    std::optional<std::int64_t> id;
+    std::optional<std::string> result_status;
+};
+
+JsonLine parse_line(const std::string& raw)
+{
+    JsonLine out;
+    out.raw = raw;
+    out.event = json_string(top_field(raw, "event")).value_or("");
+    out.seq = json_int(top_field(raw, "seq")).value_or(-1);
+    out.t_ms = json_int(top_field(raw, "t_ms")).value_or(-1);
+    out.run = json_string(top_field(raw, "run"));
+    out.launcher = json_string(top_field(raw, "launcher"));
+    out.command = json_string(top_field(raw, "command"));
+    out.reason = json_string(top_field(raw, "reason"));
+    out.asked_run = json_string(top_field(raw, "asked_run"));
+    out.accepted = json_bool(top_field(raw, "accepted"));
+    out.launcher_ends = json_bool(top_field(raw, "launcher_ends"));
+    out.id = json_int(top_field(raw, "id"));
+    if (const auto res = top_field(raw, "result"); res && !res->empty() && res->front() == '{')
+    {
+        out.result_status = json_string(top_field(*res, "result"));
+    }
+    return out;
+}
+
+class CaptureStream
+{
+public:
+    CaptureStream() : state_(std::make_shared<State>())
+    {
+        EventStreamOptions options;
+        options.heartbeat = 0ms;
+        options.now_ms = [n = std::make_shared<std::atomic<std::int64_t>>(0)]() { return n->fetch_add(1); };
+        stream_ = std::make_unique<EventStream>(
+          [s = state_](std::string_view bytes) {
+              EventWrite out;
+              const std::lock_guard lock(s->mutex);
+              s->buffer.append(bytes);
+              std::size_t pos = 0;
+              while (true)
+              {
+                  const std::size_t nl = s->buffer.find('\n', pos);
+                  if (nl == std::string::npos)
+                  {
+                      break;
+                  }
+                  s->lines.push_back(parse_line(s->buffer.substr(pos, nl - pos)));
+                  pos = nl + 1;
+              }
+              if (pos > 0)
+              {
+                  s->buffer.erase(0, pos);
+              }
+              s->changed.notify_all();
+              out.bytes = bytes.size();
+              return out;
+          },
+          [s = state_](const std::string& reason) {
+              const std::lock_guard lock(s->mutex);
+              s->closed_reason = reason;
+              s->changed.notify_all();
+          },
+          std::move(options));
+    }
+
+    ~CaptureStream() { stream_.reset(); }
+
+    EventStream& stream() { return *stream_; }
+
+    std::vector<JsonLine> lines() const
+    {
+        const std::lock_guard lock(state_->mutex);
+        return state_->lines;
+    }
+
+    JsonLine wait_for(const std::function<bool(const JsonLine&)>& pred, std::size_t from = 0, std::chrono::milliseconds limit = 5000ms)
+    {
+        std::unique_lock lock(state_->mutex);
+        const bool ok = state_->changed.wait_for(lock, limit, [&] {
+            for (std::size_t i = from; i < state_->lines.size(); ++i)
+            {
+                if (pred(state_->lines[i]))
+                {
+                    return true;
+                }
+            }
+            return false;
+        });
+        CHECK(ok);
+        for (std::size_t i = from; i < state_->lines.size(); ++i)
+        {
+            if (pred(state_->lines[i]))
+            {
+                return state_->lines[i];
+            }
+        }
+        throw unit::Failure("wait_for did not find line");
+    }
+
+    std::size_t count() const
+    {
+        const std::lock_guard lock(state_->mutex);
+        return state_->lines.size();
+    }
+
+private:
+    struct State
+    {
+        mutable std::mutex mutex;
+        std::condition_variable changed;
+        std::string buffer;
+        std::vector<JsonLine> lines;
+        std::string closed_reason;
+    };
+    std::shared_ptr<State> state_;
+    std::unique_ptr<EventStream> stream_;
+};
+
+ServeCommand cmd(std::string_view json)
+{
+    auto parsed = parse_serve_command(json);
+    CHECK(parsed.has_value());
+    return *parsed;
+}
+
+RunReport passed_report(const std::string& file = "sim.yaml")
+{
+    RunReport report;
+    report.check.file = file;
+    report.check.config.emplace();
+    report.run.emplace();
+    report.run->end.simulation = SimulationEnd::Ended;
+    return report;
+}
+
+std::filesystem::path scratch_dir(const std::string& name)
+{
+    const std::filesystem::path dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "serve" / name;
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir);
+    return dir;
+}
+
+void write_text(const std::filesystem::path& path, std::string_view text)
+{
+    std::ofstream out(path, std::ios::binary);
+    CHECK(out.good());
+    out << text;
+}
+
+} // namespace
+
+TEST_CASE(serve_parse_command_reads_run_and_fields)
+{
+    const auto r = parse_serve_command(R"({"command":"run","id":7,"request":"bench.json","timeline":"tl.json"})");
+    CHECK(r.has_value());
+    CHECK(r->command.accepted);
+    CHECK(r->command.name == "run");
+    CHECK(r->command.id == 7);
+    CHECK(r->request == "bench.json");
+    CHECK(r->timeline == "tl.json");
+    CHECK(!r->run.has_value());
+
+    const auto s = parse_serve_command(R"({"command":"stop","run":"0123456789abcdef-2","id":9})");
+    CHECK(s.has_value());
+    CHECK(s->command.accepted);
+    CHECK(s->command.is_stop());
+    CHECK(s->run == "0123456789abcdef-2");
+    CHECK(s->command.id == 9);
+
+    const auto bad_run = parse_serve_command(R"({"command":"stop","run":""})");
+    CHECK(bad_run.has_value());
+    CHECK(!bad_run->command.accepted);
+    CHECK(bad_run->command.reason == runner::reason::kInvalidArgument);
+
+    const auto bad_req = parse_serve_command(R"({"command":"run","request":123})");
+    CHECK(bad_req.has_value());
+    CHECK(!bad_req->command.accepted);
+    CHECK(bad_req->command.reason == runner::reason::kInvalidArgument);
+
+    const auto unknown = parse_serve_command(R"({"command":"bogus","run":"abc-1"})");
+    CHECK(unknown.has_value());
+    CHECK(!unknown->command.accepted);
+    CHECK(unknown->command.reason == runner::reason::kUnknownCommand);
+    CHECK(unknown->run == "abc-1");
+
+    // Non-serve parse_command still rejects "run".
+    const auto cold_run = parse_command(R"({"command":"run"})");
+    CHECK(cold_run.has_value());
+    CHECK(!cold_run->accepted);
+    CHECK(cold_run->reason == runner::reason::kUnknownCommand);
+}
+
+TEST_CASE(serve_prepare_run_applies_request_log_dir_timeline_and_control_binding)
+{
+    const std::filesystem::path dir = scratch_dir("prepare");
+    const std::filesystem::path req_path = dir / "req.json";
+    write_text(req_path, R"({"vehicle_sil_run_request":1,"start_paused":true,"speed":2})");
+
+    RunRequest base;
+    base.host.config = (dir / "sim.yaml").string();
+    base.host.log_dir = dir / "logs";
+    base.host.tool_directory = dir / "tools";
+    base.host.stdin_commands = true;
+    ControlHost control;
+    control.listen = "127.0.0.1:8510";
+    base.host.control = control;
+
+    ServeCommand c = cmd(std::string(R"({"command":"run","request":")") + req_path.generic_string() + R"("})");
+    const PreparedRun prepared = prepare_serve_run(base, c, "deadbeef01234567-3");
+    CHECK(prepared.usage.empty());
+    CHECK(prepared.request.intent.start_paused);
+    CHECK(prepared.request.intent.speed.has_value());
+    CHECK(prepared.request.host.log_dir == dir / "logs" / "deadbeef01234567-3");
+    CHECK(prepared.request.host.tool_directory.empty());
+    CHECK(prepared.request.host.control.has_value());
+    CHECK(prepared.request.host.control->run_id == "deadbeef01234567-3");
+    CHECK(prepared.request.host.control->run_id_required);
+
+    // Scenario + timeline in request/run command.
+    const std::filesystem::path scen_req = dir / "scen_req.json";
+    write_text(scen_req, R"({"vehicle_sil_run_request":1,"scenario":"s.yaml"})");
+    ServeCommand c_tl = cmd(std::string(R"({"command":"run","request":")") + scen_req.generic_string() + R"(","timeline":"out.tl.json"})");
+    const PreparedRun with_tl = prepare_serve_run(base, c_tl, "deadbeef01234567-4");
+    CHECK(with_tl.usage.empty());
+    CHECK(with_tl.request.host.timeline == "out.tl.json");
+
+    // Missing request file yields usage finding.
+    ServeCommand missing = cmd(R"({"command":"run","request":"no_such_request.json"})");
+    const PreparedRun bad = prepare_serve_run(base, missing, "deadbeef01234567-5");
+    CHECK(!bad.usage.empty());
+    CHECK(bad.usage.front().code == "usage");
+}
+
+TEST_CASE(serve_sequential_runs_numbering_busy_and_idle_eof)
+{
+    CaptureStream cap;
+    const std::string instance = "0123456789abcdef";
+    cap.stream().hello(42, "sim.yaml", {"serve", "sim.yaml"}, instance);
+
+    LauncherEnd end;
+    std::mutex gate_mu;
+    std::condition_variable gate_cv;
+    int started = 0;
+    int allow_finish = 0;
+
+    ServeOptions options;
+    options.instance = instance;
+    options.base.host.config = "sim.yaml";
+    options.base.host.stdin_commands = true;
+    options.run = [&](const RunRequest&, const RunObservers&, const RunLent& lent) {
+        int n = 0;
+        {
+            std::unique_lock lock(gate_mu);
+            n = ++started;
+            gate_cv.notify_all();
+            gate_cv.wait(lock, [&] { return allow_finish >= n; });
+        }
+        lent.controls->set_phase(Phase::Ended);
+        return passed_report();
+    };
+
+    Serve serve(cap.stream(), end, std::move(options));
+    auto done = std::async(std::launch::async, [&] { return serve.run(); });
+
+    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+    serve.command(cmd(R"({"command":"run","id":10})"));
+    const JsonLine rs1 = cap.wait_for([](const JsonLine& l) { return l.event == "run_start"; });
+    CHECK(rs1.run == instance + "-1");
+    CHECK(rs1.id == 10);
+
+    // A second run while busy is refused and does not consume a sequence number.
+    serve.command(cmd(R"({"command":"run","id":11})"));
+    const JsonLine busy = cap.wait_for([](const JsonLine& l) { return l.event == "command" && l.id == 11; });
+    CHECK(busy.accepted == false);
+    CHECK(busy.reason == serve_reason::kBusy);
+    CHECK(!busy.run.has_value());
+
+    {
+        const std::lock_guard lock(gate_mu);
+        allow_finish = 1;
+    }
+    gate_cv.notify_all();
+    const JsonLine res1 = cap.wait_for([&](const JsonLine& l) { return l.event == "result" && l.run == instance + "-1"; });
+    CHECK(res1.launcher_ends == false);
+    CHECK(res1.result_status == "passed");
+    const std::size_t after_res1 = static_cast<std::size_t>(res1.seq) + 1;
+    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; }, after_res1);
+
+    // Next run gets sequence 2 (not 3).
+    serve.command(cmd(R"({"command":"run","id":12})"));
+    const JsonLine rs2 = cap.wait_for([](const JsonLine& l) { return l.event == "run_start"; }, after_res1);
+    CHECK(rs2.run == instance + "-2");
+    CHECK(rs2.id == 12);
+    {
+        const std::lock_guard lock(gate_mu);
+        allow_finish = 2;
+    }
+    gate_cv.notify_all();
+    const JsonLine res2 = cap.wait_for([&](const JsonLine& l) { return l.event == "result" && l.run == instance + "-2"; });
+    CHECK(res2.launcher_ends == false);
+    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; }, static_cast<std::size_t>(res2.seq) + 1);
+
+    serve.end_of_input();
+    const ServeEnd ended = done.get();
+    CHECK(ended.code == 0);
+    CHECK(!ended.at_once);
+
+    const auto all = cap.lines();
+    for (std::size_t i = 0; i < all.size(); ++i)
+    {
+        CHECK(all[i].seq == static_cast<std::int64_t>(i));
+    }
+}
+
+TEST_CASE(serve_refuses_stale_and_untargeted_stdin_commands)
+{
+    CaptureStream cap;
+    const std::string instance = "1111222233334444";
+    cap.stream().hello(42, "sim.yaml", {"serve", "sim.yaml"}, instance);
+
+    LauncherEnd end;
+    std::mutex gate_mu;
+    std::condition_variable gate_cv;
+    int allow_finish = 0;
+    int run2_stops = -1;
+
+    ServeOptions options;
+    options.instance = instance;
+    options.base.host.config = "sim.yaml";
+    options.base.host.stdin_commands = true;
+    int run_num = 0;
+    options.run = [&](const RunRequest&, const RunObservers&, const RunLent& lent) {
+        const int n = ++run_num;
+        {
+            std::unique_lock lock(gate_mu);
+            gate_cv.wait(lock, [&] { return allow_finish >= n; });
+        }
+        if (n == 2)
+        {
+            run2_stops = lent.controls->stops().count();
+        }
+        lent.controls->set_phase(Phase::Ended);
+        return passed_report();
+    };
+
+    Serve serve(cap.stream(), end, std::move(options));
+    auto done = std::async(std::launch::async, [&] { return serve.run(); });
+
+    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+
+    // (d) stop while idle -> run-changed
+    serve.command(cmd(R"({"command":"stop","run":"1111222233334444-1","id":1})"));
+    const JsonLine idle_stop = cap.wait_for([](const JsonLine& l) { return l.event == "command" && l.id == 1; });
+    CHECK(idle_stop.accepted == false);
+    CHECK(idle_stop.reason == serve_reason::kRunChanged);
+    CHECK(idle_stop.asked_run == "1111222233334444-1");
+    CHECK(!idle_stop.run.has_value());
+
+    // (c) stop and pause without "run" -> run-required
+    serve.command(cmd(R"({"command":"stop","id":2})"));
+    const JsonLine no_run_stop = cap.wait_for([](const JsonLine& l) { return l.event == "command" && l.id == 2; });
+    CHECK(no_run_stop.accepted == false);
+    CHECK(no_run_stop.reason == serve_reason::kRunRequired);
+    CHECK(!no_run_stop.asked_run.has_value());
+
+    serve.command(cmd(R"({"command":"pause","id":3})"));
+    const JsonLine no_run_pause = cap.wait_for([](const JsonLine& l) { return l.event == "command" && l.id == 3; });
+    CHECK(no_run_pause.accepted == false);
+    CHECK(no_run_pause.reason == serve_reason::kRunRequired);
+
+    // Run 1 completes.
+    serve.command(cmd(R"({"command":"run","id":10})"));
+    cap.wait_for([](const JsonLine& l) { return l.event == "run_start"; });
+    {
+        const std::lock_guard lock(gate_mu);
+        allow_finish = 1;
+    }
+    gate_cv.notify_all();
+    const JsonLine res1 = cap.wait_for([](const JsonLine& l) { return l.event == "result"; });
+    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; }, static_cast<std::size_t>(res1.seq) + 1);
+
+    // Run 2 starts; stale stop/pause/speed for Run 1 must all be refused and never touch Run 2.
+    serve.command(cmd(R"({"command":"run","id":20})"));
+    const JsonLine rs2 = cap.wait_for([](const JsonLine& l) { return l.event == "run_start" && l.id == 20; });
+    CHECK(rs2.run == instance + "-2");
+
+    serve.command(cmd(R"({"command":"stop","run":"1111222233334444-1","id":21})"));
+    serve.command(cmd(R"({"command":"pause","run":"1111222233334444-1","id":22})"));
+    serve.command(cmd(R"({"command":"speed","value":2,"run":"1111222233334444-1","id":23})"));
+    for (int cid : {21, 22, 23})
+    {
+        const JsonLine ref = cap.wait_for([cid](const JsonLine& l) { return l.event == "command" && l.id == cid; });
+        CHECK(ref.accepted == false);
+        CHECK(ref.reason == serve_reason::kRunChanged);
+        CHECK(ref.asked_run == instance + "-1");
+        CHECK(!ref.run.has_value());
+    }
+
+    {
+        const std::lock_guard lock(gate_mu);
+        allow_finish = 2;
+    }
+    gate_cv.notify_all();
+    const JsonLine res2 = cap.wait_for([&](const JsonLine& l) { return l.event == "result" && l.run == instance + "-2"; });
+    CHECK(run2_stops == 0);
+    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; }, static_cast<std::size_t>(res2.seq) + 1);
+
+    serve.end_of_input();
+    CHECK(done.get().code == 0);
+}
+
+TEST_CASE(serve_window_drops_events_after_result_and_tags_state_and_log_dropped)
+{
+    CaptureStream cap;
+    const std::string instance = "aaaa0000bbbb1111";
+    cap.stream().hello(1, "sim.yaml", {"serve", "sim.yaml"}, instance);
+
+    auto w1 = cap.stream().open_run(instance + "-1", 5);
+    w1->phase(Phase::Running);
+    w1->log("T1", "before result");
+    CHECK(w1->result(format_result_event(passed_report(), false)));
+    // Late events after result must be dropped.
+    w1->log("T1", "late log");
+    w1->phase(Phase::Ended);
+    w1->registry("silkit://late");
+    w1.reset();
+    cap.stream().idle();
+    CHECK(cap.stream().wait_written(2000ms));
+
+    const auto lines = cap.lines();
+    bool saw_result = false;
+    for (const auto& l : lines)
+    {
+        if (l.event == "result")
+        {
+            saw_result = true;
+            CHECK(l.run == instance + "-1");
+            continue;
+        }
+        if (saw_result)
+        {
+            CHECK(!l.run.has_value());
+        }
+    }
+    CHECK(saw_result);
+}
+
+TEST_CASE(serve_signal_during_run_install_never_starts_unstopped_run)
+{
+    // A-M1: simulate a signal arriving while the run is being installed (both before publish()
+    // and immediately after): Serve::run() re-reads end_.requested() (seq_cst) before calling
+    // options_.run(), so the run always sees at least one stop request.
+    CaptureStream cap;
+    const std::string instance = "5555666677778888";
+    cap.stream().hello(1, "sim.yaml", {"serve", "sim.yaml"}, instance);
+
+    LauncherEnd end;
+    int seen_stops = -1;
+    bool close_cut_val = false;
+    ServeOptions options;
+    options.instance = instance;
+    options.base.host.config = "sim.yaml";
+    options.base.host.stdin_commands = true;
+    // Inject a signal inside prepare() right before Serve::install() publishes run->stops:
+    // LauncherEnd::request() sees run_ == nullptr, marks end_, then install() publishes and hands
+    // the run to Serve::run(), which must re-check end_.requested() and stop the run before starting.
+    options.prepare = [&](const RunRequest& base, const ServeCommand& c, const std::string& run_id) {
+        PreparedRun out = prepare_serve_run(base, c, run_id);
+        end.request(2); // SIGINT while run_ is still nullptr
+        return out;
+    };
+    options.run = [&](const RunRequest&, const RunObservers& obs, const RunLent& lent) {
+        seen_stops = lent.controls->stops().count();
+        close_cut_val = obs.close_cut(0);
+        lent.controls->set_phase(Phase::Ended);
+        return passed_report();
+    };
+
+    Serve serve(cap.stream(), end, std::move(options));
+    auto done = std::async(std::launch::async, [&] { return serve.run(); });
+
+    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+    serve.command(cmd(R"({"command":"run","id":1})"));
+
+    const ServeEnd ended = done.get();
+    CHECK(ended.code == kExitInterrupted);
+    CHECK(!ended.at_once);
+    CHECK(seen_stops >= 1);
+    CHECK(close_cut_val);
+
+    // Result must have launcher_ends: true and no idle after it.
+    const auto lines = cap.lines();
+    bool saw_res = false;
+    for (const auto& l : lines)
+    {
+        if (l.event == "result")
+        {
+            CHECK(l.launcher_ends == true);
+            saw_res = true;
+        }
+        else if (saw_res)
+        {
+            CHECK(l.event != "idle");
+        }
+    }
+    CHECK(saw_res);
+}
+
+TEST_CASE(serve_close_cut_ignores_first_run_stop_and_cuts_on_second_or_launcher_end)
+{
+    CaptureStream cap;
+    const std::string instance = "9999aaaabbbbcccc";
+    cap.stream().hello(1, "sim.yaml", {"serve", "sim.yaml"}, instance);
+
+    LauncherEnd end;
+    bool cut_0 = true;
+    bool cut_1 = true;
+    bool cut_2_during_close = false;
+    bool cut_2_before_close = true;
+
+    ServeOptions options;
+    options.instance = instance;
+    options.base.host.config = "sim.yaml";
+    options.base.host.stdin_commands = true;
+    options.run = [&](const RunRequest&, const RunObservers& obs, const RunLent& lent) {
+        cut_0 = obs.close_cut(0);
+        lent.controls->stops().request(stop_source::kStopCommand);
+        cut_1 = obs.close_cut(0);
+        lent.controls->stops().request(stop_source::kStopCommand);
+        cut_2_during_close = obs.close_cut(0);
+        cut_2_before_close = obs.close_cut(2);
+        lent.controls->set_phase(Phase::Ended);
+        return passed_report();
+    };
+
+    Serve serve(cap.stream(), end, std::move(options));
+    auto done = std::async(std::launch::async, [&] { return serve.run(); });
+    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+    serve.command(cmd(R"({"command":"run","id":1})"));
+    const JsonLine res = cap.wait_for([](const JsonLine& l) { return l.event == "result"; });
+    CHECK(res.launcher_ends == false);
+    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; }, static_cast<std::size_t>(res.seq) + 1);
+    serve.end_of_input();
+    CHECK(done.get().code == 0);
+
+    CHECK(!cut_0);
+    CHECK(!cut_1);
+    CHECK(cut_2_during_close);
+    CHECK(!cut_2_before_close);
+}
+
+TEST_CASE(serve_contamination_not_closed_ms_and_exception_end_launcher_at_once)
+{
+    // Case 1 (H1): RunOutcome::close.not_closed_ms set -> kExitContaminated, at_once=true, no idle.
+    {
+        CaptureStream cap;
+        const std::string instance = "ccccddddeeeeffff";
+        cap.stream().hello(1, "sim.yaml", {"serve", "sim.yaml"}, instance);
+        LauncherEnd end;
+        ServeOptions options;
+        options.instance = instance;
+        options.base.host.config = "sim.yaml";
+        options.base.host.stdin_commands = true;
+        options.run = [](const RunRequest&, const RunObservers&, const RunLent& lent) {
+            RunReport r = passed_report();
+            r.run->close.not_closed_ms = 5000;
+            r.findings.push_back(Finding{Severity::Error, "connection-not-closed", "connection did not close", 0, "", ""});
+            lent.controls->set_phase(Phase::Ended);
+            return r;
+        };
+        Serve serve(cap.stream(), end, std::move(options));
+        auto done = std::async(std::launch::async, [&] { return serve.run(); });
+        cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+        serve.command(cmd(R"({"command":"run","id":1})"));
+        const ServeEnd ended = done.get();
+        CHECK(ended.code == kExitContaminated);
+        CHECK(ended.at_once);
+        const auto lines_before = cap.lines();
+        CHECK(lines_before.back().event == "result");
+        CHECK(lines_before.back().launcher_ends == true);
+        // M1: stream is sealed after launcher_ends: true; late commands emit nothing after result.
+        serve.command(cmd(R"({"command":"run","id":2})"));
+        std::this_thread::sleep_for(30ms);
+        CHECK(cap.lines().size() == lines_before.size());
+    }
+
+    // Case 2 (H1): run function throws -> kExitContaminated, at_once=true, no idle.
+    {
+        CaptureStream cap;
+        const std::string instance = "fedcba9876543210";
+        cap.stream().hello(1, "sim.yaml", {"serve", "sim.yaml"}, instance);
+        LauncherEnd end;
+        ServeOptions options;
+        options.instance = instance;
+        options.base.host.config = "sim.yaml";
+        options.base.host.stdin_commands = true;
+        options.run = [](const RunRequest&, const RunObservers&, const RunLent&) -> RunReport {
+            throw std::runtime_error("injected internal error");
+        };
+        Serve serve(cap.stream(), end, std::move(options));
+        auto done = std::async(std::launch::async, [&] { return serve.run(); });
+        cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+        serve.command(cmd(R"({"command":"run","id":1})"));
+        const ServeEnd ended = done.get();
+        CHECK(ended.code == kExitContaminated);
+        CHECK(ended.at_once);
+        const auto lines = cap.lines();
+        CHECK(lines.back().event == "result");
+        CHECK(lines.back().launcher_ends == true);
+    }
+
+    // Case 3 (H1/H2/M1): run sent BEFORE Serve::run() still orders idle before run_start,
+    // and EOF right after contaminated result does not overwrite kExitContaminated with 0.
+    {
+        CaptureStream cap;
+        const std::string instance = "1234567890abcdef";
+        cap.stream().hello(1, "sim.yaml", {"serve", "sim.yaml"}, instance);
+        LauncherEnd end;
+        ServeOptions options;
+        options.instance = instance;
+        options.base.host.config = "sim.yaml";
+        options.base.host.stdin_commands = true;
+        options.run = [](const RunRequest&, const RunObservers&, const RunLent& lent) {
+            RunReport r = passed_report();
+            r.run->close.not_closed_ms = 5000;
+            lent.controls->set_phase(Phase::Ended);
+            return r;
+        };
+        Serve serve(cap.stream(), end, std::move(options));
+        // Command arrives BEFORE serve.run() is entered!
+        serve.command(cmd(R"({"command":"run","id":99})"));
+        // EOF also arrives after contamination (before or during result write): must still exit 6.
+        const ServeEnd ended = serve.run();
+        serve.end_of_input();
+        CHECK(ended.code == kExitContaminated);
+        CHECK(ended.at_once);
+        const auto lines = cap.lines();
+        CHECK(lines.size() >= 4);
+        CHECK(lines[0].event == "hello");
+        CHECK(lines[1].event == "idle");
+        CHECK(lines[2].event == "run_start");
+        CHECK(lines.back().event == "result");
+        CHECK(lines.back().launcher_ends == true);
+    }
+
+    // Case 4 (M1): run command arriving after end_ is requested (while Run 1 is still active) is
+    // refused with launcher-ending before the final result seals the stream.
+    {
+        CaptureStream cap;
+        const std::string instance = "a1b2c3d4e5f60718";
+        cap.stream().hello(1, "sim.yaml", {"serve", "sim.yaml"}, instance);
+        LauncherEnd end;
+        std::mutex mu;
+        std::condition_variable cv;
+        bool in_run = false;
+        bool release = false;
+        ServeOptions options;
+        options.instance = instance;
+        options.base.host.config = "sim.yaml";
+        options.base.host.stdin_commands = true;
+        options.run = [&](const RunRequest&, const RunObservers&, const RunLent& lent) {
+            {
+                const std::lock_guard lock(mu);
+                in_run = true;
+            }
+            cv.notify_all();
+            std::unique_lock lock(mu);
+            cv.wait(lock, [&] { return release; });
+            lent.controls->set_phase(Phase::Ended);
+            return passed_report();
+        };
+        Serve serve(cap.stream(), end, std::move(options));
+        auto done = std::async(std::launch::async, [&] { return serve.run(); });
+        cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+        serve.command(cmd(R"({"command":"run","id":1})"));
+        {
+            std::unique_lock lock(mu);
+            cv.wait(lock, [&] { return in_run; });
+        }
+        end.request(2); // signal marks launcher ending before Run 1 finishes
+        serve.command(cmd(R"({"command":"run","id":2})"));
+        const JsonLine ref = cap.wait_for([](const JsonLine& l) { return l.event == "command" && l.id == 2; });
+        CHECK(ref.accepted == false);
+        CHECK(ref.reason == serve_reason::kLauncherEnding);
+        {
+            const std::lock_guard lock(mu);
+            release = true;
+        }
+        cv.notify_all();
+        const ServeEnd ended = done.get();
+        CHECK(ended.code == kExitInterrupted);
+        CHECK(cap.lines().back().event == "result");
+        CHECK(cap.lines().back().launcher_ends == true);
+    }
+}
+
+TEST_CASE(serve_eof_during_run_and_output_closed_return_interrupted)
+{
+    CaptureStream cap;
+    const std::string instance = "0011223344556677";
+    cap.stream().hello(1, "sim.yaml", {"serve", "sim.yaml"}, instance);
+
+    LauncherEnd end;
+    std::mutex mu;
+    std::condition_variable cv;
+    bool in_run = false;
+    bool release = false;
+
+    ServeOptions options;
+    options.instance = instance;
+    options.base.host.config = "sim.yaml";
+    options.base.host.stdin_commands = true;
+    options.run = [&](const RunRequest&, const RunObservers&, const RunLent& lent) {
+        {
+            const std::lock_guard lock(mu);
+            in_run = true;
+        }
+        cv.notify_all();
+        std::unique_lock lock(mu);
+        cv.wait(lock, [&] { return release; });
+        CHECK(lent.controls->stops().count() == 1);
+        CHECK(lent.controls->stops().first() == stop_source::kEndOfInput);
+        lent.controls->set_phase(Phase::Ended);
+        return passed_report();
+    };
+
+    Serve serve(cap.stream(), end, std::move(options));
+    auto done = std::async(std::launch::async, [&] { return serve.run(); });
+    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+    serve.command(cmd(R"({"command":"run","id":1})"));
+    {
+        std::unique_lock lock(mu);
+        cv.wait(lock, [&] { return in_run; });
+    }
+    serve.end_of_input();
+    {
+        const std::lock_guard lock(mu);
+        release = true;
+    }
+    cv.notify_all();
+    const ServeEnd ended = done.get();
+    CHECK(ended.code == kExitInterrupted);
+    CHECK(!ended.at_once);
+    const auto lines = cap.lines();
+    CHECK(lines.back().event == "result");
+    CHECK(lines.back().launcher_ends == true);
+}
+
+TEST_CASE(serve_refuses_fixed_registry_uri_and_manual_before_describe)
+{
+    const std::filesystem::path dir = scratch_dir("fixed");
+    const std::filesystem::path fixed_uri = dir / "fixed_uri.yaml";
+    // Executable does not exist: if --describe ran, it would report an executable error instead of usage.
+    write_text(fixed_uri,
+               "vehicle_sil_simulation: 2\n"
+               "registry_uri: silkit://127.0.0.1:8500\n"
+               "networks:\n  - name: BUS\n    kind: can\n"
+               "participants:\n  - name: A\n    command: [\"./does_not_exist_ecu\"]\n");
+    RunRequest req1;
+    req1.host.config = fixed_uri.string();
+    CheckOptions opts;
+    opts.refuse_fixed_registry = true;
+    const Checked c1 = check_file(req1, opts);
+    CHECK(c1.usage);
+    CHECK(!c1.findings.empty());
+    CHECK(c1.findings.front().code == "usage");
+    CHECK(c1.findings.front().message.find("registry_uri") != std::string::npos);
+
+    const std::filesystem::path manual_cfg = dir / "manual.yaml";
+    write_text(manual_cfg,
+               "vehicle_sil_simulation: 2\n"
+               "networks:\n  - name: BUS\n    kind: can\n"
+               "participants:\n  - name: A\n    command: [\"./does_not_exist_ecu\"]\n    manual: true\n");
+    RunRequest req2;
+    req2.host.config = manual_cfg.string();
+    const Checked c2 = check_file(req2, opts);
+    CHECK(c2.usage);
+    CHECK(!c2.findings.empty());
+    CHECK(c2.findings.front().code == "usage");
+    CHECK(c2.findings.front().message.find("manual") != std::string::npos);
+}
