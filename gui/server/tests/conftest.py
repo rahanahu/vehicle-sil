@@ -165,12 +165,12 @@ def _default_control_stubs() -> Path | None:
     global _SESSION_STUBS, _SESSION_STUBS_ERROR, _SESSION_STUBS_READY
     if _SESSION_STUBS_READY:
         return _SESSION_STUBS
-    _SESSION_STUBS_READY = True
     try:
         import grpc  # noqa: F401
         from grpc_tools import protoc
     except ImportError as e:
         _SESSION_STUBS_ERROR = e
+        _SESSION_STUBS_READY = True
         return None
     out = Path(tempfile.mkdtemp(prefix="vehicle-sil-pytest-stubs-"))
     atexit.register(shutil.rmtree, out, True)
@@ -179,6 +179,7 @@ def _default_control_stubs() -> Path | None:
                         str(proto / "vehicle_sil" / "control" / "v1" / "control.proto")])
     assert code == 0, "protoc failed"
     _SESSION_STUBS = out
+    _SESSION_STUBS_READY = True
     return out
 
 

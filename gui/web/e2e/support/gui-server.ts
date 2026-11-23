@@ -138,11 +138,21 @@ function makeControlStubs(): string | undefined {
 /** GUI サーバーを起動してトークンを環境変数に置き、止める関数を返す。 */
 export async function startGuiServer(options: GuiServerOptions): Promise<() => Promise<void>> {
   const madeStubs = makeControlStubs();
-  const server = await launchGuiServer(options);
+  let server: GuiServer;
+  try {
+    server = await launchGuiServer(options);
+  } catch (error) {
+    if (madeStubs) {
+      delete process.env['VEHICLE_SIL_CONTROL_STUBS'];
+      rmSync(madeStubs, { recursive: true, force: true });
+    }
+    throw error;
+  }
   process.env['VEHICLE_SIL_GUI_E2E_TOKEN'] = server.token;
   return async () => {
     await server.stop();
     if (madeStubs) {
+      delete process.env['VEHICLE_SIL_CONTROL_STUBS'];
       rmSync(madeStubs, { recursive: true, force: true });
     }
   };

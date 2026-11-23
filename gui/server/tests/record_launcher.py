@@ -666,7 +666,11 @@ def record_once(recorder: Recorder, case: Case, again: dict[str, int],
             if attempt == ATTEMPTS:
                 raise RuntimeError(f"{case.name}: {ATTEMPTS} times {', '.join(BUSY)}: unless the machine is busy, the "
                                    "launcher's timing has changed") from e
-            again[case.name] = attempt
+            if retry_lock is not None:
+                with retry_lock:
+                    again[case.name] = attempt
+            else:
+                again[case.name] = attempt
     raise AssertionError("not reached")
 
 
@@ -681,11 +685,25 @@ def write(path: Path, head: dict, entries: list[dict]) -> None:
 NOT_IN_ORDER = {"time", "log", "log_dropped", "state", "outside"}
 # The cases that stop twice at once: a participant that is not required (Logger) either ends on the first stop (SIGTERM)
 # or is killed first; which one happens is a race, so both count as the same ending there. No other case is lenient.
-EITHER_END = {"forever-stop-twice", "control-force", "control-paused-resume-force", "control-scenario-slow-force",
-              "control-simulation-force"}
+EITHER_END = {"forever-stop-twice", "forever-stop-twice-speed1", "control-force", "control-paused-resume-force",
+              "control-scenario-slow-force", "control-simulation-force", "control-simulation-stop-finite"}
 ENDS_AT_STOP = ("stopped", "killed")
 PARTICIPANT_ENDS_AT_STOP = ("ended", *ENDS_AT_STOP)
 SOMETIMES = {"log_dropped", "outside"}  # their presence can depend on timing; when present their shapes are compared
+
+
+def _participant_ended_at_stop(e: dict, either_end: frozenset) -> bool:
+    if e.get("name") not in either_end or e.get("exit_code") is not None:
+        return False
+    state, sig = e.get("state"), e.get("signal")
+    return (state == "killed" and sig is None) or (state in ("ended", "stopped") and sig == "SIGTERM")
+
+
+def _result_ended_at_stop(p: dict, either_end: frozenset) -> bool:
+    if p.get("name") not in either_end or p.get("exit_code") is not None:
+        return False
+    ended, sig = p.get("ended"), p.get("signal")
+    return (ended == "killed" and sig is None) or (ended == "stopped" and sig == "SIGTERM")
 
 
 def json_type(value) -> str:
@@ -702,7 +720,7 @@ def decided(e: dict, either_end: frozenset = frozenset()) -> tuple:
     if kind == "command":
         return e.get("command"), e.get("source"), e.get("accepted"), e.get("ms")
     if kind == "participant":
-        if e.get("name") in either_end and e.get("state") in PARTICIPANT_ENDS_AT_STOP:
+        if _participant_ended_at_stop(e, either_end):
             return e.get("name"), "ended at the stop", None, None, e.get("reason")
         return e.get("name"), e.get("state"), e.get("exit_code"), e.get("signal"), e.get("reason")
     if kind in ("phase", "control_link"):
@@ -717,7 +735,7 @@ def decided(e: dict, either_end: frozenset = frozenset()) -> tuple:
                 tuple(f.get("code") for f in r.get("findings") or []
                       if not (either_end and f.get("code") == "ended-by-force")),
                 tuple((p.get("name"), "ended at the stop", None, None)
-                      if p.get("name") in either_end and p.get("ended") in ENDS_AT_STOP else
+                      if _result_ended_at_stop(p, either_end) else
                       (p.get("name"), p.get("ended"), p.get("exit_code"), p.get("signal"))
                       for p in r.get("participants") or []), checked(r.get("check")),
                 (r.get("scenario") or {}).get("status"))
@@ -764,6 +782,19 @@ def outline(entries: list[dict], unsure: frozenset = frozenset(), either_end: bo
         elif "exit" in e:
             out.append(("exit", e["exit"]))
     out += sorted(group, key=lambda g: str(g[2][0]))
+    if either:
+        any_killed = any(
+            p.get("ended") == "killed" for e in entries if "out" in e and e["out"].get("event") == "result"
+            and isinstance(e["out"].get("result"), dict)
+            for p in e["out"]["result"].get("participants") or [])
+        stream_forced = any(
+            e.get("out", {}).get("event") == "finding" and e["out"].get("code") == "ended-by-force" for e in entries)
+        result_forced = any(
+            f.get("code") == "ended-by-force" for e in entries if "out" in e and e["out"].get("event") == "result"
+            and isinstance(e["out"].get("result"), dict)
+            for f in e["out"]["result"].get("findings") or [])
+        if stream_forced != any_killed or result_forced != any_killed:
+            out.append(("ended-by-force mismatch", any_killed, stream_forced, result_forced))
     out.append(("commands", tuple(e["send"] for e in entries if "send" in e)))
     written = next((e["timeline_file"] for e in entries if "timeline_file" in e), None)
     out.append(("timeline file", tuple(sorted(written)) if isinstance(written, dict) else None))

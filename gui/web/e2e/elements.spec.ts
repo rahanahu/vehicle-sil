@@ -15,6 +15,7 @@ import {
   launchGuiServer,
 } from './support/gui-server';
 import { RUN_TIMEOUT } from './support/run-page';
+import { scaled } from './support/timeouts';
 
 // The launcher features that the variables and the scenario need (as the replaying launcher is told to say)
 const CONTROL_FEATURES =
@@ -273,8 +274,8 @@ test('the time part steps a paused run, then resumes it and pauses it again', as
 test('the connect part lists its network only when it is opened, and the run it starts shows the connected row', async ({
   page,
 }) => {
-  // At the recorded pace the run of the recording is connected for about 10 s: long enough to see its row
-  const server = await serve('connect.yaml', undefined, { REPLAY_TICK_MS: '350' });
+  // Paced so the connected run stays active long enough to observe its row before ending
+  const server = await serve('connect.yaml', undefined, { REPLAY_TICK_MS: String(scaled(350)) });
   cleanups.push(() => server.stop());
   test.setTimeout(120_000);
   const posted: { path: string; body: unknown }[] = [];

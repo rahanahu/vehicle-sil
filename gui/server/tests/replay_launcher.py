@@ -611,8 +611,9 @@ class Player:
         # that line. The id is taken off the line before the recordings are compared with it (a recording has none).
         self.ids: collections.deque = collections.deque()
         self.tick = int(os.environ.get("REPLAY_TICK_MS", "100")) / 100
-        self.sleepers: dict[str, subprocess.Popen] = {}
+        self.sleepers: dict[str, subprocess.Popen | _FakeSleeper] = {}
         self.control = None
+        self.control_address: str | None = None
         self.control_ms = 0  # the next step of the stand-in control server
         self.last_sim = 0  # the virtual time of the last time event written
         self.last_time: dict | None = None  # that event
@@ -674,7 +675,7 @@ class Player:
             value = value.replace("<scenario>", self.scenario or "")
             value = value.replace("<timeline>", self.timeline or "")
             value = value.replace("<tools>", os.path.dirname(os.path.abspath(sys.argv[0])))
-            if self.control is not None:
+            if self.control_address is not None:
                 value = value.replace("<control>", self.control_address)
         return value
 
