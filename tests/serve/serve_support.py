@@ -13,7 +13,8 @@ refusal, the variable of the delay of the fault injection) are the constants bel
 Environment (CMake sets it, tests/serve/CMakeLists.txt): VEHICLE_SIL_LAUNCH_EXE, VEHICLE_SIL_TEST_ECU,
 VEHICLE_SIL_EXAMPLE_DIR (the build's examples/), VEHICLE_SIL_SERVE_SCRATCH, VEHICLE_SIL_SERVE_LIN_MASTER and
 VEHICLE_SIL_SERVE_LIN_SLAVE, VEHICLE_SIL_SERVE_RUNS_1 and VEHICLE_SIL_SERVE_RUNS_10 (how many Runs the repetitions
-make), VEHICLE_SIL_SERVE_FAULT_DELAY (ON when the launcher was built with the delay of its close), and the factor
+make), VEHICLE_SIL_SERVE_FAULT_DELAY (ON when the launcher was built with the delay of its close),
+VEHICLE_SIL_SERVE_ASAN (ON when built with AddressSanitizer), and the factor
 of the waits (VEHICLE_SIL_TEST_TIMEOUT_SCALE, else VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT).
 """
 from __future__ import annotations
@@ -91,6 +92,10 @@ def runs(name: str, default: int) -> int:
 
 def fault_delay_built() -> bool:
     return os.environ.get("VEHICLE_SIL_SERVE_FAULT_DELAY", "").upper() in ("1", "ON", "TRUE", "YES")
+
+
+def asan_built() -> bool:
+    return os.environ.get("VEHICLE_SIL_SERVE_ASAN", "").upper() in ("1", "ON", "TRUE", "YES")
 
 
 def free_port() -> int:

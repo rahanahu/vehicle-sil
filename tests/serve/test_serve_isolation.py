@@ -26,6 +26,7 @@ from serve_support import (
     Serve,
     TRACE_ENV,
     WINDOWS,
+    asan_built,
     cold,
     descendants,
     env_path,
@@ -452,10 +453,19 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
                 self.assertEqual(stream_problems(srv.snapshot()), [])
             tail = rss_series[len(rss_series) // 2:]
             rss_slope = slope(tail)
-            say(f"[resources] {n_res} Runs after warmup: fds={baseline['fds']} threads={baseline['threads']} "
-                f"rss_start={rss_series[0]}KiB rss_end={rss_series[-1]}KiB tail_slope={rss_slope:.2f}KiB/Run")
-            # Loose guard against gross leaks (e.g., 37 MB/Run); exact slope is recorded above.
-            self.assertLess(rss_slope, 128.0, f"RSS grew too fast: {rss_slope:.2f} KiB/Run")
+            if asan_built():
+                # AddressSanitizer retains freed memory in its quarantine (256 MiB by default) for UAF
+                # detection, so VmRSS grows across 60 Runs by design. Keep full-quarantine UAF checking,
+                # LeakSanitizer at exit (EXIT_IDLE_EOF above), and FD/thread/descendant/listen bounds;
+                # VmRSS slope is enforced on every non-ASan Linux build.
+                say(f"[resources] {n_res} Runs after warmup: fds={baseline['fds']} threads={baseline['threads']} "
+                    f"rss_start={rss_series[0]}KiB rss_end={rss_series[-1]}KiB tail_slope={rss_slope:.2f}KiB/Run "
+                    "(RSS slope guard skipped under ASan; full quarantine UAF + LSan exit check active)")
+            else:
+                say(f"[resources] {n_res} Runs after warmup: fds={baseline['fds']} threads={baseline['threads']} "
+                    f"rss_start={rss_series[0]}KiB rss_end={rss_series[-1]}KiB tail_slope={rss_slope:.2f}KiB/Run")
+                # Loose guard against gross leaks (e.g., 37 MB/Run); exact slope is recorded above.
+                self.assertLess(rss_slope, 128.0, f"RSS grew too fast: {rss_slope:.2f} KiB/Run")
 
 
 if __name__ == "__main__":
