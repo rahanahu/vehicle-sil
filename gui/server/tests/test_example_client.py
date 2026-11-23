@@ -14,12 +14,13 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 import real_configs
-from conftest import gui_server
+from conftest import Gui, gui_server
 
 ROOT = Path(__file__).resolve().parents[3]
 EXAMPLES = ROOT / "examples" / "gui_client"
@@ -40,6 +41,12 @@ def bundle() -> Path:
     return BUNDLE
 
 
+@pytest.fixture(scope="module")
+def shared_gui(tmp_path_factory: pytest.TempPathFactory, bundle: Path) -> Iterator[Gui]:
+    with gui_server(tmp_path_factory.mktemp("example_gui")) as gui:
+        yield gui
+
+
 def run_example(name: str, url: str | None, *args: str) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items() if k != "VEHICLE_SIL_GUI_URL"}
     if url is not None:
@@ -55,21 +62,19 @@ def run_example(name: str, url: str | None, *args: str) -> subprocess.CompletedP
     ("launcher-crash.yaml", 1, "result: none"),
     ("check-error.yaml", 1, "check: failed"),
 ])
-def test_runs_a_configuration_to_its_end(tmp_path: Path, bundle: Path, example: str, file: str, code: int,
+def test_runs_a_configuration_to_its_end(shared_gui: Gui, example: str, file: str, code: int,
                                          last: str) -> None:
-    with gui_server(tmp_path) as gui:
-        out = run_example(example, gui.url, file, "--timeout", "60",
-                          *(["--stop-at-ms", "1000"] if file in {"simulation.yaml", "launcher-crash.yaml"} else []))
+    out = run_example(example, shared_gui.url, file, "--timeout", "60",
+                      *(["--stop-at-ms", "1000"] if file in {"simulation.yaml", "launcher-crash.yaml"} else []))
     assert out.returncode == code, out.stdout + out.stderr
     assert out.stdout.strip().splitlines()[-1].startswith(last), out.stdout + out.stderr
-    assert gui.token not in out.stdout + out.stderr
+    assert shared_gui.token not in out.stdout + out.stderr
 
 
 @pytest.mark.parametrize("example", ["run.mjs", "run-with-library.mjs"])
-def test_check_uses_the_same_stop_time_as_the_run(tmp_path: Path, bundle: Path, example: str) -> None:
+def test_check_uses_the_same_stop_time_as_the_run(shared_gui: Gui, example: str) -> None:
     # This file's time step is 10 ms: 25 ms is rejected by check, before any run starts.
-    with gui_server(tmp_path) as gui:
-        out = run_example(example, gui.url, "simulation-step10.yaml", "--stop-at-ms", "25")
+    out = run_example(example, shared_gui.url, "simulation-step10.yaml", "--stop-at-ms", "25")
     assert out.returncode == 1 and "check: failed" in out.stdout, out.stdout + out.stderr
     assert "started:" not in out.stdout
 
@@ -100,12 +105,11 @@ def test_front_door_runs_a_configuration_to_its_end(tmp_path: Path, bundle: Path
 
 
 @pytest.mark.parametrize("example", ["run.mjs", "run-with-library.mjs"])
-def test_says_why_it_cannot(tmp_path: Path, bundle: Path, example: str) -> None:
-    with gui_server(tmp_path) as gui:
-        wrong = run_example(example, gui.url.split("#", 1)[0] + "#token=wrong", "simulation.yaml")
-        missing = run_example(example, gui.url, "no-such-file.yaml")
-        # the URL may also come first on the command line
-        given = run_example(example, None, gui.url, "check-error.yaml")
+def test_says_why_it_cannot(shared_gui: Gui, example: str) -> None:
+    wrong = run_example(example, shared_gui.url.split("#", 1)[0] + "#token=wrong", "simulation.yaml")
+    missing = run_example(example, shared_gui.url, "no-such-file.yaml")
+    # the URL may also come first on the command line
+    given = run_example(example, None, shared_gui.url, "check-error.yaml")
     assert wrong.returncode == 1 and "unauthorized" in wrong.stdout, wrong.stdout + wrong.stderr
     assert missing.returncode == 1 and "file-not-found" in missing.stdout, missing.stdout + missing.stderr
     assert given.returncode == 1 and "check: failed" in given.stdout, given.stdout + given.stderr
@@ -138,9 +142,8 @@ def test_variables_example_with_the_fake_control_server(tmp_path: Path, bundle: 
         assert gui.token not in done.stdout + done.stderr
 
 
-def test_variables_example_says_why_there_are_no_variables(tmp_path: Path, bundle: Path) -> None:
-    with gui_server(tmp_path) as gui:  # the stand-in launcher as it is: a launcher without a control server
-        out = run_example("variables.mjs", gui.url, "simulation.yaml")
+def test_variables_example_says_why_there_are_no_variables(shared_gui: Gui) -> None:
+    out = run_example("variables.mjs", shared_gui.url, "simulation.yaml")
     assert out.returncode == 1 and out.stdout.startswith("no variables: this launcher was built "
                                                          "without a control server"), out.stdout + out.stderr
 

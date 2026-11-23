@@ -93,6 +93,7 @@ class AllChecks(unittest.TestCase):
         steps = JOBS["linux"]["steps"]
         step = next(s for s in steps if s.get("name") == "The GUI server against this launcher")
         self.assertIn("-k test_real_", step["run"])
+        self.assertIn("--no-sync", step["run"])
         tests_dir = ROOT / "gui" / "server" / "tests"
         for path in sorted(tests_dir.rglob("test_*.py")):
             if path.relative_to(tests_dir).as_posix() == "test_example_client.py":
@@ -104,6 +105,16 @@ class AllChecks(unittest.TestCase):
                     f"{path.name} uses VEHICLE_SIL_GUI_LAUNCHER, VEHICLE_SIL_GUI_EXAMPLES or real_configs, so its "
                     "name must start with test_real_ to run in the linux-gcc-control step",
                 )
+
+    def test_release_workflow_decouples_cpp_builds_from_web(self):
+        release = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8"))
+        rjobs = release["jobs"]
+        for builder in ("build-linux", "build-windows"):
+            self.assertIn(builder, rjobs)
+            self.assertNotIn("needs", rjobs[builder])
+        self.assertEqual(sorted(rjobs["package-linux"]["needs"]), ["build-linux", "web"])
+        self.assertEqual(sorted(rjobs["package-windows"]["needs"]), ["build-windows", "web"])
+        self.assertEqual(sorted(rjobs["draft"]["needs"]), ["package-linux", "package-windows", "web"])
 
 
 @unittest.skipIf(

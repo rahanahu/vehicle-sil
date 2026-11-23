@@ -9,3 +9,6 @@ vehicle_sil_add_harness_tests(vehicle_sil_control_silkit_tests
   LINK vehicle_sil::control_silkit vehicle_sil::peer)
 # The names of the topics are internal to the library (a test publishes a hello of another version).
 target_include_directories(vehicle_sil_control_silkit_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/control_silkit/src)
+set_tests_properties(control_silkit.a_participant_that_leaves_in_the_start_window_ends_the_wait
+                     control_silkit.the_last_word_arrives_though_the_participant_goes_right_after_it_with_a_large_send_under_way
+                     PROPERTIES COST 7)

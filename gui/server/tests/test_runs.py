@@ -94,7 +94,7 @@ def test_a_run_that_passes(tmp_path: Path) -> None:
         assert body["session"]["snapshot_rev"] > end["snapshot_rev"]
         assert {**without_variables(body["session"]), "snapshot_rev": end["snapshot_rev"]} == end
         assert body["session"]["variables"]["state"] == "off"
-    with gui_server(tmp_path) as gui:
+    with gui_server(tmp_path, env={"REPLAY_NO_SLEEPERS": "0"}) as gui:
         run_async(main, gui)
 
 
@@ -353,7 +353,7 @@ def test_variant_and_params_of_the_wrong_shape_are_refused(gui: Gui) -> None:
 
 
 def test_one_run_at_a_time_and_stop(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50", "REPLAY_NO_SLEEPERS": "0"}) as gui:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -396,7 +396,7 @@ def test_a_second_stop_does_not_wait(tmp_path: Path) -> None:
         run_async(main, gui)
 
 
-def test_problems_of_the_launcher_are_shown(gui: Gui) -> None:
+def test_problems_of_the_launcher_are_shown(tmp_path: Path) -> None:
     async def main(c: Client) -> None:
         got = await run_to_end(c, {"file": "participant-crash.yaml"})
         end = got[-1]["session"]
@@ -415,7 +415,8 @@ def test_problems_of_the_launcher_are_shown(gui: Gui) -> None:
         assert got[-1]["session"]["result"]["result"] == "passed"
         got = await run_to_end(c, {"file": "future-events.yaml", "stop_at_ms": 1000})
         assert [m["code"] for m in got if m["type"] == "error"] == ["events-format"]
-    run_async(main, gui)
+    with gui_server(tmp_path, env={"REPLAY_NO_SLEEPERS": "0"}) as gui:
+        run_async(main, gui)
 
 
 def test_a_launcher_that_runs_on_after_its_result_can_be_stopped(gui: Gui) -> None:
@@ -521,7 +522,7 @@ def start_run(gui: Gui, file: str, wait_for: str = "time") -> list[int]:
 @pytest.mark.skipif(not POSIX, reason="signals and /proc")
 @pytest.mark.parametrize("how", [signal.SIGTERM, signal.SIGINT, signal.SIGHUP])
 def test_stopping_the_server_stops_the_run(tmp_path: Path, how: int) -> None:
-    with gui_server(tmp_path) as gui:
+    with gui_server(tmp_path, env={"REPLAY_NO_SLEEPERS": "0"}) as gui:
         pids = start_run(gui, "forever.yaml")
         assert len(pids) == 4 and all(alive(p) for p in pids)
         start = time.monotonic()
@@ -533,7 +534,7 @@ def test_stopping_the_server_stops_the_run(tmp_path: Path, how: int) -> None:
 
 @pytest.mark.skipif(not POSIX, reason="signals and /proc")
 def test_a_launcher_that_does_not_stop_is_killed(tmp_path: Path) -> None:
-    with gui_server(tmp_path, args=("--stop-timeout", "0.2")) as gui:
+    with gui_server(tmp_path, env={"REPLAY_NO_SLEEPERS": "0"}, args=("--stop-timeout", "0.2")) as gui:
         pids = start_run(gui, "ignore-stop.yaml")
         start = time.monotonic()
         gui.proc.send_signal(signal.SIGTERM)
@@ -551,7 +552,7 @@ def test_stop_timeout_rejects_non_finite_or_negative_values(tmp_path: Path, valu
 
 @pytest.mark.skipif(not POSIX, reason="signals and /proc")
 def test_a_second_signal_skips_the_waiting(tmp_path: Path) -> None:
-    with gui_server(tmp_path) as gui:
+    with gui_server(tmp_path, env={"REPLAY_NO_SLEEPERS": "0"}) as gui:
         pids = start_run(gui, "ignore-stop.yaml")
         gui.proc.send_signal(signal.SIGINT)
         time.sleep(0.5)
@@ -566,7 +567,7 @@ def test_a_second_signal_skips_the_waiting(tmp_path: Path) -> None:
 @pytest.mark.skipif(not POSIX, reason="signals and /proc")
 def test_a_killed_server_leaves_no_run(tmp_path: Path) -> None:
     # The server cannot clean up; the launcher's input ends, and the launcher stops (the contract).
-    with gui_server(tmp_path) as gui:
+    with gui_server(tmp_path, env={"REPLAY_NO_SLEEPERS": "0"}) as gui:
         pids = start_run(gui, "forever.yaml")
         gui.proc.kill()
         gui.proc.wait()

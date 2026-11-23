@@ -513,9 +513,15 @@ def built_with(build: Path) -> str | None:
 
 
 def tools_command(args: argparse.Namespace) -> int:
+    if args.build_only and args.prebuilt:
+        raise Usage("--build-only and --prebuilt cannot be used together")
+    if args.no_build and (args.build_only or args.prebuilt):
+        raise Usage("--no-build cannot be combined with --build-only or --prebuilt")
     version = project_version()
     top, archive_name = names(version)
     build = Path(args.build_dir).resolve() if args.build_dir else ROOT / "build" / f"package-{PLATFORM}"
+    build_only = Path(args.build_only).resolve() if args.build_only else None
+    prebuilt = Path(args.prebuilt).resolve() if args.prebuilt else None
     web = Path(args.web).resolve()
     client = Path(args.client).resolve()
     client_package = Path(args.client_package).resolve() if args.client_package else client_package_path(version)
@@ -525,13 +531,25 @@ def tools_command(args: argparse.Namespace) -> int:
     launcher = build / "tools" / "launch" / LAUNCHER
     bridge = build / "bridges" / "ethernet" / ETHERNET_BRIDGE
     socketcan_bridge = build / "bridges" / "socketcan" / SOCKETCAN_BRIDGE
-    for tool, why in [("cmake", "configure and build"), ("uv", "the Python packages and stubs")] + (
-            [] if args.no_build else [("ninja", "the build")]) + (
-            [("objdump", "the DLLs of the executables (MSYS2: binutils)"), ("pacman", "the licenses of the DLLs")]
-            if WINDOWS else [("readelf", "the libraries of the executables (binutils)"),
-                            ("objdump", "the glibc versions the executables need (binutils)")]):
+    required_tools = []
+    if not prebuilt:
+        required_tools.append(("cmake", "configure and build"))
+    if not build_only:
+        required_tools.append(("uv", "the Python packages and stubs"))
+    if not args.no_build and not prebuilt:
+        required_tools.append(("ninja", "the build"))
+    if WINDOWS:
+        if not prebuilt:
+            required_tools += [("objdump", "the DLLs of the executables (MSYS2: binutils)"),
+                               ("pacman", "the licenses of the DLLs")]
+        else:
+            required_tools.append(("objdump", "the DLLs of the executables (MSYS2: binutils)"))
+    else:
+        required_tools += [("readelf", "the libraries of the executables (binutils)"),
+                           *([] if build_only else [("objdump", "the glibc versions the executables need (binutils)")])]
+    for tool, why in required_tools:
         need(tool, why)
-    if not WINDOWS and not args.shared_runtime and not args.no_build:
+    if not WINDOWS and not args.shared_runtime and not args.no_build and not prebuilt:
         cxx = os.environ.get("CXX") or "g++"
         found = subprocess.run([cxx, "-print-file-name=libstdc++.a"], capture_output=True, text=True).stdout.strip()
         if not Path(found).is_absolute():
@@ -540,19 +558,27 @@ def tools_command(args: argparse.Namespace) -> int:
                         "libstdc++-<n>-dev), or pass --shared-runtime for an archive that needs the system's "
                         "libstdc++ (for a local try, not for a release)")
     bundles = [client, client.with_name(CLIENT_BUNDLES[1])]  # the parts: next to the library, under their name
-    if not (web / "index.html").is_file() or not client.is_file() or not all(b.is_file() for b in bundles):
-        raise Usage(f"the built screen ({web}/index.html) or the client library and the parts ({client} and "
-                    f"{CLIENT_BUNDLES[1]} next to it) are missing: build them "
-                    "with scripts/verify-web.py --skip-e2e (or in gui/web: npm ci, npm run build, npm run build:client),"
-                    " or name them with --web and --client")
-    if client_package.name != client_package_path(version).name or not client_package.is_file():
-        raise Usage(f"the client library's npm package {client_package_path(version).name} is missing ({client_package}):"
-                    " make it with scripts/verify-web.py --skip-e2e (or in gui/web: npm run pack:client), or name it"
-                    " with --client-package")
     web_licenses = web.parent / "3rdpartylicenses.txt"
-    if not web_licenses.is_file():
-        raise Usage(f"{web_licenses} is missing: the screen's build writes the licenses of the packages it bundles "
-                    "there (Angular's extractLicenses); build the screen again")
+    if not build_only:
+        if not (web / "index.html").is_file() or not client.is_file() or not all(b.is_file() for b in bundles):
+            raise Usage(f"the built screen ({web}/index.html) or the client library and the parts ({client} and "
+                        f"{CLIENT_BUNDLES[1]} next to it) are missing: build them "
+                        "with scripts/verify-web.py --skip-e2e (or in gui/web: npm ci, npm run build, npm run build:client),"
+                        " or name them with --web and --client")
+        if client_package.name != client_package_path(version).name or not client_package.is_file():
+            raise Usage(f"the client library's npm package {client_package_path(version).name} is missing ({client_package}):"
+                        " make it with scripts/verify-web.py --skip-e2e (or in gui/web: npm run pack:client), or name it"
+                        " with --client-package")
+        if not web_licenses.is_file():
+            raise Usage(f"{web_licenses} is missing: the screen's build writes the licenses of the packages it bundles "
+                        "there (Angular's extractLicenses); build the screen again")
+    if prebuilt is not None:
+        for req in [prebuilt / "bin" / LAUNCHER, prebuilt / "bin" / ETHERNET_BRIDGE, prebuilt / "compiler.txt",
+                    *([] if WINDOWS else [prebuilt / "bin" / SOCKETCAN_BRIDGE]),
+                    *([] if not WINDOWS else [prebuilt / "licenses" / "msys2" / "PACKAGES.txt"]),
+                    *(prebuilt / "licenses" / "grpc" / rel for rel in GRPC_LICENSES)]:
+            if not req.is_file():
+                raise Usage(f"--prebuilt {prebuilt}: missing {req} (make it with scripts/package.py tools --build-only)")
 
     def configure(s: Step) -> None:
         command = ["cmake", "-S", ROOT, "-B", build, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
@@ -609,16 +635,31 @@ def tools_command(args: argparse.Namespace) -> int:
     def stage_step(s: Step) -> None:
         shutil.rmtree(stage_root, ignore_errors=True)
         (stage / "bin").mkdir(parents=True)
-        shutil.copy2(launcher, stage / "bin")
-        shutil.copy2(bridge, stage / "bin")
-        if not WINDOWS:
-            shutil.copy2(socketcan_bridge, stage / "bin")
-        if WINDOWS:
-            bundled = stage_windows_dlls(s, [launcher, bridge], stage / "bin")
-            (stage / "bin" / "vehicle-sil-gui.cmd").write_text(
-                CMD_WRAPPER.replace("@PYTHON@", python_versions()).replace("\n", "\r\n"), encoding="ascii", newline="")
+        if prebuilt is not None:
+            for item in sorted((prebuilt / "bin").iterdir()):
+                if item.is_file():
+                    dst = stage / "bin" / item.name
+                    shutil.copy2(item, dst)
+                    if not WINDOWS:
+                        dst.chmod(0o755)
+            if WINDOWS:
+                (stage / "bin" / "vehicle-sil-gui.cmd").write_text(
+                    CMD_WRAPPER.replace("@PYTHON@", python_versions()).replace("\n", "\r\n"), encoding="ascii", newline="")
+            else:
+                libs = sorted(f.name for f in (stage / "bin").glob("*.so*"))
+                s.notes.append("bundled " + ", ".join(libs) if libs else "the executables need no library of their own")
+            bundled = []
         else:
-            bundled = stage_linux_libraries(s, [launcher, bridge, socketcan_bridge], build, stage / "bin")
+            shutil.copy2(launcher, stage / "bin")
+            shutil.copy2(bridge, stage / "bin")
+            if not WINDOWS:
+                shutil.copy2(socketcan_bridge, stage / "bin")
+            if WINDOWS:
+                bundled = stage_windows_dlls(s, [launcher, bridge], stage / "bin")
+                (stage / "bin" / "vehicle-sil-gui.cmd").write_text(
+                    CMD_WRAPPER.replace("@PYTHON@", python_versions()).replace("\n", "\r\n"), encoding="ascii", newline="")
+            else:
+                bundled = stage_linux_libraries(s, [launcher, bridge, socketcan_bridge], build, stage / "bin")
         wrapper = stage / "bin" / "vehicle-sil-gui"
         wrapper.write_text(SH_WRAPPER.replace("@PYTHON@", python_versions()), encoding="ascii", newline="\n")
         wrapper.chmod(0o755)
@@ -650,7 +691,8 @@ def tools_command(args: argparse.Namespace) -> int:
         shutil.copy2(ROOT / "schema" / "timeline.schema.json", stage / "schema")
         shutil.copy2(ROOT / "LICENSE", stage)
         shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", stage)
-        stage_licenses(s, build, stage / "licenses", web_licenses, bundled, args.allow_missing_licenses)
+        stage_licenses(s, build, stage / "licenses", web_licenses, bundled, args.allow_missing_licenses,
+                       prebuilt=prebuilt)
         socketcan_row = "" if WINDOWS else SOCKETCAN_ROW
         (stage / "README.md").write_text(README.format(version=version, platform=PLATFORM, exe=EXE, socketcan_row=socketcan_row,
                                                        cmd=" (`.cmd` from the Command Prompt)" if WINDOWS else ""),
@@ -661,12 +703,30 @@ def tools_command(args: argparse.Namespace) -> int:
         # What this repository hands out is built with GCC (MinGW-w64 included): the C++ runtime linked into
         # the launcher is passed on under the GCC Runtime Library Exception, which was checked for GCC only.
         # Anyone may build with another compiler; the released archive is the thing that must not be.
-        found = built_with(build)
+        found = (prebuilt / "compiler.txt").read_text(encoding="ascii").strip() if prebuilt is not None else built_with(build)
         if found != "GNU":
-            raise StepFailed(f"the build in {build} was made with {found or 'an unknown compiler'}, and the tools "
+            raise StepFailed(f"the build in {prebuilt or build} was made with {found or 'an unknown compiler'}, and the tools "
                              "archive is made with GCC only (its license notices are written for GCC's runtime): "
                              "configure again with -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ "
                              "(--cmake-arg), in a new --build directory")
+
+    def export_step(s: Step) -> None:
+        assert build_only is not None
+        shutil.rmtree(build_only, ignore_errors=True)
+        bin_out = build_only / "bin"
+        bin_out.mkdir(parents=True)
+        shutil.copy2(launcher, bin_out)
+        shutil.copy2(bridge, bin_out)
+        if not WINDOWS:
+            shutil.copy2(socketcan_bridge, bin_out)
+        if WINDOWS:
+            bundled = stage_windows_dlls(s, [launcher, bridge], bin_out)
+            stage_msys2_licenses(s, build_only / "licenses" / "msys2", bundled, args.allow_missing_licenses)
+        else:
+            stage_linux_libraries(s, [launcher, bridge, socketcan_bridge], build, bin_out)
+        (build_only / "compiler.txt").write_text((built_with(build) or "") + "\n", encoding="ascii")
+        stage_grpc_licenses(build, build_only / "licenses" / "grpc")
+        s.notes.append(str(build_only))
 
     def portable_step(s: Step) -> None:
         # The staged launcher, with a PATH of the system's directories only: it finds its libraries next to it.
@@ -740,19 +800,25 @@ def tools_command(args: argparse.Namespace) -> int:
                        f"{path.stat().st_size / 1e6:.1f} MB, sha256 {digest[:12]}...")
 
     steps = [("version", check_version)]
-    if not args.no_build:
-        steps += [("configure", configure), ("build", build_step)]
+    if build_only is not None:
+        steps += [("configure", configure), ("build", build_step), ("compiler", compiler_step), ("export", export_step)]
+    elif prebuilt is not None:
+        steps += [("compiler", compiler_step), ("python", python_step), ("stage", stage_step),
+                  ("portable", portable_step), ("archive", archive_step)]
     else:
-        for built in (launcher, bridge):
-            if not built.is_file():
-                raise Usage(f"--no-build, and there is no {built}: build it first (without --no-build)")
-    steps += [("compiler", compiler_step), ("python", python_step), ("stage", stage_step), ("portable", portable_step),
-              ("archive", archive_step)]
-    print(f"package: tools {version} for {PLATFORM} (build {build})", flush=True)
+        if not args.no_build:
+            steps += [("configure", configure), ("build", build_step)]
+        else:
+            for built in (launcher, bridge):
+                if not built.is_file():
+                    raise Usage(f"--no-build, and there is no {built}: build it first (without --no-build)")
+        steps += [("compiler", compiler_step), ("python", python_step), ("stage", stage_step),
+                  ("portable", portable_step), ("archive", archive_step)]
+    print(f"package: tools {version} for {PLATFORM} (build {prebuilt or build})", flush=True)
     if not run_steps(args.tag, steps):
         print("package: FAILED")
         return 1
-    print(f"package: ok {out / archive_name}")
+    print(f"package: ok {build_only if build_only is not None else out / archive_name}")
     return 0
 
 
@@ -884,8 +950,24 @@ def stage_windows_dlls(s: Step, executables: list[Path], bin_dir: Path) -> list[
     return from_mingw
 
 
+def stage_grpc_licenses(build: Path, into: Path) -> None:
+    grpc = build / "_deps" / "grpc-src"
+    cache = (build / "CMakeCache.txt").read_text(encoding="utf-8", errors="replace")
+    given = re.search(r"(?m)^FETCHCONTENT_SOURCE_DIR_GRPC:[A-Z]+=(.+)$", cache)
+    if given:  # a gRPC source tree given to the configure
+        grpc = Path(given.group(1).strip())
+    missing = [rel for rel in GRPC_LICENSES if not (grpc / rel).is_file()]
+    if missing:
+        raise StepFailed(f"license files missing in {grpc}: {', '.join(missing)} (the gRPC version changed: update "
+                         "GRPC_LICENSES in scripts/package.py and THIRD_PARTY_NOTICES.md)")
+    for rel in GRPC_LICENSES:
+        target = into / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(grpc / rel, target)
+
+
 def stage_licenses(s: Step, build: Path, licenses: Path, web_licenses: Path, bundled: list,
-                   allow_missing: bool) -> None:
+                   allow_missing: bool, prebuilt: Path | None = None) -> None:
     licenses.mkdir()
     silkit = ROOT / "external" / "sil-kit"
     for rel in SILKIT_LICENSES:
@@ -898,21 +980,14 @@ def stage_licenses(s: Step, build: Path, licenses: Path, web_licenses: Path, bun
     web_dir = licenses / "web"
     web_dir.mkdir()
     shutil.copy2(web_licenses, web_dir / "3rdpartylicenses.txt")
+    if prebuilt is not None:
+        if WINDOWS:
+            shutil.copytree(prebuilt / "licenses" / "msys2", licenses / "msys2")
+        shutil.copytree(prebuilt / "licenses" / "grpc", licenses / "grpc")
+        return
     if WINDOWS:
         stage_msys2_licenses(s, licenses / "msys2", bundled, allow_missing)
-    grpc = build / "_deps" / "grpc-src"
-    cache = (build / "CMakeCache.txt").read_text(encoding="utf-8", errors="replace")
-    given = re.search(r"(?m)^FETCHCONTENT_SOURCE_DIR_GRPC:[A-Z]+=(.+)$", cache)
-    if given:  # a gRPC source tree given to the configure
-        grpc = Path(given.group(1).strip())
-    missing = [rel for rel in GRPC_LICENSES if not (grpc / rel).is_file()]
-    if missing:
-        raise StepFailed(f"license files missing in {grpc}: {', '.join(missing)} (the gRPC version changed: update "
-                         "GRPC_LICENSES in scripts/package.py and THIRD_PARTY_NOTICES.md)")
-    for rel in GRPC_LICENSES:
-        target = licenses / "grpc" / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(grpc / rel, target)
+    stage_grpc_licenses(build, licenses / "grpc")
 
 
 # The MinGW libraries every executable of the archive has inside (linked statically) or loads.
@@ -1275,6 +1350,10 @@ def main() -> int:
     tools = sub.add_parser("tools", help="build and pack the tools archive of this platform")
     tools.add_argument("--build-dir", help=f"the build directory (default: build/package-{PLATFORM})")
     tools.add_argument("--no-build", action="store_true", help="pack the launcher already built there")
+    tools.add_argument("--build-only", metavar="DIR",
+                       help="only configure, build, check the compiler and export binaries/licenses to DIR")
+    tools.add_argument("--prebuilt", metavar="DIR",
+                       help="pack binaries and licenses exported by --build-only in DIR (skip configure and build)")
     tools.add_argument("--web", default=str(ROOT / "gui" / "web" / "dist" / "browser"),
                        help="the built screen (default: gui/web/dist/browser)")
     tools.add_argument("--client", default=str(ROOT / "build" / "gui-client" / "vehicle-sil-gui-client.mjs"),

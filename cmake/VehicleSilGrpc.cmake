@@ -37,6 +37,10 @@ function(_vehicle_sil_fetch_grpc)
   endforeach()
   # Warnings of third-party code are not ours to fix.
   set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)
+  # gRPC, protobuf, abseil and BoringSSL debug info is ~2.8 GB of object files and not needed for
+  # vehicle-sil tests; keep vehicle-sil itself in Debug while stripping FetchContent gRPC debug info.
+  set(CMAKE_C_FLAGS_DEBUG "-g0")
+  set(CMAKE_CXX_FLAGS_DEBUG "-g0")
   FetchContent_Declare(
     grpc
     GIT_REPOSITORY https://github.com/grpc/grpc.git

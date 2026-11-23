@@ -37,6 +37,8 @@ if(TARGET vehicle_sil_launch)
             -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch>
             -DC_COMPILER=${CMAKE_C_COMPILER}
             -DCXX_COMPILER=${CMAKE_CXX_COMPILER}
+            "-DC_FLAGS_DEBUG=${CMAKE_C_FLAGS_DEBUG}"
+            "-DCXX_FLAGS_DEBUG=${CMAKE_CXX_FLAGS_DEBUG}"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_template.cmake)
   set_tests_properties(fetchcontent.template PROPERTIES LABELS fetchcontent TIMEOUT 7200)
 endif()

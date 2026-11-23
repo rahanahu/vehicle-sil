@@ -343,6 +343,7 @@ def run_preset(preset: str, args: argparse.Namespace, test_jobs: int | None) -> 
         cmd = ["cmake", "--preset", preset]
         if not args.no_werror:
             cmd.append("-DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON")
+        cmd += args.cmake_arg or []
         code, result.seconds["configure"] = run_step(cmd, logs["configure"])
         result.logs["configure"] = rel(logs["configure"])
         if code != 0:
@@ -459,8 +460,19 @@ def main() -> int:
     parser.add_argument("--no-werror", action="store_true",
                         help="do not pass -DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON (the CMake cache keeps its earlier value)")
     parser.add_argument("--no-configure", action="store_true", help="skip the configure step")
+    parser.add_argument("--cmake-arg", action="append", metavar="ARG",
+                        help="one more configure argument (repeatable, e.g. --cmake-arg=-DFOO=ON)")
     parser.add_argument("--json", action="store_true", help='print the summary as JSON ({"vehicle_sil_verify": 1, ...})')
-    args = parser.parse_args()
+    raw_argv = []
+    i = 1
+    while i < len(sys.argv):
+        if sys.argv[i] == "--cmake-arg" and i + 1 < len(sys.argv):
+            raw_argv.append(f"--cmake-arg={sys.argv[i + 1]}")
+            i += 2
+        else:
+            raw_argv.append(sys.argv[i])
+            i += 1
+    args = parser.parse_args(raw_argv)
 
     if args.summarize:
         if args.presets or args.linux:

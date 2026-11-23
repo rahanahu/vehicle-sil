@@ -300,6 +300,67 @@ class VerifyWebJUnitTest(unittest.TestCase):
         self.assertIn("VEHICLE_SIL_PLAYWRIGHT_JUNIT", pw_real_cfg)
         self.assertIn("../../build/logs/web-e2e-real.junit.xml", pw_real_cfg)
 
+    def test_verify_gui_no_sync_missing_venv_exits_two(self) -> None:
+        missing_venv = self.dir / "missing-venv"
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in (job_summary.SUMMARY_ENV, job_summary.NESTED_ENV, job_summary.ARTIFACT_ENV)
+        }
+        env["UV_PROJECT_ENVIRONMENT"] = str(missing_venv)
+        proc = subprocess.run(
+            [sys.executable, str(VERIFY_GUI), "--skip-web", "--no-wait", "--no-sync"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            env=env,
+        )
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("--no-sync", proc.stderr)
+        self.assertIn(str(missing_venv), proc.stderr)
+
+    def test_verify_gui_no_sync_omits_sync_and_passes_no_sync_to_uv_run(self) -> None:
+        venv = self.dir / "existing-venv"
+        venv.mkdir()
+        bin_dir = self.dir / "fake-bin"
+        bin_dir.mkdir()
+        args_log = self.dir / "uv-calls.txt"
+        fake_uv = bin_dir / ("uv.bat" if os.name == "nt" else "uv")
+        if os.name == "nt":
+            fake_uv.write_text(f'@echo off\r\necho %*>> "{args_log}"\r\nexit /b 0\r\n', encoding="utf-8")
+        else:
+            fake_uv.write_text(
+                f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {args_log!s}\nexit 0\n",
+                encoding="utf-8",
+            )
+            fake_uv.chmod(0o755)
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in (job_summary.SUMMARY_ENV, job_summary.NESTED_ENV, job_summary.ARTIFACT_ENV)
+        }
+        env["UV_PROJECT_ENVIRONMENT"] = str(venv)
+        env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+        proc = subprocess.run(
+            [sys.executable, str(VERIFY_GUI), "--skip-web", "--no-wait", "--no-sync", "--json", "--tag", "test-nosync"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            env=env,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        payload = json.loads(proc.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual([s["step"] for s in payload["steps"]], ["server"])
+        calls = args_log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(calls), 1)
+        self.assertIn("run --no-sync pytest", calls[0])
+        self.assertNotIn("sync --locked", calls[0])
+
 
 if __name__ == "__main__":
     unittest.main()

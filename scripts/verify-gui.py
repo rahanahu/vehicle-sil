@@ -225,6 +225,8 @@ def main() -> int:
     parser.add_argument("--skip-e2e", action="store_true", help="passed on to verify-web.py (no browser tests)")
     parser.add_argument("--e2e-dev", action="store_true",
                         help="passed on to verify-web.py (also the browser tests through the dev server)")
+    parser.add_argument("--no-sync", action="store_true",
+                        help="do not run uv sync --locked (use the existing .venv)")
     parser.add_argument("-k", dest="keyword", help="only the server tests matching this pytest -k expression")
     parser.add_argument("--tag", default="gui", help="prefix of the log names (default: gui)")
     parser.add_argument("--json", action="store_true",
@@ -247,14 +249,21 @@ def main() -> int:
     launcher = args.launcher or os.environ.get("VEHICLE_SIL_GUI_LAUNCHER") or None
     if launcher is not None and not Path(launcher).is_file():
         die_usage(f"--launcher {launcher}: no such file (build/<preset>/tools/launch/vehicle_sil_launch)")
+    if args.no_sync:
+        venv = Path(os.environ.get("UV_PROJECT_ENVIRONMENT") or ROOT / ".venv")
+        if not venv.is_dir():
+            die_usage(f"--no-sync: virtual environment {venv} does not exist (run uv sync --locked first, or omit --no-sync)")
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     junit = LOG_DIR / f"{args.tag}-server.xml"
     example_tests = "gui/server/tests/test_example_client.py"
-    pytest = [uv, "run", "--locked", "pytest", "gui/server/tests", "-q", "-rs", f"--ignore={example_tests}",
+    uv_run_flag = "--no-sync" if args.no_sync else "--locked"
+    pytest = [uv, "run", uv_run_flag, "pytest", "gui/server/tests", "-q", "-rs", f"--ignore={example_tests}",
               f"--junitxml={junit}"]
     if args.keyword:
         pytest += ["-k", args.keyword]
-    steps = [Step("sync", [uv, "sync", "--locked"])]
+    else:
+        pytest += ["-n", str(min(os.cpu_count() or 1, 4))]
+    steps = [] if args.no_sync else [Step("sync", [uv, "sync", "--locked"])]
     skipped_server = "--skip-server" if args.skip_server else None
     if skipped_server is None:
         steps.append(Step("server", pytest))
@@ -269,7 +278,7 @@ def main() -> int:
         web += ["--no-wait"] if args.no_wait else ["--wait-limit", f"{args.wait_limit:g}"]
         steps.append(Step("web", web))
     if skipped_example is None:  # after web: it uses the library bundled there
-        steps.append(Step("example", [uv, "run", "--locked", "pytest", example_tests, "-q", "-rs"]))
+        steps.append(Step("example", [uv, "run", uv_run_flag, "pytest", example_tests, "-q", "-rs"]))
     skipped_real = None
     if launcher is None:
         skipped_real = "no launcher (--launcher <path> or VEHICLE_SIL_GUI_LAUNCHER)"

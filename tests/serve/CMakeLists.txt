@@ -60,7 +60,7 @@ add_test(NAME serve.basic
          COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_serve_basic
          WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 set_tests_properties(serve.basic PROPERTIES
-  LABELS "serve;launch;integration;python" TIMEOUT 600 RUN_SERIAL TRUE
+  LABELS "serve;launch;integration;python" TIMEOUT 600 PROCESSORS 2 COST 25
   ENVIRONMENT "${_serve_common_env}")
 
 # #3 (stale stdin), #4 (event window isolation & log-dir), #6 (idle signals & run/SIGINT race),
@@ -69,7 +69,7 @@ add_test(NAME serve.isolation
          COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_serve_isolation
          WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 set_tests_properties(serve.isolation PROPERTIES
-  LABELS "serve;launch;integration;python" TIMEOUT 600 RUN_SERIAL TRUE
+  LABELS "serve;launch;integration;python" TIMEOUT 600 RUN_SERIAL TRUE COST 30
   ENVIRONMENT "${_serve_common_env}")
 
 # #11: Windows-specific handle/thread/Job Object/CTRL_BREAK/fixed-port gRPC acceptance test.
@@ -82,7 +82,7 @@ if(WIN32)
            COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_serve_windows
            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
   set_tests_properties(serve.windows PROPERTIES
-    LABELS "${_serve_win_labels}" TIMEOUT 600 RUN_SERIAL TRUE
+    LABELS "${_serve_win_labels}" TIMEOUT 600 RUN_SERIAL TRUE COST 15
     ENVIRONMENT "${_serve_common_env}")
 endif()
 
@@ -109,7 +109,7 @@ if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
              COMMAND "${_serve_grpc_python}" -m unittest -v test_serve_grpc
              WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
     set_tests_properties(serve.grpc PROPERTIES
-      LABELS "serve;control;control_server;launch;integration;python" TIMEOUT 300 RUN_SERIAL TRUE
+      LABELS "serve;control;control_server;launch;integration;python" TIMEOUT 300
       ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_serve_stubs};${_serve_common_env}")
   endif()
 endif()

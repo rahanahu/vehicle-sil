@@ -84,6 +84,39 @@ def test_at_most_five_lines_further_down() -> None:
     check("FAIL: check 4\n" in out and "FAIL: check 5" not in out, "five lines further down at most:\n" + out)
 
 
+def test_cmake_arg_is_forwarded_to_configure() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        bin_dir = tmp / "bin"
+        bin_dir.mkdir()
+        cmake_calls = tmp / "cmake-calls.txt"
+        if os.name == "nt":
+            (bin_dir / "cmake.bat").write_text(
+                f'@echo off\r\necho %*>> "{cmake_calls}"\r\nexit /b 0\r\n', encoding="utf-8")
+            (bin_dir / "ctest.bat").write_text(
+                '@echo off\r\necho 100%% tests passed out of 1\r\nexit /b 0\r\n', encoding="utf-8")
+        else:
+            cmake_sh = bin_dir / "cmake"
+            cmake_sh.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {cmake_calls!s}\nexit 0\n", encoding="utf-8")
+            cmake_sh.chmod(0o755)
+            ctest_sh = bin_dir / "ctest"
+            ctest_sh.write_text("#!/bin/sh\necho '100% tests passed out of 1'\nexit 0\n", encoding="utf-8")
+            ctest_sh.chmod(0o755)
+        env = {k: v for k, v in os.environ.items()
+               if k not in (job_summary.SUMMARY_ENV, job_summary.NESTED_ENV, job_summary.ARTIFACT_ENV)}
+        env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+        preset = "windows-mingw-debug" if os.name == "nt" else "linux-gcc-debug"
+        run = subprocess.run(
+            [sys.executable, str(VERIFY), preset, "--tag", "test-cmake-arg",
+             "--cmake-arg", "-DCMAKE_C_FLAGS_DEBUG=-g1", "--cmake-arg=-DCMAKE_CXX_FLAGS_DEBUG=-g1"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, env=env,
+        )
+        check(run.returncode == 0, f"verify.py --cmake-arg exited {run.returncode}: {run.stdout}\n{run.stderr}")
+        calls = cmake_calls.read_text(encoding="utf-8").splitlines() if cmake_calls.exists() else []
+        check(len(calls) >= 1 and "-DCMAKE_C_FLAGS_DEBUG=-g1" in calls[0] and "-DCMAKE_CXX_FLAGS_DEBUG=-g1" in calls[0],
+              f"configure received --cmake-arg values: {calls}")
+
+
 if __name__ == "__main__":
     for name, test in list(globals().items()):
         if name.startswith("test_") and callable(test):
