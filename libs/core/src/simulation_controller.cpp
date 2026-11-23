@@ -584,6 +584,28 @@ void SimulationController::start(std::chrono::milliseconds timeout, const std::f
     {
         // Running: the window was completed, so the thread is on its way out.
         window_->thread.join();
+    }
+    // Every required participant was ReadyToRun for the controller to reach Running, and is now on
+    // its way to Running too. Wait until each has reached Running (or already finished) before
+    // returning, so that an immediate abort() right after start() does not catch a participant
+    // still in ReadyToRun before it has begun to run.
+    const auto reached_running_or_ended = [](const PeerStatus& status) {
+        return is_running(status) || has_finished(status);
+    };
+    bool stopWaiting = false;
+    for (const auto& name : options_.required_participants)
+    {
+        while (!stopWaiting && !has_finished(PeerStatus{runtime_->state()}) &&
+               !runtime_->wait_for_peer(name, reached_running_or_ended, std::min(remaining(), kSlice)))
+        {
+            if ((give_up && !give_up().empty()) || remaining() <= std::chrono::milliseconds(0))
+            {
+                stopWaiting = true;
+            }
+        }
+    }
+    if (window_)
+    {
         const std::lock_guard lock(window_->mutex);
         if (!window_->error.empty())
         {

@@ -463,6 +463,7 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
         // ReadyToRun" then means Running or beyond. With the state read first, the SIL Kit thread
         // could set ReadyToRun and the flag between the two reads, and start() would return on
         // an older state while state() says ReadyToRun.
+        const bool runningEntered = running_entered_.load(std::memory_order_acquire);
         const bool stepEntered = step_entered_.load(std::memory_order_acquire);
         const bool startingEntered = starting_entered_.load(std::memory_order_acquire);
         start_probe(detail::StartProbePoint::BetweenFlagsAndState);
@@ -484,7 +485,7 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
                                           ? std::string()
                                           : " (the state is " + orch::to_string(current) + " now)"));
         }
-        if (current == orch::ParticipantState::Running || stepEntered
+        if (current == orch::ParticipantState::Running || runningEntered || stepEntered
             || (startingEntered && current != orch::ParticipantState::ReadyToRun))
         {
             deliver_stop(false); // a stop requested before Running
@@ -493,9 +494,11 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
         if (is_terminal_or_stopping(current))
         {
             // The other side of the same order: the lifecycle can have gone through Running and
-            // on to this state after the flags were read. They never go back, so they say now
-            // whether it did: that is a start that succeeded, not one that failed.
-            if (step_entered_.load(std::memory_order_acquire) || starting_entered_.load(std::memory_order_acquire))
+            // on to this state after the flags were read (or been aborted right after Running,
+            // before any step ran). They never go back, so they say now whether it did: that is a
+            // start that succeeded, not one that failed.
+            if (running_entered_.load(std::memory_order_acquire) || step_entered_.load(std::memory_order_acquire)
+                || starting_entered_.load(std::memory_order_acquire))
             {
                 deliver_stop(false);
                 return;
@@ -511,7 +514,8 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
             // this one began: if so, the next round decides (it returns, or waits for Running
             // while the starting handler is still there), and "give up" is not taken.
             if (std::string why = give_up();
-                !why.empty() && !step_entered_.load(std::memory_order_acquire)
+                !why.empty() && !running_entered_.load(std::memory_order_acquire)
+                && !step_entered_.load(std::memory_order_acquire)
                 && !starting_entered_.load(std::memory_order_acquire))
             {
                 throw std::runtime_error("SIL Kit lifecycle of '" + options_.participant_name +
@@ -1266,11 +1270,18 @@ void ParticipantRuntime::on_status(const orch::ParticipantStatus& status, bool r
     {
         // An Error before this participant began to run is a start that failed, also if SIL Kit
         // leaves Error again (start()). Only a status as it comes (on the SIL Kit thread, which
-        // also sets the two flags): a replay may bring an old Error after a run has begun.
+        // also sets the flags): a replay may bring an old Error after a run has begun.
         if (!replayed && status.state == orch::ParticipantState::Error && started()
-            && !step_entered_.load(std::memory_order_acquire) && !starting_entered_.load(std::memory_order_acquire))
+            && !running_entered_.load(std::memory_order_acquire)
+            && !step_entered_.load(std::memory_order_acquire)
+            && !starting_entered_.load(std::memory_order_acquire))
         {
             failed_before_start_.store(true, std::memory_order_release);
+        }
+        if (!replayed && status.state == orch::ParticipantState::Running && started()
+            && !failed_before_start_.load(std::memory_order_acquire))
+        {
+            running_entered_.store(true, std::memory_order_release);
         }
         if (has_finished(PeerStatus{status.state}))
         {
