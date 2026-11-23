@@ -17,6 +17,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -2366,4 +2367,65 @@ TEST_CASE(check_connections_gives_no_command_for_a_network_with_an_error)
                "ETH vehicle_sil_ethernet_bridge [/tools/vehicle_sil_ethernet_bridge] eth0 bridge.ETH: --network ETH "
                "--backend npcap --interface eth0 --src-mac 02:00:00:00:00:01\n"
                "CAN1 vehicle_sil_vector_xl_bridge [/tools/vehicle_sil_vector_xl_bridge] usb:1 bridge.CAN1: (no command)\n");
+}
+
+TEST_CASE(time_plan_validates_timing_ranges_and_stop_step_alignment)
+{
+    CHECK(!valid_positive_millis(0));
+    CHECK(valid_positive_millis(1));
+    CHECK(valid_positive_millis(kMaxMillis));
+    CHECK(!valid_positive_millis(kMaxMillis + 1));
+
+    CHECK(!valid_non_negative_millis(-1));
+    CHECK(valid_non_negative_millis(0));
+    CHECK(valid_non_negative_millis(kMaxMillis));
+    CHECK(!valid_non_negative_millis(kMaxMillis + 1));
+
+    CHECK(valid_speed(std::optional<std::optional<double>>{}));
+    CHECK(valid_speed(std::optional<std::optional<double>>{std::nullopt}));
+    CHECK(valid_speed(kMinSpeed));
+    CHECK(valid_speed(kMaxSpeed));
+    CHECK(!valid_speed(kMinSpeed / 2.0));
+    CHECK(!valid_speed(kMaxSpeed * 2.0));
+    CHECK(!valid_speed(std::numeric_limits<double>::infinity()));
+    CHECK(!valid_speed(std::numeric_limits<double>::quiet_NaN()));
+
+    CHECK(stop_on_time_step(std::nullopt, 0));
+    CHECK(stop_on_time_step(20, 10));
+    CHECK(!stop_on_time_step(25, 10));
+    CHECK(!stop_on_time_step(20, 0));
+    CHECK(!config::detail::stop_not_on_step(std::nullopt, 10).has_value());
+    CHECK(!config::detail::stop_not_on_step(20, 10).has_value());
+    const std::optional<Finding> step_err = config::detail::stop_not_on_step(25, 10);
+    CHECK(step_err.has_value());
+    if (step_err)
+    {
+        CHECK(step_err->severity == Severity::Error);
+        CHECK(step_err->code == "stop-not-on-step");
+        CHECK(step_err->message == "stop_at_ms (25) is not a multiple of time_step_ms (10)");
+    }
+
+    TimingValues ok;
+    CHECK(valid_timing_values(ok));
+    CHECK(validate_timing_values(ok).empty());
+
+    TimingValues bad;
+    bad.stop_at_ms = 0;
+    bad.late_tolerance_ms = -1;
+    bad.speed = std::optional<double>{0.0};
+    bad.start_timeout_ms = kMaxMillis + 1;
+    bad.stop_timeout_ms = 0;
+    bad.timeout_ms = 0;
+    bad.describe_timeout_ms = kMaxMillis + 1;
+    bad.time_step_ms = 0;
+    CHECK(!valid_timing_values(bad));
+    check_text(lines(validate_timing_values(bad)),
+               "E 0 usage: stop_at_ms must be an integer from 1 to 1000000000000\n"
+               "E 0 usage: late_tolerance_ms must be an integer from 0 to 1000000000000\n"
+               "E 0 usage: speed must be max or a number from 0.000001 to 1000000\n"
+               "E 0 usage: participant start timeout must be an integer from 1 to 1000000000000 ms\n"
+               "E 0 usage: participant stop timeout must be an integer from 1 to 1000000000000 ms\n"
+               "E 0 usage: timeout must be an integer from 1 to 1000000000000 ms\n"
+               "E 0 usage: describe timeout must be an integer from 1 to 1000000000000 ms\n"
+               "E 0 usage: time_step_ms must be an integer from 1 to 1000000000000\n");
 }

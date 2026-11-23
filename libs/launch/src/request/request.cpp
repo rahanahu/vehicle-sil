@@ -44,37 +44,18 @@ std::vector<config::Finding> validate_timing(const RunRequest& request)
 {
     const RunIntent& intent = request.intent;
     const RunHost& host = request.host;
-    std::vector<config::Finding> out;
-    if (intent.stop_at_ms && (*intent.stop_at_ms < 1 || *intent.stop_at_ms > config::kMaxMillis))
+    config::TimingValues values;
+    values.stop_at_ms = intent.stop_at_ms;
+    values.late_tolerance_ms = intent.late_tolerance_ms;
+    values.speed = intent.speed;
+    values.start_timeout_ms = host.start_timeout_ms;
+    values.stop_timeout_ms = host.stop_timeout_ms;
+    if (host.timeout)
     {
-        out.push_back(usage("stop_at_ms must be an integer from 1 to 1000000000000"));
+        values.timeout_ms = host.timeout->count();
     }
-    if (intent.late_tolerance_ms && (*intent.late_tolerance_ms < 0 || *intent.late_tolerance_ms > config::kMaxMillis))
-    {
-        out.push_back(usage("late_tolerance_ms must be an integer from 0 to 1000000000000"));
-    }
-    if (intent.speed && *intent.speed &&
-        (!std::isfinite(**intent.speed) || **intent.speed < config::kMinSpeed || **intent.speed > config::kMaxSpeed))
-    {
-        out.push_back(usage("speed must be max or a number from 0.000001 to 1000000"));
-    }
-    if (host.start_timeout_ms < 1 || host.start_timeout_ms > config::kMaxMillis)
-    {
-        out.push_back(usage("participant start timeout must be an integer from 1 to 1000000000000 ms"));
-    }
-    if (host.stop_timeout_ms < 1 || host.stop_timeout_ms > config::kMaxMillis)
-    {
-        out.push_back(usage("participant stop timeout must be an integer from 1 to 1000000000000 ms"));
-    }
-    if (host.timeout && (host.timeout->count() < 1 || host.timeout->count() > config::kMaxMillis))
-    {
-        out.push_back(usage("timeout must be an integer from 1 to 1000000000000 ms"));
-    }
-    if (host.describe_timeout.count() < 1 || host.describe_timeout.count() > config::kMaxMillis)
-    {
-        out.push_back(usage("describe timeout must be an integer from 1 to 1000000000000 ms"));
-    }
-    return out;
+    values.describe_timeout_ms = host.describe_timeout.count();
+    return config::validate_timing_values(values);
 }
 
 std::vector<config::Finding> validate_request(const RunRequest& request, RequestCommand command)

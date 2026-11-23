@@ -26,18 +26,22 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
     {
         throw std::invalid_argument("plan_run: the check did not pass; call it only with a passing CheckReport");
     }
-    if ((choices.stop_at_ms && (*choices.stop_at_ms < 1 || *choices.stop_at_ms > config::kMaxMillis)) ||
-        choices.late_tolerance_ms < 0 || choices.late_tolerance_ms > config::kMaxMillis ||
-        choices.start_timeout_ms < 1 || choices.start_timeout_ms > config::kMaxMillis ||
-        choices.stop_timeout_ms < 1 || choices.stop_timeout_ms > config::kMaxMillis ||
-        (choices.timeout && (choices.timeout->count() < 1 || choices.timeout->count() > config::kMaxMillis)) ||
-        (choices.speed && *choices.speed &&
-         (!std::isfinite(**choices.speed) || **choices.speed < config::kMinSpeed || **choices.speed > config::kMaxSpeed)) ||
-        (check.config->time_step_ms && (*check.config->time_step_ms < 1 || *check.config->time_step_ms > config::kMaxMillis)))
+    config::TimingValues values;
+    values.stop_at_ms = choices.stop_at_ms;
+    values.late_tolerance_ms = choices.late_tolerance_ms;
+    values.speed = choices.speed;
+    values.start_timeout_ms = choices.start_timeout_ms;
+    values.stop_timeout_ms = choices.stop_timeout_ms;
+    if (choices.timeout)
+    {
+        values.timeout_ms = choices.timeout->count();
+    }
+    values.time_step_ms = check.config->time_step_ms;
+    if (!config::valid_timing_values(values))
     {
         throw std::invalid_argument("plan_run: timing values are outside their allowed ranges");
     }
-    if (check.config->time_step_ms && choices.stop_at_ms && *choices.stop_at_ms % *check.config->time_step_ms != 0)
+    if (check.config->time_step_ms && !config::stop_on_time_step(choices.stop_at_ms, *check.config->time_step_ms))
     {
         throw std::invalid_argument("plan_run: stop_at_ms is not a multiple of time_step_ms");
     }
@@ -46,12 +50,12 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
          check.checked_start_paused != choices.start_paused ||
          check.run_timing->late_tolerance_ms != choices.late_tolerance_ms ||
          check.run_timing->speed != config::planned_speed(check.time_lock, choices.speed, {}) ||
-         check.run_timing->time_step_ms < 1 || check.run_timing->time_step_ms > config::kMaxMillis ||
+         !config::valid_positive_millis(check.run_timing->time_step_ms) ||
          check.start_timeout_ms != choices.start_timeout_ms || check.stop_timeout_ms != choices.stop_timeout_ms))
     {
         throw std::invalid_argument("plan_run: timing choices differ from the checked run; check the request again");
     }
-    if (check.run_timing && choices.stop_at_ms && *choices.stop_at_ms % check.run_timing->time_step_ms != 0)
+    if (check.run_timing && !config::stop_on_time_step(choices.stop_at_ms, check.run_timing->time_step_ms))
     {
         throw std::invalid_argument("plan_run: checked time step does not divide stop_at_ms");
     }
