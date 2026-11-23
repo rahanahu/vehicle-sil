@@ -197,7 +197,7 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       # gRPC, protobuf, abseil and BoringSSL are most of what linux-gcc-control compiles: it needs more room. So
       # does linux-gcc-release: the template's own build (FetchContent, Debug) goes into the same cache.
-      CCACHE_MAXSIZE: ${{ matrix.preset == 'linux-gcc-control' && '1.2G' || matrix.preset == 'linux-gcc-release' && '750M' || '500M' }}
+      CCACHE_MAXSIZE: ${{ matrix.preset == 'linux-gcc-control' && '1.2G' || matrix.preset == 'linux-gcc-release' && '750M' || matrix.preset == 'linux-gcc-debug' && '650M' || '500M' }}
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       VEHICLE_SIL_LOG_ARTIFACT: logs-${{ matrix.preset }}
@@ -502,7 +502,7 @@ jobs:
   gui:
     needs: changes
     if: needs.changes.outputs.gui == 'true'
-    name: gui (server, screen, examples)
+    name: gui (screen, examples, workbench)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -531,7 +531,7 @@ jobs:
       # The server's tests run in the job gui-server at the same time (the two take about as long as each other).
       - name: Screen and examples
         if: needs.changes.outputs.docs_only != 'true'
-        run: python3 scripts/verify-gui.py --skip-server --skip-install --tag ci
+        run: python3 scripts/verify-gui.py --skip-server --skip-install --no-wait --tag ci
       # The Workbench example (gui/web/workbench) has its own packages and build, and its browser tests skip
       # themselves unless VEHICLE_SIL_VERIFY_WORKBENCH is set (verify-web.py --workbench sets it).
       - name: Install the packages of the Workbench

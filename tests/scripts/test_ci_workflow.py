@@ -9,8 +9,10 @@ kind of change without leaving `linux` with an unguarded empty matrix.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,6 +27,25 @@ GATE = "all-checks"
 # Jobs that `all checks` does not wait for: the thread sanitizer, which does not hold a pull request (its result there
 # is a success because of continue-on-error), and which fails the run on main (release.yml reads the run).
 NOT_WAITED = {"linux-tsan"}
+
+
+def find_bash() -> str | None:
+    """Finds a POSIX bash (MSYS2 or Git for Windows on Windows, never the System32 WSL stub)."""
+    exe = Path(sys.executable).resolve()
+    if len(exe.parents) >= 3:
+        msys_bash = exe.parents[2] / "usr" / "bin" / ("bash.exe" if os.name == "nt" else "bash")
+        if msys_bash.is_file():
+            return str(msys_bash)
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        if not directory or "system32" in directory.lower():
+            continue
+        candidate = shutil.which("bash", path=directory)
+        if candidate:
+            return candidate
+    return None
+
+
+BASH = find_bash()
 
 
 class AllChecks(unittest.TestCase):
@@ -73,19 +94,22 @@ class AllChecks(unittest.TestCase):
         step = next(s for s in steps if s.get("name") == "The GUI server against this launcher")
         self.assertIn("-k test_real_", step["run"])
         tests_dir = ROOT / "gui" / "server" / "tests"
-        for path in sorted(tests_dir.glob("test_*.py")):
-            if path.name == "test_example_client.py":
+        for path in sorted(tests_dir.rglob("test_*.py")):
+            if path.relative_to(tests_dir).as_posix() == "test_example_client.py":
                 continue
             text = path.read_text(encoding="utf-8")
-            if "VEHICLE_SIL_GUI_LAUNCHER" in text or "real_configs" in text:
+            if any(token in text for token in ("VEHICLE_SIL_GUI_LAUNCHER", "VEHICLE_SIL_GUI_EXAMPLES", "real_configs")):
                 self.assertTrue(
                     path.name.startswith("test_real_"),
-                    f"{path.name} uses VEHICLE_SIL_GUI_LAUNCHER or real_configs, so its name must start with "
-                    "test_real_ to run in the linux-gcc-control step",
+                    f"{path.name} uses VEHICLE_SIL_GUI_LAUNCHER, VEHICLE_SIL_GUI_EXAMPLES or real_configs, so its "
+                    "name must start with test_real_ to run in the linux-gcc-control step",
                 )
 
 
-@unittest.skipIf(shutil.which("bash") is None, "bash is needed to run the `changes` job script")
+@unittest.skipIf(
+    BASH is None or any(shutil.which(cmd) is None for cmd in ("grep", "tee")),
+    "bash, grep and tee are needed to run the `changes` job script",
+)
 class ChangesTruthTable(unittest.TestCase):
     """Runs the bash script of the `changes` job against each change category and event."""
 
@@ -96,20 +120,22 @@ class ChangesTruthTable(unittest.TestCase):
 
     def evaluate(self, event: str, files: list[str]) -> dict[str, str]:
         wrapper = (
+            'export PATH="/usr/bin:/bin:$PATH"\n'
             "set -euo pipefail\n"
             'git() { printf "%s\\n" "$MOCK_FILES"; }\n'
             f"{self.script}\n"
         )
-        with tempfile.NamedTemporaryFile("w+", encoding="utf-8") as out:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "github_output.txt"
             env = {
-                "PATH": "/usr/bin:/bin",
+                **os.environ,
                 "EVENT": event,
                 "MOCK_FILES": "\n".join(files),
-                "GITHUB_OUTPUT": out.name,
+                "GITHUB_OUTPUT": out.as_posix(),
             }
-            subprocess.run(["bash", "-c", wrapper], check=True, env=env, capture_output=True, text=True)
-            out.seek(0)
-            lines = [line.strip() for line in out.read().splitlines() if "=" in line]
+            proc = subprocess.run([BASH, "-c", wrapper], env=env, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, f"stdout: {proc.stdout}\nstderr: {proc.stderr}")
+            lines = [line.strip() for line in out.read_text(encoding="utf-8").splitlines() if "=" in line]
         return dict(line.split("=", 1) for line in lines)
 
     def test_pull_request_and_push_truth_table(self):
@@ -190,9 +216,37 @@ class ChangesTruthTable(unittest.TestCase):
                  "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "false", "presets": "[]"},
             ),
             (
+                "empty pull request diff falls back to full matrix",
+                "pull_request",
+                [],
+                {"docs_only": "false", "full": "true", "gui": "true", "gui_server": "true",
+                 "gui_docs": "false", "gui_pack_docs": "false", "tsan": "true", "windows": "true", "presets": full_pr},
+            ),
+            (
+                "mixed docs_only: GUI manual + control-server-tested guide",
+                "pull_request",
+                ["docs/gui.md", "docs/howto/first-ecu.md"],
+                {"docs_only": "true", "full": "false", "gui": "true", "gui_server": "true",
+                 "gui_docs": "true", "gui_pack_docs": "false", "tsan": "false", "windows": "false", "presets": std},
+            ),
+            (
+                "mixed docs_only: GUI manual + GUI starter README",
+                "pull_request",
+                ["docs/gui.md", "examples/gui_starter/README.md"],
+                {"docs_only": "true", "full": "false", "gui": "true", "gui_server": "true",
+                 "gui_docs": "true", "gui_pack_docs": "true", "tsan": "false", "windows": "false", "presets": "[]"},
+            ),
+            (
                 "GUI server runs debug and control alongside gui and gui-server",
                 "pull_request",
                 ["gui/server/src/vehicle_sil_gui/server.py"],
+                {"docs_only": "false", "full": "false", "gui": "true", "gui_server": "true",
+                 "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "false", "presets": std},
+            ),
+            (
+                "dashboard.schema.json runs debug and control alongside gui and gui-server",
+                "pull_request",
+                ["gui/protocol/dashboard.schema.json"],
                 {"docs_only": "false", "full": "false", "gui": "true", "gui_server": "true",
                  "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "false", "presets": std},
             ),
@@ -220,7 +274,7 @@ class ChangesTruthTable(unittest.TestCase):
             (
                 "proto, python and scripts run C++, Windows, gui and gui-server",
                 "pull_request",
-                ["proto/vehicle_sil/control/v1/control.proto", "python/vehicle_sil_control/client.py"],
+                ["proto/vehicle_sil/control/v1/control.proto", "python/vehicle_sil_control/client.py", "scripts/verify.py"],
                 {"docs_only": "false", "full": "false", "gui": "true", "gui_server": "true",
                  "gui_docs": "false", "gui_pack_docs": "false", "tsan": "true", "windows": "true", "presets": std},
             ),
