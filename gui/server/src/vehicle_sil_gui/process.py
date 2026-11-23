@@ -128,6 +128,23 @@ async def wait_bounded(proc: asyncio.subprocess.Process, seconds: float) -> bool
         return proc.returncode is not None
 
 
+async def wait_exit_or_hurry(proc: asyncio.subprocess.Process, hurry: asyncio.Event,
+                             seconds: float | None) -> bool:
+    """Waits for the process to exit, at most `seconds`, returning early if `hurry` is set;
+    whether it has exited."""
+    hurry_task = asyncio.create_task(hurry.wait())
+    done = asyncio.create_task(wait_exit(proc))
+    try:
+        await asyncio.wait({hurry_task, done}, timeout=seconds, return_when=asyncio.FIRST_COMPLETED)
+        exited = done.done() or proc.returncode is not None
+    finally:
+        for task in (hurry_task, done):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(hurry_task, done, return_exceptions=True)
+    return exited
+
+
 def close_pipes(proc: asyncio.subprocess.Process) -> None:
     """Closes this side of the child's pipes (a descendant may still hold the other side open)."""
     transport = getattr(proc, "_transport", None)

@@ -895,15 +895,16 @@ def test_a_command_exits_even_when_an_escaped_child_keeps_its_output_open(tmp_pa
 
 def test_shutdown_wait_observes_exit_between_poll_and_deadline(monkeypatch) -> None:
     from types import SimpleNamespace
-    from vehicle_sil_gui.server import GuiServer
 
     async def main() -> None:
         monkeypatch.setattr(process, "EXIT_POLL_S", 1.0)
-        server = GuiServer.__new__(GuiServer)
-        server._hurry = asyncio.Event()
+        hurry = asyncio.Event()
         child = SimpleNamespace(returncode=None)
         asyncio.get_running_loop().call_later(0.02, setattr, child, "returncode", 0)
-        assert await server._wait(child, 0.08)
+        assert await process.wait_exit_or_hurry(child, hurry, 0.08)
+        stuck = SimpleNamespace(returncode=None)
+        hurry.set()
+        assert not await process.wait_exit_or_hurry(stuck, hurry, 1.0)
 
     asyncio.run(main())
 
