@@ -458,25 +458,81 @@ def test_prestart_gate_buffered_finish_preserves_ended_allowed_and_allows_next_r
             assert body["session"]["state"] == "running"
 
             await sock.until(is_ended)
-            # Drain any trailing frame that might have been broadcast after session:ended.
-            await asyncio.sleep(0.02)
 
-            allowed_frames = [m for m in sock.received if m["type"] == "allowed"]
-            assert [(m["allowed"]["rev"], m["allowed"]["start"]["reason"]) for m in allowed_frames] == [
-                (2, "starting"),
-            ]
-            sessions = [m["session"] for m in sock.received if m["type"] == "session"]
-            assert [(s["state"], s["allowed"]["rev"]) for s in sessions] == [("running", 3), ("ended", 5)]
-            ended_allowed = sessions[-1]["allowed"]
-            assert ended_allowed["start"]["ok"] is True
-            assert ended_allowed["stop"]["reason"] == "not-running"
-            assert ended_allowed["force"]["reason"] == "not-running"
-
-            # Next run starts cleanly without leftover _starting state.
+            # Start a second run and wait for it to end as a deterministic WS FIFO fence: any
+            # trailing frame from run 1 would arrive before run 2's frames without needing a sleep.
             st2, body2 = await app.client.post("api/run", {"file": "simple.yaml"})
             assert st2 == 200 and body2["session"]["id"] == 2
             await sock.until(lambda m: m.get("type") == "session" and m["session"]["id"] == 2
                              and m["session"]["state"] == "ended")
+
+            allowed_frames = [m for m in sock.received if m["type"] == "allowed"]
+            assert [(m["allowed"]["rev"], m["allowed"]["start"]["reason"]) for m in allowed_frames] == [
+                (2, "starting"),
+                (6, "starting"),
+            ]
+            sessions = [m["session"] for m in sock.received if m["type"] == "session"]
+            assert [(s["id"], s["state"], s["allowed"]["rev"]) for s in sessions] == [
+                (1, "running", 3),
+                (1, "ended", 5),
+                (2, "running", 7),
+                (2, "ended", 9),
+            ]
+            for ended_session in (sessions[1], sessions[3]):
+                ended_allowed = ended_session["allowed"]
+                assert ended_allowed["start"]["ok"] is True
+                assert ended_allowed["stop"]["reason"] == "not-running"
+                assert ended_allowed["force"]["reason"] == "not-running"
             await sock.close()
+
+    asyncio.run(main())
+
+
+def test_shutdown_waits_for_prestart_gate_buffered_finish_and_cleanup(tmp_path: Path) -> None:
+    root = _simple_config(tmp_path)
+
+    def on_start(run: _GatedFakeRun) -> None:
+        async def drive() -> None:
+            run.emit("hello", vehicle_sil_events=2, pid=run.pid, file="simple.yaml")
+            run.emit("check", check=default_check_result("simple.yaml"))
+            run.exit_process(70)
+            await run.finish(returncode=70, process_exited=False)
+
+        asyncio.create_task(drive())
+
+    async def main() -> None:
+        runtime = _GatedFakeRuntime(on_start)
+        async with in_process_gui(root, runtime=runtime) as app:
+            entered = asyncio.Event()
+            release = asyncio.Event()
+            orig_close_variables = app.server._close_variables
+
+            async def gated_close_variables(run) -> None:
+                entered.set()
+                await release.wait()
+                await orig_close_variables(run)
+
+            app.server._close_variables = gated_close_variables  # type: ignore[method-assign]
+
+            start_task = asyncio.create_task(app.client.post("api/run", {"file": "simple.yaml"}))
+            await entered.wait()
+
+            # The handle already finished into gate.buffer, so runtime.active_pids() is empty;
+            # shutdown() must still wait via _started until post_run() finishes draining and cleanup.
+            assert runtime.active_pids() == []
+            assert not app.server._started.is_set()
+            shutdown_task = asyncio.create_task(app.server.shutdown())
+            for _ in range(5):
+                await asyncio.sleep(0)
+            assert not shutdown_task.done()
+            assert not app.server.hub.closed
+
+            release.set()
+            st, body = await start_task
+            await shutdown_task
+            assert st == 503 and body["error"]["code"] == "shutting-down"
+            assert app.server._started.is_set()
+            assert app.server._starts_in_flight == 0
+            assert not app.server._runs
 
     asyncio.run(main())

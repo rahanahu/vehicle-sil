@@ -487,7 +487,8 @@ class GuiServer:
         self.current: Run | None = None  # the last run started (the one the screens see)
         self._runs: set[Run] = set()  # every launcher not yet followed to its end
         self._starting = False
-        self._started = asyncio.Event()  # set when no start is in progress
+        self._starts_in_flight = 0  # post_run() calls not yet past registration and buffered-event drain
+        self._started = asyncio.Event()  # set when no post_run() is in flight
         self._started.set()
         self._next_session_id = 1
         self.numbered = Numbered()  # the numbering of `allowed` that every place that carries it shares
@@ -1123,6 +1124,7 @@ class GuiServer:
             return self._refusal(e)
         # From here until the launcher is registered (or the start fails), no other run may start.
         self._starting = True
+        self._starts_in_flight += 1
         self._started.clear()
         self._stop_on_start = None
         self._push_allowed()
@@ -1133,7 +1135,6 @@ class GuiServer:
             registered = True
             self._starting = False
             self._stop_on_start = None
-            self._started.set()
 
         try:
             return await self._start(body, finish_starting)
@@ -1143,8 +1144,10 @@ class GuiServer:
             if not registered:
                 self._starting = False
                 self._stop_on_start = None
-                self._started.set()
                 self._push_allowed()
+            self._starts_in_flight -= 1
+            if self._starts_in_flight == 0:
+                self._started.set()
 
     async def _start(self, body: dict, finish_starting: Callable[[], None]) -> web.Response:
         config = self.root.resolve(body.get("file"))
