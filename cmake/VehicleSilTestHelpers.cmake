@@ -140,7 +140,7 @@ endfunction()
 #
 #   vehicle_sil_add_scenario_tests(<launcher>
 #     PREFIX <prefix> LABELS <label>... TIMEOUT <seconds> WORK_DIR <dir>
-#     SCENARIOS <name>... ARGS <arg>... [RUN_SERIAL] [MACHINE_LOCK <name>])
+#     SCENARIOS <name>... ARGS <arg>... [RUN_SERIAL] [MACHINE_LOCK <name>] [PROCESSORS <n>])
 #
 # MACHINE_LOCK: for scenarios that need something of which a machine has one, such as a fixed port
 # that a document shows. Each test first takes the lock file /tmp/vehicle-sil-test-<name>.lock
@@ -150,7 +150,7 @@ endfunction()
 # Windows; without flock, or when the file cannot be opened (another user's), the tests run
 # without the lock (the script says so).
 function(vehicle_sil_add_scenario_tests launcher)
-  cmake_parse_arguments(ARG "RUN_SERIAL" "PREFIX;TIMEOUT;WORK_DIR;MACHINE_LOCK" "LABELS;SCENARIOS;ARGS" ${ARGN})
+  cmake_parse_arguments(ARG "RUN_SERIAL" "PREFIX;TIMEOUT;WORK_DIR;MACHINE_LOCK;PROCESSORS" "LABELS;SCENARIOS;ARGS" ${ARGN})
   _vehicle_sil_scaled_ctest_timeout(timeout ${ARG_TIMEOUT})
   set(lock "")
   if(ARG_MACHINE_LOCK AND NOT WIN32)
@@ -171,6 +171,9 @@ function(vehicle_sil_add_scenario_tests launcher)
     # 77: the scenario cannot run on this machine (it says why).
     set_tests_properties(${test} PROPERTIES LABELS "${ARG_LABELS}" TIMEOUT ${timeout} RUN_SERIAL ${ARG_RUN_SERIAL}
                                             SKIP_RETURN_CODE 77)
+    if(ARG_PROCESSORS)
+      set_tests_properties(${test} PROPERTIES PROCESSORS ${ARG_PROCESSORS})
+    endif()
     _vehicle_sil_tell_ctest_timeout_factor(${test})
   endforeach()
 endfunction()

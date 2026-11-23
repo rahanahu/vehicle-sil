@@ -598,7 +598,7 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
         // Without the hold: a participant that never gets ready ends the start at its limit.
         vehicle_sil::runner::StopRequests stops;
         vehicle_sil::runner::RunControls controls(stops, false);
-        const HoldRun run = hold_run(ecu, helper, dir, true, false, controls, std::nullopt, [] {});
+        const HoldRun run = hold_run(ecu, helper, dir, true, false, controls, std::nullopt, [] {}, 1000);
         require(!run.held, "no hold without --start-paused" + shown(run));
         require(run.report.run && run.report.run->end.simulation == vehicle_sil::runner::SimulationEnd::NotStarted &&
                     run.report.run->start.error.find("did not all get to their first step within") != std::string::npos &&
@@ -622,7 +622,7 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
             std::this_thread::sleep_for(3000ms);
             resumed = std::chrono::steady_clock::now();
             require(commands.apply(resume_command(), "stdin").accepted, "the resume was refused");
-        });
+        }, 1000);
         require(run.held, "the run held before the first step" + shown(run));
         require(run.report.run && run.report.run->end.simulation == vehicle_sil::runner::SimulationEnd::NotStarted &&
                     run.report.run->start.error.find("within 2000 ms after the run stopped standing still before it") !=

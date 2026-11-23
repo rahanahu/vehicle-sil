@@ -114,6 +114,7 @@ def gui_server(tmp_path: Path, *, root: Path = CONFIGS, env: dict | None = None,
     test fails with what it wrote: a command that no recording has, one that came later than recorded, ...)."""
     environment = dict(os.environ)
     environment.setdefault("REPLAY_TICK_MS", "10")
+    environment.setdefault("REPLAY_NO_SLEEPERS", "1")
     if "VEHICLE_SIL_CONTROL_STUBS" not in environment and (stubs := _default_control_stubs()) is not None:
         environment["VEHICLE_SIL_CONTROL_STUBS"] = str(stubs)
     environment.pop("REPLAY_FAULT", None)

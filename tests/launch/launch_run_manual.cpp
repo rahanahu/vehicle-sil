@@ -323,12 +323,15 @@ void manual_frozen(const Options& o)
         live.wait_for({"\"name\":\"Late\"", "\"state\":\"joined\""});
         lateByHand.freeze();
         std::this_thread::sleep_for(2000ms);
-        const bool running = !events_with(live.lines(), {"\"phase\":\"running\""}).empty();
-        log(std::string("RESULT Late frozen as it joined: ") +
-            (running ? "the simulation runs (Late got to its first step)" : "the start waits for Late"));
+        const bool runningBeforeStop = !events_with(live.lines(), {"\"phase\":\"running\""}).empty();
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish_unchecked(60s);
         lateByHand.thaw();
+        const bool running = !events_with(lines, {"\"phase\":\"running\""}).empty();
+        log(std::string("RESULT Late frozen as it joined: ") +
+            (runningBeforeStop ? "the simulation runs (Late got to its first step)"
+             : running         ? "the simulation had passed communication-ready and reached running on stop"
+                               : "the start waits for Late"));
         // Before the start, the stop ends the run without errors (0). Once the simulation runs, frozen
         // Late keeps it from shutting down, and the participants that wait in their step for Late may
         // not end when asked: the stopped run then reports those errors (1, result failed).

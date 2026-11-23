@@ -195,9 +195,10 @@ jobs:
         preset: ${{ fromJSON(needs.changes.outputs.presets) }}
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      # gRPC, protobuf, abseil and BoringSSL are most of what linux-gcc-control compiles: it needs more room. So
-      # does linux-gcc-release: the template's own build (FetchContent, Debug) goes into the same cache.
-      CCACHE_MAXSIZE: ${{ matrix.preset == 'linux-gcc-control' && '1.2G' || matrix.preset == 'linux-gcc-release' && '750M' || matrix.preset == 'linux-gcc-debug' && '650M' || '500M' }}
+      CCACHE_COMPRESSLEVEL: "6"
+      # gRPC, protobuf, abseil and BoringSSL are most of what linux-gcc-control compiles (FetchContent gRPC uses -g0
+      # and CI Debug/Sanitizer presets use -g1 to stay within the repository cache budget).
+      CCACHE_MAXSIZE: ${{ matrix.preset == 'linux-gcc-control' && '550M' || matrix.preset == 'linux-gcc-static' && '200M' || '350M' }}
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       VEHICLE_SIL_LOG_ARTIFACT: logs-${{ matrix.preset }}
@@ -207,20 +208,82 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: apt-tools
+        with:
+          path: ~/.cache/apt-debs/linux-tools
+          key: apt-linux-tools-ubuntu2404-${{ env.ImageVersion || 'unknown' }}
       # ethtool: ethernet_bridge.netns.packet turns an offload off with it.
       # libpcap0.8: ethernet_bridge.netns.pcap loads the library at run time (nothing is built against it).
       - name: Install Ninja, ccache, ethtool and libpcap
-        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache ethtool libpcap0.8
+        run: |
+          deb_dir="$HOME/.cache/apt-debs/linux-tools"
+          mkdir -p "$deb_dir"
+          ok=false
+          if [ "${{ steps.apt-tools.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
+            mkdir -p "$deb_dir/partial"
+            if sudo apt-get install -y -q --no-download --no-install-recommends \
+                 -o Dir::Cache::archives="$deb_dir" \
+                 -o APT::Keep-Downloaded-Packages=true \
+                 "$deb_dir"/*.deb &&
+               dpkg -s ninja-build ccache ethtool > /dev/null 2>&1 &&
+               (dpkg -s libpcap0.8t64 > /dev/null 2>&1 || dpkg -s libpcap0.8 > /dev/null 2>&1); then
+              ok=true
+            fi
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+          fi
+          if [ "$ok" != "true" ]; then
+            rm -f "$deb_dir"/*.deb
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+            mkdir -p "$deb_dir/partial"
+            sudo apt-get update -q -o Acquire::Languages=none
+            sudo apt-get install -y -q \
+              -o Dir::Cache::archives="$deb_dir" \
+              -o APT::Keep-Downloaded-Packages=true \
+              ninja-build ccache ethtool libpcap0.8
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+            sudo chown -R "$(id -u):$(id -g)" "$deb_dir"
+          fi
       - name: Python environment (PyYAML for the code generator, gRPC for the Python tests)
         run: uv sync --locked
       # A pull request builds the control server against Ubuntu's gRPC (find_package finds it), so that it does
       # not wait for the build of gRPC when the compiler cache has gone. A push to main installs nothing here
       # and builds the pinned version with FetchContent, as a user without gRPC does.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: apt-grpc
+        if: matrix.preset == 'linux-gcc-control' && github.event_name == 'pull_request'
+        with:
+          path: ~/.cache/apt-debs/grpc
+          key: apt-grpc-ubuntu2404-${{ env.ImageVersion || 'unknown' }}
       - name: gRPC of the distribution (pull requests)
         if: matrix.preset == 'linux-gcc-control' && github.event_name == 'pull_request'
-        run: >-
-          sudo apt-get install -y -q --no-install-recommends
-          libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
+        run: |
+          deb_dir="$HOME/.cache/apt-debs/grpc"
+          mkdir -p "$deb_dir"
+          ok=false
+          if [ "${{ steps.apt-grpc.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
+            mkdir -p "$deb_dir/partial"
+            if sudo apt-get install -y -q --no-download --no-install-recommends \
+                 -o Dir::Cache::archives="$deb_dir" \
+                 -o APT::Keep-Downloaded-Packages=true \
+                 "$deb_dir"/*.deb &&
+               dpkg -s libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc > /dev/null 2>&1; then
+              ok=true
+            fi
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+          fi
+          if [ "$ok" != "true" ]; then
+            rm -f "$deb_dir"/*.deb
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+            mkdir -p "$deb_dir/partial"
+            sudo apt-get update -q -o Acquire::Languages=none
+            sudo apt-get install -y -q --no-install-recommends \
+              -o Dir::Cache::archives="$deb_dir" \
+              -o APT::Keep-Downloaded-Packages=true \
+              libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+            sudo chown -R "$(id -u):$(id -g)" "$deb_dir"
+          fi
       # The sanitizers cannot map their shadow memory when the kernel randomizes addresses with more bits.
       - name: Address space layout for the sanitizers
         if: matrix.preset == 'linux-clang-asan'
@@ -240,15 +303,31 @@ jobs:
         if: matrix.preset == 'linux-gcc-debug'
         run: |
           sudo modprobe -a vcan can_raw || {
+            sudo apt-get update -q
             sudo apt-get install -y -q "linux-modules-extra-$(uname -r)"
             sudo modprobe -a vcan can_raw
           }
+      - name: gRPC version
+        id: grpc-ver
+        if: matrix.preset == 'linux-gcc-control' && github.event_name != 'pull_request'
+        run: |
+          ver=$(sed -n 's/^set(VEHICLE_SIL_GRPC_VERSION "\([^"]*\)".*/\1/p' cmake/VehicleSilGrpc.cmake)
+          test -n "$ver"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: grpc-src
+        if: matrix.preset == 'linux-gcc-control' && github.event_name != 'pull_request'
+        with:
+          path: ~/.cache/grpc-src
+          key: grpc-src-${{ steps.grpc-ver.outputs.version }}
       # The compiler cache: SIL Kit and everything else compiles once per cache, then comes from here.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
           key: ccache-${{ matrix.preset }}-${{ github.sha }}
           restore-keys: ccache-${{ matrix.preset }}-
+      - name: Zero compiler cache statistics
+        run: ccache -z
       - name: Configure, build and test
         env:
           VEHICLE_SIL_REQUIRE_MULTI_HOST: ${{ matrix.preset == 'linux-gcc-debug' && '1' || '' }}
@@ -259,7 +338,30 @@ jobs:
           # The SocketCAN bridge on vcan0 (socketcan_bridge.netns.*): where vcan0 or a CAN socket cannot be made in the
           # namespace, the test fails rather than skips.
           VEHICLE_SIL_REQUIRE_SOCKETCAN: ${{ matrix.preset == 'linux-gcc-debug' && '1' || '' }}
-        run: python3 scripts/verify.py ${{ matrix.preset }} --tag ci
+        run: |
+          extra=()
+          case "${{ matrix.preset }}" in
+            linux-gcc-debug|linux-gcc-control|linux-clang-asan)
+              extra+=(--cmake-arg=-DCMAKE_C_FLAGS_DEBUG=-g1 --cmake-arg=-DCMAKE_CXX_FLAGS_DEBUG=-g1)
+              ;;
+          esac
+          if [ "${{ matrix.preset }}" = "linux-gcc-control" ] && [ "${{ github.event_name }}" != "pull_request" ] && [ "${{ steps.grpc-src.outputs.cache-hit }}" = "true" ]; then
+            extra+=(--cmake-arg="-DFETCHCONTENT_SOURCE_DIR_GRPC=$HOME/.cache/grpc-src")
+          fi
+          python3 scripts/verify.py ${{ matrix.preset }} --tag ci "${extra[@]}"
+      - name: Populate gRPC source cache
+        if: matrix.preset == 'linux-gcc-control' && github.event_name != 'pull_request' && steps.grpc-src.outputs.cache-hit != 'true'
+        run: |
+          if [ -d build/linux-gcc-control/_deps/grpc-src ]; then
+            rm -rf "$HOME/.cache/grpc-src"
+            mkdir -p "$HOME/.cache/grpc-src"
+            tar -C build/linux-gcc-control/_deps/grpc-src --exclude=.git -cf - . | tar -C "$HOME/.cache/grpc-src" -xf -
+          fi
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: matrix.preset == 'linux-gcc-control' && github.event_name != 'pull_request' && steps.grpc-src.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/grpc-src
+          key: grpc-src-${{ steps.grpc-ver.outputs.version }}
       # The ECU project template built the way a user builds it: FetchContent takes vehicle-sil from this checkout
       # (no network), the simulation is checked and run with this build's launcher, and its output is held against
       # the manual. Only the leg that builds the release type, so that it runs where a build change can break
@@ -268,7 +370,7 @@ jobs:
       - name: The template built with FetchContent
         if: matrix.preset == 'linux-gcc-release'
         run: |
-          cmake --preset linux-gcc-release -DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON -DVEHICLE_SIL_TEST_FETCHCONTENT=ON
+          cmake --preset linux-gcc-release -DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON -DVEHICLE_SIL_TEST_FETCHCONTENT=ON -DCMAKE_C_FLAGS_DEBUG=-g1 -DCMAKE_CXX_FLAGS_DEBUG=-g1
           python3 scripts/verify.py linux-gcc-release --no-configure --tests '^fetchcontent\.template$' --tag ci-fetchcontent
       # The GUI's tests play recordings of the launcher (gui/server/tests/recordings): are they still what this
       # launcher and the ecu_main example ECUs write? (Standard library only. Cases that need the control server
@@ -307,8 +409,15 @@ jobs:
       - name: The GUI server against this launcher
         if: matrix.preset == 'linux-gcc-control'
         run: >-
-          python3 scripts/verify-gui.py --skip-web --skip-e2e --no-wait -k test_real_ --tag ci
+          python3 scripts/verify-gui.py --skip-web --skip-e2e --no-wait --no-sync -k test_real_ --tag ci
           --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch
+      - name: Compiler cache statistics and cleanup
+        if: ${{ !cancelled() }}
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            ccache -c
+          fi
+          ccache -s
       # Only a run on main saves the compiler cache. A pull request reads the newest one of main; if each push
       # of each pull request saved its own, the repository would go over the size GitHub keeps and the caches
       # of main would be the ones thrown out.
@@ -338,7 +447,8 @@ jobs:
     continue-on-error: ${{ github.event_name == 'pull_request' }}
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 500M
+      CCACHE_COMPRESSLEVEL: "6"
+      CCACHE_MAXSIZE: 350M
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       # Empty (not set): the preset's default factor (4) applies.
@@ -350,8 +460,40 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: apt-tools
+        with:
+          path: ~/.cache/apt-debs/linux-tools
+          key: apt-linux-tools-ubuntu2404-${{ env.ImageVersion || 'unknown' }}
       - name: Install Ninja, ccache, ethtool and libpcap
-        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache ethtool libpcap0.8
+        run: |
+          deb_dir="$HOME/.cache/apt-debs/linux-tools"
+          mkdir -p "$deb_dir"
+          ok=false
+          if [ "${{ steps.apt-tools.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
+            mkdir -p "$deb_dir/partial"
+            if sudo apt-get install -y -q --no-download --no-install-recommends \
+                 -o Dir::Cache::archives="$deb_dir" \
+                 -o APT::Keep-Downloaded-Packages=true \
+                 "$deb_dir"/*.deb &&
+               dpkg -s ninja-build ccache ethtool > /dev/null 2>&1 &&
+               (dpkg -s libpcap0.8t64 > /dev/null 2>&1 || dpkg -s libpcap0.8 > /dev/null 2>&1); then
+              ok=true
+            fi
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+          fi
+          if [ "$ok" != "true" ]; then
+            rm -f "$deb_dir"/*.deb
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+            mkdir -p "$deb_dir/partial"
+            sudo apt-get update -q -o Acquire::Languages=none
+            sudo apt-get install -y -q \
+              -o Dir::Cache::archives="$deb_dir" \
+              -o APT::Keep-Downloaded-Packages=true \
+              ninja-build ccache ethtool libpcap0.8
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+            sudo chown -R "$(id -u):$(id -g)" "$deb_dir"
+          fi
       - name: Python environment (PyYAML for the code generator, gRPC for the Python tests)
         run: uv sync --locked
       # The sanitizers cannot map their shadow memory when the kernel randomizes addresses with more bits.
@@ -362,8 +504,17 @@ jobs:
           path: .ccache
           key: ccache-linux-clang-tsan-${{ github.sha }}
           restore-keys: ccache-linux-clang-tsan-
+      - name: Zero compiler cache statistics
+        run: ccache -z
       - name: Configure, build and test
-        run: python3 scripts/verify.py linux-clang-tsan --tag ci
+        run: python3 scripts/verify.py linux-clang-tsan --tag ci --cmake-arg=-DCMAKE_C_FLAGS_DEBUG=-g1 --cmake-arg=-DCMAKE_CXX_FLAGS_DEBUG=-g1
+      - name: Compiler cache statistics and cleanup
+        if: ${{ !cancelled() }}
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            ccache -c
+          fi
+          ccache -s
       - if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -386,7 +537,8 @@ jobs:
     timeout-minutes: 120
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 750M
+      CCACHE_COMPRESSLEVEL: "6"
+      CCACHE_MAXSIZE: 150M
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       CMAKE_OLDEST: 3.21.7
@@ -397,24 +549,66 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      - name: Install Ninja and ccache
-        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: apt-tools
+        with:
+          path: ~/.cache/apt-debs/linux-tools
+          key: apt-linux-tools-ubuntu2404-${{ env.ImageVersion || 'unknown' }}
+      - name: Install Ninja, ccache, ethtool and libpcap
+        run: |
+          deb_dir="$HOME/.cache/apt-debs/linux-tools"
+          mkdir -p "$deb_dir"
+          ok=false
+          if [ "${{ steps.apt-tools.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
+            mkdir -p "$deb_dir/partial"
+            if sudo apt-get install -y -q --no-download --no-install-recommends \
+                 -o Dir::Cache::archives="$deb_dir" \
+                 -o APT::Keep-Downloaded-Packages=true \
+                 "$deb_dir"/*.deb &&
+               dpkg -s ninja-build ccache ethtool > /dev/null 2>&1 &&
+               (dpkg -s libpcap0.8t64 > /dev/null 2>&1 || dpkg -s libpcap0.8 > /dev/null 2>&1); then
+              ok=true
+            fi
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+          fi
+          if [ "$ok" != "true" ]; then
+            rm -f "$deb_dir"/*.deb
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+            mkdir -p "$deb_dir/partial"
+            sudo apt-get update -q -o Acquire::Languages=none
+            sudo apt-get install -y -q \
+              -o Dir::Cache::archives="$deb_dir" \
+              -o APT::Keep-Downloaded-Packages=true \
+              ninja-build ccache ethtool libpcap0.8
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+            sudo chown -R "$(id -u):$(id -g)" "$deb_dir"
+          fi
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/cmake
+          key: cmake-${{ env.CMAKE_OLDEST }}-linux-x86_64
       - name: CMake ${{ env.CMAKE_OLDEST }} instead of the runner's
         run: |
           archive="cmake-$CMAKE_OLDEST-linux-x86_64"
-          curl -fsSL -o "$RUNNER_TEMP/$archive.tar.gz" \
-            "https://github.com/Kitware/CMake/releases/download/v$CMAKE_OLDEST/$archive.tar.gz"
-          echo "$CMAKE_OLDEST_SHA256  $RUNNER_TEMP/$archive.tar.gz" | sha256sum --check --strict -
-          tar -xzf "$RUNNER_TEMP/$archive.tar.gz" -C "$RUNNER_TEMP"
+          cached="$HOME/.cache/cmake/$archive.tar.gz"
+          mkdir -p "$HOME/.cache/cmake"
+          if [ ! -f "$cached" ]; then
+            curl -fsSL -o "$cached" \
+              "https://github.com/Kitware/CMake/releases/download/v$CMAKE_OLDEST/$archive.tar.gz"
+          fi
+          echo "$CMAKE_OLDEST_SHA256  $cached" | sha256sum --check --strict -
+          tar -xzf "$cached" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/$archive/bin" >> "$GITHUB_PATH"
       - name: Python environment (PyYAML for the code generator, gRPC for the Python tests)
         run: uv sync --locked
-      # Reads the compiler cache that the leg linux-gcc-release saves on main (same compiler and flags).
+      # Dedicated compiler cache for CMake 3.21.7 (CMake 3.21 vs 3.28+ flag/CMP0128 diffs miss the 3.28+ Release cache).
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-linux-gcc-release-${{ github.sha }}
-          restore-keys: ccache-linux-gcc-release-
+          key: ccache-linux-oldest-cmake-${{ github.sha }}
+          restore-keys: ccache-linux-oldest-cmake-
+      - name: Zero compiler cache statistics
+        run: ccache -z
       - name: Configure, build and test
         env:
           VEHICLE_SIL_LOG_ARTIFACT: logs-linux-gcc-release-cmake-${{ env.CMAKE_OLDEST }}
@@ -422,6 +616,18 @@ jobs:
           cmake --version | head -n 1
           cmake --version | grep -qxF "cmake version $CMAKE_OLDEST"
           python3 scripts/verify.py linux-gcc-release --tag ci
+      - name: Compiler cache statistics and cleanup
+        if: ${{ !cancelled() }}
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            ccache -c
+          fi
+          ccache -s
+      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-linux-oldest-cmake-${{ github.sha }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -439,10 +645,20 @@ jobs:
       run:
         shell: msys2 {0}
     env:
-      CCACHE_MAXSIZE: 500M
+      CCACHE_COMPRESSLEVEL: "6"
+      CCACHE_MAXSIZE: 250M
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       VEHICLE_SIL_LOG_ARTIFACT: logs-windows-mingw-release
+      MSYS2_PACKAGES: >-
+        git
+        mingw-w64-ucrt-x86_64-gcc
+        mingw-w64-ucrt-x86_64-cmake
+        mingw-w64-ucrt-x86_64-ninja
+        mingw-w64-ucrt-x86_64-ccache
+        mingw-w64-ucrt-x86_64-python
+        mingw-w64-ucrt-x86_64-python-yaml
+        mingw-w64-ucrt-x86_64-python-jsonschema
     steps:
       # The sources as they are in the repository (LF), as on Linux.
       - name: Keep LF line ends
@@ -452,19 +668,64 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
+      - name: Exclude build and MSYS2 directories from Defender
+        shell: pwsh
+        run: |
+          foreach ($p in @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, 'C:\msys64')) {
+            if ($p -and (Test-Path $p)) {
+              try { Add-MpPreference -ExclusionPath $p -ErrorAction Stop } catch { Write-Host "Defender exclusion skipped for ${p}: $_" }
+            }
+          }
+      - name: MSYS2 package key
+        id: msys2-key
+        shell: pwsh
+        run: |
+          $norm = ($env:MSYS2_PACKAGES -split '\s+' | Where-Object { $_ }) -join ' '
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes($norm)
+          $sha = [System.Security.Cryptography.SHA256]::Create()
+          try { $digest = $sha.ComputeHash($bytes) } finally { $sha.Dispose() }
+          $hash = ([System.BitConverter]::ToString($digest) -replace '-', '').ToLowerInvariant().Substring(0, 12)
+          "hash=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Restore MSYS2 environment
+        id: msys2-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}\msys64
+          key: msys64-ucrt64-v1-${{ env.ImageVersion || 'unknown' }}-${{ steps.msys2-key.outputs.hash }}
       - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        if: steps.msys2-cache.outputs.cache-hit != 'true'
         with:
           msystem: UCRT64
           update: true
-          install: >-
-            git
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-ccache
-            mingw-w64-ucrt-x86_64-python
-            mingw-w64-ucrt-x86_64-python-yaml
-            mingw-w64-ucrt-x86_64-python-jsonschema
+          cache: false
+          install: ${{ env.MSYS2_PACKAGES }}
+      - name: Clean MSYS2 package cache before saving
+        if: steps.msys2-cache.outputs.cache-hit != 'true'
+        run: rm -rf /var/cache/pacman/pkg/*
+      - name: Save MSYS2 environment
+        if: steps.msys2-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}\msys64
+          key: msys64-ucrt64-v1-${{ env.ImageVersion || 'unknown' }}-${{ steps.msys2-key.outputs.hash }}
+      - name: Configure cached MSYS2 shell
+        if: steps.msys2-cache.outputs.cache-hit == 'true'
+        shell: pwsh
+        run: |
+          $msysRoot = Join-Path $env:RUNNER_TEMP 'msys64'
+          $wrapDir = Join-Path $env:RUNNER_TEMP 'setup-msys2'
+          New-Item -ItemType Directory -Force -Path $wrapDir | Out-Null
+          $cmd = @(
+            '@echo off',
+            'setlocal',
+            'IF NOT DEFINED MSYSTEM set MSYSTEM=UCRT64',
+            'IF NOT DEFINED MSYS2_PATH_TYPE set MSYS2_PATH_TYPE=minimal',
+            'set CHERE_INVOKING=1',
+            "$msysRoot\usr\bin\bash.exe -leo pipefail %*"
+          ) -join "`r`n"
+          Set-Content -Path (Join-Path $wrapDir 'msys2.cmd') -Value ($cmd + "`r`n") -Encoding Ascii -NoNewline
+          $wrapDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          'MSYSTEM=UCRT64' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Where ccache keeps its files
         run: echo "CCACHE_DIR=$(cygpath -m "$GITHUB_WORKSPACE/.ccache")" >> "$GITHUB_ENV"
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -472,6 +733,8 @@ jobs:
           path: .ccache
           key: ccache-windows-mingw-release-${{ github.sha }}
           restore-keys: ccache-windows-mingw-release-
+      - name: Zero compiler cache statistics
+        run: ccache -z
       # What the build takes: the MSYS2 packages first on PATH (path-type minimal). The runner also has a Python for
       # Windows, without PyYAML, that CMake's find_package(Python3) finds first (registry): the build then takes the
       # one on PATH (cmake/VehicleSilPython.cmake).
@@ -484,6 +747,13 @@ jobs:
           python -c "import jsonschema, importlib.metadata; print('jsonschema', importlib.metadata.version('jsonschema'))"
       - name: Configure, build and test
         run: python scripts/verify.py windows-mingw-release --tag ci
+      - name: Compiler cache statistics and cleanup
+        if: ${{ !cancelled() }}
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            ccache -c
+          fi
+          ccache -s
       # Only a run on main saves the compiler cache. A pull request reads the newest one of main; if each push
       # of each pull request saved its own, the repository would go over the size GitHub keeps and the caches
       # of main would be the ones thrown out.
@@ -524,10 +794,51 @@ jobs:
         if: needs.changes.outputs.docs_only == 'true'
         working-directory: gui/web
         run: npm run format:check
+      - name: Playwright version
+        id: pw-ver
+        if: needs.changes.outputs.docs_only != 'true'
+        run: |
+          ver=$(node -p "require('./gui/web/package-lock.json').packages['node_modules/playwright-core'].version")
+          test -n "$ver"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: apt-pw
+        if: needs.changes.outputs.docs_only != 'true'
+        with:
+          path: ~/.cache/apt-debs/playwright
+          key: apt-pw-ubuntu2404-${{ env.ImageVersion || 'unknown' }}-${{ steps.pw-ver.outputs.version }}
       - name: Install the browser of the end-to-end tests
         if: needs.changes.outputs.docs_only != 'true'
         working-directory: gui/web
-        run: npx playwright install --with-deps --only-shell chromium
+        run: |
+          deb_dir="$HOME/.cache/apt-debs/playwright"
+          mkdir -p "$deb_dir"
+          ok=false
+          if [ "${{ steps.apt-pw.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
+            mkdir -p "$deb_dir/partial"
+            if sudo apt-get install -y -q --no-download --no-install-recommends \
+                 -o Dir::Cache::archives="$deb_dir" \
+                 -o APT::Keep-Downloaded-Packages=true \
+                 "$deb_dir"/*.deb &&
+               npx playwright install-deps --dry-run chromium > /dev/null 2>&1; then
+              ok=true
+            fi
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+          fi
+          if [ "$ok" != "true" ]; then
+            rm -f "$deb_dir"/*.deb
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+            mkdir -p "$deb_dir/partial"
+            trap 'sudo rm -f /etc/apt/apt.conf.d/99keep-debs' EXIT
+            printf 'Dir::Cache::archives "%s";\nAPT::Keep-Downloaded-Packages "true";\nBinary::apt::APT::Keep-Downloaded-Packages "true";\n' "$deb_dir" \
+              | sudo tee /etc/apt/apt.conf.d/99keep-debs > /dev/null
+            npx playwright install-deps chromium
+            sudo rm -f /etc/apt/apt.conf.d/99keep-debs
+            trap - EXIT
+            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+            sudo chown -R "$(id -u):$(id -g)" "$deb_dir"
+          fi
+          npx playwright install --only-shell chromium
       # The server's tests run in the job gui-server at the same time (the two take about as long as each other).
       - name: Screen and examples
         if: needs.changes.outputs.docs_only != 'true'
