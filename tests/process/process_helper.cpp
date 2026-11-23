@@ -31,6 +31,7 @@
 // On Windows it reads its arguments as UTF-8 from the wide command line and writes "\n" as it is.
 #include "spawn_sleeper.hpp"
 
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdint>
@@ -116,15 +117,85 @@ std::vector<std::string> arguments(int argc, char** argv)
 #endif
 }
 
+void append_helper_mark()
+{
+    constexpr char kLine[] = "started\n";
+    constexpr std::size_t kLineSize = sizeof(kLine) - 1;
+#ifdef _WIN32
+    const DWORD needed = GetEnvironmentVariableW(L"VEHICLE_SIL_HELPER_MARK", nullptr, 0);
+    if (needed <= 1)
+    {
+        return;
+    }
+    std::wstring path(needed, L'\0');
+    const DWORD len = GetEnvironmentVariableW(L"VEHICLE_SIL_HELPER_MARK", path.data(), needed);
+    if (len == 0 || len >= needed)
+    {
+        return;
+    }
+    path.resize(len);
+    // FILE_APPEND_DATA without FILE_WRITE_DATA makes each WriteFile atomically append at EOF.
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    for (int attempt = 0; attempt < 20; ++attempt)
+    {
+        handle = CreateFileW(path.c_str(), FILE_APPEND_DATA,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (handle != INVALID_HANDLE_VALUE)
+        {
+            break;
+        }
+        const DWORD err = GetLastError();
+        if (err != ERROR_SHARING_VIOLATION && err != ERROR_ACCESS_DENIED)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    if (handle == INVALID_HANDLE_VALUE)
+    {
+        return;
+    }
+    DWORD written = 0;
+    static_cast<void>(WriteFile(handle, kLine, static_cast<DWORD>(kLineSize), &written, nullptr));
+    CloseHandle(handle);
+#else
+    const char* mark = std::getenv("VEHICLE_SIL_HELPER_MARK");
+    if (mark == nullptr || *mark == '\0')
+    {
+        return;
+    }
+    const int fd = ::open(mark, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    if (fd < 0)
+    {
+        return;
+    }
+    const char* ptr = kLine;
+    std::size_t left = kLineSize;
+    while (left > 0)
+    {
+        const ssize_t n = ::write(fd, ptr, left);
+        if (n < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            break;
+        }
+        ptr += n;
+        left -= static_cast<std::size_t>(n);
+    }
+    ::close(fd);
+#endif
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
     const std::vector<std::string> args = arguments(argc, argv);
-    if (const char* mark = std::getenv("VEHICLE_SIL_HELPER_MARK"); mark != nullptr && *mark != '\0')
-    {
-        std::ofstream(mark, std::ios::binary | std::ios::app) << "started\n";
-    }
+    append_helper_mark();
     const std::size_t count = args.size();
     int code = 0;
     for (std::size_t i = 1; i < count; ++i)
