@@ -101,11 +101,11 @@ class LaunchTimeControl final : public control_grpc::TimeControl
 {
 public:
     LaunchTimeControl(runner::TimeCommands& commands, std::function<void()> stop) :
-      commands_(commands), stop_(std::move(stop))
+      commands_(&commands), stop_(std::move(stop))
     {
         // The last look, as the controller goes: what the server reports from then on is where the
         // run ended (the result's sim_ms), not the last time someone happened to look.
-        commands_.set_on_detach([this](SimulationController& c) {
+        commands_->set_on_detach([this](SimulationController& c) {
             control_grpc::TimeView v = view_of(c, false);
             v.now = std::max(v.now, c.runtime().now()); // as the result's sim_ms
             v.paused = false;
@@ -123,16 +123,49 @@ public:
             }
         });
     }
-    ~LaunchTimeControl() override { commands_.set_on_detach({}); }
+    ~LaunchTimeControl() override { detach(); }
     LaunchTimeControl(const LaunchTimeControl&) = delete;
     LaunchTimeControl& operator=(const LaunchTimeControl&) = delete;
 
+    /// Releases the references to the run's TimeCommands and StopRequests (and clears
+    /// TimeCommands::set_on_detach()). Idempotent. After this returns, this object holds no
+    /// reference to RunControls and may outlive it.
+    void detach()
+    {
+        runner::TimeCommands* commands = nullptr;
+        std::function<void()> stop;
+        {
+            const std::lock_guard lock(mutex_);
+            commands = std::exchange(commands_, nullptr);
+            stop = std::exchange(stop_, {});
+        }
+        if (commands != nullptr)
+        {
+            // Called without mutex_: TimeCommands::detach() holds its own mutex while invoking
+            // on_detach, which acquires mutex_. Clearing on_detach here waits for any in-flight
+            // callback to finish before detach() returns.
+            commands->set_on_detach({});
+        }
+    }
+
     control_grpc::TimeView state() const override
     {
+        runner::TimeCommands* commands = nullptr;
+        {
+            const std::lock_guard lock(mutex_);
+            commands = commands_;
+            if (commands == nullptr)
+            {
+                control_grpc::TimeView v = last_view_;
+                v.available = true;
+                v.ended = true;
+                return v;
+            }
+        }
         control_grpc::TimeView v;
         v.available = true;
         // Kept under TimeCommands' mutex too: a later look never loses to an earlier one.
-        const auto stage = commands_.inspect([&](SimulationController& c, bool holding) {
+        const auto stage = commands->inspect([&](SimulationController& c, bool holding) {
             v = view_of(c, holding);
             const std::lock_guard lock(mutex_);
             last_view_ = v;
@@ -176,19 +209,45 @@ public:
         c.speed = speed;
         apply(c);
     }
-    std::optional<SimTime> wait_paused(std::chrono::milliseconds timeout) override { return commands_.wait_paused(timeout); }
+    std::optional<SimTime> wait_paused(std::chrono::milliseconds timeout) override
+    {
+        runner::TimeCommands* commands = nullptr;
+        {
+            const std::lock_guard lock(mutex_);
+            commands = commands_;
+        }
+        if (commands == nullptr)
+        {
+            return std::nullopt;
+        }
+        return commands->wait_paused(timeout);
+    }
     void stop(const std::string&) override
     {
+        std::function<void()> stop;
+        {
+            const std::lock_guard lock(mutex_);
+            stop = stop_;
+        }
         // Decided and written with the time commands (refused once the run is over), and, under
         // their mutex, a stop request as {"command":"stop"} on standard input: an accepted stop
         // reaches the run before it detaches the commands (not while it ends the participants).
-        apply(command("stop"), stop_);
+        apply(command("stop"), stop);
     }
 
     std::vector<std::pair<std::string, std::string>> participants() const override
     {
+        runner::TimeCommands* commands = nullptr;
+        {
+            const std::lock_guard lock(mutex_);
+            commands = commands_;
+            if (commands == nullptr)
+            {
+                return last_participants_;
+            }
+        }
         std::vector<std::pair<std::string, std::string>> out;
-        const auto stage = commands_.inspect([&](SimulationController& c, bool) {
+        const auto stage = commands->inspect([&](SimulationController& c, bool) {
             out = participants_of(c);
             const std::lock_guard lock(mutex_);
             last_participants_ = out;
@@ -203,8 +262,17 @@ public:
 
     std::optional<LeftParticipant> left_participant() const override
     {
+        runner::TimeCommands* commands = nullptr;
+        {
+            const std::lock_guard lock(mutex_);
+            commands = commands_;
+            if (commands == nullptr)
+            {
+                return last_left_;
+            }
+        }
         std::optional<LeftParticipant> left;
-        const auto stage = commands_.inspect([&](SimulationController& c, bool) {
+        const auto stage = commands->inspect([&](SimulationController& c, bool) {
             left = FailureCheck::left_participant(c);
             const std::lock_guard lock(mutex_);
             if (left)
@@ -245,7 +313,17 @@ private:
     /// the client's program).
     void apply(const runner::Command& c, const std::function<void()>& accepted = {})
     {
-        const runner::Command done = commands_.apply(c, kSource, accepted);
+        runner::TimeCommands* commands = nullptr;
+        {
+            const std::lock_guard lock(mutex_);
+            commands = commands_;
+        }
+        if (commands == nullptr)
+        {
+            throw control_grpc::Refused(runner::reason::kNotRunning,
+                                        "the run is over: " + c.name.value_or("command") + " is refused");
+        }
+        const runner::Command done = commands->apply(c, kSource, accepted);
         if (done.pending)
         {
             // Not while this server listens: the run gives its time commands the time lock before
@@ -263,9 +341,9 @@ private:
         }
     }
 
-    runner::TimeCommands& commands_;
-    std::function<void()> stop_;
     mutable std::mutex mutex_; ///< after TimeCommands' mutex
+    runner::TimeCommands* commands_;
+    std::function<void()> stop_;
     mutable control_grpc::TimeView last_view_{};
     mutable std::vector<std::pair<std::string, std::string>> last_participants_{};
     mutable std::optional<LeftParticipant> last_left_{};
@@ -306,13 +384,19 @@ public:
 
     void end() override
     {
+        const std::lock_guard lock(end_mutex_);
         if (server_)
         {
             server_->shutdown();
         }
+        if (time_)
+        {
+            time_->detach();
+        }
     }
 
 private:
+    std::mutex end_mutex_;
     control_grpc::ServerOptions options_;
     std::unique_ptr<LaunchTimeControl> time_; ///< outlives the server
     std::shared_ptr<control::Hub> hub_; ///< the run's, from start(); before server_, which serves it: it goes after it

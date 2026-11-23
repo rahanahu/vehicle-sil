@@ -174,7 +174,7 @@ struct ServerOptions
     /// hub (control_silkit::HubTransport over SIL Kit).
     control::Hub* external_hub = nullptr;
     /// The time operations; nullptr: GetTime reports available = false and the others fail.
-    /// Must outlive the server.
+    /// Must outlive the server, or until shutdown() returns.
     TimeControl* time = nullptr;
     /// Capacity of a Watch whose request leaves it 0, and the largest a request may ask for.
     std::size_t default_watch_capacity = 1024;
@@ -240,7 +240,8 @@ public:
     [[nodiscard]] control::Hub& hub() noexcept;
     /// The monitor of `time` (its snapshot and its changes); nullptr without ServerOptions::time.
     [[nodiscard]] SimulationMonitor* simulation() noexcept;
-    /// Stops serving: open watches and waits end. Idempotent.
+    /// Stops serving and stops the simulation monitor: open watches and waits end, and the server
+    /// no longer reads `time`. Idempotent.
     void shutdown();
 
 private:

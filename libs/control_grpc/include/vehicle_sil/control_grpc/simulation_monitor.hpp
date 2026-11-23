@@ -62,9 +62,9 @@ struct SimulationMonitorOptions
 ///
 /// Thread safety: every function is thread safe. Subscribers are called on the monitor's thread
 /// (or the thread that calls poll()), one at a time, with no lock of the caller held; they must be
-/// short and must not subscribe, unsubscribe or poll. Unsubscribing (destroying the Subscription)
-/// waits for a call to that subscriber that is running, so a subscriber may refer to the
-/// subscription's owner. The TimeControl must outlive the monitor.
+/// short and must not subscribe, unsubscribe, poll or stop. Unsubscribing (destroying the
+/// Subscription) waits for a call to that subscriber that is running, so a subscriber may refer to
+/// the subscription's owner. The TimeControl must outlive the monitor, or until stop() returns.
 class SimulationMonitor
 {
 public:
@@ -103,6 +103,9 @@ public:
     /// Reads the TimeControl now (as the thread does every period) and tells the subscribers if
     /// something changed.
     void poll();
+    /// Stops and joins the monitor's thread (and waits for any running poll()). After this returns,
+    /// poll() does nothing and the monitor no longer reads TimeControl. Idempotent.
+    void stop();
 
 private:
     void unsubscribe(std::uint64_t id);
@@ -111,6 +114,7 @@ private:
     TimeControl& time_;
     SimulationMonitorOptions options_;
 
+    std::mutex stop_mutex_; ///< serializes stop() so every caller waits for the thread to join
     std::mutex poll_mutex_; ///< one poll at a time; also guards check_ and the subscriber calls
     FailureCheck check_;
 

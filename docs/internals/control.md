@@ -942,7 +942,8 @@ In such a run, in every phase, `give_up` watches for a stop request (an interrup
 
 - The launcher does not wait for clients.
 - No thread in `run_file()` waits for gRPC. The gRPC threads take only short locks: those of `TimeCommands`, the Hub and the gate.
-- `shutdown()` tells waiting calls and subscriptions to end (they check every 200 ms and every 100 ms respectively), and stops the gRPC Server with a deadline of at most 2 s.
+- `shutdown()` tells waiting calls and subscriptions to end (they check every 200 ms and every 100 ms respectively), stops the gRPC Server with a deadline of at most 2 s, and then stops and joins `SimulationMonitor` so it no longer reads `TimeControl`.
+- `ControlEndpoint::end()` calls `shutdown()` and detaches `LaunchTimeControl` from the run's `TimeCommands` and `StopRequests` (clearing `set_on_detach({})`), so `RunReport::ended_control_server` holds no references to `RunControls` and does not depend on destruction order.
 - `WaitOperation` returns when the end of the Agent's connection (`Hub::agent_ended()`) settles the operation.
 
 ### Launcher authentication

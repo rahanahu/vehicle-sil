@@ -9,8 +9,10 @@
 #include "test_harness.hpp"
 #include "silkit_test_util.hpp"
 
+#include "endpoints/run_control_server.hpp"
 #include "run_pacing.hpp"
 
+#include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 
 #include "vehicle_sil/launch/events.hpp"
@@ -29,6 +31,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
@@ -778,4 +781,83 @@ TEST_CASE(a_test_refuses_controls_because_every_run_needs_its_own)
     options.lent.controls = &controls;
     const std::string text = refusal([&] { static_cast<void>(vehicle_sil::launch::test_file(options)); });
     CHECK(text.find("TestOptions::lent.controls") != std::string::npos);
+}
+
+TEST_CASE(ended_control_server_survives_controls_destruction_after_start_and_end)
+{
+    // Case 1: Started ControlEndpoint ended, then RunControls/StopRequests destroyed before endpoint.
+    {
+        auto stops = std::make_unique<StopRequests>();
+        auto controls = std::make_unique<RunControls>(*stops);
+        controls->set_control_server(true);
+        controls->set_time_lock({});
+        vehicle_sil::launch::ControlHost host;
+        host.listen = "127.0.0.1:0";
+        std::shared_ptr<vehicle_sil::launch::ControlEndpoint> endpoint;
+        try
+        {
+            auto made = vehicle_sil::launch::detail::make_control_server_of_run(host, *controls);
+            CHECK(made.findings.empty() && made.server != nullptr);
+            endpoint = std::move(made.server);
+        }
+        catch (const std::invalid_argument& e)
+        {
+            CHECK(std::string(e.what()).find("this build has no control server") != std::string::npos);
+            return;
+        }
+        auto hub = std::make_shared<vehicle_sil::control::Hub>();
+        const auto info = endpoint->start(hub);
+        CHECK(!info.address.empty());
+        // Let SimulationMonitor's 50 ms polling loop run more than twice before ending.
+        std::this_thread::sleep_for(120ms);
+        endpoint->end();
+        controls.reset();
+        stops.reset();
+        // Wait more than 2x SimulationMonitor's period after controls are gone: no thread may read them.
+        std::this_thread::sleep_for(150ms);
+        endpoint->end(); // idempotent even after controls are destroyed
+        endpoint.reset();
+    }
+    // Case 2: Unstarted ControlEndpoint from run_file() (check failed before start()), RunControls destroyed before report.
+    {
+        vehicle_sil::launch::RunReport report;
+        auto stops = std::make_unique<StopRequests>();
+        auto controls = std::make_unique<RunControls>(*stops);
+        controls->set_control_server(true);
+        RunRequest asked = request_of("no-such-directory/sim.yaml");
+        asked.host.control.emplace().listen = "127.0.0.1:0";
+        RunLent lent;
+        lent.controls = controls.get();
+        report = vehicle_sil::launch::run_file(asked, {}, lent);
+        CHECK(!report.run.has_value());
+        CHECK(report.ended_control_server != nullptr);
+        controls.reset();
+        stops.reset();
+        report.ended_control_server.reset();
+    }
+    // Case 3: end() clears set_on_detach({}) so detaching TimeCommands later does not touch a destroyed LaunchTimeControl.
+    {
+        vehicle_sil::unit::InProcessRegistry registry;
+        vehicle_sil::SimulationControllerOptions options;
+        options.registry_uri = registry.uri;
+        options.required_participants = {"NeverJoins"};
+        options.time_control = vehicle_sil::TimeControlOptions{.step = 10ms};
+        vehicle_sil::SimulationController controller(options);
+
+        auto stops = std::make_unique<StopRequests>();
+        auto controls = std::make_unique<RunControls>(*stops);
+        controls->set_control_server(true);
+        controls->set_time_lock({});
+        controls->time().attach(controller, 10, std::nullopt);
+
+        vehicle_sil::launch::ControlHost host;
+        host.listen = "127.0.0.1:0";
+        auto made = vehicle_sil::launch::detail::make_control_server_of_run(host, *controls);
+        CHECK(made.findings.empty() && made.server != nullptr);
+        auto hub = std::make_shared<vehicle_sil::control::Hub>();
+        static_cast<void>(made.server->start(hub));
+        made.server->end();
+        made.server.reset();
+        controls->time().detach();
+    }
 }

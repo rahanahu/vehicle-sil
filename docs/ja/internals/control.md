@@ -942,7 +942,8 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 
 - ランチャーは、クライアントを待ちません。
 - `run_file()` の中のどのスレッドも gRPC を待たず、gRPC のスレッドが取るのは `TimeCommands`、Hub、ゲートの短いロックだけです。
-- `shutdown()` は、待つ呼び出しと購読に終わりを通知し（それぞれ 200 ms と 100 ms ごとに見る）、gRPC の Server を最長 2 秒の期限で止めます。
+- `shutdown()` は、待つ呼び出しと購読に終わりを通知し（それぞれ 200 ms と 100 ms ごとに見る）、gRPC の Server を最長 2 秒の期限で止め、続いて `SimulationMonitor` を停止・join して `TimeControl` を読まないようにします。
+- `ControlEndpoint::end()` は、`shutdown()` の後に `LaunchTimeControl` を実行の `TimeCommands` と `StopRequests` から切り離す（`set_on_detach({})` も解除する）ため、`RunReport::ended_control_server` は `RunControls` への参照を持たず、破棄順に依存しません。
 - `WaitOperation` は、Agent の接続の終わり（`Hub::agent_ended()`）で操作が確定して戻ります。
 
 ### ランチャーの認証

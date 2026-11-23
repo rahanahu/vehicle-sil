@@ -25,8 +25,9 @@ struct ControlServerOfRun
 /// its files, the certificate, the key, the credentials (read, parsed, not empty), an address that
 /// is not the loopback only with TLS and credentials, the audit log (opened for appending). Then
 /// makes the server on `controls` (its time operations go to their time commands, a client's Stop
-/// to their stop requests as stop_source::kControlStop), which must outlive it. Reads files;
-/// starts nothing and listens nowhere (ControlEndpoint::start() does).
+/// to their stop requests as stop_source::kControlStop), which must outlive it until
+/// ControlEndpoint::end() returns. Reads files; starts nothing and listens nowhere
+/// (ControlEndpoint::start() does).
 /// In a build without the control server: throws std::invalid_argument.
 [[nodiscard]] ControlServerOfRun make_control_server_of_run(const ControlHost& asked, runner::RunControls& controls);
 
