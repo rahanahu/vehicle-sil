@@ -170,7 +170,7 @@ dashboard_v1/vehicle_sil_dashboard_v1_ecu --describe
 vehicle_sil_launch check simulation.yaml
 ```
 
-`check` は、各 ECU を `--describe` で 1 つずつ起動して、設定ファイルと照合します。シミュレーションは実行しません。ECU のコンストラクターは動くので、信頼できない実行ファイルや設定ファイルは渡さないでください。
+`check` は、各 ECU を `--describe` で起動して（いくつかを同時に起動します。出力は参加者の順のままです）、設定ファイルと照合します。シミュレーションは実行しません。ECU のコンストラクターは動くので、信頼できない実行ファイルや設定ファイルは渡さないでください。
 
 ### 確認
 

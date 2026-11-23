@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(
   vehicle_sil
-  VERSION 0.2.0
+  VERSION 0.3.0
   DESCRIPTION "Vehicle network SIL simulation peers on Vector SIL Kit"
   LANGUAGES C CXX)
 

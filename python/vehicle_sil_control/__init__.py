@@ -7,7 +7,7 @@ standard library only) without gRPC.
 """
 # The vehicle-sil release of this client. A literal, not the package metadata (the tools archive puts the
 # client in place without installing it); scripts/package.py version keeps it equal to CMakeLists.txt.
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 _LAUNCHER = ["Launch", "LaunchError", "control_address"]
 __all__ = ["Control", "ControlError", "ControlWarning", "EventInfo", "Operation", "Peer", "SimulationState", "Snapshot", "Target",

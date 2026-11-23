@@ -7,7 +7,7 @@
   "status": 200,
   "response": {
     "vehicle_sil_gui": 3,
-    "version": "0.2.0",
+    "version": "0.3.0",
     "instance": "0123456789abcdef",
     "root": "/path/to/root",
     "initial_file": null,
@@ -17,7 +17,7 @@
       "problems": [],
       "version": {
         "vehicle_sil_launch": 1,
-        "vehicle_sil": "0.2.0",
+        "vehicle_sil": "0.3.0",
         "formats": {
           "check": 1,
           "run": 2,

@@ -4,6 +4,36 @@ Changes of vehicle-sil by version, in the format of [Keep a Changelog 1.1.0](htt
 
 The version comes from `project(vehicle_sil VERSION ...)` and `VEHICLE_SIL_VERSION_PRERELEASE` (`""` for a release) in the root `CMakeLists.txt` (`vehicle_sil_launch version` and `vehicle_sil` in the `--describe` output of an ECU print it). When the version is raised, write the same number in `pyproject.toml`, `gui/server/pyproject.toml`, `__version__` in `python/vehicle_sil_control/__init__.py` and in `gui/server/src/vehicle_sil_gui/__init__.py`, `VERSION` in `template/get_tools.py`, `GIT_TAG` in `template/CMakeLists.txt`, the version written in `template/README.md` and `template/README.ja.md`, and the heading in this file, `## [<version>] - Unreleased` until the release. The commit that is tagged `v<version>` replaces `Unreleased` with the release date (`YYYY-MM-DD`). `scripts/package.py version` finds mismatches; with `--expect v<version>`, which the release workflow runs for the tag, it also refuses a heading without the date. The release notes are this version's section.
 
+## [0.3.0] - Unreleased
+
+Runs on the same configuration no longer start a new launcher each time: `vehicle_sil_launch serve` keeps one launcher process for one run after another, and the browser GUI uses it automatically when the configuration allows it. `check` describes the ECUs in parallel, and runs stop and end with less waiting. There are no intended breaking changes. As before, the GUI server and the Python Control API client accept only a launcher of their own release: upgrade the tools, the GUI server and the Python client together, and build the ECUs with the same release.
+
+### Added
+
+#### Launcher and Control API
+
+- **`vehicle_sil_launch serve <file>`**: one launcher process for one configuration file that executes runs one at a time as `{"command":"run"}` arrives on stdin. Each run creates and removes its own registry, controller, hub, Control Server, ECU processes and scenario, and starts at virtual time 0. Its events are format 3 (`vehicle_sil_events: 3`): `run_start`, `idle` and `launcher_ends` are added, every event of a run carries that run's `run` ID, and stop and time commands on stdin must name the current run, so a late command never reaches the next one. `serve` refuses `VEHICLE_SIL_TRACE`, a fixed `registry_uri` and `manual` participants before it starts any process (#354).
+- **The run a Control API call is for**: Ping returns the current run (`PingReply.run`), and a call that names a run in the `vehicle-sil-run` metadata is refused with `FAILED_PRECONDITION` and the reason `run-changed` once that run is over; under `serve`, a call that names no run is refused with `run-required`. The Python client binds to a run with `Control(run=...)` or `Control.for_current_run()` and reads it with `current_run()`. A Control Server of `vehicle_sil_launch run` takes calls without a run as before (#354).
+
+#### Browser GUI and client library
+
+- **A persistent launcher in the GUI server**: the GUI server keeps a `vehicle_sil_launch serve` process for the selected configuration and starts each run on it, so a run starts without a new launcher process. `POST api/prepare` (`front.prepare()` in the client) starts that launcher ahead of the first run. A configuration that cannot use it runs with one launcher per run as before, and the reason is given (`launcher-unsupported`, `trace-enabled`, `fixed-registry`, `manual-participants`, `resident-failed`); a run that failed on the persistent launcher is not started again by itself. Each run still starts at virtual time 0 with its own ECU processes and its own Control API connection (#358).
+- **Runtime state in GUI protocol 3**: `hello` and `GET api/session` carry `runtime` (`mode` `hot` or `cold`, `state`, `config`, `reason`, `message`), and a `runtime` WebSocket message is sent when it changes. The run summary's `launcher` has `mode` and `process_alive`, while `running` still says whether the run is active, also when the persistent launcher stays alive after it. The fields are additive: `vehicle_sil_gui` stays 3. The client has `front.runtime` (#358, #359).
+- **The client's front door**: `front.configs()` and `front.recording()` list the configuration files and return the recorded writes as a scenario, `run.start()` takes `onStarted`, and `POST api/write` takes an optional `instance` (409 `session-changed` when it names another server instance) (#361).
+- **Workbench** starts the persistent launcher when a configuration is selected, and its views show runs by configuration file and status instead of internal run IDs (#361).
+
+### Changed
+
+- **One check per start in the GUI**: `POST api/run` no longer runs a separate `check` before the run; it checks participant names against the saved configuration and gates the run on the launcher's own check event. A failed check still answers 422 `check-failed` with the findings (#360).
+- **`check` describes ECUs in parallel**: the live `--describe` calls of `vehicle_sil_launch check` (and of the check at the start of `run`) run several at a time, up to a fixed limit. The output and the order of the findings are the same as before. An ECU's `--describe` may now run at the same time as another ECU's, so it must not rely on running alone (for example, on a fixed file or port) (#364).
+- **Shorter waits at the stop and the end of a run**: active Control API `Watch` streams wake when the Control Server shuts down, the GUI server no longer polls for its Control API reader to end, and a stop wakes the simulation watch, a paused start and the time gate at once, so `Stop` and the return to Ready take less time (#363, #366).
+
+### Fixed
+
+- **Control Server shutdown**: `ControlServer::shutdown()` stops and joins its simulation monitor, and `ControlEndpoint::end()` detaches the run's time and stop controls, so destroying them in another order can no longer use freed memory (#355).
+- **`vehicle_sil_launch --help`**: the `run` and `test` synopses list `--participant-start-timeout-ms` and `--participant-stop-timeout-ms`, which they already took (#369).
+- **Documentation**: the check pages say that `--describe` runs several ECUs at a time, the Control API page says that the browser GUI shows variable availability, the GUI page says how long the Control API credentials file lives with a persistent launcher, the tools archive's README lists `serve` and `test`, and the third-party notices name the SocketCAN bridge among the executables that contain SIL Kit and the GCC runtime.
+
 ## [0.2.0] - 2026-11-22
 
 The first stable release of 0.2.0. It follows 0.1.0 and the release candidates 0.2.0-rc.1 and 0.2.0-rc.2 (there is no rc.3). The changes below describe 0.2.0 as a whole, since 0.1.0. Since rc.2, runs wait less at their start and end, the GUI binds time commands and stop limits to one run, and two kinds of input that were misread or ignored are refused.

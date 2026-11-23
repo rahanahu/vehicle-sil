@@ -170,7 +170,7 @@ The network name is `VehicleCAN`, not `J1939_CAN` as agreed in step 1. The ECU a
 vehicle_sil_launch check simulation.yaml
 ```
 
-`check` starts each ECU with `--describe`, one at a time, and checks the configuration file against it. It does not run the simulation. The ECU constructors do run, so do not pass executables or configuration files that you do not trust.
+`check` starts each ECU with `--describe` (several at a time; the output keeps the order of the participants) and checks the configuration file against it. It does not run the simulation. The ECU constructors do run, so do not pass executables or configuration files that you do not trust.
 
 ### Verify the check output
 
