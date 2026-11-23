@@ -45,7 +45,6 @@ import math
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -55,17 +54,18 @@ from pathlib import Path
 
 import web_i18n
 import job_summary
+import verify_common
 from busy_machine import DEFAULT_LIMIT_S, wait_until_quiet
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = verify_common.ROOT
 WEB = ROOT / "gui" / "web"
-LOG_DIR = ROOT / "build" / "logs"
+LOG_DIR = verify_common.LOG_DIR
 EXTRACTION = ROOT / "build" / "i18n" / "messages.json"  # npm run i18n:extract
 LOCALE_DIR = WEB / "src" / "locale"
-LINE_CHARS = 300
+LINE_CHARS = verify_common.LINE_CHARS
 MAX_ERROR_LINES = 12
 
-ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+ANSI = verify_common.ANSI
 
 # Lines worth showing from a failed step, by step.
 E2E_ERRORS = re.compile(r"✘|^\s+\d+\) |Error:|Timed out|\d+ (failed|flaky)|webServer|WebServer.*(rror|exit)")
@@ -136,19 +136,15 @@ class Step:
 
 
 def die_usage(message: str) -> None:
-    print(f"verify-web: error: {message}", file=sys.stderr)
-    sys.exit(2)
+    verify_common.die_usage("verify-web", message)
 
 
 def rel(path: Path) -> str:
-    try:
-        return path.relative_to(ROOT).as_posix()
-    except ValueError:
-        return str(path)
+    return verify_common.rel(path, ROOT)
 
 
 def clean_lines(text: str) -> list[str]:
-    return [ANSI.sub("", ln).rstrip()[:LINE_CHARS] for ln in text.splitlines()]
+    return verify_common.clean_lines(text, LINE_CHARS)
 
 
 # --- versions -----------------------------------------------------------------------------------
@@ -188,30 +184,7 @@ def check_engine(tool: str, path: str, spec: str) -> None:
 # --- running ------------------------------------------------------------------------------------
 
 
-def group_alive(pgid: int) -> bool:
-    try:
-        os.killpg(pgid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-
-
-def stop_group(process: subprocess.Popen) -> None:
-    """Stop the step and everything it started (dev server, GUI server, browsers)."""
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True)
-        return
-    # SIGINT first: Playwright then stops the web servers it started (they run in their own process groups).
-    for sig, seconds in ((signal.SIGINT, 20), (signal.SIGTERM, 5), (signal.SIGKILL, 0)):
-        if not group_alive(process.pid):
-            return
-        try:
-            os.killpg(process.pid, sig)
-        except ProcessLookupError:
-            return
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline and group_alive(process.pid):
-            time.sleep(0.2)
+stop_group = verify_common.stop_group
 
 
 def run_step(step: Step, env: dict[str, str], log: Path, junit: Path | None = None) -> None:
@@ -222,7 +195,7 @@ def run_step(step: Step, env: dict[str, str], log: Path, junit: Path | None = No
         env = {**env, "NO_COLOR": "1"}
     if junit is not None:
         env = {**env, "VEHICLE_SIL_PLAYWRIGHT_JUNIT": str(junit)}
-    group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+    group = verify_common.process_group_kwargs()
     with open(log, "w", encoding="utf-8", errors="replace") as f:
         f.write("$ npm " + " ".join(step.command[1:]) + "\n")
         f.flush()
@@ -406,14 +379,8 @@ def summarize_junit(path: Path, top: int, as_json: bool) -> int:
     return 0 if ok else 1
 
 
-def on_sigterm(_signum, _frame) -> None:
-    raise KeyboardInterrupt
-
-
 def main() -> int:
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+    verify_common.reconfigure_stdio(encoding="utf-8", stderr=True)
     parser = argparse.ArgumentParser(
         prog="scripts/verify-web.py",
         description="Run npm ci, the format check, lint, unit tests, the production build and the end-to-end "
@@ -472,8 +439,7 @@ def main() -> int:
         die_usage("--e2e-repeat must be 1 or more")
     if args.wait_limit < 0:
         die_usage("--wait-limit must be 0 or more minutes")
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", args.tag):
-        die_usage(f"--tag {args.tag!r}: use letters, digits, '.', '_' and '-' only (it becomes part of file names)")
+    verify_common.validate_tag("verify-web", args.tag)
 
     node, npm = shutil.which("node"), shutil.which("npm")
     if node is None or npm is None:
@@ -527,7 +493,7 @@ def main() -> int:
     junits = {s.name: LOG_DIR / f"{args.tag}-{s.name}.junit.xml" for s in steps if s.name in ("e2e", "e2e-dev")}
     for stale in [*logs.values(), *junits.values()]:
         stale.unlink(missing_ok=True)
-    signal.signal(signal.SIGTERM, on_sigterm)
+    verify_common.install_sigterm_handler()
     if args.i18n_update:
         try:
             return update_translations(npm, env)

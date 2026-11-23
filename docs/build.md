@@ -81,7 +81,7 @@ In the 3 commands that name `linux-gcc-debug`, you can replace it with any prese
 
 `linux-gcc-control` also builds the Control Server and its tests (see "Build" in [control-api.md](control-api.md#build)). If CMake does not find gRPC, it pulls in a pinned version with FetchContent and builds it. The tests of the Python client are registered only if a Python with grpcio and grpcio-tools is available (`uv sync`).
 
-`scripts/verify.py --linux` does not include `linux-gcc-static`, `windows-mingw-static` or `linux-gcc-control`. Run them by name.
+`scripts/verify.py --linux` runs the 5 default presets (`linux-gcc-debug`, `linux-gcc-release`, `linux-clang-debug`, `linux-clang-asan`, `linux-clang-tsan`) marked in `CMakePresets.json`; it does not include `linux-gcc-static`, `linux-gcc-asan`, `linux-gcc-tsan` or `linux-gcc-control`. Run them by name, or pass `--all-linux` for every Linux preset.
 
 The tests of the ThreadSanitizer presets suppress only reports known to be false positives. The suppressions are in `cmake/tsan-suppressions.txt`, each with its reason.
 
@@ -112,7 +112,7 @@ cmake --build --preset windows-mingw-release
 ctest --preset windows-mingw-release
 ```
 
-There are 3 presets: `windows-mingw-debug`, `windows-mingw-release` and `windows-mingw-static` (Release with `VEHICLE_SIL_STATIC=ON`).
+There are 4 presets: `windows-mingw-debug`, `windows-mingw-release`, `windows-mingw-static` (Release with `VEHICLE_SIL_STATIC=ON`) and `windows-mingw-control` (Debug with `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`; see "Build" in [control-api.md](control-api.md#build)).
 
 Where the executables find the DLLs they load:
 

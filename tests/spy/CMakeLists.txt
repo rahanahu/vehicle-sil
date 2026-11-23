@@ -20,7 +20,7 @@ add_library(vehicle_sil_spy_watch_clash OBJECT EXCLUDE_FROM_ALL watch_clash.cpp)
 target_link_libraries(vehicle_sil_spy_watch_clash PRIVATE vehicle_sil::spy vehicle_sil::j1939_codec)
 target_include_directories(vehicle_sil_spy_watch_clash PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 get_property(_vehicle_sil_spy_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-if(NOT vehicle_sil_IS_TOP_LEVEL)
+if(NOT PROJECT_IS_TOP_LEVEL)
   message(STATUS "vehicle-sil: the test j1939_spy.watch_of_a_signal_named_count_does_not_build is left out: it builds in "
                  "vehicle-sil's own build tree, and here vehicle-sil is a subproject")
 elseif(_vehicle_sil_spy_multi_config)

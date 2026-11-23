@@ -26,10 +26,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import job_summary
+import verify_common
 
-ROOT = Path(__file__).resolve().parent.parent
-LOG_DIR = ROOT / "build" / "logs"
-LINUX_PRESETS = ["linux-gcc-debug", "linux-gcc-release", "linux-clang-debug", "linux-clang-asan", "linux-clang-tsan"]
+ROOT = verify_common.ROOT
+LOG_DIR = verify_common.LOG_DIR
 MAX_FAILED_NAMES = 20
 MAX_FAILED_OUTPUTS = 3
 OUTPUT_LINES = 15
@@ -52,8 +52,7 @@ BUILD_ERROR = re.compile(r"(^|[\s:])(fatal )?error:|undefined reference|ld retur
 
 
 def die_usage(message: str) -> None:
-    print(f"verify: error: {message}", file=sys.stderr)
-    sys.exit(2)
+    verify_common.die_usage("verify", message)
 
 
 def read_text(path: Path) -> str:
@@ -255,28 +254,62 @@ def host_system() -> str:
     return s
 
 
-def load_presets() -> dict[str, dict]:
+def load_presets(root: Path | None = None, *, strict: bool = True) -> dict[str, dict]:
     """Visible configure presets that also have a build and a test preset of the same name."""
+    base = ROOT if root is None else root
     found: dict[str, dict] = {}
-    data: dict[str, list] = {"configurePresets": [], "buildPresets": [], "testPresets": []}
-    for name in ("CMakePresets.json", "CMakeUserPresets.json"):
-        path = ROOT / name
+    configure: list[tuple[dict, bool]] = []
+    builds: set[str] = set()
+    tests: dict[str, dict] = {}
+    for name, from_project in (("CMakePresets.json", True), ("CMakeUserPresets.json", False)):
+        path = base / name
         if not path.exists():
             continue
         try:
             loaded = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
+            if not strict:
+                return {}
             die_usage(f"cannot read {name}: {e}")
-        for key in data:
-            data[key].extend(loaded.get(key, []))
-    by_name = {p["name"]: p for p in data["configurePresets"]}
-    builds = {p["name"] for p in data["buildPresets"]}
-    tests = {p["name"]: p for p in data["testPresets"]}
-    for name, preset in by_name.items():
-        if preset.get("hidden") or name not in builds or name not in tests:
+        if not isinstance(loaded, dict):
+            if not strict:
+                return {}
+            die_usage(f"cannot read {name}: top-level JSON value must be an object")
+        for p in loaded.get("configurePresets", []):
+            if isinstance(p, dict) and isinstance(p.get("name"), str):
+                configure.append((p, from_project))
+        for p in loaded.get("buildPresets", []):
+            if isinstance(p, dict) and isinstance(p.get("name"), str):
+                builds.add(p["name"])
+        for p in loaded.get("testPresets", []):
+            if isinstance(p, dict) and isinstance(p.get("name"), str):
+                tests.setdefault(p["name"], p)
+    by_name: dict[str, dict] = {}
+    for p, _ in configure:
+        by_name.setdefault(p["name"], p)
+    for preset, from_project in configure:
+        name = preset["name"]
+        if name in found or preset.get("hidden") or name not in builds or name not in tests:
             continue
-        found[name] = {"host": _required_host(preset, by_name), "test_jobs": _test_jobs(tests[name], tests)}
+        host = _required_host(preset, by_name)
+        vendor = preset.get("vendor")
+        vs = vendor.get("vehicle_sil") if isinstance(vendor, dict) else None
+        linux_default = from_project and host == "Linux" and isinstance(vs, dict) and vs.get("linux_default") is True
+        found[name] = {
+            "host": host,
+            "test_jobs": _test_jobs(tests[name], tests),
+            "linux_default": linux_default,
+            "from_project": from_project,
+        }
     return found
+
+
+def default_linux_presets(known: dict[str, dict]) -> list[str]:
+    return [name for name, info in known.items() if info.get("linux_default")]
+
+
+def all_linux_presets(known: dict[str, dict]) -> list[str]:
+    return [name for name, info in known.items() if info.get("from_project") and info.get("host") == "Linux"]
 
 
 def _test_jobs(preset: dict, by_name: dict[str, dict]) -> int | None:
@@ -325,10 +358,7 @@ def run_step(cmd: list[str], log: Path) -> tuple[int, float]:
 
 
 def rel(path: Path) -> str:
-    try:
-        return path.relative_to(ROOT).as_posix()
-    except ValueError:
-        return str(path)
+    return verify_common.rel(path, ROOT)
 
 
 def run_preset(preset: str, args: argparse.Namespace, test_jobs: int | None,
@@ -441,21 +471,26 @@ def print_result(r: Result) -> None:
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(errors="backslashreplace")
+    verify_common.reconfigure_stdio()
+    help_known = load_presets(strict=False)
+    help_defaults = default_linux_presets(help_known)
+    help_all = all_linux_presets(help_known)
     parser = argparse.ArgumentParser(
         prog="scripts/verify.py",
         description="Configure, build and test CMake presets and print a short summary; the full output "
         "goes to build/logs/. Exit code 0 if every preset passed, 1 if one failed, 2 on a usage error.",
         epilog="examples:\n"
-        "  scripts/verify.py --linux                       # the presets to pass before a commit\n"
+        "  scripts/verify.py --linux                       # the default Linux presets to pass before a commit\n"
         "  scripts/verify.py linux-gcc-debug --tests '^launch'\n"
         "  scripts/verify.py --linux --repeat 3 --tag nightly\n"
         "  scripts/verify.py --summarize build/logs/verify-linux-gcc-debug-test.log",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("presets", nargs="*", metavar="preset", help="configure/build/test preset names")
-    parser.add_argument("--linux", action="store_true", help="add the Linux presets: " + ", ".join(LINUX_PRESETS))
+    parser.add_argument("--linux", action="store_true",
+                        help="add the default Linux presets: " + (", ".join(help_defaults) or "(from CMakePresets.json)"))
+    parser.add_argument("--all-linux", action="store_true",
+                        help="add every Linux preset in CMakePresets.json: " + (", ".join(help_all) or "(from CMakePresets.json)"))
     parser.add_argument("--summarize", nargs="+", metavar="LOG", help="run nothing; summarize existing ctest or build logs")
     parser.add_argument("--tag", default="verify", help="prefix of the log names (default: verify)")
     parser.add_argument("--tests", metavar="REGEX", help="run only the tests that match (ctest -R)")
@@ -482,18 +517,23 @@ def main() -> int:
     args = parser.parse_args(raw_argv)
 
     if args.summarize:
-        if args.presets or args.linux:
-            die_usage("--summarize takes log files only; leave out the preset names and --linux")
+        if args.presets or args.linux or args.all_linux:
+            die_usage("--summarize takes log files only; leave out the preset names, --linux and --all-linux")
         results = [summarize_log(Path(p)) for p in args.summarize]
     else:
-        presets = list(dict.fromkeys(([*LINUX_PRESETS] if args.linux else []) + args.presets))
-        if not presets:
-            die_usage("name at least one preset, or use --linux or --summarize (see --help)")
+        if not args.presets and not args.linux and not args.all_linux:
+            die_usage("name at least one preset, or use --linux, --all-linux or --summarize (see --help)")
         if args.repeat < 1 or args.jobs < 1 or (args.test_jobs is not None and args.test_jobs < 1):
             die_usage("--repeat, --jobs and --test-jobs must be 1 or more")
-        if not re.fullmatch(r"[A-Za-z0-9._-]+", args.tag):
-            die_usage(f"--tag {args.tag!r}: use letters, digits, '.', '_' and '-' only (it becomes part of file names)")
+        verify_common.validate_tag("verify", args.tag)
         known = load_presets()
+        presets = list(dict.fromkeys(
+            (default_linux_presets(known) if args.linux else [])
+            + (all_linux_presets(known) if args.all_linux else [])
+            + args.presets
+        ))
+        if not presets:
+            die_usage("no Linux presets found in CMakePresets.json")
         unknown = [p for p in presets if p not in known]
         if unknown:
             die_usage(f"unknown preset {', '.join(unknown)}; CMakePresets.json has: {', '.join(sorted(known))}")

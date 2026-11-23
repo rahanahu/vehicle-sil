@@ -48,7 +48,7 @@ In this build, `vehicle_sil_launch` has `--control`, and `features` in `vehicle_
 |---|---|
 | If gRPC is not found | FetchContent fetches it. The first download and build take a few minutes. |
 | gRPC on Windows (MSYS2 UCRT64) | Install it beforehand with `pacman -S mingw-w64-ucrt-x86_64-grpc`. |
-| Running the Control Server tests as well | Use the preset `linux-gcc-control` (GCC Debug with this setting) with `scripts/verify.py linux-gcc-control` (see "Linux" in [build.md](build.md#linux)). |
+| Running the Control Server tests as well | Use `linux-gcc-control` on Linux or `windows-mingw-control` on Windows (GCC Debug with this setting) with `scripts/verify.py <preset>` (see "Build vehicle-sil itself" in [build.md](build.md#build-vehicle-sil-itself)). |
 | Dependency details | See [dependencies.md](dependencies.md). |
 
 ## Connect to the launcher

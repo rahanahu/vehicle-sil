@@ -49,7 +49,6 @@ import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -57,13 +56,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import job_summary
+import verify_common
 from busy_machine import DEFAULT_LIMIT_S, wait_until_quiet
 
-ROOT = Path(__file__).resolve().parent.parent
-LOG_DIR = ROOT / "build" / "logs"
-LINE_CHARS = 300
+ROOT = verify_common.ROOT
+LOG_DIR = verify_common.LOG_DIR
+LINE_CHARS = verify_common.LINE_CHARS
 MAX_ERROR_LINES = 12
-ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+ANSI = verify_common.ANSI
 
 ERROR_LINES = {
     "sync": re.compile(r"error|lockfile|needs to be updated", re.IGNORECASE),
@@ -105,38 +105,18 @@ class Step:
 
 
 def die_usage(message: str) -> None:
-    print(f"verify-gui: error: {message}", file=sys.stderr)
-    sys.exit(2)
+    verify_common.die_usage("verify-gui", message)
 
 
 def rel(path: Path) -> str:
-    try:
-        return path.relative_to(ROOT).as_posix()
-    except ValueError:
-        return str(path)
+    return verify_common.rel(path, ROOT)
 
 
 def clean_lines(text: str) -> list[str]:
-    return [ANSI.sub("", ln).rstrip()[:LINE_CHARS] for ln in text.splitlines()]
+    return verify_common.clean_lines(text, LINE_CHARS)
 
 
-def stop_group(process: subprocess.Popen) -> None:
-    """Stop the step and everything it started (the GUI servers of the tests, npm, browsers)."""
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True)
-        return
-    for sig, seconds in ((signal.SIGINT, 20), (signal.SIGTERM, 5), (signal.SIGKILL, 0)):
-        try:
-            os.killpg(process.pid, sig)
-        except ProcessLookupError:
-            return
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            try:
-                os.killpg(process.pid, 0)
-            except ProcessLookupError:
-                return
-            time.sleep(0.2)
+stop_group = verify_common.stop_group
 
 
 def run_step(step: Step, env: dict[str, str], log: Path, junit: Path | None = None) -> None:
@@ -144,7 +124,7 @@ def run_step(step: Step, env: dict[str, str], log: Path, junit: Path | None = No
     start = time.monotonic()
     if junit is not None:
         env = {**env, "VEHICLE_SIL_PLAYWRIGHT_JUNIT": str(junit)}
-    group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+    group = verify_common.process_group_kwargs()
     with open(log, "w", encoding="utf-8", errors="replace") as f:
         f.write("$ " + " ".join(step.command) + "\n")
         f.flush()
@@ -191,13 +171,8 @@ def read_web(step: Step, out: str, lines: list[str]) -> None:
         step.errors = failed[0]["errors"]
 
 
-def on_sigterm(_signum, _frame) -> None:
-    raise KeyboardInterrupt
-
-
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(errors="backslashreplace")
+    verify_common.reconfigure_stdio()
     parser = argparse.ArgumentParser(
         prog="scripts/verify-gui.py",
         description="Run the GUI server's tests and then scripts/verify-web.py, and print a short summary; the full "
@@ -240,8 +215,7 @@ def main() -> int:
         die_usage("--wait-limit must be 0 or more minutes")
     if args.skip_server and (args.skip_web or args.keyword):
         die_usage("--skip-server leaves out the server step: with --skip-web or -k nothing would be left to run")
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", args.tag):
-        die_usage(f"--tag {args.tag!r}: use letters, digits, '.', '_' and '-' only (it becomes part of file names)")
+    verify_common.validate_tag("verify-gui", args.tag)
     uv = shutil.which("uv")
     if uv is None:
         die_usage("uv is not on PATH: install it (https://docs.astral.sh/uv/), then run this again")
@@ -303,7 +277,7 @@ def main() -> int:
     logs = {s.name: LOG_DIR / f"{args.tag}-{s.name}.log" for s in steps}
     for stale in [*logs.values(), junit, real_junit]:
         stale.unlink(missing_ok=True)
-    signal.signal(signal.SIGTERM, on_sigterm)
+    verify_common.install_sigterm_handler()
 
     done: list[Step] = []
     try:

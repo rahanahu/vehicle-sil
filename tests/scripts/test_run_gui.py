@@ -108,8 +108,8 @@ def test_nothing_built(root: Path) -> None:
     check(isinstance(said, str) and said.startswith(f"run-gui: run the commands below in {root} (cd {root})\nrun-gui: no "),
           f"from another directory: the directory to run the commands in comes first ({said})")
     for windows, lines in ((False, ["  cmake --preset linux-gcc-control\n", "  cmake --build --preset linux-gcc-control\n"]),
-                           (True, ["  cmake --preset windows-mingw-debug -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON\n",
-                                   "  cmake --build --preset windows-mingw-debug\n"])):
+                           (True, ["  cmake --preset windows-mingw-control\n",
+                                   "  cmake --build --preset windows-mingw-control\n"])):
         try:
             run_gui.find_launcher(root, probe({}), NAME, windows)
             check(False, "find_launcher raises when nothing is built")
@@ -134,6 +134,10 @@ def test_no_control_server(root: Path) -> None:
     result = planned(root, {"linux-gcc-debug": ["events"]}, "--launcher", str(root / "build" / "linux-gcc-debug" / "tools" / "launch" / NAME))
     check(isinstance(result, tuple) and len(result[1]) == 2 and result[1][1].startswith("warning: ") and
           "built without the Control Server" in result[1][1], f"--launcher without the Control Server: a warning ({result})")
+    result_win = planned(root, {"linux-gcc-debug": ["events"]}, "--launcher",
+                         str(root / "build" / "linux-gcc-debug" / "tools" / "launch" / NAME), windows=True)
+    check(isinstance(result_win, tuple) and len(result_win[1]) == 2 and "windows-mingw-control" in result_win[1][1],
+          f"--launcher without the Control Server on Windows names windows-mingw-control ({result_win})")
 
 
 def test_example_not_built(root: Path) -> None:

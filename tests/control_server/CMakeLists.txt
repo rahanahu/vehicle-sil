@@ -27,23 +27,15 @@ target_compile_definitions(vehicle_sil_control_server_tests PRIVATE
 # The Python client and CLI against vehicle_sil_launch run --control, with a Python 3.11+ that has grpcio and grpcio-tools.
 # VEHICLE_SIL_CONTROL_PYTHON may name it; otherwise the repository's uv environment (.venv) if it has
 # them, else the Python 3 found here (cmake/VehicleSilPython.cmake).
-if(VEHICLE_SIL_CONTROL_PYTHON)
-  set(_control_python "${VEHICLE_SIL_CONTROL_PYTHON}")
-else()
-  vehicle_sil_find_python(_control_python grpc grpc_tools)
-endif()
 if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu AND TARGET vehicle_sil_dashboard_ecu)
-  vehicle_sil_python_can_import(_vehicle_sil_control_python_ok "${_control_python}" grpc grpc_tools)
-  if(_vehicle_sil_control_python_ok)
-    set(_stubs "${CMAKE_CURRENT_BINARY_DIR}/control_python_stubs")
-    add_custom_command(
-      OUTPUT "${_stubs}/vehicle_sil/control/v1/control_pb2.py"
-      COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${PROJECT_SOURCE_DIR}/python"
-              "${_control_python}" -m vehicle_sil_control.generate --proto-root "${PROJECT_SOURCE_DIR}/proto" --out "${_stubs}"
-      DEPENDS "${PROJECT_SOURCE_DIR}/proto/vehicle_sil/control/v1/control.proto" "${PROJECT_SOURCE_DIR}/python/vehicle_sil_control/generate.py"
-      COMMENT "Generating the Python stubs of the Control API")
-    add_custom_target(vehicle_sil_control_python_stubs ALL DEPENDS "${_stubs}/vehicle_sil/control/v1/control_pb2.py")
-    add_dependencies(vehicle_sil_control_python_stubs vehicle_sil_launch vehicle_sil_engine_ecu vehicle_sil_dashboard_ecu)
+  set(_stubs "${CMAKE_CURRENT_BINARY_DIR}/control_python_stubs")
+  vehicle_sil_add_python_grpc_stubs(vehicle_sil_control_python_stubs
+    ALL
+    OUT "${_stubs}"
+    PYTHON_VAR _control_python
+    PYTHONPATH "${PROJECT_SOURCE_DIR}/python"
+    DEPENDS vehicle_sil_launch vehicle_sil_engine_ecu vehicle_sil_dashboard_ecu)
+  if(_control_python)
     set(_example_dir "$<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..")
     # The client and the CLI under the launcher with the ECUs of examples/ecu_main; what the client
     # makes of the server's messages.
@@ -98,7 +90,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu AND TARGET vehicl
                                     -DVEHICLE_SIL_CONTROL_PYTHON)
     if(VEHICLE_SIL_CONTROL_PYTHON)
       string(CONCAT _what "${VEHICLE_SIL_CONTROL_PYTHON} (VEHICLE_SIL_CONTROL_PYTHON) is not Python 3.11+ with grpcio "
-                          "and grpcio-tools: ${_vehicle_sil_control_python_ok_REASON}")
+                          "and grpcio-tools: ${_control_python_REASON}")
     else()
       set(_what "no Python 3.11+ with grpcio and grpcio-tools was found (tried: ${_control_python_TRIED})")
     endif()

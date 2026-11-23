@@ -18,6 +18,7 @@ needs no C++ build:
            (scripts/check-docs.py), tests/scripts/test_check_commits.py (scripts/check-commits.py),
            tests/scripts/test_ci_workflow.py (.github/workflows/ci.yml), tests/scripts/test_verify.py
            (scripts/verify.py), tests/scripts/test_verify_web.py (scripts/verify-web.py),
+           tests/scripts/test_verify_common.py (scripts/verify_common.py),
            tests/scripts/test_hotspots.py (scripts/hotspots.py),
            tests/scripts/test_trace_report.py (scripts/trace-report.py) and
            tests/scripts/test_package.py (scripts/package.py)
@@ -51,9 +52,10 @@ import tomllib
 from pathlib import Path
 
 import job_summary
+import verify_common
 
-ROOT = Path(__file__).resolve().parent.parent
-LOG_DIR = ROOT / "build" / "logs"
+ROOT = verify_common.ROOT
+LOG_DIR = verify_common.LOG_DIR
 ENV_DIR = ROOT / "build" / "python-envs"
 LOWEST = "3.11"
 OUTPUT_LINES = 15
@@ -61,8 +63,7 @@ LINE_CHARS = 400
 
 
 def die_usage(message: str) -> None:
-    print(f"verify-python: error: {message}", file=sys.stderr)
-    sys.exit(2)
+    verify_common.die_usage("verify-python", message)
 
 
 def pinned_version() -> str | None:
@@ -94,10 +95,7 @@ def env_python(env: Path) -> Path:
 
 
 def rel(path: Path) -> str:
-    try:
-        return path.relative_to(ROOT).as_posix()
-    except ValueError:
-        return str(path)
+    return verify_common.rel(path, ROOT)
 
 
 def first_lines(log: Path) -> list[str]:
@@ -228,6 +226,7 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
                     s.run([python, "tests/scripts/test_ci_workflow.py"]),
                     s.run([python, "tests/scripts/test_verify.py"]),
                     s.run([python, "tests/scripts/test_verify_web.py"]),
+                    s.run([python, "tests/scripts/test_verify_common.py"]),
                     s.run([python, "tests/scripts/test_hotspots.py"]),
                     s.run([python, "tests/scripts/test_trace_report.py"]),
                     s.run([python, "tests/scripts/test_package.py"])])
@@ -267,8 +266,7 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(errors="backslashreplace")
+    verify_common.reconfigure_stdio()
     pinned = pinned_version()
     parser = argparse.ArgumentParser(
         prog="scripts/verify-python.py",
@@ -290,8 +288,7 @@ def main() -> int:
     parser.add_argument("--tag", default="verify", help="prefix of the log names (default: verify)")
     args = parser.parse_args()
 
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", args.tag):
-        die_usage(f"--tag {args.tag!r}: use letters, digits, '.', '_' and '-' only (it becomes part of file names)")
+    verify_common.validate_tag("verify-python", args.tag)
     versions = list(dict.fromkeys(args.python or [LOWEST] + ([pinned] if pinned else [])))
     for v in versions:
         if not re.fullmatch(r"3\.\d+(\.\d+)?", v):
