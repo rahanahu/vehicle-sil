@@ -72,7 +72,7 @@ class RunSink(Protocol):
 
     def on_process_exited(self, returncode: int | None) -> None: ...
 
-    async def on_run_finished(self, *, output_cut: bool = False) -> None: ...
+    async def on_run_finished(self, *, output_cut: bool = False, launcher_alive: bool = False) -> None: ...
 
     async def on_run_cleanup(self) -> None: ...
 
@@ -515,7 +515,8 @@ class ServeRunHandle:
                     sink.on_process_exited(item[1])
                 elif kind == "finish":
                     self._ended = True
-                    await sink.on_run_finished(output_cut=item[1])
+                    alive_now = bool(item[2]) and not self._resident.exited and self._resident.proc.returncode is None
+                    await sink.on_run_finished(output_cut=item[1], launcher_alive=alive_now)
                     break
         finally:
             self._ended = True
@@ -875,7 +876,7 @@ class ServeRuntime:
             if (current := resident.current_run) is not None:
                 resident.current_run = None
                 current.enqueue(("exit", code))
-                current.enqueue(("finish", not done))
+                current.enqueue(("finish", not done, False))
             if (pending := resident.pending_run) is not None:
                 resident.pending_run = None
                 pending._started_event.set()
@@ -992,7 +993,7 @@ class ServeRuntime:
                 self.runs_completed += 1
                 if launcher_ends:
                     resident.ending = True
-                current.enqueue(("finish", False))
+                current.enqueue(("finish", False, not launcher_ends))
             return
 
         if kind == "command" and ev_run is None:

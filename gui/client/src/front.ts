@@ -202,7 +202,28 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
     clock,
     controls,
     scenario,
+    runtime: low.session.runtime,
     outside: outside.value,
+    prepare: (prepareOptions = {}) => {
+      const file = prepareOptions.file ?? initialFile();
+      if (file === null) {
+        return Promise.reject(noFileError());
+      }
+      return low
+        .prepare({
+          file,
+          ...(prepareOptions.variant !== undefined ? { variant: prepareOptions.variant } : {}),
+          ...(prepareOptions.disable !== undefined ? { disable: prepareOptions.disable } : {}),
+          ...(prepareOptions.enable !== undefined ? { enable: prepareOptions.enable } : {}),
+          ...(prepareOptions.manual !== undefined ? { manual: prepareOptions.manual } : {}),
+        })
+        .then(
+          (res) => res.runtime,
+          (error: unknown) => {
+            throw actionError(error);
+          },
+        );
+    },
     connections: ({ network }, listOptions = {}) => {
       const file = listOptions.file ?? initialFile();
       if (file === null) {

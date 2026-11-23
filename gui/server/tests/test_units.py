@@ -55,7 +55,15 @@ def test_session_follows_the_events() -> None:
     assert kinds(s.launcher_exited(1)) == ["session"] and s.summary()["state"] == "running"
     out = s.ended()
     summary = s.summary()
-    assert summary["launcher"] == {"pid": None, "running": False, "exit_code": 1, "signal": None, "silent_s": None}
+    assert summary["launcher"] == {
+        "pid": None,
+        "running": False,
+        "exit_code": 1,
+        "signal": None,
+        "silent_s": None,
+        "mode": "cold",
+        "process_alive": False,
+    }
     assert summary["phase"] == "running" and summary["time"]["sim_ms"] == 300 and summary["check"] == check
     assert summary["last_seq"] == 10 and summary["last_t_ms"] == 10 and summary["stop"] == "none"
     assert summary["participants"] == [{"name": "B", "state": "disabled"},
@@ -156,7 +164,15 @@ def test_allowed_has_a_number_that_goes_up_with_each_change_only() -> None:
 def test_a_signal_is_not_an_exit_code() -> None:
     s = new_session()
     s.launcher_exited(-9)
-    assert s.summary()["launcher"] == {"pid": None, "running": False, "exit_code": None, "signal": 9, "silent_s": None}
+    assert s.summary()["launcher"] == {
+        "pid": None,
+        "running": False,
+        "exit_code": None,
+        "signal": 9,
+        "silent_s": None,
+        "mode": "cold",
+        "process_alive": False,
+    }
 
 
 def test_stop_requests_are_recorded_once() -> None:

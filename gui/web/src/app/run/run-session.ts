@@ -1,5 +1,5 @@
 import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
-import { CheckResult, Intent } from '@vehicle-sil/gui-client';
+import { CheckResult, Intent, isRunActive } from '@vehicle-sil/gui-client';
 import { RunCommands } from '../core/session/run-commands';
 import { ServerConnection } from '../core/session/server-connection';
 
@@ -30,12 +30,14 @@ export class RunSession {
   readonly ready = this.server.ready;
   /** いまの（または最後の）セッション。 */
   readonly session = this.server.session;
+  /** 常駐ランチャーの状態。 */
+  readonly runtime = this.server.runtime;
   /** セッションにつながらない知らせ。 */
   readonly notices = this.server.notices;
   /** サーバーの口の版がこの画面と違うので、つながない（そのわけの英語の文）。違わなければ null。 */
   readonly incompatible = this.server.incompatible;
-  /** ランチャーが動いているか（結果が出た後も、終わるまでは動いている）。止められるかはこれで決める。 */
-  readonly launcherRunning = computed(() => this.session()?.launcher.running ?? false);
+  /** この実行がランチャー上でまだ継続中か。止められるかはこれで決める。 */
+  readonly launcherRunning = computed(() => isRunActive(this.session()));
   /** 実行がいまどうなっているか（`run`）と、終わった実行の結果（`result`）。正面の口の `status`。 */
   readonly status = this.commands.status;
   /** 実行の操作（開始、停止、待たずに止める）を押せるか、押せない理由（正面の口が言う）。 */
@@ -56,7 +58,7 @@ export class RunSession {
   readonly elapsedMs = computed(() => {
     const session = this.session();
     if (!session) return null;
-    if (!session.launcher.running || this.connectionState() !== 'open') return session.elapsedMs;
+    if (!isRunActive(session) || this.connectionState() !== 'open') return session.elapsedMs;
     this.clock();
     return session.elapsedMs + Math.max(0, Date.now() - this.server.lastEventAt());
   });

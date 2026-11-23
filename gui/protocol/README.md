@@ -102,7 +102,7 @@ Every `api/` request has these conditions:
 - Each file in `api/configs` has `path` (relative to the root, separated by `/`), `modified`, `size` and `simulation` (whether it starts with `vehicle_sil_simulation`). The list as a whole has `truncated`.
 - `check` in the `api/check` response is the result of `check --json` as is. The response is 200 even if the check fails.
 - For `api/write`, see "ECU variables" below; for `api/scenarios` and `scenario`, "Scenarios"; for `api/recording`, "Recording actions (`api/recording`)"; for `api/timeline`, "Timeline of a scenario run (`api/timeline`)"; for `api/dashboard`, "Dashboard files". The `file` of `api/dashboard` goes through the same checks as for `api/check` (`invalid-path`, `outside-root`, `not-a-configuration`, `file-not-found`).
-- Once the server has begun to shut down, `api/run`, `api/check`, `api/describe`, `POST api/config`, `api/connections` and `api/write` return 503 `shutting-down`.
+- Once the server has begun to shut down, `api/prepare`, `api/run`, `api/check`, `api/describe`, `POST api/config`, `api/connections` and `api/write` return 503 `shutting-down`.
 
 ### `disable` and `manual`
 
@@ -419,7 +419,7 @@ Notifications from the server.
 | `file`, `disable`, `manual`, `speed`, `start_paused` | What was requested at the start |
 | `started_at`, `ended_at` | Times (UTC, ISO 8601). `ended_at` is `null` until the run ends |
 | `state` | `running` or `ended` |
-| `launcher` | `{pid, running, exit_code, signal, silent_s}` |
+| `launcher` | `{pid, running, exit_code, signal, silent_s, mode, process_alive}` |
 | `stop` | The stop the server asked the launcher for: `none`, `requested` (stop in order), `forced` (stop without waiting) |
 | `phase` | The phase of the last `phase` event (`null` if none yet) |
 | `last_seq`, `last_t_ms` | `seq` and `t_ms` of the last event received |
@@ -443,8 +443,8 @@ Notifications from the server.
 Notes on the fields:
 
 - **What was requested at the start**: `manual` holds only what `api/run` requested (`manual: true` in the configuration file is in `check`). A `speed` of `null` means no speed was requested; the current speed is `launcher_state.speed`.
-- **`state`**: `ended` means the launcher exited and its output has been read to the end (or cut off with `output-left-open`). In between (up to 2 seconds), `api/session` may show `launcher.running: false` together with `running`.
-- **`launcher`**: `running` tells whether the launcher process is running; it decides whether the run can be stopped. When the launcher exits, `exit_code` is set (if it ended by a signal, `null`, with the signal number in `signal`; POSIX only). `silent_s` is the number of seconds a running launcher has written nothing (updated only past `--silent-after`, at each multiple of it; `null` once it writes).
+- **`state`**: `ended` means the run has finished and its output has been read to the end (or cut off with `output-left-open`). In one-shot (`cold`) mode, `api/session` may show `launcher.running: false` together with `state: running` for up to 2 seconds between process exit and output end; in persistent (`hot`) mode, `ended` arrives with `launcher.running: false` while `launcher.process_alive` stays `true` when the launcher remains ready for the next run.
+- **`launcher`**: `running` tells whether the run is still active on its launcher (decides whether the run can be stopped; turns `false` when the run ends, even when a persistent launcher process stays alive for the next run). `mode` is `"hot"` for a persistent `serve` launcher or `"cold"` for a one-shot launcher, and `process_alive` tells whether the underlying launcher process is still alive (older servers omit `mode` and `process_alive`). When the launcher exits, `exit_code` is set (if it ended by a signal, `null`, with the signal number in `signal`; POSIX only). `silent_s` is the number of seconds a running launcher has written nothing (updated only past `--silent-after`, at each multiple of it; `null` once it writes).
 - **`time`**: virtual time `sim_ms`, actual speed `actual_speed`, and the lateness figures `late_steps`, `max_late_ms`, `slipped_ms` and `late_ms`. A screen opened midway learns the current time from this; whether the run is paused, where, and the speed set, are in `launcher_state` (`paused`, `paused_at_ms`, `speed`). While the run is paused, `time` can be from before the pause (an earlier `sim_ms` for up to one look of the launcher, and the `actual_speed` and `late_ms` from before it).
 - **`check`**: includes `required`, `enabled` and `variables` of each participant. `session` notifications to a connection that asked for `session_without_check` lack this field (`hello` and HTTP responses have it).
 - **`last_command`**: `seq`, `command`, `source`, `accepted`, `message`, `reason`, `id`, `ms` and `at_ms` of an accepted `step`, and `at_ms` of an accepted `run_until`. `seq` tells a new answer from the same answer as before. A launcher before `state` writes no `reason` and `id`.

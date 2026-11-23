@@ -1,7 +1,7 @@
 import { HttpTransport, errorMessage } from './http';
 import { TimeCommand, TimeCommandName } from './protocol';
 import { sameRunTarget, type RunTarget } from './session';
-import { CommandView, SessionView, TimeView } from './session-state';
+import { CommandView, SessionView, TimeView, isRunActive } from './session-state';
 import { ErrorSink, Readable, Writable, derived, rethrowLater, shallowEqual } from './values';
 
 /**
@@ -250,9 +250,7 @@ export class TimeControl implements ClientTime {
     let sending: TimeCommandName | null = null;
     if (pending && sameRunTarget(pending.target, target)) {
       const answered =
-        !session ||
-        !session.launcher.running ||
-        (session.lastCommand?.seq ?? -1) > pending.afterSeq;
+        !session || !isRunActive(session) || (session.lastCommand?.seq ?? -1) > pending.afterSeq;
       sending = this.awaitingHttp.get() === pending || !answered ? pending.command : null;
     }
     const failure = this.failureValue.get();

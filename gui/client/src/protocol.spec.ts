@@ -9,12 +9,15 @@ import {
   readConnections,
   readDashboardResponse,
   readLauncherEvent,
+  readPrepareResponse,
   readRecording,
+  readRuntimeStatus,
   readSavedConfig,
   readScenarioList,
   readServerAllowed,
   readServerMessage,
   readSessionResponse,
+  readSessionRuntime,
   readTimeResponse,
   readVariablesSummary,
   readWriteResponse,
@@ -509,5 +512,61 @@ describe('the readers refuse what they cannot read', () => {
       { name: 'off', value: 0 },
       { name: 'on', value: 1 },
     ]);
+  });
+
+  it('reads additive runtime status, prepare responses, and 2-axis launcher fields', () => {
+    const rt = readRuntimeStatus(
+      {
+        mode: 'hot',
+        state: 'ready',
+        config: 'a.yaml',
+        reason: null,
+        message: null,
+      },
+      'runtime',
+    );
+    expect(rt).toEqual({
+      mode: 'hot',
+      state: 'ready',
+      config: 'a.yaml',
+      reason: null,
+      message: null,
+    });
+
+    const prep = readPrepareResponse({
+      instance: 'inst-1',
+      runtime: {
+        mode: 'cold',
+        state: 'cold',
+        config: 'f.yaml',
+        reason: 'fixed-registry',
+        message: 'fixed',
+      },
+    });
+    expect(prep).toMatchObject({
+      instance: 'inst-1',
+      runtime: { mode: 'cold', reason: 'fixed-registry' },
+    });
+
+    expect(
+      readSessionRuntime({ instance: 'inst-1', session: null, allowed: null }),
+    ).toBeUndefined();
+    expect(
+      readSessionRuntime({ instance: 'inst-1', session: null, allowed: null, runtime: rt }),
+    ).toEqual(rt);
+
+    const rtMsg = readServerMessage({ type: 'runtime', runtime: rt });
+    expect(rtMsg).toEqual({ type: 'runtime', runtime: rt });
+
+    const helloMsg = readServerMessage({
+      type: 'hello',
+      vehicle_sil_gui: 3,
+      instance: 'inst-1',
+      session: null,
+      allowed: null,
+      replay: null,
+      runtime: rt,
+    });
+    expect(helloMsg?.type === 'hello' && helloMsg.runtime).toEqual(rt);
   });
 });

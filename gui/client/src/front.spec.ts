@@ -2455,4 +2455,47 @@ describe('the front door', () => {
       expect(fake.sockets.at(-1)?.closedByClient).toBe(true);
     });
   });
+
+  describe('runtime & prepare', () => {
+    it('tracks hello runtime, runtime WS notifications, and front.prepare()', async () => {
+      const rig = await open();
+      await rig.deliver({
+        type: 'hello',
+        vehicle_sil_gui: 3,
+        version: '0.1.0',
+        instance: 'i1',
+        session: null,
+        allowed: null,
+        replay: null,
+        runtime: { mode: 'hot', state: 'idle', config: null, reason: null, message: null },
+      });
+      expect(rig.front.runtime.get()).toMatchObject({ mode: 'hot', state: 'idle' });
+
+      const prepPromise = rig.front.prepare({ file: 'b.yaml' });
+      const prepReq = rig.http.expectOne('api/prepare');
+      expect(prepReq.request.body).toEqual({ file: 'b.yaml' });
+      prepReq.flush({
+        instance: 'i1',
+        runtime: { mode: 'hot', state: 'ready', config: 'b.yaml', reason: null, message: null },
+      });
+      const rt = await prepPromise;
+      expect(rt).toMatchObject({ mode: 'hot', state: 'ready', config: 'b.yaml' });
+      expect(rig.front.runtime.get()).toMatchObject({ state: 'ready', config: 'b.yaml' });
+
+      await rig.deliver({
+        type: 'runtime',
+        runtime: {
+          mode: 'cold',
+          state: 'cold',
+          config: 'fixed.yaml',
+          reason: 'fixed-registry',
+          message: 'fixed registry_uri',
+        },
+      });
+      expect(rig.front.runtime.get()).toMatchObject({
+        mode: 'cold',
+        reason: 'fixed-registry',
+      });
+    });
+  });
 });

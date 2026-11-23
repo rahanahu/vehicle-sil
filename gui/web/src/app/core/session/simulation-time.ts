@@ -6,6 +6,7 @@ import {
   RunTarget,
   TimeView,
   isHolding,
+  isRunActive,
 } from '@vehicle-sil/gui-client';
 import { ANSWER_TIMEOUT, GUI_FRONT, lastOperation, readableSignal } from './gui-client';
 import { ServerConnection } from './server-connection';
@@ -57,7 +58,7 @@ export class SimulationTime {
    */
   readonly paused = computed(() => {
     const session = this.session();
-    return session?.launcher.running ? (session.launcherState?.paused ?? null) : null;
+    return isRunActive(session) ? (session!.launcherState?.paused ?? null) : null;
   });
   /** 直近 1 秒ほどの実際の速さ。正面の口の `clock`（一時停止中は null。最後の time の値は止まる前のもの）。 */
   readonly actualSpeed = computed(() => this.clock().actual_speed);

@@ -4,6 +4,7 @@ import {
   LauncherEvent,
   PROTOCOL_VERSION,
   ProtocolError,
+  RuntimeStatus,
   ServerAllowed,
   ServerMessage,
   SessionSummary,
@@ -77,6 +78,8 @@ export interface ClientSession {
    * does not say. What the launcher accepts is `launcherState` of the session.
    */
   readonly allowed: Readable<ServerAllowed | null>;
+  /** Persistent launcher status reported on hello, runtime notifications, and prepare answers. */
+  readonly runtime: Readable<RuntimeStatus | null>;
   /** When an event was last applied (Date.now()). The starting point for advancing elapsed time with the clock. */
   readonly lastEventAt: Readable<number>;
   /**
@@ -141,6 +144,7 @@ export class SessionFeed implements ClientSession {
   private readonly current: Writable<SessionView | null>;
   private readonly synced: Writable<boolean>;
   private readonly allowedValue: Writable<ServerAllowed | null>;
+  private readonly runtimeValue: Writable<RuntimeStatus | null>;
   private readonly receivedAt: Writable<number>;
   private readonly noticeList: Writable<readonly Notice[]>;
   private readonly rejectedValue: Writable<boolean>;
@@ -159,6 +163,7 @@ export class SessionFeed implements ClientSession {
   readonly session: Readable<SessionView | null>;
   readonly ready: Readable<boolean>;
   readonly allowed: Readable<ServerAllowed | null>;
+  readonly runtime: Readable<RuntimeStatus | null>;
   readonly lastEventAt: Readable<number>;
   readonly notices: Readable<readonly Notice[]>;
   readonly rejected: Readable<boolean>;
@@ -172,6 +177,8 @@ export class SessionFeed implements ClientSession {
     this.synced = new Writable<boolean>(false, Object.is, onError);
     this.allowedValue = new Writable<ServerAllowed | null>(null, Object.is, onError);
     this.allowed = this.allowedValue.readonly();
+    this.runtimeValue = new Writable<RuntimeStatus | null>(null, Object.is, onError);
+    this.runtime = this.runtimeValue.readonly();
     this.receivedAt = new Writable<number>(0, Object.is, onError);
     this.noticeList = new Writable<readonly Notice[]>([], Object.is, onError);
     this.rejectedValue = new Writable<boolean>(false, Object.is, onError);
@@ -304,6 +311,11 @@ export class SessionFeed implements ClientSession {
     if (!allowed) return;
     const current = this.allowedValue.get();
     if (!current || allowed.rev === 0 || allowed.rev >= current.rev) this.allowedValue.set(allowed);
+  }
+
+  /** Updates the current persistent runtime status (from HTTP `prepare`/`session`). Used inside the library. */
+  adoptRuntime(runtime: RuntimeStatus | null): void {
+    this.runtimeValue.set(runtime);
   }
 
   report(message: string, count = 1): void {
@@ -456,6 +468,7 @@ export class SessionFeed implements ClientSession {
     let applied = false;
     let synced = this.synced.get();
     let allowedNow = this.allowedValue.get();
+    let runtimeNow = this.runtimeValue.get();
     const takeAllowed = (incoming: ServerAllowed | null | undefined, replace = false) => {
       if (!incoming) return;
       if (replace || !allowedNow || incoming.rev === 0 || incoming.rev >= allowedNow.rev) {
@@ -487,6 +500,11 @@ export class SessionFeed implements ClientSession {
             session.snapshotRev != null &&
             (summary.snapshot_rev == null || summary.snapshot_rev < session.snapshotRev);
           takeAllowed(message.allowed ?? summary?.allowed ?? null, !staleSnapshot);
+          if (message.runtime !== undefined) {
+            runtimeNow = message.runtime;
+          } else if (message.instance !== instance) {
+            runtimeNow = null;
+          }
           const sameRun = summary && instance === message.instance && session?.id === summary.id;
           const resumed = sameRun && replay?.from_seq != null;
           instance = message.instance;
@@ -539,6 +557,9 @@ export class SessionFeed implements ClientSession {
           break;
         case 'allowed':
           takeAllowed(message.allowed);
+          break;
+        case 'runtime':
+          runtimeNow = message.runtime;
           break;
         case 'session':
           if (session?.id !== message.session.id) replayLogs = null;
@@ -606,10 +627,12 @@ export class SessionFeed implements ClientSession {
       (this.current.get()?.id ?? null) === sessionId;
     const notifySession = this.current.setDeferred(session);
     const notifyAllowed = this.allowedValue.setDeferred(allowedNow);
+    const notifyRuntime = this.runtimeValue.setDeferred(runtimeNow);
     const notifySynced = this.synced.setDeferred(synced);
     if (instance && instance !== originalInstance) this.instanceListener(instance, sameRun);
     notifySession();
     notifyAllowed();
+    notifyRuntime();
     notifySynced();
     if (!sameRun()) return;
     for (const notice of notices) {

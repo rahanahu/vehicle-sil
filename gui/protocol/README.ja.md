@@ -102,7 +102,7 @@ API のバージョンは `vehicle_sil_gui`（今は 3）です。サーバー�
 - `api/configs` の各ファイルは、`path`（root からの相対で `/` 区切り）、`modified`、`size`、`simulation`（先頭に `vehicle_sil_simulation` があるか）を持ちます。一覧の全体に `truncated` があります。
 - `api/check` の `check` は `check --json` の結果そのままです。照合が失敗しても 200 です。
 - `api/write` は下の「ECU の変数」、`api/scenarios` と `scenario` は下の「シナリオ」、`api/recording` は下の「操作の記録（`api/recording`）」、`api/timeline` は下の「シナリオの実行の時間の軸（`api/timeline`）」、`api/dashboard` は下の「ダッシュボードのファイル」にあります。`api/dashboard` の `file` は `api/check` と同じ検査を通ります（`invalid-path`、`outside-root`、`not-a-configuration`、`file-not-found`）。
-- サーバーが終了を始めたら、`api/run`、`api/check`、`api/describe`、`POST api/config`、`api/connections`、`api/write` は 503 `shutting-down` です。
+- サーバーが終了を始めたら、`api/prepare`、`api/run`、`api/check`、`api/describe`、`POST api/config`、`api/connections`、`api/write` は 503 `shutting-down` です。
 
 ### `disable` と `manual`
 
@@ -416,7 +416,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | `file`、`disable`、`manual`、`speed`、`start_paused` | 始めたときの指定 |
 | `started_at`、`ended_at` | 時刻（UTC、ISO 8601）。`ended_at` は終わるまで `null` |
 | `state` | `running` か `ended` |
-| `launcher` | `{pid, running, exit_code, signal, silent_s}` |
+| `launcher` | `{pid, running, exit_code, signal, silent_s, mode, process_alive}` |
 | `stop` | サーバーがランチャーに頼んだ停止: `none`、`requested`（順に止める）、`forced`（待たずに止める） |
 | `phase` | 最後の `phase` イベントの段階（まだなければ `null`） |
 | `last_seq`、`last_t_ms` | 最後に受信したイベントの `seq` と `t_ms` |
@@ -440,8 +440,8 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 フィールドごとの補足です。
 
 - **始めたときの指定**: `manual` は `api/run` で指定したものだけです（設定ファイルの `manual: true` は `check` にあります）。`speed` の `null` は設定ファイルのままで、いまの速度は `launcher_state.speed` です。
-- **`state`**: `ended` は、ランチャーが終わり、その出力を読み終えた（または `output-left-open` で打ち切った）状態です。その間（長くて 2 秒）は、`api/session` で `launcher.running: false` と `running` が見えることがあります。
-- **`launcher`**: `running` はランチャーのプロセスが動いているかで、止められるかどうかはこれで決めます。終わったら `exit_code` が入ります（シグナルで終わったら `null` で、`signal` にその番号。POSIX だけ）。`silent_s` は、動いているランチャーが何も書かない秒数です（`--silent-after` を超えたときだけ、その倍数ごとに更新。書けば `null`）。
+- **`state`**: `ended` は、実行が終わり、その出力を読み終えた（または `output-left-open` で打ち切った）状態です。1 回ごとの（`cold`）実行では、プロセス終了から出力読了までの間（長くて 2 秒）、`api/session` で `launcher.running: false` と `running` が見えることがあります。常駐（`hot`）実行では、次の実行に備えてプロセスが生き残る場合、`launcher.running: false` とともに `launcher.process_alive: true` のまま `ended` になります。
+- **`launcher`**: `running` はこの実行がランチャー上でまだ継続中かを示し、止められるかどうかはこれで決めます（常駐ランチャーが次の実行のため生き残る場合でも、実行が終われば `false` になります）。`mode` は常駐の `"hot"` か 1 回ごとの `"cold"`、`process_alive` はランチャープロセス自体が生きているかを示します（旧サーバーでは `mode` と `process_alive` は省略されます）。終わったら `exit_code` が入ります（シグナルで終わったら `null` で、`signal` にその番号。POSIX だけ）。`silent_s` は、動いているランチャーが何も書かない秒数です（`--silent-after` を超えたときだけ、その倍数ごとに更新。書けば `null`）。
 - **`time`**: 仮想時間 `sim_ms`、実際の速度 `actual_speed`、遅れの数 `late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` です。途中から開いた画面も、これで今の時刻がわかります。一時停止しているか、その時刻、指定の速度は、`launcher_state` にあります（`paused`、`paused_at_ms`、`speed`）。一時停止している間、`time` は止まる前のものでありえます（ランチャーが次に見るまで `sim_ms` が前の時刻、`actual_speed` と `late_ms` が止まる前の値）。
 - **`check`**: participant の `required`、`enabled`、`variables` を含みます。`session_without_check` を頼んだ接続への `session` の通知には、このフィールドがありません（`hello` と HTTP のレスポンスにはあります）。
 - **`last_command`**: `seq`、`command`、`source`、`accepted`、`message`、`reason`、`id`、受け付けた `step` の `ms` と `at_ms`、受け付けた `run_until` の `at_ms` です。`seq` で、新しいレスポンスか、前と同じレスポンスかがわかります。`state` より前のランチャーは `reason` と `id` を書きません。

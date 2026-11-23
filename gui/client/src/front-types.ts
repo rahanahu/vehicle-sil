@@ -9,6 +9,7 @@ import type {
   Finding,
   OutsideState,
   RunEnd,
+  RuntimeStatus,
   ScenarioFile,
   ScenarioStatus,
   ScenarioStep,
@@ -297,8 +298,20 @@ export interface Front {
   readonly clock: Readable<FrontClock>;
   readonly controls: Readable<FrontControls>;
   readonly scenario: Readable<FrontScenario | null>;
+  /** Current persistent runtime state (mode, ready/preparing/resetting/cold reason), or null until received. */
+  readonly runtime: Readable<RuntimeStatus | null>;
   readonly run: FrontRun;
   readonly time: FrontTime;
+  /**
+   * Prepares the persistent launcher for `options.file` (default: the start-up file) when eligible (`POST api/prepare`).
+   */
+  prepare(options?: {
+    file?: string;
+    variant?: string;
+    disable?: string[];
+    enable?: string[];
+    manual?: string[];
+  }): Promise<RuntimeStatus>;
   /**
    * The networks of the run that the start's `connect` connected outside (empty when there are none, when no run is
    * going, and in a run that a `role: bridge` participant of the file connects: do not read "connected or not" from it).

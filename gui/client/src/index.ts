@@ -103,7 +103,16 @@ export { DEFAULT_TIMEOUT_MS, HttpError, errorMessage, fetchTransport } from './h
 export type { FetchTransportOptions, HttpOutcome, HttpRequest, HttpTransport } from './http';
 
 // Shape of the session copy
-export { isHolding, launcherAnswer, phaseIndex, runOutcome } from './session-state';
+export {
+  isHolding,
+  isLauncherAlive,
+  isLauncherFinishing,
+  isRunActive,
+  isSessionRunning,
+  launcherAnswer,
+  phaseIndex,
+  runOutcome,
+} from './session-state';
 export type {
   CommandView,
   LauncherAnswer,
@@ -129,11 +138,14 @@ export {
   readSavedConfig,
   readConnections,
   readDashboardResponse,
+  readPrepareResponse,
   readRecording,
+  readRuntimeStatus,
   readScenarioList,
   readServerMessage,
   readSessionAllowed,
   readSessionResponse,
+  readSessionRuntime,
   readTimeResponse,
   readVariablesSummary,
   readWriteResponse,
@@ -176,12 +188,15 @@ export type {
   LauncherAllowedItem,
   LauncherEvent,
   LauncherFields,
+  LauncherMode,
   LogCounts,
   Open,
   OutsideState,
   ParticipantRole,
   ParticipantState,
   Phase,
+  PrepareRequest,
+  PrepareResponse,
   Recording,
   Replay,
   RunParticipant,
@@ -191,6 +206,9 @@ export type {
   RunResultName,
   RunTiming,
   RunTraffic,
+  RuntimeMode,
+  RuntimeState,
+  RuntimeStatus,
   ScenarioFile,
   ScenarioList,
   ScenarioResult,

@@ -11,7 +11,7 @@ import type {
   ServerAllowed,
   ServerAllowedItem,
 } from './protocol';
-import { SessionView, launcherAnswer, runOutcome } from './session-state';
+import { SessionView, isRunActive, launcherAnswer, runOutcome } from './session-state';
 import type {
   Control,
   FrontClock,
@@ -163,8 +163,7 @@ export function standsAt(session: SessionView | null): number | null {
  */
 export function onItsWay(session: SessionView | null): boolean {
   const last = session?.lastCommand;
-  if (!session || !session.launcher.running || !last || !last.accepted || last.atMs === null)
-    return false;
+  if (!isRunActive(session) || !last || !last.accepted || last.atMs === null) return false;
   if (last.name !== 'step' && last.name !== 'run_until') return false;
   const stands = standsAt(session);
   return !(stands !== null && stands >= last.atMs);
@@ -176,7 +175,7 @@ export function clockOf(s: Snapshot): FrontClock {
   const session = s.session;
   const state = session?.launcherState ?? null;
   const time = session?.time ?? null;
-  const live = !!session && session.launcher.running;
+  const live = isRunActive(session);
   const pacing = state?.pacing;
   return {
     sim_ms: simMsOf(session ?? null),
@@ -261,7 +260,7 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
   const link = linkOf(s);
   const down = linkReason(link, s);
   const session = s.session;
-  const live = !!session && session.launcher.running && run !== 'ended' && run !== 'crashed';
+  const live = isRunActive(session) && run !== 'ended' && run !== 'crashed';
   const state = session?.launcherState ?? null;
   const stopsAsked = session?.stopRequests ?? 0;
 

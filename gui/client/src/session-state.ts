@@ -8,6 +8,7 @@ import {
   Dropped,
   Finding,
   LauncherEvent,
+  LauncherMode,
   PHASES,
   ParticipantState,
   Phase,
@@ -150,8 +151,12 @@ export interface ParticipantView {
 
 /** State of the launcher process (as the server sees it). */
 export interface LauncherView {
-  /** Whether it is running. Stays true after the result arrives, until it exits. Decides whether it can be stopped. */
+  /** Whether the run is still active on its launcher (false once ended, even in hot mode). */
   running: boolean;
+  /** Persistent `'hot'` or per-run `'cold'`. Undefined from older servers. */
+  mode?: LauncherMode;
+  /** Whether the underlying launcher process itself is still alive. Undefined from older servers. */
+  processAlive?: boolean;
   exitCode: number | null;
   /** Number of the signal that ended it (POSIX only). */
   signal: number | null;
@@ -367,6 +372,7 @@ export interface SessionView {
    */
   launcherState: StateReport | null;
   result: RunResult | null;
+  state: 'running' | 'ended' | string;
   launcher: LauncherView;
   /** What the server noticed (shown in English, unchanged). */
   problems: readonly ServerProblem[];
@@ -403,17 +409,47 @@ export type RunOutcome =
   /** The launcher exited without a result. */
   | 'crashed';
 
+/** Whether the session is running (`state === 'running'`). */
+export function isSessionRunning(
+  session: SessionView | SessionSummary | null | undefined,
+): boolean {
+  return !!session && session.state === 'running';
+}
+
+/** Whether the run itself is actively executing on its launcher. */
+export function isRunActive(session: SessionView | SessionSummary | null | undefined): boolean {
+  return !!session && session.state === 'running' && session.launcher.running;
+}
+
+/** Whether a result has arrived while a one-shot launcher process is still finishing. */
+export function isLauncherFinishing(
+  session: SessionView | SessionSummary | null | undefined,
+): boolean {
+  return !!session && isRunActive(session) && session.result !== null;
+}
+
+/** Whether the underlying launcher process is still alive (falls back to `launcher.running` on older servers). */
+export function isLauncherAlive(session: SessionView | SessionSummary | null | undefined): boolean {
+  if (!session) return false;
+  const launcher = session.launcher as {
+    processAlive?: boolean;
+    process_alive?: boolean;
+    running: boolean;
+  };
+  return launcher.processAlive ?? launcher.process_alive ?? launcher.running;
+}
+
 /**
  * Whether the run waits before its first step (the step at time 0) for a resume or a step: the launcher's state says
  * so (`holding`; a run started paused whose launcher has a Control Server). Meanwhile the launcher writes no time
  * events, and a variable written is applied in the step at time 0.
  */
 export function isHolding(session: SessionView | null): boolean {
-  return !!session && session.launcher.running && session.launcherState?.holding === true;
+  return isRunActive(session) && session!.launcherState?.holding === true;
 }
 
 export function runOutcome(session: SessionView): RunOutcome {
-  if (session.launcher.running) {
+  if (isRunActive(session)) {
     if (session.result) return 'finishing';
     if (session.stopRequests >= 2) return 'forcing';
     return session.stopRequests >= 1 ? 'stopping' : 'running';
@@ -432,6 +468,7 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
     manual: summary.manual,
     speed: summary.speed,
     startPaused: summary.start_paused,
+    state: summary.state,
     phase: null,
     phaseRank: -1,
     check: null,
@@ -501,6 +538,10 @@ function stopRequestsOf(stop: StopRequest): number {
 function launcherOf(summary: SessionSummary): LauncherView {
   return {
     running: summary.launcher.running,
+    ...(summary.launcher.mode === undefined ? {} : { mode: summary.launcher.mode }),
+    ...(summary.launcher.process_alive === undefined
+      ? {}
+      : { processAlive: summary.launcher.process_alive }),
     exitCode: summary.launcher.exit_code,
     signal: summary.launcher.signal,
     silentSeconds: summary.launcher.silent_s,
@@ -536,10 +577,12 @@ export function applySummary(
     force ||
     (summary.last_seq ?? -1) >
       Math.max(session.lastSeq, session.observedSeq ?? -1, session.projectionSeq ?? -1);
-  const launcher =
-    !force && !session.launcher.running && summary.launcher.running
-      ? session.launcher
-      : launcherOf(summary);
+  const staleEndRegression = !force && session.state === 'ended' && summary.state === 'running';
+  const stillEnded =
+    staleEndRegression ||
+    (!force && !isRunActive(session) && summary.launcher.running && summary.state === 'running');
+  const launcher = stillEnded ? session.launcher : launcherOf(summary);
+  const state = staleEndRegression ? session.state : summary.state;
   const notLess =
     summary.problems.length + summary.problems_omitted >=
     session.problems.length + session.problemsOmitted;
@@ -565,6 +608,7 @@ export function applySummary(
         ...(summary.problem_seq == null
           ? {}
           : { problemSeq: Math.max(session.problemSeq ?? 0, summary.problem_seq) }),
+        state,
         launcher,
         stopRequests: Math.max(session.stopRequests, stopRequestsOf(summary.stop)),
         logSources: withSources(session.logSources, Object.keys(summary.log)),

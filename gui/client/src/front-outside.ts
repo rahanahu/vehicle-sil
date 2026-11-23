@@ -6,6 +6,7 @@ import type { GuiClient } from './client';
 import type { Connections, ServerMessage } from './protocol';
 import type { ConnectEntry, Outside } from './front-types';
 import { sameData } from './front-compose';
+import { isRunActive } from './session-state';
 import { ErrorSink, Readable, Writable, derived } from './values';
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -81,7 +82,7 @@ export function outsideRows(
     [low.session.session, counts],
     (): readonly Outside[] => {
       const session = low.session.session.get();
-      if (!session?.launcher.running) return [];
+      if (!session || !isRunActive(session)) return [];
       const known = counts.get();
       const of = known?.session === session.id ? known.networks : new Map();
       return (session.launcherState?.outside ?? []).map((row) => {
