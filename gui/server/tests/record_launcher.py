@@ -1394,6 +1394,15 @@ def paused_api_checks() -> list[Case]:
              ["check", "--json", "--scenario", "scenarios/throttle.yaml", "--disable", "Logger",
               "--speed", "0.001", "--", "forever.yaml"],
              "a slow scenario without Logger"),
+        Case("run-check-error-no-stop", [*RUN, "--", "check-error.yaml"],
+             "a run of check-error.yaml without stop_at_ms whose check fails"),
+        Case("run-variants", [*RUN, "--", "variants.yaml"],
+             "a run of variants.yaml without a variant, refused at its check"),
+        Case("run-scenario-start-paused",
+             [*RUN, "--scenario", "scenarios/throttle.yaml", "--timeline", "<timeline>", "--start-paused",
+              "--", "simulation.yaml"],
+             "a run of a request file with a scenario and start_paused, refused before starting",
+             request={"scenario": "scenarios/throttle.yaml", "start_paused": True}),
     ])
     return out
 

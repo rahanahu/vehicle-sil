@@ -230,16 +230,11 @@ def test_concurrent_run_conflicts_and_start_failure_cleanup(tmp_path: Path) -> N
 def test_line_too_long_stderr_hiding_and_crash_problems(tmp_path: Path) -> None:
     root = _simple_config(tmp_path)
 
-    async def check_with_stop_at(argv, request, descriptions, text):
-        result = default_check_result(argv[-1])
-        result["stop_at_ms"] = 2500
-        return 0, result
-
     async def main() -> None:
-        async with in_process_gui(root, check_fn=check_with_stop_at) as app:
+        async with in_process_gui(root) as app:
             sock = await app.client.ws()
             await sock.until(is_synced)
-            status, _ = await app.client.post("api/run", {"file": "simple.yaml"})
+            status, _ = await app.client.post("api/run", {"file": "simple.yaml", "stop_at_ms": 2500})
             assert status == 200
             run = app.runtime.runs[0]
 

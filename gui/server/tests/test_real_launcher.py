@@ -181,3 +181,87 @@ def test_real_launcher_gets_time_to_finish_participant_shutdown(tmp_path: Path, 
             if alive(pid):
                 os.kill(pid, signal.SIGKILL)
                 assert wait_until(lambda: not alive(pid), 5)
+
+
+def test_real_single_check_describes_once_per_start_and_recovers_after_failed_check(tmp_path: Path) -> None:
+    """Starting a run via GuiServer invokes --describe at most once per ECU per Start (no pre-check subprocess),
+    across Cold and Hot A -> B -> A transitions, and recovers cleanly after a 422 check-failed Start."""
+    engine, dashboard = executables(EXAMPLES)
+    count_file = tmp_path / "describe_calls.log"
+    wrap_dir = tmp_path / "wrappers"
+    wrap_dir.mkdir()
+    wrappers: list[Path] = []
+    for name, real_bin in (("engine_wrap.py", engine), ("dashboard_wrap.py", dashboard)):
+        w = wrap_dir / name
+        w.write_text(
+            f"#!{sys.executable}\n"
+            "import os, sys\n"
+            "if '--describe' in sys.argv[1:]:\n"
+            f"    with open({str(count_file)!r}, 'a', encoding='utf-8') as f:\n"
+            f"        f.write({name!r} + '\\n')\n"
+            f"os.execv({str(real_bin)!r}, [{str(real_bin)!r}, *sys.argv[1:]])\n",
+            encoding="utf-8",
+        )
+        w.chmod(0o755)
+        wrappers.append(w)
+
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    eng_w, dash_w = (p.as_posix() for p in wrappers)
+    (cfg / "a.yaml").write_text(
+        f"vehicle_sil_simulation: 2\n{NETWORKS}participants:\n"
+        f"  - name: Engine\n    command: [{json.dumps(eng_w)}]\n    step_ms: 10\n"
+        f"  - name: Dashboard\n    command: [{json.dumps(dash_w)}]\n    step_ms: 5\n",
+        encoding="utf-8",
+    )
+    (cfg / "b.yaml").write_text(
+        f"vehicle_sil_simulation: 2\n{NETWORKS}participants:\n"
+        f"  - name: Engine\n    command: [{json.dumps(eng_w)}]\n    step_ms: 10\n"
+        f"  - name: Dashboard\n    command: [{json.dumps(dash_w)}]\n    step_ms: 5\n",
+        encoding="utf-8",
+    )
+    (cfg / "bad.yaml").write_text(
+        f"vehicle_sil_simulation: 2\n{NETWORKS}participants:\n"
+        f"  - name: Engine\n    command: [{json.dumps(eng_w)}]\n    step_ms: 20\n"
+        f"  - name: Dashboard\n    command: [{json.dumps(dash_w)}]\n    step_ms: 5\n",
+        encoding="utf-8",
+    )
+
+    def count_calls() -> int:
+        if not count_file.exists():
+            return 0
+        return len([ln for ln in count_file.read_text(encoding="utf-8").splitlines() if ln.strip()])
+
+    async def talk(c: Client) -> None:
+        sock = await c.ws()
+        await sock.until(is_synced)
+        before = count_calls()
+        st, body = await c.post("api/run", {"file": "a.yaml", "disable": ["Dashboard"], "stop_at_ms": 100})
+        assert st == 200, body
+        await sock.until(is_ended, timeout=30)
+        # Engine described once (disabled Dashboard is skipped by launcher)
+        delta1 = count_calls() - before
+        assert delta1 == 1, delta1
+
+        # B with both enabled -> exactly 2 --describe calls (1 per ECU)
+        before = count_calls()
+        st, body = await c.post("api/run", {"file": "b.yaml", "stop_at_ms": 100})
+        assert st == 200, body
+        prev_id = body["session"]["id"]
+        await sock.until(is_ended, timeout=30)
+        assert count_calls() - before == 2
+
+        # Failed check -> 422 check-failed, leaves session untouched, next A start succeeds cleanly
+        st, bad = await c.post("api/run", {"file": "bad.yaml"})
+        assert st == 422 and bad["error"]["code"] == "check-failed", bad
+        st_sess, cur = await c.get("api/session")
+        assert st_sess == 200 and cur["session"]["id"] == prev_id
+        before = count_calls()
+        st, body = await c.post("api/run", {"file": "a.yaml", "stop_at_ms": 100})
+        assert st == 200 and body["session"]["id"] == prev_id + 1, body
+        await sock.until(is_ended, timeout=30)
+        assert count_calls() - before == 2
+        await sock.close()
+
+    with gui_server(tmp_path, root=cfg, launcher=Path(LAUNCHER)) as gui:
+        run_async(talk, gui)

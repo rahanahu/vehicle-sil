@@ -39,7 +39,8 @@ def test_recordings_have_explicit_completion_conditions():
     for case in recorded.values():
         if case.argv[0] != "run" or "--stop-at-ms" in case.argv or "--scenario" in case.argv:
             continue
-        if case.name in {"run-participant-crash", "run-participant-crash-speed1"}:
-            continue  # the participant process fails and ends the run
+        if case.name in {"run-participant-crash", "run-participant-crash-speed1",
+                         "run-check-error-no-stop", "run-variants"}:
+            continue  # ends on participant crash or initial check failure/usage without running a simulation
         assert any(action[0] in {"close", "hang"} or action[0] == "send" and action[1] == STOP
                    for action in case.script), f"{case.name}: no end condition"

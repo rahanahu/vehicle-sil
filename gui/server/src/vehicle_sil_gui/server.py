@@ -9,11 +9,13 @@ exited and its output is read, so the end of the server stops all of them, whate
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import itertools
 import json
 import logging
+import os
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -22,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiohttp import WSCloseCode, WSMsgType, web
+import yaml
 
 from . import __version__, control, dashboard, process
 from .allowed import Facts, Numbered, allowed as allowed_of, allowed_save, allowed_start
@@ -226,14 +229,139 @@ class Run:
     preflight_timing: dict = field(default_factory=dict)
 
 
+class _PreStartGate:
+    """Buffers runtime callbacks until the launcher's initial `check` settles on pass or fail."""
+
+    def __init__(self, config_relative: str, request_path: Path | None):
+        self.config_relative = config_relative
+        self.request_path = request_path
+        self.live = False
+        self.discard = False
+        self.decision = asyncio.Event()
+        self.cleanup_done = asyncio.Event()
+        self.passed_check: dict | None = None
+        self.failed_check: dict | None = None
+        self.buffer: list[tuple] = []
+        self.cleanup_called = False
+
+    def pass_check(self, check: dict | None = None) -> None:
+        if not self.decision.is_set():
+            self.passed_check = check
+            self.decision.set()
+
+    def fail_check(self, check: dict) -> None:
+        if not self.decision.is_set():
+            self.failed_check = check
+            self.decision.set()
+
+    def inspect_line(self, line: str | None) -> None:
+        if self.decision.is_set() or line is None or not line.strip():
+            return
+        text = hide_request_in_line(line, self.request_path) if self.request_path is not None else line
+        try:
+            ev = json.loads(text)
+        except (ValueError, RecursionError):
+            return
+        if not isinstance(ev, dict):
+            return
+        kind = ev.get("event")
+        if kind == "check" and isinstance(ev.get("check"), dict):
+            chk = ev["check"]
+            if chk.get("result") == "passed":
+                self.pass_check(chk)
+            else:
+                self.fail_check(chk)
+        elif kind == "result" and isinstance(ev.get("result"), dict):
+            res = ev["result"]
+            chk = res.get("check")
+            if isinstance(chk, dict) and chk.get("result") != "passed":
+                self.fail_check(chk)
+            elif res.get("result") in ("check_failed", "usage"):
+                self.fail_check({
+                    "result": res["result"],
+                    "errors": res.get("errors") if isinstance(res.get("errors"), int) else 1,
+                    "findings": res.get("findings") if isinstance(res.get("findings"), list) and res.get("findings") else [{
+                        "severity": "error",
+                        "code": res["result"],
+                        "file": self.config_relative,
+                        "line": None,
+                        "participant": None,
+                        "network": None,
+                        "message": res.get("message") or "check failed",
+                    }],
+                })
+            else:
+                self.pass_check(chk if isinstance(chk, dict) else None)
+        elif (kind == "phase" and ev.get("phase") not in ("checking", "ended")) or kind in (
+            "registry", "control_server", "participant", "time"
+        ):
+            self.pass_check(None)
+
+
+def _read_config_metadata(path: Path, variant: str | None) -> tuple[tuple[int, int], list[str] | None, list[str] | None]:
+    """Reads file stamp plus participant and network names from the same open file descriptor."""
+    with path.open("rb") as f:
+        data = f.read(MAX_TEXT + 1)
+        st = os.fstat(f.fileno())
+    stamp = (st.st_mtime_ns, st.st_size)
+    if len(data) > MAX_TEXT:
+        return stamp, None, None
+    try:
+        doc = yaml.safe_load(data.decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError):
+        return stamp, None, None
+    if not isinstance(doc, dict):
+        return stamp, None, None
+
+    participants: list[str] | None = None
+    raw_participants = doc.get("participants")
+    if isinstance(raw_participants, list):
+        names: list[str] = [
+            entry["name"]
+            for entry in raw_participants
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+        ]
+        if variant is not None and isinstance(doc.get("variants"), dict):
+            if variant not in doc["variants"]:
+                names = []
+                participants = None
+            else:
+                var_cfg = doc["variants"].get(variant)
+                if isinstance(var_cfg, dict) and isinstance(var_cfg.get("participants"), dict):
+                    for pname in var_cfg["participants"]:
+                        if isinstance(pname, str) and pname not in names:
+                            names.append(pname)
+                participants = names
+        else:
+            participants = names
+
+    networks: list[str] | None = None
+    raw_networks = doc.get("networks")
+    if isinstance(raw_networks, list):
+        networks = [
+            entry["name"]
+            for entry in raw_networks
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+        ]
+    return stamp, participants, networks
+
+
 class _RunSink:
     """Routes runtime lifecycle callbacks for one run to GuiServer, Session, Variables, and Hub."""
 
-    def __init__(self, server: GuiServer, run: Run):
+    def __init__(self, server: GuiServer, run: Run, *, gate: _PreStartGate | None = None):
         self._server = server
         self._run = run
+        self._gate = gate
 
     def on_stdout_line(self, line: str | None) -> None:
+        gate = self._gate
+        if gate is not None and not gate.live:
+            if gate.discard:
+                return
+            gate.buffer.append(("stdout", line))
+            gate.inspect_line(line)
+            return
         run, session = self._run, self._run.session
         if line is None:
             messages = session.problem("line-too-long", f"the launcher wrote a line longer than "
@@ -250,14 +378,29 @@ class _RunSink:
     def on_stderr_line(self, line: str) -> None:
         if not line:
             return
+        gate = self._gate
+        if gate is not None and not gate.live:
+            if not gate.discard:
+                gate.buffer.append(("stderr", line))
+            return
         run = self._run
         text = hide_request(line, run.request) if run.request is not None else line
         self._server.hub.broadcast(run.session.stderr_line(text))
 
     def on_problem(self, code: str, message: str, detail: object = None) -> None:
+        gate = self._gate
+        if gate is not None and not gate.live:
+            if not gate.discard:
+                gate.buffer.append(("problem", code, message, detail))
+            return
         self._server.hub.broadcast(self._run.session.problem(code, message, detail))
 
     def on_process_exited(self, returncode: int | None) -> None:
+        gate = self._gate
+        if gate is not None and not gate.live:
+            if not gate.discard:
+                gate.buffer.append(("exit", returncode))
+            return
         run = self._run
         if run.silence_task is not None:
             run.silence_task.cancel()
@@ -267,6 +410,13 @@ class _RunSink:
         run.request_gone = control.remove(run.request)  # the launcher has ended: it needs the file no more
 
     async def on_run_finished(self, *, output_cut: bool = False, launcher_alive: bool = False) -> None:
+        gate = self._gate
+        if gate is not None and not gate.live:
+            if gate.discard:
+                return
+            gate.pass_check(None)
+            gate.buffer.append(("finish", output_cut, launcher_alive))
+            return
         run = self._run
         if run.silence_task is not None:
             run.silence_task.cancel()
@@ -277,6 +427,18 @@ class _RunSink:
         self._server.hub.broadcast(run.session.ended(output_cut=output_cut, launcher_alive=launcher_alive))
 
     async def on_run_cleanup(self) -> None:
+        gate = self._gate
+        if gate is not None and not gate.live:
+            if not gate.discard:
+                gate.cleanup_called = True
+                gate.cleanup_done.set()
+                return
+            await self._cleanup_run()
+            gate.cleanup_done.set()
+            return
+        await self._cleanup_run()
+
+    async def _cleanup_run(self) -> None:
         run = self._run
         if run.silence_task is not None:
             run.silence_task.cancel()
@@ -327,7 +489,7 @@ class GuiServer:
         self._starting = False
         self._started = asyncio.Event()  # set when no start is in progress
         self._started.set()
-        self._ids = itertools.count(1)
+        self._next_session_id = 1
         self.numbered = Numbered()  # the numbering of `allowed` that every place that carries it shares
         self._check_lock = asyncio.Lock()
         self._check_waiting = 0
@@ -750,12 +912,13 @@ class GuiServer:
         return resolve_scenario(self.root, config, body.get("scenario"))
 
     async def _intent(self, config: ConfigFile, body: dict,
-                      scenario: str | None) -> tuple[dict, list[str], list[str]]:
+                      scenario: str | None, *,
+                      known_participants: list[str] | None = None,
+                      fetch_names: bool = True) -> tuple[dict, list[str], list[str]]:
         """The request file's keys of a check or run request: (intent, disable, manual). The shapes are checked
         here; what the values mean for the file (is there such a variant, can these be used together) is the
-        launcher's to say. disable and manual are names of the file's participants (of its variant, from its last
-        check, or a new one): the names are asked for only when the request names some, so that a request without
-        them runs one check, its own."""
+        launcher's to say. For api/check, unknown disable/manual names are checked against the launcher's known
+        participants; for api/run, YAML metadata validates them without spawning a pre-check subprocess."""
         variant = check_variant(body.get("variant"))
         params = check_params(body.get("params"))
         enable = check_enable(body.get("enable"))
@@ -772,8 +935,18 @@ class GuiServer:
         connect = check_connect(body.get("connect"))
         time_policy = check_time_policy(body.get("time_policy"))
         wanted, wanted_manual = body.get("disable"), body.get("manual")
-        known = await self.participant_names(config.relative, variant) if wanted or wanted_manual else []
-        disable, manual = check_disable(wanted, known), check_manual(wanted_manual, known)
+        if wanted or wanted_manual:
+            if fetch_names:
+                known = await self.participant_names(config.relative, variant)
+                disable, manual = check_disable(wanted, known), check_manual(wanted_manual, known)
+            elif known_participants is not None:
+                disable = check_disable(wanted, known_participants)
+                manual = check_manual(wanted_manual, known_participants)
+            else:
+                disable = check_name_list("disable", wanted)
+                manual = check_name_list("manual", wanted_manual)
+        else:
+            disable, manual = [], []
         intent = {"variant": variant, "params": params or None,
                   "scenario": relative_to_config(config, scenario) if scenario is not None else None,
                   "disable": disable or None, "enable": enable or None, "manual": manual or None,
@@ -782,15 +955,13 @@ class GuiServer:
                   "late_tolerance_ms": late_tolerance_ms}
         return {k: v for k, v in intent.items() if v is not None}, disable, manual
 
-    def _check_targets(self, relative: str, connect: dict[str, str], networks: list[str],
+    def _check_targets(self, relative: str, connect: dict[str, str], networks: list[str] | None,
                        checked_stamp: tuple | None = None) -> None:
         """The guard between the browser and the bridges' devices: a target other than "none" of a network of the
-        configuration (networks: those of the check of this very request) is passed on only when the last list of
-        that network of that file (POST api/connections), made from the file as it is now, gave it as usable, exactly
-        so written. Refused 400 target-not-listed otherwise. A network that the configuration lacks connects nothing:
-        the launcher leaves it out with the note connect-network-unused, as it does for a request file. checked_stamp
-        (a run): the file's stamp before its check; a file changed since may have that network now, so then every
-        target other than "none" is refused."""
+        configuration (or any target if networks could not be read) is passed on only when the last list of that
+        network of that file (POST api/connections), made from the file as it is now, gave it as usable, exactly
+        so written. Refused 400 target-not-listed otherwise. checked_stamp (a run): the file's stamp before its
+        metadata read; a file changed since may have that network now, so every target other than "none" is refused."""
         for network, target in connect.items():
             if target == NO_CONNECTION:
                 continue
@@ -798,7 +969,7 @@ class GuiServer:
                 raise Refused(400, "target-not-listed",
                               f"{relative} has changed since this run was checked, so the networks that it connects "
                               "may be others: start the run again", {"network": network, "target": target})
-            if network not in networks:
+            if networks is not None and network not in networks:
                 continue
             listed = self._targets.get((relative, network))
             if listed is None or listed[0] != self._stamp(relative):
@@ -969,15 +1140,17 @@ class GuiServer:
         config = self.root.resolve(body.get("file"))
         await self._usable()
         scenario = self._scenario(config, body)
-        checked_stamp = self._stamp(config.relative)  # before the names and the check read the file
-        intent, disable, manual = await self._intent(config, body, scenario)
+        variant = check_variant(body.get("variant"))
+        try:
+            checked_stamp, yaml_participants, yaml_networks = await asyncio.to_thread(
+                _read_config_metadata, config.absolute, variant,
+            )
+        except OSError as e:
+            raise _unreadable(config.relative, e) from None
+        intent, disable, manual = await self._intent(
+            config, body, scenario, known_participants=yaml_participants, fetch_names=False,
+        )
         speed, start_paused = intent.get("speed"), intent.get("start_paused", False)
-        # The check of what this run is made of (the same request file as the run's): a run that the check refuses
-        # is not started, and the answer carries the findings (the same as `api/check`'s).
-        _, checked = await self._check(config.relative, intent)
-        if checked.get("result") != "passed":
-            raise Refused(422, "check-failed", self._check_failed_message(config.relative, checked),
-                          {"result": checked.get("result"), "findings": checked.get("findings", [])})
         why_not = await self._no_variables()
         self._not_closing()
         credentials = token = None
@@ -996,7 +1169,7 @@ class GuiServer:
         try:
             # The last await is above: from here to the launcher's start no other request runs, so the targets are
             # compared with the lists and the file as they are when the launcher is started.
-            self._check_targets(config.relative, intent.get("connect", {}), network_names(checked), checked_stamp)
+            self._check_targets(config.relative, intent.get("connect", {}), yaml_networks, checked_stamp)
             request = self._make_request(intent)
         except BaseException:
             control.remove(credentials)
@@ -1024,12 +1197,20 @@ class GuiServer:
             control.remove(run_credentials)
             run_credentials = None
             run_token = handle.control_token
-        # Registered in the same step as the start returns: the server's end sees every launcher.
-        session = Session(next(self._ids), config.relative, disable, speed, start_paused, limits=self.o.limits,
-                          launcher_pid=handle.pid, launcher_mode=handle.mode, scenario=scenario, manual=manual)
+        session = Session(self._next_session_id, config.relative, disable, speed, start_paused,
+                          limits=self.o.limits, launcher_pid=handle.pid, launcher_mode=handle.mode,
+                          scenario=scenario, manual=manual)
         session.facts = self.facts
         session.numbered = self.numbered
-        variables = Variables(session.id, self._tell_variables, limits=self.o.variable_limits, secret=run_token,
+        preflight_timing = {k: intent[k] for k in ("stop_at_ms", "late_tolerance_ms") if k in intent}
+        gate = _PreStartGate(config.relative, request) if getattr(handle, "waits_for_check", True) else None
+
+        def emit_variables(messages: list[dict]) -> None:
+            if gate is not None and gate.discard:
+                return
+            self._tell_variables(messages)
+
+        variables = Variables(session.id, emit_variables, limits=self.o.variable_limits, secret=run_token,
                               ending=lambda: session.phase == "stopping" or session.result is not None
                               or not session.launcher_running)
         if why_not is None:
@@ -1042,19 +1223,106 @@ class GuiServer:
             is not None else f"this run has no variables to write: {why_not}")
         run = Run(session, handle, variables, features=tuple(self.launcher.features), credentials=run_credentials,
                   token=run_token, recording=recording, timeline=timeline, request=request,
-                  preflight_timing=check_timing(checked))
+                  preflight_timing=preflight_timing)
         self._runs.add(run)
+        sink = _RunSink(self, run, gate=gate)
+        handle.start(sink)
+        if gate is not None:
+            wait_cap = 5.0 if self.o.stop_timeout_s is None else self.o.stop_timeout_s
+            try:
+                async with asyncio.timeout(self.o.check_timeout_s):
+                    await gate.decision.wait()
+            except BaseException as exc:
+                gate.discard = True
+                try:
+                    handle.send_stop(2)
+                    if not gate.cleanup_done.is_set():
+                        with contextlib.suppress(TimeoutError, Exception):
+                            async with asyncio.timeout(min(1.0, wait_cap)):
+                                await gate.cleanup_done.wait()
+                    if not gate.cleanup_done.is_set():
+                        abort = getattr(handle, "abort", None)
+                        if abort is not None:
+                            abort()
+                        with contextlib.suppress(TimeoutError, Exception):
+                            async with asyncio.timeout(process.KILL_WAIT_S + 1.0):
+                                await gate.cleanup_done.wait()
+                finally:
+                    await asyncio.shield(self._discard_failed_start(run))
+                if isinstance(exc, TimeoutError):
+                    raise Refused(504, "check-timeout",
+                                  f"the check did not end in {self.o.check_timeout_s:g} s (it was stopped): "
+                                  "an ECU's --describe may hang") from None
+                raise
+            if gate.failed_check is not None:
+                gate.discard = True
+                try:
+                    if not gate.cleanup_done.is_set():
+                        with contextlib.suppress(TimeoutError, Exception):
+                            async with asyncio.timeout(min(5.0, wait_cap)):
+                                await gate.cleanup_done.wait()
+                    if not gate.cleanup_done.is_set():
+                        abort = getattr(handle, "abort", None)
+                        if abort is not None:
+                            abort()
+                        with contextlib.suppress(TimeoutError, Exception):
+                            async with asyncio.timeout(process.KILL_WAIT_S + 1.0):
+                                await gate.cleanup_done.wait()
+                finally:
+                    await asyncio.shield(self._discard_failed_start(run))
+                self._not_closing()
+                checked = hide_request(gate.failed_check, request)
+                raise Refused(422, "check-failed", self._check_failed_message(config.relative, checked),
+                              {"result": checked.get("result"), "findings": checked.get("findings", [])})
+            if self._closing:
+                gate.discard = True
+                await asyncio.shield(self._discard_failed_start(run))
+                raise Refused(503, "shutting-down", "the GUI server is stopping: the run that was starting is stopped")
+            if isinstance(gate.passed_check, dict):
+                names = [p["name"] for p in gate.passed_check.get("participants", [])
+                         if isinstance(p, dict) and isinstance(p.get("name"), str)]
+                if names or gate.passed_check.get("result") not in ("usage",):
+                    remember(self._names, (config.relative, intent.get("variant")), (checked_stamp, names))
+
+        self._next_session_id += 1
         self.current = run
         run.silence_task = asyncio.create_task(self._watch_silence(session))
-        handle.start(_RunSink(self, run))
         if self._stop_on_start is not None:  # api/stop came while it was starting: it applies now
             self._write_stop(run, self._stop_on_start)
         # The session messages do not carry the variables: a new run's are told right after it.
         self.hub.broadcast([session.message()])
         self._tell_variables([variables.message()])
+        initial_summary = session.summary()
+        if gate is not None:
+            gate.live = True
+            while gate.buffer:
+                item = gate.buffer.pop(0)
+                kind = item[0]
+                if kind == "stdout":
+                    sink.on_stdout_line(item[1])
+                elif kind == "stderr":
+                    sink.on_stderr_line(item[1])
+                elif kind == "problem":
+                    sink.on_problem(item[1], item[2], item[3])
+                elif kind == "exit":
+                    sink.on_process_exited(item[1])
+                elif kind == "finish":
+                    await sink.on_run_finished(output_cut=item[1], launcher_alive=item[2])
+            if gate.cleanup_called:
+                await sink.on_run_cleanup()
         if self._closing:  # the end began while the launcher was starting: it is stopped with the others
             raise Refused(503, "shutting-down", "the GUI server is stopping: the run that was starting is stopped")
-        return web.json_response({"instance": self.instance, "session": session.summary()})
+        return web.json_response({"instance": self.instance, "session": initial_summary})
+
+    async def _discard_failed_start(self, run: Run) -> None:
+        self._remove_credentials(run)
+        if not run.request_gone:
+            run.request_gone = control.remove(run.request)
+        control.remove(run.timeline)
+        run.timeline = None
+        if not run.variables.closed:
+            await self._close_variables(run)
+        self._runs.discard(run)
 
     async def post_stop_session(self, request: web.Request) -> web.Response:
         """Stop one identified run, never a run that replaced it."""

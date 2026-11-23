@@ -230,8 +230,8 @@ def test_a_variant_goes_to_the_check_and_the_run(gui: Gui) -> None:
 
 
 def test_a_start_checks_the_file_once_and_asks_for_the_names_only_for_disable_or_manual(tmp_path: Path) -> None:
-    """The participant names are asked for (a check without the request) only when the request names participants
-    and the names of the file as it is now are not known; the run's own check is the one check otherwise."""
+    """Starting a run performs only the run's own check (zero separate check subprocesses, even with disable or after
+    the file's modification time changes)."""
     root = tmp_path / "root"
     shutil.copytree(CONFIGS, root)
     calls = tmp_path / "calls.jsonl"
@@ -243,15 +243,15 @@ def test_a_start_checks_the_file_once_and_asks_for_the_names_only_for_disable_or
     async def main(c: Client) -> None:
         got = await run_to_end(c, {"file": "simulation.yaml", "stop_at_ms": 1000})
         assert got[-1]["session"]["result"]["result"] == "passed"
-        assert checks() == 1  # the run's check: no names asked for
+        assert checks() == 0
         got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"], "stop_at_ms": 1000})
         assert got[-1]["session"]["result"]["result"] == "passed"
-        assert checks() == 2  # the names come from the last check of the same file
+        assert checks() == 0
         stat = (root / "simulation.yaml").stat()
         os.utime(root / "simulation.yaml", ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
         got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"], "stop_at_ms": 1000})
         assert got[-1]["session"]["result"]["result"] == "passed"
-        assert checks() == 4  # the file changed since: the names are asked for again, then the run's check
+        assert checks() == 0
     with gui_server(tmp_path, root=root, env={"REPLAY_CALLS": str(calls)}) as gui:
         run_async(main, gui)
 
@@ -298,13 +298,20 @@ def test_the_launchers_words_do_not_name_the_temporary_request_file(tmp_path: Pa
     """The launcher says where in its request file a value is wrong, naming the file that this server made: the
     answer says "the request" instead (a file that is gone before the answer, and not one the sender can open)."""
     launcher = tmp_path / "vehicle_sil_launch"
-    launcher.write_text(f"#!{sys.executable}\nimport json, runpy, sys\na = sys.argv[1:]\n"
-                        "if a[:1] == ['check'] and '--request' in a:\n    p = a[a.index('--request') + 1]\n"
-                        "    print(json.dumps({'vehicle_sil_check': 1, 'result': 'usage', 'participants': [], "
+    launcher.write_text(f"#!{sys.executable}\nimport json, os, runpy, sys\na = sys.argv[1:]\n"
+                        "if '--request' in a and a[:1] in (['check'], ['run']):\n    p = a[a.index('--request') + 1]\n"
+                        "    chk = {'vehicle_sil_check': 1, 'result': 'usage', 'participants': [], "
                         "'findings': [{'severity': 'error', 'code': 'usage', 'file': p, 'line': 5, "
-                        "'message': p + ', line 5: params: a name is letters', 'participant': None, "
-                        "'network': None}]}))\n    sys.stderr.write('error: ' + p + ', line 5: bad\\n')\n"
-                        "    sys.exit(2)\n"
+                        "'message': p + ', line 5: params: a name is letters', 'participant': None, 'network': None}]}\n"
+                        "    if a[:1] == ['check']:\n"
+                        "        print(json.dumps(chk))\n"
+                        "    else:\n"
+                        "        print(json.dumps({'event': 'hello', 'seq': 0, 't_ms': 0, 'vehicle_sil_events': 2, "
+                        "'vehicle_sil': '0.3.0', 'pid': os.getpid(), 'file': a[-1], 'arguments': a}))\n"
+                        "        print(json.dumps({'event': 'result', 'seq': 1, 't_ms': 1, 'result': "
+                        "{'vehicle_sil_run': 2, 'result': 'usage', 'ok': False, 'errors': 1, 'check': chk}}))\n"
+                        "    sys.stderr.write('error: ' + p + ', line 5: bad\\n')\n"
+                        "    sys.exit(4 if a[:1] == ['run'] else 2)\n"
                         f"runpy.run_path({str(REPLAY)!r}, run_name='__main__')\n")
     launcher.chmod(0o755)
 
