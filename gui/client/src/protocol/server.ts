@@ -929,7 +929,8 @@ export const readServerAllowed: Reader<ServerAllowed> = (value, path) => {
 };
 
 /** Reads the per-source counts, only those that are readable. */
-function partlyRecord<T>(read: Reader<T>, u: Unreadable): Reader<Record<string, T>> {
+function partlyRecord<T>(read: Reader<T>, u?: Unreadable): Reader<Record<string, T>> {
+  if (!u) return record(read);
   return (value, path) => {
     const out: Record<string, T> = {};
     for (const [key, item] of Object.entries(object(value, path))) {
@@ -1098,55 +1099,83 @@ export interface VariablesSummary {
   operations_open_omitted: number;
 }
 
-const readOperationReport: Reader<OperationReport> = (value, path) => {
+const safeInteger: Reader<number> = (value, path) => {
+  if (!Number.isSafeInteger(value)) throw new ProtocolError(path, 'an integer');
+  return value as number;
+};
+
+const nonNegativeInteger: Reader<number> = (value, path) => {
+  const n = safeInteger(value, path);
+  if (n < 0) throw new ProtocolError(path, 'a non-negative integer');
+  return n;
+};
+
+export const readOperationReport = (
+  value: unknown,
+  path: string,
+  u?: Unreadable,
+): OperationReport => {
   const f = object(value, path);
   return {
-    seq: field(f, path, 'seq', integer),
+    seq: field(f, path, 'seq', safeInteger),
     state: field(f, path, 'state', string),
-    done: field(f, path, 'done', boolean),
+    done: field(f, path, 'done', lenient(boolean, false, u)),
     peers: field(
       f,
       path,
       'peers',
-      record((v, p) => {
-        const t = object(v, p);
-        return {
-          state: field(t, p, 'state', string),
-          applied_at_ms: field(t, p, 'applied_at_ms', optional(nullable(number), null)),
-          late: field(t, p, 'late', optional(boolean, false)),
-          reason: field(t, p, 'reason', optional(nullable(string), null)),
-          applied_writes: field(t, p, 'applied_writes', optional(nullable(integer), null)),
-          failed_write: field(t, p, 'failed_write', optional(nullable(integer), null)),
-        };
-      }),
+      soft(
+        partlyRecord((v, p) => {
+          const t = object(v, p);
+          return {
+            state: field(t, p, 'state', lenient(string, 'unknown', u)),
+            applied_at_ms: field(t, p, 'applied_at_ms', soft(nullable(number), null, u)),
+            late: field(t, p, 'late', soft(boolean, false, u)),
+            reason: field(t, p, 'reason', soft(nullable(string), null, u)),
+            applied_writes: field(
+              t,
+              p,
+              'applied_writes',
+              soft(nullable(nonNegativeInteger), null, u),
+            ),
+            failed_write: field(t, p, 'failed_write', soft(nullable(nonNegativeInteger), null, u)),
+          };
+        }, u),
+        {},
+        u,
+      ),
     ),
   };
 };
 
-const readVariableSummary: Reader<VariableSummary> = (value, path) => {
+const readEnumItem: Reader<{ name: string; value: number }> = (value, path) => {
+  const item = object(value, path);
+  return { name: field(item, path, 'name', string), value: field(item, path, 'value', number) };
+};
+
+const readVariableSummary = (value: unknown, path: string, u?: Unreadable): VariableSummary => {
   const f = object(value, path);
   return {
     name: field(f, path, 'name', string),
-    type: field(f, path, 'type', string),
-    role: field(f, path, 'role', optional(string, 'output')),
-    writable: field(f, path, 'writable', optional(boolean, false)),
-    unit: field(f, path, 'unit', optional(string, '')),
-    min: field(f, path, 'min', optional(nullable(number), null)),
-    max: field(f, path, 'max', optional(nullable(number), null)),
-    step: field(f, path, 'step', optional(nullable(number), null)),
-    description: field(f, path, 'description', optional(string, '')),
+    type: field(f, path, 'type', lenient(string, '', u)),
+    role: field(f, path, 'role', soft(string, 'output', u)),
+    writable: field(f, path, 'writable', soft(boolean, false, u)),
+    unit: field(f, path, 'unit', soft(string, '', u)),
+    min: field(f, path, 'min', soft(nullable(number), null, u)),
+    max: field(f, path, 'max', soft(nullable(number), null, u)),
+    step: field(f, path, 'step', soft(nullable(number), null, u)),
+    description: field(f, path, 'description', soft(string, '', u)),
     enum: field(
       f,
       path,
       'enum',
-      optional(
-        nullable(
-          array((v, p) => {
-            const item = object(v, p);
-            return { name: field(item, p, 'name', string), value: field(item, p, 'value', number) };
-          }),
-        ),
+      soft(
+        nullable((v, p) => {
+          if (!Array.isArray(v)) throw new ProtocolError(p, 'an array');
+          return items(readEnumItem, u)(v, p);
+        }),
         null,
+        u,
       ),
     ),
     availability: readAvailability(f['availability']),
@@ -1154,38 +1183,67 @@ const readVariableSummary: Reader<VariableSummary> = (value, path) => {
 };
 
 /** Reads `variables` of a summary (present in `hello` and HTTP summaries, absent from `session` notifications). */
-export const readVariablesSummary = (value: unknown): VariablesSummary =>
-  readVariables(value, 'variables');
+export const readVariablesSummary = (value: unknown, u?: Unreadable): VariablesSummary =>
+  readVariables(value, 'variables', u);
 
-const readVariables: Reader<VariablesSummary> = (value, path) => {
+const readVariables = (value: unknown, path: string, u?: Unreadable): VariablesSummary => {
   const f = object(value, path);
   return {
     ...(f['rev'] === undefined
       ? {}
-      : { rev: field(f, path, 'rev', optional(nullable(integer), null)) }),
-    state: field(f, path, 'state', string),
-    reason: field(f, path, 'reason', optional(nullable(string), null)),
+      : { rev: field(f, path, 'rev', soft(nullable(nonNegativeInteger), null, u)) }),
+    state: field(f, path, 'state', lenient(string, 'unknown', u)),
+    reason: field(f, path, 'reason', soft(nullable(string), null, u)),
     peers: field(
       f,
       path,
       'peers',
-      optional(
-        array((v, p) => {
+      soft(
+        items((v, p) => {
           const peer = object(v, p);
           return {
             name: field(peer, p, 'name', string),
-            connected: field(peer, p, 'connected', optional(boolean, false)),
-            variables: field(peer, p, 'variables', optional(array(readVariableSummary), [])),
+            connected: field(peer, p, 'connected', soft(boolean, false, u)),
+            variables: field(
+              peer,
+              p,
+              'variables',
+              soft(
+                items((item, ip) => readVariableSummary(item, ip, u), u),
+                [],
+                u,
+              ),
+            ),
           };
-        }),
+        }, u),
         [],
+        u,
       ),
     ),
-    peers_omitted: field(f, path, 'peers_omitted', optional(integer, 0)),
-    variables_omitted: field(f, path, 'variables_omitted', optional(integer, 0)),
-    operations: field(f, path, 'operations', optional(array(readOperationReport), [])),
-    operations_from_seq: field(f, path, 'operations_from_seq', optional(integer, null)),
-    operations_open_omitted: field(f, path, 'operations_open_omitted', optional(integer, 0)),
+    peers_omitted: field(f, path, 'peers_omitted', soft(nonNegativeInteger, 0, u)),
+    variables_omitted: field(f, path, 'variables_omitted', soft(nonNegativeInteger, 0, u)),
+    operations: field(
+      f,
+      path,
+      'operations',
+      soft(
+        items((item, ip) => readOperationReport(item, ip, u), u),
+        [],
+        u,
+      ),
+    ),
+    operations_from_seq: field(
+      f,
+      path,
+      'operations_from_seq',
+      soft(nullable(safeInteger), null, u),
+    ),
+    operations_open_omitted: field(
+      f,
+      path,
+      'operations_open_omitted',
+      soft(nonNegativeInteger, 0, u),
+    ),
   };
 };
 

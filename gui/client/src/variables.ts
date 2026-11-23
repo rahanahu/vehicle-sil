@@ -1,6 +1,13 @@
 import { HttpError, HttpTransport, errorMessage } from './http';
-import { Open, readAvailability } from './protocol';
+import {
+  Open,
+  Unreadable,
+  readAvailability,
+  readOperationReport,
+  readVariablesSummary,
+} from './protocol';
 import type { VariableAvailability } from './protocol';
+import { lenient } from './protocol/read';
 import { ErrorSink, Readable, Writable, rethrowLater } from './values';
 import type { BindOptions, VariableBinding } from './variable-binding';
 
@@ -325,82 +332,58 @@ const isObject = (value: unknown): value is Fields =>
 const text = (value: unknown, fallback = '') => (typeof value === 'string' ? value : fallback);
 const numberOrNull = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
-const count = (value: unknown) => (typeof value === 'number' && value >= 0 ? value : 0);
 const positionOrNull = (value: unknown) =>
   Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : null;
 
 /** Reads `variables` of a summary. Unreadable parts are skipped as if absent (additions are compatible). */
 export function readVariables(value: unknown, session: number | null): VariablesState {
-  if (!isObject(value)) return { ...NO_VARIABLES, session };
+  const u = new Unreadable('variables');
+  const summary = lenient((v) => readVariablesSummary(v, u), null, u)(value, 'variables');
+  if (!summary) return { ...NO_VARIABLES, session };
   const peers: VariablePeer[] = [];
   const availability = new Map<string, Map<string, VariableAvailability>>();
-  for (const p of Array.isArray(value['peers']) ? value['peers'] : []) {
-    if (!isObject(p) || typeof p['name'] !== 'string') continue;
+  for (const p of summary.peers) {
     const variables: VariableInfo[] = [];
     const states = new Map<string, VariableAvailability>();
-    for (const v of Array.isArray(p['variables']) ? p['variables'] : []) {
-      if (!isObject(v) || typeof v['name'] !== 'string') continue;
-      const items = Array.isArray(v['enum'])
-        ? v['enum'].flatMap((i) =>
-            isObject(i) && typeof i['name'] === 'string' && typeof i['value'] === 'number'
-              ? [{ name: i['name'], value: i['value'] }]
-              : [],
-          )
-        : null;
-      variables.push({
-        name: v['name'],
-        type: text(v['type']),
-        role: text(v['role'], 'output'),
-        writable: v['writable'] === true,
-        unit: text(v['unit']),
-        min: numberOrNull(v['min']),
-        max: numberOrNull(v['max']),
-        step: numberOrNull(v['step']),
-        description: text(v['description']),
-        enum: items,
-      });
-      states.set(v['name'], readAvailability(v['availability']));
+    for (const { availability: state, ...info } of p.variables) {
+      variables.push(info);
+      states.set(info.name, state);
     }
-    availability.set(p['name'], states);
-    peers.push({ name: p['name'], connected: p['connected'] === true, variables });
+    availability.set(p.name, states);
+    peers.push({ name: p.name, connected: p.connected, variables });
   }
   return {
     session,
-    status: text(value['state'], 'unknown'),
-    reason: typeof value['reason'] === 'string' ? value['reason'] : null,
+    status: summary.state,
+    reason: summary.reason,
     peers,
     availability,
-    peersOmitted: count(value['peers_omitted']),
-    variablesOmitted: count(value['variables_omitted']),
+    peersOmitted: summary.peers_omitted,
+    variablesOmitted: summary.variables_omitted,
   };
 }
 
 /** Reads an `operation` notification (or one entry of operations in a summary). null if unreadable. */
 export function readOperation(value: unknown, session: number): OperationView | null {
-  if (
-    !isObject(value) ||
-    !Number.isSafeInteger(value['seq']) ||
-    typeof value['state'] !== 'string'
-  ) {
-    return null;
-  }
+  const u = new Unreadable('operation');
+  const report = lenient((v, p) => readOperationReport(v, p, u), null, u)(value, 'operation');
+  if (!report) return null;
   const peers: Record<string, OperationPeer> = {};
-  for (const [name, p] of Object.entries(isObject(value['peers']) ? value['peers'] : {})) {
-    if (!isObject(p)) continue;
+  for (const [name, p] of Object.entries(report.peers)) {
     peers[name] = {
-      state: text(p['state'], 'unknown'),
-      appliedAtMs: numberOrNull(p['applied_at_ms']),
-      late: p['late'] === true,
-      reason: typeof p['reason'] === 'string' ? p['reason'] : null,
-      appliedWrites: positionOrNull(p['applied_writes']),
-      failedWrite: positionOrNull(p['failed_write']),
+      state: p.state,
+      appliedAtMs: p.applied_at_ms,
+      late: p.late,
+      reason: p.reason,
+      appliedWrites: p.applied_writes,
+      failedWrite: p.failed_write,
     };
   }
   return {
     session,
-    seq: value['seq'] as number,
-    state: value['state'],
-    done: value['done'] === true,
+    seq: report.seq,
+    state: report.state,
+    done: report.done,
     peers,
   };
 }
