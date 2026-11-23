@@ -224,7 +224,7 @@ endif()
 if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   add_executable(vehicle_sil_launch_test_ecu run_test_ecu.cpp)
   target_include_directories(vehicle_sil_launch_test_ecu PRIVATE ${PROJECT_SOURCE_DIR}/tests/process)
-  target_link_libraries(vehicle_sil_launch_test_ecu PRIVATE vehicle_sil::simulation)
+  target_link_libraries(vehicle_sil_launch_test_ecu PRIVATE vehicle_sil::simulation vehicle_sil_test_support)
   vehicle_sil_target_defaults(vehicle_sil_launch_test_ecu)
   vehicle_sil_copy_runtime_dlls(vehicle_sil_launch_test_ecu)
 
@@ -446,7 +446,8 @@ endif()
 # at 0, and the values the hub has at the end are those of the last steps.
 if(TARGET vehicle_sil_launch_test_ecu)
   add_executable(vehicle_sil_launch_control_test launch_control_test.cpp)
-  target_link_libraries(vehicle_sil_launch_control_test PRIVATE vehicle_sil::launch vehicle_sil::control SilKit::SilKit)
+  target_link_libraries(vehicle_sil_launch_control_test PRIVATE vehicle_sil::launch vehicle_sil::control SilKit::SilKit
+                                                          vehicle_sil_test_support)
   # The names of the topics (a hand-made agent says hello and writes what is no message).
   target_include_directories(vehicle_sil_launch_control_test PRIVATE ${PROJECT_SOURCE_DIR}/libs/control_silkit/src)
   vehicle_sil_target_defaults(vehicle_sil_launch_control_test)

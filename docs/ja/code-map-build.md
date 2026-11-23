@@ -47,7 +47,8 @@
 | `tests/scripts/test_run_gui.py` | `scripts/run-gui.py`: ランチャーの選び方、足りないものごとの文言 |
 | `tests/scripts/test_job_summary.py` | `scripts/job_summary.py`: GitHub Actions の job の Summary に書く中身、書かないとき |
 | `tests/scripts/test_check_docs.py` | `scripts/check-docs.py`: 英語のページと日本語のページの対（見出し、コードブロック、リンク）、英語版がまだないページ |
-| `tests/scripts/test_verify.py` | `scripts/verify.py --summarize`: 要約に出す、落ちたテストの出力の行（先頭の行と、その先の FAIL や Error を含む行） |
+| `tests/scripts/test_verify.py` | `scripts/verify.py`: `CMakePresets.json` からの `--linux` / `--all-linux` の導出（`CMakeUserPresets.json` の除外）、`--cmake-arg` の引き継ぎ、`--summarize` で要約に出す落ちたテストの出力の行（先頭の行と、その先の FAIL や Error を含む行） |
+| `tests/scripts/test_verify_common.py` | `scripts/verify_common.py`: 共通のパス、stdio の再設定、使い方エラー、パス表記、`--tag` の検査、ANSI 行の整形、プロセスグループのヘルパー、`verify*.py` の取り込みと `--help` |
 | `tests/scripts/test_hotspots.py` | `scripts/hotspots.py`: 信号（大きさ、変更の頻度、stack、parallel）、下の層と独立した作業の分け方、数えないもの（マージ済み、閉じた、古い）、観測できなかった範囲の表示、HEAD にないパス、`gh` の失敗、無応答、想定外の応答（Windows では実行しません） |
 | `tests/scripts/test_trace_report.py` | `scripts/trace-report.py`: 作ったトレースで、各ステップを最後に終えた参加者、同期の時間、ランチャーの保持、書き込みごとの往復、終了コード |
 | `tests/scripts/test_package.py` | `scripts/package.py`: MSYS2 のライセンス収集と Windows の `--build-only` 出力 |

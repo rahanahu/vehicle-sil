@@ -47,7 +47,8 @@ Scripts for development and CI. For the list, see "Verification and scripts" in 
 | `tests/scripts/test_run_gui.py` | `scripts/run-gui.py`: how the launcher is chosen, the message for each missing item |
 | `tests/scripts/test_job_summary.py` | `scripts/job_summary.py`: what it writes to the Summary of a GitHub Actions job, and when it writes nothing |
 | `tests/scripts/test_check_docs.py` | `scripts/check-docs.py`: pairs of English and Japanese pages (headings, code blocks, links), pages without an English edition yet |
-| `tests/scripts/test_verify.py` | `scripts/verify.py --summarize`: the lines of a failing test's output in the summary (the first lines, then the lines further down that say FAIL or Error) |
+| `tests/scripts/test_verify.py` | `scripts/verify.py`: deriving `--linux` and `--all-linux` from `CMakePresets.json` (ignoring `CMakeUserPresets.json`), forwarding `--cmake-arg`, and `--summarize` on failing test outputs (the first lines, then the lines further down that say FAIL or Error) |
+| `tests/scripts/test_verify_common.py` | `scripts/verify_common.py`: shared paths, stdio reconfiguration, usage errors, path formatting, `--tag` checks, ANSI line cleaning, process group helpers and `verify*.py` imports/`--help` |
 | `tests/scripts/test_hotspots.py` | `scripts/hotspots.py`: the signals (size, churn, stack, parallel), what counts as a lower layer and as independent work, what is left out (merged, closed, stale), what it says it could not observe, a path that is not in HEAD, and a failing, hanging or odd `gh` (the test is not run on Windows) |
 | `tests/scripts/test_trace_report.py` | `scripts/trace-report.py`: on made-up traces, the participant that completes each step last, the synchronization time, the launcher's hold, each write's round trip, and the exit codes |
 | `tests/scripts/test_package.py` | `scripts/package.py`: MSYS2 license staging and Windows `--build-only` export |

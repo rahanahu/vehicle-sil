@@ -71,8 +71,8 @@ def shown(path: Path, root: Path) -> str:
 
 def build_commands(windows: bool = WINDOWS) -> str:
     if windows:
-        return ("  cmake --preset windows-mingw-debug -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON\n"
-                "  cmake --build --preset windows-mingw-debug\n"
+        return ("  cmake --preset windows-mingw-control\n"
+                "  cmake --build --preset windows-mingw-control\n"
                 "(in the MSYS2 UCRT64 shell. The Control Server needs gRPC: CMake takes an installed one, "
                 "'pacman -S mingw-w64-ucrt-x86_64-grpc'; where it finds none, the first build downloads and "
                 "builds gRPC, which takes a while)")
@@ -162,8 +162,9 @@ def plan(args: argparse.Namespace, root: Path = ROOT, probe: Probe = features_of
                             "this script look under build/")
             launcher = None
         elif CONTROL not in features:
+            preset = "windows-mingw-control" if windows else "linux-gcc-control"
             notes.append(f"warning: {shown(launcher, root)} is built without the Control Server: the screen will "
-                         "say that variables are unavailable (build with the preset linux-gcc-control, or with "
+                         f"say that variables are unavailable (build with the preset {preset}, or with "
                          "-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON)")
     else:
         try:

@@ -8,6 +8,7 @@ whole, once.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -17,6 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import job_summary  # noqa: E402
+import verify  # noqa: E402
 
 VERIFY = ROOT / "scripts" / "verify.py"
 failures: list[str] = []
@@ -115,6 +117,101 @@ def test_cmake_arg_is_forwarded_to_configure() -> None:
         calls = cmake_calls.read_text(encoding="utf-8").splitlines() if cmake_calls.exists() else []
         check(len(calls) >= 1 and "-DCMAKE_C_FLAGS_DEBUG=-g1" in calls[0] and "-DCMAKE_CXX_FLAGS_DEBUG=-g1" in calls[0],
               f"configure received --cmake-arg values: {calls}")
+
+
+def test_linux_presets_derived_from_cmake_presets() -> None:
+    known = verify.load_presets()
+    check("windows-mingw-control" in known and known["windows-mingw-control"]["host"] == "Windows",
+          f"windows-mingw-control present with Windows host: {known.get('windows-mingw-control')}")
+    check(verify.default_linux_presets(known) == [
+        "linux-gcc-debug",
+        "linux-gcc-release",
+        "linux-clang-debug",
+        "linux-clang-asan",
+        "linux-clang-tsan",
+    ], f"default_linux_presets mismatch: {verify.default_linux_presets(known)}")
+    all_linux = verify.all_linux_presets(known)
+    for expected in (
+        "linux-gcc-debug",
+        "linux-gcc-release",
+        "linux-gcc-static",
+        "linux-clang-debug",
+        "linux-gcc-asan",
+        "linux-gcc-tsan",
+        "linux-clang-asan",
+        "linux-clang-tsan",
+        "linux-gcc-control",
+    ):
+        check(expected in all_linux, f"{expected} missing from all_linux_presets: {all_linux}")
+    check(len(all_linux) == 9, f"expected 9 Linux presets, got {len(all_linux)}: {all_linux}")
+    check(known["linux-gcc-tsan"]["test_jobs"] == 8 and known["linux-clang-tsan"]["test_jobs"] == 8,
+          f"tsan presets inherit test_jobs=8: {known['linux-gcc-tsan']}, {known['linux-clang-tsan']}")
+
+
+def test_user_presets_ignored_by_linux_flags() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        (tmp / "CMakePresets.json").write_text(json.dumps({
+            "version": 3,
+            "configurePresets": [
+                {"name": "linux-base", "hidden": True,
+                 "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux"}},
+                {"name": "proj-default", "inherits": "linux-base",
+                 "vendor": {"vehicle_sil": {"linux_default": True}}},
+                {"name": "proj-extra", "inherits": "linux-base"},
+            ],
+            "buildPresets": [
+                {"name": "proj-default", "configurePreset": "proj-default"},
+                {"name": "proj-extra", "configurePreset": "proj-extra"},
+            ],
+            "testPresets": [
+                {"name": "test-base", "hidden": True, "execution": {"jobs": 8}},
+                {"name": "proj-default", "inherits": "test-base", "configurePreset": "proj-default"},
+                {"name": "proj-extra", "inherits": "test-base", "configurePreset": "proj-extra"},
+            ],
+        }), encoding="utf-8")
+        (tmp / "CMakeUserPresets.json").write_text(json.dumps({
+            "version": 3,
+            "configurePresets": [
+                {"name": "user-inherits-default", "inherits": "proj-default"},
+                {"name": "user-claims-default", "inherits": "linux-base",
+                 "vendor": {"vehicle_sil": {"linux_default": True}, "vscode": {"flag": 1}}},
+                {"name": "user-configure-only", "inherits": "linux-base"},
+            ],
+            "buildPresets": [
+                {"name": "user-inherits-default", "configurePreset": "user-inherits-default"},
+                {"name": "user-claims-default", "configurePreset": "user-claims-default"},
+                {"name": "user-configure-only", "configurePreset": "user-configure-only"},
+            ],
+            "testPresets": [
+                {"name": "user-inherits-default", "inherits": "test-base", "configurePreset": "user-inherits-default"},
+                {"name": "user-claims-default", "inherits": "test-base", "configurePreset": "user-claims-default"},
+            ],
+        }), encoding="utf-8")
+        known = verify.load_presets(tmp)
+        check("user-inherits-default" in known and known["user-inherits-default"]["host"] == "Linux",
+              f"user preset inherits host: {known.get('user-inherits-default')}")
+        check(known["user-inherits-default"]["test_jobs"] == 8,
+              f"user preset inherits test_jobs: {known.get('user-inherits-default')}")
+        check("user-configure-only" not in known, f"configure-only preset excluded: {known}")
+        check(verify.default_linux_presets(known) == ["proj-default"],
+              f"user presets excluded from default_linux_presets: {verify.default_linux_presets(known)}")
+        check(verify.all_linux_presets(known) == ["proj-default", "proj-extra"],
+              f"user presets excluded from all_linux_presets: {verify.all_linux_presets(known)}")
+
+
+def test_help_and_all_linux_cli() -> None:
+    env = {k: v for k, v in os.environ.items()
+           if k not in (job_summary.SUMMARY_ENV, job_summary.NESTED_ENV, job_summary.ARTIFACT_ENV)}
+    help_run = subprocess.run([sys.executable, str(VERIFY), "--help"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, env=env)
+    check(help_run.returncode == 0, f"--help exited {help_run.returncode}: {help_run.stderr}")
+    for token in ("--linux", "--all-linux", "linux-gcc-debug", "linux-gcc-control"):
+        check(token in help_run.stdout, f"--help missing {token!r}:\n{help_run.stdout}")
+    bad_run = subprocess.run([sys.executable, str(VERIFY), "--summarize", "foo.log", "--all-linux"],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             stdin=subprocess.DEVNULL, env=env)
+    check(bad_run.returncode == 2, f"--summarize --all-linux exited {bad_run.returncode}, expected 2: {bad_run.stderr}")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 include_guard(GLOBAL)
 
+include(${CMAKE_CURRENT_LIST_DIR}/VehicleSilPython.cmake)
+
 # gRPC and Protocol Buffers for the control server and the control agent's link to it.
 # Only with VEHICLE_SIL_BUILD_CONTROL_SERVER: the rest of vehicle-sil never needs them.
 #
@@ -41,6 +43,10 @@ function(_vehicle_sil_fetch_grpc)
   # vehicle-sil tests; keep vehicle-sil itself in Debug while stripping FetchContent gRPC debug info.
   set(CMAKE_C_FLAGS_DEBUG "-g0")
   set(CMAKE_CXX_FLAGS_DEBUG "-g0")
+  if(MINGW)
+    # BoringSSL without its assembly (it would need NASM): the control server's TLS is not a hot path.
+    set(OPENSSL_NO_ASM ON)
+  endif()
   FetchContent_Declare(
     grpc
     GIT_REPOSITORY https://github.com/grpc/grpc.git
@@ -106,4 +112,90 @@ function(vehicle_sil_add_grpc_proto target)
   target_include_directories(${target} SYSTEM PUBLIC $<BUILD_INTERFACE:${out}>)
   target_link_libraries(${target} PUBLIC vehicle_sil::grpcpp)
   target_compile_features(${target} PUBLIC cxx_std_20)
+endfunction()
+
+# vehicle_sil_add_python_grpc_stubs(<target>
+#   OUT <dir>
+#   PYTHON_VAR <var>
+#   [PYTHONPATH <dir>]
+#   [DEPENDS <dep>...]
+#   [BYPRODUCTS <file>...]
+#   [ALL])
+#
+# Finds Python 3.11+ with grpc and grpc_tools (using <var> if already set, else
+# VEHICLE_SIL_CONTROL_PYTHON, else vehicle_sil_find_python()), generates the Python Control API
+# stubs into <dir> at build time, and defines custom target <target>. Sets <var> to the Python
+# executable (or "" if none was found, leaving <target> undefined and setting <var>_REASON and
+# <var>_TRIED).
+function(vehicle_sil_add_python_grpc_stubs target)
+  cmake_parse_arguments(ARG "ALL" "OUT;PYTHON_VAR;PYTHONPATH" "DEPENDS;BYPRODUCTS" ${ARGN})
+  if(NOT ARG_OUT)
+    message(FATAL_ERROR "vehicle_sil_add_python_grpc_stubs(${target}): OUT is required")
+  endif()
+  if(NOT ARG_PYTHON_VAR)
+    message(FATAL_ERROR "vehicle_sil_add_python_grpc_stubs(${target}): PYTHON_VAR is required")
+  endif()
+
+  get_filename_component(_repo_root "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/.." ABSOLUTE)
+  set(_pythonpath "${ARG_PYTHONPATH}")
+  if(_pythonpath STREQUAL "")
+    set(_pythonpath "${_repo_root}/python")
+  endif()
+
+  set(_python "")
+  set(_tried "")
+  if(NOT "${${ARG_PYTHON_VAR}}" STREQUAL "")
+    set(_python "${${ARG_PYTHON_VAR}}")
+  elseif(VEHICLE_SIL_CONTROL_PYTHON)
+    set(_python "${VEHICLE_SIL_CONTROL_PYTHON}")
+  else()
+    vehicle_sil_find_python(_python grpc grpc_tools)
+    set(_tried "${_python_TRIED}")
+  endif()
+  vehicle_sil_python_can_import(_ok "${_python}" grpc grpc_tools)
+  if(NOT _ok)
+    set(${ARG_PYTHON_VAR} "" PARENT_SCOPE)
+    set(${ARG_PYTHON_VAR}_REASON "${_ok_REASON}" PARENT_SCOPE)
+    set(${ARG_PYTHON_VAR}_TRIED "${_tried}" PARENT_SCOPE)
+    return()
+  endif()
+
+  set(_pb2 "${ARG_OUT}/vehicle_sil/control/v1/control_pb2.py")
+  set(_grpc_pb2 "${ARG_OUT}/vehicle_sil/control/v1/control_pb2_grpc.py")
+  set(_byproducts "${_grpc_pb2}" ${ARG_BYPRODUCTS})
+  list(REMOVE_DUPLICATES _byproducts)
+
+  set(_file_deps
+    "${_repo_root}/proto/vehicle_sil/control/v1/control.proto"
+    "${_repo_root}/python/vehicle_sil_control/generate.py")
+  set(_target_deps)
+  foreach(_dep IN LISTS ARG_DEPENDS)
+    if(TARGET "${_dep}")
+      list(APPEND _target_deps "${_dep}")
+    else()
+      list(APPEND _file_deps "${_dep}")
+    endif()
+  endforeach()
+
+  add_custom_command(
+    OUTPUT "${_pb2}"
+    BYPRODUCTS ${_byproducts}
+    COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${_pythonpath}"
+            "${_python}" -m vehicle_sil_control.generate
+            --proto-root "${_repo_root}/proto" --out "${ARG_OUT}"
+    DEPENDS ${_file_deps}
+    COMMENT "Generating Python Control API stubs (${target})"
+    VERBATIM)
+  set(_all_flag)
+  if(ARG_ALL)
+    set(_all_flag ALL)
+  endif()
+  add_custom_target(${target} ${_all_flag} DEPENDS "${_pb2}")
+  if(_target_deps)
+    add_dependencies(${target} ${_target_deps})
+  endif()
+
+  set(${ARG_PYTHON_VAR} "${_python}" PARENT_SCOPE)
+  set(${ARG_PYTHON_VAR}_REASON "" PARENT_SCOPE)
+  set(${ARG_PYTHON_VAR}_TRIED "${_tried}" PARENT_SCOPE)
 endfunction()

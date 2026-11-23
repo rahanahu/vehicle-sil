@@ -10,12 +10,6 @@ set(VEHICLE_SIL_TESTED_DOCS "${PROJECT_SOURCE_DIR}/docs")
 # the areas share. A new area needs no line here: every directory below that has a CMakeLists.txt
 # is added (see the end of this file).
 
-# Every test sees the headers of unit/: the harness and the factor on the upper bounds of waiting
-# (unit/test_timeout_scale.hpp, also used by the process launchers and the helpers they share).
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/unit)
-# The factor when VEHICLE_SIL_TEST_TIMEOUT_SCALE is not set where a test runs (VehicleSilTestHelpers.cmake).
-add_compile_definitions(VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT="${VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT}")
-
 # ThreadSanitizer runs have high per-thread CPU/memory overhead: limit heavy multi-ECU
 # tests to 2 slots on TSan builds while letting normal builds use all cores.
 set(_vehicle_sil_tsan_processors "")
@@ -25,9 +19,15 @@ if("thread" IN_LIST VEHICLE_SIL_SANITIZERS
   set(_vehicle_sil_tsan_processors PROCESSORS 2)
 endif()
 
+# Shared headers of tests/unit/ (test_harness.hpp, test_timeout_scale.hpp, ...) and the build's
+# default timeout factor, attached only to test targets that use them.
+add_library(vehicle_sil_test_support INTERFACE)
+target_include_directories(vehicle_sil_test_support INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+target_compile_definitions(vehicle_sil_test_support INTERFACE VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT="${VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT}")
+
 # main() and the registry of the in-process test harness (unit/test_harness.hpp).
 add_library(vehicle_sil_test_main OBJECT unit/test_main.cpp)
-target_include_directories(vehicle_sil_test_main PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+target_link_libraries(vehicle_sil_test_main PUBLIC vehicle_sil_test_support)
 vehicle_sil_target_defaults(vehicle_sil_test_main)
 
 # A registry process, log helpers and coordinated virtual-time runs for the process-level
@@ -37,7 +37,7 @@ add_library(vehicle_sil_test_process STATIC
   integration/simulation_run.cpp
 )
 target_include_directories(vehicle_sil_test_process PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/integration)
-target_link_libraries(vehicle_sil_test_process PUBLIC vehicle_sil::process vehicle_sil_cli)
+target_link_libraries(vehicle_sil_test_process PUBLIC vehicle_sil::process vehicle_sil_cli vehicle_sil_test_support)
 vehicle_sil_target_defaults(vehicle_sil_test_process)
 
 if(NOT VEHICLE_SIL_BUILD_EXAMPLES)

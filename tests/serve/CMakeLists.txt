@@ -3,9 +3,10 @@ if(NOT TARGET vehicle_sil_launch OR NOT VEHICLE_SIL_BUILD_EXAMPLES)
   return()
 endif()
 
-find_package(Python3 COMPONENTS Interpreter QUIET)
-if(NOT Python3_FOUND)
-  message(STATUS "vehicle-sil: Python 3 not found; tests/serve skipped")
+include(VehicleSilPython)
+vehicle_sil_find_python(_serve_python)
+if(NOT _serve_python)
+  message(STATUS "vehicle-sil: no Python 3.11+ found (tried: ${_serve_python_TRIED}); tests/serve skipped")
   return()
 endif()
 
@@ -49,7 +50,7 @@ set(_serve_common_env
 
 # Pure unit tests for tests/serve helpers (digest and stream validator).
 add_test(NAME serve.tools
-         COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_serve_tools
+         COMMAND "${_serve_python}" -m unittest -v test_serve_tools
          WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 set_tests_properties(serve.tools PROPERTIES
   LABELS "unit;serve;python" TIMEOUT 60)
@@ -57,7 +58,7 @@ set_tests_properties(serve.tools PROPERTIES
 # #1 (50 Run 1-ECU + 20 Run 10-ECU vt=0), #2 (Cold equivalence, protocols, faults, binary swap),
 # #10 (fixed registry refusal, manual refusal, LIN repetitions).
 add_test(NAME serve.basic
-         COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_serve_basic
+         COMMAND "${_serve_python}" -m unittest -v test_serve_basic
          WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 set_tests_properties(serve.basic PROPERTIES
   LABELS "serve;launch;integration;python" TIMEOUT 600 ${_vehicle_sil_tsan_processors} COST 25
@@ -66,7 +67,7 @@ set_tests_properties(serve.basic PROPERTIES
 # #3 (stale stdin), #4 (event window isolation & log-dir), #6 (idle signals & run/SIGINT race),
 # #7 (stop vs launcher end & close_cut), #8 (H2 not_closed_ms Cold fallback), #9 (trace refusal & resources).
 add_test(NAME serve.isolation
-         COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_serve_isolation
+         COMMAND "${_serve_python}" -m unittest -v test_serve_isolation
          WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 set_tests_properties(serve.isolation PROPERTIES
   LABELS "serve;launch;integration;python" TIMEOUT 600 RUN_SERIAL TRUE COST 30
@@ -79,7 +80,7 @@ if(WIN32)
     list(APPEND _serve_win_labels "control")
   endif()
   add_test(NAME serve.windows
-           COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_serve_windows
+           COMMAND "${_serve_python}" -m unittest -v test_serve_windows
            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
   set_tests_properties(serve.windows PROPERTIES
     LABELS "${_serve_win_labels}" TIMEOUT 600 RUN_SERIAL TRUE COST 15
@@ -88,23 +89,14 @@ endif()
 
 # #5, #7b: Fixed-address gRPC Run binding and per-run credentials reload.
 if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
-  if(VEHICLE_SIL_CONTROL_PYTHON)
-    set(_serve_grpc_python "${VEHICLE_SIL_CONTROL_PYTHON}")
-  else()
-    vehicle_sil_find_python(_serve_grpc_python grpc grpc_tools)
-  endif()
-  vehicle_sil_python_can_import(_serve_grpc_python_ok "${_serve_grpc_python}" grpc grpc_tools)
-  if(_serve_grpc_python_ok)
-    set(_serve_stubs "${CMAKE_CURRENT_BINARY_DIR}/control_python_stubs")
-    add_custom_command(
-      OUTPUT "${_serve_stubs}/vehicle_sil/control/v1/control_pb2.py"
-      COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${PROJECT_SOURCE_DIR}/python"
-              "${_serve_grpc_python}" -m vehicle_sil_control.generate --proto-root "${PROJECT_SOURCE_DIR}/proto" --out "${_serve_stubs}"
-      DEPENDS "${PROJECT_SOURCE_DIR}/proto/vehicle_sil/control/v1/control.proto" "${PROJECT_SOURCE_DIR}/python/vehicle_sil_control/generate.py"
-      COMMENT "Generating Python Control API stubs for tests/serve")
-    add_custom_target(vehicle_sil_serve_control_stubs ALL DEPENDS "${_serve_stubs}/vehicle_sil/control/v1/control_pb2.py")
-    add_dependencies(vehicle_sil_serve_control_stubs vehicle_sil_launch vehicle_sil_launch_test_ecu)
-
+  set(_serve_stubs "${CMAKE_CURRENT_BINARY_DIR}/control_python_stubs")
+  vehicle_sil_add_python_grpc_stubs(vehicle_sil_serve_control_stubs
+    ALL
+    OUT "${_serve_stubs}"
+    PYTHON_VAR _serve_grpc_python
+    PYTHONPATH "${PROJECT_SOURCE_DIR}/python"
+    DEPENDS vehicle_sil_launch vehicle_sil_launch_test_ecu)
+  if(_serve_grpc_python)
     add_test(NAME serve.grpc
              COMMAND "${_serve_grpc_python}" -m unittest -v test_serve_grpc
              WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")

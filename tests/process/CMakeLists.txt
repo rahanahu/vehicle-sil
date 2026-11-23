@@ -2,6 +2,7 @@
 # helper executable that writes, sleeps and exits as its arguments say (also used by the tests
 # of vehicle_sil_launch).
 add_executable(vehicle_sil_process_helper process_helper.cpp)
+target_link_libraries(vehicle_sil_process_helper PRIVATE vehicle_sil_test_support)
 if(WIN32)
   target_link_libraries(vehicle_sil_process_helper PRIVATE shell32)
 endif()

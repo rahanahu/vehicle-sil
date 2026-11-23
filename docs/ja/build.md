@@ -81,7 +81,7 @@ ctest --preset linux-gcc-debug
 
 `linux-gcc-control` は、Control Server とそのテストもビルドします（[control-api.md](control-api.md) の「ビルド」）。gRPC が見つからなければ、固定したバージョンを FetchContent で取り込んでビルドします。Python のクライアントのテストは、grpcio と grpcio-tools のある Python（`uv sync`）があるときだけ登録します。
 
-`linux-gcc-static`、`windows-mingw-static`、`linux-gcc-control` は、`scripts/verify.py --linux` に入っていません。名前を指定して実行します。
+`scripts/verify.py --linux` は `CMakePresets.json` で既定に指定した 5 つのプリセット（`linux-gcc-debug`、`linux-gcc-release`、`linux-clang-debug`、`linux-clang-asan`、`linux-clang-tsan`）を実行し、`linux-gcc-static`、`linux-gcc-asan`、`linux-gcc-tsan`、`linux-gcc-control` は含みません。これらは名前を指定して実行するか、`--all-linux` で Linux のプリセットをすべて実行します。
 
 ThreadSanitizer のプリセットのテストは、誤検出とわかっている報告だけを `cmake/tsan-suppressions.txt` で抑えます（1 件ごとに理由を書いています）。
 
@@ -112,7 +112,7 @@ cmake --build --preset windows-mingw-release
 ctest --preset windows-mingw-release
 ```
 
-プリセットは `windows-mingw-debug`、`windows-mingw-release`、`windows-mingw-static`（Release で `VEHICLE_SIL_STATIC=ON`）の 3 つです。
+プリセットは `windows-mingw-debug`、`windows-mingw-release`、`windows-mingw-static`（Release で `VEHICLE_SIL_STATIC=ON`）、`windows-mingw-control`（Debug で `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`。[control-api.md](control-api.md) の「ビルド」）の 4 つです。
 
 実行ファイルが読み込む DLL は、次の場所にあります。
 

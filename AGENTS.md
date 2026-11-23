@@ -138,7 +138,7 @@ These steps are a trial. They are advice: no CI check enforces them, and their e
 
 ```sh
 scripts/doctor.py                                    # first: is everything in place?
-scripts/verify.py --linux                            # all Linux presets
+scripts/verify.py --linux                            # default Linux presets (--all-linux for all)
 scripts/verify.py linux-gcc-debug --tests '^launch'  # some tests on one preset
 scripts/verify.py --summarize build/logs/verify-linux-gcc-debug-test.log
 scripts/check-commits.py                             # the staged changes (--range origin/main..HEAD: each commit in the range)

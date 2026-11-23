@@ -48,7 +48,7 @@ cmake --build --preset linux-gcc-release
 |---|---|
 | gRPC が見つからないとき | FetchContent で取り込みます（初回はダウンロードとビルドに数分かかります）。 |
 | Windows（MSYS2 UCRT64）の gRPC | `pacman -S mingw-w64-ucrt-x86_64-grpc` でインストールしておきます。 |
-| Control Server のテストまでまとめて実行する | プリセット `linux-gcc-control`（GCC の Debug でこの設定）を `scripts/verify.py linux-gcc-control` で使えます（[build.md](build.md) の「Linux」）。 |
+| Control Server のテストまでまとめて実行する | Linux では `linux-gcc-control`、Windows では `windows-mingw-control`（GCC の Debug でこの設定）を `scripts/verify.py <preset>` で使えます（[build.md](build.md) の「vehicle-sil 自体をビルドする」）。 |
 | 依存ライブラリの詳細 | [dependencies.md](dependencies.md) にあります。 |
 
 ## ランチャーに接続する
