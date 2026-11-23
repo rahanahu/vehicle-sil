@@ -1440,6 +1440,14 @@ class GuiServer:
             if isinstance(meant, bool) or not isinstance(meant, int):
                 raise Refused(400, "invalid-field", "a write needs session: the id of the run it is meant for (the "
                                                     "id of the summary of GET api/session, or of hello)")
+            if "instance" in body:
+                inst = body.get("instance")
+                if not isinstance(inst, str) or not inst:
+                    raise InvalidRequest("invalid-field", "instance must be the server instance from the run or session answer")
+                if inst != self.instance:
+                    raise Refused(409, "session-changed",
+                                  "the server instance has changed: nothing was written; look at the variables of "
+                                  "this run before writing to it")
             run = self.current
             if run is None or self._starting or run.session.state != "running" or not run.session.launcher_running:
                 raise Refused(409, "not-running", "no simulation is running: variables are written to the run that "

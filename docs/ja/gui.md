@@ -339,7 +339,7 @@ npm --prefix gui/web/workbench run build
 scripts/run-gui.py --workbench
 ~~~
 
-上部の **Network** でシミュレーション構成を選びます。**Network Designer** では、その構成のバスと ECU チャネルの接続先を編集できます。上部の **Scenario** には、構成ファイルと同じ階層にあるサーバー側の `scenarios/` から実行できる YAML が並びます。**Free run** と **Record & start** は、**Stop at (ms)** を空欄にすると、仮想時間で自動停止しません。時刻を入力すると、Check と再生に同じ設定が適用されます。
+上部の **Network** でシミュレーション構成を選ぶと、対応構成では `POST api/prepare` で常駐ランチャーを事前準備します（非対応構成では実行単位の Cold 起動へ自動で切り替わります）。開始時は単一のチェックで判定し、Workbench 画面では数値の Run ID ではなく構成ファイルと状態で実行を示します。**Network Designer** では、その構成のバスと ECU チャネルの接続先を編集できます。上部の **Scenario** には、構成ファイルと同じ階層にあるサーバー側の `scenarios/` から実行できる YAML が並びます。**Free run** と **Record & start** は、**Stop at (ms)** を空欄にすると、仮想時間で自動停止しません。時刻を入力すると、Check と再生に同じ設定が適用されます。
 
 **Settings → Scenario folder** では、**Scenario** タブで YAML を開いたり保存したりするローカルフォルダを選びます。ブラウザーが読み取り専用でフォルダを開く場合、**Save YAML** はファイルをダウンロードします。ローカルの YAML をサーバーで実行するには、選択中の Network のサーバー側 `scenarios/` に置き、実行リストを更新します。
 

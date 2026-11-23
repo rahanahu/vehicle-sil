@@ -4,15 +4,18 @@ import type { GuiClient } from './client';
 import type { RunTarget } from './session';
 import type {
   CheckResult,
+  ConfigList,
   ConfigText,
   SavedConfig,
   Finding,
   OutsideState,
+  Recording,
   RunEnd,
   RuntimeStatus,
   ScenarioFile,
   ScenarioStatus,
   ScenarioStep,
+  SessionSummary,
 } from './protocol';
 import type { ValueCondition, WriteBlock, WriteStatus } from './variable-state';
 import type { VariableRef, VariableValue } from './variables';
@@ -227,7 +230,10 @@ export interface Outside {
 /** Operations of the run. Each resolves when the server has taken the request; whether the run began is `status.run`. */
 export interface FrontRun {
   /** Starts a run of `file` (default: the start-up file). Rejects with `check-failed` and the findings if the check refuses it. */
-  start(intent?: Intent, options?: { file?: string }): Promise<void>;
+  start(
+    intent?: Intent,
+    options?: { file?: string; onStarted?: (session: SessionSummary) => void },
+  ): Promise<void>;
   /** Stops in order. Works whatever the state of the connection (the request is sent if the network is up). */
   stop(): Promise<void>;
   /** Stops without waiting for the participants. */
@@ -312,6 +318,10 @@ export interface Front {
     enable?: string[];
     manual?: string[];
   }): Promise<RuntimeStatus>;
+  /** Lists the configuration files under the server root (`GET api/configs`). */
+  configs(): Promise<ConfigList>;
+  /** Returns applied writes recorded in the current or last run as scenario YAML (`GET api/recording`). */
+  recording(): Promise<Recording | null>;
   /**
    * The networks of the run that the start's `connect` connected outside (empty when there are none, when no run is
    * going, and in a run that a `role: bridge` participant of the file connects: do not read "connected or not" from it).

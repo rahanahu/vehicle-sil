@@ -2497,5 +2497,80 @@ describe('the front door', () => {
         reason: 'fixed-registry',
       });
     });
+
+    it('exposes configs(), recording(), and run.start(..., { onStarted }) on Front', async () => {
+      const rig = await open();
+      const cfgPromise = rig.front.configs();
+      rig.http.expectOne('api/configs').flush({
+        files: [
+          {
+            path: 'simulation.yaml',
+            modified: '2026-01-01T00:00:00Z',
+            size: 12,
+            simulation: true,
+          },
+        ],
+        truncated: false,
+      });
+      const listed = await cfgPromise;
+      expect(listed.files.map((f) => f.path)).toEqual(['simulation.yaml']);
+
+      const recPromise = rig.front.recording();
+      rig.http.expectOne('api/recording').flush({ recording: null });
+      expect(await recPromise).toBeNull();
+
+      let capturedId: number | null = null;
+      const startPromise = rig.front.run.start(
+        { stop_at_ms: 100 },
+        { file: 'simulation.yaml', onStarted: (s) => (capturedId = s.id) },
+      );
+      const runReq = rig.http.expectOne('api/run');
+      runReq.flush({
+        instance: 'i1',
+        session: {
+          snapshot_rev: 1,
+          id: 42,
+          file: 'simulation.yaml',
+          disable: [],
+          manual: [],
+          speed: null,
+          start_paused: false,
+          started_at: '2026-01-01T00:00:00.000Z',
+          ended_at: null,
+          state: 'running',
+          launcher: {
+            pid: 123,
+            running: true,
+            mode: 'cold',
+            process_alive: true,
+            exit_code: null,
+            signal: null,
+            silent_s: null,
+          },
+          stop: 'none',
+          phase: null,
+          last_seq: null,
+          last_t_ms: null,
+          time: null,
+          check: null,
+          registry: null,
+          participants: [],
+          participants_omitted: 0,
+          findings: [],
+          findings_omitted: 0,
+          last_command: null,
+          launcher_state: null,
+          allowed: null,
+          result: null,
+          log: {},
+          problems: [],
+          problems_omitted: 0,
+          scenario: null,
+          variables: null,
+        },
+      });
+      await startPromise;
+      expect(capturedId).toBe(42);
+    });
   });
 });

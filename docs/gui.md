@@ -331,7 +331,7 @@ npm --prefix gui/web/workbench run build
 scripts/run-gui.py --workbench
 ~~~
 
-The top **Network** menu selects a simulation configuration. **Network Designer** edits its buses and ECU channel mappings. The top **Scenario** menu lists runnable YAML files in the server's `scenarios/` directory next to that configuration. **Free run** and **Record & start** have no automatic stop when **Stop at (ms)** is blank. A supplied limit applies to both Check and Start.
+The top **Network** menu selects a simulation configuration and asks `POST api/prepare` to warm a persistent launcher when eligible (falling back to per-run Cold launches automatically when a configuration is not eligible). Each **Start** performs a single check before running, and Workbench views identify runs by configuration file and status rather than numeric run IDs. **Network Designer** edits its buses and ECU channel mappings. The top **Scenario** menu lists runnable YAML files in the server's `scenarios/` directory next to that configuration. **Free run** and **Record & start** have no automatic stop when **Stop at (ms)** is blank. A supplied limit applies to both Check and Start.
 
 In **Settings → Scenario folder**, choose a local directory for opening and saving YAML from the **Scenario** tab. If the browser offers read-only folder access, **Save YAML** downloads the file. To run a local file on the server, put it in the selected network's server-side `scenarios/` directory and refresh the run list.
 

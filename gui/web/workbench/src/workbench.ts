@@ -498,7 +498,7 @@ export class Workbench {
         watch(front.low.app, (value) => this.canRecord.set(value?.variables?.available === true)),
       ];
       this.destroy.onDestroy(() => releases.forEach((release) => release()));
-      const { files } = await front.low.configs();
+      const { files } = await front.configs();
       const initial = this.session()?.file ?? front.low.app.get()?.initial_file ?? '';
       const paths = files
         .filter(
@@ -554,6 +554,11 @@ export class Workbench {
     this.savedConfigText.set('');
     this.configAnswer.set(null);
     this.check.set(null);
+    if (!this.live() && file) {
+      void this.front()
+        ?.prepare({ file })
+        .catch(() => undefined);
+    }
     await this.refreshScenarios();
   }
 
@@ -591,13 +596,15 @@ export class Workbench {
       // The answer identifies this start even if session notifications are delayed or another
       // run starts before they arrive. RunControl adopts that same summary into the session feed.
       const intent = this.intent();
-      const started = await front.low.run.start({
+      let startedId: number | null = null;
+      await front.run.start(intent, {
         file: this.selectedFile(),
-        ...intent,
-        disable: intent.disable ?? [],
+        onStarted: (started) => {
+          startedId = started.id;
+        },
       });
-      if (started) {
-        this.recordedRun.set(record ? started.id : null);
+      if (startedId !== null) {
+        this.recordedRun.set(record ? startedId : null);
       } else if (record) {
         this.recordedRun.set(null);
         this.notice.set('The run started, but its session could not be identified for recording.');
@@ -817,7 +824,7 @@ export class Workbench {
   }
 
   async loadRecording() {
-    const recording = await this.front()!.low.recording();
+    const recording = await this.front()!.recording();
     if (!recording?.yaml || recording.session_id !== this.recordedRun()) {
       throw new Error(recording?.reason ?? 'No applied I/O writes were recorded in this run.');
     }

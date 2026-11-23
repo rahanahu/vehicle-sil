@@ -19,6 +19,7 @@ import type {
   SavedConfig,
   RunRequest,
   ServerMessage,
+  SessionSummary,
 } from './protocol';
 import { ErrorSink, Readable, Writable } from './values';
 
@@ -185,14 +186,21 @@ export class FrontActions {
 
   // --- run ---------------------------------------------------------------------------------------
 
-  start(intent: Intent = {}, options: { file?: string } = {}): Promise<void> {
+  start(
+    intent: Intent = {},
+    options: { file?: string; onStarted?: (session: SessionSummary) => void } = {},
+  ): Promise<void> {
     const request = this.requestOf(intent, options);
     if (request instanceof ActionError) return this.fail(request);
     const own = this.refusalOfStart();
     if (own) return this.fail(own);
     // Reserve the low-level start before notifying Front subscribers: a subscriber may stop synchronously.
     const start = this.src.low.run.start(request);
-    return this.guarded('start', () => start.then(() => undefined));
+    return this.guarded('start', () =>
+      start.then((started) => {
+        if (started) options.onStarted?.(started);
+      }),
+    );
   }
 
   /**
