@@ -1,5 +1,5 @@
 // 配信と経路の試験（捨てない）。
-import { expect, test } from '@playwright/test';
+import { expect, test } from './support/gui-test';
 import { guiToken } from './support/gui-server';
 
 const staticOnly = () =>

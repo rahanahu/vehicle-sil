@@ -839,6 +839,8 @@ test('workbench writes an ECU input, detaches the ECU, and loads the recorded YA
   try {
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
+    await page.clock.install();
+    await page.clock.resume();
     await page.goto(server.url);
     await expect(page.getByRole('button', { name: 'Record & start' })).toBeEnabled();
     const network = page.getByRole('combobox', { name: 'Network', exact: true });
@@ -884,11 +886,20 @@ test('workbench writes an ECU input, detaches the ECU, and loads the recorded YA
       .selectOption('scenarios/throttle.yaml');
     // The session can arrive over the socket before the start response. Delay that response
     // beyond the old five-second limit: its session ID must still identify this recording.
+    let releaseStart!: () => void;
+    const holdStart = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    let markStartFetched!: () => void;
+    const startFetched = new Promise<void>((resolve) => {
+      markStartFetched = resolve;
+    });
     await page.route(
       '**/api/run',
       async (route) => {
         const response = await route.fetch();
-        await new Promise((resolve) => setTimeout(resolve, 5500));
+        markStartFetched();
+        await holdStart;
         await route.fulfill({ response });
       },
       { times: 1 },
@@ -899,12 +910,20 @@ test('workbench writes an ECU input, detaches the ECU, and loads the recorded YA
     const started = page.waitForResponse(
       (response) => response.url().endsWith('/api/run') && response.request().method() === 'POST',
     );
-    await page.getByRole('button', { name: 'Record & start' }).click();
-    expect((await start).postDataJSON()).not.toHaveProperty('stop_at_ms');
+    try {
+      await page.getByRole('button', { name: 'Record & start' }).click();
+      expect((await start).postDataJSON()).not.toHaveProperty('stop_at_ms');
+      await startFetched;
+      await expect(page.getByText('Starting recording…')).toBeVisible();
+      await expect(page.getByText('Network: forever.yaml', { exact: true })).toBeVisible();
+      await expect(observer.getByText('Network: forever.yaml', { exact: true })).toBeVisible();
+      await expect(observer.getByText('Scenario: Free run', { exact: true })).toBeVisible();
+      await page.clock.fastForward(5_500);
+    } finally {
+      releaseStart();
+    }
     await started;
     await expect(page.getByText('Recording', { exact: false }).first()).toBeVisible();
-    await expect(observer.getByText('Network: forever.yaml', { exact: true })).toBeVisible();
-    await expect(observer.getByText('Scenario: Free run', { exact: true })).toBeVisible();
     const demand = page.getByRole('spinbutton', { name: 'engine.demand', exact: true });
     await expect(demand).toBeEnabled({ timeout: RUN_TIMEOUT });
     expect(
@@ -1032,7 +1051,7 @@ test('workbench writes an ECU input, detaches the ECU, and loads the recorded YA
     await pausedDemand.press('Enter');
     const row = page.locator('app-io-row').filter({ hasText: 'engine.demand' });
     await expect(row.getByText('Write pending')).toBeVisible();
-    await page.waitForTimeout(11_000);
+    await page.clock.fastForward(11_000);
     await expect(row.getByText('Write pending')).toBeVisible();
     await expect(row.getByText('Write failed')).toHaveCount(0);
     await page.getByRole('button', { name: 'Resume', exact: true }).click();

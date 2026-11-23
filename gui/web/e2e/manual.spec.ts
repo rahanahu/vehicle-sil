@@ -1,7 +1,7 @@
 // 自分で起動する participant（ランチャーの manual-participants）を、本物の GUI サーバーと流し直すランチャーで通す。
 // simulation.yaml の録りでは、自分で起動する participant は参加しない（止めるまで待つ）。manual.yaml の録りでは、
 // Dashboard が構成ファイルで manual: true で、後から参加し、終わっても残る（replay-fault: manual-stay）。
-import { expect, test } from '@playwright/test';
+import { expect, test } from './support/gui-test';
 import {
   RUN_TIMEOUT,
   choose,

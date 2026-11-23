@@ -4,7 +4,7 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { CONFIGS, REPLAY_LAUNCHER, GuiServer, launchGuiServer } from './support/gui-server';
-import { RUN_TIMEOUT } from './support/run-page';
+import { RUN_TIMEOUT, inSync } from './support/run-page';
 import {
   Target,
   openVariables,
@@ -27,7 +27,7 @@ test.beforeAll(async () => {
   server = await launchGuiServer({
     launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
-    env: { REPLAY_TICK_MS: '100', REPLAY_FEATURES: FEATURES },
+    env: { REPLAY_TICK_MS: '25', REPLAY_FEATURES: FEATURES },
     port: 0,
   });
   target = { base: new URL('/', server.url).href, token: server.token };
@@ -44,7 +44,9 @@ test.afterEach(async ({ page }) => {
 /** 構成ファイルとシナリオを選び、そのシナリオつきの照合が出るまで待つ。 */
 async function chooseScenario(page: import('@playwright/test').Page, scenario: string) {
   await page.goto(`${target.base}#token=${target.token}`);
+  await inSync(page);
   const config = page.getByRole('combobox', { name: '構成ファイル' });
+  await expect(config).toBeEnabled();
   await config.click();
   await page.getByRole('option', { name: 'simulation.yaml', exact: true }).click();
   const checked = page.waitForResponse(

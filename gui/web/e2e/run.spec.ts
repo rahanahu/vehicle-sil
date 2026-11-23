@@ -1,8 +1,8 @@
 // 実行の画面を、本物の GUI サーバーと流し直すランチャー（gui/server/tests/replay_launcher.py）で通す。
 // 構成ファイルは gui/server/tests/configs/ で、ファイルごとに本物のランチャーの出力を録ったもの（recordings/）がある。
 // サーバーは 1 つのセッションしか動かさないので、試験は順に動き、動かしたものは止めてから終わる。
-import { Locator, Page, WebSocketRoute, expect, test } from '@playwright/test';
-import { VIEWPORTS, findLayoutProblems } from './support/layout';
+import { Locator, Page, WebSocketRoute, expect, test } from './support/gui-test';
+import { VIEWPORTS, findLayoutProblems, runViewportProblems } from './support/layout';
 import {
   RUN_TIMEOUT,
   ServerSession,
@@ -23,6 +23,8 @@ import {
 } from './support/run-page';
 import { scaled } from './support/timeouts';
 import { guiToken } from './support/gui-server';
+
+test.describe.configure({ mode: 'parallel' });
 
 test.beforeEach(async ({ page, locale }) => {
   await openRun(page, languageOf(locale));
@@ -782,8 +784,8 @@ test('stopping while the start waits for its answer', async ({ page }) => {
   }
 });
 
-test('the screen asks for the server URL without a token', async ({ browser }) => {
-  const page = await browser.newPage();
+test('the screen asks for the server URL without a token', async ({ browser, baseURL }) => {
+  const page = await browser.newPage({ baseURL });
   await page.goto('/');
   await expect(page.getByTestId('no-token')).toContainText('#token=');
   await page.close();
@@ -911,7 +913,6 @@ for (const language of ['ja', 'en'] as const) {
               await expect(page.locator(`[data-session="${session}"]`).first()).toBeVisible();
             }
           }
-          const content = page.locator('mat-sidenav-content');
           for (const viewport of VIEWPORTS) {
             // 窓は伸ばさない（利用者が見る大きさのまま）
             await page.setViewportSize({ width: viewport.width, height: viewport.height });
@@ -919,31 +920,9 @@ for (const language of ['ja', 'en'] as const) {
               'data-nav-mode',
               viewport.navMode,
             );
-            await content.evaluate((element) => element.scrollTo(0, 0));
             await expect
-              .poll(() => findLayoutProblems(page), { message: `${viewport.width} px` })
+              .poll(() => runViewportProblems(page, viewport), { message: `${viewport.width} px` })
               .toEqual([]);
-            // 操作と結果は、最初の画面に入っていて、下までスクロールしても見えている
-            for (const where of ['top', 'bottom'] as const) {
-              await content.evaluate(
-                (element, to) => element.scrollTo(0, to === 'top' ? 0 : element.scrollHeight),
-                where,
-              );
-              for (const element of [
-                startButton(page),
-                stopButton(page),
-                page.getByTestId('outcome'),
-              ]) {
-                await expect(element, `${viewport.width} px, ${where}`).toBeInViewport({
-                  ratio: 1,
-                });
-              }
-            }
-            // 帯は窓の高さの 3 分の 1 を超えない
-            const band = await page.locator('app-run-status').boundingBox();
-            expect(band?.height ?? 0, `${viewport.width} px`).toBeLessThanOrEqual(
-              viewport.height / 3,
-            );
           }
           await stopIfRunning(page, language);
         });
