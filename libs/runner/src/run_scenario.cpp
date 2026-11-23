@@ -310,6 +310,15 @@ bool RunScenario::wait_for_completion(std::uint64_t& generation, std::chrono::mi
     return changed;
 }
 
+void RunScenario::wake_waiters()
+{
+    {
+        const std::lock_guard lock(completion_mutex_);
+        ++completion_generation_;
+    }
+    completion_changed_.notify_all();
+}
+
 void RunScenario::finish(SimulationController& controller, const WatchResult& watched, bool for_scenario, RunOutcome& outcome)
 {
     if (ctx_.scenario == nullptr)

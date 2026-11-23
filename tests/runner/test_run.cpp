@@ -1705,3 +1705,81 @@ TEST_CASE(why_a_run_ended_is_decided_by_the_setup_then_by_what_asked_first_then_
     check_text(vehicle_sil::runner::end_reason_name(EndReason::Failed), "failed");
     check_text(vehicle_sil::runner::end_reason_name(EndReason::SetupFailed), "setup_failed");
 }
+
+TEST_CASE(run_watch_wakes_immediately_on_non_signal_stop_for_plain_and_scenario_runs)
+{
+    using namespace vehicle_sil::runner::detail;
+    using Clock = std::chrono::steady_clock;
+    namespace orch = SilKit::Services::Orchestration;
+
+    for (const bool with_scenario : {false, true})
+    {
+        for (const bool via_publish : {false, true})
+        {
+            CheckReport check;
+            check.file = "sim.yaml";
+            check.config.emplace();
+            ParticipantConfig member;
+            member.name = "Member";
+            check.config->participants.push_back(member);
+            check.participants.emplace_back();
+            RunPlan plan = plan_run(check, nullptr, ".", RunChoices{});
+            plan.poll = 10s; // Without stop wake, watching would sleep up to 10s.
+            RunObservers observers;
+            StopRequests stops;
+            RunControls controls(stops, true, {}, with_scenario);
+            controls.set_time_lock({});
+            Scenario read;
+            RunContext ctx{plan.config(), plan.check, plan, observers, nullptr, with_scenario ? &read : nullptr, controls, controls.time()};
+            RunOutcome outcome = planned_outcome(plan);
+            RunOutput output(ctx);
+            RunControl control(ctx, output);
+            RunSamples samples({}, {});
+            RunParticipants participants(ctx, output, outcome, plan.base);
+            RunNotes notes(ctx, participants);
+            RunScenario scenario(ctx, output, control, samples);
+            RunStart start(ctx, output, control, notes, scenario, participants, outcome);
+            RunWatch watch(ctx, output, notes, samples, scenario, start, participants, outcome);
+
+            vehicle_sil::unit::InProcessRegistry registry;
+            SimulationControllerOptions options;
+            options.registry_uri = registry.uri;
+            options.required_participants = {"Member"};
+            options.time_control = TimeControlOptions{.step = 10ms, .start_paused = true};
+            SimulationController controller(options);
+            auto peer = std::make_unique<ParticipantRuntime>(
+                vehicle_sil::unit::coordinated_options("Member", registry.uri, VirtualTimeOptions{10ms, std::nullopt}));
+            peer->set_step_handler([](SimTime, SimDuration) {});
+            vehicle_sil::unit::start_together(controller, {peer.get()}, 30s);
+            CHECK(controller.wait_until_paused(vehicle_sil::test::scaled_timeout(10s)).has_value());
+
+            RunWatch::Watched watched;
+            std::thread watcher([&] { watched = watch.watch(controller); });
+            std::this_thread::sleep_for(30ms);
+
+            const auto t0 = Clock::now();
+            if (via_publish)
+            {
+                stops.request(vehicle_sil::runner::stop_source::kEndOfInput);
+                controls.publish();
+            }
+            else
+            {
+                Command stop;
+                stop.name = "stop";
+                stop.accepted = true;
+                CHECK(controls.time().apply(stop, "stdin", [&stops] {
+                    stops.request(vehicle_sil::runner::stop_source::kStopCommand);
+                }).accepted);
+            }
+            watcher.join();
+            const auto elapsed = Clock::now() - t0;
+            peer->stop("test done");
+
+            CHECK(watched.result.end == WatchEnd::Interrupted);
+            CHECK(!watched.for_scenario);
+            CHECK(watched.result.state == std::optional<orch::ParticipantState>(orch::ParticipantState::Shutdown));
+            CHECK(elapsed < 2s);
+        }
+    }
+}

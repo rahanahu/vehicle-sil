@@ -53,10 +53,20 @@ WatchResult watch_simulation(const WatchTarget& target, const WatchOptions& opti
 
 WatchResult watch_simulation(SimulationController& controller, const WatchOptions& options)
 {
+    bool stopping = false;
     WatchTarget target;
-    target.wait_until_finished = [&controller](std::chrono::milliseconds timeout) { return controller.wait_until_finished(timeout); };
+    target.wait_until_finished = [&controller, &options, &stopping](std::chrono::milliseconds timeout) {
+        if (!stopping && options.interrupted)
+        {
+            return controller.wait_until_finished(timeout, options.interrupted);
+        }
+        return controller.wait_until_finished(timeout);
+    };
     target.left_participant = [&controller] { return FailureCheck::left_participant(controller); };
-    target.stop = [&controller](std::string_view reason) { controller.stop(reason); };
+    target.stop = [&controller, &stopping](std::string_view reason) {
+        stopping = true;
+        controller.stop(reason);
+    };
     target.abort = [&controller] { controller.abort(); };
     return watch_simulation(target, options);
 }

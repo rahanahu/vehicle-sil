@@ -248,8 +248,11 @@ void SimulationController::end_gate() noexcept
 {
     if (gate_)
     {
-        const std::lock_guard lock(gate_->mutex);
-        gate_->model.end(Gate::Wall::now());
+        {
+            const std::lock_guard lock(gate_->mutex);
+            gate_->model.end(Gate::Wall::now());
+        }
+        gate_->wake();
     }
 }
 
@@ -347,6 +350,10 @@ std::optional<SimTime> SimulationController::wait_until_paused(std::chrono::mill
         }
         {
             std::unique_lock lock(g.mutex);
+            if (g.model.ended())
+            {
+                return std::nullopt;
+            }
             if (g.model.paused())
             {
                 return g.model.now();
@@ -356,9 +363,9 @@ std::optional<SimTime> SimulationController::wait_until_paused(std::chrono::mill
             {
                 return std::nullopt;
             }
-            // Short slices: the end of the lifecycle is not signalled on this condition variable.
+            // Short slices: the end of the lifecycle may also be seen before end_gate() runs.
             g.cv.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(20)),
-                            [&] { return g.model.paused(); }); // checked again at the top
+                            [&] { return g.model.paused() || g.model.ended(); }); // checked again at the top
         }
     }
 }
@@ -385,6 +392,10 @@ std::optional<SimTime> SimulationController::wait_guarded(std::chrono::milliseco
             return std::nullopt;
         }
         std::unique_lock lock(g.mutex);
+        if (g.model.ended())
+        {
+            return std::nullopt;
+        }
         if (g.model.guarded())
         {
             return g.model.now();
@@ -394,8 +405,9 @@ std::optional<SimTime> SimulationController::wait_guarded(std::chrono::milliseco
         {
             return std::nullopt;
         }
-        // Short slices: the end of the lifecycle is not signalled on this condition variable.
-        g.cv.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(20)), [&] { return g.model.guarded(); });
+        // Short slices: the end of the lifecycle may also be seen before end_gate() runs.
+        g.cv.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(20)),
+                        [&] { return g.model.guarded() || g.model.ended(); });
     }
 }
 
@@ -596,6 +608,12 @@ std::vector<std::string> SimulationController::missing_participants() const
 std::optional<orch::ParticipantState> SimulationController::wait_until_finished(std::chrono::milliseconds timeout)
 {
     return runtime_->wait_until_finished(timeout);
+}
+
+std::optional<orch::ParticipantState> SimulationController::wait_until_finished(
+    std::chrono::milliseconds timeout, const std::function<bool()>& should_wake)
+{
+    return runtime_->wait_until_finished(timeout, should_wake);
 }
 
 void SimulationController::stop(std::string_view reason) noexcept

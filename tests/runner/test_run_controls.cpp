@@ -16,10 +16,12 @@
 #include "vehicle_sil/runner/run_controls.hpp"
 #include "vehicle_sil/process/paths.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -355,4 +357,70 @@ TEST_CASE(run_controls_tell_the_state_of_the_bridges_once_for_each_change)
     controls.set_outside({bridge});
     CHECK_EQ(told.size(), std::size_t{2});
     CHECK(told.back().rev == 2 && controls.state().outside.front().reasons == std::vector<std::string>({"bus-off"}));
+}
+
+TEST_CASE(hold_before_start_and_stop_wake_react_immediately_to_non_signal_stops)
+{
+    using Clock = std::chrono::steady_clock;
+    // Case 1: accepted stop command wakes hold_before_start and stop_wake immediately.
+    {
+        StopRequests stops;
+        RunControls controls(stops, true);
+        controls.set_time_lock({});
+        std::atomic<int> wakes{0};
+        controls.set_stop_wake([&wakes] { wakes.fetch_add(1, std::memory_order_relaxed); });
+
+        std::promise<void> entered;
+        auto enteredFuture = entered.get_future();
+        TimeCommands::Hold result = TimeCommands::Hold::None;
+        std::thread holder([&] {
+            result = controls.time().hold_before_start([&] { return stops.count() > 0; }, 5s, [&] { entered.set_value(); });
+        });
+        CHECK(enteredFuture.wait_for(2s) == std::future_status::ready);
+        std::this_thread::sleep_for(10ms);
+
+        const auto t0 = Clock::now();
+        const Command applied = controls.time().apply(
+            named("stop"), "stdin", [&stops] { stops.request(vehicle_sil::runner::stop_source::kStopCommand); });
+        CHECK(applied.accepted);
+        holder.join();
+        const auto elapsed = Clock::now() - t0;
+        CHECK(result == TimeCommands::Hold::GaveUp);
+        CHECK_EQ(wakes.load(), 1);
+        // With poll = 5s, a missing wake would wait 5s.
+        CHECK(elapsed < 500ms);
+
+        // Clearing stop_wake prevents further notifications on subsequent stops.
+        controls.set_stop_wake({});
+        stops.request(vehicle_sil::runner::stop_source::kStopCommand);
+        controls.publish();
+        CHECK_EQ(wakes.load(), 1);
+    }
+
+    // Case 2: supervisor stop (request + publish) wakes hold_before_start and stop_wake immediately.
+    {
+        StopRequests stops;
+        RunControls controls(stops, true);
+        controls.set_time_lock({});
+        std::atomic<int> wakes{0};
+        controls.set_stop_wake([&wakes] { wakes.fetch_add(1, std::memory_order_relaxed); });
+
+        std::promise<void> entered;
+        auto enteredFuture = entered.get_future();
+        TimeCommands::Hold result = TimeCommands::Hold::None;
+        std::thread holder([&] {
+            result = controls.time().hold_before_start([&] { return stops.count() > 0; }, 5s, [&] { entered.set_value(); });
+        });
+        CHECK(enteredFuture.wait_for(2s) == std::future_status::ready);
+        std::this_thread::sleep_for(10ms);
+
+        const auto t0 = Clock::now();
+        stops.request(vehicle_sil::runner::stop_source::kEndOfInput);
+        controls.publish();
+        holder.join();
+        const auto elapsed = Clock::now() - t0;
+        CHECK(result == TimeCommands::Hold::GaveUp);
+        CHECK_EQ(wakes.load(), 1);
+        CHECK(elapsed < 500ms);
+    }
 }

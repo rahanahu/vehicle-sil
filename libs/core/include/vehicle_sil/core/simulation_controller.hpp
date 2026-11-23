@@ -244,6 +244,11 @@ public:
     /// Waits until the controller's lifecycle has ended. @returns its final state or nullopt.
     std::optional<SilKit::Services::Orchestration::ParticipantState> wait_until_finished(std::chrono::milliseconds timeout);
 
+    /// Like wait_until_finished(timeout), and also returns nullopt early once `should_wake()`
+    /// becomes true (woken promptly via runtime().wake_waiters()).
+    std::optional<SilKit::Services::Orchestration::ParticipantState> wait_until_finished(
+        std::chrono::milliseconds timeout, const std::function<bool()>& should_wake);
+
     /// Stops the simulation (all coordinated participants) and waits for the shutdown.
     void stop(std::string_view reason) noexcept;
 

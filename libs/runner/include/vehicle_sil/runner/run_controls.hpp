@@ -228,9 +228,15 @@ public:
     /// the caller may hold RunOutput's mutex but nothing that is taken under TimeCommands' mutex
     /// (not from what runs under it, see above). Any thread.
     void set_outside(std::vector<RunState::Outside> outside);
+    /// Registers (or clears with an empty function) a short, non-blocking wake callback invoked
+    /// under TimeCommands' mutex when a new stop request is observed via non-signal paths
+    /// (TimeCommands::apply("stop") or publish()). Must not call back into RunControls or
+    /// TimeCommands. Clearing it waits for any in-flight invocation to complete.
+    void set_stop_wake(std::function<void()> wake);
     /// Puts the state together and, if it differs from the one told last (but for `rev`), counts
-    /// `rev` up and tells Observers::on_state. Any thread (not from what runs under TimeCommands'
-    /// mutex, not from a signal handler). Cheap when nothing changed.
+    /// `rev` up and tells Observers::on_state. Also wakes hold_before_start() and any registered
+    /// stop wake if a new stop request has arrived. Any thread (not from what runs under
+    /// TimeCommands' mutex, not from a signal handler). Cheap when nothing changed.
     void publish();
     /// The state as it is now, with the `rev` of the one told last (0: none yet). Any thread, as
     /// publish().
@@ -258,6 +264,10 @@ private:
     RunState told_{};
     /// set_outside(). Under TimeCommands' mutex.
     std::vector<RunState::Outside> outside_{};
+    /// set_stop_wake(). Under TimeCommands' mutex.
+    std::function<void()> on_stop_wake_{};
+    /// Highest stops_.count() already woken through tell(). Under TimeCommands' mutex.
+    int notified_stops_ = 0;
 };
 
 } // namespace vehicle_sil::runner

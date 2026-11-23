@@ -331,6 +331,17 @@ public:
     /// Thread safe against stop() on another thread.
     std::optional<SilKit::Services::Orchestration::ParticipantState> wait_until_finished(std::chrono::milliseconds timeout);
 
+    /// Like wait_until_finished(timeout), and also returns nullopt early once `should_wake()`
+    /// becomes true (woken promptly when another thread calls wake_waiters()). Checks finished
+    /// state before `should_wake()`, so an already-finished lifecycle is still reported.
+    /// `should_wake` is called without holding internal locks.
+    std::optional<SilKit::Services::Orchestration::ParticipantState> wait_until_finished(
+        std::chrono::milliseconds timeout, const std::function<bool()>& should_wake);
+
+    /// Wakes threads blocked in wait_until_finished(timeout, should_wake). Thread safe;
+    /// must NOT be called from a signal handler or console control handler (takes a mutex).
+    void wake_waiters() noexcept;
+
     [[nodiscard]] bool uses_virtual_time() const noexcept { return time_sync_ != nullptr; }
 
     /// Start time of the step that is running or ran last; SimTime{} before the first step.
@@ -498,6 +509,7 @@ private:
     mutable std::mutex peers_mutex_;
     mutable std::condition_variable peers_cv_;
     std::uint64_t peer_generation_ = 0; // guarded by peers_mutex_
+    std::uint64_t wake_generation_ = 0; // guarded by peers_mutex_; bumped by wake_waiters()
     std::map<std::string, PeerRecord, std::less<>> peers_;
 };
 

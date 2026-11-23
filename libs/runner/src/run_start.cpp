@@ -138,7 +138,8 @@ void wait_for_pause_at_start(SimulationController& controller)
     while (std::chrono::steady_clock::now() < give_up)
     {
         const TimeState s = controller.time_state();
-        if (s.paused || !s.pause_target || *s.pause_target > s.now || has_finished(PeerStatus{controller.runtime().state()}) ||
+        if (s.paused || !s.pause_target || *s.pause_target > s.now || controller.runtime().stop_requested() ||
+            has_finished(PeerStatus{controller.runtime().state()}) ||
             controller.wait_until_paused(std::chrono::milliseconds(20)))
         {
             return;

@@ -8,6 +8,7 @@
 
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
+#include "vehicle_sil/core/simulation_watch.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -844,4 +845,75 @@ TEST_CASE(virtual_time_step_hold_of_a_participant_runtime)
     holder.runtime->stop("done");
     holder.runtime->release_step(); // after the stop: safe (nothing is held, or the participant has stopped)
     a.runtime->stop("done");
+}
+
+TEST_CASE(virtual_time_gate_end_gate_wakes_wait_until_paused_and_wait_guarded)
+{
+    {
+        GateSim sim(TimeControlOptions{.step = 10ms, .speed = 1.0});
+        sim.start();
+        std::optional<SimTime> pausedAt = at(1ms);
+        std::atomic<bool> started{false};
+        std::thread waiter([&] {
+            started.store(true, std::memory_order_release);
+            pausedAt = sim.controller->wait_until_paused(10s);
+        });
+        while (!started.load(std::memory_order_acquire))
+        {
+            std::this_thread::sleep_for(1ms);
+        }
+        std::this_thread::sleep_for(20ms);
+        const auto t0 = Wall::now();
+        sim.controller->abort();
+        waiter.join();
+        const auto elapsed = Wall::now() - t0;
+        CHECK(!pausedAt.has_value());
+        CHECK(elapsed < scaled_timeout(500ms));
+    }
+    {
+        GateSim sim(TimeControlOptions{.step = 10ms, .speed = 1.0});
+        sim.controller->guard_from(at(60s));
+        sim.start();
+        std::optional<SimTime> guardedAt = at(1ms);
+        std::atomic<bool> started{false};
+        std::thread waiter([&] {
+            started.store(true, std::memory_order_release);
+            guardedAt = sim.controller->wait_guarded(10s);
+        });
+        while (!started.load(std::memory_order_acquire))
+        {
+            std::this_thread::sleep_for(1ms);
+        }
+        std::this_thread::sleep_for(20ms);
+        const auto t0 = Wall::now();
+        sim.controller->abort();
+        waiter.join();
+        const auto elapsed = Wall::now() - t0;
+        CHECK(!guardedAt.has_value());
+        CHECK(elapsed < scaled_timeout(500ms));
+    }
+}
+
+TEST_CASE(virtual_time_watch_wakes_promptly_on_wake_waiters)
+{
+    GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true});
+    sim.start();
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
+
+    std::atomic<bool> stop{false};
+    WatchOptions opts;
+    opts.poll = 10s;
+    opts.interrupted = [&] { return stop.load(std::memory_order_acquire); };
+    WatchResult result;
+    std::thread watcher([&] { result = watch_simulation(*sim.controller, opts); });
+    std::this_thread::sleep_for(30ms);
+    const auto t0 = Wall::now();
+    stop.store(true, std::memory_order_release);
+    sim.controller->runtime().wake_waiters();
+    watcher.join();
+    const auto elapsed = Wall::now() - t0;
+    CHECK(result.end == WatchEnd::Interrupted);
+    CHECK(result.state == std::optional<orch::ParticipantState>(orch::ParticipantState::Shutdown));
+    // With poll = 10s, a missing wake would wait the full 10s.
+    CHECK(elapsed < 2s);
 }
