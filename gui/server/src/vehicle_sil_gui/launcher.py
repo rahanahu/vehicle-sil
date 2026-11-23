@@ -473,6 +473,16 @@ def run_command(launcher: Launcher, file: str, request: Path, control_credential
     return argv + ["--request", str(request), "--", file]
 
 
+def with_participant_timeouts(argv: list[str], start_timeout_ms: int, stop_timeout_ms: int) -> list[str]:
+    """Inserts non-default participant start/stop timeout options before the trailing `-- <file>`."""
+    options: list[str] = []
+    if start_timeout_ms != 30000:
+        options += ["--participant-start-timeout-ms", str(start_timeout_ms)]
+    if stop_timeout_ms != 10000:
+        options += ["--participant-stop-timeout-ms", str(stop_timeout_ms)]
+    return argv[:-2] + options + argv[-2:]
+
+
 REQUEST_NAME = "the request"
 DESCRIPTIONS_NAME = "the saved descriptions"
 

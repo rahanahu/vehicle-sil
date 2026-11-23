@@ -31,9 +31,9 @@ from .launcher import (CONNECTIONS_FIELDS, DESCRIBE_FIELDS, DESCRIPTIONS_NAME, N
                        InvalidRequest, Launcher,
                        check_command, check_connect, check_disable, check_enable, check_fields, check_manual,
                        check_network, check_params, check_run_millis, check_speed, check_strict, check_time_command, check_time_policy,
-                       check_variant, command_line, connections_command, describe_command, hide_request,
-                       hide_request_in_line, run_command, save_check_command, text_check_command,
-                       write_request_file)
+                       check_variant, connections_command, describe_command, hide_request,
+                       hide_request_in_line, save_check_command, text_check_command,
+                       with_participant_timeouts, write_request_file)
 from . import client_files
 from .config_save import (check_text, check_unchanged, decide, existing_file, new_file, replace_file, save_request,
                           stamp_of)
@@ -41,6 +41,7 @@ from .descriptions import Descriptions
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .recording import Recording
 from .refusal import Refused
+from .runtime import LauncherRuntime, OneShotRuntime, RunHandle, RunSpec
 from .scenarios import list_scenarios, relative_to_config, resolve_scenario
 from .session import SILENT_AFTER_S, Limits, Session, check_timing
 from .source import Source
@@ -205,15 +206,16 @@ class Options:
     save: bool = True  # POST api/config saves a text (not --no-save)
     # It also saves a text that changes the commands that run, and makes new files (--allow-command-changes)
     command_changes_allowed: bool = False
+    runtime: LauncherRuntime | None = None
 
 
 @dataclass(eq=False)
 class Run:
-    """One launcher process and the session it feeds, from its start until its output is read."""
+    """One active or completed run and the session it feeds."""
     session: Session
-    proc: asyncio.subprocess.Process
+    handle: RunHandle
     variables: Variables
-    task: asyncio.Task | None = None
+    silence_task: asyncio.Task | None = None
     features: tuple[str, ...] = ()  # of the launcher that runs it (version --json when it started)
     credentials: Path | None = None  # the control server's credentials file, until the launcher has read it
     request: Path | None = None  # the request file (what the browser chose); its name is hidden from the output
@@ -222,6 +224,71 @@ class Run:
     recording: Recording = field(default_factory=Recording)  # the applied writes made through this server
     timeline: Path | None = None  # the file the launcher writes the scenario's timeline to (--timeline)
     preflight_timing: dict = field(default_factory=dict)
+
+
+class _RunSink:
+    """Routes runtime lifecycle callbacks for one run to GuiServer, Session, Variables, and Hub."""
+
+    def __init__(self, server: GuiServer, run: Run):
+        self._server = server
+        self._run = run
+
+    def on_stdout_line(self, line: str | None) -> None:
+        run, session = self._run, self._run.session
+        if line is None:
+            messages = session.problem("line-too-long", f"the launcher wrote a line longer than "
+                                       f"{MAX_LINE} bytes: it is skipped", None)
+            if session.check is None and not session.check_timing and run.preflight_timing:
+                # Check and run use the same intent, including its stop time.
+                session.check_timing = run.preflight_timing
+                messages.append(session.message())
+            self._server.hub.broadcast(messages)
+        elif line.strip():
+            text = hide_request_in_line(line, run.request) if run.request is not None else line
+            self._server.relay(session, text, run)
+
+    def on_stderr_line(self, line: str) -> None:
+        if not line:
+            return
+        run = self._run
+        text = hide_request(line, run.request) if run.request is not None else line
+        self._server.hub.broadcast(run.session.stderr_line(text))
+
+    def on_problem(self, code: str, message: str, detail: object = None) -> None:
+        self._server.hub.broadcast(self._run.session.problem(code, message, detail))
+
+    def on_process_exited(self, returncode: int | None) -> None:
+        run = self._run
+        if run.silence_task is not None:
+            run.silence_task.cancel()
+        # Recorded now (api/session and a stop see it), sent with the end: a summary sent before the
+        # launcher's last lines are read would be older than the events that follow it.
+        run.session.launcher_exited(returncode)
+        run.request_gone = control.remove(run.request)  # the launcher has ended: it needs the file no more
+
+    async def on_run_finished(self, *, output_cut: bool = False) -> None:
+        run = self._run
+        if run.silence_task is not None:
+            run.silence_task.cancel()
+        if not run.request_gone:
+            run.request_gone = control.remove(run.request)
+        await self._server._close_variables(run)  # before the end: the summary sent with it has their last state
+        await self._server._keep_timeline(run)  # before the end too: the summary says where the file is
+        self._server.hub.broadcast(run.session.ended(output_cut=output_cut))
+
+    async def on_run_cleanup(self) -> None:
+        run = self._run
+        if run.silence_task is not None:
+            run.silence_task.cancel()
+            await asyncio.gather(run.silence_task, return_exceptions=True)
+            run.silence_task = None
+        self._server._remove_credentials(run, last=True)
+        if not run.request_gone and not control.remove(run.request):
+            log.warning("the request file %s of run %s could not be removed: remove it by hand", run.request,
+                        run.session.id)
+        if not run.variables.closed:  # cancelled on the way: the connection is still closed
+            await asyncio.shield(self._server._close_variables(run))
+        self._server._runs.discard(run)
 
 
 @dataclass(eq=False)
@@ -236,6 +303,13 @@ class GuiServer:
         self.o = options
         self.root = ConfigRoot(options.root)
         self.launcher = options.launcher
+        self.runtime: LauncherRuntime = options.runtime or OneShotRuntime(
+            self.launcher, cwd=self.root.root,
+            participant_start_timeout_ms=options.participant_start_timeout_ms,
+            participant_stop_timeout_ms=options.participant_stop_timeout_ms,
+            max_line=MAX_LINE, escalate_wait_s=ESCALATE_WAIT_S,
+            finish_timeout_s=process.OUTPUT_GRACE_S + 1 + VARIABLES_CLOSE_S,
+        )
         self.instance = secrets.token_hex(8)
         # The panel modules are served under panels/<key>/ (a module cannot be imported with a header): this key
         # is not the token, gives only the reading of panel modules, and is told only with GET api/dashboard.
@@ -893,18 +967,18 @@ class GuiServer:
             control.remove(credentials)
             control.remove(timeline)
             raise
-        argv = self._participant_timeouts(run_command(self.launcher, config.relative, request, credentials, timeline))
         try:
-            proc = await process.start(argv, cwd=self.root.root)
-        except BaseException as e:
+            handle = await self.runtime.start_run(RunSpec(
+                config=config.relative, request=request, credentials=credentials, timeline=timeline,
+            ))
+        except BaseException:
             control.remove(credentials)
             control.remove(request)
-            if not isinstance(e, OSError):
-                raise
-            raise Refused(502, "launcher-start", f"cannot start {self.launcher.path}: {e}") from None
+            control.remove(timeline)
+            raise
         # Registered in the same step as the start returns: the server's end sees every launcher.
         session = Session(next(self._ids), config.relative, disable, speed, start_paused, limits=self.o.limits,
-                          launcher_pid=proc.pid, scenario=scenario, manual=manual)
+                          launcher_pid=handle.pid, scenario=scenario, manual=manual)
         session.facts = self.facts
         session.numbered = self.numbered
         variables = Variables(session.id, self._tell_variables, limits=self.o.variable_limits, secret=token,
@@ -918,12 +992,13 @@ class GuiServer:
         recording = Recording() if why_not is None and scenario is None else Recording(
             available=False, reason="this run plays a scenario: its writes are the scenario's own" if scenario
             is not None else f"this run has no variables to write: {why_not}")
-        run = Run(session, proc, variables, features=tuple(self.launcher.features), credentials=credentials,
+        run = Run(session, handle, variables, features=tuple(self.launcher.features), credentials=credentials,
                   token=token, recording=recording, timeline=timeline, request=request,
                   preflight_timing=check_timing(checked))
         self._runs.add(run)
         self.current = run
-        run.task = asyncio.create_task(self._follow(run))
+        run.silence_task = asyncio.create_task(self._watch_silence(session))
+        handle.start(_RunSink(self, run))
         if self._stop_on_start is not None:  # api/stop came while it was starting: it applies now
             self._write_stop(run, self._stop_on_start)
         # The session messages do not carry the variables: a new run's are told right after it.
@@ -964,15 +1039,11 @@ class GuiServer:
         run = self.current
         if run is None:
             return web.json_response({"session": None})
-        session, proc = run.session, run.proc
+        session = run.session
         if self._closing or self._starting:  # the server's end is stopping it, or it is the run before
             return web.json_response({"session": session.summary()})
         if self._write_stop(run, force):  # decided, recorded and written before any await
-            try:
-                async with asyncio.timeout(STDIN_DRAIN_S):
-                    await proc.stdin.drain()
-            except (TimeoutError, BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
-                pass
+            await run.handle.drain(STDIN_DRAIN_S)
         return web.json_response({"session": session.summary()})
 
     async def post_time(self, request: web.Request) -> web.Response:
@@ -997,27 +1068,19 @@ class GuiServer:
         # Compare the target after reading the request and before writing anything to the launcher.
         if targeted and (instance != self.instance or self._starting or run is None or session != run.session.id):
             return error(409, "session-changed", "the run has changed: no time command was sent")
-        proc = run.proc if run else None
         if run is None or self._starting or run.session.state != "running" or not run.session.launcher_running \
-                or proc.stdin is None or proc.stdin.is_closing():
+                or not run.handle.can_send():
             return error(409, "not-running", "no simulation is running: time commands go to the run that is "
                                              "running")
         said = self._launcher_refuses(run, command["command"])
         if said is not None and said[0] == "not-running":  # the run is over (a late command could change nothing)
             return error(409, "not-running", said[1])
         gone = error(409, "not-running", "the launcher's input is closed (it is ending): the command was not sent")
-        try:
-            proc.stdin.write(command_line(command))  # written before any await: in the order the requests came
-        except (BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
+        if not run.handle.send_time(command):  # written before any await: in the order the requests came
             return gone
         if command["command"] in ("resume", "step"):
             run.variables.unsettle()  # it runs on: the values are not called paused until they are read again
-        try:
-            async with asyncio.timeout(STDIN_DRAIN_S):
-                await proc.stdin.drain()
-        except TimeoutError:
-            pass  # the launcher does not read its input now: the command waits there, the request does not
-        except (BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
+        if not await run.handle.drain(STDIN_DRAIN_S):
             return gone
         # Not the summary: what the command does comes later, as the launcher's command and time events.
         return web.json_response({"session_id": run.session.id, "command": command})
@@ -1094,16 +1157,11 @@ class GuiServer:
     def _write_stop(self, run: Run, force: bool) -> bool:
         """Records a stop request and writes its commands to the launcher's input (no await); whether something
         was written that may need draining."""
-        session, proc = run.session, run.proc
+        session = run.session
         commands = session.request_stop(force)
         if not commands:
             return False
-        delivered = proc.stdin is not None and not proc.stdin.is_closing()
-        if delivered:
-            try:
-                proc.stdin.write(b'{"command":"stop"}\n' * commands)
-            except (BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
-                delivered = False
+        delivered = run.handle.send_stop(commands)
         messages = []
         if not delivered:
             messages = session.problem("stop-not-delivered", "the stop could not be written to the launcher's "
@@ -1246,12 +1304,8 @@ class GuiServer:
         return code, result
 
     def _participant_timeouts(self, argv: list[str]) -> list[str]:
-        options = []
-        if self.o.participant_start_timeout_ms != 30000:
-            options += ["--participant-start-timeout-ms", str(self.o.participant_start_timeout_ms)]
-        if self.o.participant_stop_timeout_ms != 10000:
-            options += ["--participant-stop-timeout-ms", str(self.o.participant_stop_timeout_ms)]
-        return argv[:-2] + options + argv[-2:]
+        return with_participant_timeouts(argv, self.o.participant_start_timeout_ms,
+                                         self.o.participant_stop_timeout_ms)
 
     async def _launcher_check(self, argv: list[str], request: Path, descriptions: Path | None = None,
                               text: bytes | None = None) -> tuple[int, dict]:
@@ -1316,37 +1370,6 @@ class GuiServer:
 
     # ------------------------------------------------------------ the launcher's run
 
-    async def _follow(self, run: Run) -> None:
-        """Reads the launcher's output until it has exited (not until its output ends: what it started may keep
-        the output open), then the rest for a short time."""
-        session, proc = run.session, run.proc
-        reader = asyncio.create_task(self._read_output(run))
-        watch = asyncio.create_task(self._watch_silence(session))
-        try:
-            code = await process.wait_exit(proc)
-            watch.cancel()
-            process.kill_tree(proc)  # what the launcher left in its group (POSIX)
-            # Recorded now (api/session and a stop see it), sent with the end: a summary sent before the
-            # launcher's last lines are read would be older than the events that follow it.
-            session.launcher_exited(code)
-            run.request_gone = control.remove(run.request)  # the launcher has ended: it needs the file no more
-            done, _ = await asyncio.wait({reader}, timeout=process.OUTPUT_GRACE_S)
-            await self._close_variables(run)  # before the end: the summary sent with it has their last state
-            await self._keep_timeline(run)  # before the end too: the summary says where the file is
-            self.hub.broadcast(session.ended(output_cut=not done))
-        finally:
-            watch.cancel()
-            reader.cancel()
-            await asyncio.gather(reader, watch, return_exceptions=True)
-            process.close_pipes(proc)
-            self._remove_credentials(run, last=True)
-            if not run.request_gone and not control.remove(run.request):
-                log.warning("the request file %s of run %s could not be removed: remove it by hand", run.request,
-                            run.session.id)
-            if not run.variables.closed:  # cancelled on the way: the connection is still closed
-                await asyncio.shield(self._close_variables(run))
-            self._runs.discard(run)
-
     async def _keep_timeline(self, run: Run) -> None:
         """Keeps the run's timeline file if the launcher wrote a whole one: a result that does not report
         timeline-write (a file written only in part), and a file that is not empty."""
@@ -1400,29 +1423,6 @@ class GuiServer:
             await asyncio.sleep(min(1.0, self.o.silent_after_s / 4))
             self.hub.broadcast(session.check_silence(time.monotonic(), self.o.silent_after_s))
 
-    async def _read_output(self, run: Run) -> None:
-        session, proc = run.session, run.proc
-
-        async def stdout() -> None:
-            async for line in process.lines(proc.stdout, MAX_LINE):
-                if line is None:
-                    messages = session.problem("line-too-long", f"the launcher wrote a line longer than "
-                                               f"{MAX_LINE} bytes: it is skipped", None)
-                    if session.check is None and not session.check_timing and run.preflight_timing:
-                        # Check and run use the same intent, including its stop time.
-                        session.check_timing = run.preflight_timing
-                        messages.append(session.message())
-                    self.hub.broadcast(messages)
-                elif line.strip():
-                    self.relay(session, hide_request_in_line(line, run.request), run)
-
-        async def stderr() -> None:
-            async for line in process.lines(proc.stderr, 64 * 1024):
-                if line:
-                    self.hub.broadcast(session.stderr_line(hide_request(line, run.request)))
-
-        await asyncio.gather(stdout(), stderr(), return_exceptions=True)
-
     def relay(self, session: Session, line: str, run: Run | None = None) -> None:
         """One line of the launcher's events: into the summary and to the screens. Nothing that goes wrong with
         one line stops the reading: the line becomes a bad-event problem, and the next line is read."""
@@ -1465,11 +1465,11 @@ class GuiServer:
                 await self._started.wait()
         except TimeoutError:
             log.warning("a run was still starting when the server stopped")
-        await asyncio.gather(*(self._stop_run(run) for run in list(self._runs)))
+        await self.runtime.shutdown(self._hurry, self.o.stop_timeout_s)
         for proc in list(self._checks):  # one that was starting when the end began
             process.kill_tree(proc)
-        for run in list(self._runs):
-            log.warning("the launcher (pid %s) could not be stopped: stop it by hand", run.proc.pid)
+        for pid in self.runtime.active_pids():
+            log.warning("the launcher (pid %s) could not be stopped: stop it by hand", pid)
         self.hub.close_all()
         if self._ticker is not None:
             self._ticker.cancel()
@@ -1479,36 +1479,9 @@ class GuiServer:
 
     def kill_all(self) -> None:
         """The last resort when the end takes longer than it may: every launcher's and check's tree."""
-        for proc in [run.proc for run in self._runs] + list(self._checks):
+        self.runtime.kill_all()
+        for proc in list(self._checks):
             process.kill_tree(proc)
-
-    async def _stop_run(self, run: Run) -> None:
-        proc, session = run.proc, run.session
-        if proc.returncode is None:
-            if proc.stdin is not None:
-                proc.stdin.close()
-            if not await self._wait(proc, self.o.stop_timeout_s):
-                why = ("shutdown was requested again" if self._hurry.is_set() or self.o.stop_timeout_s is None else
-                       f"the launcher did not stop in {self.o.stop_timeout_s:g} s after its input closed")
-                self.hub.broadcast(session.problem("stop-escalated", f"{why}: the launcher was asked to stop "
-                                                   "(SIGTERM / Ctrl+Break)", None))
-                process.ask_to_stop(proc)
-                if not await self._wait(proc, ESCALATE_WAIT_S):
-                    process.kill_tree(proc)
-                    await process.wait_bounded(proc, process.KILL_WAIT_S)
-        if run.task is not None:
-            await asyncio.wait({run.task}, timeout=process.OUTPUT_GRACE_S + 1 + VARIABLES_CLOSE_S)
-
-    async def _wait(self, proc: asyncio.subprocess.Process, seconds: float | None) -> bool:
-        hurry = asyncio.create_task(self._hurry.wait())
-        done = asyncio.create_task(process.wait_exit(proc))
-        await asyncio.wait({hurry, done}, timeout=seconds, return_when=asyncio.FIRST_COMPLETED)
-        hurry.cancel()
-        if not done.done():
-            done.cancel()
-            # Exit may have been reported between the last poll and this timeout.
-            return proc.returncode is not None
-        return True
 
     async def _close_sockets(self) -> None:
         sockets = dict(self._sockets)
