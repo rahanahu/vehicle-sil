@@ -211,6 +211,7 @@ void scenario_time_commands_same(const Options& o)
         std::int64_t now = run.standing();
         require(now == 0, "a pause before the simulation runs: it stands still at 0 ms, not at " + std::to_string(now) + " ms");
         run.send_and_stand("step", "\"ms\":10", 10);
+        run.send("speed", "\"value\":2");
         now = 10;
         for (const std::int64_t at : {20, 30, 31, 50, 70, 90, 110, 170, 195, 200, 210, 220, 230, 240, 250, 270, 290, 300})
         {
@@ -244,10 +245,11 @@ void scenario_time_commands_same(const Options& o)
         run.send("pause");
         const std::int64_t at = run.standing();
         require(at >= 70 && at + 60 < 210, what + ": the pause came in the wave, not at " + std::to_string(at) + " ms");
+        run.send("speed", "\"value\":1");
         run.send_and_stand("step", "\"ms\":10", at + 10);
         run.send_and_stand("step", "\"ms\":30", at + 40);
         run.send_and_stand("run_until", "\"at_ms\":" + std::to_string(at + 55), at + 60);
-        run.send("speed", "\"value\":0.5");
+        run.send("speed", "\"value\":2");
         run.send_and_stand("run_until", "\"at_ms\":205", 210);
         run.send("speed", "\"value\":\"max\"");
         run.send("resume");
@@ -267,13 +269,14 @@ void scenario_time_commands_same(const Options& o)
         std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
         run.send("speed", slow(0.03));
         run.send("pause");
-        if (run.standing() < 45)
+        const std::int64_t stood = run.standing();
+        run.send("speed", "\"value\":2");
+        if (stood < 45)
         {
             run.send_and_stand("run_until", "\"at_ms\":45", 50); // in the expect within 40 ms of 30 ms
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(3 * wait_ms));
         // In the wait for the pulse: longer on the wall clock than anything in the scenario allows for.
-        run.send("speed", "\"value\":2");
         run.send_and_stand("run_until", "\"at_ms\":185", 190);
         std::this_thread::sleep_for(std::chrono::milliseconds(300 + wait_ms));
         run.send("speed", "\"value\":4");

@@ -49,6 +49,7 @@ REASON_RUN_CHANGED = "run-changed"
 REASON_BUSY = "busy"
 # The fault injection of a test build: how long the launcher sleeps before it closes its own SIL Kit connections.
 FAULT_DELAY_ENV = "VEHICLE_SIL_FAULT_CLOSE_DELAY_MS"
+FAULT_CLOSE_TIMEOUT_ENV = "VEHICLE_SIL_FAULT_CLOSE_TIMEOUT_MS"
 TRACE_ENV = "VEHICLE_SIL_TRACE"
 # The gRPC metadata of the Run (also in vehicle_sil_control).
 RUN_METADATA = "vehicle-sil-run"
@@ -463,6 +464,25 @@ def descendants(pid: int) -> List[int]:
     proc = pathlib.Path("/proc")
     if not proc.is_dir():
         return []
+    task_dir = proc / str(pid) / "task"
+    if task_dir.is_dir():
+        try:
+            out_fast: List[int] = []
+            seen = {pid}
+            queue = [pid]
+            while queue:
+                cur = queue.pop(0)
+                cur_task = proc / str(cur) / "task"
+                for tid_entry in cur_task.iterdir():
+                    for token in (tid_entry / "children").read_text().split():
+                        child = int(token)
+                        if child not in seen:
+                            seen.add(child)
+                            out_fast.append(child)
+                            queue.append(child)
+            return out_fast
+        except (OSError, ValueError):
+            pass
     parent: Dict[int, int] = {}
     for entry in proc.iterdir():
         if not entry.name.isdigit():
@@ -501,7 +521,7 @@ def _listening_inodes() -> set:
     return inodes
 
 
-def resources(pid: int) -> Optional[dict]:
+def resources(pid: int, *, check_listen: bool = True) -> Optional[dict]:
     """What the process `pid` holds now (Linux): descriptors, threads, RSS and anonymous memory (KiB), the processes
     below it, the TCP sockets it listens on. None elsewhere, or if the process has gone."""
     base = pathlib.Path(f"/proc/{pid}")
@@ -517,28 +537,32 @@ def resources(pid: int) -> Optional[dict]:
         key, _, rest = line.partition(":")
         if key in ("Threads", "VmRSS", "RssAnon", "VmSize"):
             values[key] = int(rest.split()[0])
-    listening = _listening_inodes()
-    listen = 0
+    socket_inodes = []
     for fd in fds:
         try:
             target = os.readlink(fd)
         except OSError:
             continue
-        if target.startswith("socket:[") and target[8:-1] in listening:
-            listen += 1
+        if target.startswith("socket:["):
+            socket_inodes.append(target[8:-1])
+    listen = 0
+    if check_listen and socket_inodes:
+        listening = _listening_inodes()
+        listen = sum(1 for inode in socket_inodes if inode in listening)
     return {"fds": len(fds), "threads": values.get("Threads"), "rss_kb": values.get("VmRSS"),
             "anon_kb": values.get("RssAnon"), "vm_kb": values.get("VmSize"), "descendants": len(descendants(pid)),
             "listen": listen}
 
 
 def settled_resources(pid: int, baseline: Mapping, keys: Iterable[str] = ("fds", "threads", "descendants", "listen"),
-                      timeout: float = 5.0) -> dict:
+                      timeout: float = 5.0, *, check_listen: bool = True) -> dict:
     """resources(pid), taken again for a short while until `keys` are back at `baseline` (a thread or a descriptor of
     the last Run may still be on its way out right after idle). The last one taken."""
+    active_keys = tuple(k for k in keys if check_listen or k != "listen")
     deadline = time.monotonic() + scaled(timeout)
     while True:
-        now = resources(pid) or {}
-        if all(now.get(k) == baseline.get(k) for k in keys) or time.monotonic() > deadline:
+        now = resources(pid, check_listen=check_listen) or {}
+        if all(now.get(k) == baseline.get(k) for k in active_keys) or time.monotonic() > deadline:
             return now
         time.sleep(0.05)
 

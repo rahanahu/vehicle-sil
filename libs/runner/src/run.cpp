@@ -204,6 +204,22 @@ std::vector<std::string> participant_names(const config::SimulationConfig& confi
     return names;
 }
 
+std::chrono::milliseconds fault_close_timeout(std::chrono::milliseconds fallback)
+{
+#ifdef VEHICLE_SIL_FAULT_INJECTION
+    const char* const text = std::getenv("VEHICLE_SIL_FAULT_CLOSE_TIMEOUT_MS");
+    if (text == nullptr || *text == '\0')
+    {
+        return fallback;
+    }
+    char* end = nullptr;
+    const long long ms = std::strtoll(text, &end, 10);
+    return *end == '\0' && ms > 0 && ms <= 3'600'000 ? std::chrono::milliseconds(ms) : fallback;
+#else
+    return fallback;
+#endif
+}
+
 } // namespace
 
 RunnerImpl::RunnerImpl(RunPlan plan, RunObservers observers, RunEvents* events, RunControls& controls) :
@@ -482,7 +498,7 @@ void RunnerImpl::close_connection(std::shared_ptr<RunConnection> connection)
     // `interrupted` is asked on this thread, during the wait only: the caller's rule
     // (RunObservers::close_cut, serve), else a stop request that comes after the wait began.
     const auto left = detail::close_connection_within(
-      std::move(connection), close_limit_, ctx_.plan.poll,
+      std::move(connection), fault_close_timeout(close_limit_), ctx_.plan.poll,
       [this, interrupts] { return ctx_.observers.close_cut ? ctx_.observers.close_cut(interrupts) : ctx_.interrupts() > interrupts; },
       detail::fault_close_delay());
     if (!left)

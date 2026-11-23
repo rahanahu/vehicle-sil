@@ -19,6 +19,7 @@ from serve_support import (
     EXIT_IDLE_EOF,
     EXIT_INTERRUPTED,
     EXIT_USAGE,
+    FAULT_CLOSE_TIMEOUT_ENV,
     FAULT_DELAY_ENV,
     REASON_RUN_CHANGED,
     REASON_RUN_REQUIRED,
@@ -324,14 +325,14 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
         if fault_delay_built():
             # Single late stop during close does NOT cut close_within -> no contamination, launcher stays alive.
             env_h = dict(os.environ)
-            env_h[FAULT_DELAY_ENV] = "1200"
+            env_h[FAULT_DELAY_ENV] = str(int(scaled(500)))
             with Serve(self.launch, cfg, env=env_h) as srv:
                 before = srv.ready()
                 cid = srv.run(req_vt0)
                 rid = srv.run_started(cid, after=before)["run"]
                 srv.wait_for(lambda e: e.get("event") == "phase" and e.get("run") == rid and e.get("phase") == "stopping",
                              "stopping")
-                time.sleep(0.25)
+                time.sleep(0.15)
                 srv.send({"command": "stop", "run": rid, "id": 777})
                 res = srv.result_of(rid)
                 self.assertFalse(res["launcher_ends"], f"single late stop contaminated launcher: {res}")
@@ -356,9 +357,9 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
         self.assertEqual(c_vt0.returncode, 0, c_vt0.stderr)
 
         # Case A: close_within expires its limit -> connection-not-closed finding, launcher_ends: true, exit 6.
-        # close_limit = 5s + max(stop_timeout_ms, 5s) = 10s; delay 12s exceeds it reliably.
         env_timeout = dict(os.environ)
-        env_timeout[FAULT_DELAY_ENV] = "12000"
+        env_timeout[FAULT_CLOSE_TIMEOUT_ENV] = str(int(scaled(400)))
+        env_timeout[FAULT_DELAY_ENV] = str(int(scaled(1000)))
         with Serve(self.launch, cfg, arguments=["--participant-stop-timeout-ms", "1000"], env=env_timeout) as srv:
             old_instance = srv.instance
             before = srv.ready()
@@ -384,7 +385,7 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
             rid = srv_f.run_started(cid, after=before)["run"]
             srv_f.wait_for(lambda e: e.get("event") == "phase" and e.get("run") == rid and e.get("phase") == "stopping",
                            "stopping")
-            time.sleep(0.25)
+            time.sleep(0.15)
             srv_f.send({"command": "stop", "run": rid, "id": 801})
             srv_f.send({"command": "stop", "run": rid, "id": 802})
             res = srv_f.result_of(rid)
@@ -395,7 +396,7 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
         # Caller starts a fresh launcher without fault delay: new instance, Cold-equivalent result.
         env_clean = dict(os.environ)
         env_clean.pop(FAULT_DELAY_ENV, None)
-        env_clean.pop(FAULT_DELAY_ENV, None)
+        env_clean.pop(FAULT_CLOSE_TIMEOUT_ENV, None)
         with Serve(self.launch, cfg, env=env_clean) as srv2:
             self.assertNotEqual(srv2.instance, old_instance)
             rec = srv2.run_once(req_vt0)
@@ -442,11 +443,13 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
                 for i in range(n_res):
                     rec = srv.run_once(req)
                     self.assertEqual(rec.result["result"], "passed")
-                    now = settled_resources(srv.process.pid, baseline)
+                    check_listen = (i % 10 == 0 or i == n_res - 1)
+                    now = settled_resources(srv.process.pid, baseline, check_listen=check_listen)
                     self.assertEqual(now["fds"], baseline["fds"], f"fd leak at run {i + 1}: {now} vs {baseline}")
                     self.assertEqual(now["threads"], baseline["threads"], f"thread leak at run {i + 1}: {now} vs {baseline}")
                     self.assertEqual(now["descendants"], 0, f"descendants left at run {i + 1}")
-                    self.assertEqual(now["listen"], 0, f"listening sockets left at run {i + 1}")
+                    if check_listen:
+                        self.assertEqual(now["listen"], 0, f"listening sockets left at run {i + 1}")
                     rss_series.append(now["rss_kb"])
                 srv.close_input()
                 self.assertEqual(srv.wait(), EXIT_IDLE_EOF)

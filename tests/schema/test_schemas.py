@@ -39,6 +39,7 @@ Needs PyYAML and jsonschema (the `schema` dependency group of pyproject.toml).
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import copy
 import json
 import os
@@ -46,6 +47,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -725,13 +727,16 @@ class Launcher:
     def __init__(self, directory: Path):
         self.directory = directory
         self.count = 0
+        self._lock = threading.RLock()
         self.scenario_configuration: Path | None = None
         # The points file the samples name (points: { file: points.csv }), beside the scenarios.
         (directory / "points.csv").write_text("time,throttle,connected\n0,0,false\n100,50,true\n", encoding="utf-8", newline="\n")
 
     def write(self, text: str) -> Path:
-        self.count += 1
-        path = self.directory / f"file{self.count}.yaml"
+        with self._lock:
+            self.count += 1
+            count = self.count
+        path = self.directory / f"file{count}.yaml"
         path.write_text(text.replace("@EXE@", LAUNCH), encoding="utf-8", newline="\n")
         return path
 
@@ -745,12 +750,14 @@ class Launcher:
         if not EXAMPLE_DIR or not (Path(EXAMPLE_DIR) / "simulation.yaml").is_file():
             raise AssertionError("VEHICLE_SIL_EXAMPLE_DIR must be the directory of the built examples/ecu_main "
                                  f"(simulation.yaml next to its ECUs), not {EXAMPLE_DIR!r}")
-        if self.scenario_configuration is None:
-            self.scenario_configuration = self.write(SCENARIO_CONFIG.replace("@DIR@", str(Path(EXAMPLE_DIR).resolve())))
-            report = check(str(self.scenario_configuration), "--variant", "small")
-            if errors_of(report):
-                raise AssertionError(f"the configuration the scenarios are checked with has errors: {errors_of(report)}")
-        report = check(str(self.scenario_configuration), "--variant", "small", "--scenario", str(self.write(text)))
+        with self._lock:
+            if self.scenario_configuration is None:
+                self.scenario_configuration = self.write(SCENARIO_CONFIG.replace("@DIR@", str(Path(EXAMPLE_DIR).resolve())))
+                report = check(str(self.scenario_configuration), "--variant", "small")
+                if errors_of(report):
+                    raise AssertionError(f"the configuration the scenarios are checked with has errors: {errors_of(report)}")
+            scenario_configuration = self.scenario_configuration
+        report = check(str(scenario_configuration), "--variant", "small", "--scenario", str(self.write(text)))
         return errors_of(report)
 
     def keys_at(self, errors: list[dict]) -> set[str]:
@@ -1090,6 +1097,7 @@ class RunRequestSchemaAndLauncher(unittest.TestCase):
         cls.temporary = tempfile.TemporaryDirectory(prefix="vehicle-sil-request-")
         cls.directory = Path(cls.temporary.name)
         cls.count = 0
+        cls._lock = threading.Lock()
 
     @classmethod
     def tearDownClass(cls):
@@ -1097,8 +1105,10 @@ class RunRequestSchemaAndLauncher(unittest.TestCase):
 
     def refusal(self, text: str) -> list[str]:
         """What `check --request` says is wrong with the request file of `text` (the configuration is not reached)."""
-        type(self).count += 1
-        path = self.directory / f"request{self.count}.json"
+        with type(self)._lock:
+            type(self).count += 1
+            count = self.count
+        path = self.directory / f"request{count}.json"
         path.write_text(text, encoding="utf-8", newline="\n")
         report = check("--request", str(path), str(self.directory / "no-configuration.yaml"))
         said = [f["message"] for f in report["findings"] if f["message"].startswith(str(path))]
@@ -1118,8 +1128,10 @@ class RunRequestSchemaAndLauncher(unittest.TestCase):
                          f"{sorted(launcher_keys - schema_keys)}): add or remove them in the schema, with a description")
 
     def test_the_launcher_reads_what_the_schema_accepts_and_refuses_what_it_refuses(self):
-        for what, text, verdict in REQUEST_SAMPLES:
-            said = self.refusal(text)
+        workers = min(os.cpu_count() or 4, 4)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(lambda sample: (sample, self.refusal(sample[1])), REQUEST_SAMPLES))
+        for (what, text, verdict), said in results:
             if verdict == "valid":
                 self.assertEqual(said, [], f"request sample '{what}': the schema accepts it, the launcher does not; "
                                            f"correct the sample or the schema\n{text}")
@@ -1330,8 +1342,11 @@ class SchemaAndLauncher(unittest.TestCase):
         }
         mappings = simulation_mappings()
         self.assertEqual(set(probes), set(mappings))
-        for where, text in probes.items():
-            self.same_keys(where, keys_of(mappings[where]), self.launcher.keys_at(self.launcher.configuration(text)),
+        workers = min(os.cpu_count() or 4, 4)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            checked = list(pool.map(lambda item: (item[0], self.launcher.configuration(item[1])), probes.items()))
+        for where, errors in checked:
+            self.same_keys(where, keys_of(mappings[where]), self.launcher.keys_at(errors),
                            "simulation.schema.json")
 
     def test_the_keys_of_a_scenario_are_the_launchers(self):
@@ -1350,8 +1365,11 @@ class SchemaAndLauncher(unittest.TestCase):
         }
         mappings = scenario_mappings()
         self.assertEqual(set(probes), set(mappings))
-        for where, text in probes.items():
-            self.same_keys(where, keys_of(mappings[where]), self.launcher.keys_at(self.launcher.scenario(text)),
+        workers = min(os.cpu_count() or 4, 4)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            checked = list(pool.map(lambda item: (item[0], self.launcher.scenario(item[1])), probes.items()))
+        for where, errors in checked:
+            self.same_keys(where, keys_of(mappings[where]), self.launcher.keys_at(errors),
                            "scenario.schema.json")
 
     def test_the_kinds_of_step_are_the_launchers(self):
@@ -1379,19 +1397,22 @@ class SchemaAndLauncher(unittest.TestCase):
         self.same_keys("participants[].role", set(roles), listed(said[0]), "simulation.schema.json")
 
     def test_the_launcher_reads_what_the_schema_accepts_and_refuses_what_it_refuses(self):
-        for name, samples, ask in (("configuration", CONFIG_SAMPLES, self.launcher.configuration),
-                                   ("scenario", SCENARIO_SAMPLES, self.launcher.scenario)):
-            for what, text, verdict in samples:
-                errors = [f"{e['code']}: {e['message']}" for e in ask(text)]
-                if verdict == "valid":
-                    self.assertEqual(errors, [], f"{name} sample '{what}': the schema accepts it, the launcher does "
-                                                 f"not; correct the sample or the schema\n{text}")
-                else:
-                    self.assertNotEqual(errors, [],
-                                        f"{name} sample '{what}' ({verdict}): the launcher reads it without an error; "
-                                        + ("the schema refuses a file that is right: loosen the schema"
-                                           if verdict == "invalid" else "it is not a mistake any more: remove the sample")
-                                        + f"\n{text}")
+        workers = min(os.cpu_count() or 4, 4)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for name, samples, ask in (("configuration", CONFIG_SAMPLES, self.launcher.configuration),
+                                       ("scenario", SCENARIO_SAMPLES, self.launcher.scenario)):
+                results = list(pool.map(lambda sample: (sample, ask(sample[1])), samples))
+                for (what, text, verdict), raw_errors in results:
+                    errors = [f"{e['code']}: {e['message']}" for e in raw_errors]
+                    if verdict == "valid":
+                        self.assertEqual(errors, [], f"{name} sample '{what}': the schema accepts it, the launcher does "
+                                                     f"not; correct the sample or the schema\n{text}")
+                    else:
+                        self.assertNotEqual(errors, [],
+                                            f"{name} sample '{what}' ({verdict}): the launcher reads it without an error; "
+                                            + ("the schema refuses a file that is right: loosen the schema"
+                                               if verdict == "invalid" else "it is not a mistake any more: remove the sample")
+                                            + f"\n{text}")
 
 
 
