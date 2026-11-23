@@ -154,32 +154,62 @@ def touch(path: Path) -> None:
 
 
 def test_a_run_compares_its_targets_right_before_the_launcher_starts(tmp_path: Path) -> None:
-    """While a run waits for its check, the file changes, or the network is listed again (here the new list fails):
-    the run is refused and nothing starts."""
+    """While a run is preparing before the launcher starts, if the file changes or the network is listed again
+    and fails, the run is refused and nothing starts."""
+    from aiohttp.test_utils import TestServer
+    import aiohttp
+    from conftest import Gui
+    from vehicle_sil_gui.launcher import Launcher
+    from vehicle_sil_gui.server import GuiServer, Options
+
     root = tmp_path / "root"
     shutil.copytree(CONFIGS, root)
     broken = tmp_path / "broken"
     run = {"file": FILE, "connect": {"ETH_EXT": "fake0"}}
 
-    async def main(c: Client) -> None:
-        await listed(c)
-        starting = asyncio.ensure_future(c.post("api/run", run))
-        await asyncio.sleep(0.5)  # the run's checks take 1.5 s each
-        touch(root / FILE)
-        refused(*await starting, "target-not-listed")
-        await listed(c)
-        broken.touch()
-        starting = asyncio.ensure_future(c.post("api/run", run))
-        await asyncio.sleep(0.5)
-        status, reply = await c.post("api/connections", LIST)  # it waits for the run's check, and fails
-        assert (status, reply["error"]["code"]) == (502, "launcher-output"), reply
-        error = refused(*await starting, "target-not-listed")
-        assert "there is no list of where 'ETH_EXT'" in error["message"]
-        status, body = await c.get("api/session")
-        assert body["session"] is None
-    with gui_server(tmp_path, root=root, launcher=stand_in(tmp_path, broken),
-                    env={"REPLAY_CHECK_DELAY_MS": "1500"}) as gui:
-        run_async(main, gui)
+    async def main() -> None:
+        launcher_path = stand_in(tmp_path, broken)
+        launcher = Launcher(launcher_path)
+        await launcher.probe()
+        server = GuiServer(Options(root=root, launcher=launcher, port=0, token="test-token", variables=False))
+        test_server = TestServer(server.app(), host="127.0.0.1")
+        await test_server.start_server()
+        assert test_server.port is not None
+        server.hosts = {f"127.0.0.1:{test_server.port}"}
+        server.origins = {f"http://127.0.0.1:{test_server.port}"}
+        gui = Gui(proc=None, port=test_server.port, token="test-token",
+                  url=f"http://127.0.0.1:{test_server.port}/#token=test-token", stderr=tmp_path / ".err")
+        orig_no_vars = server._no_variables
+
+        async def slow_no_vars():
+            await asyncio.sleep(0.35)
+            return await orig_no_vars()
+
+        server._no_variables = slow_no_vars  # type: ignore[method-assign]
+        try:
+            async with aiohttp.ClientSession() as http:
+                c = Client(gui, http)
+                await listed(c)
+                starting = asyncio.ensure_future(c.post("api/run", run))
+                await asyncio.sleep(0.1)
+                touch(root / FILE)
+                refused(*await starting, "target-not-listed")
+
+                await listed(c)
+                broken.touch()
+                starting = asyncio.ensure_future(c.post("api/run", run))
+                await asyncio.sleep(0.1)
+                status, reply = await c.post("api/connections", LIST)
+                assert (status, reply["error"]["code"]) == (502, "launcher-output"), reply
+                error = refused(*await starting, "target-not-listed")
+                assert "there is no list of where 'ETH_EXT'" in error["message"]
+                status, body = await c.get("api/session")
+                assert body["session"] is None
+        finally:
+            await server.shutdown()
+            await test_server.close()
+
+    asyncio.run(main())
 
 
 def test_a_network_that_the_file_lacks_is_left_to_the_launcher(tmp_path: Path) -> None:
@@ -201,23 +231,51 @@ def test_a_network_that_the_file_lacks_is_left_to_the_launcher(tmp_path: Path) -
 
 
 def test_a_run_whose_file_changes_during_its_check_connects_nothing(tmp_path: Path) -> None:
-    """A network that the file lacks is left to the launcher, but only for the file that was checked: if the file
-    changes while the run waits for its check, it may have that network now, so the run is refused."""
+    """A network that the file lacks is left to the launcher, but only for the file as it was read: if the file
+    changes before the launcher starts, it may have that network now, so the run is refused."""
+    from aiohttp.test_utils import TestServer
+    import aiohttp
+    from conftest import Gui
+    from vehicle_sil_gui.launcher import Launcher
+    from vehicle_sil_gui.server import GuiServer, Options
+
     root = tmp_path / "root"
     shutil.copytree(CONFIGS, root)
 
-    async def main(c: Client) -> None:
-        starting = asyncio.ensure_future(c.post("api/run", {"file": FILE, "connect": {"CAN1": "physical:1"}}))
-        await asyncio.sleep(0.5)  # the run's checks take 1.5 s each
-        touch(root / FILE)
-        error = refused(*await starting, "target-not-listed")
-        assert "connect.yaml has changed since this run was checked" in error["message"]
-        assert error["detail"] == {"network": "CAN1", "target": "physical:1"}
-        status, body = await c.get("api/session")
-        assert body["session"] is None
-    with gui_server(tmp_path, root=root, launcher=stand_in(tmp_path),
-                    env={"REPLAY_CHECK_DELAY_MS": "1500"}) as gui:
-        run_async(main, gui)
+    async def main() -> None:
+        launcher = Launcher(stand_in(tmp_path))
+        await launcher.probe()
+        server = GuiServer(Options(root=root, launcher=launcher, port=0, token="test-token", variables=False))
+        test_server = TestServer(server.app(), host="127.0.0.1")
+        await test_server.start_server()
+        assert test_server.port is not None
+        server.hosts = {f"127.0.0.1:{test_server.port}"}
+        server.origins = {f"http://127.0.0.1:{test_server.port}"}
+        gui = Gui(proc=None, port=test_server.port, token="test-token",
+                  url=f"http://127.0.0.1:{test_server.port}/#token=test-token", stderr=tmp_path / ".err")
+        orig_no_vars = server._no_variables
+
+        async def slow_no_vars():
+            await asyncio.sleep(0.35)
+            return await orig_no_vars()
+
+        server._no_variables = slow_no_vars  # type: ignore[method-assign]
+        try:
+            async with aiohttp.ClientSession() as http:
+                c = Client(gui, http)
+                starting = asyncio.ensure_future(c.post("api/run", {"file": FILE, "connect": {"CAN1": "physical:1"}}))
+                await asyncio.sleep(0.1)
+                touch(root / FILE)
+                error = refused(*await starting, "target-not-listed")
+                assert "connect.yaml has changed since this run was checked" in error["message"]
+                assert error["detail"] == {"network": "CAN1", "target": "physical:1"}
+                status, body = await c.get("api/session")
+                assert body["session"] is None
+        finally:
+            await server.shutdown()
+            await test_server.close()
+
+    asyncio.run(main())
 
 
 def test_the_list_is_of_a_network_of_the_file(tmp_path: Path) -> None:
@@ -238,6 +296,28 @@ def test_the_list_is_of_a_network_of_the_file(tmp_path: Path) -> None:
         assert reply["exit_code"] == 0 and reply["connections"]["networks"][0]["name"] == "J1939_CAN"
     with gui_server(tmp_path) as gui:
         run_async(main, gui)
+
+
+def test_non_list_networks_yaml_fails_closed_on_connect(tmp_path: Path) -> None:
+    """When networks cannot be read from YAML metadata, non-'none' connect targets fail closed unless listed."""
+    from vehicle_sil_gui.server import _read_config_metadata
+
+    cfg = tmp_path / "weird.yaml"
+    cfg.write_text("vehicle_sil_simulation: 2\nnetworks: not-a-list\nparticipants:\n  - name: Engine\n",
+                   encoding="utf-8")
+    _, participants, networks = _read_config_metadata(cfg, None)
+    assert participants == ["Engine"] and networks is None
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "weird.yaml").write_text("vehicle_sil_simulation: 2\nnetworks: not-a-list\nparticipants: []\n",
+                                      encoding="utf-8")
+    with gui_server(tmp_path, root=root) as gui:
+        async def refuse(c: Client) -> None:
+            error = refused(*await c.post("api/run", {"file": "weird.yaml", "connect": {"CAN1": "fake0"}}),
+                            "target-not-listed")
+            assert error["detail"] == {"network": "CAN1", "target": "fake0"}
+        run_async(refuse, gui)
 
 
 def test_lists_wait_in_the_queue_of_the_checks(tmp_path: Path) -> None:

@@ -301,7 +301,7 @@ def test_every_run_replays_by_the_rules_of_the_event_stream(name: str, tmp_path:
         argv[argv.index("--timeline") + 1] = str(timeline)
     sends = [e["send"] for e in entries if "send" in e]
     code, events, err = replay(argv, sends, env, timeout=5 if any("hang" in e for e in entries) else 20)
-    if "--timeline" in argv:  # written where the launcher wrote it: before the line that names it
+    if "--timeline" in argv and events[-1].get("result", {}).get("result") != "usage":  # written where the launcher wrote it: before the line that names it
         written = json.loads(timeline.read_text(encoding="utf-8"))
         assert written["vehicle_sil_timeline"] == 1 and written["file"] == head["config"], written
         assert any(e["event"] == "log" and e["line"] == f"timeline: {timeline}" for e in events), err

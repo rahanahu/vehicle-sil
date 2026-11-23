@@ -287,6 +287,9 @@ class OneShotRunHandle:
             return False
         return True
 
+    def abort(self) -> None:
+        process.kill_tree(self._proc)
+
     async def drain(self, timeout_s: float) -> bool:
         if self._proc.stdin is None:
             return False
@@ -483,6 +486,10 @@ class ServeRunHandle:
         except (BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
             return False
         return True
+
+    def abort(self) -> None:
+        self._resident.ending = True
+        process.kill_tree(self._resident.proc)
 
     async def drain(self, timeout_s: float) -> bool:
         stdin = self._resident.proc.stdin

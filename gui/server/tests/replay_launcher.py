@@ -927,6 +927,10 @@ class Player:
                 self.pace(entry["gap_ms"])
             elif "out" in entry:
                 event = self.marks(entry["out"])
+                if self.argv[:1] == ["run"] and event.get("event") == "check":
+                    delay_ms = int(os.environ.get("REPLAY_CHECK_DELAY_MS", "0"))
+                    if delay_ms > 0:
+                        time.sleep(delay_ms / 1000)
                 self.moved(event)
                 if event.get("event") == "phase" and event.get("phase") == "ended":
                     self.control_end()  # closed before the run's end is written, as the launcher does

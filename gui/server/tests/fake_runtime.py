@@ -76,6 +76,8 @@ def default_check_result(config: str = "simple.yaml",
 class FakeRun:
     """In-memory RunHandle driven directly by tests."""
 
+    waits_for_check = False
+
     def __init__(self, spec: RunSpec, *, pid: int, on_done: Callable[[FakeRun], None]):
         self.spec = spec
         self._pid = pid

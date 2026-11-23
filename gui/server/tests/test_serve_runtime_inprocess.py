@@ -88,6 +88,27 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
             t_ms += 5
             emit({"event": "phase", "seq": seq, "t_ms": t_ms, "run": run_id, "phase": "checking"})
             seq += 1
+            if mode == "check-hang" and run_counter == 1:
+                import time as _time
+                _time.sleep(5.0)
+                continue
+            if mode == "check-fail-first" and run_counter == 1:
+                emit({"event": "check", "seq": seq, "t_ms": t_ms, "run": run_id, "check": {
+                    "vehicle_sil_check": 1, "result": "failed", "errors": 1, "warnings": 0, "notes": 0,
+                    "participants": [], "networks": [],
+                    "findings": [{"severity": "error", "code": "step-mismatch", "file": cfg, "line": 1,
+                                  "participant": "Engine", "network": None, "message": "step mismatch"}],
+                }})
+                seq += 1
+                emit({"event": "phase", "seq": seq, "t_ms": t_ms + 1, "run": run_id, "phase": "ended"})
+                seq += 1
+                emit({"event": "result", "seq": seq, "t_ms": t_ms + 2, "run": run_id, "launcher_ends": False,
+                      "result": {"result": "check_failed", "errors": 1, "warnings": 0, "notes": 0, "findings": []}})
+                seq += 1
+                current_run = None
+                emit({"event": "idle", "seq": seq, "t_ms": t_ms + 3})
+                seq += 1
+                continue
             emit({"event": "check", "seq": seq, "t_ms": t_ms, "run": run_id, "check": {
                 "vehicle_sil_check": 1, "result": "passed", "errors": 0, "warnings": 0, "notes": 0,
                 "participants": [{"name": "Engine", "enabled": True, "manual": False, "variables": []}],
@@ -724,5 +745,61 @@ def test_serve_shutdown_during_spawn_leaks_nothing(tmp_path: Path) -> None:
         finally:
             control.credentials_file = orig_creds  # type: ignore[assignment]
             os.environ.pop("FAKE_SERVE_LOG", None)
+
+    asyncio.run(run())
+
+
+def test_serve_check_failed_keeps_resident_ready_without_advancing_session_id(tmp_path: Path) -> None:
+    async def run() -> None:
+        async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "check-fail-first"}) as (server, c, _):
+            rt = server.runtime
+            assert isinstance(rt, ServeRuntime)
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+
+            st, body = await c.post("api/run", {"file": "a.yaml"})
+            assert st == 422 and body["error"]["code"] == "check-failed", body
+            assert body["error"]["detail"]["result"] == "failed"
+            assert body["error"]["detail"]["findings"][0]["code"] == "step-mismatch"
+
+            # No session created, resident remains ready on a.yaml
+            st_sess, cur = await c.get("api/session")
+            assert st_sess == 200 and cur["session"] is None
+            assert rt.status()["state"] == "ready"
+            pid1 = rt.resident_pid
+            assert pid1 is not None
+
+            # Subsequent start succeeds on the same resident with session id == 1
+            st_ok, run_body = await c.post("api/run", {"file": "a.yaml"})
+            assert st_ok == 200 and run_body["session"]["id"] == 1
+            assert rt.resident_pid == pid1
+            assert rt.resident_starts == 1
+            await sock.until(is_ended)
+            await sock.close()
+
+    asyncio.run(run())
+
+
+def test_serve_check_timeout_aborts_hung_launcher_and_recovers(tmp_path: Path) -> None:
+    async def run() -> None:
+        async with _serve_gui(tmp_path, variables=False, stop_timeout_s=0.1,
+                              env={"FAKE_SERVE_BEHAVIOR": "check-hang"}) as (server, c, _):
+            server.o.check_timeout_s = 0.2
+            rt = server.runtime
+            assert isinstance(rt, ServeRuntime)
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+
+            st, err = await c.post("api/run", {"file": "a.yaml"})
+            assert st == 504 and err["error"]["code"] == "check-timeout", err
+            assert not server._runs
+            st_sess, cur = await c.get("api/session")
+            assert st_sess == 200 and cur["session"] is None
+
+            os.environ["FAKE_SERVE_BEHAVIOR"] = "normal"
+            st_ok, run_body = await c.post("api/run", {"file": "a.yaml"})
+            assert st_ok == 200 and run_body["session"]["id"] == 1
+            await sock.until(is_ended)
+            await sock.close()
 
     asyncio.run(run())
