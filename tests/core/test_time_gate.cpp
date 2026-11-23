@@ -856,7 +856,7 @@ TEST_CASE(virtual_time_gate_end_gate_wakes_wait_until_paused_and_wait_guarded)
         std::atomic<bool> started{false};
         std::thread waiter([&] {
             started.store(true, std::memory_order_release);
-            pausedAt = sim.controller->wait_until_paused(10s);
+            pausedAt = sim.controller->wait_until_paused(scaled_timeout(10s));
         });
         while (!started.load(std::memory_order_acquire))
         {
@@ -878,7 +878,7 @@ TEST_CASE(virtual_time_gate_end_gate_wakes_wait_until_paused_and_wait_guarded)
         std::atomic<bool> started{false};
         std::thread waiter([&] {
             started.store(true, std::memory_order_release);
-            guardedAt = sim.controller->wait_guarded(10s);
+            guardedAt = sim.controller->wait_guarded(scaled_timeout(10s));
         });
         while (!started.load(std::memory_order_acquire))
         {
@@ -902,7 +902,7 @@ TEST_CASE(virtual_time_watch_wakes_promptly_on_wake_waiters)
 
     std::atomic<bool> stop{false};
     WatchOptions opts;
-    opts.poll = 10s;
+    opts.poll = scaled_timeout(10s);
     opts.interrupted = [&] { return stop.load(std::memory_order_acquire); };
     WatchResult result;
     std::thread watcher([&] { result = watch_simulation(*sim.controller, opts); });
@@ -914,6 +914,6 @@ TEST_CASE(virtual_time_watch_wakes_promptly_on_wake_waiters)
     const auto elapsed = Wall::now() - t0;
     CHECK(result.end == WatchEnd::Interrupted);
     CHECK(result.state == std::optional<orch::ParticipantState>(orch::ParticipantState::Shutdown));
-    // With poll = 10s, a missing wake would wait the full 10s.
-    CHECK(elapsed < 2s);
+    // With poll = scaled_timeout(10s), a missing wake would wait the full poll.
+    CHECK(elapsed < scaled_timeout(2s));
 }

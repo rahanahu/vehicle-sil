@@ -268,6 +268,8 @@ private:
     std::function<void()> on_stop_wake_{};
     /// Highest stops_.count() already woken through tell(). Under TimeCommands' mutex.
     int notified_stops_ = 0;
+    /// Highest stops_.count() already woken for hold_before_start() in publish(). Under TimeCommands' mutex.
+    int notified_hold_stops_ = 0;
 };
 
 } // namespace vehicle_sil::runner

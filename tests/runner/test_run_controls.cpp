@@ -362,6 +362,7 @@ TEST_CASE(run_controls_tell_the_state_of_the_bridges_once_for_each_change)
 TEST_CASE(hold_before_start_and_stop_wake_react_immediately_to_non_signal_stops)
 {
     using Clock = std::chrono::steady_clock;
+    using vehicle_sil::test::scaled_timeout;
     // Case 1: accepted stop command wakes hold_before_start and stop_wake immediately.
     {
         StopRequests stops;
@@ -374,9 +375,10 @@ TEST_CASE(hold_before_start_and_stop_wake_react_immediately_to_non_signal_stops)
         auto enteredFuture = entered.get_future();
         TimeCommands::Hold result = TimeCommands::Hold::None;
         std::thread holder([&] {
-            result = controls.time().hold_before_start([&] { return stops.count() > 0; }, 5s, [&] { entered.set_value(); });
+            result = controls.time().hold_before_start([&] { return stops.count() > 0; }, scaled_timeout(5s),
+                                                       [&] { entered.set_value(); });
         });
-        CHECK(enteredFuture.wait_for(2s) == std::future_status::ready);
+        CHECK(enteredFuture.wait_for(scaled_timeout(2s)) == std::future_status::ready);
         std::this_thread::sleep_for(10ms);
 
         const auto t0 = Clock::now();
@@ -387,8 +389,8 @@ TEST_CASE(hold_before_start_and_stop_wake_react_immediately_to_non_signal_stops)
         const auto elapsed = Clock::now() - t0;
         CHECK(result == TimeCommands::Hold::GaveUp);
         CHECK_EQ(wakes.load(), 1);
-        // With poll = 5s, a missing wake would wait 5s.
-        CHECK(elapsed < 500ms);
+        // With poll = scaled_timeout(5s), a missing wake would wait the full poll.
+        CHECK(elapsed < scaled_timeout(500ms));
 
         // Clearing stop_wake prevents further notifications on subsequent stops.
         controls.set_stop_wake({});
@@ -409,9 +411,10 @@ TEST_CASE(hold_before_start_and_stop_wake_react_immediately_to_non_signal_stops)
         auto enteredFuture = entered.get_future();
         TimeCommands::Hold result = TimeCommands::Hold::None;
         std::thread holder([&] {
-            result = controls.time().hold_before_start([&] { return stops.count() > 0; }, 5s, [&] { entered.set_value(); });
+            result = controls.time().hold_before_start([&] { return stops.count() > 0; }, scaled_timeout(5s),
+                                                       [&] { entered.set_value(); });
         });
-        CHECK(enteredFuture.wait_for(2s) == std::future_status::ready);
+        CHECK(enteredFuture.wait_for(scaled_timeout(2s)) == std::future_status::ready);
         std::this_thread::sleep_for(10ms);
 
         const auto t0 = Clock::now();
@@ -421,6 +424,40 @@ TEST_CASE(hold_before_start_and_stop_wake_react_immediately_to_non_signal_stops)
         const auto elapsed = Clock::now() - t0;
         CHECK(result == TimeCommands::Hold::GaveUp);
         CHECK_EQ(wakes.load(), 1);
-        CHECK(elapsed < 500ms);
+        CHECK(elapsed < scaled_timeout(500ms));
+    }
+
+    // Case 3: intervening tell() (e.g. set_outside() from a bridge thread) between stops.request()
+    // and controls.publish() must not suppress the hold_before_start() wakeup.
+    {
+        StopRequests stops;
+        RunControls controls(stops, true);
+        controls.set_time_lock({});
+        std::atomic<int> wakes{0};
+        controls.set_stop_wake([&wakes] { wakes.fetch_add(1, std::memory_order_relaxed); });
+
+        std::promise<void> entered;
+        auto enteredFuture = entered.get_future();
+        TimeCommands::Hold result = TimeCommands::Hold::None;
+        std::thread holder([&] {
+            result = controls.time().hold_before_start([&] { return stops.count() > 0; }, scaled_timeout(5s),
+                                                       [&] { entered.set_value(); });
+        });
+        CHECK(enteredFuture.wait_for(scaled_timeout(2s)) == std::future_status::ready);
+        std::this_thread::sleep_for(10ms);
+
+        const auto t0 = Clock::now();
+        stops.request(vehicle_sil::runner::stop_source::kEndOfInput);
+        RunState::Outside bridge;
+        bridge.network = "CAN";
+        bridge.target = "can0";
+        bridge.participant = "bridge.CAN";
+        controls.set_outside({bridge});
+        controls.publish();
+        holder.join();
+        const auto elapsed = Clock::now() - t0;
+        CHECK(result == TimeCommands::Hold::GaveUp);
+        CHECK_EQ(wakes.load(), 1);
+        CHECK(elapsed < scaled_timeout(500ms));
     }
 }

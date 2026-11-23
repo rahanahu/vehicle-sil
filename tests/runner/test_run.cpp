@@ -1724,7 +1724,7 @@ TEST_CASE(run_watch_wakes_immediately_on_non_signal_stop_for_plain_and_scenario_
             check.config->participants.push_back(member);
             check.participants.emplace_back();
             RunPlan plan = plan_run(check, nullptr, ".", RunChoices{});
-            plan.poll = 10s; // Without stop wake, watching would sleep up to 10s.
+            plan.poll = vehicle_sil::test::scaled_timeout(10s); // Without stop wake, watching would sleep up to the poll limit.
             RunObservers observers;
             StopRequests stops;
             RunControls controls(stops, true, {}, with_scenario);
@@ -1779,7 +1779,7 @@ TEST_CASE(run_watch_wakes_immediately_on_non_signal_stop_for_plain_and_scenario_
             CHECK(watched.result.end == WatchEnd::Interrupted);
             CHECK(!watched.for_scenario);
             CHECK(watched.result.state == std::optional<orch::ParticipantState>(orch::ParticipantState::Shutdown));
-            CHECK(elapsed < 2s);
+            CHECK(elapsed < vehicle_sil::test::scaled_timeout(2s));
         }
     }
 }

@@ -155,7 +155,12 @@ void RunControls::publish()
 {
     bool wake_hold = false;
     time_.look([this, &wake_hold](const TimeFacts& facts) {
-        wake_hold = stops_.count() > notified_stops_;
+        const int stop_count = stops_.count();
+        if (facts.holding && stop_count > notified_hold_stops_)
+        {
+            notified_hold_stops_ = stop_count;
+            wake_hold = true;
+        }
         tell(facts);
     });
     if (wake_hold)

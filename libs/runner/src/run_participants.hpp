@@ -98,8 +98,8 @@ private:
     void show_manual(const config::ParticipantConfig& p, const std::filesystem::path& executable,
                      const std::vector<std::string>& arguments, const std::filesystem::path& workDir);
     [[nodiscard]] bool any_running(bool required_only);
-    /// Waits up to `timeout` until `done()`; stops waiting once more than `interrupts_allowed`
-    /// interrupts have come (detail::wait_for()).
+    /// Waits up to `timeout` until `done()` using bounded 1 -> 2 -> 4 -> 5 ms backoff; stops
+    /// waiting once more than `interrupts_allowed` interrupts have come.
     template <class Done>
     Waited wait_until(std::chrono::milliseconds timeout, int interrupts_allowed, Done done);
 
