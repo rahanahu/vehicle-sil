@@ -14,7 +14,17 @@ export default defineConfig({
   // 1 つの試験と expect の待ちの上限（Playwright の既定の 30 秒と 5 秒）に、VEHICLE_SIL_TEST_TIMEOUT_SCALE の倍率を掛ける
   timeout: scaled(30_000),
   expect: { timeout: scaled(5_000) },
-  reporter: [['list']],
+  reporter: [
+    ['list'],
+    [
+      'junit',
+      {
+        outputFile:
+          process.env['VEHICLE_SIL_PLAYWRIGHT_JUNIT']?.trim() ||
+          '../../build/logs/web-e2e-real.junit.xml',
+      },
+    ],
+  ],
   outputDir: 'test-results/real',
   globalSetup: './e2e/support/real-server.ts',
   use: {

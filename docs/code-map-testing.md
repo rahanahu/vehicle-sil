@@ -61,7 +61,7 @@ Run on your computer what the change can break; leave the full matrix of presets
 | A public header or a class or function template that many targets include | Build the touched targets with `linux-clang-tsan`: `scripts/verify.py linux-clang-tsan --targets <target> --tests '<regex>'` |
 | What the launcher prints or counts (findings, events, `run` output), or the documentation that copies it | `^launch`, `^multi_host\.`, `^schema\.` and `^template\.` (the ECU project template), which compare the documentation (see [Documentation examples and tests](#documentation-examples-and-tests)) |
 | Launcher output that the GUI replays (`gui/server/tests/recordings/`), or the Control API | `scripts/verify.py linux-gcc-control --tests '^control'`, then `scripts/verify-gui.py --skip-web --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch` |
-| The browser GUI only | `scripts/verify-web.py --skip-install` (`--e2e-grep <pattern>` runs only the matching e2e tests) |
+| The browser GUI only | `scripts/verify-web.py --skip-install` (`--e2e-grep <pattern>` runs only the matching e2e tests; `--summarize-junit build/logs/web-e2e.junit.xml` lists per-file times and the slowest tests) |
 | Documentation only | `scripts/check-docs.py` |
 | A script only | `python3 tests/scripts/test_<name>.py` |
 

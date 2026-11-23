@@ -14,6 +14,15 @@ process.env['VEHICLE_SIL_GUI_E2E_DEV_PORT'] ??= String(freePort());
 const devPort = Number(process.env['VEHICLE_SIL_GUI_E2E_DEV_PORT']);
 const devOrigin = `http://127.0.0.1:${devPort}`;
 
+const junitOutputFile = (mode: E2eMode): string => {
+  const fromEnv = process.env['VEHICLE_SIL_PLAYWRIGHT_JUNIT']?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+  const kind = process.env['VEHICLE_SIL_VERIFY_WORKBENCH'] === '1' ? 'workbench' : mode;
+  return `../../build/logs/web-e2e-${kind}.junit.xml`;
+};
+
 export const e2eConfig = (mode: E2eMode) =>
   defineConfig({
     testDir: 'e2e',
@@ -26,7 +35,7 @@ export const e2eConfig = (mode: E2eMode) =>
     // 1 つの試験と expect の待ちの上限（Playwright の既定の 30 秒と 5 秒）に、VEHICLE_SIL_TEST_TIMEOUT_SCALE の倍率を掛ける
     timeout: scaled(30_000),
     expect: { timeout: scaled(5_000) },
-    reporter: [['list']],
+    reporter: [['list'], ['junit', { outputFile: junitOutputFile(mode) }]],
     outputDir: `test-results/${mode}`,
     globalSetup: './e2e/support/gui-server.ts',
     metadata: mode === 'dev' ? { devOrigin } : {},
