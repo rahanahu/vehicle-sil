@@ -274,7 +274,7 @@ test('the connect part lists its network only when it is opened, and the run it 
   page,
 }) => {
   // At the recorded pace the run of the recording is connected for about 10 s: long enough to see its row
-  const server = await serve('connect.yaml', undefined, { REPLAY_TICK_MS: '1000' });
+  const server = await serve('connect.yaml', undefined, { REPLAY_TICK_MS: '350' });
   cleanups.push(() => server.stop());
   test.setTimeout(120_000);
   const posted: { path: string; body: unknown }[] = [];

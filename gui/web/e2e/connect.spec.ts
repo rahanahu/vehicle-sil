@@ -15,7 +15,7 @@ test('a network is connected outside only when chosen, says so before each start
   const server: GuiServer = await launchGuiServer({
     launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
-    env: { REPLAY_TICK_MS: '1000' },
+    env: { REPLAY_TICK_MS: '350' },
     port: 0,
   });
   const posted: { path: string; body: unknown }[] = [];

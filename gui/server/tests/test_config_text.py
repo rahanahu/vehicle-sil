@@ -291,7 +291,7 @@ def test_a_text_is_checked_with_no_description_when_describing_fails(tmp_path: P
     (which says what went wrong)."""
     with open(root / FILE, "a", encoding="utf-8") as f:
         f.write("# stand-in: describe hangs\n")
-    server, log = serve(tmp_path, root, args=("--check-timeout", "1"))
+    server, log = serve(tmp_path, root, args=("--check-timeout", "0.25"))
 
     async def main(c: Client) -> None:
         body = {"file": FILE, "text": unsaved(root)}

@@ -130,6 +130,7 @@ def no_heartbeat(monkeypatch) -> None:
     and while it waits for a command it does not run on (no time events that depend on timing)."""
     monkeypatch.setenv("REPLAY_HEARTBEAT_MS", "0")
     monkeypatch.setenv("REPLAY_RUN_ON", "0")
+    monkeypatch.setenv("REPLAY_NO_SLEEPERS", "1")
 
 
 class Normalizer:
@@ -500,7 +501,7 @@ def test_config_text_examples(tmp_path: Path) -> None:
 
 
 def test_errors_of_the_launcher_and_of_load(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"REPLAY_CHECK_DELAY_MS": "2000"}, args=("--check-timeout", "1")) as gui:
+    with gui_server(tmp_path, env={"REPLAY_CHECK_DELAY_MS": "1000"}, args=("--check-timeout", "0.2")) as gui:
         async def talk(c: Client) -> None:
             req = {"file": "simulation.yaml"}
             status, body = await c.post("api/check", req)

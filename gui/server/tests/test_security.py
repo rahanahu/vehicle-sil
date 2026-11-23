@@ -6,12 +6,19 @@ import json
 import os
 import shutil
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from urllib.parse import unquote
 
 import aiohttp
 import pytest
 from conftest import CONFIGS, Client, Gui, gui_server, run_async, wait_until
+
+
+@pytest.fixture(scope="module")
+def gui(tmp_path_factory) -> Iterator[Gui]:
+    with gui_server(tmp_path_factory.mktemp("security-gui")) as g:
+        yield g
 
 API = [("GET", "api/app"), ("GET", "api/configs"), ("GET", "api/session"), ("POST", "api/check"),
        ("POST", "api/run"), ("POST", "api/stop"), ("POST", "api/time"), ("GET", "api/dashboard"),

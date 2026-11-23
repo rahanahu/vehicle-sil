@@ -149,6 +149,7 @@ test('started paused: a parameter can be written before the first step, and a wr
   await expect(enabled.getByRole('switch')).toHaveAttribute('aria-checked', 'false');
   await page.unroute('**/api/write');
 
+  await mode.scrollIntoViewIfNeeded();
   await timeCommand(page, target, 'resume');
   await expect(mode.getByTestId('widget-write')).toHaveText(/0\.000 s のステップで反映しました/);
   await expect(mode.getByRole('combobox')).toContainText('on');

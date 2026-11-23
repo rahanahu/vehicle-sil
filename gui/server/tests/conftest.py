@@ -4,12 +4,15 @@ launcher, and an HTTP and WebSocket client that sends what the screen sends."""
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import Awaitable, Callable, Iterator
@@ -111,6 +114,8 @@ def gui_server(tmp_path: Path, *, root: Path = CONFIGS, env: dict | None = None,
     test fails with what it wrote: a command that no recording has, one that came later than recorded, ...)."""
     environment = dict(os.environ)
     environment.setdefault("REPLAY_TICK_MS", "10")
+    if "VEHICLE_SIL_CONTROL_STUBS" not in environment and (stubs := _default_control_stubs()) is not None:
+        environment["VEHICLE_SIL_CONTROL_STUBS"] = str(stubs)
     environment.pop("REPLAY_FAULT", None)
     environment.pop("REPLAY_CASE", None)
     report = tmp_path / f"replay-{time.monotonic_ns()}.txt"
@@ -150,24 +155,44 @@ CONTROL_FEATURES = ("events,stdin-commands,request,check-variables,speed,start-p
                     "network-names,run-traffic,j1939-nodes,connect,connections,connect-counts,run-stop-at,control-server")
 
 
-@pytest.fixture(scope="session")
-def control_stubs(tmp_path_factory) -> Path:
-    """The gRPC stubs of the Control API, made once for the tests that use the stand-in for the launcher's control
-    server (fake_control.py). Skips when grpcio-tools is not installed (`uv sync` installs it); fails instead
-    when VEHICLE_SIL_GUI_REQUIRE_CONTROL is 1 (scripts/verify-gui.py sets it)."""
+_SESSION_STUBS: Path | None = None
+_SESSION_STUBS_ERROR: ImportError | None = None
+_SESSION_STUBS_READY = False
+
+
+def _default_control_stubs() -> Path | None:
+    """Generates the Control API gRPC stubs once per pytest process so server subprocesses do not re-run protoc."""
+    global _SESSION_STUBS, _SESSION_STUBS_ERROR, _SESSION_STUBS_READY
+    if _SESSION_STUBS_READY:
+        return _SESSION_STUBS
+    _SESSION_STUBS_READY = True
     try:
         import grpc  # noqa: F401
         from grpc_tools import protoc
     except ImportError as e:
-        # scripts/verify-gui.py asks for these tests: there, missing packages are a failure, not a skip.
-        if os.environ.get("VEHICLE_SIL_GUI_REQUIRE_CONTROL") == "1":
-            pytest.fail(f"grpcio and grpcio-tools are needed for the tests of the variables ({e}): uv sync")
-        pytest.skip(f"grpcio or grpcio-tools is not installed ({e}): uv sync")
-    out = tmp_path_factory.mktemp("control-stubs")
+        _SESSION_STUBS_ERROR = e
+        return None
+    out = Path(tempfile.mkdtemp(prefix="vehicle-sil-pytest-stubs-"))
+    atexit.register(shutil.rmtree, out, True)
     proto = REPOSITORY / "proto"
     code = protoc.main(["protoc", f"-I{proto}", f"--python_out={out}", f"--grpc_python_out={out}",
                         str(proto / "vehicle_sil" / "control" / "v1" / "control.proto")])
     assert code == 0, "protoc failed"
+    _SESSION_STUBS = out
+    return out
+
+
+@pytest.fixture(scope="session")
+def control_stubs() -> Path:
+    """The gRPC stubs of the Control API, made once for the tests that use the stand-in for the launcher's control
+    server (fake_control.py). Skips when grpcio-tools is not installed (`uv sync` installs it); fails instead
+    when VEHICLE_SIL_GUI_REQUIRE_CONTROL is 1 (scripts/verify-gui.py sets it)."""
+    out = _default_control_stubs()
+    if out is None:
+        # scripts/verify-gui.py asks for these tests: there, missing packages are a failure, not a skip.
+        if os.environ.get("VEHICLE_SIL_GUI_REQUIRE_CONTROL") == "1":
+            pytest.fail(f"grpcio and grpcio-tools are needed for the tests of the variables ({_SESSION_STUBS_ERROR}): uv sync")
+        pytest.skip(f"grpcio or grpcio-tools is not installed ({_SESSION_STUBS_ERROR}): uv sync")
     return out
 
 
@@ -176,7 +201,8 @@ def control_env(control_stubs: Path, monkeypatch) -> dict:
     """The environment of a GUI server whose stand-in launcher has a control server (and of this process, for tests
     that start fake_control themselves)."""
     monkeypatch.setenv("VEHICLE_SIL_CONTROL_STUBS", str(control_stubs))
-    return {"REPLAY_FEATURES": CONTROL_FEATURES, "VEHICLE_SIL_CONTROL_STUBS": str(control_stubs)}
+    return {"REPLAY_FEATURES": CONTROL_FEATURES, "VEHICLE_SIL_CONTROL_STUBS": str(control_stubs),
+            "REPLAY_NO_SLEEPERS": "1"}
 
 
 def without_variables(summary: dict) -> dict:

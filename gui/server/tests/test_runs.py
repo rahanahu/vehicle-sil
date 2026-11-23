@@ -533,7 +533,7 @@ def test_stopping_the_server_stops_the_run(tmp_path: Path, how: int) -> None:
 
 @pytest.mark.skipif(not POSIX, reason="signals and /proc")
 def test_a_launcher_that_does_not_stop_is_killed(tmp_path: Path) -> None:
-    with gui_server(tmp_path, args=("--stop-timeout", "0.5")) as gui:
+    with gui_server(tmp_path, args=("--stop-timeout", "0.2")) as gui:
         pids = start_run(gui, "ignore-stop.yaml")
         start = time.monotonic()
         gui.proc.send_signal(signal.SIGTERM)
@@ -962,5 +962,5 @@ def test_a_launcher_that_does_not_read_its_input_holds_no_request(tmp_path: Path
         await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "log")
         await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "log")
         assert len(events(sock.received, "log")) >= logs + 2
-    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "100"}, args=("--stop-timeout", "1")) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "100"}, args=("--stop-timeout", "0.3")) as gui:
         run_async(main, gui)

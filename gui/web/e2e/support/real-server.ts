@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { REPOSITORY, startGuiServer } from './gui-server';
+import { scaled } from './timeouts';
 
 export default async function startRealGuiServer(): Promise<() => Promise<void>> {
   const launcher = process.env['VEHICLE_SIL_GUI_LAUNCHER'];
@@ -35,7 +36,16 @@ export default async function startRealGuiServer(): Promise<() => Promise<void>>
     throw error;
   }
   process.env['VEHICLE_SIL_GUI_E2E_ROOT'] = root;
-  const stop = await startGuiServer({ launcher: resolve(launcher), root });
+  const stop = await startGuiServer({
+    launcher: resolve(launcher),
+    root,
+    args: [
+      '--participant-start-timeout-ms',
+      String(scaled(2500)),
+      '--participant-stop-timeout-ms',
+      String(scaled(2000)),
+    ],
+  });
   return async () => {
     await stop();
     rmSync(root, { recursive: true, force: true });

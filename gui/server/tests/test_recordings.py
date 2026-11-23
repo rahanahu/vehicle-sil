@@ -253,7 +253,7 @@ def replay(argv: list[str], lines: list[str | None], env: dict | None = None, ti
     proc = subprocess.Popen([sys.executable, str(REPLAY), *argv], cwd=CONFIGS, stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             env={**os.environ, "REPLAY_TICK_MS": "1", "REPLAY_HEARTBEAT_MS": "0",
-                                 "REPLAY_FAULT": "none", **(env or {})})
+                                 "REPLAY_NO_SLEEPERS": "1", "REPLAY_FAULT": "none", **(env or {})})
     out: list[bytes] = []
     err: list[bytes] = []
     readers = [threading.Thread(target=lambda: out.append(proc.stdout.read()), daemon=True),
@@ -285,11 +285,9 @@ def argv_of(head: dict) -> list[str]:
 
 
 @pytest.mark.parametrize("name", RUNS)
-def test_every_run_replays_by_the_rules_of_the_event_stream(name: str, tmp_path: Path, request) -> None:
+def test_every_run_replays_by_the_rules_of_the_event_stream(name: str, tmp_path: Path) -> None:
     head, entries = recording(name)
-    env = {}
-    if "--control" in head["shape"]:  # the stand-in control server
-        env["VEHICLE_SIL_CONTROL_STUBS"] = str(request.getfixturevalue("control_stubs"))
+    env = {"REPLAY_CASE": name, "REPLAY_CONTROL": "off"}
     argv = argv_of(head)
     if "--control-credentials" in argv:
         credentials = tmp_path / "credentials.txt"
@@ -300,7 +298,7 @@ def test_every_run_replays_by_the_rules_of_the_event_stream(name: str, tmp_path:
     if "--timeline" in argv:
         argv[argv.index("--timeline") + 1] = str(timeline)
     sends = [e["send"] for e in entries if "send" in e]
-    code, events, err = replay(argv, sends, env, timeout=5 if any("hang" in e for e in entries) else 20)
+    code, events, err = replay(argv, sends, env, timeout=0.4 if any("hang" in e for e in entries) else 20)
     if "--timeline" in argv and events[-1].get("result", {}).get("result") != "usage":  # written where the launcher wrote it: before the line that names it
         written = json.loads(timeline.read_text(encoding="utf-8"))
         assert written["vehicle_sil_timeline"] == 1 and written["file"] == head["config"], written
@@ -384,3 +382,34 @@ def test_a_command_more_than_any_recording_has_ends_the_replay() -> None:
     code, events, err = replay(["run", "--events", "--stdin-commands", "--", "forever.yaml"], [stop, stop, stop])
     assert code == 3 and events[-1]["event"] != "result", err
     assert f"{stop} came where no recording of this command line has a command" in err
+
+
+def test_either_end_treats_participant_ended_and_killed_the_same_for_non_required_participants() -> None:
+    """In a double-stop (force) case, a non-required participant (Logger) may exit on the first stop's SIGTERM
+    (emitting participant state 'ended', result ended 'stopped', and no 'ended-by-force' finding) or be killed by
+    the second stop's SIGKILL (emitting participant state 'killed', result ended 'killed', and 'ended-by-force')."""
+    def entries_for(state: str, ended: str, signal_name: str | None, forced_finding: bool) -> list[dict]:
+        findings = [{"code": "stopped"}] + ([{"code": "ended-by-force"}] if forced_finding else [])
+        stream = [
+            {"out": {"event": "participant", "name": "Logger", "state": state,
+                     "exit_code": None, "signal": signal_name, "reason": None}},
+        ]
+        if forced_finding:
+            stream.append({"out": {"event": "finding", "severity": "note", "code": "ended-by-force",
+                                   "participant": None}})
+        stream.extend([
+            {"out": {"event": "phase", "phase": "ended"}},
+            {"out": {"event": "result", "result": {
+                "result": "stopped", "simulation": "stopped", "interrupted_by": "stop command",
+                "findings": findings,
+                "participants": [{"name": "Engine", "required": True, "ended": "stopped", "exit_code": 0, "signal": None},
+                                 {"name": "Logger", "required": False, "ended": ended, "exit_code": None, "signal": signal_name}],
+            }}},
+            {"exit": 0},
+        ])
+        return stream
+
+    killed = entries_for("killed", "killed", None, forced_finding=True)
+    stopped_on_sigterm = entries_for("ended", "stopped", "SIGTERM", forced_finding=False)
+    assert outline(killed, either_end=True) == outline(stopped_on_sigterm, either_end=True)
+    assert outline(killed, either_end=False) != outline(stopped_on_sigterm, either_end=False)

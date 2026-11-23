@@ -3,7 +3,7 @@
 // 本物のランチャーで動かす e2e（e2e/real/）も、ここの startGuiServer でサーバーを起動する（support/real-server.ts）。
 import { ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -85,6 +85,8 @@ export interface GuiServerOptions {
   web?: string;
   /** 最初に出す構成ファイル（root の下にあるファイルのパス。画面が `start()` に file を渡さないときの既定になる）。 */
   config?: string;
+  /** GUI サーバーに渡す追加のコマンドライン引数。 */
+  args?: string[];
 }
 
 /** 起動した GUI サーバー。 */
@@ -104,11 +106,46 @@ export default async function startFakeGuiServer(config: FullConfig): Promise<()
   });
 }
 
+/** Control API の gRPC スタブを 1 度だけ生成し、各 GUI サーバーと fake_control の再生成を省く。 */
+function makeControlStubs(): string | undefined {
+  if (process.env['VEHICLE_SIL_CONTROL_STUBS']) return undefined;
+  const out = mkdtempSync(join(tmpdir(), 'vehicle-sil-e2e-stubs-'));
+  try {
+    execFileSync(
+      'uv',
+      [
+        'run',
+        '--project',
+        REPOSITORY,
+        'python',
+        '-c',
+        'import sys; from grpc_tools import protoc; out, proto = sys.argv[1], sys.argv[2]; ' +
+          'sys.exit(protoc.main(["protoc", f"-I{proto}", f"--python_out={out}", f"--grpc_python_out={out}", ' +
+          'f"{proto}/vehicle_sil/control/v1/control.proto"]))',
+        out,
+        resolve(REPOSITORY, 'proto'),
+      ],
+      { stdio: 'ignore' },
+    );
+    process.env['VEHICLE_SIL_CONTROL_STUBS'] = out;
+    return out;
+  } catch {
+    rmSync(out, { recursive: true, force: true });
+    return undefined;
+  }
+}
+
 /** GUI サーバーを起動してトークンを環境変数に置き、止める関数を返す。 */
 export async function startGuiServer(options: GuiServerOptions): Promise<() => Promise<void>> {
+  const madeStubs = makeControlStubs();
   const server = await launchGuiServer(options);
   process.env['VEHICLE_SIL_GUI_E2E_TOKEN'] = server.token;
-  return server.stop;
+  return async () => {
+    await server.stop();
+    if (madeStubs) {
+      rmSync(madeStubs, { recursive: true, force: true });
+    }
+  };
 }
 
 let launches = 0;
@@ -121,6 +158,8 @@ export async function launchGuiServer(options: GuiServerOptions): Promise<GuiSer
     tmpdir(),
     `vehicle-sil-replay-report-${process.pid}-${port}-${Date.now()}-${++launches}.txt`,
   );
+  const defaultEnv: Record<string, string> =
+    launcher === REPLAY_LAUNCHER ? { REPLAY_NO_SLEEPERS: '1' } : {};
   const server = spawn(
     'uv',
     [
@@ -138,13 +177,14 @@ export async function launchGuiServer(options: GuiServerOptions): Promise<GuiSer
       root,
       ...(devOrigin ? ['--dev-origin', devOrigin] : []),
       ...(web ? ['--web', web] : []),
+      ...(options.args ?? []),
       ...(options.config ? [options.config] : []),
     ],
     {
       cwd: REPOSITORY,
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'inherit'],
-      env: { ...process.env, REPLAY_REPORT: report, ...options.env },
+      env: { ...process.env, ...defaultEnv, REPLAY_REPORT: report, ...options.env },
     },
   );
   const lines = createInterface({ input: server.stdout! });
