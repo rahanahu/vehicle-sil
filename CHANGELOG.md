@@ -4,7 +4,7 @@ Changes of vehicle-sil by version, in the format of [Keep a Changelog 1.1.0](htt
 
 The version comes from `project(vehicle_sil VERSION ...)` and `VEHICLE_SIL_VERSION_PRERELEASE` (`""` for a release) in the root `CMakeLists.txt` (`vehicle_sil_launch version` and `vehicle_sil` in the `--describe` output of an ECU print it). When the version is raised, write the same number in `pyproject.toml`, `gui/server/pyproject.toml`, `__version__` in `python/vehicle_sil_control/__init__.py` and in `gui/server/src/vehicle_sil_gui/__init__.py`, `VERSION` in `template/get_tools.py`, `GIT_TAG` in `template/CMakeLists.txt`, the version written in `template/README.md` and `template/README.ja.md`, and the heading in this file, `## [<version>] - Unreleased` until the release. The commit that is tagged `v<version>` replaces `Unreleased` with the release date (`YYYY-MM-DD`). `scripts/package.py version` finds mismatches; with `--expect v<version>`, which the release workflow runs for the tag, it also refuses a heading without the date. The release notes are this version's section.
 
-## [0.3.0] - Unreleased
+## [0.3.0] - 2026-11-23
 
 Runs on the same configuration no longer start a new launcher each time: `vehicle_sil_launch serve` keeps one launcher process for one run after another, and the browser GUI uses it automatically when the configuration allows it. `check` describes the ECUs in parallel, and runs stop and end with less waiting. There are no intended breaking changes. As before, the GUI server and the Python Control API client accept only a launcher of their own release: upgrade the tools, the GUI server and the Python client together, and build the ECUs with the same release.
 
@@ -31,6 +31,8 @@ Runs on the same configuration no longer start a new launcher each time: `vehicl
 ### Fixed
 
 - **Control Server shutdown**: `ControlServer::shutdown()` stops and joins its simulation monitor, and `ControlEndpoint::end()` detaches the run's time and stop controls, so destroying them in another order can no longer use freed memory (#355).
+- **GUI server start-up race**: the GUI server clears its starting state when registering a run, before draining buffered pre-start events, so a launcher that exits immediately no longer emits an extra intermediate `allowed` message or leaves an ended session marked as starting (#374).
+- **Immediate abort during start**: `ParticipantRuntime::start()` recognises a participant that reached `Running` before an immediate abort, and `SimulationController::start()` waits for required participants to reach `Running` or finish, so an abort right after start no longer reports a false setup failure (#376).
 - **`vehicle_sil_launch --help`**: the `run` and `test` synopses list `--participant-start-timeout-ms` and `--participant-stop-timeout-ms`, which they already took (#369).
 - **Documentation**: the check pages say that `--describe` runs several ECUs at a time, the Control API page says that the browser GUI shows variable availability, the GUI page says how long the Control API credentials file lives with a persistent launcher, the tools archive's README lists `serve` and `test`, and the third-party notices name the SocketCAN bridge among the executables that contain SIL Kit and the GCC runtime.
 
