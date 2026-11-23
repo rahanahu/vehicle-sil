@@ -9,6 +9,7 @@ The Control API is a gRPC API for controlling and monitoring a running simulatio
 | How clients, the launcher and ECUs connect | [Overview](#overview) |
 | Building a launcher with the Control Server | [Build](#build) |
 | The address for `--control`, and when the server starts and ends | [Connect to the launcher](#connect-to-the-launcher) |
+| Keeping a client to one run (`vehicle-sil-run`, `PingReply.run`) | [The run a call is for](#the-run-a-call-is-for) |
 | Writing values before the first simulation step | [Write before the start (`--start-paused`)](#write-before-the-start---start-paused) |
 | The order and rules of time commands | [Stdin commands and client commands](#stdin-commands-and-client-commands) |
 | TLS, tokens and roles | [Authentication](#authentication) |
@@ -92,6 +93,23 @@ When the run ends, whether normally, by a stop request, by `--timeout-ms` or by 
 | Calls that are waiting (`Watch`, `WaitOperation`, `WaitPaused`) | End when the server closes (`Watch` with the end of its stream, `WaitPaused` with `FAILED_PRECONDITION` or `CANCELLED`). |
 | Clients that stay connected | The launcher does not wait for clients, so they do not delay its exit. |
 | Between the end of the simulation and the closing of the server | Clients can read the values as of the end. |
+
+### The run a call is for
+
+Each run has an ID that the launcher gives it: an opaque string. Compare it for equality only; do not take it apart. Each run has its own Control Server, which knows the ID of its run. gRPC connects a channel again by itself to whatever server listens at the address, so at a fixed address a client of an earlier run would reach the next run's server. A client names the run it means, and the server refuses calls for another run.
+
+| Topic | Details |
+|---|---|
+| How a client learns the ID | `run` of `PingReply` (`Ping`). With `serve`, the launcher's events tell it too (see [simulation-events.md](simulation-events.md)). |
+| How a call names the run | The metadata `vehicle-sil-run: <ID>`. In Python, `Control(address, run=<ID>)` or `Control.for_current_run(address)` (see [Python](#python)). |
+| A call that names another run | Rejected with `FAILED_PRECONDITION`; `vehicle-sil-reason` in the trailing metadata is `run-changed`. Nothing of the call reaches the ECUs or the time. |
+| A call that names no run, with `vehicle_sil_launch run` | Served, as before runs had IDs. |
+| A call that names no run, with `vehicle_sil_launch serve` (one launcher, one run after another; see [simulation-run.md](simulation-run.md)) | Rejected with `FAILED_PRECONDITION`; `vehicle-sil-reason` is `run-required`. |
+| `Ping` | Never rejected for the run, so that a client can always learn the current one. |
+| Order of the checks | The token (`UNAUTHENTICATED`), then the role (`PERMISSION_DENIED`), then the run. A client without a valid token learns nothing about the run, and a client with one learns no more than `Ping` tells it. |
+| The audit log | Each line begins with `[run <ID>] `, so one file (`--control-audit-log`) can hold the lines of several runs. A rejected call is logged with the run it named. |
+
+The run ID is not a credential: anyone who may call `Ping` can read it. It only keeps a client to its run. What a client may do is decided by its token and role (see [Authentication](#authentication)). To keep the clients of one run out of the next one completely, give each run its own credentials file.
 
 ### While a scenario runs
 
@@ -263,7 +281,7 @@ The roles that calls require (for each call, see [List of calls](#list-of-calls)
 | `operator` | Controlling time and writing. |
 | `admin` | `Stop`. Only `admin` can call `Stop`. |
 
-With `--control-audit-log <file>`, the launcher appends who changed what to the file. If the file can no longer be written, the run goes on and those lines are lost.
+With `--control-audit-log <file>`, the launcher appends who changed what to the file, one line per call, beginning with `[run <ID>] ` (see [The run a call is for](#the-run-a-call-is-for)). If the file can no longer be written, the run goes on and those lines are lost.
 
 There is no authentication between the ECUs and the launcher (SIL Kit). Anyone who can join the registry can write to the ECUs. Run the simulation on a closed network.
 
@@ -398,7 +416,7 @@ The gRPC calls, the matching methods of the Python client (methods of `Control`;
 
 | gRPC | What it does | Python | CLI | Role |
 |---|---|---|---|---|
-| `Ping` | Returns the server version (`server_version`) and the vehicle-sil release the server was built from (`vehicle_sil`). | `ping()` (returns `server_version`) | None | `viewer` |
+| `Ping` | Returns the server version (`server_version`), the vehicle-sil release the server was built from (`vehicle_sil`) and the ID of its run (`run`). | `ping()` (returns `server_version`), `current_run()` (returns `run`) | None | `viewer` |
 | `ListPeers` | Reads the list of peers and their variables. | `peers()`, `peer()` | `peers`, `show` | `viewer` |
 | `GetValues` | Reads the latest values of one peer. | `values()` | `show` | `viewer` |
 | `GetSnapshot` | Reads the time and values together. | `snapshot()` | None | `viewer` |
@@ -490,7 +508,24 @@ Times are virtual time in nanoseconds. Make them with `ms()` and `s()`.
 | A call fails | The exception `ControlError` (see [Errors](#errors)). |
 | The Agent rejects a write | Not an exception: the result of the operation (`invalid` and others). |
 
-Use the `vehicle_sil_control` of the same vehicle-sil release as the launcher. Making a `Control` does not connect. At its first call or watch, `Control` asks the server's release with one `Ping`. Another release is refused with `ControlError` (`code` `FAILED_PRECONDITION`): `the control server is vehicle-sil <X>; this vehicle_sil_control is <Y>: use the vehicle_sil_control of the same release as the launcher`. A server that does not report its release (a 0.1.0 launcher, or one built before this check) is refused the same way: `the control server does not report its vehicle-sil release (...); this vehicle_sil_control is <Y>: use the vehicle_sil_control that came with the launcher`. Stubs generated before the client knew the field are refused before any call, with a message that says to run `python -m vehicle_sil_control.generate` again. A `Ping` that fails (the server is not there yet) is tried again at the next call.
+To keep a `Control` to one run (see [The run a call is for](#the-run-a-call-is-for)), bind it to the run. It then names the run in every call, and once the server at the address belongs to another run, every call but `ping()` and `current_run()` raises `ControlError` with the `reason` `run-changed`. Make a new `Control` for the new run.
+
+```python
+from vehicle_sil_control import Control
+
+with Control.for_current_run("127.0.0.1:8510", token=token) as c:   # the run the server belongs to now
+    print(c.run)                                                     # its ID
+    c.sim.stop()                                                     # stops that run, never a later one
+```
+
+| Member | Details |
+|---|---|
+| `Control(address, ..., run=<ID>)` | Names the run `<ID>` in every call (the metadata `vehicle-sil-run`). `run=None` (the default) names none. |
+| `Control.for_current_run(address, ...)` | A `Control` bound to the run the server belongs to now (one `Ping`). It takes the arguments of `Control()` except `run`. A server that belongs to no run raises `ControlError` (`FAILED_PRECONDITION`). |
+| `run` | The ID the `Control` is bound to, or `None`. |
+| `current_run()` | The ID of the run the server belongs to now (`PingReply.run`; empty if none). Never rejected for the run: compare it with `run` to see whether the `Control` still reaches its run. |
+
+Use the `vehicle_sil_control` of the same vehicle-sil release as the launcher. Making a `Control` does not connect. At its first call or watch, `Control` asks the server's release with one `Ping`. Another release is refused with `ControlError` (`code` `FAILED_PRECONDITION`): `the control server is vehicle-sil <X>; this vehicle_sil_control is <Y>: use the vehicle_sil_control of the same release as the launcher`. A server that does not report its release (a 0.1.0 launcher, or one built before this check) is refused the same way: `the control server does not report its vehicle-sil release (...); this vehicle_sil_control is <Y>: use the vehicle_sil_control that came with the launcher`. Stubs generated before the client knew the fields (`vehicle_sil`, `run`) are refused before any call, with a message that says to run `python -m vehicle_sil_control.generate` again. A `Ping` that fails (the server is not there yet) is tried again at the next call.
 
 ### Rules for writes
 
@@ -615,7 +650,7 @@ Which peers `values` contains:
 
 ## CLI
 
-Pass `address` of the launcher's `control_server` event (in the human-readable output, the `control server at` line) to `--server` (default: `VEHICLE_SIL_CONTROL_SERVER`). [List of calls](#list-of-calls) maps the commands to gRPC calls.
+Pass `address` of the launcher's `control_server` event (in the human-readable output, the `control server at` line) to `--server` (default: `VEHICLE_SIL_CONTROL_SERVER`). `--run <ID>` (default: `VEHICLE_SIL_CONTROL_RUN`) names the run the command is for (see [The run a call is for](#the-run-a-call-is-for)); a launcher with `serve` requires it. [List of calls](#list-of-calls) maps the commands to gRPC calls.
 
 ```sh
 export VEHICLE_SIL_CONTROL_SERVER=ctrl-pc:8510 VEHICLE_SIL_CONTROL_TOKEN=... VEHICLE_SIL_CONTROL_ROOT_CERT=server.crt
@@ -636,12 +671,12 @@ A failed call returns a gRPC status code. In Python, it raises the exception `Co
 | `ControlError` member | Details |
 |---|---|
 | `code` | The gRPC status code. |
-| `reason` | The word the server gave when it rejected the call with a reason (`vehicle-sil-reason` in the trailing metadata): `scenario-running`, `outside-real-time`, and the other reasons of a time command that is not possible now. Empty otherwise. |
+| `reason` | The word the server gave when it rejected the call with a reason (`vehicle-sil-reason` in the trailing metadata): `run-changed`, `run-required`, `scenario-running`, `outside-real-time`, and the other reasons of a time command that is not possible now. Empty otherwise. |
 
 | Status code | Returned when |
 |---|---|
 | `INVALID_ARGUMENT` | An argument is wrong (a speed out of range, a step of 0 or less, more than 1024 names for `snapshot()`). |
-| `FAILED_PRECONDITION` | The call is not possible now (`step` while not paused, `Stop` after the end, writes during a scenario, a pause or another speed in a run that is connected outside and keeps real time). The Python client also raises it for a server of another vehicle-sil release. |
+| `FAILED_PRECONDITION` | The call is not possible now (`step` while not paused, `Stop` after the end, writes during a scenario, a pause or another speed in a run that is connected outside and keeps real time), or it is for another run than the server's (`run-changed`) or names no run where the server requires one (`run-required`). The Python client also raises it for a server of another vehicle-sil release. |
 | `CANCELLED` | The server closed while the call was waiting (`WaitPaused`; it can also get `FAILED_PRECONDITION`). |
 | `RESOURCE_EXHAUSTED` | The response of `snapshot()` was larger than the limit of one message (4 MiB). |
 | `UNIMPLEMENTED` | The address answers gRPC but is not a vehicle-sil Control Server (it has no such call). |
@@ -661,7 +696,7 @@ Writes during a scenario have the `reason` `scenario-running`.
 | Peers that time control (pause, step, speed) stops | Only peers synchronized in virtual time. Real-time peers keep running. |
 | Lateness at a set speed | If the simulation falls behind real time, it does not try to catch up later. |
 | Operations that do not exist | Reset, starting and restarting participants, and selecting CAN or LIN channels. |
-| Runs the server covers | One run of that launcher only. The server closes when the run ends. |
+| Runs the server covers | One run only. The server closes when the run ends. With `serve`, each run has a server of its own. |
 | Value subscriptions | Latest value only. A newer value that arrives before the client reads replaces the older one. |
 
 - When a run at a set speed falls behind, it keeps going at the set speed, shifted back by the lateness (see "How lateness is measured" in [internals/virtual-time.md](internals/virtual-time.md#how-lateness-is-measured)).

@@ -8,6 +8,7 @@
 
 #include <grpcpp/grpcpp.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cstddef>
@@ -158,6 +159,16 @@ ServerOptions check(ServerOptions o)
                                         "and '-' (it is sent as metadata), not '" + reason + "'");
         }
     }
+    if (o.run.size() > 128 || std::any_of(o.run.begin(), o.run.end(), [](char c) { return c <= ' ' || c > '~'; }))
+    {
+        // It is compared with the value of a metadata entry, and written in the audit log.
+        throw std::invalid_argument("vehicle_sil control server: run must be at most 128 characters of printable ASCII "
+                                    "without spaces (it is sent as metadata), not '" + o.run + "'");
+    }
+    if (o.run_required && o.run.empty())
+    {
+        throw std::invalid_argument("vehicle_sil control server: run_required needs the run's ID (run)");
+    }
     return o;
 }
 
@@ -180,7 +191,7 @@ struct ControlServer::Impl
 
     explicit Impl(ServerOptions o) :
       options(check(std::move(o))),
-      audit(options.audit),
+      audit(options.audit, options.run.empty() ? std::string() : "[run " + options.run + "] "),
       own_hub(options.external_hub == nullptr ? std::make_unique<control::Hub>(options.hub) : nullptr),
       hub(options.external_hub != nullptr ? *options.external_hub : *own_hub),
       auth(options.security),

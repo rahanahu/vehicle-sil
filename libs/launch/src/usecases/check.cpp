@@ -18,6 +18,7 @@
 
 #include "vehicle_sil/core/registry_uri.hpp"
 #include "vehicle_sil/process/paths.hpp"
+#include "vehicle_sil/runner/detail/run_detail.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -273,6 +274,28 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         if (on_time_lock)
         {
             on_time_lock(report.time_lock);
+        }
+        if (options.refuse_fixed_registry &&
+            (report.config->registry_uri.has_value() || config::waits_for_manual(*report.config)))
+        {
+            // serve: before any executable is looked for or described, so nothing is started.
+            const bool written = report.config->registry_uri.has_value();
+            config::Finding finding{config::Severity::Error, "usage",
+                                    std::string("serve does not run a configuration whose registry listens at a fixed address (") +
+                                      (written ? "registry_uri: " + *report.config->registry_uri
+                                               : "a participant you start yourself (manual) waits at " +
+                                                   std::string(runner::kManualRegistryUri)) +
+                                      "): a participant of an earlier run that starts late could join the next run there, and the "
+                                      "run ID does not reach SIL Kit. Run it with vehicle_sil_launch run (a new launcher for each run)" +
+                                      (written ? ", or take registry_uri out of the file (a free port is chosen for each run)" : ""),
+                                    0, "", ""};
+            Checked usage;
+            usage.file = std::move(report.file);
+            usage.strict = report.strict;
+            usage.variants = std::move(report.variants);
+            usage.usage = true;
+            usage.findings = {std::move(finding)};
+            return usage;
         }
     }
     if (report.config && options.file_only && !connect.empty())

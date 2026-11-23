@@ -688,7 +688,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "stdin-run-until",
     "request",
     "scenario-samples",
-    "run-stop-at"
+    "run-stop-at",
+    "serve"
   ]
 }
 ```
@@ -752,6 +753,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `request` | `check` と `run` の `--request <file>`。何を走らせるかを要求ファイルから読みます（[simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」） |
 | `scenario-samples` | シナリオの最上位のキー `samples` と、シナリオが値を読む ECU のステップごとのサンプル（[scenario.md](scenario.md#ecu-が値を送る頻度samples) の「ECU が値を送る頻度」） |
 | `run-stop-at` | Run 単位の `stop_at_ms` と `late_tolerance_ms` に対応。 |
+| `serve` | `vehicle_sil_launch serve`: 1 つのランチャープロセスで Run ID とイベント窓を分離して順次実行する（[常駐ランチャー](#常駐ランチャーserve)） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 | `scenario-time` | シナリオの実行中に、Control Server のクライアントが時間を動かせる（Control Server を持つビルドだけ） |
@@ -784,6 +786,39 @@ participant の `log` の終わりの側には、保証がありません。part
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは書けません。書く呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します。`scenario-time` のあるビルドでは、時刻を動かす呼び出し（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`）を、シナリオの実行中も、標準入力の同じコマンドと同じように受け付けます。シナリオの結果は変わりません。`scenario-control` だけのビルドは、これらも同じ理由で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。
 
 上の例は、Control Server を持たないビルドの出力です。持つビルドは、`features` の最後に `"control-server"`、`"scenario-control"`、`"scenario-time"` を追加します。この例も、CTest の `launch_cli.docs` が照合します（`vehicle_sil` のバージョンと、この 3 つを除いて、バイト単位で）。
+
+## 常駐ランチャー（`serve`）
+
+`vehicle_sil_launch serve <file>` は、ランチャーの寿命を通じて 1 本の NDJSON ストリームを標準出力に書きます（`hello` の `vehicle_sil_events` は 3）。`seq` はストリーム全体で 0 から欠けなく 1 ずつ増え、`t_ms` は後戻りしません。
+
+### ランチャー ID と Run ID
+
+`hello` には `"launcher": "<instance>"`（ランダムな 64 ビット値の小文字 16 進 16 文字）が入ります。受理された `run` コマンドごとに不透明な Run ID `"<instance>-<n>"`（`n` は 1 から連番。拒否された `run` コマンドは番号を進めません）が採番されます。呼び出し側は一致比較だけを行い、認証情報の代わりにしないでください。
+
+### ストリームの寿命とイベント窓
+
+| `event` | 範囲 | 意味とキー |
+|---|---|---|
+| `hello` | ランチャー（先頭 1 回） | `run --events` と同じ形式に `vehicle_sil_events: 3` と `"launcher": "<instance>"` を追加 |
+| `idle` | ランチャー（`run` なし） | 前の実行の資源をすべて解放し、次の `run` コマンドを受け付けられる状態 |
+| `run_start` | 実行（`"run": "<ID>"`） | 実行のイベント窓を開く。`"id"` に `run` コマンドの `"id"` を返す（省略時は `null`） |
+| 実行イベント | 実行（`"run": "<ID>"`） | `run_start` と `result` の間のすべてのイベント（`phase`、`check`、`control_server`、`registry`、`participant`、`control_link`、`log`、`log_dropped`、`outside`、`finding`、`scenario_step`、`time`、`state`、`command`、`heartbeat`）に `"run": "<ID>"` が付く。`state.rev` は実行ごとにリセットされる |
+| `result` | 実行（`"run": "<ID>"`） | 実行のイベント窓を閉じる。`"launcher_ends": <bool>` と `"result": {...}` を持つ。この後に同じ `"run"` のイベントは出ない |
+| `command` | ランチャー（`run` なし） | ランチャー直下の拒否（`accepted: false`）。`"asked_run"`（指定がなければ `null`）を追加 |
+| `heartbeat` | ランチャーまたは実行 | 待機中（`run` なし）も実行中（`"run"` 付き）も出力 |
+
+起動時の使い方の誤り（`VEHICLE_SIL_TRACE` 設定時を含む）では、`hello` の後にランチャー直下の `result`（`run` なし、`"launcher_ends": true`）を最終行として終了します。
+
+### `serve` の標準入力コマンド
+
+```json
+{"command":"run","id":1,"request":"bench.json","timeline":"timeline.json"}
+{"command":"stop","run":"0123456789abcdef-1","id":2}
+```
+
+- `run`: 待機中なら実行を開始します。`"request"`（要求 JSON ファイルのパス）、`"timeline"`（タイムライン JSON の出力先パス）、`"id"` はいずれも任意です。実行中（`idle` より前）は `"busy"`、終了処理中は `"launcher-ending"` で拒否します。
+- `stop`、`pause`、`resume`、`step`、`run_until`、`speed`: `"run": "<Run ID>"` が必須です。欄がなければ `"run-required"`、現在の実行と異なれば（終了済みや待機中を含む）`"run-changed"` と `"asked_run"` で拒否します。
+- 標準入力の閉鎖（EOF）はランチャー終了を意味します（待機中なら終了コード 0、実行中ならその実行を止めて終了コード 130）。
 
 ## 関連するドキュメント
 

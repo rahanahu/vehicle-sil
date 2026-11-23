@@ -369,12 +369,16 @@ std::string listen_address(const std::string& value)
     return value;
 }
 
-/// What `asked` names, read and checked: the options of the server (listen address, TLS PEM
-/// texts, credentials, audit function). Refused for the first thing that is wrong.
+/// What `asked` names, read and checked: the options of the server (listen address, run ID, TLS
+/// PEM texts, credentials, audit function). Refused for the first thing that is wrong.
 control_grpc::ServerOptions read_control_options(const ControlHost& asked)
 {
     control_grpc::ServerOptions options;
     options.listen = listen_address(asked.listen);
+    // The run the server belongs to (the launcher's ID; not from the user): a client of an earlier
+    // run that names it cannot act on this one, and with serve every call must name it.
+    options.run = asked.run_id;
+    options.run_required = asked.run_id_required;
     if (asked.tls_cert.empty() != asked.tls_key.empty())
     {
         throw Refused("--control-tls-cert and --control-tls-key go together: TLS needs the certificate chain and "

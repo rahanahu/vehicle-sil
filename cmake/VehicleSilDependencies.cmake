@@ -53,6 +53,16 @@ function(_vehicle_sil_add_silkit)
 
   _vehicle_sil_patched_source(sil-kit silkit_source)
   add_subdirectory("${silkit_source}" "${CMAKE_CURRENT_BINARY_DIR}/external/sil-kit" EXCLUDE_FROM_ALL)
+  # MinGW GCC (posix/winpthreads): libstdc++'s os_defines.h defines _GTHREAD_USE_MUTEX_INIT_FUNC and
+  # _GTHREAD_USE_COND_INIT_FUNC so std::mutex and std::condition_variable destroy their winpthreads
+  # resources, but omits _GTHREAD_USE_RECURSIVE_MUTEX_INIT_FUNC. Without it, std::recursive_mutex
+  # uses PTHREAD_RECURSIVE_MUTEX_INITIALIZER with a trivial destructor and leaks a Win32 Event handle
+  # for every locked instance. SIL Kit uses std::recursive_mutex in its services and handlers, which
+  # would otherwise leak handles on every run of a resident launcher. Only gthr-posix.h inspects this
+  # macro, so it is a no-op on non-winpthreads toolchains.
+  if(MINGW AND TARGET I_SilKit)
+    target_compile_definitions(I_SilKit INTERFACE _GTHREAD_USE_RECURSIVE_MUTEX_INIT_FUNC=1)
+  endif()
 endfunction()
 
 # Copies the pinned submodule external/<dependency> to the build tree and

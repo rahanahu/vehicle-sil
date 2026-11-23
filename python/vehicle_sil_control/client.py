@@ -45,11 +45,14 @@ def _warn_every_time(message: str) -> None:
 class ControlError(Exception):
     """A call failed; `code` is the gRPC status code. `reason` is the server's word for why it
     refused the call, for a program that must tell the refusals apart; "" if it gave none. The
-    launcher gives one with FAILED_PRECONDITION: "scenario-running" (the run plays a scenario, and
-    a client cannot write meanwhile; it can move the time), "outside-real-time" (the run is connected
-    outside the simulation and keeps to real time: no pause, step, run_until or speed other than
-    1; start it with --time-policy free to move its time), and the other reasons of a refused
-    command ("not-running", "not-paused", "not-set-up": docs/simulation-events.md lists them)."""
+    launcher gives one with FAILED_PRECONDITION: "run-changed" (the Control is bound to another run
+    than the server's: an earlier run's client at the same address), "run-required" (the server
+    takes calls that name its run only: bind the Control to a run), "scenario-running" (the run
+    plays a scenario, and a client cannot write meanwhile; it can move the time),
+    "outside-real-time" (the run is connected outside the simulation and keeps to real time: no
+    pause, step, run_until or speed other than 1; start it with --time-policy free to move its
+    time), and the other reasons of a refused command ("not-running", "not-paused", "not-set-up":
+    docs/simulation-events.md lists them)."""
 
     def __init__(self, code: grpc.StatusCode, message: str, reason: str = ""):
         super().__init__(f"{code.name}: {message}")
@@ -58,6 +61,7 @@ class ControlError(Exception):
 
 
 REASON_KEY = "vehicle-sil-reason"  # the trailing metadata of a refusal (ControlError.reason)
+RUN_KEY = "vehicle-sil-run"  # the metadata that names the run a call is for (Control(run=...))
 
 
 def _error(e: grpc.RpcError) -> ControlError:
@@ -254,15 +258,15 @@ def _simulation(m) -> SimulationState:
                            m.failed_participant, m.failed_state, m.failure_reason, m.ended)
 
 
-class _TokenInterceptor(grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor,
-                        grpc.StreamUnaryClientInterceptor, grpc.StreamStreamClientInterceptor):
-    """Adds "authorization: Bearer <token>" to every call."""
+class _MetadataInterceptor(grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor,
+                           grpc.StreamUnaryClientInterceptor, grpc.StreamStreamClientInterceptor):
+    """Adds the same metadata to every call ("authorization: Bearer <token>", "vehicle-sil-run: <ID>")."""
 
-    def __init__(self, token: str):
-        self._metadata = ("authorization", f"Bearer {token}")
+    def __init__(self, metadata: Sequence[tuple]):
+        self._metadata = list(metadata)
 
     def _details(self, details):
-        metadata = list(details.metadata or []) + [self._metadata]
+        metadata = list(details.metadata or []) + self._metadata
         return details._replace(metadata=metadata) if hasattr(details, "_replace") else _Details(details, metadata)
 
     def intercept_unary_unary(self, continuation, details, request):
@@ -333,26 +337,55 @@ class Control:
 
     Making one does not connect. The first call (or watch) checks that the server is of this
     client's vehicle-sil release (__version__) and refuses another with ControlError.
+
+    A Control bound to a run (`run`, or `Control.for_current_run()`) acts on that run only: once
+    the server at the address belongs to another run (a launcher with `serve` runs one after
+    another), every call but `ping()` and `current_run()` is refused with ControlError, `reason`
+    "run-changed". gRPC connects again by itself to whatever server listens at the address, so
+    without a run a Control may reach a later run there (a server that requires the run refuses
+    it with "run-required").
     """
 
     def __init__(self, address: str, timeout: float = 10.0, token: Optional[str] = None,
-                 root_certificates: Optional[bytes] = None, tls: bool = False):
+                 root_certificates: Optional[bytes] = None, tls: bool = False, run: Optional[str] = None):
         """`token`: a bearer token of the server's credentials. `root_certificates`: PEM bytes of
         the roots the server's certificate must chain to (set: TLS). `tls` without
-        root_certificates: TLS with the system's root certificates."""
+        root_certificates: TLS with the system's root certificates. `run`: the ID of the run the
+        calls are for (sent as the metadata "vehicle-sil-run"; the launcher's events and
+        `current_run()` tell it). It is no credential: the token decides what a client may do."""
         if root_certificates is not None or tls:
             self._channel = grpc.secure_channel(address, grpc.ssl_channel_credentials(root_certificates))
         else:
             self._channel = grpc.insecure_channel(address)
-        if token:
-            interceptor = _TokenInterceptor(token)
-            self._channel = grpc.intercept_channel(self._channel, interceptor)
+        if run is not None and not run:
+            raise ValueError("run is the ID of a run (None: calls name no run), not an empty string")
+        self.run = run  # the run the calls are for (None: they name none)
+        metadata = ([("authorization", f"Bearer {token}")] if token else []) + ([(RUN_KEY, run)] if run else [])
+        if metadata:
+            self._channel = grpc.intercept_channel(self._channel, _MetadataInterceptor(metadata))
         self._stub = rpc.ControlServiceStub(self._channel)
         self._timeout = timeout
         self._schemas: Dict[tuple, List[Variable]] = {}  # (peer, incarnation) -> schema, for snapshot()
         self._checked = False  # the server's release was compared with this client's (_check_release)
         self._check_lock = threading.Lock()
         self.sim = _Simulation(self)
+
+    @classmethod
+    def for_current_run(cls, address: str, **options) -> "Control":
+        """A Control bound to the run that the server at `address` belongs to now (one Ping), so
+        that its calls never reach a later run at the same address. `options` are those of
+        Control() but `run`. ControlError FAILED_PRECONDITION if the server belongs to no run.
+
+            with Control.for_current_run("127.0.0.1:8510") as c:
+                c.sim.stop()   # this run, or ControlError "run-changed" once another has begun"""
+        if "run" in options:
+            raise TypeError("for_current_run() finds the run itself: give the ID to Control(run=...) instead")
+        with cls(address, **options) as probe:
+            run = probe.current_run()
+        if not run:
+            raise ControlError(grpc.StatusCode.FAILED_PRECONDITION,
+                               f"the control server at {address} belongs to no run, so a client cannot be bound to one")
+        return cls(address, run=run, **options)
 
     def __enter__(self) -> "Control":
         return self
@@ -373,10 +406,11 @@ class Control:
         with self._check_lock:
             if self._checked:
                 return
-            if "vehicle_sil" not in pb.PingReply.DESCRIPTOR.fields_by_name:
+            missing = [f for f in ("vehicle_sil", "run") if f not in pb.PingReply.DESCRIPTOR.fields_by_name]
+            if missing:
                 raise ControlError(grpc.StatusCode.FAILED_PRECONDITION,
                                    f"the Control API stubs in {_STUBS} are older than this vehicle_sil_control (their "
-                                   "PingReply has no vehicle_sil): make them again with `python -m "
+                                   f"PingReply has no {missing[0]}): make them again with `python -m "
                                    "vehicle_sil_control.generate` (with --out <directory> for VEHICLE_SIL_CONTROL_STUBS)")
             try:
                 reply = self._stub.Ping(pb.PingRequest(), timeout=self._timeout)
@@ -402,6 +436,12 @@ class Control:
 
     def ping(self, text: str = "") -> str:
         return self._call(self._stub.Ping, pb.PingRequest(text=text)).server_version
+
+    def current_run(self) -> str:
+        """The ID of the run the server belongs to now (PingReply.run; "" if none). Not refused for
+        a Control bound to another run: compare it with `run` to see whether this Control still
+        reaches its run."""
+        return self._call(self._stub.Ping, pb.PingRequest()).run
 
     def peers(self) -> List[Peer]:
         """The peers. If the server could not read the simulation's participants, it warns

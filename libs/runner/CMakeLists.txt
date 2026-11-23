@@ -50,4 +50,9 @@ target_link_libraries(vehicle_sil_runner PRIVATE vehicle_sil::trace)
 if(WIN32)
   target_link_libraries(vehicle_sil_runner PRIVATE iphlpapi ws2_32)
 endif()
+# Tests only (VEHICLE_SIL_FAULT_INJECTION): public, so that every file that includes run_connection.hpp
+# sees the same fault_close_delay().
+if(VEHICLE_SIL_FAULT_INJECTION)
+  target_compile_definitions(vehicle_sil_runner PUBLIC $<$<CONFIG:Debug>:VEHICLE_SIL_FAULT_INJECTION>)
+endif()
 vehicle_sil_target_defaults(vehicle_sil_runner)

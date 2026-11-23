@@ -150,14 +150,15 @@
     {
       "name": "linux-gcc-control",
       "displayName": "Linux GCC Debug with the control server (VEHICLE_SIL_BUILD_CONTROL_SERVER)",
-      "description": "Also builds the control server and its tests; takes gRPC from find_package(gRPC CONFIG), else builds the pinned gRPC with FetchContent (needs CMake 3.28+, git and network on the first configure)",
+      "description": "Also builds the control server and its tests, and the tests' fault injection (VEHICLE_SIL_FAULT_INJECTION); takes gRPC from find_package(gRPC CONFIG), else builds the pinned gRPC with FetchContent (needs CMake 3.28+, git and network on the first configure)",
       "inherits": [
         "gcc",
         "linux"
       ],
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "VEHICLE_SIL_BUILD_CONTROL_SERVER": "ON"
+        "VEHICLE_SIL_BUILD_CONTROL_SERVER": "ON",
+        "VEHICLE_SIL_FAULT_INJECTION": "ON"
       }
     },
     {

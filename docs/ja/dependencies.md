@@ -503,6 +503,16 @@ required でない coordinated の participant が、この順になります。
 
 **上流への報告**: 未報告です。
 
+### MinGW GCC（`winpthreads`）: `std::recursive_mutex` の破棄で Win32 の `Event` ハンドルがリークする
+
+**内容**: `posix` スレッドモデル（`winpthreads`、MSYS2 UCRT64 など）の MinGW-w64 GCC では、`libstdc++` の `os_defines.h` が `_GTHREAD_USE_MUTEX_INIT_FUNC` と `_GTHREAD_USE_COND_INIT_FUNC` を定義して `std::mutex` と `std::condition_variable` の `winpthreads` 資源を破棄する一方、`_GTHREAD_USE_RECURSIVE_MUTEX_INIT_FUNC` を定義していません。そのため `std::recursive_mutex` は `PTHREAD_RECURSIVE_MUTEX_INITIALIZER` かつ自明なデストラクターになり、`pthread_mutex_destroy()` が呼ばれません。`std::recursive_mutex` をロックすると `winpthreads` が Win32 の `Event` ハンドルを遅延確保し、破棄時にリークします。
+
+**影響**: SIL Kit は内部のサービスやハンドラー一覧で `std::recursive_mutex` を使います。Run ごとに SIL Kit のオブジェクトを作り直す常駐ランチャー（`vehicle_sil_launch serve`）では、回避策がないと 1 Run ごとに約 15〜17 個の Win32 `Event` ハンドルがリークします。
+
+**対応**: `cmake/VehicleSilDependencies.cmake` で、MinGW ビルドのとき SIL Kit の内部インターフェースターゲット（`I_SilKit`）に `_GTHREAD_USE_RECURSIVE_MUTEX_INIT_FUNC=1` を与えます。このマクロを参照するのは `gthr-posix.h` だけなので `winpthreads` 以外のツールチェーンでは影響がなく、SIL Kit の公開 ABI は C API のためバイナリ境界もまたぎません。この回避策によりハンドル増加は約 +1 ハンドル/Run まで減ります（残るわずかな増加は既知の課題ですが、実用上の連続実行を妨げる規模ではありません）。
+
+**上流への報告**: 未報告です。
+
 ## SIL Kit へのパッチ
 
 `patches/sil-kit/` のパッチは、上流のタグ `v5.0.8`（固定コミット）に `git format-patch` で作ったもので、上流のスタイル（clang-format）に合わせています。0001 は上流の統合テストを、0006 は上流の単体テストを含みます。

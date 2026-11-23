@@ -7,6 +7,7 @@
 #include "vehicle_sil/runner/control_rules.hpp"
 
 #include <charconv>
+#include <utility>
 #include <string>
 #include <system_error>
 
@@ -21,9 +22,8 @@ bool whole_number(const std::string& text, std::int64_t& value)
     return parsed.ec == std::errc{} && parsed.ptr == end;
 }
 
-} // namespace
-
-std::optional<runner::Command> parse_command(std::string_view line)
+/// parse_command(), and with `serve` parse_serve_command() (which it fills but for `command`).
+std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
 {
     if (!line.empty() && line.back() == '\r')
     {
@@ -70,6 +70,38 @@ std::optional<runner::Command> parse_command(std::string_view line)
             }
             return std::pair{config::detail::to_string(tree.val(n)), tree.is_val_quoted(n)};
         };
+        // serve: a string that is not empty, if the key is there; false: it is there, and not that.
+        const auto text = [&](const char* key, std::string& value, bool& given) {
+            given = tree.find_child(root, ryml::to_csubstr(key)) != ryml::NONE;
+            if (!given)
+            {
+                return true;
+            }
+            const auto got = scalar(key);
+            if (!got || !got->second || got->first.empty())
+            {
+                return false;
+            }
+            value = got->first;
+            return true;
+        };
+        if (serve != nullptr)
+        {
+            // The run it is for, before anything else: a refusal of it says the run too.
+            std::string run;
+            bool given = false;
+            if (!text("run", run, given))
+            {
+                out.message = "\"run\" must be the ID of the run the command is for, as a string, as the event run_start "
+                              "gave it, such as {\"command\":\"stop\",\"run\":\"<run ID>\"}";
+                out.reason = runner::reason::kInvalidArgument;
+                return out;
+            }
+            if (given)
+            {
+                serve->run = std::move(run);
+            }
+        }
         // The sender's number, before the arguments: a refusal for them says it too.
         if (tree.find_child(root, ryml::csubstr("id", 2)) != ryml::NONE)
         {
@@ -86,7 +118,22 @@ std::optional<runner::Command> parse_command(std::string_view line)
             }
             out.id = value;
         }
-        if (*out.name == "step")
+        if (serve != nullptr && *out.name == "run")
+        {
+            bool given = false;
+            for (const auto& [key, value] : {std::pair{"request", &serve->request}, std::pair{"timeline", &serve->timeline}})
+            {
+                if (!text(key, *value, given))
+                {
+                    out.message = std::string("run: \"") + key + "\" must be the path of a file as a string, such as " +
+                                  "{\"command\":\"run\",\"request\":\"bench.json\",\"timeline\":\"timeline.json\"}; leave it out " +
+                                  "for none";
+                    out.reason = runner::reason::kInvalidArgument;
+                    return out;
+                }
+            }
+        }
+        else if (*out.name == "step")
         {
             const auto ms = scalar("ms");
             std::int64_t value = 0;
@@ -134,15 +181,33 @@ std::optional<runner::Command> parse_command(std::string_view line)
         return out;
     }
     static constexpr std::string_view kNames[] = {"stop", "pause", "resume", "step", "run_until", "speed"};
-    if (std::find(std::begin(kNames), std::end(kNames), *out.name) == std::end(kNames))
+    if (std::find(std::begin(kNames), std::end(kNames), *out.name) == std::end(kNames) &&
+        (serve == nullptr || *out.name != "run"))
     {
         // The name as far as it is worth showing.
         const std::string shown = out.name->size() > 64 ? out.name->substr(0, 64) + "..." : *out.name;
-        out.message = "unknown command '" + shown + "': the commands are stop, pause, resume, step, run_until and speed";
+        out.message = "unknown command '" + shown + "': the commands are " +
+                      (serve != nullptr ? "run, " : "") + "stop, pause, resume, step, run_until and speed";
         out.reason = runner::reason::kUnknownCommand;
         return out;
     }
     out.accepted = true;
+    return out;
+}
+
+} // namespace
+
+std::optional<runner::Command> parse_command(std::string_view line) { return parse(line, nullptr); }
+
+std::optional<ServeCommand> parse_serve_command(std::string_view line)
+{
+    ServeCommand out;
+    std::optional<runner::Command> command = parse(line, &out);
+    if (!command)
+    {
+        return std::nullopt;
+    }
+    out.command = std::move(*command);
     return out;
 }
 
@@ -160,7 +225,7 @@ void CommandInput::append(std::string_view bytes)
                 runner::Command tooLong;
                 tooLong.message = "the line is longer than " + std::to_string(kMaxCommandLine) + " bytes";
                 tooLong.reason = runner::reason::kInvalidCommand;
-                on_command_(tooLong);
+                too_long(tooLong);
                 pending_.clear();
                 skipping_ = true;
             }
@@ -189,9 +254,30 @@ void CommandInput::finish()
     skipping_ = false;
 }
 
+void CommandInput::too_long(const runner::Command& command)
+{
+    if (on_serve_)
+    {
+        ServeCommand serve;
+        serve.command = command;
+        on_serve_(serve);
+    }
+    else
+    {
+        on_command_(command);
+    }
+}
+
 void CommandInput::line(std::string_view text)
 {
-    if (auto command = parse_command(text))
+    if (on_serve_)
+    {
+        if (auto command = parse_serve_command(text))
+        {
+            on_serve_(*command);
+        }
+    }
+    else if (auto command = parse_command(text))
     {
         on_command_(*command);
     }

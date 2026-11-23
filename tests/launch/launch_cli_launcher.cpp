@@ -596,8 +596,8 @@ void usage(const Options& o)
         require(err.rfind("error: " + error + "\nusage: vehicle_sil_launch check [--json]", 0) == 0,
                 "for the error '" + error + "' vehicle_sil_launch wrote:\n" + err);
     };
-    expect_usage({}, "no command: give check <file>, run <file>, test <file>, connections <file> or version");
-    expect_usage({"start", "x.yaml"}, "unknown command 'start': the commands are check, run, test, connections and version");
+    expect_usage({}, "no command: give check <file>, run <file>, serve <file>, test <file>, connections <file> or version");
+    expect_usage({"start", "x.yaml"}, "unknown command 'start': the commands are check, run, serve, test, connections and version");
     expect_usage({"check"}, "check needs the configuration file: vehicle_sil_launch check <file>");
     expect_usage({"check", "a.yaml", "b.yaml"}, "check takes one file, not 2");
     expect_usage({"check", "a.yaml", "--bogus"}, "unknown option --bogus");

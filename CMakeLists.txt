@@ -32,6 +32,15 @@ option(VEHICLE_SIL_STATIC
        "Executables that link SIL Kit need no vehicle-sil library next to them: SIL Kit as a static library, and the C++ runtime linked statically (MinGW: also winpthread; glibc stays shared)" OFF)
 option(VEHICLE_SIL_BUILD_CONTROL_SERVER
        "Build the control server into vehicle_sil_launch (run --control; needs gRPC: found, or built with FetchContent)" OFF)
+# Tests only: the places where a test may make a fault happen by the real way (the run's own
+# connection closes late when VEHICLE_SIL_FAULT_CLOSE_DELAY_MS is set; libs/runner/src/run_connection.hpp).
+# Never in a build that is given to users: a release, a static build or a package refuses it.
+option(VEHICLE_SIL_FAULT_INJECTION
+       "Tests only: let environment variables inject faults into vehicle_sil_launch (never in a release or a package)" OFF)
+if(VEHICLE_SIL_FAULT_INJECTION AND (VEHICLE_SIL_STATIC OR CMAKE_CONFIGURATION_TYPES OR NOT CMAKE_BUILD_TYPE STREQUAL "Debug"))
+  message(FATAL_ERROR "vehicle-sil: VEHICLE_SIL_FAULT_INJECTION is for single-config Debug test builds only, not with "
+                      "VEHICLE_SIL_STATIC, multi-config generators, or CMAKE_BUILD_TYPE='${CMAKE_BUILD_TYPE}': configure without it")
+endif()
 set(VEHICLE_SIL_SANITIZERS
     ""
     CACHE STRING "Semicolon separated -fsanitize= values, e.g. address;undefined (top-level builds only)")

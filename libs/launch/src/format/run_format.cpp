@@ -383,6 +383,16 @@ std::string format_result_event(const RunReport& report)
     return w.take();
 }
 
+std::string format_result_event(const RunReport& report, bool launcher_ends)
+{
+    vehicle_sil::json::JsonWriter w(true);
+    w.begin_object();
+    w.boolean("launcher_ends", launcher_ends);
+    detail::write_run_json(w, "result", report);
+    w.end_object();
+    return w.take();
+}
+
 void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const RunReport& report)
 {
     w.begin_object(key);

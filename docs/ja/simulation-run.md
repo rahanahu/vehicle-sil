@@ -21,6 +21,7 @@
 | シナリオが書いた値と見た値を JSON のファイルに記録する | [`--timeline`](#シナリオの実行を時間の軸で記録する--timeline) |
 | そのファイルを図で見る、シナリオが失敗した理由を見る | [時間の軸のファイルを見る](#時間の軸のファイルを見る) |
 | 全部の機種で、シナリオをまとめて実行する | [`test`](#シナリオをまとめて実行するvehicle_sil_launch-test) |
+| 1 つのランチャープロセスで順に実行を繰り返す | [`serve`](#1-つのランチャーで順に実行するvehicle_sil_launch-serve) |
 
 ## 実行の流れ
 
@@ -2051,6 +2052,44 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 | `run` | その組の `run --json` と同じオブジェクト（`skipped` と `not_run` では `null`） |
 
 `version --json` の `formats` の `test` が、この JSON のバージョンです。`features` には `test` の項目はありません。
+
+## 1 つのランチャーで順に実行する（`vehicle_sil_launch serve`）
+
+`vehicle_sil_launch serve <file>` は、1 つの設定ファイルに対して常駐し、標準入力の `{"command":"run"}` コマンドごとに 1 つずつ順に実行します。各実行は独自の SIL Kit registry、controller、hub、Control Server、participant プロセス、シナリオを作成して破棄し、前の実行の状態を持ち越さずに毎回仮想時刻 0 から開始します。
+
+```sh
+vehicle_sil_launch serve [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeout-ms <ms>] \
+  [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>] \
+  [--events-stall-ms <ms>] [--control <address> [--control-credentials <file>] \
+  [--control-tls-cert <file> --control-tls-key <file>] [--control-audit-log <file>]] \
+  [--] <file>
+```
+
+- `serve` は常に標準出力に NDJSON イベントを書き、標準入力からコマンドを読みます（[simulation-events.md](simulation-events.md#常駐ランチャーserve) の「常駐ランチャー（`serve`）」）。`--events` や `--stdin-commands` の指定は使い方の誤りです。
+- 実行ごとのオプション（`--scenario`、`--variant`、`--param`、`--speed`、`--strict`、`--start-paused`、`--stop-at-ms`、`--late-tolerance-ms`、`--disable`、`--enable`、`--manual`、`--connect`、`--time-policy`、`--request`、`--timeline`）はコマンドラインで受け付けません。各 `{"command":"run"}` コマンドの `"request"` ファイル（および `"timeline"` パス）で指定します。
+- `--log-dir <dir>` を指定すると、実行ごとの participant ログを `<dir>/<Run ID>/` に書きます。
+- `--control-credentials <file>` は実行ごとに読み直すため、呼び出し側は実行ごとにトークンを差し替えられます。
+- 同時に実行できるのは 1 つだけです。`idle` の前に届いた `run` コマンドは `busy` で拒否され、待ち行列には積みません。
+- 失敗・タイムアウト・停止で終わった実行を自動で再実行することはありません。
+
+### `serve` の制限
+
+- **固定の registry アドレス（`registry_uri` または `manual` participant）**: `serve` は、SIL Kit registry のアドレスを固定する構成（明示の `registry_uri`、または既定ポート 8500 で待つ `manual` participant）を、`--describe` やプロセス起動を行う前に拒否します。その実行は理由を記した `usage` 結果で終わり、ランチャーは `idle` に戻ります。Run ID は SIL Kit の参加を覆わないため、前の実行から遅れて起動した同名の participant が次の実行に混入するのを防ぐための制限です。これらの構成は `vehicle_sil_launch run` で実行してください。
+- **プロファイリングトレース（`VEHICLE_SIL_TRACE`）**: `VEHICLE_SIL_TRACE` が設定されていると、`serve` は起動時に使い方の誤り（終了コード 4、`result` イベント付き）で終了します。常駐プロセス内に実行ごとのトレースリングが蓄積するためです。1 回の実行をトレースするには `vehicle_sil_launch run` を使ってください。
+
+### `serve` の停止と終了コード
+
+- Run ID を指定した標準入力の `stop`（`{"command":"stop","run":"<Run ID>"}`）や、一致する Run ID の Control API `Stop` は、現在の実行だけを止めます。終了処理が正常に終わればランチャーは `idle` を出し、次の `run` を受け付けます。
+- 実行が自身の SIL Kit 接続を閉じている途中に届いた 1 回目の `stop` は、閉じる待ちを打ち切りません。打ち切るのは 2 回目の `stop`（強制）かランチャー終了の要求だけです。
+- `SIGINT`、`SIGTERM`、`SIGHUP`（Windows では `CTRL_C_EVENT`、`CTRL_BREAK_EVENT`、`CTRL_CLOSE_EVENT`）、標準入力の EOF、または標準出力の閉鎖はランチャーの終了を意味します。実行中であればその実行を止め、`result` に `"launcher_ends": true` を付けて（`idle` は出さずに）終了します。
+- 自身の SIL Kit 接続を期限内に閉じられなかった場合（`connection-not-closed`）や内部例外が発生した場合、その実行の `result` に `"launcher_ends": true` を出して終了コード 6 で即座に終了します。呼び出し側は次の実行のために新しいランチャーを起動します。
+
+| 終了コード | 意味 |
+|---|---|
+| 0 | 待機中に標準入力が EOF に達した |
+| 4 | 起動時の使い方の誤り（`VEHICLE_SIL_TRACE` 設定時を含む） |
+| 6 | 実行がランチャーを未確定状態に残した（`connection-not-closed` または内部エラー。`"launcher_ends": true`） |
+| 130 | シグナル・コンソールイベント、実行中の標準入力 EOF、またはイベント出力の閉鎖による中断 |
 
 ## 関連するドキュメント
 

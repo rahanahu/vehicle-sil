@@ -688,7 +688,8 @@ A run with a scenario (`--scenario`) accepts the time commands from both. They d
     "stdin-run-until",
     "request",
     "scenario-samples",
-    "run-stop-at"
+    "run-stop-at",
+    "serve"
   ]
 }
 ```
@@ -752,6 +753,7 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 | `request` | `--request <file>` of `check` and `run`: what to run, from a request file (see "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request)) |
 | `scenario-samples` | The top-level key `samples` of a scenario, and a sample of every ECU step for the ECUs whose values a scenario reads (see "How often the ECUs send their values" in [scenario.md](scenario.md#how-often-the-ecus-send-their-values-samples)) |
 | `run-stop-at` | Supports per-run `stop_at_ms` and `late_tolerance_ms`. |
+| `serve` | `vehicle_sil_launch serve`: sequential runs in one launcher process with per-run IDs and event windows (see [Resident launcher](#resident-launcher-serve)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 | `scenario-time` | Control Server clients can move time while a scenario runs (only in builds with the Control Server) |
@@ -784,6 +786,39 @@ Each name indicates that the following are present:
 In a build with `scenario-control`, clients cannot write while a scenario runs: calls that write are rejected with `FAILED_PRECONDITION` (reason `scenario-running`). In a build with `scenario-time`, calls that move time (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) are accepted during a scenario, as the same commands from stdin are, and do not change the result of the scenario; a build with `scenario-control` alone rejects them with the same reason (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).
 
 The example above is the output of a build without the Control Server. A build with it adds `"control-server"`, `"scenario-control"` and `"scenario-time"` at the end of `features`. The CTest test `launch_cli.docs` also checks this example (byte for byte, except the `vehicle_sil` version and these 3 names).
+
+## Resident launcher (`serve`)
+
+`vehicle_sil_launch serve <file>` writes one continuous NDJSON stream on stdout for the life of the launcher (`vehicle_sil_events` version 3 in `hello`). `seq` increases by 1 from 0 across the whole stream without gaps, and `t_ms` never decreases.
+
+### Launcher and run IDs
+
+`hello` carries `"launcher": "<instance>"`, a random 64-bit value formatted as 16 lowercase hexadecimal digits. Each accepted `run` command is assigned an opaque run ID `"<instance>-<n>"` (`n` starting at 1; refused `run` commands do not advance `n`). Callers compare run IDs for equality only and must not treat them as credentials.
+
+### Stream lifecycle and event windows
+
+| `event` | Scope | Meaning and keys |
+|---|---|---|
+| `hello` | Launcher (once, first) | Same as `run --events`, with `vehicle_sil_events: 3` and `"launcher": "<instance>"` |
+| `idle` | Launcher (no `run`) | The launcher holds no state from any run and accepts the next `run` command |
+| `run_start` | Run (`"run": "<ID>"`) | Opens a run's window; `"id"` echoes the `run` command's `"id"` (`null` if omitted) |
+| Run events | Run (`"run": "<ID>"`) | Every event between `run_start` and `result` (`phase`, `check`, `control_server`, `registry`, `participant`, `control_link`, `log`, `log_dropped`, `outside`, `finding`, `scenario_step`, `time`, `state`, `command`, `heartbeat`) carries `"run": "<ID>"`. `state.rev` resets per run |
+| `result` | Run (`"run": "<ID>"`) | Closes the run's window; carries `"launcher_ends": <bool>` and `"result": {...}`. No event with that `"run"` is written after its `result` |
+| `command` | Launcher (no `run`) | Refusal by the launcher itself (`accepted: false`): adds `"asked_run"` (`null` if the command named no run) |
+| `heartbeat` | Launcher or Run | Emitted while idle (no `run`) as well as during a run (with `"run"`) |
+
+If `serve` fails at startup (usage error, including `VEHICLE_SIL_TRACE`), it writes `hello` followed by a launcher-level `result` (no `run`, `"launcher_ends": true`) as its final line.
+
+### Stdin commands in `serve`
+
+```json
+{"command":"run","id":1,"request":"bench.json","timeline":"timeline.json"}
+{"command":"stop","run":"0123456789abcdef-1","id":2}
+```
+
+- `run`: starts a run when idle. `"request"` (path to a run request JSON file), `"timeline"` (path to write the timeline JSON), and `"id"` are optional. Refused with `"busy"` while a run is active (until `idle`), or `"launcher-ending"` once the launcher is ending.
+- `stop`, `pause`, `resume`, `step`, `run_until`, `speed`: require `"run": "<run ID>"`. Missing `"run"` is refused with `"run-required"`; any other value (including an ended run or while idle) is refused with `"run-changed"` and `"asked_run"`.
+- Closing stdin (EOF) ends the launcher (exit code 0 when idle; stops the active run and exits with 130 when a run is in progress).
 
 ## See also
 

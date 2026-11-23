@@ -8,6 +8,7 @@
 
 #include "endpoints/run_control_server.hpp"
 
+#include "vehicle_sil/runner/detail/run_detail.hpp"
 #include "vehicle_sil/runner/detail/runner.hpp"
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/timeline_format.hpp"
@@ -218,6 +219,7 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     // reads in the request). A run reads the whole, whatever the caller's options say.
     CheckOptions check = check_options;
     check.file_only = false;
+    check.refuse_fixed_registry = lent.refuse_fixed_registry;
     // The controls get the time lock as soon as the configuration has been read, before any
     // --describe: the time commands that came until then wait for it, and are decided there.
     report.check = check_file(request, check, [&controls](const config::TimeLock& lock) { controls.set_time_lock(lock); });

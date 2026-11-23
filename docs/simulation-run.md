@@ -21,6 +21,7 @@ This reference describes what `vehicle_sil_launch run <file>` does and in which 
 | Recording what a scenario wrote and saw in a JSON file | [`--timeline`](#recording-a-scenario-run-on-a-timeline---timeline) |
 | Seeing that file as a chart, and why a scenario failed | [Viewing a timeline file](#viewing-a-timeline-file) |
 | Running several scenarios on every variant | [`test`](#running-several-scenarios-vehicle_sil_launch-test) |
+| Keeping one launcher process for sequential runs | [`serve`](#running-sequentially-in-one-launcher-vehicle_sil_launch-serve) |
 
 ## How a run proceeds
 
@@ -2051,6 +2052,44 @@ Keys of `runs[]`:
 | `run` | The same object as `run --json` for that run (`null` for `skipped` and `not_run`) |
 
 `formats` of `version --json` has the version of this JSON as `test`; `features` has no entry for `test`.
+
+## Running sequentially in one launcher (`vehicle_sil_launch serve`)
+
+`vehicle_sil_launch serve <file>` stays running for one configuration file and executes runs one at a time as stdin `{"command":"run"}` commands arrive. Each run creates and destroys its own SIL Kit registry, controller, hub, Control Server, participant processes and scenario, and starts at virtual time 0 with no state carried over from earlier runs.
+
+```sh
+vehicle_sil_launch serve [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeout-ms <ms>] \
+  [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>] \
+  [--events-stall-ms <ms>] [--control <address> [--control-credentials <file>] \
+  [--control-tls-cert <file> --control-tls-key <file>] [--control-audit-log <file>]] \
+  [--] <file>
+```
+
+- `serve` always writes NDJSON events to stdout and reads commands from stdin (see "Resident launcher (`serve`)" in [simulation-events.md](simulation-events.md#resident-launcher-serve)). Passing `--events` or `--stdin-commands` is a usage error.
+- Per-run options (`--scenario`, `--variant`, `--param`, `--speed`, `--strict`, `--start-paused`, `--stop-at-ms`, `--late-tolerance-ms`, `--disable`, `--enable`, `--manual`, `--connect`, `--time-policy`, `--request`, `--timeline`) are not accepted on the command line; pass them in the `"request"` file (and `"timeline"` path) of each `{"command":"run"}` command.
+- With `--log-dir <dir>`, each run writes its participant logs under `<dir>/<run ID>/`.
+- With `--control-credentials <file>`, the credentials file is read again before each run so callers can rotate tokens per run.
+- Only one run is executed at a time. A `run` command received before the launcher emits `idle` is refused (`busy`); nothing is queued.
+- A run that fails, times out or is stopped is never retried automatically.
+
+### Restrictions of `serve`
+
+- **Fixed registry address (`registry_uri` or `manual` participants)**: `serve` refuses any run whose configuration fixes the SIL Kit registry address (an explicit `registry_uri`, or a `manual` participant waiting on the default port 8500) before describing or starting any participant. The run ends with a `usage` result explaining the reason and the launcher returns to `idle`. A late participant from an earlier run could otherwise join the next run under the same name, because the run ID does not cover SIL Kit participant joins. Use `vehicle_sil_launch run` for such configurations.
+- **Profiling trace (`VEHICLE_SIL_TRACE`)**: `serve` refuses to start when `VEHICLE_SIL_TRACE` is set (exit code 4, with a usage `result` event), because per-run trace rings stay in the resident process. Use `vehicle_sil_launch run` to trace a single run.
+
+### Stopping and exit codes of `serve`
+
+- A targeted stdin `stop` (`{"command":"stop","run":"<run ID>"}`) or a Control API `Stop` with a matching run ID stops only the current run. When the run closes cleanly, the launcher emits `idle` and accepts the next `run`.
+- While a run is already closing its own SIL Kit connection, a single late `stop` for that run does not cut the close wait short; only a second `stop` (force) or a launcher termination request does.
+- `SIGINT`, `SIGTERM`, `SIGHUP` (Windows: `CTRL_C_EVENT`, `CTRL_BREAK_EVENT`, `CTRL_CLOSE_EVENT`), stdin EOF, or closed stdout ends the launcher. If a run is active, it is stopped and its `result` sets `"launcher_ends": true`, with no `idle` after it.
+- If a run cannot close its own SIL Kit connection within the limit (`connection-not-closed`) or throws an internal error, the launcher sets `"launcher_ends": true` on that run's `result` and exits immediately with code 6 so the caller can start a fresh launcher for the next run.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Stdin reached EOF while idle |
+| 4 | Startup usage error (including `VEHICLE_SIL_TRACE` set) |
+| 6 | A run left the launcher in an unknown state (`connection-not-closed` or internal error; `"launcher_ends": true`) |
+| 130 | Interrupted by a signal or console event, stdin EOF during a run, or closed event output |
 
 ## See also
 

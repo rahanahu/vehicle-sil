@@ -67,6 +67,10 @@ struct CheckOptions
     /// Treat RunIntent::speed as a test default. The run adopts it when the time lock is off;
     /// with the time lock on, the run uses speed 1 without refusing the default.
     bool fastest_by_default = false;
+    /// serve: refuse a configuration whose registry listens at a fixed address (registry_uri or a
+    /// manual participant) as soon as the file is read, before any executable is described or
+    /// started: CheckReport::usage with one finding that says why and to use `run`.
+    bool refuse_fixed_registry = false;
 };
 
 /// Checks the file of `request` (RunHost::config, shown as given): reads it, checks the

@@ -1613,13 +1613,14 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "stdin-run-until",
     "request",
     "scenario-samples",
-    "run-stop-at"
+    "run-stop-at",
+    "serve"
   ]
 }
 )");
     // A build with the control server adds its features last.
     const std::string with = format_version_json({kControlServerFeature, kScenarioControlFeature, kScenarioTimeFeature});
-    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"stdin-run-until\",\n    \"request\",\n    \"scenario-samples\",\n    \"run-stop-at\",\n    \"control-server\",\n    \"scenario-control\",\n    \"scenario-time\"\n  ]") != std::string::npos);
+    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"stdin-run-until\",\n    \"request\",\n    \"scenario-samples\",\n    \"run-stop-at\",\n    \"serve\",\n    \"control-server\",\n    \"scenario-control\",\n    \"scenario-time\"\n  ]") != std::string::npos);
 }
 
 TEST_CASE(an_accepted_stop_is_asked_for_before_the_detach_and_a_refused_one_not_at_all)

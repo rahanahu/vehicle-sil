@@ -9,6 +9,7 @@ Control API は、実行中のシミュレーションを外から操作・監�
 | クライアント、ランチャー、ECU のつながり | [全体の構成](#全体の構成) |
 | Control Server を持つランチャーのビルド | [ビルド](#ビルド) |
 | `--control` のアドレス、サーバーが起動する時点と終わる時点 | [ランチャーに接続する](#ランチャーに接続する) |
+| クライアントを 1 つの実行に結びつける（`vehicle-sil-run`、`PingReply.run`） | [宛先の実行](#宛先の実行) |
 | 最初のステップの前に値を書く | [始まる前に書く（`--start-paused`）](#始まる前に書く--start-paused) |
 | 時間のコマンドの順序とルール | [標準入力とクライアントのコマンド](#標準入力とクライアントのコマンド) |
 | TLS、トークン、ロール | [認証](#認証) |
@@ -92,6 +93,23 @@ vehicle_sil_launch run --events --stdin-commands --start-paused --control 0 simu
 | 待っている呼び出し（`Watch`、`WaitOperation`、`WaitPaused`） | サーバーを閉じる時点で終わります（`Watch` はストリームの終わり、`WaitPaused` は `FAILED_PRECONDITION` か `CANCELLED`）。 |
 | クライアントが接続したままのとき | ランチャーはクライアントを待たないので、終了は遅れません。 |
 | シミュレーションが終わってからサーバーを閉じるまでの間 | 終わった時点の値を読めます。 |
+
+### 宛先の実行
+
+実行には、ランチャーが付ける ID があります。中身に意味のない文字列で、等しいかどうかだけを比べます（分解しません）。Control Server は実行ごとにあり、自分の実行の ID を知っています。gRPC のチャネルは、そのアドレスで待ち受けているサーバーに自分でつなぎ直すので、固定のアドレスでは、前の実行のクライアントが次の実行のサーバーに届いてしまいます。そこで、クライアントは宛先の実行を名乗り、サーバーは別の実行宛ての呼び出しを断ります。
+
+| 項目 | 内容 |
+|---|---|
+| クライアントが ID を知る方法 | `PingReply` の `run`（`Ping`）。`serve` では、ランチャーのイベントにもあります（[simulation-events.md](simulation-events.md)）。 |
+| 呼び出しで実行を名乗る方法 | メタデータ `vehicle-sil-run: <ID>`。Python では `Control(address, run=<ID>)` か `Control.for_current_run(address)` です（[Python](#python)）。 |
+| 別の実行を名乗る呼び出し | `FAILED_PRECONDITION` で断ります。trailing metadata の `vehicle-sil-reason` は `run-changed` です。呼び出しの中身は ECU にも時刻にも届きません。 |
+| 実行を名乗らない呼び出し（`vehicle_sil_launch run`） | 受けます（実行に ID がなかったころと同じです）。 |
+| 実行を名乗らない呼び出し（`vehicle_sil_launch serve`。1 つのランチャーが実行を 1 つずつ順に行う。[simulation-run.md](simulation-run.md)） | `FAILED_PRECONDITION` で断ります。`vehicle-sil-reason` は `run-required` です。 |
+| `Ping` | 実行を理由に断ることはありません。クライアントがいつでも今の実行を知れるようにするためです。 |
+| 確かめる順序 | トークン（`UNAUTHENTICATED`）、ロール（`PERMISSION_DENIED`）、実行の順です。正しいトークンのないクライアントは実行について何も知れず、トークンのあるクライアントも `Ping` で分かること以上は知れません。 |
+| 監査ログ | 各行の先頭に `[run <ID>] ` が付きます。1 つのファイル（`--control-audit-log`）に複数の実行の行が入っても区別できます。断った呼び出しの行には、名乗った実行も書きます。 |
+
+実行の ID は資格情報ではありません。`Ping` を呼べる人なら誰でも読めます。クライアントを自分の実行にとどめるだけです。クライアントに何ができるかは、トークンとロールが決めます（[認証](#認証)）。ある実行のクライアントを次の実行から完全に締め出すには、実行ごとに別の資格情報ファイルを使います。
 
 ### シナリオの実行中
 
@@ -263,7 +281,7 @@ admin      lead     7b21e4...
 | `operator` | 時間の操作と書き込みです。 |
 | `admin` | `Stop` です（`Stop` を呼べるのは `admin` だけです）。 |
 
-`--control-audit-log <file>` を付けると、誰が何を変えたかをファイルに追記します。書き込めなくなっても実行は続き、その行は失われます。
+`--control-audit-log <file>` を付けると、誰が何を変えたかを、呼び出しごとに 1 行、先頭に `[run <ID>] ` を付けてファイルに追記します（[宛先の実行](#宛先の実行)）。書き込めなくなっても実行は続き、その行は失われます。
 
 ECU とランチャーの間（SIL Kit）には、認証がありません。registry に参加できる者は、ECU に書き込めます。閉じたネットワークで使います。
 
@@ -398,7 +416,7 @@ gRPC の呼び出しと、Python のクライアント（`Control` のメソッ�
 
 | gRPC | すること | Python | CLI | ロール |
 |---|---|---|---|---|
-| `Ping` | サーバーのバージョン（`server_version`）と、サーバーを作った vehicle-sil のリリース（`vehicle_sil`）を返します。 | `ping()`（`server_version` を返す） | なし | `viewer` |
+| `Ping` | サーバーのバージョン（`server_version`）、サーバーを作った vehicle-sil のリリース（`vehicle_sil`）、サーバーの実行の ID（`run`）を返します。 | `ping()`（`server_version` を返す）、`current_run()`（`run` を返す） | なし | `viewer` |
 | `ListPeers` | Peer と変数の一覧を読みます。 | `peers()`、`peer()` | `peers`、`show` | `viewer` |
 | `GetValues` | 1 つの Peer の最後の値を読みます。 | `values()` | `show` | `viewer` |
 | `GetSnapshot` | 時刻と値をまとめて読みます。 | `snapshot()` | なし | `viewer` |
@@ -490,7 +508,24 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
 | 呼び出しの失敗 | 例外 `ControlError` です（[エラー](#エラー)）。 |
 | Agent が拒否した書き込み | 例外ではなく、操作の結果（`invalid` など）になります。 |
 
-`vehicle_sil_control` は、ランチャーと同じ vehicle-sil のリリースのものを使います。`Control` を作っただけでは接続しません。最初の呼び出しか watch のときに、`Control` は `Ping` を 1 回送ってサーバーのリリースを確かめます。別のリリースのサーバーは、`ControlError`（`code` は `FAILED_PRECONDITION`）で断ります。メッセージは `the control server is vehicle-sil <X>; this vehicle_sil_control is <Y>: use the vehicle_sil_control of the same release as the launcher` です。リリースを返さないサーバー（0.1.0 のランチャーか、この確認より前に作ったもの）も同じように断ります。メッセージは `the control server does not report its vehicle-sil release (...); this vehicle_sil_control is <Y>: use the vehicle_sil_control that came with the launcher` です。クライアントがこの欄を知る前に作ったスタブは、呼び出しの前に断ります。メッセージは、`python -m vehicle_sil_control.generate` をもう一度実行するように言います。`Ping` が失敗したとき（サーバーがまだない）は、次の呼び出しでもう一度確かめます。
+`Control` を 1 つの実行にとどめるには（[宛先の実行](#宛先の実行)）、実行に結びつけます。結びつけた `Control` はすべての呼び出しで実行を名乗り、アドレスのサーバーが別の実行のものになると、`ping()` と `current_run()` 以外の呼び出しは `ControlError`（`reason` は `run-changed`）になります。新しい実行には新しい `Control` を作ります。
+
+```python
+from vehicle_sil_control import Control
+
+with Control.for_current_run("127.0.0.1:8510", token=token) as c:   # the run the server belongs to now
+    print(c.run)                                                     # its ID
+    c.sim.stop()                                                     # stops that run, never a later one
+```
+
+| メンバー | 内容 |
+|---|---|
+| `Control(address, ..., run=<ID>)` | すべての呼び出しで実行 `<ID>` を名乗ります（メタデータ `vehicle-sil-run`）。`run=None`（既定）では名乗りません。 |
+| `Control.for_current_run(address, ...)` | サーバーの今の実行に結びつけた `Control` です（`Ping` を 1 回送ります）。引数は `run` を除いて `Control()` と同じです。実行を持たないサーバーでは `ControlError`（`FAILED_PRECONDITION`）です。 |
+| `run` | 結びつけた ID か `None` です。 |
+| `current_run()` | サーバーの今の実行の ID です（`PingReply.run`。なければ空）。実行を理由に断られることはありません。`run` と比べると、`Control` がまだ自分の実行に届くかが分かります。 |
+
+`vehicle_sil_control` は、ランチャーと同じ vehicle-sil のリリースのものを使います。`Control` を作っただけでは接続しません。最初の呼び出しか watch のときに、`Control` は `Ping` を 1 回送ってサーバーのリリースを確かめます。別のリリースのサーバーは、`ControlError`（`code` は `FAILED_PRECONDITION`）で断ります。メッセージは `the control server is vehicle-sil <X>; this vehicle_sil_control is <Y>: use the vehicle_sil_control of the same release as the launcher` です。リリースを返さないサーバー（0.1.0 のランチャーか、この確認より前に作ったもの）も同じように断ります。メッセージは `the control server does not report its vehicle-sil release (...); this vehicle_sil_control is <Y>: use the vehicle_sil_control that came with the launcher` です。クライアントがこれらの欄（`vehicle_sil`、`run`）を知る前に作ったスタブは、呼び出しの前に断ります。メッセージは、`python -m vehicle_sil_control.generate` をもう一度実行するように言います。`Ping` が失敗したとき（サーバーがまだない）は、次の呼び出しでもう一度確かめます。
 
 ### 書き込みのルール
 
@@ -615,7 +650,7 @@ if snap.consistent:                       # 値は、止まっている時刻 sn
 
 ## CLI
 
-`--server`（既定は `VEHICLE_SIL_CONTROL_SERVER`）に、ランチャーのイベント `control_server` の `address`（人向けの出力では `control server at` の行）を渡します。コマンドと gRPC の呼び出しの対応は、[呼び出しの一覧](#呼び出しの一覧)にあります。
+`--server`（既定は `VEHICLE_SIL_CONTROL_SERVER`）に、ランチャーのイベント `control_server` の `address`（人向けの出力では `control server at` の行）を渡します。`--run <ID>`（既定は `VEHICLE_SIL_CONTROL_RUN`）は、コマンドの宛先の実行を名乗ります（[宛先の実行](#宛先の実行)）。`serve` のランチャーでは必須です。コマンドと gRPC の呼び出しの対応は、[呼び出しの一覧](#呼び出しの一覧)にあります。
 
 ```sh
 export VEHICLE_SIL_CONTROL_SERVER=ctrl-pc:8510 VEHICLE_SIL_CONTROL_TOKEN=... VEHICLE_SIL_CONTROL_ROOT_CERT=server.crt
@@ -636,12 +671,12 @@ python -m vehicle_sil_control stop
 | `ControlError` のメンバー | 内容 |
 |---|---|
 | `code` | gRPC の状態コードです。 |
-| `reason` | Server が理由を付けて拒否したときの、その語です（trailing metadata の `vehicle-sil-reason`）。`scenario-running`、`outside-real-time` と、今はできない時刻のコマンドのほかの理由です（なければ空）。 |
+| `reason` | Server が理由を付けて拒否したときの、その語です（trailing metadata の `vehicle-sil-reason`）。`run-changed`、`run-required`、`scenario-running`、`outside-real-time` と、今はできない時刻のコマンドのほかの理由です（なければ空）。 |
 
 | 状態コード | 返るとき |
 |---|---|
 | `INVALID_ARGUMENT` | 引数のエラーです（範囲の外の速度、0 以下のステップ、`snapshot()` の名前が 1024 個を超える）。 |
-| `FAILED_PRECONDITION` | 今はできない呼び出しです（一時停止していないときの `step`、終わった後の `Stop`、シナリオの実行中の書き込み、外につながっていて実時間を保つ実行での一時停止や速度の変更）。Python のクライアントは、別の vehicle-sil のリリースのサーバーにも出します。 |
+| `FAILED_PRECONDITION` | 今はできない呼び出しです（一時停止していないときの `step`、終わった後の `Stop`、シナリオの実行中の書き込み、外につながっていて実時間を保つ実行での一時停止や速度の変更）か、サーバーと別の実行宛ての呼び出し（`run-changed`）や、実行が必須のサーバーへの実行を名乗らない呼び出し（`run-required`）です。Python のクライアントは、別の vehicle-sil のリリースのサーバーにも出します。 |
 | `CANCELLED` | 待っている間に、サーバーが閉じました（`WaitPaused`。`FAILED_PRECONDITION` のこともあります）。 |
 | `RESOURCE_EXHAUSTED` | `snapshot()` のレスポンスが、1 つのメッセージの上限（4 MiB）を超えました。 |
 | `UNIMPLEMENTED` | そのアドレスは gRPC に答えますが、vehicle-sil の Control Server ではありません（その呼び出しがない）。 |
@@ -661,7 +696,7 @@ python -m vehicle_sil_control stop
 | 時間の操作（一時停止、ステップ実行、速度）で止まる Peer | 仮想時間で同期している Peer だけで、実時間の Peer は動き続けます。 |
 | 速度を指定したときの遅れ | シミュレーションが実時間に遅れても、後から追いつこうとはしません。 |
 | ない操作 | リセット、participant の起動と再起動、CAN/LIN のチャネルの選択はありません。 |
-| サーバーが扱う実行 | そのランチャーの 1 回の実行だけで、実行が終わると閉じます。 |
+| サーバーが扱う実行 | 1 回の実行だけで、実行が終わると閉じます。`serve` では、実行ごとに別のサーバーがあります。 |
 | 値の購読 | 最新値です（読む前に来た新しい値で置き換えます）。 |
 
 - 速度を指定して遅れたときは、遅れた分だけ後ろにずれたまま、指定の速度で進みます（[internals/virtual-time.md](internals/virtual-time.md#遅れの測り方) の「遅れの測り方」）。

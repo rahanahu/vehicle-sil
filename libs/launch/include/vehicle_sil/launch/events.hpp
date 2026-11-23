@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
-// The machine interface of vehicle_sil_launch: the events of `run --events` (one JSON object per
-// line) and `version --json`; the commands of `run --stdin-commands` are read by command_input.hpp.
-// Internal; the format: docs/simulation-events.md.
+// The machine interface of vehicle_sil_launch: the events of `run --events` and of `serve` (one JSON
+// object per line) and `version --json`; the commands of `run --stdin-commands` and of `serve` are
+// read by command_input.hpp. Internal; the format: docs/simulation-events.md.
 #pragma once
 
 #include "vehicle_sil/config/check.hpp"
@@ -29,11 +29,15 @@ namespace vehicle_sil::launch {
 
 /// The version of the events (hello's "vehicle_sil_events").
 inline constexpr int kEventsFormat = 2;
+/// The version of the events of `serve` (its hello's "vehicle_sil_events"): the lines of
+/// kEventsFormat, each run's between its "run_start" and its "result" with "run", and the
+/// launcher's own lines ("idle", the refused commands) between the runs.
+inline constexpr int kServeEventsFormat = 3;
 /// The version of `version --json` (its "vehicle_sil_launch").
 inline constexpr int kVersionFormat = 1;
 /// What this launcher can do, by name, for a reader that asks "is it there" instead of comparing
 /// versions (`version --json`'s "features"). Names are only added.
-inline constexpr std::array<std::string_view, 27> kFeatures{"events",
+inline constexpr std::array<std::string_view, 28> kFeatures{"events",
                                                             "stdin-commands",
                                                             "check-variables",
                                                             "speed",
@@ -59,7 +63,8 @@ inline constexpr std::array<std::string_view, 27> kFeatures{"events",
                                                             "stdin-run-until",
                                                             "request",
                                                             "scenario-samples",
-                                                            "run-stop-at"};
+                                                            "run-stop-at",
+                                                            "serve"};
 
 /// `version`: "vehicle_sil_launch <version>\n".
 [[nodiscard]] std::string format_version_text();
@@ -174,6 +179,18 @@ struct EventStreamOptions
 /// What the run itself tells is RunEvents (run_events.hpp), which this implements: the parts of a
 /// run call those members and do not know this class. The other members are for whoever runs the
 /// launcher's commands (hello, check, phase, command, state, result).
+///
+/// serve: one stream for the life of the launcher, which runs one run after the other. Each run
+/// has a window (open_run()): a stream object that shares this stream's queue, writer, watch,
+/// "seq" and "t_ms", and puts "run":"<run ID>" first in each line it makes. The window's first
+/// line is "run_start" and its last its result(), which closes the window but not the stream:
+/// whatever is given to the window after that (a thread of the run that is late) is dropped, so
+/// no line of a run follows its result. While a window is open, a "heartbeat" has its "run" too,
+/// so every line from "run_start" to the result has it; "log_dropped" and "state" belong to the
+/// window that made them (a waiting "state" is only replaced by one of the same window). Between
+/// the windows the stream writes the launcher's own lines (idle(), refused(), heartbeats) without
+/// "run", and is never sealed: only a result() of the stream itself (the launcher ends at its
+/// start) is the last line. One window is open at a time (the caller's rule).
 class EventStream : public runner::RunEvents
 {
 public:
@@ -191,6 +208,19 @@ public:
 
     /// The first event. `file`: the configuration file as given, or "" (null) if unknown.
     void hello(long pid, const std::string& file, const std::vector<std::string>& arguments);
+    /// serve: the first event, as above with kServeEventsFormat and "launcher": the launcher's
+    /// instance (16 hexadecimal digits; each run ID begins with it).
+    void hello(long pid, const std::string& file, const std::vector<std::string>& arguments, const std::string& launcher);
+    /// serve: "idle": the launcher holds nothing of a run any more and takes the next run command.
+    void idle();
+    /// serve: a command of standard input that the launcher refused itself (not a run's: no
+    /// "run"): the members of command() and "asked_run", the run the command named (null if it
+    /// named none).
+    void refused(const runner::Command& command, std::string_view source, const std::optional<std::string>& asked_run);
+    /// serve: opens the window of the run `run` (see above) and writes its "run_start" with "id",
+    /// the run command's number (null without one). The window is open until its result() or
+    /// until it is destroyed; it may outlive this object (it shares the stream's state).
+    [[nodiscard]] std::unique_ptr<EventStream> open_run(const std::string& run, std::optional<std::int64_t> id);
     void phase(runner::Phase phase);
     /// The check's result, as `check --json` writes it.
     void check(const Checked& report);
@@ -246,12 +276,14 @@ public:
     void state(const runner::RunState& state);
     /// The last event: the run's result as `run --json` writes it. `members`: the event's members
     /// as a compact JSON object, {"result":{...}} (format_result_event() of run.hpp writes it from
-    /// the run's report). Waits until it has been written
+    /// the run's report). On a run's window (open_run()): the window's last line, which closes the
+    /// window and, when `seal` is true (`launcher_ends: true`), also seals the stream so no line
+    /// follows it. Waits until it has been written
     /// (true) or the stream has closed (false): at most stall_timeout, whether the reader reads
     /// or not. While nothing could be written for half a second, `give_up` is asked every few
     /// milliseconds, and true closes the stream (`give_up` takes the result from no reader that
     /// reads).
-    bool result(std::string members, const std::function<bool()>& give_up = {});
+    bool result(std::string members, const std::function<bool()>& give_up = {}, bool seal = false);
 
     /// Waits up to `timeout` until every event given so far has been written; false if the time
     /// is over or the stream has closed.
@@ -271,16 +303,26 @@ private:
         Other,
         State,
         Result,
+        ResultFinal, ///< a window's result that also ends the stream (launcher_ends: true)
+        Open,        ///< a window's "run_start": an Other that opens the window for the heartbeats
     };
     /// Queues {"event":<event>,"seq":..,"t_ms":..,<the members of `object`>}; `object` is a compact
-    /// JSON object. false if it was not taken (closed, after the result, a dropped "log").
-    bool emit(std::string_view event, std::string object, Kind kind = Kind::Other, const std::string& source = {});
+    /// JSON object; a window puts its "run" first. false if it was not taken (closed, after the
+    /// result, a window that is closed, a dropped "log"). `order`: set to the line's place in the
+    /// queue (result() waits for it).
+    bool emit(std::string_view event, std::string object, Kind kind = Kind::Other, const std::string& source = {},
+              std::uint64_t* order = nullptr);
 
     struct State;
+    struct Window;
+    /// A run's window on `state` (open_run()).
+    EventStream(std::shared_ptr<State> state, std::shared_ptr<Window> window);
     static void write_lines(const std::shared_ptr<State>& state);
     static void watch(const std::shared_ptr<State>& state);
 
     std::shared_ptr<State> state_;
+    /// Set: this object is a run's window (open_run()), not the stream.
+    std::shared_ptr<Window> window_;
 };
 
 } // namespace vehicle_sil::launch

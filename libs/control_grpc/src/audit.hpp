@@ -22,14 +22,18 @@ std::string cut_utf8(std::string text, std::size_t max);
 
 /// The audit log (ServerOptions::audit): cleaned lines of bounded length, and refused calls
 /// thinned out, since anyone who reaches the port can make those (a flood must not fill the disk
-/// or slow the other calls down).
+/// or slow the other calls down). `prefix` comes before every line ("[run <ID>] ": one file can
+/// hold the lines of several runs).
 class AuditLog
 {
 public:
     static constexpr std::size_t kMaxLine = 1000;
     static constexpr int kRefusedPerSecond = 20;
 
-    explicit AuditLog(std::function<void(const std::string&)> sink) : sink_(std::move(sink)) {}
+    explicit AuditLog(std::function<void(const std::string&)> sink, std::string prefix = {}) :
+      sink_(std::move(sink)), prefix_(std::move(prefix))
+    {
+    }
     AuditLog(const AuditLog&) = delete;
     AuditLog& operator=(const AuditLog&) = delete;
 
@@ -74,7 +78,7 @@ public:
 private:
     void write(std::string text) const
     {
-        text = clean(std::move(text));
+        text = clean(prefix_ + text);
         if (text.size() > kMaxLine)
         {
             text = cut_utf8(std::move(text), kMaxLine) + "...";
@@ -90,6 +94,7 @@ private:
     }
 
     std::function<void(const std::string&)> sink_;
+    std::string prefix_;
     mutable std::mutex mutex_;
     mutable std::chrono::steady_clock::time_point window_{};
     mutable int in_window_ = 0;
