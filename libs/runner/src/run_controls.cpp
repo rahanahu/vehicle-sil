@@ -115,17 +115,26 @@ RunState RunControls::compose(const TimeFacts& facts) const
 
 void RunControls::tell(const TimeFacts& facts)
 {
+    const int stop_count = stops_.count();
+    const bool new_stop = stop_count > notified_stops_;
+    if (new_stop)
+    {
+        notified_stops_ = stop_count;
+    }
     RunState now = compose(facts);
     now.rev = told_.rev;
-    if (told_.rev != 0 && now == told_)
+    if (told_.rev == 0 || now != told_)
     {
-        return;
+        ++now.rev;
+        told_ = std::move(now);
+        if (on_state_)
+        {
+            on_state_(told_);
+        }
     }
-    ++now.rev;
-    told_ = std::move(now);
-    if (on_state_)
+    if (new_stop && on_stop_wake_)
     {
-        on_state_(told_);
+        on_stop_wake_();
     }
 }
 
@@ -137,9 +146,27 @@ void RunControls::set_outside(std::vector<RunState::Outside> outside)
     });
 }
 
+void RunControls::set_stop_wake(std::function<void()> wake)
+{
+    time_.look([this, &wake](const TimeFacts&) { on_stop_wake_ = std::move(wake); });
+}
+
 void RunControls::publish()
 {
-    time_.look([this](const TimeFacts& facts) { tell(facts); });
+    bool wake_hold = false;
+    time_.look([this, &wake_hold](const TimeFacts& facts) {
+        const int stop_count = stops_.count();
+        if (facts.holding && stop_count > notified_hold_stops_)
+        {
+            notified_hold_stops_ = stop_count;
+            wake_hold = true;
+        }
+        tell(facts);
+    });
+    if (wake_hold)
+    {
+        time_.wake_hold();
+    }
 }
 
 RunState RunControls::state()

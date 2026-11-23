@@ -242,6 +242,20 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
     WatchTarget target;
     std::uint64_t completionGeneration = 0;
     bool stopping = false;
+    struct StopWakeGuard
+    {
+        RunControls& controls;
+        StopWakeGuard(RunControls& c, std::function<void()> wake) : controls(c)
+        {
+            controls.set_stop_wake(std::move(wake));
+        }
+        ~StopWakeGuard() { controls.set_stop_wake({}); }
+        StopWakeGuard(const StopWakeGuard&) = delete;
+        StopWakeGuard& operator=(const StopWakeGuard&) = delete;
+    } const stopWake(ctx_.controls, [this, &controller] {
+        controller.runtime().wake_waiters();
+        scenario_.wake_waiters();
+    });
     const ScenarioWatchWait wait{
         [&controller](std::chrono::milliseconds duration) { return controller.wait_until_finished(duration); },
         [this, &completionGeneration](std::chrono::milliseconds duration) {
@@ -251,9 +265,17 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         [] { return std::chrono::steady_clock::now(); },
     };
     target.wait_until_finished = [this, &controller, &wait, &stopping](std::chrono::milliseconds timeout) {
-        if (ctx_.scenario == nullptr || stopping)
+        if (stopping)
         {
             return controller.wait_until_finished(timeout);
+        }
+        if (ctx_.scenario == nullptr)
+        {
+            return controller.wait_until_finished(timeout, [this] { return ctx_.interrupts() > 0; });
+        }
+        if (ctx_.interrupts() > 0)
+        {
+            return controller.wait_until_finished(std::chrono::milliseconds(0));
         }
         return wait_scenario_watch(wait, timeout);
     };

@@ -608,4 +608,19 @@ TEST_CASE(time_gate_model_the_guard_and_a_pause_hold_a_step_together_and_the_las
     gate.begin_last_step(at(20ms), w(10));
     CHECK(!gate.guarded());
     CHECK(!gate.release_at().has_value());
+    CHECK(gate.ended());
+}
+
+TEST_CASE(time_gate_model_ended_reports_end_and_last_step)
+{
+    TimeGate by_end(1.0, 10ms, false);
+    CHECK(!by_end.ended());
+    CHECK(!by_end.begin_step(at(0ms), 10ms, w(0)) || !by_end.ended());
+    by_end.end(w(5));
+    CHECK(by_end.ended());
+
+    TimeGate by_last(1.0, 10ms, false);
+    CHECK(!by_last.ended());
+    by_last.begin_last_step(at(0ms), w(0));
+    CHECK(by_last.ended());
 }

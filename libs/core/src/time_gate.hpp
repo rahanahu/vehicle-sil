@@ -52,6 +52,7 @@ public:
     /// The state as if the run ended at `wall` (after end(): as it ended).
     [[nodiscard]] TimeState state(Wall::time_point wall) const;
     [[nodiscard]] bool paused() const noexcept { return state_.paused; }
+    [[nodiscard]] bool ended() const noexcept { return ended_; }
     [[nodiscard]] SimTime now() const noexcept { return state_.now; }
 
 private:

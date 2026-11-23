@@ -63,6 +63,9 @@ struct TimeCommands::State
     std::deque<Waiting> waiting{};
     /// In hold_before_start(), and no resume, step or run_until yet.
     bool holding = false;
+    /// Incremented on accepted stop commands and wake_hold() so hold_before_start() rechecks
+    /// give_up() immediately instead of waiting for its poll interval.
+    std::uint64_t hold_wake_generation = 0;
     /// Since the last pause (or the start, paused): a step, run_until or pause at a later time
     /// has let the simulation go on from 0, so there is nothing to hold before the first step.
     bool released = false;
@@ -206,9 +209,11 @@ Command decide_and_do(S& s, const Command& command, std::string_view source, con
     }
     SimulationController* c = s.controller;
     // A stop is the caller's (it asks the run to stop): only its event and its refusal are here,
-    // in the order of the other commands.
+    // in the order of the other commands. Wake hold_before_start() so it sees the stop at once.
     if (name == "stop")
     {
+        ++s.hold_wake_generation;
+        s.cv.notify_all();
         return out;
     }
     // Before it takes effect: where the simulation stood when it came.
@@ -405,6 +410,7 @@ TimeCommands::Hold TimeCommands::hold_before_start(const std::function<bool()>& 
                                                    const std::function<void()>& on_hold)
 {
     State& s = *state_;
+    std::uint64_t seen_wake = 0;
     {
         const std::lock_guard lock(s.mutex);
         if (s.detached)
@@ -416,6 +422,7 @@ TimeCommands::Hold TimeCommands::hold_before_start(const std::function<bool()>& 
             return Hold::None; // a command before the window let it go on: nothing to hold
         }
         s.holding = true;
+        seen_wake = s.hold_wake_generation;
         tell(s);
     }
     // However this ends (also by an exception), the run no longer holds.
@@ -435,13 +442,6 @@ TimeCommands::Hold TimeCommands::hold_before_start(const std::function<bool()>& 
     }
     while (true)
     {
-        {
-            std::unique_lock lock(s.mutex);
-            if (s.cv.wait_for(lock, poll, [&s] { return !s.holding; }))
-            {
-                return s.detached ? Hold::GaveUp : Hold::Released;
-            }
-        }
         // Without the lock: it may take other locks (the window's, the runtime's).
         if (give_up && give_up())
         {
@@ -452,7 +452,26 @@ TimeCommands::Hold TimeCommands::hold_before_start(const std::function<bool()>& 
             }
             return Hold::GaveUp;
         }
+        std::unique_lock lock(s.mutex);
+        if (s.cv.wait_for(lock, poll, [&s, seen_wake] { return !s.holding || s.hold_wake_generation != seen_wake; }))
+        {
+            if (!s.holding)
+            {
+                return s.detached ? Hold::GaveUp : Hold::Released;
+            }
+            seen_wake = s.hold_wake_generation;
+        }
     }
+}
+
+void TimeCommands::wake_hold()
+{
+    State& s = *state_;
+    {
+        const std::lock_guard lock(s.mutex);
+        ++s.hold_wake_generation;
+    }
+    s.cv.notify_all();
 }
 
 std::optional<TimeChange> TimeCommands::first_time_change()

@@ -201,10 +201,15 @@ public:
     };
     /// The hold, on the thread of the start window: waits until a resume, step or run_until
     /// command has been accepted, `give_up()` is true or detach() is called. `on_hold` is called
-    /// once when the hold begins (not for Hold::None), `give_up` every `poll`; both without this
-    /// object's mutex.
+    /// once when the hold begins (not for Hold::None), `give_up` every `poll` and whenever an
+    /// accepted stop command or wake_hold() wakes the wait; both without this object's mutex.
     Hold hold_before_start(const std::function<bool()>& give_up, std::chrono::milliseconds poll,
                            const std::function<void()>& on_hold = {});
+
+    /// Wakes hold_before_start() to recheck `give_up()` immediately (for non-signal stop paths
+    /// that did not go through apply("stop")). Thread safe; must NOT be called from a signal
+    /// handler or from callbacks running under this object's mutex.
+    void wake_hold();
 
     /// Where the run stands, for a control server: SettingUp (before attach()), Attached,
     /// Detached.

@@ -795,6 +795,88 @@ std::optional<orch::ParticipantState> ParticipantRuntime::wait_until_finished(st
     return final_state();
 }
 
+std::optional<orch::ParticipantState> ParticipantRuntime::wait_until_finished(
+    std::chrono::milliseconds timeout, const std::function<bool()>& should_wake)
+{
+    if (!should_wake)
+    {
+        return wait_until_finished(timeout);
+    }
+    if (auto state = final_state())
+    {
+        return state;
+    }
+    if (!lifecycle_done_)
+    {
+        return std::nullopt;
+    }
+    const auto done = *lifecycle_done_; // own copy: stop() may use it meanwhile
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    try
+    {
+        while (true)
+        {
+            std::uint64_t peer_gen = 0;
+            std::uint64_t wake_gen = 0;
+            {
+                const std::lock_guard lock(peers_mutex_);
+                peer_gen = peer_generation_;
+                wake_gen = wake_generation_;
+            }
+            if (done.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
+            {
+                set_final_state(done.get());
+                return final_state();
+            }
+            const auto current = lifecycle_->State();
+            if (current == orch::ParticipantState::Error)
+            {
+                return orch::ParticipantState::Error;
+            }
+            if (should_wake())
+            {
+                return std::nullopt;
+            }
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline)
+            {
+                return std::nullopt;
+            }
+            // Once the lifecycle is already stopping or shut down, wait directly on the future
+            // for its completion instead of sleeping on peers_cv_.
+            if (is_terminal_or_stopping(current))
+            {
+                constexpr auto kPoll = std::chrono::milliseconds(20);
+                if (done.wait_for(std::min<std::chrono::steady_clock::duration>(kPoll, deadline - now))
+                    == std::future_status::ready)
+                {
+                    set_final_state(done.get());
+                    return final_state();
+                }
+                continue;
+            }
+            std::unique_lock lock(peers_mutex_);
+            peers_cv_.wait_until(lock, deadline, [&] {
+                return peer_generation_ != peer_gen || wake_generation_ != wake_gen;
+            });
+        }
+    }
+    catch (const std::exception&)
+    {
+        set_final_state(lifecycle_->State());
+    }
+    return final_state();
+}
+
+void ParticipantRuntime::wake_waiters() noexcept
+{
+    {
+        const std::lock_guard lock(peers_mutex_);
+        ++wake_generation_;
+    }
+    peers_cv_.notify_all();
+}
+
 bool ParticipantRuntime::stop_requested() const
 {
     const std::lock_guard lock(control_mutex_);

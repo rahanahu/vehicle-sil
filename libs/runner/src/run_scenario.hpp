@@ -99,6 +99,10 @@ public:
     [[nodiscard]] bool wait_for_completion(std::uint64_t& generation, std::chrono::milliseconds timeout,
                                            const std::function<void()>& before_wait = {}) const;
 
+    /// Wakes wait_for_completion() early (for non-signal stop requests while watching a scenario).
+    /// Thread safe; must NOT be called from a signal handler.
+    void wake_waiters();
+
     /// The simulation is over (main thread): ends the scenario's thread and decides what is left.
     void finish(SimulationController& controller, const WatchResult& watched, bool for_scenario, RunOutcome& outcome);
 

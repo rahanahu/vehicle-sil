@@ -173,8 +173,25 @@ RunParticipants::RunParticipants(const RunContext& ctx, RunOutput& out, RunOutco
 template <class Done>
 Waited RunParticipants::wait_until(std::chrono::milliseconds timeout, int interrupts_allowed, Done done)
 {
-    return detail::wait_for(timeout, std::chrono::milliseconds(5), done,
-                            [this, interrupts_allowed] { return ctx_.interrupts() > interrupts_allowed; });
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto interrupted = [this, interrupts_allowed] { return ctx_.interrupts() > interrupts_allowed; };
+    std::chrono::milliseconds poll{1};
+    constexpr std::chrono::milliseconds kMaxPoll{5};
+    while (!done())
+    {
+        if (interrupted())
+        {
+            return done() ? Waited::Done : Waited::Interrupted;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+        {
+            return Waited::TimedOut;
+        }
+        std::this_thread::sleep_for(std::min<std::chrono::steady_clock::duration>(poll, deadline - now));
+        poll = std::min(poll * 2, kMaxPoll);
+    }
+    return Waited::Done;
 }
 
 bool RunParticipants::start_children(const std::string& uri, Which which)
