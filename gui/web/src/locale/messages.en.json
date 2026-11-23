@@ -1058,6 +1058,42 @@
       "source": " まだ実行していません。始めると、participant の状態とログがここに出ます。 ",
       "target": " Nothing has run yet. When you start a run, participant status and the log appear here. "
     },
+    "7946142533011010779": {
+      "source": "{$PH} 用のランチャーを準備しています。",
+      "target": "Preparing launcher for {$PH}."
+    },
+    "436406544990433557": {
+      "source": "ランチャーを準備しています。",
+      "target": "Preparing launcher."
+    },
+    "6204609903909987020": {
+      "source": "常駐ランチャーを切り替えています。",
+      "target": "Switching persistent launcher."
+    },
+    "524695720442318584": {
+      "source": "{$PH} をすぐ開始できます（常駐待機中）。",
+      "target": "Ready to start {$PH} immediately (persistent launcher waiting)."
+    },
+    "5668094354570611881": {
+      "source": "常駐ランチャーが待機中です。",
+      "target": "Persistent launcher is ready."
+    },
+    "4926433667135090556": {
+      "source": "固定の registry_uri があるため、実行ごとにランチャーを起動します。",
+      "target": "Starts a new launcher per run because registry_uri is fixed."
+    },
+    "1958011884707473326": {
+      "source": "手動起動の participant があるため、実行ごとにランチャーを起動します。",
+      "target": "Starts a new launcher per run because a participant is manual."
+    },
+    "6771677521727857644": {
+      "source": "トレース有効のため、実行ごとにランチャーを起動します。",
+      "target": "Starts a new launcher per run while tracing is enabled."
+    },
+    "8439363317767414078": {
+      "source": "常駐ランチャーの準備に失敗したため、実行ごとの起動へ切り替えました。",
+      "target": "Persistent launcher preparation failed; switched to launching per run."
+    },
     "4802514740729461545": {
       "source": "構成ファイルを選んでください。",
       "target": "Choose a configuration file."

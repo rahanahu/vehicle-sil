@@ -30,7 +30,9 @@
           "running": false,
           "exit_code": 0,
           "signal": null,
-          "silent_s": null
+          "silent_s": null,
+          "mode": "cold",
+          "process_alive": false
         },
         "stop": "none",
         "phase": "ended",

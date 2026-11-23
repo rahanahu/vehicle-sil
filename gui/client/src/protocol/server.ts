@@ -536,13 +536,64 @@ const readSummaryParticipant = (
   };
 };
 
+export type LauncherMode = Open<'cold' | 'hot'>;
+
+export type RuntimeMode = Open<'cold' | 'hot'>;
+
+export type RuntimeState = Open<'idle' | 'preparing' | 'ready' | 'running' | 'resetting' | 'cold'>;
+
+/** Persistent launcher status reported on `api/session`, `api/prepare`, `hello`, and `runtime` notifications. */
+export interface RuntimeStatus {
+  mode: RuntimeMode;
+  state: RuntimeState;
+  config: string | null;
+  reason: string | null;
+  message: string | null;
+}
+
+export const readRuntimeStatus: Reader<RuntimeStatus> = (value, path) => {
+  const f = object(value, path);
+  return {
+    mode: field(f, path, 'mode', string),
+    state: field(f, path, 'state', string),
+    config: field(f, path, 'config', nullable(string)),
+    reason: field(f, path, 'reason', nullable(string)),
+    message: field(f, path, 'message', nullable(string)),
+  };
+};
+
+export interface PrepareRequest {
+  file: string;
+  variant?: string;
+  disable?: string[];
+  enable?: string[];
+  manual?: string[];
+}
+
+export interface PrepareResponse {
+  instance: string;
+  runtime: RuntimeStatus;
+}
+
+export const readPrepareResponse = (value: unknown): PrepareResponse => {
+  const path = 'response';
+  const f = object(value, path);
+  return {
+    instance: field(f, path, 'instance', string),
+    runtime: field(f, path, 'runtime', readRuntimeStatus),
+  };
+};
+
 /** launcher of the summary: whether the launcher process is running and, if it ended, how. */
 export interface SummaryLauncher {
   /**
-   * Whether it is running. Stays true after it printed the result, until the process exits. Decides whether it can be
-   * stopped.
+   * Whether the run is still active on its launcher (false once ended, even when a persistent launcher stays alive).
    */
   running: boolean;
+  /** Persistent `'hot'` or per-run `'cold'`. Omitted on older servers. */
+  mode?: LauncherMode;
+  /** Whether the underlying launcher process itself is still alive. Omitted on older servers. */
+  process_alive?: boolean;
   exit_code: number | null;
   /** Number of the signal that ended it (POSIX only). */
   signal: number | null;
@@ -555,8 +606,12 @@ export interface SummaryLauncher {
 
 const readSummaryLauncher: Reader<SummaryLauncher> = (value, path) => {
   const f = object(value, path);
+  const mode = field(f, path, 'mode', optional(string, undefined));
+  const processAlive = field(f, path, 'process_alive', optional(boolean, undefined));
   return {
     running: field(f, path, 'running', boolean),
+    ...(mode === undefined ? {} : { mode }),
+    ...(processAlive === undefined ? {} : { process_alive: processAlive }),
     exit_code: field(f, path, 'exit_code', nullable(integer)),
     signal: field(f, path, 'signal', nullable(integer)),
     silent_s: field(f, path, 'silent_s', optional(nullable(integer), null)),
@@ -904,6 +959,15 @@ export const readSessionAllowed = (value: unknown): ServerAllowed | null =>
     'response',
     'allowed',
     optional(nullable(readServerAllowed), null),
+  );
+
+/** Persistent runtime status carried alongside `api/session` (undefined on older servers). */
+export const readSessionRuntime = (value: unknown): RuntimeStatus | null | undefined =>
+  field(
+    object(value, 'response'),
+    'response',
+    'runtime',
+    optional(nullable(readRuntimeStatus), undefined),
   );
 
 /**
@@ -1380,7 +1444,9 @@ export type ServerMessage =
       /** What the server accepts now; also there when `session` is null. null from a server that does not say. */
       allowed: ServerAllowed | null;
       replay: Replay | null;
+      runtime?: RuntimeStatus | null;
     }
+  | { type: 'runtime'; runtime: RuntimeStatus }
   /**
    * What the server accepts changed with no `session` to carry it (a start begins or fails, the server begins to end).
    * session is the current run's id (null if none). Other changes arrive in the summary.
@@ -1427,15 +1493,20 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
   const f = object(value, path);
   const type = field(f, path, 'type', string);
   switch (type) {
-    case 'hello':
+    case 'hello': {
       version(f, path, 'vehicle_sil_gui', PROTOCOL_VERSION);
+      const runtime = field(f, path, 'runtime', optional(nullable(readRuntimeStatus), undefined));
       return {
         type,
         instance: field(f, path, 'instance', string),
         session: field(f, path, 'session', nullable(readSessionSummary)),
         allowed: field(f, path, 'allowed', optional(nullable(readServerAllowed), null)),
         replay: field(f, path, 'replay', nullable(readReplay)),
+        ...(runtime === undefined ? {} : { runtime }),
       };
+    }
+    case 'runtime':
+      return { type, runtime: field(f, path, 'runtime', readRuntimeStatus) };
     case 'event': {
       const event = field(f, path, 'event', (v, p) => readLauncherEvent(v, p, true));
       return event && { type, session: field(f, path, 'session', integer), event };

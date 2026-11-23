@@ -22,6 +22,7 @@ import {
   FrontStatus,
   PHASES,
   SessionView,
+  isRunActive,
   phaseIndex,
   severityRank,
 } from '@vehicle-sil/gui-client';
@@ -121,7 +122,7 @@ export class RunStatus {
   /** 待たずに止めるボタンが、最後にフォーカスを持っていた（消えたら、帯の文へフォーカスを移す）。 */
   private forceHadFocus = false;
 
-  private readonly running = computed(() => this.session()?.launcher.running ?? false);
+  private readonly running = computed(() => isRunActive(this.session()));
   private readonly stopRequests = computed(() =>
     this.starting() || this.controls().stop.reason?.code === 'starting'
       ? 0
@@ -215,8 +216,7 @@ export class RunStatus {
   protected readonly lateText = computed(() => {
     const session = this.session();
     const time = session?.time;
-    if (!session?.launcher.running || session.result || !time || time.lateSteps === null)
-      return null;
+    if (!isRunActive(session) || session!.result || !time || time.lateSteps === null) return null;
     return latenessText({
       lateSteps: time.lateSteps,
       maxLateMs: time.maxLateMs ?? 0,
@@ -347,7 +347,7 @@ export class RunStatus {
   /** 動いているランチャーから、心拍も含めて何も届かない秒数（なければ null）。 */
   protected readonly silentSeconds = computed(() => {
     const session = this.session();
-    return session?.launcher.running ? session.launcher.silentSeconds : null;
+    return isRunActive(session) ? session!.launcher.silentSeconds : null;
   });
 
   /** 結果（または異常終了）がある。 */
@@ -361,7 +361,7 @@ export class RunStatus {
     const session = this.session();
     const crashed = this.status().run === 'crashed';
     const reached = session ? session.phaseRank : -1;
-    const current = session && !session.launcher.running ? phaseIndex('ended') : reached;
+    const current = session && !isRunActive(session) ? phaseIndex('ended') : reached;
     return PHASES.map((phase, i) => {
       const cut = crashed && i === reached && phase !== 'ended';
       return {

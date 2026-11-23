@@ -2,7 +2,7 @@
 <header class="bar">
   <strong class="brand">vehicle-sil <span>Workbench</span></strong>
   @if (!fixedPeer && !detachedWave) {
-    @if (live() && session()?.launcher?.running) {
+    @if (live() && runActive(session())) {
       <span>Network: {{ session()!.file }}</span>
       <span
         >Scenario:

@@ -9,6 +9,7 @@ import { ActionError } from './front-types';
 import type { Snapshot } from './front-compose';
 import type { StopCapture } from './run';
 import { sameRunTarget, type RunTarget } from './session';
+import { isRunActive } from './session-state';
 import { linkOf, standsAt } from './front-compose';
 import type {
   CheckResult,
@@ -681,9 +682,9 @@ export class FrontActions {
     for (const w of [...this.waiting.values()]) {
       if (
         !session ||
+        !isRunActive(session) ||
         session.id !== w.session ||
         instance !== w.instance ||
-        !session.launcher.running ||
         session.result
       ) {
         this.settle(

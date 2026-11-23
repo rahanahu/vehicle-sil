@@ -12,6 +12,8 @@ import {
   Connections,
   ConnectionsRequest,
   DashboardResponse,
+  PrepareRequest,
+  PrepareResponse,
   Recording,
   SaveConfigRequest,
   SavedConfig,
@@ -23,12 +25,14 @@ import {
   readConfigText,
   readConnections,
   readDashboardResponse,
+  readPrepareResponse,
   readRecording,
   readScenarioList,
   readSavedConfig,
   readSessionAllowed,
   readSessionInstance,
   readSessionResponse,
+  readSessionRuntime,
 } from './protocol';
 import { ClientRun, RunControl } from './run';
 import { ClientSession, SessionFeed } from './session';
@@ -161,6 +165,8 @@ export interface GuiClient {
    * the user opens the choice. Waits in the queue of the checks, as long as `check`.
    */
   connections(request: ConnectionsRequest): Promise<Connections>;
+  /** `POST api/prepare`: prepares a persistent launcher when eligible. */
+  prepare(request: PrepareRequest): Promise<PrepareResponse>;
   /** `GET api/session`: summary of the current session (null if none). Also applied to the session copy. */
   fetchSession(): Promise<SessionSummary | null>;
   /**
@@ -309,6 +315,7 @@ export function buildClient(options: ClientOptions): ClientParts {
       currentInstance: () => session.currentInstance(),
       ready: session.ready,
       allowed: session.allowed,
+      runtime: session.runtime,
       lastEventAt: session.lastEventAt,
       notices: session.notices,
       rejected: session.rejected,
@@ -404,6 +411,17 @@ export function buildClient(options: ClientOptions): ClientParts {
         },
         readConnections,
       ),
+    prepare: (body) =>
+      call(
+        {
+          method: 'POST',
+          path: 'api/prepare',
+          body,
+          timeoutMs: longRequestMs(limits.get()),
+        },
+        readPrepareResponse,
+        (res) => session.adoptRuntime(res.runtime),
+      ),
     fetchSession: () => {
       const resyncFrom = session.currentInstance();
       const snapshotVersion = variables.snapshotVersion();
@@ -416,8 +434,10 @@ export function buildClient(options: ClientOptions): ClientParts {
           try {
             const summary = readSessionResponse(outcome.body);
             const instance = readSessionInstance(outcome.body);
+            const runtime = readSessionRuntime(outcome.body);
             const adoption = session.adopt(summary, instance, resyncFrom);
             if (adoption !== null) {
+              if (runtime !== undefined) session.adoptRuntime(runtime);
               const rawSession = (
                 outcome.body as { session?: { variables?: { rev?: unknown } } } | null
               )?.session;

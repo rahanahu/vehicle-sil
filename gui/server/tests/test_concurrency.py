@@ -87,8 +87,8 @@ def test_stop_is_idempotent_and_answers_with_the_summary(tmp_path: Path) -> None
             got = await sock.until(is_ended)
             assert len(event_messages(sock.received, "command")) == 1  # one stop reached the launcher
             end = got[-1]["session"]
-            assert end["launcher"] == {"pid": end["launcher"]["pid"], "running": False, "exit_code": 0,
-                                       "signal": None, "silent_s": None}
+            assert end["launcher"] == {"pid": end["launcher"]["pid"], "running": False, "mode": "cold",
+                                       "process_alive": False, "exit_code": 0, "signal": None, "silent_s": None}
             status, body = await c.post("api/stop", {"force": True})  # ended: the summary, nothing sent
             assert status == 200 and body["session"]["snapshot_rev"] > end["snapshot_rev"]
             assert {**without_variables(body["session"]), "snapshot_rev": end["snapshot_rev"]} == end
@@ -224,8 +224,8 @@ def test_the_summary_says_when_the_launcher_has_ended_without_a_result(tmp_path:
             assert [s["state"] for s in sessions] == ["running", "ended"]  # the start, then the end
             end = sessions[-1]
             assert end["state"] == "ended" and end["result"] is None
-            assert end["launcher"] == {"pid": end["launcher"]["pid"], "running": False, "exit_code": 70,
-                                       "signal": None, "silent_s": None}
+            assert end["launcher"] == {"pid": end["launcher"]["pid"], "running": False, "mode": "cold",
+                                       "process_alive": False, "exit_code": 70, "signal": None, "silent_s": None}
             assert [p["code"] for p in end["problems"]][-1] == "no-result"
         run_async(main, gui)
 

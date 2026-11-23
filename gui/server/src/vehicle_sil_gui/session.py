@@ -264,14 +264,16 @@ class Session:
     start_paused: bool
     limits: Limits = field(default_factory=Limits)
     launcher_pid: int | None = None
+    launcher_mode: str = "cold"
     started_at: str = field(default_factory=now_iso)
     scenario: str | None = None  # the scenario file given to --scenario (root-relative), or None
     manual: list[str] = field(default_factory=list)  # the names given to --manual (the user starts them)
 
     def __post_init__(self) -> None:
         self.ended_at: str | None = None
-        self.state = "running"  # until the launcher has exited and its output is read
+        self.state = "running"  # until the run ends and its output is read
         self.launcher_running = True
+        self.launcher_process_alive = True
         self.exit_code: int | None = None
         self.signal: int | None = None
         self.stop = STOP_NONE
@@ -689,6 +691,7 @@ class Session:
         """The launcher process has exited (its output may still be being read). A negative returncode is the
         POSIX signal that ended it. The message is for a caller that sends it at once."""
         self.launcher_running = False
+        self.launcher_process_alive = False
         self.silent_s = None
         if returncode is not None and returncode < 0:
             self.exit_code, self.signal = None, -returncode
@@ -696,8 +699,8 @@ class Session:
             self.exit_code, self.signal = returncode, None
         return [self.message()]
 
-    def ended(self, output_cut: bool = False) -> list[dict]:
-        """The launcher has exited and its output is read (or, output_cut, given up on)."""
+    def ended(self, output_cut: bool = False, *, launcher_alive: bool = False) -> list[dict]:
+        """The run has ended and its output is read (or, output_cut, given up on)."""
         out: list[dict] = self._stderr_end()
         if output_cut:
             out += self.problem("output-left-open",
@@ -711,6 +714,7 @@ class Session:
                                 {"exit_code": self.exit_code})
         self.state = "ended"
         self.launcher_running = False
+        self.launcher_process_alive = bool(launcher_alive)
         self.ended_at = now_iso()
         return out + [self.message()]
 
@@ -728,7 +732,8 @@ class Session:
             "start_paused": self.start_paused, "started_at": self.started_at, "ended_at": self.ended_at,
             "state": self.state,
             "launcher": {"pid": self.launcher_pid, "running": self.launcher_running, "exit_code": self.exit_code,
-                         "signal": self.signal, "silent_s": self.silent_s},
+                         "signal": self.signal, "silent_s": self.silent_s,
+                         "mode": self.launcher_mode, "process_alive": self.launcher_process_alive},
             "stop": self.stop, "phase": self.phase, "last_seq": self.last_seq, "last_t_ms": self.last_t_ms,
             "time": self.time, "check": self.check, "registry": self.registry,
             "participants": list(self.participants.values()), "participants_omitted": self.participants_omitted,

@@ -159,6 +159,9 @@
               </button>
             </p>
           }
+          @if (runtimeNote(); as note) {
+            <p class="hint" data-testid="runtime-note">{{ note }}</p>
+          }
           @if (running()) {
             <p class="file" data-testid="session-scenario">
               <ng-container i18n>シナリオ:</ng-container>
@@ -300,7 +303,7 @@
               <mat-card-subtitle data-testid="result-file">{{ session.file }}</mat-card-subtitle>
             </mat-card-header>
             <mat-card-content>
-              @if (session.launcher.running) {
+              @if (launcherFinishing(session)) {
                 <p class="hint" data-testid="finishing" i18n>
                   結果は出ましたが、ランチャーはまだ終わっていません。終わらないときは、上の「停止」で止めてください。
                 </p>
@@ -369,7 +372,7 @@
             <mat-card-content>
               <app-scenario-panel
                 [scenario]="scenario"
-                [running]="session.launcher.running && !session.result"
+                [running]="runActive(session) && !session.result"
               />
             </mat-card-content>
           </mat-card>
@@ -379,7 +382,7 @@
               <mat-card-title><h2 i18n>操作をシナリオに</h2></mat-card-title>
             </mat-card-header>
             <mat-card-content>
-              <app-recording-panel [session]="session.id" [running]="session.launcher.running" />
+              <app-recording-panel [session]="session.id" [running]="runActive(session)" />
             </mat-card-content>
           </mat-card>
         }

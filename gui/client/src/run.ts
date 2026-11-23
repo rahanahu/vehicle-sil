@@ -7,6 +7,7 @@ import {
   readSessionResponse,
 } from './protocol';
 import { SessionFeed } from './session';
+import { isRunActive } from './session-state';
 import { ErrorSink, Readable, Writable, derived, rethrowLater } from './values';
 
 /** Stop action: stop in order, or stop without waiting. */
@@ -137,8 +138,7 @@ export class RunControl implements ClientRun {
         const session = feed.session.get();
         if (!failure) return null;
         const same =
-          failure.session === (session?.id ?? null) &&
-          failure.running === (session?.launcher.running ?? false);
+          failure.session === (session?.id ?? null) && failure.running === isRunActive(session);
         return same ? failure.message : null;
       },
       Object.is,
@@ -226,7 +226,7 @@ export class RunControl implements ClientRun {
         this.failure.set({
           message,
           session: session?.id ?? null,
-          running: session?.launcher.running ?? false,
+          running: isRunActive(session),
         });
         done();
         return Promise.reject(new Error(message));
@@ -243,7 +243,7 @@ export class RunControl implements ClientRun {
             this.failure.set({
               message,
               session: session?.id ?? null,
-              running: session?.launcher.running ?? false,
+              running: isRunActive(session),
             });
             throw new Error(message);
           }
@@ -257,14 +257,13 @@ export class RunControl implements ClientRun {
           );
         },
         (error: unknown) => {
-          const message = `the start was not confirmed; no stop was sent: ${errorMessage(error)}`;
           const session = this.feed.session.get();
           this.failure.set({
-            message,
+            message: `the start was not confirmed; no stop was sent: ${errorMessage(error)}`,
             session: session?.id ?? null,
-            running: session?.launcher.running ?? false,
+            running: isRunActive(session),
           });
-          throw new Error(message);
+          throw new Error(`the start was not confirmed; no stop was sent: ${errorMessage(error)}`);
         },
       )
       .finally(done);
@@ -302,7 +301,7 @@ export class RunControl implements ClientRun {
           this.failure.set({
             message: answerMissing(path, failure) ?? errorMessage(failure),
             session: session?.id ?? null,
-            running: session?.launcher.running ?? false,
+            running: isRunActive(session),
           });
           done();
           reject(failure);
@@ -338,7 +337,7 @@ export class RunControl implements ClientRun {
             this.failure.set({
               message,
               session: session?.id ?? null,
-              running: session?.launcher.running ?? false,
+              running: isRunActive(session),
             });
             done();
             reject(new Error(message));

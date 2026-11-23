@@ -266,7 +266,7 @@ class _RunSink:
         run.session.launcher_exited(returncode)
         run.request_gone = control.remove(run.request)  # the launcher has ended: it needs the file no more
 
-    async def on_run_finished(self, *, output_cut: bool = False) -> None:
+    async def on_run_finished(self, *, output_cut: bool = False, launcher_alive: bool = False) -> None:
         run = self._run
         if run.silence_task is not None:
             run.silence_task.cancel()
@@ -274,7 +274,7 @@ class _RunSink:
             run.request_gone = control.remove(run.request)
         await self._server._close_variables(run)  # before the end: the summary sent with it has their last state
         await self._server._keep_timeline(run)  # before the end too: the summary says where the file is
-        self._server.hub.broadcast(run.session.ended(output_cut=output_cut))
+        self._server.hub.broadcast(run.session.ended(output_cut=output_cut, launcher_alive=launcher_alive))
 
     async def on_run_cleanup(self) -> None:
         run = self._run
@@ -1026,7 +1026,7 @@ class GuiServer:
             run_token = handle.control_token
         # Registered in the same step as the start returns: the server's end sees every launcher.
         session = Session(next(self._ids), config.relative, disable, speed, start_paused, limits=self.o.limits,
-                          launcher_pid=handle.pid, scenario=scenario, manual=manual)
+                          launcher_pid=handle.pid, launcher_mode=handle.mode, scenario=scenario, manual=manual)
         session.facts = self.facts
         session.numbered = self.numbered
         variables = Variables(session.id, self._tell_variables, limits=self.o.variable_limits, secret=run_token,

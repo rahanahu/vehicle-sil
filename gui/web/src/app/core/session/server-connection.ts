@@ -34,6 +34,8 @@ export class ServerConnection {
   readonly ready = readableSignal(this.client.session.ready);
   /** いまの（または最後の）セッション。サーバーにまだ何もなければ null。 */
   readonly session = readableSignal(this.client.session.session);
+  /** 常駐ランチャーの状態（準備中、待機中、切替理由など）。 */
+  readonly runtime = readableSignal(this.client.session.runtime);
   /** 最後に事象を当てた時刻（Date.now()）。経過時間を時計で進める起点。 */
   readonly lastEventAt = readableSignal(this.client.session.lastEventAt);
   /** セッションにつながらない知らせ。セッションの知らせ（seq の抜けなど）は session().problems。 */

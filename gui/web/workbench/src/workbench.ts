@@ -14,6 +14,7 @@ import {
   ActionError,
   connect,
   createWaveforms,
+  isRunActive,
   takeToken,
   watch,
   type CheckResult,
@@ -160,6 +161,7 @@ export class Workbench {
   readonly runScenario = signal<FrontScenario | null>(null);
   readonly session = signal<SessionView | null>(null);
   readonly sessionReady = signal(false);
+  readonly runActive = isRunActive;
   readonly variables = signal<VariablesState | null>(null);
   readonly canRecord = signal(false);
   readonly files = signal<string[]>([]);
@@ -170,7 +172,7 @@ export class Workbench {
   readonly stopAt = signal('');
   readonly activeStopAt = computed(() => {
     const session = this.session();
-    if (!session?.launcher.running) return 'Awaiting check';
+    if (!session || !isRunActive(session)) return 'Awaiting check';
     const stopAt = session.check ? session.check.stop_at_ms : session.stopAtMs;
     return stopAt === undefined ? 'Awaiting check' : (stopAt ?? 'No limit');
   });

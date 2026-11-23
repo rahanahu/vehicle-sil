@@ -309,6 +309,9 @@ def test_serve_hot_scenario_aba_isolation_and_per_run_cleanup(tmp_path: Path) ->
             end1 = msgs[-1]["session"]
             assert end1["state"] == "ended"
             assert end1["result"]["result"] == "passed"
+            assert end1["launcher"]["mode"] == "hot"
+            assert end1["launcher"]["running"] is False
+            assert end1["launcher"]["process_alive"] is True
             assert rt.resident_starts == 1
             pid1 = rt.resident_pid
             assert pid1 is not None
@@ -515,8 +518,13 @@ def test_serve_recovery_after_failure_contamination_and_crash_without_retry(
             if expected_result is None:
                 assert end1["result"] is None
                 assert any(p["code"] == "no-result" for p in end1["problems"])
+                assert end1["launcher"]["process_alive"] is False
             else:
                 assert end1["result"]["result"] == expected_result
+                if behavior == "contaminated-first":
+                    assert end1["launcher"]["process_alive"] is False
+                else:
+                    assert end1["launcher"]["process_alive"] is True
 
             # No automatic retry occurred: only 1 run session exists so far
             st, cur = await c.get("api/session")

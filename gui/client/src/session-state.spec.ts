@@ -7,6 +7,10 @@ import {
   applyEvents,
   applySummary,
   addDropped,
+  isLauncherAlive,
+  isLauncherFinishing,
+  isRunActive,
+  isSessionRunning,
   runOutcome,
   sessionFromSummary,
 } from './session-state';
@@ -1327,5 +1331,69 @@ describe('addProblem', () => {
       }),
     );
     expect(session.participants[0]).toMatchObject({ state: 'ended', stopRequested: true });
+  });
+
+  it('distinguishes run activity from resident launcher liveness and keeps legacy fallback', () => {
+    const hotEnded = sessionFromSummary(
+      summary({
+        state: 'ended',
+        result: { result: 'passed', findings: [], participants: [] } as unknown as RunResult,
+        launcher: {
+          running: false,
+          mode: 'hot',
+          process_alive: true,
+          exit_code: null,
+          signal: null,
+          silent_s: null,
+        },
+      }),
+    );
+    expect(isSessionRunning(hotEnded)).toBe(false);
+    expect(isRunActive(hotEnded)).toBe(false);
+    expect(isLauncherFinishing(hotEnded)).toBe(false);
+    expect(isLauncherAlive(hotEnded)).toBe(true);
+    expect(runOutcome(hotEnded)).toBe('ended');
+
+    const coldFinishing = sessionFromSummary(
+      summary({
+        state: 'running',
+        result: { result: 'passed', findings: [], participants: [] } as unknown as RunResult,
+        launcher: {
+          running: true,
+          mode: 'cold',
+          process_alive: true,
+          exit_code: null,
+          signal: null,
+          silent_s: null,
+        },
+      }),
+    );
+    expect(isSessionRunning(coldFinishing)).toBe(true);
+    expect(isRunActive(coldFinishing)).toBe(true);
+    expect(isLauncherFinishing(coldFinishing)).toBe(true);
+    expect(isLauncherAlive(coldFinishing)).toBe(true);
+    expect(runOutcome(coldFinishing)).toBe('finishing');
+
+    // Legacy server omits `mode` and `process_alive`
+    const legacyRunning = sessionFromSummary(
+      summary({
+        state: 'running',
+        launcher: { running: true, exit_code: null, signal: null, silent_s: null },
+      }),
+    );
+    expect(isLauncherAlive(legacyRunning)).toBe(true);
+    expect(isRunActive(legacyRunning)).toBe(true);
+
+    // Non-forced stale HTTP summary cannot revert an ended run back to running even without snapshot_rev
+    const staleAfterHotEnd = applySummary(
+      hotEnded,
+      summary({
+        state: 'running',
+        launcher: { running: false, exit_code: null, signal: null, silent_s: null },
+      }),
+    );
+    expect(staleAfterHotEnd.state).toBe('ended');
+    expect(isSessionRunning(staleAfterHotEnd)).toBe(false);
+    expect(isLauncherAlive(staleAfterHotEnd)).toBe(true);
   });
 });

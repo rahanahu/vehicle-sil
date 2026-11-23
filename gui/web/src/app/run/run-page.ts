@@ -16,7 +16,14 @@ import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
-import { CheckResult, Intent, Speed, errorMessage } from '@vehicle-sil/gui-client';
+import {
+  CheckResult,
+  Intent,
+  Speed,
+  errorMessage,
+  isLauncherFinishing,
+  isRunActive,
+} from '@vehicle-sil/gui-client';
 import { pageIntent } from '@vehicle-sil/gui-client/elements';
 import { AuthToken } from '../core/auth/auth-token';
 import { shortPath } from '../core/format/short-path';
@@ -294,15 +301,49 @@ export class RunPage {
    * 同じ場所に残す（「待たずに止める」が、一時停止のあった場所に出ないように）。停止の後に並ぶので、出ても消えても
    * 開始と停止は動かない。
    */
+  protected readonly launcherFinishing = isLauncherFinishing;
+  protected readonly runActive = isRunActive;
+  protected readonly runtimeNote = computed<string | null>(() => {
+    const rt = this.run.runtime();
+    if (!rt) return null;
+    if (rt.state === 'preparing') {
+      return rt.config
+        ? $localize`${rt.config} 用のランチャーを準備しています。`
+        : $localize`ランチャーを準備しています。`;
+    }
+    if (rt.state === 'resetting') return $localize`常駐ランチャーを切り替えています。`;
+    if (rt.state === 'ready' && rt.mode === 'hot') {
+      return rt.config
+        ? $localize`${rt.config} をすぐ開始できます（常駐待機中）。`
+        : $localize`常駐ランチャーが待機中です。`;
+    }
+    if (
+      rt.mode === 'cold' &&
+      rt.reason &&
+      rt.reason !== 'launcher-unsupported' &&
+      rt.reason !== 'one-shot-runtime'
+    ) {
+      if (rt.reason === 'fixed-registry')
+        return $localize`固定の registry_uri があるため、実行ごとにランチャーを起動します。`;
+      if (rt.reason === 'manual-participants')
+        return $localize`手動起動の participant があるため、実行ごとにランチャーを起動します。`;
+      if (rt.reason === 'trace-enabled')
+        return $localize`トレース有効のため、実行ごとにランチャーを起動します。`;
+      if (rt.reason === 'resident-failed')
+        return $localize`常駐ランチャーの準備に失敗したため、実行ごとの起動へ切り替えました。`;
+    }
+    return null;
+  });
+
   protected readonly timeButtonsShown = computed(() => {
     const session = this.session();
     if (this.run.starting()) return true;
-    return !!session && session.launcher.running && !session.result;
+    return isRunActive(session) && !session!.result;
   });
   /** 「時刻」のカードを出すか: 実行中（結果が出るかランチャーが終わるまで）。 */
   protected readonly timeCardShown = computed(() => {
     const session = this.session();
-    return !!session && session.launcher.running && !session.result;
+    return isRunActive(session) && !session!.result;
   });
   /** 速度。前の実行のもの（なければ等速）から始める。 */
   protected readonly speed = linkedSignal<Speed>(() => {
@@ -605,7 +646,7 @@ export class RunPage {
     }
     const all = [...groups.values()].slice(0, MAX_PROBLEM_GROUPS);
     const explained = new Set(EXPLAINED_PROBLEMS);
-    if (session.result || session.launcher.running) explained.delete('no-result');
+    if (session.result || isRunActive(session)) explained.delete('no-result');
     return {
       groups: all.filter((g) => !explained.has(g.code)),
       explained: all.filter((g) => explained.has(g.code)),

@@ -99,7 +99,9 @@
           "running": true,
           "exit_code": null,
           "signal": null,
-          "silent_s": null
+          "silent_s": null,
+          "mode": "cold",
+          "process_alive": true
         },
         "stop": "none",
         "phase": null,
@@ -1535,7 +1537,9 @@
           "running": true,
           "exit_code": null,
           "signal": null,
-          "silent_s": null
+          "silent_s": null,
+          "mode": "cold",
+          "process_alive": true
         },
         "stop": "requested",
         "phase": "running",
@@ -2735,7 +2739,9 @@
           "running": false,
           "exit_code": 0,
           "signal": null,
-          "silent_s": null
+          "silent_s": null,
+          "mode": "cold",
+          "process_alive": false
         },
         "stop": "requested",
         "phase": "ended",
