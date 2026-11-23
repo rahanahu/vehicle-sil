@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 
@@ -64,8 +65,16 @@ private:
     std::uint64_t dropped_ = 0;
 };
 
+struct ControlServiceHandle
+{
+    std::unique_ptr<grpc::Service> service;
+    /// Closes every active Watch subscription so its poll() wakes immediately on shutdown.
+    /// Must only be called while `service` is alive.
+    std::function<void()> close_watches;
+};
+
 /// ControlService. `monitor` is nullptr without ServerOptions::time.
-std::unique_ptr<grpc::Service> make_control_service(control::Hub& hub, const ServerOptions& options, SimulationMonitor* monitor,
-                                                    const std::atomic<bool>& stopping, const Authorizer& auth, const AuditLog& audit);
+ControlServiceHandle make_control_service(control::Hub& hub, const ServerOptions& options, SimulationMonitor* monitor,
+                                          const std::atomic<bool>& stopping, const Authorizer& auth, const AuditLog& audit);
 
 } // namespace vehicle_sil::control_grpc::detail

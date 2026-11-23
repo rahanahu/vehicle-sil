@@ -10,7 +10,7 @@ import threading
 import time
 
 import pytest
-from conftest import free_port
+from conftest import free_port, scaled
 from fake_control import variables
 from vehicle_sil_gui import control
 from vehicle_sil_gui.source import SnapshotInfo, SourceError, TimeInfo
@@ -380,3 +380,47 @@ def test_only_this_computers_address_is_connected_to(address) -> None:
     with pytest.raises(ValueError):
         control.check_address(address)
     assert control.check_address("127.0.0.1:34089") == "127.0.0.1:34089"
+
+
+def test_close_wakes_on_reader_exit_without_sleep_polling(fake, monkeypatch) -> None:
+    server = fake(token=TOKEN)
+    sleeps: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def spy_sleep(delay, *args, **kwargs):
+        sleeps.append(delay)
+        return await real_sleep(delay, *args, **kwargs)
+
+    async def main() -> None:
+        source = control.GrpcSource(library(), server.address, TOKEN)
+        sink = Sink()
+        source.start(sink)
+        await sink.until("synced")
+        monkeypatch.setattr(asyncio, "sleep", spy_sleep)
+        began = time.monotonic()
+        await source.close()
+        elapsed = time.monotonic() - began
+        assert sleeps == [], f"close() should wake via event, not sleep-poll: {sleeps}"
+        assert not source._thread.is_alive()
+        assert elapsed < scaled(1.0)
+    asyncio.run(main())
+
+
+def test_close_respects_close_wait_s_when_reader_is_stuck(fake, monkeypatch) -> None:
+    server = fake(token=TOKEN)
+    gate = threading.Event()
+    monkeypatch.setattr(control, "CLOSE_WAIT_S", 0.05)
+
+    async def main() -> None:
+        source = control.GrpcSource(library(), server.address, TOKEN)
+        monkeypatch.setattr(source, "_read_loop", lambda: gate.wait(5.0))
+        sink = Sink()
+        source.start(sink)
+        began = time.monotonic()
+        await source.close()
+        elapsed = time.monotonic() - began
+        assert 0.04 <= elapsed < scaled(1.0)
+        gate.set()
+        source._thread.join(timeout=2.0)
+        assert not source._thread.is_alive()
+    asyncio.run(main())

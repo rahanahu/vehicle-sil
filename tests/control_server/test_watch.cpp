@@ -12,6 +12,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -88,4 +89,73 @@ TEST_CASE(control_server_a_watch_leaves_out_the_operations_of_the_clients_it_nam
     without_context.TryCancel();
     static_cast<void>(every->Finish());
     static_cast<void>(without->Finish());
+}
+
+TEST_CASE(control_server_shutdown_wakes_active_watches_promptly)
+{
+    // Active Watch streams block inside Subscription::poll(64, 100ms). Shutting the server down
+    // must close those subscriptions so shutdown() returns well before the 100 ms poll timeout
+    // instead of stalling every cycle.
+    constexpr int kCycles = 5;
+    std::chrono::steady_clock::duration total_shutdown{};
+    for (int i = 0; i < kCycles; ++i)
+    {
+        control_grpc::ControlServer server({.listen = "127.0.0.1:0"});
+        const auto stub = v1::ControlService::NewStub(
+            grpc::CreateChannel("127.0.0.1:" + std::to_string(server.port()), grpc::InsecureChannelCredentials()));
+        grpc::ClientContext ctx1;
+        grpc::ClientContext ctx2;
+        ctx1.set_deadline(std::chrono::system_clock::now() + 30s);
+        ctx2.set_deadline(std::chrono::system_clock::now() + 30s);
+        v1::WatchRequest req;
+        req.set_operations(true);
+        auto r1 = stub->Watch(&ctx1, req);
+        auto r2 = stub->Watch(&ctx2, req);
+        v1::Update u;
+        while (r1->Read(&u) && !u.has_initial_done()) {}
+        while (r2->Read(&u) && !u.has_initial_done()) {}
+
+        // Drain both streams concurrently while shutting down so neither side blocks on write buffers.
+        std::thread drain1([&] {
+            v1::Update next;
+            while (r1->Read(&next)) {}
+            static_cast<void>(r1->Finish());
+        });
+        std::thread drain2([&] {
+            v1::Update next;
+            while (r2->Read(&next)) {}
+            static_cast<void>(r2->Finish());
+        });
+
+        const auto began = std::chrono::steady_clock::now();
+        server.shutdown();
+        total_shutdown += std::chrono::steady_clock::now() - began;
+
+        drain1.join();
+        drain2.join();
+    }
+    // Without waking the 100 ms Subscription::poll(), 5 cycles take ~500 ms minimum.
+    CHECK(total_shutdown < vehicle_sil::test::scaled_timeout(300ms));
+}
+
+TEST_CASE(control_server_shutdown_concurrent_with_opening_watches_is_safe)
+{
+    // Opening a Watch while shutdown() is in progress must neither hang nor race under TSan/ASan.
+    for (int i = 0; i < 5; ++i)
+    {
+        control_grpc::ControlServer server({.listen = "127.0.0.1:0"});
+        const auto stub = v1::ControlService::NewStub(
+            grpc::CreateChannel("127.0.0.1:" + std::to_string(server.port()), grpc::InsecureChannelCredentials()));
+        std::thread opener([&] {
+            grpc::ClientContext ctx;
+            ctx.set_deadline(std::chrono::system_clock::now() + 10s);
+            auto reader = stub->Watch(&ctx, v1::WatchRequest{});
+            v1::Update u;
+            while (reader->Read(&u)) {}
+            static_cast<void>(reader->Finish());
+        });
+        std::this_thread::sleep_for(2ms);
+        server.shutdown();
+        opener.join();
+    }
 }

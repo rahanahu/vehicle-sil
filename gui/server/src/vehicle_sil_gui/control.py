@@ -30,6 +30,7 @@ event or a message: every text that comes from the control server is cleaned of 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 import logging
 import math
@@ -261,6 +262,8 @@ class GrpcSource:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._sink: Sink | None = None
         self._thread: threading.Thread | None = None
+        self._thread_done: asyncio.Event | None = None
+        self._reader_exited = threading.Event()
         self._stop = threading.Event()
         self._taken = threading.Event()  # the loop has taken a lost connection: the reader may connect again
         self._lock = threading.Lock()
@@ -284,6 +287,8 @@ class GrpcSource:
     def start(self, sink: Sink) -> None:
         self._loop = asyncio.get_running_loop()
         self._sink = sink
+        self._thread_done = asyncio.Event()
+        self._reader_exited.clear()
         self._thread = threading.Thread(target=self._read, name="vehicle_sil_gui control", daemon=True)
         self._thread.start()
 
@@ -298,9 +303,25 @@ class GrpcSource:
         if call is not None:
             call.cancel()
         self._channel.close()  # ends every call
+        thread = self._thread
+        if thread is None or not thread.is_alive():
+            return
         deadline = time.monotonic() + CLOSE_WAIT_S
-        while self._thread is not None and self._thread.is_alive() and time.monotonic() < deadline:
-            await asyncio.sleep(0.01)
+        done = self._thread_done
+        same_loop = self._loop is asyncio.get_running_loop()
+        if done is not None and same_loop and not self._reader_exited.is_set():
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(done.wait(), timeout=CLOSE_WAIT_S)
+        elif not self._reader_exited.is_set():
+            # Fallback only when close() runs on a different loop than start().
+            while thread.is_alive() and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
+        if self._reader_exited.is_set() and thread.is_alive():
+            # _read() has already reached its finally block; join the exiting OS thread briefly
+            # so thread.is_alive() is reliably False when close() returns.
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining > 0.0:
+                thread.join(timeout=min(0.05, remaining))
 
     async def read_peers(self, timeout_s: float) -> list[PeerInfo]:
         reply = await self._unary(self._stub.ListPeers, self._pb.ListPeersRequest(), timeout_s)
@@ -499,7 +520,22 @@ class GrpcSource:
         except RuntimeError:  # the loop is closed
             self._stop.set()
 
+    def _notify_thread_done(self) -> None:
+        self._reader_exited.set()
+        loop, done = self._loop, self._thread_done
+        if loop is not None and done is not None and not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(done.set)
+            except RuntimeError:  # the loop is closed
+                pass
+
     def _read(self) -> None:
+        try:
+            self._read_loop()
+        finally:
+            self._notify_thread_done()
+
+    def _read_loop(self) -> None:
         grpc, pb = self._grpc, self._pb
         delay = RECONNECT_MIN_S
         fatal_codes = (grpc.StatusCode.UNAUTHENTICATED, grpc.StatusCode.PERMISSION_DENIED,
