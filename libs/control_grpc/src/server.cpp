@@ -183,7 +183,7 @@ struct ControlServer::Impl
     std::atomic<bool> stopping{false};
     Authorizer auth;
     std::unique_ptr<SimulationMonitor> monitor; ///< outlives the service's calls (Watch subscribes)
-    std::unique_ptr<grpc::Service> clients;
+    ControlServiceHandle clients;
     std::unique_ptr<grpc::Server> server;
     int port = 0;
     std::mutex shutdown_mutex;
@@ -235,7 +235,7 @@ struct ControlServer::Impl
         // would be open. Without it, the second one fails as for a port any other program has.
         builder.AddChannelArgument(GRPC_ARG_ALLOW_REUSEPORT, 0);
         builder.AddListeningPort(options.listen, credentials, &port);
-        builder.RegisterService(clients.get());
+        builder.RegisterService(clients.service.get());
         server = builder.BuildAndStart();
         if (!server || port == 0)
         {
@@ -274,6 +274,10 @@ void ControlServer::shutdown()
         return;
     }
     impl_->stopping = true;
+    if (impl_->clients.close_watches)
+    {
+        impl_->clients.close_watches();
+    }
     impl_->server->Shutdown(std::chrono::system_clock::now() + std::chrono::seconds(2));
     impl_->server->Wait();
     if (impl_->monitor)

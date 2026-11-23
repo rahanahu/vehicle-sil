@@ -14,6 +14,7 @@
 #include <string_view>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace vehicle_sil::control_grpc::detail {
 namespace {
@@ -396,6 +397,7 @@ public:
                 return o.peers.empty() || std::find(o.peers.begin(), o.peers.end(), peer) != o.peers.end();
             };
             const auto sub = hub_.subscribe(o);
+            const ActiveWatch active_watch(*this, sub);
             // The monitor's changes, in order, taken by this stream between its waits on the hub.
             SnapshotQueue pending(kMaxPendingSnapshots);
             const auto write = [&](v1::Update& out) {
@@ -532,6 +534,10 @@ public:
                         sub->close();
                         return grpc::Status::OK; // the client went away
                     }
+                }
+                if (context->IsCancelled() || stopping_.load())
+                {
+                    break;
                 }
                 auto taken = pending.take();
                 bool sent = send_simulation(); // the initial snapshot, or the unavailable one
@@ -756,7 +762,71 @@ public:
         });
     }
 
+    void close_watches()
+    {
+        std::vector<std::shared_ptr<control::Subscription>> to_close;
+        {
+            const std::lock_guard lock(watches_mutex_);
+            watches_closed_ = true;
+            to_close.reserve(active_watches_.size());
+            for (const auto& [id, weak] : active_watches_)
+            {
+                if (auto sub = weak.lock())
+                {
+                    to_close.push_back(std::move(sub));
+                }
+            }
+            active_watches_.clear();
+        }
+        // Close outside watches_mutex_ so watches_mutex_ remains a leaf lock (never held across
+        // Subscription::mutex_).
+        for (const auto& sub : to_close)
+        {
+            sub->close();
+        }
+    }
+
 private:
+    /// Tracks an active Watch subscription so close_watches() can wake its poll() on shutdown.
+    class ActiveWatch
+    {
+    public:
+        ActiveWatch(ControlServiceImpl& service, const std::shared_ptr<control::Subscription>& sub) : service_(&service)
+        {
+            bool already_closed = false;
+            {
+                const std::lock_guard lock(service_->watches_mutex_);
+                if (service_->watches_closed_)
+                {
+                    already_closed = true;
+                }
+                else
+                {
+                    id_ = ++service_->next_watch_id_;
+                    service_->active_watches_.emplace(id_, sub);
+                }
+            }
+            if (already_closed)
+            {
+                sub->close();
+            }
+        }
+        ActiveWatch(const ActiveWatch&) = delete;
+        ActiveWatch& operator=(const ActiveWatch&) = delete;
+        ~ActiveWatch()
+        {
+            if (id_ != 0)
+            {
+                const std::lock_guard lock(service_->watches_mutex_);
+                service_->active_watches_.erase(id_);
+            }
+        }
+
+    private:
+        ControlServiceImpl* service_;
+        std::uint64_t id_ = 0;
+    };
+
     Hub& hub_;
     const ServerOptions& options_;
     SimulationMonitor* monitor_;
@@ -764,14 +834,23 @@ private:
     const Authorizer& auth_;
     const AuditLog& audit_;
     std::atomic<std::size_t> waiting_{0};
+    std::mutex watches_mutex_;
+    bool watches_closed_ = false;
+    std::uint64_t next_watch_id_ = 0;
+    std::map<std::uint64_t, std::weak_ptr<control::Subscription>> active_watches_;
 };
 
 } // namespace
 
-std::unique_ptr<grpc::Service> make_control_service(Hub& hub, const ServerOptions& options, SimulationMonitor* monitor,
-                                                    const std::atomic<bool>& stopping, const Authorizer& auth, const AuditLog& audit)
+ControlServiceHandle make_control_service(Hub& hub, const ServerOptions& options, SimulationMonitor* monitor,
+                                          const std::atomic<bool>& stopping, const Authorizer& auth, const AuditLog& audit)
 {
-    return std::make_unique<ControlServiceImpl>(hub, options, monitor, stopping, auth, audit);
+    auto impl = std::make_unique<ControlServiceImpl>(hub, options, monitor, stopping, auth, audit);
+    auto* raw = impl.get();
+    return ControlServiceHandle{
+        .service = std::move(impl),
+        .close_watches = [raw] { raw->close_watches(); },
+    };
 }
 
 } // namespace vehicle_sil::control_grpc::detail
