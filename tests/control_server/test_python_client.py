@@ -113,11 +113,17 @@ class LaunchedTest(unittest.TestCase):
         seen = []
         stop = threading.Event()
 
+        def enough():
+            return (any(isinstance(u, Peer) for u in seen)
+                    and any(isinstance(u, Values) for u in seen)
+                    and any(isinstance(u, Operation) and u.done for u in seen)
+                    and any(isinstance(u, EventInfo) and "claimed" in u.text for u in seen))
+
         def watch():
             with Control(self.address) as w:
                 for u in w.watch():
                     seen.append(u)
-                    if stop.is_set():
+                    if stop.is_set() or enough():
                         break
 
         watcher = threading.Thread(target=watch, daemon=True)
@@ -168,6 +174,7 @@ class LaunchedTest(unittest.TestCase):
             c.write({})
         stop.set()
         watcher.join(10)
+        self.assertFalse(watcher.is_alive())
         self.assertTrue(any(isinstance(u, Peer) for u in seen))
         self.assertTrue(any(isinstance(u, Values) for u in seen))
         self.assertTrue(any(isinstance(u, Operation) and u.seq == seq and u.done for u in seen))

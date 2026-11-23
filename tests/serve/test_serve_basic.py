@@ -21,6 +21,7 @@ from serve_support import (
     free_port,
     runs,
     say,
+    scaled,
 )
 
 
@@ -182,13 +183,16 @@ class ServeBasicAcceptanceTest(unittest.TestCase):
         norm_req = sf.request("normal", scenario=fscen.name, disable=["Late", "Quick"])
         fx.set_behaviour(sf, "T1", fx.NORMAL)
         fx.set_behaviour(sf, "T2", fx.NORMAL)
+        fault_args = [
+            "--timeout-ms", str(int(scaled(800))),
+            "--participant-start-timeout-ms", str(int(scaled(500))),
+            "--participant-stop-timeout-ms", str(int(scaled(300))),
+        ]
         cold_norm = cold(self.launch, fcfg, norm_req, sf.timeline("cold_norm"),
-                         arguments=["--timeout-ms", "3000", "--participant-start-timeout-ms", "1500",
-                                    "--participant-stop-timeout-ms", "1000"])
+                         arguments=fault_args)
         self.assertEqual(cold_norm.result["result"], "passed")
 
-        with Serve(self.launch, fcfg, arguments=["--timeout-ms", "3000", "--participant-start-timeout-ms", "1500",
-                                                 "--participant-stop-timeout-ms", "1000"]) as srv:
+        with Serve(self.launch, fcfg, arguments=fault_args) as srv:
             srv.ready()
             for fname, (beh, dis) in fx.FAULTS.items():
                 fx.set_behaviour(sf, "T1", beh)
