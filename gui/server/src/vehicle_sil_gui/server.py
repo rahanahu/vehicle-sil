@@ -487,7 +487,8 @@ class GuiServer:
         self.current: Run | None = None  # the last run started (the one the screens see)
         self._runs: set[Run] = set()  # every launcher not yet followed to its end
         self._starting = False
-        self._started = asyncio.Event()  # set when no start is in progress
+        self._starts_in_flight = 0  # post_run() calls not yet past registration and buffered-event drain
+        self._started = asyncio.Event()  # set when no post_run() is in flight
         self._started.set()
         self._next_session_id = 1
         self.numbered = Numbered()  # the numbering of `allowed` that every place that carries it shares
@@ -1123,20 +1124,32 @@ class GuiServer:
             return self._refusal(e)
         # From here until the launcher is registered (or the start fails), no other run may start.
         self._starting = True
+        self._starts_in_flight += 1
         self._started.clear()
         self._stop_on_start = None
         self._push_allowed()
+        registered = False
+
+        def finish_starting() -> None:
+            nonlocal registered
+            registered = True
+            self._starting = False
+            self._stop_on_start = None
+
         try:
-            return await self._start(body)
+            return await self._start(body, finish_starting)
         except (PathRejected, InvalidRequest, Refused) as e:
             return self._refusal(e)
         finally:
-            self._starting = False
-            self._stop_on_start = None
-            self._started.set()
-            self._push_allowed()
+            if not registered:
+                self._starting = False
+                self._stop_on_start = None
+                self._push_allowed()
+            self._starts_in_flight -= 1
+            if self._starts_in_flight == 0:
+                self._started.set()
 
-    async def _start(self, body: dict) -> web.Response:
+    async def _start(self, body: dict, finish_starting: Callable[[], None]) -> web.Response:
         config = self.root.resolve(body.get("file"))
         await self._usable()
         scenario = self._scenario(config, body)
@@ -1287,8 +1300,13 @@ class GuiServer:
         self._next_session_id += 1
         self.current = run
         run.silence_task = asyncio.create_task(self._watch_silence(session))
-        if self._stop_on_start is not None:  # api/stop came while it was starting: it applies now
-            self._write_stop(run, self._stop_on_start)
+        stop_on_start = self._stop_on_start
+        # Registration is complete: clear starting state before broadcasting the session and draining
+        # buffered pre-start callbacks so an already-exited launcher neither corrupts `allowed` while
+        # draining nor triggers a spurious `allowed` push when post_run() exits.
+        finish_starting()
+        if stop_on_start is not None:  # api/stop came while it was starting: it applies now
+            self._write_stop(run, stop_on_start)
         # The session messages do not carry the variables: a new run's are told right after it.
         self.hub.broadcast([session.message()])
         self._tell_variables([variables.message()])
