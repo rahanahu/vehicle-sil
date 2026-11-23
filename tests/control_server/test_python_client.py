@@ -25,11 +25,16 @@ import warnings
 from vehicle_sil_control import (Control, ControlError, ControlWarning, EventInfo, Launch, Operation, Peer,
                                  SimulationState, Values, ms)
 
+_COMMON_DIR = str(pathlib.Path(__file__).resolve().parents[1] / "common")
+if _COMMON_DIR not in sys.path:
+    sys.path.insert(0, _COMMON_DIR)
+from timeout_scale import scaled, timeout_scale  # noqa: E402
+
 EXE = ".exe" if os.name == "nt" else ""
 
 
 def first(test, updates, pred, timeout=20.0):
-    """The first of `updates` for which `pred` holds; fails after `timeout` s instead of hanging
+    """The first of `updates` for which `pred` holds; fails after `timeout` s (scaled) instead of hanging
     (the caller closes the client, which ends the iteration left behind)."""
     found = []
 
@@ -39,10 +44,11 @@ def first(test, updates, pred, timeout=20.0):
                 found.append(u)
                 return
 
+    limit = scaled(timeout)
     reader = threading.Thread(target=run, daemon=True)
     reader.start()
-    reader.join(timeout)
-    test.assertTrue(found, f"no matching update within {timeout} s")
+    reader.join(limit)
+    test.assertTrue(found, f"no matching update within {limit} s")
     return found[0]
 
 
@@ -52,6 +58,10 @@ class LaunchedTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        try:
+            timeout_scale()
+        except ValueError as e:
+            raise SystemExit(str(e)) from None
         example = pathlib.Path(os.environ["VEHICLE_SIL_EXAMPLE_DIR"])
         scratch = pathlib.Path(os.environ["VEHICLE_SIL_LAUNCH_SCRATCH"])
         scratch.mkdir(parents=True, exist_ok=True)
@@ -148,7 +158,7 @@ class LaunchedTest(unittest.TestCase):
         self.assertIn("engine.speed", target.reason)
 
         # The engine sped up (towards 2400 rpm) and the dashboard received it over J1939.
-        deadline = time.time() + 10
+        deadline = time.time() + scaled(10)
         while time.time() < deadline:
             v = c.values("Dashboard")
             if v and v.time >= ms(590):
@@ -173,7 +183,7 @@ class LaunchedTest(unittest.TestCase):
         with self.assertRaises(ControlError):
             c.write({})
         stop.set()
-        watcher.join(10)
+        watcher.join(scaled(10))
         self.assertFalse(watcher.is_alive())
         self.assertTrue(any(isinstance(u, Peer) for u in seen))
         self.assertTrue(any(isinstance(u, Values) for u in seen))

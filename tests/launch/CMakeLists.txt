@@ -460,6 +460,7 @@ if(TARGET vehicle_sil_launch_test_ecu)
   # ECUs' own limit for the start, --timeout-ms and Ctrl+C in
   # the hold, a resume before the window, when the control server is started and when it is not,
   # what its start throws out of run_file(), a request for a control server that is wrong.
+  _vehicle_sil_scaled_ctest_timeout(_launch_control_timeout 300)
   foreach(part IN ITEMS a_write_in_the_start_window_reaches_each_process_before_its_first_step
                         what_fails_before_the_start_aborts_the_simulation
                         a_stop_while_what_is_done_before_the_start_fails_does_not_cut_the_end_short
@@ -477,7 +478,8 @@ if(TARGET vehicle_sil_launch_test_ecu)
     add_test(NAME launch_control.${part}
              COMMAND vehicle_sil_launch_control_test $<TARGET_FILE:vehicle_sil_launch_test_ecu>
                      ${CMAKE_CURRENT_BINARY_DIR}/control $<TARGET_FILE:vehicle_sil_process_helper> ${part})
-    set_tests_properties(launch_control.${part} PROPERTIES LABELS "integration;launch;control" TIMEOUT 300)
+    set_tests_properties(launch_control.${part} PROPERTIES LABELS "integration;launch;control" TIMEOUT ${_launch_control_timeout})
+    _vehicle_sil_tell_ctest_timeout_factor(launch_control.${part})
   endforeach()
   set_tests_properties(launch_control.the_ecus_wait_as_long_as_the_run_stands_still PROPERTIES COST 15)
   set_tests_properties(launch_control.a_write_in_the_start_window_reaches_each_process_before_its_first_step

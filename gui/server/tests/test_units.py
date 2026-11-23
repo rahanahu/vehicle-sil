@@ -1160,3 +1160,27 @@ def test_a_request_file_that_cannot_be_made_is_said_so(monkeypatch) -> None:
         server.GuiServer._make_request({})
     assert (e.value.status, e.value.code) == (500, "request-file")
     assert "No space left on device" in str(e.value) and "TMPDIR" in str(e.value)
+
+
+def test_timeout_scale(monkeypatch) -> None:
+    import conftest
+
+    for text, expected in (("3", 3.0), ("0.5", 0.5), (".5", 0.5), ("5.", 5.0), ("007", 7.0), ("0.001", 0.001)):
+        monkeypatch.setenv("VEHICLE_SIL_TEST_TIMEOUT_SCALE", text)
+        assert conftest._timeout_scale() == expected
+
+    monkeypatch.delenv("VEHICLE_SIL_TEST_TIMEOUT_SCALE", raising=False)
+    assert conftest._timeout_scale() == 1.0
+    monkeypatch.setenv("VEHICLE_SIL_TEST_TIMEOUT_SCALE", "")
+    assert conftest._timeout_scale() == 1.0
+
+    for bad in ("0", "0.0", "000", "000.0", ".", "-1", "+3", "abc", "3x", " ", " 3", "3 ", "3\n",
+                "1e3", "1e-3", "0x10", "1_000", "1.2.3", "inf", "nan", "Infinity", "NaN", "٢", "²",
+                "9" * 400, "0." + ("0" * 400) + "1"):
+        monkeypatch.setenv("VEHICLE_SIL_TEST_TIMEOUT_SCALE", bad)
+        with pytest.raises(pytest.UsageError) as exc:
+            conftest._timeout_scale()
+        assert f'VEHICLE_SIL_TEST_TIMEOUT_SCALE="{bad}"' in str(exc.value)
+
+    monkeypatch.setattr(conftest, "TIMEOUT_SCALE", 2.5)
+    assert conftest.scaled(4.0) == 10.0

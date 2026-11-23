@@ -513,3 +513,27 @@ def test_the_stubs_the_server_makes_are_removed_as_soon_as_they_are_imported(tmp
     before = list(sys.path)
     assert control._load().pb.DESCRIPTOR.name.endswith("control.proto")  # made from the repository's proto file
     assert list(tmp_path.iterdir()) == [] and sys.path == before
+
+
+def test_fake_control_makes_and_removes_stubs_when_env_is_unset(tmp_path: Path, control_stubs,
+                                                                monkeypatch) -> None:
+    import tempfile
+
+    import fake_control
+
+    monkeypatch.delenv("VEHICLE_SIL_CONTROL_STUBS", raising=False)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    before = list(sys.path)
+    _, pb, _ = fake_control.load()
+    assert pb.DESCRIPTOR.name.endswith("control.proto")
+    assert list(tmp_path.iterdir()) == [] and sys.path == before
+
+
+def test_stubs_directory_outside_repository_without_env_is_unavailable(monkeypatch) -> None:
+    from vehicle_sil_gui import control
+
+    monkeypatch.delenv("VEHICLE_SIL_CONTROL_STUBS", raising=False)
+    monkeypatch.setattr(control, "repository", lambda: None)
+    with pytest.raises(control.Unavailable) as exc:
+        control._stubs_directory()
+    assert "does not run from the vehicle-sil repository" in str(exc.value)

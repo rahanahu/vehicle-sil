@@ -48,8 +48,8 @@ inline constexpr const char* kCTestTimeoutFactorVariable = "VEHICLE_SIL_TEST_CTE
 
 /// The factor that `text` gives when it is digits with at most one point and greater than 0 (such
 /// as 3, 2.5 or .5); nullopt for anything else (empty, spaces, a sign, an exponent, hex, inf, nan,
-/// 0). The same rule as cmake/VehicleSilTestHelpers.cmake, gui/server/tests/conftest.py and
-/// gui/web/e2e/support/timeouts.ts.
+/// 0). The same rule as cmake/VehicleSilTestHelpers.cmake, tests/common/timeout_scale.py,
+/// gui/server/tests/conftest.py and gui/web/e2e/support/timeouts.ts.
 inline std::optional<double> parse_timeout_scale(std::string_view text)
 {
     bool digit = false;

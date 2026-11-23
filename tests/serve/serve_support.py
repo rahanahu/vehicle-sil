@@ -58,20 +58,15 @@ RUN_METADATA = "vehicle-sil-run"
 EXE = ".exe" if os.name == "nt" else ""
 WINDOWS = os.name == "nt"
 
+_COMMON_DIR = str(pathlib.Path(__file__).resolve().parents[1] / "common")
+if _COMMON_DIR not in sys.path:
+    sys.path.insert(0, _COMMON_DIR)
+from timeout_scale import timeout_scale as _timeout_scale  # noqa: E402
 
-def _scale() -> float:
-    text = os.environ.get("VEHICLE_SIL_TEST_TIMEOUT_SCALE") or os.environ.get("VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT") or "1"
-    try:
-        value = float(text)
-    except ValueError:
-        value = -1.0
-    if not value > 0 or not all(c.isdigit() or c == "." for c in text) or text.count(".") > 1:
-        raise SystemExit(f"VEHICLE_SIL_TEST_TIMEOUT_SCALE={text!r} is not a number greater than 0 in digits "
-                         "(such as 3 or 2.5): set it to such a factor, or unset it")
-    return value
-
-
-SCALE = _scale()
+try:
+    SCALE = _timeout_scale()
+except ValueError as e:
+    raise SystemExit(str(e)) from None
 
 
 def scaled(seconds: float) -> float:

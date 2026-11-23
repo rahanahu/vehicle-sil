@@ -229,7 +229,8 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
                     s.run([python, "tests/scripts/test_verify_common.py"]),
                     s.run([python, "tests/scripts/test_hotspots.py"]),
                     s.run([python, "tests/scripts/test_trace_report.py"]),
-                    s.run([python, "tests/scripts/test_package.py"])])
+                    s.run([python, "tests/scripts/test_package.py"]),
+                    s.run([python, "tests/unit/test_timeout_scale.py"])])
 
     def control(s: Step) -> bool:
         if not s.run([python, "-m", "vehicle_sil_control.generate", "--out", str(stubs)]):

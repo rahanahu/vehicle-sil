@@ -19,6 +19,7 @@ Dashboard on b killed: the launcher aborts the run at once and names it.
 """
 import argparse
 import os
+import pathlib
 import re
 import shutil
 import signal
@@ -27,6 +28,11 @@ import sys
 import tempfile
 import threading
 import time
+
+_COMMON_DIR = str(pathlib.Path(__file__).resolve().parents[1] / "common")
+if _COMMON_DIR not in sys.path:
+    sys.path.insert(0, _COMMON_DIR)
+from timeout_scale import scaled, timeout_scale  # noqa: E402
 
 SKIP = 77
 REGISTRY_PORT = 18500
@@ -55,7 +61,7 @@ def outer(args: argparse.Namespace) -> None:
         skip("unshare -Urnm fails, so unprivileged user namespaces are turned off here (for example "
              "kernel.apparmor_restrict_unprivileged_userns=1): " + (probe.stderr.strip() or f"exit {probe.returncode}"))
     run = subprocess.run(["unshare", "-Urnm", "--propagation", "private", sys.executable, os.path.abspath(__file__),
-                          "--inner", "--launch", args.launch, "--example-dir", args.example_dir], timeout=600)
+                          "--inner", "--launch", args.launch, "--example-dir", args.example_dir], timeout=scaled(600))
     sys.exit(run.returncode)
 
 
@@ -165,60 +171,60 @@ def inner(args: argparse.Namespace) -> None:
     procs: list[Proc] = []
     try:
         # 1. The launcher on a tells a's address; the Dashboard on b joins there; the run passes.
-        a = Proc("a", [launch, "run", "sim.yaml", "--stop-at-ms", "1000", "--timeout-ms", "60000"], work)
+        a = Proc("a", [launch, "run", "sim.yaml", "--stop-at-ms", "1000", "--timeout-ms", str(int(scaled(60000)))], work)
         procs.append(a)
-        a.wait_for("waiting for Dashboard to join (manual)", 60)
-        told = a.wait_for("from other computers, join at ", 1)
+        a.wait_for("waiting for Dashboard to join (manual)", scaled(60))
+        told = a.wait_for("from other computers, join at ", scaled(1))
         if f"join at {uri} (this computer's address)" not in told:
             fail(f"the launcher on a names a's address {uri}:\n{told}")
-        b = Proc("b", [dashboard, "--name", "Dashboard", "--registry-uri", uri, "--start-timeout-ms", "60000"], work)
+        b = Proc("b", [dashboard, "--name", "Dashboard", "--registry-uri", uri, "--start-timeout-ms", str(int(scaled(60000)))], work)
         procs.append(b)
-        if a.wait(60) != 0:
+        if a.wait(scaled(60)) != 0:
             fail("the run with the Dashboard on b passes:\n" + a.text())
         if "run: the simulation ran to stop_at_ms (1000 ms) and ended" not in a.text():
             fail("the launcher reached the requested stop time:\n" + a.text())
         # The step at the stop time may or may not run; 500 ms is strictly before it.
-        if b.wait(30) != 0 or not re.search(r"^t=500 ms engine speed [1-9]\d* rpm \([1-9]\d* messages\)$",
-                                             b.text(), re.MULTILINE):
+        if b.wait(scaled(30)) != 0 or not re.search(r"^t=500 ms engine speed [1-9]\d* rpm \([1-9]\d* messages\)$",
+                                                     b.text(), re.MULTILINE):
             fail("the Dashboard on b received engine speed before the stop:\n" + b.text())
         print("two_hosts: joined from b, the run passed", flush=True)
 
         # 2. The link cut while the simulation runs (slowly, at speed 0.01): after 10 s the launcher says that
         # virtual time does not advance; once the link is back, that it does again.
-        a = Proc("a", [launch, "run", "sim.yaml", "--stop-at-ms", "1000", "--speed", "0.01", "--stdin-commands", "--timeout-ms", "120000"], work,
+        a = Proc("a", [launch, "run", "sim.yaml", "--stop-at-ms", "1000", "--speed", "0.01", "--stdin-commands", "--timeout-ms", str(int(scaled(120000)))], work,
                  stdin=True)
         procs.append(a)
-        a.wait_for("waiting for Dashboard to join (manual)", 60)
-        b = Proc("b", [dashboard, "--name", "Dashboard", "--registry-uri", uri, "--start-timeout-ms", "60000"], work)
+        a.wait_for("waiting for Dashboard to join (manual)", scaled(60))
+        b = Proc("b", [dashboard, "--name", "Dashboard", "--registry-uri", uri, "--start-timeout-ms", str(int(scaled(60000)))], work)
         procs.append(b)
-        a.wait_for("simulation running", 30)
+        a.wait_for("simulation running", scaled(30))
         time.sleep(1)
         sh("ip", "-n", "b", "link", "set", "vb", "down")
         cut = time.monotonic()
-        said = a.wait_for("virtual time has not advanced for 10 s", 40)
+        said = a.wait_for("virtual time has not advanced for 10 s", scaled(40))
         if "lost its network connection" not in said:
             fail("the line names a lost connection as a cause:\n" + said)
         print(f"two_hosts: link cut, the launcher said so after {time.monotonic() - cut:.1f} s", flush=True)
         sh("ip", "-n", "b", "link", "set", "vb", "up")
-        a.wait_for("virtual time advances again", 60)
+        a.wait_for("virtual time advances again", scaled(60))
         a.write('{"command":"stop"}\n')
-        if a.wait(60) != 0:
+        if a.wait(scaled(60)) != 0:
             fail("a stop ends the run without errors (0, result stopped):\n" + a.text())
-        if b.wait(30) != 0:
+        if b.wait(scaled(30)) != 0:
             fail("the Dashboard on b ends with the run:\n" + b.text())
         print("two_hosts: link back, it went on, stopped", flush=True)
 
         # 3. The Dashboard on b killed while the simulation runs: the run is aborted at once.
-        a = Proc("a", [launch, "run", "sim.yaml", "--stop-at-ms", "1000", "--speed", "0.01", "--timeout-ms", "120000"], work)
+        a = Proc("a", [launch, "run", "sim.yaml", "--stop-at-ms", "1000", "--speed", "0.01", "--timeout-ms", str(int(scaled(120000)))], work)
         procs.append(a)
-        a.wait_for("waiting for Dashboard to join (manual)", 60)
-        b = Proc("b", [dashboard, "--name", "Dashboard", "--registry-uri", uri, "--start-timeout-ms", "60000"], work)
+        a.wait_for("waiting for Dashboard to join (manual)", scaled(60))
+        b = Proc("b", [dashboard, "--name", "Dashboard", "--registry-uri", uri, "--start-timeout-ms", str(int(scaled(60000)))], work)
         procs.append(b)
-        a.wait_for("simulation running", 30)
+        a.wait_for("simulation running", scaled(30))
         time.sleep(1)
         b.end()
         killed = time.monotonic()
-        if a.wait(30) != 1 or "participant 'Dashboard' failed" not in a.text():
+        if a.wait(scaled(30)) != 1 or "participant 'Dashboard' failed" not in a.text():
             fail("the run is aborted, naming Dashboard:\n" + a.text())
         print(f"two_hosts: Dashboard on b killed, the run aborted after {time.monotonic() - killed:.1f} s", flush=True)
     finally:
@@ -229,6 +235,10 @@ def inner(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    try:
+        timeout_scale()
+    except ValueError as e:
+        raise SystemExit(str(e)) from None
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--launch", required=True, help="vehicle_sil_launch")
     parser.add_argument("--example-dir", required=True, help="the build directory of examples/ecu_main")

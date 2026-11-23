@@ -267,7 +267,7 @@ def load_presets(root: Path | None = None, *, strict: bool = True) -> dict[str, 
             continue
         try:
             loaded = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as e:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
             if not strict:
                 return {}
             die_usage(f"cannot read {name}: {e}")
@@ -275,13 +275,18 @@ def load_presets(root: Path | None = None, *, strict: bool = True) -> dict[str, 
             if not strict:
                 return {}
             die_usage(f"cannot read {name}: top-level JSON value must be an object")
-        for p in loaded.get("configurePresets", []):
+        for key in ("configurePresets", "buildPresets", "testPresets"):
+            if key in loaded and not isinstance(loaded[key], list):
+                if not strict:
+                    return {}
+                die_usage(f"cannot read {name}: {key} must be a JSON array")
+        for p in loaded.get("configurePresets") or []:
             if isinstance(p, dict) and isinstance(p.get("name"), str):
                 configure.append((p, from_project))
-        for p in loaded.get("buildPresets", []):
+        for p in loaded.get("buildPresets") or []:
             if isinstance(p, dict) and isinstance(p.get("name"), str):
                 builds.add(p["name"])
-        for p in loaded.get("testPresets", []):
+        for p in loaded.get("testPresets") or []:
             if isinstance(p, dict) and isinstance(p.get("name"), str):
                 tests.setdefault(p["name"], p)
     by_name: dict[str, dict] = {}
@@ -291,13 +296,19 @@ def load_presets(root: Path | None = None, *, strict: bool = True) -> dict[str, 
         name = preset["name"]
         if name in found or preset.get("hidden") or name not in builds or name not in tests:
             continue
-        host = _required_host(preset, by_name)
+        try:
+            host = _required_host(preset, by_name)
+            jobs = _test_jobs(tests[name], tests)
+        except ValueError as e:
+            if not strict:
+                return {}
+            die_usage(f"cannot read preset {name!r}: {e}")
         vendor = preset.get("vendor")
         vs = vendor.get("vehicle_sil") if isinstance(vendor, dict) else None
         linux_default = from_project and host == "Linux" and isinstance(vs, dict) and vs.get("linux_default") is True
         found[name] = {
             "host": host,
-            "test_jobs": _test_jobs(tests[name], tests),
+            "test_jobs": jobs,
             "linux_default": linux_default,
             "from_project": from_project,
         }
@@ -312,15 +323,29 @@ def all_linux_presets(known: dict[str, dict]) -> list[str]:
     return [name for name, info in known.items() if info.get("from_project") and info.get("host") == "Linux"]
 
 
-def _test_jobs(preset: dict, by_name: dict[str, dict]) -> int | None:
-    """execution.jobs of a test preset, or of the first preset it inherits that sets it."""
-    jobs = preset.get("execution", {}).get("jobs")
-    if isinstance(jobs, int):
-        return jobs
+def _inherits(preset: dict) -> list[str]:
     parents = preset.get("inherits", [])
-    for parent in [parents] if isinstance(parents, str) else parents:
+    if isinstance(parents, str):
+        return [parents]
+    if isinstance(parents, list):
+        return [p for p in parents if isinstance(p, str)]
+    return []
+
+
+def _test_jobs(preset: dict, by_name: dict[str, dict], seen: frozenset[str] = frozenset()) -> int | None:
+    """execution.jobs of a test preset, or of the first preset it inherits that sets it."""
+    execution = preset.get("execution")
+    jobs = execution.get("jobs") if isinstance(execution, dict) else None
+    if isinstance(jobs, int) and not isinstance(jobs, bool):
+        return jobs
+    name = preset.get("name")
+    if isinstance(name, str):
+        seen = seen | {name}
+    for parent in _inherits(preset):
+        if parent in seen:
+            raise ValueError(f"cyclic inherits involving {parent!r}")
         if parent in by_name:
-            jobs = _test_jobs(by_name[parent], by_name)
+            jobs = _test_jobs(by_name[parent], by_name, seen)
             if jobs is not None:
                 return jobs
     return None
@@ -335,14 +360,19 @@ def default_test_jobs(preset_jobs: int | None) -> int | None:
     return None
 
 
-def _required_host(preset: dict, by_name: dict[str, dict]) -> str | None:
+def _required_host(preset: dict, by_name: dict[str, dict], seen: frozenset[str] = frozenset()) -> str | None:
     cond = preset.get("condition")
     if isinstance(cond, dict) and cond.get("type") == "equals" and cond.get("lhs") == "${hostSystemName}":
-        return cond.get("rhs")
-    parents = preset.get("inherits", [])
-    for parent in [parents] if isinstance(parents, str) else parents:
+        rhs = cond.get("rhs")
+        return rhs if isinstance(rhs, str) else None
+    name = preset.get("name")
+    if isinstance(name, str):
+        seen = seen | {name}
+    for parent in _inherits(preset):
+        if parent in seen:
+            raise ValueError(f"cyclic inherits involving {parent!r}")
         if parent in by_name:
-            host = _required_host(by_name[parent], by_name)
+            host = _required_host(by_name[parent], by_name, seen)
             if host:
                 return host
     return None

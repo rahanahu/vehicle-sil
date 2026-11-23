@@ -3,13 +3,20 @@
 // 「起きないこと」を確かめる待ちと、画面やサーバーに与える時間（ガードの長さなど）には掛けない（試験の意味が変わる）。
 // 設定ファイル（playwright*.config.ts）と試験を動かすプロセスの両方が読む。
 
-function readScale(): number {
-  const text = process.env['VEHICLE_SIL_TEST_TIMEOUT_SCALE'] ?? '';
-  if (text === '') return 1;
+export function parseTimeoutScale(text: string): number | undefined {
   // 数字と小数点 1 つだけ（空白、符号、指数、16 進、Infinity は断る）。C++ の試験（tests/unit/test_timeout_scale.hpp）、
   // CMake、GUI サーバーの試験と同じ規則
-  const value = /^[0-9]*\.?[0-9]*$/.test(text) && /[0-9]/.test(text) ? Number(text) : 0;
-  if (!(value > 0 && Number.isFinite(value))) {
+  if (!/^[0-9]*\.?[0-9]*$/.test(text) || !/[0-9]/.test(text)) return undefined;
+  const value = Number(text);
+  return value > 0 && Number.isFinite(value) ? value : undefined;
+}
+
+export function readTimeoutScale(
+  text = process.env['VEHICLE_SIL_TEST_TIMEOUT_SCALE'] ?? '',
+): number {
+  if (text === '') return 1;
+  const value = parseTimeoutScale(text);
+  if (value === undefined) {
     throw new Error(
       `VEHICLE_SIL_TEST_TIMEOUT_SCALE="${text}" is not a number greater than 0 in digits (such as 3 or 2.5): set it ` +
         'to a factor such as 3 (every upper bound of waiting in the tests 3 times as long), or unset it',
@@ -18,7 +25,7 @@ function readScale(): number {
   return value;
 }
 
-export const TIMEOUT_SCALE = readScale();
+export const TIMEOUT_SCALE = readTimeoutScale();
 
 /** 起きるはずのことを待つ上限（ミリ秒）に倍率を掛ける。 */
 export function scaled(ms: number): number {

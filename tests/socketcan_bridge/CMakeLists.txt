@@ -27,6 +27,7 @@ if(NOT _socketcan_netns_python)
 endif()
 # The peer of the Vector XL bridge's integration tests: it sends the frame matrix of tests/can_bridge
 # and expects the answers of a device (the script).
+_vehicle_sil_scaled_ctest_timeout(_socketcan_netns_timeout 300)
 foreach(_scenario roundtrip link refused shared)
   add_test(NAME socketcan_bridge.netns.${_scenario}
     COMMAND "${_socketcan_netns_python}" ${CMAKE_CURRENT_SOURCE_DIR}/bridge_netns.py --scenario ${_scenario}
@@ -34,7 +35,8 @@ foreach(_scenario roundtrip link refused shared)
             --peer $<TARGET_FILE:vehicle_sil_vector_xl_it_peer>
             --registry $<TARGET_FILE:sil-kit-registry>)
   set_tests_properties(socketcan_bridge.netns.${_scenario}
-    PROPERTIES LABELS "integration;socketcan_bridge" TIMEOUT 300 SKIP_RETURN_CODE 77)
+    PROPERTIES LABELS "integration;socketcan_bridge" TIMEOUT ${_socketcan_netns_timeout} SKIP_RETURN_CODE 77
+               ENVIRONMENT "VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT=${VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT}")
 endforeach()
 
 # launch: vehicle_sil_launch run --connect J1939_CAN=vcan0 starts the bridge itself, beside the engine ECU.
@@ -47,5 +49,6 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
             --launch $<TARGET_FILE:vehicle_sil_launch>
             --ecu $<TARGET_FILE:vehicle_sil_engine_ecu>)
   set_tests_properties(socketcan_bridge.netns.launch
-    PROPERTIES LABELS "integration;socketcan_bridge" TIMEOUT 300 SKIP_RETURN_CODE 77)
+    PROPERTIES LABELS "integration;socketcan_bridge" TIMEOUT ${_socketcan_netns_timeout} SKIP_RETURN_CODE 77
+               ENVIRONMENT "VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT=${VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT}")
 endif()

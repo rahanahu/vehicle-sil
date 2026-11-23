@@ -36,6 +36,7 @@ Any failure after that fails the test.
 import argparse
 import json
 import os
+import pathlib
 import re
 import shutil
 import signal
@@ -46,6 +47,11 @@ import sys
 import tempfile
 import threading
 import time
+
+_COMMON_DIR = str(pathlib.Path(__file__).resolve().parents[1] / "common")
+if _COMMON_DIR not in sys.path:
+    sys.path.insert(0, _COMMON_DIR)
+from timeout_scale import timeout_scale  # noqa: E402
 
 SKIP = 77
 REGISTRY_PORT = 18510
@@ -58,7 +64,10 @@ CAN_RTR_FLAG = 0x40000000
 CAN_ERR_FLAG = 0x20000000
 FRAME = struct.Struct("=IB3x8s")
 
-SCALE = float(os.environ.get("VEHICLE_SIL_TEST_TIMEOUT_SCALE") or 1)
+try:
+    SCALE = timeout_scale()
+except ValueError as e:
+    raise SystemExit(str(e)) from None
 WAIT = 30 * SCALE
 
 STATISTICS = ("silkit_to_ext", "ext_to_silkit", "ext_from_devices", "own_tx_dropped", "error_frames", "overruns",

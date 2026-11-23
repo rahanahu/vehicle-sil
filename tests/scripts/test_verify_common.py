@@ -13,6 +13,8 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -143,10 +145,132 @@ class VerifyCommonTest(unittest.TestCase):
             # (c) Timeout escalation SIGINT -> SIGTERM -> SIGKILL
             kill_calls.clear()
             with mock.patch.object(verify_common, "_group_alive", return_value=True), \
-                 mock.patch.object(verify_common.time, "monotonic", side_effect=[0.0, 21.0, 0.0, 6.0, 0.0, 0.0]), \
+                 mock.patch.object(verify_common.time, "monotonic", side_effect=[0.0, 21.0, 0.0, 6.0, 0.0, 2.0]), \
                  mock.patch.object(verify_common.time, "sleep"):
                 verify_common.stop_group(proc)
             self.assertEqual(kill_calls, [(9999, signal.SIGINT), (9999, signal.SIGTERM), (9999, expected_sigkill)])
+
+            # (e) Reap after SIGKILL inside the 1s reap window
+            kill_calls.clear()
+            sigkill_reaped = False
+
+            def poll_after_sigkill():
+                nonlocal sigkill_reaped
+                if (9999, expected_sigkill) in kill_calls:
+                    sigkill_reaped = True
+                return -expected_sigkill if sigkill_reaped else None
+
+            def alive_until_sigkill_reap(_pgid: int) -> bool:
+                return not sigkill_reaped
+
+            proc_kill = mock.Mock(pid=9999)
+            proc_kill.poll.side_effect = poll_after_sigkill
+            with mock.patch.object(verify_common, "_group_alive", side_effect=alive_until_sigkill_reap), \
+                 mock.patch.object(verify_common.time, "monotonic", side_effect=[0.0, 21.0, 0.0, 6.0, 0.0, 0.1]), \
+                 mock.patch.object(verify_common.time, "sleep"):
+                verify_common.stop_group(proc_kill)
+            self.assertEqual(kill_calls, [(9999, signal.SIGINT), (9999, signal.SIGTERM), (9999, expected_sigkill)])
+            self.assertTrue(sigkill_reaped)
+
+            # (d) Leader is reaped by proc.poll() inside the wait loop so _group_alive turns False without escalation
+            kill_calls.clear()
+            reaped = False
+
+            def poll_reaps():
+                nonlocal reaped
+                if kill_calls:
+                    reaped = True
+                return -signal.SIGINT if reaped else None
+
+            def alive_after_reap(_pgid: int) -> bool:
+                return not reaped
+
+            proc_reap = mock.Mock(pid=9999)
+            proc_reap.poll.side_effect = poll_reaps
+            with mock.patch.object(verify_common, "_group_alive", side_effect=alive_after_reap), \
+                 mock.patch.object(verify_common.time, "monotonic", side_effect=[0.0, 0.1]), \
+                 mock.patch.object(verify_common.time, "sleep"):
+                verify_common.stop_group(proc_reap)
+            self.assertEqual(kill_calls, [(9999, signal.SIGINT)])
+            self.assertGreaterEqual(proc_reap.poll.call_count, 2)
+
+    @unittest.skipIf(os.name == "nt", "POSIX process groups")
+    def test_stop_group_posix_real_subprocess_no_zombie_stall(self) -> None:
+        # Case 1: Single process exiting on SIGINT (must reap leader zombie without stalling 20s+5s)
+        script1 = (
+            "import signal, sys, time\n"
+            "signal.signal(signal.SIGINT, signal.SIG_DFL)\n"
+            "print('ready', flush=True)\n"
+            "time.sleep(30)\n"
+        )
+        proc = subprocess.Popen(
+            [sys.executable, "-c", script1],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            **verify_common.process_group_kwargs(),
+        )
+        try:
+            self.assertEqual(proc.stdout.readline().strip(), "ready")
+            started = time.monotonic()
+            verify_common.stop_group(proc)
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 2.0)
+            self.assertEqual(proc.returncode, -signal.SIGINT)
+            self.assertFalse(verify_common._group_alive(proc.pid))
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            if proc.stdout is not None:
+                proc.stdout.close()
+
+        # Case 2: Leader exits immediately on SIGINT while child ignores SIGINT briefly, then exits
+        with tempfile.TemporaryDirectory() as d:
+            ready_file = Path(d) / "child.ready"
+            pid_file = Path(d) / "child.pid"
+            script2 = (
+                "import pathlib, signal, subprocess, sys, time\n"
+                "child_code = (\n"
+                "    'import os, pathlib, signal, sys, time\\n'\n"
+                "    'signal.signal(signal.SIGINT, signal.SIG_IGN)\\n'\n"
+                "    'pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))\\n'\n"
+                "    'pathlib.Path(sys.argv[2]).write_text(\"ready\")\\n'\n"
+                "    'time.sleep(0.4)\\n'\n"
+                ")\n"
+                "subprocess.Popen([sys.executable, '-c', child_code, sys.argv[1], sys.argv[2]])\n"
+                "signal.signal(signal.SIGINT, signal.SIG_DFL)\n"
+                "while not pathlib.Path(sys.argv[2]).exists():\n"
+                "    time.sleep(0.01)\n"
+                "print('ready', flush=True)\n"
+                "time.sleep(30)\n"
+            )
+            proc2 = subprocess.Popen(
+                [sys.executable, "-c", script2, str(pid_file), str(ready_file)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                **verify_common.process_group_kwargs(),
+            )
+            try:
+                self.assertEqual(proc2.stdout.readline().strip(), "ready")
+                child_pid = int(pid_file.read_text().strip())
+                started = time.monotonic()
+                verify_common.stop_group(proc2)
+                elapsed = time.monotonic() - started
+                self.assertLess(elapsed, 2.0)
+                self.assertEqual(proc2.returncode, -signal.SIGINT)
+                self.assertFalse(verify_common._group_alive(proc2.pid))
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(child_pid, 0)
+            finally:
+                if proc2.poll() is None:
+                    proc2.kill()
+                    proc2.wait()
+                if proc2.stdout is not None:
+                    proc2.stdout.close()
 
     def test_install_sigterm_handler(self) -> None:
         with mock.patch.object(verify_common.signal, "signal") as signal_mock:

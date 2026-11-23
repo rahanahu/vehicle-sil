@@ -214,6 +214,128 @@ def test_help_and_all_linux_cli() -> None:
     check(bad_run.returncode == 2, f"--summarize --all-linux exited {bad_run.returncode}, expected 2: {bad_run.stderr}")
 
 
+def test_load_presets_guards_null_invalid_and_cycles() -> None:
+    # 1. null top-level preset arrays: strict=False returns {}, strict=True calls die_usage (exit 2)
+    for key in ("configurePresets", "buildPresets", "testPresets"):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            (tmp / "CMakePresets.json").write_text(json.dumps({"version": 3, key: None}), encoding="utf-8")
+            check(verify.load_presets(tmp, strict=False) == {}, f"{key}=null with strict=False should return {{}}")
+            try:
+                verify.load_presets(tmp, strict=True)
+                check(False, f"{key}=null with strict=True should exit 2")
+            except SystemExit as e:
+                check(e.code == 2, f"{key}=null with strict=True exited {e.code}, expected 2")
+
+    # 2. null/bool/invalid subfields do not crash load_presets
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        (tmp / "CMakePresets.json").write_text(json.dumps({
+            "version": 3,
+            "include": None,
+            "configurePresets": [
+                {"name": "base", "hidden": True,
+                 "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux"}},
+                {"name": "p1", "inherits": [None, "base"],
+                 "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": None}},
+                {"name": "p2", "inherits": None},
+                {"name": "p3", "inherits": [None, "base"]},
+            ],
+            "buildPresets": [
+                {"name": "p1", "configurePreset": "p1"},
+                {"name": "p2", "configurePreset": "p2"},
+                {"name": "p3", "configurePreset": "p3"},
+            ],
+            "testPresets": [
+                {"name": "p1", "configurePreset": "p1", "execution": None, "inherits": [None, "tb"]},
+                {"name": "tb", "hidden": True, "execution": {"jobs": True}},
+                {"name": "p2", "configurePreset": "p2", "inherits": None},
+                {"name": "p3", "configurePreset": "p3", "inherits": [None, "tb"], "execution": {"jobs": 4}},
+            ],
+        }), encoding="utf-8")
+        known = verify.load_presets(tmp, strict=True)
+        check(known["p1"]["host"] is None and known["p1"]["test_jobs"] is None, f"p1 null/bool subfields: {known['p1']}")
+        check(known["p2"]["host"] is None and known["p2"]["test_jobs"] is None, f"p2 null inherits: {known['p2']}")
+        check(known["p3"]["host"] == "Linux" and known["p3"]["test_jobs"] == 4, f"p3 skips null parent: {known['p3']}")
+
+    # 3. Cyclic inherits (configurePresets and testPresets)
+    cycles = [
+        {
+            "version": 3,
+            "configurePresets": [
+                {"name": "a", "inherits": "b"},
+                {"name": "b", "inherits": "a"},
+            ],
+            "buildPresets": [{"name": "a", "configurePreset": "a"}],
+            "testPresets": [{"name": "a", "configurePreset": "a"}],
+        },
+        {
+            "version": 3,
+            "configurePresets": [{"name": "self", "inherits": "self"}],
+            "buildPresets": [{"name": "self", "configurePreset": "self"}],
+            "testPresets": [{"name": "self", "configurePreset": "self"}],
+        },
+        {
+            "version": 3,
+            "configurePresets": [{"name": "a"}],
+            "buildPresets": [{"name": "a", "configurePreset": "a"}],
+            "testPresets": [
+                {"name": "a", "configurePreset": "a", "inherits": "tb"},
+                {"name": "tb", "hidden": True, "inherits": "a"},
+            ],
+        },
+    ]
+    for idx, payload in enumerate(cycles):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            (tmp / "CMakePresets.json").write_text(json.dumps(payload), encoding="utf-8")
+            check(verify.load_presets(tmp, strict=False) == {}, f"cycle {idx} strict=False should return {{}}")
+            try:
+                verify.load_presets(tmp, strict=True)
+                check(False, f"cycle {idx} strict=True should exit 2")
+            except SystemExit as e:
+                check(e.code == 2, f"cycle {idx} strict=True exited {e.code}, expected 2")
+
+    # 4. Diamond inherits DAG resolves host and test_jobs without false cycle error
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        (tmp / "CMakePresets.json").write_text(json.dumps({
+            "version": 3,
+            "configurePresets": [
+                {"name": "a", "hidden": True,
+                 "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux"}},
+                {"name": "b", "hidden": True, "inherits": "a"},
+                {"name": "c", "hidden": True, "inherits": "a"},
+                {"name": "d", "inherits": ["b", "c"]},
+            ],
+            "buildPresets": [{"name": "d", "configurePreset": "d"}],
+            "testPresets": [
+                {"name": "ta", "hidden": True, "execution": {"jobs": 6}},
+                {"name": "tb", "hidden": True, "inherits": "ta"},
+                {"name": "tc", "hidden": True, "inherits": "ta"},
+                {"name": "d", "configurePreset": "d", "inherits": ["tb", "tc"]},
+            ],
+        }), encoding="utf-8")
+        known = verify.load_presets(tmp, strict=True)
+        check(known["d"]["host"] == "Linux" and known["d"]["test_jobs"] == 6,
+              f"diamond DAG should resolve cleanly: {known['d']}")
+
+    # 5. Non-UTF-8 preset files: strict=False returns {}, strict=True exits 2
+    for filename in ("CMakePresets.json", "CMakeUserPresets.json"):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            if filename == "CMakeUserPresets.json":
+                (tmp / "CMakePresets.json").write_text(json.dumps({"version": 3}), encoding="utf-8")
+            (tmp / filename).write_bytes(b"\xff\xfe\x00\x00")
+            check(verify.load_presets(tmp, strict=False) == {},
+                  f"non-UTF-8 {filename} with strict=False should return {{}}")
+            try:
+                verify.load_presets(tmp, strict=True)
+                check(False, f"non-UTF-8 {filename} with strict=True should exit 2")
+            except SystemExit as e:
+                check(e.code == 2, f"non-UTF-8 {filename} with strict=True exited {e.code}, expected 2")
+
+
 if __name__ == "__main__":
     for name, test in list(globals().items()):
         if name.startswith("test_") and callable(test):
