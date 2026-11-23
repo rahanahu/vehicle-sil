@@ -2,6 +2,7 @@ import { HttpError, errorMessage } from './http';
 import { httpExamples, webSocketExamples } from './testing/protocol-examples';
 import {
   ProtocolError,
+  Unreadable,
   readAppInfo,
   readCheckResponse,
   readConfigList,
@@ -9,6 +10,7 @@ import {
   readConnections,
   readDashboardResponse,
   readLauncherEvent,
+  readOperationReport,
   readPrepareResponse,
   readRecording,
   readRuntimeStatus,
@@ -19,6 +21,7 @@ import {
   readSessionResponse,
   readSessionRuntime,
   readTimeResponse,
+  readVariablesReport,
   readVariablesSummary,
   readWriteResponse,
 } from './protocol';
@@ -568,5 +571,109 @@ describe('the readers refuse what they cannot read', () => {
       runtime: rt,
     });
     expect(helloMsg?.type === 'hello' && helloMsg.runtime).toEqual(rt);
+  });
+
+  it('reads variables summaries and operation reports strictly or leniently with Unreadable', () => {
+    const rawVars = {
+      rev: -1,
+      state: 123,
+      reason: 45,
+      peers: [
+        {
+          name: 'Engine',
+          connected: 'yes',
+          variables: [
+            {
+              name: 'mode',
+              type: 9,
+              role: 7,
+              writable: 'true',
+              unit: null,
+              min: '0',
+              max: Infinity,
+              step: 0.5,
+              description: false,
+              enum: [{ name: 'bad' }, { name: 'ok', value: 1 }],
+              availability: 'inactive',
+            },
+            { name: 42 },
+          ],
+        },
+        { connected: true },
+      ],
+      peers_omitted: -2,
+      variables_omitted: 3,
+      operations_from_seq: null,
+      operations_open_omitted: 'none',
+    };
+    expect(() => readVariablesSummary(rawVars)).toThrow(ProtocolError);
+    const uVars = new Unreadable('variables');
+    const lenientVars = readVariablesReport(rawVars, 'variables', uVars);
+    expect(lenientVars).toEqual({
+      rev: null,
+      state: 'unknown',
+      reason: null,
+      peers: [
+        {
+          name: 'Engine',
+          connected: false,
+          variables: [
+            {
+              name: 'mode',
+              type: '',
+              role: 'output',
+              writable: false,
+              unit: '',
+              min: null,
+              max: null,
+              step: 0.5,
+              description: '',
+              enum: [{ name: 'ok', value: 1 }],
+              availability: 'inactive',
+            },
+          ],
+        },
+      ],
+      peers_omitted: 0,
+      variables_omitted: 3,
+      operations: [],
+      operations_from_seq: null,
+      operations_open_omitted: 0,
+    });
+    expect(uVars.parts.length).toBeGreaterThan(0);
+
+    const rawOp = {
+      seq: 7,
+      state: 'rejected',
+      done: 'yes',
+      peers: {
+        Engine: {
+          state: 5,
+          applied_at_ms: '10',
+          late: 'no',
+          reason: 99,
+          applied_writes: -1,
+          failed_write: 0,
+        },
+        Broken: 'not-an-object',
+      },
+    };
+    expect(() => readOperationReport(rawOp, 'operation')).toThrow(ProtocolError);
+    const uOp = new Unreadable('operation');
+    expect(readOperationReport(rawOp, 'operation', uOp)).toEqual({
+      seq: 7,
+      state: 'rejected',
+      done: false,
+      peers: {
+        Engine: {
+          state: 'unknown',
+          applied_at_ms: null,
+          late: false,
+          reason: null,
+          applied_writes: null,
+          failed_write: 0,
+        },
+      },
+    });
   });
 });
