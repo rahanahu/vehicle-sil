@@ -35,7 +35,7 @@ Run every command in the directory where you extracted the template (the one tha
 
 ## Step 1: Extract the template
 
-Download `vehicle-sil-template-0.2.0.zip` from the [releases page](https://github.com/rahanahu/vehicle-sil/releases) of vehicle-sil, extract it, and rename the directory to the name of your project. To manage it with Git, run `git init` there (`.gitignore` excludes `build/`, `bin/` and `tools/`).
+Download `vehicle-sil-template-0.3.0.zip` from the [releases page](https://github.com/rahanahu/vehicle-sil/releases) of vehicle-sil, extract it, and rename the directory to the name of your project. To manage it with Git, run `git init` there (`.gitignore` excludes `build/`, `bin/` and `tools/`).
 
 The template and the tools exist only for released versions. A copy of `template/` from the vehicle-sil repository is the same, but its `get_tools.py` does not contain the SHA-256 of the tools (pass it with `--sha256` in step 2).
 
@@ -52,7 +52,7 @@ python3 get_tools.py     # Windows (UCRT64 shell): python get_tools.py
 |---|---|
 | 1 | Downloads the tools archive for your OS from the releases page. |
 | 2 | Checks the SHA-256 of the archive. |
-| 3 | Extracts it to `tools/vehicle-sil-tools-0.2.0-<OS>/`. |
+| 3 | Extracts it to `tools/vehicle-sil-tools-0.3.0-<OS>/`. |
 | 4 | Copies the JSON Schemas in the tools to `schema/`. |
 | 5 | Prints the command that adds `bin` to `PATH`. |
 
@@ -69,7 +69,7 @@ If `vehicle_sil_launch version` prints the version, the tools are in `PATH`. The
 | Symptom | Cause | Fix |
 |---|---|---|
 | Prints `may not be published yet` and stops | The version of this README is not released yet. | If you have the tools archive of that version as a file (for example from a colleague), run `python3 get_tools.py --archive <file>`. Otherwise clone and build the vehicle-sil repository ("Build from the repository" in the vehicle-sil README) and use the `vehicle_sil_launch` of that build. |
-| The download fails | Your computer cannot reach the releases page. | Download `vehicle-sil-tools-0.2.0-linux-x86_64.tar.gz` (on Windows, `-windows-x86_64.zip`) in a browser, then run `python3 get_tools.py --archive <downloaded file>`. It still checks the SHA-256. |
+| The download fails | Your computer cannot reach the releases page. | Download `vehicle-sil-tools-0.3.0-linux-x86_64.tar.gz` (on Windows, `-windows-x86_64.zip`) in a browser, then run `python3 get_tools.py --archive <downloaded file>`. It still checks the SHA-256. |
 | Prints `this copy of the template has no SHA-256` and stops | You copied `template/` from the repository, so it has no SHA-256. | Pass the value from `SHA256SUMS` on the releases page with `--sha256`. |
 
 To extract the tools by hand instead of with `get_tools.py`, check the archive against `SHA256SUMS` on the releases page before you extract it, then add its `bin` to `PATH`.
@@ -100,7 +100,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 | `run` | The `ended` column is `exit code 0` for both ECUs. |
 | `run --scenario` | Every entry in the `result` column is `ok`, and the exit code is 0. |
 
-Step 1 of the guide "[Create your first ECU](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/howto/first-ecu.md)" shows the full output of `check` and `run`.
+Step 1 of the guide "[Create your first ECU](https://github.com/rahanahu/vehicle-sil/blob/v0.3.0/docs/howto/first-ecu.md)" shows the full output of `check` and `run`.
 
 ### Troubleshoot the build and run
 
@@ -152,7 +152,7 @@ Do not edit the files in `schema/` by hand: `get_tools.py` overwrites them with 
 
 The Manufacturer Code 0x7F0 is a placeholder.
 
-For the complete procedure to add an ECU, see the guide "[Create your first ECU](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/howto/first-ecu.md)".
+For the complete procedure to add an ECU, see the guide "[Create your first ECU](https://github.com/rahanahu/vehicle-sil/blob/v0.3.0/docs/howto/first-ecu.md)".
 
 ## Distribute a single executable
 
@@ -165,7 +165,7 @@ cmake --build --preset linux                      # Windows: cmake --build --pre
 
 SIL Kit and the C++ runtime are then linked statically into the executable (glibc on Linux stays a shared library). On Linux, this needs a static libstdc++ (`libstdc++-static` on Fedora). To switch back, reconfigure with `-DVEHICLE_SIL_STATIC=OFF`.
 
-When you give the executable to someone, ship the license notices of what it contains with it. For the list, see "License notices to ship with the executable" in [docs/build.md](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/build.md) of vehicle-sil. The tools contain files ready to ship in `licenses/sil-kit/` (and, on Windows, `licenses/msys2/`).
+When you give the executable to someone, ship the license notices of what it contains with it. For the list, see "License notices to ship with the executable" in [docs/build.md](https://github.com/rahanahu/vehicle-sil/blob/v0.3.0/docs/build.md) of vehicle-sil. The tools contain files ready to ship in `licenses/sil-kit/` (and, on Windows, `licenses/msys2/`).
 
 ## Upgrade vehicle-sil
 
@@ -182,9 +182,9 @@ Keep the ECUs and the tools on the same version of vehicle-sil. If the versions 
 
 ## What to read next
 
-- Add an ECU and read and write its variables from Python: [Create your first ECU](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/howto/first-ecu.md) (also covers J1939 communication and starting an ECU from a debugger)
-- Write J1939 nodes: [Writing J1939 nodes](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/j1939-guide.md), [J1939 typed messages](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/j1939-codec.md)
-- Look up the configuration file and the commands: [Configuration file](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/simulation-config.md), [Checks](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/simulation-check.md), [Running](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/simulation-run.md), [Scenarios](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/scenario.md), [Browser GUI](https://github.com/rahanahu/vehicle-sil/blob/v0.2.0/docs/gui.md)
+- Add an ECU and read and write its variables from Python: [Create your first ECU](https://github.com/rahanahu/vehicle-sil/blob/v0.3.0/docs/howto/first-ecu.md) (also covers J1939 communication and starting an ECU from a debugger)
+- Write J1939 nodes: [Writing J1939 nodes](https://github.com/rahanahu/vehicle-sil/blob/v0.3.0/docs/j1939-guide.md), [J1939 typed messages](https://github.com/rahanahu/vehicle-sil/blob/v0.3.0/docs/j1939-codec.md)
+- Look up the configuration file and the commands: [Configuration file](https://github.com/rahanahu/vehicle-sil/blob/v0.3.0/docs/simulation-config.md), [Checks](https://github.com/rahanahu/vehicle-sil/blob/v0.3.0/docs/simulation-check.md), [Running](https://github.com/rahanahu/vehicle-sil/blob/v0.3.0/docs/simulation-run.md), [Scenarios](https://github.com/rahanahu/vehicle-sil/blob/v0.3.0/docs/scenario.md), [Browser GUI](https://github.com/rahanahu/vehicle-sil/blob/v0.3.0/docs/gui.md)
 
 ## License
 

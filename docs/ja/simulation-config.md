@@ -31,7 +31,7 @@ vehicle_sil_launch run simulation.yaml --stop-at-ms 1000
 | `vehicle_sil_launch check` | 設定ファイルと、各実行ファイルの `--describe` の出力を照合し、不整合を 1 回で全部表示します（[simulation-check.md](simulation-check.md)）。 |
 | `vehicle_sil_launch run` | 同じ照合をしてから、シミュレーション全体を起動し、終わりまで監視して、各 participant がどう終わったかを表示します（[simulation-run.md](simulation-run.md)）。 |
 
-`check` はシミュレーションを始めず、registry にも接続しません。ただし、`describe: true` の実行ファイルは、1 つずつ `--describe` で起動します。`--describe` は ECU を組み立てるので、その実行ファイルのコード（ECU のコンストラクターなど）が動きます。`describe: false` の実行ファイルは起動せず、あることだけを確認します。
+`check` はシミュレーションを始めず、registry にも接続しません。ただし、`describe: true` の実行ファイルは `--describe` で起動します。いくつかを同時に起動します（数に上限があります）が、出力はファイルの参加者の順のままです。`--describe` は ECU を組み立てるので、その実行ファイルのコード（ECU のコンストラクターなど）が動きます。`describe: false` の実行ファイルは起動せず、あることだけを確認します。
 
 `run` は、照合に通ったときだけ、すべての participant を起動します。
 

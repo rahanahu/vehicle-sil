@@ -31,7 +31,7 @@ vehicle_sil_launch run simulation.yaml --stop-at-ms 1000
 | `vehicle_sil_launch check` | Checks the configuration file against the `--describe` output of each executable and reports every mismatch at once ([simulation-check.md](simulation-check.md)). |
 | `vehicle_sil_launch run` | Runs the same check, then starts the whole simulation, monitors it to the end and shows how each participant ended ([simulation-run.md](simulation-run.md)). |
 
-`check` does not start the simulation and does not connect to the registry. It does start each `describe: true` executable, one at a time, with `--describe`. `--describe` constructs the ECU, so the code of that executable (the ECU's constructor and so on) runs. `check` does not start `describe: false` executables; it only confirms that they exist.
+`check` does not start the simulation and does not connect to the registry. It does start each `describe: true` executable with `--describe`, several at a time (up to a fixed limit); the output keeps the order of the participants in the file. `--describe` constructs the ECU, so the code of that executable (the ECU's constructor and so on) runs. `check` does not start `describe: false` executables; it only confirms that they exist.
 
 `run` starts the participants only if the check passes.
 

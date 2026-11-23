@@ -383,7 +383,7 @@ GUI のコンポーネントは、サーバーが前の書き込みを受け取�
 | 報告する変数 | `VariableOptions::availability` を付けて宣言した変数です。この値が最初の状態です。どの変数が報告するかは宣言で決まり、実行中は変わりません。 |
 | 状態を変える | ECU のステップ（`on_step()`、`every()`、`at()`、ハンドラー）から `ecu.set_availability(name, state)` を呼びます。同じ状態をもう一度渡しても何も起きません。 |
 | エラー | ECU が宣言していない名前、`availability` なしで宣言した変数、vehicle-sil がどの ECU にも足す変数（`ecu.connected`、監視の出力）は `std::invalid_argument` です。組み立ての間（実行の前）は `std::logic_error` です。最初の状態は宣言で渡してください。 |
-| 状態の行き先 | 変わったときと、シミュレーション時間の 1 秒ごとに、Control Server へ送ります（後からつながったサーバーにも届きます）。Hub の購読は、頼んだとき（`SubscriptionOptions::availability`）だけ受け取ります。gRPC のサービスは下のように渡し、GUI サーバーは画面へ渡します（[gui/protocol](../../gui/protocol/README.ja.md#ecu-の変数) の「ECU の変数」）。ブラウザーの GUI はまだ表示しません。 |
+| 状態の行き先 | 変わったときと、シミュレーション時間の 1 秒ごとに、Control Server へ送ります（後からつながったサーバーにも届きます）。Hub の購読は、頼んだとき（`SubscriptionOptions::availability`）だけ受け取ります。gRPC のサービスは下のように渡し、GUI サーバーは画面へ渡します（[gui/protocol](../../gui/protocol/README.ja.md#ecu-の変数) の「ECU の変数」）。標準のブラウザー GUI は、使っていない変数を薄く表示し、その旨を示します（[gui.md](gui.md#コンポーネントに共通の動作) の「コンポーネントに共通の動作」）。 |
 | 古い vehicle-sil で作った ECU | 何も報告しません。変数はすべて `Active` とみなします。check が注記します（`control-link-revision`）。 |
 
 ```cpp

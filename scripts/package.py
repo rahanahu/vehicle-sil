@@ -466,7 +466,7 @@ vehicle-sil version (the ECU project template: GIT_TAG v{version}).
 
 | Path | What |
 |---|---|
-| `bin/vehicle_sil_launch{exe}` | checks and runs a simulation configuration (`check`, `run`, `run --scenario`, `run --control`) |
+| `bin/vehicle_sil_launch{exe}` | checks and runs a simulation configuration (`check`, `run`, `run --scenario`, `run --control`, `test`; `serve` keeps one launcher for several runs) |
 | `bin/vehicle_sil_ethernet_bridge{exe}` | the Ethernet bridge between a SIL Kit Ethernet network and a network interface of this computer: `vehicle_sil_launch run --connect <network>=<interface>` starts it from here. Its `npcap` (Windows) and `pcap` (Linux) backends need Npcap or libpcap installed, which this archive does not contain; `packet` and `tap` (Linux) need nothing. The Vector XL CAN bridge is not in this archive: build it with the Vector XL Driver Library and put it next to `vehicle_sil_launch` or in a directory on PATH |
 {socketcan_row}| `bin/vehicle-sil-gui`{cmd} | the browser GUI's server, with the launcher above (needs Python 3.11+; with uv, `uv run` installs its packages) |
 | `python/` | the GUI server (`vehicle_sil_gui`, with the built screen, the timeline page and the client files) and the Control API client (`vehicle_sil_control`, with its gRPC stubs); `requirements.txt` pins their packages with hashes |
