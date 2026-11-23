@@ -50,6 +50,7 @@ SCENARIO_STEP_EVENT = "scenario_step"
 # --timeline <file> writes what the scenario wrote and saw to that file after the run.
 FEATURE_TIMELINE = "timeline"
 FEATURE_RUN_STOP_AT = "run-stop-at"
+FEATURE_SERVE = "serve"
 
 
 class LauncherNotFound(Exception):
@@ -313,6 +314,11 @@ def check_enable(enable: object) -> list[str]:
     return _check_names("enable", enable, None)
 
 
+def check_name_list(key: str, value: object) -> list[str]:
+    """Validates a participant name list shape without checking known names."""
+    return _check_names(key, value, None)
+
+
 def _check_names(key: str, value: object, known: list[str] | None) -> list[str]:
     if value is None:
         return []
@@ -388,14 +394,23 @@ def _time_example(name: str, id: int | None = None) -> str:
 
 
 
-def command_line(command: dict) -> bytes:
+def command_line(command: dict, *, run_id: str | None = None) -> bytes:
     """The line written to the launcher's standard input for a command that check_time_command accepted."""
     if command["command"] == "speed":
         value = command["value"]
         text = '"max"' if value == "max" else speed_argument(value)
         number = f',"id":{command["id"]}' if "id" in command else ""
-        return f'{{"command":"speed","value":{text}{number}}}\n'.encode()
-    return (json.dumps(command, separators=(",", ":")) + "\n").encode()
+        run_part = f',"run":{json.dumps(run_id)}' if run_id is not None else ""
+        return f'{{"command":"speed","value":{text}{number}{run_part}}}\n'.encode()
+    payload = {**command, "run": run_id} if run_id is not None else command
+    return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
+
+
+def stop_command_line(run_id: str | None = None) -> bytes:
+    """The line written to the launcher's standard input to ask the current run to stop."""
+    if run_id is None:
+        return b'{"command":"stop"}\n'
+    return (json.dumps({"command": "stop", "run": run_id}, separators=(",", ":")) + "\n").encode()
 
 
 def request_text(intent: dict) -> str:
@@ -471,6 +486,24 @@ def run_command(launcher: Launcher, file: str, request: Path, control_credential
     if control_credentials is not None:
         argv += ["--control", "0", "--control-credentials", str(control_credentials)]
     return argv + ["--request", str(request), "--", file]
+
+
+def serve_command(launcher: Launcher, file: str, control_credentials: Path | None = None) -> list[str]:
+    """Builds the `vehicle_sil_launch serve` invocation for resident execution."""
+    argv = launcher.prefix + ["serve"]
+    if control_credentials is not None:
+        argv += ["--control", "0", "--control-credentials", str(control_credentials)]
+    return argv + ["--", file]
+
+
+def serve_run_command(request: Path, timeline: Path | None = None, command_id: int | None = None) -> bytes:
+    """Builds the NDJSON `run` command written to `vehicle_sil_launch serve` stdin."""
+    payload: dict[str, object] = {"command": "run", "request": str(request)}
+    if timeline is not None:
+        payload["timeline"] = str(timeline)
+    if command_id is not None:
+        payload["id"] = command_id
+    return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
 
 
 def with_participant_timeouts(argv: list[str], start_timeout_ms: int, stop_timeout_ms: int) -> list[str]:

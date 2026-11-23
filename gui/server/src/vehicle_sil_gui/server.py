@@ -30,7 +30,7 @@ from .launcher import (CONNECTIONS_FIELDS, DESCRIBE_FIELDS, DESCRIPTIONS_NAME, N
                        FEATURE_RUN_STOP_AT, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, TEXT_FIELDS,
                        InvalidRequest, Launcher,
                        check_command, check_connect, check_disable, check_enable, check_fields, check_manual,
-                       check_network, check_params, check_run_millis, check_speed, check_strict, check_time_command, check_time_policy,
+                       check_network, check_params, check_run_millis, check_speed, check_strict, check_name_list, check_time_command, check_time_policy,
                        check_variant, connections_command, describe_command, hide_request,
                        hide_request_in_line, save_check_command, text_check_command,
                        with_participant_timeouts, write_request_file)
@@ -41,7 +41,7 @@ from .descriptions import Descriptions
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .recording import Recording
 from .refusal import Refused
-from .runtime import LauncherRuntime, OneShotRuntime, RunHandle, RunSpec
+from .runtime import LauncherRuntime, OneShotRuntime, RunHandle, RunSpec, ServeRuntime
 from .scenarios import list_scenarios, relative_to_config, resolve_scenario
 from .session import SILENT_AFTER_S, Limits, Session, check_timing
 from .source import Source
@@ -303,13 +303,15 @@ class GuiServer:
         self.o = options
         self.root = ConfigRoot(options.root)
         self.launcher = options.launcher
-        self.runtime: LauncherRuntime = options.runtime or OneShotRuntime(
+        self.runtime: LauncherRuntime = options.runtime or ServeRuntime(
             self.launcher, cwd=self.root.root,
             participant_start_timeout_ms=options.participant_start_timeout_ms,
             participant_stop_timeout_ms=options.participant_stop_timeout_ms,
             max_line=MAX_LINE, escalate_wait_s=ESCALATE_WAIT_S,
             finish_timeout_s=process.OUTPUT_GRACE_S + 1 + VARIABLES_CLOSE_S,
+            on_status=self._on_runtime_status,
         )
+        self.runtime.sync_launcher()
         self.instance = secrets.token_hex(8)
         # The panel modules are served under panels/<key>/ (a module cannot be imported with a header): this key
         # is not the token, gives only the reading of panel modules, and is told only with GET api/dashboard.
@@ -372,6 +374,9 @@ class GuiServer:
         return self.session.allowed() if self.session else self.numbered.stamp(
             allowed_of(self.facts(), False, False, "none"))
 
+    def _on_runtime_status(self, status: dict) -> None:
+        self.hub.broadcast([{"type": "runtime", "runtime": status}])
+
     def _push_allowed(self) -> None:
         """Tells the screens an `allowed` that changed with no `session` message to carry it (a start begins or
         fails, the server's end begins): a small message of its own. Nothing when it has not changed."""
@@ -392,6 +397,7 @@ class GuiServer:
         app.router.add_post("/api/check", self.post_check)
         app.router.add_post("/api/describe", self.post_describe)
         app.router.add_post("/api/connections", self.post_connections)
+        app.router.add_post("/api/prepare", self.post_prepare)
         app.router.add_post("/api/run", self.post_run)
         app.router.add_post("/api/stop", self.post_stop)
         app.router.add_post("/api/stop-session", self.post_stop_session)
@@ -495,6 +501,7 @@ class GuiServer:
 
     async def get_app(self, request: web.Request) -> web.Response:
         await self.launcher.probe()
+        self.runtime.sync_launcher()
         self._push_allowed()  # the probe may have made the launcher usable or not
         why_not = await self._no_variables()
         v = self.o.variable_limits
@@ -613,6 +620,7 @@ class GuiServer:
                           "open, or this user may not write it or its directory; close that program or fix the "
                           "permissions, then save again") from None
         self.descriptions.forget(config.relative)
+        await self.runtime.release_config(config.relative)
         for kept in (self._names, self._targets):
             for key in [k for k in kept if k[0] == config.relative]:
                 del kept[key]
@@ -644,7 +652,7 @@ class GuiServer:
     async def get_session(self, request: web.Request) -> web.Response:
         # The same encoding as the WebSocket: strict JSON (never a bare NaN or Infinity), or a 500.
         return web.Response(text=encode({"instance": self.instance, "session": self.session.summary() if self.session else None,
-                                         "allowed": self.allowed()}),
+                                         "allowed": self.allowed(), "runtime": self.runtime.status()}),
                             content_type="application/json")
 
     async def get_dashboard(self, request: web.Request) -> web.Response:
@@ -902,6 +910,33 @@ class GuiServer:
         return web.json_response({"file": config.relative, "network": network, "exit_code": code,
                                   "connections": result})
 
+    async def post_prepare(self, request: web.Request) -> web.Response:
+        """Prepares the persistent runtime for a configuration when eligible."""
+        try:
+            self._not_closing()
+            if self._starting or (self.session is not None and self.session.state == "running"):
+                raise Refused(409, "already-running", "a simulation is running: stop it before preparing another")
+            body = await self._body(request)
+            check_fields("api/prepare", body, ("file", "variant", "disable", "enable", "manual"))
+            config = self.root.resolve(body.get("file"))
+            variant = check_variant(body.get("variant"))
+            disable = tuple(check_name_list("disable", body.get("disable")))
+            enable = tuple(check_name_list("enable", body.get("enable")))
+            manual = tuple(check_name_list("manual", body.get("manual")))
+            await self._usable()
+            why_not = await self._no_variables()
+            status = await self.runtime.prepare(
+                config.relative,
+                variant=variant,
+                disable=disable,
+                enable=enable,
+                manual=manual,
+                want_control=why_not is None,
+            )
+        except (PathRejected, InvalidRequest, Refused) as e:
+            return self._refusal(e)
+        return web.json_response({"instance": self.instance, "runtime": status})
+
     async def post_run(self, request: web.Request) -> web.Response:
         try:
             self._not_closing()
@@ -969,19 +1004,32 @@ class GuiServer:
             raise
         try:
             handle = await self.runtime.start_run(RunSpec(
-                config=config.relative, request=request, credentials=credentials, timeline=timeline,
+                config=config.relative,
+                request=request,
+                credentials=credentials,
+                timeline=timeline,
+                variant=intent.get("variant"),
+                disable=tuple(disable),
+                enable=tuple(intent.get("enable", ())),
+                manual=tuple(manual),
             ))
         except BaseException:
             control.remove(credentials)
             control.remove(request)
             control.remove(timeline)
             raise
+        run_credentials = credentials
+        run_token = token
+        if handle.control_token is not None:
+            control.remove(run_credentials)
+            run_credentials = None
+            run_token = handle.control_token
         # Registered in the same step as the start returns: the server's end sees every launcher.
         session = Session(next(self._ids), config.relative, disable, speed, start_paused, limits=self.o.limits,
                           launcher_pid=handle.pid, scenario=scenario, manual=manual)
         session.facts = self.facts
         session.numbered = self.numbered
-        variables = Variables(session.id, self._tell_variables, limits=self.o.variable_limits, secret=token,
+        variables = Variables(session.id, self._tell_variables, limits=self.o.variable_limits, secret=run_token,
                               ending=lambda: session.phase == "stopping" or session.result is not None
                               or not session.launcher_running)
         if why_not is None:
@@ -992,8 +1040,8 @@ class GuiServer:
         recording = Recording() if why_not is None and scenario is None else Recording(
             available=False, reason="this run plays a scenario: its writes are the scenario's own" if scenario
             is not None else f"this run has no variables to write: {why_not}")
-        run = Run(session, handle, variables, features=tuple(self.launcher.features), credentials=credentials,
-                  token=token, recording=recording, timeline=timeline, request=request,
+        run = Run(session, handle, variables, features=tuple(self.launcher.features), credentials=run_credentials,
+                  token=run_token, recording=recording, timeline=timeline, request=request,
                   preflight_timing=check_timing(checked))
         self._runs.add(run)
         self.current = run
@@ -1173,6 +1221,7 @@ class GuiServer:
 
     async def _usable(self) -> None:
         await self.launcher.probe()
+        self.runtime.sync_launcher()
         if not self.launcher.usable:
             raise InvalidRequest("launcher-unusable",
                                  "; ".join(p["message"] for p in self.launcher.problems) or "the launcher is not usable")
@@ -1411,7 +1460,7 @@ class GuiServer:
             if self.o.source is not None:
                 source = self.o.source(address, run.token or "")
             else:
-                source = control.GrpcSource(self._library, address, run.token)
+                source = control.GrpcSource(self._library, address, run.token, run_id=run.handle.run_id)
         except Exception as e:
             variables.fail(f"{e}: the variables of this run are not read")
             return
@@ -1502,7 +1551,8 @@ class GuiServer:
     def snapshot(self, session_id: int | None, from_seq: int | None) -> list[dict]:
         s = self.session
         hello = {"type": "hello", "vehicle_sil_gui": PROTOCOL, "version": __version__, "instance": self.instance,
-                 "session": s.summary() if s else None, "allowed": self.allowed(), "replay": None}
+                 "session": s.summary() if s else None, "allowed": self.allowed(), "replay": None,
+                 "runtime": self.runtime.status()}
         if s is None:
             return [hello, {"type": "synced", "session": None, "last_seq": None}]
         start = from_seq if session_id == s.id else None
