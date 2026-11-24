@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <string>
+#include <string_view>
 
 #ifndef _WIN32
 #include <cerrno>
@@ -314,6 +316,76 @@ void Process::kill_tree() noexcept
     }
 }
 
+namespace {
+
+/// `<system32>\conhost.exe`, or empty if Windows does not report its system directory.
+std::wstring system_conhost_path()
+{
+    std::wstring directory(MAX_PATH, L'\0');
+    for (;;)
+    {
+        const UINT length = GetSystemDirectoryW(directory.data(), static_cast<UINT>(directory.size()));
+        if (length == 0)
+        {
+            return {};
+        }
+        if (length < directory.size())
+        {
+            directory.resize(length);
+            if (!directory.empty() && directory.back() != L'\\')
+            {
+                directory.push_back(L'\\');
+            }
+            directory.append(L"conhost.exe");
+            return directory;
+        }
+        if (length > 32768 || directory.size() >= 32768)
+        {
+            return {};
+        }
+        // GetSystemDirectoryW returns the required length including the terminating null.
+        directory.resize(length > directory.size() ? static_cast<std::size_t>(length) : directory.size() * 2);
+    }
+}
+
+/// Full Win32 image path of `handle`, or empty if it cannot be queried.
+std::wstring process_image_path(HANDLE handle)
+{
+    std::wstring path(MAX_PATH, L'\0');
+    for (;;)
+    {
+        DWORD size = static_cast<DWORD>(path.size());
+        if (QueryFullProcessImageNameW(handle, 0, path.data(), &size) != 0)
+        {
+            path.resize(size);
+            return path;
+        }
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || path.size() >= 32768)
+        {
+            return {};
+        }
+        path.resize(path.size() * 2);
+    }
+}
+
+/// True if `handle` is Windows's own `<system32>\conhost.exe`.
+bool is_system_conhost(HANDLE handle, std::wstring_view conhostPath)
+{
+    if (conhostPath.empty())
+    {
+        return false;
+    }
+    const std::wstring image = process_image_path(handle);
+    if (image.empty())
+    {
+        return false;
+    }
+    return CompareStringOrdinal(image.data(), static_cast<int>(image.size()), conhostPath.data(),
+                                static_cast<int>(conhostPath.size()), TRUE) == CSTR_EQUAL;
+}
+
+} // namespace
+
 bool Process::others_running()
 {
     if (!poll() || job_ == nullptr)
@@ -332,13 +404,44 @@ bool Process::others_running()
     {
         return false;
     }
+    std::wstring conhostPath;
+    bool conhostPathChecked = false;
     const ULONG_PTR* id = ids.list.ProcessIdList;
     for (DWORD i = 0; i < ids.list.NumberOfProcessIdsInList; ++i)
     {
-        if (id[i] != static_cast<ULONG_PTR>(pid_))
+        if (id[i] == static_cast<ULONG_PTR>(pid_))
         {
+            continue;
+        }
+        Handle other(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(id[i])));
+        if (other.h == nullptr)
+        {
+            if (GetLastError() == ERROR_INVALID_PARAMETER)
+            {
+                // Already exited before OpenProcess().
+                continue;
+            }
+            // Cannot inspect (e.g. access denied): conservatively report it as still running.
             return true;
         }
+        DWORD exitCode = 0;
+        if (GetExitCodeProcess(other.h, &exitCode) != 0 && exitCode != STILL_ACTIVE)
+        {
+            continue;
+        }
+        if (!conhostPathChecked)
+        {
+            conhostPath = system_conhost_path();
+            conhostPathChecked = true;
+        }
+        // Headless runs start console programs with CREATE_NO_WINDOW inside this job, causing
+        // Windows to spawn <system32>\conhost.exe in the same job. It may outlive the participant
+        // briefly during teardown; it is not a child started by the participant.
+        if (is_system_conhost(other.h, conhostPath))
+        {
+            continue;
+        }
+        return true;
     }
     // More than fit here: some are others.
     return ids.list.NumberOfAssignedProcesses > ids.list.NumberOfProcessIdsInList;

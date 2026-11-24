@@ -302,6 +302,19 @@ TEST_CASE(process_tells_that_processes_it_started_outlive_it)
     CHECK(vehicle_sil::unit::eventually([&] { return !p.others_running(); }, 60s));
 }
 
+TEST_CASE(process_reports_no_others_running_after_clean_exit)
+{
+    // Repeat immediately after exit so headless Windows runs (CREATE_NO_WINDOW -> conhost.exe in
+    // the job) exercise the post-exit check while Windows's console host may still be tearing down.
+    for (int i = 0; i < 8; ++i)
+    {
+        Lines lines;
+        Process p(kHelper, {"--exit", "0"}, lines.options());
+        CHECK(p.wait_for(scaled_timeout(60s)) == (ExitStatus{0, std::nullopt}));
+        CHECK(!p.others_running());
+    }
+}
+
 TEST_CASE(process_ends_with_what_it_started_when_destroyed)
 {
     const fs::path dir = scratch("process destroyed");
